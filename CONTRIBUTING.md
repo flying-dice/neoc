@@ -197,14 +197,16 @@ Work branches follow the pattern enforced by the kanban workflow (see [CLAUDE.md
 
 ### Releasing
 
-Push a version tag to trigger the release pipeline:
+Push a version tag to kick off the release pipeline:
 
 ```sh
 git tag v0.1.0
 git push origin v0.1.0
 ```
 
-The pipeline builds a release binary, packages it as `neoc-x86_64-unknown-linux-gnu.tar.gz`, and creates a [GitLab Release](https://gitlab.beluga-sirius.ts.net/flying-dice/neoc/-/releases) with auto-generated release notes. The install scripts (`scripts/install.sh`, `scripts/install.ps1`) download from these release assets.
+The pipeline runs lint → test → build (all four cross-compilation targets) → **upload-release-assets** automatically. Once the upload job finishes, a manual **create-release** job appears in the pipeline UI — click Play to publish the [GitLab Release](https://gitlab.beluga-sirius.ts.net/flying-dice/neoc/-/releases).
+
+Binaries are uploaded to the GitLab Generic Package Registry under a permanent, version-keyed URL before the release is created, so they do not expire like job artifacts. The release links directly to those packages.
 
 ## MR expectations
 

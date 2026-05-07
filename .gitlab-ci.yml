@@ -2,6 +2,7 @@ stages:
   - lint
   - test
   - build
+  - release
   - pages
 
 image: rust:1-bookworm
@@ -184,6 +185,70 @@ build:windows-x86_64:
     paths:
       - artifacts/
     expire_in: 14 days
+
+# ── release ───────────────────────────────────────────────────────────────────
+#
+# Release jobs run only on version tags (v*.*.*).
+#
+# upload-release-assets runs automatically: it pulls the binaries from all four
+# build jobs and pushes them to the GitLab Generic Package Registry, giving each
+# file a permanent, version-keyed URL that won't expire like job artifacts do.
+#
+# create-release is a manual gate — click Play in the GitLab UI once you are
+# satisfied the pipeline is clean. It creates the GitLab Release and links the
+# uploaded packages as downloadable assets.
+
+upload-release-assets:
+  stage: release
+  image: curlimages/curl:latest
+  before_script: []
+  needs:
+    - build:linux-x86_64
+    - build:linux-x86_64-musl
+    - build:linux-aarch64-musl
+    - build:windows-x86_64
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/
+  script:
+    - |
+      for f in artifacts/neoc-*; do
+        fname=$(basename "$f")
+        curl --fail --silent --show-error \
+          --header "JOB-TOKEN: $CI_JOB_TOKEN" \
+          --upload-file "$f" \
+          "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/neoc/$CI_COMMIT_TAG/$fname"
+        echo "Uploaded $fname"
+      done
+
+create-release:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  before_script: []
+  needs:
+    - upload-release-assets
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/
+      when: manual
+  script:
+    - echo "Publishing GitLab Release $CI_COMMIT_TAG"
+  release:
+    name: "neoc $CI_COMMIT_TAG"
+    description: "neoc $CI_COMMIT_TAG — see git log for details."
+    tag_name: $CI_COMMIT_TAG
+    assets:
+      links:
+        - name: "neoc-x86_64-unknown-linux-gnu"
+          url: "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/neoc/$CI_COMMIT_TAG/neoc-x86_64-unknown-linux-gnu"
+          link_type: package
+        - name: "neoc-x86_64-unknown-linux-musl"
+          url: "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/neoc/$CI_COMMIT_TAG/neoc-x86_64-unknown-linux-musl"
+          link_type: package
+        - name: "neoc-aarch64-unknown-linux-musl"
+          url: "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/neoc/$CI_COMMIT_TAG/neoc-aarch64-unknown-linux-musl"
+          link_type: package
+        - name: "neoc-x86_64-pc-windows-gnu.exe"
+          url: "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/neoc/$CI_COMMIT_TAG/neoc-x86_64-pc-windows-gnu.exe"
+          link_type: package
 
 # ── pages ─────────────────────────────────────────────────────────────────────
 #
