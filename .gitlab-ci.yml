@@ -215,8 +215,8 @@ release-plz:
     entrypoint: [""]
   before_script: []
   script:
-    - release-plz release --git-token "$GITLAB_TOKEN" --git-host "gitlab.beluga-sirius.ts.net"
-    - release-plz release-pr --git-token "$GITLAB_TOKEN" --git-host "gitlab.beluga-sirius.ts.net"
+    - release-plz release --git-token "$GITLAB_TOKEN"
+    - release-plz release-pr --git-token "$GITLAB_TOKEN"
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: on_success
