@@ -188,15 +188,36 @@ build:windows-x86_64:
 
 # ── release ───────────────────────────────────────────────────────────────────
 #
-# Release jobs run only on version tags (v*.*.*).
+# release-plz runs on every push to main. It has two responsibilities:
+#   1. release-plz release    — if the version in Cargo.toml has no matching
+#                               tag yet (i.e. the Release MR was just merged),
+#                               push the tag and create the GitLab Release with
+#                               the generated changelog as its description.
+#   2. release-plz release-pr — create or update a Release MR that bumps the
+#                               version and updates CHANGELOG.md based on
+#                               conventional commits since the last release.
 #
-# upload-release-assets runs automatically: it pulls the binaries from all four
-# build jobs and pushes them to the GitLab Generic Package Registry, giving each
-# file a permanent, version-keyed URL that won't expire like job artifacts do.
+# Merging the Release MR is the approval gate. Once merged, release-plz pushes
+# the tag and creates the release; the tag pipeline then builds and attaches
+# binaries automatically.
 #
-# create-release is a manual gate — click Play in the GitLab UI once you are
-# satisfied the pipeline is clean. It creates the GitLab Release and links the
-# uploaded packages as downloadable assets.
+# Requires GITLAB_TOKEN (a PAT or Project Access Token with api +
+# write_repository scopes) stored as a masked CI/CD variable.
+#
+# upload-release-assets and attach-release-assets run only on version tags
+# (v*.*.*). upload pushes binaries to the Generic Package Registry for permanent
+# URLs; attach adds those links to the release-plz-created GitLab Release.
+
+release-plz:
+  stage: release
+  image: marcoieni/release-plz:latest
+  before_script: []
+  script:
+    - release-plz release --git-token "$GITLAB_TOKEN" --git-host "gitlab.beluga-sirius.ts.net"
+    - release-plz release-pr --git-token "$GITLAB_TOKEN" --git-host "gitlab.beluga-sirius.ts.net"
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: on_success
 
 upload-release-assets:
   stage: release
@@ -220,35 +241,30 @@ upload-release-assets:
         echo "Uploaded $fname"
       done
 
-create-release:
+attach-release-assets:
   stage: release
-  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  image: curlimages/curl:latest
   before_script: []
   needs:
     - upload-release-assets
   rules:
     - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/
-      when: manual
   script:
-    - echo "Publishing GitLab Release $CI_COMMIT_TAG"
-  release:
-    name: "neoc $CI_COMMIT_TAG"
-    description: "neoc $CI_COMMIT_TAG — see git log for details."
-    tag_name: $CI_COMMIT_TAG
-    assets:
-      links:
-        - name: "neoc-x86_64-unknown-linux-gnu"
-          url: "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/neoc/$CI_COMMIT_TAG/neoc-x86_64-unknown-linux-gnu"
-          link_type: package
-        - name: "neoc-x86_64-unknown-linux-musl"
-          url: "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/neoc/$CI_COMMIT_TAG/neoc-x86_64-unknown-linux-musl"
-          link_type: package
-        - name: "neoc-aarch64-unknown-linux-musl"
-          url: "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/neoc/$CI_COMMIT_TAG/neoc-aarch64-unknown-linux-musl"
-          link_type: package
-        - name: "neoc-x86_64-pc-windows-gnu.exe"
-          url: "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/neoc/$CI_COMMIT_TAG/neoc-x86_64-pc-windows-gnu.exe"
-          link_type: package
+    - |
+      PKG_BASE="$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/neoc/$CI_COMMIT_TAG"
+      LINKS_URL="$CI_API_V4_URL/projects/$CI_PROJECT_ID/releases/$CI_COMMIT_TAG/assets/links"
+      add_link() {
+        curl --fail --silent --show-error \
+          --request POST \
+          --header "JOB-TOKEN: $CI_JOB_TOKEN" \
+          --data "name=$1&url=$2&link_type=package" \
+          "$LINKS_URL"
+        echo "Linked $1"
+      }
+      add_link "neoc-x86_64-unknown-linux-gnu"   "$PKG_BASE/neoc-x86_64-unknown-linux-gnu"
+      add_link "neoc-x86_64-unknown-linux-musl"  "$PKG_BASE/neoc-x86_64-unknown-linux-musl"
+      add_link "neoc-aarch64-unknown-linux-musl" "$PKG_BASE/neoc-aarch64-unknown-linux-musl"
+      add_link "neoc-x86_64-pc-windows-gnu.exe"  "$PKG_BASE/neoc-x86_64-pc-windows-gnu.exe"
 
 # ── pages ─────────────────────────────────────────────────────────────────────
 #

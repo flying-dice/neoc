@@ -1,0 +1,5 @@
+[workspace]
+# release-plz creates the GitLab Release with the generated changelog as its
+# description. The CI pipeline then attaches cross-compiled binary download
+# links as release assets. See .gitlab-ci.yml for the full pipeline design.
+changelog_update = true

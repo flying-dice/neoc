@@ -197,16 +197,17 @@ Work branches follow the pattern enforced by the kanban workflow (see [CLAUDE.md
 
 ### Releasing
 
-Push a version tag to kick off the release pipeline:
+Releases are driven by [release-plz](https://release-plz.dev/) using conventional commits. No manual tag pushing is needed.
 
-```sh
-git tag v0.1.0
-git push origin v0.1.0
-```
+**Workflow:**
 
-The pipeline runs lint → test → build (all four cross-compilation targets) → **upload-release-assets** automatically. Once the upload job finishes, a manual **create-release** job appears in the pipeline UI — click Play to publish the [GitLab Release](https://gitlab.beluga-sirius.ts.net/flying-dice/neoc/-/releases).
+1. Merge feature branches to `main` using [conventional commit](https://www.conventionalcommits.org/) messages (`feat:`, `fix:`, `chore:`, etc.).
+2. On every push to `main`, release-plz inspects unreleased commits and creates or updates a **Release MR** that bumps the version in `Cargo.toml` and updates `CHANGELOG.md`.
+3. Review the Release MR — the changelog diff shows exactly what will be in the release. **Merging this MR is the approval gate.**
+4. After merge, release-plz automatically pushes the version tag and creates the [GitLab Release](https://gitlab.beluga-sirius.ts.net/flying-dice/neoc/-/releases) with the generated changelog as its description.
+5. The tag triggers the build pipeline: lint → test → cross-compile (all four targets) → upload binaries to the Package Registry → attach binary download links to the release.
 
-Binaries are uploaded to the GitLab Generic Package Registry under a permanent, version-keyed URL before the release is created, so they do not expire like job artifacts. The release links directly to those packages.
+**Prerequisites:** a `GITLAB_TOKEN` CI/CD variable (masked, protected) must be set in project Settings → CI/CD → Variables. The token needs `api` and `write_repository` scopes. The release links directly to those packages.
 
 ## MR expectations
 
