@@ -4,12 +4,6 @@ stages:
   - build
   - pages
 
-default:
-  tags:
-    - self-hosted
-    - linux
-    - x64
-
 variables:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
