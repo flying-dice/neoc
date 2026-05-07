@@ -199,6 +199,8 @@ pages:
   image: oven/bun:latest
   before_script: []
   needs: []
+  variables:
+    VITEPRESS_BASE: /flying-dice/neoc/
   script:
     - cd docs
     - bun install --frozen-lockfile
