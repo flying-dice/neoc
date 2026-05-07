@@ -78,19 +78,8 @@ test:
 # produced for every commit — even on WIP branches where tests may be
 # intentionally failing. Check the lint/test jobs separately for quality gates.
 #
-# Cross-compilation uses cargo-zigbuild, which delegates to the Zig C compiler
-# for vendored C code (mlua/Luau and rusqlite/SQLite). This avoids maintaining
-# separate sysroots or Docker-in-Docker for each target.
-#
-# Binaries are uploaded as job artifacts with a 14-day expiry. When releases
-# are ready (issue #1), these artifacts will be promoted to GitLab Releases.
-
-.cross_setup: &cross_setup
-  before_script:
-    - export PATH="$CARGO_HOME/bin:$PATH"
-    - apt-get update -qq && apt-get install -y -qq python3-pip
-    - which cargo-zigbuild || cargo install cargo-zigbuild --locked
-    - which zig || pip3 install ziglang --break-system-packages
+# Cross-compilation uses rustup target add + plain cargo build. Each job
+# installs the appropriate system linker from apt.
 
 # Native Linux x86_64 — plain cargo, no cross toolchain needed.
 build:linux-x86_64:
@@ -116,7 +105,9 @@ build:linux-x86_64:
 # Static Linux x86_64 — fully self-contained, no glibc dependency.
 build:linux-x86_64-musl:
   stage: build
-  <<: *cross_setup
+  variables:
+    TARGET: x86_64-unknown-linux-musl
+    CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
   cache:
     - *tools_cache
     - key:
@@ -124,11 +115,10 @@ build:linux-x86_64-musl:
         prefix: build-x86_64-linux-musl
       paths:
         - target/
-  variables:
-    TARGET: x86_64-unknown-linux-musl
   script:
+    - apt-get update -qq && apt-get install -y -qq musl-tools
     - rustup target add "${TARGET}"
-    - cargo zigbuild --release --target "${TARGET}"
+    - cargo build --release --target "${TARGET}"
     - mkdir -p artifacts
     - strip "target/${TARGET}/release/neoc"
     - cp "target/${TARGET}/release/neoc" "artifacts/neoc-${TARGET}"
@@ -138,22 +128,23 @@ build:linux-x86_64-musl:
       - artifacts/
     expire_in: 14 days
 
-# Static Linux ARM64 — cross-compiled for aarch64 servers and Raspberry Pi 4+.
-build:linux-aarch64-musl:
+# Linux ARM64 — cross-compiled for aarch64 servers and Raspberry Pi 4+.
+build:linux-aarch64:
   stage: build
-  <<: *cross_setup
+  variables:
+    TARGET: aarch64-unknown-linux-gnu
+    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
   cache:
     - *tools_cache
     - key:
         files: [Cargo.lock]
-        prefix: build-aarch64-linux-musl
+        prefix: build-aarch64-linux-gnu
       paths:
         - target/
-  variables:
-    TARGET: aarch64-unknown-linux-musl
   script:
+    - apt-get update -qq && apt-get install -y -qq gcc-aarch64-linux-gnu
     - rustup target add "${TARGET}"
-    - cargo zigbuild --release --target "${TARGET}"
+    - cargo build --release --target "${TARGET}"
     - mkdir -p artifacts
     - cp "target/${TARGET}/release/neoc" "artifacts/neoc-${TARGET}"
   artifacts:
@@ -162,10 +153,12 @@ build:linux-aarch64-musl:
       - artifacts/
     expire_in: 14 days
 
-# Windows x86_64 — cross-compiled via Zig's bundled MinGW toolchain.
+# Windows x86_64 — cross-compiled via MinGW.
 build:windows-x86_64:
   stage: build
-  <<: *cross_setup
+  variables:
+    TARGET: x86_64-pc-windows-gnu
+    CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: x86_64-w64-mingw32-gcc
   cache:
     - *tools_cache
     - key:
@@ -173,11 +166,10 @@ build:windows-x86_64:
         prefix: build-x86_64-windows-gnu
       paths:
         - target/
-  variables:
-    TARGET: x86_64-pc-windows-gnu
   script:
+    - apt-get update -qq && apt-get install -y -qq mingw-w64
     - rustup target add "${TARGET}"
-    - cargo zigbuild --release --target "${TARGET}"
+    - cargo build --release --target "${TARGET}"
     - mkdir -p artifacts
     - cp "target/${TARGET}/release/neoc.exe" "artifacts/neoc-${TARGET}.exe"
   artifacts:
@@ -245,7 +237,7 @@ upload-release-assets:
   needs:
     - build:linux-x86_64
     - build:linux-x86_64-musl
-    - build:linux-aarch64-musl
+    - build:linux-aarch64
     - build:windows-x86_64
   rules:
     - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/
@@ -282,7 +274,7 @@ attach-release-assets:
       }
       add_link "neoc-x86_64-unknown-linux-gnu"   "$PKG_BASE/neoc-x86_64-unknown-linux-gnu"
       add_link "neoc-x86_64-unknown-linux-musl"  "$PKG_BASE/neoc-x86_64-unknown-linux-musl"
-      add_link "neoc-aarch64-unknown-linux-musl" "$PKG_BASE/neoc-aarch64-unknown-linux-musl"
+      add_link "neoc-aarch64-unknown-linux-gnu"  "$PKG_BASE/neoc-aarch64-unknown-linux-gnu"
       add_link "neoc-x86_64-pc-windows-gnu.exe"  "$PKG_BASE/neoc-x86_64-pc-windows-gnu.exe"
 
 # ── pages ─────────────────────────────────────────────────────────────────────
