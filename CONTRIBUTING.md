@@ -164,16 +164,29 @@ For a perf-sensitive change, pin a baseline before editing and compare after —
 
 ## CI
 
-The project is hosted on a self-hosted GitLab instance (`gitlab.beluga-sirius.ts.net/flying-dice/neoc`). GitLab CI runs automatically on push to `main` and on merge requests. See [issue #1](https://gitlab.beluga-sirius.ts.net/flying-dice/neoc/-/issues/1) for the pipeline definition — a `.gitlab-ci.yml` is the deliverable for that issue.
+The project is hosted on a self-hosted GitLab instance (`gitlab.beluga-sirius.ts.net/flying-dice/neoc`). GitLab CI (`.gitlab-ci.yml`) runs automatically on push to `main` and on merge requests targeting `main`.
 
-The intended pipeline stages are:
+Pipeline stages:
 
 1. **Lint** — `cargo fmt --check` and `cargo clippy --all-targets` (warnings are errors via `RUSTFLAGS=-D warnings`).
-2. **Test** — `cargo test --lib`, `cargo test --bin neoc`, and Luau integration tests on the self-hosted Linux runner.
-3. **Bench** — Criterion benchmarks; manual/scheduled trigger only, results uploaded as artifacts.
-4. **Release** — triggered on `v*` tags; builds a release binary and publishes a GitLab Release.
+2. **Test** — `cargo test --lib`, `cargo test --bin neoc`, and Luau integration tests on the self-hosted Linux runner. Docker-dependent tests (`sqlx_mysql`, `sqlx_postgres`, `testcontainers_modules`) are excluded.
+3. **Build** — Cross-compiled binaries for all targets (see below), uploaded as job artifacts on every commit. Independent of the test stage so binaries are always produced.
+4. **Pages** — VitePress documentation built and published via GitLab Pages; runs on `main` only.
 
 All lint and test jobs must pass before a merge request can be merged.
+
+### Cross-compilation targets
+
+Binaries are produced for every pipeline run using `cargo-zigbuild` (Zig as the C cross-compiler, handles vendored C code in `mlua` and `rusqlite`):
+
+| Job | Target | Notes |
+|---|---|---|
+| `build:linux-x86_64` | `x86_64-unknown-linux-gnu` | Native build, stripped |
+| `build:linux-x86_64-musl` | `x86_64-unknown-linux-musl` | Static, no glibc dependency |
+| `build:linux-aarch64-musl` | `aarch64-unknown-linux-musl` | ARM64 static |
+| `build:windows-x86_64` | `x86_64-pc-windows-gnu` | Windows via Zig's MinGW toolchain |
+
+Artifacts expire after 14 days. They are attached to the pipeline, not to a release. Release promotion is tracked in [issue #1](https://gitlab.beluga-sirius.ts.net/flying-dice/neoc/-/issues/1).
 
 ### Branching
 

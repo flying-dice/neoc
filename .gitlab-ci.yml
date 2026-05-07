@@ -1,0 +1,208 @@
+stages:
+  - lint
+  - test
+  - build
+  - pages
+
+default:
+  tags:
+    - self-hosted
+    - linux
+    - x64
+
+variables:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+  # Keep all cargo data inside the project dir so it lands in the cache.
+  CARGO_HOME: "${CI_PROJECT_DIR}/.cargo"
+
+# ── Cache anchors ─────────────────────────────────────────────────────────────
+
+# Shared registry / git / bin cache — keyed by a manual version string so it
+# can be busted when tool versions need to change (bump tools-vN).
+.tools_cache: &tools_cache
+  key: tools-v1
+  paths:
+    - .cargo/bin/
+    - .cargo/registry/
+    - .cargo/git/
+
+# ── lint ──────────────────────────────────────────────────────────────────────
+
+lint:
+  stage: lint
+  cache:
+    - *tools_cache
+    - key:
+        files: [Cargo.lock]
+        prefix: lint
+      paths:
+        - target/
+  script:
+    - cargo fmt --check
+    - cargo clippy --all-targets
+
+# ── test ──────────────────────────────────────────────────────────────────────
+
+test:
+  stage: test
+  needs: [lint]
+  cache:
+    - *tools_cache
+    - key:
+        files: [Cargo.lock]
+        prefix: test
+      paths:
+        - target/
+  script:
+    - cargo test --lib
+    - cargo test --bin neoc
+    # Docker-dependent tests (sqlx_mysql, sqlx_postgres, testcontainers_modules)
+    # require a live Docker daemon and are excluded from the runner.
+    - cargo run -- \
+        "tests/lib/*.test.luau" \
+        "tests/std/*.test.luau" \
+        "tests/vnd/jsonschema.test.luau" \
+        "tests/vnd/quick_xml.test.luau" \
+        "tests/vnd/rusqlite.test.luau" \
+        "tests/vnd/serde_json.test.luau" \
+        "tests/vnd/serde_yaml.test.luau" \
+        "tests/vnd/toml.test.luau"
+
+# ── build ─────────────────────────────────────────────────────────────────────
+#
+# Build jobs are independent of the test stage so that binaries are always
+# produced for every commit — even on WIP branches where tests may be
+# intentionally failing. Check the lint/test jobs separately for quality gates.
+#
+# Cross-compilation uses cargo-zigbuild, which delegates to the Zig C compiler
+# for vendored C code (mlua/Luau and rusqlite/SQLite). This avoids maintaining
+# separate sysroots or Docker-in-Docker for each target.
+#
+# Binaries are uploaded as job artifacts with a 14-day expiry. When releases
+# are ready (issue #1), these artifacts will be promoted to GitLab Releases.
+
+.cross_setup: &cross_setup
+  before_script:
+    - which cargo-zigbuild || cargo install cargo-zigbuild --locked
+    - which zig || pip3 install ziglang --break-system-packages
+
+# Native Linux x86_64 — plain cargo, no cross toolchain needed.
+build:linux-x86_64:
+  stage: build
+  cache:
+    - *tools_cache
+    - key:
+        files: [Cargo.lock]
+        prefix: build-x86_64-linux-gnu
+      paths:
+        - target/
+  script:
+    - cargo build --release
+    - mkdir -p artifacts
+    - strip target/release/neoc
+    - cp target/release/neoc artifacts/neoc-x86_64-unknown-linux-gnu
+  artifacts:
+    name: "neoc-x86_64-unknown-linux-gnu-${CI_COMMIT_SHORT_SHA}"
+    paths:
+      - artifacts/
+    expire_in: 14 days
+
+# Static Linux x86_64 — fully self-contained, no glibc dependency.
+build:linux-x86_64-musl:
+  stage: build
+  <<: *cross_setup
+  cache:
+    - *tools_cache
+    - key:
+        files: [Cargo.lock]
+        prefix: build-x86_64-linux-musl
+      paths:
+        - target/
+  variables:
+    TARGET: x86_64-unknown-linux-musl
+  script:
+    - rustup target add "${TARGET}"
+    - cargo zigbuild --release --target "${TARGET}"
+    - mkdir -p artifacts
+    - strip "target/${TARGET}/release/neoc"
+    - cp "target/${TARGET}/release/neoc" "artifacts/neoc-${TARGET}"
+  artifacts:
+    name: "neoc-${TARGET}-${CI_COMMIT_SHORT_SHA}"
+    paths:
+      - artifacts/
+    expire_in: 14 days
+
+# Static Linux ARM64 — cross-compiled for aarch64 servers and Raspberry Pi 4+.
+build:linux-aarch64-musl:
+  stage: build
+  <<: *cross_setup
+  cache:
+    - *tools_cache
+    - key:
+        files: [Cargo.lock]
+        prefix: build-aarch64-linux-musl
+      paths:
+        - target/
+  variables:
+    TARGET: aarch64-unknown-linux-musl
+  script:
+    - rustup target add "${TARGET}"
+    - cargo zigbuild --release --target "${TARGET}"
+    - mkdir -p artifacts
+    - cp "target/${TARGET}/release/neoc" "artifacts/neoc-${TARGET}"
+  artifacts:
+    name: "neoc-${TARGET}-${CI_COMMIT_SHORT_SHA}"
+    paths:
+      - artifacts/
+    expire_in: 14 days
+
+# Windows x86_64 — cross-compiled via Zig's bundled MinGW toolchain.
+build:windows-x86_64:
+  stage: build
+  <<: *cross_setup
+  cache:
+    - *tools_cache
+    - key:
+        files: [Cargo.lock]
+        prefix: build-x86_64-windows-gnu
+      paths:
+        - target/
+  variables:
+    TARGET: x86_64-pc-windows-gnu
+  script:
+    - rustup target add "${TARGET}"
+    - cargo zigbuild --release --target "${TARGET}"
+    - mkdir -p artifacts
+    - cp "target/${TARGET}/release/neoc.exe" "artifacts/neoc-${TARGET}.exe"
+  artifacts:
+    name: "neoc-${TARGET}-${CI_COMMIT_SHORT_SHA}"
+    paths:
+      - artifacts/
+    expire_in: 14 days
+
+# ── pages ─────────────────────────────────────────────────────────────────────
+#
+# Builds the VitePress documentation site and publishes it via GitLab Pages.
+# Runs only on the default branch. The `public/` artifact is the GitLab Pages
+# contract — its root becomes the served site.
+#
+# If GitLab Pages serves the site at a subpath (e.g. /neoc/) rather than the
+# domain root, set the VITEPRESS_BASE CI/CD variable in project settings:
+#   Settings → CI/CD → Variables → VITEPRESS_BASE = /neoc/
+
+pages:
+  stage: pages
+  needs: []
+  script:
+    - cd docs
+    - bun install --frozen-lockfile
+    - bun run docs:build
+    - cd ..
+    - mkdir -p public
+    - cp -r docs/.vitepress/dist/. public/
+  artifacts:
+    paths:
+      - public
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
