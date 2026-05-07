@@ -210,7 +210,9 @@ build:windows-x86_64:
 
 release-plz:
   stage: release
-  image: marcoieni/release-plz:latest
+  image:
+    name: marcoieni/release-plz:latest
+    entrypoint: [""]
   before_script: []
   script:
     - release-plz release --git-token "$GITLAB_TOKEN" --git-host "gitlab.beluga-sirius.ts.net"
