@@ -1,6 +1,10 @@
 # Rust build output
 /target
 
+# CI — cargo cache and build artifacts land here during pipeline runs
+/.cargo
+/artifacts
+
 # Generated docs site
 docs/.vitepress/dist
 docs/.vitepress/cache
