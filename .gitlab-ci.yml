@@ -232,8 +232,8 @@ release-plz:
   cache:
     - *tools_cache
   script:
-    - release-plz release --git-token "$RELEASE_PLZ_TOKEN" --forge gitlab --git-host "$CI_SERVER_URL"
-    - release-plz release-pr --git-token "$RELEASE_PLZ_TOKEN" --forge gitlab --git-host "$CI_SERVER_URL"
+    - release-plz release --git-token "$RELEASE_PLZ_TOKEN" --forge gitlab
+    - release-plz release-pr --git-token "$RELEASE_PLZ_TOKEN" --forge gitlab
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: on_success
