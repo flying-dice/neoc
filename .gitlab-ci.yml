@@ -212,7 +212,16 @@ release-plz:
   stage: release
   # Uses the default rust:1-bookworm image — release-plz needs cargo to read
   # Cargo.toml metadata. The binary is downloaded and cached in CARGO_HOME/bin.
+  #
+  # GIT_DEPTH: 0 — full clone so release-plz can see all tags and compute the
+  # correct next version. The default shallow depth of 20 hides older tags.
+  #
+  # git checkout — GitLab CI checks out in detached HEAD; release-plz requires
+  # HEAD to point to a branch so it can determine the current branch name.
+  variables:
+    GIT_DEPTH: 0
   before_script:
+    - git checkout "$CI_COMMIT_BRANCH"
     - mkdir -p "$CARGO_HOME/bin"
     - export PATH="$CARGO_HOME/bin:$PATH"
     - |
