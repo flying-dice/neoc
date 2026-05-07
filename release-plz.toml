@@ -6,7 +6,8 @@ changelog_update = true
 
 [[package]]
 name = "neoc"
-# publish = false in Cargo.toml prevents crates.io publishing, but
-# release-plz skips packages with publish=false by default. Setting
-# release = true here keeps git tagging and GitLab Release creation active.
+# publish = false in Cargo.toml prevents crates.io publishing. Setting
+# release = true keeps git tagging and GitLab Release creation active;
+# publish = false here matches Cargo.toml so release-plz doesn't conflict.
 release = true
+publish = false
