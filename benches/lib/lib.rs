@@ -25,6 +25,7 @@ use neoc::lua::lib;
 criterion_group!(
     benches,
     lib::base64::benches,
+    lib::http::benches,
     lib::json::benches,
     lib::mime::benches,
 );
