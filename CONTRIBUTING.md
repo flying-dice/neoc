@@ -1,6 +1,6 @@
 # Contributing
 
-This guide is the mechanical walkthrough — the order to do things in, where files go, and what to run before opening a PR. It deliberately points at [STYLEGUIDE.md](STYLEGUIDE.md) and [README.md](README.md) for the conventions and the higher-level rationale rather than restating them.
+This guide is the mechanical walkthrough — the order to do things in, where files go, and what to run before opening a merge request. It deliberately points at [STYLEGUIDE.md](STYLEGUIDE.md) and [README.md](README.md) for the conventions and the higher-level rationale rather than restating them.
 
 ## Before you start
 
@@ -148,13 +148,13 @@ Smaller surface — the same flow, in-place:
 4. Extend the `pub fn benches` group with `library`, `into_out_lua`, `through_lua` rows for the new function.
 5. Add `describe(...)` cases to `tests/<ns>/<name>.test.luau` (one per error condition; see the [STYLEGUIDE.md coverage requirement](STYLEGUIDE.md#coverage-requirement)).
 
-## Local check matrix before opening a PR
+## Local check matrix before opening an MR
 
 ```sh
 cargo build                                 # builds clean
 cargo test --lib                            # in-module Rust tests
 cargo test --bin neoc                       # multi-worker subprocess tests
-cargo run -- 'tests/**/*.test.luau'            # all Luau suites
+cargo run -- 'tests/**/*.test.luau'         # all Luau suites
 cargo bench --bench lib <name>              # the group you touched, against a pinned baseline
 cargo clippy --all-targets                  # no new warnings
 cargo fmt --check                           # formatting
@@ -164,33 +164,43 @@ For a perf-sensitive change, pin a baseline before editing and compare after —
 
 ## CI
 
-GitHub Actions runs automatically on push to `main` and on pull requests. The CI workflow (`.github/workflows/ci.yml`) runs:
+The project is hosted on a self-hosted GitLab instance (`gitlab.beluga-sirius.ts.net/flying-dice/neoc`). GitLab CI runs automatically on push to `main` and on merge requests. See [issue #1](https://gitlab.beluga-sirius.ts.net/flying-dice/neoc/-/issues/1) for the pipeline definition — a `.gitlab-ci.yml` is the deliverable for that issue.
 
-1. **Check & Lint** — `cargo fmt --check` and `cargo clippy --all-targets`.
-2. **Test** — Rust unit tests and Luau integration tests on Linux, macOS, and Windows.
-3. **Benchmarks** — Criterion benchmarks on Linux. Results are uploaded as artifacts.
-4. **Build** — Release builds for all three platforms. Binaries are uploaded as artifacts.
+The intended pipeline stages are:
 
-All checks must pass before merge.
+1. **Lint** — `cargo fmt --check` and `cargo clippy --all-targets` (warnings are errors via `RUSTFLAGS=-D warnings`).
+2. **Test** — `cargo test --lib`, `cargo test --bin neoc`, and Luau integration tests on the self-hosted Linux runner.
+3. **Bench** — Criterion benchmarks; manual/scheduled trigger only, results uploaded as artifacts.
+4. **Release** — triggered on `v*` tags; builds a release binary and publishes a GitLab Release.
+
+All lint and test jobs must pass before a merge request can be merged.
+
+### Branching
+
+Work branches follow the pattern enforced by the kanban workflow (see [CLAUDE.md](CLAUDE.md)):
+
+- Implementation: `issues/{id}-{slug}` — e.g. `issues/6-std-task`
+- Design artefacts: `design/{id}-{slug}` — e.g. `design/23-std-env`
 
 ### Releasing
 
-Push a version tag to trigger the release workflow (`.github/workflows/release.yml`):
+Push a version tag to trigger the release pipeline:
 
 ```sh
 git tag v0.1.0
 git push origin v0.1.0
 ```
 
-The workflow builds release binaries for all platforms, packages them (`.tar.gz` for Linux/macOS, `.zip` for Windows), and creates a GitHub Release with auto-generated release notes. The install scripts (`scripts/install.sh`, `scripts/install.ps1`) download from these release assets.
+The pipeline builds a release binary, packages it as `neoc-x86_64-unknown-linux-gnu.tar.gz`, and creates a [GitLab Release](https://gitlab.beluga-sirius.ts.net/flying-dice/neoc/-/releases) with auto-generated release notes. The install scripts (`scripts/install.sh`, `scripts/install.ps1`) download from these release assets.
 
-## PR expectations
+## MR expectations
 
-- One module or one well-scoped change per PR. Don't fold drive-by refactors into a feature PR.
-- The commit message and PR description should say *why*, not just *what*. The diff already shows what.
-- Update [README.md](README.md) and any relevant subsection in the same PR — don't leave docs to a follow-up.
+- One module or one well-scoped change per merge request. Don't fold drive-by refactors into a feature MR.
+- The commit message and MR description should say *why*, not just *what*. The diff already shows what.
+- Update [README.md](README.md) and any relevant subsection in the same MR — don't leave docs to a follow-up.
 - New crates require explicit sign-off; see the dependency rule in [STYLEGUIDE.md](STYLEGUIDE.md#allowed-dependencies) before adding anything to `Cargo.toml`. The `vnd:*` namespace exists specifically so that when a vendored crate IS the module, the rule is "match the crate name."
-- If a benchmark regresses, the PR description should call it out and explain whether it's intentional (a deliberate trade for some other gain) or load-bearing for a follow-up.
+- If a benchmark regresses, the MR description should call it out and explain whether it's intentional (a deliberate trade for some other gain) or load-bearing for a follow-up.
+- Apply the correct `workflow::*` label when opening the MR (`workflow::Implementation`) and update it to `workflow::Review` once the MR is ready for CODEOWNER review.
 
 ## When in doubt
 

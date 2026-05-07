@@ -41,14 +41,14 @@ The agents who ship, design, review, and maintain neoc — the runtime that spea
 
 ## Quickstart
 
-Pre-built binaries for Linux, macOS, and Windows live on the [GitHub Releases](https://github.com/flying-dice/neoc/releases) page.
+Pre-built binaries for Linux, macOS, and Windows live on the [GitLab Releases](https://gitlab.beluga-sirius.ts.net/flying-dice/neoc/-/releases) page.
 
 ```sh
 # Linux / macOS
-curl -fsSL https://raw.githubusercontent.com/flying-dice/neoc/main/scripts/install.sh | bash
+TBC
 
 # Windows (PowerShell)
-irm https://raw.githubusercontent.com/flying-dice/neoc/main/scripts/install.ps1 | iex
+TBC
 
 # From source
 cargo install --path .
@@ -64,11 +64,11 @@ local fs    = require("std:fs")
 local hyper = require("vnd:hyper")
 local json  = require("vnd:serde_json")
 
-local resp = assert(hyper.get("https://api.github.com/repos/flying-dice/neoc"))
+local resp = assert(hyper.get("https://gitlab.beluga-sirius.ts.net/api/v4/projects/flying-dice%2Fneoc"))
 local data = assert(json.from_str(resp.body))
 
 fs.write("repo.json", json.to_string_pretty(data))
-print("saved " .. data:get("full_name"))
+print("saved " .. data:get("path_with_namespace"))
 ```
 
 ```sh

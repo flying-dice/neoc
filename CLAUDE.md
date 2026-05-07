@@ -73,11 +73,22 @@ Precedence: 1 > 2 > 3 > 4.
 5. Add `tests/<ns>/<name>.test.luau`
 6. Update README module table
 
-## Issue workflow — GitHub Project board
+## Issue workflow — GitLab board
 
-Issue lifecycle is managed through the GitHub Project board columns, **not labels**. Do not use `draft` labels or `DRAFT:` title prefixes.
+Issue lifecycle is managed through the [GitLab board](https://gitlab.beluga-sirius.ts.net/flying-dice/neoc/-/boards/3) using scoped `workflow::*` labels. Do not use `draft` labels or `DRAFT:` title prefixes.
 
 **Columns:** Backlog → Refinement → Design → Implementation → Review → Done
+
+Each column maps to a scoped label. Labels are mutually exclusive within the `workflow::` scope — applying a new stage label automatically replaces the old one.
+
+| Label | Meaning |
+|---|---|
+| `workflow::Backlog` | Not yet refined — awaiting CODEOWNER go-ahead |
+| `workflow::Refinement` | Being fleshed out: acceptance criteria, open questions, approach options |
+| `workflow::Design` | RFC or ADR in progress; awaiting CODEOWNER approval before implementation |
+| `workflow::Implementation` | Implementation merge request open; work in progress |
+| `workflow::Review` | Merge request under CODEOWNER review; awaiting approval |
+| *(closed)* | Done — issue closed on merge |
 
 **Gates:**
 
@@ -85,14 +96,41 @@ Issue lifecycle is managed through the GitHub Project board columns, **not label
 |---|---|
 | Backlog → Refinement | CODEOWNER gives explicit go-ahead. No bot self-promotes from Backlog. |
 | Refinement → Design | Flesh out the ticket (acceptance criteria, open questions, approach options). Wait for CODEOWNER signal to advance. |
-| Design → Implementation | If a design PR is needed, open one — CODEOWNER approves before moving to Implementation. If the ticket description is sufficient design, move straight to Implementation once settled. |
-| Implementation → Review | Open the implementation PR. CODEOWNER reviews. Card stays in Review until approved. |
-| Review → Done | CODEOWNER approves the PR, merge, move to Done. |
+| Design → Implementation | If a design MR is needed, open one on a `design/{id}-{slug}` branch — CODEOWNER approves before moving to Implementation. If the ticket description is sufficient design, move straight to Implementation once settled. |
+| Implementation → Review | Open the implementation MR from an `issues/{id}-{slug}` branch. CODEOWNER reviews. Label stays `workflow::Review` until approved. |
+| Review → Done | CODEOWNER approves the MR, merge to `main`, close the issue. |
+
+**Branching model:**
+
+- Implementation work: `issues/{id}-{slug}` (e.g. `issues/6-std-task`)
+- Design artefacts: `design/{id}-{slug}` (e.g. `design/23-std-env`)
+
+**Additional labels:**
+
+| Label | Purpose |
+|---|---|
+| `module` | New or updated runtime module (std/lib/vnd) |
+| `infrastructure` | CI, release, scripts, tooling |
+| `priority:high` | Must ship in the current milestone |
+| `priority:medium` | Should ship in the current milestone |
+| `priority:low` | Nice to have; deferred if scope is tight |
+| `design-rfc` | Design RFC required before implementation begins |
+| `design-adr` | Architecture Decision Record produced by this issue |
+| `spike` | Time-boxed investigation; produces a recommendation, not production code |
+
+**Milestones:**
+
+| Milestone | Scope |
+|---|---|
+| M1: std — Stable Standard Library | All `std:*` modules stable, tested, documented |
+| M2: lib — Blessed Library Extensions | All `lib:*` modules stable, tested, documented |
+| M3: vnd — Vendor Libraries | All `vnd:*` wrapper modules stable, tested, documented |
 
 **Hard rules:**
-- Board column position is the source of truth for issue state.
-- Never move an issue out of Backlog without explicit CODEOWNER instruction.
+- The `workflow::*` label is the source of truth for issue state — not the issue's open/closed status alone.
+- Never move an issue out of `workflow::Backlog` without explicit CODEOWNER instruction.
 - CODEOWNER approval is still required at the Review gate before merge (see CODEOWNERS file).
+- The GitLab project is hosted at `gitlab.beluga-sirius.ts.net/flying-dice/neoc`.
 
 ## Cross-platform
 
