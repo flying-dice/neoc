@@ -4,6 +4,8 @@ stages:
   - build
   - pages
 
+image: rust:1-bookworm
+
 variables:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
@@ -78,8 +80,9 @@ test:
 
 .cross_setup: &cross_setup
   before_script:
+    - apt-get update -qq && apt-get install -y -qq python3-pip
     - which cargo-zigbuild || cargo install cargo-zigbuild --locked
-    - which zig || pip3 install ziglang --break-system-packages
+    - pip3 install ziglang --break-system-packages
 
 # Native Linux x86_64 — plain cargo, no cross toolchain needed.
 build:linux-x86_64:
@@ -187,6 +190,7 @@ build:windows-x86_64:
 
 pages:
   stage: pages
+  image: oven/bun:latest
   needs: []
   script:
     - cd docs
