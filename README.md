@@ -113,7 +113,8 @@ For long-running HTTP servers, the script binds a listener and uses `std:thread`
 ## Going further
 
 - [STYLEGUIDE.md](STYLEGUIDE.md) — module conventions, return-type rules, dependency policy
-- [CONTRIBUTING.md](CONTRIBUTING.md) — adding a module, tests, benchmarks
+- [CONTRIBUTING.md](CONTRIBUTING.md) — adding a module, tests, benchmarks, commit style
+- [CLAUDE.md](CLAUDE.md) — instructions for Claude Code (commit conventions, issue workflow, design principles)
 - [docs/styleguide/documentation-styleguide.md](docs/styleguide/documentation-styleguide.md) — documentation conventions
 
 It isn't trying to replace anything. It's a different trade-off — one shaped around who's writing code now.

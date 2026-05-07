@@ -73,6 +73,35 @@ Precedence: 1 > 2 > 3 > 4.
 5. Add `tests/<ns>/<name>.test.luau`
 6. Update README module table
 
+## Commit style
+
+All commits use [Conventional Commits](https://www.conventionalcommits.org/). release-plz reads these to determine the next version and generate the changelog — wrong format means wrong (or missing) releases.
+
+```
+<type>(<scope>): <subject>
+```
+
+**Types:**
+
+| Type | When to use |
+|---|---|
+| `feat` | New capability visible to users or scripts |
+| `fix` | Bug fix |
+| `docs` | Documentation only |
+| `refactor` | Code change with no behaviour change |
+| `test` | Tests only |
+| `chore` | Maintenance (deps, CI tweaks, etc.) that doesn't affect the binary |
+| `perf` | Performance improvement |
+
+**Scope** is optional but recommended — use the module name (`std:fs`), subsystem (`ci`, `install`), or omit for repo-wide changes.
+
+**Breaking changes:** append `!` after the type/scope (`feat!:`) and add a `BREAKING CHANGE:` footer.
+
+**Rules:**
+- Subject is lowercase, no trailing period.
+- Body and footers are optional; use them when the *why* isn't obvious from the subject.
+- One logical change per commit. If you're tempted to write "and" in the subject, split it.
+
 ## Issue workflow — GitLab board
 
 Issue lifecycle is managed through the [GitLab board](https://gitlab.beluga-sirius.ts.net/flying-dice/neoc/-/boards/3) using scoped `workflow::*` labels. Do not use `draft` labels or `DRAFT:` title prefixes.

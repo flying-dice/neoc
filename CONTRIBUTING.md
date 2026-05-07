@@ -177,16 +177,14 @@ All lint and test jobs must pass before a merge request can be merged.
 
 ### Cross-compilation targets
 
-Binaries are produced for every pipeline run using `cargo-zigbuild` (Zig as the C cross-compiler, handles vendored C code in `mlua` and `rusqlite`):
+Binaries are produced for every pipeline run using plain `rustup target add` and apt-installed linkers:
 
 | Job | Target | Notes |
 |---|---|---|
 | `build:linux-x86_64` | `x86_64-unknown-linux-gnu` | Native build, stripped |
-| `build:linux-x86_64-musl` | `x86_64-unknown-linux-musl` | Static, no glibc dependency |
-| `build:linux-aarch64-musl` | `aarch64-unknown-linux-musl` | ARM64 static |
-| `build:windows-x86_64` | `x86_64-pc-windows-gnu` | Windows via Zig's MinGW toolchain |
+| `build:windows-x86_64` | `x86_64-pc-windows-gnu` | Cross-compiled via `mingw-w64` |
 
-Artifacts expire after 14 days. They are attached to the pipeline, not to a release. Release promotion is tracked in [issue #1](https://gitlab.beluga-sirius.ts.net/flying-dice/neoc/-/issues/1).
+Artifacts expire after 14 days.
 
 ### Branching
 
@@ -208,6 +206,30 @@ Releases are driven by [release-plz](https://release-plz.dev/) using conventiona
 5. The tag triggers the build pipeline: lint → test → cross-compile (all four targets) → upload binaries to the Package Registry → attach binary download links to the release.
 
 **Prerequisites:** a `GITLAB_TOKEN` CI/CD variable (masked, protected) must be set in project Settings → CI/CD → Variables. The token needs `api` and `write_repository` scopes. The release links directly to those packages.
+
+## Commit style
+
+All commits must follow [Conventional Commits](https://www.conventionalcommits.org/). release-plz reads these to determine the next version and build the changelog — a wrong or missing type means a missed or incorrect release.
+
+```
+<type>(<scope>): <subject>
+```
+
+| Type | When |
+|---|---|
+| `feat` | New capability visible to users or scripts |
+| `fix` | Bug fix |
+| `docs` | Documentation only |
+| `refactor` | Code change with no behaviour change |
+| `test` | Tests only |
+| `chore` | Maintenance (deps, CI tweaks) that doesn't affect the binary |
+| `perf` | Performance improvement |
+
+Scope is optional — use the module name (`std:fs`), subsystem (`ci`, `install`), or omit for repo-wide changes. Breaking changes get a `!` suffix and a `BREAKING CHANGE:` footer.
+
+Subject is lowercase, no trailing period. One logical change per commit.
+
+Full type reference: [CLAUDE.md → Commit style](CLAUDE.md#commit-style).
 
 ## MR expectations
 
