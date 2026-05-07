@@ -102,61 +102,6 @@ build:linux-x86_64:
       - artifacts/
     expire_in: 14 days
 
-# Static Linux x86_64 — fully self-contained, no glibc dependency.
-build:linux-x86_64-musl:
-  stage: build
-  variables:
-    TARGET: x86_64-unknown-linux-musl
-    CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
-    CC_x86_64_unknown_linux_musl: musl-gcc
-    CXX_x86_64_unknown_linux_musl: g++
-  cache:
-    - *tools_cache
-    - key:
-        files: [Cargo.lock]
-        prefix: build-x86_64-linux-musl
-      paths:
-        - target/
-  script:
-    - apt-get update -qq && apt-get install -y -qq musl-tools
-    - rustup target add "${TARGET}"
-    - cargo build --release --target "${TARGET}"
-    - mkdir -p artifacts
-    - strip "target/${TARGET}/release/neoc"
-    - cp "target/${TARGET}/release/neoc" "artifacts/neoc-${TARGET}"
-  artifacts:
-    name: "neoc-${TARGET}-${CI_COMMIT_SHORT_SHA}"
-    paths:
-      - artifacts/
-    expire_in: 14 days
-
-# Linux ARM64 — cross-compiled for aarch64 servers and Raspberry Pi 4+.
-build:linux-aarch64:
-  stage: build
-  variables:
-    TARGET: aarch64-unknown-linux-gnu
-    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-    CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
-    CXX_aarch64_unknown_linux_gnu: aarch64-linux-gnu-g++
-  cache:
-    - *tools_cache
-    - key:
-        files: [Cargo.lock]
-        prefix: build-aarch64-linux-gnu
-      paths:
-        - target/
-  script:
-    - apt-get update -qq && apt-get install -y -qq g++-aarch64-linux-gnu
-    - rustup target add "${TARGET}"
-    - cargo build --release --target "${TARGET}"
-    - mkdir -p artifacts
-    - cp "target/${TARGET}/release/neoc" "artifacts/neoc-${TARGET}"
-  artifacts:
-    name: "neoc-${TARGET}-${CI_COMMIT_SHORT_SHA}"
-    paths:
-      - artifacts/
-    expire_in: 14 days
-
 # Windows x86_64 — cross-compiled via MinGW.
 build:windows-x86_64:
   stage: build
@@ -240,8 +185,6 @@ upload-release-assets:
   before_script: []
   needs:
     - build:linux-x86_64
-    - build:linux-x86_64-musl
-    - build:linux-aarch64
     - build:windows-x86_64
   rules:
     - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/
@@ -276,10 +219,8 @@ attach-release-assets:
           "$LINKS_URL"
         echo "Linked $1"
       }
-      add_link "neoc-x86_64-unknown-linux-gnu"   "$PKG_BASE/neoc-x86_64-unknown-linux-gnu"
-      add_link "neoc-x86_64-unknown-linux-musl"  "$PKG_BASE/neoc-x86_64-unknown-linux-musl"
-      add_link "neoc-aarch64-unknown-linux-gnu"  "$PKG_BASE/neoc-aarch64-unknown-linux-gnu"
-      add_link "neoc-x86_64-pc-windows-gnu.exe"  "$PKG_BASE/neoc-x86_64-pc-windows-gnu.exe"
+      add_link "neoc-x86_64-unknown-linux-gnu"  "$PKG_BASE/neoc-x86_64-unknown-linux-gnu"
+      add_link "neoc-x86_64-pc-windows-gnu.exe" "$PKG_BASE/neoc-x86_64-pc-windows-gnu.exe"
 
 # ── pages ─────────────────────────────────────────────────────────────────────
 #
