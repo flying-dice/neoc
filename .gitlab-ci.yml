@@ -210,10 +210,17 @@ build:windows-x86_64:
 
 release-plz:
   stage: release
-  image:
-    name: marcoieni/release-plz:latest
-    entrypoint: [""]
-  before_script: []
+  # Uses the default rust:1-bookworm image — release-plz needs cargo to read
+  # Cargo.toml metadata. The binary is downloaded and cached in CARGO_HOME/bin.
+  before_script:
+    - export PATH="$CARGO_HOME/bin:$PATH"
+    - |
+      which release-plz 2>/dev/null || \
+        curl -sSL \
+          "https://github.com/release-plz/release-plz/releases/latest/download/release-plz-x86_64-unknown-linux-gnu.tar.gz" \
+          | tar -xz -C "$CARGO_HOME/bin/"
+  cache:
+    - *tools_cache
   script:
     - release-plz release --git-token "$GITLAB_TOKEN"
     - release-plz release-pr --git-token "$GITLAB_TOKEN"
