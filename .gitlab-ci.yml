@@ -22,7 +22,7 @@ variables:
 # Shared registry / git / bin cache — keyed by a manual version string so it
 # can be busted when tool versions need to change (bump tools-vN).
 .tools_cache: &tools_cache
-  key: tools-v1
+  key: tools-v2
   paths:
     - .cargo/bin/
     - .cargo/registry/
@@ -232,8 +232,8 @@ release-plz:
   cache:
     - *tools_cache
   script:
-    - release-plz release --git-token "$RELEASE_PLZ_TOKEN"
-    - release-plz release-pr --git-token "$RELEASE_PLZ_TOKEN"
+    - release-plz release --git-token "$RELEASE_PLZ_TOKEN" --forge gitlab --git-host "$CI_SERVER_URL"
+    - release-plz release-pr --git-token "$RELEASE_PLZ_TOKEN" --forge gitlab --git-host "$CI_SERVER_URL"
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: on_success
