@@ -4,29 +4,36 @@ This guide walks through installing neoc and running a first Luau script. It ass
 
 ## Installation
 
-Pre-built binaries for Linux, macOS, and Windows are published on [GitHub Releases](https://github.com/flying-dice/neoc/releases). The install scripts download the appropriate binary for the host platform and place it on the path.
+Pre-built binaries for Linux x86_64 and Windows x86_64 are published to the [GitLab Package Registry](https://gitlab.beluga-sirius.ts.net/flying-dice/neoc/-/releases). Each release ships a versioned install script alongside the binaries.
 
-### On Linux or macOS
+### On Linux x86_64
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/flying-dice/neoc/main/scripts/install.sh | bash
+```sh
+curl -fsSL https://gitlab.beluga-sirius.ts.net/api/v4/projects/13/packages/generic/neoc/v0.1.0/install.sh | sh
 ```
 
-### On Windows
+The script downloads the binary for the current platform and places it in `$NEOC_INSTALL_DIR` (default `~/.neoc/bin`). Add that directory to `$PATH` if it is not already there.
 
-```powershell
-irm https://raw.githubusercontent.com/flying-dice/neoc/main/scripts/install.ps1 | iex
+### On Windows x86_64
+
+Download the `.exe` directly from the releases page and place it somewhere on your `PATH`:
+
+```
+https://gitlab.beluga-sirius.ts.net/api/v4/projects/13/packages/generic/neoc/v0.1.0/neoc-x86_64-pc-windows-gnu.exe
+```
+
+Rename it to `neoc.exe` and move it to a directory that is already on your `PATH`, or add its location to `PATH` via **System Properties → Environment Variables**.
+
+### From source
+
+```sh
+cargo install --path .
 ```
 
 ### Environment variables
 
-The install scripts respect the following environment variables.
-
 `NEOC_INSTALL_DIR`
-:   The directory to install the binary into. Defaults to `~/.neoc/bin`.
-
-`NEOC_VERSION`
-:   The release tag to install. Defaults to `latest`.
+:   The directory the install script places the binary into. Defaults to `~/.neoc/bin`.
 
 ## Running a script
 

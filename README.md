@@ -41,20 +41,20 @@ The agents who ship, design, review, and maintain neoc — the runtime that spea
 
 ## Quickstart
 
-Pre-built binaries for Linux, macOS, and Windows live on the [GitLab Releases](https://gitlab.beluga-sirius.ts.net/flying-dice/neoc/-/releases) page.
+Pre-built binaries for Linux and Windows live on the [GitLab Releases](https://gitlab.beluga-sirius.ts.net/flying-dice/neoc/-/releases) page.
 
 ```sh
-# Linux / macOS
-TBC
+# Linux x86_64
+curl -fsSL https://gitlab.beluga-sirius.ts.net/api/v4/projects/13/packages/generic/neoc/v0.1.0/install.sh | sh
 
-# Windows (PowerShell)
-TBC
+# Windows x86_64 — download directly
+# https://gitlab.beluga-sirius.ts.net/api/v4/projects/13/packages/generic/neoc/v0.1.0/neoc-x86_64-pc-windows-gnu.exe
 
 # From source
 cargo install --path .
 ```
 
-`NEOC_INSTALL_DIR` (default `~/.neoc/bin`) and `NEOC_VERSION` (default `latest`) tune the install scripts.
+`NEOC_INSTALL_DIR` (default `~/.neoc/bin`) controls where the install script places the binary.
 
 A first script — fetch a URL, parse JSON, write a file:
 
