@@ -55,6 +55,7 @@ test:
       paths:
         - target/
   script:
+    - cargo build
     - cargo test --lib
     - cargo test --bin neoc
     # Docker-dependent tests (sqlx_mysql, sqlx_postgres, testcontainers_modules)
@@ -195,6 +196,7 @@ build:windows-x86_64:
 pages:
   stage: pages
   image: oven/bun:latest
+  before_script: []
   needs: []
   script:
     - cd docs
