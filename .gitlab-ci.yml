@@ -213,6 +213,7 @@ release-plz:
   # Uses the default rust:1-bookworm image — release-plz needs cargo to read
   # Cargo.toml metadata. The binary is downloaded and cached in CARGO_HOME/bin.
   before_script:
+    - mkdir -p "$CARGO_HOME/bin"
     - export PATH="$CARGO_HOME/bin:$PATH"
     - |
       which release-plz 2>/dev/null || \
