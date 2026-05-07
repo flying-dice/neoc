@@ -86,9 +86,10 @@ test:
 
 .cross_setup: &cross_setup
   before_script:
+    - export PATH="$CARGO_HOME/bin:$PATH"
     - apt-get update -qq && apt-get install -y -qq python3-pip
     - which cargo-zigbuild || cargo install cargo-zigbuild --locked
-    - pip3 install ziglang --break-system-packages
+    - which zig || pip3 install ziglang --break-system-packages
 
 # Native Linux x86_64 — plain cargo, no cross toolchain needed.
 build:linux-x86_64:
