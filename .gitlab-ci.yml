@@ -60,7 +60,8 @@ test:
     - cargo test --bin neoc
     # Docker-dependent tests (sqlx_mysql, sqlx_postgres, testcontainers_modules)
     # require a live Docker daemon and are excluded from the runner.
-    - cargo run -- \
+    - |
+      cargo run -- \
         "tests/lib/*.test.luau" \
         "tests/std/*.test.luau" \
         "tests/vnd/jsonschema.test.luau" \
