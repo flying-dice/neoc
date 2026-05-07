@@ -152,26 +152,23 @@ build:windows-x86_64:
 release-plz:
   stage: release
   # Uses the default rust:1-bookworm image — release-plz needs cargo to read
-  # Cargo.toml metadata. The binary is downloaded and cached in CARGO_HOME/bin.
+  # CARGO_HOME is set to /tmp so that cargo's registry and the release-plz
+  # binary land outside the project directory. The project dir must be clean
+  # (no untracked files) for release-plz to compute the next version.
   #
-  # GIT_DEPTH: 0 — full clone so release-plz can see all tags and compute the
-  # correct next version. The default shallow depth of 20 hides older tags.
-  #
-  # git checkout — GitLab CI checks out in detached HEAD; release-plz requires
-  # HEAD to point to a branch so it can determine the current branch name.
+  # GIT_DEPTH: 0 — full clone so release-plz can see all tags.
+  # git checkout — CI checks out detached HEAD; release-plz needs a branch ref.
   variables:
     GIT_DEPTH: 0
+    CARGO_HOME: /tmp/cargo
   before_script:
     - git checkout "$CI_COMMIT_BRANCH"
     - mkdir -p "$CARGO_HOME/bin"
     - export PATH="$CARGO_HOME/bin:$PATH"
     - |
-      which release-plz 2>/dev/null || \
-        curl -sSL \
-          "https://github.com/release-plz/release-plz/releases/latest/download/release-plz-x86_64-unknown-linux-gnu.tar.gz" \
-          | tar -xz -C "$CARGO_HOME/bin/"
-  cache:
-    - *tools_cache
+      curl -sSL \
+        "https://github.com/release-plz/release-plz/releases/latest/download/release-plz-x86_64-unknown-linux-gnu.tar.gz" \
+        | tar -xz -C "$CARGO_HOME/bin/"
   script:
     - release-plz release --git-token "$RELEASE_PLZ_TOKEN" --forge gitlab
     - release-plz release-pr --git-token "$RELEASE_PLZ_TOKEN" --forge gitlab
