@@ -22,11 +22,12 @@ variables:
 # Shared registry / git / bin cache — keyed by a manual version string so it
 # can be busted when tool versions need to change (bump tools-vN).
 .tools_cache: &tools_cache
-  key: tools-v2
+  key: tools-v3
   paths:
     - .cargo/bin/
     - .cargo/registry/
     - .cargo/git/
+    - .cargo/zig/
 
 # ── lint ──────────────────────────────────────────────────────────────────────
 
@@ -87,10 +88,10 @@ test:
 
 .cross_setup: &cross_setup
   before_script:
-    - export PATH="$CARGO_HOME/bin:$PATH"
+    - export PATH="$CARGO_HOME/bin:$CARGO_HOME/zig/bin:$PATH"
     - apt-get update -qq && apt-get install -y -qq python3-pip
     - which cargo-zigbuild || cargo install cargo-zigbuild --locked
-    - which zig || pip3 install ziglang --break-system-packages
+    - which zig || pip3 install ziglang --target "$CARGO_HOME/zig" --break-system-packages
 
 # Native Linux x86_64 — plain cargo, no cross toolchain needed.
 build:linux-x86_64:
