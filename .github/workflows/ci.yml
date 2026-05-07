@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  check:
+    name: Check & Lint
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets
+
+  test:
+    name: Test
+    needs: check
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --lib
+      - name: Run Luau integration tests
+        run: |
+          cargo run -- \
+            "tests/lib/*.test.luau" \
+            "tests/std/*.test.luau" \
+            "tests/vnd/jsonschema.test.luau" \
+            "tests/vnd/quick_xml.test.luau" \
+            "tests/vnd/rusqlite.test.luau" \
+            "tests/vnd/serde_json.test.luau" \
+            "tests/vnd/serde_yaml.test.luau" \
+            "tests/vnd/toml.test.luau"
+        # Note: sqlx_mysql, sqlx_postgres, and testcontainers_modules tests
+        # require Docker (testcontainers) and are excluded from CI.

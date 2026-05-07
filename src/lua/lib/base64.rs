@@ -1,0 +1,295 @@
+//! base64 encode / decode (standard and URL-safe alphabets).
+//!
+//! See docs/modules/base64.md for the public surface contract.
+
+use base64::Engine as _;
+use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
+use mlua::{Lua, Table, Value};
+use tracing::instrument;
+
+use crate::lua::sandbox::{from_err, ok};
+
+pub fn module(lua: &Lua) -> mlua::Result<Table> {
+    let t = lua.create_table()?;
+    t.set("encode", lua.create_function(encode)?)?;
+    t.set("decode", lua.create_function(decode)?)?;
+    t.set("encode_no_pad", lua.create_function(encode_no_pad)?)?;
+    t.set("decode_no_pad", lua.create_function(decode_no_pad)?)?;
+    t.set("encode_url_safe", lua.create_function(encode_url_safe)?)?;
+    t.set("decode_url_safe", lua.create_function(decode_url_safe)?)?;
+    t.set(
+        "encode_url_safe_no_pad",
+        lua.create_function(encode_url_safe_no_pad)?,
+    )?;
+    t.set(
+        "decode_url_safe_no_pad",
+        lua.create_function(decode_url_safe_no_pad)?,
+    )?;
+    Ok(t)
+}
+
+#[instrument(name = "base64.encode", target = "luau::lib::base64", skip_all)]
+fn encode(_: &Lua, input: mlua::String) -> mlua::Result<String> {
+    Ok(STANDARD.encode(input.as_bytes()))
+}
+
+#[instrument(name = "base64.decode", target = "luau::lib::base64", skip_all)]
+fn decode(lua: &Lua, input: mlua::String) -> mlua::Result<(Value, Value)> {
+    match STANDARD.decode(input.as_bytes()) {
+        Ok(b) => ok(lua, lua.create_string(&b)?),
+        Err(e) => from_err(lua, "base64.decode", e),
+    }
+}
+
+#[instrument(name = "base64.encode_no_pad", target = "luau::lib::base64", skip_all)]
+fn encode_no_pad(_: &Lua, input: mlua::String) -> mlua::Result<String> {
+    Ok(STANDARD_NO_PAD.encode(input.as_bytes()))
+}
+
+#[instrument(name = "base64.decode_no_pad", target = "luau::lib::base64", skip_all)]
+fn decode_no_pad(lua: &Lua, input: mlua::String) -> mlua::Result<(Value, Value)> {
+    match STANDARD_NO_PAD.decode(input.as_bytes()) {
+        Ok(b) => ok(lua, lua.create_string(&b)?),
+        Err(e) => from_err(lua, "base64.decode_no_pad", e),
+    }
+}
+
+#[instrument(
+    name = "base64.encode_url_safe",
+    target = "luau::lib::base64",
+    skip_all
+)]
+fn encode_url_safe(_: &Lua, input: mlua::String) -> mlua::Result<String> {
+    Ok(URL_SAFE.encode(input.as_bytes()))
+}
+
+#[instrument(
+    name = "base64.decode_url_safe",
+    target = "luau::lib::base64",
+    skip_all
+)]
+fn decode_url_safe(lua: &Lua, input: mlua::String) -> mlua::Result<(Value, Value)> {
+    match URL_SAFE.decode(input.as_bytes()) {
+        Ok(b) => ok(lua, lua.create_string(&b)?),
+        Err(e) => from_err(lua, "base64.decode_url_safe", e),
+    }
+}
+
+#[instrument(
+    name = "base64.encode_url_safe_no_pad",
+    target = "luau::lib::base64",
+    skip_all
+)]
+fn encode_url_safe_no_pad(_: &Lua, input: mlua::String) -> mlua::Result<String> {
+    Ok(URL_SAFE_NO_PAD.encode(input.as_bytes()))
+}
+
+#[instrument(
+    name = "base64.decode_url_safe_no_pad",
+    target = "luau::lib::base64",
+    skip_all
+)]
+fn decode_url_safe_no_pad(lua: &Lua, input: mlua::String) -> mlua::Result<(Value, Value)> {
+    match URL_SAFE_NO_PAD.decode(input.as_bytes()) {
+        Ok(b) => ok(lua, lua.create_string(&b)?),
+        Err(e) => from_err(lua, "base64.decode_url_safe_no_pad", e),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Benchmarks
+//
+// Three tiers, all encoding the same 2.25 KiB payload to bring iteration
+// cost above mlua call overhead so the deltas are stable:
+//   - library:       `STANDARD.encode(bytes)` — pure base64 crate.
+//   - into_out_lua:  identity Rust fn registered with mlua, called with the
+//                    same `mlua::String` shape. Isolates the bridge.
+//   - through_lua:   `b64.encode(payload)` invoked from a compiled
+//                    Lua chunk. End-to-end path users actually pay.
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "bench")]
+pub fn benches(c: &mut criterion::Criterion) {
+    use criterion::{Throughput, black_box};
+
+    let lua = crate::lua::sandbox::make_engine().expect("engine");
+    let payload = "The quick brown fox jumps over the lazy dog. ".repeat(50);
+    let payload_lua = lua.create_string(&payload).expect("payload");
+
+    let mut g = c.benchmark_group("base64");
+    g.throughput(Throughput::Bytes(payload.len() as u64));
+
+    g.bench_function("library", |b| {
+        b.iter(|| {
+            let _ = STANDARD.encode(black_box(payload.as_bytes()));
+        });
+    });
+
+    let ident: mlua::Function = lua
+        .create_function(|_, s: mlua::String| Ok(s))
+        .expect("ident");
+    g.bench_function("into_out_lua", |b| {
+        b.iter(|| {
+            let _: mlua::String = ident.call(black_box(payload_lua.clone())).unwrap();
+        });
+    });
+
+    let chunk: mlua::Function = lua
+        .load(r#"return function(p) return (require("lib:base64")).encode(p) end"#)
+        .eval()
+        .expect("chunk");
+    g.bench_function("through_lua", |b| {
+        b.iter(|| {
+            let _: mlua::String = chunk.call(black_box(payload_lua.clone())).unwrap();
+        });
+    });
+
+    g.finish();
+}
+
+#[cfg(test)]
+mod tests {
+    use mlua::Lua;
+
+    /// Test-only engine. Binds `b64 = require("lib:base64")` as a global to
+    /// keep the inline test bodies short — these tests validate base64
+    /// behaviour, not require's plumbing (which has its own coverage).
+    fn engine() -> Lua {
+        let lua = crate::lua::sandbox::make_engine().expect("engine");
+        let m: mlua::Table = lua.load(r#"return require("lib:base64")"#).eval().unwrap();
+        lua.globals().set("b64", m).unwrap();
+        lua
+    }
+
+    #[test]
+    fn encode_standard() {
+        let lua = engine();
+        let (s, err): (String, Option<String>) =
+            lua.load(r#"return b64.encode("hello")"#).eval().unwrap();
+        assert_eq!(s, "aGVsbG8=");
+        assert!(err.is_none());
+    }
+
+    #[test]
+    fn decode_standard() {
+        let lua = engine();
+        let (s, err): (String, Option<String>) =
+            lua.load(r#"return b64.decode("aGVsbG8=")"#).eval().unwrap();
+        assert_eq!(s, "hello");
+        assert!(err.is_none());
+    }
+
+    #[test]
+    fn round_trip_binary() {
+        let lua = engine();
+        let s: mlua::String = lua
+            .load(
+                r#"
+                local raw = "\0\1\2\254\255"
+                local enc = b64.encode(raw)
+                local dec = b64.decode(enc)
+                return dec
+            "#,
+            )
+            .eval()
+            .unwrap();
+        assert_eq!(&*s.as_bytes(), &[0u8, 1, 2, 254, 255]);
+    }
+
+    #[test]
+    fn url_safe_alphabet() {
+        let lua = engine();
+        let (std_, url): (String, String) = lua
+            .load(
+                r#"
+                local raw = "\251\255\254"
+                local std_enc = b64.encode(raw)
+                local url_enc = b64.encode_url_safe(raw)
+                return std_enc, url_enc
+            "#,
+            )
+            .eval()
+            .unwrap();
+        assert!(std_.contains('+') || std_.contains('/'));
+        assert!(!url.contains('+') && !url.contains('/'));
+        assert_eq!(std_.len(), url.len());
+    }
+
+    #[test]
+    fn no_padding_variant() {
+        let lua = engine();
+        let (padded, bare): (String, String) = lua
+            .load(
+                r#"
+                local raw = "hi"
+                local p = b64.encode(raw)
+                local b = b64.encode_no_pad(raw)
+                return p, b
+            "#,
+            )
+            .eval()
+            .unwrap();
+        assert_eq!(padded, "aGk=");
+        assert_eq!(bare, "aGk");
+    }
+
+    #[test]
+    fn decode_url_safe() {
+        let lua = engine();
+        let s: mlua::String = lua
+            .load(
+                r#"
+                local raw = "\251\255\254"
+                local url_enc = b64.encode_url_safe(raw)
+                local dec, err = b64.decode_url_safe(url_enc)
+                assert(err == nil)
+                return dec
+            "#,
+            )
+            .eval()
+            .unwrap();
+        assert_eq!(&*s.as_bytes(), &[251u8, 255, 254]);
+    }
+
+    #[test]
+    fn decode_invalid_returns_err() {
+        let lua = engine();
+        let (val, err): (Option<String>, Option<String>) = lua
+            .load(r#"return b64.decode("not*base64!")"#)
+            .eval()
+            .unwrap();
+        assert!(val.is_none());
+        let err = err.expect("error string expected");
+        assert!(err.starts_with("base64.decode:"), "missing prefix: {err}");
+    }
+
+    #[test]
+    fn decode_no_pad_with_padded_input_errs() {
+        let lua = engine();
+        let (val, err): (Option<String>, Option<String>) = lua
+            .load(r#"return b64.decode_no_pad("aGVsbG8=")"#)
+            .eval()
+            .unwrap();
+        assert!(val.is_none());
+        assert!(err.unwrap().starts_with("base64.decode_no_pad:"));
+    }
+
+    #[test]
+    fn round_trip_url_safe_no_pad() {
+        let lua = engine();
+        let s: mlua::String = lua
+            .load(
+                r#"
+                local raw = "\251\255\254"
+                local enc = b64.encode_url_safe_no_pad(raw)
+                assert(not enc:find("="))
+                local dec, err = b64.decode_url_safe_no_pad(enc)
+                assert(err == nil)
+                return dec
+            "#,
+            )
+            .eval()
+            .unwrap();
+        assert_eq!(&*s.as_bytes(), &[251u8, 255, 254]);
+    }
+}

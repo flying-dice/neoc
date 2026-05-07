@@ -1,0 +1,17 @@
+# Rust build output
+/target
+
+# Generated docs site
+docs/.vitepress/dist
+docs/.vitepress/cache
+docs/node_modules
+
+# OS / editor metadata
+.DS_Store
+**/.DS_Store
+.idea/
+*.swp
+*.swo
+
+# Test scratch
+.tmp/

@@ -1,0 +1,61 @@
+name: Bug
+description: A defect — current behaviour does not match the documented surface.
+title: "[bug] "
+labels:
+  - draft
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > [!NOTE]
+        > Bugs are deviations from the documented Lua surface (the module reference pages on <https://neoc.org>) or from accepted RFCs. If the surface itself is wrong, file a [refinement](?template=refinement.yml) instead.
+
+  - type: input
+    id: module
+    attributes:
+      label: Affected module(s)
+      description: e.g. `lib:json`, `vnd:hyper`, `std:workers`
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `neoc --version`, or commit SHA if running from source.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      description: What the docs say should happen. Link to the relevant module reference page or RFC section.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: What happens instead. Include stack traces, panic messages, or unexpected return values.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Minimal Luau snippet that demonstrates the bug. Use a code block fenced as `luau`.
+      render: lua
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, architecture, anything relevant about the host runtime.
+    validations:
+      required: false

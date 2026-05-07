@@ -1,0 +1,99 @@
+# CLAUDE.md
+
+This file is for Claude Code — it describes how to work in this repo.
+
+## What this is
+
+`neoc` is an embedded Luau runtime backed by Rust. Lua scripts run in a sandboxed engine with a curated module surface (`std:*`, `lib:*`, `vnd:*`). The unsafe halves of the Lua standard library are stripped; everything scripts need is provided through explicit modules.
+
+## Build and test
+
+```sh
+cargo build                              # debug build
+cargo build --release                    # release build
+cargo test --lib                         # in-module Rust tests
+cargo test --bin neoc                    # end-to-end subprocess tests
+cargo run -- 'tests/**/*.test.luau'      # all Luau integration tests
+cargo bench --bench lib                  # Criterion benchmarks (lib modules)
+cargo bench --bench vnd                  # Criterion benchmarks (vnd modules)
+cargo clippy --all-targets               # lint
+cargo fmt --check                        # formatting check
+```
+
+## Project structure
+
+```
+src/
+  main.rs              # CLI entry point (script runner + serve mode)
+  lib.rs               # Library root (pub mod dto, lua)
+  lua/
+    sandbox.rs         # Engine construction
+    modules.rs         # Module registration
+    std/               # std:* modules (collections, fs, io, net, thread, workers)
+    lib/               # lib:* modules (base64, json, test, vcr)
+    vnd/               # vnd:* modules (hyper, serde_json, rusqlite, sqlx_*, etc.)
+tests/                 # Luau integration tests (*.test.luau, *.spec.luau)
+benches/               # Criterion benchmark suites (lib/, vnd/)
+```
+
+## Module namespaces
+
+Three namespaces, chosen at registration time in `src/lua/modules.rs`:
+
+- `std:*` — mirrors Rust std (e.g. `std:collections`, `std:fs`, `std:net`)
+- `lib:*` — blessed gap-fillers and custom modules (e.g. `lib:base64`, `lib:test`)
+- `vnd:*` — vendored crates, name must match the upstream crate (e.g. `vnd:hyper`, `vnd:serde_json`)
+
+## Design principles (non-negotiable)
+
+Every API decision must satisfy these four rules, in priority order:
+
+1. **No surprises** — behave like every other major runtime. If Rust, Go, Python, and Node agree, follow them.
+2. **No footguns** — never ship an API that is unintuitive or causes silent mistakes.
+3. **Mirror Rust first** — primary API is `UserData` types mirroring `std::*` 1:1 (same methods, same semantics). Think of it as Rust's best bits wrapped in a GC for lifetimes.
+4. **Supplement with scripting ergonomics** — flat functions (Python/Node-style) layered on top for convenience. These delegate to the UserData layer and never introduce their own design decisions.
+
+Precedence: 1 > 2 > 3 > 4.
+
+## Key conventions
+
+- Every module exports a single `pub fn module(lua: &Lua) -> mlua::Result<Table>`.
+- Infallible Lua functions return the value directly. Fallible ones return `(Value, Value)` using `ok`/`from_err` helpers.
+- Error prefixes use `"module.function"` format (no namespace prefix).
+- Resource handles use `UserData` with methods. Multi-handle ops are free functions.
+- Dependencies: `std:*` uses std + blessed.rs. `lib:*` adds focused vendored crates. `vnd:*` wraps exactly one crate.
+- No speculative abstractions — add helpers only when 3+ call sites exist.
+
+## Adding a module
+
+1. Create `src/lua/<ns>/<name>.rs` with a `module` function
+2. Register in `src/lua/<ns>/mod.rs` (alphabetical)
+3. Add `#[cfg(test)] mod tests` in the file
+4. Add Criterion benches (gated behind `bench` feature)
+5. Add `tests/<ns>/<name>.test.luau`
+6. Update README module table
+
+## Issue workflow — GitHub Project board
+
+Issue lifecycle is managed through the GitHub Project board columns, **not labels**. Do not use `draft` labels or `DRAFT:` title prefixes.
+
+**Columns:** Backlog → Refinement → Design → Implementation → Review → Done
+
+**Gates:**
+
+| Transition | Gate |
+|---|---|
+| Backlog → Refinement | CODEOWNER gives explicit go-ahead. No bot self-promotes from Backlog. |
+| Refinement → Design | Flesh out the ticket (acceptance criteria, open questions, approach options). Wait for CODEOWNER signal to advance. |
+| Design → Implementation | If a design PR is needed, open one — CODEOWNER approves before moving to Implementation. If the ticket description is sufficient design, move straight to Implementation once settled. |
+| Implementation → Review | Open the implementation PR. CODEOWNER reviews. Card stays in Review until approved. |
+| Review → Done | CODEOWNER approves the PR, merge, move to Done. |
+
+**Hard rules:**
+- Board column position is the source of truth for issue state.
+- Never move an issue out of Backlog without explicit CODEOWNER instruction.
+- CODEOWNER approval is still required at the Review gate before merge (see CODEOWNERS file).
+
+## Cross-platform
+
+The binary supports Linux, macOS, and Windows. Signal handling uses `#[cfg(unix)]` / `#[cfg(not(unix))]` conditionally. `mlua` is built with `vendored` (bundles Luau). `rusqlite` uses `bundled` (bundles SQLite).

@@ -1,0 +1,25 @@
+{
+  "globals": ["lib"],
+  "definitionFiles": [
+    "src/lua/lib/base64.d.luau",
+    "src/lua/lib/json.d.luau",
+    "src/lua/lib/test.d.luau",
+    "src/lua/lib/vcr.d.luau",
+    "src/lua/std/collections.d.luau",
+    "src/lua/std/fs.d.luau",
+    "src/lua/std/io.d.luau",
+    "src/lua/std/net.d.luau",
+    "src/lua/std/thread.d.luau",
+    "src/lua/std/workers.d.luau",
+    "src/lua/vnd/hyper.d.luau",
+    "src/lua/vnd/jsonschema.d.luau",
+    "src/lua/vnd/quick_xml.d.luau",
+    "src/lua/vnd/rusqlite.d.luau",
+    "src/lua/vnd/serde_json.d.luau",
+    "src/lua/vnd/serde_yaml.d.luau",
+    "src/lua/vnd/sqlx_mysql.d.luau",
+    "src/lua/vnd/sqlx_postgres.d.luau",
+    "src/lua/vnd/testcontainers_modules.d.luau",
+    "src/lua/vnd/toml.d.luau"
+  ]
+}

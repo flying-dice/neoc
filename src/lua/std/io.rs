@@ -1,0 +1,148 @@
+//! Core I/O primitives — `lib.io` (mirrors `std::io`).
+//!
+//! `ReaderHandle` and `WriterHandle` are the canonical trait-object wrappers
+//! (ADR 0003). Methods mirror Rust's Read/Write/BufRead traits.
+//!
+//! ```lua
+//! local reader = lib.io.from_string("hello")
+//! local data, err = reader:read_all()
+//!
+//! local writer, err = lib.fs.open({ path = "out.bin", mode = "w" })
+//! local ok, err = writer:write("hello")
+//! writer:flush()
+//!
+//! local n, err = lib.io.copy(reader, writer)
+//! ```
+
+use std::io::{BufRead, Read, Write};
+use std::sync::Arc;
+
+use mlua::{AnyUserData, Lua, Table, UserData, UserDataMethods, Value};
+use parking_lot::Mutex;
+use tracing::instrument;
+
+use crate::lua::sandbox::{from_err, ok};
+
+// ---------------------------------------------------------------------------
+// Handle types
+// ---------------------------------------------------------------------------
+
+pub struct ReaderHandle(pub Arc<Mutex<Box<dyn BufRead + Send>>>);
+pub struct WriterHandle(pub Arc<Mutex<Box<dyn Write + Send>>>);
+
+impl ReaderHandle {
+    pub fn new<R: BufRead + Send + 'static>(r: R) -> Self {
+        Self(Arc::new(Mutex::new(Box::new(r))))
+    }
+}
+
+impl WriterHandle {
+    pub fn new<W: Write + Send + 'static>(w: W) -> Self {
+        Self(Arc::new(Mutex::new(Box::new(w))))
+    }
+}
+
+impl UserData for ReaderHandle {
+    fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        methods.add_method("read", |lua, this, n: usize| {
+            let mut buf = vec![0u8; n];
+            let result = this.0.lock().read(&mut buf);
+            match result {
+                Ok(0) => ok(lua, Value::Nil),
+                Ok(k) => ok(lua, lua.create_string(&buf[..k])?),
+                Err(e) => from_err(lua, "io.read", e),
+            }
+        });
+
+        methods.add_method("read_line", |lua, this, _: ()| {
+            let mut line = String::new();
+            let result = this.0.lock().read_line(&mut line);
+            match result {
+                Ok(0) => ok(lua, Value::Nil),
+                Ok(_) => {
+                    if line.ends_with('\n') {
+                        line.pop();
+                    }
+                    if line.ends_with('\r') {
+                        line.pop();
+                    }
+                    ok(lua, lua.create_string(line.as_bytes())?)
+                }
+                Err(e) => from_err(lua, "io.read_line", e),
+            }
+        });
+
+        methods.add_method("read_all", |lua, this, _: ()| {
+            let mut buf = Vec::new();
+            let result = this.0.lock().read_to_end(&mut buf);
+            match result {
+                Ok(_) => ok(lua, lua.create_string(&buf)?),
+                Err(e) => from_err(lua, "io.read_all", e),
+            }
+        });
+    }
+}
+
+impl UserData for WriterHandle {
+    fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        methods.add_method("write", |lua, this, data: mlua::String| {
+            let result = this.0.lock().write_all(&data.as_bytes());
+            match result {
+                Ok(()) => ok(lua, true),
+                Err(e) => from_err(lua, "io.write", e),
+            }
+        });
+
+        methods.add_method("flush", |lua, this, _: ()| {
+            let result = this.0.lock().flush();
+            match result {
+                Ok(()) => ok(lua, true),
+                Err(e) => from_err(lua, "io.flush", e),
+            }
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// module — constructors and multi-handle operations
+// ---------------------------------------------------------------------------
+
+pub fn module(lua: &Lua) -> mlua::Result<Table> {
+    let t = lua.create_table()?;
+    t.set("from_string", lua.create_function(from_string)?)?;
+    t.set("copy", lua.create_function(copy)?)?;
+    Ok(t)
+}
+
+#[instrument(name = "io.from_string", target = "luau::lib::io", skip_all)]
+fn from_string(_: &Lua, s: mlua::String) -> mlua::Result<ReaderHandle> {
+    Ok(ReaderHandle::new(std::io::Cursor::new(
+        s.as_bytes().to_vec(),
+    )))
+}
+
+#[instrument(name = "io.copy", target = "luau::lib::io", skip_all)]
+fn copy(
+    lua: &Lua,
+    (reader_ud, writer_ud): (AnyUserData, AnyUserData),
+) -> mlua::Result<(Value, Value)> {
+    let rh = match reader_ud.borrow::<ReaderHandle>() {
+        Ok(h) => h,
+        Err(_) => return from_err(lua, "io.copy", "first argument is not a reader handle"),
+    };
+    let wh = match writer_ud.borrow::<WriterHandle>() {
+        Ok(h) => h,
+        Err(_) => return from_err(lua, "io.copy", "second argument is not a writer handle"),
+    };
+    let mut r = rh.0.lock();
+    let mut w = wh.0.lock();
+    let result = std::io::copy(&mut *r, &mut *w);
+    drop(r);
+    drop(w);
+    drop(rh);
+    drop(wh);
+    match result {
+        Ok(n) => ok(lua, n as i64),
+        Err(e) => from_err(lua, "io.copy", e),
+    }
+}

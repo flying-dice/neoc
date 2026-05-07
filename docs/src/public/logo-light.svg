@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 32" width="96" height="32" fill="none">
+  <text x="0" y="24"
+        font-family="Geist Mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+        font-size="26" font-weight="600" letter-spacing="-0.04em">
+    <tspan fill="#0a0f19">neo</tspan><tspan fill="#7a3fde">c</tspan>
+  </text>
+</svg>

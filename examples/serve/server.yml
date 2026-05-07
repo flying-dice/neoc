@@ -1,0 +1,4 @@
+bind: 127.0.0.1:8080
+workers: ~                # null → num_cpus
+shutdown_timeout: 30
+ops_bind: ~               # v1: null only; v2 will mount /metrics, /healthz, /readyz here

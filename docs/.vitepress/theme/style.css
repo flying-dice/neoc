@@ -1,0 +1,449 @@
+/**
+ * Customize default theme styling by overriding CSS variables:
+ * https://github.com/vuejs/vitepress/blob/main/src/client/theme-default/styles/vars.css
+ */
+
+/* Geist + Geist Mono — pulled from the neoc design system. The wordmark
+ * SVGs reference Geist Mono, so loading them here keeps the topbar logo
+ * consistent across browsers that don't have Geist installed locally. */
+@import url("https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap");
+
+/**
+ * Colors
+ *
+ * Each colors have exact same color scale system with 3 levels of solid
+ * colors with different brightness, and 1 soft color.
+ *
+ * - `XXX-1`: The most solid color used mainly for colored text. It must
+ *   satisfy the contrast ratio against when used on top of `XXX-soft`.
+ *
+ * - `XXX-2`: The color used mainly for hover state of the button.
+ *
+ * - `XXX-3`: The color for solid background, such as bg color of the button.
+ *   It must satisfy the contrast ratio with pure white (#ffffff) text on
+ *   top of it.
+ *
+ * - `XXX-soft`: The color used for subtle background such as custom container
+ *   or badges. It must satisfy the contrast ratio when putting `XXX-1` colors
+ *   on top of it.
+ *
+ *   The soft color must be semi transparent alpha channel. This is crucial
+ *   because it allows adding multiple "soft" colors on top of each other
+ *   to create a accent, such as when having inline code block inside
+ *   custom containers.
+ *
+ * - `default`: The color used purely for subtle indication without any
+ *   special meanings attached to it such as bg color for menu hover state.
+ *
+ * - `brand`: Used for primary brand colors, such as link text, button with
+ *   brand theme, etc.
+ *
+ * - `tip`: Used to indicate useful information. The default theme uses the
+ *   brand color for this by default.
+ *
+ * - `warning`: Used to indicate warning to the users. Used in custom
+ *   container, badges, etc.
+ *
+ * - `danger`: Used to show error, or dangerous message to the users. Used
+ *   in custom container, badges, etc.
+ * -------------------------------------------------------------------------- */
+
+/* Decepticon violet — pulled from the neoc design system as the brand
+ * accent. Everything else (defaults, warning, danger) keeps VitePress's
+ * built-in scales for now. The full design system (typography, custom
+ * landing, components in context) is being developed on a separate site. */
+
+:root {
+  --vp-c-default-1: var(--vp-c-gray-1);
+  --vp-c-default-2: var(--vp-c-gray-2);
+  --vp-c-default-3: var(--vp-c-gray-3);
+  --vp-c-default-soft: var(--vp-c-gray-soft);
+
+  /* Light: signal text is violet-700, button bg / hover is violet-600. */
+  --vp-c-brand-1: #5e26b8;
+  --vp-c-brand-2: #7a3fde;
+  --vp-c-brand-3: #7a3fde;
+  --vp-c-brand-soft: rgba(122, 63, 222, 0.14);
+
+  --vp-c-tip-1: var(--vp-c-brand-1);
+  --vp-c-tip-2: var(--vp-c-brand-2);
+  --vp-c-tip-3: var(--vp-c-brand-3);
+  --vp-c-tip-soft: var(--vp-c-brand-soft);
+
+  --vp-c-warning-1: var(--vp-c-yellow-1);
+  --vp-c-warning-2: var(--vp-c-yellow-2);
+  --vp-c-warning-3: var(--vp-c-yellow-3);
+  --vp-c-warning-soft: var(--vp-c-yellow-soft);
+
+  --vp-c-danger-1: var(--vp-c-red-1);
+  --vp-c-danger-2: var(--vp-c-red-2);
+  --vp-c-danger-3: var(--vp-c-red-3);
+  --vp-c-danger-soft: var(--vp-c-red-soft);
+}
+
+.dark {
+  /* Dark: lift the brand a step so it stays readable on the dark ground. */
+  --vp-c-brand-1: #b48aff;
+  --vp-c-brand-2: #d4b3ff;
+  --vp-c-brand-3: #b48aff;
+  --vp-c-brand-soft: rgba(180, 138, 255, 0.16);
+
+  /* Dark surfaces — the design's "void" family. The deep blue-black of a
+   * clear-sky observatory at 03:00. Every other VitePress surface lives on
+   * top of these. */
+  --vp-c-bg:           #050811;   /* void-950 — page ground */
+  --vp-c-bg-alt:       #030610;   /* sunken — sidebar / nav-bar */
+  --vp-c-bg-elv:       #0a0f19;   /* void-900 — modals, popovers */
+  --vp-c-bg-soft:      #0a0f19;   /* void-900 — cards, callouts */
+
+  /* Dark ink — parchment for primary, void-300/-400 for the muted tiers. */
+  --vp-c-text-1:       #fbf9f4;   /* parchment-50 */
+  --vp-c-text-2:       #9aa6bd;   /* void-300 */
+  --vp-c-text-3:       #6d7a95;   /* void-400 */
+
+  /* Dividers — void-700 for the standard rule, void-600 for the strong one. */
+  --vp-c-divider:      #212a3d;   /* void-700 */
+  --vp-c-gutter:       #050811;   /* match the page ground */
+  --vp-c-border:       #212a3d;
+  --vp-c-border-hard:  #323c54;   /* void-600 */
+}
+
+/**
+ * Type stack — Geist Sans for prose/UI, Geist Mono for code.
+ * -------------------------------------------------------------------------- */
+
+:root {
+  --vp-font-family-base: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --vp-font-family-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+/**
+ * Component: Button
+ * -------------------------------------------------------------------------- */
+
+:root {
+  --vp-button-brand-border: transparent;
+  --vp-button-brand-text: var(--vp-c-white);
+  --vp-button-brand-bg: var(--vp-c-brand-3);
+  --vp-button-brand-hover-border: transparent;
+  --vp-button-brand-hover-text: var(--vp-c-white);
+  --vp-button-brand-hover-bg: var(--vp-c-brand-2);
+  --vp-button-brand-active-border: transparent;
+  --vp-button-brand-active-text: var(--vp-c-white);
+  --vp-button-brand-active-bg: var(--vp-c-brand-1);
+}
+
+/**
+ * Component: Home
+ * -------------------------------------------------------------------------- */
+
+:root {
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: -webkit-linear-gradient(
+    120deg,
+    #5e26b8 30%,
+    #b48aff
+  );
+
+  --vp-home-hero-image-background-image: linear-gradient(
+    -45deg,
+    #5e26b8 50%,
+    #b48aff 50%
+  );
+  --vp-home-hero-image-filter: blur(44px);
+}
+
+@media (min-width: 640px) {
+  :root {
+    --vp-home-hero-image-filter: blur(56px);
+  }
+}
+
+@media (min-width: 960px) {
+  :root {
+    --vp-home-hero-image-filter: blur(68px);
+  }
+}
+
+/**
+ * Component: Custom Block
+ * -------------------------------------------------------------------------- */
+
+:root {
+  --vp-custom-block-tip-border: transparent;
+  --vp-custom-block-tip-text: var(--vp-c-text-1);
+  --vp-custom-block-tip-bg: var(--vp-c-brand-soft);
+  --vp-custom-block-tip-code-bg: var(--vp-c-brand-soft);
+}
+
+/**
+ * Component: Code
+ * --------------------------------------------------------------------------
+ * Code block background tracks the active mode. Shiki theme (vitesse-light /
+ * vitesse-dark) drives syntax colours; the wrapper bg below keeps padding
+ * and inline-code containers tonally consistent. Inline code keeps the
+ * brand-violet accent. */
+
+:root {
+  --vp-code-block-bg: #f5f3ee;        /* warm parchment, matches design system */
+  --vp-code-color: var(--vp-c-brand-1);
+}
+
+.dark {
+  --vp-code-block-bg: #0a0f19;        /* void-900, matches dark surfaces */
+}
+
+::selection {
+  background: var(--vp-c-brand-3);
+  color: #ffffff;
+}
+
+/**
+ * Typography refinements
+ * --------------------------------------------------------------------------
+ * Display weight 600 with tightened tracking. Body line-height stays at
+ * VitePress's default. */
+
+.vp-doc h1 { font-weight: 600; letter-spacing: -0.025em; }
+.vp-doc h2 { font-weight: 600; letter-spacing: -0.02em; }
+.vp-doc h3 { font-weight: 600; letter-spacing: -0.015em; }
+.vp-doc h4 { font-weight: 600; letter-spacing: -0.01em; }
+
+/**
+ * Component: Algolia
+ * -------------------------------------------------------------------------- */
+
+.DocSearch {
+  --docsearch-primary-color: var(--vp-c-brand-1) !important;
+}
+
+/**
+ * Component: HomeHeroExtra
+ * --------------------------------------------------------------------------
+ * Bun-style hero extension — install pill + first-script code block,
+ * injected via the home-hero-after slot. Always near-black ground for
+ * the code surfaces regardless of mode (deliberate, follows the design
+ * system rule that code reads better against deep void). */
+
+.home-hero-extra {
+  max-width: 960px;
+  margin: -16px auto 96px;
+  padding: 0 24px;
+  display: grid;
+  gap: 20px;
+}
+
+.home-hero-extra .hhx-eyebrow {
+  font-family: var(--vp-font-family-mono);
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--vp-c-brand-1);
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.home-hero-extra .hhx-eyebrow::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  max-width: 96px;
+  background: var(--vp-c-brand-1);
+  opacity: 0.4;
+}
+
+/* Tabs sit on a small gap above their content (install pill / script block) */
+.home-hero-extra .hhx-install-block,
+.home-hero-extra .hhx-example-block {
+  display: grid;
+  gap: 8px;
+}
+
+.home-hero-extra .hhx-tabs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  padding: 0 4px;
+}
+
+.home-hero-extra .hhx-tab {
+  font-family: var(--vp-font-family-mono);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  padding: 6px 10px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  color: var(--vp-c-text-3);
+  cursor: pointer;
+  transition: color 100ms ease-out, border-color 100ms ease-out;
+}
+
+.home-hero-extra .hhx-tab:hover {
+  color: var(--vp-c-text-2);
+}
+
+.home-hero-extra .hhx-tab.active {
+  color: var(--vp-c-brand-1);
+  border-bottom-color: var(--vp-c-brand-1);
+}
+
+.home-hero-extra .hhx-tab:focus-visible {
+  outline: none;
+  color: var(--vp-c-brand-1);
+  box-shadow: 0 0 0 2px rgba(180, 138, 255, 0.3);
+  border-radius: 2px;
+}
+
+.home-hero-extra .hhx-tab-shell {
+  margin-left: auto;
+  font-family: var(--vp-font-family-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--vp-c-text-3);
+  padding: 6px 10px;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 2px;
+}
+
+/* Install pill — single-line, copyable */
+.home-hero-extra .hhx-install {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 14px;
+  background: #02040a;
+  border: 1px solid #212a3d;
+  border-radius: 4px;
+  padding: 14px 18px;
+  font-family: var(--vp-font-family-mono);
+  font-size: 0.875rem;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  transition: border-color 100ms ease-out;
+}
+
+.home-hero-extra .hhx-install:hover {
+  border-color: #323c54;
+}
+
+.home-hero-extra .hhx-install:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(180, 138, 255, 0.3);
+}
+
+.home-hero-extra .hhx-install .hhx-glyph {
+  color: var(--vp-c-brand-1);
+  font-weight: 600;
+}
+
+.home-hero-extra .hhx-install code {
+  color: #f4efe3;
+  background: transparent;
+  font-family: var(--vp-font-family-mono);
+  font-size: 0.875rem;
+  white-space: nowrap;
+  overflow-x: auto;
+  padding: 0;
+  border: 0;
+}
+
+.home-hero-extra .hhx-copy {
+  font-family: var(--vp-font-family-mono);
+  font-size: 0.6875rem;
+  color: #9aa6bd;
+  border: 1px solid #212a3d;
+  padding: 4px 10px;
+  border-radius: 2px;
+  background: transparent;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  transition: color 100ms, border-color 100ms;
+  white-space: nowrap;
+  pointer-events: none; /* parent button handles click */
+}
+
+.home-hero-extra .hhx-install:hover .hhx-copy {
+  color: #d4b3ff;
+  border-color: #421a8a;
+}
+
+.home-hero-extra .hhx-copy-btn {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.home-hero-extra .hhx-copy-btn:hover {
+  color: #d4b3ff;
+  border-color: #421a8a;
+}
+
+/* Script preview — header bar + filename + Copy button + manual syntax tokens */
+.home-hero-extra .hhx-script {
+  background: #02040a;
+  border: 1px solid #212a3d;
+  border-radius: 4px;
+  font-family: var(--vp-font-family-mono);
+  font-size: 0.84rem;
+  line-height: 1.7;
+  overflow: hidden;
+}
+
+.home-hero-extra .hhx-script-header {
+  display: flex;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid #212a3d;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.home-hero-extra .hhx-file {
+  font-family: var(--vp-font-family-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.08em;
+  color: #9aa6bd;
+  text-transform: uppercase;
+}
+
+.home-hero-extra .hhx-script-header .hhx-copy-btn {
+  margin-left: auto;
+}
+
+.home-hero-extra .hhx-script pre {
+  margin: 0;
+  padding: 18px 22px;
+  overflow-x: auto;
+  background: transparent;
+  color: #f4efe3;
+}
+
+.home-hero-extra .hhx-script code {
+  background: transparent;
+  padding: 0;
+  border: 0;
+  font-family: var(--vp-font-family-mono);
+  font-size: 0.84rem;
+  color: inherit;
+}
+
+/* Syntax tokens — mapped from the neoc design system palette */
+.home-hero-extra .hhx-script .hhx-kw  { color: #b48aff; }   /* violet — keywords */
+.home-hero-extra .hhx-script .hhx-str { color: #6fbf7a; }   /* verdant — strings */
+.home-hero-extra .hhx-script .hhx-num { color: #8fe3e0; }   /* lume — numbers */
+.home-hero-extra .hhx-script .hhx-com { color: #6d7a95; font-style: italic; }
+.home-hero-extra .hhx-script .hhx-fn  { color: #ffd089; }   /* amber — calls */
+
+/* Long install command + multi-line Lua scripts overflow on narrow viewports.
+   Hide the whole hero extension below the tablet breakpoint. */
+@media (max-width: 768px) {
+  .home-hero-extra { display: none; }
+}
+
