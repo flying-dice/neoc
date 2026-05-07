@@ -1,5 +1,5 @@
 ---
-status: Proposed
+status: Accepted
 date: 2026-05-04
 ---
 
@@ -9,7 +9,7 @@ Date: 2026-05-04
 
 ## Status
 
-Proposed
+Accepted
 
 ## Context
 
@@ -35,7 +35,7 @@ Tradeoff: files created after startup are not served (no live reload). This is a
 | **Wrap `actix-files`** | Same boundary violation. Also pulls in the full actix-web framework stack. Rejected. |
 | **Use raw `tokio::net::TcpListener` + manual HTTP/1.1 parsing** | The issue's original proposal. Avoids all framework dependencies. Correct for the scope of static serving — request parsing is trivial (read method + path + a handful of headers). Accepted. |
 | **Serve a directory root (Go/Rust consensus model)** | Safer for compiled binaries; risky for scripts. The glob allowlist is a better fit for a sandboxed scripting context. Rejected in favour of glob-scoped approach. |
-| **Defer to `lib:mime` (#33) for MIME detection** | `lib:mime` is not yet landed. The issue allows an inline map for v1; defer dependency is a clean layering choice once #33 ships. Accepted for v1. |
+| **Defer to `lib:mime` for MIME detection** | `lib:mime` has landed. `lib:http` uses `mime_guess` directly (same crate already pulled by `lib:mime`; no new dependency). `mime_overrides` gives callers extension points without waiting on upstream patches. Accepted. |
 
 ### Prior art signals
 
@@ -75,7 +75,7 @@ http.serve_static("./dist/**/*", {
 2. **Index page** (`GET /`) — when `directory_index` is `true` (the default), return an HTML page listing every matched file as a clickable link. Sorted alphabetically. Shows file name, size (human-readable), and last-modified timestamp. Minimal styling with `prefers-color-scheme` dark/light support. Image types (`png`, `jpg`, `gif`, `svg`, `webp`) additionally render an `<img>` thumbnail with `loading="lazy"` and a `max-height` constraint — this is a primary use case and the listing should be immediately useful.
 
 3. **File serving** (`GET /<relative-path>`) — if the requested path resolves to a file in the allowlist, serve it with:
-   - `Content-Type` inferred from the extension (built-in map, extended by `mime_overrides`)
+   - `Content-Type` inferred from the extension via `mime_guess` (extended by `mime_overrides`)
    - `Content-Length` from `fs::metadata`
    - `Last-Modified` from `fs::metadata` mtime (already retrieved for the index; cost is zero)
    - `Accept-Ranges: none` for v1 (range requests deferred)
@@ -89,7 +89,7 @@ http.serve_static("./dist/**/*", {
 - Module: `src/lua/lib/http.rs`, `pub fn module(lua: &Lua) -> mlua::Result<Table>`
 - Registration: `src/lua/lib/mod.rs`, alphabetical
 - HTTP server: `tokio::net::TcpListener` → async accept loop → read request line + headers → route → write response. No HTTP framework. The request surface for static serving is narrow: parse method, path, and `Host`; ignore everything else.
-- MIME map: a `match` on `Path::extension()` covering at minimum: `html`, `css`, `js`, `json`, `txt`, `csv`, `xml`, `png`, `jpg`/`jpeg`, `gif`, `svg`, `webp`, `ico`, `wasm`, `pdf`. Fallback: `application/octet-stream`. Extensible via `mime_overrides`. When `lib:mime` (#33) lands, delegate to it and keep the inline map as a fallback.
+- MIME detection: uses `mime_guess` (the same crate already pulled by `lib:mime`; no new dependency). Extension is extracted from `Path::extension()`, passed to `mime_guess::from_ext`, and falls back to `application/octet-stream` for unknown extensions. `mime_overrides` entries are checked first, allowing callers to extend or override without a patch release.
 - Glob matching: `globset::GlobSet` compiled at call time, walked via `walkdir::WalkDir`.
 - Index page: rendered as a `String` computed once at startup (not per-request) since the file set is immutable. Regeneration happens only if a future enhancement re-globs on index requests.
 
@@ -103,7 +103,7 @@ http.serve_static("./dist/**/*", {
 
 ### MIME type handling
 
-Extension-based detection is the consensus across Node.js (mime package), Bun (hardcoded map), Deno (@std/media-types), Go (mime.TypeByExtension), and Rust (mime_guess). Content sniffing is not performed — it requires reading file bytes and introduces ambiguity. The built-in map covers all types expected in the target workflows. Unknown extensions fall back to `application/octet-stream`, which is correct behaviour (the browser will download rather than render, which is safe).
+Extension-based detection is the consensus across Node.js (mime package), Bun (hardcoded map), Deno (@std/media-types), Go (mime.TypeByExtension), and Rust (mime_guess). Content sniffing is not performed — it requires reading file bytes and introduces ambiguity. `lib:http` delegates to `mime_guess` (the same crate `lib:mime` already uses), giving coverage of ~1000 extensions with no inline maintenance burden. Unknown extensions fall back to `application/octet-stream`, which is correct behaviour (the browser will download rather than render, which is safe).
 
 The `mime_overrides` option allows callers to add or override entries without waiting for a patch release. This addresses the most common forward-compatibility concern.
 
@@ -130,13 +130,13 @@ Deferred. Screenshots and typical web assets do not require resumable downloads 
 - Files created after the server starts are not visible. Scripts that generate files while the server runs will see a stale listing. The fix (re-glob on index request) is a clean layering concern but requires a follow-on change.
 - Manual HTTP/1.1 parsing avoids framework debt but must handle edge cases: malformed request lines, missing `Host`, oversized headers. The implementation must be conservative — return 400 on any parse failure rather than attempting to recover.
 - No range request support means large files (video, large PDFs) cannot be streamed efficiently. Callers expecting `206` behaviour will be disappointed. Mitigated by setting `Accept-Ranges: none` explicitly.
-- The inline MIME map requires manual maintenance until `lib:mime` (#33) lands. Unknown extensions silently fall back to `application/octet-stream`; callers can work around via `mime_overrides`.
+- `mime_overrides` is still needed for edge cases not covered by `mime_guess`, but the maintenance burden is minimal — `mime_guess` handles the long tail automatically.
 - `127.0.0.1` as the default bind address means the server is not reachable from other hosts out of the box. Callers in containerised or networked environments must explicitly pass `host = "0.0.0.0"` to expose the server on all interfaces. This is the correct trade-off: safe by default, opt-in for exposure.
 
 ## References
 
-- Originating issue: [flying-dice/neoc#78](https://github.com/flying-dice/neoc/issues/78)
-- `lib:mime` dependency: [flying-dice/neoc#33](https://github.com/flying-dice/neoc/issues/33)
+- Originating issue: flying-dice/neoc#19
+- `lib:mime` (landed): provides `mime_guess` as a shared dependency
 - ADR 0006 — Hidden async with synchronous-looking Lua APIs
 - ADR 0003 — Three-namespace module structure (`std`, `lib`, `vnd`)
 - [Node.js `http-server`](https://www.npmjs.com/package/http-server) — UX reference
