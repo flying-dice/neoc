@@ -158,6 +158,7 @@ release-plz:
   #
   # GIT_DEPTH: 0 — full clone so release-plz can see all tags.
   # git checkout — CI checks out detached HEAD; release-plz needs a branch ref.
+  dependencies: []
   variables:
     GIT_DEPTH: 0
     CARGO_HOME: /tmp/cargo
