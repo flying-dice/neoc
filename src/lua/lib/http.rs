@@ -9,10 +9,14 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use globset::GlobSetBuilder;
 use mlua::{Lua, Table};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tracing::instrument;
 use walkdir::WalkDir;
+
+const MAX_HEADER_LINE: u64 = 8192;
+const MAX_HEADERS: usize = 100;
+const HEADER_TIMEOUT: Duration = Duration::from_secs(10);
 
 struct StaticFile {
     abs_path: PathBuf,
@@ -97,17 +101,9 @@ async fn handle_connection(
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
 
-    let mut request_line = String::new();
-    reader.read_line(&mut request_line).await?;
-    let (method, path) = parse_request_line(&request_line)?;
-
-    loop {
-        let mut header_line = String::new();
-        reader.read_line(&mut header_line).await?;
-        if header_line == "\r\n" || header_line.is_empty() {
-            break;
-        }
-    }
+    let (method, path) = tokio::time::timeout(HEADER_TIMEOUT, read_request_head(&mut reader))
+        .await
+        .map_err(|_| "header read timeout")??;
 
     if method != "GET" && method != "HEAD" {
         write_response(
@@ -180,6 +176,41 @@ async fn handle_connection(
         }
     }
     Ok(())
+}
+
+async fn read_request_head(
+    reader: &mut BufReader<tokio::net::tcp::OwnedReadHalf>,
+) -> Result<(String, String), Box<dyn std::error::Error + Send + Sync>> {
+    let mut request_line = String::new();
+    {
+        let mut limited = (&mut *reader).take(MAX_HEADER_LINE + 1);
+        limited.read_line(&mut request_line).await?;
+    }
+    if !request_line.ends_with('\n') {
+        return Err("request line too long".into());
+    }
+    let (method, path) = parse_request_line(&request_line)?;
+
+    let mut header_count = 0usize;
+    loop {
+        let mut header_line = String::new();
+        {
+            let mut limited = (&mut *reader).take(MAX_HEADER_LINE + 1);
+            limited.read_line(&mut header_line).await?;
+        }
+        if header_line == "\r\n" || header_line.is_empty() {
+            break;
+        }
+        if !header_line.ends_with('\n') {
+            return Err("header line too long".into());
+        }
+        header_count += 1;
+        if header_count > MAX_HEADERS {
+            return Err("too many headers".into());
+        }
+    }
+
+    Ok((method, path))
 }
 
 fn parse_request_line(
