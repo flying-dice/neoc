@@ -53,7 +53,10 @@ async fn serve_static(
         .await
         .map_err(|e| mlua::Error::external(format!("http.serve_static: bind {addr}: {e}")))?;
 
-    tracing::info!("http static server on http://{addr} ({} files)", files.len());
+    tracing::info!(
+        "http static server on http://{addr} ({} files)",
+        files.len()
+    );
 
     tokio::select! {
         _ = serve_loop(listener, files, index) => {},
@@ -107,25 +110,72 @@ async fn handle_connection(
     }
 
     if method != "GET" && method != "HEAD" {
-        write_response(&mut writer, 405, "Method Not Allowed", "text/plain", None, b"Method Not Allowed").await?;
+        write_response(
+            &mut writer,
+            405,
+            "Method Not Allowed",
+            "text/plain",
+            None,
+            b"Method Not Allowed",
+            true,
+        )
+        .await?;
         return Ok(());
     }
 
+    let send_body = method != "HEAD";
+
     if path == "/" {
-        write_response(&mut writer, 200, "OK", "text/html; charset=utf-8", None, index.as_bytes()).await?;
+        write_response(
+            &mut writer,
+            200,
+            "OK",
+            "text/html; charset=utf-8",
+            None,
+            index.as_bytes(),
+            send_body,
+        )
+        .await?;
     } else {
         let rel = path.trim_start_matches('/');
         if rel.contains("..") {
-            write_response(&mut writer, 403, "Forbidden", "text/plain", None, b"Forbidden").await?;
+            write_response(
+                &mut writer,
+                403,
+                "Forbidden",
+                "text/plain",
+                None,
+                b"Forbidden",
+                send_body,
+            )
+            .await?;
             return Ok(());
         }
         match files.get(rel) {
             Some(f) => {
                 let data = tokio::fs::read(&f.abs_path).await?;
-                write_response(&mut writer, 200, "OK", f.mime, Some(f.modified), &data).await?;
+                write_response(
+                    &mut writer,
+                    200,
+                    "OK",
+                    f.mime,
+                    Some(f.modified),
+                    &data,
+                    send_body,
+                )
+                .await?;
             }
             None => {
-                write_response(&mut writer, 404, "Not Found", "text/plain", None, b"Not Found").await?;
+                write_response(
+                    &mut writer,
+                    404,
+                    "Not Found",
+                    "text/plain",
+                    None,
+                    b"Not Found",
+                    send_body,
+                )
+                .await?;
             }
         }
     }
@@ -149,6 +199,7 @@ async fn write_response(
     content_type: &str,
     modified: Option<SystemTime>,
     body: &[u8],
+    send_body: bool,
 ) -> tokio::io::Result<()> {
     let mut head = format!(
         "HTTP/1.1 {status} {reason}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n",
@@ -159,7 +210,9 @@ async fn write_response(
     }
     head.push_str("\r\n");
     writer.write_all(head.as_bytes()).await?;
-    writer.write_all(body).await?;
+    if send_body {
+        writer.write_all(body).await?;
+    }
     writer.flush().await
 }
 
@@ -183,9 +236,7 @@ fn glob_root(pattern: &str) -> PathBuf {
     }
 }
 
-fn resolve_glob(
-    pattern: &str,
-) -> Result<FileMap, Box<dyn std::error::Error + Send + Sync>> {
+fn resolve_glob(pattern: &str) -> Result<FileMap, Box<dyn std::error::Error + Send + Sync>> {
     let mut builder = GlobSetBuilder::new();
     builder.add(globset::Glob::new(pattern)?);
     let set = builder.build()?;
@@ -258,26 +309,35 @@ fn mime_for_ext(ext: &str) -> &'static str {
 // Index page
 // ---------------------------------------------------------------------------
 
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
 fn build_index(files: &FileMap, glob_pattern: &str) -> String {
     let mut entries: Vec<(&str, &StaticFile)> =
         files.iter().map(|(k, v)| (k.as_str(), v)).collect();
     entries.sort_by_key(|(rel, _)| *rel);
 
+    let glob_escaped = html_escape(glob_pattern);
     let rows: String = entries
         .iter()
         .map(|(rel, f)| {
+            let rel_escaped = html_escape(rel);
             let size = human_size(f.size);
             let mtime = fmt_http_date(f.modified);
             let is_image = f.mime.starts_with("image/");
             let preview = if is_image {
                 format!(
-                    r#"<img src="/{rel}" loading="lazy" alt="" style="max-height:64px;max-width:128px;vertical-align:middle;margin-right:8px">"#
+                    r#"<img src="/{rel_escaped}" loading="lazy" alt="" style="max-height:64px;max-width:128px;vertical-align:middle;margin-right:8px">"#
                 )
             } else {
                 String::new()
             };
             format!(
-                r#"<tr><td>{preview}<a href="/{rel}">{rel}</a></td><td>{size}</td><td>{mtime}</td></tr>"#
+                r#"<tr><td>{preview}<a href="/{rel_escaped}">{rel_escaped}</a></td><td>{size}</td><td>{mtime}</td></tr>"#
             )
         })
         .collect();
@@ -289,7 +349,7 @@ fn build_index(files: &FileMap, glob_pattern: &str) -> String {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Index of {glob_pattern}</title>
+<title>Index of {glob_escaped}</title>
 <style>
 :root{{color-scheme:light dark}}
 *{{box-sizing:border-box;margin:0;padding:0}}
@@ -304,7 +364,7 @@ a:hover{{text-decoration:underline}}
 </style>
 </head>
 <body>
-<h1>Index of {glob_pattern} <small style="font-weight:normal;color:color-mix(in srgb,currentColor 50%,transparent)">({count} files)</small></h1>
+<h1>Index of {glob_escaped} <small style="font-weight:normal;color:color-mix(in srgb,currentColor 50%,transparent)">({count} files)</small></h1>
 <table>
 <thead><tr><th>File</th><th>Size</th><th>Modified</th></tr></thead>
 <tbody>{rows}</tbody>
@@ -332,16 +392,24 @@ fn human_size(bytes: u64) -> String {
 // ---------------------------------------------------------------------------
 
 fn fmt_http_date(t: SystemTime) -> String {
-    let secs = t.duration_since(UNIX_EPOCH).unwrap_or(Duration::ZERO).as_secs();
+    let secs = t
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or(Duration::ZERO)
+        .as_secs();
     let days = secs / 86400;
     // 1970-01-01 was a Thursday (index 4 in Sun=0 week).
     let dow = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][((days + 4) % 7) as usize];
-    let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    let months = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
     let (y, m, d) = days_to_ymd(days);
     let h = ((secs / 3600) % 24) as u32;
     let min = ((secs / 60) % 60) as u32;
     let sec = (secs % 60) as u32;
-    format!("{dow}, {d:02} {} {y} {h:02}:{min:02}:{sec:02} GMT", months[(m - 1) as usize])
+    format!(
+        "{dow}, {d:02} {} {y} {h:02}:{min:02}:{sec:02} GMT",
+        months[(m - 1) as usize]
+    )
 }
 
 fn days_to_ymd(days: u64) -> (u32, u32, u32) {
@@ -456,7 +524,10 @@ mod tests {
 
     #[test]
     fn glob_root_simple() {
-        assert_eq!(glob_root("screenshots/**/*.png"), PathBuf::from("screenshots"));
+        assert_eq!(
+            glob_root("screenshots/**/*.png"),
+            PathBuf::from("screenshots")
+        );
         assert_eq!(glob_root("./**/*.png"), PathBuf::from("."));
         assert_eq!(glob_root("**/*.png"), PathBuf::from("."));
     }
