@@ -154,12 +154,24 @@ fn bundle_impl(entrypoint: &Path, output: &Path) -> Result<(), String> {
     let stub_path = std::env::current_exe()
         .map_err(|e| format!("compile.bundle: cannot resolve current executable: {e}"))?;
 
-    let stub_bytes = std::fs::read(&stub_path).map_err(|e| {
+    let mut stub_bytes = std::fs::read(&stub_path).map_err(|e| {
         format!(
             "compile.bundle: cannot read stub {}: {e}",
             stub_path.display()
         )
     })?;
+
+    // Strip any previously embedded payload so that re-bundling a bundled binary
+    // does not inflate the output by the prior payload + trailer on each pass.
+    if stub_bytes.len() as u64 >= TRAILER_SIZE {
+        let t = stub_bytes.len() - TRAILER_SIZE as usize;
+        if stub_bytes[t..t + 7] == *TRAILER_MAGIC && stub_bytes[t + 7] == TRAILER_VERSION {
+            let offset = u64::from_le_bytes(stub_bytes[t + 8..t + 16].try_into().unwrap());
+            if (offset as usize) < t {
+                stub_bytes.truncate(offset as usize);
+            }
+        }
+    }
 
     let stub_len = stub_bytes.len() as u64;
 
@@ -287,12 +299,18 @@ mod tests {
 
     #[test]
     fn wrong_magic_returns_none() {
+        // Use a 7-byte fake magic (same length as TRAILER_MAGIC) so the trailer
+        // is structurally correct at 20 bytes and the reader inspects the right bytes.
+        let stub = b"stub-data";
+        let payload = b"";
         let mut f = tempfile::NamedTempFile::new().expect("tempfile");
-        f.write_all(b"stub-data").unwrap();
-        f.write_all(b"BADMAGIC").unwrap();
+        let offset = stub.len() as u64;
+        let length = payload.len() as u32;
+        f.write_all(stub).unwrap();
+        f.write_all(b"BADMAGX").unwrap(); // 7 bytes — wrong magic, correct length
         f.write_all(&[TRAILER_VERSION]).unwrap();
-        f.write_all(&9u64.to_le_bytes()).unwrap();
-        f.write_all(&0u32.to_le_bytes()).unwrap();
+        f.write_all(&offset.to_le_bytes()).unwrap();
+        f.write_all(&length.to_le_bytes()).unwrap();
         f.flush().unwrap();
         assert!(
             detect_embedded_payload_from(f.path())
@@ -371,6 +389,63 @@ mod tests {
         let length = u32::from_le_bytes(buf[21..25].try_into().unwrap());
         assert_eq!(length, payload.len() as u32);
         assert_eq!(buf.len(), 25);
+    }
+
+    // --- re-bundle idempotency ---
+
+    #[test]
+    fn rebundle_does_not_inflate_stub() {
+        // Simulate: bundled_binary = stub + payload_a + trailer_a
+        // Re-bundle with payload_b — output must be stub + payload_b + trailer_b,
+        // not stub + payload_a + trailer_a + payload_b + trailer_b.
+        use std::io::Write as _;
+
+        let stub = b"fake-neoc-binary";
+        let payload_a = b"first-script";
+        let payload_b = b"second-script";
+
+        // Build first bundle (mimics what write_bundled does).
+        let mut first_bundle: Vec<u8> = Vec::new();
+        first_bundle.write_all(stub).unwrap();
+        let offset_a = stub.len() as u64;
+        let length_a = payload_a.len() as u32;
+        first_bundle.write_all(payload_a).unwrap();
+        first_bundle.write_all(TRAILER_MAGIC).unwrap();
+        first_bundle.write_all(&[TRAILER_VERSION]).unwrap();
+        first_bundle.write_all(&offset_a.to_le_bytes()).unwrap();
+        first_bundle.write_all(&length_a.to_le_bytes()).unwrap();
+
+        // The stripping logic in bundle_impl, applied inline.
+        let mut stub_bytes = first_bundle.clone();
+        if stub_bytes.len() as u64 >= TRAILER_SIZE {
+            let t = stub_bytes.len() - TRAILER_SIZE as usize;
+            if stub_bytes[t..t + 7] == *TRAILER_MAGIC && stub_bytes[t + 7] == TRAILER_VERSION {
+                let offset =
+                    u64::from_le_bytes(stub_bytes[t + 8..t + 16].try_into().unwrap());
+                if (offset as usize) < t {
+                    stub_bytes.truncate(offset as usize);
+                }
+            }
+        }
+
+        // After stripping, stub_bytes must equal the original stub only.
+        assert_eq!(&stub_bytes[..], stub.as_slice());
+
+        // Building the second bundle from the stripped stub gives the correct size.
+        let stub_len = stub_bytes.len() as u64;
+        let mut second_bundle = stub_bytes;
+        write_trailer(&mut second_bundle, payload_b, stub_len).unwrap();
+        let expected_size = stub.len() + payload_b.len() + TRAILER_SIZE as usize;
+        assert_eq!(second_bundle.len(), expected_size);
+
+        // And detection on the second bundle returns payload_b, not payload_a.
+        let mut f = tempfile::NamedTempFile::new().expect("tempfile");
+        f.write_all(&second_bundle).unwrap();
+        f.flush().unwrap();
+        let detected = detect_embedded_payload_from(f.path())
+            .expect("no error")
+            .expect("payload present");
+        assert_eq!(detected, payload_b.as_slice());
     }
 
     // --- Luau API ---

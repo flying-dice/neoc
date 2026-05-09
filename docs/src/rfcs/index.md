@@ -32,7 +32,7 @@ _None yet._
 
 ### Implemented
 
-_None yet._
+- [0002 — `lib:compile` — programmatic single-file executable bundler](./0002-lib-compile)
 
 ### Rejected
 
