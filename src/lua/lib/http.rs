@@ -101,9 +101,28 @@ async fn handle_connection(
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
 
-    let (method, path) = tokio::time::timeout(HEADER_TIMEOUT, read_request_head(&mut reader))
+    let head = tokio::time::timeout(HEADER_TIMEOUT, read_request_head(&mut reader))
         .await
-        .map_err(|_| "header read timeout")??;
+        .map_err(|_| -> Box<dyn std::error::Error + Send + Sync> {
+            "header read timeout".into()
+        })?;
+    let (method, path) = match head {
+        Ok(v) => v,
+        Err(e) if e.downcast_ref::<MalformedPercentEncoding>().is_some() => {
+            write_response(
+                &mut writer,
+                400,
+                "Bad Request",
+                "text/plain",
+                None,
+                b"Bad Request",
+                true,
+            )
+            .await?;
+            return Ok(());
+        }
+        Err(e) => return Err(e),
+    };
 
     if method != "GET" && method != "HEAD" {
         write_response(
@@ -213,13 +232,61 @@ async fn read_request_head(
     Ok((method, path))
 }
 
+#[derive(Debug)]
+struct MalformedPercentEncoding;
+
+impl std::fmt::Display for MalformedPercentEncoding {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("malformed percent-encoding")
+    }
+}
+
+impl std::error::Error for MalformedPercentEncoding {}
+
+fn hex_nibble(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn percent_decode(s: &str) -> Result<String, MalformedPercentEncoding> {
+    let bytes = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'%' {
+            out.push(bytes[i]);
+            i += 1;
+            continue;
+        }
+        if i + 2 >= bytes.len() {
+            return Err(MalformedPercentEncoding);
+        }
+        let hi = hex_nibble(bytes[i + 1]).ok_or(MalformedPercentEncoding)?;
+        let lo = hex_nibble(bytes[i + 2]).ok_or(MalformedPercentEncoding)?;
+        let byte = (hi << 4) | lo;
+        if byte == b'/' {
+            // %2F/%2f: keep encoded to block encoded-slash path traversal.
+            out.extend_from_slice(&bytes[i..i + 3]);
+        } else {
+            out.push(byte);
+        }
+        i += 3;
+    }
+    String::from_utf8(out).map_err(|_| MalformedPercentEncoding)
+}
+
 fn parse_request_line(
     line: &str,
 ) -> Result<(String, String), Box<dyn std::error::Error + Send + Sync>> {
     let mut parts = line.split_whitespace();
     let method = parts.next().ok_or("empty request line")?.to_uppercase();
     let raw_path = parts.next().ok_or("missing path")?.to_string();
-    let path = raw_path.split('?').next().unwrap_or("/").to_string();
+    let path_without_qs = raw_path.split('?').next().unwrap_or("/");
+    let path = percent_decode(path_without_qs)?;
     Ok((method, path))
 }
 
@@ -627,5 +694,67 @@ mod tests {
         let files = resolve_glob(&pattern).unwrap();
         assert_eq!(files.len(), 1);
         assert!(files.contains_key("a.png"));
+    }
+
+    #[test]
+    fn percent_decode_space() {
+        assert_eq!(percent_decode("/my%20file.png").unwrap(), "/my file.png");
+    }
+
+    #[test]
+    fn percent_decode_non_ascii_utf8() {
+        // é = U+00E9 = 0xC3 0xA9 in UTF-8
+        assert_eq!(percent_decode("/%C3%A9.png").unwrap(), "/\u{00e9}.png");
+    }
+
+    #[test]
+    fn percent_decode_already_decoded() {
+        assert_eq!(percent_decode("/plain.png").unwrap(), "/plain.png");
+    }
+
+    #[test]
+    fn percent_decode_malformed_non_hex() {
+        assert!(percent_decode("/%GG").is_err());
+    }
+
+    #[test]
+    fn percent_decode_malformed_truncated() {
+        assert!(percent_decode("/%2").is_err());
+        assert!(percent_decode("/%").is_err());
+    }
+
+    #[test]
+    fn percent_decode_slash_stays_encoded() {
+        assert_eq!(
+            percent_decode("/my%2Fetc/passwd").unwrap(),
+            "/my%2Fetc/passwd",
+        );
+        assert_eq!(
+            percent_decode("/my%2fetc/passwd").unwrap(),
+            "/my%2fetc/passwd",
+        );
+    }
+
+    #[test]
+    fn percent_decode_invalid_utf8_sequence() {
+        // 0x80 alone is not valid UTF-8
+        assert!(percent_decode("/%80").is_err());
+    }
+
+    #[test]
+    fn parse_request_line_decodes_space() {
+        let (_, path) = parse_request_line("GET /my%20file.png HTTP/1.1\r\n").unwrap();
+        assert_eq!(path, "/my file.png");
+    }
+
+    #[test]
+    fn parse_request_line_malformed_percent_is_err() {
+        let result = parse_request_line("GET /%GG HTTP/1.1\r\n");
+        assert!(
+            result
+                .unwrap_err()
+                .downcast_ref::<MalformedPercentEncoding>()
+                .is_some()
+        );
     }
 }
