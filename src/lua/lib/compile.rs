@@ -420,8 +420,7 @@ mod tests {
         if stub_bytes.len() as u64 >= TRAILER_SIZE {
             let t = stub_bytes.len() - TRAILER_SIZE as usize;
             if stub_bytes[t..t + 7] == *TRAILER_MAGIC && stub_bytes[t + 7] == TRAILER_VERSION {
-                let offset =
-                    u64::from_le_bytes(stub_bytes[t + 8..t + 16].try_into().unwrap());
+                let offset = u64::from_le_bytes(stub_bytes[t + 8..t + 16].try_into().unwrap());
                 if (offset as usize) < t {
                     stub_bytes.truncate(offset as usize);
                 }

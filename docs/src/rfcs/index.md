@@ -25,6 +25,7 @@ Every RFC carries a `status` in its front matter. A draft banner is rendered at 
 - [0002 — std:env — Environment, platform constants, and paths](./0002-std-env)
 - [0002 — std:task — cooperative task scheduler](./0002-std-task)
 - [0002 — `lib:mime` — extension-to-MIME mapping via `mime_guess`, extension preference layer](./0002-lib-mime-extension-and-filename-detection)
+- [0002 — `lib:compile` — programmatic single-file executable bundler](./0002-lib-compile)
 
 ### Accepted
 
@@ -32,7 +33,7 @@ _None yet._
 
 ### Implemented
 
-- [0002 — `lib:compile` — programmatic single-file executable bundler](./0002-lib-compile)
+_None yet._
 
 ### Rejected
 

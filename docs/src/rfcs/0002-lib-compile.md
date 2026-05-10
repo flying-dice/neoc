@@ -1,5 +1,5 @@
 ---
-status: implemented
+status: draft
 created: 2026-05-09
 implemented-in: issues/17-lib-compile
 ---
@@ -118,7 +118,7 @@ This strategy matches the approach taken by Bun and Deno for their compiled outp
 
 ## Open questions
 
-None. The v1 API surface is settled and the implementation is merged.
+None. The v1 API surface is settled; implementation pending merge.
 
 ## Implementation notes
 
