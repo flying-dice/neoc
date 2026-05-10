@@ -82,7 +82,7 @@ Three layers, one binary.
 | Layer    | Purpose                                  | Modules |
 |----------|------------------------------------------|---------|
 | `std:*`  | Rust's standard library, 1:1 in Luau     | `collections`, `fs`, `io`, `net`, `thread`, `workers` |
-| `lib:*`  | Curated helpers and gap-fillers we wrote | `base64`, `json`, `mime`, `test`, `vcr` |
+| `lib:*`  | Curated helpers and gap-fillers we wrote | `base64`, `http`, `json`, `mime`, `test`, `vcr` |
 | `vnd:*`  | Handpicked third-party libraries         | `hyper`, `rusqlite`, `sqlx_postgres`, `sqlx_mysql`, `serde_json`, `serde_yaml`, `quick_xml`, `toml`, `jsonschema`, `testcontainers_modules` |
 
 `require("namespace:name")` is the only way in. No ambient globals, no path search, no file I/O — unknown names error with the catalogue, so typos surface immediately.
