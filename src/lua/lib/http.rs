@@ -103,7 +103,9 @@ async fn handle_connection(
 
     let head = tokio::time::timeout(HEADER_TIMEOUT, read_request_head(&mut reader))
         .await
-        .map_err(|_| -> Box<dyn std::error::Error + Send + Sync> { "header read timeout".into() })?;
+        .map_err(|_| -> Box<dyn std::error::Error + Send + Sync> {
+            "header read timeout".into()
+        })?;
     let (method, path) = match head {
         Ok(v) => v,
         Err(e) if e.downcast_ref::<MalformedPercentEncoding>().is_some() => {
@@ -748,9 +750,11 @@ mod tests {
     #[test]
     fn parse_request_line_malformed_percent_is_err() {
         let result = parse_request_line("GET /%GG HTTP/1.1\r\n");
-        assert!(result
-            .unwrap_err()
-            .downcast_ref::<MalformedPercentEncoding>()
-            .is_some());
+        assert!(
+            result
+                .unwrap_err()
+                .downcast_ref::<MalformedPercentEncoding>()
+                .is_some()
+        );
     }
 }
