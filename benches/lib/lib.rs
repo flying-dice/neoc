@@ -7,7 +7,7 @@
 //!
 //! Each module's `benches` registers three tiers, so per-bench regressions
 //! tell you exactly *where* the cost shifted:
-//!   - `library`       — pure underlying crate, no mlua.
+//!   - `library`         — pure underlying crate, no mlua.
 //!   - `into_out_lua`  — mlua marshalling alone (identity-shape Rust fn).
 //!   - `through_lua`   — end-to-end via `require("lib:<module>")` from Lua.
 //!
@@ -26,6 +26,7 @@ criterion_group!(
     benches,
     lib::base64::benches,
     lib::http::benches,
+    lib::ini::benches,
     lib::json::benches,
     lib::mime::benches,
 );

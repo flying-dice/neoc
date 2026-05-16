@@ -8,6 +8,7 @@
 pub mod base64;
 pub mod compile;
 pub mod http;
+pub mod ini;
 pub mod json;
 pub mod mime;
 pub mod test;
