@@ -1,19 +1,21 @@
 //! INI file parsing — `lib:ini`.
+//!
+//! Backed by the `rust-ini` crate with a dialect-normalisation layer
+//! for bare keys, custom symbols, and colon escaping.
 
+use ini::Ini;
 use mlua::{Lua, Table, Value};
 use tracing::instrument;
 
 use crate::lua::sandbox::{err, from_err, ok};
 
-// ---------------------------------------------------------------------------
-// Internal types
-// ---------------------------------------------------------------------------
+// Sentinels — safe because we reject null bytes before parsing.
+const BARE_SENTINEL: &str = "\x01BARE\x01";
+const COLON_ESCAPE: &str = "\x02";
 
-#[derive(Debug, Clone)]
-enum IniValue {
-    Str(String),
-    Bare,
-}
+// ---------------------------------------------------------------------------
+// Options
+// ---------------------------------------------------------------------------
 
 struct ParseOpts {
     comment_symbols: Vec<char>,
@@ -31,101 +33,67 @@ impl Default for ParseOpts {
     }
 }
 
-#[allow(clippy::type_complexity)]
-struct IniDoc {
-    sections: Vec<(Option<String>, Vec<(String, IniValue)>)>,
-}
-
-impl IniDoc {
-    fn new() -> Self {
-        Self {
-            sections: Vec::new(),
-        }
-    }
-
-    fn ensure_section(&mut self, name: Option<&str>) -> usize {
-        if let Some(pos) = self.sections.iter().position(|(n, _)| n.as_deref() == name) {
-            pos
-        } else {
-            self.sections.push((name.map(|s| s.to_owned()), Vec::new()));
-            self.sections.len() - 1
-        }
-    }
-
-    fn set(&mut self, section_idx: usize, key: String, value: IniValue) {
-        let props = &mut self.sections[section_idx].1;
-        if let Some(existing) = props.iter_mut().find(|(k, _)| *k == key) {
-            existing.1 = value;
-        } else {
-            props.push((key, value));
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
-// Parser
+// Dialect normalisation
 // ---------------------------------------------------------------------------
 
-fn do_parse(text: &str, opts: &ParseOpts) -> Result<IniDoc, String> {
-    let mut doc = IniDoc::new();
-    let mut current_section: Option<String> = None;
+/// Validate structure and normalise dialect differences before handing
+/// to rust-ini. Handles: custom comment/delimiter symbols, bare keys,
+/// and escapes literal `:` so rust-ini doesn't treat it as a delimiter.
+fn preprocess(raw: &str, opts: &ParseOpts) -> Result<String, String> {
+    let mut out = String::with_capacity(raw.len() + 64);
 
-    for (line_num, raw_line) in text.lines().enumerate() {
-        let line = raw_line.trim();
+    for (line_num, raw_line) in raw.lines().enumerate() {
+        let trimmed = raw_line.trim();
 
-        if line.is_empty() {
+        if trimmed.is_empty() {
+            out.push('\n');
             continue;
         }
 
-        // Comment check — only at line start.
-        if let Some(first) = line.chars().next()
-            && opts.comment_symbols.contains(&first)
-        {
-            continue;
+        if let Some(first) = trimmed.chars().next() {
+            if opts.comment_symbols.contains(&first) {
+                out.push_str(";_\n");
+                continue;
+            }
         }
 
-        // Section header.
-        if line.starts_with('[') {
-            let end = line
+        if trimmed.starts_with('[') {
+            let end = trimmed
                 .find(']')
                 .ok_or_else(|| format!("line {}: unclosed section header", line_num + 1))?;
-            let name = &line[1..end];
+            let name = &trimmed[1..end];
             if name.is_empty() {
                 return Err(format!("line {}: empty section name", line_num + 1));
             }
-            let name = if opts.lowercase_keys {
-                name.to_lowercase()
-            } else {
-                name.to_owned()
-            };
-            current_section = Some(name);
+            out.push('[');
+            out.push_str(&name.replace(':', COLON_ESCAPE));
+            out.push(']');
+            out.push('\n');
             continue;
         }
 
-        // Key-value or bare key.
-        let section_idx = doc.ensure_section(current_section.as_deref());
-
-        if let Some(delim_pos) = line.find(|c: char| opts.delimiters.contains(&c)) {
-            let raw_key = line[..delim_pos].trim_end();
-            let key = if opts.lowercase_keys {
-                raw_key.to_lowercase()
-            } else {
-                raw_key.to_owned()
-            };
-            let val_start = delim_pos + line[delim_pos..].chars().next().unwrap().len_utf8();
-            let value = line[val_start..].trim().to_owned();
-            doc.set(section_idx, key, IniValue::Str(value));
+        if let Some(pos) = trimmed.find(|c: char| opts.delimiters.contains(&c)) {
+            let key = trimmed[..pos].trim_end();
+            let delim_len = trimmed[pos..].chars().next().unwrap().len_utf8();
+            let value = trimmed[pos + delim_len..].trim();
+            out.push_str(&key.replace(':', COLON_ESCAPE));
+            out.push('=');
+            out.push_str(&value.replace(':', COLON_ESCAPE));
+            out.push('\n');
         } else {
-            let key = if opts.lowercase_keys {
-                line.to_lowercase()
-            } else {
-                line.to_owned()
-            };
-            doc.set(section_idx, key, IniValue::Bare);
+            out.push_str(&trimmed.replace(':', COLON_ESCAPE));
+            out.push('=');
+            out.push_str(BARE_SENTINEL);
+            out.push('\n');
         }
     }
 
-    Ok(doc)
+    Ok(out)
+}
+
+fn unescape(s: &str) -> String {
+    s.replace(COLON_ESCAPE, ":")
 }
 
 // ---------------------------------------------------------------------------
@@ -152,68 +120,110 @@ fn parse(
         return err(lua, "ini.parse: input contains null bytes");
     }
 
-    let opts = if let Some(tbl) = opts_table {
-        let mut o = ParseOpts::default();
-        if let Some(cs) = tbl.get::<Option<Table>>("comment_symbols")? {
-            let mut syms = Vec::new();
-            for pair in cs.pairs::<i64, mlua::String>() {
-                let (_, v) = pair?;
-                let s = v
-                    .to_str()
-                    .map_err(|e| mlua::Error::external(e.to_string()))?;
-                if let Some(c) = s.chars().next() {
-                    syms.push(c);
-                }
-            }
-            o.comment_symbols = syms;
-        }
-        if let Some(ds) = tbl.get::<Option<Table>>("delimiters")? {
-            let mut delims = Vec::new();
-            for pair in ds.pairs::<i64, mlua::String>() {
-                let (_, v) = pair?;
-                let s = v
-                    .to_str()
-                    .map_err(|e| mlua::Error::external(e.to_string()))?;
-                if let Some(c) = s.chars().next() {
-                    delims.push(c);
-                }
-            }
-            o.delimiters = delims;
-        }
-        if let Some(lk) = tbl.get::<Option<bool>>("lowercase_keys")? {
-            o.lowercase_keys = lk;
-        }
-        o
-    } else {
-        ParseOpts::default()
+    let opts = read_opts(opts_table)?;
+
+    let processed = match preprocess(&raw, &opts) {
+        Ok(p) => p,
+        Err(e) => return from_err(lua, "ini.parse", e),
     };
 
-    let doc = match do_parse(&raw, &opts) {
-        Ok(d) => d,
+    let conf = match Ini::load_from_str_noescape(&processed) {
+        Ok(c) => c,
         Err(e) => return from_err(lua, "ini.parse", e),
     };
 
     let result = lua.create_table()?;
-    for (section_name, props) in &doc.sections {
-        let key = section_name.as_deref().unwrap_or("");
-        let section_table: Table = match result.get::<Option<Table>>(key)? {
+    for (section, properties) in conf.iter() {
+        if section.is_none() && properties.is_empty() {
+            continue;
+        }
+
+        let section_key = match section {
+            Some(s) => {
+                let s = unescape(s);
+                if opts.lowercase_keys {
+                    s.to_lowercase()
+                } else {
+                    s
+                }
+            }
+            None => String::new(),
+        };
+
+        let section_table: Table = match result.get::<Option<Table>>(&*section_key)? {
             Some(t) => t,
             None => {
                 let t = lua.create_table()?;
-                result.set(key, t.clone())?;
+                result.set(section_key.as_str(), t.clone())?;
                 t
             }
         };
-        for (k, v) in props {
-            match v {
-                IniValue::Str(s) => section_table.set(k.as_str(), s.as_str())?,
-                IniValue::Bare => section_table.set(k.as_str(), true)?,
+
+        for (key, value) in properties.iter() {
+            let key = unescape(key);
+            let lua_key = if opts.lowercase_keys {
+                key.to_lowercase()
+            } else {
+                key
+            };
+
+            if value == BARE_SENTINEL {
+                section_table.set(lua_key.as_str(), true)?;
+            } else {
+                let value = unescape(value);
+                section_table.set(lua_key.as_str(), value.as_str())?;
             }
         }
     }
 
     ok(lua, result)
 }
+
+fn read_opts(opts_table: Option<Table>) -> mlua::Result<ParseOpts> {
+    let Some(tbl) = opts_table else {
+        return Ok(ParseOpts::default());
+    };
+
+    let mut opts = ParseOpts::default();
+
+    if let Some(cs) = tbl.get::<Option<Table>>("comment_symbols")? {
+        let mut syms = Vec::new();
+        for pair in cs.pairs::<i64, mlua::String>() {
+            let (_, v) = pair?;
+            let s = v
+                .to_str()
+                .map_err(|e| mlua::Error::external(e.to_string()))?;
+            if let Some(c) = s.chars().next() {
+                syms.push(c);
+            }
+        }
+        opts.comment_symbols = syms;
+    }
+
+    if let Some(ds) = tbl.get::<Option<Table>>("delimiters")? {
+        let mut delims = Vec::new();
+        for pair in ds.pairs::<i64, mlua::String>() {
+            let (_, v) = pair?;
+            let s = v
+                .to_str()
+                .map_err(|e| mlua::Error::external(e.to_string()))?;
+            if let Some(c) = s.chars().next() {
+                delims.push(c);
+            }
+        }
+        opts.delimiters = delims;
+    }
+
+    if let Some(lk) = tbl.get::<Option<bool>>("lowercase_keys")? {
+        opts.lowercase_keys = lk;
+    }
+
+    Ok(opts)
+}
+
+// ---------------------------------------------------------------------------
+// Stringify
+// ---------------------------------------------------------------------------
 
 #[instrument(name = "ini.stringify", target = "luau::lib::ini", skip_all)]
 fn stringify(
@@ -229,13 +239,11 @@ fn stringify(
     let mut out = String::new();
     let mut first_section = true;
 
-    // Write sectionless keys first (under "" key).
     if let Some(global) = config.get::<Option<Table>>("")? {
         write_props(&global, &mut out)?;
         first_section = false;
     }
 
-    // Write named sections.
     for pair in config.pairs::<mlua::String, Table>() {
         let (k, section_table) = pair?;
         let section_name = k
@@ -309,7 +317,8 @@ pub fn benches(c: &mut criterion::Criterion) {
     g.bench_function("library", |b| {
         let opts = ParseOpts::default();
         b.iter(|| {
-            let _ = do_parse(black_box(&payload), &opts);
+            let processed = preprocess(black_box(&payload), &opts).unwrap();
+            let _ = Ini::load_from_str_noescape(&processed);
         });
     });
 
