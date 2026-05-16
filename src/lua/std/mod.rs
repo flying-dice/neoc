@@ -7,6 +7,7 @@
 //! `crate::lua::modules::install`.
 
 pub mod collections;
+pub mod env;
 pub mod fs;
 pub mod io;
 pub mod net;
