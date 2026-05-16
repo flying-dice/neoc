@@ -98,10 +98,10 @@ describe("ini.parse", function()
         expect(err).toContain("empty section name")
     end)
 
-    test("error: null bytes", function()
+    test("error: control bytes", function()
         local val, err = ini.parse("key=val\0ue")
         expect(val).toBeNil()
-        expect(err).toContain("null bytes")
+        expect(err).toContain("control bytes")
     end)
 end)
 
@@ -126,10 +126,16 @@ describe("ini.stringify", function()
         expect(s).toContain("name=world")
     end)
 
-    test("spacing option adds blank lines between sections", function()
-        local t = { a = { k = "1" }, b = { k = "2" } }
+    test("spacing=true adds spaces around delimiter", function()
+        local t = { section = { key = "value" } }
         local s = ini.stringify(t, { spacing = true })
-        expect(s).toContain("\n\n")
+        expect(s).toContain("key = value")
+    end)
+
+    test("spacing=false uses compact delimiter", function()
+        local t = { section = { key = "value" } }
+        local s = ini.stringify(t, { spacing = false })
+        expect(s).toContain("key=value")
     end)
 
     test("round trip preserves data", function()

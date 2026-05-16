@@ -116,8 +116,8 @@ fn parse(
         .to_str()
         .map_err(|e| mlua::Error::external(e.to_string()))?;
 
-    if raw.contains('\0') {
-        return err(lua, "ini.parse: input contains null bytes");
+    if raw.bytes().any(|b| b <= 0x08) {
+        return err(lua, "ini.parse: input contains control bytes");
     }
 
     let opts = read_opts(opts_table)?;
@@ -240,7 +240,7 @@ fn stringify(
     let mut first_section = true;
 
     if let Some(global) = config.get::<Option<Table>>("")? {
-        write_props(&global, &mut out)?;
+        write_props(&global, &mut out, spacing)?;
         first_section = false;
     }
 
@@ -252,24 +252,22 @@ fn stringify(
         if section_name.is_empty() {
             continue;
         }
-        if !first_section && spacing {
-            out.push('\n');
-        }
-        if (!first_section || !out.is_empty()) && !spacing && !out.is_empty() {
+        if !first_section || !out.is_empty() {
             out.push('\n');
         }
         out.push('[');
         out.push_str(&section_name);
         out.push(']');
         out.push('\n');
-        write_props(&section_table, &mut out)?;
+        write_props(&section_table, &mut out, spacing)?;
         first_section = false;
     }
 
     ok(lua, out)
 }
 
-fn write_props(table: &Table, out: &mut String) -> mlua::Result<()> {
+fn write_props(table: &Table, out: &mut String, spacing: bool) -> mlua::Result<()> {
+    let delim = if spacing { " = " } else { "=" };
     for pair in table.pairs::<mlua::String, Value>() {
         let (k, v) = pair?;
         let key = k
@@ -282,7 +280,7 @@ fn write_props(table: &Table, out: &mut String) -> mlua::Result<()> {
             }
             Value::String(s) => {
                 out.push_str(&key);
-                out.push('=');
+                out.push_str(delim);
                 let val = s
                     .to_str()
                     .map_err(|e| mlua::Error::external(e.to_string()))?;
@@ -291,7 +289,7 @@ fn write_props(table: &Table, out: &mut String) -> mlua::Result<()> {
             }
             _ => {
                 out.push_str(&key);
-                out.push('=');
+                out.push_str(delim);
                 out.push_str(&format!("{:?}", v));
                 out.push('\n');
             }
@@ -508,7 +506,27 @@ mod tests {
             .unwrap();
         assert!(matches!(val, Value::Nil));
         let err = err.expect("error expected");
-        assert!(err.contains("null bytes"), "got: {err}");
+        assert!(err.contains("control bytes"), "got: {err}");
+    }
+
+    #[test]
+    fn parse_error_sentinel_bytes() {
+        let lua = engine();
+        let input = lua.create_string(b"[s]\nkey=val\x01ue").unwrap();
+        lua.globals().set("input", input).unwrap();
+        let (val, err): (Value, Option<String>) =
+            lua.load(r#"return ini.parse(input)"#).eval().unwrap();
+        assert!(matches!(val, Value::Nil));
+        let err = err.expect("error expected");
+        assert!(err.contains("control bytes"), "got: {err}");
+
+        let input2 = lua.create_string(b"[s]\nkey\x02=value").unwrap();
+        lua.globals().set("input", input2).unwrap();
+        let (val2, err2): (Value, Option<String>) =
+            lua.load(r#"return ini.parse(input)"#).eval().unwrap();
+        assert!(matches!(val2, Value::Nil));
+        let err2 = err2.expect("error expected");
+        assert!(err2.contains("control bytes"), "got: {err2}");
     }
 
     #[test]
@@ -566,6 +584,40 @@ mod tests {
         let name_pos = result.find("name=world").unwrap();
         let section_pos = result.find("[section]").unwrap();
         assert!(name_pos < section_pos, "sectionless keys should come first");
+    }
+
+    #[test]
+    fn stringify_spacing_true() {
+        let lua = engine();
+        let result: String = lua
+            .load(
+                r#"
+                local t = { section = { key = "value" } }
+                local s = ini.stringify(t, { spacing = true })
+                return s
+                "#,
+            )
+            .eval()
+            .unwrap();
+        assert!(result.contains("key = value"), "got: {result}");
+        assert!(!result.contains("key=value"), "got: {result}");
+    }
+
+    #[test]
+    fn stringify_spacing_false() {
+        let lua = engine();
+        let result: String = lua
+            .load(
+                r#"
+                local t = { section = { key = "value" } }
+                local s = ini.stringify(t, { spacing = false })
+                return s
+                "#,
+            )
+            .eval()
+            .unwrap();
+        assert!(result.contains("key=value"), "got: {result}");
+        assert!(!result.contains("key = value"), "got: {result}");
     }
 
     #[test]
