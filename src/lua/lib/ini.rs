@@ -187,7 +187,7 @@ fn parse(
         ParseOpts::default()
     };
 
-    let doc = match do_parse(raw, &opts) {
+    let doc = match do_parse(&raw, &opts) {
         Ok(d) => d,
         Err(e) => return from_err(lua, "ini.parse", e),
     };
@@ -252,7 +252,7 @@ fn stringify(
             }
         }
         out.push('[');
-        out.push_str(section_name);
+        out.push_str(&section_name);
         out.push(']');
         out.push('\n');
         write_props(&section_table, &mut out)?;
@@ -270,20 +270,20 @@ fn write_props(table: &Table, out: &mut String) -> mlua::Result<()> {
             .map_err(|e| mlua::Error::external(e.to_string()))?;
         match &v {
             Value::Boolean(true) => {
-                out.push_str(key);
+                out.push_str(&key);
                 out.push('\n');
             }
             Value::String(s) => {
-                out.push_str(key);
+                out.push_str(&key);
                 out.push('=');
                 let val = s
                     .to_str()
                     .map_err(|e| mlua::Error::external(e.to_string()))?;
-                out.push_str(val);
+                out.push_str(&val);
                 out.push('\n');
             }
             _ => {
-                out.push_str(key);
+                out.push_str(&key);
                 out.push('=');
                 out.push_str(&format!("{:?}", v));
                 out.push('\n');
