@@ -51,11 +51,11 @@ fn preprocess(raw: &str, opts: &ParseOpts) -> Result<String, String> {
             continue;
         }
 
-        if let Some(first) = trimmed.chars().next() {
-            if opts.comment_symbols.contains(&first) {
-                out.push_str(";_\n");
-                continue;
-            }
+        if let Some(first) = trimmed.chars().next()
+            && opts.comment_symbols.contains(&first)
+        {
+            out.push_str(";_\n");
+            continue;
         }
 
         if trimmed.starts_with('[') {
