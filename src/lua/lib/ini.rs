@@ -31,6 +31,7 @@ impl Default for ParseOpts {
     }
 }
 
+#[allow(clippy::type_complexity)]
 struct IniDoc {
     sections: Vec<(Option<String>, Vec<(String, IniValue)>)>,
 }
@@ -77,10 +78,10 @@ fn do_parse(text: &str, opts: &ParseOpts) -> Result<IniDoc, String> {
         }
 
         // Comment check — only at line start.
-        if let Some(first) = line.chars().next() {
-            if opts.comment_symbols.contains(&first) {
-                continue;
-            }
+        if let Some(first) = line.chars().next()
+            && opts.comment_symbols.contains(&first)
+        {
+            continue;
         }
 
         // Section header.
@@ -246,10 +247,8 @@ fn stringify(
         if !first_section && spacing {
             out.push('\n');
         }
-        if !first_section || !out.is_empty() {
-            if !spacing && !out.is_empty() {
-                out.push('\n');
-            }
+        if (!first_section || !out.is_empty()) && !spacing && !out.is_empty() {
+            out.push('\n');
         }
         out.push('[');
         out.push_str(&section_name);
