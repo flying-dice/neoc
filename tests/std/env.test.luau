@@ -111,9 +111,32 @@ describe("env", function()
     -- CLI arguments ------------------------------------------------------------
 
     describe("args", function()
-        test("returns a table", function()
+        test("library mode — absent global returns empty table", function()
+            local prev = _G._NEOC_ARGS
+            _G._NEOC_ARGS = nil
             local a = env.args()
             expect(type(a)).toBe("table")
+            expect(#a).toBe(0)
+            _G._NEOC_ARGS = prev
+        end)
+
+        test("normal path — returns args from global", function()
+            local prev = _G._NEOC_ARGS
+            _G._NEOC_ARGS = {"hello", "world"}
+            local a = env.args()
+            expect(#a).toBe(2)
+            expect(a[1]).toBe("hello")
+            expect(a[2]).toBe("world")
+            _G._NEOC_ARGS = prev
+        end)
+
+        test("error path — non-table raises", function()
+            local prev = _G._NEOC_ARGS
+            _G._NEOC_ARGS = 42
+            local ok, err = pcall(env.args)
+            expect(ok).toBe(false)
+            expect(string.find(tostring(err), "env.args: _NEOC_ARGS: expected array of strings")).toBeTruthy()
+            _G._NEOC_ARGS = prev
         end)
     end)
 
