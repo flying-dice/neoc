@@ -7,24 +7,24 @@ implemented-in:
 # 0002 — std:path — File path manipulation
 
 > [!WARNING]
-> This RFC is `draft`. It is under refinement and is **not** the contract.
+> This RFC is `draft`. Not the contract.
 
 ## Summary
 
-Add `std:path` as a first-class module in the neoc standard library. The module exposes two complementary surfaces: Rust-mirror UserData types (`Path` and `PathBuf`) for type-safe, chainable path manipulation, and a set of flat convenience functions following Node/Deno naming conventions for ergonomic common-case use. OS-native separators are preserved throughout; no forward-slash normalisation is performed. See [issue #19](https://github.com/flying-dice/neoc/issues/19) for the full design rationale.
+`std:path` — two surfaces: Rust-mirror UserData types (`Path`, `PathBuf`) for type-safe chainable manipulation + flat convenience functions (Node/Deno naming) for common cases. OS-native separators preserved; no forward-slash normalisation. See [issue #19](https://github.com/flying-dice/neoc/issues/19).
 
 ## Motivation
 
-Scripts that touch the filesystem — reading configs, constructing output paths, resolving relative references — inevitably manipulate path strings. Without a dedicated module, authors reach for `string.format` and manual separator handling, which breaks cross-platform and silently misbehaves on Windows paths containing backslashes.
+Scripts manipulating paths without a dedicated module resort to `string.format` + manual separators → breaks cross-platform, silent misbehaviour on Windows backslashes.
 
-Every major runtime ships a path module. neoc has none. The absence forces authors to either hard-code platform assumptions or depend on Lune compatibility shims that neoc does not expose. This module closes that gap.
+Every major runtime ships a path module. neoc has none. Forces hard-coded platform assumptions or missing Lune shims.
 
-Two distinct design goals motivate the dual-surface approach:
+Dual-surface rationale:
 
-1. **Correctness and chainability** — the `Path`/`PathBuf` UserData types make path operations type-safe. A function that returns a `Path` can have `:join()` called on it directly; there is no ambiguity about whether a return value is a path or an arbitrary string.
-2. **Ergonomics for common cases** — the flat convenience functions match the names authors already know from Node (`path.join`, `path.dirname`, `path.extname`). No import of a secondary type is needed for simple operations.
+1. **Correctness/chainability** — `Path`/`PathBuf` UserData types make operations type-safe. Return values are unambiguously paths, not arbitrary strings.
+2. **Ergonomics** — flat functions match Node names (`path.join`, `path.dirname`, `path.extname`). No secondary type import needed for simple ops.
 
-The immutability distinction between `Path` and `PathBuf` is explicitly valuable even without Rust's borrow semantics. A function that promises not to mutate its argument can accept a `Path`; a builder accumulating path components takes a `PathBuf`. This distinction is confirmed design direction per [issue #19](https://github.com/flying-dice/neoc/issues/19).
+Immutability distinction valuable even without borrow semantics: `Path` receiver → promise not to mutate; `PathBuf` → builder accumulating components. Confirmed per [issue #19](https://github.com/flying-dice/neoc/issues/19).
 
 ## Peer runtime survey
 
@@ -43,15 +43,15 @@ The immutability distinction between `Path` and `PathBuf` is explicitly valuable
 | **OS separator** | `std::path::MAIN_SEPARATOR` | `string(os.PathSeparator)` | `path.sep` | `os.sep` | `SEPARATOR` | `path.sep` | — |
 | **OOP chaining** | `PathBuf::push`, `:join` | — | — | `Path / "child"` | — | — | — |
 
-†`canonicalize` requires filesystem access. Deferred to `std:fs` integration; see design decisions.
+†`canonicalize` requires filesystem access. Deferred to `std:fs`; see design decisions.
 
-**Key observations:**
+**Observations:**
 
-1. Every major runtime provides `join`, `dirname`/`dir`, `basename`/`base`, and `extname`/`ext`. These are the non-negotiable core.
-2. Rust is the only runtime that provides both an immutable borrowed type (`Path`) and an owned mutable type (`PathBuf`). Python's `pathlib.Path` is mutable. Node, Deno, and Go work exclusively with strings.
-3. Extension format differs between the two traditions: Rust's `Path::extension()` returns `"txt"` (no leading dot); Node/Deno's `path.extname()` returns `".txt"` (with leading dot). Both conventions are preserved on their respective surfaces — this is an intentional, documented difference.
-4. Lune (the closest Luau precedent) ships no path module at all. Authors using Lune manipulate paths as raw strings. This is a clear gap this module fills.
-5. `path.resolve` in Node/Deno is CWD-dependent and performs filesystem access. In a sandbox, this requires explicit capability. `std:path.resolve` in neoc returns an absolute path by prepending `std:env.current_dir()` and applying lexical normalization — no filesystem syscall, consistent with the principle that `std:path` is lexical-only.
+1. `join`, `dirname`, `basename`, `extname` — universal. Non-negotiable core.
+2. Only Rust provides immutable + mutable types. Python's `pathlib.Path` is mutable. Node/Deno/Go use strings only.
+3. Extension format diverges: Rust `"txt"` (no dot) vs Node `".txt"` (with dot). Both preserved on respective surfaces — intentional documented difference.
+4. Lune ships no path module. Authors use raw strings. Clear gap.
+5. Node/Deno `path.resolve` is CWD-dependent + filesystem access. neoc's `std:path.resolve` prepends `std:env.current_dir()` + lexical normalize — no syscall. `std:path` is lexical-only.
 
 ## Detailed design
 
@@ -74,7 +74,7 @@ local path = require("std:path")
 
 #### `Path` — immutable
 
-`Path` wraps a string and exposes read-only path inspection. All methods that return a path return a new `PathBuf` (mutable), so the result can be further modified. Methods that return components return plain strings or `nil`.
+Wraps a string; read-only inspection. Methods returning paths → new `PathBuf`. Component methods → strings or `nil`.
 
 ```lua
 local p = path.Path.new("/home/user/file.txt")
@@ -110,7 +110,7 @@ tostring(p)     --> "/home/user/file.txt" (via __tostring metamethod)
 
 #### `PathBuf` — mutable
 
-`PathBuf` extends `Path` with in-place mutation. All `Path` read methods are available on `PathBuf` (Deref equivalent via the UserData implementation).
+Extends `Path` with in-place mutation. All `Path` read methods available (Deref equivalent via UserData implementation).
 
 ```lua
 local buf = path.PathBuf.new()         -- empty mutable path
@@ -135,21 +135,19 @@ tostring(buf)               --> string
 
 #### Equality and comparison
 
-Both types implement `__eq`. Two paths are equal if their string representations are identical after normalisation of trailing separators (following Rust's `PartialEq` for `Path`).
+Both types implement `__eq`. Equal if string representations identical after trailing-separator normalisation (follows Rust `PartialEq` for `Path`).
 
 ```lua
 path.Path.new("/home/user") == path.Path.new("/home/user")  --> true
 ```
 
-#### Equality notes
+Case-sensitive on all platforms including Windows — matches Rust, avoids platform-specific case folding cost. For case-insensitive: `:display()` + `string.lower`.
 
-Comparison is case-sensitive on all platforms, including Windows — this matches Rust's behaviour and avoids the cost of platform-specific case folding in the Lua layer. Authors who need case-insensitive comparison should call `:display()` and apply `string.lower`.
-
-Cross-type equality (`Path == PathBuf`) is an **open question** — see Open Question #5. The implementation may or may not support it depending on the resolution of that question. Do not write code that depends on cross-type equality until the open question is resolved.
+Cross-type equality (`Path == PathBuf`) — **open question #5**. Do not depend on it until resolved.
 
 ### Flat convenience functions
 
-All flat functions operate on plain strings and return plain strings. They are stateless and perform no filesystem access. Function naming follows Node/Deno conventions; semantics follow Rust/POSIX where the two traditions diverge (see individual function notes below).
+Operate on plain strings, return plain strings. Stateless, no filesystem access. Node/Deno naming; Rust/POSIX semantics where traditions diverge.
 
 ```lua
 path.join("src", "lua", "lib", "json.rs")      --> "src/lua/lib/json.rs"
@@ -166,29 +164,29 @@ path.sep                                        --> OS-native separator string (
 
 #### Function semantics
 
-- **`path.join(...)`** — joins any number of string segments using the OS-native separator. Does not call into the filesystem. If an argument is an absolute path, it resets the result (Rust/POSIX semantics — note: this differs from Node's `path.join`, which treats all segments as relative). Zero-argument call returns `""` (empty string); a single empty-string argument returns `""`.
-- **`path.dirname(p)`** — returns the directory component. Returns `"."` for a bare filename with no directory component (e.g. `path.dirname("file.txt") == "."`). Returns the path unchanged for root paths (e.g. `path.dirname("/") == "/"`) — matching Node and Python behaviour. `path.dirname("") == "."` (matches Node). Note: `std::path::Path::new("/").parent()` returns `None` in Rust; the implementation must special-case root paths rather than falling back to `"."` for the `None` case.
-- **`path.basename(p)`** — returns the last component of the path. Trailing separators are ignored. On root paths (`"/"`, `"C:\\"`) where `file_name()` returns `None`, returns `"/"` or `"C:\\"` respectively — matching Node (`path.basename("/") == "/"`). `path.basename("") == ""` (matches Node).
-- **`path.extname(p)`** — returns the extension including the leading dot (`.txt`), or `""` if there is no extension. This intentionally differs from `Path:extension()`, which omits the dot. For dotfiles (e.g. `.gitignore`, `.env`), returns `""` — the entire name is treated as the stem with no extension. This is consistent with both Node (`path.extname(".gitignore") == ""`) and Rust (`Path::extension()` returns `None` for dotfiles — a name beginning with `.` and containing no subsequent `.` has no extension). `path.extname("") == ""`.
-- **`path.normalize(p)`** — performs lexical normalisation: resolves `.` components, collapses `..` where possible, removes duplicate separators. Does not access the filesystem. Equivalent to Go's `filepath.Clean`. `..` past root is clamped: `path.normalize("/../foo") == "/foo"` (matching Go, Node, and Python). `path.normalize("") == "."` (matches Node).
-- **`path.is_absolute(p)`** — returns `true` if the path is absolute.
-- **`path.resolve(p)`** — returns an absolute path by prepending `std:env.current_dir()` if `p` is relative, then applying `path.normalize`. Does not access the filesystem beyond the CWD query. Example: given CWD `/home/user`, `path.resolve("docs/file.txt")` returns `"/home/user/docs/file.txt"`. Already-absolute paths are normalised and returned unchanged.
-- **`path.relative(from, to)`** — computes the relative path from `from` to `to`. Both arguments are treated as directory paths. Equivalent to Go's `filepath.Rel` / Node's `path.relative`.
-- **`path.sep`** — read-only string constant: `"/"` on Unix, `"\\"` on Windows.
+- **`path.join(...)`** — variadic, OS-native separator. Absolute argument resets result (Rust/POSIX — differs from Node which treats all segments as relative). Zero args → `""`; single empty string → `""`.
+- **`path.dirname(p)`** — directory component. Bare filename → `"."`. Root → unchanged (`dirname("/") == "/"`; matches Node/Python). `dirname("") == "."`. Note: Rust `Path::new("/").parent()` returns `None`; implementation must special-case root rather than falling back to `"."`.
+- **`path.basename(p)`** — last component; trailing separators ignored. Root (`"/"`, `"C:\\"`) where `file_name()` → `None`: returns `"/"` or `"C:\\"` (matches Node). `basename("") == ""`.
+- **`path.extname(p)`** — extension with leading dot (`.txt`), or `""` if none. Dotfiles (`.gitignore`, `.env`) → `""` (entire name = stem, no extension). Matches Node and Rust. `extname("") == ""`.
+- **`path.normalize(p)`** — lexical: resolves `.`, collapses `..`, removes duplicate separators. No filesystem access. `..` past root clamped: `normalize("/../foo") == "/foo"` (Go/Node/Python). `normalize("") == "."`.
+- **`path.is_absolute(p)`** — `true` if absolute.
+- **`path.resolve(p)`** — prepends `std:env.current_dir()` if relative, then `normalize`. No filesystem access beyond CWD query. Already-absolute → normalised unchanged.
+- **`path.relative(from, to)`** — lexical relative path. Both args treated as directories. Equivalent to Go `filepath.Rel` / Node `path.relative`.
+- **`path.sep`** — `"/"` on Unix, `"\\"` on Windows.
 
-### Key differences between the two surfaces
+### Key differences between surfaces
 
 | Concern | UserData (`Path`/`PathBuf`) | Flat functions |
 |---|---|---|
-| Extension format | `"txt"` (no dot — Rust convention) | `".txt"` (with dot — Node convention) |
+| Extension format | `"txt"` (no dot — Rust) | `".txt"` (with dot — Node) |
 | Return types | `Path`/`PathBuf` UserData or strings | Plain strings |
-| Mutation | `PathBuf` methods mutate in-place | Stateless, return new strings |
-| Chaining | `p:join("a"):join("b"):with_extension("rs")` | Nest calls or intermediate variables |
-| Null-safety | `:parent()` returns `nil` on root | `dirname("/")` returns `"/"` |
+| Mutation | `PathBuf` mutates in-place | Stateless, new strings |
+| Chaining | `p:join("a"):join("b"):with_extension("rs")` | Nest calls or intermediates |
+| Null-safety | `:parent()` → `nil` on root | `dirname("/")` → `"/"` |
 
 ### Error semantics
 
-Errors follow the `"module.function: <detail>"` convention:
+Format: `"module.function: <detail>"`.
 
 ```
 "path.strip_prefix: prefix not found"
@@ -196,20 +194,18 @@ Errors follow the `"module.function: <detail>"` convention:
 "path: non-UTF-8 path component"
 ```
 
-The table below specifies error behaviour per function. Functions not listed are infallible for any string input (including empty string).
-
 | Function | Condition | Behaviour |
 |---|---|---|
-| `Path:strip_prefix(prefix)` | Prefix does not match | `error("path.strip_prefix: prefix not found")` — programmer error, not recoverable |
-| `path.resolve(p)` | `current_dir()` syscall fails | `error("path.resolve: current_dir unavailable: <reason>")` |
-| Any function | Non-UTF-8 bytes in path | `error("path: non-UTF-8 path component")` |
-| `PathBuf:push("")` | Empty string component | Silently appends nothing — Rust's `PathBuf::push("")` is a no-op |
-| `path.Path.new("")` | Empty string | Constructs a valid empty path — equivalent to Rust's `Path::new("")` |
-| `path.PathBuf.new()` | (zero args) | Constructs a valid empty mutable path — equivalent to Rust's `PathBuf::new()` |
+| `Path:strip_prefix(prefix)` | Prefix mismatch | `error("path.strip_prefix: prefix not found")` — programmer error |
+| `path.resolve(p)` | `current_dir()` fails | `error("path.resolve: current_dir unavailable: <reason>")` |
+| Any function | Non-UTF-8 bytes | `error("path: non-UTF-8 path component")` |
+| `PathBuf:push("")` | Empty string | No-op (matches Rust) |
+| `path.Path.new("")` | Empty string | Valid empty path (matches Rust) |
+| `path.PathBuf.new()` | Zero args | Valid empty mutable path (matches Rust) |
 
-`strip_prefix` errors via `error()` — this is a programmer error, not a recoverable condition, mirroring Rust's `Path::strip_prefix` which returns `Err`. All other path operations are infallible for valid UTF-8 input, including empty strings.
+`strip_prefix` errors via `error()` — programmer error, not recoverable (mirrors Rust `Err`). All other ops infallible for valid UTF-8.
 
-Non-UTF-8 paths: neoc targets UTF-8 throughout. Paths containing non-UTF-8 bytes are reported as an error with the prefix `"path: non-UTF-8 path component"`.
+Non-UTF-8 paths: neoc targets UTF-8 throughout. Non-UTF-8 bytes → `error("path: non-UTF-8 path component")`.
 
 ### Rust implementation sketch
 
@@ -453,65 +449,63 @@ declare path: {
 
 ## Security considerations
 
-`std:path` performs no filesystem access except in `path.resolve` (which reads the CWD via `std::env::current_dir()`). No file is opened, read, written, or stat-ed. The module is safe to grant without filesystem capability.
+`std:path` performs no filesystem access except `path.resolve` (reads CWD via `std::env::current_dir()`). No file opened/read/written/stat-ed. Safe without filesystem capability.
 
-Two points worth documenting:
-
-1. **Path traversal.** Consumers of `Path:join()` or `path.join()` must validate that the resulting path stays within an intended root before passing it to `std:fs`. This module provides `Path:starts_with()` and `Path:strip_prefix()` specifically for that validation. The absence of canonicalization in `std:path` is intentional: lexical operations cannot resolve symlinks, so they cannot be relied upon for security boundaries that involve symlinks. Use `std:fs.canonicalize()` (a future API) when symlink resolution is required.
-2. **Capability gating.** If neoc adopts a `--allow-fs` or `--allow-path` capability model, `std:path` in its current scope (lexical only) does not require it. `path.resolve` uses `current_dir()` which is part of `std:env`'s capability scope. If `std:env` becomes capability-gated, `path.resolve` inherits that gate.
+1. **Path traversal.** `Path:join()`/`path.join()` consumers must validate results stay within intended root before passing to `std:fs`. Module provides `Path:starts_with()` and `Path:strip_prefix()` for that. Lexical ops cannot resolve symlinks → cannot enforce security boundaries involving symlinks. Use `std:fs.canonicalize()` (future) when symlink resolution required.
+2. **Capability gating.** `std:path` (lexical-only) needs no `--allow-fs`/`--allow-path`. `path.resolve` uses `current_dir()` → inherits `std:env` capability scope if gated.
 
 ## Drawbacks
 
-- **Dual surface doubles the documentation surface.** Two distinct conventions for the same operations (extension with/without dot, UserData vs. string returns) require clear documentation to avoid confusion. Mitigated by the explicit table in the design section and consistent naming (`Path:extension` vs `path.extname`).
-- **UserData methods cannot use Rust's Deref coercion.** `PathBuf` inherits `Path`'s read methods by duplication in the UserData implementation, not through Rust's `Deref<Target = Path>`. This is a maintenance burden — any change to a `Path` method must be mirrored on `PathBuf`. Mitigated by extracting a shared `register_path_read_methods` helper.
-- **Lexical-only `path.normalize` cannot resolve `..` past unknown symlinks.** Authors who need symlink-aware normalization must use `std:fs.canonicalize()`. This is documented.
-- **Case-sensitive comparison on all platforms.** Windows paths are case-insensitive in practice, but neoc's `Path.__eq` is case-sensitive, matching Rust's `PartialEq for Path`. Authors on Windows may observe surprising equality failures. This is consistent with the Rust mirror precedent and avoids platform-specific complexity in the Lua layer.
+- **Dual surface doubles docs.** Two conventions (extension with/without dot, UserData vs string) require clear documentation. Mitigated by explicit table + consistent naming (`Path:extension` vs `path.extname`).
+- **No Deref coercion in mlua.** `PathBuf` inherits `Path` read methods by duplication. Maintenance burden mitigated by shared `register_path_read_methods` helper.
+- **Lexical-only normalize cannot resolve symlinks.** Authors needing symlink-aware normalisation → `std:fs.canonicalize()`. Documented.
+- **Case-sensitive comparison on all platforms.** Windows paths case-insensitive in practice, but `Path.__eq` is case-sensitive (matches Rust). Consistent with Rust-mirror precedent; avoids platform-specific complexity.
 
 ## Alternatives
 
 ### Strings only (Node/Go approach)
 
-Rejected. `std:path` in a Rust-mirror runtime should expose Rust's type model. The `Path`/`PathBuf` distinction provides type-level guarantees that string-only approaches cannot. The flat functions are included as ergonomic sugar, not as the primary surface.
+Rejected. Rust-mirror runtime should expose Rust's type model. `Path`/`PathBuf` provides type-level guarantees strings cannot. Flat functions = ergonomic sugar, not primary surface.
 
-### Single mutable type only (Python's `pathlib.Path`)
+### Single mutable type (Python `pathlib.Path`)
 
-Rejected. The immutability distinction is explicitly confirmed by Jonathan as useful even without borrow semantics. A function that takes a `Path` signals it will not modify the path; a function that takes a `PathBuf` may. This is expressible in Luau type definitions and meaningful at the call site.
+Rejected. Immutability distinction confirmed useful without borrow semantics. `Path` receiver signals no mutation; `PathBuf` may. Expressible in Luau types, meaningful at call site.
 
-### Single flat surface with no UserData types
+### Single flat surface, no UserData
 
-Rejected. Flat string functions cannot be chained without intermediate variables. `p:join("a"):join("b"):with_extension("rs")` is more readable than `path.with_extension(path.join(path.join(p, "a"), "b"), "rs")`. The UserData surface is worth the complexity.
+Rejected. Cannot chain without intermediates. `p:join("a"):join("b"):with_extension("rs")` beats nested calls. Worth the complexity.
 
 ### Include `canonicalize` in `std:path`
 
-Rejected. `canonicalize` requires filesystem access — it must resolve symlinks and verify that intermediate directories exist. `std:path` is deliberately lexical-only. `canonicalize` belongs in `std:fs`, where filesystem capability is already implied.
+Rejected. Requires filesystem access (symlinks, directory existence). `std:path` deliberately lexical-only. Belongs in `std:fs`.
 
-### Expose `path.sep` as a function rather than a constant
+### `path.sep` as function
 
-Rejected. `path.sep` is a compile-time constant. Exposing it as a function would imply it might change at runtime, which it cannot. Every other runtime (Node, Deno, Python) exposes the separator as a constant.
+Rejected. Compile-time constant. Function implies runtime variability. Every other runtime exposes as constant.
 
-### Follow Lune's approach (no path module, raw strings)
+### Lune approach (no path module)
 
-Rejected. Lune's absence of a path module is a known gap that forces authors to manipulate separators manually. neoc targets professional-grade scripting use-cases where cross-platform correctness is not optional.
+Rejected. Known gap forcing manual separator manipulation. neoc targets professional-grade scripting; cross-platform correctness not optional.
 
 ## Open questions
 
-1. **`lexical_normalize` implementation.** No Rust standard library function performs lexical path normalization without filesystem access (only `canonicalize` exists, which requires filesystem). The implementation should use the `path-clean` crate or an equivalent in-tree implementation. If the team prefers no additional crates in `std:*`, an in-tree implementation is straightforward (~50 lines). Decision needed before the implementation PR.
+1. **`lexical_normalize` implementation.** No Rust stdlib function does lexical normalize without filesystem (only `canonicalize`). Use `path-clean` crate or in-tree (~50 lines). Decision needed before implementation PR.
 
-2. **`path.join` variadic signature.** In Rust, `PathBuf::push` appends one component at a time; Node's `path.join` accepts variadic string arguments. The flat `path.join` follows Node. The `PathBuf:push` method follows Rust (single argument). This asymmetry is intentional but should be confirmed before landing.
+2. **`path.join` variadic signature.** Flat `path.join` → variadic (Node). `PathBuf:push` → single arg (Rust). Asymmetry intentional; confirm before landing.
 
-3. **`path.relative` edge cases.** What does `path.relative` return when `from` and `to` are on different Windows drive letters? Go returns an error; Node returns the absolute `to` path. neoc should decide which behaviour to adopt. Recommendation: return the absolute `to` path (Node behaviour), as it is always valid even if not a relative path.
+3. **`path.relative` cross-drive edge case.** Different Windows drive letters: Go errors; Node returns absolute `to`. Recommendation: Node behaviour (always valid).
 
-4. **Cross-type method calls.** Should `Path:join` accept a `PathBuf` argument in addition to a plain string? Currently specified as string-only. Accepting `PathBuf` would require the Rust implementation to accept a `mlua::AnyUserData` and downcast. Decision deferred to implementation.
+4. **Cross-type method calls.** Should `Path:join` accept `PathBuf` arg? Currently string-only. Accepting `PathBuf` requires `AnyUserData` + downcast. Deferred to implementation.
 
-5. **`PathBuf` equality with `Path`.** The `__eq` metamethod on `PathBuf` must compare equal to a `Path` with the same string representation. mlua's `__eq` is only invoked when both operands are the same UserData type. Cross-type equality may require a workaround (e.g., both implement `__tostring` and equality falls back to string comparison). This needs to be resolved in the implementation. Until resolved, cross-type equality is unspecified behaviour — do not depend on it.
+5. **`PathBuf` equality with `Path`.** mlua `__eq` only fires for same UserData type. Cross-type may need workaround (e.g. `__tostring` fallback). Unspecified until resolved — do not depend on it.
 
 ## Implementation notes
 
-- **Files:** `src/lua/std/path.rs` (module), registered in `src/lua/std/mod.rs` alphabetically.
-- **Shared read-method helper:** Extract a `fn register_path_read_methods<T: UserData + AsRef<StdPath>>(methods: &mut UserDataMethods<T>)` to avoid duplicating `Path` methods on `PathBuf`.
-- **Lexical normalize:** If no in-tree implementation, add `path-clean = "1"` (or equivalent) to `Cargo.toml` under a `[dependencies]` block. Document the decision in the PR.
-- **`path.resolve` CWD dependency:** `path.resolve` calls `std::env::current_dir()` internally. If `current_dir()` fails (deleted working directory), surface the error via `error()` with the prefix `"path.resolve: current_dir unavailable: <reason>"`.
-- **Tests:** `tests/std/path.test.luau` — cover all acceptance criteria. Separator-sensitive assertions should be conditional on `require("std:env").os`. Include test cases for: `path.basename("/")`, `path.extname(".gitignore")`, `path.normalize("/../foo")`, and all functions called with empty string `""`.
-- **`.d.luau` stub:** `types/std/path.d.luau` — required per M1 Definition of Done. The `PathBuf = Path & { ... }` intersection type accurately models the inheritance relationship.
-- **Criterion bench:** gated behind `bench` feature — include at minimum `join` (10-segment path) and `normalize` (path with multiple `..` components).
-- **Sequencing:** `std:path` has no dependency on `std:fs` or `std:env` at the module level. `path.resolve` calls `std::env::current_dir()` directly (Rust stdlib, not neoc's `std:env`). The module can be picked up and landed independently. It does not block and is not blocked by any other open issue.
+- **Files:** `src/lua/std/path.rs`, registered in `src/lua/std/mod.rs` alphabetically.
+- **Shared helper:** `fn register_path_read_methods<T: UserData + AsRef<StdPath>>(methods: &mut UserDataMethods<T>)` — avoid duplicating `Path` methods on `PathBuf`.
+- **Lexical normalize:** `path-clean = "1"` or in-tree. Document in PR.
+- **`path.resolve` CWD:** calls `std::env::current_dir()`. Failure → `error("path.resolve: current_dir unavailable: <reason>")`.
+- **Tests:** `tests/std/path.test.luau` — all acceptance criteria. Separator-sensitive assertions conditional on `require("std:env").os`. Cover: `path.basename("/")`, `path.extname(".gitignore")`, `path.normalize("/../foo")`, all functions with `""`.
+- **`.d.luau` stub:** `types/std/path.d.luau` — required per M1 DoD. `PathBuf = Path & { ... }` models inheritance.
+- **Bench:** Criterion, `bench` feature. Minimum: `join` (10 segments), `normalize` (multiple `..`).
+- **Sequencing:** No dependency on `std:fs` or `std:env` at module level. `path.resolve` calls Rust stdlib `current_dir()` directly. Lands independently; no blockers.

@@ -1,8 +1,8 @@
-# `std:collections` module
+# `std:collections`
 
 **Experimental**
 
-The **`std:collections`** module exposes concurrent and shareable collection types — `map`, `counter`, and `mutex`.
+Concurrent, shareable collection types — `map`, `counter`, `mutex`.
 
 | Property | Value |
 |---|---|
@@ -21,10 +21,9 @@ local collections = require("std:collections")
 ## Description
 
 > [!WARNING]
-> This reference page is a **stub**. The full Lua surface is captured in the module source listed above and exercised by the test file — until this page is fleshed out, those are the contract.
+> **Stub.** Full surface in module source; contract exercised by test file.
 
 ## See also
 
-- [The module system](/guides/module-system) — How `require("std:collections")` resolves.
-- [The sandboxing model](/guides/sandboxing-model) — How `std:*` modules fit into the engine.
-- [`std:*`](/std/) — Other modules in this namespace.
+- [The module system](/guides/module-system)
+- [`std:*`](/std/)

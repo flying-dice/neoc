@@ -7,17 +7,17 @@ implemented-in:
 # 0002 — `lib:mime` — extension-to-MIME mapping via `mime_guess`, extension preference layer
 
 > [!WARNING]
-> This RFC is `draft`. It is under refinement and is **not** the contract.
+> This RFC is `draft`. Under refinement — **not** the contract.
 
 ## Summary
 
-Add a `lib:mime` module that maps file extensions to MIME types and back, backed by the `mime_guess = "2"` crate. Extension-only detection; magic-byte detection is explicitly out of scope. A three-level preference resolution (user → runtime → crate) handles canonical tie-breaking for `to_extension`.
+`lib:mime` maps file extensions to MIME types and back via `mime_guess = "2"`. Extension-only; magic-byte detection out of scope. Three-level preference resolution (user → runtime → crate) handles canonical tie-breaking for `to_extension`.
 
 ## Motivation
 
-`neoc` scripts that serve files or process uploads need to map file extensions to MIME types and back. The need surfaced directly from `lib:http`'s static-file serving path and any future upload handler: you receive a filename and need to set `Content-Type`; you receive a `Content-Type` header and need to write a file.
+Scripts serving files or processing uploads need extension↔MIME mapping. Surfaced from `lib:http` static-file serving and future upload handlers: filename → `Content-Type`; `Content-Type` → file extension.
 
-Without a dedicated module, scripts must either hard-code MIME mappings or pull in a vendored crate directly — both are fragile and inconsistent with the curated module surface `neoc` provides.
+Without this module: hard-coded mappings or direct vendored crate usage — fragile, inconsistent with curated module surface.
 
 Originating issue: [flying-dice/neoc#33](https://github.com/flying-dice/neoc/issues/33)
 
@@ -25,37 +25,33 @@ Originating issue: [flying-dice/neoc#33](https://github.com/flying-dice/neoc/iss
 
 ### Detection strategy: extension-only
 
-Peer runtimes land in two camps:
-
-| Runtime | Detection strategy |
+| Runtime | Strategy |
 |---|---|
-| Deno `@std/media-types` | Extension-only. Backed by a large hand-maintained database derived from the IANA registry and Apache's `mime.types`. |
+| Deno `@std/media-types` | Extension-only. IANA + Apache `mime.types` database. |
 | Bun built-in | Extension-only for `Bun.file().type`. |
-| Go `mime` (stdlib) | Extension-only. System MIME database on Unix; registry on Windows. |
-| Python `mimetypes` | Extension-only with an optional database. |
-| Node (no stdlib module) | npm `mime` is extension-only; `file-type` does magic-byte detection and is separate. |
-| Rust `infer` crate | Magic bytes only. |
-| Rust `tree_magic_mini` | Magic bytes, MIME hierarchy. |
-| Rust `mime_guess` | Extension-only. IANA + Apache database, compiled in. |
+| Go `mime` (stdlib) | Extension-only. System MIME DB (Unix) / registry (Windows). |
+| Python `mimetypes` | Extension-only + optional database. |
+| Node (no stdlib) | npm `mime` extension-only; `file-type` magic-bytes separate. |
+| Rust `infer` | Magic bytes only. |
+| Rust `tree_magic_mini` | Magic bytes + MIME hierarchy. |
+| Rust `mime_guess` | Extension-only. IANA + Apache, compiled in. |
 
-Magic-byte detection requires reading file content, which means I/O — you cannot detect a type from a filename alone. Every runtime that must work on a filename or extension without reading the file uses extension-only detection. Magic-byte detection is a separate capability with different I/O implications.
-
-`lib:mime`'s declared purpose (map extensions to MIME types and vice versa, detect from filename) is satisfied entirely by extension-based detection. Magic-byte detection belongs to a future module (e.g. `lib:magic` or as an option on a file-reading module) when a concrete use case requires it.
+Magic-byte detection requires file I/O → cannot detect from filename alone. All runtimes working on filenames use extension-only. Magic-byte detection is a separate concern with different I/O implications → future module (`lib:magic` or file-reading option) when needed.
 
 ### Backing crate: `mime_guess`
 
-| Crate | Strategy | Compile-time DB | MIME→extension | Notes |
+| Crate | Strategy | Compile-time DB | MIME→ext | Notes |
 |---|---|---|---|---|
 | `mime_guess` | Extension | Yes (IANA + Apache) | Yes | Zero I/O, no system deps, WASM-compatible |
 | `mime` | Parsing only | — | No | Types only; no lookup DB |
 | `infer` | Magic bytes | No | No | Requires file content |
 | `tree_magic_mini` | Magic bytes | No | No | Requires file content; system DB optional |
 
-`mime_guess` is the only crate in the Rust ecosystem that is extension-based, has a compiled-in database, and supports both directions (extension→MIME and MIME→extension). It has no system dependencies, is WASM-compatible, and its database tracks the IANA registry and Apache `mime.types` — the same sources Deno and Go use.
+Only Rust crate that is extension-based + compiled-in DB + bidirectional. No system deps, WASM-compatible, tracks IANA + Apache — same sources as Deno and Go.
 
 ### API surface
 
-Three functions, all synchronous, all following the `(value, err)` tuple convention ([ADR 0005](/adrs/0005-tuple-error-convention)):
+Three synchronous functions, `(value, err)` tuple convention ([ADR 0005](/adrs/0005-tuple-error-convention)):
 
 ```lua
 local mime = require("lib:mime")
@@ -75,33 +71,33 @@ local ext, err = mime.to_extension("text/html", { ["text/html"] = ".htm" })  -->
 local mt, err = mime.detect("archive.tar.gz")  --> "application/gzip", nil
 ```
 
-Unknown extensions and unparseable MIME strings are recoverable failures returned in the `err` slot; passing the wrong type is a programming error and raises.
+Unknown extensions / unparseable MIME strings → recoverable `err`. Wrong type → raises (programming error).
 
 ### Extension preference resolution (`to_extension`)
 
-`mime_guess` resolves MIME→extension by returning the alphabetically first entry from its database. This produces unnatural extensions in common cases: `image/jpeg` → `.jfif` rather than `.jpg`; `text/html` → `.htm` rather than `.html`. Every peer runtime resolves this with a curated preference list.
+`mime_guess` returns alphabetically-first extension → unnatural results: `image/jpeg` → `.jfif` not `.jpg`; `text/html` → `.htm` not `.html`. All peer runtimes curate a preference list.
 
-`to_extension` applies a three-level resolution:
+Three-level resolution:
 
-1. **User preference table** (optional second argument) — a plain Lua table, `{ ["mime/type"] = ".ext" }`. Takes precedence over everything.
-2. **Runtime preference table** — a static list compiled into the module for types where `mime_guess`'s alphabetical-first entry is not the canonical expectation (`.html` not `.htm`, `.jpg` not `.jfif`, `.js` not `.es`, etc.).
-3. **`mime_guess` fallback** — alphabetical-first extension from the compiled-in database.
+1. **User preference table** (optional arg) — `{ ["mime/type"] = ".ext" }`. Highest precedence.
+2. **Runtime preference table** — static compiled-in overrides where `mime_guess` default is non-canonical (`.html` not `.htm`, `.jpg` not `.jfif`, `.js` not `.es`).
+3. **`mime_guess` fallback** — alphabetical-first from compiled DB.
 
 ### Async posture
 
-`lib:mime` is synchronous throughout. MIME detection from a filename requires no I/O and never yields. This is consistent with ADR 0006's hidden-async policy: a module that does no async work does not expose async functions.
+Synchronous throughout. No I/O, never yields. Consistent with ADR 0006 hidden-async policy.
 
 ## Drawbacks
 
-- Magic-byte detection — reading the first N bytes of a file to identify its type — is not covered by this module. A script that must identify a binary whose extension is missing or misleading cannot use `lib:mime` for that purpose. This is an intentional scope boundary, but it means a second module will be needed when that use case arises.
-- The runtime preference list is a compile-time constant. Adding entries requires a code change and a release, not a runtime configuration update.
+- No magic-byte detection. Missing/misleading extensions require a second module when that use case arises. Intentional scope boundary.
+- Runtime preference list is compile-time constant → new entries require code change + release.
 
 ## Alternatives
 
-- **Do nothing.** Scripts hard-code MIME mappings or use `vnd:mime_guess` directly. Inconsistent, duplicated, no canonical preference layer.
-- **Hard-coded module defaults only** — simple, no API surface. Inflexible: a caller wanting `.htm` for legacy reasons has no path.
-- **External database file** — configurable at runtime, like Go's system MIME database. Higher flexibility, external dependency, not appropriate for a runtime that compiles everything in.
-- **Include magic-byte detection** — broadens scope, introduces I/O, mixes two distinct concerns. Every peer runtime treats these as separate modules.
+- **Do nothing** — scripts hard-code or use `vnd:mime_guess` directly. Inconsistent, duplicated, no preference layer.
+- **Hard-coded defaults only** — inflexible; no path for callers wanting `.htm` for legacy reasons.
+- **External database file** — runtime-configurable like Go's system MIME DB. External dependency, inappropriate for compile-everything-in runtime.
+- **Include magic-byte detection** — broadens scope, introduces I/O, mixes concerns. All peer runtimes treat these as separate.
 
 ## Open questions
 
@@ -110,7 +106,7 @@ _None._
 ## Implementation notes
 
 - Add `mime_guess = "2"` to `Cargo.toml`.
-- Create `src/lua/lib/mime.rs` with the standard `pub fn module(lua: &Lua) -> mlua::Result<Table>` entry point.
+- Create `src/lua/lib/mime.rs` with `pub fn module(lua: &Lua) -> mlua::Result<Table>`.
 - Register in `src/lua/lib/mod.rs`.
-- The runtime preference table is a `phf::Map` or a `match` block — whichever is clearer at implementation time.
-- `lib:http` and any future upload handler can depend on `lib:mime` for `Content-Type` resolution without taking on additional dependencies.
+- Runtime preference table: `phf::Map` or `match` block — whichever clearer at implementation time.
+- `lib:http` and future upload handlers depend on `lib:mime` for `Content-Type` resolution without additional deps.

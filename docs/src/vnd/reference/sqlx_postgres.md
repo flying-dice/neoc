@@ -1,14 +1,14 @@
-# `vnd:sqlx_postgres` module
+# `vnd:sqlx_postgres`
 
 **Experimental**
 
-The **`vnd:sqlx_postgres`** module exposes the PostgreSQL driver from the [`sqlx`](https://crates.io/crates/sqlx) async SQL toolkit.
+PostgreSQL driver from [`sqlx`](https://crates.io/crates/sqlx).
 
 | Property | Value |
 |---|---|
 | Namespace | `vnd` |
 | Source | [`src/lua/vnd/sqlx_postgres.rs`](https://github.com/flying-dice/neoc/blob/main/src/lua/vnd/sqlx_postgres.rs) |
-| Tests | Not in CI (requires Docker / containers) |
+| Tests | Not in CI (requires Docker) |
 | Stability | Experimental |
 | Mirror | [`sqlx`](https://docs.rs/sqlx/) (`postgres` feature) |
 
@@ -21,10 +21,9 @@ local sqlx_postgres = require("vnd:sqlx_postgres")
 ## Description
 
 > [!WARNING]
-> This reference page is a **stub**. The full Lua surface is captured in the module source listed above and exercised by the test file — until this page is fleshed out, those are the contract.
+> **Stub.** Full surface in module source; contract exercised by test file.
 
 ## See also
 
-- [The module system](/guides/module-system) — How `require("vnd:sqlx_postgres")` resolves.
-- [The sandboxing model](/guides/sandboxing-model) — How `vnd:*` modules fit into the engine.
-- [`vnd:*`](/vnd/) — Other modules in this namespace.
+- [The module system](/guides/module-system)
+- [`vnd:*`](/vnd/)

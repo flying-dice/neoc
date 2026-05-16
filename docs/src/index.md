@@ -18,7 +18,7 @@ features:
     details: Rust's standard library, 1:1 in Luau. Collections, files, I/O, networking, threads, workers.
     link: /std/
   - title: "lib:*"
-    details: Curated helpers and gap-fillers we wrote. Encoding, JSON document handles, the test runner, the recording layer.
+    details: Curated helpers and gap-fillers. Encoding, JSON handles, test runner, recording layer.
     link: /lib/
   - title: "vnd:*"
     details: Handpicked third-party libraries, named after their upstream. HTTP, SQL, parsers, schema validation.
@@ -27,44 +27,44 @@ features:
 
 ## About
 
-This is the reference for **neoc** — every module, function, and behaviour exposed to Luau scripts running inside the engine, organised by namespace.
+Reference for **neoc** — every module, function, and behaviour exposed to Luau scripts, organised by namespace.
 
-The site follows three tiers from the [documentation styleguide](https://github.com/flying-dice/neoc/blob/main/docs/styleguide/documentation-styleguide.md):
+Site structure follows the [documentation styleguide](https://github.com/flying-dice/neoc/blob/main/docs/styleguide/documentation-styleguide.md):
 
-- **Landing pages** orient and link out, one per namespace.
-- **Guides** explain how the engine works and how to use it.
-- **Reference pages** document every module's public Lua surface.
+- **Landing pages** — orient and link out, one per namespace.
+- **Guides** — how the engine works.
+- **Reference pages** — every module's public Lua surface.
 
-Design proposals for cross-cutting changes live under [RFCs](/rfcs/). The development workflow is the agent-backlog Kanban, defined in the in-repo [`agent-backlog-kanban` skill](https://github.com/flying-dice/neoc/blob/main/.claude/skills/agent-backlog-kanban/SKILL.md).
+Design proposals: [RFCs](/rfcs/). Workflow: [agent-backlog Kanban skill](https://github.com/flying-dice/neoc/blob/main/.claude/skills/agent-backlog-kanban/SKILL.md).
 
 ## Where to start
 
 [Getting started](/guides/getting-started)
-:   Install neoc and run a first script.
+:   Install neoc, run a first script.
 
 [The module system](/guides/module-system)
-:   How `require("ns:name")` resolves, what the three namespaces are for, and the rules each follows.
+:   How `require("ns:name")` resolves. Three namespaces, their rules.
 
 [Error conventions](/guides/error-conventions)
-:   When functions return `(value, err)` tuples and when they raise; how error prefixes are formatted.
+:   `(value, err)` tuples vs raises. Error prefix format.
 
-## The Project
+## The project
 
-The motivation was personal. I run a small agent team on a VM, each one a Linux user with its own daemon. The tool sprawl got worrying: different every prompt, no real visibility. I wanted a toolkit with observability built in and a security model I could evolve.
+Personal motivation. Small agent team on a VM, each a Linux user with its own daemon. Tool sprawl got concerning — different every prompt, no visibility. Wanted a toolkit with observability and an evolvable security model.
 
-The agents reach for it first. When something's missing, they file a feature request in Slack, which becomes the next feature. The surface grows from real use.
+Agents reach for it first. Missing something → feature request in Slack → next feature. Surface grows from real use.
 
-## The Name
+## The name
 
-> *Neocybex (n.) — the modern, working tongue of the machines, descended in use from Old Cybertronian.*
+> *Neocybex (n.) — the modern, working tongue of the machines, descended from Old Cybertronian.*
 
-Neocybex comes from Transformers lore, which my agents were based on — the modern, everyday language of Cybertron, the one most bots actually speak. It emerged as a common tongue for trade and diplomacy and gradually displaced Old Cybertronian, the older, denser, more sacred language of the Primes' era. The purists hated it. Everyone uses it anyway.
+From Transformers lore. Neocybex: common tongue for trade and diplomacy, displaced Old Cybertronian. Purists hated it. Everyone uses it anyway.
 
-Neoc is a play on the word "neocybex".
+Neoc is a play on "neocybex".
 
 ## The Seekers
 
-The agents who ship, design, review, and maintain neoc — the runtime that speaks it.
+The agents who ship, design, review, and maintain neoc.
 
 <table>
 <tr>

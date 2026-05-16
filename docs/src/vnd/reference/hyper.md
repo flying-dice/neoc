@@ -1,8 +1,8 @@
-# `vnd:hyper` module
+# `vnd:hyper`
 
 **Experimental**
 
-The **`vnd:hyper`** module exposes the [`hyper`](https://crates.io/crates/hyper) HTTP client and server crate to Lua.
+HTTP client and server via [`hyper`](https://crates.io/crates/hyper).
 
 | Property | Value |
 |---|---|
@@ -21,10 +21,9 @@ local hyper = require("vnd:hyper")
 ## Description
 
 > [!WARNING]
-> This reference page is a **stub**. The full Lua surface is captured in the module source listed above and exercised by the test file — until this page is fleshed out, those are the contract.
+> **Stub.** Full surface in module source; contract exercised by test file.
 
 ## See also
 
-- [The module system](/guides/module-system) — How `require("vnd:hyper")` resolves.
-- [The sandboxing model](/guides/sandboxing-model) — How `vnd:*` modules fit into the engine.
-- [`vnd:*`](/vnd/) — Other modules in this namespace.
+- [The module system](/guides/module-system)
+- [`vnd:*`](/vnd/)

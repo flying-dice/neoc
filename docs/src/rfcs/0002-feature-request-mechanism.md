@@ -7,49 +7,47 @@ implemented-in:
 # 0002 — Built-in feature request mechanism for LLM callers
 
 > [!WARNING]
-> This RFC is `draft`. It is under refinement and is **not** the contract.
+> This RFC is `draft`. Under refinement — **not** the contract.
 
 ## Summary
 
-Add a first-class channel through which an executing script can emit a structured capability gap report — a **feature request** — that survives the process and is observable by the caller. The mechanism is a `std:feedback` module exposing a single `request(t)` function; the runtime collects these into a newline-delimited JSON file at `~/.neoc/feature-requests.jsonl` (overridable via environment variable). A companion CLI flag `--feature-request` bypasses script execution entirely for one-liner requests. Neither variant requires network access, external services, or elevated permissions.
+First-class channel for scripts to emit structured capability gap reports. `std:feedback` module exposes `request(t)` → appends JSONL to `~/.neoc/feature-requests.jsonl` (overridable via `NEOC_FEEDBACK_SINK`). Companion CLI flag `--feature-request` bypasses script execution for one-liner requests. No network, no services, no elevated permissions.
 
 ## Motivation
 
-When an LLM agent uses `neoc path/to/script.luau` as its sole tool and hits a capability gap, it currently has two options: work around the gap silently (reaching for `bash`, `curl`, or Python) or fail. Both outcomes are invisible to the maintainers of the runtime. The actual demand signal for which modules to build next comes from guesswork or from watching what agents reach for on the other side of the process boundary.
+Agent hits capability gap → two options today: silent workaround (bash/curl/Python) or fail. Both invisible to runtime maintainers. Demand signal for next modules = guesswork.
 
-This RFC proposes closing that loop. Every time an agent identifies a missing capability, it can record that identification as a structured artefact attached to the `neoc` invocation. The artefact persists locally. The maintainers can inspect the log, count frequencies, and build the highest-demand modules first. The backlog writes itself from real usage.
+This RFC closes the loop. Agent records structured gap artefact → persists locally → maintainers inspect, count frequencies, build highest-demand modules first. Backlog writes itself from real usage.
 
-The three concrete scenarios that are currently awkward or impossible:
+Scenarios currently awkward/impossible:
 
-1. **Require falls through.** An agent calls `require("lib:regex")`, catches the error, implements a workaround using Lua patterns, and moves on. The missing module is never recorded.
-2. **Capability exists but is insufficient.** An agent calls `std:fs.read_to_string`, discovers there is no streaming API for large files, falls back to shell piping. No signal is generated.
-3. **Caller-side harness.** A developer driving a fleet of agents wants a structured daily report of "what did the agents need that neoc didn't have?" There is currently no artefact to aggregate.
+1. **Require falls through.** Agent calls `require("lib:regex")`, catches error, implements workaround via Lua patterns. Missing module never recorded.
+2. **Insufficient capability.** Agent calls `std:fs.read_to_string`, discovers no streaming API for large files, falls back to shell piping. No signal generated.
+3. **Fleet aggregation.** Developer driving agent fleet wants structured daily report of gaps. No artefact to aggregate.
 
 ### Peer runtime survey
 
-Before proposing anything, it is worth checking whether this pattern already exists in runtimes agents use today and how they handle it.
+**Node.js / npm.** No built-in mechanism. Gaps discovered via issue trackers; detection entirely out-of-band.
 
-**Node.js / npm.** No built-in mechanism. Missing APIs are discovered through community issue trackers; detection is entirely out-of-band. The feedback channel is the public internet.
+**Deno.** No built-in mechanism. `--allow-*` flags surface capability boundaries but are security gates, not feedback channels. Denied permissions produce structured errors naming the resource — but no first-class path to record "needed X, denied" beyond manual file writes.
 
-**Deno.** No built-in mechanism either. Deno does provide `--allow-*` permission flags that surface capability boundaries explicitly, but those are security gates, not feedback channels. When a permission is denied, the error is structured and names the resource — the agent can detect the denial at runtime — but there is no first-class path to record "I needed this, I was denied" beyond catching the error and writing to a file manually.
+**Bun.** Same as Node. `Bun.shell` makes host shell escape trivial — precisely the silent workaround problem addressed here.
 
-**Bun.** Same picture as Node. No built-in capability gap reporting. The shell integration (`Bun.shell`) makes it trivial to reach for the host shell as an escape hatch, which is precisely the silent workaround problem this RFC addresses.
+**Lua 5.4 / PUC Lua.** No equivalent. Gap-filling left to LuaRocks. Missing modules surface as `require` errors; observation is caller's problem.
 
-**Lua 5.4 / PUC Lua.** No equivalent concept. The standard library is intentionally minimal; gap-filling is left to LuaRocks. Missing modules surface as `require` errors; whether those errors are observed is entirely up to the caller.
+**Luau (Roblox).** Security-focused capability model, not feedback-focused. Internal feature request forum exists but nothing accessible from running scripts.
 
-**Luau (Roblox).** Luau's `getfenv`/`setfenv` removal and its capability model are security-focused, not feedback-focused. The Roblox platform has an internal feature request forum, but nothing accessible from a running script.
-
-**Conclusion.** No peer runtime has a built-in, structured, local-first capability gap reporting mechanism. This feature has no direct model to mirror (design principle 3 — "mirror Rust first" — does not apply here because there is nothing to mirror). Principles 1 and 2 therefore drive the design: **no surprises** (the mechanism should feel like a normal module call) and **no footguns** (the mechanism must not silently lose requests, must not block execution, and must not touch the network without explicit opt-in).
+**Conclusion.** No peer runtime has built-in, structured, local-first capability gap reporting. Nothing to mirror (principle 3 N/A). Principles 1+2 drive design: **no surprises** (feels like normal module call) and **no footguns** (never silently lose requests, never block execution, never touch network without opt-in).
 
 ### Why not a global hook on `require` failure?
 
-Automatic detection on `require` failure would capture the most common gap — a missing module — without requiring the agent to write any extra code. It is rejected here for three reasons:
+Rejected for three reasons:
 
-1. **Not all `require` failures are capability gaps.** An agent doing `pcall(require, "lib:json")` to probe for an optional dependency is a normal pattern; recording that probe as a feature request generates noise that erodes the signal.
-2. **The reason matters more than the event.** A structured request carries `operation`, `reason`, and `fallback` — context that makes the request actionable. A hook on `require` captures none of that.
-3. **Opt-in is the right default for a feedback mechanism.** An agent that never calls `std:feedback.request` generates no requests. That silence is meaningful: it means the agent found everything it needed, or it chose not to report what it didn't.
+1. **Not all failures are gaps.** `pcall(require, "lib:json")` probing optional dependency = normal pattern; recording as request → noise erodes signal.
+2. **Reason matters more than event.** Structured request carries `operation`, `reason`, `fallback` — actionable context. Hook captures none.
+3. **Opt-in is correct default.** No calls → no requests. Silence = agent found everything needed or chose not to report.
 
-The automatic hook is available as a future opt-in (see [Open questions](#open-questions)).
+Automatic hook available as future opt-in (see [Open questions](#open-questions)).
 
 ## Detailed design
 
@@ -70,11 +68,11 @@ local ok, err = feedback.request({
 -- Returns (nil, error_string) if the write fails (disk full, permissions, etc.).
 ```
 
-The function is non-blocking. It appends one line to the configured sink and returns immediately. A write failure is surfaced as a `(nil, err)` return — consistent with the rest of the `neoc` API — but does **not** raise an error. The agent decides whether a failed feedback write is fatal to its own logic.
+Non-blocking. Appends one line to configured sink, returns immediately. Write failure surfaced as `(nil, err)` — consistent with rest of `neoc` API — does **not** raise error. Agent decides whether failed feedback write is fatal to its logic.
 
 #### Record schema
 
-Each call appends one JSON line to the sink. The schema is stable and additive — future fields may be added but existing fields will not be renamed or removed.
+Each call appends one JSON line. Schema is stable and additive — future fields added, existing fields never renamed/removed.
 
 ```json
 {
@@ -91,43 +89,43 @@ Each call appends one JSON line to the sink. The schema is stable and additive �
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `version` | integer | always | Schema version. Currently `1`. |
-| `ts` | ISO 8601 string | always | UTC timestamp at the moment of the call. |
-| `module` | string | always | The requested capability identifier (e.g. `lib:regex`, `lib:csv`). |
-| `operation` | string | optional | What the caller needed to do with the module. |
-| `reason` | string | optional | Why the built-in alternatives were insufficient. |
-| `fallback` | string | optional | What the caller did instead. |
-| `session` | string | always | A per-process random hex identifier (16 chars / 64-bit), stable for the lifetime of one `neoc` invocation. Groups requests from the same session. |
+| `ts` | ISO 8601 string | always | UTC timestamp at moment of call. |
+| `module` | string | always | Requested capability identifier (e.g. `lib:regex`, `lib:csv`). |
+| `operation` | string | optional | What caller needed to do with the module. |
+| `reason` | string | optional | Why built-in alternatives were insufficient. |
+| `fallback` | string | optional | What caller did instead. |
+| `session` | string | always | Per-process random hex identifier (16 chars / 64-bit), stable for lifetime of one `neoc` invocation. Groups requests from same session. |
 
-The `session` field enables aggregation: ten requests from the same agent run share a `session` id, so a post-processing tool can count distinct sessions per `module` rather than raw request counts.
+`session` enables aggregation: ten requests from same agent run share id → post-processing counts distinct sessions per `module` rather than raw counts.
 
 #### Sink configuration
 
 | Priority | Source | Value |
 |---|---|---|
-| 1 | Env var `NEOC_FEEDBACK_SINK` | Absolute path to the JSONL file |
+| 1 | Env var `NEOC_FEEDBACK_SINK` | Absolute path to JSONL file |
 | 2 | Default | `~/.neoc/feature-requests.jsonl` |
 
-The directory is created on first use if it does not exist. No migration is required — the file is append-only JSONL; new records from newer versions coexist with old records without issue.
+Directory created on first use if absent. No migration — append-only JSONL; new records coexist with old.
 
-To route requests to stdout (for the caller's harness to capture), set `NEOC_FEEDBACK_SINK=/dev/stdout` (Unix) or pipe via a wrapper script on Windows.
+Route to stdout: `NEOC_FEEDBACK_SINK=/dev/stdout` (Unix) or pipe via wrapper on Windows.
 
 ### CLI flag: `--feature-request`
 
-For one-liner requests without a script:
+One-liner requests without a script:
 
 ```bash
 neoc --feature-request "lib:regex: need non-greedy quantifiers for URL extraction from markdown"
 ```
 
-The argument is parsed as `<module-id>: <reason>`. The split key is the two-character sequence `: ` (ASCII `0x3A` followed by ASCII `0x20`); the split occurs at the **first** occurrence. Everything before that sequence is the `module-id`; everything after is the `reason`. Examples: `lib:regex: need non-greedy quantifiers` → module `lib:regex`, reason `need non-greedy quantifiers`. A colon not followed by a space (e.g. as part of a sub-path like `std:fs.read`) is part of the module identifier and does not trigger a split. If no `: ` sequence is present, the entire string is treated as `module` with an empty `reason`. A trailing `: ` with nothing after it produces an empty `reason` string — this is recorded as-is, not treated as an error. All other optional fields are absent. The process exits 0 after recording.
+Parsed as `<module-id>: <reason>`. Split key = `: ` (first occurrence of `0x3A 0x20`). Before = `module-id`; after = `reason`. Colon not followed by space (e.g. `std:fs.read`) does not trigger split. No `: ` present → entire string = `module`, empty `reason`. Trailing `: ` with nothing after → empty `reason` (recorded as-is, not error). All other optional fields absent. Process exits 0 after recording.
 
-This is a convenience path for interactive developer use and for callers that prefer not to embed Lua for a purely administrative action.
+Convenience path for interactive developer use and callers preferring not to embed Lua for administrative actions.
 
 ### Deduplication
 
-Deduplication is intentionally **not** the runtime's job. The runtime appends every call faithfully. Deduplication is a read-time concern, handled by whatever tool processes the JSONL file. This keeps the write path simple, avoids introducing state that must survive crashes, and lets the consumer choose its deduplication key (module + session? module + reason prefix? exact record hash?).
+Intentionally **not** the runtime's job. Runtime appends every call faithfully. Deduplication = read-time concern, handled by consumer. Keeps write path simple, avoids crash-sensitive state, lets consumer choose dedup key (module + session? module + reason prefix? exact hash?).
 
-A reference aggregation script will be included in `scripts/` as part of the implementation PR. It groups by `module`, counts distinct `session` values, and emits a ranked table.
+Reference aggregation script included in `scripts/` with implementation PR — groups by `module`, counts distinct `session` values, emits ranked table.
 
 ### Rust-side layout
 
@@ -140,11 +138,11 @@ src/
   main.rs          -- --feature-request flag handling
 ```
 
-`config.rs` does not currently exist and must be created. It will hold feedback sink path resolution and session id generation. `feedback.rs` is a new module following the standard `pub fn module(lua: &Lua) -> mlua::Result<Table>` convention.
+`config.rs` must be created. Holds feedback sink path resolution + session id generation. `feedback.rs` follows standard `pub fn module(lua: &Lua) -> mlua::Result<Table>` convention.
 
 ### Error semantics
 
-`feedback.request` never panics and never raises a Lua error. All failure modes return `(nil, err_string)`:
+`feedback.request` never panics, never raises Lua error. All failures return `(nil, err_string)`:
 
 | Failure | `err_string` prefix |
 |---|---|
@@ -154,68 +152,66 @@ src/
 
 ### Acceptance criteria
 
-1. With `NEOC_FEEDBACK_SINK` set to a temp path, `require("std:feedback").request({ module = "lib:regex" })` appends exactly one valid JSON line to that path and returns `(true, nil)`.
-2. `require("std:feedback").request({})` returns `(nil, "feedback.request: 'module' must be a non-empty string")` and writes nothing.
-3. A write failure (unwritable path via `NEOC_FEEDBACK_SINK`) returns `(nil, err)` and does not raise a Lua error or terminate the script.
-4. Two calls in the same `neoc` process share the same `session` value. Two calls in separate `neoc` processes have distinct `session` values (guaranteed with high probability: 16-char hex / 64-bit id, birthday bound 50% collision at ~4 billion sessions).
-5. `neoc --feature-request "lib:regex: need X"` exits 0 and appends one record with `module = "lib:regex"` and `reason = "need X"`.
-6. Setting `NEOC_FEEDBACK_SINK=/tmp/test.jsonl` redirects all writes to that path.
-7. All existing tests pass (the module is additive; nothing is removed).
+1. `NEOC_FEEDBACK_SINK` set to temp path → `require("std:feedback").request({ module = "lib:regex" })` appends exactly one valid JSON line, returns `(true, nil)`.
+2. `require("std:feedback").request({})` → returns `(nil, "feedback.request: 'module' must be a non-empty string")`, writes nothing.
+3. Unwritable path via `NEOC_FEEDBACK_SINK` → returns `(nil, err)`, no Lua error raised, script continues.
+4. Two calls same process → same `session`. Two calls separate processes → distinct `session` (64-bit; birthday bound 50% collision at ~4B sessions).
+5. `neoc --feature-request "lib:regex: need X"` → exits 0, appends record with `module = "lib:regex"`, `reason = "need X"`.
+6. `NEOC_FEEDBACK_SINK=/tmp/test.jsonl` → all writes go to that path.
+7. All existing tests pass (module is additive; nothing removed).
 
 ## Drawbacks
 
-- **Surface expansion.** A new module is added to `std:*`. The surface is small — one function — but it is there.
-- **Sink file grows unbounded.** No rotation, no cap. A long-running fleet of agents could produce a large file. Rotation is out of scope here; the caller is responsible for periodic archival. This is the same contract as any append-only log.
-- **Session id is process-scoped, not agent-scoped.** If a supervisor spawns multiple `neoc path/to/script.luau` calls for a single logical agent task, each invocation has its own `session`. Correlating across processes requires caller-side logic (e.g. passing a correlation id in `reason` or via a wrapper). This is a deliberate scope limit — cross-process identity is the caller's problem.
-- **No automatic detection.** The mechanism requires explicit call sites. A script that does not call `feedback.request` generates no signal, even if it silently works around every gap it encounters. This is the correct default (see Motivation), but it means adoption depends on agent authors instrumenting their scripts.
+- **Surface expansion.** New `std:*` module. Small surface (one function) but present.
+- **Unbounded sink.** No rotation, no cap. Long-running fleet → large file. Rotation out of scope; caller responsible for archival. Same contract as any append-only log.
+- **Session = process-scoped, not agent-scoped.** Supervisor spawning multiple `neoc` calls per logical task → each invocation gets own session. Cross-process correlation = caller's problem (pass correlation id in `reason` or via wrapper). Deliberate scope limit.
+- **No automatic detection.** Requires explicit call sites. Script not calling `feedback.request` generates no signal even if it silently works around gaps. Correct default (see Motivation) but adoption depends on agent authors instrumenting scripts.
 
 ## Alternatives
 
 ### Emit to stdout as structured JSON
 
-Route requests to stdout rather than a file. The caller captures `neoc`'s stdout and parses the mixed script-output + feedback stream. Rejected because:
-
-- `neoc path/to/script.luau` scripts routinely print to stdout as part of their normal operation. Multiplexing feedback records into that stream requires a framing convention (distinguishing feedback lines from script output) that adds complexity on both sides.
-- The file-based sink is zero-coordination: the agent writes, the maintainer reads, no protocol negotiation required.
-- `NEOC_FEEDBACK_SINK=/dev/stdout` gives the stdout path to any caller that genuinely wants it, without imposing it on everyone.
+Rejected:
+- Scripts routinely print to stdout → multiplexing feedback requires framing convention → complexity on both sides.
+- File-based sink = zero-coordination: agent writes, maintainer reads, no protocol negotiation.
+- `NEOC_FEEDBACK_SINK=/dev/stdout` available for callers that want it without imposing on everyone.
 
 ### Auto-record `require` failures
 
-Intercept every failed `require` call and automatically log it as a feature request. Rejected for the reasons stated in Motivation. Available as a future opt-in via a module-level or CLI flag (see [Open questions](#open-questions)).
+Rejected for reasons in Motivation. Available as future opt-in via module-level or CLI flag (see [Open questions](#open-questions)).
 
 ### GitHub issue auto-creation
 
-Write requests directly to a GitHub issue tracker via the API. Rejected at this stage because:
-
-- Requires network access and a credential — neoc is deliberately sandboxed and this is a significant permission expansion.
-- Deduplication across issues is hard; GitHub's API is not designed for high-frequency write fan-in from many agent processes.
-- The local JSONL file is a better staging layer: collect locally, promote to GitHub on a human-gated schedule.
-- Nothing prevents the caller from reading the JSONL and creating issues downstream; that policy does not belong in the runtime.
+Rejected:
+- Requires network + credential → significant permission expansion for sandboxed runtime.
+- Deduplication across issues hard; GitHub API not designed for high-frequency write fan-in from many agents.
+- Local JSONL = better staging layer: collect locally, promote on human-gated schedule.
+- Caller can read JSONL and create issues downstream; policy doesn't belong in runtime.
 
 ### CLI-only (`--request-feature`), no Lua module
 
-Provide only the CLI flag, not the `std:feedback` module. Rejected because the most important use case — an agent detecting a gap *inside a script* and recording it with full context before proceeding with its fallback — requires an in-script API. The CLI flag is a complement, not a substitute.
+Rejected. Most important use case = agent detecting gap *inside script* with full context before proceeding with fallback → requires in-script API. CLI flag = complement, not substitute.
 
 ### Configurable backends (file / stdout / GitHub / webhook)
 
-Make the sink pluggable at runtime. Rejected because the abstraction cost is not justified by the current use cases. The environment variable approach (set `NEOC_FEEDBACK_SINK` to any path) already covers the stdout, file, and pipe-to-webhook cases without any code change. A formal backend plugin model can be introduced in a follow-up RFC if real demand emerges.
+Rejected. Abstraction cost not justified by current use cases. Env var approach (set `NEOC_FEEDBACK_SINK` to any path) covers stdout, file, and pipe-to-webhook without code change. Formal backend plugin model = follow-up RFC if real demand emerges.
 
 ## Open questions
 
-1. **Opt-in automatic `require` monitoring.** Should a future flag (e.g. `NEOC_AUTO_FEEDBACK=1` or `--auto-feedback`) auto-record all `require` failures as feature requests, with an empty `reason` and `fallback`? This would lower the bar for passive signal collection without changing the default. Decision deferred — the explicit API ships first; the automatic hook is a follow-on if the explicit adoption proves too low.
+1. **Opt-in auto `require` monitoring.** Future flag (`NEOC_AUTO_FEEDBACK=1` / `--auto-feedback`) auto-records all `require` failures with empty `reason`/`fallback`? Lowers bar for passive signal collection without changing default. Decision deferred — explicit API ships first; automatic hook follows if explicit adoption too low.
 
-2. **Structured module field.** `module` is currently a free string. Should the runtime validate that it follows the `ns:name` convention (e.g. `lib:regex`, `std:fs`)? Stricter validation catches typos at the cost of rejecting valid but unconventional identifiers (e.g. a request for a CLI flag or a build system feature). Leaning toward a warning on `stderr` for strings that do not match `[a-z]+:[a-z][a-z_.:]*` rather than a hard error.
+2. **Structured module field.** `module` is free string. Validate `ns:name` convention? Stricter validation catches typos at cost of rejecting unconventional identifiers (e.g. CLI flag request). Leaning toward warning on `stderr` for strings not matching `[a-z]+:[a-z][a-z_.:]*` rather than hard error.
 
-3. **Windows sink path.** `~/.neoc/` expands differently on Windows (`%USERPROFILE%\.neoc\`). The implementation must handle `$HOME` resolution correctly. This is an implementation concern, not a design concern, but it should be tracked on the implementation issue.
+3. **Windows sink path.** `~/.neoc/` expands differently on Windows (`%USERPROFILE%\.neoc\`). Implementation must handle `$HOME` resolution correctly. Implementation concern, not design concern — track on implementation issue.
 
-4. **`feedback.list()` accessor.** Should the module expose a read path — `feedback.list()` — that returns the recorded requests as a Lua table? Useful for agents that want to inspect and surface their own gap log. Deferred to avoid scope creep in the first iteration; the JSONL file is readable by any script via `std:fs`.
+4. **`feedback.list()` accessor.** Expose read path returning recorded requests as Lua table? Useful for agents inspecting own gap log. Deferred to avoid scope creep; JSONL readable via `std:fs`.
 
-5. **Namespace placement.** `std:feedback` is proposed as a `std:*` module, but it does not mirror any Rust `std` type — it is a neoc-specific meta-mechanism. `lib:feedback` would be equally valid under the namespace rules. The `std:*` placement is chosen because capability gap reporting is intrinsic to the runtime (not a gap-filler or vendored crate), but this should be confirmed before the implementation PR. If the CODEOWNER prefers `lib:feedback`, the API surface is identical — only the `require` path changes.
+5. **Namespace placement.** `std:feedback` does not mirror Rust `std` type — neoc-specific meta-mechanism. `lib:feedback` equally valid. `std:*` chosen because capability gap reporting is intrinsic to runtime (not gap-filler or vendored crate). Confirm before implementation PR. If CODEOWNER prefers `lib:feedback`, API surface identical — only `require` path changes.
 
 ## Implementation notes
 
-- The `session` id is a random 16-char hex string (64-bit) generated once at process start in the new `src/config.rs` and stored as a `LazyLock<String>` (or equivalent). It is passed into the feedback module at registration time.
-- The JSONL append must be atomic at the line level: write the full JSON record plus `\n` in a single `write_all` call with `O_APPEND`. For local filesystems, a single `write_all` with `O_APPEND` is de-facto atomic for records of this size (< 512 bytes). This is not guaranteed on network filesystems (NFS, SMB). The disclaimer already present in this section covers that case.
-- The `--feature-request` flag parsing in `main.rs` should run before engine initialisation — it does not need a Lua VM.
-- `std:feedback` is a `std:*` module. It uses only `std` and `blessed.rs` dependencies (specifically `serde_json` for serialisation, which is already in the dependency tree). No new crate dependencies are required.
-- The `scripts/aggregate-feedback.sh` (or `.py`) reference script is out of scope for the RFC and will be specced on the implementation issue.
+- `session` id: random 16-char hex (64-bit), generated once at process start in `src/config.rs`, stored as `LazyLock<String>`. Passed into feedback module at registration.
+- JSONL append must be line-atomic: full JSON record + `\n` in single `write_all` with `O_APPEND`. De-facto atomic for records < 512 bytes on local filesystems. Not guaranteed on NFS/SMB (disclaimer covers this).
+- `--feature-request` parsing in `main.rs` runs before engine init — no Lua VM needed.
+- `std:feedback` uses only `std` + `blessed.rs` deps (`serde_json` for serialisation, already in tree). No new crate dependencies.
+- `scripts/aggregate-feedback.sh` (or `.py`) reference script out of scope for RFC — specced on implementation issue.

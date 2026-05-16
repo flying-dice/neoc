@@ -13,26 +13,26 @@ Accepted
 
 ## Context
 
-`neoc` needs an embedded scripting language for user-supplied scripts running inside the host runtime. The language must run in a host that controls the execution environment tightly, must permit fine-grained sandboxing of the operating-system surface exposed to scripts, and must not require the host to ship a JIT or a full ECMAScript runtime.
+Need: embedded scripting language with tight host control, fine-grained sandboxing, no JIT requirement.
 
-Several candidates were available:
+Candidates:
 
-- **Lua 5.4** — small, well-documented, widely embedded. Has the standard library that `os`, `io`, `package`, and `debug` modules expose, much of which is unsafe in a multi-tenant runtime and would need to be stripped.
-- **Luau** — Roblox's dialect of Lua. Sandbox-aware by design (the language explicitly drops or restricts unsafe surface), gradual typing, deterministic execution. Implemented in C++ and bindable from Rust through the [`mlua`](https://docs.rs/mlua/) crate's `luau` feature.
-- **JavaScript via Deno or Boa** — large surface, heavyweight runtime, less amenable to embedding into a fixed-resource host.
-- **WebAssembly** — capable, but the source-language story is downstream and the tooling burden on script authors is high.
-- **Custom DSL** — too narrow; user scripts need general-purpose expressivity.
+- **Lua 5.4** — small, widely embedded. Unsafe `os`/`io`/`package`/`debug` surface needs stripping.
+- **Luau** — Roblox's Lua dialect. Sandbox-aware by design, gradual typing, deterministic. Bindable from Rust via [`mlua`](https://docs.rs/mlua/) `luau` feature.
+- **JavaScript (Deno/Boa)** — heavyweight, less amenable to fixed-resource embedding.
+- **WebAssembly** — capable but high tooling burden on script authors.
+- **Custom DSL** — too narrow for general-purpose scripts.
 
-The host runtime is written in Rust. The bindings story for the embedded language is a load-bearing concern; the choice must integrate cleanly with `mlua` or an equivalent.
+Host is Rust. Bindings story via `mlua` is load-bearing.
 
 ## Decision
 
-`neoc` uses Luau as its embedded scripting language. The Luau interpreter is bundled into the binary through `mlua`'s `vendored` feature.
+`neoc` uses Luau, bundled via `mlua`'s `vendored` feature.
 
 ## Consequences
 
-- Scripts benefit from Luau's gradual type system and its sandbox-aware design. The language itself drops parts of the Lua standard library that are unsafe for embedding (notably `dofile`, `loadfile`, and parts of `package`), reducing the surface that must be stripped at the host level.
-- The host runtime can rely on Luau's deterministic execution semantics — no JIT, predictable allocation behaviour — when reasoning about embedded scripts.
-- Script authors must use Luau syntax and semantics rather than vanilla Lua. Most Lua libraries written for 5.1/5.4 are compatible with adaptation; a small number that depend on stripped surface or on Lua-specific features (such as integer/number distinction) require porting.
-- The choice of `mlua` as the binding layer gates this decision on the upstream maintainer's continued Luau support. Migration to a different binding layer would be possible but would require non-trivial work.
-- The `mlua` `vendored` feature bundles Luau into the neoc binary, so the host does not depend on a system Lua installation. This simplifies distribution at the cost of a larger binary.
+- Luau's gradual type system and sandbox-aware design reduce host-level stripping work.
+- Deterministic execution (no JIT) — predictable allocation behaviour.
+- Script authors use Luau syntax. Most Lua 5.1/5.4 libraries compatible with adaptation.
+- Gated on `mlua` upstream's continued Luau support.
+- `vendored` bundles Luau into binary — no system Lua dependency, larger binary.

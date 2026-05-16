@@ -1,8 +1,8 @@
-# `vnd:quick_xml` module
+# `vnd:quick_xml`
 
 **Experimental**
 
-The **`vnd:quick_xml`** module exposes the [`quick-xml`](https://crates.io/crates/quick-xml) crate for parsing and serialising XML.
+XML parsing/serialisation via [`quick-xml`](https://crates.io/crates/quick-xml).
 
 | Property | Value |
 |---|---|
@@ -21,10 +21,9 @@ local quick_xml = require("vnd:quick_xml")
 ## Description
 
 > [!WARNING]
-> This reference page is a **stub**. The full Lua surface is captured in the module source listed above and exercised by the test file — until this page is fleshed out, those are the contract.
+> **Stub.** Full surface in module source; contract exercised by test file.
 
 ## See also
 
-- [The module system](/guides/module-system) — How `require("vnd:quick_xml")` resolves.
-- [The sandboxing model](/guides/sandboxing-model) — How `vnd:*` modules fit into the engine.
-- [`vnd:*`](/vnd/) — Other modules in this namespace.
+- [The module system](/guides/module-system)
+- [`vnd:*`](/vnd/)

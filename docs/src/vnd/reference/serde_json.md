@@ -1,8 +1,8 @@
-# `vnd:serde_json` module
+# `vnd:serde_json`
 
 **Experimental**
 
-The **`vnd:serde_json`** module exposes the [`serde_json`](https://crates.io/crates/serde_json) crate for parsing and serialising JSON. Parsed documents are returned as [`lib:json`](/lib/reference/json) Object and Array handles.
+JSON parsing/serialisation via [`serde_json`](https://crates.io/crates/serde_json). Parsed documents returned as [`lib:json`](/lib/reference/json) Object/Array handles.
 
 | Property | Value |
 |---|---|
@@ -21,10 +21,10 @@ local serde_json = require("vnd:serde_json")
 ## Description
 
 > [!WARNING]
-> This reference page is a **stub**. The full Lua surface is captured in the module source listed above and exercised by the test file — until this page is fleshed out, those are the contract.
+> **Stub.** Full surface in module source; contract exercised by test file.
 
 ## See also
 
-- [The module system](/guides/module-system) — How `require("vnd:serde_json")` resolves.
-- [The sandboxing model](/guides/sandboxing-model) — How `vnd:*` modules fit into the engine.
-- [`vnd:*`](/vnd/) — Other modules in this namespace.
+- [`lib:json`](/lib/reference/json) — document handles produced by this module
+- [The module system](/guides/module-system)
+- [`vnd:*`](/vnd/)
