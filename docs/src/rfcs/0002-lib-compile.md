@@ -1,5 +1,5 @@
 ---
-status: draft
+status: implemented
 created: 2026-05-09
 implemented-in: issues/17-lib-compile
 ---
@@ -50,12 +50,12 @@ The 20-byte trailer is appended immediately after the source payload:
 
 ```
 Offset  Size  Field    Description
-──────  ────  ───────  ─────────────────────────────────────────────────────
+──────  ────  ───────  ────────────────────────────────────────────────────────
 0       7     magic    b"NEOC_BL" — identifies a neoc bundled binary
 7       1     version  0x01 — trailer format version
 8       8     offset   u64 little-endian — byte offset of payload start
 16      4     length   u32 little-endian — byte length of payload
-──────  ────
+────────────
 Total: 20 bytes
 ```
 
@@ -118,7 +118,7 @@ This strategy matches the approach taken by Bun and Deno for their compiled outp
 
 ## Open questions
 
-None. The v1 API surface is settled; implementation pending merge.
+None. The v1 API surface is settled; implementation merged in `!3`.
 
 ## Implementation notes
 
