@@ -1,26 +1,26 @@
 # Guides
 
-This section contains narrative documentation that explains how neoc works and how to use it. Guides are read in order when learning the runtime; each one builds on the ones above it.
+How neoc works and how to use it. Read in order when learning the runtime.
 
-For the full surface of a specific module, see the reference page under [`std:*`](/std/), [`lib:*`](/lib/), or [`vnd:*`](/vnd/) instead.
+For module-specific surface, see reference pages under [`std:*`](/std/), [`lib:*`](/lib/), or [`vnd:*`](/vnd/).
 
 ## Getting oriented
 
 [Getting started](/guides/getting-started)
-:   Install neoc, run a first script, and understand the basic invocation model.
+:   Install neoc, run a first script, understand invocation.
 
 [The sandboxing model](/guides/sandboxing-model)
-:   What the engine strips from Lua, why those parts are stripped, and what the curated module surface replaces them with.
+:   What's stripped from Lua, why, and what replaces it.
 
 [The module system](/guides/module-system)
-:   How `require("ns:name")` resolves, the three namespaces, and the rules each one follows.
+:   How `require("ns:name")` resolves. Three namespaces and their rules.
 
 [Error conventions](/guides/error-conventions)
-:   When functions return `(value, err)` tuples and when they raise. How error prefixes are formatted.
+:   `(value, err)` tuples vs raises. Error prefix format.
 
 ## See also
 
-- [`std:*`](/std/) — Standard-library mirrors.
-- [`lib:*`](/lib/) — Project-native modules.
-- [`vnd:*`](/vnd/) — Vendored crates.
-- [RFCs](/rfcs/) — Cross-cutting design proposals.
+- [`std:*`](/std/) — Standard-library mirrors
+- [`lib:*`](/lib/) — Project-native modules
+- [`vnd:*`](/vnd/) — Vendored crates
+- [RFCs](/rfcs/) — Cross-cutting design proposals

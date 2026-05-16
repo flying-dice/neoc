@@ -1,16 +1,16 @@
-# `std:workers` module
+# `std:workers`
 
 **Stable**
 
-The **`std:workers`** module exposes process-level coordination to scripts. Its primary surface is [`workers.on_shutdown()`](#workers-on-shutdown) — an observable signal that fires on Ctrl-C / SIGINT so long-running primitives can exit cleanly. The pool itself is sized at process startup; `std:workers` does not expose pool construction or worker lifecycle to scripts.
+Process-level coordination. Primary surface: [`workers.on_shutdown()`](#workers-on-shutdown) — observable signal on Ctrl-C/SIGINT for graceful exit. Pool sized at startup; construction/lifecycle not exposed to scripts.
 
 | Property | Value |
 |---|---|
 | Namespace | `std` |
 | Source | [`src/lua/std/workers.rs`](https://github.com/flying-dice/neoc/blob/main/src/lua/std/workers.rs) |
-| Tests | In-source `#[cfg(test)] mod tests` in [`workers.rs`](https://github.com/flying-dice/neoc/blob/main/src/lua/std/workers.rs) |
+| Tests | In-source `#[cfg(test)]` in `workers.rs` |
 | Stability | Stable |
-| Mirror | tokio runtime — no `std::` equivalent |
+| Mirror | tokio runtime (no `std::` equivalent) |
 
 ## Syntax
 
@@ -18,17 +18,13 @@ The **`std:workers`** module exposes process-level coordination to scripts. Its 
 local workers = require("std:workers")
 ```
 
-The returned table exposes the module functions described below.
-
 ## Description
 
-neoc runs scripts in a pool of independent Lua virtual machines — *workers*. Each worker is a self-contained interpreter: globals, locals, upvalues, and any userdata constructed inside it are private to that worker. The pool is sized at process startup and tasks dispatch across workers transparently. Script authors do not pick which worker they run on.
+neoc runs scripts in a pool of independent Lua VMs — *workers*. Each worker: private globals, locals, upvalues, userdata. Pool sized at startup, tasks dispatch transparently.
 
-`std:workers` provides process-level coordination primitives that operate above the individual worker boundary. Currently that means one thing: observing when the process is shutting down so scripts can clean up gracefully.
+`std:workers` provides process-level primitives above the worker boundary. Currently: shutdown observation.
 
-For cross-worker data sharing, see [`std:thread`](/std/reference/thread) which provides message-passing between workers via channels.
-
-For background on the worker model, see [The sandboxing model](/guides/sandboxing-model#the-worker-model).
+Cross-worker data: [`std:thread`](/std/reference/thread). Background: [sandboxing model](/guides/sandboxing-model#the-worker-model).
 
 ## Module functions
 
@@ -38,7 +34,7 @@ For background on the worker model, see [The sandboxing model](/guides/sandboxin
 workers.on_shutdown(): ShutdownSignal
 ```
 
-Returns a process-singleton signal that fires once when the process receives a shutdown request (Ctrl-C or SIGINT). Repeated calls return references to the same underlying signal.
+Returns process-singleton signal that fires on shutdown (Ctrl-C/SIGINT). Repeated calls return same signal.
 
 #### workers.shutdown_signal (deprecated)
 
@@ -46,21 +42,19 @@ Returns a process-singleton signal that fires once when the process receives a s
 workers.shutdown_signal(): ShutdownSignal
 ```
 
-Legacy alias for [`workers.on_shutdown()`](#workers-on-shutdown). Prefer `on_shutdown()` in new code.
+Legacy alias for `on_shutdown()`. Prefer `on_shutdown()`.
 
 ## ShutdownSignal methods
 
 `ShutdownSignal:is_fired()`
-:   Returns `true` once the signal has fired, `false` otherwise. Non-blocking.
+:   `true` once fired, `false` otherwise. Non-blocking.
 
 `ShutdownSignal:wait()`
-:   Resumes when the signal fires. Returns immediately if the signal has already fired. Safe to call from multiple workers and multiple coroutines concurrently.
+:   Resumes on fire. Returns immediately if already fired. Safe from multiple workers/coroutines.
 
 ## Examples
 
 ### Graceful shutdown
-
-The following example blocks the main task until Ctrl-C, then closes a long-running server.
 
 ```lua
 local workers = require("std:workers")
@@ -76,28 +70,28 @@ server:close()
 server:wait()
 ```
 
-### Polling shutdown in a loop
+### Polling in a loop
 
 ```lua
 local workers = require("std:workers")
 local signal  = workers.on_shutdown()
 
 while not signal:is_fired() do
-    -- do periodic work
+    -- periodic work
 end
 -- cleanup
 ```
 
 ## Acceptance
 
-The following scenarios must hold. They are exercised by the in-source `#[cfg(test)] mod tests` block in [`workers.rs`](https://github.com/flying-dice/neoc/blob/main/src/lua/std/workers.rs).
+Exercised by in-source `#[cfg(test)]` in `workers.rs`:
 
-1. **Singleton identity.** `workers.on_shutdown()` called multiple times returns handles to the same underlying signal.
-2. **Alias equivalence.** `workers.shutdown_signal()` and `workers.on_shutdown()` return the same signal.
-3. **Idempotent wait.** Calling `signal:wait()` multiple times after the signal has fired returns immediately each time.
-4. **is_fired reflects state.** `signal:is_fired()` returns `false` before the signal fires and `true` after.
+1. **Singleton identity.** Multiple `on_shutdown()` calls → same signal.
+2. **Alias equivalence.** `shutdown_signal()` and `on_shutdown()` → same signal.
+3. **Idempotent wait.** `wait()` after fire returns immediately.
+4. **is_fired reflects state.** `false` before fire, `true` after.
 
 ## See also
 
-- [The sandboxing model](/guides/sandboxing-model#the-worker-model) — How the worker pool fits into the broader engine.
-- [`std:thread`](/std/reference/thread) — Worker spawning and message-passing channels.
+- [The sandboxing model](/guides/sandboxing-model#the-worker-model)
+- [`std:thread`](/std/reference/thread)

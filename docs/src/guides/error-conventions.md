@@ -1,28 +1,26 @@
 # Error conventions
 
-This guide describes how neoc modules signal failure to Lua scripts. It covers the two failure-signalling shapes the runtime uses, when each one applies, how error messages are formatted, and how scripts handle them. Familiarity with Lua's `error`, `pcall`, and multi-value return is assumed.
+How neoc modules signal failure. Two shapes, when each applies, message format, handling patterns.
 
 ## Two shapes of failure
 
-A function in neoc signals failure in one of two ways.
-
 `(value, err)` tuple
-:   The function returns two values. On success, `value` holds the result and `err` is `nil`. On failure, `value` is `nil` and `err` is a string describing the failure. This shape is used for *recoverable* failures — conditions a script is expected to inspect and react to.
+:   On success: `value` holds result, `err` is `nil`. On failure: `value` is `nil`, `err` is a string. Used for *recoverable* failures — conditions scripts inspect and react to.
 
 Raised error
-:   The function calls `error(...)`, propagating up the stack until caught by `pcall` or `xpcall`. This shape is used for *programming errors* — conditions that indicate a script bug rather than a runtime condition the script should handle.
+:   Calls `error(...)`, propagates until caught by `pcall`/`xpcall`. Used for *programming errors* — script bugs, not runtime conditions.
 
-The choice of shape is documented per function on its module's reference page. The two shapes are not interchangeable: a function either consistently uses `(value, err)` or it consistently raises.
+Per-function shape is documented on its module reference page. A function consistently uses one shape or the other, never both.
 
-## When each shape applies
+## When each applies
 
-A function returns the `(value, err)` tuple when its failure mode is something the caller might reasonably want to inspect and recover from. Examples include I/O failures (`std:fs.read_to_string` on a missing file), parser failures (`vnd:serde_json.from_str` on malformed input), and network failures (`vnd:hyper.get` against an unreachable host).
+**Tuple return** — failure the caller might reasonably recover from: I/O failures (`std:fs.read_to_string` on missing file), parse failures (`vnd:serde_json.from_str` on malformed input), network failures (`vnd:hyper.get` on unreachable host).
 
-A function raises when its failure mode indicates the script has misused the surface — passing an argument of the wrong type, calling a method on a closed handle, or passing a non-Sendable userdata in the `shared` table of `thread.spawn`. These are bugs in the script, not runtime conditions, and pretending otherwise would mask the bug.
+**Raise** — script misused the surface: wrong argument type, method on closed handle, non-Sendable in `shared` table. These are bugs; suppressing them masks the bug.
 
 ## Error message format
 
-Every error message — whether returned in the `err` slot of a tuple or raised — begins with a qualified prefix that names the module and function that produced it. The prefix has the form `"module.function:"` (no namespace prefix in the message itself).
+Every error begins with a qualified prefix: `"module.function:"` (no namespace prefix).
 
 ```text
 fs.read_to_string: No such file or directory (os error 2)
@@ -31,49 +29,43 @@ hyper.get: connection refused
 thread.spawn: shared.k is 'JsonNull', which is not Sendable. Use args for by-value transfer, or use a Sendable type (Map, Counter, TcpListener).
 ```
 
-This format is consistent across every module. Scripts can match against the prefix programmatically, and readers of stack traces can locate the failing call site without context.
+Consistent across every module. Prefix is matchable programmatically.
 
-## Handling failures in scripts
+## Handling failures
 
-### Inspecting a tuple return
-
-A script handles a recoverable failure by inspecting the second return value.
+### Tuple return
 
 ```lua
 local fs = require("std:fs")
 
 local body, err = fs.read_to_string("config.json")
 if err then
-    -- handle the failure: log, retry, fall back, etc.
     return
 end
 -- use `body`
 ```
 
-The pattern is identical across every function that returns the tuple shape. There is no separate status code, no exception object, and no wrapping type to unpack.
+Same pattern everywhere. No status codes, no exception objects, no wrapper types.
 
-### Catching a raised error
-
-A script catches a raised error with `pcall` (protected call). The standard Lua idiom applies unchanged.
+### Raised error
 
 ```lua
 local thread = require("std:thread")
 local json   = require("lib:json")
 
 local ok, err = pcall(function()
-    thread.spawn({ source = "return 1", shared = { v = json.null } })   -- json.null is not Sendable
+    thread.spawn({ source = "return 1", shared = { v = json.null } })
 end)
 if not ok then
-    -- err contains the qualified message
+    -- err contains qualified message
 end
 ```
 
-Scripts should reach for `pcall` when they genuinely need to recover from a programming error — for example, in a test runner or in a top-level supervisor that should report the failure rather than crash the worker.
+Use `pcall` when genuine recovery from a programming error is needed — test runners, top-level supervisors.
 
 ## See also
 
-- [The sandboxing model](/guides/sandboxing-model) — Where errors fit into the broader engine model.
-- [The module system](/guides/module-system) — How `require` itself signals failure.
-- [`std:fs`](/std/reference/fs) — Example of a tuple-returning module.
-- [`std:workers`](/std/reference/workers) — Process-level coordination (shutdown signal).
-- [`std:thread`](/std/reference/thread) — Example of a module that raises on misuse (non-Sendable values in `shared`).
+- [The sandboxing model](/guides/sandboxing-model)
+- [The module system](/guides/module-system) — how `require` signals failure
+- [`std:fs`](/std/reference/fs) — tuple-returning module
+- [`std:thread`](/std/reference/thread) — raises on misuse

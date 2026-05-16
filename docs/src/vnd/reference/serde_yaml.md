@@ -1,8 +1,8 @@
-# `vnd:serde_yaml` module
+# `vnd:serde_yaml`
 
 **Experimental**
 
-The **`vnd:serde_yaml`** module exposes the [`serde_yaml`](https://crates.io/crates/serde_yaml) crate for parsing and serialising YAML.
+YAML parsing/serialisation via [`serde_yaml`](https://crates.io/crates/serde_yaml).
 
 | Property | Value |
 |---|---|
@@ -21,10 +21,9 @@ local serde_yaml = require("vnd:serde_yaml")
 ## Description
 
 > [!WARNING]
-> This reference page is a **stub**. The full Lua surface is captured in the module source listed above and exercised by the test file — until this page is fleshed out, those are the contract.
+> **Stub.** Full surface in module source; contract exercised by test file.
 
 ## See also
 
-- [The module system](/guides/module-system) — How `require("vnd:serde_yaml")` resolves.
-- [The sandboxing model](/guides/sandboxing-model) — How `vnd:*` modules fit into the engine.
-- [`vnd:*`](/vnd/) — Other modules in this namespace.
+- [The module system](/guides/module-system)
+- [`vnd:*`](/vnd/)

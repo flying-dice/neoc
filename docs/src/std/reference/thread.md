@@ -1,8 +1,8 @@
-# `std:thread` module
+# `std:thread`
 
 **Experimental**
 
-The **`std:thread`** module exposes thread-local primitives and the `sleep` function.
+Thread-local primitives and `sleep`.
 
 | Property | Value |
 |---|---|
@@ -21,10 +21,9 @@ local thread = require("std:thread")
 ## Description
 
 > [!WARNING]
-> This reference page is a **stub**. The full Lua surface is captured in the module source listed above and exercised by the test file — until this page is fleshed out, those are the contract.
+> **Stub.** Full surface in module source; contract exercised by test file.
 
 ## See also
 
-- [The module system](/guides/module-system) — How `require("std:thread")` resolves.
-- [The sandboxing model](/guides/sandboxing-model) — How `std:*` modules fit into the engine.
-- [`std:*`](/std/) — Other modules in this namespace.
+- [The module system](/guides/module-system)
+- [`std:*`](/std/)

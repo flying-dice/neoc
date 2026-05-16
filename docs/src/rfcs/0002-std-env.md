@@ -11,20 +11,13 @@ implemented-in:
 
 ## Summary
 
-`std:env` — first-class neoc standard library module. Exposes:
-
-- Platform constants (OS, arch, ABI family)
-- Directory path queries (home, temp, cwd)
-- Read-only environment-variable access
-- CLI argument access
-
-Mirrors `std::env` from Rust. Env mutation (`set_var`, `remove_var`) excluded. Telemetry (hostname, CPU, memory) out of scope — separate issue.
+`std:env` exposes platform constants, directory queries, read-only env-var access, CLI args. Mirrors `std::env` from Rust. Mutation excluded. Telemetry out of scope.
 
 ## Motivation
 
-Cross-platform scripts need: platform detection, env-var access, path resolution. Every major runtime provides all three. neoc has none — forces hard-coded paths or workarounds via unexposed Lua `os` table.
+Cross-platform scripts need platform detection, env-var access, path resolution. Every major runtime provides all three; neoc has none.
 
-`std:env` closes that gap. Name follows Rust: `std::env` owns constants, var, args, home_dir, temp_dir, current_dir. `std:os` rejected — Rust's `std::os` is platform-specific extension traits, not these APIs.
+`std:env` closes that gap. Name follows Rust (`std::env` owns constants, var, args, dirs). `std:os` rejected — Rust's `std::os` = platform-specific extension traits.
 
 ## Peer runtime survey
 
@@ -46,11 +39,11 @@ Cross-platform scripts need: platform detection, env-var access, path resolution
 
 **Observations:**
 
-1. Every runtime provides platform detection, env vars, args. Universal.
-2. Rust, Go, Python include home/temp/cwd. neoc includes them (Rust mirror precedence).
-3. `set_var`/`remove_var` — Rust made `unsafe` in Edition 2024 (Rust 1.83). neoc excludes from `std:env`. Rationale below.
-4. Telemetry absent from all runtimes' `env`-equivalent. Requires platform crates. Routes to distinct module.
-5. Lune puts everything under `process`. neoc separates env from process lifecycle — Rust-faithful boundary. Process lifecycle → `std:process` (#7).
+1. Platform detection + env vars + args — universal across runtimes.
+2. Rust/Go/Python include home/temp/cwd → neoc includes (Rust mirror precedence).
+3. `set_var`/`remove_var` — Rust made `unsafe` in Edition 2024. neoc excludes.
+4. Telemetry absent from all env-equivalents → routes to distinct module.
+5. Lune uses `process` for everything. neoc separates env from process lifecycle (Rust-faithful). Process lifecycle → `std:process` (#7).
 
 ## Detailed design
 
@@ -70,7 +63,7 @@ local env = require("std:env")
 
 #### Platform constants (read-only)
 
-Mirror `std::env::consts`. Compile-time constants — immutable after runtime start.
+Mirror `std::env::consts`. Compile-time, immutable.
 
 ```lua
 env.os            -- "linux" | "macos" | "windows" | "freebsd" | ...
@@ -81,7 +74,7 @@ env.dll_prefix    -- "lib" (unix) | "" (windows)
 env.dll_suffix    -- ".so" | ".dylib" | ".dll"
 ```
 
-All six from `std::env::consts::{OS, ARCH, FAMILY, EXE_SUFFIX, DLL_PREFIX, DLL_SUFFIX}`. Raw values — no mapping, no translation.
+All six from `std::env::consts::{OS, ARCH, FAMILY, EXE_SUFFIX, DLL_PREFIX, DLL_SUFFIX}`. Raw values, no mapping.
 
 #### Directory path queries (fallible)
 
@@ -103,11 +96,11 @@ local cwd, err = env.current_dir()
 
 **Semantics:**
 
-- `home_dir` — returns `nil` when `HOME` (Unix) / `USERPROFILE` (Windows) absent. Empty string = present, returned as-is. No filesystem access. Negative tests must `unset HOME`, not set to `""`.
+- `home_dir` — returns `nil` when `HOME` (Unix) / `USERPROFILE` (Windows) absent. Empty string = present, returned as-is. No filesystem access. Negative tests: `unset HOME`, not `""`.
 - `temp_dir` — infallible. OS always provides one.
 - `current_dir` — fallible. CWD may be deleted after process start.
 
-All return string paths (not `std:fs` `Path` objects). No circular dependency on `std:fs`.
+All return string paths (not `std:fs` `Path` objects). No circular dep on `std:fs`.
 
 #### Environment variables (read-only)
 
@@ -123,23 +116,23 @@ local all = env.vars()
 -- Non-UTF-8 pairs silently skipped.
 ```
 
-**`var`** — `(value, err)` convention. Error strings are raw `Display` of `std::env::VarError` with `"env.var: KEY: "` prefix. Implementation must not fabricate different strings.
+**`var`** — `(value, err)` convention. Error strings = raw `Display` of `std::env::VarError` with `"env.var: KEY: "` prefix.
 
-**`vars()`** — iterates `std::env::vars_os()`, discards non-UTF-8 pairs. Avoids panics and binary garbage in Lua.
+**`vars()`** — iterates `std::env::vars_os()`, discards non-UTF-8 pairs. Avoids panics/binary garbage in Lua.
 
 #### Exclusion of `set_var` and `remove_var`
 
 Intentionally omitted. Three converging rationales:
 
-**1. Rust safety precedent.** `set_var`/`remove_var` made `unsafe` in Edition 2024 (Rust 1.83) — concurrent reads during mutation are UB on POSIX. Design principle 3 (mirror Rust) prohibits exposing as safe calls.
+**1. Rust safety precedent.** `set_var`/`remove_var` = `unsafe` in Edition 2024 (concurrent reads during mutation → UB on POSIX). Principle 3 prohibits exposing as safe.
 
-**2. Sendable concurrency model.** RFC 0001: cross-engine state sharing must be explicit, validated at spawn, DAG-rooted. `env.set_var()` is process-global mutable state visible to all engines — exactly what Sendable eliminates.
+**2. Sendable concurrency model.** RFC 0001: cross-engine state = explicit, validated at spawn, DAG-rooted. `env.set_var()` = process-global mutable state visible to all engines — exactly what Sendable eliminates.
 
 **3. Cross-language evidence:**
 
-- **Systems (Rust, Go, C, C++):** Rust → `unsafe`. Go → locked but process-global. C/C++ → ungated, unsound. Idiom: `Command::env()` / `exec.Cmd.Env` — spawn-scoped, never parent-global.
-- **Managed (Java, Kotlin, Groovy, Scala, C#):** JVM never shipped public `setenv` — deliberate, concurrency-motivated. `ProcessBuilder.environment()` / `ProcessStartInfo.Environment` — spawn-scoped.
-- **Scripting (Node, Bun, Deno, Lune):** Node/Bun ungated → widespread test-isolation bugs. Deno gates behind `--allow-env`. Lune ungated but single-threaded.
+- **Systems (Rust, Go, C, C++):** Rust → `unsafe`. Go → locked but process-global. C/C++ → ungated, unsound. Idiom: `Command::env()` / `exec.Cmd.Env` — spawn-scoped.
+- **Managed (Java, Kotlin, Groovy, Scala, C#):** JVM never shipped public `setenv` — concurrency-motivated. `ProcessBuilder.environment()` / `ProcessStartInfo.Environment` — spawn-scoped.
+- **Scripting (Node, Bun, Deno, Lune):** Node/Bun ungated → test-isolation bugs. Deno gates behind `--allow-env`. Lune ungated but single-threaded.
 
 **Env mutation belongs in `std:process` (#7)**, spawn-scoped:
 
@@ -155,7 +148,7 @@ Every major runtime agrees: spawn-scoped mutation, never parent-global.
 
 #### Exclusion of `set_current_dir`
 
-Omitted — same rationale as `set_var`. Process-global mutable state outside Sendable protocol. Use `process.spawn()` `cwd` option.
+Omitted — same rationale as `set_var`. Process-global mutable state outside Sendable. Use `process.spawn()` `cwd` option.
 
 #### CLI arguments
 
@@ -175,7 +168,7 @@ Script path excluded — authors want their args, not runtime argv. Deno, Lune, 
 | Present, `{string}` | Returns args table |
 | Present, wrong type | `error("env.args: _NEOC_ARGS: expected array of strings")` — runner bug |
 
-**Test setup:** Normal path → set `_NEOC_ARGS = {"arg1", "arg2"}`. Library mode → ensure unset. Error path → set to non-table, assert error string.
+**Test setup:** Normal → set `_NEOC_ARGS = {"arg1", "arg2"}`. Library mode → ensure unset. Error → set to non-table, assert error string.
 
 ### Error format
 
@@ -188,7 +181,7 @@ Convention: `"module.function: <detail>"` (per `CLAUDE.md`).
 "env.current_dir: <os_error>"
 ```
 
-`var` errors — raw `Display` of `VarError`, prefixed `"env.var: KEY: "`. OS errors (`current_dir`) locale-dependent; prefix stable, message not. Tests match prefix only.
+`var` errors — raw `Display` of `VarError`, prefixed `"env.var: KEY: "`. OS errors locale-dependent; prefix stable, message not. Tests match prefix only.
 
 ### Rust implementation sketch
 
@@ -288,28 +281,28 @@ declare env: {
 }
 ```
 
-> **Type-wideness:** `(string?, string?)` permits `(nil, nil)` and `(string, string)` — neither valid. Actual contract: `(string, nil) | (nil, string)`. Luau cannot express this disjunction. Narrowest approximation. Luau limitation, not spec ambiguity.
+> **Type-wideness:** `(string?, string?)` permits `(nil, nil)` and `(string, string)` — neither valid. Actual contract: `(string, nil) | (nil, string)`. Luau cannot express this disjunction. Narrowest approximation.
 
 ## Security considerations
 
-`std:env` is a capability — grants read access to all env vars (may include secrets, credentials).
+`std:env` = capability granting read access to all env vars (may include secrets).
 
-1. **No implicit grant.** Only available via explicit `require`. No `std:env` require = no env access.
-2. **Read-only by design.** No write access exposed. Eliminates env-poisoning attacks (`PATH`, `LD_PRELOAD` modification).
+1. **No implicit grant.** Only via explicit `require`. No require = no access.
+2. **Read-only.** No writes → eliminates env-poisoning (`PATH`, `LD_PRELOAD` modification).
 
-Future `--allow-env` gate (Deno-style) would enforce at this module boundary. Not designed here, but boundary supports it without API change.
+Future `--allow-env` gate (Deno-style) would enforce at this module boundary. Not designed here; boundary supports it without API change.
 
 ## Drawbacks
 
-- **`home_dir` deprecated in Rust 1.x** (#[deprecated] since 1.29.0, [rust-lang/rust#71898](https://github.com/rust-lang/rust/issues/71898)). Idiomatic replacement: `dirs` crate. We use `home_dir` because: (a) `std:*` = no external crates; (b) deprecation is about Windows edge cases. Correct dependency-free choice for runtime use-case.
-- **String paths, not Path objects.** Simpler but loses type-level safety. `std:fs` integration later without breaking surface.
-- **No env mutation here.** Must use `std:process` (#7) for child-process env. Intentional — means `std:process` ships first for mutation workflows.
+- **`home_dir` deprecated in Rust** (since 1.29.0, [rust-lang/rust#71898](https://github.com/rust-lang/rust/issues/71898)). Idiomatic: `dirs` crate. Used here because: `std:*` = no external crates; deprecation = Windows edge cases only.
+- **String paths, not Path objects.** Simpler, loses type safety. `std:fs` integration later without breaking surface.
+- **No env mutation.** Must use `std:process` (#7) for child-process env. Intentional — `std:process` ships first for mutation workflows.
 
 ## Alternatives
 
 ### `std:os` as module name
 
-Rejected. `std::os` in Rust = platform-specific extension traits. Violates principle 3, misleads Rust developers.
+Rejected. `std::os` in Rust = platform-specific extension traits. Violates principle 3.
 
 ### Env vars under `std:process`
 
@@ -321,7 +314,7 @@ Rejected. Luau `__newindex` doesn't hook cleanly into Rust. Functional API expli
 
 ### Include `set_var` / `remove_var`
 
-Rejected. Rust made `unsafe` in Edition 2024. Sendable model prohibits process-global mutable state. `process.spawn({ env = {...} })` is spawn-scoped and safe. `set_var` violates principle 2, contradicts RFC 0001.
+Rejected. Rust `unsafe` in Edition 2024. Sendable prohibits process-global mutable state. `process.spawn({ env = {...} })` = spawn-scoped, safe. Violates principle 2, contradicts RFC 0001.
 
 ### System telemetry here
 
@@ -336,11 +329,11 @@ Rejected. Requires `sysinfo` crate — outside `std:*` rules. Belongs in `lib:sy
 
 - **File:** `src/lua/std/env.rs` — single `pub fn module(lua: &Lua) -> mlua::Result<Table>`.
 - **Registration:** `src/lua/std/mod.rs`, alphabetically between `collections` and `fs`.
-- **Helpers:** `ok`/`from_err` in `src/lua/helpers.rs` — `(value, nil)` / `(nil, err)` convention.
+- **Helpers:** `ok`/`from_err` in `src/lua/helpers.rs`.
 - **`args()` wiring:** `src/main.rs` sets `_NEOC_ARGS` global at startup. Absent → empty table. Wrong type → `error()`.
 - **`home_dir`:** `#[allow(deprecated)]` at call site.
 - **Tests:** `tests/std/env.test.luau` — all surface functions. Platform assertions conditional on `env.os`. `current_dir` error tests match prefix only.
 - **`.d.luau`:** `types/std/env.d.luau` — required per M1 DoD.
 - **Bench:** Criterion, gated behind `bench` feature.
 - **Sequencing:** No upstream dep. Not blocked by #7. Boundary clean.
-- **Impact on #7:** Original #7 placed `process.env`, `process.args`, `process.cwd` under `std:process`. With `std:env` owning read access, #7 narrows to lifecycle (`exit`, `abort`, `spawn`, `id`) + spawn-scoped env mutation.
+- **Impact on #7:** Original #7 placed `process.env`, `process.args`, `process.cwd` under `std:process`. With `std:env` owning read access, #7 narrows to lifecycle + spawn-scoped env mutation.

@@ -1,19 +1,19 @@
 # `lib:*`: Blessed gap-fillers and project-native modules
 
-The `lib:*` namespace contains modules that do not fit cleanly into either `std:*` (which mirrors the Rust standard library) or `vnd:*` (which exposes single vendored crates). Two kinds of module live here: blessed *gap-fillers* that plug a hole the Rust standard library does not cover (such as `lib:base64`), and *project-native* modules written specifically for neoc (such as `lib:test` and `lib:json`).
+Modules that don't fit `std:*` (Rust std mirrors) or `vnd:*` (single vendored crates). Two kinds: *gap-fillers* (`lib:base64`) and *project-native* modules (`lib:test`, `lib:json`).
 
-A module qualifies for `lib:*` when its purpose is well-defined, its surface is stable, and it is genuinely useful to most scripts. Speculative or experimental functionality belongs elsewhere until it has earned a place here.
+Qualifies when: well-defined purpose, stable surface, genuinely useful to most scripts.
 
 ## Reference
 
-- [`lib:base64`](/lib/reference/base64) — Base64 encoding and decoding.
-- [`lib:json`](/lib/reference/json) — JSON Object and Array document handles, with `null` sentinel.
-- [`lib:mime`](/lib/reference/mime) — MIME type detection and extension mapping.
-- [`lib:test`](/lib/reference/test) — The Luau test runner and assertion surface.
-- [`lib:vcr`](/lib/reference/vcr) — Record-and-replay HTTP fixtures for tests.
+- [`lib:base64`](/lib/reference/base64) — Base64 encoding/decoding
+- [`lib:json`](/lib/reference/json) — JSON Object/Array handles, `null` sentinel
+- [`lib:mime`](/lib/reference/mime) — MIME type detection and extension mapping
+- [`lib:test`](/lib/reference/test) — Luau test runner and assertions
+- [`lib:vcr`](/lib/reference/vcr) — Record-and-replay HTTP fixtures
 
 ## See also
 
-- [The module system](/guides/module-system) — How `require("lib:name")` resolves.
-- [`std:*`](/std/) — Standard-library mirrors.
-- [`vnd:*`](/vnd/) — Vendored crates.
+- [The module system](/guides/module-system)
+- [`std:*`](/std/)
+- [`vnd:*`](/vnd/)

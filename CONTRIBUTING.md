@@ -1,19 +1,18 @@
 # Contributing
 
-This guide is the mechanical walkthrough — the order to do things in, where files go, and what to run before opening a merge request. It deliberately points at [STYLEGUIDE.md](STYLEGUIDE.md) and [README.md](README.md) for the conventions and the higher-level rationale rather than restating them.
+Mechanical walkthrough — order, file locations, pre-MR checks. Points to [STYLEGUIDE.md](STYLEGUIDE.md) and [README.md](README.md) for conventions and rationale.
 
 ## Before you start
 
-- Rust toolchain (stable; `cargo` on `PATH`).
-- Read the [Design principles](README.md#design-principles) section of the README — these four rules (no surprises, no footguns, mirror Rust, supplement with scripting ergonomics) govern every API decision and are non-negotiable.
-- Read [STYLEGUIDE.md](STYLEGUIDE.md) once — it covers module shape, return types, error prefixes, resource handles, allowed dependencies, constructor naming, the namespace model (`std:*` / `lib:*` / `vnd:*`), and the Luau test conventions. The rules there are binding.
-- Read the [Module workflow](README.md#module-workflow) section of the README — it describes the two-tier flow (isolated then integrated) the steps below implement.
+- Rust toolchain (stable, `cargo` on `PATH`).
+- Read [Design principles](README.md#design-principles) — non-negotiable.
+- Read [STYLEGUIDE.md](STYLEGUIDE.md) — binding rules.
 
 ## Adding a new module
 
-The example below threads through as if you were adding a `foo` module. The first decision is the namespace — see [STYLEGUIDE.md → Module namespaces](STYLEGUIDE.md#module-namespaces). Once you've picked one, every step that mentions `<ns>:foo` resolves to it (e.g. `lib:foo`, `vnd:foo`, `std:foo`). Every step has a "where this is documented" pointer in case the convention is unclear.
+Example: adding `foo` module. First pick namespace per [STYLEGUIDE.md → Module namespaces](STYLEGUIDE.md#module-namespaces).
 
-### 1. Create the module file
+### 1. Create module file
 
 `src/lua/lib/foo.rs`:
 
@@ -31,23 +30,19 @@ fn greet(_: &Lua, name: mlua::String) -> mlua::Result<String> {
 }
 ```
 
-Conventions for the function shape, fallible vs infallible returns, error prefix format, and resource handles are in [STYLEGUIDE.md → Rust → mlua modules](STYLEGUIDE.md#mlua-modules). Allowed dependencies depend on the namespace — see [STYLEGUIDE.md → Allowed dependencies](STYLEGUIDE.md#allowed-dependencies).
+### 2. Register
 
-### 2. Register the module
-
-Add to `src/lua/lib/mod.rs` in two places — the `pub mod` declaration and the `install` body, under the right namespace section:
+Add to `src/lua/lib/mod.rs` — `pub mod` declaration + `install` body. Alphabetical.
 
 ```rust
 pub mod foo;
 // ...
-modules.insert("lib:foo".into(), foo::module(lua)?);  // or std:foo / vnd:foo
+modules.insert("lib:foo".into(), foo::module(lua)?);
 ```
 
-Keep both the `pub mod` list and the `modules.insert` calls within their namespace section alphabetical so diffs stay clean.
+### 3. Rust tests
 
-### 3. In-module Rust tests
-
-Append a `#[cfg(test)] mod tests` block at the bottom of `src/lua/lib/foo.rs`. These cover the Rust core directly — no Lua boundary, fast feedback.
+`#[cfg(test)] mod tests` at bottom of module file:
 
 ```rust
 #[cfg(test)]
@@ -63,13 +58,11 @@ mod tests {
 }
 ```
 
-If a test needs the full engine (require resolution, other modules), use `crate::lua::sandbox::make_engine()`.
+Full engine: `crate::lua::sandbox::make_engine()`. Run: `cargo test --lib`.
 
-Run with `cargo test --lib`.
+### 4. Criterion benches
 
-### 4. In-module Criterion benches
-
-Bench code lives next to the module it exercises. Add a `pub fn benches(c: &mut Criterion)` at the bottom of `src/lua/lib/foo.rs`, gated behind the `bench` feature so it doesn't bloat normal builds. Three tiers per module — see [README.md → Bench tiers](README.md#bench-tiers) for what each one means and what regressions they catch.
+`pub fn benches(c: &mut Criterion)` gated behind `bench` feature. Three tiers: `library` (pure Rust), `into_out_lua` (marshalling cost), `through_lua` (full user path).
 
 ```rust
 #[cfg(feature = "bench")]
@@ -81,12 +74,10 @@ pub fn benches(c: &mut criterion::Criterion) {
 
     let mut g = c.benchmark_group("foo");
 
-    // library — pure Rust crate, no mlua at all.
     g.bench_function("greet/library", |b| {
         b.iter(|| { let _ = black_box("hello, world"); });
     });
 
-    // into_out_lua — identity-shape Rust fn, isolates marshalling cost.
     let ident: mlua::Function = lua
         .create_function(|_, s: mlua::String| Ok(s))
         .unwrap();
@@ -94,7 +85,6 @@ pub fn benches(c: &mut criterion::Criterion) {
         b.iter(|| { let _: mlua::String = ident.call(black_box(payload.clone())).unwrap(); });
     });
 
-    // through_lua — full path the way users actually call it.
     let chunk: mlua::Function = lua
         .load(r#"return function(p) return (require("lib:foo")).greet(p) end"#)
         .eval()
@@ -107,13 +97,11 @@ pub fn benches(c: &mut criterion::Criterion) {
 }
 ```
 
-Then add `lib::foo::benches` to the `criterion_group!` line at the bottom of `benches/lib.rs`.
-
-Run with `cargo bench --bench lib foo` (the `bench` feature is auto-enabled by `[[bench]] required-features` in `Cargo.toml`, so no flag-juggling).
+Add to `criterion_group!` in `benches/lib.rs`. Run: `cargo bench --bench lib foo`.
 
 ### 5. Luau integration test
 
-Create `tests/<ns>/foo.test.luau` to exercise the public Lua API the way real scripts will, in the same engine as every other module. Test file shape, capture conventions, and coverage requirements are in [STYLEGUIDE.md → Luau](STYLEGUIDE.md#luau).
+`tests/<ns>/foo.test.luau`:
 
 ```lua
 local _t       = require("lib:test")
@@ -132,84 +120,68 @@ describe("foo", function()
 end)
 ```
 
-Run via the CLI: `cargo run -- tests/<ns>/foo.test.luau` (or all suites: `cargo run -- 'tests/**/*.test.luau'`).
+Run: `cargo run -- tests/<ns>/foo.test.luau`.
 
-### 6. Update the README
+### 6. Update README
 
-Add a row to the modules table in [README.md](README.md), under the namespace it belongs to. Keep the table alphabetical inside each namespace. If the module exposes anything non-obvious (resource handles, opt-in modes, env-var switches), give it its own short subsection.
+Add row to modules table. Alphabetical within namespace.
 
-## Adding to an existing module
+## Adding to existing module
 
-Smaller surface — the same flow, in-place:
+1. Add function in `src/lua/lib/<name>.rs`
+2. Register on table in `module()`
+3. Add `#[cfg(test)]` cases
+4. Extend bench group (3 tiers)
+5. Add `describe(...)` cases to test file
 
-1. Add the function in `src/lua/lib/<name>.rs`.
-2. Register it on the table in that module's `module()`.
-3. Add `#[cfg(test)]` cases for it.
-4. Extend the `pub fn benches` group with `library`, `into_out_lua`, `through_lua` rows for the new function.
-5. Add `describe(...)` cases to `tests/<ns>/<name>.test.luau` (one per error condition; see the [STYLEGUIDE.md coverage requirement](STYLEGUIDE.md#coverage-requirement)).
-
-## Local check matrix before opening an MR
+## Pre-MR checks
 
 ```sh
-cargo build                                 # builds clean
-cargo test --lib                            # in-module Rust tests
-cargo test --bin neoc                       # multi-worker subprocess tests
-cargo run -- 'tests/**/*.test.luau'         # all Luau suites
-cargo bench --bench lib <name>              # the group you touched, against a pinned baseline
-cargo clippy --all-targets                  # no new warnings
-cargo fmt --check                           # formatting
+cargo build
+cargo test --lib
+cargo test --bin neoc
+cargo run -- 'tests/**/*.test.luau'
+cargo bench --bench lib <name>
+cargo clippy --all-targets
+cargo fmt --check
 ```
-
-For a perf-sensitive change, pin a baseline before editing and compare after — see [README.md → Protecting against Criterion regressions](README.md#protecting-against-criterion-regressions).
 
 ## CI
 
-The project is hosted on a self-hosted GitLab instance (`gitlab.beluga-sirius.ts.net/flying-dice/neoc`). GitLab CI (`.gitlab-ci.yml`) runs automatically on push to `main` and on merge requests targeting `main`.
+GitLab CI (`.gitlab-ci.yml`) on push to `main` and MRs targeting `main`.
 
-Pipeline stages:
+Stages:
+1. **Lint** — `fmt --check`, `clippy` (warnings = errors)
+2. **Test** — Rust + Luau integration (Docker tests excluded)
+3. **Build** — cross-compiled binaries as artifacts
+4. **Pages** — VitePress docs (main only)
 
-1. **Lint** — `cargo fmt --check` and `cargo clippy --all-targets` (warnings are errors via `RUSTFLAGS=-D warnings`).
-2. **Test** — `cargo test --lib`, `cargo test --bin neoc`, and Luau integration tests on the self-hosted Linux runner. Docker-dependent tests (`sqlx_mysql`, `sqlx_postgres`, `testcontainers_modules`) are excluded.
-3. **Build** — Cross-compiled binaries for all targets (see below), uploaded as job artifacts on every commit. Independent of the test stage so binaries are always produced.
-4. **Pages** — VitePress documentation built and published via GitLab Pages; runs on `main` only.
+### Cross-compilation
 
-All lint and test jobs must pass before a merge request can be merged.
-
-### Cross-compilation targets
-
-Binaries are produced for every pipeline run using plain `rustup target add` and apt-installed linkers:
-
-| Job | Target | Notes |
-|---|---|---|
-| `build:linux-x86_64` | `x86_64-unknown-linux-gnu` | Native build, stripped |
-| `build:windows-x86_64` | `x86_64-pc-windows-gnu` | Cross-compiled via `mingw-w64` |
-
-Artifacts expire after 14 days.
+| Job | Target |
+|---|---|
+| `build:linux-x86_64` | `x86_64-unknown-linux-gnu` |
+| `build:windows-x86_64` | `x86_64-pc-windows-gnu` |
 
 ### Branching
 
-Work branches follow the pattern enforced by the kanban workflow (see [CLAUDE.md](CLAUDE.md)):
-
-- Implementation: `issues/{id}-{slug}` — e.g. `issues/6-std-task`
-- Design artefacts: `design/{id}-{slug}` — e.g. `design/23-std-env`
+- Implementation: `issues/{id}-{slug}`
+- Design: `design/{id}-{slug}`
 
 ### Releasing
 
-Releases are driven by [release-plz](https://release-plz.dev/) using conventional commits. No manual tag pushing is needed.
+[release-plz](https://release-plz.dev/) via conventional commits:
+1. Merge to `main` with conventional commit messages
+2. release-plz creates/updates Release MR (version bump + changelog)
+3. Merge Release MR = approval gate
+4. Tag pushed → GitLab Release created
+5. Build pipeline: lint → test → cross-compile → upload binaries
 
-**Workflow:**
-
-1. Merge feature branches to `main` using [conventional commit](https://www.conventionalcommits.org/) messages (`feat:`, `fix:`, `chore:`, etc.).
-2. On every push to `main`, release-plz inspects unreleased commits and creates or updates a **Release MR** that bumps the version in `Cargo.toml` and updates `CHANGELOG.md`.
-3. Review the Release MR — the changelog diff shows exactly what will be in the release. **Merging this MR is the approval gate.**
-4. After merge, release-plz automatically pushes the version tag and creates the [GitLab Release](https://gitlab.beluga-sirius.ts.net/flying-dice/neoc/-/releases) with the generated changelog as its description.
-5. The tag triggers the build pipeline: lint → test → cross-compile (all four targets) → upload binaries to the Package Registry → attach binary download links to the release.
-
-**Prerequisites:** a `GITLAB_TOKEN` CI/CD variable (masked, protected) must be set in project Settings → CI/CD → Variables. The token needs `api` and `write_repository` scopes. The release links directly to those packages.
+Requires `GITLAB_TOKEN` CI variable (`api` + `write_repository` scopes).
 
 ## Commit style
 
-All commits must follow [Conventional Commits](https://www.conventionalcommits.org/). release-plz reads these to determine the next version and build the changelog — a wrong or missing type means a missed or incorrect release.
+[Conventional Commits](https://www.conventionalcommits.org/). release-plz reads these.
 
 ```
 <type>(<scope>): <subject>
@@ -217,31 +189,27 @@ All commits must follow [Conventional Commits](https://www.conventionalcommits.o
 
 | Type | When |
 |---|---|
-| `feat` | New capability visible to users or scripts |
+| `feat` | New capability |
 | `fix` | Bug fix |
 | `docs` | Documentation only |
-| `refactor` | Code change with no behaviour change |
+| `refactor` | No behaviour change |
 | `test` | Tests only |
-| `chore` | Maintenance (deps, CI tweaks) that doesn't affect the binary |
-| `perf` | Performance improvement |
+| `chore` | Maintenance |
+| `perf` | Performance |
 
-Scope is optional — use the module name (`std:fs`), subsystem (`ci`, `install`), or omit for repo-wide changes. Breaking changes get a `!` suffix and a `BREAKING CHANGE:` footer.
-
-Subject is lowercase, no trailing period. One logical change per commit.
-
-Full type reference: [CLAUDE.md → Commit style](CLAUDE.md#commit-style).
+Scope optional (module name or subsystem). Breaking: `!` suffix + `BREAKING CHANGE:` footer. Subject lowercase, no period. One logical change per commit.
 
 ## MR expectations
 
-- One module or one well-scoped change per merge request. Don't fold drive-by refactors into a feature MR.
-- The commit message and MR description should say *why*, not just *what*. The diff already shows what.
-- Update [README.md](README.md) and any relevant subsection in the same MR — don't leave docs to a follow-up.
-- New crates require explicit sign-off; see the dependency rule in [STYLEGUIDE.md](STYLEGUIDE.md#allowed-dependencies) before adding anything to `Cargo.toml`. The `vnd:*` namespace exists specifically so that when a vendored crate IS the module, the rule is "match the crate name."
-- If a benchmark regresses, the MR description should call it out and explain whether it's intentional (a deliberate trade for some other gain) or load-bearing for a follow-up.
-- Apply the correct `workflow::*` label when opening the MR (`workflow::Implementation`) and update it to `workflow::Review` once the MR is ready for CODEOWNER review.
+- One module or one well-scoped change per MR.
+- Say *why* in description, not just *what*.
+- Update docs in same MR.
+- New crates require sign-off per [STYLEGUIDE.md](STYLEGUIDE.md#allowed-dependencies).
+- Benchmark regressions: call out + explain in description.
+- Apply `workflow::Implementation` label, update to `workflow::Review` when ready.
 
 ## When in doubt
 
-- For module shape / return types / errors / namespacing: [STYLEGUIDE.md](STYLEGUIDE.md).
-- For *why* the trade-offs are what they are: [README.md → Design philosophy](README.md#design-philosophy) and [What it's good at / not so good at](README.md#what-its-good-at).
-- For testing and benching mechanics: this file plus [README.md → Module workflow](README.md#module-workflow).
+- Module shape / errors / namespacing → [STYLEGUIDE.md](STYLEGUIDE.md)
+- Design trade-offs → [README.md](README.md#design-principles)
+- Testing / benching → this file + [README.md](README.md#module-workflow)
