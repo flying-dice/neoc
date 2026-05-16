@@ -156,13 +156,21 @@ This is where every major runtime agrees env mutation is safe — spawn-scoped, 
 local args = env.args()
 -- Returns an array table of strings: { "arg1", "arg2", ... }
 -- Script name is NOT included (mirrors Deno.args and Lune process.args).
--- Infallible.
--- In library mode (no _NEOC_ARGS global set), returns an empty table — not an error.
+-- Absent global (library mode): returns an empty table — not an error.
+-- Malformed global (present but wrong type): raises error() — this is a runner bug.
 ```
 
 The script path itself is excluded from `args()`. The rationale: authors want the arguments their script received, not the runtime's own argv. Deno, Lune, and Python's `sys.argv[1:]` convention all agree on this boundary.
 
-**Library-mode test setup:** `args()` reads the `_NEOC_ARGS` Lua global injected by the runner at startup (see Implementation Notes). To test the normal path, set `_NEOC_ARGS = {"arg1", "arg2"}` before calling `args()`. To test library mode (empty table), ensure `_NEOC_ARGS` is not set. These are the only two observable states.
+**Behaviour by global state:**
+
+| `_NEOC_ARGS` state | Result |
+|---|---|
+| Absent (`nil`) | Returns `{}` — library mode, expected |
+| Present, correct type (`{string}`) | Returns the args table |
+| Present, wrong type (number, table with non-string values, etc.) | Raises `error("env.args: _NEOC_ARGS: expected array of strings")` — runner bug |
+
+**Test setup:** To test the normal path, set `_NEOC_ARGS = {"arg1", "arg2"}` before calling `args()`. To test library mode (empty table), ensure `_NEOC_ARGS` is not set. To test the error path, set `_NEOC_ARGS` to a non-table value and assert the error string.
 
 ### Error format
 
@@ -236,12 +244,22 @@ pub fn module(lua: &Lua) -> Result<Table> {
         Ok(tbl)
     })?)?;
 
-    // args: infallible, script args only
+    // args: empty in library mode, error on type mismatch
     t.set("args", lua.create_function(|lua, ()| {
         let globals = lua.globals();
-        match globals.get::<Vec<String>>("_NEOC_ARGS") {
-            Ok(args) => Ok(args),
-            Err(_)   => Ok(Vec::new()),
+        match globals.get::<mlua::Value>("_NEOC_ARGS") {
+            Ok(mlua::Value::Nil) => Ok(Vec::new()),
+            Ok(mlua::Value::Table(tbl)) => {
+                tbl.sequence_values::<String>()
+                    .collect::<mlua::Result<Vec<String>>>()
+                    .map_err(|_| mlua::Error::runtime(
+                        "env.args: _NEOC_ARGS: expected array of strings",
+                    ))
+            }
+            Ok(_) => Err(mlua::Error::runtime(
+                "env.args: _NEOC_ARGS: expected array of strings",
+            )),
+            Err(_) => Ok(Vec::new()),
         }
     })?)?;
 
@@ -322,7 +340,7 @@ Rejected. Hostname, CPU count, total/free memory, and uptime require the `sysinf
 - **File:** `src/lua/std/env.rs` — single `pub fn module(lua: &Lua) -> mlua::Result<Table>`.
 - **Registration:** `src/lua/std/mod.rs`, alphabetically between `collections` and `fs`.
 - **`ok`/`from_err` helpers:** defined in `src/lua/helpers.rs` (or equivalent); used throughout the codebase for the `(value, nil)` / `(nil, err)` Lua return convention.
-- **`args()` wiring:** `src/main.rs` calls `engine.globals().set("_NEOC_ARGS", ...)` at startup with the script-args slice. `env.args()` reads this global. If no such global exists at call time, return an empty table (not an error) — this covers library-mode usage and is a testable contract.
+- **`args()` wiring:** `src/main.rs` calls `engine.globals().set("_NEOC_ARGS", ...)` at startup with the script-args slice. `env.args()` reads this global. If absent (`nil`), returns an empty table (library mode). If present but wrong type or contains non-string values, raises `error()` — a runner that misconfigures this global has a programmer error and must be told.
 - **`home_dir` deprecation:** Add `#[allow(deprecated)]` at the call site with a comment explaining why `std::env::home_dir` is preferred over `dirs` crate in `std:*` context.
 - **Tests:** `tests/std/env.test.luau` — cover all surface functions. Platform-constant assertions are conditional on `env.os`. Tests for `current_dir` error must match on the `"env.current_dir: "` prefix only, not the full OS error string.
 - **`.d.luau` stub:** `types/std/env.d.luau` — required per M1 Definition of Done.
