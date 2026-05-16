@@ -37,7 +37,9 @@ struct IniDoc {
 
 impl IniDoc {
     fn new() -> Self {
-        Self { sections: Vec::new() }
+        Self {
+            sections: Vec::new(),
+        }
     }
 
     fn ensure_section(&mut self, name: Option<&str>) -> usize {
@@ -83,9 +85,9 @@ fn do_parse(text: &str, opts: &ParseOpts) -> Result<IniDoc, String> {
 
         // Section header.
         if line.starts_with('[') {
-            let end = line.find(']').ok_or_else(|| {
-                format!("line {}: unclosed section header", line_num + 1)
-            })?;
+            let end = line
+                .find(']')
+                .ok_or_else(|| format!("line {}: unclosed section header", line_num + 1))?;
             let name = &line[1..end];
             if name.is_empty() {
                 return Err(format!("line {}: empty section name", line_num + 1));
@@ -137,8 +139,13 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 }
 
 #[instrument(name = "ini.parse", target = "luau::lib::ini", skip_all)]
-fn parse(lua: &Lua, (text, opts_table): (mlua::String, Option<Table>)) -> mlua::Result<(Value, Value)> {
-    let raw = text.to_str().map_err(|e| mlua::Error::external(e.to_string()))?;
+fn parse(
+    lua: &Lua,
+    (text, opts_table): (mlua::String, Option<Table>),
+) -> mlua::Result<(Value, Value)> {
+    let raw = text
+        .to_str()
+        .map_err(|e| mlua::Error::external(e.to_string()))?;
 
     if raw.contains('\0') {
         return err(lua, "ini.parse: input contains null bytes");
@@ -150,7 +157,9 @@ fn parse(lua: &Lua, (text, opts_table): (mlua::String, Option<Table>)) -> mlua::
             let mut syms = Vec::new();
             for pair in cs.pairs::<i64, mlua::String>() {
                 let (_, v) = pair?;
-                let s = v.to_str().map_err(|e| mlua::Error::external(e.to_string()))?;
+                let s = v
+                    .to_str()
+                    .map_err(|e| mlua::Error::external(e.to_string()))?;
                 if let Some(c) = s.chars().next() {
                     syms.push(c);
                 }
@@ -161,7 +170,9 @@ fn parse(lua: &Lua, (text, opts_table): (mlua::String, Option<Table>)) -> mlua::
             let mut delims = Vec::new();
             for pair in ds.pairs::<i64, mlua::String>() {
                 let (_, v) = pair?;
-                let s = v.to_str().map_err(|e| mlua::Error::external(e.to_string()))?;
+                let s = v
+                    .to_str()
+                    .map_err(|e| mlua::Error::external(e.to_string()))?;
                 if let Some(c) = s.chars().next() {
                     delims.push(c);
                 }
@@ -204,7 +215,10 @@ fn parse(lua: &Lua, (text, opts_table): (mlua::String, Option<Table>)) -> mlua::
 }
 
 #[instrument(name = "ini.stringify", target = "luau::lib::ini", skip_all)]
-fn stringify(lua: &Lua, (config, opts_table): (Table, Option<Table>)) -> mlua::Result<(Value, Value)> {
+fn stringify(
+    lua: &Lua,
+    (config, opts_table): (Table, Option<Table>),
+) -> mlua::Result<(Value, Value)> {
     let spacing = if let Some(tbl) = &opts_table {
         tbl.get::<Option<bool>>("spacing")?.unwrap_or(false)
     } else {
@@ -223,7 +237,9 @@ fn stringify(lua: &Lua, (config, opts_table): (Table, Option<Table>)) -> mlua::R
     // Write named sections.
     for pair in config.pairs::<mlua::String, Table>() {
         let (k, section_table) = pair?;
-        let section_name = k.to_str().map_err(|e| mlua::Error::external(e.to_string()))?;
+        let section_name = k
+            .to_str()
+            .map_err(|e| mlua::Error::external(e.to_string()))?;
         if section_name.is_empty() {
             continue;
         }
@@ -249,7 +265,9 @@ fn stringify(lua: &Lua, (config, opts_table): (Table, Option<Table>)) -> mlua::R
 fn write_props(table: &Table, out: &mut String) -> mlua::Result<()> {
     for pair in table.pairs::<mlua::String, Value>() {
         let (k, v) = pair?;
-        let key = k.to_str().map_err(|e| mlua::Error::external(e.to_string()))?;
+        let key = k
+            .to_str()
+            .map_err(|e| mlua::Error::external(e.to_string()))?;
         match &v {
             Value::Boolean(true) => {
                 out.push_str(key);
@@ -258,7 +276,9 @@ fn write_props(table: &Table, out: &mut String) -> mlua::Result<()> {
             Value::String(s) => {
                 out.push_str(key);
                 out.push('=');
-                let val = s.to_str().map_err(|e| mlua::Error::external(e.to_string()))?;
+                let val = s
+                    .to_str()
+                    .map_err(|e| mlua::Error::external(e.to_string()))?;
                 out.push_str(val);
                 out.push('\n');
             }
@@ -282,8 +302,7 @@ pub fn benches(c: &mut criterion::Criterion) {
     use criterion::black_box;
 
     let lua = crate::lua::sandbox::make_engine().expect("engine");
-    let payload = "[section1]\nkey1=value1\nkey2=value2\n\n[section2]\nfoo=bar\nbaz\n"
-        .repeat(20);
+    let payload = "[section1]\nkey1=value1\nkey2=value2\n\n[section2]\nfoo=bar\nbaz\n".repeat(20);
     let payload_lua = lua.create_string(&payload).expect("payload");
 
     let mut g = c.benchmark_group("ini");
@@ -360,10 +379,8 @@ mod tests {
     #[test]
     fn parse_empty_value() {
         let lua = engine();
-        let (result, _): (Table, Value) = lua
-            .load(r#"return ini.parse("[s]\nkey=")"#)
-            .eval()
-            .unwrap();
+        let (result, _): (Table, Value) =
+            lua.load(r#"return ini.parse("[s]\nkey=")"#).eval().unwrap();
         let section: Table = result.get("s").unwrap();
         let val: String = section.get("key").unwrap();
         assert_eq!(val, "");
@@ -372,10 +389,8 @@ mod tests {
     #[test]
     fn parse_bare_key() {
         let lua = engine();
-        let (result, _): (Table, Value) = lua
-            .load(r#"return ini.parse("[s]\nflag")"#)
-            .eval()
-            .unwrap();
+        let (result, _): (Table, Value) =
+            lua.load(r#"return ini.parse("[s]\nflag")"#).eval().unwrap();
         let section: Table = result.get("s").unwrap();
         let val: bool = section.get("flag").unwrap();
         assert!(val);
@@ -410,10 +425,7 @@ mod tests {
     #[test]
     fn parse_empty_input() {
         let lua = engine();
-        let (result, _): (Table, Value) = lua
-            .load(r#"return ini.parse("")"#)
-            .eval()
-            .unwrap();
+        let (result, _): (Table, Value) = lua.load(r#"return ini.parse("")"#).eval().unwrap();
         let count: i64 = lua
             .load("local n=0; for _ in pairs(...) do n=n+1 end; return n")
             .call(result)
@@ -462,10 +474,8 @@ mod tests {
     #[test]
     fn parse_error_unclosed_section() {
         let lua = engine();
-        let (val, err): (Value, Option<String>) = lua
-            .load(r#"return ini.parse("[bad")"#)
-            .eval()
-            .unwrap();
+        let (val, err): (Value, Option<String>) =
+            lua.load(r#"return ini.parse("[bad")"#).eval().unwrap();
         assert!(matches!(val, Value::Nil));
         let err = err.expect("error expected");
         assert!(err.contains("unclosed section"), "got: {err}");
@@ -474,10 +484,8 @@ mod tests {
     #[test]
     fn parse_error_empty_section_name() {
         let lua = engine();
-        let (val, err): (Value, Option<String>) = lua
-            .load(r#"return ini.parse("[]")"#)
-            .eval()
-            .unwrap();
+        let (val, err): (Value, Option<String>) =
+            lua.load(r#"return ini.parse("[]")"#).eval().unwrap();
         assert!(matches!(val, Value::Nil));
         let err = err.expect("error expected");
         assert!(err.contains("empty section name"), "got: {err}");
@@ -526,7 +534,10 @@ mod tests {
             )
             .eval()
             .unwrap();
-        assert!(result.contains("flag\n") || result.contains("flag\r"), "got: {result}");
+        assert!(
+            result.contains("flag\n") || result.contains("flag\r"),
+            "got: {result}"
+        );
         assert!(!result.contains("flag="), "got: {result}");
     }
 
