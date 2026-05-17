@@ -38,7 +38,7 @@ Enrich existing error strings with suggestions computed on the error path. Zero 
 
 **Dependency:** `strsim = "0.11"` (~12KB)
 
-**Algorithm:** Levenshtein with threshold `max(1, name.len() / 3)` — Rust's proven threshold. Avoids garbage suggestions on short names and over-strictness on long names.
+**Algorithm:** Levenshtein with threshold `max(1, name.len() / 3)` — Rust's proven threshold. Avoids garbage suggestions on short names and over-strictness on long names. Tie-breaking: when multiple candidates share the lowest edit distance, return the lexicographically first. Deterministic output, no user confusion.
 
 **Gating rules:**
 
@@ -57,9 +57,9 @@ Enrich existing error strings with suggestions computed on the error path. Zero 
 
 The `require` closure in `modules.rs:79-84` has access to the full `HashMap<String, Table>` keys. On miss:
 
-1. Parse the requested name for namespace prefix (`std:`, `lib:`, `vnd:`).
-2. If namespace valid — filter candidates to that namespace, Levenshtein match the module name portion, enumerate if ≤ 10.
-3. If namespace invalid — suggest nearest namespace + nearest module across all namespaces.
+1. Check for `:` in the requested name. If present, split into `(namespace, local_name)`. If absent, `namespace = None`.
+2. If namespace present — filter candidates to that namespace, Levenshtein match the module name portion, enumerate if ≤ 10.
+3. If no namespace — search across all namespaces, Levenshtein match against all registered module names, enumerate if ≤ 10.
 
 ```rust
 // Pseudocode — in the require closure's error path
@@ -67,13 +67,20 @@ let requested = &name;
 let keys: Vec<&str> = modules.keys().map(|k| k.as_str()).collect();
 let suggestion = find_closest(requested, &keys, max(1, requested.len() / 3));
 
-let namespace_modules: Vec<&str> = if let Some(ns) = requested.split(':').next() {
+let (ns, _local_name) = if let Some(pos) = requested.find(':') {
+    (Some(&requested[..pos]), &requested[pos + 1..])
+} else {
+    (None, requested.as_str())
+};
+
+let namespace_modules: Vec<&str> = if let Some(ns) = ns {
     keys.iter()
         .filter(|k| k.starts_with(&format!("{ns}:")))
         .copied()
         .collect()
 } else {
-    vec![]
+    // No namespace prefix — search across all namespaces
+    keys.to_vec()
 };
 
 let mut msg = format!("require: unknown module {requested:?}");
@@ -123,11 +130,11 @@ pub enum NeoError {
     #[error("unknown module {name:?}")]
     #[diagnostic(
         code(neoc::E0001),
-        help("did you mean {suggestion:?}?"),
         url("https://neoc.dev/errors/E0001")
     )]
     ModuleNotFound {
         name: String,
+        #[help]
         suggestion: Option<String>,
         #[source_code]
         src: miette::NamedSource<String>,
@@ -174,7 +181,15 @@ pub enum NeoError {
 
 Flat namespace `neoc::ENNNN` — sequential. Stable across versions. Each code links to a docs page.
 
-**Source location:** mlua tracks chunk names via `.set_name()`. Line numbers available from `mlua::Error` debug info. Layer 2 extracts these into `miette::SourceSpan` for annotated output.
+**Source retention and span extraction:**
+
+neoc already reads the full script source into a `String` in `main.rs` before passing it to `lua.load()`. Layer 2 retains this source in an `Arc<String>` stored in Lua app data (`lua.set_app_data(source.clone())`). When a `require()` error occurs:
+
+1. **Source text** — retrieved from `lua.app_data_ref::<Arc<String>>()`. Wrapped in `miette::NamedSource::new(script_path, source)`.
+2. **Span extraction** — mlua's `Error::CallbackError` includes a traceback string with `"chunk_name:line:"` prefixes. Parse the line number from the traceback, then compute the byte offset into the retained source by iterating lines: `source.lines().take(line - 1).map(|l| l.len() + 1).sum()`. The span length is the length of the `require("...")` call on that line, found by searching for the `require` token at the byte offset.
+3. **Multi-file limitation** — neoc currently executes a single entry script (glob-matched). `Arc<String>` holds only the entry source. `dofile()`/`loadfile()` calls within the script do not have their source retained. Layer 2 annotated output degrades gracefully to error-code + help text without source context for those paths. Full multi-file source retention is a future enhancement if needed.
+
+This approach has zero happy-path cost — `Arc::clone` is a refcount bump, and span extraction only runs on the error path.
 
 **Scope boundary:** miette renders errors that reach `main.rs`. It does NOT change the Lua-facing `(nil, string)` convention. The two paths are independent:
 
@@ -267,7 +282,7 @@ Auto-generation from `#[diagnostic]` attributes is a future optimisation. Hand-w
 
 ## Drawbacks
 
-- **Two new dependencies** — `strsim` (12KB), `miette` (50KB) + `thiserror` (minimal). Total binary impact ~65KB.
+- **Two new dependencies** — `strsim` (~12KB), `miette` with `fancy` feature (~80KB) + transitive deps (`owo-colors`, `unicode-width`, `supports-color`, `textwrap`) (~70-100KB) + `thiserror` (minimal). Total binary impact ~150-200KB.
 - **Error message changes break snapshot tests** — any test asserting exact error strings needs updating. Existing tests use prefix matching (`"env.var: "` prefix), so impact is limited.
 - **miette only covers CLI path** — Lua-facing errors remain strings. Two rendering paths to maintain.
 - **Error code commitment** — once assigned, codes must remain stable. Wrong taxonomy early is expensive to fix.
@@ -296,7 +311,7 @@ Tempting but premature. The error code taxonomy doesn't exist yet. Breaking ADR-
 
 ## Open questions
 
-1. **Error code taxonomy** — flat `neoc::E0001` (proposed) vs namespaced `neoc::require::E001`. Flat is simpler and matches Rust. Namespaced is greppable by subsystem. Team should weigh in.
+1. ~~**Error code taxonomy**~~ — **Resolved: flat `neoc::E0001`**. Matches rustc convention, simpler, sequential. Subsystem is derivable from the error type — namespacing the code adds no information.
 2. **Docs hosting for error pages** — inline in VitePress site (proposed) vs auto-generated from code. Hand-written initially; automation later if error count grows past ~20.
 3. **Layer 3 timing** — when do structured error tables become necessary? Current proposal defers until LLM consumer demand is concrete.
 4. **`miette` in test output** — should `lib:test` assertion failures also use miette rendering? Currently out of scope but natural extension.
