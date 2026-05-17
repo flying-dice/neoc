@@ -41,6 +41,7 @@ pub fn install(lua: &Lua) -> mlua::Result<()> {
 
     // std:* — mirrors Rust standard library.
     modules.insert("std:collections".into(), stdmod::collections::module(lua)?);
+    modules.insert("std:env".into(), stdmod::env::module(lua)?);
     modules.insert("std:fs".into(), stdmod::fs::module(lua)?);
     modules.insert("std:io".into(), stdmod::io::module(lua)?);
     modules.insert("std:net".into(), stdmod::net::module(lua)?);

@@ -70,7 +70,7 @@ fn install_shutdown_handler() {
     });
 }
 
-async fn run(paths: &[String]) {
+async fn run(paths: &[String], user_args: &[String]) {
     install_shutdown_handler();
 
     let mut total_passed = 0u32;
@@ -87,6 +87,14 @@ async fn run(paths: &[String]) {
             eprintln!("error: engine init failed: {e}");
             process::exit(1);
         });
+
+        if !user_args.is_empty() {
+            let tbl = engine.create_table().unwrap();
+            for (i, arg) in user_args.iter().enumerate() {
+                tbl.set(i + 1, arg.as_str()).unwrap();
+            }
+            engine.globals().set("_NEOC_ARGS", tbl).unwrap();
+        }
 
         if let Err(e) = engine
             .load(&source)
@@ -168,10 +176,20 @@ async fn main() {
     if let Some(payload) = detect_embedded_payload() {
         install_shutdown_handler();
 
+        let user_args: Vec<String> = env::args().skip(1).collect();
+
         let engine = lua::sandbox::make_engine().unwrap_or_else(|e| {
             eprintln!("error: engine init failed: {e}");
             process::exit(1);
         });
+
+        if !user_args.is_empty() {
+            let tbl = engine.create_table().unwrap();
+            for (i, arg) in user_args.iter().enumerate() {
+                tbl.set(i + 1, arg.as_str()).unwrap();
+            }
+            engine.globals().set("_NEOC_ARGS", tbl).unwrap();
+        }
 
         if let Err(e) = engine.load(&payload[..]).exec_async().await {
             eprintln!("{e}");
@@ -182,13 +200,18 @@ async fn main() {
     }
 
     // --- normal path: run scripts from the filesystem ---
-    let paths = expand_args(env::args().skip(1));
+    let all_args: Vec<String> = env::args().skip(1).collect();
+    let (script_args, user_args) = match all_args.iter().position(|a| a == "--") {
+        Some(pos) => (&all_args[..pos], &all_args[pos + 1..]),
+        None => (&all_args[..], &[][..]),
+    };
+    let paths = expand_args(script_args.iter().cloned());
     if paths.is_empty() {
-        eprintln!("usage: neoc <script.luau> [script.luau ...]");
+        eprintln!("usage: neoc <script.luau> [script.luau ...] [-- args...]");
         process::exit(1);
     }
 
-    run(&paths).await;
+    run(&paths, user_args).await;
 }
 
 // ---------------------------------------------------------------------------
