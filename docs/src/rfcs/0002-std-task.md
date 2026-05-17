@@ -1,17 +1,17 @@
 ---
-status: draft
+status: proposed
 created: 2026-05-05
 implemented-in:
 ---
 
 # 0002 — std:task — cooperative task scheduler
 
-> [!WARNING]
-> This RFC is `draft`. Under refinement — **not** the contract.
+> [!NOTE]
+> This RFC is `proposed`. Under review — pending seeker sign-off before implementation.
 
 ## Summary
 
-`std:task` — canonical cooperative scheduler for neoc. Exposes five primitives matching Roblox `task` library exactly: `spawn`, `defer`, `delay`, `wait`, `cancel`. Backed by tokio async runtime; yields never block OS threads. Strictly intra-worker: operates on coroutines within a single Lua VM, orthogonal to cross-VM `std:thread`.
+`std:task` — canonical cooperative scheduler for neoc. Exposes five primitives matching Roblox `task` library exactly: `spawn`, `defer`, `delay`, `wait`, `cancel`. Backed by tokio async runtime; yields never block OS threads. Strictly intra-worker: operates on coroutines within a single Lua VM, orthogonal to cross-VM `std:thread`. `task.spawn` returns a `Task` UserData handle (mirrors tokio `JoinHandle`) with `:cancel()`, `:is_finished()`, and `:await()` methods — the dual-API pattern from the design principles. The flat `task.cancel(handle)` function is retained for Roblox muscle-memory compatibility.
 
 ## Motivation
 
@@ -38,20 +38,20 @@ local task = require("std:task")
 
 -- spawn: resume fn immediately on the current thread; runs until fn first yields or returns,
 -- then control returns to the caller. Caller is NOT suspended.
--- Returns the coroutine (thread). Any extra args are passed to fn.
-local t = task.spawn(function(x)
+-- Returns a Task UserData handle. Any extra args are passed to fn.
+local handle = task.spawn(function(x)
     print("runs now, x =", x)
 end, 42)
 
 -- defer: queue fn to resume after the current scheduler cycle completes.
--- Returns the coroutine (thread). Any extra args are passed to fn.
-local t2 = task.defer(function()
+-- Returns a Task handle. Any extra args are passed to fn.
+local h2 = task.defer(function()
     print("runs after this cycle")
 end)
 
 -- delay: schedule fn to resume after `secs` seconds (tokio-backed, not busy-wait).
--- Returns the coroutine (thread). Extra args after fn are forwarded to fn.
-local t3 = task.delay(2.5, function()
+-- Returns a Task handle. Extra args after fn are forwarded to fn.
+local h3 = task.delay(2.5, function()
     print("runs ~2.5s from now")
 end)
 
@@ -60,9 +60,13 @@ end)
 -- Negative values are clamped to 0. Returns elapsed time as a float.
 local elapsed = task.wait(1.0)
 
--- cancel: cancel a thread returned by spawn/defer/delay.
--- Returns true if successfully cancelled; false if already completed (no-op).
-task.cancel(t3)
+-- cancel: flat function for Roblox compat (delegates to handle:cancel())
+task.cancel(h3)
+
+-- Task handle methods (neoc extension — dual-API pattern)
+handle:cancel()          -- cancel the task
+handle:is_finished()     -- query completion state
+local result = handle:await()  -- yield until task completes; returns result or (nil, err)
 ```
 
 #### Argument passing
@@ -122,42 +126,90 @@ sequenceDiagram
 
 Canonical Roblox scheduler design (Immediate → Deferred → Heartbeat → signals). neoc collapses heartbeat phases (no meaning outside game engine) but preserves Immediate/Deferred distinction — observable to Luau code.
 
-### Thread handle
+### Task handle (UserData)
 
-`task.spawn`, `task.defer`, `task.delay` return a Lua `thread` (coroutine) value, not custom userdata. Matches Roblox.
+`task.spawn` returns a `Task` UserData — a handle to the scheduled coroutine, mirroring tokio's `JoinHandle<T>`. This is the dual-API pattern from the design principles: principle 3 (mirror Rust) provides the UserData with lifecycle methods; principle 4 (scripting ergonomics) provides the flat `task.cancel(handle)` for Roblox muscle-memory.
 
-`task.spawn`/`task.defer` accept plain function **or** `coroutine.create`-produced coroutine. When raw coroutine passed → scheduler registers on entry.
+`task.defer` and `task.delay` also return `Task` handles.
+
+#### Methods
+
+```lua
+handle:cancel()        -- cancel the task; returns true if cancelled, false if already completed
+handle:is_finished()   -- returns true if the task completed (success or error) or was cancelled
+handle:await()         -- yield current coroutine until task completes;
+                       -- returns task result on success, or (nil, err) on error/cancellation
+```
+
+#### `handle:await()` semantics
+
+`handle:await()` is a neoc extension beyond the Roblox surface (Roblox has no per-task join). It fills a real gap: "wait until this specific task finishes" — distinct from `task.wait(n)` which sleeps for a fixed duration.
+
+- Yields the current coroutine (does not block the executor).
+- On success: returns the task's return values.
+- On error: returns `(nil, error_message)`.
+- On cancellation: returns `(nil, "cancelled")`.
+- Calling `:await()` on an already-completed task returns immediately with the cached result.
+- Calling `:await()` on a cancelled task returns immediately with `(nil, "cancelled")`.
+
+```lua
+local handle = task.spawn(function()
+    task.wait(1)
+    return "done", 42
+end)
+
+-- ... do other work ...
+
+local a, b = handle:await()   -- yields until spawn completes; a="done", b=42
+```
+
+#### Flat cancel function (Roblox compatibility)
+
+`task.cancel(handle)` delegates to `handle:cancel()`. Exists purely for Roblox muscle-memory — developers expect the flat form.
+
+```lua
+task.cancel(handle)   -- equivalent to handle:cancel()
+```
+
+#### Input validation
+
+`task.spawn`/`task.defer` accept a plain function **or** a coroutine created by `coroutine.create`. When a raw coroutine is passed, the scheduler registers it on entry and wraps it in a `Task` handle.
 
 Passing `dead` or `running` coroutine → error:
 - `"task.spawn: cannot schedule a dead coroutine"`
 - `"task.spawn: cannot schedule a running coroutine"`
 - Substitute `task.defer` when raised from that function.
 
-`task.cancel` accepts any thread handle registered with scheduler (returned from `spawn`/`defer`/`delay`). Unregistered coroutine → error.
-
-Returns: `true` if cancelled, `false` if already completed (no-op, no error).
+`task.cancel` on a value that is not a `Task` handle → type error.
 
 ```lua
--- Correct: t was returned by task.spawn
-local t = task.spawn(f)
-task.cancel(t)   -- → true
+-- spawn returns a Task handle
+local h = task.spawn(f)
+h:cancel()               -- → true
+h:is_finished()          -- → true (cancelled counts as finished)
 
--- Also correct: handle from task.defer is equally cancellable
-local t2 = task.defer(f)
-task.cancel(t2)   -- → true
+-- defer handle is equally cancellable
+local h2 = task.defer(f)
+task.cancel(h2)          -- → true (flat form)
 
--- Also correct: pre-created coroutine passed to spawn (Roblox-compatible)
+-- pre-created coroutine gets wrapped in a Task handle
 local c = coroutine.create(f)
-local t3 = task.spawn(c)   -- scheduler registers c on entry; t3 == c
-task.cancel(t3)   -- → true
+local h3 = task.spawn(c)
+h3:is_finished()         -- → false (still running/pending)
 
--- No-op: already-completed thread returns false, does not error
-local t4 = task.spawn(function() end)   -- completes immediately
-local cancelled = task.cancel(t4)       -- → false
+-- completed task: cancel is a no-op
+local h4 = task.spawn(function() end)   -- completes immediately
+h4:cancel()              -- → false (already done)
+h4:is_finished()         -- → true
 
--- Error: raw coroutine never registered with the scheduler
-local c2 = coroutine.create(f)
-task.cancel(c2)   -- → error: "task.cancel: thread not registered with scheduler"
+-- await after cancel
+local h5 = task.spawn(function() task.wait(10) end)
+h5:cancel()
+local ok, err = h5:await()   -- → nil, "cancelled"
+
+-- type error: not a Task handle
+task.cancel(42)          -- → error: "task.cancel: expected Task, got number"
+task.cancel(nil)         -- → error: "task.cancel: expected Task, got nil"
 ```
 
 ### Relationship to `std:thread`
@@ -174,7 +226,7 @@ task.cancel(c2)   -- → error: "task.cancel: thread not registered with schedul
 ```
 src/lua/std/
   task.rs    -- task.spawn, task.defer, task.delay, task.wait, task.cancel
-              -- + Scheduler struct (immediate queue, deferred queue, tokio timer integration)
+              -- + Scheduler struct, Task UserData
 ```
 
 `Scheduler` held on Lua VM state via `set_app_data` → per-VM, no global state. Each `task.*` pulls scheduler from VM app data, never accessed across threads.
@@ -182,39 +234,91 @@ src/lua/std/
 ```rust
 // src/lua/std/task.rs (sketch — not the implementation contract)
 
+struct TaskHandle {
+    id: TaskId,
+    // Shared state for the task — completion, result, cancellation flag
+    state: Rc<RefCell<TaskState>>,
+}
+
+impl UserData for TaskHandle {
+    fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        methods.add_method("cancel", |_, this, ()| { ... });
+        methods.add_method("is_finished", |_, this, ()| { ... });
+        methods.add_async_method("await", |_, this, ()| { ... });
+    }
+}
+
 struct Scheduler {
-    immediate: VecDeque<(mlua::Thread, Vec<mlua::Value>)>,
-    deferred:  VecDeque<(mlua::Thread, Vec<mlua::Value>)>,
+    immediate: VecDeque<(TaskId, mlua::Thread, Vec<mlua::Value>)>,
+    deferred:  VecDeque<(TaskId, mlua::Thread, Vec<mlua::Value>)>,
+    tasks: HashMap<TaskId, Rc<RefCell<TaskState>>>,
     // timer handles are owned by tokio and re-enqueue into `immediate` on fire
 }
 ```
 
+`Rc<RefCell<TaskState>>` is correct because the scheduler is per-VM and `Lua` is not `Send`. No `Arc` needed.
+
 ### Acceptance criteria
 
-- [ ] `task.spawn(fn | thread, ...)` — resume immediately; pass varargs; return thread handle.
-- [ ] `task.defer(fn | thread, ...)` — queue to end of cycle; pass varargs; return thread handle.
-- [ ] `task.delay(secs, fn, ...)` — schedule after `secs` (tokio-backed); pass varargs; return thread handle.
+#### API surface
+
+- [ ] `task.spawn(fn | thread, ...)` — resume immediately; pass varargs; return `Task` UserData handle.
+- [ ] `task.defer(fn | thread, ...)` — queue to end of cycle; pass varargs; return `Task` handle.
+- [ ] `task.delay(secs, fn, ...)` — schedule after `secs` (tokio-backed); pass varargs; return `Task` handle.
 - [ ] `task.wait(secs)` — yield current coroutine for `secs`; return elapsed float.
-- [ ] `task.cancel(thread)` — return `true` if cancelled, `false` if completed (no-op); never errors for registered completed thread.
-- [ ] `task.cancel` on unregistered coroutine → error `"task.cancel: thread not registered with scheduler"`.
+- [ ] `task.cancel(handle)` — flat function; delegates to `handle:cancel()`; Roblox-compatible signature.
+
+#### Task UserData
+
+- [ ] `handle:cancel()` — return `true` if cancelled, `false` if already completed (no-op).
+- [ ] `handle:is_finished()` — return `true` if task completed (success, error, or cancelled).
+- [ ] `handle:await()` — yield current coroutine until task completes; return task result on success, `(nil, err)` on error, `(nil, "cancelled")` on cancellation.
+- [ ] `handle:await()` on already-completed task returns immediately (cached result).
+- [ ] `handle:cancel()` then `handle:await()` returns `(nil, "cancelled")`.
+
+#### Varargs
+
+- [ ] `task.spawn(fn, ...)` forwards varargs correctly: 0, 1, N args.
+- [ ] Varargs with nil holes (`spawn(fn, 1, nil, 3)`) preserves count.
+- [ ] `task.defer` and `task.delay` forward varargs identically.
+
+#### Input validation
+
 - [ ] `task.spawn`/`task.defer` on `dead` coroutine → error `"task.spawn: cannot schedule a dead coroutine"` (or `task.defer` variant).
 - [ ] `task.spawn`/`task.defer` on `running` coroutine → error `"task.spawn: cannot schedule a running coroutine"` (or `task.defer` variant).
+- [ ] `task.cancel(nil)` → type error.
+- [ ] `task.cancel(non_task)` → type error.
 - [ ] `task.wait` from main thread → immediate error.
 - [ ] `task.wait` negative duration → clamped to 0.
+
+#### Timing
+
 - [ ] `task.wait(0)` yields to next event-loop tick (Roblox-compatible).
-- [ ] Errors in spawned coroutines isolated — logged, not propagated.
-- [ ] Scheduler per-VM; no global state.
 - [ ] `task.wait` never blocks OS thread (tokio sleep).
-- [ ] Varargs forwarded correctly for `spawn`, `defer`, `delay`.
-- [ ] Type definition stub (`.d.luau`) covers full surface.
-- [ ] Spec at `tests/std/task.spec.luau` using `lib:test`, committed before implementation PR (see [RFC 0000](0000-spec-driven-development.md)).
-- [ ] Full test suite: happy path, cancellation, error isolation, timing accuracy, varargs, `wait` return, negative-duration clamp, main-thread error, dead/running coroutine errors, cancel error string.
 - [ ] Timing tests assert `elapsed >= requested`; upper-bound tolerance 100ms (CI jitter budget), documented in spec.
+
+#### Error isolation
+
+- [ ] Errors in spawned coroutines isolated — logged to stderr, not propagated to caller.
+- [ ] Script exit code non-zero if any spawned task errored.
+- [ ] Scheduler per-VM; no global state.
+
+#### Cancellation
+
+- [ ] `task.cancel` on completed task → `false` (no-op, no error).
+- [ ] `task.cancel` on already-cancelled task → idempotent (returns `false`).
 - [ ] `task.cancel` on mid-execution coroutine → marks cancelled; not re-enqueued after next yield. Cancellation not immediate — completes current execution slice.
+
+#### Deliverables
+
+- [ ] Type definition stub (`.d.luau`) at `types/std/task.d.luau`.
+- [ ] Spec at `tests/std/task.spec.luau` using `lib:test`, committed before implementation PR (see [RFC 0000](0000-spec-driven-development.md)).
+- [ ] Full test suite covering test matrix in issue #2.
 
 ## Drawbacks
 
-- Five new exported functions to maintain. API stable (Roblox constrains it), but scheduler is non-trivial Rust.
+- Five exported functions + one UserData type to maintain. API surface stable (Roblox constrains the flat functions), but scheduler + Task handle state machine is non-trivial Rust.
+- `Task` UserData is a neoc extension — code using `:await()` or `:is_finished()` is not portable back to Roblox/Lune. Mitigation: the flat API (`task.spawn`, `task.cancel`) remains 1:1 Roblox-compatible; extensions are additive.
 - Immediate/Deferred ordering observable to scripts → coupling to scheduler internals. Inherent to Roblox model; acceptable because explicitly documented.
 - No cap on live coroutines. Scripts can saturate immediate queue. Consistent with Roblox/Lune — follow pattern rather than diverge.
 
@@ -235,6 +339,10 @@ Share one scheduler across `std:thread` workers. Eliminates per-worker overhead 
 ### Expose `desynchronize`/`synchronize` (Roblox parallel Luau)
 
 Roblox parallel Luau: `task.desynchronize()` yields out of serialised actor context, `task.synchronize()` re-enters. Meaningful in Roblox because actors have write-isolation. neoc uses `std:thread` (separate VMs), not actor isolation → these map to nothing. Excluded; revisit if neoc introduces actor-style isolation.
+
+### Return plain thread instead of Task UserData
+
+Return Lua `thread` (coroutine) values from `task.spawn` — matching Roblox exactly. No custom UserData. Simpler implementation — but loses join semantics (`await`), completion queries (`is_finished`), and type-safe cancel. Roblox doesn't need these because it has engine-level lifetime management; neoc scripts are standalone and need explicit coordination. The dual-API pattern (UserData + flat functions) gives both Roblox compat and Rust-style lifecycle management. Rejected in favour of TaskHandle.
 
 ### Combine with `std:thread`
 
