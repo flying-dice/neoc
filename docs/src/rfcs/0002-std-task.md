@@ -335,7 +335,7 @@ struct Scheduler {
 ```rust
 impl UserData for TaskHandle {
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
-        fields.add_meta_method(MetaMethod::Close, |lua, this, ()| {
+        fields.add_meta_method(MetaMethod::Gc, |lua, this, ()| {
             // If task is complete, remove from scheduler.tasks
             ...
         });
