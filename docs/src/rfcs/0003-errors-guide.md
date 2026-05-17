@@ -119,14 +119,14 @@ miette = { version = "7", features = ["fancy"] }
 
 **Error types:**
 
-Define a `NeoError` enum covering all CLI-facing error paths:
+Define a `NeocError` enum covering all CLI-facing error paths:
 
 ```rust
 use miette::Diagnostic;
 use thiserror::Error;
 
 #[derive(Error, Diagnostic, Debug)]
-pub enum NeoError {
+pub enum NeocError {
     #[error("unknown module {name:?}")]
     #[diagnostic(
         code(neoc::E0001),
@@ -273,7 +273,7 @@ Auto-generation from `#[diagnostic]` attributes is a future optimisation. Hand-w
 - [ ] `require()` errors include Levenshtein suggestion + namespace enumeration
 - [ ] Type mismatch errors in ≥ 3 modules list accepted types
 - [ ] `thiserror` + `miette` added to `Cargo.toml`
-- [ ] `NeoError` enum defined with `#[diagnostic]` attributes
+- [ ] `NeocError` enum defined with `#[diagnostic]` attributes
 - [ ] `main.rs` error output uses miette rendering
 - [ ] Error-conventions guide updated with suggestion style rules
 - [ ] ≥ 1 error code page in `docs/src/errors/`
@@ -319,7 +319,7 @@ Tempting but premature. The error code taxonomy doesn't exist yet. Breaking ADR-
 ## Implementation notes
 
 - **Layer 1 files touched:** `Cargo.toml` (add `strsim`), `src/lua/modules.rs` (require error enrichment), individual module files for type hint enrichment.
-- **Layer 2 files touched:** `Cargo.toml` (add `thiserror`, `miette`), new `src/errors.rs` (NeoError enum), `src/main.rs` (miette rendering).
+- **Layer 2 files touched:** `Cargo.toml` (add `thiserror`, `miette`), new `src/errors.rs` (NeocError enum), `src/main.rs` (miette rendering).
 - **Docs:** `docs/src/guides/error-conventions.md` (extend with suggestion rules), new `docs/src/errors/` directory.
 - **Sequencing:** Layer 1 ships first (single commit, `fix` type). Layer 2 follows (separate MR, `feat` type). Independent of any other in-flight work.
 - **Testing:** Add `tests/require-errors.test.luau` covering typo suggestions. Existing tests unaffected — they test happy paths.
