@@ -126,6 +126,23 @@ sequenceDiagram
 
 Canonical Roblox scheduler design (Immediate → Deferred → Heartbeat → signals). neoc collapses heartbeat phases (no meaning outside game engine) but preserves Immediate/Deferred distinction — observable to Luau code.
 
+#### `task.delay(0)` semantics
+
+`task.delay(0, fn)` is equivalent to `task.defer(fn)` — both enqueue into the deferred queue. When a zero-duration timer fires, the callback is placed at the back of the deferred queue for the current tick, not the immediate queue. This matches Roblox behaviour where `delay(0)` runs on the next resumption cycle (heartbeat), semantically identical to `defer`.
+
+Observable ordering guarantee: given `task.delay(0, f1)` followed by `task.defer(f2)` in the same execution slice, `f1` runs before `f2` (FIFO within the deferred queue — `f1` was enqueued first).
+
+```lua
+-- These two are semantically equivalent:
+task.delay(0, fn)
+task.defer(fn)
+
+-- Observable ordering:
+task.delay(0, function() print("A") end)
+task.defer(function() print("B") end)
+-- Output: A, B (FIFO within deferred queue)
+```
+
 ### Task handle (UserData)
 
 `task.spawn` returns a `Task` UserData — a handle to the scheduled coroutine, mirroring tokio's `JoinHandle<T>`. This is the dual-API pattern from the design principles: principle 3 (mirror Rust) provides the UserData with lifecycle methods; principle 4 (scripting ergonomics) provides the flat `task.cancel(handle)` for Roblox muscle-memory.
@@ -147,10 +164,12 @@ handle:await()         -- yield current coroutine until task completes;
 
 - Yields the current coroutine (does not block the executor).
 - On success: returns the task's return values.
-- On error: returns `(nil, error_message)`.
+- On error: returns `(nil, error_message)` where `error_message` is a string. (Interim format — type may change when the error format RFC lands per open question #1.)
 - On cancellation: returns `(nil, "cancelled")`.
 - Calling `:await()` on an already-completed task returns immediately with the cached result.
 - Calling `:await()` on a cancelled task returns immediately with `(nil, "cancelled")`.
+- **Single-consumer:** at most one coroutine may be suspended in `:await()` on a given handle at a time. A second call to `:await()` while another coroutine is already waiting → error `"task.await: another coroutine is already awaiting this task"`. Sequential re-calls after completion are fine (cached result). Mirrors tokio `JoinHandle` (single-consumer; second `.await` panics).
+- **Self-await detection:** calling `handle:await()` from within the task itself → error `"task.await: cannot await self"`. This is a guaranteed deadlock (task yields waiting for its own completion); detected at call site.
 
 ```lua
 local handle = task.spawn(function()
@@ -162,6 +181,43 @@ end)
 
 local a, b = handle:await()   -- yields until spawn completes; a="done", b=42
 ```
+
+#### Cancellation semantics
+
+The cancellation state machine has three cases depending on task state at cancel time:
+
+**Case 1: Task is yielded/suspended (in scheduler queues).** Straightforward — task is removed from the queue and marked cancelled. `:await()` returns `(nil, "cancelled")` immediately.
+
+**Case 2: Task is suspended inside `task.wait(n)` (timer-backed, not in scheduler queues).** Cancellation is prompt — the tokio timer is cancelled and the task returns immediately with cancelled status. Does not wait for the timer to fire. Mirrors `tokio::JoinHandle::abort()` — cancellation latency is not bounded by remaining sleep duration.
+
+```lua
+local h = task.spawn(function() task.wait(60) end)  -- suspended on 60s timer
+h:cancel()             -- wakes immediately; does not wait 60s
+h:is_finished()        -- → true
+local ok, err = h:await()  -- → nil, "cancelled"
+```
+
+**Case 3: Task is mid-execution (running its current slice).** Cancel marks the task; execution continues until the current slice yields or returns. After yield/return, the task is not re-enqueued. This applies identically whether cancel is called from another coroutine or from the task itself (self-cancel).
+
+**Self-cancel:** `handle:cancel()` called from within the task's own execution is a deferred cancel — the task continues its current slice, and after yield/return it is discarded. Matches Roblox where `task.cancel` on a running coroutine is effectively a no-op until yield.
+
+```lua
+local handle
+handle = task.spawn(function()
+    handle:cancel()        -- marks cancelled; execution continues
+    print("still runs")   -- this prints
+    task.wait(1)           -- yields → task discarded, never re-enqueued
+    print("never runs")
+end)
+```
+
+**`is_finished()` during cancel-while-running:** returns `false` until the execution slice actually completes. `is_finished()` reflects execution state, not mark state. Once the slice yields/returns and the task is discarded, `is_finished()` returns `true`.
+
+#### Roblox/Lune cancel-while-running comparison
+
+In Roblox, `task.cancel()` on a currently-running coroutine is a no-op — cancellation only applies to yielded/suspended threads. The running thread continues unaffected; the cancel call returns `false`. Lune follows identical behaviour.
+
+neoc diverges deliberately: cancellation marks the task regardless of execution state. A running task completes its current slice, then is discarded at the next yield point. This is more useful than "no-op on running" — it provides a reliable cancellation mechanism where the caller can guarantee the task won't run beyond its current slice. The divergence is acceptable because: (1) Roblox scripts rarely cancel running tasks (it's a no-op there, so nobody writes code relying on it), and (2) the observable difference is only visible at the next yield, not mid-statement.
 
 #### Flat cancel function (Roblox compatibility)
 
@@ -234,9 +290,15 @@ src/lua/std/
 ```rust
 // src/lua/std/task.rs (sketch — not the implementation contract)
 
+struct TaskState {
+    status: TaskStatus,          // Pending | Running | Completed | Cancelled
+    result: Option<Vec<Value>>,  // cached return values (or error)
+    awaiter: Option<mlua::Thread>, // at most one suspended awaiter (single-consumer)
+    awaited: bool,               // true if any caller observed the error via :await()
+}
+
 struct TaskHandle {
     id: TaskId,
-    // Shared state for the task — completion, result, cancellation flag
     state: Rc<RefCell<TaskState>>,
 }
 
@@ -244,7 +306,11 @@ impl UserData for TaskHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("cancel", |_, this, ()| { ... });
         methods.add_method("is_finished", |_, this, ()| { ... });
-        methods.add_async_method("await", |_, this, ()| { ... });
+        methods.add_async_method("await", |lua, this, ()| {
+            // Error if self-await (this.id == current task id)
+            // Error if awaiter already set (single-consumer)
+            ...
+        });
     }
 }
 
@@ -257,6 +323,25 @@ struct Scheduler {
 ```
 
 `Rc<RefCell<TaskState>>` is correct because the scheduler is per-VM and `Lua` is not `Send`. No `Arc` needed.
+
+#### Task state cleanup (GC policy)
+
+`TaskHandle` implements a Lua `__gc` metamethod (finalizer). Cleanup contract:
+
+- When a `TaskHandle` is garbage-collected **and** the task is complete (success, error, or cancelled): the corresponding entry is removed from `Scheduler.tasks`.
+- Active tasks (pending/running) retain their entry regardless of handle GC — the scheduler owns the reference via the queue.
+- This bounds memory growth to: active tasks + handles still reachable in Lua. Fire-and-forget spawns with discarded handles are cleaned up promptly after completion + next GC cycle.
+
+```rust
+impl UserData for TaskHandle {
+    fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
+        fields.add_meta_method(MetaMethod::Close, |lua, this, ()| {
+            // If task is complete, remove from scheduler.tasks
+            ...
+        });
+    }
+}
+```
 
 ### Acceptance criteria
 
@@ -272,9 +357,12 @@ struct Scheduler {
 
 - [ ] `handle:cancel()` — return `true` if cancelled, `false` if already completed (no-op).
 - [ ] `handle:is_finished()` — return `true` if task completed (success, error, or cancelled).
-- [ ] `handle:await()` — yield current coroutine until task completes; return task result on success, `(nil, err)` on error, `(nil, "cancelled")` on cancellation.
+- [ ] `handle:await()` — yield current coroutine until task completes; return task result on success, `(nil, err)` on error, `(nil, "cancelled")` on cancellation. `err` is a string (error message) until the error format RFC resolves open question #1.
 - [ ] `handle:await()` on already-completed task returns immediately (cached result).
 - [ ] `handle:cancel()` then `handle:await()` returns `(nil, "cancelled")`.
+- [ ] `handle:await()` single-consumer: second concurrent awaiter → error `"task.await: another coroutine is already awaiting this task"`.
+- [ ] `handle:await()` self-await detection → error `"task.await: cannot await self"`.
+- [ ] `TaskHandle` implements `__gc`: removes entry from `Scheduler.tasks` when handle is GC'd and task is complete.
 
 #### Varargs
 
@@ -294,13 +382,15 @@ struct Scheduler {
 #### Timing
 
 - [ ] `task.wait(0)` yields to next event-loop tick (Roblox-compatible).
+- [ ] `task.delay(0, fn)` equivalent to `task.defer(fn)` — enqueues into deferred queue (Roblox-compatible).
+- [ ] `task.delay(0, f1)` then `task.defer(f2)` in same slice → `f1` runs before `f2` (FIFO).
 - [ ] `task.wait` never blocks OS thread (tokio sleep).
 - [ ] Timing tests assert `elapsed >= requested`; upper-bound tolerance 100ms (CI jitter budget), documented in spec.
 
 #### Error isolation
 
 - [ ] Errors in spawned coroutines isolated — logged to stderr, not propagated to caller.
-- [ ] Script exit code non-zero if any spawned task errored.
+- [ ] Script exit code non-zero if any spawned task errored **and was not awaited**. A task whose error is observed via `:await()` is considered handled — does not contribute to non-zero exit. Mirrors tokio: panics that are `.join()`ed and handled don't propagate.
 - [ ] Scheduler per-VM; no global state.
 
 #### Cancellation
@@ -308,6 +398,9 @@ struct Scheduler {
 - [ ] `task.cancel` on completed task → `false` (no-op, no error).
 - [ ] `task.cancel` on already-cancelled task → idempotent (returns `false`).
 - [ ] `task.cancel` on mid-execution coroutine → marks cancelled; not re-enqueued after next yield. Cancellation not immediate — completes current execution slice.
+- [ ] `task.cancel` on timer-suspended task (`task.wait(n)`) → prompt cancellation. Timer cancelled, task marked finished immediately.
+- [ ] Self-cancel (`handle:cancel()` from within the task) → deferred cancel; task continues current slice, discarded at next yield/return.
+- [ ] `handle:is_finished()` during cancel-while-running slice → `false` (reflects execution state, not mark state).
 
 #### Deliverables
 
@@ -344,17 +437,31 @@ Roblox parallel Luau: `task.desynchronize()` yields out of serialised actor cont
 
 Return Lua `thread` (coroutine) values from `task.spawn` — matching Roblox exactly. No custom UserData. Simpler implementation — but loses join semantics (`await`), completion queries (`is_finished`), and type-safe cancel. Roblox doesn't need these because it has engine-level lifetime management; neoc scripts are standalone and need explicit coordination. The dual-API pattern (UserData + flat functions) gives both Roblox compat and Rust-style lifecycle management. Rejected in favour of TaskHandle.
 
+**Compatibility note:** Roblox returns the thread itself from `task.spawn` — `type(task.spawn(f)) == "thread"`. In neoc, `type(task.spawn(f)) == "userdata"`. Scripts that check `type(handle) == "thread"` are not portable from Roblox. This is accepted — `type(handle)` checks are rare in practice and the flat API (`task.cancel(handle)`) works identically regardless of the underlying type.
+
 ### Combine with `std:thread`
 
 Put `task.spawn` et al. on `std:thread` module. Rejected — concerns are distinct: `std:thread.spawn` creates new VM; `task.spawn` schedules coroutine inside current VM. Mixing blurs abstraction boundary, confuses Roblox users (separate globals). Separation keeps both modules independently comprehensible.
 
 ## Open questions
 
-1. **Error format for throwing coroutine?** Message, stack trace, coroutine identity — needs consistent format across all runtime error surfaces. Tracks with `std:io` error formatting work. **Cross-track dependency:** cannot pin exact error string in acceptance criteria until std:io error formatting design decided. Implementation PR gated on that design (or temporary format recorded in ADR).
+1. **Error format for throwing coroutine?** Message, stack trace, coroutine identity — needs consistent format across all runtime error surfaces. Tracks with `std:io` error formatting work. **Cross-track dependency:** cannot pin exact error string in acceptance criteria until std:io error formatting design decided. Implementation PR gated on that design (or temporary format recorded in ADR). **Interim:** `err` returned from `:await()` is a plain string (error message). Type may change when error RFC lands.
 
 2. ~~**Should `task.wait(0)` be legal?**~~ **Resolved.** Legal. Yields until next event-loop tick (Roblox-consistent). Captured in acceptance criteria.
 
 3. ~~**Cancellation semantics for running coroutine.**~~ **Resolved.** Option (b) — mark cancelled, next yield detects flag, not re-enqueued. Avoids closing mid-frame. Captured in acceptance criteria.
+
+4. ~~**`delay(0)` semantics.**~~ **Resolved.** Equivalent to `task.defer` — enqueues into deferred queue. FIFO ordering within the queue. Captured in acceptance criteria.
+
+5. ~~**Self-cancel behaviour.**~~ **Resolved.** Deferred cancel — task continues current slice, discarded at next yield/return. Matches the general cancel-while-running semantics. Captured in acceptance criteria.
+
+6. ~~**Multiple concurrent awaiters.**~~ **Resolved.** Single-consumer. Second live await errors. Mirrors tokio `JoinHandle`. Cached result available for sequential re-calls after completion. Captured in acceptance criteria.
+
+7. ~~**Exit code for caught errors.**~~ **Resolved.** "Errored AND not awaited" — if `:await()` observes the error, it's handled and does not contribute to non-zero exit. Captured in acceptance criteria.
+
+8. ~~**`Scheduler.tasks` cleanup policy.**~~ **Resolved.** `TaskHandle.__gc` removes entry from scheduler map when handle is GC'd and task is complete. Captured in Rust sketch and acceptance criteria.
+
+9. ~~**Cancellation of timer-suspended tasks.**~~ **Resolved.** Prompt cancellation — timer cancelled, task returns immediately with cancelled status. Mirrors `tokio::JoinHandle::abort()`. Captured in acceptance criteria.
 
 ## Implementation notes
 
