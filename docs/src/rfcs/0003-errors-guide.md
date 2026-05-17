@@ -1,13 +1,13 @@
 ---
-status: draft
+status: approved
 created: 2026-05-17
 implemented-in:
 ---
 
 # 0003 — Errors guide: helpful errors that educate, not punish
 
-> [!WARNING]
-> This RFC is `draft`. Under refinement — **not** the contract.
+> [!NOTE]
+> This RFC is `approved`. All seekers reviewed and approved. Awaiting CODEOWNER merge.
 
 ## Summary
 
