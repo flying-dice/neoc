@@ -18,6 +18,9 @@ mlua = { version = "0.10", features = ["luau", "async", "send", "vendored", "ser
 parking_lot = "0.12"
 regex = "1"
 base64 = "0.22"
+flate2 = "1"
+zstd = "0.13"
+brotli = "7"
 rust-ini = "0.21"
 mime_guess = "2"
 
