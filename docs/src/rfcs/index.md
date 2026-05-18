@@ -27,7 +27,7 @@ Workflow: agent-backlog Kanban. RFCs produced when issue carries `design-rfc` la
 
 ### Accepted
 
-_None yet._
+- [0004 — lib:compress — compression and decompression](./0004-lib-compress)
 
 ### Implemented
 
