@@ -171,7 +171,7 @@ Methods:
 
 All errors are tuple-form `(nil, string)` except `csv.rows` / `reader:rows()` iterators (raise).
 
-Error message format follows the repo convention (`docs/src/rfcs/0003-errors-guide.md`): `module.function: <reason>` — no namespace prefix. Line numbers 1-indexed, matches Go `encoding/csv`. Parse errors append the offending raw line truncated to 80 bytes (UTF-8 boundary safe): `<reason>: "<raw>"`. Line truncated mid-field gets a trailing `…`.
+Error message format follows the repo convention (`docs/src/rfcs/0003-errors-guide.md`): `module.function: <reason>` — no namespace prefix. Line numbers 1-indexed, matches Go `encoding/csv`. Parse errors append a *reconstructed* offending line truncated to 80 bytes (UTF-8 boundary safe): `<reason>: "<line>"`. The line is rebuilt from the parsed fields with conservative quoting heuristics — quoting choices may differ from the source bytes. The line number and field counts are exact; the snippet is for orientation. Byte-exact source reproduction is a deferred enhancement (would require a `Read` wrapper that captures lines by `csv::Position::byte()`). Line truncated mid-field gets a trailing `…`.
 
 | Condition | Message |
 |---|---|
@@ -233,7 +233,7 @@ Empty field in a typed column → `nil` (see [Empty fields](#empty-fields)). Cal
 - [ ] RFC 4180: quoted fields, escaped quotes, multiline values
 - [ ] Schema-driven type coercion (`"number"`, `"boolean"`); untyped → string
 - [ ] Errors use `module.function:` prefix per `0003-errors-guide` — no `lib:` namespace prefix
-- [ ] Parse errors include line number, expected vs found column count, and the offending raw line truncated to 80 bytes (`<reason>: "<raw>"`)
+- [ ] Parse errors include line number, expected vs found column count, and a reconstructed offending line truncated to 80 bytes (`<reason>: "<line>"`); byte-exact reproduction deferred
 - [ ] Duplicate header names → hard error, not silent shadow
 - [ ] Untyped empty field → `""`; typed empty field → `nil`
 - [ ] `csv.reader` enforces exclusive borrow on the `ReaderHandle`; second concurrent reader on the same handle → tuple error, no deadlock
@@ -282,7 +282,7 @@ _None._
 - `reader:headers()` is backed by `csv::Reader::headers()` directly — the backing crate already caches the headers on first parse and returns a borrowed `StringRecord` thereafter. We clone into a fresh Luau table per call. Calling `:headers()` before `:rows()` triggers the initial parse; calling it after triggers no extra I/O (cached). Documented to match Rust semantics 1:1.
 - `csv.writer` wraps `csv::Writer<Vec<u8>>`; `:finish()` consumes and returns `String::from_utf8`. Built with `flexible(false)` so column-count mismatches surface as errors rather than producing ragged output.
 - `writer:row` shape detection: walk keys once. `1..n` integer keys only → array; string keys only → keyed lookup against `headers`; both present → tuple error. Array length compared to `#headers`; mismatch → tuple error with both counts. Keyed shape: iterate `headers`, look up each in the table; absent key → empty string field (matches `stringify`).
-- Parse errors append the offending raw line truncated to 80 bytes. Truncation walks UTF-8 boundaries via `str::is_char_boundary`; truncated lines get a trailing `…`. Source: `csv::Error::position()` for line number; raw line buffered by the `ReaderBuilder` (already exposed via `csv::Reader::position()` + last-record byte range). Pre-cached during read to avoid re-seeking the handle.
+- Parse errors append a reconstructed offending line truncated to 80 bytes. Truncation walks UTF-8 boundaries via `str::is_char_boundary`; truncated lines get a trailing `…`. Line numbers come from `csv::Error::position()` / `csv::ByteRecord::position()`. The line text is rebuilt from the parsed fields with conservative quoting heuristics — the `csv` crate doesn't surface raw source bytes per record. Byte-exact reproduction would need a `Read` wrapper that captures bytes between `csv::Position::byte()` boundaries; tracked as a v2 follow-up.
 - Single-byte option validation happens at the Luau→Rust boundary, before constructing the `ReaderBuilder` / `WriterBuilder`. Options-validation errors omit the `line N:` segment and raw line (no position context).
 - Error prefixes follow `0003-errors-guide` — `module.function:` form, set via `from_err(lua, "csv.parse", …)` etc.
 - Type stub: `docs/src/lib/csv.d.luau` (mirror existing module stubs).

@@ -326,8 +326,6 @@ fn create_rows_iter(
             headers.as_deref(),
             &s.opts.types,
             line,
-            s.opts.delimiter,
-            s.opts.quote,
             prefix,
         ) {
             Ok(v) => v,
@@ -378,8 +376,6 @@ fn parse_fn(
                     headers.as_deref(),
                     &parse_opts.types,
                     line,
-                    parse_opts.delimiter,
-                    parse_opts.quote,
                     prefix,
                 ) {
                     Ok(v) => v,
@@ -691,29 +687,21 @@ fn format_number(n: f64) -> String {
 // Record conversion
 // ---------------------------------------------------------------------------
 
-#[allow(clippy::too_many_arguments)]
 fn record_to_lua(
     lua: &Lua,
     record: &csv::ByteRecord,
     headers: Option<&[String]>,
     types: &HashMap<String, ColumnType>,
     line: u64,
-    delimiter: u8,
-    quote: u8,
     prefix: &str,
 ) -> Result<Value, String> {
     let t = lua.create_table().map_err(|e| format!("{prefix}: {e}"))?;
     match headers {
         Some(hs) => {
-            if record.len() != hs.len() {
-                let raw = byte_record_to_raw(record, delimiter, quote);
-                return Err(format!(
-                    "{prefix}: line {line}: found {} fields, expected {}: \"{}\"",
-                    record.len(),
-                    hs.len(),
-                    truncate_for_error(&raw, MAX_RAW_LINE_BYTES)
-                ));
-            }
+            // Length parity is enforced upstream by `ReaderBuilder::flexible(false)` —
+            // any mismatch surfaces as `csv::ErrorKind::UnequalLengths` before reaching
+            // here. The mapping is many→one (each header to a record field), so we
+            // tolerate `record.len() < hs.len()` defensively via `record.get`.
             for (i, h) in hs.iter().enumerate() {
                 let raw_field = record.get(i).unwrap_or(b"");
                 let value = match types.get(h) {
@@ -824,7 +812,7 @@ fn validate_headers<R: Read>(
     let fields: Vec<String> = rec.iter().map(|s| s.to_string()).collect();
     if let Some(dup) = find_duplicate(&fields) {
         let refs: Vec<&str> = rec.iter().collect();
-        let raw = fields_to_raw_line(&refs, opts.delimiter, opts.quote);
+        let raw = reconstruct_line(&refs, opts.delimiter, opts.quote);
         return Err(format!(
             "{prefix}: line 1: duplicate header \"{dup}\": \"{}\"",
             truncate_for_error(&raw, MAX_RAW_LINE_BYTES)
@@ -834,7 +822,14 @@ fn validate_headers<R: Read>(
 }
 
 // ---------------------------------------------------------------------------
-// Error formatting + raw-line helpers
+// Error formatting + line-reconstruction helpers
+//
+// The offending-line text in parse errors is *reconstructed* from the parsed
+// fields, not the original source bytes — quoting choices may differ (e.g. a
+// single-char field that was quoted in source comes back unquoted). The line
+// number and field counts locate the problem precisely; the reconstructed
+// snippet is for orientation only. Byte-exact source reproduction would need
+// a `Read` wrapper that captures lines by position — tracked as a follow-up.
 // ---------------------------------------------------------------------------
 
 fn csv_error_message(
@@ -853,7 +848,7 @@ fn csv_error_message(
         } => {
             let line = pos.as_ref().map(|p| p.line()).unwrap_or(0);
             let raw = record
-                .map(|r| byte_record_to_raw(r, delimiter, quote))
+                .map(|r| reconstruct_record_line(r, delimiter, quote))
                 .unwrap_or_default();
             format!(
                 "{prefix}: line {line}: found {len} fields, expected {expected_len}: \"{}\"",
@@ -879,16 +874,16 @@ fn find_duplicate(headers: &[String]) -> Option<String> {
     None
 }
 
-fn byte_record_to_raw(rec: &csv::ByteRecord, delimiter: u8, quote: u8) -> String {
+fn reconstruct_record_line(rec: &csv::ByteRecord, delimiter: u8, quote: u8) -> String {
     let fields: Vec<String> = rec
         .iter()
         .map(|f| String::from_utf8_lossy(f).into_owned())
         .collect();
     let refs: Vec<&str> = fields.iter().map(|s| s.as_str()).collect();
-    fields_to_raw_line(&refs, delimiter, quote)
+    reconstruct_line(&refs, delimiter, quote)
 }
 
-fn fields_to_raw_line(fields: &[&str], delimiter: u8, quote: u8) -> String {
+fn reconstruct_line(fields: &[&str], delimiter: u8, quote: u8) -> String {
     let delim = delimiter as char;
     let q = quote as char;
     let mut out = String::new();

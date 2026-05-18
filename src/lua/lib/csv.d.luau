@@ -38,7 +38,7 @@ export type WriteOpts = {
     with `headers = true` rows are tables keyed by header name. Typed columns
     yield numbers/booleans/nil; untyped columns are always strings.
 ]=]
-export type Row = { [string]: any } | { string | number | boolean | nil }
+export type Row = { [string]: any } | { string }
 
 --[=[
     Iterator returned by `csv.rows` and `reader:rows()`. Calling it returns
