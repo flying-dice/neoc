@@ -63,6 +63,39 @@ end
 
 Use `pcall` when genuine recovery from a programming error is needed — test runners, top-level supervisors.
 
+## Suggestions and enrichment
+
+When an error involves a name lookup (module, method, field), the runtime provides "did you mean" suggestions using Levenshtein edit distance with threshold `max(1, name.len() / 3)`.
+
+**Structure:**
+
+```text
+module.function: what went wrong[ — did you mean "X"?][ available: a, b, c]
+```
+
+**Rules:**
+
+- Suggestions appear only when edit distance is within threshold — never garbage matches.
+- Suggestions never echo the user's original input.
+- Available options are enumerated when the candidate set has ≤ 10 items.
+- Type mismatch errors list accepted types: `"expected SQL string, got table — accepted: string"`.
+
+All suggestion computation lives in the error path. Zero cost on the happy path.
+
+### CLI diagnostics
+
+Errors that surface through the CLI (not through Lua `(nil, string)` tuples) are rendered with source context, error codes, and help text using `miette`. Each error code links to a docs page.
+
+```text
+  × require: unknown module "lib:jsn"
+  help: did you mean "lib:json"?
+        available: lib:base64, lib:compile, lib:http, lib:ini, lib:json, lib:mime, lib:test, lib:vcr
+
+  neoc::E0001 — https://neoc.dev/errors/E0001
+```
+
+Error codes are flat-namespaced (`neoc::ENNNN`), sequential, and stable across versions. See [error code reference](/errors/).
+
 ## See also
 
 - [The sandboxing model](/guides/sandboxing-model)

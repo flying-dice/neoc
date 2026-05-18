@@ -117,7 +117,13 @@ fn from_str(lua: &Lua, s: mlua::String) -> mlua::Result<(Value, Value)> {
 fn from_reader(lua: &Lua, ud: AnyUserData) -> mlua::Result<(Value, Value)> {
     let rh = match ud.borrow::<ReaderHandle>() {
         Ok(h) => h,
-        Err(_) => return from_err(lua, "serde_json.from_reader", "expected a reader handle"),
+        Err(_) => {
+            return from_err(
+                lua,
+                "serde_json.from_reader",
+                "expected a reader handle — accepted: Reader",
+            );
+        }
     };
     let mut locked = rh.0.lock();
     let result = serde_json::from_reader::<_, serde_json::Value>(&mut **locked);

@@ -21,6 +21,10 @@ base64 = "0.22"
 rust-ini = "0.21"
 mime_guess = "2"
 
+strsim = "0.11"
+thiserror = "2"
+miette = { version = "7", features = ["fancy"] }
+
 globset = "0.4"
 walkdir = "2"
 serde-jsonlines = "0.7.0"
