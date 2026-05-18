@@ -166,8 +166,11 @@ release-plz:
     # -B resets the branch to HEAD so a stale local branch ref on the reused
     # runner workspace can't shadow the fresh commit GitLab just checked out.
     - git checkout -B "$CI_COMMIT_BRANCH"
+    # release-plz pushes the release MR branch over HTTPS; inject the PAT into
+    # the remote URL so git push is authenticated.
+    - git remote set-url origin "https://oauth2:${RELEASE_PLZ_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
     # release-plz creates commits on the release MR branch — needs an identity.
-    - git config user.email "release-plz@flying-dice.com"
+    - git config user.email "${RELEASE_PLZ_BOT_EMAIL}"
     - git config user.name "release-plz"
     - mkdir -p "$CARGO_HOME/bin"
     - export PATH="$CARGO_HOME/bin:$PATH"
