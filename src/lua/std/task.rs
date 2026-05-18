@@ -12,6 +12,7 @@
 //! threads.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use futures::StreamExt as _;
 use mlua::{Lua, MultiValue, Table, Thread, ThreadStatus, UserData, UserDataMethods, Value};
@@ -36,8 +37,8 @@ enum TaskOutcome {
 struct TaskInner {
     outcome: Mutex<Option<TaskOutcome>>,
     notify: Arc<Notify>,
-    // AbortHandle set after tokio::spawn; None only transiently at init.
     abort: Mutex<Option<tokio::task::AbortHandle>>,
+    awaited: AtomicBool,
 }
 
 impl TaskInner {
@@ -46,6 +47,7 @@ impl TaskInner {
             outcome: Mutex::new(None),
             notify: Arc::new(Notify::new()),
             abort: Mutex::new(None),
+            awaited: AtomicBool::new(false),
         }
     }
 
@@ -96,6 +98,7 @@ impl UserData for TaskHandle {
 
         methods.add_async_method("await", |lua, this, ()| {
             let inner = this.inner.clone();
+            inner.awaited.store(true, Ordering::Relaxed);
             async move {
                 // Enable the notification listener BEFORE checking outcome to
                 // guarantee we don't miss a notification that fires between
@@ -147,6 +150,8 @@ fn outcome_to_multi(lua: &Lua, outcome: &TaskOutcome) -> mlua::Result<MultiValue
 pub struct Scheduler {
     set: Mutex<tokio::task::JoinSet<()>>,
     prev_defer: Mutex<Option<Arc<TaskInner>>>,
+    tasks: Mutex<Vec<Arc<TaskInner>>>,
+    had_errors: AtomicBool,
 }
 
 impl Scheduler {
@@ -154,6 +159,8 @@ impl Scheduler {
         Self {
             set: Mutex::new(tokio::task::JoinSet::new()),
             prev_defer: Mutex::new(None),
+            tasks: Mutex::new(Vec::new()),
+            had_errors: AtomicBool::new(false),
         }
     }
 
@@ -162,6 +169,10 @@ impl Scheduler {
         future: impl std::future::Future<Output = ()> + Send + 'static,
     ) -> tokio::task::AbortHandle {
         self.set.lock().spawn(future)
+    }
+
+    fn track(&self, inner: &Arc<TaskInner>) {
+        self.tasks.lock().push(inner.clone());
     }
 
     /// Clean up in-flight tasks after the main script exits.
@@ -173,11 +184,29 @@ impl Scheduler {
     /// task that is synchronously blocked. Dropping the `JoinSet` flags
     /// them for abort and detaches; the tokio runtime cleans them up on
     /// shutdown.
+    ///
+    /// After dropping, reports un-awaited task errors to stderr.
     pub async fn wait_all(&self) {
         let _set = {
             let mut guard = self.set.lock();
             std::mem::take(&mut *guard)
         };
+
+        let tasks = std::mem::take(&mut *self.tasks.lock());
+        for inner in &tasks {
+            if inner.awaited.load(Ordering::Relaxed) {
+                continue;
+            }
+            let guard = inner.outcome.lock();
+            if let Some(TaskOutcome::Err(msg)) = guard.as_ref() {
+                self.had_errors.store(true, Ordering::Relaxed);
+                eprintln!("error in un-awaited task: {msg}");
+            }
+        }
+    }
+
+    pub fn had_task_errors(&self) -> bool {
+        self.had_errors.load(Ordering::Relaxed)
     }
 }
 
@@ -258,6 +287,8 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
                 .app_data_ref::<Scheduler>()
                 .ok_or_else(|| mlua::Error::external("task: no Scheduler in app data"))?;
 
+            scheduler.track(&inner);
+
             match thread.resume::<MultiValue>(args) {
                 Ok(vals) => {
                     if matches!(thread.status(), ThreadStatus::Resumable) {
@@ -292,6 +323,8 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
                 .app_data_ref::<Scheduler>()
                 .ok_or_else(|| mlua::Error::external("task: no Scheduler in app data"))?;
 
+            scheduler.track(&inner);
+
             let prev = scheduler.prev_defer.lock().clone();
             let inner_clone = inner.clone();
             let abort = scheduler.spawn_task(async move {
@@ -304,6 +337,20 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
                         notified.await;
                     }
                 }
+
+                // Probe the Lua VM lock before checking cancellation.
+                // thread.status() acquires the ReentrantMutex — it blocks
+                // until the current synchronous Lua batch yields. Since
+                // cancel() runs synchronously before the yield, is_finished()
+                // is guaranteed to reflect it once status() returns.
+                tokio::task::block_in_place(|| {
+                    let _ = thread.status();
+                });
+
+                if inner_clone.is_finished() {
+                    return;
+                }
+
                 let outcome = drive_thread(thread, args).await;
                 inner_clone.complete(outcome);
             });
@@ -325,6 +372,8 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
             let scheduler = lua
                 .app_data_ref::<Scheduler>()
                 .ok_or_else(|| mlua::Error::external("task: no Scheduler in app data"))?;
+
+            scheduler.track(&inner);
 
             let inner_clone = inner.clone();
             let abort = scheduler.spawn_task(async move {
@@ -505,6 +554,75 @@ mod tests {
         });
         rx.recv_timeout(std::time::Duration::from_secs(10))
             .expect("wait_all deadlocked — did not complete within 10s");
+    }
+
+    #[test]
+    fn unawaited_error_sets_had_task_errors() {
+        rt().block_on(async {
+            let e = engine();
+            e.load(
+                r#"
+                local task = require("std:task")
+                task.spawn(function() error("unhandled") end)
+            "#,
+            )
+            .exec_async()
+            .await
+            .expect("exec");
+
+            let scheduler = e.app_data_ref::<super::Scheduler>().unwrap();
+            scheduler.wait_all().await;
+            assert!(scheduler.had_task_errors(), "should flag un-awaited errors");
+        });
+    }
+
+    #[test]
+    fn awaited_error_does_not_set_had_task_errors() {
+        rt().block_on(async {
+            let e = engine();
+            e.load(
+                r#"
+                local task = require("std:task")
+                local h = task.spawn(function() error("handled") end)
+                h:await()
+            "#,
+            )
+            .exec_async()
+            .await
+            .expect("exec");
+
+            let scheduler = e.app_data_ref::<super::Scheduler>().unwrap();
+            scheduler.wait_all().await;
+            assert!(
+                !scheduler.had_task_errors(),
+                "awaited errors should not flag"
+            );
+        });
+    }
+
+    #[test]
+    fn defer_cancel_before_execution() {
+        rt().block_on(async {
+            let e = engine();
+            let ran: bool = e
+                .load(
+                    r#"
+                    local task = require("std:task")
+                    local ran = false
+                    local h = task.spawn(function()
+                        local dh = task.defer(function() ran = true end)
+                        dh:cancel()
+                        task.wait(0.05)
+                        return ran
+                    end)
+                    return h:await()
+                "#,
+                )
+                .eval_async()
+                .await
+                .expect("defer_cancel");
+            assert!(!ran, "deferred task should have been cancelled");
+        });
     }
 
     #[test]

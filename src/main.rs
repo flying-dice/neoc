@@ -121,6 +121,9 @@ async fn run(paths: &[String], user_args: &[String]) {
         // Drain any tasks spawned by std:task that outlive the main script.
         if let Some(scheduler) = engine.app_data_ref::<lua::std::task::Scheduler>() {
             scheduler.wait_all().await;
+            if scheduler.had_task_errors() {
+                process::exit(1);
+            }
         }
 
         let is_test = path.ends_with(".test.luau") || path.ends_with(".spec.luau");
@@ -214,6 +217,9 @@ async fn main() {
 
         if let Some(scheduler) = engine.app_data_ref::<lua::std::task::Scheduler>() {
             scheduler.wait_all().await;
+            if scheduler.had_task_errors() {
+                process::exit(1);
+            }
         }
 
         return;

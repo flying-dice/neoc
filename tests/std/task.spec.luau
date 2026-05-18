@@ -167,6 +167,22 @@ describe("std:task", function()
             end, "x", "y")
             h:await()
         end)
+
+        test("cancel prevents deferred execution", function()
+            local ran = false
+            local h = task.defer(function() ran = true end)
+            h:cancel()
+            task.wait(0.05)
+            expect(ran).toBe(false)
+        end)
+
+        test("cancel then await returns (nil, 'cancelled')", function()
+            local h = task.defer(function() end)
+            h:cancel()
+            local result, err = h:await()
+            expect(result).toBeNil()
+            expect(err).toBe("cancelled")
+        end)
     end)
 
     -- task.delay ---------------------------------------------------------------
