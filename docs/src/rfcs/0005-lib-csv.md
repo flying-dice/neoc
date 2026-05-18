@@ -11,7 +11,7 @@ implemented-in:
 
 ## Summary
 
-`lib:csv` exposes parse/stringify and streaming reader/writer handles for CSV — RFC 4180, configurable delimiter (TSV via `delimiter = "\t"`), schema-driven type coercion, no auto-inference. Backed by the `csv` (BurntSushi) crate.
+`lib:csv` exposes parse/stringify, a handle-based streaming reader (`csv.reader`), a lazy string iterator (`csv.rows`), and an incremental writer (`csv.writer`) — RFC 4180, configurable delimiter (TSV via `delimiter = "\t"`), schema-driven type coercion, no auto-inference. Backed by the `csv` (BurntSushi) crate.
 
 ## Motivation
 
@@ -29,10 +29,15 @@ Cross-runtime survey:
 
 Concrete scenarios:
 
-- Parse a benchmark export to filter failing rows
-- Stream a multi-GB log dump without loading it into memory
+- Parse a benchmark export to filter failing rows (`csv.parse`)
+- Stream a multi-GB log dump from disk without loading it into memory — via `csv.reader(handle)` over a `std:fs` file handle
+- Lazily iterate parsed rows from an already-in-memory string (`csv.rows(data)`)
 - Generate a coverage CSV deterministically for downstream tooling
 - Read TSV (`delimiter = "\t"`) without a second module
+
+**Streaming clarification.** Two distinct things, two APIs:
+- `csv.reader(handle, opts)` — handle-based, reads incrementally from any `ReaderHandle` (file, socket, pipe). True I/O streaming; the file is never fully resident. Mirrors Rust `csv::Reader::from_reader`, Go `csv.NewReader`, Python `csv.reader`.
+- `csv.rows(data, opts)` — string-based, lazy *parsing* over an in-memory buffer. The bytes are already loaded; only the parsed row table is allocated lazily. Use when you already hold the data (e.g. from an HTTP body).
 
 ## Detailed design
 
@@ -67,11 +72,19 @@ csv.parse(data, {
     types     = {},     -- per-column type coercion map
 })
 
--- Streaming iterator (large files — avoids loading everything)
+-- Lazy iterator over an in-memory string (data already loaded)
 for row in csv.rows(data, { headers = true }) do
     if row.status == "FAIL" then
         process_failure(row)
     end
+end
+
+-- Handle-based streaming reader (multi-GB files, sockets, pipes)
+local fs   = require("std:fs")
+local file = fs.open({ path = "huge.csv", mode = "r" })  --> ReaderHandle
+local r    = csv.reader(file, { headers = true })
+for row in r:rows() do
+    process(row)  -- file is read incrementally; never fully resident
 end
 
 -- Stringify (headers array controls both header row and output order)
@@ -96,7 +109,21 @@ local output = writer:finish()
 
 **`csv.rows(data[, opts]) → iterator`**
 
-Returns a Luau iterator. Each call returns the next row (array or table per `headers`), or `nil` at EOF. Errors raise (not tuple) — iterators cannot return `(nil, err)` ergonomically; raise matches `pairs`/`ipairs` shape.
+Returns a Luau iterator over an in-memory string. Each call returns the next row (array or table per `headers`), or `nil` at EOF. Errors raise (not tuple) — iterators cannot return `(nil, err)` ergonomically; raise matches `pairs`/`ipairs` shape. Convenience wrapper over `csv.reader(std:io.from_string(data), opts):rows()`.
+
+**`csv.reader(handle[, opts]) → reader`**
+
+| Param | Type | Required | Description |
+|---|---|---|---|
+| `handle` | `ReaderHandle` | yes | Stream source from `std:fs.open` (mode `"r"`), `std:io.from_string`, or any future `ReaderHandle` producer |
+| `opts` | `table?` | no | Same as `csv.parse` / `csv.rows` |
+
+Methods:
+
+- `reader:headers() → ({string}, nil) | (nil, string)` — read and return the header row (consumes input up to and including the first record). Errors if `headers ~= true`.
+- `reader:rows() → iterator` — Luau iterator yielding the next row on each call, `nil` at EOF. Same raise-on-error semantics as `csv.rows`. The reader holds the handle for the lifetime of the iterator; do not reuse the handle elsewhere.
+
+Mirrors Rust `csv::Reader::from_reader` / `csv::Reader::records`. The reader is the primary streaming API; `csv.parse` and `csv.rows` are convenience shims for in-memory strings.
 
 **`csv.stringify(records, opts) → (string, nil) | (nil, string)`**
 
@@ -117,7 +144,7 @@ Returns a Luau iterator. Each call returns the next row (array or table per `hea
 
 Methods:
 
-- `writer:row(values)` — append a row. `values` is an array (positional, matches `headers` order) or a table (keyed by header name).
+- `writer:row(values)` — append a row. `values` is **either** an array (positional, matches `headers` order) **or** a table keyed by header name. Mixed (both numeric and string keys present, e.g. `{1, 2, name="Alice"}`) → tuple error `csv.writer: row values must be array or keyed table, not both`. Pick one shape per call.
 - `writer:finish() → string` — flush and return the accumulated CSV string. Subsequent calls error.
 
 ### Options reference
@@ -133,26 +160,42 @@ Methods:
 
 ### Error semantics
 
-All errors are tuple-form `(nil, string)` except `csv.rows` iterator (raises).
+All errors are tuple-form `(nil, string)` except `csv.rows` / `reader:rows()` iterators (raise).
 
-Error message format: `lib:csv: <op> error at line N: <reason>` — line numbers 1-indexed, matches Go `encoding/csv`.
+Error message format follows the repo convention (`docs/src/rfcs/0003-errors-guide.md`): `module.function: <reason>` — no namespace prefix. Line numbers 1-indexed, matches Go `encoding/csv`.
 
 | Condition | Message |
 |---|---|
-| Mismatched field count | `lib:csv: parse error at line 47: found 3 fields, expected 5` |
-| Unterminated quote | `lib:csv: parse error at line 12: unterminated quoted field` |
-| Duplicate header names | `lib:csv: parse error at line 1: duplicate header "name"` |
-| `types` set without `headers` | `lib:csv: parse error: 'types' requires 'headers = true'` |
-| Type coercion failed | `lib:csv: parse error at line 5: column "duration" cannot coerce "abc" to number` |
+| Mismatched field count | `csv.parse: line 47: found 3 fields, expected 5` |
+| Unterminated quote | `csv.parse: line 12: unterminated quoted field` |
+| Duplicate header names | `csv.parse: line 1: duplicate header "name"` |
+| `types` set without `headers` | `csv.parse: 'types' requires 'headers = true'` |
+| Type coercion failed | `csv.parse: line 5: column "duration" cannot coerce "abc" to number` |
 | Boolean coercion accepts | `"true"`, `"false"`, `"1"`, `"0"` (case-insensitive); anything else → error |
-| Multi-byte `delimiter`/`quote`/`escape`/`comment` | `lib:csv: invalid option: 'delimiter' must be a single byte` |
-| `stringify` missing `headers` | `lib:csv: stringify error: 'headers' is required` |
+| Multi-byte `delimiter`/`quote`/`escape`/`comment` | `csv.parse: 'delimiter' must be a single byte` |
+| `stringify` missing `headers` | `csv.stringify: 'headers' is required` |
 | `stringify` record missing keyed column | Field emitted as empty string (matches RFC 4180 empty-field semantics) |
-| `writer:finish()` called twice | `lib:csv: writer already finished` |
+| `writer:row` mixed table | `csv.writer: row values must be array or keyed table, not both` |
+| `writer:finish()` called twice | `csv.writer: already finished` |
+| `reader:headers()` without `headers = true` | `csv.reader: 'headers' option must be true to call :headers()` |
+| `reader` handle is not a `ReaderHandle` | `csv.reader: argument must be a ReaderHandle` |
+
+`csv.rows` and `reader:rows()` errors raise with the same message body, no tuple. `csv.parse` errors use the `csv.parse:` prefix regardless of internal call chain.
 
 ### Empty fields
 
-`"a,,c"` → `{"a", "", "c"}`. Empty strings, never `nil`. `nil` in a Lua array breaks `#` and `ipairs`; the `csv` crate returns empty strings natively, no conversion.
+`"a,,c"` → `{"a", "", "c"}` (untyped). Empty strings, never `nil` — `nil` in a Lua array breaks `#` and `ipairs`. The `csv` crate returns empty strings natively, no conversion.
+
+**Carve-out for typed columns.** When `types[col]` is set, an empty field for that column produces `nil`, not `""`. `types` requires `headers = true`, so results are keyed tables (`{name="Alice", age=nil}`); `nil` in a keyed table is the Lua-idiomatic "absent value" and is safe — `#` and `ipairs` don't apply. The array-safety rule above only governs positional (untyped) results. This avoids a silent mixed-type return from an explicitly typed column (principle 2: no footguns).
+
+Summary:
+
+| Source | Result |
+|---|---|
+| Untyped column, empty field | `""` |
+| Typed column (`types[col]` set), empty field | `nil` |
+| Typed column, non-empty field | Coerced value |
+| Typed column, non-empty field that fails coercion | Tuple error |
 
 ### Type coercion
 
@@ -165,27 +208,30 @@ Supported types:
 | `"number"` | `str::parse::<f64>()`. Failure → tuple error with line + column. |
 | `"boolean"` | `"true"`/`"1"` → `true`; `"false"`/`"0"` → `false` (case-insensitive). Failure → tuple error. |
 
-Empty string is preserved as empty string even when type-coerced — coercion is opt-in per column, but empties stay empty (matches `NULL`-equivalent semantics in CSV). Callers handle empties explicitly.
+Empty field in a typed column → `nil` (see [Empty fields](#empty-fields)). Callers handle absence as `if row.age ~= nil then`. Coercion failure on a non-empty value still errors via tuple form.
 
 ### Acceptance criteria
 
 - [ ] `csv.parse` — parse CSV string to rows or records
-- [ ] `csv.rows` — streaming iterator for large-file use
+- [ ] `csv.rows` — lazy iterator over an in-memory string
+- [ ] `csv.reader` — handle-based streaming reader (`ReaderHandle` from `std:fs` / `std:io`); `:headers()`, `:rows()` methods
 - [ ] `csv.stringify` — write records; `headers` array controls column order
-- [ ] `csv.writer` — incremental writer with `:row()` and `:finish()`
+- [ ] `csv.writer` — incremental writer with `:row()` and `:finish()`; rejects mixed array+keyed tables
 - [ ] Configurable `delimiter`, `quote`, `escape`, `comment`
 - [ ] RFC 4180: quoted fields, escaped quotes, multiline values
 - [ ] Schema-driven type coercion (`"number"`, `"boolean"`); untyped → string
+- [ ] Errors use `module.function:` prefix per `0003-errors-guide` — no `lib:` namespace prefix
 - [ ] Errors include line number, expected vs found column count, raw line (truncated)
 - [ ] Duplicate header names → hard error, not silent shadow
-- [ ] Empty fields → empty strings, never `nil`
+- [ ] Untyped empty field → `""`; typed empty field → `nil`
 - [ ] Spec + unit tests + `.d.luau` type stub
 
 ## Drawbacks
 
-- Surface adds four entry points (`parse`, `rows`, `stringify`, `writer`) vs a leaner `encode`/`decode` pair. Streaming and incremental writing don't fold cleanly into the symmetric encode/decode shape used by `lib:compress` / `lib:base64`.
+- Surface adds five entry points (`parse`, `rows`, `reader`, `stringify`, `writer`) vs a leaner `encode`/`decode` pair. Streaming I/O, lazy-parse, and incremental writing each have a distinct shape and don't fold into the symmetric encode/decode used by `lib:compress` / `lib:base64`.
+- Reader is handle-based (`csv.reader(handle)`); writer is in-memory accumulator (`csv.writer({headers})`). The asymmetry is deliberate — handle-based writer is deferred until `std:io` exposes a buffer sink (so the in-memory case has a clean expression). Tracked as a v2 candidate in [Alternatives](#alternatives).
 - `types` map requires headers — coupling two options that are otherwise independent.
-- Iterator `csv.rows` raises instead of tuple-erroring, diverging from the rest of the module. Required by Luau iterator protocol.
+- Iterators (`csv.rows`, `reader:rows()`) raise instead of tuple-erroring, diverging from the rest of the module. Required by Luau iterator protocol.
 - Writer state (`:finish` consumes) adds a footgun — well-typed but easy to misuse in long-lived scripts.
 
 ## Alternatives
@@ -202,6 +248,12 @@ Empty string is preserved as empty string even when type-coerced — coercion is
 
 **`stringify` auto-detects headers from first record's keys.** Rejected — Lua table key order is not guaranteed. Deterministic output requires explicit `headers`.
 
+**Handle-based writer (`csv.writer(handle, opts)`) in v1.** Considered. Deferred — requires a `std:io.buffer()` sink (or similar) to express the in-memory case cleanly. Without one, callers writing to a string would need extra ceremony for the common path. v1 keeps the in-memory accumulator; v2 will add `csv.writer(handle, opts)` once `std:io` grows a buffer sink, restoring full read/write handle symmetry.
+
+**`csv.reader` returning the iterator directly (no `:rows()` method).** Considered. Rejected — the reader needs more than one method (`:headers()` for explicit header access, future `:position()`/`:close()`); collapsing it to a single iterator callable forecloses that surface.
+
+**Single `csv.rows` accepting both string and handle.** Rejected — overloads on first-arg type are surprising in Lua and conflate two distinct cost models (lazy parse vs I/O streaming). Two named functions make the choice explicit at the call site.
+
 ## Open questions
 
 _None._
@@ -210,7 +262,10 @@ _None._
 
 - Backing crate: `csv` (BurntSushi) — RFC 4180 compliant, streaming reads native, position info on errors.
 - Module location: `src/lib/csv/` (per existing `lib:*` layout).
-- `csv.rows` wraps `csv::Reader::records()` lazily; do not materialise into a `Vec`.
+- `csv.reader(handle, opts)` borrows the `ReaderHandle`'s inner `BufRead` (held via `Arc<Mutex<…>>`) and wraps it with `csv::Reader::from_reader`. Returns a `CsvReader` `UserData`. The handle is locked for the lifetime of the reader; concurrent use of the same handle in another reader is undefined.
+- `csv.rows(data, opts)` is a thin wrapper: constructs an internal `Cursor`-backed `ReaderHandle` (or reuses `std:io.from_string`) and delegates to `csv.reader(…):rows()`. Same `csv::Reader::records()` underneath; no separate code path.
 - `csv.writer` wraps `csv::Writer<Vec<u8>>`; `:finish()` consumes and returns `String::from_utf8`.
+- `writer:row` inspects the table: array shape (only `1..n` integer keys present) → positional; keyed shape (only string keys present) → keyed lookup against `headers`; both present → tuple error.
 - Single-byte option validation happens at the Luau→Rust boundary, before constructing the `ReaderBuilder` / `WriterBuilder`.
+- Error prefixes follow `0003-errors-guide` — `module.function:` form, set via `from_err(lua, "csv.parse", …)` etc.
 - Type stub: `docs/src/lib/csv.d.luau` (mirror existing module stubs).
