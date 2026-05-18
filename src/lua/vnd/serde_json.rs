@@ -127,7 +127,7 @@ fn from_reader(lua: &Lua, ud: AnyUserData) -> mlua::Result<(Value, Value)> {
             );
         }
     };
-    let mut locked = rh.0.lock();
+    let mut locked = rh.inner.lock();
     let result = serde_json::from_reader::<_, serde_json::Value>(&mut **locked);
     drop(locked);
     drop(rh);
