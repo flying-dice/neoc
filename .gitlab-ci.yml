@@ -177,7 +177,10 @@ release-plz:
       which release-plz
       release-plz --version
   script:
-    - release-plz release --git-token "$RELEASE_PLZ_TOKEN" --forge gitlab
+    - echo "=== release-plz.toml ==="; cat release-plz.toml
+    - echo "=== Cargo.toml [package] ==="; sed -n '1,10p' Cargo.toml
+    - echo "=== pwd / workspace ==="; pwd; ls -la
+    - RELEASE_PLZ_LOG=DEBUG release-plz release --git-token "$RELEASE_PLZ_TOKEN" --forge gitlab
     - release-plz release-pr --git-token "$RELEASE_PLZ_TOKEN" --forge gitlab
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
