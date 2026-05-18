@@ -10,3 +10,4 @@ name = "neoc"
 # This lets release-plz manage changelogs, tags, and GitLab releases without
 # ever touching crates.io, consistent with publish = false in Cargo.toml.
 git_only = true
+publish = false
