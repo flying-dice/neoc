@@ -212,10 +212,13 @@ describe("std:task", function()
     describe("task.cancel", function()
         test("cancel prevents pending delay from executing", function()
             local ran = false
-            local h = task.delay(0.1, function() ran = true end)
-            task.cancel(h)
-            task.wait(0.15)  -- must be inside a coroutine; wrap in spawn
-            -- Hoist into a spawned task since task.wait needs coroutine context
+            local h = task.spawn(function()
+                local dh = task.delay(0.1, function() ran = true end)
+                task.cancel(dh)
+                task.wait(0.15)
+                expect(ran).toBe(false)
+            end)
+            h:await()
         end)
 
         test("cancel a pending delay via flat function", function()

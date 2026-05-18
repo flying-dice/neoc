@@ -166,12 +166,24 @@ impl Scheduler {
 
     /// Drain all in-flight tasks. Called after the main script exits so
     /// spawned coroutines that haven't been explicitly awaited can complete.
+    ///
+    /// Lua async operations (`task.wait`, etc.) cannot be driven after the
+    /// main `exec_async` context returns — their `AsyncThread` streams stall.
+    /// A bounded timeout prevents an indefinite hang; remaining tasks are
+    /// aborted when the deadline expires.
     pub async fn wait_all(&self) {
         let mut set = {
             let mut guard = self.set.lock();
             std::mem::take(&mut *guard)
         };
-        while (set.join_next().await).is_some() {}
+        match tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while (set.join_next().await).is_some() {}
+        })
+        .await
+        {
+            Ok(()) => {}
+            Err(_) => set.abort_all(),
+        }
     }
 }
 
@@ -471,6 +483,29 @@ mod tests {
                 .expect("await_cancelled");
             assert!(is_nil);
             assert_eq!(err, "cancelled");
+        });
+    }
+
+    #[test]
+    fn wait_all_does_not_deadlock_on_unawaited_async_tasks() {
+        rt().block_on(async {
+            let e = engine();
+            e.load(
+                r#"
+                local task = require("std:task")
+                task.spawn(function()
+                    task.wait(0.01)
+                end)
+            "#,
+            )
+            .exec_async()
+            .await
+            .expect("exec");
+
+            let scheduler = e.app_data_ref::<super::Scheduler>().unwrap();
+            tokio::time::timeout(std::time::Duration::from_secs(10), scheduler.wait_all())
+                .await
+                .expect("wait_all deadlocked");
         });
     }
 
