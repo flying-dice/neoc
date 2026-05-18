@@ -4,7 +4,7 @@ created: 2026-05-18
 implemented-in:
 ---
 
-# 0005 — `lib:csv` — CSV parsing and writing
+# 0010 — `lib:csv` — CSV parsing and writing
 
 ## Summary
 

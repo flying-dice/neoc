@@ -4,7 +4,7 @@ created: 2026-05-17
 implemented-in:
 ---
 
-# 0003 — Errors guide: helpful errors that educate, not punish
+# 0008 — Errors guide: helpful errors that educate, not punish
 
 > [!NOTE]
 > This RFC is `approved`. All seekers reviewed and approved. Awaiting CODEOWNER merge.

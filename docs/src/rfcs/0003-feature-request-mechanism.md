@@ -4,7 +4,7 @@ created: 2026-05-05
 implemented-in:
 ---
 
-# 0002 — Built-in feature request mechanism for LLM callers
+# 0003 — Built-in feature request mechanism for LLM callers
 
 > [!WARNING]
 > This RFC is `draft`. Under refinement — **not** the contract.

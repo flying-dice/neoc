@@ -4,7 +4,7 @@ created: 2026-05-05
 implemented-in:
 ---
 
-# 0002 — std:env — Environment, platform constants, and paths
+# 0004 — std:env — Environment, platform constants, and paths
 
 > [!WARNING]
 > This RFC is `draft`. Under refinement — **not** the contract.

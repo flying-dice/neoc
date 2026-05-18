@@ -154,6 +154,30 @@ export default defineConfig({
           text: 'Drafts',
           items: [
             { text: '0001 — Sendable concurrency model', link: '/rfcs/0001-sendable-concurrency-model' },
+            { text: '0003 — Feature request mechanism', link: '/rfcs/0003-feature-request-mechanism' },
+            { text: '0004 — std:env', link: '/rfcs/0004-std-env' },
+            { text: '0005 — std:task', link: '/rfcs/0005-std-task' },
+            { text: '0006 — lib:mime', link: '/rfcs/0006-lib-mime-extension-and-filename-detection' },
+            { text: '0007 — std:path', link: '/rfcs/0007-std-path' },
+          ],
+        },
+        {
+          text: 'Approved',
+          items: [
+            { text: '0008 — Errors guide', link: '/rfcs/0008-errors-guide' },
+          ],
+        },
+        {
+          text: 'Accepted',
+          items: [
+            { text: '0009 — lib:compress', link: '/rfcs/0009-lib-compress' },
+            { text: '0010 — lib:csv', link: '/rfcs/0010-lib-csv' },
+          ],
+        },
+        {
+          text: 'Implemented',
+          items: [
+            { text: '0002 — lib:compile', link: '/rfcs/0002-lib-compile' },
           ],
         },
         {
@@ -181,6 +205,14 @@ export default defineConfig({
             { text: '0004 — vnd:* names match upstream', link: '/adrs/0004-vnd-module-names-match-upstream' },
             { text: '0005 — Tuple error convention', link: '/adrs/0005-tuple-error-convention' },
             { text: '0006 — Hidden async with sync-looking APIs', link: '/adrs/0006-hidden-async-with-sync-looking-apis' },
+            { text: '0008 — lib:http static file server', link: '/adrs/0008-lib-http-static-file-server' },
+            { text: '0009 — --eval / -e CLI flag', link: '/adrs/0009-eval-cli-flag' },
+          ],
+        },
+        {
+          text: 'Proposed',
+          items: [
+            { text: '0007 — std:process', link: '/adrs/0007-std-process-module' },
           ],
         },
       ],

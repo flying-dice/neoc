@@ -4,7 +4,7 @@ created: 2026-05-04
 implemented-in:
 ---
 
-# 0002 — `lib:mime` — extension-to-MIME mapping via `mime_guess`, extension preference layer
+# 0006 — `lib:mime` — extension-to-MIME mapping via `mime_guess`, extension preference layer
 
 > [!WARNING]
 > This RFC is `draft`. Under refinement — **not** the contract.

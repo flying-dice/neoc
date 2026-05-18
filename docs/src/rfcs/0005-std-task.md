@@ -4,7 +4,7 @@ created: 2026-05-05
 implemented-in:
 ---
 
-# 0002 — std:task — cooperative task scheduler
+# 0005 — std:task — cooperative task scheduler
 
 > [!NOTE]
 > This RFC is `proposed`. Under review — pending seeker sign-off before implementation.

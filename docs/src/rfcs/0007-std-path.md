@@ -4,7 +4,7 @@ created: 2026-05-05
 implemented-in:
 ---
 
-# 0002 — std:path — File path manipulation
+# 0007 — std:path — File path manipulation
 
 > [!WARNING]
 > This RFC is `draft`. Not the contract.

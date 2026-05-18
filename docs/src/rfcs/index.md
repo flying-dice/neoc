@@ -18,18 +18,21 @@ Workflow: agent-backlog Kanban. RFCs produced when issue carries `design-rfc` la
 
 ### Draft
 
-- [0002 — Feature request mechanism for LLM callers](./0002-feature-request-mechanism)
 - [0001 — Sendable concurrency model](./0001-sendable-concurrency-model)
-- [0002 — std:env](./0002-std-env)
-- [0002 — std:task](./0002-std-task)
-- [0002 — lib:mime extension/filename detection](./0002-lib-mime-extension-and-filename-detection)
-- [0003 — Errors guide: helpful errors that educate, not punish](./0003-errors-guide)
+- [0003 — Feature request mechanism for LLM callers](./0003-feature-request-mechanism)
+- [0004 — std:env](./0004-std-env)
+- [0005 — std:task](./0005-std-task)
+- [0006 — lib:mime extension/filename detection](./0006-lib-mime-extension-and-filename-detection)
+- [0007 — std:path](./0007-std-path)
 
-- [0005 — lib:csv — CSV parsing and writing](./0005-lib-csv)
+### Approved
+
+- [0008 — Errors guide: helpful errors that educate, not punish](./0008-errors-guide)
 
 ### Accepted
 
-- [0004 — lib:compress — compression and decompression](./0004-lib-compress)
+- [0009 — lib:compress — compression and decompression](./0009-lib-compress)
+- [0010 — lib:csv — CSV parsing and writing](./0010-lib-csv)
 
 ### Implemented
 

@@ -3,7 +3,7 @@ status: Proposed
 date: 2026-05-05
 ---
 
-# 0008. `std:process` — environment, arguments, and child-process spawning
+# 0007. `std:process` — environment, arguments, and child-process spawning
 
 Date: 2026-05-05
 

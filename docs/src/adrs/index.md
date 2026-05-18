@@ -21,8 +21,7 @@ ADRs are *retrospective* (decisions in force). [RFCs](/rfcs/) are *forward-looki
 - [0004. `vnd:*` names match upstream crate names verbatim](/adrs/0004-vnd-module-names-match-upstream)
 - [0005. Tuple-return convention for recoverable failures](/adrs/0005-tuple-error-convention)
 - [0006. Hidden async with synchronous-looking Lua APIs](/adrs/0006-hidden-async-with-sync-looking-apis)
-- 0007 — withdrawn; slot reserved.
-- [0008. `std:process` — env, args, child-process spawning](/adrs/0008-std-process-module)
+- [0007. `std:process` — env, args, child-process spawning](/adrs/0007-std-process-module)
 - [0008. `lib:http` — Static file server with directory index](/adrs/0008-lib-http-static-file-server)
 - [0009. `--eval` / `-e` CLI flag](/adrs/0009-eval-cli-flag)
 
