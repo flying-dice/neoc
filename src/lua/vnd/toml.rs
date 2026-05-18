@@ -34,6 +34,7 @@ fn decode(lua: &Lua, ud: AnyUserData) -> mlua::Result<(Value, Value)> {
         Err(_) => return from_err(lua, "toml.decode", "expected a reader handle"),
     };
     let mut buf = Vec::new();
+    // TODO: clean-code - 0.55 - COUPLING: reaches into ReaderHandle.0 internals instead of a method
     let result = std::io::Read::read_to_end(&mut **rh.0.lock(), &mut buf);
     drop(rh);
     if let Err(e) = result {
@@ -74,6 +75,7 @@ fn encode_to(lua: &Lua, (v, ud): (Value, AnyUserData)) -> mlua::Result<(Value, V
         Ok(s) => s,
         Err(e) => return from_err(lua, "toml.encode_to", e),
     };
+    // TODO: clean-code - 0.55 - COUPLING: reaches into WriterHandle.0 internals instead of a method
     let mut locked = wh.0.lock();
     let result = std::io::Write::write_all(&mut **locked, s.as_bytes());
     drop(locked);
@@ -104,6 +106,7 @@ fn to_toml_string(v: &Value, pretty: bool) -> Result<String, String> {
     result.map_err(|e| e.to_string())
 }
 
+// TODO: clean-code - 0.55 - KISS: bool flag drives both branching and prefix lookup — pass prefix explicitly
 fn to_string(lua: &Lua, v: Value, pretty: bool) -> mlua::Result<(Value, Value)> {
     let prefix = if pretty {
         "toml.encode_pretty"

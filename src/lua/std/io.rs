@@ -44,6 +44,7 @@ impl WriterHandle {
 
 impl UserData for ReaderHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        // TODO: clean-code - 0.7 - DRY: repeated `match result { Ok => ok, Err => from_err("io.X", e) }` across all 5 methods + copy — extract a small helper or macro.
         methods.add_method("read", |lua, this, n: usize| {
             let mut buf = vec![0u8; n];
             let result = this.0.lock().read(&mut buf);
@@ -60,6 +61,7 @@ impl UserData for ReaderHandle {
             match result {
                 Ok(0) => ok(lua, Value::Nil),
                 Ok(_) => {
+                    // TODO: clean-code - 0.55 - KISS: two sequential `ends_with`+`pop` blocks to strip CRLF — `trim_end_matches(['\r','\n'])` or `str::strip_suffix` chain is clearer.
                     if line.ends_with('\n') {
                         line.pop();
                     }
@@ -126,6 +128,7 @@ fn copy(
     lua: &Lua,
     (reader_ud, writer_ud): (AnyUserData, AnyUserData),
 ) -> mlua::Result<(Value, Value)> {
+    // TODO: clean-code - 0.6 - DRY: two near-identical `match userdata.borrow() { Ok => h, Err => from_err }` blocks — extract a typed helper `borrow_or_err(lua, ud, "io.copy", "...")`.
     let rh = match reader_ud.borrow::<ReaderHandle>() {
         Ok(h) => h,
         Err(_) => return from_err(lua, "io.copy", "first argument is not a reader handle"),
@@ -137,6 +140,7 @@ fn copy(
     let mut r = rh.0.lock();
     let mut w = wh.0.lock();
     let result = std::io::copy(&mut *r, &mut *w);
+    // TODO: clean-code - 0.6 - KISS: explicit `drop` chain on guards/refs that go out of scope at function end — redundant; scope handles release.
     drop(r);
     drop(w);
     drop(rh);

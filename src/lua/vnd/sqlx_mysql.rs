@@ -81,6 +81,7 @@ async fn open(lua: Lua, url: String) -> mlua::Result<(Value, Value)> {
 }
 
 impl UserData for Database {
+    // TODO: clean-code - 0.85 - DRY: six near-identical async method blocks (execute/query/query_one across Database+Statement) repeat split/clone/dispatch boilerplate — extract a macro or helper
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_async_method("execute", |lua, this, args: MultiValue| {
             let pool = this.pool.clone();
@@ -177,6 +178,7 @@ impl UserData for Statement {
 // shared execution helpers
 // ---------------------------------------------------------------------------
 
+// TODO: clean-code - 0.7 - DRY: run_execute/run_query/run_query_one share the same closed-check + build_query + error-mapping prologue — collapse into a single helper that yields a ready Query
 async fn run_execute(
     lua: &Lua,
     pool: &MySqlPool,
@@ -334,6 +336,7 @@ fn classify(type_name: &str) -> Kind {
     Kind::Text
 }
 
+// TODO: clean-code - 0.6 - SRP: row_to_table mixes column iteration, null detection, kind dispatch, six decode arms and Lua value construction — split decode-per-kind into its own helper
 fn row_to_table(lua: &Lua, row: &MySqlRow) -> mlua::Result<Table> {
     let cols = row.columns();
     let t = lua.create_table_with_capacity(0, cols.len())?;

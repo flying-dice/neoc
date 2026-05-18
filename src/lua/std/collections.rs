@@ -31,6 +31,7 @@ use tracing::instrument;
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
     let t = lua.create_table()?;
 
+    // TODO: clean-code - 0.55 - DRY: triplicated `Constructor.new` table-wiring pattern across Map/Counter/Mutex
     // `require("std:collections").Map.new()`
     let map_t = lua.create_table()?;
     map_t.set("new", lua.create_function(make_map)?)?;
@@ -80,10 +81,12 @@ pub struct SharedMap {
 #[derive(Clone)]
 pub struct Map(Arc<SharedMap>);
 
+// TODO: clean-code - 0.65 - DRY: identical from_arc/arc impl block triplicated across Map/Counter/Mutex
 impl Map {
     pub fn from_arc(arc: Arc<SharedMap>) -> Self {
         Self(arc)
     }
+    // TODO: clean-code - 0.6 - DEAD: pub arc() accessor has no external callers (only hyper.rs uses .arc() on its own type)
     pub fn arc(&self) -> Arc<SharedMap> {
         self.0.clone()
     }
@@ -159,6 +162,7 @@ impl Counter {
     pub fn from_arc(arc: Arc<SharedCounter>) -> Self {
         Self(arc)
     }
+    // TODO: clean-code - 0.6 - DEAD: pub arc() accessor has no external callers
     pub fn arc(&self) -> Arc<SharedCounter> {
         self.0.clone()
     }
@@ -232,6 +236,7 @@ impl Mutex {
     pub fn from_arc(arc: Arc<SharedMutex>) -> Self {
         Self(arc)
     }
+    // TODO: clean-code - 0.6 - DEAD: pub arc() accessor has no external callers
     pub fn arc(&self) -> Arc<SharedMutex> {
         self.0.clone()
     }

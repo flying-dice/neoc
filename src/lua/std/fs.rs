@@ -43,6 +43,7 @@ fn create_dir_all(lua: &Lua, path: String) -> mlua::Result<(Value, Value)> {
     }
 }
 
+// TODO: clean-code - 0.65 - DRY: three open-arms repeat the Ok→handle / Err→from_err shape; collapse to one match producing a Result<Handle> then a single ok/from_err tail
 #[instrument(name = "fs.open", target = "luau::lib::fs", skip_all)]
 fn open(lua: &Lua, opts: Table) -> mlua::Result<(Value, Value)> {
     let path: String = opts.get("path")?;
@@ -64,6 +65,7 @@ fn open(lua: &Lua, opts: Table) -> mlua::Result<(Value, Value)> {
             Ok(f) => ok(lua, WriterHandle::new(BufWriter::new(f))),
             Err(e) => from_err(lua, "fs.open", e),
         },
+        // TODO: clean-code - 0.55 - DRY: "fs.open" literal repeated 4× in this function and also as instrument name — extract const ERR_CTX: &str = "fs.open"
         other => from_err(lua, "fs.open", format!("unknown mode \"{other}\"")),
     }
 }

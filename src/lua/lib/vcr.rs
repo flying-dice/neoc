@@ -85,6 +85,7 @@ impl Tape {
     }
 }
 
+// TODO: clean-code - 0.55 - KISS: hand-rolled Serialize replicates serde(skip) on `registered`
 impl serde::Serialize for Tape {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         self.entries.serialize(s)
@@ -95,6 +96,7 @@ impl serde::Serialize for Tape {
 // off (pass-through)
 // ---------------------------------------------------------------------------
 
+// TODO: clean-code - 0.7 - DRY: no-op `dump` entry duplicated across passthrough/recording/replay; factor a shared cassette-table builder
 #[instrument(name = "vcr.off", target = "luau::lib::vcr", skip_all)]
 fn passthrough(lua: &Lua) -> mlua::Result<Table> {
     let t = lua.create_table()?;
@@ -142,6 +144,7 @@ fn recording(lua: &Lua, path: String) -> mlua::Result<Table> {
                     let reg_key = lua.create_registry_value(f)?;
                     let tape = tape.clone();
                     let path = path.clone();
+                    // TODO: clean-code - 0.65 - SRP: wrap closure conflates call dispatch, JSON conversion, in-memory record, and disk flush
                     lua.create_function(move |lua, args: MultiValue| {
                         let json_args = args.iter().map(to_json).collect();
                         let f: mlua::Function = lua.registry_value(&reg_key)?;
@@ -171,6 +174,7 @@ fn recording(lua: &Lua, path: String) -> mlua::Result<Table> {
 // replay
 // ---------------------------------------------------------------------------
 
+// TODO: clean-code - 0.6 - DRY: replay mirrors recording's table+wrap+duplicate-key+dump scaffolding; extract a common cassette builder
 #[instrument(name = "vcr.replay", target = "luau::lib::vcr", skip_all)]
 fn replay(lua: &Lua, path: &str) -> mlua::Result<Table> {
     let content = std::fs::read_to_string(path).map_err(mlua::Error::external)?;

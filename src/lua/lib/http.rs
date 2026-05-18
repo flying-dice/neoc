@@ -38,6 +38,7 @@ async fn serve_static(
     _lua: Lua,
     (glob_pattern, opts): (String, Option<Table>),
 ) -> mlua::Result<()> {
+    // TODO: clean-code - 0.6 - KISS: chained as_ref().and_then().ok().flatten() opts extraction is hard to read; extract helper.
     let port: u16 = opts
         .as_ref()
         .and_then(|o| o.get::<Option<u16>>("port").ok().flatten())
@@ -93,6 +94,9 @@ async fn serve_loop(listener: TcpListener, files: Arc<FileMap>, index: Arc<Strin
     }
 }
 
+// TODO: clean-code - 0.75 - SRP: handle_connection performs routing, path validation, file lookup, response composition, and error mapping; split into parse → route → respond.
+// TODO: clean-code - 0.6 - DRY: 5 near-identical write_response calls for plain-text error statuses (400/403/404/405); extract write_error(writer, status, reason).
+// TODO: clean-code - 0.55 - COUPLING: Box<dyn Error> return type forces downcast for MalformedPercentEncoding; use a typed enum.
 async fn handle_connection(
     stream: tokio::net::TcpStream,
     files: &FileMap,
@@ -200,6 +204,7 @@ async fn handle_connection(
 async fn read_request_head(
     reader: &mut BufReader<tokio::net::tcp::OwnedReadHalf>,
 ) -> Result<(String, String), Box<dyn std::error::Error + Send + Sync>> {
+    // TODO: clean-code - 0.6 - DRY: limited-take + read_line + length-check block is duplicated for request line and header lines; extract read_bounded_line helper.
     let mut request_line = String::new();
     {
         let mut limited = (&mut *reader).take(MAX_HEADER_LINE + 1);
@@ -414,6 +419,7 @@ fn html_escape(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
+// TODO: clean-code - 0.65 - SRP: build_index mixes sorting, escaping, row formatting, and embeds a 20+ line CSS literal; split row rendering from page chrome.
 fn build_index(files: &FileMap, glob_pattern: &str) -> String {
     let mut entries: Vec<(&str, &StaticFile)> =
         files.iter().map(|(k, v)| (k.as_str(), v)).collect();

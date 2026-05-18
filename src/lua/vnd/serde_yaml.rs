@@ -27,6 +27,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 }
 
 #[instrument(name = "serde_yaml.decode", target = "luau::lib::serde_yaml", skip_all)]
+// TODO: clean-code - 0.7 - DRY: reader-handle borrow + error mirrors encode_to's writer-handle pattern
 fn decode(lua: &Lua, ud: AnyUserData) -> mlua::Result<(Value, Value)> {
     let rh = match ud.borrow::<ReaderHandle>() {
         Ok(h) => h,
@@ -36,6 +37,7 @@ fn decode(lua: &Lua, ud: AnyUserData) -> mlua::Result<(Value, Value)> {
     let result = serde_yaml::from_reader::<_, serde_json::Value>(&mut **locked);
     drop(locked);
     drop(rh);
+    // TODO: clean-code - 0.65 - KISS: nested match-of-match; flatten with and_then/map_err + single dispatch
     match result {
         Ok(json) => match lua.to_value(&json) {
             Ok(v) => ok(lua, v),
@@ -52,6 +54,7 @@ fn decode(lua: &Lua, ud: AnyUserData) -> mlua::Result<(Value, Value)> {
 )]
 fn decode_string(lua: &Lua, s: mlua::String) -> mlua::Result<(Value, Value)> {
     let bytes = s.as_bytes();
+    // TODO: clean-code - 0.75 - DRY: yaml-bytes -> json::Value -> lua::Value pipeline duplicates decode()'s tail
     match serde_yaml::from_slice::<serde_json::Value>(&bytes) {
         Ok(json) => match lua.to_value(&json) {
             Ok(v) => ok(lua, v),
@@ -63,6 +66,7 @@ fn decode_string(lua: &Lua, s: mlua::String) -> mlua::Result<(Value, Value)> {
 
 #[instrument(name = "serde_yaml.encode", target = "luau::lib::serde_yaml", skip_all)]
 fn encode(lua: &Lua, v: Value) -> mlua::Result<(Value, Value)> {
+    // TODO: clean-code - 0.8 - DRY: lua::Value -> serde_json::Value bridge duplicated in encode_to
     match serde_json::to_value(&v).map_err(Error::external) {
         Ok(json) => match serde_yaml::to_string(&json) {
             Ok(s) => ok(lua, s),
@@ -82,6 +86,7 @@ fn encode_to(lua: &Lua, (v, ud): (Value, AnyUserData)) -> mlua::Result<(Value, V
         Ok(h) => h,
         Err(_) => return from_err(lua, "serde_yaml.encode_to", "expected a writer handle"),
     };
+    // TODO: clean-code - 0.8 - DRY: lua::Value -> serde_json::Value bridge duplicated from encode
     let json = match serde_json::to_value(&v).map_err(Error::external) {
         Ok(j) => j,
         Err(e) => return from_err(lua, "serde_yaml.encode_to", e),

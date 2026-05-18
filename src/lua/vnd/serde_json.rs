@@ -30,6 +30,7 @@ fn jv_to_json_value(jv: serde_json::Value) -> JsonValue {
     match jv {
         serde_json::Value::Null => JsonValue::Null,
         serde_json::Value::Bool(b) => JsonValue::Bool(b),
+        // TODO: clean-code - 0.55 - KISS: Number conversion cascade is dense; extract jv_number_to_json with named branches
         serde_json::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
                 JsonValue::Int(i)
@@ -114,6 +115,7 @@ fn from_str(lua: &Lua, s: mlua::String) -> mlua::Result<(Value, Value)> {
     target = "luau::lib::serde_json",
     skip_all
 )]
+// TODO: clean-code - 0.75 - KISS: nested match pyramid + manual drops; flatten with ? and a scoped block
 fn from_reader(lua: &Lua, ud: AnyUserData) -> mlua::Result<(Value, Value)> {
     let rh = match ud.borrow::<ReaderHandle>() {
         Ok(h) => h,
@@ -143,7 +145,9 @@ fn from_reader(lua: &Lua, ud: AnyUserData) -> mlua::Result<(Value, Value)> {
     target = "luau::lib::serde_json",
     skip_all
 )]
+// TODO: clean-code - 0.8 - DRY: to_string and to_string_pretty share identical scaffolding; extract serialize_with(formatter)
 fn to_string(lua: &Lua, v: Value) -> mlua::Result<(Value, Value)> {
+    // TODO: clean-code - 0.6 - DRY: error-prefix literal "serde_json.to_string" repeated 3x; bind once
     let j = match lua_value_to_json_value(&v) {
         Ok(j) => j,
         Err(e) => return from_err(lua, "serde_json.to_string", e),

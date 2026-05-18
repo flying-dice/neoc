@@ -74,6 +74,7 @@ pub struct MysqlContainer {
     port: u16,
 }
 
+// TODO: clean-code - 0.85 - DRY: MysqlContainer/PostgresContainer + start_mysql/start_postgres are near-identical twins (struct shape, start flow, UserData impl) — collapse via a typed-image trait or shared generic.
 #[instrument(
     name = "testcontainers_modules.mysql",
     target = "luau::lib::testcontainers_modules",
@@ -204,6 +205,7 @@ pub struct GenericContainer {
     ports: HashMap<u16, u16>,
 }
 
+// TODO: clean-code - 0.8 - SRP: start_generic does 6 jobs in 86 lines — opts parsing, image build, wait, env, cmd, port mapping. Split into parse_opts / build_request / map_ports.
 #[instrument(
     name = "testcontainers_modules.generic",
     target = "luau::lib::testcontainers_modules",
@@ -222,6 +224,7 @@ async fn start_generic(lua: Lua, opts: Table) -> mlua::Result<(Value, Value)> {
 
     let mut img = GenericImage::new(&image, &tag);
 
+    // TODO: clean-code - 0.75 - DRY: `match opts.get::<Option<Table>>(...) { Ok => .., Err(e) => return from_err(...) }` is repeated 4+ times with the same literal error tag — extract a helper or use `?` with map_err.
     let exposed_ports: Vec<u16> = match opts.get::<Option<Table>>("ports") {
         Ok(Some(t)) => match t.sequence_values::<u16>().collect::<mlua::Result<Vec<_>>>() {
             Ok(v) => v,

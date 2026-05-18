@@ -49,7 +49,9 @@ pub struct JSchema {
 
 impl UserData for JSchema {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        // TODO: clean-code - 0.7 - DRY: lua-Value → serde_json::Value conversion duplicated in is_valid and validate; extract a helper.
         methods.add_method("is_valid", |_, this, value: Value| {
+            // TODO: clean-code - 0.6 - KISS: silently returns false on conversion error, hiding bugs; inconsistent with validate which surfaces the error.
             let jv = match serde_json::to_value(&value).map_err(mlua::Error::external) {
                 Ok(v) => v,
                 Err(_) => return Ok(false),
@@ -94,6 +96,7 @@ impl UserData for JValidationResult {
             Ok(t)
         });
 
+        // TODO: clean-code - 0.7 - DEAD: misleading comment — ToString metamethod does not make `if result then` work (userdata is always truthy); comment describes behaviour the code does not provide.
         // Convenience: same as :ok() but lets `if result then` work.
         methods.add_meta_method(mlua::MetaMethod::ToString, |_, this, _: ()| {
             if this.valid {
