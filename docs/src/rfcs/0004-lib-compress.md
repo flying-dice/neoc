@@ -1,13 +1,10 @@
 ---
-status: draft
+status: accepted
 created: 2026-05-18
 implemented-in:
 ---
 
 # 0004 — `lib:compress` — compression and decompression
-
-> [!WARNING]
-> This RFC is `draft`. Under refinement — **not** the contract.
 
 ## Summary
 
