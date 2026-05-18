@@ -76,7 +76,9 @@ Two functions. Format is always the first argument — parameterisable, no per-f
 
 Out-of-range level → `(nil, "compress.encode: level out of range for {format}: {n}")`.
 
-Non-integer `level` value (e.g. `{ level = "fast" }`) → `(nil, "compress.encode: invalid level type")`. Luau numbers that are not whole (e.g. `6.7`) are truncated to integer via `as i32` — this matches Rust's standard numeric coercion and is documented as intentional.
+Non-number `level` (e.g. `{ level = "fast" }`) → `(nil, "compress.encode: invalid level type")`.
+
+Non-integer numeric `level` (e.g. `{ level = 6.7 }`) → `(nil, "compress.encode: level must be an integer")`. Rationale: Luau numbers are f64; dynamic computations like `base + offset` can silently produce non-whole values. Silent `as i32` truncation hides arithmetic bugs and disagrees with Node `zlib` / Python `gzip` precedent (both reject). Fail loud.
 
 **`compress.decode(format, data[, opts]) → (string, nil) | (nil, string)`**
 
@@ -88,7 +90,15 @@ Non-integer `level` value (e.g. `{ level = "fast" }`) → `(nil, "compress.encod
 
 `max_size`: maximum decompressed output size in bytes. Default: 268435456 (256 MB). Exceeding → `(nil, "compress.decode: output exceeds max_size (256 MB)")`. The streaming internals check `output.len()` during writes and bail early — near-zero cost on the happy path.
 
-Rationale: `decode` receives untrusted data in most real-world scenarios (HTTP responses, external files). A 1 KB gzip can expand to 1 GB+ (decompression bomb). Unguarded decode is a memory exhaustion vector. The default is generous enough for legitimate payloads; callers who know their bounds can override.
+`max_size` validation — must fail loud, never silently fall back to default:
+
+- Non-number value (e.g. `{ max_size = "1MB" }`) → `(nil, "compress.decode: invalid max_size type")`
+- Non-integer numeric value (e.g. `{ max_size = 1.5e6 }`) → `(nil, "compress.decode: max_size must be an integer")`
+- Zero or negative value → `(nil, "compress.decode: max_size must be > 0")`
+
+Rationale: `max_size` is the decompression bomb guard. A caller writing `{ max_size = "1MB" }` intends protection — silent fallback to 256 MB means the safety mechanism appears active but isn't. Worst-kind-of-failure. Same `contains_key` + explicit error pattern as `level`.
+
+Rationale (default): `decode` receives untrusted data in most real-world scenarios (HTTP responses, external files). A 1 KB gzip can expand to 1 GB+ (decompression bomb). Unguarded decode is a memory exhaustion vector. The default is generous enough for legitimate payloads; callers who know their bounds can override.
 
 ### Error handling
 
@@ -98,7 +108,11 @@ Error cases:
 - Unknown format string → `"compress.encode: unknown format 'lz4'"`
 - Corrupt/truncated compressed data → `"compress.decode: {underlying_error}"`
 - Out-of-range level → `"compress.encode: level out of range for {format}: {n}"`
-- Invalid level type → `"compress.encode: invalid level type"`
+- Invalid level type (non-number) → `"compress.encode: invalid level type"`
+- Non-integer level → `"compress.encode: level must be an integer"`
+- Invalid max_size type (non-number) → `"compress.decode: invalid max_size type"`
+- Non-integer max_size → `"compress.decode: max_size must be an integer"`
+- Non-positive max_size → `"compress.decode: max_size must be > 0"`
 - Output exceeds max_size → `"compress.decode: output exceeds max_size (256 MB)"`
 - Empty input to `decode` → `(nil, "compress.decode: {underlying_error}")` (no valid compressed stream is 0 bytes)
 
@@ -129,13 +143,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 
     t.set("encode", lua.create_function(|lua, (format, data, opts): (String, mlua::String, Option<Table>)| {
         let bytes = data.as_bytes();
-        let level = match opts {
-            Some(t) => match t.contains_key("level")? {
-                true => Some(t.get::<i32>("level").map_err(|_| mlua::Error::runtime("compress.encode: invalid level type"))?),
-                false => None,
-            },
-            None => None,
-        };
+        let level = extract_integer_opt(opts.as_ref(), "level", "compress.encode")?;
         match format.as_str() {
             "gzip" => encode_gzip(lua, bytes, level),
             "zlib" => encode_zlib(lua, bytes, level),
@@ -147,8 +155,9 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 
     t.set("decode", lua.create_function(|lua, (format, data, opts): (String, mlua::String, Option<Table>)| {
         let bytes = data.as_bytes();
-        let max_size = match &opts {
-            Some(t) => t.get::<usize>("max_size").unwrap_or(256 * 1024 * 1024),
+        let max_size = match extract_integer_opt(opts.as_ref(), "max_size", "compress.decode")? {
+            Some(n) if n <= 0 => return err(lua, "compress.decode: max_size must be > 0".to_string()),
+            Some(n) => n as usize,
             None => 256 * 1024 * 1024, // 256 MB default
         };
         match format.as_str() {
@@ -165,6 +174,27 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 ```
 
 Each `encode_*` function uses streaming internals (write to `Vec<u8>` via `std::io::Write` adapters), then returns `ok(lua, lua.create_string(&output)?)` or `from_err(...)`. Each `decode_*` function takes `max_size` and checks `output.len()` during writes — bailing with an error if the limit is exceeded.
+
+Shared opts validation helper — single source of truth for type + integer checks:
+
+```rust
+fn extract_integer_opt(opts: Option<&Table>, key: &str, prefix: &str) -> mlua::Result<Option<i64>> {
+    let Some(t) = opts else { return Ok(None) };
+    if !t.contains_key(key)? { return Ok(None); }
+    let v: mlua::Value = t.get(key)?;
+    let n = match v {
+        mlua::Value::Integer(i) => i as i64,
+        mlua::Value::Number(f) => {
+            if f.fract() != 0.0 || !f.is_finite() {
+                return Err(mlua::Error::runtime(format!("{prefix}: {key} must be an integer")));
+            }
+            f as i64
+        }
+        _ => return Err(mlua::Error::runtime(format!("{prefix}: invalid {key} type"))),
+    };
+    Ok(Some(n))
+}
+```
 
 ### Streaming internals
 
@@ -207,7 +237,8 @@ Format strings are case-sensitive, lowercase only. `"GZIP"` → error. Rationale
 
 - **Decompression size limit.** Resolved: `decode` enforces `max_size` (default 256 MB) via opts table. Streaming internals check `output.len()` during writes and bail early. See `decode` signature above.
 - **`decode` opts slot.** Resolved: `decode(format, data[, opts])` — consistent with `encode` signature, forward-compatible for future options.
-- **Level type coercion.** Resolved: non-number types (e.g. `{ level = "fast" }`) → explicit error. Float-to-int truncation (e.g. `6.7` → `6`) is documented as intentional Rust `as i32` behaviour.
+- **Level validation.** Resolved: non-number → `invalid level type`; non-integer → `level must be an integer`. Fail-loud; matches Node `zlib` / Python `gzip` precedent. Silent truncation rejected as a footgun in an f64 runtime.
+- **`max_size` validation.** Resolved: non-number → `invalid max_size type`; non-integer → `max_size must be an integer`; non-positive → `max_size must be > 0`. Same fail-loud pattern as `level`; safety mechanism must never silently degrade to default.
 
 ## Open questions
 
