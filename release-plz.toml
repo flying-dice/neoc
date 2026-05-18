@@ -1,6 +1,5 @@
 [workspace]
 changelog_update = true
-publish = false
 
 [[package]]
 name = "neoc"
