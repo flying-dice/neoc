@@ -24,6 +24,7 @@ Workflow: agent-backlog Kanban. RFCs produced when issue carries `design-rfc` la
 - [0002 — std:task](./0002-std-task)
 - [0002 — lib:mime extension/filename detection](./0002-lib-mime-extension-and-filename-detection)
 - [0003 — Errors guide: helpful errors that educate, not punish](./0003-errors-guide)
+- [0004 — lib:compress — compression and decompression](./0004-lib-compress)
 
 ### Accepted
 
