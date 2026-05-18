@@ -79,32 +79,130 @@ fn parse_require_message(msg: &str) -> (Option<String>, Option<String>) {
 }
 
 fn find_require_span(source: &str, traceback: &str) -> miette::SourceSpan {
-    if let Some(line_num) = extract_line_number(traceback) {
-        let mut offset = 0;
-        for (i, line) in source.lines().enumerate() {
-            if i + 1 == line_num {
-                if let Some(col) = line.find("require") {
-                    let len = line[col..]
-                        .find(')')
-                        .map(|e| e + 1)
-                        .unwrap_or(line.len() - col);
-                    return (offset + col, len).into();
-                }
-                return (offset, line.len()).into();
+    let Some(line_num) = extract_line_number(traceback) else {
+        return (0, 0).into();
+    };
+    let mut offset = 0;
+    for (i, line) in source.split_inclusive('\n').enumerate() {
+        if i + 1 == line_num {
+            let trimmed = line.trim_end_matches(['\r', '\n']);
+            if let Some(col) = trimmed.find("require") {
+                let len = trimmed[col..]
+                    .find(')')
+                    .map(|e| e + 1)
+                    .unwrap_or(trimmed.len() - col);
+                return (offset + col, len).into();
             }
-            offset += line.len() + 1;
+            return (offset, trimmed.len()).into();
         }
+        offset += line.len();
     }
     (0, 0).into()
 }
 
 fn extract_line_number(traceback: &str) -> Option<usize> {
-    for part in traceback.split(':') {
-        if let Ok(n) = part.trim().parse::<usize>()
-            && n > 0
-        {
-            return Some(n);
-        }
+    // Anchor on the mlua/Luau chunk marker `]:LINE:`. The chunk name is
+    // wrapped in `[string "..."]`, so `]:` reliably terminates it.
+    let after = traceback.split("]:").nth(1)?;
+    let line_str = after.split(':').next()?;
+    line_str.trim().parse::<usize>().ok().filter(|&n| n > 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_line_number_parses_mlua_traceback() {
+        let tb = r#"runtime error: [string "test.luau"]:3: require: unknown module"#;
+        assert_eq!(extract_line_number(tb), Some(3));
     }
-    None
+
+    #[test]
+    fn extract_line_number_returns_none_when_no_chunk_marker() {
+        assert_eq!(extract_line_number("no traceback here"), None);
+    }
+
+    #[test]
+    fn extract_line_number_ignores_leading_numbers_in_message() {
+        // Bare number anywhere — without `]:` anchor — must not match.
+        assert_eq!(extract_line_number("port 8080: connection refused"), None);
+    }
+
+    #[test]
+    fn extract_line_number_handles_chunk_with_numeric_name() {
+        let tb = r#"[string "8080.luau"]:42: boom"#;
+        assert_eq!(extract_line_number(tb), Some(42));
+    }
+
+    #[test]
+    fn parse_require_message_extracts_did_you_mean() {
+        let msg = r#"require: unknown module "lib:jsn" — did you mean "lib:json"? available: lib:json, lib:base64"#;
+        let (sug, avail) = parse_require_message(msg);
+        assert_eq!(sug.as_deref(), Some(r#"did you mean "lib:json"?"#));
+        assert_eq!(avail.as_deref(), Some("available: lib:json, lib:base64"));
+    }
+
+    #[test]
+    fn parse_require_message_no_match_returns_none() {
+        let (sug, avail) = parse_require_message(r#"require: unknown module "foo""#);
+        assert!(sug.is_none());
+        assert!(avail.is_none());
+    }
+
+    #[test]
+    fn find_require_span_lf_source_points_at_require_call() {
+        let src = "local x = 1\nrequire(\"lib:jsn\")\nprint(x)\n";
+        let tb = r#"[string "t.luau"]:2: require: unknown"#;
+        let span: miette::SourceSpan = find_require_span(src, tb);
+        let start = span.offset();
+        let len = span.len();
+        let slice = &src[start..start + len];
+        assert_eq!(slice, r#"require("lib:jsn")"#);
+    }
+
+    #[test]
+    fn find_require_span_crlf_source_accounts_for_carriage_return() {
+        let src = "local x = 1\r\nrequire(\"lib:jsn\")\r\nprint(x)\r\n";
+        let tb = r#"[string "t.luau"]:2: require: unknown"#;
+        let span: miette::SourceSpan = find_require_span(src, tb);
+        let start = span.offset();
+        let len = span.len();
+        let slice = &src[start..start + len];
+        assert_eq!(slice, r#"require("lib:jsn")"#);
+    }
+
+    #[test]
+    fn find_require_span_returns_zero_when_no_line_number() {
+        let span: miette::SourceSpan = find_require_span("anything", "no chunk here");
+        assert_eq!(span.offset(), 0);
+        assert_eq!(span.len(), 0);
+    }
+
+    #[test]
+    fn extract_require_error_skips_non_require_messages() {
+        let err = mlua::Error::external("totally unrelated boom");
+        assert!(extract_require_error(&err, "src", "p").is_none());
+    }
+
+    #[test]
+    fn extract_require_error_builds_module_not_found_with_help() {
+        let raw =
+            r#"require: unknown module "lib:jsn" — did you mean "lib:json"? available: lib:json"#;
+        let err = mlua::Error::external(raw);
+        let src = "require(\"lib:jsn\")\n";
+        let neoc = extract_require_error(&err, src, "t.luau").expect("should classify");
+        let NeocError::ModuleNotFound {
+            message,
+            suggestion,
+            ..
+        } = neoc
+        else {
+            panic!("expected ModuleNotFound");
+        };
+        assert!(message.starts_with(r#"require: unknown module "lib:jsn""#));
+        let help = suggestion.expect("help present");
+        assert!(help.contains(r#"did you mean "lib:json"?"#));
+        assert!(help.contains("available: lib:json"));
+    }
 }
