@@ -1,9 +1,23 @@
+use neoc::errors::{self, NeocError};
 use neoc::lua;
 use neoc::lua::lib::compile::{TrailerError, detect_embedded_payload_from};
 use neoc::lua::std::workers::ShutdownSignal;
 
 use std::path::Path;
 use std::{env, fs, process};
+
+fn report_error(err: NeocError) -> ! {
+    eprintln!("{:?}", miette::Report::new(err));
+    process::exit(1);
+}
+
+fn report_script_error(e: mlua::Error, source: &str, path: &str) -> ! {
+    if let Some(neoc_err) = errors::extract_require_error(&e, source, path) {
+        report_error(neoc_err);
+    }
+    eprintln!("{e}");
+    process::exit(1);
+}
 
 fn expand_args(args: impl Iterator<Item = String>) -> Vec<String> {
     let mut paths = Vec::new();
@@ -84,8 +98,7 @@ async fn run(paths: &[String], user_args: &[String]) {
         });
 
         let engine = lua::sandbox::make_engine().unwrap_or_else(|e| {
-            eprintln!("error: engine init failed: {e}");
-            process::exit(1);
+            report_error(NeocError::EngineInit(e.to_string()));
         });
 
         if !user_args.is_empty() {
@@ -102,8 +115,7 @@ async fn run(paths: &[String], user_args: &[String]) {
             .exec_async()
             .await
         {
-            eprintln!("{e}");
-            process::exit(1);
+            report_script_error(e, &source, path);
         }
 
         let is_test = path.ends_with(".test.luau") || path.ends_with(".spec.luau");
@@ -155,17 +167,18 @@ fn detect_embedded_payload() -> Option<Vec<u8>> {
     match detect_embedded_payload_from(&exe) {
         Ok(payload) => payload,
         Err(TrailerError::UnknownVersion(version)) => {
-            eprintln!(
-                "error: this executable was compiled with a newer version of neoc \
-                 (trailer version {version:#04x}); please upgrade your neoc installation"
-            );
-            process::exit(1);
+            report_error(NeocError::CorruptPayload {
+                detail: format!(
+                    "compiled with a newer version of neoc (trailer version {version:#04x}); \
+                     please upgrade your neoc installation"
+                ),
+            });
         }
         Err(TrailerError::CorruptBounds { .. }) => {
-            eprintln!(
-                "error: embedded payload descriptor is corrupt (offset or length out of range)"
-            );
-            process::exit(1);
+            report_error(NeocError::CorruptPayload {
+                detail: "embedded payload descriptor is corrupt (offset or length out of range)"
+                    .to_string(),
+            });
         }
     }
 }
@@ -179,8 +192,7 @@ async fn main() {
         let user_args: Vec<String> = env::args().skip(1).collect();
 
         let engine = lua::sandbox::make_engine().unwrap_or_else(|e| {
-            eprintln!("error: engine init failed: {e}");
-            process::exit(1);
+            report_error(NeocError::EngineInit(e.to_string()));
         });
 
         if !user_args.is_empty() {
@@ -192,8 +204,7 @@ async fn main() {
         }
 
         if let Err(e) = engine.load(&payload[..]).exec_async().await {
-            eprintln!("{e}");
-            process::exit(1);
+            report_error(NeocError::Runtime(e.to_string()));
         }
 
         return;
