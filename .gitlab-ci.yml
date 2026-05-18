@@ -168,7 +168,7 @@ release-plz:
     - export PATH="$CARGO_HOME/bin:$PATH"
     - |
       curl -sSL \
-        "https://github.com/release-plz/release-plz/releases/download/release-plz-v0.3.158/release-plz-x86_64-unknown-linux-gnu.tar.gz" \
+        "https://github.com/release-plz/release-plz/releases/latest/download/release-plz-x86_64-unknown-linux-gnu.tar.gz" \
         | tar -xz -C "$CARGO_HOME/bin/"
   script:
     - release-plz release --git-token "$RELEASE_PLZ_TOKEN" --forge gitlab
