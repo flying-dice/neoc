@@ -126,6 +126,7 @@ fn open(lua: &Lua, path: String) -> mlua::Result<(Value, Value)> {
         | OpenFlags::SQLITE_OPEN_CREATE
         | OpenFlags::SQLITE_OPEN_NO_MUTEX
         | OpenFlags::SQLITE_OPEN_URI;
+    // TODO: clean-code - 0.6 - DEAD: ":memory:" branch is dead — open_with_flags(&path, ..) handles it identically
     let conn = if path == ":memory:" {
         rusqlite::Connection::open_with_flags(":memory:", flags)
     } else {
@@ -144,6 +145,7 @@ fn open(lua: &Lua, path: String) -> mlua::Result<(Value, Value)> {
 
 impl UserData for Database {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        // TODO: clean-code - 0.75 - DRY: split_sql_args + dispatch repeated 3x across Database methods and mirrored 3x on Statement
         methods.add_method("execute", |lua, this, args: MultiValue| {
             let (sql, params) = match split_sql_args(args) {
                 Ok(v) => v,
@@ -198,6 +200,7 @@ pub struct Statement {
 
 impl UserData for Statement {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        // TODO: clean-code - 0.6 - NAMING: op tag "sqlite.statement.*" inconsistent with "rusqlite.*" used elsewhere in this module
         methods.add_method("execute", |lua, this, args: MultiValue| {
             let params: Vec<Value> = args.into_iter().collect();
             run_execute(
@@ -268,6 +271,7 @@ fn run_execute(
     }
 }
 
+// TODO: clean-code - 0.85 - DRY: run_query and run_query_one duplicate column-name extraction, ref binding, and row materialization
 fn run_query(
     lua: &Lua,
     handle: &Arc<LocalConn>,

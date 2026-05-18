@@ -70,6 +70,7 @@ async fn open(lua: Lua, url: String) -> mlua::Result<(Value, Value)> {
 
 impl UserData for Database {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        // TODO: clean-code - 0.85 - DRY: execute/query/query_one duplicate split_args+bind+is_closed prelude — extract prepare(args, pool, op_name)
         methods.add_async_method("execute", |lua, this, args: MultiValue| {
             let pool = this.pool.clone();
             async move {
@@ -188,6 +189,7 @@ fn bind_param<'q>(
         Value::Boolean(b) => q.bind(b),
         Value::Integer(i) => q.bind(i as i64),
         Value::Number(f) => q.bind(f),
+        // TODO: clean-code - 0.6 - KISS: implicit utf8→text / non-utf8→bytea fallback hides bind type from caller; consider explicit bytes type
         Value::String(s) => {
             let bytes = s.as_bytes();
             match std::str::from_utf8(&bytes) {
@@ -216,6 +218,7 @@ fn row_to_table(lua: &Lua, row: &PgRow) -> mlua::Result<Table> {
     Ok(t)
 }
 
+// TODO: clean-code - 0.55 - SRP: decode_cell dispatches types AND silently treats every unknown type as TEXT — split known-type table from text fallback
 fn decode_cell(lua: &Lua, row: &PgRow, idx: usize, type_name: &str) -> mlua::Result<Value> {
     // Postgres is strict about type widths — INT4 must decode through i32,
     // not i64, and likewise FLOAT4 through f32. Mismatches raise a runtime

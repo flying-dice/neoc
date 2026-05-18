@@ -221,6 +221,7 @@ fn reconstruct_shared(lua: &Lua, entries: &[SharedEntry]) -> mlua::Result<Table>
 // ---------------------------------------------------------------------------
 
 #[instrument(name = "thread.spawn", target = "luau::lib::thread", skip_all)]
+// TODO: clean-code - 0.7 - DRY: four near-identical `match … from_err(lua, "thread.spawn", e)` blocks — collapse via `?`-style helper or local macro
 fn spawn(lua: &Lua, opts: Table) -> mlua::Result<(Value, Value)> {
     let (source, default_name) = match read_source(&opts) {
         Ok(s) => s,
@@ -273,6 +274,7 @@ fn spawn(lua: &Lua, opts: Table) -> mlua::Result<(Value, Value)> {
 /// Returns `(source, default_name)`. The default name is the file path when
 /// `file` is used so stack traces and `set_name` output point at it; for
 /// inline `source` it falls back to a generic label.
+// TODO: clean-code - 0.6 - DRY: `read_source`, `read_args`, `read_shared` each repeat `.map_err(|e| e.to_string())` on `opts.get` — push the string-conversion into a single `opt<T>` helper
 fn read_source(opts: &Table) -> Result<(String, String), String> {
     if let Some(s) = opts
         .get::<Option<String>>("source")
@@ -374,6 +376,7 @@ impl Drop for WorkerInner {
 
 impl UserData for WorkerHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        // TODO: clean-code - 0.8 - DRY: send/receive bodies duplicate `Channel`'s send/receive verbatim (only error labels and Arc-around-Mutex differ) — extract a shared `send_json` / `recv_json` helper
         methods.add_method("send", |_, this, v: Value| {
             let json = serde_json::to_value(&v).map_err(mlua::Error::external)?;
             this.inner

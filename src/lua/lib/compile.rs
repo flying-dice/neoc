@@ -61,6 +61,7 @@ pub enum TrailerError {
 /// - `Ok(Some(payload))` — valid trailer found; payload extracted.
 /// - `Ok(None)` — no NEOC_BL magic; this is a plain binary.
 /// - `Err(TrailerError)` — magic matched but the trailer is malformed.
+// TODO: clean-code - 0.7 - SRP: open+seek+read+validate magic/version+validate bounds+extract payload — split into read_trailer + extract_payload
 pub fn detect_embedded_payload_from(exe: &Path) -> Result<Option<Vec<u8>>, TrailerError> {
     let mut f = match std::fs::File::open(exe) {
         Ok(f) => f,
@@ -145,6 +146,7 @@ fn write_trailer(f: &mut impl Write, payload: &[u8], stub_len: u64) -> std::io::
 ///    the runtime, so `current_exe()` is always the correct stub).
 /// 3. Copies stub → output, appends payload + 20-byte trailer.
 /// 4. Sets executable permission on Unix.
+// TODO: clean-code - 0.75 - SRP: read source + resolve stub + strip prior trailer + assemble + write + chmod — extract strip_existing_trailer and set_executable
 fn bundle_impl(entrypoint: &Path, output: &Path) -> Result<(), String> {
     // Read source.
     let source = std::fs::read(entrypoint)
@@ -163,6 +165,7 @@ fn bundle_impl(entrypoint: &Path, output: &Path) -> Result<(), String> {
 
     // Strip any previously embedded payload so that re-bundling a bundled binary
     // does not inflate the output by the prior payload + trailer on each pass.
+    // TODO: clean-code - 0.8 - DRY: duplicates magic/version/offset parsing from detect_embedded_payload_from — share a parse_trailer helper over a byte slice
     if stub_bytes.len() as u64 >= TRAILER_SIZE {
         let t = stub_bytes.len() - TRAILER_SIZE as usize;
         if stub_bytes[t..t + 7] == *TRAILER_MAGIC && stub_bytes[t + 7] == TRAILER_VERSION {

@@ -273,6 +273,7 @@ const NULL_REGISTRY_KEY: &str = "__lib_json_null_singleton";
 /// Returns the per-engine `JsonNull` singleton, creating + caching it
 /// on first call.
 fn null_handle(lua: &Lua) -> mlua::Result<Value> {
+    // TODO: clean-code - 0.55 - KISS: registry miss returns Nil, not Err — fold the `Ok && !Nil` chain into a single match on the loaded Value.
     if let Ok(existing) = lua.named_registry_value::<Value>(NULL_REGISTRY_KEY)
         && !matches!(existing, Value::Nil)
     {
@@ -390,6 +391,7 @@ fn with_resolved_mut<T>(
     f(walk_mut(&mut guard, path))
 }
 
+// TODO: clean-code - 0.6 - DRY: walk and walk_mut differ only by &/&mut; either accept that as a macro or use a single generic over a Get/GetMut trait.
 fn walk<'a>(root: &'a JsonValue, path: &[PathSeg]) -> Option<&'a JsonValue> {
     let mut cur = root;
     for seg in path {
@@ -496,6 +498,7 @@ pub struct Object {
 }
 
 impl Object {
+    // TODO: clean-code - 0.75 - DRY: set_inner/push_inner across Object+Array repeat the resolve+cast+error pattern; extract a `with_object_mut`/`with_array_mut` helper.
     fn set_inner(&self, key: String, v: JsonValue) -> mlua::Result<()> {
         with_resolved_mut(&self.root, &self.path, |resolved| {
             let cur = resolved
@@ -601,6 +604,7 @@ impl Array {
 
 impl UserData for Array {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        // TODO: clean-code - 0.65 - DRY: Array's `get`, `len`, `to_table` are byte-for-byte mirrors of Object's; share via a free helper keyed on Arc<Root>+path.
         methods.add_method("get", |lua, this, args: MultiValue| {
             walk_get(lua, &this.root, &this.path, args)
         });
@@ -632,6 +636,7 @@ impl UserData for Array {
 // JsonValue ↔ Lua bridge
 // ---------------------------------------------------------------------------
 
+// TODO: clean-code - 0.8 - DRY: wrap_value and json_value_to_lua share identical Null/Bool/Int/Float/String arms; factor a scalar-only helper used by both.
 /// Wrap one node of a `JsonValue` tree as a Lua value. Objects and Arrays
 /// become userdata sharing the given root + path; scalars become Lua-native
 /// values. Crate-pub so `vnd:serde_json::from_str` can call it.
@@ -705,6 +710,7 @@ pub fn lua_value_to_json_value(v: &Value) -> mlua::Result<JsonValue> {
     }
 }
 
+// TODO: clean-code - 0.55 - KISS: array detection iterates pairs once then iterates again to build; collect once and decide, or rely on raw_len+all_int check without the double walk.
 fn table_to_json_value(t: &Table) -> mlua::Result<JsonValue> {
     // Detect array form: keys are exactly 1..=N and there are N entries.
     // Anything else (string keys, gaps, 0 / negative indices) → object.

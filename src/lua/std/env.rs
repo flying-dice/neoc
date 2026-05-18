@@ -14,6 +14,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
     t.set("dll_prefix", std::env::consts::DLL_PREFIX)?;
     t.set("dll_suffix", std::env::consts::DLL_SUFFIX)?;
 
+    // TODO: clean-code - 0.55 - DRY: home_dir/current_dir repeat PathBuf -> ok(lua, lossy) pattern; extract helper
     t.set(
         "home_dir",
         lua.create_function(|lua, ()| {
@@ -59,6 +60,8 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
         })?,
     )?;
 
+    // TODO: clean-code - 0.65 - KISS: nested match on _NEOC_ARGS Value variants is dense; flatten via early return
+    // TODO: clean-code - 0.6 - DRY: identical "_NEOC_ARGS: expected array of strings" literal duplicated on two arms
     t.set(
         "args",
         lua.create_function(|lua, ()| {

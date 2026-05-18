@@ -19,6 +19,7 @@ fn report_script_error(e: mlua::Error, source: &str, path: &str) -> ! {
     process::exit(1);
 }
 
+// TODO: clean-code - 0.55 - SRP: expand_args mixes glob detection, walking, and process::exit error handling
 fn expand_args(args: impl Iterator<Item = String>) -> Vec<String> {
     let mut paths = Vec::new();
     for arg in args {
@@ -97,6 +98,7 @@ async fn run(paths: &[String], user_args: &[String]) {
             process::exit(1);
         });
 
+        // TODO: clean-code - 0.75 - DRY: engine-init + _NEOC_ARGS binding + scheduler drain duplicated in main() embedded-payload path
         let engine = lua::sandbox::make_engine().unwrap_or_else(|e| {
             report_error(NeocError::EngineInit(e.to_string()));
         });
@@ -126,6 +128,7 @@ async fn run(paths: &[String], user_args: &[String]) {
             }
         }
 
+        // TODO: clean-code - 0.6 - DRY: ANSI escape sequences \x1b[32m / \x1b[31m duplicated across pass/fail prints — extract green()/red() helpers
         let is_test = path.ends_with(".test.luau") || path.ends_with(".spec.luau");
         if is_test {
             match lua::lib::test::summary(&engine) {
@@ -191,6 +194,7 @@ fn detect_embedded_payload() -> Option<Vec<u8>> {
     }
 }
 
+// TODO: clean-code - 0.65 - SRP: main() interleaves embedded-payload execution, CLI arg parsing, and dispatch — split into run_embedded() / run_cli()
 #[tokio::main]
 async fn main() {
     // --- single-file executable: check for embedded payload first ---

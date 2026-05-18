@@ -100,6 +100,7 @@ impl<S> Layer<S> for LuauLayer
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
+    // TODO: clean-code - 0.55 - DRY: `target().starts_with("luau")` guard repeated in all four hooks — extract `is_luau_target()` helper
     fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
         if !attrs.metadata().target().starts_with("luau") {
             return;

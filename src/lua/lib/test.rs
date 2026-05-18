@@ -12,6 +12,7 @@ use mlua::{Lua, Table, Value};
 const STATE_KEY: &str = "_NEOC_TEST";
 const CTR_KEY: &str = "_NEOC_EXPECT_CTR";
 
+// TODO: clean-code - 0.6 - SRP: module() does state init, describe/test/it/expect registration, and println formatting — split into init_state, register_suite_fns, register_expect.
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
     let state = lua.create_table()?;
     state.set("passed", 0_u32)?;
@@ -84,6 +85,7 @@ pub fn summary(lua: &Lua) -> mlua::Result<(u32, u32)> {
 // Matcher construction
 // ---------------------------------------------------------------------------
 
+// TODO: clean-code - 0.6 - KISS: stashing each expect value under a counter-keyed registry slot is over-engineered — mlua values can be cloned and captured directly in the matcher closure.
 fn next_key(lua: &Lua) -> mlua::Result<String> {
     let ctr: Table = lua.named_registry_value(CTR_KEY)?;
     let n: u64 = ctr.get("n")?;
@@ -91,6 +93,7 @@ fn next_key(lua: &Lua) -> mlua::Result<String> {
     Ok(format!("_ev{n}"))
 }
 
+// TODO: clean-code - 0.85 - DRY: every matcher repeats {let k = key.clone(); m.set(name, create_function(move |lua, _| { registry_value(&k)?; ... Err(RuntimeError(...))}))} — extract a register_matcher helper.
 fn make_matcher(lua: &Lua, value: Value) -> mlua::Result<Table> {
     let key = next_key(lua)?;
     lua.set_named_registry_value(&key, value)?;
@@ -155,6 +158,7 @@ fn make_matcher(lua: &Lua, value: Value) -> mlua::Result<Table> {
         )?;
     }
 
+    // TODO: clean-code - 0.7 - DRY: toBeFalsy is toBeTruthy with the condition negated and the message swapped — share a single is_falsy predicate.
     // toBeFalsy()
     {
         let k = key.clone();

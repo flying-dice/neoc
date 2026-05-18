@@ -86,6 +86,7 @@ async fn get(lua: Lua, url: String) -> mlua::Result<(Value, Value)> {
     perform(&lua, "hyper.get", "GET".into(), url, None, Vec::new()).await
 }
 
+// TODO: clean-code - 0.75 - DRY: post/request repeat the same opts.get+from_err pattern; factor into an `extract_opts` helper returning (method,url,body,headers) or Err.
 #[instrument(name = "hyper.post", target = "luau::lib::hyper", skip_all)]
 async fn post(lua: Lua, opts: Table) -> mlua::Result<(Value, Value)> {
     let url: String = match opts.get("url") {
@@ -169,6 +170,7 @@ async fn perform(
     }
 }
 
+// TODO: clean-code - 0.7 - SRP: do_request does URI parse, scheme check, connect, handshake, builder, send, collect — split into uri_parts/connect/build_req/collect_resp.
 async fn do_request(
     method: String,
     url: String,
@@ -216,6 +218,7 @@ async fn do_request(
     let resp = sender.send_request(req).await.map_err(|e| e.to_string())?;
 
     let status = resp.status().as_u16();
+    // TODO: clean-code - 0.6 - DRY: identical header-to-Vec<(String,String)> conversion appears in invoke_lua_handler; extract `collect_headers(&HeaderMap)`.
     let resp_headers: Vec<(String, String)> = resp
         .headers()
         .iter()
@@ -283,6 +286,7 @@ impl ServerHandle {
     /// Spawn the accept loop on the current tokio runtime. Called once
     /// from `serve`; not exposed to Lua because the only way to obtain a
     /// `ServerHandle` is via `serve`, which always starts it.
+    // TODO: clean-code - 0.6 - KISS: replace-with-Closed-then-restore-on-Listening dance is harder than peeking; check state first, only consume on Idle.
     fn start(&self, lua: &Lua) -> mlua::Result<()> {
         let mut state = self.inner.state.lock();
         let (listener, addr) = match std::mem::replace(&mut *state, ServerState::Closed) {
@@ -563,6 +567,7 @@ impl UserData for Request {
             }
             Ok(Value::Table(t))
         });
+        // TODO: clean-code - 0.55 - COUPLING: vnd:hyper reaches directly into vnd::serde_json::parse_to_handle; promote to a shared bridge in lib or accept it as a constructor dep.
         fields.add_field_method_get("json", |lua, this| {
             if this.inner.body.is_empty() {
                 return Ok(Value::Nil);

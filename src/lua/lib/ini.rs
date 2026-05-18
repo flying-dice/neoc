@@ -107,6 +107,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
     Ok(t)
 }
 
+// TODO: clean-code - 0.7 - SRP: parse mixes validation, preprocess orchestration, ini load, and Lua table assembly — split assembly into a helper
 #[instrument(name = "ini.parse", target = "luau::lib::ini", skip_all)]
 fn parse(
     lua: &Lua,
@@ -138,6 +139,7 @@ fn parse(
             continue;
         }
 
+        // TODO: clean-code - 0.6 - DRY: `if opts.lowercase_keys { x.to_lowercase() } else { x }` repeated for section and key — extract a `case_fold` helper
         let section_key = match section {
             Some(s) => {
                 let s = unescape(s);
@@ -150,6 +152,7 @@ fn parse(
             None => String::new(),
         };
 
+        // TODO: clean-code - 0.55 - KISS: rust-ini already merges duplicate sections — this lookup-or-create branch is rarely exercised; either drop or document why
         let section_table: Table = match result.get::<Option<Table>>(&*section_key)? {
             Some(t) => t,
             None => {
@@ -186,6 +189,7 @@ fn read_opts(opts_table: Option<Table>) -> mlua::Result<ParseOpts> {
 
     let mut opts = ParseOpts::default();
 
+    // TODO: clean-code - 0.85 - DRY: comment_symbols and delimiters extraction are identical Table->Vec<char> loops — extract `read_char_list(tbl, key)`
     if let Some(cs) = tbl.get::<Option<Table>>("comment_symbols")? {
         let mut syms = Vec::new();
         for pair in cs.pairs::<i64, mlua::String>() {
@@ -246,6 +250,7 @@ fn stringify(
 
     for pair in config.pairs::<mlua::String, Table>() {
         let (k, section_table) = pair?;
+        // TODO: clean-code - 0.65 - DRY: `to_str().map_err(|e| mlua::Error::external(e.to_string()))` repeated 4x — extract a helper
         let section_name = k
             .to_str()
             .map_err(|e| mlua::Error::external(e.to_string()))?;
@@ -287,6 +292,7 @@ fn write_props(table: &Table, out: &mut String, spacing: bool) -> mlua::Result<(
                 out.push_str(&val);
                 out.push('\n');
             }
+            // TODO: clean-code - 0.7 - KISS: fallback emits Rust Debug syntax into INI output — footgun; either error on non-string/bool or document type contract
             _ => {
                 out.push_str(&key);
                 out.push_str(delim);

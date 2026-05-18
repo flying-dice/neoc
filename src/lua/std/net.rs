@@ -50,6 +50,7 @@ fn make_listener(lua: &Lua, addr: String) -> mlua::Result<(mlua::Value, mlua::Va
     }
 }
 
+// TODO: clean-code - 0.55 - DRY: error prefix "bind {addr}" duplicates the "TcpListener.bind" context added later by from_err
 fn bind(addr: &str) -> Result<TcpListener, String> {
     let std_listener =
         std::net::TcpListener::bind(addr).map_err(|e| format!("bind {addr}: {e}"))?;

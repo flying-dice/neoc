@@ -9,6 +9,7 @@ use tracing::instrument;
 
 use crate::lua::sandbox::{from_err, ok};
 
+// TODO: clean-code - 0.6 - DRY: 8 explicit `t.set("name", lua.create_function(name)?)?` lines — register via slice + loop
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
     let t = lua.create_table()?;
     t.set("encode", lua.create_function(encode)?)?;
@@ -28,11 +29,13 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
     Ok(t)
 }
 
+// TODO: clean-code - 0.75 - DRY: 4 encode_* fns differ only by engine constant — collapse via shared helper or macro
 #[instrument(name = "base64.encode", target = "luau::lib::base64", skip_all)]
 fn encode(_: &Lua, input: mlua::String) -> mlua::Result<String> {
     Ok(STANDARD.encode(input.as_bytes()))
 }
 
+// TODO: clean-code - 0.8 - DRY: 4 decode_* fns share identical match-encode-or-error skeleton — extract to helper taking engine + err prefix
 #[instrument(name = "base64.decode", target = "luau::lib::base64", skip_all)]
 fn decode(lua: &Lua, input: mlua::String) -> mlua::Result<(Value, Value)> {
     match STANDARD.decode(input.as_bytes()) {
