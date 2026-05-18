@@ -163,7 +163,9 @@ release-plz:
     GIT_DEPTH: 0
     CARGO_HOME: /tmp/cargo
   before_script:
-    - git checkout "$CI_COMMIT_BRANCH"
+    # -B resets the branch to HEAD so a stale local branch ref on the reused
+    # runner workspace can't shadow the fresh commit GitLab just checked out.
+    - git checkout -B "$CI_COMMIT_BRANCH"
     - mkdir -p "$CARGO_HOME/bin"
     - export PATH="$CARGO_HOME/bin:$PATH"
     # Pinned to v0.3.157 — v0.3.158 breaks check_publish_fields for
