@@ -23,6 +23,7 @@ pub fn make_engine() -> mlua::Result<Lua> {
         StdLib::ALL_SAFE,
         mlua::LuaOptions::new(),
     )?;
+    lua.set_app_data(crate::lua::std::task::Scheduler::new());
     modules::install(&lua)?;
     Ok(lua)
 }

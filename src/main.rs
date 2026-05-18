@@ -118,6 +118,11 @@ async fn run(paths: &[String], user_args: &[String]) {
             report_script_error(e, &source, path);
         }
 
+        // Drain any tasks spawned by std:task that outlive the main script.
+        if let Some(scheduler) = engine.app_data_ref::<lua::std::task::Scheduler>() {
+            scheduler.wait_all().await;
+        }
+
         let is_test = path.ends_with(".test.luau") || path.ends_with(".spec.luau");
         if is_test {
             match lua::lib::test::summary(&engine) {
@@ -205,6 +210,10 @@ async fn main() {
 
         if let Err(e) = engine.load(&payload[..]).exec_async().await {
             report_error(NeocError::Runtime(e.to_string()));
+        }
+
+        if let Some(scheduler) = engine.app_data_ref::<lua::std::task::Scheduler>() {
+            scheduler.wait_all().await;
         }
 
         return;
