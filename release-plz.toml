@@ -1,7 +1,4 @@
 [workspace]
 changelog_update = true
-
-[[package]]
-name = "neoc"
-git_only = true
 publish = false
+git_only = true
