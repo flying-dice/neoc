@@ -1,13 +1,10 @@
 ---
-status: draft
+status: accepted
 created: 2026-05-18
 implemented-in:
 ---
 
 # 0005 — `lib:csv` — CSV parsing and writing
-
-> [!WARNING]
-> This RFC is `draft`. Under refinement — **not** the contract.
 
 ## Summary
 
