@@ -11,5 +11,6 @@ pub mod env;
 pub mod fs;
 pub mod io;
 pub mod net;
+pub mod task;
 pub mod thread;
 pub mod workers;

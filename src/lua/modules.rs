@@ -77,6 +77,7 @@ pub fn install(lua: &Lua) -> mlua::Result<()> {
     modules.insert("std:fs".into(), stdmod::fs::module(lua)?);
     modules.insert("std:io".into(), stdmod::io::module(lua)?);
     modules.insert("std:net".into(), stdmod::net::module(lua)?);
+    modules.insert("std:task".into(), stdmod::task::module(lua)?);
     modules.insert("std:thread".into(), stdmod::thread::module(lua)?);
     modules.insert("std:workers".into(), stdmod::workers::module(lua)?);
 
