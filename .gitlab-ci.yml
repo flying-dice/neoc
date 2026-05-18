@@ -162,16 +162,15 @@ release-plz:
   variables:
     GIT_DEPTH: 0
     CARGO_HOME: /tmp/cargo
-    # Pinned to v0.3.157 — v0.3.158 breaks publish=false workspaces.
-    # https://github.com/release-plz/release-plz/issues/2693
-    RELEASE_PLZ_VERSION: "0.3.157"
   before_script:
     - git checkout "$CI_COMMIT_BRANCH"
     - mkdir -p "$CARGO_HOME/bin"
     - export PATH="$CARGO_HOME/bin:$PATH"
+    # Pinned to v0.3.157 — v0.3.158 breaks check_publish_fields for
+    # publish=false workspaces. https://github.com/release-plz/release-plz/issues/2693
     - |
       curl -sSL \
-        "https://github.com/release-plz/release-plz/releases/download/release-plz-v${RELEASE_PLZ_VERSION}/release-plz-x86_64-unknown-linux-gnu.tar.gz" \
+        "https://github.com/release-plz/release-plz/releases/download/release-plz-v0.3.157/release-plz-x86_64-unknown-linux-gnu.tar.gz" \
         | tar -xz -C "$CARGO_HOME/bin/"
   script:
     - release-plz release --git-token "$RELEASE_PLZ_TOKEN" --forge gitlab
