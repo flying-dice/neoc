@@ -83,6 +83,7 @@ pub fn install(lua: &Lua) -> mlua::Result<()> {
     // lib:* — blessed gap-fillers and our own custom modules.
     modules.insert("lib:base64".into(), lib::base64::module(lua)?);
     modules.insert("lib:compile".into(), lib::compile::module(lua)?);
+    modules.insert("lib:compress".into(), lib::compress::module(lua)?);
     modules.insert("lib:http".into(), lib::http::module(lua)?);
     modules.insert("lib:ini".into(), lib::ini::module(lua)?);
     modules.insert("lib:json".into(), lib::json::module(lua)?);
