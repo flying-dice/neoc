@@ -164,26 +164,20 @@ impl Scheduler {
         self.set.lock().spawn(future)
     }
 
-    /// Drain all in-flight tasks. Called after the main script exits so
-    /// spawned coroutines that haven't been explicitly awaited can complete.
+    /// Clean up in-flight tasks after the main script exits.
     ///
     /// Lua async operations (`task.wait`, etc.) cannot be driven after the
-    /// main `exec_async` context returns — their `AsyncThread` streams stall.
-    /// A bounded timeout prevents an indefinite hang; remaining tasks are
-    /// aborted when the deadline expires.
+    /// main `exec_async` context returns — their `AsyncThread` streams
+    /// block inside the Lua VM lock and never yield. Neither
+    /// `tokio::time::timeout` nor `JoinSet::abort_all` can interrupt a
+    /// task that is synchronously blocked. Dropping the `JoinSet` flags
+    /// them for abort and detaches; the tokio runtime cleans them up on
+    /// shutdown.
     pub async fn wait_all(&self) {
-        let mut set = {
+        let _set = {
             let mut guard = self.set.lock();
             std::mem::take(&mut *guard)
         };
-        match tokio::time::timeout(std::time::Duration::from_secs(5), async {
-            while (set.join_next().await).is_some() {}
-        })
-        .await
-        {
-            Ok(()) => {}
-            Err(_) => set.abort_all(),
-        }
     }
 }
 
@@ -488,25 +482,29 @@ mod tests {
 
     #[test]
     fn wait_all_does_not_deadlock_on_unawaited_async_tasks() {
-        rt().block_on(async {
-            let e = engine();
-            e.load(
-                r#"
-                local task = require("std:task")
-                task.spawn(function()
-                    task.wait(0.01)
-                end)
-            "#,
-            )
-            .exec_async()
-            .await
-            .expect("exec");
-
-            let scheduler = e.app_data_ref::<super::Scheduler>().unwrap();
-            tokio::time::timeout(std::time::Duration::from_secs(10), scheduler.wait_all())
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            rt().block_on(async {
+                let e = engine();
+                e.load(
+                    r#"
+                    local task = require("std:task")
+                    task.spawn(function()
+                        task.wait(0.01)
+                    end)
+                "#,
+                )
+                .exec_async()
                 .await
-                .expect("wait_all deadlocked");
+                .expect("exec");
+
+                let scheduler = e.app_data_ref::<super::Scheduler>().unwrap();
+                scheduler.wait_all().await;
+            });
+            tx.send(()).ok();
         });
+        rx.recv_timeout(std::time::Duration::from_secs(10))
+            .expect("wait_all deadlocked — did not complete within 10s");
     }
 
     #[test]
