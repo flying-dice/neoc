@@ -166,23 +166,19 @@ release-plz:
     # -B resets the branch to HEAD so a stale local branch ref on the reused
     # runner workspace can't shadow the fresh commit GitLab just checked out.
     - git checkout -B "$CI_COMMIT_BRANCH"
+    # release-plz creates commits on the release MR branch — needs an identity.
+    - git config user.email "release-plz@flying-dice.com"
+    - git config user.name "release-plz"
     - mkdir -p "$CARGO_HOME/bin"
     - export PATH="$CARGO_HOME/bin:$PATH"
     # Pinned to v0.3.157 — v0.3.158 breaks check_publish_fields for
     # publish=false workspaces. https://github.com/release-plz/release-plz/issues/2693
     - |
-      set -euxo pipefail
-      curl --fail -sSL \
+      curl -sSL \
         "https://github.com/release-plz/release-plz/releases/download/release-plz-v0.3.157/release-plz-x86_64-unknown-linux-gnu.tar.gz" \
-        -o /tmp/release-plz.tar.gz
-      tar -xzvf /tmp/release-plz.tar.gz -C "$CARGO_HOME/bin/"
-      which release-plz
-      release-plz --version
+        | tar -xz -C "$CARGO_HOME/bin/"
   script:
-    - echo "=== release-plz.toml ==="; cat release-plz.toml
-    - echo "=== Cargo.toml [package] ==="; sed -n '1,10p' Cargo.toml
-    - echo "=== pwd / workspace ==="; pwd; ls -la
-    - RELEASE_PLZ_LOG=DEBUG release-plz release --git-token "$RELEASE_PLZ_TOKEN" --forge gitlab
+    - release-plz release --git-token "$RELEASE_PLZ_TOKEN" --forge gitlab
     - release-plz release-pr --git-token "$RELEASE_PLZ_TOKEN" --forge gitlab
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
