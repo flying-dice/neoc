@@ -120,10 +120,12 @@ Returns a Luau iterator over an in-memory string. Each call returns the next row
 
 Methods:
 
-- `reader:headers() → ({string}, nil) | (nil, string)` — read and return the header row (consumes input up to and including the first record). Errors if `headers ~= true`.
-- `reader:rows() → iterator` — Luau iterator yielding the next row on each call, `nil` at EOF. Same raise-on-error semantics as `csv.rows`. The reader holds the handle for the lifetime of the iterator; do not reuse the handle elsewhere.
+- `reader:headers() → ({string}, nil) | (nil, string)` — return the header row. **Cached**, mirrors Rust `csv::Reader::headers`: the first call (or the first row consumed via `:rows()` when `headers = true`) parses and stores the headers; all subsequent calls return the cached value regardless of reader position. Errors if `headers ~= true`. Safe to call before or after `:rows()`.
+- `reader:rows() → iterator` — Luau iterator yielding the next row on each call, `nil` at EOF. Same raise-on-error semantics as `csv.rows`. The reader holds an exclusive borrow on the handle for its lifetime (see Handle borrow enforcement below).
 
-Mirrors Rust `csv::Reader::from_reader` / `csv::Reader::records`. The reader is the primary streaming API; `csv.parse` and `csv.rows` are convenience shims for in-memory strings.
+**Handle borrow enforcement.** `csv.reader(handle, opts)` takes an exclusive borrow on the `ReaderHandle` for the lifetime of the returned reader. A second `csv.reader` call with the same handle while the first reader is alive returns a tuple error — no deadlock, no interleaved reads. The borrow flag clears on reader GC (or explicit `:close()` if added in v2). Implementation flips a boolean on the `ReaderHandle` UserData; check is O(1).
+
+Mirrors Rust `csv::Reader::from_reader` / `csv::Reader::records` / `csv::Reader::headers`. The reader is the primary streaming API; `csv.parse` and `csv.rows` are convenience shims for in-memory strings.
 
 **`csv.stringify(records, opts) → (string, nil) | (nil, string)`**
 
@@ -144,7 +146,17 @@ Mirrors Rust `csv::Reader::from_reader` / `csv::Reader::records`. The reader is 
 
 Methods:
 
-- `writer:row(values)` — append a row. `values` is **either** an array (positional, matches `headers` order) **or** a table keyed by header name. Mixed (both numeric and string keys present, e.g. `{1, 2, name="Alice"}`) → tuple error `csv.writer: row values must be array or keyed table, not both`. Pick one shape per call.
+- `writer:row(values)` — append a row. `values` is **either** an array (positional, matches `headers` order) **or** a table keyed by header name. Returns `(true, nil)` on success, `(nil, string)` on shape error.
+
+  Shape rules (matches backing crate's default `flexible(false)`):
+
+  | Input | Behaviour |
+  |---|---|
+  | Array shape, length == `#headers` | Written positionally |
+  | Array shape, length ≠ `#headers` | Tuple error: `csv.writer: row has N values, expected M (headers length)` |
+  | Keyed shape, every header key present | Written in `headers` order |
+  | Keyed shape, missing key for a header | Field emitted as empty string (matches `stringify` convention) |
+  | Mixed (numeric + string keys, e.g. `{1, 2, name="Alice"}`) | Tuple error: `csv.writer: row values must be array or keyed table, not both` |
 - `writer:finish() → string` — flush and return the accumulated CSV string. Subsequent calls error.
 
 ### Options reference
@@ -162,25 +174,28 @@ Methods:
 
 All errors are tuple-form `(nil, string)` except `csv.rows` / `reader:rows()` iterators (raise).
 
-Error message format follows the repo convention (`docs/src/rfcs/0003-errors-guide.md`): `module.function: <reason>` — no namespace prefix. Line numbers 1-indexed, matches Go `encoding/csv`.
+Error message format follows the repo convention (`docs/src/rfcs/0003-errors-guide.md`): `module.function: <reason>` — no namespace prefix. Line numbers 1-indexed, matches Go `encoding/csv`. Parse errors append the offending raw line truncated to 80 bytes (UTF-8 boundary safe): `<reason>: "<raw>"`. Line truncated mid-field gets a trailing `…`.
 
 | Condition | Message |
 |---|---|
-| Mismatched field count | `csv.parse: line 47: found 3 fields, expected 5` |
-| Unterminated quote | `csv.parse: line 12: unterminated quoted field` |
-| Duplicate header names | `csv.parse: line 1: duplicate header "name"` |
+| Mismatched field count | `csv.parse: line 47: found 3 fields, expected 5: "a,b,c"` |
+| Unterminated quote | `csv.parse: line 12: unterminated quoted field: "\"alice,30…"` |
+| Duplicate header names | `csv.parse: line 1: duplicate header "name": "name,age,name"` |
 | `types` set without `headers` | `csv.parse: 'types' requires 'headers = true'` |
-| Type coercion failed | `csv.parse: line 5: column "duration" cannot coerce "abc" to number` |
+| Type coercion failed | `csv.parse: line 5: column "duration" cannot coerce "abc" to number: "test_login,abc,PASS"` |
 | Boolean coercion accepts | `"true"`, `"false"`, `"1"`, `"0"` (case-insensitive); anything else → error |
 | Multi-byte `delimiter`/`quote`/`escape`/`comment` | `csv.parse: 'delimiter' must be a single byte` |
 | `stringify` missing `headers` | `csv.stringify: 'headers' is required` |
 | `stringify` record missing keyed column | Field emitted as empty string (matches RFC 4180 empty-field semantics) |
 | `writer:row` mixed table | `csv.writer: row values must be array or keyed table, not both` |
+| `writer:row` array length ≠ headers length | `csv.writer: row has 2 values, expected 3 (headers length)` |
+| `writer:row` keyed table missing a header key | Field for missing header emitted as empty string (matches `stringify`) |
 | `writer:finish()` called twice | `csv.writer: already finished` |
 | `reader:headers()` without `headers = true` | `csv.reader: 'headers' option must be true to call :headers()` |
 | `reader` handle is not a `ReaderHandle` | `csv.reader: argument must be a ReaderHandle` |
+| `reader` handle already borrowed by another reader | `csv.reader: handle is already in use by another reader` |
 
-`csv.rows` and `reader:rows()` errors raise with the same message body, no tuple. `csv.parse` errors use the `csv.parse:` prefix regardless of internal call chain.
+`csv.rows` and `reader:rows()` errors raise with the same message body (including raw line), no tuple. `csv.parse` errors use the `csv.parse:` prefix regardless of internal call chain. Options-validation errors (no line context, e.g. multi-byte `delimiter`) omit the `line N:` segment and the raw line.
 
 ### Empty fields
 
@@ -221,9 +236,12 @@ Empty field in a typed column → `nil` (see [Empty fields](#empty-fields)). Cal
 - [ ] RFC 4180: quoted fields, escaped quotes, multiline values
 - [ ] Schema-driven type coercion (`"number"`, `"boolean"`); untyped → string
 - [ ] Errors use `module.function:` prefix per `0003-errors-guide` — no `lib:` namespace prefix
-- [ ] Errors include line number, expected vs found column count, raw line (truncated)
+- [ ] Parse errors include line number, expected vs found column count, and the offending raw line truncated to 80 bytes (`<reason>: "<raw>"`)
 - [ ] Duplicate header names → hard error, not silent shadow
 - [ ] Untyped empty field → `""`; typed empty field → `nil`
+- [ ] `csv.reader` enforces exclusive borrow on the `ReaderHandle`; second concurrent reader on the same handle → tuple error, no deadlock
+- [ ] `reader:headers()` cached — first call (or first `:rows()` consumption) parses and stores; subsequent calls return cached value
+- [ ] `writer:row` array length mismatch → tuple error; keyed missing key → empty string field
 - [ ] Spec + unit tests + `.d.luau` type stub
 
 ## Drawbacks
@@ -262,10 +280,12 @@ _None._
 
 - Backing crate: `csv` (BurntSushi) — RFC 4180 compliant, streaming reads native, position info on errors.
 - Module location: `src/lib/csv/` (per existing `lib:*` layout).
-- `csv.reader(handle, opts)` borrows the `ReaderHandle`'s inner `BufRead` (held via `Arc<Mutex<…>>`) and wraps it with `csv::Reader::from_reader`. Returns a `CsvReader` `UserData`. The handle is locked for the lifetime of the reader; concurrent use of the same handle in another reader is undefined.
-- `csv.rows(data, opts)` is a thin wrapper: constructs an internal `Cursor`-backed `ReaderHandle` (or reuses `std:io.from_string`) and delegates to `csv.reader(…):rows()`. Same `csv::Reader::records()` underneath; no separate code path.
-- `csv.writer` wraps `csv::Writer<Vec<u8>>`; `:finish()` consumes and returns `String::from_utf8`.
-- `writer:row` inspects the table: array shape (only `1..n` integer keys present) → positional; keyed shape (only string keys present) → keyed lookup against `headers`; both present → tuple error.
-- Single-byte option validation happens at the Luau→Rust boundary, before constructing the `ReaderBuilder` / `WriterBuilder`.
+- `csv.reader(handle, opts)` takes an exclusive borrow on the `ReaderHandle` and wraps it with `csv::Reader::from_reader`. Returns a `CsvReader` `UserData`. The `ReaderHandle` gains a `borrowed: AtomicBool` field (set on borrow, cleared on `CsvReader` drop). `csv.reader` checks the flag first; if already set → tuple error `csv.reader: handle is already in use by another reader`. No `MutexGuard` is held across calls — only the inner trait object is moved into the reader, which holds it for its lifetime. This eliminates both deadlock and interleaved-read failure modes.
+- `csv.rows(data, opts)` is a thin wrapper: constructs an internal `Cursor`-backed `ReaderHandle` (or reuses `std:io.from_string`) and delegates to `csv.reader(…):rows()`. Same `csv::Reader::records()` underneath; no separate code path. The handle is owned by the iterator closure, so the borrow flag is irrelevant in this path.
+- `reader:headers()` is backed by `csv::Reader::headers()` directly — the backing crate already caches the headers on first parse and returns a borrowed `StringRecord` thereafter. We clone into a fresh Luau table per call. Calling `:headers()` before `:rows()` triggers the initial parse; calling it after triggers no extra I/O (cached). Documented to match Rust semantics 1:1.
+- `csv.writer` wraps `csv::Writer<Vec<u8>>`; `:finish()` consumes and returns `String::from_utf8`. Built with `flexible(false)` so column-count mismatches surface as errors rather than producing ragged output.
+- `writer:row` shape detection: walk keys once. `1..n` integer keys only → array; string keys only → keyed lookup against `headers`; both present → tuple error. Array length compared to `#headers`; mismatch → tuple error with both counts. Keyed shape: iterate `headers`, look up each in the table; absent key → empty string field (matches `stringify`).
+- Parse errors append the offending raw line truncated to 80 bytes. Truncation walks UTF-8 boundaries via `str::is_char_boundary`; truncated lines get a trailing `…`. Source: `csv::Error::position()` for line number; raw line buffered by the `ReaderBuilder` (already exposed via `csv::Reader::position()` + last-record byte range). Pre-cached during read to avoid re-seeking the handle.
+- Single-byte option validation happens at the Luau→Rust boundary, before constructing the `ReaderBuilder` / `WriterBuilder`. Options-validation errors omit the `line N:` segment and raw line (no position context).
 - Error prefixes follow `0003-errors-guide` — `module.function:` form, set via `from_err(lua, "csv.parse", …)` etc.
 - Type stub: `docs/src/lib/csv.d.luau` (mirror existing module stubs).
