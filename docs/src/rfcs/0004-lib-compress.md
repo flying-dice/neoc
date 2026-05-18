@@ -11,7 +11,7 @@ implemented-in:
 
 ## Summary
 
-`lib:compress` exposes `encode(format, data[, opts])` and `decode(format, data)` to Luau scripts — unified compression/decompression for gzip, zlib, zstd, and brotli. Format is a string parameter, not per-format functions. Returns `(result, nil)` on success, `(nil, error)` on failure per tuple-error convention.
+`lib:compress` exposes `encode(format, data[, opts])` and `decode(format, data[, opts])` to Luau scripts — unified compression/decompression for gzip, zlib, zstd, and brotli. Format is a string parameter, not per-format functions. Returns `(result, nil)` on success, `(nil, error)` on failure per tuple-error convention.
 
 ## Motivation
 
@@ -48,6 +48,9 @@ local decompressed, err = compress.decode("gzip", compressed)
 local decompressed, err = compress.decode("zlib", compressed)
 local decompressed, err = compress.decode("brotli", compressed)
 local decompressed, err = compress.decode("zstd", compressed)
+
+-- With max output size (decompression bomb protection)
+local decompressed, err = compress.decode("gzip", compressed, { max_size = 1048576 }) -- 1 MB
 ```
 
 Two functions. Format is always the first argument — parameterisable, no per-format aliases. Matches Lune's `serde.compress` / `serde.decompress` pattern but uses `encode` / `decode` to align with `lib:base64`.
@@ -68,19 +71,24 @@ Two functions. Format is always the first argument — parameterisable, no per-f
 |---|---|---|---|
 | gzip | 6 | 0–9 | `flate2::Compression` |
 | zlib | 6 | 0–9 | `flate2::Compression` |
-| zstd | 3 | 1–22 | `zstd::DEFAULT_COMPRESSION_LEVEL` |
+| zstd | 3 | 1–22 | `zstd::DEFAULT_COMPRESSION_LEVEL` (note: zstd supports -7 to -1 for fast mode; excluded for v1 surface simplicity) |
 | brotli | 6 | 0–11 | brotli quality parameter |
 
 Out-of-range level → `(nil, "compress.encode: level out of range for {format}: {n}")`.
 
-**`compress.decode(format, data) → (string, nil) | (nil, string)`**
+Non-integer `level` value (e.g. `{ level = "fast" }`) → `(nil, "compress.encode: invalid level type")`. Luau numbers that are not whole (e.g. `6.7`) are truncated to integer via `as i32` — this matches Rust's standard numeric coercion and is documented as intentional.
+
+**`compress.decode(format, data[, opts]) → (string, nil) | (nil, string)`**
 
 | Param | Type | Required | Description |
 |---|---|---|---|
 | `format` | `string` | yes | `"gzip"`, `"zlib"`, `"zstd"`, `"brotli"` |
 | `data` | `string` | yes | Compressed bytes to decompress |
+| `opts` | `table?` | no | `{ max_size = number }` |
 
-No options — decompression is deterministic from the stream.
+`max_size`: maximum decompressed output size in bytes. Default: 268435456 (256 MB). Exceeding → `(nil, "compress.decode: output exceeds max_size (256 MB)")`. The streaming internals check `output.len()` during writes and bail early — near-zero cost on the happy path.
+
+Rationale: `decode` receives untrusted data in most real-world scenarios (HTTP responses, external files). A 1 KB gzip can expand to 1 GB+ (decompression bomb). Unguarded decode is a memory exhaustion vector. The default is generous enough for legitimate payloads; callers who know their bounds can override.
 
 ### Error handling
 
@@ -90,6 +98,14 @@ Error cases:
 - Unknown format string → `"compress.encode: unknown format 'lz4'"`
 - Corrupt/truncated compressed data → `"compress.decode: {underlying_error}"`
 - Out-of-range level → `"compress.encode: level out of range for {format}: {n}"`
+- Invalid level type → `"compress.encode: invalid level type"`
+- Output exceeds max_size → `"compress.decode: output exceeds max_size (256 MB)"`
+- Empty input to `decode` → `(nil, "compress.decode: {underlying_error}")` (no valid compressed stream is 0 bytes)
+
+### Edge cases
+
+- `encode("")` returns a valid compressed empty stream. All four formats produce headers/trailers even for empty content (e.g. gzip emits a 20-byte header+footer).
+- `decode("")` returns `(nil, error)`. An empty byte sequence is not a valid compressed stream in any supported format.
 
 ### Binary data convention
 
@@ -113,7 +129,13 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 
     t.set("encode", lua.create_function(|lua, (format, data, opts): (String, mlua::String, Option<Table>)| {
         let bytes = data.as_bytes();
-        let level = opts.and_then(|t| t.get::<i32>("level").ok());
+        let level = match opts {
+            Some(t) => match t.contains_key("level")? {
+                true => Some(t.get::<i32>("level").map_err(|_| mlua::Error::runtime("compress.encode: invalid level type"))?),
+                false => None,
+            },
+            None => None,
+        };
         match format.as_str() {
             "gzip" => encode_gzip(lua, bytes, level),
             "zlib" => encode_zlib(lua, bytes, level),
@@ -123,13 +145,17 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
         }
     })?)?;
 
-    t.set("decode", lua.create_function(|lua, (format, data): (String, mlua::String)| {
+    t.set("decode", lua.create_function(|lua, (format, data, opts): (String, mlua::String, Option<Table>)| {
         let bytes = data.as_bytes();
+        let max_size = match &opts {
+            Some(t) => t.get::<usize>("max_size").unwrap_or(256 * 1024 * 1024),
+            None => 256 * 1024 * 1024, // 256 MB default
+        };
         match format.as_str() {
-            "gzip" => decode_gzip(lua, bytes),
-            "zlib" => decode_zlib(lua, bytes),
-            "zstd" => decode_zstd(lua, bytes),
-            "brotli" => decode_brotli(lua, bytes),
+            "gzip" => decode_gzip(lua, bytes, max_size),
+            "zlib" => decode_zlib(lua, bytes, max_size),
+            "zstd" => decode_zstd(lua, bytes, max_size),
+            "brotli" => decode_brotli(lua, bytes, max_size),
             _ => err(lua, format!("compress.decode: unknown format '{format}'")),
         }
     })?)?;
@@ -138,7 +164,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 }
 ```
 
-Each `encode_*` / `decode_*` function uses streaming internals (write to `Vec<u8>` via `std::io::Write` adapters), then returns `ok(lua, lua.create_string(&output)?)` or `from_err(...)`.
+Each `encode_*` function uses streaming internals (write to `Vec<u8>` via `std::io::Write` adapters), then returns `ok(lua, lua.create_string(&output)?)` or `from_err(...)`. Each `decode_*` function takes `max_size` and checks `output.len()` during writes — bailing with an error if the limit is exceeded.
 
 ### Streaming internals
 
@@ -177,9 +203,14 @@ Format strings are case-sensitive, lowercase only. `"GZIP"` → error. Rationale
 | Format auto-detection on `decode` | Deferred — caller typically knows format from context (HTTP headers, file extension). `compress.detect(data)` planned for v2. |
 | Do nothing | Rejected — scripts cannot handle compressed HTTP responses or reduce payload sizes. Table-stakes gap. |
 
+## Resolved questions
+
+- **Decompression size limit.** Resolved: `decode` enforces `max_size` (default 256 MB) via opts table. Streaming internals check `output.len()` during writes and bail early. See `decode` signature above.
+- **`decode` opts slot.** Resolved: `decode(format, data[, opts])` — consistent with `encode` signature, forward-compatible for future options.
+- **Level type coercion.** Resolved: non-number types (e.g. `{ level = "fast" }`) → explicit error. Float-to-int truncation (e.g. `6.7` → `6`) is documented as intentional Rust `as i32` behaviour.
+
 ## Open questions
 
-- **Decompression size limit.** Should `decode` enforce a max output size to prevent decompression bombs (e.g., a 1 KB gzip that expands to 1 GB)? If so, what default — 256 MB? Configurable via opts table on `decode`?
 - **`zstd` dictionary support.** `zstd` supports pre-trained dictionaries for small-payload compression. Defer to v2 or include `{ dictionary = buffer }` option now?
 
 ## Implementation notes
