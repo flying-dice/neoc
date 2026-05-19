@@ -157,4 +157,16 @@ describe("template.add_filter", function()
         local _, err = template.add_filter("", function() return "" end)
         expect(err).toContain("non-empty")
     end)
+
+    test("filter calling render is rejected, not deadlocked", function()
+        template.add_filter("recurse_render", function(_, _)
+            local out, e = template.render("inner:{{ s }}", { s = "x" })
+            if not out then error(e) end
+            return out
+        end)
+        local out, err = template.render("{{ x | recurse_render }}", { x = "y" })
+        expect(out).toBeNil()
+        expect(err).toContain("recursive render")
+        expect(err).toContain("recurse_render")
+    end)
 end)

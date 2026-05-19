@@ -23,7 +23,15 @@
 -- ## Thread safety
 --
 -- Compiled `Template` userdata wraps an `Arc<Mutex<...>>` engine handle and
--- is safe to share across `std:task` coroutines and `std:thread` workers.
+-- is safe to share across `std:task` coroutines (same engine, same VM).
+-- `std:thread` workers run a fresh engine per worker and `Template` is not
+-- Sendable — cross-worker handoff is not supported.
+--
+-- ## Re-entrant render
+--
+-- Filters must not call `template.render` or `Template:render` from inside
+-- their callback. The engine lock is non-reentrant; the nested call returns
+-- `(nil, "...: recursive render not supported")` rather than deadlocking.
 --
 -- ## Custom filters
 --
@@ -53,7 +61,7 @@ export type RenderOptions = {
 
 --[=[
     A compiled template. Reusable — call `:render(ctx)` as many times as you
-    like. Safe to share across `std:task` coroutines and `std:thread` workers.
+    like. Safe to share across `std:task` coroutines (same engine, same VM).
 ]=]
 export type Template = {
     --[=[

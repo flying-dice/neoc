@@ -23,8 +23,11 @@
 //! - **Custom filter output always escaped under autoescape.** No `safe = true`
 //!   opt-in on `add_filter`. Authors that need unescaped output chain tera's
 //!   built-in `| safe` filter (`{{ x | shout | safe }}`).
-//! - **Thread-safe Template.** Backing engine is `Arc<Mutex<Tera>>`; compiled
-//!   `Template` userdata can be passed across `std:task` / `std:thread` workers.
+//! - **Thread-safe Template.** Backing engine is `Arc<Mutex<Tera>>`. Compiled
+//!   `Template` userdata is `Send` and can move across `std:task` coroutines
+//!   (same engine, same VM). It is **not** `Sendable` — `std:thread` workers
+//!   run a fresh engine per worker and would not share registered filters,
+//!   so cross-worker handoff is not supported.
 //!
 //! ## Filter callback bridge
 //!
@@ -34,6 +37,16 @@
 //! mlua callback that already holds `&Lua`, and is cleared via RAII before the
 //! callback returns. Tera invokes filters synchronously inside `render` — no
 //! filter ever outlives the call.
+//!
+//! ## Re-entrant render guard
+//!
+//! The Tera engine lock (`parking_lot::Mutex`) is non-reentrant and held
+//! across `tera.render`. If a Lua filter were to call `template.render` or
+//! `Template:render`, the recursive lock acquire on the same OS thread would
+//! deadlock permanently. `IN_RENDER` is a thread-local flag set on render
+//! entry; nested calls return `(nil, "...: recursive render not supported")`
+//! instead of blocking. Cleared via RAII so a panic in tera or in a filter
+//! still releases the flag.
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -58,16 +71,23 @@ const ESCAPE_SUFFIX: &str = "__esc";
 const ONE_OFF_PLAIN: &str = "__one_off";
 const ONE_OFF_ESCAPED: &str = "__one_off.__esc";
 
+/// Error returned when a Lua filter calls `template.render` or `Template:render`
+/// from within a render. The tera engine lock is non-reentrant — without this
+/// guard the recursive call would deadlock the thread.
+const RECURSIVE_RENDER_MSG: &str =
+    "recursive render not supported — filters must not call template.render or Template:render";
+
 // ---------------------------------------------------------------------------
 // Active-Lua thread-local — see module docstring for the lifetime argument.
 // ---------------------------------------------------------------------------
 
 thread_local! {
     static LUA_PTR: Cell<*const Lua> = const { Cell::new(std::ptr::null()) };
+    static IN_RENDER: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Publish `lua` on the thread-local for the duration of `f`. RAII restores
-/// the previous pointer so nested renders are safe (filter calls render, etc.).
+/// the previous pointer so the LUA_PTR slot remains correct across panics.
 fn with_active_lua<F, R>(lua: &Lua, f: F) -> R
 where
     F: FnOnce() -> R,
@@ -98,6 +118,29 @@ where
         let lua: &Lua = unsafe { &*p };
         f(lua)
     })
+}
+
+/// RAII guard rejecting recursive entry into a render call. See module
+/// docstring "Re-entrant render guard" for the rationale.
+struct RenderGuard;
+
+impl RenderGuard {
+    fn enter() -> Option<Self> {
+        IN_RENDER.with(|c| {
+            if c.get() {
+                None
+            } else {
+                c.set(true);
+                Some(Self)
+            }
+        })
+    }
+}
+
+impl Drop for RenderGuard {
+    fn drop(&mut self) {
+        IN_RENDER.with(|c| c.set(false));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -167,12 +210,28 @@ impl TeraFilter for LuaFilter {
 
 // ---------------------------------------------------------------------------
 // Template userdata.
+//
+// `TemplateInner::Drop` removes the template entry from the engine's
+// `templates` map. Cloning a handle bumps the Arc refcount — the entry is
+// only removed when the last clone is dropped, so userdata identity stays
+// stable for the script's view of the template.
 // ---------------------------------------------------------------------------
+
+struct TemplateInner {
+    engine: Engine,
+    name: String,
+}
+
+impl Drop for TemplateInner {
+    fn drop(&mut self) {
+        let mut guard = self.engine.tera.lock();
+        guard.templates.remove(&self.name);
+    }
+}
 
 #[derive(Clone)]
 pub struct TemplateHandle {
-    engine: Engine,
-    name: String,
+    inner: Arc<TemplateInner>,
 }
 
 impl UserData for TemplateHandle {
@@ -181,7 +240,7 @@ impl UserData for TemplateHandle {
             template_render(lua, this, ctx)
         });
         methods.add_meta_method(MetaMethod::ToString, |_, this, _: ()| {
-            Ok(format!("Template({})", this.name))
+            Ok(format!("Template({})", this.inner.name))
         });
     }
 }
@@ -234,8 +293,10 @@ fn compile_impl(lua: &Lua, engine: &Engine, src: String) -> mlua::Result<(Value,
     ok(
         lua,
         TemplateHandle {
-            engine: engine.clone(),
-            name,
+            inner: Arc::new(TemplateInner {
+                engine: engine.clone(),
+                name,
+            }),
         },
     )
 }
@@ -248,6 +309,9 @@ fn render_impl(
     ctx: Value,
     opts: Option<Table>,
 ) -> mlua::Result<(Value, Value)> {
+    let Some(_render_guard) = RenderGuard::enter() else {
+        return from_err(lua, "template.render", RECURSIVE_RENDER_MSG);
+    };
     let autoescape = match read_autoescape(opts.as_ref()) {
         Ok(b) => b,
         Err(e) => return from_err(lua, "template.render", e),
@@ -275,12 +339,15 @@ fn render_impl(
 }
 
 fn template_render(lua: &Lua, this: &TemplateHandle, ctx: Value) -> mlua::Result<(Value, Value)> {
+    let Some(_render_guard) = RenderGuard::enter() else {
+        return from_err(lua, "Template.render", RECURSIVE_RENDER_MSG);
+    };
     let ctx_obj = match build_context(lua, &ctx) {
         Ok(c) => c,
         Err(e) => return from_err(lua, "Template.render", e),
     };
-    let guard = this.engine.tera.lock();
-    let render_result = with_active_lua(lua, || guard.render(&this.name, &ctx_obj));
+    let guard = this.inner.engine.tera.lock();
+    let render_result = with_active_lua(lua, || guard.render(&this.inner.name, &ctx_obj));
     drop(guard);
     match render_result {
         Ok(s) => ok(lua, s),
@@ -761,11 +828,119 @@ mod tests {
     }
 
     #[test]
-    fn compiled_template_handle_is_send() {
-        // The thread-safety claim in the .d.luau is grounded in `TemplateHandle`
-        // being `Send`. Compile-time assertion — a regression here is the kind
-        // of thing the test name spells out.
+    fn template_handle_is_send_for_task_coroutines() {
+        // `Send` is sufficient for moving the handle across `std:task`
+        // coroutine resumption points within one engine + VM. It is *not*
+        // sufficient for `std:thread` workers — that requires the Sendable
+        // protocol (see `src/lua/std/thread.rs`), which `TemplateHandle` does
+        // not implement.
         fn assert_send<T: Send>() {}
         assert_send::<super::TemplateHandle>();
+    }
+
+    #[test]
+    fn filter_recursive_render_rejected_not_deadlocked() {
+        // Reproducer for the deadlock that motivated the render guard:
+        // the tera engine lock is non-reentrant, so a filter that calls
+        // `template.render` from inside an outer render must be rejected
+        // explicitly rather than blocking the thread forever.
+        let lua = engine();
+        lua.load(
+            r#"
+            template.add_filter("recurse", function(_, _)
+                local out, e = template.render("inner:{{ s }}", { s = "x" })
+                if not out then error(e) end
+                return out
+            end)
+            "#,
+        )
+        .exec()
+        .unwrap();
+        let (val, e): (Value, Option<String>) = lua
+            .load(r#"return template.render("{{ x | recurse }}", { x = "y" })"#)
+            .eval()
+            .unwrap();
+        assert!(matches!(val, Value::Nil));
+        let e = e.unwrap();
+        assert!(e.contains("recursive render"), "got: {e}");
+        assert!(e.contains("recurse"), "got: {e}"); // filter name surfaces
+    }
+
+    #[test]
+    fn compiled_template_recursive_render_rejected() {
+        // Same guard, exercised via the `Template:render` entry point.
+        let lua = engine();
+        lua.load(
+            r#"
+            inner = template.compile("nested:{{ s }}")
+            template.add_filter("recurse2", function(_, _)
+                local out, e = inner:render({ s = "x" })
+                if not out then error(e) end
+                return out
+            end)
+            outer = template.compile("{{ x | recurse2 }}")
+            "#,
+        )
+        .exec()
+        .unwrap();
+        let (val, e): (Value, Option<String>) = lua
+            .load(r#"return outer:render({ x = "y" })"#)
+            .eval()
+            .unwrap();
+        assert!(matches!(val, Value::Nil));
+        let e = e.unwrap();
+        assert!(e.contains("recursive render"), "got: {e}");
+    }
+
+    #[test]
+    fn dropping_template_handle_removes_engine_entry() {
+        // Reproducer for the leak that motivated `TemplateInner::Drop`: the
+        // tera engine's `templates` map grew unbounded because nothing
+        // removed entries when the userdata went away.
+        use std::sync::Arc;
+        let engine = super::Engine::new();
+        let baseline = engine.tera.lock().templates.len();
+        {
+            let mut g = engine.tera.lock();
+            g.add_raw_template("drop_probe", "hello {{ x }}").unwrap();
+            drop(g);
+            let handle = super::TemplateHandle {
+                inner: Arc::new(super::TemplateInner {
+                    engine: engine.clone(),
+                    name: "drop_probe".to_string(),
+                }),
+            };
+            assert_eq!(engine.tera.lock().templates.len(), baseline + 1);
+            drop(handle);
+        }
+        assert_eq!(
+            engine.tera.lock().templates.len(),
+            baseline,
+            "templates map must shrink back to baseline once the last handle is dropped"
+        );
+    }
+
+    #[test]
+    fn cloned_template_handle_keeps_entry_until_last_drop() {
+        // Drop on the inner state must wait for the last Arc clone. Premature
+        // removal would turn a second `:render` call on a clone into a
+        // missing-template error.
+        use std::sync::Arc;
+        let engine = super::Engine::new();
+        let baseline = engine.tera.lock().templates.len();
+        let mut g = engine.tera.lock();
+        g.add_raw_template("clone_probe", "x={{ x }}").unwrap();
+        drop(g);
+        let h1 = super::TemplateHandle {
+            inner: Arc::new(super::TemplateInner {
+                engine: engine.clone(),
+                name: "clone_probe".to_string(),
+            }),
+        };
+        let h2 = h1.clone();
+        drop(h1);
+        assert_eq!(engine.tera.lock().templates.len(), baseline + 1);
+        drop(h2);
+        assert_eq!(engine.tera.lock().templates.len(), baseline);
     }
 }
