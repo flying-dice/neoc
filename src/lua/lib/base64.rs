@@ -2,12 +2,24 @@
 //!
 //! See docs/modules/base64.md for the public surface contract.
 
-use base64::Engine as _;
+use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
 use mlua::{Lua, Table, Value};
 use tracing::instrument;
 
 use crate::lua::sandbox::{from_err, ok};
+
+fn decode_with<E: Engine>(
+    lua: &Lua,
+    engine: &E,
+    op: &'static str,
+    input: mlua::String,
+) -> mlua::Result<(Value, Value)> {
+    match engine.decode(input.as_bytes()) {
+        Ok(b) => ok(lua, lua.create_string(&b)?),
+        Err(e) => from_err(lua, op, e),
+    }
+}
 
 // TODO: clean-code - 0.6 - DRY: 8 explicit `t.set("name", lua.create_function(name)?)?` lines — register via slice + loop
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
@@ -35,13 +47,9 @@ fn encode(_: &Lua, input: mlua::String) -> mlua::Result<String> {
     Ok(STANDARD.encode(input.as_bytes()))
 }
 
-// TODO: clean-code - 0.8 - DRY: 4 decode_* fns share identical match-encode-or-error skeleton — extract to helper taking engine + err prefix
 #[instrument(name = "base64.decode", target = "luau::lib::base64", skip_all)]
 fn decode(lua: &Lua, input: mlua::String) -> mlua::Result<(Value, Value)> {
-    match STANDARD.decode(input.as_bytes()) {
-        Ok(b) => ok(lua, lua.create_string(&b)?),
-        Err(e) => from_err(lua, "base64.decode", e),
-    }
+    decode_with(lua, &STANDARD, "base64.decode", input)
 }
 
 #[instrument(name = "base64.encode_no_pad", target = "luau::lib::base64", skip_all)]
@@ -51,10 +59,7 @@ fn encode_no_pad(_: &Lua, input: mlua::String) -> mlua::Result<String> {
 
 #[instrument(name = "base64.decode_no_pad", target = "luau::lib::base64", skip_all)]
 fn decode_no_pad(lua: &Lua, input: mlua::String) -> mlua::Result<(Value, Value)> {
-    match STANDARD_NO_PAD.decode(input.as_bytes()) {
-        Ok(b) => ok(lua, lua.create_string(&b)?),
-        Err(e) => from_err(lua, "base64.decode_no_pad", e),
-    }
+    decode_with(lua, &STANDARD_NO_PAD, "base64.decode_no_pad", input)
 }
 
 #[instrument(
@@ -72,10 +77,7 @@ fn encode_url_safe(_: &Lua, input: mlua::String) -> mlua::Result<String> {
     skip_all
 )]
 fn decode_url_safe(lua: &Lua, input: mlua::String) -> mlua::Result<(Value, Value)> {
-    match URL_SAFE.decode(input.as_bytes()) {
-        Ok(b) => ok(lua, lua.create_string(&b)?),
-        Err(e) => from_err(lua, "base64.decode_url_safe", e),
-    }
+    decode_with(lua, &URL_SAFE, "base64.decode_url_safe", input)
 }
 
 #[instrument(
@@ -93,10 +95,12 @@ fn encode_url_safe_no_pad(_: &Lua, input: mlua::String) -> mlua::Result<String> 
     skip_all
 )]
 fn decode_url_safe_no_pad(lua: &Lua, input: mlua::String) -> mlua::Result<(Value, Value)> {
-    match URL_SAFE_NO_PAD.decode(input.as_bytes()) {
-        Ok(b) => ok(lua, lua.create_string(&b)?),
-        Err(e) => from_err(lua, "base64.decode_url_safe_no_pad", e),
-    }
+    decode_with(
+        lua,
+        &URL_SAFE_NO_PAD,
+        "base64.decode_url_safe_no_pad",
+        input,
+    )
 }
 
 // ---------------------------------------------------------------------------
