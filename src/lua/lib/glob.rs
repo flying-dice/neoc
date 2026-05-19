@@ -921,7 +921,9 @@ mod tests {
 
     /// Permission-denied entries are surfaced through the `errors` return
     /// slot, never silently dropped. Unix-only — Windows permission model is
-    /// different enough that this style of test isn't portable.
+    /// different enough that this style of test isn't portable. Skipped when
+    /// the test process can still read the chmod-000 dir (root bypasses Unix
+    /// perms; the CI runner is rootful).
     #[cfg(unix)]
     #[test]
     fn scan_permission_denied_surfaces_in_errors() {
@@ -932,8 +934,14 @@ mod tests {
         let locked = dir.path().join("locked");
         std::fs::create_dir(&locked).unwrap();
         std::fs::write(locked.join("inner.txt"), "").unwrap();
-        // 000 = no read/write/exec. walkdir will fail to descend.
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        if std::fs::read_dir(&locked).is_ok() {
+            // Running as root — chmod is a no-op. The behaviour is still
+            // covered when run by an unprivileged user; CI runs as root.
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).ok();
+            return;
+        }
 
         let lua = engine();
         lua.globals()
