@@ -182,90 +182,122 @@ pub struct GenericContainer {
     ports: HashMap<u16, u16>,
 }
 
-// TODO: clean-code - 0.8 - SRP: start_generic does 6 jobs in 86 lines — opts parsing, image build, wait, env, cmd, port mapping. Split into parse_opts / build_request / map_ports.
+struct GenericOpts {
+    image: String,
+    tag: String,
+    ports: Vec<u16>,
+    wait: Option<WaitFor>,
+    env: Vec<(String, String)>,
+    cmd: Option<Vec<String>>,
+}
+
+fn parse_generic_opts(opts: &Table) -> mlua::Result<GenericOpts> {
+    let image: String = opts.get("image")?;
+    let tag: String = opts
+        .get::<Option<String>>("tag")?
+        .unwrap_or_else(|| "latest".to_string());
+
+    let ports = match opts.get::<Option<Table>>("ports")? {
+        Some(t) => t
+            .sequence_values::<u16>()
+            .collect::<mlua::Result<Vec<_>>>()?,
+        None => Vec::new(),
+    };
+
+    let wait = match opts.get::<Option<Table>>("wait")? {
+        Some(t) => Some(parse_wait(&t).map_err(mlua::Error::external)?),
+        None => None,
+    };
+
+    let env = match opts.get::<Option<Table>>("env")? {
+        Some(t) => t
+            .pairs::<String, String>()
+            .collect::<mlua::Result<Vec<_>>>()?,
+        None => Vec::new(),
+    };
+
+    let cmd = match opts.get::<Option<Table>>("cmd")? {
+        Some(t) => Some(
+            t.sequence_values::<String>()
+                .collect::<mlua::Result<Vec<_>>>()?,
+        ),
+        None => None,
+    };
+
+    Ok(GenericOpts {
+        image,
+        tag,
+        ports,
+        wait,
+        env,
+        cmd,
+    })
+}
+
+fn build_request(parsed: GenericOpts) -> ContainerRequest<GenericImage> {
+    let GenericOpts {
+        image,
+        tag,
+        ports,
+        wait,
+        env,
+        cmd,
+    } = parsed;
+
+    let mut img = GenericImage::new(&image, &tag);
+    for p in &ports {
+        img = img.with_exposed_port((*p).tcp());
+    }
+    if let Some(w) = wait {
+        img = img.with_wait_for(w);
+    }
+
+    let mut req: ContainerRequest<GenericImage> = img.into();
+    for (k, v) in env {
+        req = req.with_env_var(k, v);
+    }
+    if let Some(parts) = cmd {
+        req = req.with_cmd(parts);
+    }
+    req
+}
+
+async fn map_ports(
+    container: &ContainerAsync<GenericImage>,
+    exposed_ports: &[u16],
+) -> Result<HashMap<u16, u16>, testcontainers_modules::testcontainers::TestcontainersError> {
+    let mut ports = HashMap::with_capacity(exposed_ports.len());
+    for p in exposed_ports {
+        let host_port = container.get_host_port_ipv4(*p).await?;
+        ports.insert(*p, host_port);
+    }
+    Ok(ports)
+}
+
 #[instrument(
     name = "testcontainers_modules.generic",
     target = "luau::lib::testcontainers_modules",
     skip_all
 )]
 async fn start_generic(lua: Lua, opts: Table) -> mlua::Result<(Value, Value)> {
-    let image: String = match opts.get("image") {
-        Ok(v) => v,
-        Err(e) => return from_err(&lua, "testcontainers_modules.generic", e),
+    let op = "testcontainers_modules.generic";
+
+    let parsed = match parse_generic_opts(&opts) {
+        Ok(p) => p,
+        Err(e) => return from_err(&lua, op, e),
     };
-    let tag: String = opts
-        .get::<Option<String>>("tag")
-        .ok()
-        .flatten()
-        .unwrap_or_else(|| "latest".to_string());
-
-    let mut img = GenericImage::new(&image, &tag);
-
-    // TODO: clean-code - 0.75 - DRY: `match opts.get::<Option<Table>>(...) { Ok => .., Err(e) => return from_err(...) }` is repeated 4+ times with the same literal error tag — extract a helper or use `?` with map_err.
-    let exposed_ports: Vec<u16> = match opts.get::<Option<Table>>("ports") {
-        Ok(Some(t)) => match t.sequence_values::<u16>().collect::<mlua::Result<Vec<_>>>() {
-            Ok(v) => v,
-            Err(e) => return from_err(&lua, "testcontainers_modules.generic", e),
-        },
-        Ok(None) => Vec::new(),
-        Err(e) => return from_err(&lua, "testcontainers_modules.generic", e),
-    };
-    for p in &exposed_ports {
-        img = img.with_exposed_port((*p).tcp());
-    }
-
-    let wait_opts = match opts.get::<Option<Table>>("wait") {
-        Ok(v) => v,
-        Err(e) => return from_err(&lua, "testcontainers_modules.generic", e),
-    };
-    if let Some(w) = wait_opts {
-        let strategy = match parse_wait(&w) {
-            Ok(s) => s,
-            Err(e) => return from_err(&lua, "testcontainers_modules.generic", e),
-        };
-        img = img.with_wait_for(strategy);
-    }
-
-    // Now move into ContainerRequest so we can apply env / cmd via ImageExt.
-    let mut req: ContainerRequest<GenericImage> = img.into();
-
-    if let Some(env) = match opts.get::<Option<Table>>("env") {
-        Ok(v) => v,
-        Err(e) => return from_err(&lua, "testcontainers_modules.generic", e),
-    } {
-        for pair in env.pairs::<String, String>() {
-            let (k, v) = match pair {
-                Ok(p) => p,
-                Err(e) => return from_err(&lua, "testcontainers_modules.generic", e),
-            };
-            req = req.with_env_var(k, v);
-        }
-    }
-
-    if let Some(cmd) = match opts.get::<Option<Table>>("cmd") {
-        Ok(v) => v,
-        Err(e) => return from_err(&lua, "testcontainers_modules.generic", e),
-    } {
-        let parts: Vec<String> = match cmd.sequence_values::<String>().collect() {
-            Ok(v) => v,
-            Err(e) => return from_err(&lua, "testcontainers_modules.generic", e),
-        };
-        req = req.with_cmd(parts);
-    }
+    let exposed_ports = parsed.ports.clone();
+    let req = build_request(parsed);
 
     let container = match req.start().await {
         Ok(c) => c,
-        Err(e) => return from_err(&lua, "testcontainers_modules.generic", e),
+        Err(e) => return from_err(&lua, op, e),
     };
 
-    let mut ports = HashMap::with_capacity(exposed_ports.len());
-    for p in &exposed_ports {
-        let host_port = match container.get_host_port_ipv4(*p).await {
-            Ok(hp) => hp,
-            Err(e) => return from_err(&lua, "testcontainers_modules.generic", e),
-        };
-        ports.insert(*p, host_port);
-    }
+    let ports = match map_ports(&container, &exposed_ports).await {
+        Ok(p) => p,
+        Err(e) => return from_err(&lua, op, e),
+    };
 
     ok(
         &lua,
