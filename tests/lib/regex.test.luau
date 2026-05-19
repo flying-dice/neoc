@@ -73,10 +73,27 @@ describe("regex", function()
             expect(m.groups[2]).toBe("34")
         end)
 
-        test("unmatched optional group is nil", function()
+        test("unmatched optional group is false", function()
             local m = regex.find("(a)(b)?", "a")
             expect(m.groups[1]).toBe("a")
-            expect(m.groups[2]).toBeNil()
+            expect(m.groups[2]).toBe(false)
+            expect(#m.groups).toBe(2)
+        end)
+
+        test("sparse groups stay dense — `#` and `ipairs` work", function()
+            -- Early unmatched group followed by a matched one. Without the
+            -- `false` sentinel the array would have a `nil` hole and `#` /
+            -- `ipairs` would be undefined.
+            local m = regex.find("(a)?(b)", "b")
+            expect(m.groups[1]).toBe(false)
+            expect(m.groups[2]).toBe("b")
+            expect(#m.groups).toBe(2)
+
+            local seen = 0
+            for _, _ in ipairs(m.groups) do
+                seen = seen + 1
+            end
+            expect(seen).toBe(2)
         end)
 
         test("named groups", function()

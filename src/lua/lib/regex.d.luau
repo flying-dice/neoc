@@ -67,10 +67,15 @@ export type Match = {
     --[=[ 1-based byte offset of the last byte of the match (inclusive).
         Empty matches collapse to `finish = start - 1`. ]=]
     finish: number,
-    --[=[ Positional captures, 1-based. Optional groups that did not match
-        are `nil`. Group 0 (whole match) is on `text` / `start` / `finish`
-        and is **not** repeated here. ]=]
-    groups: { string? },
+    --[=[ Positional captures, 1-based. Group 0 (whole match) is on
+        `text` / `start` / `finish` and is **not** repeated here.
+
+        Optional groups that did not match are `false` rather than `nil`,
+        so the array stays dense — `#m.groups` and `ipairs(m.groups)`
+        work the way callers expect (Lua leaves both undefined on tables
+        with mid-array `nil` holes). Test for unmatched with `== false`,
+        not `nil`. ]=]
+    groups: { string | false },
     --[=[ Named captures keyed by `(?P<name>…)`. Groups that did not match
         are absent rather than `nil` — `pairs(m.named)` only iterates
         matched names. ]=]

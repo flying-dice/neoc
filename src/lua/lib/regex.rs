@@ -247,12 +247,17 @@ fn build_match(lua: &Lua, re: &Regex, caps: &regex::Captures<'_>) -> mlua::Resul
 
 /// 1-based array of positional captures. Group 0 is omitted (it's already
 /// the `text`/`start`/`finish` triple on the parent). Unmatched optional
-/// groups are absent — Lua's `tbl[i]` returns `nil` either way.
+/// groups are filled with `false` so the array stays dense — Lua's `#`
+/// and `ipairs` are undefined on tables with mid-array `nil` holes, and
+/// every parallel runtime (Python `None`, Go `""`, JS `undefined`) returns
+/// a dense container. `false` is the closest Lua equivalent that round-trips
+/// through `ipairs`.
 fn positional_groups(lua: &Lua, caps: &regex::Captures<'_>) -> mlua::Result<Table> {
     let groups = lua.create_table()?;
     for i in 1..caps.len() {
-        if let Some(m) = caps.get(i) {
-            groups.set(i, m.as_str())?;
+        match caps.get(i) {
+            Some(m) => groups.set(i, m.as_str())?,
+            None => groups.set(i, false)?,
         }
     }
     Ok(groups)
@@ -516,19 +521,43 @@ mod tests {
     }
 
     #[test]
-    fn optional_unmatched_group_is_nil() {
+    fn optional_unmatched_group_is_false() {
         let lua = engine();
-        let (has_two, second): (bool, Value) = lua
+        let (has_first, second, len): (bool, Value, i64) = lua
             .load(
                 r#"
                 local m = regex.find("(a)(b)?", "a")
-                return m.groups[1] == "a", m.groups[2]
+                return m.groups[1] == "a", m.groups[2], #m.groups
             "#,
             )
             .eval()
             .unwrap();
-        assert!(has_two);
-        assert!(matches!(second, Value::Nil));
+        assert!(has_first);
+        assert!(matches!(second, Value::Boolean(false)));
+        assert_eq!(len, 2);
+    }
+
+    #[test]
+    fn sparse_groups_dense_after_unmatched() {
+        // Regression: an unmatched early group followed by a matched later
+        // group used to leave a `nil` hole, breaking `#` / `ipairs`. Now the
+        // hole is filled with `false`, mirroring Python `None` / Go `""`.
+        let lua = engine();
+        let (first, second, len, iter_count): (Value, String, i64, i64) = lua
+            .load(
+                r#"
+                local m = regex.find("(a)?(b)", "b")
+                local n = 0
+                for _, _ in ipairs(m.groups) do n = n + 1 end
+                return m.groups[1], m.groups[2], #m.groups, n
+            "#,
+            )
+            .eval()
+            .unwrap();
+        assert!(matches!(first, Value::Boolean(false)));
+        assert_eq!(second, "b");
+        assert_eq!(len, 2);
+        assert_eq!(iter_count, 2);
     }
 
     #[test]
