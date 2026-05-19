@@ -6,6 +6,7 @@
     "src/lua/lib/csv.d.luau",
     "src/lua/lib/json.d.luau",
     "src/lua/lib/test.d.luau",
+    "src/lua/lib/text.d.luau",
     "src/lua/lib/vcr.d.luau",
     "src/lua/std/collections.d.luau",
     "src/lua/std/fs.d.luau",
