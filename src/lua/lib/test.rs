@@ -93,7 +93,21 @@ fn next_key(lua: &Lua) -> mlua::Result<String> {
     Ok(format!("_ev{n}"))
 }
 
-// TODO: clean-code - 0.85 - DRY: every matcher repeats {let k = key.clone(); m.set(name, create_function(move |lua, _| { registry_value(&k)?; ... Err(RuntimeError(...))}))} — extract a register_matcher helper.
+fn register_matcher<A, F>(lua: &Lua, m: &Table, name: &str, key: &str, body: F) -> mlua::Result<()>
+where
+    A: mlua::FromLuaMulti + 'static,
+    F: Fn(Value, A) -> mlua::Result<()> + mlua::MaybeSend + 'static,
+{
+    let k = key.to_owned();
+    m.set(
+        name,
+        lua.create_function(move |lua, args: A| {
+            let actual: Value = lua.named_registry_value(&k)?;
+            body(actual, args)
+        })?,
+    )
+}
+
 fn make_matcher(lua: &Lua, value: Value) -> mlua::Result<Table> {
     let key = next_key(lua)?;
     lua.set_named_registry_value(&key, value)?;
@@ -101,150 +115,106 @@ fn make_matcher(lua: &Lua, value: Value) -> mlua::Result<Table> {
     let m = lua.create_table()?;
 
     // toBe(expected) — strict equality
-    {
-        let k = key.clone();
-        m.set(
-            "toBe",
-            lua.create_function(move |lua, expected: Value| {
-                let actual: Value = lua.named_registry_value(&k)?;
-                if actual == expected {
-                    Ok(())
-                } else {
-                    Err(mlua::Error::RuntimeError(format!(
-                        "expected {} to be {}",
-                        display(&actual),
-                        display(&expected),
-                    )))
-                }
-            })?,
-        )?;
-    }
+    register_matcher(lua, &m, "toBe", &key, |actual, expected: Value| {
+        if actual == expected {
+            Ok(())
+        } else {
+            Err(mlua::Error::RuntimeError(format!(
+                "expected {} to be {}",
+                display(&actual),
+                display(&expected),
+            )))
+        }
+    })?;
 
     // toBeNil()
-    {
-        let k = key.clone();
-        m.set(
-            "toBeNil",
-            lua.create_function(move |lua, _: ()| {
-                let actual: Value = lua.named_registry_value(&k)?;
-                if matches!(actual, Value::Nil) {
-                    Ok(())
-                } else {
-                    Err(mlua::Error::RuntimeError(format!(
-                        "expected nil, got {}",
-                        display(&actual)
-                    )))
-                }
-            })?,
-        )?;
-    }
+    register_matcher(lua, &m, "toBeNil", &key, |actual, _: ()| {
+        if matches!(actual, Value::Nil) {
+            Ok(())
+        } else {
+            Err(mlua::Error::RuntimeError(format!(
+                "expected nil, got {}",
+                display(&actual)
+            )))
+        }
+    })?;
 
     // toBeTruthy()
-    {
-        let k = key.clone();
-        m.set(
-            "toBeTruthy",
-            lua.create_function(move |lua, _: ()| {
-                let actual: Value = lua.named_registry_value(&k)?;
-                if !matches!(actual, Value::Nil | Value::Boolean(false)) {
-                    Ok(())
-                } else {
-                    Err(mlua::Error::RuntimeError(format!(
-                        "expected truthy, got {}",
-                        display(&actual)
-                    )))
-                }
-            })?,
-        )?;
-    }
+    register_matcher(lua, &m, "toBeTruthy", &key, |actual, _: ()| {
+        if !matches!(actual, Value::Nil | Value::Boolean(false)) {
+            Ok(())
+        } else {
+            Err(mlua::Error::RuntimeError(format!(
+                "expected truthy, got {}",
+                display(&actual)
+            )))
+        }
+    })?;
 
     // TODO: clean-code - 0.7 - DRY: toBeFalsy is toBeTruthy with the condition negated and the message swapped — share a single is_falsy predicate.
     // toBeFalsy()
-    {
-        let k = key.clone();
-        m.set(
-            "toBeFalsy",
-            lua.create_function(move |lua, _: ()| {
-                let actual: Value = lua.named_registry_value(&k)?;
-                if matches!(actual, Value::Nil | Value::Boolean(false)) {
+    register_matcher(lua, &m, "toBeFalsy", &key, |actual, _: ()| {
+        if matches!(actual, Value::Nil | Value::Boolean(false)) {
+            Ok(())
+        } else {
+            Err(mlua::Error::RuntimeError(format!(
+                "expected falsy, got {}",
+                display(&actual)
+            )))
+        }
+    })?;
+
+    // toContain(item) — substring for strings, value search for tables
+    register_matcher(lua, &m, "toContain", &key, |actual, item: Value| {
+        match (&actual, &item) {
+            (Value::String(s), Value::String(sub)) => {
+                let haystack = s.as_bytes();
+                let needle = sub.as_bytes();
+                if haystack.windows(needle.len()).any(|w| needle == w) {
                     Ok(())
                 } else {
                     Err(mlua::Error::RuntimeError(format!(
-                        "expected falsy, got {}",
-                        display(&actual)
+                        "{} does not contain {}",
+                        display(&actual),
+                        display(&item),
                     )))
                 }
-            })?,
-        )?;
-    }
-
-    // toContain(item) — substring for strings, value search for tables
-    {
-        let k = key.clone();
-        m.set(
-            "toContain",
-            lua.create_function(move |lua, item: Value| {
-                let actual: Value = lua.named_registry_value(&k)?;
-                match (&actual, &item) {
-                    (Value::String(s), Value::String(sub)) => {
-                        let haystack = s.as_bytes();
-                        let needle = sub.as_bytes();
-                        if haystack.windows(needle.len()).any(|w| needle == w) {
-                            Ok(())
-                        } else {
-                            Err(mlua::Error::RuntimeError(format!(
-                                "{} does not contain {}",
-                                display(&actual),
-                                display(&item),
-                            )))
-                        }
+            }
+            (Value::Table(tbl), _) => {
+                let mut found = false;
+                for pair in tbl.clone().pairs::<Value, Value>() {
+                    if pair?.1 == item {
+                        found = true;
+                        break;
                     }
-                    (Value::Table(tbl), _) => {
-                        let mut found = false;
-                        for pair in tbl.clone().pairs::<Value, Value>() {
-                            if pair?.1 == item {
-                                found = true;
-                                break;
-                            }
-                        }
-                        if found {
-                            Ok(())
-                        } else {
-                            Err(mlua::Error::RuntimeError(format!(
-                                "table does not contain {}",
-                                display(&item)
-                            )))
-                        }
-                    }
-                    _ => Err(mlua::Error::RuntimeError(
-                        "toContain requires a string or table value".into(),
-                    )),
                 }
-            })?,
-        )?;
-    }
+                if found {
+                    Ok(())
+                } else {
+                    Err(mlua::Error::RuntimeError(format!(
+                        "table does not contain {}",
+                        display(&item)
+                    )))
+                }
+            }
+            _ => Err(mlua::Error::RuntimeError(
+                "toContain requires a string or table value".into(),
+            )),
+        }
+    })?;
 
     // toThrow() — value must be a callable that raises an error
-    {
-        let k = key.clone();
-        m.set(
-            "toThrow",
-            lua.create_function(move |lua, _: ()| {
-                let actual: Value = lua.named_registry_value(&k)?;
-                match actual {
-                    Value::Function(f) => match f.call::<Value>(()) {
-                        Err(_) => Ok(()),
-                        Ok(_) => Err(mlua::Error::RuntimeError(
-                            "expected function to throw, but it returned normally".into(),
-                        )),
-                    },
-                    _ => Err(mlua::Error::RuntimeError(
-                        "toThrow requires a function value".into(),
-                    )),
-                }
-            })?,
-        )?;
-    }
+    register_matcher(lua, &m, "toThrow", &key, |actual, _: ()| match actual {
+        Value::Function(f) => match f.call::<Value>(()) {
+            Err(_) => Ok(()),
+            Ok(_) => Err(mlua::Error::RuntimeError(
+                "expected function to throw, but it returned normally".into(),
+            )),
+        },
+        _ => Err(mlua::Error::RuntimeError(
+            "toThrow requires a function value".into(),
+        )),
+    })?;
 
     Ok(m)
 }
