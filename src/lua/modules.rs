@@ -86,6 +86,7 @@ pub fn install(lua: &Lua) -> mlua::Result<()> {
     modules.insert("lib:compile".into(), lib::compile::module(lua)?);
     modules.insert("lib:compress".into(), lib::compress::module(lua)?);
     modules.insert("lib:csv".into(), lib::csv::module(lua)?);
+    modules.insert("lib:diff".into(), lib::diff::module(lua)?);
     modules.insert("lib:glob".into(), lib::glob::module(lua)?);
     modules.insert("lib:http".into(), lib::http::module(lua)?);
     modules.insert("lib:ini".into(), lib::ini::module(lua)?);
