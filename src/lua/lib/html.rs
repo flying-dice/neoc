@@ -109,6 +109,17 @@ fn decode_numeric(body: &str) -> Option<char> {
     if num.is_empty() {
         return None;
     }
+    // Validate strict digit set up-front — `u32::from_str_radix` accepts a
+    // leading `+` (e.g. `&#+5;` would otherwise decode to `\x05`), which
+    // diverges from Python `html`, Go `html`, and Deno `@std/html` (all
+    // passthrough). Reject anything outside the radix's digit set.
+    let all_digits = num.bytes().all(|b| match radix {
+        16 => b.is_ascii_hexdigit(),
+        _ => b.is_ascii_digit(),
+    });
+    if !all_digits {
+        return None;
+    }
     let n = u32::from_str_radix(num, radix).ok()?;
     // `char::from_u32` already filters surrogates (D800..=DFFF) and
     // anything beyond U+10FFFF. NUL is a valid scalar in Rust but
@@ -311,6 +322,26 @@ mod tests {
             .eval()
             .unwrap();
         assert_eq!(s, "&#xGG;");
+    }
+
+    #[test]
+    fn unescape_leading_plus_decimal_passthrough() {
+        // `u32::from_str_radix` accepts a leading `+`; Python `html`, Go
+        // `html`, and Deno `@std/html` do not. Match standard runtimes —
+        // passthrough.
+        let lua = engine();
+        let s: String = lua.load(r#"return html.unescape("&#+5;")"#).eval().unwrap();
+        assert_eq!(s, "&#+5;");
+    }
+
+    #[test]
+    fn unescape_leading_plus_hex_passthrough() {
+        let lua = engine();
+        let s: String = lua
+            .load(r#"return html.unescape("&#x+5;")"#)
+            .eval()
+            .unwrap();
+        assert_eq!(s, "&#x+5;");
     }
 
     #[test]

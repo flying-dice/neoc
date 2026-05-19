@@ -116,6 +116,12 @@ describe("html", function()
         test("invalid hex digits pass through", function()
             expect(html.unescape("&#xGG;")).toBe("&#xGG;")
         end)
+        test("leading + in decimal passes through (matches Python/Go/Deno)", function()
+            expect(html.unescape("&#+5;")).toBe("&#+5;")
+        end)
+        test("leading + in hex passes through", function()
+            expect(html.unescape("&#x+5;")).toBe("&#x+5;")
+        end)
     end)
 
     -- round-trip + invariants ------------------------------------------------
