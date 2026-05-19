@@ -15,6 +15,7 @@ pub mod ini;
 pub mod json;
 pub mod log;
 pub mod mime;
+pub mod semver;
 pub mod test;
 pub mod text;
 pub mod vcr;
