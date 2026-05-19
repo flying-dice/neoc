@@ -13,6 +13,7 @@ pub mod glob;
 pub mod http;
 pub mod ini;
 pub mod json;
+pub mod log;
 pub mod mime;
 pub mod test;
 pub mod text;
