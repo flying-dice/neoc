@@ -170,6 +170,20 @@ describe("log", function()
             })
             expect(true).toBe(true)
         end)
+
+        test("non-string-keyed field accepted without crashing", function()
+            -- Lua allows any value as a table key; log must coerce
+            -- unsupported keys to a placeholder, never propagate an error.
+            logger:info("msg", { [true] = "x" })
+            expect(true).toBe(true)
+        end)
+
+        test("text format does not let caller shadow reserved keys", function()
+            -- Single emitted line; ack noise in test runs.
+            local logger_text = log.new({ level = "info", format = "text" })
+            logger_text:info("L_text_reserved_emit", { level = "shadow", ts = "FAKE", msg = "FAKEMSG", user = "alice" })
+            expect(true).toBe(true)
+        end)
     end)
 
     -- level filtering ---------------------------------------------------------

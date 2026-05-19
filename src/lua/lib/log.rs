@@ -274,10 +274,12 @@ fn key_to_string(v: &Value) -> mlua::Result<String> {
         Value::String(s) => Ok(s.to_str()?.to_owned()),
         Value::Integer(i) => Ok(i.to_string()),
         Value::Number(n) => Ok(n.to_string()),
-        other => Err(mlua::Error::external(format!(
-            "log: field key must be string or number, got Lua {}",
-            other.type_name()
-        ))),
+        // Booleans/nil/tables/functions/userdata as table keys are legal
+        // in Lua but have no JSON/text representation. A log call must
+        // never crash the program — coerce to a placeholder. Multiple
+        // invalid keys collide on the same placeholder; acceptable as
+        // the contract is "never crash", not "round-trip every shape".
+        _ => Ok("<invalid key>".into()),
     }
 }
 
@@ -352,6 +354,12 @@ fn is_array_like(t: &Table) -> mlua::Result<bool> {
 // Output
 // ---------------------------------------------------------------------------
 
+/// Reserved keys take precedence — a caller can't shadow `level`/`ts`/`msg`
+/// and corrupt the line shape. Enforced for both formats.
+fn is_reserved_key(k: &str) -> bool {
+    matches!(k, "level" | "ts" | "msg")
+}
+
 fn write_line(format: Format, lvl: LogLevel, msg: &str, fields: &Map<String, Json>) {
     let ts = now_rfc3339_millis();
     let line = match format {
@@ -361,9 +369,7 @@ fn write_line(format: Format, lvl: LogLevel, msg: &str, fields: &Map<String, Jso
             obj.insert("ts".into(), Json::String(ts));
             obj.insert("msg".into(), Json::String(msg.to_owned()));
             for (k, v) in fields {
-                // Reserved keys take precedence — a caller can't shadow
-                // `level`/`ts`/`msg` and corrupt the schema.
-                if k == "level" || k == "ts" || k == "msg" {
+                if is_reserved_key(k) {
                     continue;
                 }
                 obj.insert(k.clone(), v.clone());
@@ -373,6 +379,9 @@ fn write_line(format: Format, lvl: LogLevel, msg: &str, fields: &Map<String, Jso
         Format::Text => {
             let mut s = format!("{ts} [{}] {msg}", lvl.as_str());
             for (k, v) in fields {
+                if is_reserved_key(k) {
+                    continue;
+                }
                 s.push(' ');
                 s.push_str(k);
                 s.push('=');
@@ -743,6 +752,35 @@ mod tests {
         opts.set("level", "verbose").unwrap();
         let err = LuaLogger::from_options(Some(opts)).unwrap_err();
         assert!(err.to_string().contains("unknown level"));
+    }
+
+    #[test]
+    fn non_string_field_key_does_not_crash() {
+        // Booleans/tables/functions as table keys are legal in Lua. A log
+        // call must never crash — they coerce to "<invalid key>".
+        let lua = lua();
+        let t: Table = lua
+            .load(r#"local x = {}; x[true] = "v"; return x"#)
+            .eval()
+            .unwrap();
+        let mut fields = Map::new();
+        merge_table_into(&mut fields, &lua, &t, DEPTH_LIMIT).unwrap();
+        assert_eq!(
+            fields.get("<invalid key>").unwrap(),
+            &Json::String("v".into())
+        );
+    }
+
+    #[test]
+    fn text_format_filters_reserved_keys() {
+        // `is_reserved_key` is the shared filter used by both branches of
+        // `write_line`; assert it identifies exactly the reserved set.
+        for k in ["level", "ts", "msg"] {
+            assert!(is_reserved_key(k), "{k} should be reserved");
+        }
+        for k in ["user", "request_id", "ts2", ""] {
+            assert!(!is_reserved_key(k), "{k} should not be reserved");
+        }
     }
 }
 
