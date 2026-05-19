@@ -37,14 +37,7 @@ fn decode(lua: &Lua, ud: AnyUserData) -> mlua::Result<(Value, Value)> {
     let result = serde_yaml::from_reader::<_, serde_json::Value>(&mut **locked);
     drop(locked);
     drop(rh);
-    // TODO: clean-code - 0.65 - KISS: nested match-of-match; flatten with and_then/map_err + single dispatch
-    match result {
-        Ok(json) => match lua.to_value(&json) {
-            Ok(v) => ok(lua, v),
-            Err(e) => from_err(lua, "serde_yaml.decode", e),
-        },
-        Err(e) => from_err(lua, "serde_yaml.decode", e),
-    }
+    json_result_to_lua_pair(lua, result, "serde_yaml.decode")
 }
 
 #[instrument(
@@ -54,13 +47,24 @@ fn decode(lua: &Lua, ud: AnyUserData) -> mlua::Result<(Value, Value)> {
 )]
 fn decode_string(lua: &Lua, s: mlua::String) -> mlua::Result<(Value, Value)> {
     let bytes = s.as_bytes();
-    // TODO: clean-code - 0.75 - DRY: yaml-bytes -> json::Value -> lua::Value pipeline duplicates decode()'s tail
-    match serde_yaml::from_slice::<serde_json::Value>(&bytes) {
+    let result = serde_yaml::from_slice::<serde_json::Value>(&bytes);
+    json_result_to_lua_pair(lua, result, "serde_yaml.decode_string")
+}
+
+/// Materialise the `Result<serde_json::Value, _>` returned by every YAML
+/// parser into the `(value, error)` Lua tuple shape. Decode and decode_string
+/// share the same parse → lua bridge → wrap tail.
+fn json_result_to_lua_pair<E: std::fmt::Display>(
+    lua: &Lua,
+    parse_result: Result<serde_json::Value, E>,
+    prefix: &'static str,
+) -> mlua::Result<(Value, Value)> {
+    match parse_result {
         Ok(json) => match lua.to_value(&json) {
             Ok(v) => ok(lua, v),
-            Err(e) => from_err(lua, "serde_yaml.decode_string", e),
+            Err(e) => from_err(lua, prefix, e),
         },
-        Err(e) => from_err(lua, "serde_yaml.decode_string", e),
+        Err(e) => from_err(lua, prefix, e),
     }
 }
 
