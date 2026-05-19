@@ -55,6 +55,35 @@ pub enum TrailerError {
     },
 }
 
+struct TrailerHeader {
+    offset: u64,
+    length: u32,
+}
+
+/// Parse the last 20 bytes of `bytes` as a NEOC_BL trailer.
+///
+/// Returns:
+/// - `Ok(Some(header))` — magic + supported version matched.
+/// - `Ok(None)` — no magic, or buffer too short.
+/// - `Err(version)` — magic matched but the trailer version is unknown.
+fn parse_trailer(bytes: &[u8]) -> Result<Option<TrailerHeader>, u8> {
+    if bytes.len() < TRAILER_SIZE as usize {
+        return Ok(None);
+    }
+    let t = bytes.len() - TRAILER_SIZE as usize;
+    let trailer = &bytes[t..];
+    if trailer[0..7] != *TRAILER_MAGIC {
+        return Ok(None);
+    }
+    let version = trailer[7];
+    if version != TRAILER_VERSION {
+        return Err(version);
+    }
+    let offset = u64::from_le_bytes(trailer[8..16].try_into().unwrap());
+    let length = u32::from_le_bytes(trailer[16..20].try_into().unwrap());
+    Ok(Some(TrailerHeader { offset, length }))
+}
+
 /// Core trailer-parsing logic, operating on an arbitrary path.
 ///
 /// Returns:
@@ -79,22 +108,16 @@ pub fn detect_embedded_payload_from(exe: &Path) -> Result<Option<Vec<u8>>, Trail
         return Ok(None);
     }
 
-    let mut trailer = [0u8; 20];
+    let mut trailer = [0u8; TRAILER_SIZE as usize];
     if f.read_exact(&mut trailer).is_err() {
         return Ok(None);
     }
 
-    if &trailer[0..7] != TRAILER_MAGIC {
-        return Ok(None);
-    }
-
-    let version = trailer[7];
-    if version != TRAILER_VERSION {
-        return Err(TrailerError::UnknownVersion(version));
-    }
-
-    let offset = u64::from_le_bytes(trailer[8..16].try_into().unwrap());
-    let length = u32::from_le_bytes(trailer[16..20].try_into().unwrap());
+    let TrailerHeader { offset, length } = match parse_trailer(&trailer) {
+        Ok(Some(h)) => h,
+        Ok(None) => return Ok(None),
+        Err(v) => return Err(TrailerError::UnknownVersion(v)),
+    };
 
     // Checked arithmetic to avoid wrapping overflow on a malformed trailer.
     let end = (offset as u128) + (length as u128) + (TRAILER_SIZE as u128);
@@ -165,14 +188,10 @@ fn bundle_impl(entrypoint: &Path, output: &Path) -> Result<(), String> {
 
     // Strip any previously embedded payload so that re-bundling a bundled binary
     // does not inflate the output by the prior payload + trailer on each pass.
-    // TODO: clean-code - 0.8 - DRY: duplicates magic/version/offset parsing from detect_embedded_payload_from — share a parse_trailer helper over a byte slice
-    if stub_bytes.len() as u64 >= TRAILER_SIZE {
+    if let Ok(Some(TrailerHeader { offset, .. })) = parse_trailer(&stub_bytes) {
         let t = stub_bytes.len() - TRAILER_SIZE as usize;
-        if stub_bytes[t..t + 7] == *TRAILER_MAGIC && stub_bytes[t + 7] == TRAILER_VERSION {
-            let offset = u64::from_le_bytes(stub_bytes[t + 8..t + 16].try_into().unwrap());
-            if (offset as usize) < t {
-                stub_bytes.truncate(offset as usize);
-            }
+        if (offset as usize) < t {
+            stub_bytes.truncate(offset as usize);
         }
     }
 
