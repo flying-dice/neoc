@@ -1,6 +1,7 @@
 {
   "globals": ["lib"],
   "definitionFiles": [
+    "src/lua/lib/args.d.luau",
     "src/lua/lib/base64.d.luau",
     "src/lua/lib/compress.d.luau",
     "src/lua/lib/csv.d.luau",

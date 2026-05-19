@@ -1801,6 +1801,7 @@ dependencies = [
  "base64",
  "brotli",
  "bytes",
+ "clap",
  "criterion",
  "csv",
  "deunicode",
