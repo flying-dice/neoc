@@ -65,6 +65,15 @@ describe("glob", function()
             expect(glob.is_match(".git*", ".gitignore")).toBeTruthy()
         end)
 
+        test("nested dotfile component filters whole path", function()
+            -- `.cache` taints the path even though the leaf is plain.
+            expect(glob.is_match("**/*.rs", "src/.cache/foo.rs")).toBeFalsy()
+        end)
+
+        test("nested dotfile allowed when pattern opts in", function()
+            expect(glob.is_match("**/.cache/*.rs", "src/.cache/foo.rs")).toBeTruthy()
+        end)
+
         test("backslash path normalised", function()
             expect(glob.is_match("src/**/*.rs", "src\\lib\\json.rs")).toBeTruthy()
         end)

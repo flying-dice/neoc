@@ -33,11 +33,22 @@ export type ScanError = { path: string, error: string }
 
     Safe to store in module-scope locals and reuse — no hidden mutable
     state. `tostring(g)` returns the original pattern string.
+
+    **Dotfile rule.** A path is filtered if *any* path segment starts with
+    `.` and the pattern does not include a segment that literally starts
+    with `.` (Unix convention, matches `ripgrep`/`fd`). Examples:
+
+    - `glob.is_match("*", ".gitignore")` → `false`
+    - `glob.is_match(".git*", ".gitignore")` → `true`
+    - `glob.is_match("**/*.rs", "src/.cache/foo.rs")` → `false`
+      (the `.cache` segment hides the path)
+    - `glob.is_match("**/.cache/*.rs", "src/.cache/foo.rs")` → `true`
 ]=]
 export type Glob = {
     --[=[
         Test whether `path` matches this pattern. Forward slashes and
-        backslashes in `path` are normalised before matching.
+        backslashes in `path` are normalised before matching. See the
+        dotfile rule documented above.
     ]=]
     is_match: (self: Glob, path: string) -> boolean,
 

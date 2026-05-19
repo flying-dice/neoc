@@ -88,6 +88,23 @@ pub struct GlobSetHandle {
 }
 
 impl GlobSetHandle {
+    fn is_match(&self, path: &str) -> bool {
+        let normalised = normalise_input_path(path);
+        // Fast path: no dotfile in the candidate → globset's automaton can
+        // short-circuit on the first hit. We never need to inspect which
+        // pattern matched.
+        if !path_has_dotfile(&normalised) {
+            return self.set.is_match(&normalised);
+        }
+        // Dotfile path: at least one matching pattern must explicitly allow
+        // dotfiles. globset::matches walks all hits internally — we still
+        // short-circuit the per-pattern filter via `.any`.
+        self.set
+            .matches(&normalised)
+            .into_iter()
+            .any(|idx| pattern_allows_dotfiles(&self.patterns[idx]))
+    }
+
     fn matching_indices(&self, path: &str) -> Vec<usize> {
         let normalised = normalise_input_path(path);
         self.set
@@ -100,9 +117,7 @@ impl GlobSetHandle {
 
 impl UserData for GlobSetHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        methods.add_method("is_match", |_, this, path: String| {
-            Ok(!this.matching_indices(&path).is_empty())
-        });
+        methods.add_method("is_match", |_, this, path: String| Ok(this.is_match(&path)));
         methods.add_method("matches", |lua, this, path: String| {
             let t = lua.create_table()?;
             for (i, idx) in this.matching_indices(&path).into_iter().enumerate() {
@@ -438,6 +453,7 @@ fn expect_bool(v: Value) -> Result<bool, String> {
 
 fn expect_integer(v: Value) -> Result<i64, String> {
     match v {
+        // `mlua::Integer` is `i32` under the Luau backend; the cast widens.
         Value::Integer(i) => Ok(i as i64),
         Value::Number(f) if f.is_finite() && f.fract() == 0.0 => Ok(f as i64),
         Value::Number(_) => Err("must be an integer".to_owned()),
@@ -849,5 +865,102 @@ mod tests {
             .eval()
             .unwrap();
         assert!(same);
+    }
+
+    /// `GlobSet:is_match` must agree with `:matches` after dotfile filtering,
+    /// across the no-dotfile fast path and the dotfile-aware path. Locks the
+    /// contract independently of which internal branch was taken.
+    #[test]
+    fn globset_is_match_agrees_with_matches() {
+        let lua = engine();
+        let ok: bool = lua
+            .load(
+                r#"
+                local cases = {
+                    -- { patterns, path, expected }
+                    { { "*.rs" },         "foo.rs",        true  },  -- fast path
+                    { { "*.rs" },         "foo.md",        false },  -- fast path
+                    { { "*", ".git*" },   ".gitignore",    true  },  -- dotfile path
+                    { { "*" },            ".gitignore",    false },  -- dotfile path
+                    { { "src/*.rs" },     "src/.hidden.rs", false }, -- nested dotfile
+                }
+                for _, c in ipairs(cases) do
+                    local s = glob.GlobSet.new(c[1])
+                    local matches_nonempty = #s:matches(c[2]) > 0
+                    local is = s:is_match(c[2])
+                    if is ~= c[3] then return false end
+                    if matches_nonempty ~= is then return false end
+                end
+                return true
+            "#,
+            )
+            .eval()
+            .unwrap();
+        assert!(ok, "is_match/matches disagreement");
+    }
+
+    /// Nested dotfile components are filtered, not just leaves. Pins the
+    /// ripgrep/fd-style behaviour so anyone changing it sees a red test.
+    #[test]
+    fn nested_dotfile_component_filters_path() {
+        let lua = engine();
+        // Path `src/.cache/foo.rs` should NOT match `**/*.rs` — the `.cache`
+        // intermediate segment is hidden and the pattern doesn't opt-in.
+        let m: bool = lua
+            .load(r#"return glob.is_match("**/*.rs", "src/.cache/foo.rs")"#)
+            .eval()
+            .unwrap();
+        assert!(!m, "nested dotfile component must filter the path");
+        // Opt-in: pattern with a `.` segment unlocks dotfile traversal.
+        let m: bool = lua
+            .load(r#"return glob.is_match("**/.cache/*.rs", "src/.cache/foo.rs")"#)
+            .eval()
+            .unwrap();
+        assert!(m, "explicit dotted pattern segment must allow the path");
+    }
+
+    /// Permission-denied entries are surfaced through the `errors` return
+    /// slot, never silently dropped. Unix-only — Windows permission model is
+    /// different enough that this style of test isn't portable.
+    #[cfg(unix)]
+    #[test]
+    fn scan_permission_denied_surfaces_in_errors() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("visible.txt"), "").unwrap();
+        let locked = dir.path().join("locked");
+        std::fs::create_dir(&locked).unwrap();
+        std::fs::write(locked.join("inner.txt"), "").unwrap();
+        // 000 = no read/write/exec. walkdir will fail to descend.
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let lua = engine();
+        lua.globals()
+            .set("cwd", dir.path().to_string_lossy().into_owned())
+            .unwrap();
+        let (results, errors): (Vec<String>, Option<Vec<mlua::Table>>) = lua
+            .load(r#"return glob.scan("**/*.txt", { cwd = cwd })"#)
+            .eval()
+            .unwrap();
+
+        // Restore perms now so tempdir Drop can clean up regardless of what
+        // we assert below.
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).ok();
+
+        assert!(
+            results.contains(&"visible.txt".to_owned()),
+            "visible file should still match: {results:?}"
+        );
+        let errors = errors.expect("errors slot should be populated, not nil");
+        let mut found_perm = false;
+        for row in errors {
+            let msg: String = row.get("error").unwrap();
+            if msg.to_lowercase().contains("permission") {
+                found_perm = true;
+                break;
+            }
+        }
+        assert!(found_perm, "expected a Permission error among walk errors");
     }
 }
