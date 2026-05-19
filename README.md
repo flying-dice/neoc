@@ -79,11 +79,11 @@ neoc fetch.luau
 
 Three layers, one binary.
 
-| Layer | Purpose | Modules |
+| Layer | Purpose | Source |
 |---|---|---|
-| `std:*` | Rust's standard library, 1:1 in Luau | `collections`, `fs`, `io`, `net`, `thread`, `workers` |
-| `lib:*` | Curated helpers and gap-fillers | `args`, `base64`, `compress`, `csv`, `diff`, `glob`, `http`, `json`, `log`, `mime`, `semver`, `test`, `text`, `vcr` |
-| `vnd:*` | Handpicked third-party libraries | `hyper`, `rusqlite`, `sqlx_postgres`, `sqlx_mysql`, `serde_json`, `serde_yaml`, `quick_xml`, `toml`, `jsonschema`, `testcontainers_modules` |
+| `std:*` | Rust's standard library, 1:1 in Luau | [src/lua/std/](src/lua/std) |
+| `lib:*` | Curated helpers and gap-fillers | [src/lua/lib/](src/lua/lib) |
+| `vnd:*` | Handpicked third-party libraries | [src/lua/vnd/](src/lua/vnd) |
 
 `require("namespace:name")` is the only way in. No ambient globals, no path search. Unknown names error with the catalogue.
 

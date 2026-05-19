@@ -71,7 +71,6 @@ Precedence: 1 > 2 > 3 > 4.
 3. Add `#[cfg(test)] mod tests` in the file
 4. Add Criterion benches (gated behind `bench` feature)
 5. Add `tests/<ns>/<name>.test.luau`
-6. Update README module table
 
 ## Commit style
 
