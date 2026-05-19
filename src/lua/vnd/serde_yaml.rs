@@ -66,12 +66,12 @@ fn decode_string(lua: &Lua, s: mlua::String) -> mlua::Result<(Value, Value)> {
 
 #[instrument(name = "serde_yaml.encode", target = "luau::lib::serde_yaml", skip_all)]
 fn encode(lua: &Lua, v: Value) -> mlua::Result<(Value, Value)> {
-    // TODO: clean-code - 0.8 - DRY: lua::Value -> serde_json::Value bridge duplicated in encode_to
-    match serde_json::to_value(&v).map_err(Error::external) {
-        Ok(json) => match serde_yaml::to_string(&json) {
-            Ok(s) => ok(lua, s),
-            Err(e) => from_err(lua, "serde_yaml.encode", e),
-        },
+    let json = match lua_to_json_value(&v) {
+        Ok(j) => j,
+        Err(e) => return from_err(lua, "serde_yaml.encode", e),
+    };
+    match serde_yaml::to_string(&json) {
+        Ok(s) => ok(lua, s),
         Err(e) => from_err(lua, "serde_yaml.encode", e),
     }
 }
@@ -86,8 +86,7 @@ fn encode_to(lua: &Lua, (v, ud): (Value, AnyUserData)) -> mlua::Result<(Value, V
         Ok(h) => h,
         Err(_) => return from_err(lua, "serde_yaml.encode_to", "expected a writer handle"),
     };
-    // TODO: clean-code - 0.8 - DRY: lua::Value -> serde_json::Value bridge duplicated from encode
-    let json = match serde_json::to_value(&v).map_err(Error::external) {
+    let json = match lua_to_json_value(&v) {
         Ok(j) => j,
         Err(e) => return from_err(lua, "serde_yaml.encode_to", e),
     };
@@ -99,6 +98,14 @@ fn encode_to(lua: &Lua, (v, ud): (Value, AnyUserData)) -> mlua::Result<(Value, V
         Ok(()) => ok(lua, true),
         Err(e) => from_err(lua, "serde_yaml.encode_to", e),
     }
+}
+
+/// Bridge a Lua `Value` to a `serde_json::Value` so it can hand off to
+/// `serde_yaml::to_*`. The YAML side uses JSON as its normalisation step
+/// (see module docstring); both encode entry points need this conversion,
+/// so the lossy-yaml note lives here too.
+fn lua_to_json_value(v: &Value) -> Result<serde_json::Value, Error> {
+    serde_json::to_value(v).map_err(Error::external)
 }
 
 // ---------------------------------------------------------------------------
