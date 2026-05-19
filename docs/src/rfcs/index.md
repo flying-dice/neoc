@@ -33,6 +33,7 @@ Workflow: agent-backlog Kanban. RFCs produced when issue carries `design-rfc` la
 
 - [0009 — lib:compress — compression and decompression](./0009-lib-compress)
 - [0010 — lib:csv — CSV parsing and writing](./0010-lib-csv)
+- [0011 — lib:text — String utilities and case conversion](./0011-lib-text)
 
 ### Implemented
 

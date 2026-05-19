@@ -14,4 +14,5 @@ pub mod ini;
 pub mod json;
 pub mod mime;
 pub mod test;
+pub mod text;
 pub mod vcr;
