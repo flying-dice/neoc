@@ -273,6 +273,17 @@ describe("text", function()
         test("empty stays empty", function()
             expect(text.slugify("")).toBe("")
         end)
+        -- Pin the full deunicode transliteration policy — locks the
+        -- contract beyond bare diacritic strip so the docstring claims hold.
+        test("CJK transliterates to pinyin-style ASCII", function()
+            expect(text.slugify("日本語")).toBe("ri-ben-yu")
+        end)
+        test("Cyrillic transliterates to Latin", function()
+            expect(text.slugify("Привет мир")).toBe("privet-mir")
+        end)
+        test("emoji become English names", function()
+            expect(text.slugify("hello 😀")).toBe("hello-grinning")
+        end)
     end)
 
 end)

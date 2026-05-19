@@ -207,8 +207,18 @@ Violations return `(nil, "text.pad_left: fill char must …")`.
 | `"---multiple---hyphens---"` | `"multiple-hyphens"` |
 | `""` | `""` |
 | `"Café résumé"` | `"cafe-resume"` |
+| `"日本語"` | `"ri-ben-yu"` |
+| `"Привет мир"` | `"privet-mir"` |
+| `"hello 😀"` | `"hello-grinning"` |
 
-Diacritic policy: **strip** (URL-safe default). `deunicode` performs ASCII transliteration; `"café"` → `"cafe"`, `"München"` → `"munchen"`. This is the right default for routing slugs (URLs, file names, search keys); applications wanting internationalised slugs can construct their own pipeline from `text.to_kebab_case` on the lowercase original.
+Transliteration policy: **`deunicode` full Unicode → ASCII**, not just diacritic strip. Concretely:
+
+- Latin diacritics drop (`café` → `cafe`, `München` → `munchen`)
+- CJK becomes pinyin-style ASCII (`日本語` → `ri-ben-yu`)
+- Cyrillic becomes Latin (`Привет` → `privet`)
+- Emoji become their English names (`😀` → `grinning`)
+
+This is the right default for routing slugs (URLs, file names, search keys) — every input produces a routable ASCII path. Applications wanting internationalised slugs can construct their own pipeline from `text.to_kebab_case` on the lowercase original.
 
 ### `levenshtein` — known-value verification
 

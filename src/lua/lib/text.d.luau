@@ -98,11 +98,18 @@ export type TextModule = {
 
         `width` must be > 0.
 
+        ASCII whitespace is the only word boundary. CJK and other scripts
+        without whitespace are treated as a single "word" and will overflow
+        unless `break_words = true` is set — at which point the wrap respects
+        display columns (CJK = 2 cols).
+
         ```lua
         text.word_wrap("hello world", 5)
             --> "hello\nworld", nil
         text.word_wrap("abcdefghij", 5, { break_words = true })
             --> "abcde\nfghij", nil
+        text.word_wrap("あいうえお", 4, { break_words = true })
+            --> "あい\nうえ\nお", nil
         ```
     ]=]
     word_wrap: (text: string, width: number, opts: WordWrapOpts?) -> (string?, string?),
@@ -125,7 +132,7 @@ export type TextModule = {
 
         ```lua
         text.closest("teh", {"the", "tea", "ten"})
-            --> { {match="ten", distance=1}, {match="the", distance=1}, {match="tea", distance=2} }
+            --> { {match="tea", distance=1}, {match="ten", distance=1}, {match="the", distance=2} }
         text.closest("teh", {"the", "tea", "ten"}, { limit = 2 })
         ```
     ]=]
@@ -167,13 +174,22 @@ export type TextModule = {
     center: (text: string, width: number, fill_char: string?) -> (string?, string?),
 
     --[=[
-        Convert `text` to a URL-safe slug: strip diacritics (`café` → `cafe`),
-        lowercase ASCII, replace non-alphanumeric runs with single hyphens,
-        trim leading and trailing hyphens.
+        Convert `text` to a URL-safe ASCII slug. Backed by `deunicode`, which
+        does full Unicode → ASCII transliteration (not just diacritic strip):
+
+        - Latin diacritics drop: `café` → `cafe`, `München` → `munchen`
+        - CJK becomes pinyin-style ASCII: `日本語` → `ri-ben-yu`
+        - Cyrillic becomes Latin: `Привет` → `privet`
+        - Emoji become their English names: `😀` → `grinning`
+
+        After transliteration: lowercased, runs of non-alphanumerics collapse
+        to a single hyphen, leading/trailing hyphens trimmed.
 
         ```lua
         text.slugify("Hello, World!")     --> "hello-world"
         text.slugify("---café---")        --> "cafe"
+        text.slugify("日本語")            --> "ri-ben-yu"
+        text.slugify("hello 😀")          --> "hello-grinning"
         ```
     ]=]
     slugify: (text: string) -> string,
