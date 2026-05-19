@@ -2,7 +2,7 @@
 //!
 //! See docs/src/rfcs/0010-lib-csv.md for the public surface contract.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, Cursor, Read};
 use std::sync::Arc;
 
@@ -14,6 +14,11 @@ use crate::lua::sandbox::{err, from_err, ok};
 use crate::lua::std::io::{ExclusiveBorrow, ReaderHandle};
 
 const MAX_RAW_LINE_BYTES: usize = 80;
+
+/// Source-byte capture buffer cap. Comfortably above any realistic CSV record;
+/// the underlying `csv` crate buffers in 8 KiB chunks, so this guarantees the
+/// failing record's bytes are still in the capture when the error is raised.
+const RAW_CAPTURE_CAP: usize = 64 * 1024;
 
 // ---------------------------------------------------------------------------
 // Module entry
@@ -220,6 +225,79 @@ impl Read for LockingReader {
 }
 
 // ---------------------------------------------------------------------------
+// RawCapture — bounded rolling capture of source bytes
+// ---------------------------------------------------------------------------
+
+/// Rolling buffer of the most recent source bytes, keyed by their global byte
+/// offset in the underlying stream. The error-formatting path slices this to
+/// reproduce the offending line byte-for-byte.
+struct RawCapture {
+    buf: VecDeque<u8>,
+    base: u64,
+    cap: usize,
+}
+
+impl RawCapture {
+    fn new(cap: usize) -> Self {
+        Self {
+            buf: VecDeque::with_capacity(cap.min(8 * 1024)),
+            base: 0,
+            cap,
+        }
+    }
+
+    fn append(&mut self, bytes: &[u8]) {
+        self.buf.extend(bytes.iter().copied());
+        while self.buf.len() > self.cap {
+            self.buf.pop_front();
+            self.base += 1;
+        }
+    }
+
+    /// Return bytes covering `[start, end)` if the range is fully captured.
+    /// Returns `None` if either endpoint has been evicted or the range is invalid.
+    fn slice(&self, start: u64, end: u64) -> Option<Vec<u8>> {
+        if end < start {
+            return None;
+        }
+        let buf_end = self.base + self.buf.len() as u64;
+        if start < self.base || end > buf_end {
+            return None;
+        }
+        let s = (start - self.base) as usize;
+        let e = (end - self.base) as usize;
+        Some(self.buf.range(s..e).copied().collect())
+    }
+}
+
+/// `Read` adapter that mirrors every byte read into a `RawCapture`.
+struct CapturingReader<R: Read> {
+    inner: R,
+    capture: Arc<Mutex<RawCapture>>,
+}
+
+impl<R: Read> Read for CapturingReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        if n > 0 {
+            self.capture.lock().append(&buf[..n]);
+        }
+        Ok(n)
+    }
+}
+
+fn new_capture() -> Arc<Mutex<RawCapture>> {
+    Arc::new(Mutex::new(RawCapture::new(RAW_CAPTURE_CAP)))
+}
+
+fn wrap_capturing(reader: BoxedReader, capture: Arc<Mutex<RawCapture>>) -> BoxedReader {
+    Box::new(CapturingReader {
+        inner: reader,
+        capture,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // CsvReader UserData
 // ---------------------------------------------------------------------------
 
@@ -228,6 +306,7 @@ type BoxedReader = Box<dyn Read + Send>;
 struct CsvReaderState {
     reader: csv::Reader<BoxedReader>,
     opts: ParseOpts,
+    capture: Arc<Mutex<RawCapture>>,
     headers_cache: Option<Result<Vec<String>, String>>,
     finished: bool,
     _borrow: Option<ExclusiveBorrow>,
@@ -239,7 +318,7 @@ impl CsvReaderState {
             return Ok(None);
         }
         if self.headers_cache.is_none() {
-            let res = validate_headers(&mut self.reader, &self.opts, prefix);
+            let res = validate_headers(&mut self.reader, Some(&self.capture), &self.opts, prefix);
             self.headers_cache = Some(res);
         }
         match self.headers_cache.as_ref().unwrap() {
@@ -309,8 +388,16 @@ fn create_rows_iter(
         let read = match read_res {
             Ok(b) => b,
             Err(e) => {
-                let msg =
-                    csv_error_message(prefix, &e, s.opts.delimiter, s.opts.quote, Some(&record));
+                let end = s.reader.position().byte();
+                let msg = csv_error_message(
+                    prefix,
+                    &e,
+                    s.opts.delimiter,
+                    s.opts.quote,
+                    Some(&record),
+                    Some(&s.capture),
+                    Some(end),
+                );
                 s.finished = true;
                 return Err(mlua::Error::external(msg));
             }
@@ -353,9 +440,11 @@ fn parse_fn(
         Err(msg) => return err(lua, msg),
     };
     let bytes = data.as_bytes().to_vec();
-    let mut reader = build_csv_reader(Box::new(Cursor::new(bytes)) as BoxedReader, &parse_opts);
+    let capture = new_capture();
+    let source = wrap_capturing(Box::new(Cursor::new(bytes)) as BoxedReader, capture.clone());
+    let mut reader = build_csv_reader(source, &parse_opts);
     let headers = if parse_opts.headers {
-        match validate_headers(&mut reader, &parse_opts, prefix) {
+        match validate_headers(&mut reader, Some(&capture), &parse_opts, prefix) {
             Ok(v) => Some(v),
             Err(msg) => return err(lua, msg),
         }
@@ -385,6 +474,7 @@ fn parse_fn(
                 idx += 1;
             }
             Err(e) => {
+                let end = reader.position().byte();
                 return err(
                     lua,
                     csv_error_message(
@@ -393,6 +483,8 @@ fn parse_fn(
                         parse_opts.delimiter,
                         parse_opts.quote,
                         Some(&record),
+                        Some(&capture),
+                        Some(end),
                     ),
                 );
             }
@@ -405,8 +497,10 @@ fn parse_fn(
 fn rows_fn(lua: &Lua, (data, opts): (mlua::String, Option<Table>)) -> mlua::Result<Function> {
     let parse_opts = parse_parse_opts(opts.as_ref(), "csv.rows").map_err(mlua::Error::external)?;
     let bytes = data.as_bytes().to_vec();
-    let reader = build_csv_reader(Box::new(Cursor::new(bytes)) as BoxedReader, &parse_opts);
-    let state = new_reader_state(reader, parse_opts, None);
+    let capture = new_capture();
+    let source = wrap_capturing(Box::new(Cursor::new(bytes)) as BoxedReader, capture.clone());
+    let reader = build_csv_reader(source, &parse_opts);
+    let state = new_reader_state(reader, parse_opts, capture, None);
     create_rows_iter(lua, state, "csv.rows")
 }
 
@@ -440,8 +534,10 @@ fn reader_fn(
         inner: rh.inner.clone(),
     };
     drop(rh);
-    let reader = build_csv_reader(Box::new(locking) as BoxedReader, &parse_opts);
-    let state = new_reader_state(reader, parse_opts, Some(borrow));
+    let capture = new_capture();
+    let source = wrap_capturing(Box::new(locking) as BoxedReader, capture.clone());
+    let reader = build_csv_reader(source, &parse_opts);
+    let state = new_reader_state(reader, parse_opts, capture, Some(borrow));
     ok(lua, CsvReader { state })
 }
 
@@ -788,11 +884,13 @@ fn build_csv_writer<W: std::io::Write>(w: W, opts: &WriteOpts) -> csv::Writer<W>
 fn new_reader_state(
     reader: csv::Reader<BoxedReader>,
     opts: ParseOpts,
+    capture: Arc<Mutex<RawCapture>>,
     borrow: Option<ExclusiveBorrow>,
 ) -> Arc<Mutex<CsvReaderState>> {
     Arc::new(Mutex::new(CsvReaderState {
         reader,
         opts,
+        capture,
         headers_cache: None,
         finished: false,
         _borrow: borrow,
@@ -803,16 +901,37 @@ fn new_reader_state(
 /// `module.function` prefix. Shared by `parse_fn` and `CsvReaderState`.
 fn validate_headers<R: Read>(
     reader: &mut csv::Reader<R>,
+    capture: Option<&Arc<Mutex<RawCapture>>>,
     opts: &ParseOpts,
     prefix: &str,
 ) -> Result<Vec<String>, String> {
-    let rec = reader
-        .headers()
-        .map_err(|e| csv_error_message(prefix, &e, opts.delimiter, opts.quote, None))?;
+    let header_res = reader.headers().cloned();
+    let end = reader.position().byte();
+    let rec = match header_res {
+        Ok(r) => r,
+        Err(e) => {
+            return Err(csv_error_message(
+                prefix,
+                &e,
+                opts.delimiter,
+                opts.quote,
+                None,
+                capture,
+                Some(end),
+            ));
+        }
+    };
     let fields: Vec<String> = rec.iter().map(|s| s.to_string()).collect();
     if let Some(dup) = find_duplicate(&fields) {
         let refs: Vec<&str> = rec.iter().collect();
-        let raw = reconstruct_line(&refs, opts.delimiter, opts.quote);
+        let raw = raw_line_text(
+            Some(0),
+            Some(end),
+            capture,
+            opts.delimiter,
+            opts.quote,
+            &refs,
+        );
         return Err(format!(
             "{prefix}: line 1: duplicate header \"{dup}\": \"{}\"",
             truncate_for_error(&raw, MAX_RAW_LINE_BYTES)
@@ -822,14 +941,12 @@ fn validate_headers<R: Read>(
 }
 
 // ---------------------------------------------------------------------------
-// Error formatting + line-reconstruction helpers
+// Error formatting + raw-line helpers
 //
-// The offending-line text in parse errors is *reconstructed* from the parsed
-// fields, not the original source bytes — quoting choices may differ (e.g. a
-// single-char field that was quoted in source comes back unquoted). The line
-// number and field counts locate the problem precisely; the reconstructed
-// snippet is for orientation only. Byte-exact source reproduction would need
-// a `Read` wrapper that captures lines by position — tracked as a follow-up.
+// The offending-line text in parse errors reproduces the source bytes verbatim
+// by slicing them out of a rolling `RawCapture` keyed on global byte offset.
+// If the bytes have aged out of the capture (cap exceeded) we fall back to a
+// best-effort reconstruction from the parsed fields.
 // ---------------------------------------------------------------------------
 
 fn csv_error_message(
@@ -838,6 +955,8 @@ fn csv_error_message(
     delimiter: u8,
     quote: u8,
     record: Option<&csv::ByteRecord>,
+    capture: Option<&Arc<Mutex<RawCapture>>>,
+    reader_byte: Option<u64>,
 ) -> String {
     use csv::ErrorKind::*;
     match e.kind() {
@@ -847,9 +966,7 @@ fn csv_error_message(
             len,
         } => {
             let line = pos.as_ref().map(|p| p.line()).unwrap_or(0);
-            let raw = record
-                .map(|r| reconstruct_record_line(r, delimiter, quote))
-                .unwrap_or_default();
+            let raw = error_line(record, capture, reader_byte, delimiter, quote);
             format!(
                 "{prefix}: line {line}: found {len} fields, expected {expected_len}: \"{}\"",
                 truncate_for_error(&raw, MAX_RAW_LINE_BYTES)
@@ -864,6 +981,64 @@ fn csv_error_message(
     }
 }
 
+/// Best raw-byte line for the failing record. Tries the capture first; on miss,
+/// reconstructs from the record's parsed fields (lossy on non-UTF-8 bytes).
+fn error_line(
+    record: Option<&csv::ByteRecord>,
+    capture: Option<&Arc<Mutex<RawCapture>>>,
+    reader_byte: Option<u64>,
+    delimiter: u8,
+    quote: u8,
+) -> String {
+    if let Some(rec) = record {
+        let start = rec.position().map(|p| p.byte());
+        let owned: Vec<String> = rec
+            .iter()
+            .map(|f| String::from_utf8_lossy(f).into_owned())
+            .collect();
+        let refs: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
+        raw_line_text(start, reader_byte, capture, delimiter, quote, &refs)
+    } else {
+        String::new()
+    }
+}
+
+/// Slice `[start, end)` out of the capture and strip the trailing record
+/// terminator; on miss fall back to reconstructed line from `fallback_fields`.
+fn raw_line_text(
+    start: Option<u64>,
+    end: Option<u64>,
+    capture: Option<&Arc<Mutex<RawCapture>>>,
+    delimiter: u8,
+    quote: u8,
+    fallback_fields: &[&str],
+) -> String {
+    if let (Some(cap), Some(s), Some(e)) = (capture, start, end)
+        && let Some(bytes) = cap.lock().slice(s, e)
+    {
+        let trimmed = strip_terminator(&bytes);
+        return String::from_utf8_lossy(trimmed).into_owned();
+    }
+    reconstruct_line(fallback_fields, delimiter, quote)
+}
+
+fn strip_terminator(bytes: &[u8]) -> &[u8] {
+    let mut b = bytes;
+    // The csv crate places `Position::byte()` after the first terminator byte.
+    // For CRLF that lands on the `\n`, so the slice starts with the prior
+    // record's `\n` — strip it.
+    if b.first() == Some(&b'\n') {
+        b = &b[1..];
+    }
+    if b.last() == Some(&b'\n') {
+        b = &b[..b.len() - 1];
+    }
+    if b.last() == Some(&b'\r') {
+        b = &b[..b.len() - 1];
+    }
+    b
+}
+
 fn find_duplicate(headers: &[String]) -> Option<String> {
     let mut seen = std::collections::HashSet::new();
     for h in headers {
@@ -872,15 +1047,6 @@ fn find_duplicate(headers: &[String]) -> Option<String> {
         }
     }
     None
-}
-
-fn reconstruct_record_line(rec: &csv::ByteRecord, delimiter: u8, quote: u8) -> String {
-    let fields: Vec<String> = rec
-        .iter()
-        .map(|f| String::from_utf8_lossy(f).into_owned())
-        .collect();
-    let refs: Vec<&str> = fields.iter().map(|s| s.as_str()).collect();
-    reconstruct_line(&refs, delimiter, quote)
 }
 
 fn reconstruct_line(fields: &[&str], delimiter: u8, quote: u8) -> String {
@@ -1080,6 +1246,105 @@ mod tests {
         assert!(val.is_none());
         let e = e.unwrap();
         assert!(e.contains("expected 2"), "got: {e}");
+    }
+
+    #[test]
+    fn parse_error_preserves_source_quoting() {
+        let lua = engine();
+        // The first field is quoted in source even though it's a single char.
+        // Reconstruction would unquote it; the raw capture must preserve it.
+        let (_, e): (Option<mlua::Table>, Option<String>) = lua
+            .load(r#"return csv.parse('a,b,c\n"x",y,z,extra\n')"#)
+            .eval()
+            .unwrap();
+        let e = e.unwrap();
+        assert!(
+            e.ends_with(r#": ""x",y,z,extra""#),
+            "expected source-quoted snippet, got: {e}"
+        );
+    }
+
+    #[test]
+    fn parse_error_preserves_escaped_quotes() {
+        let lua = engine();
+        let (_, e): (Option<mlua::Table>, Option<String>) = lua
+            .load(r#"return csv.parse('a,b\n"he said ""hi""",1,extra')"#)
+            .eval()
+            .unwrap();
+        let e = e.unwrap();
+        assert!(
+            e.contains(r#""he said ""hi""",1,extra"#),
+            "expected escaped quotes preserved, got: {e}"
+        );
+    }
+
+    // Given:  Windows-style CRLF-terminated input with a field-count overflow on record 2
+    // When:   csv.parse raises UnequalLengths
+    // Then:   the snippet is the raw record bytes, no leading \n carried over from the CRLF
+    #[test]
+    fn parse_error_strips_leading_lf_from_crlf_input() {
+        let lua = engine();
+        let (_, e): (Option<mlua::Table>, Option<String>) = lua
+            .load(r#"return csv.parse('a,b\r\n"x",y,extra\r\n')"#)
+            .eval()
+            .unwrap();
+        let e = e.unwrap();
+        assert!(
+            e.ends_with(r#": ""x",y,extra""#),
+            "expected snippet with no leading \\n, got: {e}"
+        );
+    }
+
+    #[test]
+    fn parse_error_truncates_long_line() {
+        let lua = engine();
+        // Construct an offending row well over 80 bytes — must end in `…`.
+        let script = format!(
+            r#"return csv.parse('a,b\n{},extra')"#,
+            "x".repeat(120) + ",y"
+        );
+        let (_, e): (Option<mlua::Table>, Option<String>) = lua.load(&script).eval().unwrap();
+        let e = e.unwrap();
+        assert!(e.ends_with("…\""), "expected trailing ellipsis, got: {e}");
+    }
+
+    #[test]
+    fn rows_error_preserves_source_quoting() {
+        let lua = engine();
+        let err: mlua::Result<i64> = lua
+            .load(
+                r#"
+                for _ in csv.rows('a,b\n"x",y,extra\n') do end
+                return 0
+            "#,
+            )
+            .eval();
+        let msg = format!("{}", err.unwrap_err());
+        assert!(
+            msg.contains(r#""x",y,extra"#),
+            "expected raw source bytes, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn reader_error_preserves_source_quoting() {
+        let lua = engine();
+        let err: mlua::Result<i64> = lua
+            .load(
+                r#"
+                local io = require("std:io")
+                local h = io.from_string('a,b\n"x",y,extra\n')
+                local r = csv.reader(h)
+                for _ in r:rows() do end
+                return 0
+            "#,
+            )
+            .eval();
+        let msg = format!("{}", err.unwrap_err());
+        assert!(
+            msg.contains(r#""x",y,extra"#),
+            "expected raw source bytes from reader, got: {msg}"
+        );
     }
 
     #[test]
