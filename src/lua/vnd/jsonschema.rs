@@ -47,12 +47,18 @@ pub struct JSchema {
     inner: Arc<jsonschema::Validator>,
 }
 
+/// Bridge a Lua `Value` to a `serde_json::Value` for schema validation.
+/// Both `is_valid` and `validate` go through this — they only differ in
+/// how they surface the conversion failure.
+fn lua_value_to_jv(value: &Value) -> mlua::Result<JV> {
+    serde_json::to_value(value).map_err(mlua::Error::external)
+}
+
 impl UserData for JSchema {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        // TODO: clean-code - 0.7 - DRY: lua-Value → serde_json::Value conversion duplicated in is_valid and validate; extract a helper.
         methods.add_method("is_valid", |_, this, value: Value| {
             // TODO: clean-code - 0.6 - KISS: silently returns false on conversion error, hiding bugs; inconsistent with validate which surfaces the error.
-            let jv = match serde_json::to_value(&value).map_err(mlua::Error::external) {
+            let jv = match lua_value_to_jv(&value) {
                 Ok(v) => v,
                 Err(_) => return Ok(false),
             };
@@ -60,7 +66,7 @@ impl UserData for JSchema {
         });
 
         methods.add_method("validate", |_, this, value: Value| {
-            let jv = match serde_json::to_value(&value).map_err(mlua::Error::external) {
+            let jv = match lua_value_to_jv(&value) {
                 Ok(v) => v,
                 Err(e) => {
                     return Ok(JValidationResult {
