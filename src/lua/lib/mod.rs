@@ -18,6 +18,7 @@ pub mod ini;
 pub mod json;
 pub mod log;
 pub mod mime;
+pub mod regex;
 pub mod semver;
 pub mod template;
 pub mod test;
