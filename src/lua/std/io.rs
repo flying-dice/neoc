@@ -16,6 +16,7 @@
 
 use std::io::{BufRead, Read, Write};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use mlua::{AnyUserData, Lua, Table, UserData, UserDataMethods, Value};
 use parking_lot::Mutex;
@@ -27,12 +28,44 @@ use crate::lua::sandbox::{from_err, ok};
 // Handle types
 // ---------------------------------------------------------------------------
 
-pub struct ReaderHandle(pub Arc<Mutex<Box<dyn BufRead + Send>>>);
+pub struct ReaderHandle {
+    pub inner: Arc<Mutex<Box<dyn BufRead + Send>>>,
+    pub borrowed: Arc<AtomicBool>,
+}
+
 pub struct WriterHandle(pub Arc<Mutex<Box<dyn Write + Send>>>);
+
+/// RAII guard returned by `ReaderHandle::try_borrow_exclusive`. Clears the
+/// borrow flag on drop so subsequent streaming consumers (e.g. another
+/// `csv.reader` call) can acquire the handle.
+pub struct ExclusiveBorrow {
+    flag: Arc<AtomicBool>,
+}
+
+impl Drop for ExclusiveBorrow {
+    fn drop(&mut self) {
+        self.flag.store(false, Ordering::Release);
+    }
+}
 
 impl ReaderHandle {
     pub fn new<R: BufRead + Send + 'static>(r: R) -> Self {
-        Self(Arc::new(Mutex::new(Box::new(r))))
+        Self {
+            inner: Arc::new(Mutex::new(Box::new(r))),
+            borrowed: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// Atomically claim exclusive access for a streaming consumer. Returns
+    /// `None` if already borrowed. Callers hold the returned guard for the
+    /// lifetime of the consumer; the flag clears on drop.
+    pub fn try_borrow_exclusive(&self) -> Option<ExclusiveBorrow> {
+        self.borrowed
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| ExclusiveBorrow {
+                flag: self.borrowed.clone(),
+            })
     }
 }
 
@@ -47,7 +80,7 @@ impl UserData for ReaderHandle {
         // TODO: clean-code - 0.7 - DRY: repeated `match result { Ok => ok, Err => from_err("io.X", e) }` across all 5 methods + copy — extract a small helper or macro.
         methods.add_method("read", |lua, this, n: usize| {
             let mut buf = vec![0u8; n];
-            let result = this.0.lock().read(&mut buf);
+            let result = this.inner.lock().read(&mut buf);
             match result {
                 Ok(0) => ok(lua, Value::Nil),
                 Ok(k) => ok(lua, lua.create_string(&buf[..k])?),
@@ -57,7 +90,7 @@ impl UserData for ReaderHandle {
 
         methods.add_method("read_line", |lua, this, _: ()| {
             let mut line = String::new();
-            let result = this.0.lock().read_line(&mut line);
+            let result = this.inner.lock().read_line(&mut line);
             match result {
                 Ok(0) => ok(lua, Value::Nil),
                 Ok(_) => {
@@ -76,7 +109,7 @@ impl UserData for ReaderHandle {
 
         methods.add_method("read_all", |lua, this, _: ()| {
             let mut buf = Vec::new();
-            let result = this.0.lock().read_to_end(&mut buf);
+            let result = this.inner.lock().read_to_end(&mut buf);
             match result {
                 Ok(_) => ok(lua, lua.create_string(&buf)?),
                 Err(e) => from_err(lua, "io.read_all", e),
@@ -137,7 +170,7 @@ fn copy(
         Ok(h) => h,
         Err(_) => return from_err(lua, "io.copy", "second argument is not a writer handle"),
     };
-    let mut r = rh.0.lock();
+    let mut r = rh.inner.lock();
     let mut w = wh.0.lock();
     let result = std::io::copy(&mut *r, &mut *w);
     // TODO: clean-code - 0.6 - KISS: explicit `drop` chain on guards/refs that go out of scope at function end — redundant; scope handles release.

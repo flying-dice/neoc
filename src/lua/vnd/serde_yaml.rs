@@ -33,7 +33,7 @@ fn decode(lua: &Lua, ud: AnyUserData) -> mlua::Result<(Value, Value)> {
         Ok(h) => h,
         Err(_) => return from_err(lua, "serde_yaml.decode", "expected a reader handle"),
     };
-    let mut locked = rh.0.lock();
+    let mut locked = rh.inner.lock();
     let result = serde_yaml::from_reader::<_, serde_json::Value>(&mut **locked);
     drop(locked);
     drop(rh);

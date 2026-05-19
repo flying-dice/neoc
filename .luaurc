@@ -3,6 +3,7 @@
   "definitionFiles": [
     "src/lua/lib/base64.d.luau",
     "src/lua/lib/compress.d.luau",
+    "src/lua/lib/csv.d.luau",
     "src/lua/lib/json.d.luau",
     "src/lua/lib/test.d.luau",
     "src/lua/lib/vcr.d.luau",

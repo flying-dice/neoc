@@ -23,6 +23,7 @@ zstd = "0.13"
 brotli = "7"
 rust-ini = "0.21"
 mime_guess = "2"
+csv = "1"
 
 strsim = "0.11"
 thiserror = "2"

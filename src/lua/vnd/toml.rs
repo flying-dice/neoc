@@ -34,8 +34,7 @@ fn decode(lua: &Lua, ud: AnyUserData) -> mlua::Result<(Value, Value)> {
         Err(_) => return from_err(lua, "toml.decode", "expected a reader handle"),
     };
     let mut buf = Vec::new();
-    // TODO: clean-code - 0.55 - COUPLING: reaches into ReaderHandle.0 internals instead of a method
-    let result = std::io::Read::read_to_end(&mut **rh.0.lock(), &mut buf);
+    let result = std::io::Read::read_to_end(&mut **rh.inner.lock(), &mut buf);
     drop(rh);
     if let Err(e) = result {
         return from_err(lua, "toml.decode", e);

@@ -26,6 +26,7 @@ criterion_group!(
     benches,
     lib::base64::benches,
     lib::compress::benches,
+    lib::csv::benches,
     lib::http::benches,
     lib::ini::benches,
     lib::json::benches,
