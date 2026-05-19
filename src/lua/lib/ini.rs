@@ -182,6 +182,23 @@ fn parse(
     ok(lua, result)
 }
 
+fn read_char_list(tbl: &Table, key: &str) -> mlua::Result<Option<Vec<char>>> {
+    let Some(list) = tbl.get::<Option<Table>>(key)? else {
+        return Ok(None);
+    };
+    let mut chars = Vec::new();
+    for pair in list.pairs::<i64, mlua::String>() {
+        let (_, v) = pair?;
+        let s = v
+            .to_str()
+            .map_err(|e| mlua::Error::external(e.to_string()))?;
+        if let Some(c) = s.chars().next() {
+            chars.push(c);
+        }
+    }
+    Ok(Some(chars))
+}
+
 fn read_opts(opts_table: Option<Table>) -> mlua::Result<ParseOpts> {
     let Some(tbl) = opts_table else {
         return Ok(ParseOpts::default());
@@ -189,32 +206,11 @@ fn read_opts(opts_table: Option<Table>) -> mlua::Result<ParseOpts> {
 
     let mut opts = ParseOpts::default();
 
-    // TODO: clean-code - 0.85 - DRY: comment_symbols and delimiters extraction are identical Table->Vec<char> loops — extract `read_char_list(tbl, key)`
-    if let Some(cs) = tbl.get::<Option<Table>>("comment_symbols")? {
-        let mut syms = Vec::new();
-        for pair in cs.pairs::<i64, mlua::String>() {
-            let (_, v) = pair?;
-            let s = v
-                .to_str()
-                .map_err(|e| mlua::Error::external(e.to_string()))?;
-            if let Some(c) = s.chars().next() {
-                syms.push(c);
-            }
-        }
+    if let Some(syms) = read_char_list(&tbl, "comment_symbols")? {
         opts.comment_symbols = syms;
     }
 
-    if let Some(ds) = tbl.get::<Option<Table>>("delimiters")? {
-        let mut delims = Vec::new();
-        for pair in ds.pairs::<i64, mlua::String>() {
-            let (_, v) = pair?;
-            let s = v
-                .to_str()
-                .map_err(|e| mlua::Error::external(e.to_string()))?;
-            if let Some(c) = s.chars().next() {
-                delims.push(c);
-            }
-        }
+    if let Some(delims) = read_char_list(&tbl, "delimiters")? {
         opts.delimiters = delims;
     }
 
