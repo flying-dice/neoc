@@ -140,22 +140,29 @@ fn from_reader(lua: &Lua, ud: AnyUserData) -> mlua::Result<(Value, Value)> {
     }
 }
 
+fn serialize_with(
+    lua: &Lua,
+    v: Value,
+    op: &'static str,
+    formatter: impl Fn(&serde_json::Value) -> serde_json::Result<String>,
+) -> mlua::Result<(Value, Value)> {
+    let j = match lua_value_to_json_value(&v) {
+        Ok(j) => j,
+        Err(e) => return from_err(lua, op, e),
+    };
+    match formatter(&json_value_to_jv(&j)) {
+        Ok(s) => ok(lua, s),
+        Err(e) => from_err(lua, op, e),
+    }
+}
+
 #[instrument(
     name = "serde_json.to_string",
     target = "luau::lib::serde_json",
     skip_all
 )]
-// TODO: clean-code - 0.8 - DRY: to_string and to_string_pretty share identical scaffolding; extract serialize_with(formatter)
 fn to_string(lua: &Lua, v: Value) -> mlua::Result<(Value, Value)> {
-    // TODO: clean-code - 0.6 - DRY: error-prefix literal "serde_json.to_string" repeated 3x; bind once
-    let j = match lua_value_to_json_value(&v) {
-        Ok(j) => j,
-        Err(e) => return from_err(lua, "serde_json.to_string", e),
-    };
-    match serde_json::to_string(&json_value_to_jv(&j)) {
-        Ok(s) => ok(lua, s),
-        Err(e) => from_err(lua, "serde_json.to_string", e),
-    }
+    serialize_with(lua, v, "serde_json.to_string", serde_json::to_string)
 }
 
 #[instrument(
@@ -164,14 +171,12 @@ fn to_string(lua: &Lua, v: Value) -> mlua::Result<(Value, Value)> {
     skip_all
 )]
 fn to_string_pretty(lua: &Lua, v: Value) -> mlua::Result<(Value, Value)> {
-    let j = match lua_value_to_json_value(&v) {
-        Ok(j) => j,
-        Err(e) => return from_err(lua, "serde_json.to_string_pretty", e),
-    };
-    match serde_json::to_string_pretty(&json_value_to_jv(&j)) {
-        Ok(s) => ok(lua, s),
-        Err(e) => from_err(lua, "serde_json.to_string_pretty", e),
-    }
+    serialize_with(
+        lua,
+        v,
+        "serde_json.to_string_pretty",
+        serde_json::to_string_pretty,
+    )
 }
 
 #[instrument(
