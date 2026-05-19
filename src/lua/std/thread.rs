@@ -376,30 +376,15 @@ impl Drop for WorkerInner {
 
 impl UserData for WorkerHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        // TODO: clean-code - 0.8 - DRY: send/receive bodies duplicate `Channel`'s send/receive verbatim (only error labels and Arc-around-Mutex differ) — extract a shared `send_json` / `recv_json` helper
         methods.add_method("send", |_, this, v: Value| {
-            let json = serde_json::to_value(&v).map_err(mlua::Error::external)?;
-            this.inner
-                .tx
-                .send(json)
-                .map_err(|_| mlua::Error::external("thread.send: worker has exited"))?;
-            Ok(())
+            send_json(&this.inner.tx, v, "thread.send: worker has exited")
         });
 
         methods.add_async_method("receive", |lua, this, _: ()| {
             let inner = this.inner.clone();
             async move {
-                let mut guard = inner.rx.lock().await;
-                match guard.recv().await {
-                    Some(json) => {
-                        let v = lua.to_value(&json)?;
-                        Ok((v, Value::Nil))
-                    }
-                    None => {
-                        let s = lua.create_string("thread.receive: worker has exited")?;
-                        Ok((Value::Nil, Value::String(s)))
-                    }
-                }
+                let received = inner.rx.lock().await.recv().await;
+                handle_recv_result(&lua, received, "thread.receive: worker has exited")
             }
         });
 
@@ -442,29 +427,42 @@ pub struct Channel {
 impl UserData for Channel {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("send", |_, this, v: Value| {
-            let json = serde_json::to_value(&v).map_err(mlua::Error::external)?;
-            this.tx
-                .send(json)
-                .map_err(|_| mlua::Error::external("channel.send: peer has exited"))?;
-            Ok(())
+            send_json(&this.tx, v, "channel.send: peer has exited")
         });
 
         methods.add_async_method("receive", |lua, this, _: ()| {
             let rx = this.rx.clone();
             async move {
-                let mut guard = rx.lock().await;
-                match guard.recv().await {
-                    Some(json) => {
-                        let v = lua.to_value(&json)?;
-                        Ok((v, Value::Nil))
-                    }
-                    None => {
-                        let s = lua.create_string("channel.receive: peer has exited")?;
-                        Ok((Value::Nil, Value::String(s)))
-                    }
-                }
+                let received = rx.lock().await.recv().await;
+                handle_recv_result(&lua, received, "channel.receive: peer has exited")
             }
         });
+    }
+}
+
+/// Encode `v` and push onto `tx`. `err_msg` is wrapped in the same
+/// `mlua::Error::external` envelope used by every direct caller.
+fn send_json(
+    tx: &mpsc::UnboundedSender<serde_json::Value>,
+    v: Value,
+    err_msg: &'static str,
+) -> mlua::Result<()> {
+    let json = serde_json::to_value(&v).map_err(mlua::Error::external)?;
+    tx.send(json).map_err(|_| mlua::Error::external(err_msg))?;
+    Ok(())
+}
+
+/// Convert the result of an `UnboundedReceiver::recv().await` into the
+/// `(value, error)` tuple shape every Lua-facing receive surface returns.
+/// `Some(json)` → value, `None` (channel closed) → typed error string.
+fn handle_recv_result(
+    lua: &Lua,
+    received: Option<serde_json::Value>,
+    err_msg: &'static str,
+) -> mlua::Result<(Value, Value)> {
+    match received {
+        Some(json) => Ok((lua.to_value(&json)?, Value::Nil)),
+        None => Ok((Value::Nil, Value::String(lua.create_string(err_msg)?))),
     }
 }
 
