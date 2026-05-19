@@ -9,6 +9,10 @@ use tracing::instrument;
 
 use crate::lua::sandbox::{from_err, ok};
 
+fn encode_with<E: Engine>(engine: &E, input: mlua::String) -> String {
+    engine.encode(input.as_bytes())
+}
+
 fn decode_with<E: Engine>(
     lua: &Lua,
     engine: &E,
@@ -41,10 +45,9 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
     Ok(t)
 }
 
-// TODO: clean-code - 0.75 - DRY: 4 encode_* fns differ only by engine constant — collapse via shared helper or macro
 #[instrument(name = "base64.encode", target = "luau::lib::base64", skip_all)]
 fn encode(_: &Lua, input: mlua::String) -> mlua::Result<String> {
-    Ok(STANDARD.encode(input.as_bytes()))
+    Ok(encode_with(&STANDARD, input))
 }
 
 #[instrument(name = "base64.decode", target = "luau::lib::base64", skip_all)]
@@ -54,7 +57,7 @@ fn decode(lua: &Lua, input: mlua::String) -> mlua::Result<(Value, Value)> {
 
 #[instrument(name = "base64.encode_no_pad", target = "luau::lib::base64", skip_all)]
 fn encode_no_pad(_: &Lua, input: mlua::String) -> mlua::Result<String> {
-    Ok(STANDARD_NO_PAD.encode(input.as_bytes()))
+    Ok(encode_with(&STANDARD_NO_PAD, input))
 }
 
 #[instrument(name = "base64.decode_no_pad", target = "luau::lib::base64", skip_all)]
@@ -68,7 +71,7 @@ fn decode_no_pad(lua: &Lua, input: mlua::String) -> mlua::Result<(Value, Value)>
     skip_all
 )]
 fn encode_url_safe(_: &Lua, input: mlua::String) -> mlua::Result<String> {
-    Ok(URL_SAFE.encode(input.as_bytes()))
+    Ok(encode_with(&URL_SAFE, input))
 }
 
 #[instrument(
@@ -86,7 +89,7 @@ fn decode_url_safe(lua: &Lua, input: mlua::String) -> mlua::Result<(Value, Value
     skip_all
 )]
 fn encode_url_safe_no_pad(_: &Lua, input: mlua::String) -> mlua::Result<String> {
-    Ok(URL_SAFE_NO_PAD.encode(input.as_bytes()))
+    Ok(encode_with(&URL_SAFE_NO_PAD, input))
 }
 
 #[instrument(
