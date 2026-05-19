@@ -80,41 +80,39 @@ async fn open(lua: Lua, url: String) -> mlua::Result<(Value, Value)> {
     }
 }
 
+macro_rules! db_op {
+    ($methods:expr, $name:literal, $op:literal, $run:ident) => {
+        $methods.add_async_method($name, |lua, this, args: MultiValue| {
+            let pool = this.pool.clone();
+            async move {
+                let (sql, params) = match split_sql_args(args) {
+                    Ok(v) => v,
+                    Err(e) => return from_err(&lua, $op, e),
+                };
+                $run(&lua, &pool, $op, &sql, params).await
+            }
+        });
+    };
+}
+
+macro_rules! stmt_op {
+    ($methods:expr, $name:literal, $op:literal, $run:ident) => {
+        $methods.add_async_method($name, |lua, this, args: MultiValue| {
+            let sql = this.sql.clone();
+            let pool = this.pool.clone();
+            async move {
+                let params = args.into_iter().collect();
+                $run(&lua, &pool, $op, &sql, params).await
+            }
+        });
+    };
+}
+
 impl UserData for Database {
-    // TODO: clean-code - 0.85 - DRY: six near-identical async method blocks (execute/query/query_one across Database+Statement) repeat split/clone/dispatch boilerplate — extract a macro or helper
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        methods.add_async_method("execute", |lua, this, args: MultiValue| {
-            let pool = this.pool.clone();
-            async move {
-                let (sql, params) = match split_sql_args(args) {
-                    Ok(v) => v,
-                    Err(e) => return from_err(&lua, "sqlx_mysql.execute", e),
-                };
-                run_execute(&lua, &pool, "sqlx_mysql.execute", &sql, params).await
-            }
-        });
-
-        methods.add_async_method("query", |lua, this, args: MultiValue| {
-            let pool = this.pool.clone();
-            async move {
-                let (sql, params) = match split_sql_args(args) {
-                    Ok(v) => v,
-                    Err(e) => return from_err(&lua, "sqlx_mysql.query", e),
-                };
-                run_query(&lua, &pool, "sqlx_mysql.query", &sql, params).await
-            }
-        });
-
-        methods.add_async_method("query_one", |lua, this, args: MultiValue| {
-            let pool = this.pool.clone();
-            async move {
-                let (sql, params) = match split_sql_args(args) {
-                    Ok(v) => v,
-                    Err(e) => return from_err(&lua, "sqlx_mysql.query_one", e),
-                };
-                run_query_one(&lua, &pool, "sqlx_mysql.query_one", &sql, params).await
-            }
-        });
+        db_op!(methods, "execute", "sqlx_mysql.execute", run_execute);
+        db_op!(methods, "query", "sqlx_mysql.query", run_query);
+        db_op!(methods, "query_one", "sqlx_mysql.query_one", run_query_one);
 
         methods.add_method("prepare", |_, this, sql: String| {
             Ok(Statement {
@@ -145,32 +143,14 @@ pub struct Statement {
 
 impl UserData for Statement {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        methods.add_async_method("execute", |lua, this, args: MultiValue| {
-            let sql = this.sql.clone();
-            let pool = this.pool.clone();
-            async move {
-                let params = args.into_iter().collect();
-                run_execute(&lua, &pool, "mysql.statement.execute", &sql, params).await
-            }
-        });
-
-        methods.add_async_method("query", |lua, this, args: MultiValue| {
-            let sql = this.sql.clone();
-            let pool = this.pool.clone();
-            async move {
-                let params = args.into_iter().collect();
-                run_query(&lua, &pool, "mysql.statement.query", &sql, params).await
-            }
-        });
-
-        methods.add_async_method("query_one", |lua, this, args: MultiValue| {
-            let sql = this.sql.clone();
-            let pool = this.pool.clone();
-            async move {
-                let params = args.into_iter().collect();
-                run_query_one(&lua, &pool, "mysql.statement.query_one", &sql, params).await
-            }
-        });
+        stmt_op!(methods, "execute", "mysql.statement.execute", run_execute);
+        stmt_op!(methods, "query", "mysql.statement.query", run_query);
+        stmt_op!(
+            methods,
+            "query_one",
+            "mysql.statement.query_one",
+            run_query_one
+        );
     }
 }
 
