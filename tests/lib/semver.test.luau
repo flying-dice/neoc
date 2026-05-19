@@ -161,6 +161,10 @@ describe("semver", function()
                 { "v1.2.3-rc1",    "1.2.3-rc1" },
                 { "1.2.3.4",       "1.2.3"     },
                 { "1.2.3+build",   "1.2.3"     },
+                -- Loose recovery: invalid pre-release (leading zero per
+                -- SemVer §9) drops the pre rather than nuking the whole
+                -- result.
+                { "1.2.3-01",      "1.2.3"     },
             }
             for _, c in ipairs(cases) do
                 local got = semver.coerce(c[1])
@@ -258,6 +262,11 @@ describe("semver", function()
                 { "1.2.3", "prerelease", "1.2.4-0"      },
                 { "1.2.3-beta", "prerelease", "1.2.3-beta.0" },
                 { "1.2.3-beta.1", "prerelease", "1.2.3-beta.2" },
+                -- Node parity: only the trailing identifier matters.
+                -- Non-numeric tail → append `.0`, even with a numeric
+                -- segment earlier in the dotted pre.
+                { "1.2.3-0.alpha", "prerelease", "1.2.3-0.alpha.0" },
+                { "1.2.3-rc.1.beta", "prerelease", "1.2.3-rc.1.beta.0" },
             }
             for _, c in ipairs(cases) do
                 expect(semver.increment(c[1], c[2])).toBe(c[3])
@@ -289,6 +298,25 @@ describe("semver", function()
             local v = semver.Version.parse("1.2.3-rc.1+meta")
             expect(semver.format(v)).toBe(tostring(v))
             expect(semver.format(v)).toBe("1.2.3-rc.1+meta")
+        end)
+
+        test("accepts a string", function()
+            expect(semver.format("1.2.3-rc.1+meta")).toBe("1.2.3-rc.1+meta")
+        end)
+
+        test("invalid input returns (nil, err) — never raises", function()
+            local s, err = semver.format("not.a.ver")
+            expect(s).toBeNil()
+            expect(err).toContain("semver.format:")
+        end)
+    end)
+
+    -- ── VersionReq tostring ──────────────────────────────────────────────────
+
+    describe("VersionReq tostring", function()
+        test("canonical range form", function()
+            local r = semver.VersionReq.parse(">=1.0.0, <2.0.0")
+            expect(tostring(r)).toBe(">=1.0.0, <2.0.0")
         end)
     end)
 

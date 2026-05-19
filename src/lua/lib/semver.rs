@@ -216,10 +216,11 @@ fn flat_increment(lua: &Lua, (version, level): (String, String)) -> mlua::Result
 }
 
 #[instrument(name = "semver.format", target = "luau::lib::semver", skip_all)]
-fn flat_format(_: &Lua, version: Value) -> mlua::Result<String> {
-    coerce_to_version(version, "semver.format")
-        .map_err(mlua::Error::external)
-        .map(|v| v.to_string())
+fn flat_format(lua: &Lua, version: Value) -> mlua::Result<(Value, Value)> {
+    match coerce_to_version(version, "semver.format") {
+        Ok(v) => ok(lua, v.to_string()),
+        Err(msg) => err(lua, msg),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -361,26 +362,27 @@ fn inc_prerelease(v: &mut Version) -> Result<(), String> {
     Ok(())
 }
 
-/// Bump the last numeric dotted identifier in `pre`, or append `.0` if the
-/// pre-release contains no numeric tail. Matches Node's `semver` behaviour.
+/// Bump the trailing dotted identifier of `pre`: if it is numeric, increment
+/// it; otherwise append `.0`. Matches Node's `semver` behaviour — only the
+/// last identifier is inspected, so `1.2.3-0.alpha` → `1.2.3-0.alpha.0`
+/// (alpha tail triggers append, not the leading numeric).
 fn bump_prerelease(pre: &str) -> Result<Prerelease, String> {
-    let parts: Vec<String> = pre.split('.').map(|s| s.to_string()).collect();
-    let last_numeric = parts
-        .iter()
-        .rposition(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
-    let new_pre = match last_numeric {
-        Some(idx) => {
-            let n: u64 = parts[idx]
-                .parse()
-                .map_err(|e: std::num::ParseIntError| e.to_string())?;
-            let bumped = n
-                .checked_add(1)
-                .ok_or_else(|| "prerelease overflow".to_string())?;
-            let mut new_parts = parts.clone();
-            new_parts[idx] = bumped.to_string();
-            new_parts.join(".")
-        }
-        None => format!("{pre}.0"),
+    // `str::split` always yields at least one element, and `inc_prerelease`
+    // only calls us when `pre` is non-empty.
+    let mut parts: Vec<String> = pre.split('.').map(|s| s.to_string()).collect();
+    let last_idx = parts.len() - 1;
+    let last = &parts[last_idx];
+    let new_pre = if !last.is_empty() && last.chars().all(|c| c.is_ascii_digit()) {
+        let n: u64 = last
+            .parse()
+            .map_err(|e: std::num::ParseIntError| e.to_string())?;
+        let bumped = n
+            .checked_add(1)
+            .ok_or_else(|| "prerelease overflow".to_string())?;
+        parts[last_idx] = bumped.to_string();
+        parts.join(".")
+    } else {
+        format!("{pre}.0")
     };
     Prerelease::new(&new_pre).map_err(|e| e.to_string())
 }
@@ -412,10 +414,14 @@ fn coerce_version(input: &str) -> Option<Version> {
         .get(3)
         .and_then(|m| m.as_str().parse().ok())
         .unwrap_or(0);
-    let pre = match caps.get(4) {
-        Some(m) => Prerelease::new(m.as_str()).ok()?,
-        None => Prerelease::EMPTY,
-    };
+    // Loose coerce: a malformed pre-release identifier (e.g. leading zero —
+    // strict per SemVer 2.0.0 §9) drops the pre rather than failing the whole
+    // function, matching the "truncate fourth component" behaviour. The base
+    // major.minor.patch is what callers reach for `coerce` to rescue.
+    let pre = caps
+        .get(4)
+        .and_then(|m| Prerelease::new(m.as_str()).ok())
+        .unwrap_or(Prerelease::EMPTY);
     Some(Version {
         major,
         minor,
@@ -784,6 +790,10 @@ mod tests {
             ("v1.2.3-rc1", "1.2.3-rc1"),
             ("1.2.3.4", "1.2.3"),
             ("1.2.3+build", "1.2.3"),
+            // Loose recovery: a pre-release that fails strict SemVer §9
+            // (leading zero on a numeric identifier) drops the pre and
+            // returns the base, matching the truncation rule for `.4`.
+            ("1.2.3-01", "1.2.3"),
         ];
         for (input, expected) in cases {
             lua.globals().set("inp", input).unwrap();
@@ -819,6 +829,11 @@ mod tests {
             ("1.2.3", "prerelease", "1.2.4-0"),
             ("1.2.3-beta", "prerelease", "1.2.3-beta.0"),
             ("1.2.3-beta.1", "prerelease", "1.2.3-beta.2"),
+            // Node parity — only the trailing identifier matters. A
+            // non-numeric tail triggers append, regardless of any earlier
+            // numeric segments in the dotted pre.
+            ("1.2.3-0.alpha", "prerelease", "1.2.3-0.alpha.0"),
+            ("1.2.3-rc.1.beta", "prerelease", "1.2.3-rc.1.beta.0"),
             ("1.2.3+build", "minor", "1.3.0"),
         ];
         for (input, level, expected) in cases {
@@ -877,5 +892,37 @@ mod tests {
             .unwrap();
         assert_eq!(a, b);
         assert_eq!(a, "1.2.3-rc.1+meta");
+    }
+
+    #[test]
+    fn format_accepts_string() {
+        let lua = engine();
+        let s: String = lua
+            .load(r#"return semver.format("1.2.3-rc.1+meta")"#)
+            .eval()
+            .unwrap();
+        assert_eq!(s, "1.2.3-rc.1+meta");
+    }
+
+    #[test]
+    fn format_invalid_returns_nil_err_not_raise() {
+        let lua = engine();
+        let (val, e): (Value, Option<String>) = lua
+            .load(r#"return semver.format("not.a.ver")"#)
+            .eval()
+            .unwrap();
+        assert!(matches!(val, Value::Nil));
+        let e = e.unwrap();
+        assert!(e.starts_with("semver.format:"), "got: {e}");
+    }
+
+    #[test]
+    fn versionreq_tostring_canonical() {
+        let lua = engine();
+        let s: String = lua
+            .load(r#"return tostring(semver.VersionReq.parse(">=1.0.0, <2.0.0"))"#)
+            .eval()
+            .unwrap();
+        assert_eq!(s, ">=1.0.0, <2.0.0");
     }
 }

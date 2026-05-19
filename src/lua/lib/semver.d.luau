@@ -66,11 +66,13 @@ export type Version = {
     `semver.VersionReq.parse(s)`. Range syntax is **Cargo-compatible**:
     `^`, `~`, `>=`, `<`, `=`, comma-AND. npm extensions (`||`, hyphen
     ranges, x-ranges) are out of scope and will fail to parse.
+    `tostring(r)` returns the canonical Cargo range form.
 
     ```lua
     local r = semver.VersionReq.parse(">=1.0.0, <2.0.0")
     r:matches("1.5.0")    -- true
     r:matches("2.0.0")    -- false
+    tostring(r)           -- ">=1.0.0, <2.0.0"
     ```
 ]=]
 export type VersionReq = {
@@ -126,8 +128,9 @@ export type SemverModule = {
     --[=[
         Loose extraction. Strips a leading `v`/`V`, finds the first numeric
         sequence, fills missing minor/patch with `0`, preserves a trailing
-        pre-release identifier, drops build metadata, truncates fourth
-        components (`1.2.3.4` → `1.2.3`).
+        pre-release identifier (or drops it if it violates SemVer 2.0.0 §9 —
+        e.g. leading-zero numeric segments), drops build metadata, truncates
+        fourth components (`1.2.3.4` → `1.2.3`).
 
         Returns `(Version, nil)` on success or `(nil, "semver.coerce: ...")`
         when no numeric sequence can be extracted.
@@ -172,8 +175,12 @@ export type SemverModule = {
 
     --[=[
         Canonical SemVer 2.0.0 string for `v`. Equivalent to `tostring(v)`.
+        Accepts a `Version` or a string (parsed on demand).
+
+        Returns `(string, nil)` on success or `(nil, "semver.format: ...")`
+        if the argument is not a valid version.
     ]=]
-    format: (v: Version) -> string,
+    format: (v: Version | string) -> (string?, string?),
 }
 
 declare function require(name: "lib:semver"): SemverModule
