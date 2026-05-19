@@ -68,6 +68,23 @@ describe("csv", function()
             expect(string.find(e, "expected 2") ~= nil).toBeTruthy()
         end)
 
+        test("error snippet preserves source quoting", function()
+            -- single-char quoted field must come back quoted, not unquoted
+            local _, e = csv.parse('a,b,c\n"x",y,z,extra\n')
+            expect(string.find(e, '"x",y,z,extra', 1, true) ~= nil).toBeTruthy()
+        end)
+
+        test("error snippet preserves escaped quotes", function()
+            local _, e = csv.parse('a,b\n"he said ""hi""",1,extra')
+            expect(string.find(e, '"he said ""hi""",1,extra', 1, true) ~= nil).toBeTruthy()
+        end)
+
+        test("error snippet truncates long lines with ellipsis", function()
+            local long = string.rep("x", 120)
+            local _, e = csv.parse('a,b\n' .. long .. ',y,extra')
+            expect(string.find(e, '…"$') ~= nil).toBeTruthy()
+        end)
+
         test("empty fields untyped are empty strings", function()
             local r = csv.parse("a,,c")
             expect(r[1][1]).toBe("a")
@@ -149,6 +166,14 @@ describe("csv", function()
             end)
             expect(ok).toBe(false)
         end)
+
+        test("error snippet preserves source quoting", function()
+            local ok, err = pcall(function()
+                for _ in csv.rows('a,b\n"x",y,extra\n') do end
+            end)
+            expect(ok).toBe(false)
+            expect(string.find(tostring(err), '"x",y,extra', 1, true) ~= nil).toBeTruthy()
+        end)
     end)
 
     -- reader (handle-based streaming) -----------------------------------------
@@ -216,6 +241,16 @@ describe("csv", function()
             local r, e = csv.reader("not a handle")
             expect(r).toBeNil()
             expect(string.find(e, "ReaderHandle") ~= nil).toBeTruthy()
+        end)
+
+        test("error snippet preserves source quoting from stream", function()
+            local h = io.from_string('a,b\n"alpha",beta,extra\n')
+            local r = csv.reader(h)
+            local ok, err = pcall(function()
+                for _ in r:rows() do end
+            end)
+            expect(ok).toBe(false)
+            expect(string.find(tostring(err), '"alpha",beta,extra', 1, true) ~= nil).toBeTruthy()
         end)
 
         test("streams from a real file", function()
