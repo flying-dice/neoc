@@ -63,38 +63,60 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 }
 
 // ---------------------------------------------------------------------------
-// MySQL
+// Typed container (Mysql / Postgres)
 // ---------------------------------------------------------------------------
 
+/// Image-specific facts the shared start flow needs.
+trait TypedImage:
+    testcontainers_modules::testcontainers::Image + Default + Send + Sync + 'static
+{
+    const CONTAINER_PORT: u16;
+    const OP_NAME: &'static str;
+    fn url(host: &str, port: u16) -> String;
+}
+
+impl TypedImage for Mysql {
+    const CONTAINER_PORT: u16 = 3306;
+    const OP_NAME: &'static str = "testcontainers_modules.mysql";
+
+    /// `Mysql::default()` exposes db `test` to user `root` with no password.
+    fn url(host: &str, port: u16) -> String {
+        format!("mysql://root@{host}:{port}/test")
+    }
+}
+
+impl TypedImage for Postgres {
+    const CONTAINER_PORT: u16 = 5432;
+    const OP_NAME: &'static str = "testcontainers_modules.postgres";
+
+    /// `Postgres::default()` exposes db `postgres` to user `postgres`/`postgres`.
+    fn url(host: &str, port: u16) -> String {
+        format!("postgres://postgres:postgres@{host}:{port}/postgres")
+    }
+}
+
 #[derive(Clone)]
-pub struct MysqlContainer {
-    inner: Arc<Mutex<Option<ContainerAsync<Mysql>>>>,
+pub struct TypedContainer<I: testcontainers_modules::testcontainers::Image> {
+    inner: Arc<Mutex<Option<ContainerAsync<I>>>>,
     url: String,
     host: String,
     port: u16,
 }
 
-// TODO: clean-code - 0.85 - DRY: MysqlContainer/PostgresContainer + start_mysql/start_postgres are near-identical twins (struct shape, start flow, UserData impl) — collapse via a typed-image trait or shared generic.
-#[instrument(
-    name = "testcontainers_modules.mysql",
-    target = "luau::lib::testcontainers_modules",
-    skip_all
-)]
-async fn start_mysql(lua: Lua) -> mlua::Result<(Value, Value)> {
-    let container = match Mysql::default().start().await {
+async fn start_typed<I: TypedImage>(lua: Lua) -> mlua::Result<(Value, Value)> {
+    let container = match I::default().start().await {
         Ok(c) => c,
-        Err(e) => return from_err(&lua, "testcontainers_modules.mysql", e),
+        Err(e) => return from_err(&lua, I::OP_NAME, e),
     };
-    let port = match container.get_host_port_ipv4(3306).await {
+    let port = match container.get_host_port_ipv4(I::CONTAINER_PORT).await {
         Ok(p) => p,
-        Err(e) => return from_err(&lua, "testcontainers_modules.mysql", e),
+        Err(e) => return from_err(&lua, I::OP_NAME, e),
     };
     let host = "127.0.0.1".to_string();
-    // `Mysql::default()` exposes db `test` to user `root` with no password.
-    let url = format!("mysql://root@{host}:{port}/test");
+    let url = I::url(&host, port);
     ok(
         &lua,
-        MysqlContainer {
+        TypedContainer::<I> {
             inner: Arc::new(Mutex::new(Some(container))),
             url,
             host,
@@ -103,9 +125,14 @@ async fn start_mysql(lua: Lua) -> mlua::Result<(Value, Value)> {
     )
 }
 
-impl UserData for MysqlContainer {
+impl<I> UserData for TypedContainer<I>
+where
+    I: testcontainers_modules::testcontainers::Image + 'static,
+{
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        add_container_methods(methods, |c| c.url.clone(), |c| c.host.clone(), |c| c.port);
+        methods.add_method("url", |_, this, _: ()| Ok(this.url.clone()));
+        methods.add_method("host", |_, this, _: ()| Ok(this.host.clone()));
+        methods.add_method("port", |_, this, _: ()| Ok(this.port as i32));
         methods.add_async_method("stop", |_, this, _: ()| {
             let inner = this.inner.clone();
             async move { stop_container(inner).await }
@@ -113,16 +140,13 @@ impl UserData for MysqlContainer {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Postgres
-// ---------------------------------------------------------------------------
-
-#[derive(Clone)]
-pub struct PostgresContainer {
-    inner: Arc<Mutex<Option<ContainerAsync<Postgres>>>>,
-    url: String,
-    host: String,
-    port: u16,
+#[instrument(
+    name = "testcontainers_modules.mysql",
+    target = "luau::lib::testcontainers_modules",
+    skip_all
+)]
+async fn start_mysql(lua: Lua) -> mlua::Result<(Value, Value)> {
+    start_typed::<Mysql>(lua).await
 }
 
 #[instrument(
@@ -131,54 +155,7 @@ pub struct PostgresContainer {
     skip_all
 )]
 async fn start_postgres(lua: Lua) -> mlua::Result<(Value, Value)> {
-    let container = match Postgres::default().start().await {
-        Ok(c) => c,
-        Err(e) => return from_err(&lua, "testcontainers_modules.postgres", e),
-    };
-    let port = match container.get_host_port_ipv4(5432).await {
-        Ok(p) => p,
-        Err(e) => return from_err(&lua, "testcontainers_modules.postgres", e),
-    };
-    let host = "127.0.0.1".to_string();
-    // `Postgres::default()` exposes db `postgres` to user `postgres`/`postgres`.
-    let url = format!("postgres://postgres:postgres@{host}:{port}/postgres");
-    ok(
-        &lua,
-        PostgresContainer {
-            inner: Arc::new(Mutex::new(Some(container))),
-            url,
-            host,
-            port,
-        },
-    )
-}
-
-impl UserData for PostgresContainer {
-    fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        add_container_methods(methods, |c| c.url.clone(), |c| c.host.clone(), |c| c.port);
-        methods.add_async_method("stop", |_, this, _: ()| {
-            let inner = this.inner.clone();
-            async move { stop_container(inner).await }
-        });
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Shared method registration / lifecycle
-// ---------------------------------------------------------------------------
-
-fn add_container_methods<T, M>(
-    methods: &mut M,
-    url: fn(&T) -> String,
-    host: fn(&T) -> String,
-    port: fn(&T) -> u16,
-) where
-    T: 'static,
-    M: UserDataMethods<T>,
-{
-    methods.add_method("url", move |_, this, _: ()| Ok(url(this)));
-    methods.add_method("host", move |_, this, _: ()| Ok(host(this)));
-    methods.add_method("port", move |_, this, _: ()| Ok(port(this) as i32));
+    start_typed::<Postgres>(lua).await
 }
 
 async fn stop_container<I>(inner: Arc<Mutex<Option<ContainerAsync<I>>>>) -> mlua::Result<()>
