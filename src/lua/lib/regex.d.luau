@@ -42,6 +42,11 @@
 -- - `${name}` — named capture
 -- - `$$` — literal `$`
 --
+-- `$N` where N exceeds the capture count substitutes an empty string
+-- silently — a documented quirk of the upstream crate. Prefer `${1}`
+-- braces to avoid typo-silent-drop patterns (`$11` parses as group 11,
+-- not group 1 followed by literal `1`).
+--
 -- ## Editor diagnostics
 --
 -- `declare` is a `.d.luau` keyword, not regular Luau syntax. Editors will
