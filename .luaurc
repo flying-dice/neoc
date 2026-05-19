@@ -6,6 +6,7 @@
     "src/lua/lib/compress.d.luau",
     "src/lua/lib/csv.d.luau",
     "src/lua/lib/json.d.luau",
+    "src/lua/lib/template.d.luau",
     "src/lua/lib/test.d.luau",
     "src/lua/lib/text.d.luau",
     "src/lua/lib/vcr.d.luau",

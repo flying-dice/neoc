@@ -34,6 +34,7 @@ criterion_group!(
     lib::json::benches,
     lib::mime::benches,
     lib::semver::benches,
+    lib::template::benches,
     lib::text::benches,
 );
 criterion_main!(benches);
