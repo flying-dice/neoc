@@ -70,27 +70,21 @@ async fn open(lua: Lua, url: String) -> mlua::Result<(Value, Value)> {
 
 impl UserData for Database {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        // TODO: clean-code - 0.85 - DRY: execute/query/query_one duplicate split_args+bind+is_closed prelude — extract prepare(args, pool, op_name)
         methods.add_async_method("execute", |lua, this, args: MultiValue| {
             let pool = this.pool.clone();
             async move {
-                let (sql, params) = match split_args(args) {
+                let op = "sqlx_postgres.execute";
+                let (sql, params) = match prepare(args, &pool) {
                     Ok(v) => v,
-                    Err(e) => return from_err(&lua, "sqlx_postgres.execute", e),
+                    Err(e) => return from_err(&lua, op, e),
                 };
-                let mut q = sqlx::query(&sql);
-                for p in params {
-                    q = match bind_param(q, p) {
-                        Ok(q) => q,
-                        Err(e) => return from_err(&lua, "sqlx_postgres.execute", e),
-                    };
-                }
-                if pool.is_closed() {
-                    return from_err(&lua, "sqlx_postgres.execute", "database is closed");
-                }
+                let q = match build_query(&sql, params) {
+                    Ok(q) => q,
+                    Err(e) => return from_err(&lua, op, e),
+                };
                 match q.execute(&*pool).await {
                     Ok(r) => ok(&lua, r.rows_affected() as i64),
-                    Err(e) => from_err(&lua, "sqlx_postgres.execute", e),
+                    Err(e) => from_err(&lua, op, e),
                 }
             }
         });
@@ -98,20 +92,15 @@ impl UserData for Database {
         methods.add_async_method("query", |lua, this, args: MultiValue| {
             let pool = this.pool.clone();
             async move {
-                let (sql, params) = match split_args(args) {
+                let op = "sqlx_postgres.query";
+                let (sql, params) = match prepare(args, &pool) {
                     Ok(v) => v,
-                    Err(e) => return from_err(&lua, "sqlx_postgres.query", e),
+                    Err(e) => return from_err(&lua, op, e),
                 };
-                let mut q = sqlx::query(&sql);
-                for p in params {
-                    q = match bind_param(q, p) {
-                        Ok(q) => q,
-                        Err(e) => return from_err(&lua, "sqlx_postgres.query", e),
-                    };
-                }
-                if pool.is_closed() {
-                    return from_err(&lua, "sqlx_postgres.query", "database is closed");
-                }
+                let q = match build_query(&sql, params) {
+                    Ok(q) => q,
+                    Err(e) => return from_err(&lua, op, e),
+                };
                 match q.fetch_all(&*pool).await {
                     Ok(rows) => {
                         let out = lua.create_table()?;
@@ -120,7 +109,7 @@ impl UserData for Database {
                         }
                         ok(&lua, out)
                     }
-                    Err(e) => from_err(&lua, "sqlx_postgres.query", e),
+                    Err(e) => from_err(&lua, op, e),
                 }
             }
         });
@@ -128,24 +117,19 @@ impl UserData for Database {
         methods.add_async_method("query_one", |lua, this, args: MultiValue| {
             let pool = this.pool.clone();
             async move {
-                let (sql, params) = match split_args(args) {
+                let op = "sqlx_postgres.query_one";
+                let (sql, params) = match prepare(args, &pool) {
                     Ok(v) => v,
-                    Err(e) => return from_err(&lua, "sqlx_postgres.query_one", e),
+                    Err(e) => return from_err(&lua, op, e),
                 };
-                let mut q = sqlx::query(&sql);
-                for p in params {
-                    q = match bind_param(q, p) {
-                        Ok(q) => q,
-                        Err(e) => return from_err(&lua, "sqlx_postgres.query_one", e),
-                    };
-                }
-                if pool.is_closed() {
-                    return from_err(&lua, "sqlx_postgres.query_one", "database is closed");
-                }
+                let q = match build_query(&sql, params) {
+                    Ok(q) => q,
+                    Err(e) => return from_err(&lua, op, e),
+                };
                 match q.fetch_optional(&*pool).await {
                     Ok(Some(row)) => ok(&lua, row_to_table(&lua, &row)?),
                     Ok(None) => ok(&lua, Value::Nil),
-                    Err(e) => from_err(&lua, "sqlx_postgres.query_one", e),
+                    Err(e) => from_err(&lua, op, e),
                 }
             }
         });
@@ -158,6 +142,21 @@ impl UserData for Database {
             }
         });
     }
+}
+
+fn prepare(args: MultiValue, pool: &PgPool) -> Result<(String, Vec<Value>), String> {
+    let (sql, params) = split_args(args)?;
+    if pool.is_closed() {
+        return Err("database is closed".into());
+    }
+    Ok((sql, params))
+}
+
+fn build_query<'q>(
+    sql: &'q str,
+    params: Vec<Value>,
+) -> Result<Query<'q, Postgres, PgArguments>, String> {
+    params.into_iter().try_fold(sqlx::query(sql), bind_param)
 }
 
 // ---------------------------------------------------------------------------
