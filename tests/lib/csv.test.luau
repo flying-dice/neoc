@@ -85,6 +85,14 @@ describe("csv", function()
             expect(string.find(e, '…"$') ~= nil).toBeTruthy()
         end)
 
+        -- given:  Windows-style CRLF input with a field-count overflow on record 2
+        -- when:   csv.parse raises UnequalLengths
+        -- then:   snippet is the record bytes only, no leading \n carried over from the CRLF
+        test("error snippet strips leading lf from crlf input", function()
+            local _, e = csv.parse('a,b\r\n"x",y,extra\r\n')
+            expect(string.find(e, ': "\"x",y,extra"$') ~= nil).toBeTruthy()
+        end)
+
         test("empty fields untyped are empty strings", function()
             local r = csv.parse("a,,c")
             expect(r[1][1]).toBe("a")

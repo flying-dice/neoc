@@ -925,7 +925,6 @@ fn validate_headers<R: Read>(
     if let Some(dup) = find_duplicate(&fields) {
         let refs: Vec<&str> = rec.iter().collect();
         let raw = raw_line_text(
-            None,
             Some(0),
             Some(end),
             capture,
@@ -998,15 +997,7 @@ fn error_line(
             .map(|f| String::from_utf8_lossy(f).into_owned())
             .collect();
         let refs: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
-        raw_line_text(
-            Some(rec),
-            start,
-            reader_byte,
-            capture,
-            delimiter,
-            quote,
-            &refs,
-        )
+        raw_line_text(start, reader_byte, capture, delimiter, quote, &refs)
     } else {
         String::new()
     }
@@ -1015,7 +1006,6 @@ fn error_line(
 /// Slice `[start, end)` out of the capture and strip the trailing record
 /// terminator; on miss fall back to reconstructed line from `fallback_fields`.
 fn raw_line_text(
-    _record: Option<&csv::ByteRecord>,
     start: Option<u64>,
     end: Option<u64>,
     capture: Option<&Arc<Mutex<RawCapture>>>,
@@ -1034,6 +1024,12 @@ fn raw_line_text(
 
 fn strip_terminator(bytes: &[u8]) -> &[u8] {
     let mut b = bytes;
+    // The csv crate places `Position::byte()` after the first terminator byte.
+    // For CRLF that lands on the `\n`, so the slice starts with the prior
+    // record's `\n` — strip it.
+    if b.first() == Some(&b'\n') {
+        b = &b[1..];
+    }
     if b.last() == Some(&b'\n') {
         b = &b[..b.len() - 1];
     }
@@ -1279,6 +1275,23 @@ mod tests {
         assert!(
             e.contains(r#""he said ""hi""",1,extra"#),
             "expected escaped quotes preserved, got: {e}"
+        );
+    }
+
+    // Given:  Windows-style CRLF-terminated input with a field-count overflow on record 2
+    // When:   csv.parse raises UnequalLengths
+    // Then:   the snippet is the raw record bytes, no leading \n carried over from the CRLF
+    #[test]
+    fn parse_error_strips_leading_lf_from_crlf_input() {
+        let lua = engine();
+        let (_, e): (Option<mlua::Table>, Option<String>) = lua
+            .load(r#"return csv.parse('a,b\r\n"x",y,extra\r\n')"#)
+            .eval()
+            .unwrap();
+        let e = e.unwrap();
+        assert!(
+            e.ends_with(r#": ""x",y,extra""#),
+            "expected snippet with no leading \\n, got: {e}"
         );
     }
 
