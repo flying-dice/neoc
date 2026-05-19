@@ -219,6 +219,18 @@ describe("regex", function()
             expect(parts[1]).toBe("a")
             expect(parts[2]).toBe("b,c,d")
         end)
+
+        test("split error carries module-scoped prefix", function()
+            local parts, err = regex.Pattern.new(","):split("a,b", -1)
+            expect(parts).toBeNil()
+            expect(err).toContain("regex.Pattern.split:")
+        end)
+
+        test("find returns a single value (infallible)", function()
+            local p = regex.Pattern.new("\\d+")
+            expect(select("#", p:find("abc 123"))).toBe(1)
+            expect(select("#", p:find("abc"))).toBe(1)
+        end)
     end)
 
     -- ── Unicode ──────────────────────────────────────────────────────────────

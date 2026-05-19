@@ -74,8 +74,8 @@ impl UserData for PatternHandle {
 
         methods.add_method("find", |lua, this, text: String| {
             match this.re.captures(&text) {
-                Some(caps) => ok(lua, build_match(lua, &this.re, &caps)?),
-                None => Ok((Value::Nil, Value::Nil)),
+                Some(caps) => Ok(Some(build_match(lua, &this.re, &caps)?)),
+                None => Ok(None),
             }
         });
 
@@ -107,7 +107,7 @@ impl UserData for PatternHandle {
         methods.add_method(
             "split",
             |lua, this, (text, limit): (String, Option<i64>)| {
-                split_into_table(lua, &this.re, &text, limit, "Pattern.split")
+                split_into_table(lua, &this.re, &text, limit, "regex.Pattern.split")
             },
         );
 
@@ -786,6 +786,48 @@ mod tests {
         assert!(matches!(val, Value::Nil));
         let e = e.unwrap();
         assert!(e.starts_with("regex.Pattern.new:"), "got: {e}");
+    }
+
+    /// `Pattern:find` is infallible — the regex is already compiled, so a
+    /// no-match cannot raise. Return shape must be a bare `Match?`, not the
+    /// `(Match?, string?)` tuple the flat `regex.find` uses. Lock the
+    /// observable return arity so the d.luau signature stays accurate.
+    #[test]
+    fn pattern_find_returns_single_value() {
+        let lua = engine();
+        let (hit, miss): (i64, i64) = lua
+            .load(
+                r##"
+                local p = regex.Pattern.new("\\d+")
+                return
+                    select("#", p:find("abc 123")),
+                    select("#", p:find("abc"))
+            "##,
+            )
+            .eval()
+            .unwrap();
+        assert_eq!(hit, 1, "Pattern:find must return exactly one value on hit");
+        assert_eq!(
+            miss, 1,
+            "Pattern:find must return exactly one value on miss"
+        );
+    }
+
+    /// UserData methods carry the full `module.Type.method` error prefix —
+    /// matching `semver.Version.increment`, `glob.Glob.new`, etc.
+    #[test]
+    fn pattern_split_error_prefix_is_module_scoped() {
+        let lua = engine();
+        let (val, e): (Value, Option<String>) = lua
+            .load(r#"return regex.Pattern.new(","):split("a,b", -1)"#)
+            .eval()
+            .unwrap();
+        assert!(matches!(val, Value::Nil));
+        let e = e.unwrap();
+        assert!(
+            e.starts_with("regex.Pattern.split:"),
+            "got: {e} — expected 'regex.Pattern.split:' prefix"
+        );
     }
 
     #[test]
