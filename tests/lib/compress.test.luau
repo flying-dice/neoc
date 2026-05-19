@@ -35,6 +35,16 @@ describe("compress", function()
             local decompressed = compress.decode("zstd", compressed)
             expect(decompressed).toBe(big)
         end)
+
+        test("empty round-trip", function()
+            for _, fmt in { "gzip", "zlib", "zstd", "brotli" } do
+                local compressed, enc_err = compress.encode(fmt, "")
+                expect(enc_err).toBeNil()
+                local decompressed, dec_err = compress.decode(fmt, compressed)
+                expect(dec_err).toBeNil()
+                expect(decompressed).toBe("")
+            end
+        end)
     end)
 
     -- encode ------------------------------------------------------------------

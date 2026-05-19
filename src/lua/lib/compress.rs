@@ -26,17 +26,16 @@ fn encode(
     lua: &Lua,
     (format, data, opts): (String, mlua::String, Option<Table>),
 ) -> mlua::Result<(Value, Value)> {
-    let raw = data.as_bytes();
-    let bytes: &[u8] = &raw;
+    let bytes = data.as_bytes();
     let level = match extract_integer_opt(opts.as_ref(), "level", "compress.encode") {
         Ok(l) => l,
         Err(msg) => return err(lua, msg),
     };
     match format.as_str() {
-        "gzip" => encode_gzip(lua, bytes, level),
-        "zlib" => encode_zlib(lua, bytes, level),
-        "zstd" => encode_zstd(lua, bytes, level),
-        "brotli" => encode_brotli(lua, bytes, level),
+        "gzip" => encode_gzip(lua, &bytes, level),
+        "zlib" => encode_zlib(lua, &bytes, level),
+        "zstd" => encode_zstd(lua, &bytes, level),
+        "brotli" => encode_brotli(lua, &bytes, level),
         _ => err(lua, format!("compress.encode: unknown format '{format}'")),
     }
 }
@@ -46,8 +45,7 @@ fn decode(
     lua: &Lua,
     (format, data, opts): (String, mlua::String, Option<Table>),
 ) -> mlua::Result<(Value, Value)> {
-    let raw = data.as_bytes();
-    let bytes: &[u8] = &raw;
+    let bytes = data.as_bytes();
     if bytes.is_empty() {
         return err(
             lua,
@@ -61,10 +59,10 @@ fn decode(
         Err(msg) => return err(lua, msg),
     };
     match format.as_str() {
-        "gzip" => decode_gzip(lua, bytes, max_size),
-        "zlib" => decode_zlib(lua, bytes, max_size),
-        "zstd" => decode_zstd(lua, bytes, max_size),
-        "brotli" => decode_brotli(lua, bytes, max_size),
+        "gzip" => decode_gzip(lua, &bytes, max_size),
+        "zlib" => decode_zlib(lua, &bytes, max_size),
+        "zstd" => decode_zstd(lua, &bytes, max_size),
+        "brotli" => decode_brotli(lua, &bytes, max_size),
         _ => err(lua, format!("compress.decode: unknown format '{format}'")),
     }
 }
@@ -241,7 +239,13 @@ fn decode_brotli(lua: &Lua, data: &[u8], max_size: usize) -> mlua::Result<(Value
 
 #[cfg(feature = "bench")]
 pub fn benches(c: &mut criterion::Criterion) {
+    use std::io::Write;
+
+    use brotli::{CompressorWriter, Decompressor};
     use criterion::{Throughput, black_box};
+    use flate2::Compression;
+    use flate2::read::{GzDecoder, ZlibDecoder};
+    use flate2::write::{GzEncoder, ZlibEncoder};
 
     let lua = crate::lua::sandbox::make_engine().expect("engine");
     let payload = "The quick brown fox jumps over the lazy dog. ".repeat(50);
@@ -250,34 +254,152 @@ pub fn benches(c: &mut criterion::Criterion) {
     let mut g = c.benchmark_group("compress");
     g.throughput(Throughput::Bytes(payload.len() as u64));
 
-    for format in &["gzip", "zlib", "zstd", "brotli"] {
-        let encode_chunk: mlua::Function = lua
-            .load(format!(
-                r#"return function(p) return (require("lib:compress")).encode("{format}", p) end"#
-            ))
-            .eval()
-            .expect("chunk");
-        g.bench_function(format!("{format}_encode"), |b| {
-            b.iter(|| {
-                let _: mlua::String = encode_chunk.call(black_box(payload_lua.clone())).unwrap();
-            });
-        });
+    // (format_name, default_level, max_level)
+    let formats: [(&str, i64, i64); 4] = [
+        ("gzip", 6, 9),
+        ("zlib", 6, 9),
+        ("zstd", 3, 22),
+        ("brotli", 6, 11),
+    ];
 
-        let compressed_lua: mlua::String =
-            encode_chunk.call(payload_lua.clone()).expect("compress");
-        let decode_chunk: mlua::Function = lua
-            .load(format!(
-                r#"return function(p) return (require("lib:compress")).decode("{format}", p) end"#
-            ))
-            .eval()
-            .expect("chunk");
-        g.bench_function(format!("{format}_decode"), |b| {
-            b.iter(|| {
-                let _: mlua::String = decode_chunk
-                    .call(black_box(compressed_lua.clone()))
-                    .unwrap();
+    // --- library tier --- pure crate, no mlua. Isolates compression cost.
+
+    for (fmt, def, max) in formats {
+        for (suffix, level) in [("default", def), ("max", max)] {
+            let name = format!("library/{fmt}_encode_{suffix}");
+            g.bench_function(name, |b| {
+                b.iter(|| match fmt {
+                    "gzip" => {
+                        let mut enc = GzEncoder::new(Vec::new(), Compression::new(level as u32));
+                        enc.write_all(black_box(payload.as_bytes())).unwrap();
+                        let _ = enc.finish().unwrap();
+                    }
+                    "zlib" => {
+                        let mut enc = ZlibEncoder::new(Vec::new(), Compression::new(level as u32));
+                        enc.write_all(black_box(payload.as_bytes())).unwrap();
+                        let _ = enc.finish().unwrap();
+                    }
+                    "zstd" => {
+                        let mut enc = zstd::Encoder::new(Vec::new(), level as i32).unwrap();
+                        enc.write_all(black_box(payload.as_bytes())).unwrap();
+                        let _ = enc.finish().unwrap();
+                    }
+                    "brotli" => {
+                        let mut out = Vec::new();
+                        {
+                            let mut w = CompressorWriter::new(&mut out, 4096, level as u32, 22);
+                            w.write_all(black_box(payload.as_bytes())).unwrap();
+                        }
+                    }
+                    _ => unreachable!(),
+                });
             });
+        }
+
+        for (suffix, level) in [("default", def), ("max", max)] {
+            let compressed: Vec<u8> = match fmt {
+                "gzip" => {
+                    let mut enc = GzEncoder::new(Vec::new(), Compression::new(level as u32));
+                    enc.write_all(payload.as_bytes()).unwrap();
+                    enc.finish().unwrap()
+                }
+                "zlib" => {
+                    let mut enc = ZlibEncoder::new(Vec::new(), Compression::new(level as u32));
+                    enc.write_all(payload.as_bytes()).unwrap();
+                    enc.finish().unwrap()
+                }
+                "zstd" => {
+                    let mut enc = zstd::Encoder::new(Vec::new(), level as i32).unwrap();
+                    enc.write_all(payload.as_bytes()).unwrap();
+                    enc.finish().unwrap()
+                }
+                "brotli" => {
+                    let mut out = Vec::new();
+                    {
+                        let mut w = CompressorWriter::new(&mut out, 4096, level as u32, 22);
+                        w.write_all(payload.as_bytes()).unwrap();
+                    }
+                    out
+                }
+                _ => unreachable!(),
+            };
+            let name = format!("library/{fmt}_decode_{suffix}");
+            g.bench_function(name, |b| {
+                b.iter(|| match fmt {
+                    "gzip" => {
+                        let r = GzDecoder::new(black_box(&compressed[..]));
+                        let _ = read_with_limit(r, DEFAULT_MAX_SIZE).unwrap();
+                    }
+                    "zlib" => {
+                        let r = ZlibDecoder::new(black_box(&compressed[..]));
+                        let _ = read_with_limit(r, DEFAULT_MAX_SIZE).unwrap();
+                    }
+                    "zstd" => {
+                        let r = zstd::Decoder::new(black_box(&compressed[..])).unwrap();
+                        let _ = read_with_limit(r, DEFAULT_MAX_SIZE).unwrap();
+                    }
+                    "brotli" => {
+                        let r = Decompressor::new(black_box(&compressed[..]), 4096);
+                        let _ = read_with_limit(r, DEFAULT_MAX_SIZE).unwrap();
+                    }
+                    _ => unreachable!(),
+                });
+            });
+        }
+    }
+
+    // --- into_out_lua tier --- identity mlua marshalling, no compression.
+    // One bench: payload size is constant across all compress benches.
+
+    let ident: mlua::Function = lua
+        .create_function(|_, s: mlua::String| Ok(s))
+        .expect("ident");
+    g.bench_function("into_out_lua", |b| {
+        b.iter(|| {
+            let _: mlua::String = ident.call(black_box(payload_lua.clone())).unwrap();
         });
+    });
+
+    // --- through_lua tier --- end-to-end via require("lib:compress").
+
+    for (fmt, def, max) in formats {
+        for (suffix, level) in [("default", def), ("max", max)] {
+            let chunk: mlua::Function = lua
+                .load(format!(
+                    r#"return function(p) return (require("lib:compress")).encode("{fmt}", p, {{ level = {level} }}) end"#
+                ))
+                .eval()
+                .expect("chunk");
+            let name = format!("through_lua/{fmt}_encode_{suffix}");
+            g.bench_function(name, |b| {
+                b.iter(|| {
+                    let _: mlua::String = chunk.call(black_box(payload_lua.clone())).unwrap();
+                });
+            });
+        }
+
+        for (suffix, level) in [("default", def), ("max", max)] {
+            let encode_chunk: mlua::Function = lua
+                .load(format!(
+                    r#"return function(p) return (require("lib:compress")).encode("{fmt}", p, {{ level = {level} }}) end"#
+                ))
+                .eval()
+                .expect("encode chunk");
+            let compressed: mlua::String =
+                encode_chunk.call(payload_lua.clone()).expect("compress");
+            let decode_chunk: mlua::Function = lua
+                .load(format!(
+                    r#"return function(p) return (require("lib:compress")).decode("{fmt}", p) end"#
+                ))
+                .eval()
+                .expect("decode chunk");
+            let name = format!("through_lua/{fmt}_decode_{suffix}");
+            g.bench_function(name, |b| {
+                b.iter(|| {
+                    let _: mlua::String = decode_chunk.call(black_box(compressed.clone())).unwrap();
+                });
+            });
+        }
     }
 
     g.finish();
@@ -391,6 +513,27 @@ mod tests {
             assert!(
                 !s.as_bytes().is_empty(),
                 "{format}: empty input should produce non-empty compressed output"
+            );
+        }
+    }
+
+    #[test]
+    fn round_trip_empty() {
+        let lua = engine();
+        for format in ["gzip", "zlib", "zstd", "brotli"] {
+            let s: mlua::String = lua
+                .load(format!(
+                    r#"
+                    local compressed = compress.encode("{format}", "")
+                    return compress.decode("{format}", compressed)
+                    "#
+                ))
+                .eval()
+                .unwrap();
+            assert_eq!(
+                &*s.as_bytes(),
+                b"",
+                "{format}: encode('') then decode should yield ''"
             );
         }
     }
