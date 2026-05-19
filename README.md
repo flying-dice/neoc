@@ -77,13 +77,7 @@ neoc fetch.luau
 
 ## What's inside
 
-Three layers, one binary.
-
-| Layer | Purpose | Source |
-|---|---|---|
-| `std:*` | Rust's standard library, 1:1 in Luau | [src/lua/std/](src/lua/std) |
-| `lib:*` | Curated helpers and gap-fillers | [src/lua/lib/](src/lua/lib) |
-| `vnd:*` | Handpicked third-party libraries | [src/lua/vnd/](src/lua/vnd) |
+Three layers, one binary — `std:*` mirrors Rust's standard library, `lib:*` are curated helpers and gap-fillers, `vnd:*` are handpicked third-party libraries. Browse [src/lua/](src/lua) for the live catalogue.
 
 `require("namespace:name")` is the only way in. No ambient globals, no path search. Unknown names error with the catalogue.
 
