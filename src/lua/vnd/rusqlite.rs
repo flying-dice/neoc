@@ -244,6 +244,31 @@ fn conn_mut(handle: &Arc<LocalConn>) -> Result<&mut rusqlite::Connection, &'stat
     slot.as_mut().ok_or("database is closed")
 }
 
+fn to_sql_refs(lua_params: &[LuaToSql]) -> Vec<&dyn ToSql> {
+    // rusqlite's `params_from_iter` takes any iterator of &dyn ToSql; we
+    // materialize them into a Vec<&dyn ToSql> first so the borrow lifetimes
+    // line up cleanly with prepare_cached's borrow of conn.
+    lua_params.iter().map(|p| p as &dyn ToSql).collect()
+}
+
+fn column_names(stmt: &rusqlite::Statement<'_>) -> Vec<String> {
+    (0..stmt.column_count())
+        .map(|i| stmt.column_name(i).unwrap_or("").to_owned())
+        .collect()
+}
+
+fn materialize_row(
+    row: &rusqlite::Row<'_>,
+    col_names: &[String],
+) -> rusqlite::Result<Vec<(String, SqlValue)>> {
+    let mut out = Vec::with_capacity(col_names.len());
+    for (i, name) in col_names.iter().enumerate() {
+        let v = row.get_ref(i)?;
+        out.push((name.clone(), value_ref_to_owned(v)?));
+    }
+    Ok(out)
+}
+
 fn run_execute(
     lua: &Lua,
     handle: &Arc<LocalConn>,
@@ -258,10 +283,7 @@ fn run_execute(
     let lua_params: Vec<LuaToSql> = params.into_iter().map(LuaToSql).collect();
     let result = (|| -> rusqlite::Result<u64> {
         let mut stmt = conn.prepare_cached(sql)?;
-        // rusqlite's `params_from_iter` takes any iterator of &dyn ToSql;
-        // we materialize them into a Vec<&dyn ToSql> first so the borrow
-        // lifetimes line up cleanly with prepare_cached's borrow of conn.
-        let refs: Vec<&dyn ToSql> = lua_params.iter().map(|p| p as &dyn ToSql).collect();
+        let refs = to_sql_refs(&lua_params);
         let n = stmt.execute(rusqlite::params_from_iter(refs.iter().copied()))?;
         Ok(n as u64)
     })();
@@ -271,7 +293,6 @@ fn run_execute(
     }
 }
 
-// TODO: clean-code - 0.85 - DRY: run_query and run_query_one duplicate column-name extraction, ref binding, and row materialization
 fn run_query(
     lua: &Lua,
     handle: &Arc<LocalConn>,
@@ -286,22 +307,12 @@ fn run_query(
     let lua_params: Vec<LuaToSql> = params.into_iter().map(LuaToSql).collect();
     let result = (|| -> rusqlite::Result<Vec<Vec<(String, SqlValue)>>> {
         let mut stmt = conn.prepare_cached(sql)?;
-        let col_count = stmt.column_count();
-        let col_names: Vec<String> = (0..col_count)
-            .map(|i| stmt.column_name(i).unwrap_or("").to_owned())
-            .collect();
-        let refs: Vec<&dyn ToSql> = lua_params.iter().map(|p| p as &dyn ToSql).collect();
-        let rows = stmt
-            .query_map(rusqlite::params_from_iter(refs.iter().copied()), |row| {
-                let mut out = Vec::with_capacity(col_count);
-                for (i, name) in col_names.iter().enumerate() {
-                    let v = row.get_ref(i)?;
-                    out.push((name.clone(), value_ref_to_owned(v)?));
-                }
-                Ok(out)
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
+        let col_names = column_names(&stmt);
+        let refs = to_sql_refs(&lua_params);
+        stmt.query_map(rusqlite::params_from_iter(refs.iter().copied()), |row| {
+            materialize_row(row, &col_names)
+        })?
+        .collect()
     })();
     match result {
         Ok(rows) => {
@@ -329,23 +340,12 @@ fn run_query_one(
     let lua_params: Vec<LuaToSql> = params.into_iter().map(LuaToSql).collect();
     let result = (|| -> rusqlite::Result<Option<Vec<(String, SqlValue)>>> {
         let mut stmt = conn.prepare_cached(sql)?;
-        let col_count = stmt.column_count();
-        let col_names: Vec<String> = (0..col_count)
-            .map(|i| stmt.column_name(i).unwrap_or("").to_owned())
-            .collect();
-        let refs: Vec<&dyn ToSql> = lua_params.iter().map(|p| p as &dyn ToSql).collect();
+        let col_names = column_names(&stmt);
+        let refs = to_sql_refs(&lua_params);
         let mut rows = stmt.query(rusqlite::params_from_iter(refs.iter().copied()))?;
-        match rows.next()? {
-            Some(row) => {
-                let mut out = Vec::with_capacity(col_count);
-                for (i, name) in col_names.iter().enumerate() {
-                    let v = row.get_ref(i)?;
-                    out.push((name.clone(), value_ref_to_owned(v)?));
-                }
-                Ok(Some(out))
-            }
-            None => Ok(None),
-        }
+        rows.next()?
+            .map(|row| materialize_row(row, &col_names))
+            .transpose()
     })();
     match result {
         Ok(Some(row)) => ok(lua, row_to_lua_table(lua, row)?),
