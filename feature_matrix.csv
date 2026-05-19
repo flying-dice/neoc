@@ -1,0 +1,102 @@
+Feature,Python,Node.js,Deno,Bun,Go,Rust (std),Java,.NET,Ruby,PHP,Luau,neoc
+File I/O,io+os,node:fs,Deno+@std/fs,Bun.file+node:fs,os+io,std::fs+io,java.io+nio,System.IO,File+IO,fopen/fread,—,std:fs+std:io
+Paths,os.path+pathlib,node:path,@std/path,node:path,path+filepath,std::path,java.nio.file.Path,System.IO.Path,Pathname,pathinfo,—,std:fs
+Glob/fnmatch,glob+fnmatch,fs.glob,@std/fs,Bun.Glob,filepath.Glob,—,PathMatcher,EnumerateFiles,Dir.glob,glob(),—,lib:glob
+Directory walk,os.walk,fs.readdir,@std/fs/walk,fs.readdir,filepath.Walk,fs::read_dir,Files.walk,EnumerateFiles,Dir+Find,RecursiveDirIter,—,std:fs
+Env vars,os.environ,process.env,Deno.env,Bun.env,os.Getenv,std::env,System.getenv,Environment,ENV,getenv,—,std:env
+CLI args,sys.argv+argparse,process.argv+parseArgs,Deno.args,Bun.argv,os.Args+flag,std::env::args,String[] args,Environment.GetCommandLineArgs,ARGV+OptionParser,$argv+getopt,—,std:env
+Subprocess,subprocess,child_process,Deno.Command,Bun.spawn,os/exec,std::process,ProcessBuilder,Process,Process+Open3,proc_open,—,—
+Signals,signal,process signals,addSignalListener,process signals,os/signal,—,sun.misc.Signal,PosixSignalRegistration,Signal,pcntl_signal,—,—
+Temp files,tempfile,fs.mkdtemp,Deno.makeTempFile,node:fs,os.CreateTemp,—,Files.createTempFile,Path.GetTempFileName,Tempfile,tmpfile,—,—
+TTY/terminal,tty+termios+curses,node:tty+readline,Deno.stdin.isTerminal,node:tty,—,—,java.io.Console,Console,IO.tty?+Readline,posix_isatty,—,—
+Filesystem watch,—,fs.watch,Deno.watchFs,fs.watch,—,—,WatchService,FileSystemWatcher,—,inotify,—,—
+Regex,re,RegExp,RegExp,RegExp,regexp,—,java.util.regex,System.Text.RegularExpressions,Regexp,preg_*,string.match,—
+Unicode normalize,unicodedata,String.normalize,String.normalize,String.normalize,—,—,java.text.Normalizer,System.Text,String.unicode_normalize,intl,—,—
+String format,f-strings+%,template lit,template lit,template lit,fmt,std::fmt,String.format,String.Format,sprintf+format,sprintf,string.format,string.format
+Templating,string.Template,—,—,—,text/template+html/template,—,—,Razor,ERB,—,—,—
+JSON,json,JSON,JSON,JSON,encoding/json,—,—,System.Text.Json,json,json_encode,—,lib:json+vnd:serde_json
+YAML,—,—,@std/yaml,—,—,—,—,—,psych,yaml ext,—,vnd:serde_yaml
+TOML,tomllib,—,@std/toml,—,—,—,—,—,—,—,—,vnd:toml
+XML,xml.etree+sax+dom,—,@std/xml,—,encoding/xml,—,javax.xml,System.Xml,rexml,SimpleXML+DOMDocument,—,vnd:quick_xml
+CSV,csv,—,@std/csv,—,encoding/csv,—,—,—,csv,fputcsv,—,lib:csv
+INI/config,configparser,—,@std/ini,—,—,—,Properties,ConfigurationManager,—,parse_ini_file,—,lib:ini
+Base64,base64,Buffer,btoa+atob,Buffer,encoding/base64,—,java.util.Base64,Convert.ToBase64String,Base64,base64_*,—,lib:base64
+Hex,binascii,Buffer,—,Buffer,encoding/hex,—,HexFormat,Convert.ToHexString,unpack,bin2hex,—,—
+Binary pack/struct,struct,Buffer+DataView,DataView,DataView,encoding/binary,—,ByteBuffer,BinaryReader/Writer,pack/unpack,pack/unpack,string.pack,—
+gzip/zlib,gzip+zlib,node:zlib,@std/io,node:zlib,compress/gzip+zlib,—,GZIPStream,System.IO.Compression,Zlib,gzopen+zlib,—,lib:compress
+bzip2,bz2,—,—,—,—,—,—,—,—,bzopen,—,—
+lzma/xz,lzma,—,—,—,—,—,—,—,—,xz ext,—,—
+zstd,—,—,—,—,—,—,—,—,—,—,—,—
+zip archive,zipfile,—,—,—,archive/zip,—,java.util.zip,System.IO.Compression,—,ZipArchive,—,—
+tar archive,tarfile,—,—,—,archive/tar,—,—,System.Formats.Tar,—,PharData,—,—
+Hash (SHA/MD5),hashlib,node:crypto,crypto.subtle+@std/crypto,Bun.hash+node:crypto,crypto/sha256+md5,—,MessageDigest,System.Security.Cryptography,Digest,hash(),—,—
+HMAC,hmac,node:crypto,crypto.subtle,node:crypto,crypto/hmac,—,Mac,HMACSHA256,OpenSSL::HMAC,hash_hmac,—,—
+Symmetric crypto (AES),—,node:crypto,crypto.subtle,node:crypto,crypto/aes+cipher,—,Cipher,AesGcm,OpenSSL::Cipher,openssl_encrypt,—,—
+Asymmetric crypto,—,node:crypto,crypto.subtle,node:crypto,crypto/rsa+ecdsa,—,KeyPairGenerator,RSA+ECDsa,OpenSSL::PKey,openssl_*,—,—
+TLS,ssl,node:tls,Deno.connectTls,node:tls,crypto/tls,—,javax.net.ssl,SslStream,OpenSSL::SSL,openssl,—,vnd:hyper (indirect)
+CSPRNG,secrets,crypto.randomBytes,getRandomValues,crypto.randomBytes,crypto/rand,—,SecureRandom,RandomNumberGenerator,SecureRandom,random_bytes,—,—
+UUID,uuid,crypto.randomUUID,crypto.randomUUID,crypto.randomUUID,—,—,java.util.UUID,System.Guid,SecureRandom.uuid,—,—,—
+DateTime,datetime,Date+Temporal,Date+Temporal,Date+Temporal,time,—,java.time,System.DateTime,Time+Date,DateTime,os.time,—
+Timezone,zoneinfo,Intl+Temporal,Temporal,Temporal,time.LoadLocation,—,java.time.ZoneId,TimeZoneInfo,Time (limited),DateTimeZone,—,—
+Monotonic clock,time.monotonic,performance.now,performance.now,performance.now,time.Now,std::time::Instant,System.nanoTime,Stopwatch,Process.clock_gettime,hrtime,os.clock,—
+Timers/sleep,sched+time.sleep,setTimeout,setTimeout,setTimeout,time.Sleep+Timer,thread::sleep,ScheduledExecutor,Task.Delay,sleep,sleep,task.wait,std:task
+Math,math,Math,Math,Math,math,std primitives,java.lang.Math,System.Math,Math,math fns,math,math (Luau)
+Random PRNG,random,Math.random,Math.random,Math.random,math/rand,—,java.util.Random,System.Random,Random,mt_rand,math.random,math.random
+Statistics,statistics,—,—,—,—,—,—,—,—,stats ext,—,—
+BigInt,int (native),BigInt,BigInt,BigInt,math/big,—,BigInteger,BigInteger,Integer (native),GMP ext,—,—
+Decimal,decimal,—,—,—,—,—,BigDecimal,decimal,BigDecimal,bcmath ext,—,—
+TCP/UDP sockets,socket,node:net+dgram,Deno.connect+listen,node:net,net,std::net,java.net,System.Net.Sockets,Socket+UDPSocket,sockets ext,—,std:net
+HTTP client,urllib+http.client,node:http+fetch,fetch,fetch+Bun.fetch,net/http,—,HttpClient,HttpClient,Net::HTTP,curl+streams,—,lib:http
+HTTP server,http.server,node:http,Deno.serve,Bun.serve,net/http,—,com.sun.net.httpserver,Kestrel+HttpListener,WEBrick,built-in SAPI,—,vnd:hyper
+WebSocket,—,native (22+),WebSocket+upgradeWebSocket,WebSocket+Bun.serve,—,—,java.net.WebSocket,ClientWebSocket,—,—,—,—
+DNS,socket+dnspython,node:dns,Deno.resolveDns,node:dns,net.LookupHost,—,InetAddress,System.Net.Dns,Resolv,dns_get_record,—,std:net
+URL parsing,urllib.parse,node:url+URL,URL,URL,net/url,—,java.net.URI,System.Uri,URI,parse_url,—,—
+IP addresses,ipaddress,net.isIP,@std/net,—,net.IP,std::net::IpAddr,InetAddress,System.Net.IPAddress,IPAddr,inet_*,—,std:net
+Email/SMTP,smtplib+email,—,—,—,net/smtp+net/mail,—,jakarta.mail,System.Net.Mail,Net::SMTP,mail+SMTP,—,—
+Threads,threading,worker_threads,Worker,Worker,goroutines,std::thread,java.lang.Thread,System.Threading.Thread,Thread,pthreads ext,—,std:thread+std:workers
+Async/await,asyncio,Promise+async,Promise+async,Promise+async,goroutines+chan,—,CompletableFuture,Task+async,Fiber+Async,fibers ext,task,std:task
+Channels/queues,queue,—,BroadcastChannel,—,chan,std::sync::mpsc,BlockingQueue,System.Threading.Channels,Queue,—,—,std:workers
+Locks/mutex,threading.Lock,—,—,—,sync.Mutex,std::sync::Mutex,ReentrantLock,Monitor+lock,Mutex,—,—,—
+Atomics,—,Atomics,Atomics,Atomics,sync/atomic,std::sync::atomic,AtomicInteger,Interlocked,—,—,—,—
+Process pool,multiprocessing,cluster,—,—,—,—,ForkJoinPool,Parallel,—,—,—,—
+Collections (deque/heap/ordered),collections+heapq,—,—,—,container/list+heap+ring,std::collections,java.util.*,System.Collections.Generic,—,SplStack/SplQueue,—,std:collections
+Set,set,Set,Set,Set,—,HashSet,HashSet,HashSet,Set,—,—,std:collections
+Map/Dict,dict,Map,Map,Map,map,HashMap+BTreeMap,HashMap+TreeMap,Dictionary,Hash,array,table,std:collections+table
+Logging,logging,—,—,—,log+log/slog,—,java.util.logging,ILogger,Logger,error_log,—,—
+Profiling,cProfile+profile,—,—,—,runtime/pprof,—,—,—,—,xdebug,—,—
+Debugger hooks,pdb+sys.settrace,inspector,inspector,inspector,runtime/debug,—,JPDA,System.Diagnostics,debug,xdebug,debug.*,—
+GC controls,gc,—,—,—,runtime,—,System.gc,GC,GC,gc_*,collectgarbage,collectgarbage
+Reflection,inspect,—,—,—,reflect,std::any (limited),java.lang.reflect,System.Reflection,Module/Class,Reflection,—,—
+Locale/i18n,locale+gettext,Intl,Intl,Intl,golang.org/x/text,—,java.util.Locale,System.Globalization,I18n (gem),intl,—,—
+SQLite,sqlite3,—,—,bun:sqlite,—,—,—,Microsoft.Data.Sqlite,—,SQLite3,—,vnd:rusqlite
+SQL drivers,—,—,—,—,database/sql,—,JDBC,System.Data,—,PDO,—,vnd:sqlx_mysql+vnd:sqlx_postgres
+Test framework,unittest+doctest,node:test,Deno.test,bun:test,testing,—,—,—,minitest+test-unit,—,—,lib:test
+Mocking/VCR,unittest.mock,—,—,—,—,—,—,—,—,—,—,lib:vcr
+Benchmark,timeit,—,Deno.bench,—,testing.B,—,JMH (3p),BenchmarkDotNet (3p),Benchmark,—,—,Criterion (Rust)
+Argv parser,argparse+getopt,parseArgs,Deno.parseArgs,—,flag,—,—,System.CommandLine,OptionParser,getopt,—,—
+Env file load,—,—,—,Bun.env (.env),—,—,—,—,dotenv,—,—,—
+MIME types,mimetypes,—,@std/media-types,—,mime,—,—,—,—,mime_content_type,—,lib:mime
+HTML parse/escape,html+html.parser,—,—,—,html+html/template,—,—,System.Web,CGI.escapeHTML,htmlspecialchars,—,—
+Text manipulation,textwrap+difflib,—,—,—,strings,—,—,—,—,—,—,lib:text
+Pickle/serialize,pickle+marshal+shelve,—,—,—,encoding/gob,—,Serializable,BinaryFormatter,Marshal,serialize,—,—
+Buffer/bytes,bytes+bytearray+io.BytesIO,Buffer,Uint8Array,Buffer,bytes,Vec<u8>,ByteBuffer,Span<byte>,String (binary),—,buffer (3p),—
+Streams,io,node:stream,ReadableStream,node:stream,io.Reader+Writer,std::io,InputStream+OutputStream,Stream,IO,streams,—,—
+Async streams,async generators,Readable async,ReadableStream,Readable async,—,—,Flow,IAsyncEnumerable,Enumerator::Lazy,—,—,—
+JSON Schema,—,—,—,—,—,—,—,—,—,—,—,vnd:jsonschema
+GraphQL,—,—,—,—,—,—,—,—,—,—,—,—
+gRPC,—,—,—,—,—,—,—,Grpc.Net,—,—,—,—
+Container/Docker test,—,—,—,—,—,—,Testcontainers (3p),Testcontainers (3p),Testcontainers (3p),—,—,vnd:testcontainers_modules
+Embedded Lua/script,—,vm,—,—,—,—,Nashorn (rm),ClearScript,—,—,—,(host)
+WASM,—,WebAssembly,WebAssembly,WebAssembly,wasm/wasi,—,—,Wasm runtimes,—,—,—,—
+FFI/native,ctypes,N-API,Deno.dlopen,bun:ffi,cgo,—,JNI+Panama,P/Invoke,Fiddle,FFI ext,—,—
+Sandbox/permissions,—,Permission Model,Permission flags,—,—,—,SecurityManager (rm),—,—,—,—,(curated surface)
+Plugin/module loader,importlib,require/import,import,import,plugin,—,ServiceLoader,Assembly.Load,require,require,require,require
+Hot reload/watch,—,—watch,--watch,--watch,—,—,—,dotnet watch,—,—,—,—
+Cron/scheduler,sched,—,Deno.cron,Bun.cron,—,—,Timer+ScheduledExecutor,Timer,—,—,—,—
+Cache (LRU),functools.lru_cache,—,—,—,—,—,LinkedHashMap,MemoryCache,—,APCu,—,—
+Path expansion (~),os.path.expanduser,os.homedir,Deno.env+expandHome,os.homedir,os/user.HomeDir,dirs (3p),System.getProperty,Environment.GetFolderPath,Dir.home,getenv HOME,—,std:env
+Process info (pid/uid),os.getpid+os.getuid,process.pid+getuid,Deno.pid,process.pid,os.Getpid+Getuid,std::process::id,ProcessHandle,Process.GetCurrentProcess,Process.pid,getmypid+posix_getuid,—,—
+Memory stats,resource,process.memoryUsage,Deno.memoryUsage,process.memoryUsage,runtime.MemStats,—,Runtime.totalMemory,GC.GetTotalMemory,GC.stat,memory_get_usage,—,—
+Random UUID v7,—,—,—,—,—,—,—,System.Guid.CreateVersion7,—,—,—,—
+Diff/patch,difflib,—,—,—,—,—,—,—,—,—,—,—
+Hash table / ordered dict,collections.OrderedDict,Map (ordered),Map,Map,—,IndexMap (3p),LinkedHashMap,OrderedDictionary,Hash (ordered),—,table,—
