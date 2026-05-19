@@ -636,7 +636,23 @@ impl UserData for Array {
 // JsonValue ↔ Lua bridge
 // ---------------------------------------------------------------------------
 
-// TODO: clean-code - 0.8 - DRY: wrap_value and json_value_to_lua share identical Null/Bool/Int/Float/String arms; factor a scalar-only helper used by both.
+/// Lift a scalar `JsonValue` to a Lua value. Returns `Ok(None)` for
+/// composite types (Object/Array), which callers must handle themselves
+/// (wrap as userdata, or recurse into a Lua table).
+fn json_scalar_to_lua(lua: &Lua, v: &JsonValue) -> mlua::Result<Option<Value>> {
+    match v {
+        JsonValue::Null => Ok(Some(null_handle(lua)?)),
+        JsonValue::Bool(b) => Ok(Some(Value::Boolean(*b))),
+        JsonValue::Int(i) => Ok(Some(match i32::try_from(*i) {
+            Ok(i32v) => Value::Integer(i32v),
+            Err(_) => Value::Number(*i as f64),
+        })),
+        JsonValue::Float(f) => Ok(Some(Value::Number(*f))),
+        JsonValue::String(s) => Ok(Some(Value::String(lua.create_string(s)?))),
+        JsonValue::Object(_) | JsonValue::Array(_) => Ok(None),
+    }
+}
+
 /// Wrap one node of a `JsonValue` tree as a Lua value. Objects and Arrays
 /// become userdata sharing the given root + path; scalars become Lua-native
 /// values. Crate-pub so `vnd:serde_json::from_str` can call it.
@@ -646,17 +662,13 @@ pub(crate) fn wrap_value(
     path: Vec<PathSeg>,
     v: &JsonValue,
 ) -> mlua::Result<Value> {
+    if let Some(scalar) = json_scalar_to_lua(lua, v)? {
+        return Ok(scalar);
+    }
     match v {
-        JsonValue::Null => null_handle(lua),
-        JsonValue::Bool(b) => Ok(Value::Boolean(*b)),
-        JsonValue::Int(i) => match i32::try_from(*i) {
-            Ok(i32v) => Ok(Value::Integer(i32v)),
-            Err(_) => Ok(Value::Number(*i as f64)),
-        },
-        JsonValue::Float(f) => Ok(Value::Number(*f)),
-        JsonValue::String(s) => Ok(Value::String(lua.create_string(s)?)),
         JsonValue::Object(_) => Object { root, path }.into_lua(lua),
         JsonValue::Array(_) => Array { root, path }.into_lua(lua),
+        _ => unreachable!("scalar arms handled above"),
     }
 }
 
@@ -764,20 +776,16 @@ fn table_to_json_value(t: &Table) -> mlua::Result<JsonValue> {
 /// Materialise a `JsonValue` tree as a Lua-native value (recursive walk).
 /// Used by `:to_table()` and any consumer that wants a plain Lua table
 /// rather than the userdata view.
+///
+/// Scalars (including `Null`, which becomes the cached `JsonNull` singleton —
+/// preserves the null/absent distinction on `:to_table()` round-trips) are
+/// produced by `json_scalar_to_lua`; only the composite branches recurse
+/// into Lua tables here.
 pub fn json_value_to_lua(lua: &Lua, v: &JsonValue) -> mlua::Result<Value> {
+    if let Some(scalar) = json_scalar_to_lua(lua, v)? {
+        return Ok(scalar);
+    }
     match v {
-        // Same cached `JsonNull` singleton as the userdata navigation
-        // path — `:to_table()` preserves the null/absent distinction,
-        // otherwise a round-trip from JSON → Lua table → encode would
-        // silently turn `{"k": null}` into `{}`.
-        JsonValue::Null => null_handle(lua),
-        JsonValue::Bool(b) => Ok(Value::Boolean(*b)),
-        JsonValue::Int(i) => match i32::try_from(*i) {
-            Ok(i32v) => Ok(Value::Integer(i32v)),
-            Err(_) => Ok(Value::Number(*i as f64)),
-        },
-        JsonValue::Float(f) => Ok(Value::Number(*f)),
-        JsonValue::String(s) => Ok(Value::String(lua.create_string(s)?)),
         JsonValue::Array(a) => {
             let t = lua.create_table_with_capacity(a.len(), 0)?;
             for (i, item) in a.iter().enumerate() {
@@ -792,6 +800,7 @@ pub fn json_value_to_lua(lua: &Lua, v: &JsonValue) -> mlua::Result<Value> {
             }
             Ok(Value::Table(t))
         }
+        _ => unreachable!("scalar arms handled above"),
     }
 }
 
