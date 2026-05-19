@@ -141,7 +141,7 @@ fn make_matcher(lua: &Lua, value: Value) -> mlua::Result<Table> {
 
     // toBeTruthy()
     register_matcher(lua, &m, "toBeTruthy", &key, |actual, _: ()| {
-        if !matches!(actual, Value::Nil | Value::Boolean(false)) {
+        if !is_falsy(&actual) {
             Ok(())
         } else {
             Err(mlua::Error::RuntimeError(format!(
@@ -151,10 +151,9 @@ fn make_matcher(lua: &Lua, value: Value) -> mlua::Result<Table> {
         }
     })?;
 
-    // TODO: clean-code - 0.7 - DRY: toBeFalsy is toBeTruthy with the condition negated and the message swapped — share a single is_falsy predicate.
     // toBeFalsy()
     register_matcher(lua, &m, "toBeFalsy", &key, |actual, _: ()| {
-        if matches!(actual, Value::Nil | Value::Boolean(false)) {
+        if is_falsy(&actual) {
             Ok(())
         } else {
             Err(mlua::Error::RuntimeError(format!(
@@ -237,6 +236,12 @@ fn display(v: &Value) -> String {
         Value::Function(_) => "<function>".into(),
         _ => "<value>".into(),
     }
+}
+
+/// Lua's truth rules: only `nil` and `false` are falsy. Shared by
+/// `toBeTruthy` (asserts not-falsy) and `toBeFalsy` (asserts falsy).
+fn is_falsy(v: &Value) -> bool {
+    matches!(v, Value::Nil | Value::Boolean(false))
 }
 
 fn extract_message(e: &mlua::Error) -> String {
