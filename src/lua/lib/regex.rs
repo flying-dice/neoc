@@ -49,19 +49,19 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 #[derive(Clone)]
 pub struct PatternHandle {
     source: String,
-    re: Regex,
+    compiled: Regex,
 }
 
 impl PatternHandle {
     fn compile(pattern: &str, flags: Option<&str>, prefix: &str) -> Result<Self, String> {
-        let mut b = RegexBuilder::new(pattern);
+        let mut builder = RegexBuilder::new(pattern);
         if let Some(f) = flags {
-            apply_flags(&mut b, f, prefix)?;
+            apply_flags(&mut builder, f, prefix)?;
         }
-        let re = b.build().map_err(|e| format!("{prefix}: {e}"))?;
+        let compiled = builder.build().map_err(|e| format!("{prefix}: {e}"))?;
         Ok(Self {
             source: pattern.to_owned(),
-            re,
+            compiled,
         })
     }
 }
@@ -69,20 +69,20 @@ impl PatternHandle {
 impl UserData for PatternHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("is_match", |_, this, text: String| {
-            Ok(this.re.is_match(&text))
+            Ok(this.compiled.is_match(&text))
         });
 
         methods.add_method("find", |lua, this, text: String| {
-            match this.re.captures(&text) {
-                Some(caps) => Ok(Some(build_match(lua, &this.re, &caps)?)),
+            match this.compiled.captures(&text) {
+                Some(caps) => Ok(Some(build_match(lua, &this.compiled, &caps)?)),
                 None => Ok(None),
             }
         });
 
         methods.add_method("find_all", |lua, this, text: String| {
             let t = lua.create_table()?;
-            for (i, caps) in this.re.captures_iter(&text).enumerate() {
-                t.set(i + 1, build_match(lua, &this.re, &caps)?)?;
+            for (i, caps) in this.compiled.captures_iter(&text).enumerate() {
+                t.set(i + 1, build_match(lua, &this.compiled, &caps)?)?;
             }
             Ok(t)
         });
@@ -90,7 +90,10 @@ impl UserData for PatternHandle {
         methods.add_method(
             "replace",
             |_, this, (text, replacement): (String, String)| {
-                Ok(this.re.replace(&text, replacement.as_str()).into_owned())
+                Ok(this
+                    .compiled
+                    .replace(&text, replacement.as_str())
+                    .into_owned())
             },
         );
 
@@ -98,7 +101,7 @@ impl UserData for PatternHandle {
             "replace_all",
             |_, this, (text, replacement): (String, String)| {
                 Ok(this
-                    .re
+                    .compiled
                     .replace_all(&text, replacement.as_str())
                     .into_owned())
             },
@@ -107,7 +110,7 @@ impl UserData for PatternHandle {
         methods.add_method(
             "split",
             |lua, this, (text, limit): (String, Option<i64>)| {
-                split_into_table(lua, &this.re, &text, limit, "regex.Pattern.split")
+                split_into_table(lua, &this.compiled, &text, limit, "regex.Pattern.split")
             },
         );
 
@@ -132,22 +135,17 @@ fn pattern_new(
 // Flat functions
 // ---------------------------------------------------------------------------
 
-/// Tail of every flat function: compile `pattern` (with optional `flags`) and
-/// hand the borrow off to `body`. Keeps the eight call sites uniform.
-fn with_compiled<F>(
-    lua: &Lua,
-    pattern: &str,
-    flags: Option<&str>,
-    prefix: &str,
-    body: F,
-) -> mlua::Result<(Value, Value)>
-where
-    F: FnOnce(&Lua, &Regex) -> mlua::Result<(Value, Value)>,
-{
-    match PatternHandle::compile(pattern, flags, prefix) {
-        Ok(p) => body(lua, &p.re),
-        Err(msg) => err(lua, msg),
-    }
+/// Compile `pattern` with optional `flags`, or return early as `(nil, msg)`.
+/// Inlined at every flat call site via `?`-on-an-`Option` wouldn't work —
+/// success carries the handle, failure carries a Lua error tuple — so the
+/// macro keeps the early-return readable without inventing a closure.
+macro_rules! compile_or_return {
+    ($lua:expr, $pattern:expr, $flags:expr, $prefix:expr) => {
+        match PatternHandle::compile($pattern, $flags, $prefix) {
+            Ok(p) => p,
+            Err(msg) => return err($lua, msg),
+        }
+    };
 }
 
 #[instrument(name = "regex.is_match", target = "luau::lib::regex", skip_all)]
@@ -155,13 +153,8 @@ fn flat_is_match(
     lua: &Lua,
     (pattern, text, flags): (String, String, Option<String>),
 ) -> mlua::Result<(Value, Value)> {
-    with_compiled(
-        lua,
-        &pattern,
-        flags.as_deref(),
-        "regex.is_match",
-        |lua, re| ok(lua, re.is_match(&text)),
-    )
+    let p = compile_or_return!(lua, &pattern, flags.as_deref(), "regex.is_match");
+    ok(lua, p.compiled.is_match(&text))
 }
 
 #[instrument(name = "regex.find", target = "luau::lib::regex", skip_all)]
@@ -169,16 +162,11 @@ fn flat_find(
     lua: &Lua,
     (pattern, text, flags): (String, String, Option<String>),
 ) -> mlua::Result<(Value, Value)> {
-    with_compiled(
-        lua,
-        &pattern,
-        flags.as_deref(),
-        "regex.find",
-        |lua, re| match re.captures(&text) {
-            Some(caps) => ok(lua, build_match(lua, re, &caps)?),
-            None => Ok((Value::Nil, Value::Nil)),
-        },
-    )
+    let p = compile_or_return!(lua, &pattern, flags.as_deref(), "regex.find");
+    match p.compiled.captures(&text) {
+        Some(caps) => ok(lua, build_match(lua, &p.compiled, &caps)?),
+        None => Ok((Value::Nil, Value::Nil)),
+    }
 }
 
 #[instrument(name = "regex.find_all", target = "luau::lib::regex", skip_all)]
@@ -186,19 +174,12 @@ fn flat_find_all(
     lua: &Lua,
     (pattern, text, flags): (String, String, Option<String>),
 ) -> mlua::Result<(Value, Value)> {
-    with_compiled(
-        lua,
-        &pattern,
-        flags.as_deref(),
-        "regex.find_all",
-        |lua, re| {
-            let t = lua.create_table()?;
-            for (i, caps) in re.captures_iter(&text).enumerate() {
-                t.set(i + 1, build_match(lua, re, &caps)?)?;
-            }
-            ok(lua, t)
-        },
-    )
+    let p = compile_or_return!(lua, &pattern, flags.as_deref(), "regex.find_all");
+    let t = lua.create_table()?;
+    for (i, caps) in p.compiled.captures_iter(&text).enumerate() {
+        t.set(i + 1, build_match(lua, &p.compiled, &caps)?)?;
+    }
+    ok(lua, t)
 }
 
 #[instrument(name = "regex.replace", target = "luau::lib::regex", skip_all)]
@@ -206,12 +187,10 @@ fn flat_replace(
     lua: &Lua,
     (pattern, text, replacement, flags): (String, String, String, Option<String>),
 ) -> mlua::Result<(Value, Value)> {
-    with_compiled(
+    let p = compile_or_return!(lua, &pattern, flags.as_deref(), "regex.replace");
+    ok(
         lua,
-        &pattern,
-        flags.as_deref(),
-        "regex.replace",
-        |lua, re| ok(lua, re.replace(&text, replacement.as_str()).into_owned()),
+        p.compiled.replace(&text, replacement.as_str()).into_owned(),
     )
 }
 
@@ -220,17 +199,12 @@ fn flat_replace_all(
     lua: &Lua,
     (pattern, text, replacement, flags): (String, String, String, Option<String>),
 ) -> mlua::Result<(Value, Value)> {
-    with_compiled(
+    let p = compile_or_return!(lua, &pattern, flags.as_deref(), "regex.replace_all");
+    ok(
         lua,
-        &pattern,
-        flags.as_deref(),
-        "regex.replace_all",
-        |lua, re| {
-            ok(
-                lua,
-                re.replace_all(&text, replacement.as_str()).into_owned(),
-            )
-        },
+        p.compiled
+            .replace_all(&text, replacement.as_str())
+            .into_owned(),
     )
 }
 
@@ -239,9 +213,8 @@ fn flat_split(
     lua: &Lua,
     (pattern, text, limit, flags): (String, String, Option<i64>, Option<String>),
 ) -> mlua::Result<(Value, Value)> {
-    with_compiled(lua, &pattern, flags.as_deref(), "regex.split", |lua, re| {
-        split_into_table(lua, re, &text, limit, "regex.split")
-    })
+    let p = compile_or_return!(lua, &pattern, flags.as_deref(), "regex.split");
+    split_into_table(lua, &p.compiled, &text, limit, "regex.split")
 }
 
 #[instrument(name = "regex.escape", target = "luau::lib::regex", skip_all)]
@@ -253,7 +226,7 @@ fn flat_escape(_: &Lua, text: String) -> mlua::Result<String> {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Build a `Match` table from a `Captures` against `text`.
+/// Build a `Match` table from a `Captures`.
 ///
 /// Positions are 1-based byte offsets matching `string.find`'s contract:
 /// `start` is the first byte of the match, `finish` is the last byte
@@ -267,26 +240,34 @@ fn build_match(lua: &Lua, re: &Regex, caps: &regex::Captures<'_>) -> mlua::Resul
     let (start, finish) = byte_range_to_lua(whole.start(), whole.end());
     t.set("start", start)?;
     t.set("finish", finish)?;
+    t.set("groups", positional_groups(lua, caps)?)?;
+    t.set("named", named_groups(lua, re, caps)?)?;
+    Ok(t)
+}
 
-    // Group 0 (whole match) intentionally omitted — already on text/start/finish.
+/// 1-based array of positional captures. Group 0 is omitted (it's already
+/// the `text`/`start`/`finish` triple on the parent). Unmatched optional
+/// groups are absent — Lua's `tbl[i]` returns `nil` either way.
+fn positional_groups(lua: &Lua, caps: &regex::Captures<'_>) -> mlua::Result<Table> {
     let groups = lua.create_table()?;
     for i in 1..caps.len() {
-        match caps.get(i) {
-            Some(m) => groups.set(i, m.as_str())?,
-            None => groups.set(i, Value::Nil)?,
+        if let Some(m) = caps.get(i) {
+            groups.set(i, m.as_str())?;
         }
     }
-    t.set("groups", groups)?;
+    Ok(groups)
+}
 
+/// String-keyed table of named captures. Only matching names are populated —
+/// `pairs(m.named)` iterates exactly the groups that fired.
+fn named_groups(lua: &Lua, re: &Regex, caps: &regex::Captures<'_>) -> mlua::Result<Table> {
     let named = lua.create_table()?;
     for name in re.capture_names().flatten() {
         if let Some(m) = caps.name(name) {
             named.set(name, m.as_str())?;
         }
     }
-    t.set("named", named)?;
-
-    Ok(t)
+    Ok(named)
 }
 
 fn byte_range_to_lua(start: usize, end: usize) -> (i64, i64) {
