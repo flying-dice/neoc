@@ -853,9 +853,10 @@ mod tests {
 
     #[test]
     fn unicode_position_uses_byte_offsets() {
-        // 'é' is two UTF-8 bytes. The match `é` starts at byte 6 in
-        // "café X" (c=1,a=2,f=3,é=4..5,space=6). Confirm we report byte
-        // offsets, not char offsets — matches Lua's own string convention.
+        // 'é' is two UTF-8 bytes. In "café X" the bytes are
+        // c=1, a=2, f=3, é=4..5, space=6 — so the match `é` starts at byte 4
+        // and ends at byte 5. Confirm we report byte offsets, not char
+        // offsets — matches Lua's own string convention.
         let lua = engine();
         let (start, finish): (i64, i64) = lua
             .load(
