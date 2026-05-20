@@ -37,5 +37,6 @@ criterion_group!(
     lib::semver::benches,
     lib::template::benches,
     lib::text::benches,
+    lib::url::benches,
 );
 criterion_main!(benches);

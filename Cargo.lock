@@ -1844,6 +1844,7 @@ dependencies = [
  "mime_guess",
  "mlua",
  "parking_lot",
+ "percent-encoding",
  "quick-xml",
  "regex",
  "rusqlite",
@@ -1866,6 +1867,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "unicode-width 0.2.2",
+ "url",
  "walkdir",
  "zstd",
 ]

@@ -23,4 +23,5 @@ pub mod semver;
 pub mod template;
 pub mod test;
 pub mod text;
+pub mod url;
 pub mod vcr;
