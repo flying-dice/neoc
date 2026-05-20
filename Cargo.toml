@@ -18,6 +18,12 @@ mlua = { version = "0.10", features = ["luau", "async", "send", "vendored", "ser
 parking_lot = "0.12"
 regex = "1"
 base64 = "0.22"
+sha2 = "0.10"
+sha3 = "0.10"
+blake3 = "1"
+md-5 = "0.10"
+sha1 = "0.10"
+xxhash-rust = { version = "0.8", features = ["xxh3", "xxh64"] }
 flate2 = "1"
 zstd = "0.13"
 brotli = "7"

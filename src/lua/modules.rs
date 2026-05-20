@@ -40,9 +40,9 @@ use crate::lua::{lib, std as stdmod, vnd};
 
 /// Upper bound on the namespace catalogue we'll dump into a `require` error.
 /// Keeps small namespaces actionable without paging the user when the catalogue
-/// grows. Bumped past the largest current namespace (`vnd:*`, 10) so adding a
+/// grows. Bumped past the largest current namespace (`lib:*`, 21) so adding a
 /// module doesn't silently suppress the list.
-const MAX_AVAILABLE_LIST: usize = 20;
+const MAX_AVAILABLE_LIST: usize = 30;
 
 fn find_closest<'a>(requested: &str, candidates: &[&'a str], threshold: usize) -> Option<&'a str> {
     candidates
@@ -89,6 +89,7 @@ pub fn install(lua: &Lua) -> mlua::Result<()> {
     modules.insert("lib:csv".into(), lib::csv::module(lua)?);
     modules.insert("lib:diff".into(), lib::diff::module(lua)?);
     modules.insert("lib:glob".into(), lib::glob::module(lua)?);
+    modules.insert("lib:hash".into(), lib::hash::module(lua)?);
     modules.insert("lib:html".into(), lib::html::module(lua)?);
     modules.insert("lib:http".into(), lib::http::module(lua)?);
     modules.insert("lib:ini".into(), lib::ini::module(lua)?);
