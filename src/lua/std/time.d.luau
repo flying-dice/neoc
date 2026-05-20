@@ -122,9 +122,9 @@ export type TimeModule = {
     now: () -> Instant,
 
     --[=[
-        Cooperative sleep for the given duration. Returns the actual
-        elapsed `Duration` so callers can detect overruns. Must be called
-        from within a spawned/deferred task.
+        Cooperative sleep for the given duration — yields to other tasks
+        while waiting. Returns the actual elapsed `Duration` so callers
+        can detect overruns.
     ]=]
     sleep: (duration: Duration) -> Duration,
 }
