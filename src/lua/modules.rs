@@ -79,6 +79,7 @@ pub fn install(lua: &Lua) -> mlua::Result<()> {
     modules.insert("std:net".into(), stdmod::net::module(lua)?);
     modules.insert("std:task".into(), stdmod::task::module(lua)?);
     modules.insert("std:thread".into(), stdmod::thread::module(lua)?);
+    modules.insert("std:time".into(), stdmod::time::module(lua)?);
     modules.insert("std:workers".into(), stdmod::workers::module(lua)?);
 
     // lib:* — blessed gap-fillers and our own custom modules.

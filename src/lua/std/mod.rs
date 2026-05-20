@@ -13,4 +13,5 @@ pub mod io;
 pub mod net;
 pub mod task;
 pub mod thread;
+pub mod time;
 pub mod workers;
