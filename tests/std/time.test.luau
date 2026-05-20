@@ -74,6 +74,23 @@ describe("time", function()
             expect(d).toBeNil()
             expect(type(err)).toBe("string")
         end)
+
+        test("rejects values that overflow u64 nanos", function()
+            local d, err = time.Duration.parse("99999999999999999999h")
+            expect(d).toBeNil()
+            expect(type(err)).toBe("string")
+        end)
+    end)
+
+    -- as_* saturation ---------------------------------------------------------
+
+    describe("Duration as_*", function()
+        test("as_nanos / as_micros / as_millis stay non-negative for huge durations", function()
+            local d = time.Duration.parse("9000h")  -- ~3.24e16 ns, fits in i64
+            expect(d:as_nanos() > 0).toBe(true)
+            expect(d:as_micros() > 0).toBe(true)
+            expect(d:as_millis() > 0).toBe(true)
+        end)
     end)
 
     describe("Duration tostring", function()
@@ -105,6 +122,12 @@ describe("time", function()
         test("mul by scalar", function()
             local d = time.Duration.from_secs(2) * 1.5
             expect(d:as_millis()).toBe(3000)
+        end)
+
+        test("mul is commutative (scalar * Duration)", function()
+            local d = time.Duration.from_secs(1)
+            expect((2 * d):as_millis()).toBe(2000)
+            expect((0.5 * d):as_millis()).toBe(500)
         end)
 
         test("div by scalar", function()

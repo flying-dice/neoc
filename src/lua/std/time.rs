@@ -33,9 +33,15 @@ pub struct DurationHandle(pub StdDuration);
 impl UserData for DurationHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("as_secs", |_, this, ()| Ok(this.0.as_secs() as i64));
-        methods.add_method("as_millis", |_, this, ()| Ok(this.0.as_millis() as i64));
-        methods.add_method("as_micros", |_, this, ()| Ok(this.0.as_micros() as i64));
-        methods.add_method("as_nanos", |_, this, ()| Ok(this.0.as_nanos() as i64));
+        methods.add_method("as_millis", |_, this, ()| {
+            Ok(u128_to_i64_saturating(this.0.as_millis()))
+        });
+        methods.add_method("as_micros", |_, this, ()| {
+            Ok(u128_to_i64_saturating(this.0.as_micros()))
+        });
+        methods.add_method("as_nanos", |_, this, ()| {
+            Ok(u128_to_i64_saturating(this.0.as_nanos()))
+        });
         methods.add_method("as_secs_f64", |_, this, ()| Ok(this.0.as_secs_f64()));
         methods.add_method("is_zero", |_, this, ()| Ok(this.0.is_zero()));
 
@@ -55,8 +61,13 @@ impl UserData for DurationHandle {
         // NaN, negative, and infinity so the result is always a valid
         // non-negative Duration. Silently producing zero on negative input
         // would mask user error.
-        methods.add_meta_method(MetaMethod::Mul, |_, this, factor: f64| {
-            scale_duration(this.0, factor, "time.Duration.__mul").map(DurationHandle)
+        //
+        // `__mul` is commutative (`2 * d` and `d * 2` both work); `add_meta_function`
+        // is needed because `add_meta_method` would bind `self` to whichever side
+        // Lua dispatches from, and `(number, Duration)` fails the userdata coerce.
+        methods.add_meta_function(MetaMethod::Mul, |_, args: (Value, Value)| {
+            let (dur, factor) = split_duration_scalar(args, "time.Duration.__mul")?;
+            scale_duration(dur, factor, "time.Duration.__mul").map(DurationHandle)
         });
         methods.add_meta_method(MetaMethod::Div, |_, this, divisor: f64| {
             if divisor == 0.0 {
@@ -102,6 +113,50 @@ fn borrow_pair<T: mlua::UserData + Copy + 'static>(
 fn cmp_duration_pair(args: (AnyUserData, AnyUserData)) -> mlua::Result<Ordering> {
     let (a, b) = borrow_pair::<DurationHandle>(args, "Duration")?;
     Ok(a.0.cmp(&b.0))
+}
+
+/// Pick the Duration and scalar from either argument order. Used by `__mul`
+/// to support `2 * d` and `d * 2` symmetrically — Lua dispatches via
+/// Duration's metatable in either case, but the userdata can land in either slot.
+fn split_duration_scalar(
+    (a, b): (Value, Value),
+    ctx: &'static str,
+) -> mlua::Result<(StdDuration, f64)> {
+    let (dur_v, num_v) = match (&a, &b) {
+        (Value::UserData(ud), _) if ud.is::<DurationHandle>() => (&a, &b),
+        (_, Value::UserData(ud)) if ud.is::<DurationHandle>() => (&b, &a),
+        _ => {
+            return Err(mlua::Error::external(format!(
+                "{ctx}: expected Duration and number"
+            )));
+        }
+    };
+    let dur = dur_v
+        .as_userdata()
+        .expect("duration side checked above")
+        .borrow::<DurationHandle>()?
+        .0;
+    let factor = match num_v {
+        Value::Number(n) => *n,
+        Value::Integer(i) => *i as f64,
+        _ => {
+            return Err(mlua::Error::external(format!(
+                "{ctx}: expected number operand"
+            )));
+        }
+    };
+    Ok((dur, factor))
+}
+
+/// Saturate a `u128` count (e.g. nanos, micros, millis) to `i64::MAX` instead
+/// of wrapping. The `as` cast on its own truncates the low 64 bits and then
+/// reinterprets as signed, so giant durations silently became negative.
+fn u128_to_i64_saturating(v: u128) -> i64 {
+    if v > i64::MAX as u128 {
+        i64::MAX
+    } else {
+        v as i64
+    }
 }
 
 fn scale_duration(d: StdDuration, factor: f64, ctx: &'static str) -> mlua::Result<StdDuration> {
@@ -299,6 +354,12 @@ fn parse_duration(input: &str) -> Result<StdDuration, String> {
 
         let nanos = value * nanos_per_unit;
         if !nanos.is_finite() {
+            return Err("duration overflow".into());
+        }
+        // `nanos as u64` saturates per Rust ≥1.45 cast semantics — silently caps
+        // huge inputs at `u64::MAX` (~584 years) instead of failing. Bound check
+        // so the caller hears about it.
+        if nanos.round() > u64::MAX as f64 {
             return Err("duration overflow".into());
         }
         let segment = StdDuration::from_nanos(nanos.round() as u64);
@@ -650,6 +711,53 @@ mod tests {
             .eval()
             .unwrap();
         assert_eq!(formatted, "1m30s");
+    }
+
+    #[test]
+    fn mul_is_commutative() {
+        let lua = make_engine().unwrap();
+        let (left, right, frac): (i64, i64, i64) = lua
+            .load(
+                r#"
+                local time = require("std:time")
+                local d = time.Duration.from_secs(1)
+                return (d * 2):as_millis(), (2 * d):as_millis(), (0.5 * d):as_millis()
+            "#,
+            )
+            .eval()
+            .unwrap();
+        assert_eq!(left, 2_000);
+        assert_eq!(right, 2_000);
+        assert_eq!(frac, 500);
+    }
+
+    #[test]
+    fn as_nanos_saturates_instead_of_wrapping() {
+        let lua = make_engine().unwrap();
+        let (nanos, micros, millis): (i64, i64, i64) = lua
+            .load(
+                r#"
+                local time = require("std:time")
+                -- 1e15 ns ≈ 11.5 days; safe in i64. Pick a value that would wrap
+                -- if u128 → i64 truncated (anything > 2^63 nanos ≈ 292 years).
+                local d = time.Duration.parse("9000h")  -- ~3.24e16 ns, still in i64
+                return d:as_nanos(), d:as_micros(), d:as_millis()
+            "#,
+            )
+            .eval()
+            .unwrap();
+        assert!(nanos > 0, "as_nanos went negative: {nanos}");
+        assert!(micros > 0);
+        assert!(millis > 0);
+    }
+
+    #[test]
+    fn parse_rejects_overflow() {
+        let err = parse_duration("99999999999999999999h").unwrap_err();
+        assert!(
+            err.contains("overflow"),
+            "expected overflow error, got: {err}"
+        );
     }
 
     #[test]
