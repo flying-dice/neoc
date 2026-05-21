@@ -7,6 +7,7 @@
 
 pub mod args;
 pub mod base64;
+pub mod chrono;
 pub mod compile;
 pub mod compress;
 pub mod csv;

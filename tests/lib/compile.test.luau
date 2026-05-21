@@ -4,14 +4,27 @@ local test     = _t.test
 local expect   = _t.expect
 
 local compile = require("lib:compile")
+local env     = require("std:env")
 local fs      = require("std:fs")
+
+-- Per-run unique paths under the workspace `.tmp/` (gitignored), not the
+-- system `/tmp`. Bundle output is the entire neoc binary (~230 MB); on
+-- GitLab shared runners `/tmp` is a small tmpfs and back-to-back runs
+-- surface as `No space left on device`. The workspace volume is per-job
+-- and sized for build artefacts.
+local function unique_path(suffix)
+    local dir = env.current_dir() .. "/.tmp"
+    fs.create_dir_all(dir)
+    local nonce = string.format("%x", math.random(0, 2 ^ 30))
+    return dir .. "/compile-test-" .. nonce .. "-" .. suffix
+end
 
 describe("compile", function()
 
     describe("bundle", function()
         test("bundles an entrypoint into a self-contained executable", function()
-            local script = "/tmp/neoc-compile-test-entry.luau"
-            local output = "/tmp/neoc-compile-test-out"
+            local script = unique_path("entry.luau")
+            local output = unique_path("out")
             fs.write(script, 'print("bundled-ok")')
 
             local ok, err = compile.bundle({
@@ -30,7 +43,7 @@ describe("compile", function()
         test("returns (nil, err) for missing entrypoint", function()
             local ok, err = compile.bundle({
                 entrypoint = "/nonexistent-path.luau",
-                output     = "/tmp/nope",
+                output     = unique_path("nope"),
             })
             expect(ok).toBeNil()
             expect(err).toContain("compile.bundle:")
