@@ -38,6 +38,7 @@ criterion_group!(
     lib::regex::benches,
     lib::semver::benches,
     lib::template::benches,
+    lib::tempfile::benches,
     lib::text::benches,
     lib::url::benches,
 );

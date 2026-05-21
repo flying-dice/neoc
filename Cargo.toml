@@ -84,9 +84,13 @@ jsonschema = { version = "0.30", default-features = false }
 # tests) can spin up disposable backing services without external setup.
 testcontainers-modules = { version = "0.11", features = ["mysql", "postgres"] }
 
+# RAII temp files and directories backing `lib:tempfile`. Rust's de-facto
+# tempfile crate — `NamedTempFile` / `TempDir` unlink on drop, which is the
+# semantic the Lua-facing UserData layer mirrors via mlua's GC.
+tempfile = "3"
+
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
-tempfile = "3"
 
 # Optional regular dep, gated behind the `bench` feature so it doesn't
 # bloat normal lib builds. Lives in `[dependencies]` rather than
