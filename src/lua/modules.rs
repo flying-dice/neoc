@@ -101,6 +101,7 @@ pub fn install(lua: &Lua) -> mlua::Result<()> {
     modules.insert("lib:regex".into(), lib::regex::module(lua)?);
     modules.insert("lib:semver".into(), lib::semver::module(lua)?);
     modules.insert("lib:template".into(), lib::template::module(lua)?);
+    modules.insert("lib:tempfile".into(), lib::tempfile::module(lua)?);
     modules.insert("lib:test".into(), lib::test::module(lua)?);
     modules.insert("lib:text".into(), lib::text::module(lua)?);
     modules.insert("lib:url".into(), lib::url::module(lua)?);
