@@ -34,6 +34,10 @@ semver = "1"
 similar = "3"
 url = "2"
 percent-encoding = "2"
+# Civil dates, times, IANA timezone conversion, RFC 3339 / strftime parse and
+# format. Default features bundle the tzdb on Windows and read /usr/share/zoneinfo
+# on Unix, plus detect the system zone — exactly what `lib:chrono` needs.
+jiff = "0.2"
 clap = { version = "4", default-features = false, features = ["std", "help", "usage", "error-context", "string"] }
 
 strsim = "0.11"

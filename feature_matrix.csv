@@ -36,8 +36,8 @@ Asymmetric crypto,—,node:crypto,crypto.subtle,node:crypto,crypto/rsa+ecdsa,—
 TLS,ssl,node:tls,Deno.connectTls,node:tls,crypto/tls,—,javax.net.ssl,SslStream,OpenSSL::SSL,openssl,—,vnd:hyper (indirect)
 CSPRNG,secrets,crypto.randomBytes,getRandomValues,crypto.randomBytes,crypto/rand,—,SecureRandom,RandomNumberGenerator,SecureRandom,random_bytes,—,—
 UUID,uuid,crypto.randomUUID,crypto.randomUUID,crypto.randomUUID,—,—,java.util.UUID,System.Guid,SecureRandom.uuid,—,—,—
-DateTime,datetime,Date+Temporal,Date+Temporal,Date+Temporal,time,—,java.time,System.DateTime,Time+Date,DateTime,os.time,—
-Timezone,zoneinfo,Intl+Temporal,Temporal,Temporal,time.LoadLocation,—,java.time.ZoneId,TimeZoneInfo,Time (limited),DateTimeZone,—,—
+DateTime,datetime,Date+Temporal,Date+Temporal,Date+Temporal,time,—,java.time,System.DateTime,Time+Date,DateTime,os.time,lib:chrono
+Timezone,zoneinfo,Intl+Temporal,Temporal,Temporal,time.LoadLocation,—,java.time.ZoneId,TimeZoneInfo,Time (limited),DateTimeZone,—,lib:chrono
 Monotonic clock,time.monotonic,performance.now,performance.now,performance.now,time.Now,std::time::Instant,System.nanoTime,Stopwatch,Process.clock_gettime,hrtime,os.clock,—
 Timers/sleep,sched+time.sleep,setTimeout,setTimeout,setTimeout,time.Sleep+Timer,thread::sleep,ScheduledExecutor,Task.Delay,sleep,sleep,task.wait,std:task
 Math,math,Math,Math,Math,math,std primitives,java.lang.Math,System.Math,Math,math fns,math,math (Luau)

@@ -26,6 +26,7 @@ criterion_group!(
     benches,
     lib::args::benches,
     lib::base64::benches,
+    lib::chrono::benches,
     lib::compress::benches,
     lib::csv::benches,
     lib::glob::benches,

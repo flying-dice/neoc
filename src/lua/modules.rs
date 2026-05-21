@@ -85,6 +85,7 @@ pub fn install(lua: &Lua) -> mlua::Result<()> {
     // lib:* — blessed gap-fillers and our own custom modules.
     modules.insert("lib:args".into(), lib::args::module(lua)?);
     modules.insert("lib:base64".into(), lib::base64::module(lua)?);
+    modules.insert("lib:chrono".into(), lib::chrono::module(lua)?);
     modules.insert("lib:compile".into(), lib::compile::module(lua)?);
     modules.insert("lib:compress".into(), lib::compress::module(lua)?);
     modules.insert("lib:csv".into(), lib::csv::module(lua)?);
