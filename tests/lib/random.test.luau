@@ -170,6 +170,12 @@ describe("random", function()
             expect(rng.uuid_format(bytes)).toBe("550e8400-e29b-41d4-a716-446655440000")
         end)
 
+        test("accepts braced form", function()
+            local bytes, err = rng.uuid_parse("{550e8400-e29b-41d4-a716-446655440000}")
+            expect(err).toBeNil()
+            expect(rng.uuid_format(bytes)).toBe("550e8400-e29b-41d4-a716-446655440000")
+        end)
+
         test("invalid input returns (nil, err)", function()
             local v, err = rng.uuid_parse("not-a-uuid")
             expect(v).toBeNil()

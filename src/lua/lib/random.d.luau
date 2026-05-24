@@ -58,18 +58,18 @@
 ]=]
 export type RandomModule = {
     --[=[
-        Return `n` cryptographically secure random bytes as a Luau string.
-        Backed by the OS getrandom syscall.
+        Return `n_bytes` cryptographically secure random bytes as a Luau
+        string. Backed by the OS getrandom syscall.
 
         Returns `(string, nil)` on success; `(nil, "random.random_bytes: ...")`
-        if `n` is negative. `n == 0` returns the empty string.
+        if `n_bytes` is negative. `n_bytes == 0` returns the empty string.
 
         ```lua
         local rng = require("lib:random")
         local salt = assert(rng.random_bytes(16))
         ```
     ]=]
-    random_bytes: (n: number) -> (string?, string?),
+    random_bytes: (n_bytes: number) -> (string?, string?),
 
     --[=[
         Return a uniformly distributed integer in the closed interval
@@ -92,8 +92,14 @@ export type RandomModule = {
         Return a string of `n` characters drawn uniformly from `alphabet`.
         If `alphabet` is omitted, defaults to `[0-9A-Za-z]` (62 chars).
 
+        Selection is per Unicode character, not per byte: a multi-byte UTF-8
+        `alphabet` (e.g. `"αβγ"`) always yields valid UTF-8, never a split
+        codepoint. The output is `n` characters, so its byte length may exceed
+        `n` when the alphabet contains multi-byte characters. `alphabet` must
+        itself be valid UTF-8.
+
         Returns `(string, nil)` on success; `(nil, "random.random_string: ...")`
-        if `n < 0` or `alphabet` is the empty string.
+        if `n < 0`, `alphabet` is empty, or `alphabet` is not valid UTF-8.
 
         ```lua
         local session = assert(rng.random_string(24))           -- alphanumeric

@@ -41,7 +41,7 @@ use crate::lua::sandbox::{err, from_err, ok};
 
 /// Default alphabet for `random_string` when no alphabet is supplied.
 /// 62 chars — digits + upper + lower. ~5.95 bits of entropy per char.
-const DEFAULT_ALPHABET: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+const DEFAULT_ALPHABET: &str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
 // ---------------------------------------------------------------------------
 // Module
@@ -65,11 +65,11 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 // ---------------------------------------------------------------------------
 
 #[instrument(name = "random.random_bytes", target = "luau::lib::random", skip_all)]
-fn random_bytes(lua: &Lua, n: i64) -> mlua::Result<(Value, Value)> {
-    if n < 0 {
+fn random_bytes(lua: &Lua, n_bytes: i64) -> mlua::Result<(Value, Value)> {
+    if n_bytes < 0 {
         return err(lua, "random.random_bytes: byte count must be non-negative");
     }
-    let mut buf = vec![0u8; n as usize];
+    let mut buf = vec![0u8; n_bytes as usize];
     OsRng.fill_bytes(&mut buf);
     ok(lua, lua.create_string(&buf)?)
 }
@@ -82,12 +82,15 @@ fn random_int(lua: &Lua, (min, max): (i64, i64)) -> mlua::Result<(Value, Value)>
             format!("random.random_int: min ({min}) must be <= max ({max})"),
         );
     }
-    // Width fits in u64 because both bounds are i64; the +1 (closed interval)
-    // is the only edge that can overflow — guard it explicitly.
-    let span = (max as i128) - (min as i128) + 1;
-    let span = span as u128;
+    // Closed interval [min, max]: span = max - min + 1. Compute in i128 — at
+    // the extreme (i64::MIN, i64::MAX) the span is 2^64 and `value` can reach
+    // 2^64 - 1, so the final `min + value` must also stay in i128 before
+    // narrowing. Casting `value as i64` first would wrap negative; adding in
+    // i64 would overflow. The i128 sum is always within i64 range, so the
+    // narrowing cast is lossless.
+    let span = ((max as i128) - (min as i128) + 1) as u128;
     let value = uniform_u128(span);
-    let result = min + (value as i64);
+    let result = ((min as i128) + (value as i128)) as i64;
     ok(lua, result)
 }
 
@@ -119,19 +122,31 @@ fn random_string(
     if n < 0 {
         return err(lua, "random.random_string: length must be non-negative");
     }
-    let alpha_owned = alphabet.as_ref().map(|s| s.as_bytes().to_vec());
-    let alpha: &[u8] = alpha_owned.as_deref().unwrap_or(DEFAULT_ALPHABET);
+    // Select whole characters, not bytes. Picking bytes out of a multi-byte
+    // UTF-8 alphabet (e.g. "αβγ") splits codepoints and yields invalid UTF-8;
+    // `chars()` is the unit the docs promise. ASCII alphabets are unaffected
+    // (one byte per char), so the common case is unchanged.
+    let alpha: Vec<char> = match alphabet.as_ref() {
+        Some(s) => {
+            let bytes = s.as_bytes();
+            match std::str::from_utf8(&bytes) {
+                Ok(st) => st.chars().collect(),
+                Err(_) => return err(lua, "random.random_string: alphabet must be valid UTF-8"),
+            }
+        }
+        None => DEFAULT_ALPHABET.chars().collect(),
+    };
     if alpha.is_empty() {
         return err(lua, "random.random_string: alphabet must be non-empty");
     }
-    let mut out = Vec::with_capacity(n as usize);
+    let mut out = String::with_capacity(n as usize);
     for _ in 0..n {
         let pick = alpha
             .choose(&mut OsRng)
             .expect("alphabet non-empty (checked above)");
         out.push(*pick);
     }
-    ok(lua, lua.create_string(&out)?)
+    ok(lua, out)
 }
 
 #[instrument(name = "random.token_urlsafe", target = "luau::lib::random", skip_all)]
@@ -357,6 +372,25 @@ mod tests {
         assert!(e.unwrap().starts_with("random.random_int:"));
     }
 
+    #[test]
+    fn random_int_extreme_bounds_no_overflow() {
+        // Unreachable from Luau (number is f64; exact ints cap at 2^53) but a
+        // Rust-direct caller can ask for the full i64 span. With span = 2^64,
+        // ~half the draws land >= 2^63 — the exact path that wrapped/panicked
+        // before the i128 fix. Loop so a wrap, if present, is near-certain.
+        let lua = engine();
+        let mut saw_high_half = false;
+        for _ in 0..200 {
+            let (v, e) = super::random_int(&lua, (i64::MIN, i64::MAX)).unwrap();
+            assert!(matches!(e, mlua::Value::Nil), "unexpected error path");
+            let drawn: f64 = lua.unpack(v).expect("number result");
+            if drawn >= 0.0 {
+                saw_high_half = true;
+            }
+        }
+        assert!(saw_high_half, "never drew value >= 2^63 in 200 tries");
+    }
+
     // random_string ---------------------------------------------------------
 
     #[test]
@@ -380,6 +414,42 @@ mod tests {
         for c in s.chars() {
             assert!(c == '0' || c == '1', "non-binary char: {c}");
         }
+    }
+
+    #[test]
+    fn random_string_multibyte_alphabet_stays_valid_utf8() {
+        // The bug: byte-level selection split multi-byte codepoints, emitting
+        // invalid UTF-8. Decoding the result as a Rust `String` would fail.
+        // Char-level selection must emit only whole chars from the alphabet,
+        // and exactly `n` of them.
+        let lua = engine();
+        let s: String = lua
+            .load(r#"return rng.random_string(64, "αβγ")"#)
+            .eval()
+            .unwrap();
+        let alphabet = ['α', 'β', 'γ'];
+        let chars: Vec<char> = s.chars().collect();
+        assert_eq!(
+            chars.len(),
+            64,
+            "expected 64 characters, got {}",
+            chars.len()
+        );
+        for c in chars {
+            assert!(alphabet.contains(&c), "char outside alphabet: {c:?}");
+        }
+    }
+
+    #[test]
+    fn random_string_invalid_utf8_alphabet_errors() {
+        // Alphabet bytes that aren't valid UTF-8 can't be decoded into chars.
+        let lua = engine();
+        let (v, e): (Option<String>, Option<String>) = lua
+            .load(r#"return rng.random_string(8, "\xff\xfe")"#)
+            .eval()
+            .unwrap();
+        assert!(v.is_none());
+        assert!(e.unwrap().starts_with("random.random_string:"));
     }
 
     #[test]
@@ -555,5 +625,18 @@ mod tests {
             .eval()
             .unwrap();
         assert_eq!(s, "550e8400-e29b-41d4-a716-446655440000");
+
+        // Braced (Microsoft GUID) form — `uuid::parse_str` strips the braces.
+        let braced: String = lua
+            .load(
+                r#"
+                local bytes, err = rng.uuid_parse("{550e8400-e29b-41d4-a716-446655440000}")
+                assert(err == nil, err)
+                return rng.uuid_format(bytes)
+                "#,
+            )
+            .eval()
+            .unwrap();
+        assert_eq!(braced, "550e8400-e29b-41d4-a716-446655440000");
     }
 }
