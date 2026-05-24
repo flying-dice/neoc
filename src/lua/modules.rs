@@ -98,6 +98,7 @@ pub fn install(lua: &Lua) -> mlua::Result<()> {
     modules.insert("lib:json".into(), lib::json::module(lua)?);
     modules.insert("lib:log".into(), lib::log::module(lua)?);
     modules.insert("lib:mime".into(), lib::mime::module(lua)?);
+    modules.insert("lib:random".into(), lib::random::module(lua)?);
     modules.insert("lib:regex".into(), lib::regex::module(lua)?);
     modules.insert("lib:semver".into(), lib::semver::module(lua)?);
     modules.insert("lib:template".into(), lib::template::module(lua)?);

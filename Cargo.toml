@@ -27,6 +27,14 @@ xxhash-rust = { version = "0.8", features = ["xxh3", "xxh64"] }
 flate2 = "1"
 zstd = "0.13"
 brotli = "7"
+# CSPRNG (OsRng) backing `lib:random`. `rand` 0.8 is already in the dep tree
+# transitively; pinning here keeps the build stable. Default features pull in
+# `getrandom` + `std_rng`, which is all we need.
+rand = "0.8"
+# UUID generation + parsing for `lib:random`. `v4` = random, `v7` = unix-ms
+# timestamp ordered. `uuid` 1.x is already a transitive dep — features make
+# it ours.
+uuid = { version = "1", features = ["v4", "v7"] }
 rust-ini = "0.21"
 mime_guess = "2"
 csv = "1"
