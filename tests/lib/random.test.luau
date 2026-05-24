@@ -145,9 +145,10 @@ describe("random", function()
         test("returns canonical form with v7 marker", function()
             local s = rng.uuid_v7()
             expect(#s).toBe(36)
-            -- Third group starts with '7'.
-            local _, _, ver = s:find("%-(.)%x%x%x%-")
-            expect(ver).toBe("7")
+            -- Version is the first hex digit of group 3; group 3 starts at
+            -- position 15 (1-indexed) in the canonical form
+            -- xxxxxxxx-xxxx-Mxxx-Nxxx-xxxxxxxxxxxx.
+            expect(s:sub(15, 15)).toBe("7")
         end)
     end)
 
