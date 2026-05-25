@@ -159,12 +159,16 @@ pub struct EmitResult {
 /// Lower a module to JavaScript (ES2022) source.
 ///
 /// Cross-module `use` imports are filtered against `imported_bindings`: only a
-/// `use`d name present in that set lowers to a JS `import`. The set names the
-/// items whose source module emits a runtime binding — a `pub fn`, `pub const`,
-/// or `pub` struct/enum carrying a method slot. A type-only item (a data-only
-/// `pub` struct/enum, or a `pub type` alias) is absent from the set: its name
-/// is erased in JS, so importing it would dangle against a module that exports
-/// nothing under that name. Pass an empty set when no module graph is resolved
+/// `use` whose resolved `prefix::last` key is present in that set lowers to a JS
+/// `import`. The set keys the imports whose source module emits a runtime
+/// binding — a `pub fn`, `pub const`, or `pub` struct/enum carrying a method
+/// slot. A type-only item (a data-only `pub` struct/enum, or a `pub type` alias)
+/// is absent from the set: its name is erased in JS, so importing it would
+/// dangle against a module that exports nothing under that name.
+///
+/// The key is the resolved `(module, name)` pair (`prefix::last`), not the bare
+/// name, so two modules sharing a final segment — one a binding, one type-only —
+/// get independent decisions. Pass an empty set when no module graph is resolved
 /// (single-file `transpile`), where no cross-module `use` can resolve anyway.
 #[must_use]
 pub fn emit<S: std::hash::BuildHasher>(
@@ -281,9 +285,12 @@ pub(crate) struct Emitter {
     tmp_seq: usize,
     /// Native imports from module-bound `ext` blocks, sorted by specifier.
     imports: Vec<(String, Vec<String>)>,
-    /// `use`d names whose source module emits a runtime binding. A `use` of a
-    /// name in this set lowers to a JS `import`; a type-only name (absent here)
-    /// emits no import, since it is erased in JS. See [`emit`].
+    /// Resolved `use` imports whose source module emits a runtime binding, keyed
+    /// per import as `prefix::last`. A `use` whose key is in this set lowers to a
+    /// JS `import`; a type-only import (absent here) emits none, since its name
+    /// is erased in JS. Keying on the resolved `(module, name)` rather than the
+    /// bare name keeps two modules' shared final segment independent. See
+    /// [`emit`].
     imported_bindings: HashSet<String>,
 }
 
@@ -438,8 +445,11 @@ impl Emitter {
         // A type-only item — a data-only struct/enum or a `pub type` alias —
         // emits no binding in its source module, so importing its name would
         // dangle against an empty export. Such names are erased in JS
-        // (constructions lower to inline objects), so emit no import.
-        if !self.imported_bindings.contains(last.as_str()) {
+        // (constructions lower to inline objects), so emit no import. The keep
+        // decision is keyed per resolved import (`prefix::last`), rebuilt here to
+        // match the driver's key, so a name shared by two source modules — one a
+        // binding, one type-only — is decided per source.
+        if !self.imported_bindings.contains(&u.path.join("::")) {
             return;
         }
         let module = prefix.join("/");
@@ -779,7 +789,7 @@ mod tests {
                 Vec::new(),
             )],
         };
-        let bindings = HashSet::from(["c".to_string()]);
+        let bindings = HashSet::from(["a::b::c".to_string()]);
         assert_eq!(
             emit(&module, &bindings).js,
             "import { c } from \"./a/b.js\";\n"
@@ -799,7 +809,7 @@ mod tests {
                 Vec::new(),
             )],
         };
-        let bindings = HashSet::from(["c".to_string()]);
+        let bindings = HashSet::from(["a::b::c".to_string()]);
         assert_eq!(
             emit(&module, &bindings).js,
             "import { c as d } from \"./a/b.js\";\n"

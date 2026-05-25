@@ -489,17 +489,22 @@ fn emit(
     }
 }
 
-/// The `use`d names in `module` whose source module emits a runtime JS binding.
+/// The `use`d imports in `module` whose source module emits a runtime JS
+/// binding, keyed per resolved import as `prefix::last` (the full `use` path).
 ///
 /// For each `use a::b::X`, resolves module `a::b` against the loaded graph and
-/// keeps `X` only if the source module emits a binding for it — a `pub fn`,
-/// `pub const`, or `pub` struct/enum carrying a method slot (see
+/// keeps the key `a::b::X` only if that source module emits a binding for `X` —
+/// a `pub fn`, `pub const`, or `pub` struct/enum carrying a method slot (see
 /// [`codegen_js::module_js_bindings`]). A type-only item — a data-only `pub`
 /// struct/enum or a `pub type` alias — is excluded: its name is erased in JS,
-/// so emitting an `import` for it would dangle against an empty export. The
-/// names are the source items' own names, matching what the JS emitter sees in
-/// each `use` path's final segment. Target-agnostic; the Lua backend ignores
-/// the result.
+/// so emitting an `import` for it would dangle against an empty export.
+///
+/// The key is the resolved `(module, name)` pair, not the bare name: two
+/// modules can share a final segment (one a binding, one type-only), and keying
+/// on the bare name would let the binding module's keep decision leak onto the
+/// type-only module's import and re-emit a dangling import. The JS emitter
+/// rebuilds the same `prefix::last` key from each `use` to look up its own
+/// per-source decision. Target-agnostic; the Lua backend ignores the result.
 fn js_imported_bindings(
     root: &Path,
     loaded: &HashMap<PathBuf, LoadedModule>,
@@ -520,7 +525,7 @@ fn js_imported_bindings(
             continue;
         };
         if codegen_js::module_js_bindings(&source.module).contains(last) {
-            bindings.insert(last.clone());
+            bindings.insert(u.path.join("::"));
         }
     }
     bindings
