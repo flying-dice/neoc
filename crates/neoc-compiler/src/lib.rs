@@ -154,7 +154,14 @@ pub fn transpile(source: &str, target: Target) -> CompileOutput {
     // Mark string-typed `+` as concatenation before emitting. Each backend
     // interprets it: Lua picks `..`, JS keeps `+` (`lang/DYNAMIC.md` §4.2).
     let elaborated = types::elaborate(&parsed.module);
-    let (output, emit_messages, source_map) = emit(target, &elaborated, source);
+    // A single-file `transpile` has no resolved module graph, so no cross-module
+    // `use` can resolve to a binding — pass an empty set.
+    let (output, emit_messages, source_map) = emit(
+        target,
+        &elaborated,
+        source,
+        &std::collections::HashSet::new(),
+    );
     diagnostics.extend(emit_messages.into_iter().map(|message| Diagnostic {
         stage: Stage::Emit,
         message,
@@ -353,7 +360,9 @@ fn check_and_emit_module(
         });
     }
     let elaborated = types::elaborate(&me.module);
-    let (output, emit_messages, source_map) = emit(target, &elaborated, &me.source);
+    let imported_bindings = js_imported_bindings(root, loaded, &me.module);
+    let (output, emit_messages, source_map) =
+        emit(target, &elaborated, &me.source, &imported_bindings);
     for message in emit_messages {
         diagnostics.push(ProjectDiagnostic {
             path: path.to_path_buf(),
@@ -449,7 +458,17 @@ fn canonical_or(path: &Path) -> PathBuf {
 /// `source` is the neoc text the module was parsed from; the Lua backend uses
 /// it to map emitted lines to neoc lines. The JS backend has no source map yet
 /// (#56), so it returns an empty [`SourceMap`].
-fn emit(target: Target, module: &ast::Module, source: &str) -> (String, Vec<String>, SourceMap) {
+///
+/// `imported_bindings` are the module's `use`d names whose source module emits
+/// a runtime JS binding (see [`codegen_js::module_js_bindings`]); the JS backend
+/// filters its `import` emission against it so a type-only `use` produces no
+/// dangling import. The Lua backend ignores it.
+fn emit(
+    target: Target,
+    module: &ast::Module,
+    source: &str,
+    imported_bindings: &std::collections::HashSet<String>,
+) -> (String, Vec<String>, SourceMap) {
     match target {
         Target::Lua => {
             let r = codegen_lua::emit_with_source(module, source);
@@ -460,7 +479,7 @@ fn emit(target: Target, module: &ast::Module, source: &str) -> (String, Vec<Stri
             )
         }
         Target::Js => {
-            let r = codegen_js::emit(module);
+            let r = codegen_js::emit(module, imported_bindings);
             (
                 r.js,
                 r.diagnostics.into_iter().map(|d| d.message).collect(),
@@ -468,4 +487,41 @@ fn emit(target: Target, module: &ast::Module, source: &str) -> (String, Vec<Stri
             )
         }
     }
+}
+
+/// The `use`d names in `module` whose source module emits a runtime JS binding.
+///
+/// For each `use a::b::X`, resolves module `a::b` against the loaded graph and
+/// keeps `X` only if the source module emits a binding for it — a `pub fn`,
+/// `pub const`, or `pub` struct/enum carrying a method slot (see
+/// [`codegen_js::module_js_bindings`]). A type-only item — a data-only `pub`
+/// struct/enum or a `pub type` alias — is excluded: its name is erased in JS,
+/// so emitting an `import` for it would dangle against an empty export. The
+/// names are the source items' own names, matching what the JS emitter sees in
+/// each `use` path's final segment. Target-agnostic; the Lua backend ignores
+/// the result.
+fn js_imported_bindings(
+    root: &Path,
+    loaded: &HashMap<PathBuf, LoadedModule>,
+    module: &ast::Module,
+) -> std::collections::HashSet<String> {
+    let mut bindings = std::collections::HashSet::new();
+    for item in &module.items {
+        let ast::ItemKind::Use(u) = &item.kind else {
+            continue;
+        };
+        let Some((last, _)) = u.path.split_last() else {
+            continue;
+        };
+        let Some(dep) = module_file(root, &u.path).map(|p| canonical_or(&p)) else {
+            continue;
+        };
+        let Some(source) = loaded.get(&dep) else {
+            continue;
+        };
+        if codegen_js::module_js_bindings(&source.module).contains(last) {
+            bindings.insert(last.clone());
+        }
+    }
+    bindings
 }
