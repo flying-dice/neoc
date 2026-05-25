@@ -12,21 +12,21 @@ assertions at every stage.
   (consolidated EBNF) outstanding — see `conformance-breadth.md`.
 
 ## Compiler crates
-- `neocc-grammar` — tree-sitter grammar, consumed as the `tree-sitter-neoc`
+- `neoc-grammar` — tree-sitter grammar, consumed as the `tree-sitter-neoc`
   submodule; `cc`-builds its parser; CST parse tests.
-- `neocc-ast` — full typed AST (span-free, `PartialEq`).
-- `neocc-parser` — modular CST→AST adapter (every construct); AST-stage tests.
-- `neocc-types` — declaration collection, inference, checks (unknown names,
+- `neoc-ast` — full typed AST (span-free, `PartialEq`).
+- `neoc-parser` — modular CST→AST adapter (every construct); AST-stage tests.
+- `neoc-types` — declaration collection, inference, checks (unknown names,
   type mismatches, struct-literal fields, `match` exhaustiveness, `?`
   well-formedness, trait-impl completeness), `elaborate` (string `+` → `Concat`),
   and derived-method awareness (`clone`/`eq`/`debug`/`display` are callable).
-- `neocc-macros` — `Clone`/`Eq`/`Debug`/`Display` derives, structural over the AST.
-- `neocc-codegen-lua` — emitter for the language: fn, structs (metatable
+- `neoc-macros` — `Clone`/`Eq`/`Debug`/`Display` derives, structural over the AST.
+- `neoc-codegen-lua` — emitter for the language: fn, structs (metatable
   dispatch), enums, `impl`, control flow, operators incl. string concat (`..`),
   calls, fields, indexing, struct/enum construction, lists, closures, `match` +
   patterns, `?`, derive splicing. (Remaining emitter gaps tracked in
   `emitter-limitations.md`.)
-- `neocc-compiler` — `transpile(src) -> CompileOutput` (parse → check →
+- `neoc-compiler` — `transpile(src) -> CompileOutput` (parse → check →
   elaborate → emit), diagnostics tagged by stage.
 
 ## Tests (assert at every stage)
@@ -41,4 +41,4 @@ The conformance corpus has already caught and fixed two real bugs.
   at `tree-sitter-neoc`).
 
 ## Stubs (not done — see task files)
-`neocc` CLI bin, `neocc-lsp`, `neocc-fmt`, `neocc-wasm` are stubs.
+`neoc` CLI bin, `neoc-lsp`, `neoc-fmt`, `neoc-wasm` are stubs.

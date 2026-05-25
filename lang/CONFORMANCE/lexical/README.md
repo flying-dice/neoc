@@ -15,7 +15,7 @@ must be hand-written against the spec, never derived from whatever the impl
 happens to produce; a synthesised mapping would violate that.
 
 So this layer waits for a real tokeniser. When neoc grows a standalone lexer
-(`neocc_lexer::tokenize(&str) -> Vec<Token>` with `LEXICAL.md`-named kinds),
+(`neoc_lexer::tokenize(&str) -> Vec<Token>` with `LEXICAL.md`-named kinds),
 add cases here as `<name>.neoc` + `<name>.tokens` and a runner alongside
 `conformance_static.rs` / `conformance_syntax.rs`.
 

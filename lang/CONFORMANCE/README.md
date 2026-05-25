@@ -54,7 +54,7 @@ neoc build lang/CONFORMANCE/dynamic/*.neoc --target python
 
 Each dynamic case also ships a `name.rs`: the closest working Rust translation. neoc is "Rust without lifetimes," so the anchor mirrors the case — same structs, enums, impls, `match` arms — and prints exactly `name.stdout`.
 
-The single data-driven runner `crates/neocc-compiler/tests/conformance.rs` pins the whole contract, one visible test per case × target:
+The single data-driven runner `crates/neoc-compiler/tests/conformance.rs` pins the whole contract, one visible test per case × target:
 
 - `<case>::<target>::source` — the live emit equals the committed `.lua` / `.js` / `.py` (the transformation is pinned; no toolchain needed).
 - `<case>::<target>` — transpile (or compile the `.rs`) and run under `lua` / `node` / `python3` / `rustc`, asserting `name.stdout`.
@@ -69,7 +69,7 @@ A neoc implementation passes conformance when, for every `*.neoc` file under `CO
 2. No additional warnings or diagnostics are produced beyond those listed in the expected output.
 3. The exit status is zero (success) for cases that should succeed, non-zero for cases that should fail.
 
-The `neocc` workspace ships one runner per active layer under `crates/neocc-compiler/tests/`: `conformance.rs` (dynamic), `conformance_static.rs` (static), and `conformance_syntax.rs` (syntax). Each uses `libtest-mimic` to emit one visible test per case. A different implementation in another host language is expected to bring its own runner; the conformance files themselves are language- and implementation-agnostic.
+The neoc workspace ships one runner per active layer under `crates/neoc-compiler/tests/`: `conformance.rs` (dynamic), `conformance_static.rs` (static), and `conformance_syntax.rs` (syntax). Each uses `libtest-mimic` to emit one visible test per case. A different implementation in another host language is expected to bring its own runner; the conformance files themselves are language- and implementation-agnostic.
 
 ## Adding cases
 
