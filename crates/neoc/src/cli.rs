@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::Subcommand;
-use neoc_compiler::{ProjectDiagnostic, Stage, Target, transpile_project};
+use neoc_compiler::{ProjectDiagnostic, SourceMap, Stage, Target, transpile_project};
 
 /// The compiler subcommands: `build`, `check`, `fmt`, and `lsp`.
 #[derive(Debug, Subcommand)]
@@ -216,22 +216,34 @@ fn out_path(source: &Path, output: Option<&Path>, target: Target) -> PathBuf {
     }
 }
 
-/// Prints a multi-file project's diagnostics to `err`, each tagged with the
-/// module it came from.
+/// A transpiled `.neoc` entry ready to run: the emitted Lua and the line map
+/// back to the neoc source, so `neoc run` can rewrite a runtime fault's Lua
+/// line numbers to neoc positions.
+pub struct TranspiledEntry {
+    /// The emitted Lua source for the entry, with `main()` appended when the
+    /// program defines a `main`.
+    pub lua: String,
+    /// Maps emitted-Lua lines back to neoc source lines.
+    pub source_map: SourceMap,
+}
+
 /// Transpiles a single `.neoc` entry file to Lua so `neoc run` can execute it
 /// in-process, with no intermediate file. Diagnostics (parse / type / emit) are
 /// reported to `err` exactly as `neoc build` reports them.
 ///
-/// Returns the emitted Lua source for the entry on success. Returns `None` when
-/// the program reported a diagnostic, or when it imports other modules via
-/// `use` — `run` executes a single file, and the lowered `require("a.b")` calls
-/// have no resolver under the runtime's `namespace:name` require, so such
-/// projects must go through `neoc build`.
+/// Returns the emitted Lua source for the entry and its line map on success.
+/// Returns `None` when the program reported a diagnostic, or when it imports
+/// other modules via `use` — `run` executes a single file, and the lowered
+/// `require("a.b")` calls have no resolver under the runtime's `namespace:name`
+/// require, so such projects must go through `neoc build`.
 ///
 /// # Errors
 ///
 /// Returns an error if the entry file cannot be read.
-pub fn transpile_entry_to_lua(file: &Path, err: &mut impl Write) -> Result<Option<String>> {
+pub fn transpile_entry_to_lua(
+    file: &Path,
+    err: &mut impl Write,
+) -> Result<Option<TranspiledEntry>> {
     let project = transpile_project(file, Target::Lua)
         .with_context(|| format!("reading {}", file.display()))?;
 
@@ -250,7 +262,9 @@ pub fn transpile_entry_to_lua(file: &Path, err: &mut impl Write) -> Result<Optio
         return Ok(None);
     }
 
-    let Some((_, mut lua)) = project.files.into_iter().next() else {
+    let mut files = project.files.into_iter();
+    let mut maps = project.source_maps.into_iter();
+    let (Some((_, mut lua)), Some(source_map)) = (files.next(), maps.next()) else {
         return Ok(None);
     };
 
@@ -263,7 +277,7 @@ pub fn transpile_entry_to_lua(file: &Path, err: &mut impl Write) -> Result<Optio
         lua.push_str("\nmain()\n");
     }
 
-    Ok(Some(lua))
+    Ok(Some(TranspiledEntry { lua, source_map }))
 }
 
 /// Whether the emitted Lua defines a top-level `main` function — the entry

@@ -272,3 +272,43 @@ fn run_neoc_type_error_reports_neoc_diagnostic_not_lua() {
         "expected a neoc type diagnostic, got: {stderr}"
     );
 }
+
+// A program that compiles cleanly but faults at runtime: `crash()` (neoc line
+// 4) calls an unbound name, so the VM raises `attempt to call a nil value`. The
+// offending call sits on neoc line 4; the emitted Lua puts it on a different
+// line, so a correct source map must report line 4, not the Lua line. (#55, #56)
+const RUNTIME_FAULT: &str = "\
+ext fn print(s: string);
+fn crash() {
+  print(\"in crash\");
+  let n = explode();
+}
+ext fn explode() -> number;
+fn main() {
+  crash();
+}
+";
+
+#[test]
+fn run_neoc_runtime_fault_reports_neoc_line_not_lua_line() {
+    let dir = tempdir().unwrap();
+    let src = write(dir.path(), "fault.neoc", RUNTIME_FAULT);
+
+    let out = Command::new(BIN).arg("run").arg(&src).output().unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+
+    // The fault names the `.neoc` file and the neoc line of the offending call
+    // (`let n = explode();` on line 4), not the emitted-Lua line.
+    assert!(
+        stderr.contains("fault.neoc\"]:4:"),
+        "expected the fault at fault.neoc:4 (neoc line), got: {stderr}"
+    );
+    // The emitted Lua puts `explode()` on line 3 (no `ext`/header lines emit), so
+    // an unmapped report would have said `:3:` — assert that leaked Lua line is
+    // gone from the chunk reference.
+    assert!(
+        !stderr.contains("fault.neoc\"]:3:"),
+        "Lua line 3 leaked into the report; map not applied: {stderr}"
+    );
+}
