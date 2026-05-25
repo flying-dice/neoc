@@ -22,6 +22,7 @@ use mlua::{AnyUserData, Lua, Table, UserData, UserDataMethods, Value};
 use parking_lot::Mutex;
 use tracing::instrument;
 
+use crate::lua::facade::Module;
 use crate::lua::sandbox::{from_err, ok};
 
 // ---------------------------------------------------------------------------
@@ -143,10 +144,76 @@ impl UserData for WriterHandle {
 // ---------------------------------------------------------------------------
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
-    t.set("from_string", lua.create_function(from_string)?)?;
-    t.set("copy", lua.create_function(copy)?)?;
-    Ok(t)
+    Ok(declare(lua)?.into_table())
+}
+
+/// Declares the `std:io` surface through the facade.
+///
+/// Both module functions are set verbatim with
+/// [`crate::lua::facade::Module::set`]: each already carries its own
+/// `#[instrument(name = "io.<fn>", target = "luau::lib::io")]` attribute, so
+/// routing through the facade would add a second span. `from_string` returns a
+/// `ReaderHandle` userdata and `copy` borrows two handles and bakes its own
+/// argument-type error messages, so neither fits a regular facade return type.
+/// The `ReaderHandle` / `WriterHandle` methods keep their own `impl UserData`
+/// and are recorded here for the header via
+/// [`crate::lua::facade::Module::userdata`].
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "std:io")?;
+
+    m.set("from_string", lua.create_function(from_string)?)?;
+    m.record_fn(
+        "from_string",
+        &[("s", "string")],
+        "ReaderHandle",
+        "Wrap a Lua string in a `ReaderHandle` so it can be passed to any reader consumer.",
+    );
+
+    m.set("copy", lua.create_function(copy)?)?;
+    m.record_fn(
+        "copy",
+        &[("reader", "ReaderHandle"), ("writer", "WriterHandle")],
+        "Result<number, string>",
+        "Copy all remaining bytes from `reader` into `writer`, returning the total bytes copied.",
+    );
+
+    m.userdata("ReaderHandle", |r| {
+        r.method(
+            "read",
+            &[("n", "number")],
+            "Result<string, string>",
+            "Read up to `n` bytes; returns `(nil, nil)` at EOF.",
+        )
+        .method(
+            "read_line",
+            &[],
+            "Result<string, string>",
+            "Read one line, stripping the trailing newline; returns `(nil, nil)` at EOF.",
+        )
+        .method(
+            "read_all",
+            &[],
+            "Result<string, string>",
+            "Read the entire remaining stream into a single string.",
+        );
+    });
+
+    m.userdata("WriterHandle", |w| {
+        w.method(
+            "write",
+            &[("data", "string")],
+            "Result<bool, string>",
+            "Write all bytes of `data` to the stream.",
+        )
+        .method(
+            "flush",
+            &[],
+            "Result<bool, string>",
+            "Flush any buffered bytes to the underlying sink.",
+        );
+    });
+
+    Ok(m)
 }
 
 #[instrument(name = "io.from_string", target = "luau::lib::io", skip_all)]

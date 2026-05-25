@@ -9,17 +9,67 @@ use std::io::{BufReader, BufWriter};
 use mlua::{Lua, Table, Value};
 use tracing::instrument;
 
+use crate::lua::facade::Module;
 use crate::lua::sandbox::{from_err, ok};
 use crate::lua::std::io::{ReaderHandle, WriterHandle};
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
-    t.set("create_dir", lua.create_function(create_dir)?)?;
-    t.set("create_dir_all", lua.create_function(create_dir_all)?)?;
-    t.set("open", lua.create_function(open)?)?;
-    t.set("read", lua.create_function(read)?)?;
-    t.set("write", lua.create_function(write)?)?;
-    Ok(t)
+    Ok(declare(lua)?.into_table())
+}
+
+/// Declares the `std:fs` surface through the facade.
+///
+/// Every function is set verbatim with [`crate::lua::facade::Module::set`]:
+/// each already carries its own `#[instrument(name = "fs.<fn>", target =
+/// "luau::lib::fs")]` attribute, so routing through the facade's `try_func`
+/// would add a second span and break byte-identical tracing. `open` returns a
+/// `ReaderHandle` or `WriterHandle` whose type depends on the mode, so it has
+/// no single facade return type. Each function is recorded for the header via
+/// [`crate::lua::facade::Module::record_fn`].
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "std:fs")?;
+
+    m.set("create_dir", lua.create_function(create_dir)?)?;
+    m.record_fn(
+        "create_dir",
+        &[("path", "string")],
+        "Result<bool, string>",
+        "Create a single directory. Mirrors `std::fs::create_dir` — errors if the path already exists or the parent is missing.",
+    );
+
+    m.set("create_dir_all", lua.create_function(create_dir_all)?)?;
+    m.record_fn(
+        "create_dir_all",
+        &[("path", "string")],
+        "Result<bool, string>",
+        "Create a directory and every missing ancestor. Mirrors `std::fs::create_dir_all`; succeeds if the directory already exists.",
+    );
+
+    m.set("open", lua.create_function(open)?)?;
+    m.record_fn(
+        "open",
+        &[("opts", "LuaValue")],
+        "Result<LuaValue, string>",
+        "Open a file given `{ path, mode }`. Mode `\"r\"` returns a reader handle; `\"w\"` / `\"a\"` return a writer handle.",
+    );
+
+    m.set("read", lua.create_function(read)?)?;
+    m.record_fn(
+        "read",
+        &[("path", "string")],
+        "Result<string, string>",
+        "Read the entire contents of `path` into a binary-safe string. Mirrors `std::fs::read`.",
+    );
+
+    m.set("write", lua.create_function(write)?)?;
+    m.record_fn(
+        "write",
+        &[("path", "string"), ("data", "string")],
+        "Result<bool, string>",
+        "Write `data` to `path`, replacing any existing content. Mirrors `std::fs::write`; binary-safe.",
+    );
+
+    Ok(m)
 }
 
 /// Creates a single directory. Mirrors `std::fs::create_dir` — errors if the

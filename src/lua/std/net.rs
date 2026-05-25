@@ -27,27 +27,44 @@ use std::sync::Arc;
 
 use mlua::{Lua, Table, UserData, UserDataMethods};
 use tokio::net::TcpListener;
-use tracing::instrument;
 
-use crate::lua::sandbox::{from_err, ok};
+use crate::lua::facade::Module;
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
-
-    // `require("std:net").TcpListener.bind(addr)`
-    let tcp_listener_t = lua.create_table()?;
-    tcp_listener_t.set("bind", lua.create_function(make_listener)?)?;
-    t.set("TcpListener", tcp_listener_t)?;
-
-    Ok(t)
+    Ok(declare(lua)?.into_table())
 }
 
-#[instrument(name = "TcpListener.bind", target = "luau::lib::net", skip_all)]
-fn make_listener(lua: &Lua, addr: String) -> mlua::Result<(mlua::Value, mlua::Value)> {
-    match bind(&addr) {
-        Ok(listener) => ok(lua, Listener::from_arc(Arc::new(listener))),
-        Err(e) => from_err(lua, "TcpListener.bind", e),
-    }
+/// Declares the `std:net` surface through the facade.
+///
+/// `TcpListener` is a constructor sub-table reached as
+/// `require("std:net").TcpListener.bind(addr)`. The fallible constructor routes
+/// through [`crate::lua::facade::TypeSpec::try_constructor`], which opens the
+/// `"TcpListener.bind"` span at `luau::lib::net` and marshals the
+/// `(value, error)` idiom with the `"TcpListener.bind"` error prefix — exactly
+/// as the hand-written `#[instrument(name = "TcpListener.bind", target =
+/// "luau::lib::net")]` registration did. The `Listener` (`addr`) method keeps
+/// its own `impl UserData` and is recorded here for the header.
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "std:net")?;
+
+    // `require("std:net").TcpListener.bind(addr)`
+    m.type_("TcpListener", |t| {
+        t.try_constructor(
+            "bind",
+            &[("addr", "string")],
+            "Bind a TCP socket to `addr` (e.g. `\"0.0.0.0:3000\"`). Returns a listener handle on success.",
+            |_, addr: String| bind(&addr).map(|l| Listener::from_arc(Arc::new(l))),
+        )?
+        .method(
+            "addr",
+            &[],
+            "string",
+            "Return the local address the socket is bound to, as a string like `\"127.0.0.1:8080\"`.",
+        );
+        Ok(())
+    })?;
+
+    Ok(m)
 }
 
 // TODO: clean-code - 0.55 - DRY: error prefix "bind {addr}" duplicates the "TcpListener.bind" context added later by from_err

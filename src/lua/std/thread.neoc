@@ -1,0 +1,30 @@
+// @generated from the std:thread runtime module — do not edit.
+struct WorkerHandle;
+impl WorkerHandle {
+    /// Send a JSON-serialisable value to the worker; errors if the worker has exited.
+    fn send(value: LuaValue) -> ();
+    /// Wait for a message from the worker. Returns `(nil, error)` once the worker has exited.
+    fn receive() -> Result<LuaValue, string>;
+    /// Wait for the worker to finish and return its result, or `(nil, error)` on failure.
+    fn await() -> Result<LuaValue, string>;
+    /// Abort the worker immediately. A subsequent `:await()` returns `(nil, "thread.await: terminated")`.
+    fn terminate() -> ();
+}
+struct Channel;
+impl Channel {
+    /// Send a JSON-serialisable value to the parent's message queue.
+    fn send(value: LuaValue) -> ();
+    /// Wait for a message from the parent. Returns `(nil, error)` once the parent has exited.
+    fn receive() -> Result<LuaValue, string>;
+}
+#[link(name = "std:thread")]
+extern "neoc" {
+    /// Spawn a new Lua VM as a worker on the same Tokio runtime, given `{ source | file, name?, args?, shared? }`.
+    fn spawn(opts: LuaValue) -> Result<WorkerHandle, string>;
+    /// Return the number of logical CPU cores available to the process. At least 1.
+    fn available_parallelism() -> number;
+    /// The `Channel` to the parent VM inside a spawned worker; nil at the top level.
+    const parent: LuaValue;
+    /// The reconstructed table of Sendable values passed via `shared` at spawn time; nil otherwise.
+    const shared: LuaValue;
+}

@@ -2,20 +2,66 @@
 
 use mlua::{Lua, Table, Value};
 
+use crate::lua::facade::Module;
 use crate::lua::sandbox::{err, from_err, ok};
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
+    Ok(declare(lua)?.into_table())
+}
 
-    t.set("os", std::env::consts::OS)?;
-    t.set("arch", std::env::consts::ARCH)?;
-    t.set("family", std::env::consts::FAMILY)?;
-    t.set("exe_suffix", std::env::consts::EXE_SUFFIX)?;
-    t.set("dll_prefix", std::env::consts::DLL_PREFIX)?;
-    t.set("dll_suffix", std::env::consts::DLL_SUFFIX)?;
+/// Declares the `std:env` surface through the facade.
+///
+/// Every function is set verbatim with [`crate::lua::facade::Module::set`]:
+/// the hand-written registration carried **no** `#[instrument]` span, so
+/// routing through the facade's `func` / `try_func` would add one and break
+/// byte-identical tracing. `home_dir` and `var` bake their own literal error
+/// messages, `args` raises `mlua::Error` directly, and the platform constants
+/// are plain string values — none fit the facade's regular paths. Each is
+/// recorded for the header via [`crate::lua::facade::Module::record_fn`] /
+/// [`crate::lua::facade::Module::const_`].
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "std:env")?;
+
+    m.set("os", std::env::consts::OS)?
+        .set("arch", std::env::consts::ARCH)?
+        .set("family", std::env::consts::FAMILY)?
+        .set("exe_suffix", std::env::consts::EXE_SUFFIX)?
+        .set("dll_prefix", std::env::consts::DLL_PREFIX)?
+        .set("dll_suffix", std::env::consts::DLL_SUFFIX)?;
+
+    m.const_(
+        "os",
+        "string",
+        "Target operating system (e.g. `\"linux\"`, `\"macos\"`, `\"windows\"`).",
+    )
+    .const_(
+        "arch",
+        "string",
+        "Target CPU architecture (e.g. `\"x86_64\"`, `\"aarch64\"`).",
+    )
+    .const_(
+        "family",
+        "string",
+        "Target OS family (`\"unix\"` or `\"windows\"`).",
+    )
+    .const_(
+        "exe_suffix",
+        "string",
+        "Executable file suffix for the target (e.g. `\".exe\"` on Windows).",
+    )
+    .const_(
+        "dll_prefix",
+        "string",
+        "Dynamic-library filename prefix for the target (e.g. `\"lib\"`).",
+    )
+    .const_(
+        "dll_suffix",
+        "string",
+        "Dynamic-library filename suffix for the target (e.g. `\".so\"`, `\".dylib\"`).",
+    );
 
     // TODO: clean-code - 0.55 - DRY: home_dir/current_dir repeat PathBuf -> ok(lua, lossy) pattern; extract helper
-    t.set(
+    m.set(
         "home_dir",
         lua.create_function(|lua, ()| {
             #[allow(deprecated)]
@@ -25,29 +71,53 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
             }
         })?,
     )?;
+    m.record_fn(
+        "home_dir",
+        &[],
+        "Result<string, string>",
+        "Return the current user's home directory, or an error if it cannot be determined.",
+    );
 
-    t.set(
+    m.set(
         "temp_dir",
         lua.create_function(|_, ()| Ok(std::env::temp_dir().to_string_lossy().into_owned()))?,
     )?;
+    m.record_fn(
+        "temp_dir",
+        &[],
+        "string",
+        "Return the platform temporary-file directory.",
+    );
 
-    t.set(
+    m.set(
         "current_dir",
         lua.create_function(|lua, ()| match std::env::current_dir() {
             Ok(p) => ok(lua, p.to_string_lossy().as_ref()),
             Err(e) => from_err(lua, "env.current_dir", e),
         })?,
     )?;
+    m.record_fn(
+        "current_dir",
+        &[],
+        "Result<string, string>",
+        "Return the process's current working directory, or an error.",
+    );
 
-    t.set(
+    m.set(
         "var",
         lua.create_function(|lua, key: String| match std::env::var(&key) {
             Ok(v) => ok(lua, v),
             Err(e) => err(lua, format!("env.var: {key}: {e}")),
         })?,
     )?;
+    m.record_fn(
+        "var",
+        &[("key", "string")],
+        "Result<string, string>",
+        "Read the environment variable `key`, or an error if it is unset or not valid Unicode.",
+    );
 
-    t.set(
+    m.set(
         "vars",
         lua.create_function(|lua, ()| {
             let tbl = lua.create_table()?;
@@ -59,10 +129,16 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
             Ok(tbl)
         })?,
     )?;
+    m.record_fn(
+        "vars",
+        &[],
+        "LuaValue",
+        "Return every environment variable as a `{ [string]: string }` table, skipping non-Unicode entries.",
+    );
 
     // TODO: clean-code - 0.65 - KISS: nested match on _NEOC_ARGS Value variants is dense; flatten via early return
     // TODO: clean-code - 0.6 - DRY: identical "_NEOC_ARGS: expected array of strings" literal duplicated on two arms
-    t.set(
+    m.set(
         "args",
         lua.create_function(|lua, ()| {
             let globals = lua.globals();
@@ -81,8 +157,14 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
             }
         })?,
     )?;
+    m.record_fn(
+        "args",
+        &[],
+        "LuaValue",
+        "Return the CLI arguments passed to the script as a 1-indexed `{ string }` table.",
+    );
 
-    Ok(t)
+    Ok(m)
 }
 
 #[cfg(test)]

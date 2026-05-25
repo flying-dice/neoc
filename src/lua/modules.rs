@@ -194,6 +194,14 @@ pub fn headers(lua: &Lua) -> mlua::Result<Vec<(String, String)>> {
     };
 
     push(stdmod::collections::declare(lua))?;
+    push(stdmod::env::declare(lua))?;
+    push(stdmod::fs::declare(lua))?;
+    push(stdmod::io::declare(lua))?;
+    push(stdmod::net::declare(lua))?;
+    push(stdmod::task::declare(lua))?;
+    push(stdmod::thread::declare(lua))?;
+    push(stdmod::time::declare(lua))?;
+    push(stdmod::workers::declare(lua))?;
 
     push(lib::args::declare(lua))?;
     push(lib::base64::declare(lua))?;
@@ -246,9 +254,17 @@ mod tests {
         assert!(keys.contains(&"lib:template"));
         assert!(keys.contains(&"lib:tempfile"));
         assert!(keys.contains(&"std:collections"));
+        assert!(keys.contains(&"std:env"));
+        assert!(keys.contains(&"std:fs"));
+        assert!(keys.contains(&"std:io"));
+        assert!(keys.contains(&"std:net"));
+        assert!(keys.contains(&"std:task"));
+        assert!(keys.contains(&"std:thread"));
+        assert!(keys.contains(&"std:time"));
+        assert!(keys.contains(&"std:workers"));
         assert!(keys.contains(&"vnd:serde_yaml"));
         assert!(keys.contains(&"vnd:toml"));
-        assert_eq!(keys.len(), 17, "expected 17 migrated modules, got {keys:?}");
+        assert_eq!(keys.len(), 25, "expected 25 migrated modules, got {keys:?}");
 
         for (key, header) in &headers {
             assert!(

@@ -19,6 +19,8 @@ use mlua::{Lua, MultiValue, Table, Thread, ThreadStatus, UserData, UserDataMetho
 use parking_lot::Mutex;
 use tokio::sync::Notify;
 
+use crate::lua::facade::Module;
+
 // ---------------------------------------------------------------------------
 // Task outcome — stored once the task reaches a terminal state
 // ---------------------------------------------------------------------------
@@ -273,12 +275,25 @@ async fn drive_thread(thread: Thread, args: MultiValue) -> TaskOutcome {
 // ---------------------------------------------------------------------------
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
+    Ok(declare(lua)?.into_table())
+}
+
+/// Declares the `std:task` surface through the facade.
+///
+/// Every function is set verbatim with [`crate::lua::facade::Module::set`]:
+/// the hand-written registration carried **no** `#[instrument]` span, and each
+/// function raises `mlua::Error` directly on bad input (a dead coroutine, a
+/// non-`Task` handle) rather than returning the `(value, error)` channel — so
+/// neither `func` nor `try_func` fits. The `Task` userdata keeps its own
+/// `impl UserData` and is recorded here for the header via
+/// [`crate::lua::facade::Module::userdata`].
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "std:task")?;
 
     // task.spawn(fn | thread, ...) — resume synchronously for the first slice,
     // then return a Task handle. If the function yields (async op), the
     // continuation runs as a separate tokio task.
-    t.set(
+    m.set(
         "spawn",
         lua.create_function(|lua, (fn_val, args): (Value, MultiValue)| {
             let thread = into_thread(lua, fn_val, "task.spawn")?;
@@ -310,11 +325,17 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
             Ok(TaskHandle { inner })
         })?,
     )?;
+    m.record_fn(
+        "spawn",
+        &[("fn_or_thread", "LuaValue"), ("args", "LuaValue")],
+        "Task",
+        "Spawn a function or coroutine. The first synchronous slice runs immediately; a yield runs the continuation as a separate task.",
+    );
 
     // task.defer(fn | thread, ...) — queue to run after the current batch.
     // Deferred tasks execute in FIFO order; each waits for the previous
     // defer to finish before starting.
-    t.set(
+    m.set(
         "defer",
         lua.create_function(|lua, (fn_val, args): (Value, MultiValue)| {
             let thread = into_thread(lua, fn_val, "task.defer")?;
@@ -360,10 +381,16 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
             Ok(TaskHandle { inner })
         })?,
     )?;
+    m.record_fn(
+        "defer",
+        &[("fn_or_thread", "LuaValue"), ("args", "LuaValue")],
+        "Task",
+        "Queue a function to run after the current synchronous batch. Deferred tasks execute in FIFO order.",
+    );
 
     // task.delay(secs, fn, ...) — schedule fn after secs seconds.
     // delay(0) is semantically equivalent to defer.
-    t.set(
+    m.set(
         "delay",
         lua.create_function(|lua, (secs, fn_val, args): (f64, Value, MultiValue)| {
             let secs = secs.max(0.0);
@@ -386,11 +413,21 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
             Ok(TaskHandle { inner })
         })?,
     )?;
+    m.record_fn(
+        "delay",
+        &[
+            ("secs", "number"),
+            ("fn_or_thread", "LuaValue"),
+            ("args", "LuaValue"),
+        ],
+        "Task",
+        "Schedule a function to run after `secs` seconds. `delay(0, ...)` is equivalent to `defer(...)`.",
+    );
 
     // task.wait(secs) — yield current coroutine for secs seconds.
     // Must be called from within a coroutine (spawned task or deferred task).
     // Negative values are clamped to 0. Returns elapsed time as a float.
-    t.set(
+    m.set(
         "wait",
         lua.create_async_function(|_, secs: f64| async move {
             let secs = secs.max(0.0);
@@ -399,9 +436,15 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
             Ok(start.elapsed().as_secs_f64())
         })?,
     )?;
+    m.record_fn(
+        "wait",
+        &[("secs", "number")],
+        "number",
+        "Yield the current coroutine for `secs` seconds (clamped to 0). Returns the actual elapsed time.",
+    );
 
     // task.cancel(handle) — flat Roblox-compatible function; delegates to handle:cancel().
-    t.set(
+    m.set(
         "cancel",
         lua.create_function(|_, val: Value| match val {
             Value::UserData(ud) => {
@@ -419,8 +462,35 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
             ))),
         })?,
     )?;
+    m.record_fn(
+        "cancel",
+        &[("handle", "Task")],
+        "bool",
+        "Cancel a task by handle. Returns `true` if this call was the one that cancelled it.",
+    );
 
-    Ok(t)
+    m.userdata("Task", |t| {
+        t.method(
+            "cancel",
+            &[],
+            "bool",
+            "Cancel the task. Returns `true` if this call cancelled it; `false` if already finished.",
+        )
+        .method(
+            "is_finished",
+            &[],
+            "bool",
+            "Return `true` if the task has completed (success, error, or cancel).",
+        )
+        .method(
+            "await",
+            &[],
+            "Result<LuaValue, string>",
+            "Wait for the task to finish. Returns its values on success, `(nil, error)` on error, or `(nil, \"cancelled\")` if cancelled.",
+        );
+    });
+
+    Ok(m)
 }
 
 // ---------------------------------------------------------------------------
