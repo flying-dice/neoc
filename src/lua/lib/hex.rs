@@ -10,45 +10,71 @@
 //! without pre-cleaning), then strict: odd length or any non-hex character is
 //! refused via `from_err`.
 
-use mlua::{Lua, Table, Value};
-use tracing::instrument;
+use std::fmt;
 
-use crate::lua::sandbox::{from_err, ok};
+use mlua::{Lua, Table};
+
+use crate::lua::facade::Module;
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
-    t.set("encode", lua.create_function(encode)?)?;
-    t.set("encode_upper", lua.create_function(encode_upper)?)?;
-    t.set("decode", lua.create_function(decode)?)?;
-    Ok(t)
+    Ok(declare(lua)?.into_table())
 }
 
-#[instrument(name = "hex.encode", target = "luau::lib::hex", skip_all)]
-fn encode(_: &Lua, input: mlua::String) -> mlua::Result<String> {
-    Ok(hex::encode(input.as_bytes()))
+/// Declares the `lib:hex` surface through the facade. `encode` / `encode_upper`
+/// are infallible [`crate::lua::facade::Module::func`]s; `decode` is a fallible
+/// [`crate::lua::facade::Module::try_func`]. The `(value, error)` shape, the
+/// `hex.decode` error prefix, and the `luau::lib::hex` spans are byte-identical
+/// to the hand-written registration this replaces.
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "lib:hex")?;
+    m.func(
+        "encode",
+        &[("input", "string")],
+        "Encode `input` bytes to a lowercase hex string — two characters per byte, drawn from `0`–`9` and `a`–`f`.",
+        |_, input: mlua::String| Ok(hex::encode(input.as_bytes())),
+    )?
+    .func(
+        "encode_upper",
+        &[("input", "string")],
+        "Encode `input` bytes to an uppercase hex string (`0`–`9` and `A`–`F`).",
+        |_, input: mlua::String| Ok(hex::encode_upper(input.as_bytes())),
+    )?
+    .try_func(
+        "decode",
+        &[("input", "string")],
+        "Decode a hex string back to raw bytes; case-insensitive and tolerant of ASCII whitespace, strict otherwise.",
+        |lua, input: mlua::String| decode(lua, &input.as_bytes()),
+    )?;
+    Ok(m)
 }
 
-#[instrument(name = "hex.encode_upper", target = "luau::lib::hex", skip_all)]
-fn encode_upper(_: &Lua, input: mlua::String) -> mlua::Result<String> {
-    Ok(hex::encode_upper(input.as_bytes()))
+/// A decode failure rendered as a message whose `Display` matches the wrapped
+/// `hex::FromHexError`'s. The facade prefixes it as `hex.decode: <e>`, so this
+/// preserves the exact error string the original hand-written function produced.
+struct DecodeFail(String);
+
+impl fmt::Display for DecodeFail {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
 }
 
-#[instrument(name = "hex.decode", target = "luau::lib::hex", skip_all)]
-fn decode(lua: &Lua, input: mlua::String) -> mlua::Result<(Value, Value)> {
-    // Drop ASCII whitespace before decoding so dumps like "de ad be ef" or
-    // newline-wrapped blobs round-trip. The error position then refers to the
-    // whitespace-stripped stream, but the offending character is still named —
-    // good enough, and far less surprising than rejecting any space.
-    let cleaned: Vec<u8> = input
-        .as_bytes()
+/// Decodes `bytes` into a Lua byte string, mirroring the original
+/// `lua.create_string(&decoded)` path so the decoded value stays a string. ASCII
+/// whitespace is dropped first so dumps like `"de ad be ef"` or newline-wrapped
+/// blobs round-trip. The error position then refers to the whitespace-stripped
+/// stream, but the offending character is still named — good enough, and far
+/// less surprising than rejecting any space. The `hex` error flows to the
+/// facade's `(nil, "hex.decode: <e>")` error channel unchanged.
+fn decode(lua: &Lua, bytes: &[u8]) -> Result<mlua::String, DecodeFail> {
+    let cleaned: Vec<u8> = bytes
         .iter()
         .filter(|&&b| !b.is_ascii_whitespace())
         .copied()
         .collect();
-    match hex::decode(&cleaned) {
-        Ok(bytes) => ok(lua, lua.create_string(&bytes)?),
-        Err(e) => from_err(lua, "hex.decode", e),
-    }
+    let decoded = hex::decode(&cleaned).map_err(|e| DecodeFail(e.to_string()))?;
+    lua.create_string(&decoded)
+        .map_err(|e| DecodeFail(e.to_string()))
 }
 
 // ---------------------------------------------------------------------------

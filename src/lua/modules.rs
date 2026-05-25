@@ -214,6 +214,8 @@ pub fn headers(lua: &Lua) -> mlua::Result<Vec<(String, String)>> {
     push(lib::diff::declare(lua))?;
     push(lib::glob::declare(lua))?;
     push(lib::hash::declare(lua))?;
+    push(lib::hex::declare(lua))?;
+    push(lib::hmac::declare(lua))?;
     push(lib::html::declare(lua))?;
     push(lib::http::declare(lua))?;
     push(lib::ini::declare(lua))?;
@@ -268,6 +270,8 @@ mod tests {
         assert!(keys.contains(&"lib:diff"));
         assert!(keys.contains(&"lib:glob"));
         assert!(keys.contains(&"lib:hash"));
+        assert!(keys.contains(&"lib:hex"));
+        assert!(keys.contains(&"lib:hmac"));
         assert!(keys.contains(&"lib:html"));
         assert!(keys.contains(&"lib:http"));
         assert!(keys.contains(&"lib:ini"));
@@ -302,7 +306,7 @@ mod tests {
         assert!(keys.contains(&"vnd:sqlx_postgres"));
         assert!(keys.contains(&"vnd:testcontainers_modules"));
         assert!(keys.contains(&"vnd:toml"));
-        assert_eq!(keys.len(), 43, "expected 43 migrated modules, got {keys:?}");
+        assert_eq!(keys.len(), 45, "expected 45 migrated modules, got {keys:?}");
 
         for (key, header) in &headers {
             assert!(

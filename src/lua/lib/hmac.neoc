@@ -1,0 +1,19 @@
+// @generated from the lib:hmac runtime module — do not edit.
+struct Hmac;
+impl Hmac {
+    /// Feed `data` into the running MAC.
+    fn update(data: string) -> ();
+    /// Return the current tag as raw bytes; idempotent and does not consume the MAC.
+    fn digest() -> string;
+    /// Return the algorithm name this MAC was constructed with.
+    fn algorithm() -> string;
+}
+#[link(name = "lib:hmac")]
+extern "neoc" {
+    /// One-shot tag of `data` under `algo` and `key`, returning the tag as raw bytes.
+    fn hmac(algo: string, key: string, data: string) -> Result<string, string>;
+    /// Compare two tags in constant time; returns `true` iff they are equal.
+    fn verify(a: string, b: string) -> bool;
+    /// Return the list of supported algorithm names in canonical order.
+    fn algorithms() -> LuaValue;
+}
