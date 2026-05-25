@@ -234,6 +234,9 @@ pub fn headers(lua: &Lua) -> mlua::Result<Vec<(String, String)>> {
     push(vnd::rusqlite::declare(lua))?;
     push(vnd::serde_json::declare(lua))?;
     push(vnd::serde_yaml::declare(lua))?;
+    push(vnd::sqlx_mysql::declare(lua))?;
+    push(vnd::sqlx_postgres::declare(lua))?;
+    push(vnd::testcontainers_modules::declare(lua))?;
     push(vnd::toml::declare(lua))?;
 
     Ok(out)
@@ -293,8 +296,11 @@ mod tests {
         assert!(keys.contains(&"vnd:rusqlite"));
         assert!(keys.contains(&"vnd:serde_json"));
         assert!(keys.contains(&"vnd:serde_yaml"));
+        assert!(keys.contains(&"vnd:sqlx_mysql"));
+        assert!(keys.contains(&"vnd:sqlx_postgres"));
+        assert!(keys.contains(&"vnd:testcontainers_modules"));
         assert!(keys.contains(&"vnd:toml"));
-        assert_eq!(keys.len(), 40, "expected 40 migrated modules, got {keys:?}");
+        assert_eq!(keys.len(), 43, "expected 43 migrated modules, got {keys:?}");
 
         for (key, header) in &headers {
             assert!(
