@@ -6,23 +6,32 @@
 //! not a validating parser. See docs/src/rfcs for the full design rationale.
 
 use mlua::{Lua, Table};
-use tracing::instrument;
+
+use crate::lua::facade::Module;
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
-    t.set("escape", lua.create_function(escape)?)?;
-    t.set("unescape", lua.create_function(unescape)?)?;
-    Ok(t)
+    Ok(declare(lua)?.into_table())
 }
 
-#[instrument(name = "html.escape", target = "luau::lib::html", skip_all)]
-fn escape(_: &Lua, (input, _opts): (mlua::String, Option<Table>)) -> mlua::Result<String> {
-    Ok(escape_str(input.to_str()?.as_ref()))
-}
-
-#[instrument(name = "html.unescape", target = "luau::lib::html", skip_all)]
-fn unescape(_: &Lua, input: mlua::String) -> mlua::Result<String> {
-    Ok(unescape_str(input.to_str()?.as_ref()))
+/// Declares the `lib:html` surface through the facade. Both functions are
+/// infallible string transforms; the registered Lua surface and the
+/// `luau::lib::html` spans are byte-identical to the hand-written registration
+/// this replaces.
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "lib:html")?;
+    m.func(
+        "escape",
+        &[("input", "string"), ("opts", "LuaValue?")],
+        "Escape the five XML entities (`&`, `<`, `>`, `\"`, `'`) in `input`.",
+        |_, (input, _opts): (mlua::String, Option<Table>)| Ok(escape_str(input.to_str()?.as_ref())),
+    )?
+    .func(
+        "unescape",
+        &[("input", "string")],
+        "Reverse HTML entity references (named and numeric) in `input`; unknown entities pass through unchanged.",
+        |_, input: mlua::String| Ok(unescape_str(input.to_str()?.as_ref())),
+    )?;
+    Ok(m)
 }
 
 // ---------------------------------------------------------------------------

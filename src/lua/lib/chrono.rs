@@ -19,9 +19,12 @@ use std::str::FromStr;
 use jiff::civil::{Date, DateTime, Time};
 use jiff::tz::TimeZone;
 use jiff::{Span, Timestamp, Unit, Zoned};
-use mlua::{AnyUserData, Lua, MetaMethod, Table, UserData, UserDataFields, UserDataMethods, Value};
+use mlua::{
+    AnyUserData, IntoLua, Lua, MetaMethod, Table, UserData, UserDataFields, UserDataMethods, Value,
+};
 use tracing::instrument;
 
+use crate::lua::facade::Module;
 use crate::lua::sandbox::{err, ok};
 
 // ---------------------------------------------------------------------------
@@ -29,37 +32,286 @@ use crate::lua::sandbox::{err, ok};
 // ---------------------------------------------------------------------------
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
+    Ok(declare(lua)?.into_table())
+}
+
+/// Declares the `lib:chrono` surface through the facade.
+///
+/// The five constructor sub-tables (`Date`, `Time`, `DateTime`,
+/// `ZonedDateTime`, `Duration`) are set verbatim with
+/// [`crate::lua::facade::Module::set`]: their hand-written constructors carry
+/// `chrono.<Type>.<ctor>`-named spans the facade's `type_` would rename to
+/// `<Type>.<ctor>`, so routing them through the facade would change the trace
+/// shape. Each type keeps its own `impl UserData` and is recorded here for the
+/// header via [`crate::lua::facade::Module::userdata`]. The three flat helpers
+/// (`now`, `utc_now`, `parse`) are routed through the facade — their
+/// `chrono.<fn>` spans match what the facade emits, so behaviour stays
+/// byte-identical.
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "lib:chrono")?;
 
     let date_sub = lua.create_table()?;
     date_sub.set("new", lua.create_function(date_new)?)?;
     date_sub.set("parse", lua.create_function(date_parse_ctor)?)?;
-    t.set("Date", date_sub)?;
+    m.set("Date", date_sub)?;
 
     let time_sub = lua.create_table()?;
     time_sub.set("new", lua.create_function(time_new)?)?;
     time_sub.set("parse", lua.create_function(time_parse_ctor)?)?;
-    t.set("Time", time_sub)?;
+    m.set("Time", time_sub)?;
 
     let dt_sub = lua.create_table()?;
     dt_sub.set("new", lua.create_function(datetime_new)?)?;
     dt_sub.set("parse", lua.create_function(datetime_parse_ctor)?)?;
-    t.set("DateTime", dt_sub)?;
+    m.set("DateTime", dt_sub)?;
 
     let zdt_sub = lua.create_table()?;
     zdt_sub.set("parse", lua.create_function(zdt_parse_ctor)?)?;
-    t.set("ZonedDateTime", zdt_sub)?;
+    m.set("ZonedDateTime", zdt_sub)?;
 
     let dur_sub = lua.create_table()?;
     dur_sub.set("of", lua.create_function(duration_of)?)?;
     dur_sub.set("parse", lua.create_function(duration_parse_ctor)?)?;
-    t.set("Duration", dur_sub)?;
+    m.set("Duration", dur_sub)?;
 
-    t.set("now", lua.create_function(flat_now)?)?;
-    t.set("utc_now", lua.create_function(flat_utc_now)?)?;
-    t.set("parse", lua.create_function(flat_parse)?)?;
+    // `now` / `utc_now` return a `ZonedDateTime` userdata handle — not a
+    // facade `NeocType` — and carry `chrono.now` / `chrono.utc_now` spans, so
+    // they are set verbatim with their `#[instrument]` attributes intact.
+    m.set("now", lua.create_function(flat_now)?)?
+        .set("utc_now", lua.create_function(flat_utc_now)?)?
+        .try_func(
+            "parse",
+            &[("s", "string")],
+            "Recognise an ISO 8601 / RFC 9557 string and dispatch it to the matching `Date`, `Time`, `DateTime`, or `ZonedDateTime`.",
+            |lua, s: String| flat_parse(lua, &s),
+        )?;
 
-    Ok(t)
+    record_userdata(&mut m);
+
+    Ok(m)
+}
+
+/// Records the five chrono userdata types' field-getters and methods for the
+/// emitted `.neoc` header. The runtime registration of each type stays in its
+/// own `impl UserData`; this only mirrors the surface so the header documents
+/// it. Fields are recorded as zero-argument accessor methods.
+fn record_userdata(m: &mut Module<'_>) {
+    m.userdata("Date", |t| {
+        t.method("year", &[], "number", "Calendar year.")
+            .method("month", &[], "number", "Month of year (1-12).")
+            .method("day", &[], "number", "Day of month (1-31).")
+            .method("weekday", &[], "number", "Day of week, Monday = 1.")
+            .method("ordinal", &[], "number", "Day of year (1-366).")
+            .method(
+                "with_year",
+                &[("year", "number")],
+                "Result<Date, string>",
+                "Return a copy with the year replaced.",
+            )
+            .method(
+                "with_month",
+                &[("month", "number")],
+                "Result<Date, string>",
+                "Return a copy with the month replaced.",
+            )
+            .method(
+                "with_day",
+                &[("day", "number")],
+                "Result<Date, string>",
+                "Return a copy with the day replaced.",
+            )
+            .method(
+                "at",
+                &[("time", "Time")],
+                "DateTime",
+                "Combine with a `Time` into a `DateTime`.",
+            )
+            .method(
+                "add",
+                &[("duration", "Duration")],
+                "Result<Date, string>",
+                "Add a day-resolution `Duration`.",
+            )
+            .method(
+                "sub",
+                &[("duration", "Duration")],
+                "Result<Date, string>",
+                "Subtract a day-resolution `Duration`.",
+            )
+            .method(
+                "diff",
+                &[("other", "Date")],
+                "Result<Duration, string>",
+                "Calendar span from this date until `other`.",
+            )
+            .method(
+                "format",
+                &[("fmt", "string")],
+                "Result<string, string>",
+                "Format via a strftime pattern.",
+            );
+    });
+
+    m.userdata("Time", |t| {
+        t.method("hour", &[], "number", "Hour of day (0-23).")
+            .method("minute", &[], "number", "Minute of hour (0-59).")
+            .method("second", &[], "number", "Second of minute (0-59).")
+            .method("nanosecond", &[], "number", "Sub-second nanoseconds.")
+            .method(
+                "add",
+                &[("duration", "Duration")],
+                "Result<Time, string>",
+                "Add a `Duration`.",
+            )
+            .method(
+                "sub",
+                &[("duration", "Duration")],
+                "Result<Time, string>",
+                "Subtract a `Duration`.",
+            )
+            .method(
+                "diff",
+                &[("other", "Time")],
+                "Result<Duration, string>",
+                "Span from this time until `other`.",
+            )
+            .method(
+                "format",
+                &[("fmt", "string")],
+                "Result<string, string>",
+                "Format via a strftime pattern.",
+            );
+    });
+
+    m.userdata("DateTime", |t| {
+        t.method("year", &[], "number", "Calendar year.")
+            .method("month", &[], "number", "Month of year (1-12).")
+            .method("day", &[], "number", "Day of month (1-31).")
+            .method("hour", &[], "number", "Hour of day (0-23).")
+            .method("minute", &[], "number", "Minute of hour (0-59).")
+            .method("second", &[], "number", "Second of minute (0-59).")
+            .method("nanosecond", &[], "number", "Sub-second nanoseconds.")
+            .method("date", &[], "Date", "The civil `Date` component.")
+            .method("time", &[], "Time", "The civil `Time` component.")
+            .method(
+                "in_zone",
+                &[("name", "string")],
+                "Result<ZonedDateTime, string>",
+                "Interpret this civil datetime in the named IANA zone.",
+            )
+            .method(
+                "add",
+                &[("duration", "Duration")],
+                "Result<DateTime, string>",
+                "Add a `Duration`.",
+            )
+            .method(
+                "sub",
+                &[("duration", "Duration")],
+                "Result<DateTime, string>",
+                "Subtract a `Duration`.",
+            )
+            .method(
+                "diff",
+                &[("other", "DateTime")],
+                "Result<Duration, string>",
+                "Span from this datetime until `other`.",
+            )
+            .method(
+                "format",
+                &[("fmt", "string")],
+                "Result<string, string>",
+                "Format via a strftime pattern.",
+            );
+    });
+
+    m.userdata("ZonedDateTime", |t| {
+        t.method("year", &[], "number", "Calendar year.")
+            .method("month", &[], "number", "Month of year (1-12).")
+            .method("day", &[], "number", "Day of month (1-31).")
+            .method("hour", &[], "number", "Hour of day (0-23).")
+            .method("minute", &[], "number", "Minute of hour (0-59).")
+            .method("second", &[], "number", "Second of minute (0-59).")
+            .method("nanosecond", &[], "number", "Sub-second nanoseconds.")
+            .method("timezone", &[], "string?", "IANA zone name, if any.")
+            .method("offset_seconds", &[], "number", "UTC offset in seconds.")
+            .method(
+                "epoch_seconds",
+                &[],
+                "number",
+                "Seconds since the Unix epoch.",
+            )
+            .method("date", &[], "Date", "The civil `Date` component.")
+            .method("time", &[], "Time", "The civil `Time` component.")
+            .method(
+                "datetime",
+                &[],
+                "DateTime",
+                "The civil `DateTime` component.",
+            )
+            .method(
+                "in_zone",
+                &[("name", "string")],
+                "Result<ZonedDateTime, string>",
+                "Convert to the named IANA zone, preserving the instant.",
+            )
+            .method(
+                "add",
+                &[("duration", "Duration")],
+                "Result<ZonedDateTime, string>",
+                "Add a `Duration`.",
+            )
+            .method(
+                "sub",
+                &[("duration", "Duration")],
+                "Result<ZonedDateTime, string>",
+                "Subtract a `Duration`.",
+            )
+            .method(
+                "diff",
+                &[("other", "ZonedDateTime")],
+                "Result<Duration, string>",
+                "Span from this instant until `other`.",
+            )
+            .method(
+                "format",
+                &[("fmt", "string")],
+                "Result<string, string>",
+                "Format via a strftime pattern.",
+            )
+            .method("to_rfc3339", &[], "string", "RFC 3339 timestamp string.");
+    });
+
+    m.userdata("Duration", |t| {
+        t.method("years", &[], "number", "Named years component.")
+            .method("months", &[], "number", "Named months component.")
+            .method("weeks", &[], "number", "Named weeks component.")
+            .method("days", &[], "number", "Named days component.")
+            .method("hours", &[], "number", "Named hours component.")
+            .method("minutes", &[], "number", "Named minutes component.")
+            .method("seconds", &[], "number", "Named seconds component.")
+            .method(
+                "milliseconds",
+                &[],
+                "number",
+                "Named milliseconds component.",
+            )
+            .method(
+                "microseconds",
+                &[],
+                "number",
+                "Named microseconds component.",
+            )
+            .method("nanoseconds", &[], "number", "Named nanoseconds component.")
+            .method(
+                "total_seconds",
+                &[],
+                "Result<number, string>",
+                "Total span in seconds (calendar-agnostic units only).",
+            )
+            .method("negate", &[], "Duration", "Return the sign-flipped span.")
+            .method("abs", &[], "Duration", "Return the absolute span.");
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -711,33 +963,39 @@ fn flat_utc_now(_: &Lua, _: ()) -> mlua::Result<ZonedDateTimeHandle> {
 // trying it before `Date` would swallow date-only input into a fake DateTime
 // with `00:00:00`. We use the string's structural markers (`T`, `:`, `[`) to
 // route to the right narrower parser.
-#[instrument(name = "chrono.parse", target = "luau::lib::chrono", skip_all)]
-fn flat_parse(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
+fn flat_parse(lua: &Lua, s: &str) -> Result<Value, String> {
     let has_datetime_shape = s.contains('T') || s.contains(' ');
-    if has_datetime_shape {
-        if let Ok(z) = Zoned::from_str(&s) {
-            return ok(lua, ZonedDateTimeHandle(z));
-        }
-        // RFC 3339 with `Z` or numeric offset but no `[zone]` suffix —
-        // `Zoned::from_str` rejects it, but `Timestamp::from_str` accepts.
-        // Normalise to a UTC-zoned instant so the instant is preserved.
-        if let Ok(ts) = Timestamp::from_str(&s) {
-            return ok(lua, ZonedDateTimeHandle(ts.to_zoned(TimeZone::UTC)));
-        }
-        if let Ok(dt) = DateTime::from_str(&s) {
-            return ok(lua, DateTimeHandle(dt));
+    let value = if has_datetime_shape {
+        if let Ok(z) = Zoned::from_str(s) {
+            ZonedDateTimeHandle(z).into_lua(lua)
+        } else if let Ok(ts) = Timestamp::from_str(s) {
+            // RFC 3339 with `Z` or numeric offset but no `[zone]` suffix —
+            // `Zoned::from_str` rejects it, but `Timestamp::from_str` accepts.
+            // Normalise to a UTC-zoned instant so the instant is preserved.
+            ZonedDateTimeHandle(ts.to_zoned(TimeZone::UTC)).into_lua(lua)
+        } else if let Ok(dt) = DateTime::from_str(s) {
+            DateTimeHandle(dt).into_lua(lua)
+        } else {
+            return Err(format!(
+                "cannot recognise {s:?} as Date, Time, DateTime, or ZonedDateTime"
+            ));
         }
     } else if s.contains(':') {
-        if let Ok(t) = Time::from_str(&s) {
-            return ok(lua, TimeHandle(t));
+        if let Ok(t) = Time::from_str(s) {
+            TimeHandle(t).into_lua(lua)
+        } else {
+            return Err(format!(
+                "cannot recognise {s:?} as Date, Time, DateTime, or ZonedDateTime"
+            ));
         }
-    } else if let Ok(d) = Date::from_str(&s) {
-        return ok(lua, DateHandle(d));
-    }
-    err(
-        lua,
-        format!("chrono.parse: cannot recognise {s:?} as Date, Time, DateTime, or ZonedDateTime"),
-    )
+    } else if let Ok(d) = Date::from_str(s) {
+        DateHandle(d).into_lua(lua)
+    } else {
+        return Err(format!(
+            "cannot recognise {s:?} as Date, Time, DateTime, or ZonedDateTime"
+        ));
+    };
+    value.map_err(|e| e.to_string())
 }
 
 // ---------------------------------------------------------------------------

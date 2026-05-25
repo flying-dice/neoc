@@ -195,7 +195,14 @@ pub fn headers(lua: &Lua) -> mlua::Result<Vec<(String, String)>> {
 
     push(stdmod::collections::declare(lua))?;
 
+    push(lib::args::declare(lua))?;
     push(lib::base64::declare(lua))?;
+    push(lib::chrono::declare(lua))?;
+    push(lib::compress::declare(lua))?;
+    push(lib::glob::declare(lua))?;
+    push(lib::hash::declare(lua))?;
+    push(lib::html::declare(lua))?;
+    push(lib::http::declare(lua))?;
     push(lib::json::declare(lua))?;
     push(lib::mime::declare(lua))?;
 
@@ -220,13 +227,20 @@ mod tests {
         let headers = super::headers(&lua).expect("headers");
 
         let keys: Vec<&str> = headers.iter().map(|(k, _)| k.as_str()).collect();
+        assert!(keys.contains(&"lib:args"));
         assert!(keys.contains(&"lib:base64"));
+        assert!(keys.contains(&"lib:chrono"));
+        assert!(keys.contains(&"lib:compress"));
+        assert!(keys.contains(&"lib:glob"));
+        assert!(keys.contains(&"lib:hash"));
+        assert!(keys.contains(&"lib:html"));
+        assert!(keys.contains(&"lib:http"));
         assert!(keys.contains(&"lib:json"));
         assert!(keys.contains(&"lib:mime"));
         assert!(keys.contains(&"std:collections"));
         assert!(keys.contains(&"vnd:serde_yaml"));
         assert!(keys.contains(&"vnd:toml"));
-        assert_eq!(keys.len(), 6, "expected 6 migrated modules, got {keys:?}");
+        assert_eq!(keys.len(), 13, "expected 13 migrated modules, got {keys:?}");
 
         for (key, header) in &headers {
             assert!(

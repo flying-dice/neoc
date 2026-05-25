@@ -10,9 +10,8 @@
 
 use clap::{Arg, ArgAction, ArgMatches, Command, error::ErrorKind, value_parser};
 use mlua::{Lua, Table, Value};
-use tracing::instrument;
 
-use crate::lua::sandbox::{from_err, ok};
+use crate::lua::facade::Module;
 
 // ---------------------------------------------------------------------------
 // Config types
@@ -65,28 +64,37 @@ struct CommandSpec {
 // ---------------------------------------------------------------------------
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
-    t.set("parse", lua.create_function(parse)?)?;
-    t.set("help", lua.create_function(help)?)?;
-    Ok(t)
+    Ok(declare(lua)?.into_table())
 }
 
-#[instrument(name = "args.parse", target = "luau::lib::args", skip_all)]
-fn parse(lua: &Lua, (argv_tbl, config_tbl): (Table, Table)) -> mlua::Result<(Value, Value)> {
-    let argv = match read_argv(&argv_tbl) {
-        Ok(v) => v,
-        Err(e) => return from_err(lua, "args.parse", e),
-    };
-    let spec = match read_command(&config_tbl, true) {
-        Ok(c) => c,
-        Err(e) => return from_err(lua, "args.parse", e),
-    };
+/// Declares the `lib:args` surface through the facade. Both functions are
+/// fallible: `parse` returns the parsed-config table, `help` the rendered help
+/// text. The `(value, error)` shape, the `args.parse` / `args.help` error
+/// prefixes, and the `luau::lib::args` spans are byte-identical to the
+/// hand-written registration this replaces.
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "lib:args")?;
+    m.try_func(
+        "parse",
+        &[("argv", "LuaValue"), ("config", "LuaValue")],
+        "Parse `argv` against `config`, returning the parsed-flags table (or, on `--help`/`-h`, a `{ help = true, help_text = ... }` table).",
+        |lua, (argv_tbl, config_tbl): (Table, Table)| parse(lua, &argv_tbl, &config_tbl),
+    )?
+    .try_func(
+        "help",
+        &[("config", "LuaValue")],
+        "Render `config`'s help text without parsing any arguments.",
+        |_, config_tbl: Table| help(&config_tbl),
+    )?;
+    Ok(m)
+}
+
+fn parse(lua: &Lua, argv_tbl: &Table, config_tbl: &Table) -> Result<Table, String> {
+    let argv = read_argv(argv_tbl)?;
+    let spec = read_command(config_tbl, true)?;
     let cmd = build_command(&spec);
     match cmd.try_get_matches_from(argv) {
-        Ok(matches) => match build_parsed_table(lua, &spec, &matches) {
-            Ok(t) => ok(lua, t),
-            Err(e) => from_err(lua, "args.parse", e.to_string()),
-        },
+        Ok(matches) => build_parsed_table(lua, &spec, &matches).map_err(|e| e.to_string()),
         Err(err)
             if matches!(
                 err.kind(),
@@ -94,23 +102,16 @@ fn parse(lua: &Lua, (argv_tbl, config_tbl): (Table, Table)) -> mlua::Result<(Val
             ) =>
         {
             let text = err.render().to_string();
-            match build_help_table(lua, &text) {
-                Ok(t) => ok(lua, t),
-                Err(e) => from_err(lua, "args.parse", e.to_string()),
-            }
+            build_help_table(lua, &text).map_err(|e| e.to_string())
         }
-        Err(err) => from_err(lua, "args.parse", err.to_string()),
+        Err(err) => Err(err.to_string()),
     }
 }
 
-#[instrument(name = "args.help", target = "luau::lib::args", skip_all)]
-fn help(lua: &Lua, config_tbl: Table) -> mlua::Result<(Value, Value)> {
-    let spec = match read_command(&config_tbl, true) {
-        Ok(c) => c,
-        Err(e) => return from_err(lua, "args.help", e),
-    };
+fn help(config_tbl: &Table) -> Result<String, String> {
+    let spec = read_command(config_tbl, true)?;
     let mut cmd = build_command(&spec);
-    ok(lua, cmd.render_help().to_string())
+    Ok(cmd.render_help().to_string())
 }
 
 // ---------------------------------------------------------------------------
