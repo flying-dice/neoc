@@ -282,13 +282,18 @@ pub fn transpile_entry_to_lua(
 
 /// Whether the emitted Lua defines a top-level `main` function — the entry
 /// point `neoc run` invokes.
+///
+/// The codegen emits top-level items at column zero, so the check is anchored
+/// there (no `trim_start`): an indented `main` inside a nested block — or the
+/// substring appearing mid-line — is never mistaken for the entry point.
 fn defines_main(lua: &str) -> bool {
-    lua.lines().any(|l| {
-        let l = l.trim_start();
-        l.starts_with("local function main(") || l.starts_with("function main(")
-    })
+    lua.lines()
+        .any(|l| l.starts_with("local function main(") || l.starts_with("function main("))
 }
 
+/// Writes each project diagnostic to `err` as `<path>: <stage>: <message>` —
+/// the shared reporting used by `build`, `check`, and `neoc run`'s in-process
+/// transpile so a `.neoc` fault reads the same regardless of entry point.
 fn report_project(diagnostics: &[ProjectDiagnostic], err: &mut impl Write) -> Result<()> {
     for d in diagnostics {
         writeln!(

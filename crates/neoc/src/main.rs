@@ -186,7 +186,10 @@ async fn run(paths: &[String], user_args: &[String]) {
         // scripts load verbatim. For a `.neoc` entry the source map travels with
         // the Lua so a runtime fault is reported at the neoc line, not the
         // emitted-Lua line.
-        let (source, source_map) = if path.ends_with(".neoc") {
+        let is_neoc = Path::new(path)
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("neoc"));
+        let (source, source_map) = if is_neoc {
             match cli::transpile_entry_to_lua(Path::new(path), &mut io::stderr().lock()) {
                 Ok(Some(entry)) => (entry.lua, Some(entry.source_map)),
                 Ok(None) => process::exit(1),

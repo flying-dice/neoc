@@ -1,5 +1,6 @@
-//! Integration tests driving the compiler subcommands of the unified `neoc`
-//! binary (`neoc build`/`check`/`fmt`/`lsp`).
+//! Integration tests driving the unified `neoc` binary: the compiler
+//! subcommands (`build`/`check`/`fmt`/`lsp`) and `run` of a `.neoc` entry
+//! (in-process transpile + execute, with runtime faults mapped to neoc lines).
 
 use std::fs;
 use std::path::Path;
@@ -310,5 +311,32 @@ fn run_neoc_runtime_fault_reports_neoc_line_not_lua_line() {
     assert!(
         !stderr.contains("fault.neoc\"]:3:"),
         "Lua line 3 leaked into the report; map not applied: {stderr}"
+    );
+}
+
+#[test]
+fn run_neoc_multi_module_is_rejected_with_pointer_to_build() {
+    // `run` executes a single file; a program that `use`s another module lowers
+    // to `require("util")`, which has no resolver under the runtime's
+    // `namespace:name` require — so it's rejected up front (not at a confusing
+    // runtime require failure) with a pointer to `neoc build`.
+    let dir = tempdir().unwrap();
+    write(
+        dir.path(),
+        "util.neoc",
+        "pub fn add(a: number, b: number) -> number { a + b }\n",
+    );
+    let entry = write(
+        dir.path(),
+        "app.neoc",
+        "use util::add;\nfn main() -> number { add(2, 3) }\n",
+    );
+
+    let out = Command::new(BIN).arg("run").arg(&entry).output().unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("imports other modules") && stderr.contains("neoc build"),
+        "expected a multi-module rejection pointing at `neoc build`, got: {stderr}"
     );
 }
