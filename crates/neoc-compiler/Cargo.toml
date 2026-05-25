@@ -12,7 +12,6 @@ neoc-parser.workspace = true
 neoc-types.workspace = true
 neoc-codegen-lua.workspace = true
 neoc-codegen-js.workspace = true
-neoc-codegen-py.workspace = true
 neoc-macros.workspace = true
 
 [lints]

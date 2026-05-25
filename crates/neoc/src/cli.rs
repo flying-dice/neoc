@@ -23,7 +23,7 @@ pub enum Command {
         /// Write output under this directory instead of next to the source.
         #[arg(short, long, value_name = "DIR")]
         output: Option<PathBuf>,
-        /// Target language: `lua`, `js`, or `python`.
+        /// Target language: `lua` or `js`.
         #[arg(short, long, default_value_t = Target::Lua)]
         target: Target,
     },
@@ -326,8 +326,6 @@ mod tests {
         assert_eq!(got, PathBuf::from("src/foo.lua"));
         let got = out_path(Path::new("src/foo.neoc"), None, Target::Js);
         assert_eq!(got, PathBuf::from("src/foo.js"));
-        let got = out_path(Path::new("src/foo.neoc"), None, Target::Python);
-        assert_eq!(got, PathBuf::from("src/foo.py"));
     }
 
     #[test]

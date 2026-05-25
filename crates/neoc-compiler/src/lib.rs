@@ -10,7 +10,6 @@ use std::path::{Path, PathBuf};
 use neoc_ast as ast;
 use neoc_codegen_js as codegen_js;
 use neoc_codegen_lua as codegen_lua;
-use neoc_codegen_py as codegen_py;
 use neoc_parser as parser;
 use neoc_types as types;
 
@@ -22,8 +21,6 @@ pub enum Target {
     Lua,
     /// JavaScript, ES2022 (`.js`).
     Js,
-    /// Python 3 (`.py`).
-    Python,
 }
 
 impl Target {
@@ -33,7 +30,6 @@ impl Target {
         match self {
             Target::Lua => "lua",
             Target::Js => "js",
-            Target::Python => "py",
         }
     }
 }
@@ -43,7 +39,6 @@ impl std::fmt::Display for Target {
         f.write_str(match self {
             Target::Lua => "lua",
             Target::Js => "js",
-            Target::Python => "python",
         })
     }
 }
@@ -55,10 +50,7 @@ impl std::str::FromStr for Target {
         match s {
             "lua" => Ok(Target::Lua),
             "js" | "javascript" => Ok(Target::Js),
-            "py" | "python" => Ok(Target::Python),
-            other => Err(format!(
-                "unknown target `{other}` (expected `lua`, `js`, or `python`)"
-            )),
+            other => Err(format!("unknown target `{other}` (expected `lua` or `js`)")),
         }
     }
 }
@@ -160,8 +152,7 @@ pub fn transpile(source: &str, target: Target) -> CompileOutput {
     }));
 
     // Mark string-typed `+` as concatenation before emitting. Each backend
-    // interprets it: Lua picks `..`, JS and Python keep `+` (`lang/DYNAMIC.md`
-    // §4.2).
+    // interprets it: Lua picks `..`, JS keeps `+` (`lang/DYNAMIC.md` §4.2).
     let elaborated = types::elaborate(&parsed.module);
     let (output, emit_messages, source_map) = emit(target, &elaborated, source);
     diagnostics.extend(emit_messages.into_iter().map(|message| Diagnostic {
@@ -456,8 +447,8 @@ fn canonical_or(path: &Path) -> PathBuf {
 /// emit diagnostic messages, and a [`SourceMap`] back to neoc.
 ///
 /// `source` is the neoc text the module was parsed from; the Lua backend uses
-/// it to map emitted lines to neoc lines. The JS and Python backends have no
-/// source map yet (#56), so they return an empty [`SourceMap`].
+/// it to map emitted lines to neoc lines. The JS backend has no source map yet
+/// (#56), so it returns an empty [`SourceMap`].
 fn emit(target: Target, module: &ast::Module, source: &str) -> (String, Vec<String>, SourceMap) {
     match target {
         Target::Lua => {
@@ -472,14 +463,6 @@ fn emit(target: Target, module: &ast::Module, source: &str) -> (String, Vec<Stri
             let r = codegen_js::emit(module);
             (
                 r.js,
-                r.diagnostics.into_iter().map(|d| d.message).collect(),
-                SourceMap::default(),
-            )
-        }
-        Target::Python => {
-            let r = codegen_py::emit(module);
-            (
-                r.py,
                 r.diagnostics.into_iter().map(|d| d.message).collect(),
                 SourceMap::default(),
             )
