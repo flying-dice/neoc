@@ -46,7 +46,7 @@ describe("thread", function()
 
         test("spawn from file with bidirectional messaging", function()
             local w = thread.spawn({
-                file = "tests/std/thread_worker.luau",
+                file = "crates/neoc/tests/std/thread_worker.luau",
                 args = { n = 7 },
             })
             -- Worker sends a greeting, waits for "ack", replies, then returns.
