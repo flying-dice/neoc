@@ -345,3 +345,107 @@ fn non_fn_cross_module_export_loads_as_esm() {
         "main should print add(10, 2) = 12"
     );
 }
+
+/// Two modules share a final segment `Hue`: `pal` declares a type-only data-only
+/// `pub struct Hue` (no `impl`, no `#[derive]`, so JS erases its name and its
+/// module exports nothing for it), while `cfg` exports a binding `pub const Hue`.
+/// The entry `use`s both under aliases. The keep/suppression decision must be
+/// keyed per resolved import (`module::name`), not on the bare final segment:
+/// keyed on the bare name, `cfg`'s binding `Hue` would leak its keep decision
+/// onto `pal`'s type-only `Hue`, re-emitting `import { Hue } from "./pal.js"`
+/// that dangles against an empty export — an ESM `SyntaxError` at link (#58).
+/// The entry must import ONLY the binding `Hue` from `cfg`, and load + run under
+/// `node` as ESM with no `SyntaxError`.
+#[test]
+fn binding_and_type_only_name_collision_loads_as_esm() {
+    let dir = tempdir();
+    // `pal::Hue` — a data-only `pub` struct: no binding, name erased in JS.
+    write(&dir, "pal.neoc", "pub struct Hue {\n    r: number,\n}\n");
+    // `cfg::Hue` — a `pub const` binding under the same final segment.
+    write(&dir, "cfg.neoc", "pub const Hue: number = 7;\n");
+    // The entry imports both under aliases: it constructs the type-only `PalHue`
+    // and reads the binding `CfgHue`.
+    let entry = write(
+        &dir,
+        "main.neoc",
+        "use pal::Hue as PalHue;\n\
+         use cfg::Hue as CfgHue;\n\
+         \n\
+         ext fn println(n: number);\n\
+         \n\
+         pub fn main() {\n\
+         \x20   let h = PalHue { r: CfgHue };\n\
+         \x20   println(h.r);\n\
+         }\n",
+    );
+
+    let project = transpile_project(&entry, Target::Js).expect("read project");
+    assert!(
+        project.ok(),
+        "expected a clean project, got: {:#?}",
+        project.diagnostics
+    );
+
+    let main_js = project
+        .files
+        .iter()
+        .find(|(p, _)| p.file_stem().is_some_and(|s| s == "main"))
+        .map(|(_, src)| src.as_str())
+        .expect("main output present");
+
+    // The binding `cfg::Hue` is kept (aliased to `CfgHue`).
+    assert!(
+        main_js.contains("import { Hue as CfgHue } from \"./cfg.js\";"),
+        "main should import the binding `Hue` from cfg:\n{main_js}"
+    );
+    // The type-only `pal::Hue` is suppressed: `pal.js` exports nothing for it.
+    assert!(
+        !main_js.contains("from \"./pal.js\""),
+        "main must NOT import the type-only `Hue` from pal:\n{main_js}"
+    );
+    // Its construction inlines to a tagged object — the erased name never appears
+    // as an import binding.
+    assert!(
+        main_js.contains("_struct: \"PalHue\"") || main_js.contains("_struct: \"Hue\""),
+        "the `PalHue` construction should inline to a tagged object:\n{main_js}"
+    );
+
+    if !node_present() {
+        return;
+    }
+
+    let out = tempdir();
+    let src_root = std::fs::canonicalize(&dir).expect("canonicalise source root");
+    for (abs, contents) in &project.files {
+        let rel = abs.strip_prefix(&src_root).expect("file under source root");
+        let dest = out.join(rel);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).expect("create out dir");
+        }
+        std::fs::write(&dest, contents).expect("write emitted module");
+    }
+    let runner = out.join("run.mjs");
+    std::fs::write(
+        &runner,
+        "globalThis.println = (x) => console.log(x);\n\
+         import { main } from \"./main.js\";\n\
+         main();\n",
+    )
+    .expect("write runner");
+
+    let output = Command::new("node")
+        .arg(&runner)
+        .output()
+        .expect("spawn node");
+    assert!(
+        output.status.success(),
+        "node failed to run the emitted ESM:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "7",
+        "main should print CfgHue = 7"
+    );
+}
