@@ -24,6 +24,6 @@ such. Revisit only if a real need shows up.
   Full bound solving is deferred.
 - **Derived `Eq` is shallow.** It compares fields with Lua `==`, so a nested
   derived type compares by reference, not recursively. Deep structural equality
-  across nested derives is deferred (documented in `neocc-macros`).
+  across nested derives is deferred (documented in `neoc-macros`).
 
 If any of these graduate from "deferred" to "wanted", give it its own task file.

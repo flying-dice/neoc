@@ -1,6 +1,6 @@
 # tasks/
 
-The durable project task list for `neocc`. One Markdown file per work item so any
+The durable project task list for the neoc compiler. One Markdown file per work item so any
 contributor — human or LLM — can pick up where the last one left off without
 re-deriving context from git history.
 
@@ -33,8 +33,8 @@ language, with assertions at every stage. See `done.md`. What remains is below.
 
 | File | Item | Status | Priority | Blocked on |
 | --- | --- | --- | --- | --- |
-| `runtime-integration.md` | `../neoc` runtime embeds `neocc` | blocked | P1 | parked `Result`-at-`ext` boundary decision; cross-repo |
-| `wasm-build.md` | tree-sitter→wasm32 + `neocc-wasm` | blocked | P2 | tree-sitter C → wasm32 toolchain |
+| `runtime-integration.md` | the `crates/neoc` runtime embeds `neoc-compiler` | blocked | P1 | parked `Result`-at-`ext` boundary decision |
+| `wasm-build.md` | tree-sitter→wasm32 + `neoc-wasm` | blocked | P2 | tree-sitter C → wasm32 toolchain |
 | `non-goals.md` | intentional deferrals (advanced Rust) | deferred | — | by design |
 | `done.md` | completed work, for context | done | — | — |
 

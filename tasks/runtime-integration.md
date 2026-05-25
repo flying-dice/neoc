@@ -1,16 +1,16 @@
-# Runtime integration — `../neoc` embeds `neocc`
+# Runtime integration — the `crates/neoc` runtime embeds `neoc-compiler`
 
 - **Status:** todo
-- **Area:** the separate `neoc` runtime repo (Rust + mlua); `neocc-compiler` is
+- **Area:** the `crates/neoc` runtime (Rust + mlua); `neoc-compiler` is
   the dependency
 - **Priority:** P1
-- **Depends on:** `cli.md` / a stable `neocc-compiler` API
+- **Depends on:** `cli.md` / a stable `neoc-compiler` API
 
 ## Goal
 
-Wire the `neoc` runtime to consume `neocc` so `neoc main.neoc` compiles in memory
-(`neocc::transpile`) and runs the emitted Lua via mlua — no `.lua` written. This
-is master-plan steps 12/14 (see `../bun-oas/plan.md`).
+Wire the `crates/neoc` runtime to consume `neoc-compiler` so `neoc main.neoc`
+compiles in memory (`neoc_compiler::transpile`) and runs the emitted Lua via
+mlua — no `.lua` written.
 
 Also: the runtime owns its API surface, exposed to neoc through `ext`
 declarations (a `types/` directory of `.neoc` files the compiler seeds into the
