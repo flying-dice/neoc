@@ -110,13 +110,15 @@ neoc run one.luau two.luau             # several in sequence
 
 ```sh
 neoc build main.neoc                   # → Lua 5.1 (default target)
-neoc build main.neoc --target js       # → JavaScript (ES2022)
+neoc build main.neoc --target js       # → JavaScript (ES2022), ES modules
 neoc check main.neoc                   # parse + type-check only
 neoc fmt main.neoc                     # canonical formatting
 neoc lsp                               # language server (stdio)
 ```
 
 `.neoc` compiles to Lua 5.1 by default — the lowest common denominator, so the output runs unchanged on Luau, Lua 5.4, LuaJIT, and this runtime. The codegen layer is decoupled from the language surface, so a JavaScript (ES2022) backend ships alongside it, selected with `--target`.
+
+The two targets are the two halves of full-stack neoc: **Lua is the backend** (the default, LCD target above); **JS is the browser/frontend**. The JS backend emits **ES modules** — a `use` becomes a relative `import`, a `pub` item an `export` — so output loads natively in evergreen browsers and bundlers (Vite, esbuild) with no Node or CommonJS shim.
 
 ## Workspace layout
 

@@ -25,6 +25,8 @@ Lua 5.1 / JavaScript (ES2022) source
 
 `crates/neoc-compiler` orchestrates the run (`transpile(src, target) -> CompileOutput`) and is the stable seam an embedding runtime depends on; the target selects the codegen backend (`lua` / `js`). Each stage is single-purpose and reads its predecessor's output without mutating it.
 
+The two backends are the two halves of full-stack neoc: **Lua is the backend** and the default, lowest-common-denominator target; **JS is the browser/frontend**. The JS backend emits **ES modules** (`use` → relative `import`, `pub` → `export`), so output loads natively in browsers and bundlers without a CommonJS shim.
+
 ## Crates
 
 | Crate | Owns | Depends on |
@@ -35,7 +37,7 @@ Lua 5.1 / JavaScript (ES2022) source
 | `neoc-types` | declaration collection, inference, well-formedness checks, `elaborate` | ast |
 | `neoc-macros` | built-in derives (Clone/Eq/Debug/Display), structural over the AST | ast |
 | `neoc-codegen-lua` | AST → Lua 5.1; one emit module per construct family | ast, macros |
-| `neoc-codegen-js` | AST → JavaScript (ES2022); mirrors `neoc-codegen-lua`'s structure | ast, macros |
+| `neoc-codegen-js` | AST → JavaScript (ES2022, ES modules); the browser/frontend target; mirrors `neoc-codegen-lua`'s structure | ast, macros |
 | `neoc-compiler` | the public lib API: `transpile` to any target; merges per-stage diagnostics | ast, parser, types, codegen-lua, codegen-js, macros |
 | `neoc-fmt` | formatter | ast, parser |
 | `neoc-lsp` | language server | compiler, parser |

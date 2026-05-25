@@ -161,13 +161,16 @@ fn run_lua(neoc: &str, case: &str, _neoc_path: &Path) -> Result<String, Failed> 
     run_program(lua, &program, "lua", case, "lua")
 }
 
-/// js: route `print` / `println` through `console.log`, then call `main()`.
+/// js: route `print` / `println` through `console.log`, then call `main()`. The
+/// JS backend emits an ES module (`import`/`export`), so the program runs as one
+/// — written to a `.mjs` temp file, which `node` parses as ESM regardless of any
+/// surrounding `package.json`.
 fn run_js(neoc: &str, case: &str, _neoc_path: &Path) -> Result<String, Failed> {
     let output = emit(neoc, Target::Js, case)?;
     let harness =
         "globalThis.print = (x) => console.log(x);\nglobalThis.println = globalThis.print;\n";
     let program = format!("{harness}{output}\nmain();\n");
-    run_program("node", &program, "js", case, "js")
+    run_program("node", &program, "mjs", case, "js")
 }
 
 /// rust: compile the case's `.rs` anchor with `rustc --edition 2021` and run it.

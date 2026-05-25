@@ -1,7 +1,14 @@
 //! AST → JavaScript (ES2022) emitter. Mirrors `neoc-codegen-lua`'s structure.
 //!
+//! The JavaScript backend is neoc's browser/frontend target — the client half of
+//! full-stack neoc, with Lua on the backend. Output is an **ES module**: a `use`
+//! lowers to a relative, `.js`-suffixed `import`, and a `pub` item to an
+//! `export`. That form loads natively in evergreen browsers and bundlers (Vite,
+//! `esbuild`) without a `CommonJS` or Node shim. It also runs under `node` as
+//! ESM, which the conformance suite uses as the behavioural oracle.
+//!
 //! Targets ES2022 — the language level supported across all current Node.js LTS
-//! lines (18/20/22) and evergreen browsers. Output runs directly under `node`.
+//! lines (18/20/22) and evergreen browsers.
 //!
 //! Split by construct family: items here, expressions in [`expr`], patterns in
 //! [`pat`]. neoc is expression-oriented and JavaScript is statement-oriented, so
@@ -150,11 +157,28 @@ pub struct EmitResult {
 }
 
 /// Lower a module to JavaScript (ES2022) source.
+///
+/// Cross-module `use` imports are filtered against `imported_bindings`: only a
+/// `use` whose resolved `prefix::last` key is present in that set lowers to a JS
+/// `import`. The set keys the imports whose source module emits a runtime
+/// binding — a `pub fn`, `pub const`, or `pub` struct/enum carrying a method
+/// slot. A type-only item (a data-only `pub` struct/enum, or a `pub type` alias)
+/// is absent from the set: its name is erased in JS, so importing it would
+/// dangle against a module that exports nothing under that name.
+///
+/// The key is the resolved `(module, name)` pair (`prefix::last`), not the bare
+/// name, so two modules sharing a final segment — one a binding, one type-only —
+/// get independent decisions. Pass an empty set when no module graph is resolved
+/// (single-file `transpile`), where no cross-module `use` can resolve anyway.
 #[must_use]
-pub fn emit(module: &ast::Module) -> EmitResult {
+pub fn emit<S: std::hash::BuildHasher>(
+    module: &ast::Module,
+    imported_bindings: &HashSet<String, S>,
+) -> EmitResult {
     let mut e = Emitter {
         enums: EnumIndex::build(module),
         tuple_structs: TupleStructIndex::build(module),
+        imported_bindings: imported_bindings.iter().cloned().collect(),
         ..Emitter::default()
     };
     e.emit_module(module);
@@ -163,6 +187,77 @@ pub fn emit(module: &ast::Module) -> EmitResult {
         js: e.finish(),
         diagnostics,
     }
+}
+
+/// The names `module` emits a runtime JS binding for, reachable by a `use` in
+/// another module. A binding is a `pub fn`, a `pub const`, or a `pub`
+/// struct/enum that carries a method slot (an `impl` block or a `#[derive]`,
+/// emitted as `export const Name = (__m.Name = {})`). A data-only `pub`
+/// struct/enum and a `pub type` alias emit nothing — their names are erased in
+/// JS — so they are excluded. The compiler driver intersects this set with each
+/// importing module's `use` names to decide which imports to emit.
+#[must_use]
+pub fn module_js_bindings(module: &ast::Module) -> HashSet<String> {
+    let method_types = method_type_names(module);
+    let mut bindings = HashSet::new();
+    for item in &module.items {
+        if item.vis != ast::Visibility::Public {
+            continue;
+        }
+        match &item.kind {
+            ast::ItemKind::Fn(f) => {
+                bindings.insert(f.sig.name.clone());
+            }
+            ast::ItemKind::Const(c) => {
+                bindings.insert(c.name.clone());
+            }
+            ast::ItemKind::Struct(s) if method_types.contains(s.name.as_str()) => {
+                bindings.insert(s.name.clone());
+            }
+            ast::ItemKind::Enum(e) if method_types.contains(e.name.as_str()) => {
+                bindings.insert(e.name.clone());
+            }
+            _ => {}
+        }
+    }
+    bindings
+}
+
+/// The struct/enum names in `module` that carry a method-table entry — any with
+/// a `#[derive(...)]` or an `impl` block targeting them. Shared by binding
+/// detection ([`module_js_bindings`]) and the emitter's own slot collection.
+fn method_type_names(module: &ast::Module) -> HashSet<String> {
+    let type_names: HashSet<&str> = module
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            ast::ItemKind::Struct(s) => Some(s.name.as_str()),
+            ast::ItemKind::Enum(e) => Some(e.name.as_str()),
+            _ => None,
+        })
+        .collect();
+    let mut method_types = HashSet::new();
+    for item in &module.items {
+        match &item.kind {
+            ast::ItemKind::Struct(s) if has_derive(&item.attrs) => {
+                method_types.insert(s.name.clone());
+            }
+            ast::ItemKind::Enum(e) if has_derive(&item.attrs) => {
+                method_types.insert(e.name.clone());
+            }
+            ast::ItemKind::Impl(b) => {
+                if let ast::Type::Path(p) = &b.ty {
+                    if let Some(seg) = p.segments.last() {
+                        if type_names.contains(seg.name.as_str()) {
+                            method_types.insert(seg.name.clone());
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    method_types
 }
 
 /// Accumulates emitted JavaScript and diagnostics. Output is built line by line
@@ -190,6 +285,13 @@ pub(crate) struct Emitter {
     tmp_seq: usize,
     /// Native imports from module-bound `ext` blocks, sorted by specifier.
     imports: Vec<(String, Vec<String>)>,
+    /// Resolved `use` imports whose source module emits a runtime binding, keyed
+    /// per import as `prefix::last`. A `use` whose key is in this set lowers to a
+    /// JS `import`; a type-only import (absent here) emits none, since its name
+    /// is erased in JS. Keying on the resolved `(module, name)` rather than the
+    /// bare name keeps two modules' shared final segment independent. See
+    /// [`emit`].
+    imported_bindings: HashSet<String>,
 }
 
 /// The `Result`/`Option` prelude: variant constructors as plain tagged objects.
@@ -271,35 +373,7 @@ impl Emitter {
     /// Record every type that needs a method-table entry: a struct/enum with a
     /// `#[derive(...)]` or any `impl` block targeting it.
     fn collect_method_types(&mut self, module: &ast::Module) {
-        let type_names: HashSet<&str> = module
-            .items
-            .iter()
-            .filter_map(|item| match &item.kind {
-                ast::ItemKind::Struct(s) => Some(s.name.as_str()),
-                ast::ItemKind::Enum(e) => Some(e.name.as_str()),
-                _ => None,
-            })
-            .collect();
-        for item in &module.items {
-            match &item.kind {
-                ast::ItemKind::Struct(s) if has_derive(&item.attrs) => {
-                    self.method_types.insert(s.name.clone());
-                }
-                ast::ItemKind::Enum(e) if has_derive(&item.attrs) => {
-                    self.method_types.insert(e.name.clone());
-                }
-                ast::ItemKind::Impl(b) => {
-                    if let ast::Type::Path(p) = &b.ty {
-                        if let Some(seg) = p.segments.last() {
-                            if type_names.contains(seg.name.as_str()) {
-                                self.method_types.insert(seg.name.clone());
-                            }
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
+        self.method_types = method_type_names(module);
     }
 
     /// Whether `name` is a type with a method-table entry. Used to decide when
@@ -322,16 +396,16 @@ impl Emitter {
 
     fn emit_item(&mut self, item: &ast::Item) {
         match &item.kind {
-            ast::ItemKind::Fn(f) => self.emit_fn(None, f),
+            ast::ItemKind::Fn(f) => self.emit_fn(None, f, item.vis),
             ast::ItemKind::Struct(s) => {
-                self.ensure_method_slot(&s.name);
+                self.ensure_method_slot(&s.name, item.vis);
                 self.emit_derives(&item.attrs, neoc_ast_derive_target(item));
             }
-            ast::ItemKind::Const(c) => self.emit_const(c),
+            ast::ItemKind::Const(c) => self.emit_const(c, item.vis),
             ast::ItemKind::Impl(b) => self.emit_impl(b),
             ast::ItemKind::Use(u) => self.emit_use(u),
             ast::ItemKind::Enum(e) => {
-                self.ensure_method_slot(&e.name);
+                self.ensure_method_slot(&e.name, item.vis);
                 self.emit_derives(&item.attrs, neoc_ast_derive_target(item));
             }
             // No JS output: aliases erase, ext is provided by the runtime harness.
@@ -342,11 +416,17 @@ impl Emitter {
         }
     }
 
-    /// Register the `__m[name] = {}` method slot for a type that carries one.
-    fn ensure_method_slot(&mut self, name: &str) {
+    /// Register the `__m[name] = {}` method slot for a type that carries one. A
+    /// `pub` type also binds its name to the slot and exports it, so importing
+    /// modules can reach the type's methods through their own `__m`.
+    fn ensure_method_slot(&mut self, name: &str, vis: ast::Visibility) {
         if self.type_has_methods(name) {
             self.uses_methods = true;
-            self.line(format!("__m.{name} = {{}};"));
+            if vis == ast::Visibility::Public {
+                self.line(format!("export const {name} = (__m.{name} = {{}});"));
+            } else {
+                self.line(format!("__m.{name} = {{}};"));
+            }
         }
     }
 
@@ -362,14 +442,28 @@ impl Emitter {
         let Some((last, prefix)) = u.path.split_last() else {
             return;
         };
-        let binding = u.alias.as_deref().unwrap_or(last);
+        // A type-only item — a data-only struct/enum or a `pub type` alias —
+        // emits no binding in its source module, so importing its name would
+        // dangle against an empty export. Such names are erased in JS
+        // (constructions lower to inline objects), so emit no import. The keep
+        // decision is keyed per resolved import (`prefix::last`), rebuilt here to
+        // match the driver's key, so a name shared by two source modules — one a
+        // binding, one type-only — is decided per source.
+        if !self.imported_bindings.contains(&u.path.join("::")) {
+            return;
+        }
         let module = prefix.join("/");
-        self.line(format!("const {binding} = require(\"{module}\").{last};"));
+        let named = match &u.alias {
+            Some(alias) => format!("{last} as {alias}"),
+            None => last.clone(),
+        };
+        self.line(format!("import {{ {named} }} from \"./{module}.js\";"));
     }
 
-    fn emit_const(&mut self, c: &ast::ConstDecl) {
+    fn emit_const(&mut self, c: &ast::ConstDecl, vis: ast::Visibility) {
         let value = self.emit_expr(&c.value);
-        self.line(format!("const {} = {value};", c.name));
+        let kw = export_kw(vis);
+        self.line(format!("{kw}const {} = {value};", c.name));
     }
 
     fn emit_impl(&mut self, b: &ast::ImplBlock) {
@@ -381,14 +475,16 @@ impl Emitter {
             return;
         };
         for f in &b.items {
-            self.emit_fn(Some(&target), f);
+            self.emit_fn(Some(&target), f, ast::Visibility::Public);
         }
     }
 
     /// Emit a function. `target` is the type name when this is a method or
     /// associated function inside an impl: it lands on `__m[target]` taking the
-    /// receiver as its first parameter.
-    fn emit_fn(&mut self, target: Option<&str>, f: &ast::FnDecl) {
+    /// receiver as its first parameter. `vis` applies only to a free function — a
+    /// `pub` one becomes an exported declaration; impl methods live on `__m` and
+    /// are reached through the type, never exported by keyword.
+    fn emit_fn(&mut self, target: Option<&str>, f: &ast::FnDecl, vis: ast::Visibility) {
         let mut params = Vec::new();
         for p in &f.sig.params {
             match p {
@@ -397,18 +493,28 @@ impl Emitter {
             }
         }
         let param_list = params.join(", ");
-        match target {
-            Some(t) => {
-                self.uses_methods = true;
-                self.line(format!(
-                    "__m.{t}.{} = function({param_list}) {{",
-                    f.sig.name
-                ));
-            }
-            None => self.line(format!("function {}({param_list}) {{", f.sig.name)),
+        if let Some(t) = target {
+            self.uses_methods = true;
+            self.line(format!(
+                "__m.{t}.{} = function({param_list}) {{",
+                f.sig.name
+            ));
+        } else {
+            let kw = export_kw(vis);
+            self.line(format!("{kw}function {}({param_list}) {{", f.sig.name));
         }
         self.indented(|e| e.emit_block_as_body(&f.body));
         self.line("}");
+    }
+}
+
+/// The leading keyword for a module-level binding: `"export "` for a `pub` item,
+/// empty for a module-local one.
+fn export_kw(vis: ast::Visibility) -> &'static str {
+    if vis == ast::Visibility::Public {
+        "export "
+    } else {
+        ""
     }
 }
 
@@ -458,6 +564,12 @@ fn has_derive(attrs: &[ast::Attribute]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Emit `module` with no resolved cross-module bindings — the common case
+    /// for these single-module fixtures, which carry no cross-module `use`.
+    fn emit_solo(module: &ast::Module) -> EmitResult {
+        emit(module, &HashSet::new())
+    }
 
     fn item(kind: ast::ItemKind, attrs: Vec<ast::Attribute>) -> ast::Item {
         ast::Item {
@@ -555,7 +667,7 @@ mod tests {
                 ),
             ],
         };
-        let out = emit(&module);
+        let out = emit_solo(&module);
         assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
         assert_eq!(
             out.js,
@@ -618,7 +730,7 @@ mod tests {
                 ),
             ],
         };
-        let out = emit(&module);
+        let out = emit_solo(&module);
         assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
         assert_eq!(
             out.js,
@@ -648,7 +760,7 @@ mod tests {
                 vec![derive_attr("Debug")],
             )],
         };
-        let out = emit(&module);
+        let out = emit_solo(&module);
         assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
         assert_eq!(
             out.js,
@@ -661,6 +773,179 @@ mod tests {
              return \"Point { \" + \"x = \" + String(self.x) + \", \" + \
              \"y = \" + String(self.y) + \" }\";\n\
              };\n"
+        );
+    }
+
+    /// A `use a::b::c` of a name with a runtime binding lowers to a relative,
+    /// `.js`-suffixed ESM import.
+    #[test]
+    fn use_of_binding_lowers_to_esm_import() {
+        let module = ast::Module {
+            items: vec![item(
+                ast::ItemKind::Use(ast::UseDecl {
+                    path: vec!["a".to_string(), "b".to_string(), "c".to_string()],
+                    alias: None,
+                }),
+                Vec::new(),
+            )],
+        };
+        let bindings = HashSet::from(["a::b::c".to_string()]);
+        assert_eq!(
+            emit(&module, &bindings).js,
+            "import { c } from \"./a/b.js\";\n"
+        );
+    }
+
+    /// A `use a::b::c as d` of a name with a runtime binding carries the rename
+    /// through as `import { c as d }`.
+    #[test]
+    fn use_alias_of_binding_lowers_to_renamed_esm_import() {
+        let module = ast::Module {
+            items: vec![item(
+                ast::ItemKind::Use(ast::UseDecl {
+                    path: vec!["a".to_string(), "b".to_string(), "c".to_string()],
+                    alias: Some("d".to_string()),
+                }),
+                Vec::new(),
+            )],
+        };
+        let bindings = HashSet::from(["a::b::c".to_string()]);
+        assert_eq!(
+            emit(&module, &bindings).js,
+            "import { c as d } from \"./a/b.js\";\n"
+        );
+    }
+
+    /// A `use` of a type-only item — one absent from the source module's
+    /// bindings (a data-only struct/enum or a `pub type` alias) — emits no
+    /// import. Its name is erased in JS, so an import would dangle against an
+    /// empty export.
+    #[test]
+    fn use_of_type_only_item_emits_no_import() {
+        let module = ast::Module {
+            items: vec![item(
+                ast::ItemKind::Use(ast::UseDecl {
+                    path: vec!["a".to_string(), "b".to_string(), "Color".to_string()],
+                    alias: None,
+                }),
+                Vec::new(),
+            )],
+        };
+        assert_eq!(emit_solo(&module).js, "");
+    }
+
+    /// A `pub fn` becomes an exported declaration; a private one stays local.
+    #[test]
+    fn pub_fn_is_exported_private_fn_is_not() {
+        let mut pub_fn = fn_item("f", int("1"));
+        pub_fn.vis = ast::Visibility::Public;
+        let priv_fn = fn_item("g", int("2"));
+        let module = ast::Module {
+            items: vec![pub_fn, priv_fn],
+        };
+        assert_eq!(
+            emit_solo(&module).js,
+            "export function f() {\n  return 1;\n}\n\
+             function g() {\n  return 2;\n}\n"
+        );
+    }
+
+    /// A `pub const` is exported; a private one is a plain `const`.
+    #[test]
+    fn pub_const_is_exported() {
+        let mk = |vis| ast::Item {
+            attrs: Vec::new(),
+            vis,
+            kind: ast::ItemKind::Const(ast::ConstDecl {
+                name: "MAX".to_string(),
+                ty: ast::Type::Unit,
+                value: int("10"),
+            }),
+            span: ast::Span::default(),
+        };
+        let module = ast::Module {
+            items: vec![mk(ast::Visibility::Public)],
+        };
+        assert_eq!(emit_solo(&module).js, "export const MAX = 10;\n");
+
+        let module = ast::Module {
+            items: vec![mk(ast::Visibility::Private)],
+        };
+        assert_eq!(emit_solo(&module).js, "const MAX = 10;\n");
+    }
+
+    /// A `pub` type that carries a method slot exports the slot under its name so
+    /// importing modules can reach its methods.
+    #[test]
+    fn pub_type_method_slot_is_exported() {
+        let mut s = item(
+            ast::ItemKind::Struct(ast::StructDecl {
+                name: "Point".to_string(),
+                generics: Vec::new(),
+                body: ast::StructBody::Named(vec![field("x"), field("y")]),
+            }),
+            vec![derive_attr("Debug")],
+        );
+        s.vis = ast::Visibility::Public;
+        let module = ast::Module { items: vec![s] };
+        let out = emit_solo(&module);
+        assert!(
+            out.js.contains("export const Point = (__m.Point = {});"),
+            "{}",
+            out.js
+        );
+    }
+
+    /// `module_js_bindings` reports the names that emit a runtime binding: a
+    /// `pub fn`, a `pub const`, and a `pub` struct/enum with a method slot.
+    /// A data-only `pub` struct and a private item contribute nothing.
+    #[test]
+    fn module_js_bindings_reports_only_binding_bearing_items() {
+        let mut pub_fn = fn_item("f", int("1"));
+        pub_fn.vis = ast::Visibility::Public;
+
+        let priv_fn = fn_item("g", int("2"));
+
+        let mut pub_const = item(
+            ast::ItemKind::Const(ast::ConstDecl {
+                name: "MAX".to_string(),
+                ty: ast::Type::Unit,
+                value: int("10"),
+            }),
+            Vec::new(),
+        );
+        pub_const.vis = ast::Visibility::Public;
+
+        // A data-only `pub` struct: no derive, no impl → no method slot → no
+        // binding.
+        let mut data_struct = item(
+            ast::ItemKind::Struct(ast::StructDecl {
+                name: "Plain".to_string(),
+                generics: Vec::new(),
+                body: ast::StructBody::Named(vec![field("x")]),
+            }),
+            Vec::new(),
+        );
+        data_struct.vis = ast::Visibility::Public;
+
+        // A `pub` struct carrying a method slot via `#[derive]` → binding.
+        let mut method_struct = item(
+            ast::ItemKind::Struct(ast::StructDecl {
+                name: "Point".to_string(),
+                generics: Vec::new(),
+                body: ast::StructBody::Named(vec![field("x"), field("y")]),
+            }),
+            vec![derive_attr("Debug")],
+        );
+        method_struct.vis = ast::Visibility::Public;
+
+        let module = ast::Module {
+            items: vec![pub_fn, priv_fn, pub_const, data_struct, method_struct],
+        };
+        let bindings = module_js_bindings(&module);
+        assert_eq!(
+            bindings,
+            HashSet::from(["f".to_string(), "MAX".to_string(), "Point".to_string()])
         );
     }
 }
