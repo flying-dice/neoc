@@ -21,9 +21,6 @@ neoc-codegen-py = { path = "crates/neoc-codegen-py" }
 neoc-compiler = { path = "crates/neoc-compiler" }
 neoc-fmt = { path = "crates/neoc-fmt" }
 neoc-lsp = { path = "crates/neoc-lsp" }
-neoc-bindgen-ts = { path = "crates/neoc-bindgen-ts" }
-neoc-bindgen-py = { path = "crates/neoc-bindgen-py" }
-neoc-bindgen-lua = { path = "crates/neoc-bindgen-lua" }
 tree-sitter = "0.25"
 tree-sitter-language = "0.1"
 

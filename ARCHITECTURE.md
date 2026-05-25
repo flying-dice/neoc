@@ -43,9 +43,6 @@ Lua 5.1 / JavaScript (ES2022) / Python 3 source
 | `neoc-wasm` | browser entry point | compiler |
 | `neoc-cli` | the compiler subcommand tree (`build`/`check`/`fmt`/`lsp`) | compiler, fmt, lsp |
 | `neoc` | the Luau runtime + the `neoc` binary; mounts `neoc-cli`'s subcommands | cli |
-| `neoc-bindgen-ts` | standalone CLI: TypeScript (`.d.ts`/`.ts`) → declarations-only `.neoc` header | — |
-| `neoc-bindgen-py` | standalone CLI: Python (`.py`/`.pyi`) → declarations-only `.neoc` header | — |
-| `neoc-bindgen-lua` | standalone CLI: Luau → declarations-only `.neoc` header | — |
 
 The dependency graph is acyclic and the AST is the frozen contract every stage shares.
 

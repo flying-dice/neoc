@@ -158,9 +158,6 @@ neoc-fmt                     # formatter
 neoc-lsp                     # language server (diagnostics over stdio)
 neoc-cli                     # the compiler subcommand tree (build/check/fmt/lsp)
 neoc-wasm                    # browser entry point
-neoc-bindgen-ts              # standalone CLI: TypeScript → .neoc header
-neoc-bindgen-py              # standalone CLI: Python → .neoc header
-neoc-bindgen-lua             # standalone CLI: Luau → .neoc header
 ```
 
 The dependency graph is acyclic; the AST is the frozen contract every compiler
