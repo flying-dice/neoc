@@ -7,6 +7,7 @@ Qualifies when: well-defined purpose, stable surface, genuinely useful to most s
 ## Reference
 
 - [`lib:base64`](/lib/reference/base64) — Base64 encoding/decoding
+- [`lib:crypto`](/lib/reference/crypto) — Authenticated symmetric encryption (AES-GCM, ChaCha20-Poly1305)
 - [`lib:json`](/lib/reference/json) — JSON Object/Array handles, `null` sentinel
 - [`lib:mime`](/lib/reference/mime) — MIME type detection and extension mapping
 - [`lib:test`](/lib/reference/test) — Luau test runner and assertions

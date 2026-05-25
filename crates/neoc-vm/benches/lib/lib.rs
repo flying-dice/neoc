@@ -28,6 +28,7 @@ criterion_group!(
     lib::base64::benches,
     lib::chrono::benches,
     lib::compress::benches,
+    lib::crypto::benches,
     lib::csv::benches,
     lib::glob::benches,
     lib::hash::benches,
