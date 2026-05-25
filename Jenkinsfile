@@ -57,7 +57,7 @@ pipeline {
                 bat 'cargo test --workspace --lib --target x86_64-pc-windows-msvc'
                 bat 'if not exist .tmp mkdir .tmp'
                 bat '''
-                    cargo run -p neoc --target x86_64-pc-windows-msvc -- ^
+                    cargo run -p neoc --target x86_64-pc-windows-msvc -- run ^
                         "crates/neoc/tests/lib/*.test.luau" ^
                         "crates/neoc/tests/std/*.test.luau" ^
                         "crates/neoc/tests/vnd/jsonschema.test.luau" ^

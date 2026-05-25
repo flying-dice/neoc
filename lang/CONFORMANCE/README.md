@@ -42,12 +42,12 @@ dynamic/4-05-match-literal-arms.stdout ← the output every target must produce
 
 ## Readable per-target output
 
-The `.lua` / `.js` / `.py` files are the **committed, readable lowering** of each case to each backend — exactly what `neocc build --target <lua|js|python>` emits. Read them to see the transformation; regenerate them after a codegen change with:
+The `.lua` / `.js` / `.py` files are the **committed, readable lowering** of each case to each backend — exactly what `neoc build --target <lua|js|python>` emits. Read them to see the transformation; regenerate them after a codegen change with:
 
 ```
-neocc build lang/CONFORMANCE/dynamic/*.neoc --target lua
-neocc build lang/CONFORMANCE/dynamic/*.neoc --target js
-neocc build lang/CONFORMANCE/dynamic/*.neoc --target python
+neoc build lang/CONFORMANCE/dynamic/*.neoc --target lua
+neoc build lang/CONFORMANCE/dynamic/*.neoc --target js
+neoc build lang/CONFORMANCE/dynamic/*.neoc --target python
 ```
 
 ## Dynamic Rust anchors

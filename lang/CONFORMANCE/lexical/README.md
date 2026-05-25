@@ -5,7 +5,7 @@ This layer is empty on purpose. The `.tokens` format in the parent README
 `LEXICAL.md` §8 token classes (`PLUS`, `ARROW`, `INT_LITERAL`, …) as a flat
 stream. neoc has no such API.
 
-The only parser is `neocc-grammar` (tree-sitter). Tree-sitter produces a concrete
+The only parser is `neoc-grammar` (tree-sitter). Tree-sitter produces a concrete
 syntax tree, not a token stream: its terminals for keywords and punctuation are
 anonymous nodes, and it carries no mapping from those anonymous tokens to the
 named `LEXICAL.md` token classes. Reconstructing `KIND@line:col "lexeme"` from

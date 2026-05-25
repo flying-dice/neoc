@@ -72,7 +72,7 @@ print("saved " .. data:get("path_with_namespace"))
 ```
 
 ```sh
-neoc fetch.luau
+neoc run fetch.luau
 ```
 
 ## What's inside
@@ -84,9 +84,9 @@ Three layers, one binary — `std:*` mirrors Rust's standard library, `lib:*` ar
 ## Running
 
 ```sh
-neoc script.luau                       # one script
-neoc 'tests/**/*.luau'                 # globs expand
-neoc one.luau two.luau                 # several in sequence
+neoc run script.luau                   # one script
+neoc run 'tests/**/*.luau'             # globs expand
+neoc run one.luau two.luau             # several in sequence
 ```
 
 `.test.luau` / `.spec.luau` suffix triggers built-in test runner.
