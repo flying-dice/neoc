@@ -1,9 +1,8 @@
 //! Command logic for the neoc compiler subcommands.
 //!
-//! This crate is a library. The `neoc` binary mounts [`Command`] into its
-//! top-level `clap` tree and calls [`Command::run`] to dispatch. Keeping the
-//! logic here lets the integration tests exercise it directly as well as
-//! through the built binary.
+//! The `neoc` binary mounts [`Command`] into its top-level `clap` tree and
+//! calls [`Command::run`] to dispatch. Keeping the logic in its own module lets
+//! the integration tests exercise it through the built binary.
 
 use std::fs;
 use std::io::Write;
