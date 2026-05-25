@@ -72,6 +72,51 @@ fn two_file_project_resolves_pub_item_and_emits_require() {
 }
 
 #[test]
+fn two_file_project_emits_esm_import_and_export_for_js() {
+    let dir = fixtures();
+    let entry = dir.join("main.neoc");
+    let project = transpile_project(&entry, Target::Js).expect("read project");
+
+    assert!(
+        project.ok(),
+        "expected a clean project, got: {:#?}",
+        project.diagnostics
+    );
+    assert_eq!(project.files.len(), 2, "expected main + util outputs");
+
+    let find = |stem: &str| {
+        project
+            .files
+            .iter()
+            .find(|(p, _)| p.file_stem().is_some_and(|s| s == stem))
+            .map_or_else(|| panic!("{stem} output present"), |(_, src)| src.as_str())
+    };
+
+    // `use util::add;` lowers to a relative, `.js`-suffixed ESM import — the form
+    // a browser or bundler resolves natively.
+    let main_js = find("main");
+    assert!(
+        main_js.contains("import { add } from \"./util.js\";"),
+        "main should import `add` as an ES module:\n{main_js}"
+    );
+    assert!(
+        main_js.contains("add(2, 3)"),
+        "main should call the imported function:\n{main_js}"
+    );
+
+    // The `pub fn add` becomes an exported binding; the private `secret` does not.
+    let util_js = find("util");
+    assert!(
+        util_js.contains("export function add("),
+        "`pub fn add` should be exported:\n{util_js}"
+    );
+    assert!(
+        !util_js.contains("export function secret(") && util_js.contains("function secret("),
+        "private `secret` should stay module-local:\n{util_js}"
+    );
+}
+
+#[test]
 fn using_a_private_item_is_a_visibility_error() {
     let dir = tempdir();
     write(&dir, "util.neoc", "fn secret(x: number) -> number { x }\n");
