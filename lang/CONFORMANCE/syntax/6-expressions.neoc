@@ -1,0 +1,18 @@
+// SYNTAX.md §6: operators, calls, indexing, closures, if/match, ranges, try.
+ext fn parse(s: string) -> Result<number, string>;
+
+fn run(s: string) -> Result<number, string> {
+    let xs = [1, 2, 3];
+    let f = |x| x + 1;
+    let n = parse(s)?;
+    let label = if n > 0 { "pos" } else { "neg" };
+    for i in 0..n { let _ = xs[0]; }
+    while n > 0 { let _ = f(n); }
+    let tag = match n {
+        0 => "zero",
+        1 | 2 => "small",
+        x if x > 9 => "big",
+        _ => label,
+    };
+    Ok(n)
+}

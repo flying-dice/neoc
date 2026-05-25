@@ -1,0 +1,7 @@
+// STATIC.md §6 (T-TRY-RESULT): `?` is well-typed in a `Result`-returning fn.
+ext fn parse(s: string) -> Result<number, string>;
+
+fn double(s: string) -> Result<number, string> {
+    let n = parse(s)?;
+    Ok(n + n)
+}

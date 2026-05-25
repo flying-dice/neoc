@@ -1,0 +1,14 @@
+// SYNTAX.md §7: wildcard, binding, literal, or, path, struct, and tuple patterns.
+enum Shape { Circle { radius: number }, Move(number, number), Origin }
+
+fn area(s: Shape) -> number {
+    match s {
+        Shape::Circle { radius } => radius,
+        Shape::Move(dx, dy) => dx + dy,
+        Shape::Origin => 0,
+    }
+}
+
+fn small(n: number) -> bool {
+    match n { 1 | 2 | 3 => true, _ => false }
+}

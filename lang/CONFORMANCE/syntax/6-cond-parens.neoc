@@ -1,0 +1,9 @@
+// SYNTAX.md §6.2: a struct literal in a condition needs parentheses, because a
+// bare `{` opens the block. Parenthesized, it parses. Mirrors Rust.
+struct Point { x: number }
+
+fn f() {
+    if (Point { x: 1 }).x > 0 { go(); }
+}
+
+ext fn go();

@@ -32,7 +32,7 @@ Picking:
 - Our code or small helper crate → `lib:*`
 - Recognisable crate from `Cargo.toml` → `vnd:*` (exact name)
 
-Registry built once at boot in `src/lua/lib/mod.rs::install`.
+Registry built once at boot in `crates/neoc/src/lua/lib/mod.rs::install`.
 
 ---
 
@@ -159,7 +159,7 @@ Grouped by namespace, alphabetical. Local name matches module name.
 
 ### Test file structure
 
-`tests/<module>.test.luau`:
+`crates/neoc/tests/<module>.test.luau`:
 
 ```lua
 local _t       = require("lib:test")

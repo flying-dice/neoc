@@ -1,0 +1,22 @@
+// DYNAMIC.md §4.5 + §5: a `match` over a `number` exercising a literal arm
+// (`0`), an or-pattern (`1 | 2 | 3`), a binding pattern with a guard
+// (`x if x > 100`), and a wildcard catch-all. The guard is tested only after its
+// pattern binds, so it sees `x`. A number scrutinee requires a binding/wildcard
+// arm to be exhaustive (STATIC.md §7).
+ext fn println(s: string);
+
+fn classify(n: number) -> string {
+    match n {
+        0 => "zero",
+        1 | 2 | 3 => "small",
+        x if x > 100 => "huge",
+        _ => "other",
+    }
+}
+
+fn main() {
+    println(classify(0));
+    println(classify(2));
+    println(classify(200));
+    println(classify(50));
+}

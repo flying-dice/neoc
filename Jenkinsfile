@@ -54,18 +54,18 @@ pipeline {
 
         stage('Test') {
             steps {
-                bat 'cargo test --lib --target x86_64-pc-windows-msvc'
+                bat 'cargo test --workspace --lib --target x86_64-pc-windows-msvc'
                 bat 'if not exist .tmp mkdir .tmp'
                 bat '''
-                    cargo run --target x86_64-pc-windows-msvc -- ^
-                        "tests/lib/*.test.luau" ^
-                        "tests/std/*.test.luau" ^
-                        "tests/vnd/jsonschema.test.luau" ^
-                        "tests/vnd/quick_xml.test.luau" ^
-                        "tests/vnd/rusqlite.test.luau" ^
-                        "tests/vnd/serde_json.test.luau" ^
-                        "tests/vnd/serde_yaml.test.luau" ^
-                        "tests/vnd/toml.test.luau"
+                    cargo run -p neoc --target x86_64-pc-windows-msvc -- run ^
+                        "crates/neoc/tests/lib/*.test.luau" ^
+                        "crates/neoc/tests/std/*.test.luau" ^
+                        "crates/neoc/tests/vnd/jsonschema.test.luau" ^
+                        "crates/neoc/tests/vnd/quick_xml.test.luau" ^
+                        "crates/neoc/tests/vnd/rusqlite.test.luau" ^
+                        "crates/neoc/tests/vnd/serde_json.test.luau" ^
+                        "crates/neoc/tests/vnd/serde_yaml.test.luau" ^
+                        "crates/neoc/tests/vnd/toml.test.luau"
                 '''
             }
         }

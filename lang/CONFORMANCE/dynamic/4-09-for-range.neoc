@@ -1,0 +1,12 @@
+// DYNAMIC.md §4.9: `for x in a..b { … }` lowers to a numeric `for x = a, b - 1`
+// (the range is half-open, excluding the upper bound). `1..5` visits 1,2,3,4,
+// summing to 10.
+ext fn println(n: number);
+
+fn main() {
+    let mut sum = 0;
+    for i in 1..5 {
+        sum = sum + i;
+    }
+    println(sum);
+}

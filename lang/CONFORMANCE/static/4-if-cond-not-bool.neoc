@@ -1,0 +1,4 @@
+// STATIC.md §4.1 / SYNTAX.md §6.2: an `if` condition must be `bool`.
+fn main() {
+    if 1 { }
+}

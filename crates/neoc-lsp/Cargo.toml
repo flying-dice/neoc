@@ -1,0 +1,19 @@
+[package]
+name = "neoc-lsp"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+neoc-compiler.workspace = true
+neoc-grammar.workspace = true
+neoc-parser.workspace = true
+neoc-types.workspace = true
+tree-sitter.workspace = true
+tower-lsp = "0.20"
+tokio = { version = "1", features = ["rt", "io-std", "io-util", "macros"] }
+
+[lints]
+workspace = true

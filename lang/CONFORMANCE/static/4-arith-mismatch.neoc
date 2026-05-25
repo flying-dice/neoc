@@ -1,0 +1,4 @@
+// STATIC.md §4.1 (T-ARITH): `+` needs two `number`s or two `string`s.
+fn main() {
+    let x = 1 + "hi";
+}

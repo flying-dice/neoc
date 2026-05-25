@@ -1,0 +1,147 @@
+[package]
+name = "neoc"
+version.workspace = true
+edition.workspace = true
+default-run = "neoc"
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+toml = { version = "0.8", features = ["parse", "display"] }
+quick-xml = { version = "0.31", features = ["serialize"] }
+tracing = "0.1"
+tracing-core = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "net", "io-util", "signal"] }
+mlua = { version = "0.10", features = ["luau", "async", "send", "vendored", "serialize", "macros"] }
+parking_lot = "0.12"
+regex = "1"
+base64 = "0.22"
+# De-facto Rust standard for hex (cited in the lib:hex issue) and already in
+# the tree transitively. Zero-dep, backs `lib:hex` alongside the base64 crate.
+hex = "0.4"
+sha2 = "0.10"
+sha3 = "0.10"
+blake3 = "1"
+md-5 = "0.10"
+sha1 = "0.10"
+xxhash-rust = { version = "0.8", features = ["xxh3", "xxh64"] }
+# HMAC over the sha2 digests, backing `lib:hmac`. RustCrypto `hmac` 0.12 pairs
+# with the `digest` 0.10 traits `sha2` already implements — no new digest
+# backend, just the keyed construction. `subtle` gives the constant-time tag
+# comparison (`verify`); hand-rolling that is the side-channel footgun the
+# module exists to avoid. Both are RustCrypto crates already in the tree
+# transitively via the digest stack.
+hmac = "0.12"
+subtle = "2"
+flate2 = "1"
+zstd = "0.13"
+brotli = "7"
+# CSPRNG (OsRng) backing `lib:random`. `rand` 0.8 is already in the dep tree
+# transitively; pinning here keeps the build stable. Default features pull in
+# `getrandom` + `std_rng`, which is all we need.
+rand = "0.8"
+# UUID generation + parsing for `lib:random`. `v4` = random, `v7` = unix-ms
+# timestamp ordered. `uuid` 1.x is already a transitive dep — features make
+# it ours.
+uuid = { version = "1", features = ["v4", "v7"] }
+rust-ini = "0.21"
+mime_guess = "2"
+csv = "1"
+semver = "1"
+similar = "3"
+url = "2"
+percent-encoding = "2"
+# Civil dates, times, IANA timezone conversion, RFC 3339 / strftime parse and
+# format. Default features bundle the tzdb on Windows and read /usr/share/zoneinfo
+# on Unix, plus detect the system zone — exactly what `lib:chrono` needs.
+jiff = "0.2"
+clap = { version = "4", default-features = false, features = ["std", "help", "usage", "error-context", "string", "derive"] }
+
+# The compiler half of the unified `neoc` CLI. `neoc-cli` is a library exposing
+# the `build`/`check`/`fmt`/`lsp` subcommands; the runtime mounts them into its
+# top-level clap tree. This pulls in neoc-compiler / neoc-fmt / neoc-lsp
+# transitively.
+neoc-cli = { path = "../neoc-cli" }
+
+strsim = "0.11"
+heck = "0.5"
+unicode-width = "0.2"
+deunicode = "1"
+thiserror = "2"
+miette = { version = "7", features = ["fancy"] }
+futures = { version = "0.3", default-features = false, features = ["std"] }
+globset = "0.4"
+# `default-features = false` drops tera's `builtins` (chrono-backed `date`,
+# `urlencode`, `slugify`, `json_encode`). The lib:template AC (`upper`,
+# `lower`, `trim`, `length`, `join`, `replace`, …) is met by tera's
+# always-on filter set, so keeping `builtins` out avoids dragging chrono +
+# tz data just for date formatting. Scripts that need those helpers can use
+# their dedicated library modules and chain results through filters.
+tera = { version = "1.20", default-features = false }
+walkdir = "2"
+serde-jsonlines = "0.7.0"
+
+hyper = { version = "1", features = ["client", "server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+bytes = "1"
+
+socket2 = { version = "0.5", features = ["all"] }
+
+# sqlx is async-only and used here for `lib.mysql` / `lib.postgres`, where the
+# work genuinely is network IO (worth yielding for). For `lib.sqlite` we use
+# rusqlite directly — sqlite is a synchronous C library, so wrapping it in
+# async/await machinery on top adds overhead with no IO to overlap. Both
+# ultimately link the same vendored libsqlite3-sys.
+# `mysql`/`postgres` are pure-Rust drivers; TLS is intentionally not enabled here
+# (consistent with `lib.http` being HTTP-only).
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "mysql", "postgres"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# JSON Schema validation. `default-features = false` drops the optional
+# resolvers (HTTP/file remote $ref) — schemas embedded in scripts don't
+# need them, and turning them off shrinks the dependency tree.
+jsonschema = { version = "0.30", default-features = false }
+
+# Exposed to Luau as `lib.testcontainers` so scripts (and our integration
+# tests) can spin up disposable backing services without external setup.
+testcontainers-modules = { version = "0.11", features = ["mysql", "postgres"] }
+
+# RAII temp files and directories backing `lib:tempfile`. Rust's de-facto
+# tempfile crate — `NamedTempFile` / `TempDir` unlink on drop, which is the
+# semantic the Lua-facing UserData layer mirrors via mlua's GC.
+tempfile = "3"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+
+# Optional regular dep, gated behind the `bench` feature so it doesn't
+# bloat normal lib builds. Lives in `[dependencies]` rather than
+# `[dev-dependencies]` because the `pub fn benches` functions inline in
+# `src/lua/lib/<module>.rs` need to reference `criterion::Criterion` from
+# library code — and dev-dependencies aren't visible to lib code.
+[dependencies.criterion]
+version = "0.5"
+features = ["html_reports"]
+optional = true
+
+[features]
+# Compiles the per-module `benches` functions and pulls in criterion.
+# `cargo bench` auto-activates this via the `[[bench]] required-features`
+# entry below, so users don't have to remember the flag.
+bench = ["dep:criterion"]
+
+[[bench]]
+name = "lib"
+path = "benches/lib/lib.rs"
+harness = false
+required-features = ["bench"]
+
+[[bench]]
+name = "vnd"
+path = "benches/vnd/vnd.rs"
+harness = false
+required-features = ["bench"]

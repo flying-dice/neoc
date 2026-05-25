@@ -1,0 +1,4 @@
+// STATIC.md §4.1: comparison `<` requires both operands to be `number`.
+fn main() {
+    let b = 1 < "hi";
+}
