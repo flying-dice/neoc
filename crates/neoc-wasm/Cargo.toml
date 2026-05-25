@@ -1,0 +1,17 @@
+[package]
+name = "neoc-wasm"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+neoc-compiler.workspace = true
+
+# wasm-bindgen and the cdylib crate-type are added when the browser build
+# lands. Today this is a plain library so the host workspace builds cleanly;
+# making the compiler graph wasm-clean is tracked separately.
+
+[lints]
+workspace = true

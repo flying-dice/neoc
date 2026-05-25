@@ -1,0 +1,7 @@
+// SYNTAX.md §6.2: a bare struct literal in an `if` condition is rejected; the
+// `{` is taken as the block. Must be parenthesized.
+struct Point { x: number }
+
+fn f() {
+    if Point { x: 1 }.x > 0 { go(); }
+}

@@ -1,0 +1,28 @@
+// DYNAMIC.md §4.5 + §5: `match` over an `enum`, exercising a tuple-variant
+// pattern (`Move(dx, dy)` — payload at [1],[2]) and a struct-variant pattern
+// (`Box { w, h }` — payload by field name). The unit variant `Dot` is covered by
+// the wildcard arm. The scrutinee is evaluated once; arms are tested in order.
+ext fn println(n: number);
+
+enum Shape {
+    Dot,
+    Move(number, number),
+    Box {
+        w: number,
+        h: number,
+    },
+}
+
+fn area(s: Shape) -> number {
+    match s {
+        Shape::Move(dx, dy) => dx + dy,
+        Shape::Box { w, h } => w * h,
+        _ => 0,
+    }
+}
+
+fn main() {
+    println(area(Shape::Move(3, 4)));
+    println(area(Shape::Box { w: 5, h: 6 }));
+    println(area(Shape::Dot));
+}

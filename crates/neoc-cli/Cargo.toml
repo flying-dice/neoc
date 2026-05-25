@@ -1,0 +1,29 @@
+[package]
+name = "neoc-cli"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "neocc"
+path = "src/main.rs"
+
+[lib]
+name = "neoc_cli"
+path = "src/lib.rs"
+
+[dependencies]
+neoc-compiler.workspace = true
+neoc-fmt.workspace = true
+neoc-lsp.workspace = true
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+glob = "0.3"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

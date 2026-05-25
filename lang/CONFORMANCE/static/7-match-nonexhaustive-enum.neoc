@@ -1,0 +1,9 @@
+// STATIC.md §7: every enum variant must be covered.
+enum Color { Red, Green, Blue }
+
+fn name(c: Color) -> string {
+    match c {
+        Color::Red => "r",
+        Color::Green => "g",
+    }
+}

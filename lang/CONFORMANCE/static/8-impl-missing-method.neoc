@@ -1,0 +1,5 @@
+// STATIC.md §8: an `impl` must provide every required trait method.
+trait Show { fn show(self) -> string; }
+struct P { x: number }
+
+impl Show for P { }

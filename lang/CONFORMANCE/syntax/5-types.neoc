@@ -1,0 +1,4 @@
+// SYNTAX.md §5: unit, list, function, qualified-path, and generic types.
+ext fn run(f: fn(number) -> number, xs: [number]) -> ();
+
+fn id(x: Result<number, string>) -> Result<number, string> { x }

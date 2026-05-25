@@ -1,0 +1,11 @@
+// DYNAMIC.md §4.2: comparison operators yield `bool`; `&&`/`||` lower to Lua
+// `and`/`or` and short-circuit; `!` lowers to `not`. Lua prints booleans as
+// `true` / `false`.
+ext fn println(b: bool);
+
+fn main() {
+    println(3 < 5 && 5 <= 5);
+    println(1 > 2 || !false);
+    println(4 == 4 && 4 != 5);
+    println(2 >= 3);
+}

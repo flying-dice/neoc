@@ -1,0 +1,13 @@
+// DYNAMIC.md §4.9: `while c { … }` lowers to Lua `while c do … end`. Sums
+// 0+1+2+3+4 = 10 with an explicit mutable counter.
+ext fn println(n: number);
+
+fn main() {
+    let mut i = 0;
+    let mut sum = 0;
+    while i < 5 {
+        sum = sum + i;
+        i = i + 1;
+    }
+    println(sum);
+}

@@ -1,0 +1,36 @@
+[package]
+name = "neoc-compiler"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+neoc-ast.workspace = true
+neoc-parser.workspace = true
+neoc-types.workspace = true
+neoc-codegen-lua.workspace = true
+neoc-codegen-js.workspace = true
+neoc-codegen-py.workspace = true
+neoc-macros.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+libtest-mimic = "0.8"
+neoc-grammar.workspace = true
+tree-sitter.workspace = true
+
+[[test]]
+name = "conformance"
+harness = false
+
+[[test]]
+name = "conformance_static"
+harness = false
+
+[[test]]
+name = "conformance_syntax"
+harness = false

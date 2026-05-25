@@ -1,0 +1,7 @@
+// STATIC.md §3.3: a complete struct literal and valid field access type-check.
+struct P { x: number, y: number }
+
+fn main() {
+    let p = P { x: 1, y: 2 };
+    let z = p.x + p.y;
+}

@@ -1,0 +1,13 @@
+[package]
+name = "neoc-macros"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+neoc-ast.workspace = true
+
+[lints]
+workspace = true
