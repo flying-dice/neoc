@@ -1,0 +1,15 @@
+// DYNAMIC.md §4.6 + §3.6: `if`/`else` in value position (the initialiser of a
+// `let`) and `let` / `let mut`. `mut` is a static-only distinction with no
+// runtime effect, so the reassignment to `y` is an ordinary Lua assignment.
+ext fn println(n: number);
+
+fn main() {
+    let x = 7;
+    let mut y = if x > 5 {
+        x * 2
+    } else {
+        0
+    };
+    y = y + 1;
+    println(y);
+}

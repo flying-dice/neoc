@@ -1,0 +1,6 @@
+// STATIC.md §3.3 (T-STRUCT-LIT): a struct literal must name every field.
+struct P { x: number, y: number }
+
+fn main() {
+    let p = P { x: 1 };
+}

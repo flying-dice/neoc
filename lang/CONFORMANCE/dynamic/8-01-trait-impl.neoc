@@ -1,0 +1,23 @@
+// DYNAMIC.md §3.4: a `trait` produces no output; an `impl Trait for Type`
+// attaches the method to the type's table, so a call dispatches via the
+// metatable exactly like an inherent method. `d.greet()` resolves `Dog.greet`.
+ext fn println(s: string);
+
+trait Greet {
+    fn greet(self) -> string;
+}
+
+struct Dog {
+    name: string,
+}
+
+impl Greet for Dog {
+    fn greet(self) -> string {
+        self.name + " says woof"
+    }
+}
+
+fn main() {
+    let d = Dog { name: "Rex" };
+    println(d.greet());
+}

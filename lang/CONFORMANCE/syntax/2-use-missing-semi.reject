@@ -1,0 +1,2 @@
+// SYNTAX.md §3.1: a `use` declaration must end with `;`.
+use math::vec::Vec3

@@ -1,0 +1,4 @@
+// STATIC.md §4.1 (T-IF): both branches share a type; the `if` is an expression.
+fn classify(n: number) -> string {
+    if n > 0 { "pos" } else { "neg" }
+}

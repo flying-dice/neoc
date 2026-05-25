@@ -1,0 +1,13 @@
+ext fn print(s: string);
+
+fn describe(r: Result<number, string>) -> string {
+    match r {
+        Ok(n) => "ok",
+        Err(e) => e,
+    }
+}
+
+fn main() {
+    print(describe(Ok(7)));
+    print(describe(Err("boom")));
+}

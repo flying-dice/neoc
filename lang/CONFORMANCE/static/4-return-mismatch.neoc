@@ -1,0 +1,4 @@
+// STATIC.md §4.3 (D-FN): the body must have the declared return type.
+fn f() -> number {
+    "hi"
+}

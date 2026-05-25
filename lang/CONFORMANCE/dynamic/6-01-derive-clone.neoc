@@ -1,0 +1,16 @@
+// DYNAMIC.md §6.1: `#[derive(Clone)]` emits `Counter.clone(self)` returning a
+// shallow copy carrying the same `_struct` tag. The clone reads back the same
+// field value as the original.
+ext fn println(n: number);
+
+#[derive(Clone)]
+struct Counter {
+    value: number,
+}
+
+fn main() {
+    let a = Counter { value: 5 };
+    let b = a.clone();
+    println(a.value);
+    println(b.value);
+}

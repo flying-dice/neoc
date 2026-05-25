@@ -1,0 +1,16 @@
+// DYNAMIC.md §6.4: `#[derive(Display)]` emits `Point.display(self)` producing
+// the user-facing string — the field values joined with ", " and no type-name
+// decoration, the analogue of Rust's `{}`. The method is called as
+// `p.display()`.
+ext fn println(s: string);
+
+#[derive(Display)]
+struct Point {
+    x: number,
+    y: number,
+}
+
+fn main() {
+    let p = Point { x: 1, y: 2 };
+    println(p.display());
+}

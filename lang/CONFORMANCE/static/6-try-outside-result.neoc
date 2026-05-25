@@ -1,0 +1,7 @@
+// STATIC.md §6 (T-TRY-RESULT): `?` on a `Result` needs a `Result`-returning fn.
+ext fn g() -> Result<number, string>;
+
+fn f() -> number {
+    let x = g()?;
+    x
+}

@@ -1,0 +1,7 @@
+// STATIC.md §7: an arm that can never match (earlier arm covers all) is an error.
+fn f(n: number) -> string {
+    match n {
+        x => "a",
+        _ => "b",
+    }
+}

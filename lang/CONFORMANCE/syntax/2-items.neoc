@@ -1,0 +1,22 @@
+// SYNTAX.md §2-3: the item forms — use, const, type alias, struct, enum,
+// trait, impl, fn, ext — all parse.
+use math::vec::Vec3;
+const LIMIT: number = 10;
+type Id = number;
+
+struct Marker;
+struct UserId(number);
+struct Point { x: number, y: number }
+
+enum Shape { Circle { radius: number }, Move(number, number), Origin }
+
+trait Show { fn show(self) -> string; fn name(self) -> string { "?" } }
+
+impl Show for Point { fn show(self) -> string { "p" } }
+impl Point { fn origin() -> Point { Point { x: 0, y: 0 } } }
+
+ext fn now() -> number;
+
+fn main() {
+    let p = Point::origin();
+}

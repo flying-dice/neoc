@@ -1,0 +1,3 @@
+[submodule "crates/neoc-grammar/tree-sitter-neoc"]
+	path = crates/neoc-grammar/tree-sitter-neoc
+	url = ../tree-sitter-neoc.git

@@ -1,0 +1,11 @@
+// SYNTAX.md §8-9: derive, field-validation, and test attributes, plus doc comments.
+/// A point in the plane.
+#[derive(Clone, Eq)]
+struct Point {
+    #[min(0)]
+    x: number,
+    y: number,
+}
+
+#[test]
+fn it_works() { }

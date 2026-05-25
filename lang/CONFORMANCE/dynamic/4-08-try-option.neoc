@@ -1,0 +1,22 @@
+// DYNAMIC.md §4.10: `?` on an `Option`. The same hoisted guard serves `Option`:
+// on `None` it returns the carrier from the enclosing function; on `Some` it
+// yields the wrapped value. `incr(Some(41))` propagates `Some(42)`; `incr(None)`
+// short-circuits `None` out.
+ext fn println(n: number);
+
+fn incr(o: Option<number>) -> Option<number> {
+    let n = o?;
+    Some(n + 1)
+}
+
+fn unwrap_or(o: Option<number>) -> number {
+    match o {
+        Some(n) => n,
+        None => 0,
+    }
+}
+
+fn main() {
+    println(unwrap_or(incr(Some(41))));
+    println(unwrap_or(incr(None)));
+}

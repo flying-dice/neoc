@@ -1,0 +1,4 @@
+// STATIC.md §4.1 (T-CONCAT): a `string` cannot be added to a `number`.
+fn main() {
+    let s = "a" + 1;
+}

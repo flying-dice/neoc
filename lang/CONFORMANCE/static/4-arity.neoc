@@ -1,0 +1,6 @@
+// STATIC.md §3.2 (T-CALL): the argument count must match exactly.
+fn g(a: number, b: number) -> number { a + b }
+
+fn main() {
+    g(1);
+}
