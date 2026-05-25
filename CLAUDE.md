@@ -3,10 +3,11 @@
 Guidance for Claude (and any LLM agent) working in the **neoc** monorepo — one
 Cargo workspace holding two halves:
 
-- **Runtime** (`crates/neoc`) — an embedded Luau engine backed by Rust. Lua
+- **Runtime** (`crates/neoc-vm`) — an embedded Luau engine backed by Rust. Lua
   scripts run in a sandboxed VM with a curated module surface (`std:*`, `lib:*`,
   `vnd:*`). The unsafe halves of the Lua standard library are stripped;
-  everything scripts need is provided through explicit modules.
+  everything scripts need is provided through explicit modules. The `neoc`
+  binary is a thin shell over this library.
 - **Compiler** (`neoc-*` crates) — the Rust compiler for the **neoc** language.
   `.neoc` → Lua 5.1 by default. (5.1 is the lowest common denominator; output
   runs on Luau, Lua 5.4, LuaJIT, and the runtime above. JavaScript (ES2022) and
@@ -92,10 +93,10 @@ handles, or an emitter for a node the type-checker never sees, is a desync bug.
 The workspace splits responsibilities across crates; boundaries are enforced by
 `Cargo.toml`, not convention:
 
-- Every compiler crate (everything except the `neoc` bin) carries **no
-  host-language assumptions** — no `std::fs`, `std::net`, `std::process`,
-  `tokio`, `mlua`, `hyper`, `sqlx`. I/O lives only in the `neoc` bin and (over
-  stdio) in `neoc-lsp`.
+- Every compiler crate (everything except `neoc-vm` and the `neoc` bin) carries
+  **no host-language assumptions** — no `std::fs`, `std::net`, `std::process`,
+  `tokio`, `mlua`, `hyper`, `sqlx`. The runtime host deps live in `neoc-vm`; I/O
+  lives there, in the `neoc` bin, and (over stdio) in `neoc-lsp`.
 - The pure leaf crates (`neoc-ast`, `neoc-macros`, `neoc-codegen-lua`) compile
   for `wasm32-unknown-unknown`; CI gates them with
   `cargo check --target wasm32-unknown-unknown -p neoc-ast -p neoc-macros -p neoc-codegen-lua`.
@@ -119,7 +120,7 @@ cargo build                                          # debug build
 cargo build --release                                # release build
 cargo test --workspace                               # full suite (runtime + compiler)
 cargo run -p neoc -- run 'crates/neoc/tests/**/*.test.luau'  # Luau integration tests
-cargo run -p neoc -- emit-headers --out crates/neoc/src/lua  # regenerate ext headers
+cargo run -p neoc -- emit-headers --out crates/neoc-vm/src/lua  # regenerate ext headers
 cargo bench --bench lib                              # Criterion benchmarks (lib modules)
 cargo bench --bench vnd                              # Criterion benchmarks (vnd modules)
 cargo check --target wasm32-unknown-unknown -p neoc-ast -p neoc-macros -p neoc-codegen-lua  # wasm leaf gate
@@ -132,17 +133,22 @@ cargo fmt --check                                    # formatting check
 ## Project structure
 
 ```
-crates/neoc/                 # the runtime + the `neoc` binary
+crates/neoc/                 # the thin `neoc` binary (the only bin)
   src/
     main.rs                  # CLI entry (run/emit-headers + compiler subcommands)
-    lib.rs                   # library root (pub mod dto, lua)
+    cli.rs                   # folded compiler subcommand tree (build/check/fmt/lsp)
+  tests/                     # Luau integration tests (*.test.luau, *.spec.luau) + cli.rs
+
+crates/neoc-vm/              # the Luau runtime library
+  src/
+    lib.rs                   # library root (pub mod dto, errors, lua)
+    errors.rs                # runtime error types (NeocError)
     lua/
       sandbox.rs             # engine construction
-      modules.rs             # module registration
+      modules.rs             # module registration + headers()
       std/                   # std:* modules (collections, fs, io, net, thread, …)
       lib/                   # lib:* modules (base64, json, test, vcr, …)
       vnd/                   # vnd:* modules (hyper, serde_json, rusqlite, sqlx_*, …)
-  tests/                     # Luau integration tests (*.test.luau, *.spec.luau)
   benches/                   # Criterion suites (lib/, vnd/)
 
 neoc-grammar                 # vendors tree-sitter-neoc (submodule); cc-builds parser.c
@@ -156,7 +162,6 @@ neoc-codegen-py              # AST → Python 3
 neoc-compiler                # public lib API: transpile to any target; merges per-stage diagnostics
 neoc-fmt                     # formatter
 neoc-lsp                     # language server (diagnostics over stdio)
-neoc-cli                     # the compiler subcommand tree (build/check/fmt/lsp)
 neoc-wasm                    # browser entry point
 ```
 
@@ -168,8 +173,8 @@ as the `neoc-grammar` submodule.
 
 ## Runtime: module namespaces
 
-Three namespaces, chosen at registration in `crates/neoc/src/lua/modules.rs`. No
-ambient globals — `require("namespace:name")` is the only way in:
+Three namespaces, chosen at registration in `crates/neoc-vm/src/lua/modules.rs`.
+No ambient globals — `require("namespace:name")` is the only way in:
 
 - `std:*` — mirrors Rust std (`std:collections`, `std:fs`, `std:net`).
 - `lib:*` — blessed gap-fillers and custom modules (`lib:base64`, `lib:test`).
@@ -204,8 +209,8 @@ Priority order, 1 > 2 > 3 > 4:
 
 ### Adding a module
 
-1. Create `crates/neoc/src/lua/<ns>/<name>.rs` with a `module` function.
-2. Register in `crates/neoc/src/lua/<ns>/mod.rs` (alphabetical).
+1. Create `crates/neoc-vm/src/lua/<ns>/<name>.rs` with a `module` function.
+2. Register in `crates/neoc-vm/src/lua/<ns>/mod.rs` (alphabetical).
 3. Add `#[cfg(test)] mod tests` in the file.
 4. Add Criterion benches (gated behind the `bench` feature).
 5. Add `crates/neoc/tests/<ns>/<name>.test.luau`.

@@ -41,8 +41,8 @@ Lua 5.1 / JavaScript (ES2022) / Python 3 source
 | `neoc-fmt` | formatter | ast, parser |
 | `neoc-lsp` | language server | compiler, parser |
 | `neoc-wasm` | browser entry point | compiler |
-| `neoc-cli` | the compiler subcommand tree (`build`/`check`/`fmt`/`lsp`) | compiler, fmt, lsp |
-| `neoc` | the Luau runtime + the `neoc` binary; mounts `neoc-cli`'s subcommands | cli |
+| `neoc-vm` | the Luau runtime: engine construction, script execution, `.neoc` header emission; owns the `mlua`/`tokio` stack and the `std:*`/`lib:*`/`vnd:*` modules | (runtime deps) |
+| `neoc` | the `neoc` binary: the unified `clap` tree and the folded compiler subcommands (`build`/`check`/`fmt`/`lsp`); dispatches `run`/`emit-headers` to `neoc-vm` | vm, compiler, fmt, lsp |
 
 The dependency graph is acyclic and the AST is the frozen contract every stage shares.
 
