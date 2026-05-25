@@ -1,26 +1,19 @@
-//! Command logic for the `neocc` command-line compiler.
+//! Command logic for the neoc compiler subcommands.
 //!
-//! The binary in `main.rs` parses arguments with `clap` and dispatches into
-//! the functions here. Keeping the logic in a library lets the integration
-//! tests exercise it directly as well as through the built binary.
+//! This crate is a library. The `neoc` binary mounts [`Command`] into its
+//! top-level `clap` tree and calls [`Command::run`] to dispatch. Keeping the
+//! logic here lets the integration tests exercise it directly as well as
+//! through the built binary.
 
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::Subcommand;
 use neoc_compiler::{ProjectDiagnostic, Stage, Target, transpile_project};
 
-/// The `neocc` command-line compiler: neoc source to Lua 5.1.
-#[derive(Debug, Parser)]
-#[command(name = "neocc", version, about, long_about = None)]
-pub struct Cli {
-    #[command(subcommand)]
-    command: Command,
-}
-
-/// The subcommands the compiler understands.
+/// The compiler subcommands: `build`, `check`, `fmt`, and `lsp`.
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Transpile neoc source files to a target language.
@@ -54,7 +47,7 @@ pub enum Command {
     Lsp,
 }
 
-impl Cli {
+impl Command {
     /// Runs the parsed command, streaming diagnostics to `err`.
     ///
     /// Returns the process exit code: `0` on success, non-zero when any file
@@ -64,7 +57,7 @@ impl Cli {
     ///
     /// Returns an error if expanding a glob or reading/writing a file fails.
     pub fn run(self, err: &mut impl Write) -> Result<i32> {
-        match self.command {
+        match self {
             Command::Build {
                 paths,
                 output,
@@ -205,7 +198,7 @@ fn resolve(patterns: &[String], err: &mut impl Write) -> Result<Vec<PathBuf>> {
             }
         }
         if !matched {
-            writeln!(err, "neocc: no files matched `{pattern}`")?;
+            writeln!(err, "neoc: no files matched `{pattern}`")?;
         }
     }
     Ok(files)
