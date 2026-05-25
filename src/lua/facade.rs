@@ -340,6 +340,36 @@ impl<'l> Module<'l> {
         Ok(self)
     }
 
+    /// Records a free-function signature for the header without registering an
+    /// implementation.
+    ///
+    /// The signature-only counterpart to [`Module::set`]: pair the two when a
+    /// free function must be registered verbatim — because it raises an
+    /// `mlua::Error` directly, bakes its own error prefix, shares a prefix
+    /// helper with a userdata method, or runs under a custom or absent
+    /// `tracing` span — yet must still appear in the emitted header. `params`
+    /// is the ordered list of `(parameter_name, neoc_type)` pairs; `ret` is the
+    /// neoc return type as a string (the caller passes it directly because such
+    /// a function's return shape is decided in its body rather than by a single
+    /// Rust return type, exactly as [`UserDataSpec::method`] does). This records
+    /// only the header surface; the runtime registration is whatever
+    /// [`Module::set`] installed, left untouched.
+    pub fn record_fn(
+        &mut self,
+        name: &str,
+        params: &[(&str, &str)],
+        ret: &str,
+        doc: &str,
+    ) -> &mut Self {
+        self.entries.push(Entry {
+            name: name.to_string(),
+            params: own_params(params),
+            ret: ret.to_string(),
+            doc: doc.to_string(),
+        });
+        self
+    }
+
     /// Records a resource-handle userdata type for the emitted header.
     ///
     /// `type_name` is the neoc type the userdata maps to (matching the Rust
@@ -988,5 +1018,30 @@ mod tests {
             header.contains("fn open(url: string) -> Result<string, string>;"),
             "{header}"
         );
+    }
+
+    /// `set` + `record_fn` registers a verbatim implementation and records its
+    /// header signature without the facade touching the body — the path for
+    /// functions that raise or bake their own prefix.
+    #[test]
+    fn record_fn_records_signature_for_verbatim_set() {
+        let lua = Lua::new();
+        let mut m = Module::new(&lua, "lib:demo").expect("module");
+        let raw = lua
+            .create_function(|_, n: i64| Ok(n + 1))
+            .expect("create_function");
+        m.set("bump", raw).expect("set");
+        m.record_fn("bump", &[("n", "number")], "number", "Increments by one.");
+
+        let header = m.neoc_header();
+        assert!(
+            header.contains("    fn bump(n: number) -> number;"),
+            "{header}"
+        );
+
+        // The verbatim implementation is what actually runs.
+        let bump: mlua::Function = m.into_table().get("bump").expect("bump fn");
+        let out: i64 = bump.call(41).expect("call");
+        assert_eq!(out, 42);
     }
 }
