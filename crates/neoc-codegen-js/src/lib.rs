@@ -1,7 +1,14 @@
 //! AST → JavaScript (ES2022) emitter. Mirrors `neoc-codegen-lua`'s structure.
 //!
+//! The JavaScript backend is neoc's browser/frontend target — the client half of
+//! full-stack neoc, with Lua on the backend. Output is an **ES module**: a `use`
+//! lowers to a relative, `.js`-suffixed `import`, and a `pub` item to an
+//! `export`. That form loads natively in evergreen browsers and bundlers (Vite,
+//! `esbuild`) without a `CommonJS` or Node shim. It also runs under `node` as
+//! ESM, which the conformance suite uses as the behavioural oracle.
+//!
 //! Targets ES2022 — the language level supported across all current Node.js LTS
-//! lines (18/20/22) and evergreen browsers. Output runs directly under `node`.
+//! lines (18/20/22) and evergreen browsers.
 //!
 //! Split by construct family: items here, expressions in [`expr`], patterns in
 //! [`pat`]. neoc is expression-oriented and JavaScript is statement-oriented, so
@@ -322,16 +329,16 @@ impl Emitter {
 
     fn emit_item(&mut self, item: &ast::Item) {
         match &item.kind {
-            ast::ItemKind::Fn(f) => self.emit_fn(None, f),
+            ast::ItemKind::Fn(f) => self.emit_fn(None, f, item.vis),
             ast::ItemKind::Struct(s) => {
-                self.ensure_method_slot(&s.name);
+                self.ensure_method_slot(&s.name, item.vis);
                 self.emit_derives(&item.attrs, neoc_ast_derive_target(item));
             }
-            ast::ItemKind::Const(c) => self.emit_const(c),
+            ast::ItemKind::Const(c) => self.emit_const(c, item.vis),
             ast::ItemKind::Impl(b) => self.emit_impl(b),
             ast::ItemKind::Use(u) => self.emit_use(u),
             ast::ItemKind::Enum(e) => {
-                self.ensure_method_slot(&e.name);
+                self.ensure_method_slot(&e.name, item.vis);
                 self.emit_derives(&item.attrs, neoc_ast_derive_target(item));
             }
             // No JS output: aliases erase, ext is provided by the runtime harness.
@@ -342,11 +349,17 @@ impl Emitter {
         }
     }
 
-    /// Register the `__m[name] = {}` method slot for a type that carries one.
-    fn ensure_method_slot(&mut self, name: &str) {
+    /// Register the `__m[name] = {}` method slot for a type that carries one. A
+    /// `pub` type also binds its name to the slot and exports it, so importing
+    /// modules can reach the type's methods through their own `__m`.
+    fn ensure_method_slot(&mut self, name: &str, vis: ast::Visibility) {
         if self.type_has_methods(name) {
             self.uses_methods = true;
-            self.line(format!("__m.{name} = {{}};"));
+            if vis == ast::Visibility::Public {
+                self.line(format!("export const {name} = (__m.{name} = {{}});"));
+            } else {
+                self.line(format!("__m.{name} = {{}};"));
+            }
         }
     }
 
@@ -362,14 +375,18 @@ impl Emitter {
         let Some((last, prefix)) = u.path.split_last() else {
             return;
         };
-        let binding = u.alias.as_deref().unwrap_or(last);
         let module = prefix.join("/");
-        self.line(format!("const {binding} = require(\"{module}\").{last};"));
+        let named = match &u.alias {
+            Some(alias) => format!("{last} as {alias}"),
+            None => last.clone(),
+        };
+        self.line(format!("import {{ {named} }} from \"./{module}.js\";"));
     }
 
-    fn emit_const(&mut self, c: &ast::ConstDecl) {
+    fn emit_const(&mut self, c: &ast::ConstDecl, vis: ast::Visibility) {
         let value = self.emit_expr(&c.value);
-        self.line(format!("const {} = {value};", c.name));
+        let kw = export_kw(vis);
+        self.line(format!("{kw}const {} = {value};", c.name));
     }
 
     fn emit_impl(&mut self, b: &ast::ImplBlock) {
@@ -381,14 +398,16 @@ impl Emitter {
             return;
         };
         for f in &b.items {
-            self.emit_fn(Some(&target), f);
+            self.emit_fn(Some(&target), f, ast::Visibility::Public);
         }
     }
 
     /// Emit a function. `target` is the type name when this is a method or
     /// associated function inside an impl: it lands on `__m[target]` taking the
-    /// receiver as its first parameter.
-    fn emit_fn(&mut self, target: Option<&str>, f: &ast::FnDecl) {
+    /// receiver as its first parameter. `vis` applies only to a free function — a
+    /// `pub` one becomes an exported declaration; impl methods live on `__m` and
+    /// are reached through the type, never exported by keyword.
+    fn emit_fn(&mut self, target: Option<&str>, f: &ast::FnDecl, vis: ast::Visibility) {
         let mut params = Vec::new();
         for p in &f.sig.params {
             match p {
@@ -397,18 +416,28 @@ impl Emitter {
             }
         }
         let param_list = params.join(", ");
-        match target {
-            Some(t) => {
-                self.uses_methods = true;
-                self.line(format!(
-                    "__m.{t}.{} = function({param_list}) {{",
-                    f.sig.name
-                ));
-            }
-            None => self.line(format!("function {}({param_list}) {{", f.sig.name)),
+        if let Some(t) = target {
+            self.uses_methods = true;
+            self.line(format!(
+                "__m.{t}.{} = function({param_list}) {{",
+                f.sig.name
+            ));
+        } else {
+            let kw = export_kw(vis);
+            self.line(format!("{kw}function {}({param_list}) {{", f.sig.name));
         }
         self.indented(|e| e.emit_block_as_body(&f.body));
         self.line("}");
+    }
+}
+
+/// The leading keyword for a module-level binding: `"export "` for a `pub` item,
+/// empty for a module-local one.
+fn export_kw(vis: ast::Visibility) -> &'static str {
+    if vis == ast::Visibility::Public {
+        "export "
+    } else {
+        ""
     }
 }
 
@@ -661,6 +690,98 @@ mod tests {
              return \"Point { \" + \"x = \" + String(self.x) + \", \" + \
              \"y = \" + String(self.y) + \" }\";\n\
              };\n"
+        );
+    }
+
+    /// `use a::b::c` lowers to a relative, `.js`-suffixed ESM import.
+    #[test]
+    fn use_lowers_to_esm_import() {
+        let module = ast::Module {
+            items: vec![item(
+                ast::ItemKind::Use(ast::UseDecl {
+                    path: vec!["a".to_string(), "b".to_string(), "c".to_string()],
+                    alias: None,
+                }),
+                Vec::new(),
+            )],
+        };
+        assert_eq!(emit(&module).js, "import { c } from \"./a/b.js\";\n");
+    }
+
+    /// `use a::b::c as d` carries the rename through as `import { c as d }`.
+    #[test]
+    fn use_alias_lowers_to_renamed_esm_import() {
+        let module = ast::Module {
+            items: vec![item(
+                ast::ItemKind::Use(ast::UseDecl {
+                    path: vec!["a".to_string(), "b".to_string(), "c".to_string()],
+                    alias: Some("d".to_string()),
+                }),
+                Vec::new(),
+            )],
+        };
+        assert_eq!(emit(&module).js, "import { c as d } from \"./a/b.js\";\n");
+    }
+
+    /// A `pub fn` becomes an exported declaration; a private one stays local.
+    #[test]
+    fn pub_fn_is_exported_private_fn_is_not() {
+        let mut pub_fn = fn_item("f", int("1"));
+        pub_fn.vis = ast::Visibility::Public;
+        let priv_fn = fn_item("g", int("2"));
+        let module = ast::Module {
+            items: vec![pub_fn, priv_fn],
+        };
+        assert_eq!(
+            emit(&module).js,
+            "export function f() {\n  return 1;\n}\n\
+             function g() {\n  return 2;\n}\n"
+        );
+    }
+
+    /// A `pub const` is exported; a private one is a plain `const`.
+    #[test]
+    fn pub_const_is_exported() {
+        let mk = |vis| ast::Item {
+            attrs: Vec::new(),
+            vis,
+            kind: ast::ItemKind::Const(ast::ConstDecl {
+                name: "MAX".to_string(),
+                ty: ast::Type::Unit,
+                value: int("10"),
+            }),
+            span: ast::Span::default(),
+        };
+        let module = ast::Module {
+            items: vec![mk(ast::Visibility::Public)],
+        };
+        assert_eq!(emit(&module).js, "export const MAX = 10;\n");
+
+        let module = ast::Module {
+            items: vec![mk(ast::Visibility::Private)],
+        };
+        assert_eq!(emit(&module).js, "const MAX = 10;\n");
+    }
+
+    /// A `pub` type that carries a method slot exports the slot under its name so
+    /// importing modules can reach its methods.
+    #[test]
+    fn pub_type_method_slot_is_exported() {
+        let mut s = item(
+            ast::ItemKind::Struct(ast::StructDecl {
+                name: "Point".to_string(),
+                generics: Vec::new(),
+                body: ast::StructBody::Named(vec![field("x"), field("y")]),
+            }),
+            vec![derive_attr("Debug")],
+        );
+        s.vis = ast::Visibility::Public;
+        let module = ast::Module { items: vec![s] };
+        let out = emit(&module);
+        assert!(
+            out.js.contains("export const Point = (__m.Point = {});"),
+            "{}",
+            out.js
         );
     }
 }
