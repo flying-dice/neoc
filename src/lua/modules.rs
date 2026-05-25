@@ -204,7 +204,11 @@ pub fn headers(lua: &Lua) -> mlua::Result<Vec<(String, String)>> {
     push(lib::html::declare(lua))?;
     push(lib::http::declare(lua))?;
     push(lib::json::declare(lua))?;
+    push(lib::log::declare(lua))?;
     push(lib::mime::declare(lua))?;
+    push(lib::random::declare(lua))?;
+    push(lib::template::declare(lua))?;
+    push(lib::tempfile::declare(lua))?;
 
     push(vnd::serde_yaml::declare(lua))?;
     push(vnd::toml::declare(lua))?;
@@ -236,11 +240,15 @@ mod tests {
         assert!(keys.contains(&"lib:html"));
         assert!(keys.contains(&"lib:http"));
         assert!(keys.contains(&"lib:json"));
+        assert!(keys.contains(&"lib:log"));
         assert!(keys.contains(&"lib:mime"));
+        assert!(keys.contains(&"lib:random"));
+        assert!(keys.contains(&"lib:template"));
+        assert!(keys.contains(&"lib:tempfile"));
         assert!(keys.contains(&"std:collections"));
         assert!(keys.contains(&"vnd:serde_yaml"));
         assert!(keys.contains(&"vnd:toml"));
-        assert_eq!(keys.len(), 13, "expected 13 migrated modules, got {keys:?}");
+        assert_eq!(keys.len(), 17, "expected 17 migrated modules, got {keys:?}");
 
         for (key, header) in &headers {
             assert!(

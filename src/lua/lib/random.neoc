@@ -1,0 +1,20 @@
+// @generated from the lib:random runtime module — do not edit.
+#[link(name = "lib:random")]
+extern "neoc" {
+    /// Return `n_bytes` cryptographically-random bytes as a raw string.
+    fn random_bytes(n_bytes: number) -> Result<string, string>;
+    /// Return a uniform random integer in the closed interval `[min, max]`.
+    fn random_int(min: number, max: number) -> Result<number, string>;
+    /// Return a random string of `n` characters drawn from `alphabet` (default `[0-9A-Za-z]`).
+    fn random_string(n: number, alphabet: string?) -> Result<string, string>;
+    /// Return a URL-safe base64 token built from `n_bytes` random bytes.
+    fn token_urlsafe(n_bytes: number) -> Result<string, string>;
+    /// Generate a random (version 4) UUID as a canonical hyphenated string.
+    fn uuid_v4() -> string;
+    /// Generate a timestamp-ordered (version 7) UUID as a canonical hyphenated string.
+    fn uuid_v7() -> string;
+    /// Parse a canonical UUID string and return its 16 raw bytes.
+    fn uuid_parse(input: string) -> Result<string, string>;
+    /// Format 16 raw bytes as a canonical hyphenated UUID string.
+    fn uuid_format(input: string) -> Result<string, string>;
+}

@@ -1,0 +1,19 @@
+// @generated from the lib:log runtime module — do not edit.
+struct Logger;
+impl Logger {
+    /// Return a child logger with `fields` merged into the bound context; the parent is unchanged.
+    fn with(fields: LuaValue) -> Logger;
+    /// Emit a `trace`-level line if the logger's threshold permits it.
+    fn trace(msg: string, fields: LuaValue?) -> ();
+    /// Emit a `debug`-level line if the logger's threshold permits it.
+    fn debug(msg: string, fields: LuaValue?) -> ();
+    /// Emit an `info`-level line if the logger's threshold permits it.
+    fn info(msg: string, fields: LuaValue?) -> ();
+    /// Emit a `warn`-level line if the logger's threshold permits it.
+    fn warn(msg: string, fields: LuaValue?) -> ();
+    /// Emit an `error`-level line; highest severity short of `off`.
+    fn error(msg: string, fields: LuaValue?) -> ();
+}
+#[link(name = "lib:log")]
+extern "neoc" {
+}
