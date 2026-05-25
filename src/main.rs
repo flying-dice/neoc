@@ -194,9 +194,66 @@ fn detect_embedded_payload() -> Option<Vec<u8>> {
     }
 }
 
+/// Writes every facade-declared module's `.neoc` header under `out_dir`, one
+/// file per module at `<out_dir>/<namespace>/<module>.neoc` (so `lib:base64`
+/// lands at `<out_dir>/lib/base64.neoc`). Prints the path of each file written
+/// plus a total.
+fn emit_headers(out_dir: &str) {
+    let engine = lua::sandbox::make_engine().unwrap_or_else(|e| {
+        report_error(NeocError::EngineInit(e.to_string()));
+    });
+    let headers = lua::modules::headers(&engine).unwrap_or_else(|e| {
+        eprintln!("error: collecting headers failed: {e}");
+        process::exit(1);
+    });
+
+    let base = Path::new(out_dir);
+    for (key, header) in &headers {
+        let (ns, stem) = key.split_once(':').unwrap_or(("", key.as_str()));
+        let dir = base.join(ns);
+        fs::create_dir_all(&dir).unwrap_or_else(|e| {
+            eprintln!("error: {}: {e}", dir.display());
+            process::exit(1);
+        });
+        let path = dir.join(format!("{stem}.neoc"));
+        fs::write(&path, header).unwrap_or_else(|e| {
+            eprintln!("error: {}: {e}", path.display());
+            process::exit(1);
+        });
+        println!("{}", path.display());
+    }
+    println!("\n{} header(s) written to {out_dir}", headers.len());
+}
+
 // TODO: clean-code - 0.65 - SRP: main() interleaves embedded-payload execution, CLI arg parsing, and dispatch — split into run_embedded() / run_cli()
 #[tokio::main]
 async fn main() {
+    // --- emit-headers subcommand: dump facade-declared .neoc headers ---
+    {
+        let mut args = env::args().skip(1).peekable();
+        if args.peek().map(String::as_str) == Some("emit-headers") {
+            args.next();
+            let mut out = "headers".to_string();
+            while let Some(arg) = args.next() {
+                match arg.as_str() {
+                    "--out" => {
+                        out = args.next().unwrap_or_else(|| {
+                            eprintln!("error: --out requires a directory argument");
+                            process::exit(1);
+                        });
+                    }
+                    other => {
+                        eprintln!("error: unknown argument to emit-headers: {other}");
+                        eprintln!("usage: neoc emit-headers [--out <dir>]");
+                        process::exit(1);
+                    }
+                }
+            }
+            emit_headers(&out);
+            return;
+        }
+    }
+
     // --- single-file executable: check for embedded payload first ---
     if let Some(payload) = detect_embedded_payload() {
         install_shutdown_handler();

@@ -1,0 +1,10 @@
+// @generated from the lib:mime runtime module — do not edit.
+#[link(name = "lib:mime")]
+extern "neoc" {
+    /// Look up the MIME type for a file extension (leading dot optional).
+    fn from_extension(ext: string) -> Result<string, string>;
+    /// Pick a file extension for a MIME type, honouring an optional preference map.
+    fn to_extension(mime_type: string, prefs: LuaValue?) -> Result<string, string>;
+    /// Detect the MIME type of a filename from its extension.
+    fn detect(filename: string) -> Result<string, string>;
+}

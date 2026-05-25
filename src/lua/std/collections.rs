@@ -26,36 +26,93 @@ use std::sync::atomic::{AtomicI64, Ordering};
 
 use mlua::{Function, Lua, LuaSerdeExt, MultiValue, Table, UserData, UserDataMethods, Value};
 use parking_lot::RwLock;
-use tracing::instrument;
+
+use crate::lua::facade::Module;
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
-
-    // TODO: clean-code - 0.55 - DRY: triplicated `Constructor.new` table-wiring pattern across Map/Counter/Mutex
-    // `require("std:collections").Map.new()`
-    let map_t = lua.create_table()?;
-    map_t.set("new", lua.create_function(make_map)?)?;
-    t.set("Map", map_t)?;
-
-    // `require("std:collections").Counter.new(initial?)`
-    let counter_t = lua.create_table()?;
-    counter_t.set("new", lua.create_function(make_counter)?)?;
-    t.set("Counter", counter_t)?;
-
-    // `require("std:collections").Mutex.new()`
-    let mutex_t = lua.create_table()?;
-    mutex_t.set("new", lua.create_function(make_mutex)?)?;
-    t.set("Mutex", mutex_t)?;
-
-    Ok(t)
+    Ok(declare(lua)?.into_table())
 }
 
-#[instrument(name = "Map.new", target = "luau::lib::collections", skip_all)]
+/// Declares the `std:collections` surface through the facade. Each type is a
+/// constructor sub-table (`Map.new()`, `Counter.new(initial?)`, `Mutex.new()`)
+/// whose `new` span (`"<Type>.new"` at `luau::lib::collections`) and registered
+/// Lua surface are byte-identical to the hand-written registration this
+/// replaces; the instance methods stay in each type's `impl UserData` and are
+/// recorded here for the header only.
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "std:collections")?;
+
+    // `require("std:collections").Map.new()`
+    m.type_("Map", |t| {
+        t.constructor("new", &[], "Construct an empty concurrent map.", make_map)?
+            .method("get", &[("key", "string")], "LuaValue", "Read a key.")
+            .method(
+                "set",
+                &[("key", "string"), ("value", "LuaValue")],
+                "()",
+                "Insert or replace a key.",
+            )
+            .method(
+                "delete",
+                &[("key", "string")],
+                "bool",
+                "Remove a key, returning whether it was present.",
+            )
+            .method("has", &[("key", "string")], "bool", "Test for a key.")
+            .method("size", &[], "number", "Number of entries.")
+            .method("keys", &[], "LuaValue", "All keys as a 1-indexed table.")
+            .method("clear", &[], "()", "Remove all entries.");
+        Ok(())
+    })?
+    // `require("std:collections").Counter.new(initial?)`
+    .type_("Counter", |t| {
+        t.constructor(
+            "new",
+            &[("initial", "number?")],
+            "Construct a counter, optionally seeded with an initial value.",
+            make_counter,
+        )?
+        .method("get", &[], "number", "Current value.")
+        .method(
+            "increment",
+            &[],
+            "number",
+            "Add one, returning the new value.",
+        )
+        .method(
+            "decrement",
+            &[],
+            "number",
+            "Subtract one, returning the new value.",
+        )
+        .method(
+            "add",
+            &[("n", "number")],
+            "number",
+            "Add `n`, returning the new value.",
+        )
+        .method("set", &[("n", "number")], "()", "Set the value to `n`.");
+        Ok(())
+    })?
+    // `require("std:collections").Mutex.new()`
+    .type_("Mutex", |t| {
+        t.constructor("new", &[], "Construct a coordination mutex.", make_mutex)?
+            .method(
+                "with_lock",
+                &[("f", "LuaValue")],
+                "LuaValue",
+                "Acquire the lock, call `f`, release, and return `f`'s result.",
+            );
+        Ok(())
+    })?;
+
+    Ok(m)
+}
+
 fn make_map(_: &Lua, _: ()) -> mlua::Result<Map> {
     Ok(Map::from_arc(Arc::new(SharedMap::default())))
 }
 
-#[instrument(name = "Counter.new", target = "luau::lib::collections", skip_all)]
 fn make_counter(_: &Lua, initial: Option<i64>) -> mlua::Result<Counter> {
     let c = Counter::from_arc(Arc::new(SharedCounter::default()));
     if let Some(v) = initial {
@@ -64,7 +121,6 @@ fn make_counter(_: &Lua, initial: Option<i64>) -> mlua::Result<Counter> {
     Ok(c)
 }
 
-#[instrument(name = "Mutex.new", target = "luau::lib::collections", skip_all)]
 fn make_mutex(_: &Lua, _: ()) -> mlua::Result<Mutex> {
     Ok(Mutex::from_arc(Arc::new(SharedMutex::default())))
 }

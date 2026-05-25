@@ -2,10 +2,9 @@
 //!
 //! See docs/src/lib/reference/mime.md for the public surface contract.
 
-use mlua::{Lua, Table, Value};
-use tracing::instrument;
+use mlua::{Lua, Table};
 
-use crate::lua::sandbox::{from_err, ok};
+use crate::lua::facade::Module;
 
 /// Built-in preference map for canonical extensions where `mime_guess`'s
 /// alphabetical first entry isn't what users expect. Checked before falling
@@ -21,70 +20,79 @@ static RUNTIME_PREFS: &[(&str, &str)] = &[
 ];
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
-    t.set("from_extension", lua.create_function(from_extension)?)?;
-    t.set("to_extension", lua.create_function(to_extension)?)?;
-    t.set("detect", lua.create_function(detect)?)?;
-    Ok(t)
+    Ok(declare(lua)?.into_table())
 }
 
-#[instrument(name = "mime.from_extension", target = "luau::lib::mime", skip_all)]
-fn from_extension(lua: &Lua, ext: String) -> mlua::Result<(Value, Value)> {
+/// Declares the `lib:mime` surface through the facade. All three functions are
+/// fallible; their `(value, error)` shape, `mime.<fn>` error prefix, exact
+/// error suffixes, and `luau::lib::mime` span are byte-identical to the
+/// hand-written registration this replaces.
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "lib:mime")?;
+    m.try_func(
+        "from_extension",
+        &[("ext", "string")],
+        "Look up the MIME type for a file extension (leading dot optional).",
+        from_extension,
+    )?
+    .try_func(
+        "to_extension",
+        &[("mime_type", "string"), ("prefs", "LuaValue?")],
+        "Pick a file extension for a MIME type, honouring an optional preference map.",
+        to_extension,
+    )?
+    .try_func(
+        "detect",
+        &[("filename", "string")],
+        "Detect the MIME type of a filename from its extension.",
+        detect,
+    )?;
+    Ok(m)
+}
+
+fn from_extension(_: &Lua, ext: String) -> Result<String, String> {
     // Normalize: strip leading dot if present, so both ".json" and "json" work.
     let ext_clean = ext.strip_prefix('.').unwrap_or(&ext);
     match mime_guess::from_ext(ext_clean).first() {
-        Some(mime) => ok(lua, mime.to_string()),
-        None => from_err(
-            lua,
-            "mime.from_extension",
-            format!("unknown extension: {ext}"),
-        ),
+        Some(mime) => Ok(mime.to_string()),
+        None => Err(format!("unknown extension: {ext}")),
     }
 }
 
-#[instrument(name = "mime.to_extension", target = "luau::lib::mime", skip_all)]
 fn to_extension(
-    lua: &Lua,
+    _: &Lua,
     (mime_type, user_prefs): (String, Option<Table>),
-) -> mlua::Result<(Value, Value)> {
+) -> Result<String, String> {
     // 1. User preference map (optional Lua table arg).
     if let Some(ref prefs) = user_prefs
-        && let Some(ext) = prefs.get::<Option<String>>(mime_type.as_str())?
+        && let Some(ext) = prefs
+            .get::<Option<String>>(mime_type.as_str())
+            .map_err(|e| e.to_string())?
     {
-        return ok(lua, ext);
+        return Ok(ext);
     }
 
     // 2. Runtime preference map (canonical extensions).
     for &(mime, ext) in RUNTIME_PREFS {
         if mime == mime_type {
-            return ok(lua, ext.to_string());
+            return Ok(ext.to_string());
         }
     }
 
     // 3. Fall back to mime_guess.
-    let mime: mime_guess::mime::Mime = match mime_type.parse() {
-        Ok(m) => m,
-        Err(e) => return from_err(lua, "mime.to_extension", e),
-    };
+    let mime: mime_guess::mime::Mime = mime_type
+        .parse()
+        .map_err(|e: mime_guess::mime::FromStrError| e.to_string())?;
     match mime_guess::get_mime_extensions(&mime) {
-        Some(exts) if !exts.is_empty() => ok(lua, format!(".{}", exts[0])),
-        _ => from_err(
-            lua,
-            "mime.to_extension",
-            format!("no extension known for: {mime_type}"),
-        ),
+        Some(exts) if !exts.is_empty() => Ok(format!(".{}", exts[0])),
+        _ => Err(format!("no extension known for: {mime_type}")),
     }
 }
 
-#[instrument(name = "mime.detect", target = "luau::lib::mime", skip_all)]
-fn detect(lua: &Lua, filename: String) -> mlua::Result<(Value, Value)> {
+fn detect(_: &Lua, filename: String) -> Result<String, String> {
     match mime_guess::from_path(&filename).first() {
-        Some(mime) => ok(lua, mime.to_string()),
-        None => from_err(
-            lua,
-            "mime.detect",
-            format!("cannot determine MIME type for: {filename}"),
-        ),
+        Some(mime) => Ok(mime.to_string()),
+        None => Err(format!("cannot determine MIME type for: {filename}")),
     }
 }
 

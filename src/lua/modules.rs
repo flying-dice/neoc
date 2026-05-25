@@ -178,9 +178,63 @@ pub fn install(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
+/// Collects the emitted `.neoc` header for every module that declares its
+/// surface through the facade.
+///
+/// Each entry is `(registry_key, header_text)` — for example
+/// `("lib:base64", "// @generated …\n#[link(name = \"lib:base64\")]\nextern \"neoc\" { … }\n")`.
+/// Only modules migrated to the facade appear here; the rest still register
+/// through a hand-written `module()` and ship a hand-written `.d.luau`.
+pub fn headers(lua: &Lua) -> mlua::Result<Vec<(String, String)>> {
+    let mut out = Vec::new();
+    let mut push = |m: mlua::Result<crate::lua::facade::Module<'_>>| -> mlua::Result<()> {
+        let m = m?;
+        out.push((m.name().to_string(), m.neoc_header()));
+        Ok(())
+    };
+
+    push(stdmod::collections::declare(lua))?;
+
+    push(lib::base64::declare(lua))?;
+    push(lib::json::declare(lua))?;
+    push(lib::mime::declare(lua))?;
+
+    push(vnd::serde_yaml::declare(lua))?;
+    push(vnd::toml::declare(lua))?;
+
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lua::sandbox::make_engine;
+
+    /// Every facade-migrated module reports a `#[link(name = "<key>")]`-keyed
+    /// header. Guards the facade's `#[link]` attribute and the collector wiring;
+    /// the count tracks the modules migrated so far (the rest follow in later
+    /// batches).
+    #[test]
+    fn headers_cover_migrated_modules() {
+        let lua = make_engine().expect("engine");
+        let headers = super::headers(&lua).expect("headers");
+
+        let keys: Vec<&str> = headers.iter().map(|(k, _)| k.as_str()).collect();
+        assert!(keys.contains(&"lib:base64"));
+        assert!(keys.contains(&"lib:json"));
+        assert!(keys.contains(&"lib:mime"));
+        assert!(keys.contains(&"std:collections"));
+        assert!(keys.contains(&"vnd:serde_yaml"));
+        assert!(keys.contains(&"vnd:toml"));
+        assert_eq!(keys.len(), 6, "expected 6 migrated modules, got {keys:?}");
+
+        for (key, header) in &headers {
+            assert!(
+                header.contains(&format!("#[link(name = \"{key}\")]")),
+                "{key} header missing #[link(name = …)]:\n{header}"
+            );
+        }
+    }
 
     #[test]
     fn find_closest_returns_within_threshold() {

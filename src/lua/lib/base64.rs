@@ -2,108 +2,101 @@
 //!
 //! See docs/modules/base64.md for the public surface contract.
 
-use base64::Engine;
+use std::fmt;
+
+use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
-use mlua::{Lua, Table, Value};
-use tracing::instrument;
+use mlua::{Lua, Table};
 
-use crate::lua::sandbox::{from_err, ok};
+use crate::lua::facade::Module;
 
-fn encode_with<E: Engine>(engine: &E, input: mlua::String) -> String {
-    engine.encode(input.as_bytes())
+pub fn module(lua: &Lua) -> mlua::Result<Table> {
+    Ok(declare(lua)?.into_table())
 }
 
-fn decode_with<E: Engine>(
-    lua: &Lua,
-    engine: &E,
-    op: &'static str,
-    input: mlua::String,
-) -> mlua::Result<(Value, Value)> {
-    match engine.decode(input.as_bytes()) {
-        Ok(b) => ok(lua, lua.create_string(&b)?),
-        Err(e) => from_err(lua, op, e),
+/// Declares the `lib:base64` surface through the facade. Each of the four
+/// alphabets exposes an infallible `encode*` and a fallible `decode*`. The
+/// `(value, error)` shape, the `base64.decode*` error prefix, and the
+/// `luau::lib::base64` span are byte-identical to the hand-written
+/// registration this replaces.
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "lib:base64")?;
+    m.func(
+        "encode",
+        &[("input", "string")],
+        "Encode `input` using the standard alphabet (A–Z, a–z, 0–9, +, /) with `=` padding.",
+        |_, s: mlua::String| Ok(STANDARD.encode(s.as_bytes())),
+    )?
+    .try_func(
+        "decode",
+        &[("input", "string")],
+        "Decode a standard-alphabet base64 string back to raw bytes.",
+        |lua, s: mlua::String| decode_with(lua, &STANDARD, &s.as_bytes()),
+    )?
+    .func(
+        "encode_no_pad",
+        &[("input", "string")],
+        "Encode using the standard alphabet without `=` padding.",
+        |_, s: mlua::String| Ok(STANDARD_NO_PAD.encode(s.as_bytes())),
+    )?
+    .try_func(
+        "decode_no_pad",
+        &[("input", "string")],
+        "Decode standard-alphabet base64 that has no padding.",
+        |lua, s: mlua::String| decode_with(lua, &STANDARD_NO_PAD, &s.as_bytes()),
+    )?
+    .func(
+        "encode_url_safe",
+        &[("input", "string")],
+        "Encode using the URL-safe alphabet (`-` and `_` instead of `+` and `/`), with `=` padding.",
+        |_, s: mlua::String| Ok(URL_SAFE.encode(s.as_bytes())),
+    )?
+    .try_func(
+        "decode_url_safe",
+        &[("input", "string")],
+        "Decode URL-safe base64 with padding.",
+        |lua, s: mlua::String| decode_with(lua, &URL_SAFE, &s.as_bytes()),
+    )?
+    .func(
+        "encode_url_safe_no_pad",
+        &[("input", "string")],
+        "Encode using the URL-safe alphabet without padding.",
+        |_, s: mlua::String| Ok(URL_SAFE_NO_PAD.encode(s.as_bytes())),
+    )?
+    .try_func(
+        "decode_url_safe_no_pad",
+        &[("input", "string")],
+        "Decode URL-safe base64 without padding.",
+        |lua, s: mlua::String| decode_with(lua, &URL_SAFE_NO_PAD, &s.as_bytes()),
+    )?;
+    Ok(m)
+}
+
+/// A decode failure rendered as a message whose `Display` matches the wrapped
+/// error's. The facade prefixes it as `base64.<fn>: <e>`, so this preserves the
+/// exact error string the original hand-written functions produced.
+struct DecodeFail(String);
+
+impl fmt::Display for DecodeFail {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
     }
 }
 
-// TODO: clean-code - 0.6 - DRY: 8 explicit `t.set("name", lua.create_function(name)?)?` lines — register via slice + loop
-pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
-    t.set("encode", lua.create_function(encode)?)?;
-    t.set("decode", lua.create_function(decode)?)?;
-    t.set("encode_no_pad", lua.create_function(encode_no_pad)?)?;
-    t.set("decode_no_pad", lua.create_function(decode_no_pad)?)?;
-    t.set("encode_url_safe", lua.create_function(encode_url_safe)?)?;
-    t.set("decode_url_safe", lua.create_function(decode_url_safe)?)?;
-    t.set(
-        "encode_url_safe_no_pad",
-        lua.create_function(encode_url_safe_no_pad)?,
-    )?;
-    t.set(
-        "decode_url_safe_no_pad",
-        lua.create_function(decode_url_safe_no_pad)?,
-    )?;
-    Ok(t)
-}
-
-#[instrument(name = "base64.encode", target = "luau::lib::base64", skip_all)]
-fn encode(_: &Lua, input: mlua::String) -> mlua::Result<String> {
-    Ok(encode_with(&STANDARD, input))
-}
-
-#[instrument(name = "base64.decode", target = "luau::lib::base64", skip_all)]
-fn decode(lua: &Lua, input: mlua::String) -> mlua::Result<(Value, Value)> {
-    decode_with(lua, &STANDARD, "base64.decode", input)
-}
-
-#[instrument(name = "base64.encode_no_pad", target = "luau::lib::base64", skip_all)]
-fn encode_no_pad(_: &Lua, input: mlua::String) -> mlua::Result<String> {
-    Ok(encode_with(&STANDARD_NO_PAD, input))
-}
-
-#[instrument(name = "base64.decode_no_pad", target = "luau::lib::base64", skip_all)]
-fn decode_no_pad(lua: &Lua, input: mlua::String) -> mlua::Result<(Value, Value)> {
-    decode_with(lua, &STANDARD_NO_PAD, "base64.decode_no_pad", input)
-}
-
-#[instrument(
-    name = "base64.encode_url_safe",
-    target = "luau::lib::base64",
-    skip_all
-)]
-fn encode_url_safe(_: &Lua, input: mlua::String) -> mlua::Result<String> {
-    Ok(encode_with(&URL_SAFE, input))
-}
-
-#[instrument(
-    name = "base64.decode_url_safe",
-    target = "luau::lib::base64",
-    skip_all
-)]
-fn decode_url_safe(lua: &Lua, input: mlua::String) -> mlua::Result<(Value, Value)> {
-    decode_with(lua, &URL_SAFE, "base64.decode_url_safe", input)
-}
-
-#[instrument(
-    name = "base64.encode_url_safe_no_pad",
-    target = "luau::lib::base64",
-    skip_all
-)]
-fn encode_url_safe_no_pad(_: &Lua, input: mlua::String) -> mlua::Result<String> {
-    Ok(encode_with(&URL_SAFE_NO_PAD, input))
-}
-
-#[instrument(
-    name = "base64.decode_url_safe_no_pad",
-    target = "luau::lib::base64",
-    skip_all
-)]
-fn decode_url_safe_no_pad(lua: &Lua, input: mlua::String) -> mlua::Result<(Value, Value)> {
-    decode_with(
-        lua,
-        &URL_SAFE_NO_PAD,
-        "base64.decode_url_safe_no_pad",
-        input,
-    )
+/// Decodes `bytes` with `engine` into a Lua byte string, mirroring the original
+/// `lua.create_string(&decoded)` path so the decoded value stays a string (not
+/// a numeric table). The base64 error flows to the facade's
+/// `(nil, "base64.<fn>: <e>")` error channel unchanged.
+fn decode_with(
+    lua: &Lua,
+    engine: &base64::engine::GeneralPurpose,
+    bytes: &[u8],
+) -> Result<mlua::String, DecodeFail> {
+    let decoded = engine
+        .decode(bytes)
+        .map_err(|e| DecodeFail(e.to_string()))?;
+    lua.create_string(&decoded)
+        .map_err(|e| DecodeFail(e.to_string()))
 }
 
 // ---------------------------------------------------------------------------
