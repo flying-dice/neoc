@@ -3,5 +3,6 @@ changelog_update = true
 
 [[package]]
 name = "neoc"
+path = "crates/neoc"
 git_only = true
 publish = false
