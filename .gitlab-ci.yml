@@ -61,8 +61,11 @@ test:
         - target/
   script:
     - cargo build
-    - cargo test --workspace --lib
-    - cargo test -p neoc --bin neoc
+    # Full workspace suite: runtime lib/bin tests plus the compiler's
+    # integration tests (conformance.rs/_static/_syntax, cli.rs, LSP). The
+    # conformance exec arms self-skip when lua/node/python3/rustc are absent on
+    # the runner via a binary_present gate, so no toolchain installs are needed.
+    - cargo test --workspace
     # Docker-dependent tests (sqlx_mysql, sqlx_postgres, testcontainers_modules)
     # require a live Docker daemon and are excluded from the runner.
     - |
@@ -75,6 +78,29 @@ test:
         "crates/neoc/tests/vnd/serde_json.test.luau" \
         "crates/neoc/tests/vnd/serde_yaml.test.luau" \
         "crates/neoc/tests/vnd/toml.test.luau"
+
+# ── wasm ──────────────────────────────────────────────────────────────────────
+#
+# The pure transform crates must stay host-free so the browser build remains
+# viable. They are checked for wasm32-unknown-unknown here. The parser/compiler
+# graph currently links the tree-sitter C runtime, which does not yet
+# cross-compile to wasm32-unknown-unknown; making that graph wasm-clean (cc to
+# wasm, or a pure-Rust parser) is tracked separately. Until then the gate
+# guards the leaf crates, which is where host-dependency creep would start.
+
+wasm:
+  stage: test
+  needs: [lint]
+  cache:
+    - *tools_cache
+    - key:
+        files: [Cargo.lock]
+        prefix: wasm
+      paths:
+        - target/
+  script:
+    - rustup target add wasm32-unknown-unknown
+    - cargo check --target wasm32-unknown-unknown -p neoc-ast -p neoc-macros -p neoc-codegen-lua
 
 # ── build ─────────────────────────────────────────────────────────────────────
 #
