@@ -12,8 +12,11 @@ Cargo workspace holding two halves:
   `.neoc` → Lua 5.1 by default. (5.1 is the lowest common denominator; output
   runs on Luau, Lua 5.4, LuaJIT, and the runtime above. A JavaScript (ES2022)
   backend sits behind the same codegen seam, selected with `--target`.)
-  The library crate (`neoc-compiler`) is what the runtime embeds; the grammar
-  lives in the `neoc-grammar` submodule.
+  Lua and JS are the two halves of full-stack neoc: Lua is the backend and the
+  default LCD target; JS is the browser/frontend, emitting **ES modules**
+  (`use` → relative `import`, `pub` → `export`) that load natively in browsers
+  and bundlers. The library crate (`neoc-compiler`) is what the runtime embeds;
+  the grammar lives in the `neoc-grammar` submodule.
 
 One binary, `neoc`, drives both: `run` / `emit-headers` (runtime) and `build` /
 `check` / `fmt` / `lsp` (compiler).
