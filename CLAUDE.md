@@ -10,8 +10,8 @@ Cargo workspace holding two halves:
   binary is a thin shell over this library.
 - **Compiler** (`neoc-*` crates) — the Rust compiler for the **neoc** language.
   `.neoc` → Lua 5.1 by default. (5.1 is the lowest common denominator; output
-  runs on Luau, Lua 5.4, LuaJIT, and the runtime above. JavaScript (ES2022) and
-  Python 3 backends sit behind the same codegen seam, selected with `--target`.)
+  runs on Luau, Lua 5.4, LuaJIT, and the runtime above. A JavaScript (ES2022)
+  backend sits behind the same codegen seam, selected with `--target`.)
   The library crate (`neoc-compiler`) is what the runtime embeds; the grammar
   lives in the `neoc-grammar` submodule.
 
@@ -158,7 +158,6 @@ neoc-types                   # declaration collection, inference, well-formednes
 neoc-macros                  # built-in derives (Clone/Eq/Debug/Display)
 neoc-codegen-lua             # AST → Lua 5.1; one emit module per construct family
 neoc-codegen-js              # AST → JavaScript (ES2022)
-neoc-codegen-py              # AST → Python 3
 neoc-compiler                # public lib API: transpile to any target; merges per-stage diagnostics
 neoc-fmt                     # formatter
 neoc-lsp                     # language server (diagnostics over stdio)
@@ -272,7 +271,7 @@ things stay exact and complete — **never** abbreviate or stylise these:
 | API names | Exact. `#[derive(Clone)]` stays `#[derive(Clone)]`. |
 | Type signatures | Exact. Never trim a type. |
 | Error / log messages | Quote verbatim. |
-| Commands | Exact: `neoc run`, `neoc build`, `neoc check`, `neoc lsp`, `cargo check --target wasm32-unknown-unknown`. (That `--target` is a Rust build target — *not* `neoc build --target`, which selects the output language: `lua` / `js` / `python`.) |
+| Commands | Exact: `neoc run`, `neoc build`, `neoc check`, `neoc lsp`, `cargo check --target wasm32-unknown-unknown`. (That `--target` is a Rust build target — *not* `neoc build --target`, which selects the output language: `lua` / `js`.) |
 | File paths, env vars | Exact. |
 | Rustdoc (`///`) on public items | Full, normal English — see below. |
 | Legal, LICENSE, security notes | Complete and careful. |

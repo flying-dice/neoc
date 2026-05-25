@@ -92,21 +92,18 @@ impl Item {
 pub enum Target {
     Lua,
     Js,
-    Python,
 }
 
 impl Target {
     /// Maps an `extern "<host>"` host string to the backend it targets.
     ///
     /// Returns `None` for an unrecognised host. The recognised hosts are
-    /// `neoc`, `lua`, `luau` (Lua); `node`, `bun`, `deno` (JavaScript); and
-    /// `python`, `cpython` (Python).
+    /// `neoc`, `lua`, `luau` (Lua); and `node`, `bun`, `deno` (JavaScript).
     #[must_use]
     pub fn from_host(host: &str) -> Option<Self> {
         match host {
             "neoc" | "lua" | "luau" => Some(Target::Lua),
             "node" | "bun" | "deno" => Some(Target::Js),
-            "python" | "cpython" => Some(Target::Python),
             _ => None,
         }
     }
