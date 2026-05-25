@@ -12,12 +12,56 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use mlua::{Lua, Table, UserData, UserDataMethods};
 use tokio::sync::Notify;
 
+use crate::lua::facade::Module;
+
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
-    t.set("on_shutdown", lua.create_function(shutdown_signal_fn)?)?;
+    Ok(declare(lua)?.into_table())
+}
+
+/// Declares the `std:workers` surface through the facade.
+///
+/// Both functions are set verbatim with [`crate::lua::facade::Module::set`]:
+/// the hand-written registration carried **no** `#[instrument]` span, so
+/// routing through the facade's `func` would add one. Each returns the
+/// process-global `ShutdownSignal` userdata, whose `is_fired` / `wait` methods
+/// keep their own `impl UserData` and are recorded here for the header via
+/// [`crate::lua::facade::Module::userdata`].
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "std:workers")?;
+
+    m.set("on_shutdown", lua.create_function(shutdown_signal_fn)?)?;
+    m.record_fn(
+        "on_shutdown",
+        &[],
+        "ShutdownSignal",
+        "Return the process-global `ShutdownSignal`. Fires on Ctrl-C (SIGINT).",
+    );
+
     // Backwards compat alias — deprecated, prefer on_shutdown().
-    t.set("shutdown_signal", lua.create_function(shutdown_signal_fn)?)?;
-    Ok(t)
+    m.set("shutdown_signal", lua.create_function(shutdown_signal_fn)?)?;
+    m.record_fn(
+        "shutdown_signal",
+        &[],
+        "ShutdownSignal",
+        "Deprecated alias for `on_shutdown()`. Prefer `on_shutdown()` in new code.",
+    );
+
+    m.userdata("ShutdownSignal", |s| {
+        s.method(
+            "is_fired",
+            &[],
+            "bool",
+            "Return `true` if the signal has already fired. Non-blocking.",
+        )
+        .method(
+            "wait",
+            &[],
+            "()",
+            "Yield the calling coroutine until the signal fires; returns immediately if already fired.",
+        );
+    });
+
+    Ok(m)
 }
 
 // ---------------------------------------------------------------------------

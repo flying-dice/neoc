@@ -55,26 +55,105 @@ use tokio::runtime::Handle;
 use tokio::sync::oneshot;
 use tracing::instrument;
 
+use crate::lua::facade::Module;
 use crate::lua::sandbox::{from_err, ok};
 use crate::lua::std::net::Listener;
 use crate::lua::std::workers::ShutdownSignal;
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
-    t.set(
+    Ok(declare(lua)?.into_table())
+}
+
+/// Declares the `vnd:hyper` surface through the facade.
+///
+/// Every function is set verbatim with [`crate::lua::facade::Module::set`]
+/// rather than `async_func` / `try_func`. The client functions (`get`,
+/// `post`, `request`) return a pre-built `(Value, Value)` tuple from `perform`,
+/// bake their own `hyper.<fn>` error prefix, and already carry an
+/// `#[instrument]` span; `serve` likewise carries its own
+/// `#[instrument(name = "hyper.serve")]` attribute and bakes the `hyper.serve`
+/// prefix. Routing any of them through the facade's marshalling would add a
+/// span and reshape the result, so each is registered byte-for-byte as before
+/// and only its signature is recorded for the header via
+/// [`crate::lua::facade::Module::record_fn`]. The `ServerHandle` and `Request`
+/// userdata types keep their own `impl UserData` (fields and methods unchanged)
+/// and have their method surface recorded via
+/// [`crate::lua::facade::Module::userdata`].
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "vnd:hyper")?;
+
+    m.set(
         "get",
         lua.create_async_function(|lua, url: String| get(lua, url))?,
     )?;
-    t.set(
+    m.record_fn(
+        "get",
+        &[("url", "string")],
+        "Result<LuaValue, string>",
+        "Perform an HTTP GET request, returning a response table `{ status, headers, body }`.",
+    );
+
+    m.set(
         "post",
         lua.create_async_function(|lua, opts: Table| post(lua, opts))?,
     )?;
-    t.set(
+    m.record_fn(
+        "post",
+        &[("opts", "LuaValue")],
+        "Result<LuaValue, string>",
+        "Perform an HTTP POST request given `{ url, body?, headers? }`.",
+    );
+
+    m.set(
         "request",
         lua.create_async_function(|lua, opts: Table| request(lua, opts))?,
     )?;
-    t.set("serve", lua.create_function(serve)?)?;
-    Ok(t)
+    m.record_fn(
+        "request",
+        &[("opts", "LuaValue")],
+        "Result<LuaValue, string>",
+        "Perform an HTTP request with an arbitrary method given `{ method, url, body?, headers? }`.",
+    );
+
+    m.set("serve", lua.create_function(serve)?)?;
+    m.record_fn(
+        "serve",
+        &[("listener", "LuaValue"), ("handler", "LuaValue")],
+        "Result<ServerHandle, string>",
+        "Attach `handler` to `listener` and start accepting HTTP connections.",
+    );
+
+    m.userdata("ServerHandle", |s| {
+        s.method(
+            "addr",
+            &[],
+            "string",
+            "Return the local address the server is bound to.",
+        )
+        .method(
+            "close",
+            &[],
+            "()",
+            "Initiate graceful shutdown; returns immediately. Use `:wait()` to block until stopped.",
+        )
+        .method(
+            "wait",
+            &[],
+            "()",
+            "Block until the server stops accepting connections (`:close()` or process shutdown signal).",
+        );
+    });
+
+    m.userdata("Request", |r| {
+        r.method(
+            "header",
+            &[("name", "string")],
+            "LuaValue",
+            "Look up a request header by name (case-insensitive); returns the value string or nil when absent.",
+        );
+    });
+
+    Ok(m)
 }
 
 // ---------------------------------------------------------------------------

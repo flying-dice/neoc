@@ -12,87 +12,104 @@
 //! first, then parses. The root value must be a table for encoding.
 
 use mlua::{AnyUserData, Lua, LuaSerdeExt, Table, Value};
-use tracing::instrument;
 
-use crate::lua::sandbox::{from_err, ok};
+use crate::lua::facade::Module;
 use crate::lua::std::io::{ReaderHandle, WriterHandle};
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
-    t.set("decode", lua.create_function(decode)?)?;
-    t.set("decode_string", lua.create_function(decode_string)?)?;
-    t.set("encode", lua.create_function(encode)?)?;
-    t.set("encode_pretty", lua.create_function(encode_pretty)?)?;
-    t.set("encode_to", lua.create_function(encode_to)?)?;
-    Ok(t)
+    Ok(declare(lua)?.into_table())
 }
 
-#[instrument(name = "toml.decode", target = "luau::lib::toml", skip_all)]
-fn decode(lua: &Lua, ud: AnyUserData) -> mlua::Result<(Value, Value)> {
+/// Declares the `vnd:toml` surface through the facade. Every function is
+/// fallible; the `(value, error)` shape, the `toml.<fn>` error prefixes, the
+/// exact error suffixes (reader/writer-handle, UTF-8, parse, serialize, and
+/// I/O failures), and the `luau::lib::toml` spans are byte-identical to the
+/// hand-written registration this replaces.
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "vnd:toml")?;
+    m.try_func(
+        "decode",
+        &[("reader", "LuaValue")],
+        "Read a reader handle to completion and parse it as TOML.",
+        decode,
+    )?
+    .try_func(
+        "decode_string",
+        &[("s", "string")],
+        "Parse a TOML string into a Lua value.",
+        decode_string,
+    )?
+    .try_func(
+        "encode",
+        &[("value", "LuaValue")],
+        "Serialise a Lua value to a compact TOML string.",
+        encode,
+    )?
+    .try_func(
+        "encode_pretty",
+        &[("value", "LuaValue")],
+        "Serialise a Lua value to a pretty-printed TOML string.",
+        encode_pretty,
+    )?
+    .try_func(
+        "encode_to",
+        &[("value", "LuaValue"), ("writer", "LuaValue")],
+        "Serialise a Lua value to TOML and write it to a writer handle.",
+        encode_to,
+    )?;
+    Ok(m)
+}
+
+fn decode(lua: &Lua, ud: AnyUserData) -> Result<Value, String> {
     let rh = match ud.borrow::<ReaderHandle>() {
         Ok(h) => h,
-        Err(_) => return from_err(lua, "toml.decode", "expected a reader handle"),
+        Err(_) => return Err("expected a reader handle".to_string()),
     };
     let mut buf = Vec::new();
     let result = std::io::Read::read_to_end(&mut **rh.inner.lock(), &mut buf);
     drop(rh);
     if let Err(e) = result {
-        return from_err(lua, "toml.decode", e);
+        return Err(e.to_string());
     }
-    let s = match std::str::from_utf8(&buf) {
-        Ok(s) => s,
-        Err(e) => return from_err(lua, "toml.decode", e),
-    };
-    parse_str(lua, s, "toml.decode")
+    let s = std::str::from_utf8(&buf).map_err(|e| e.to_string())?;
+    parse_str(lua, s)
 }
 
-#[instrument(name = "toml.decode_string", target = "luau::lib::toml", skip_all)]
-fn decode_string(lua: &Lua, s: mlua::String) -> mlua::Result<(Value, Value)> {
-    match std::str::from_utf8(&s.as_bytes()) {
-        Ok(s) => parse_str(lua, s, "toml.decode_string"),
-        Err(e) => from_err(lua, "toml.decode_string", e),
-    }
+fn decode_string(lua: &Lua, s: mlua::String) -> Result<Value, String> {
+    let s = std::str::from_utf8(&s.as_bytes())
+        .map(str::to_owned)
+        .map_err(|e| e.to_string())?;
+    parse_str(lua, &s)
 }
 
-#[instrument(name = "toml.encode", target = "luau::lib::toml", skip_all)]
-fn encode(lua: &Lua, v: Value) -> mlua::Result<(Value, Value)> {
-    to_string(lua, v, false)
+fn encode(_: &Lua, v: Value) -> Result<String, String> {
+    to_toml_string(&v, false)
 }
 
-#[instrument(name = "toml.encode_pretty", target = "luau::lib::toml", skip_all)]
-fn encode_pretty(lua: &Lua, v: Value) -> mlua::Result<(Value, Value)> {
-    to_string(lua, v, true)
+fn encode_pretty(_: &Lua, v: Value) -> Result<String, String> {
+    to_toml_string(&v, true)
 }
 
-#[instrument(name = "toml.encode_to", target = "luau::lib::toml", skip_all)]
-fn encode_to(lua: &Lua, (v, ud): (Value, AnyUserData)) -> mlua::Result<(Value, Value)> {
+fn encode_to(_: &Lua, (v, ud): (Value, AnyUserData)) -> Result<bool, String> {
     let wh = match ud.borrow::<WriterHandle>() {
         Ok(h) => h,
-        Err(_) => return from_err(lua, "toml.encode_to", "expected a writer handle"),
+        Err(_) => return Err("expected a writer handle".to_string()),
     };
-    let s = match to_toml_string(&v, false) {
-        Ok(s) => s,
-        Err(e) => return from_err(lua, "toml.encode_to", e),
-    };
+    let s = to_toml_string(&v, false)?;
     // TODO: clean-code - 0.55 - COUPLING: reaches into WriterHandle.0 internals instead of a method
     let mut locked = wh.0.lock();
     let result = std::io::Write::write_all(&mut **locked, s.as_bytes());
     drop(locked);
     drop(wh);
     match result {
-        Ok(()) => ok(lua, true),
-        Err(e) => from_err(lua, "toml.encode_to", e),
+        Ok(()) => Ok(true),
+        Err(e) => Err(e.to_string()),
     }
 }
 
-fn parse_str(lua: &Lua, s: &str, prefix: &str) -> mlua::Result<(Value, Value)> {
-    match toml::from_str::<serde_json::Value>(s) {
-        Ok(json) => match lua.to_value(&json) {
-            Ok(v) => ok(lua, v),
-            Err(e) => from_err(lua, prefix, e),
-        },
-        Err(e) => from_err(lua, prefix, e),
-    }
+fn parse_str(lua: &Lua, s: &str) -> Result<Value, String> {
+    let json = toml::from_str::<serde_json::Value>(s).map_err(|e| e.to_string())?;
+    lua.to_value(&json).map_err(|e| e.to_string())
 }
 
 fn to_toml_string(v: &Value, pretty: bool) -> Result<String, String> {
@@ -103,19 +120,6 @@ fn to_toml_string(v: &Value, pretty: bool) -> Result<String, String> {
         toml::to_string(&json)
     };
     result.map_err(|e| e.to_string())
-}
-
-// TODO: clean-code - 0.55 - KISS: bool flag drives both branching and prefix lookup — pass prefix explicitly
-fn to_string(lua: &Lua, v: Value, pretty: bool) -> mlua::Result<(Value, Value)> {
-    let prefix = if pretty {
-        "toml.encode_pretty"
-    } else {
-        "toml.encode"
-    };
-    match to_toml_string(&v, pretty) {
-        Ok(s) => ok(lua, s),
-        Err(e) => from_err(lua, prefix, e),
-    }
 }
 
 // ---------------------------------------------------------------------------

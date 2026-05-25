@@ -11,6 +11,7 @@ use mlua::{Lua, MetaMethod, Table, UserData, UserDataMethods, Value};
 use tracing::instrument;
 use walkdir::WalkDir;
 
+use crate::lua::facade::Module;
 use crate::lua::sandbox::{err, from_err, ok};
 
 // ---------------------------------------------------------------------------
@@ -18,20 +19,81 @@ use crate::lua::sandbox::{err, from_err, ok};
 // ---------------------------------------------------------------------------
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
+    Ok(declare(lua)?.into_table())
+}
+
+/// Declares the `lib:glob` surface through the facade.
+///
+/// `is_match` is the one fallible flat function the facade can model and is
+/// routed through [`crate::lua::facade::Module::try_func`]. `scan` returns the
+/// `(results, errors)` dual where *both* slots can be non-nil on a partial
+/// walk — outside the facade's `(value, error)` idiom — so it is set verbatim
+/// (keeping its `glob.scan` span) with [`crate::lua::facade::Module::set`]. The
+/// `Glob` / `GlobSet` constructor sub-tables are also set verbatim because the
+/// hand-written constructors carried no span; the userdata types keep their own
+/// `impl UserData` and are recorded here for the header via
+/// [`crate::lua::facade::Module::userdata`].
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "lib:glob")?;
 
     let glob_sub = lua.create_table()?;
     glob_sub.set("new", lua.create_function(glob_new)?)?;
-    t.set("Glob", glob_sub)?;
+    m.set("Glob", glob_sub)?;
 
     let set_sub = lua.create_table()?;
     set_sub.set("new", lua.create_function(set_new)?)?;
-    t.set("GlobSet", set_sub)?;
+    m.set("GlobSet", set_sub)?;
 
-    t.set("is_match", lua.create_function(flat_is_match)?)?;
-    t.set("scan", lua.create_function(flat_scan)?)?;
+    m.try_func(
+        "is_match",
+        &[("pattern", "string"), ("path", "string")],
+        "Compile `pattern` and test whether `path` matches it.",
+        |_, (pattern, path): (String, String)| {
+            GlobHandle::compile(&pattern).map(|g| g.matches(&path))
+        },
+    )?;
 
-    Ok(t)
+    m.set("scan", lua.create_function(flat_scan)?)?;
+
+    m.record_fn(
+        "scan",
+        &[("pattern", "string"), ("opts", "LuaValue?")],
+        "Result<LuaValue, string>",
+        "Compile `pattern`, walk the filesystem, and return all matching paths plus any per-entry walk errors.",
+    );
+
+    m.userdata("Glob", |g| {
+        g.method(
+            "is_match",
+            &[("path", "string")],
+            "bool",
+            "Test whether `path` matches this compiled pattern.",
+        )
+        .method(
+            "scan",
+            &[("opts", "LuaValue?")],
+            "LuaValue",
+            "Walk the filesystem and return all paths matching this pattern, plus any per-entry walk errors.",
+        );
+    });
+
+    m.userdata("GlobSet", |s| {
+        s.method(
+            "is_match",
+            &[("path", "string")],
+            "bool",
+            "True if any pattern in the set matches `path`.",
+        )
+        .method(
+            "matches",
+            &[("path", "string")],
+            "LuaValue",
+            "1-based indices of every pattern in the set that matches `path`.",
+        )
+        .method("len", &[], "number", "Number of patterns in the set.");
+    });
+
+    Ok(m)
 }
 
 // ---------------------------------------------------------------------------
@@ -45,8 +107,8 @@ pub struct GlobHandle {
 }
 
 impl GlobHandle {
-    fn compile(pattern: &str, prefix: &str) -> Result<Self, String> {
-        let g = GsGlob::new(pattern).map_err(|e| format!("{prefix}: {e}"))?;
+    fn compile(pattern: &str) -> Result<Self, String> {
+        let g = GsGlob::new(pattern).map_err(|e| e.to_string())?;
         Ok(Self {
             pattern: pattern.to_owned(),
             matcher: g.compile_matcher(),
@@ -72,9 +134,9 @@ impl UserData for GlobHandle {
 }
 
 fn glob_new(lua: &Lua, pattern: String) -> mlua::Result<(Value, Value)> {
-    match GlobHandle::compile(&pattern, "glob.Glob.new") {
+    match GlobHandle::compile(&pattern) {
         Ok(g) => ok(lua, g),
-        Err(msg) => err(lua, msg),
+        Err(msg) => err(lua, format!("glob.Glob.new: {msg}")),
     }
 }
 
@@ -162,19 +224,11 @@ fn set_new(lua: &Lua, patterns: Table) -> mlua::Result<(Value, Value)> {
 // Flat functions
 // ---------------------------------------------------------------------------
 
-#[instrument(name = "glob.is_match", target = "luau::lib::glob", skip_all)]
-fn flat_is_match(lua: &Lua, (pattern, path): (String, String)) -> mlua::Result<(Value, Value)> {
-    match GlobHandle::compile(&pattern, "glob.is_match") {
-        Ok(g) => ok(lua, g.matches(&path)),
-        Err(msg) => err(lua, msg),
-    }
-}
-
 #[instrument(name = "glob.scan", target = "luau::lib::glob", skip_all)]
 fn flat_scan(lua: &Lua, (pattern, opts): (String, Option<Table>)) -> mlua::Result<(Value, Value)> {
-    let g = match GlobHandle::compile(&pattern, "glob.scan") {
+    let g = match GlobHandle::compile(&pattern) {
         Ok(g) => g,
-        Err(msg) => return err(lua, msg),
+        Err(msg) => return err(lua, format!("glob.scan: {msg}")),
     };
     run_scan(lua, &g.pattern, &g.matcher, opts, "glob.scan")
 }

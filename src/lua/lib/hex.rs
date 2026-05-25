@@ -13,24 +13,50 @@
 use mlua::{Lua, Table, Value};
 use tracing::instrument;
 
+use crate::lua::facade::Module;
 use crate::lua::sandbox::{from_err, ok};
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
-    t.set("encode", lua.create_function(encode)?)?;
-    t.set("encode_upper", lua.create_function(encode_upper)?)?;
-    t.set("decode", lua.create_function(decode)?)?;
-    Ok(t)
+    Ok(declare(lua)?.into_table())
 }
 
-#[instrument(name = "hex.encode", target = "luau::lib::hex", skip_all)]
-fn encode(_: &Lua, input: mlua::String) -> mlua::Result<String> {
-    Ok(hex::encode(input.as_bytes()))
-}
+/// Declares the `lib:hex` surface through the facade. `encode` / `encode_upper`
+/// are infallible [`crate::lua::facade::Module::func`]s.
+///
+/// `decode` is a *mixed* raise-plus-channel shape: a hex-decode failure goes to
+/// the `(value, error)` channel via [`crate::lua::sandbox::from_err`], but a
+/// `lua.create_string` failure on the decoded bytes raises an `mlua::Error`
+/// directly (the bare `?`) — a mix `try_func` cannot model. It is registered
+/// verbatim with [`crate::lua::facade::Module::set`] (keeping its
+/// `#[instrument]` span and `hex.decode` channel prefix) and recorded for the
+/// header with [`crate::lua::facade::Module::record_fn`]. The `(value, error)`
+/// shape, the `hex.decode` error prefix, the raise on `create_string`, and the
+/// `luau::lib::hex` spans are byte-identical to the hand-written registration
+/// this replaces.
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "lib:hex")?;
+    m.func(
+        "encode",
+        &[("input", "string")],
+        "Encode `input` bytes to a lowercase hex string — two characters per byte, drawn from `0`–`9` and `a`–`f`.",
+        |_, input: mlua::String| Ok(hex::encode(input.as_bytes())),
+    )?
+    .func(
+        "encode_upper",
+        &[("input", "string")],
+        "Encode `input` bytes to an uppercase hex string (`0`–`9` and `A`–`F`).",
+        |_, input: mlua::String| Ok(hex::encode_upper(input.as_bytes())),
+    )?
+    .set("decode", lua.create_function(decode)?)?;
 
-#[instrument(name = "hex.encode_upper", target = "luau::lib::hex", skip_all)]
-fn encode_upper(_: &Lua, input: mlua::String) -> mlua::Result<String> {
-    Ok(hex::encode_upper(input.as_bytes()))
+    m.record_fn(
+        "decode",
+        &[("input", "string")],
+        "Result<string, string>",
+        "Decode a hex string back to raw bytes; case-insensitive and tolerant of ASCII whitespace, strict otherwise.",
+    );
+
+    Ok(m)
 }
 
 #[instrument(name = "hex.decode", target = "luau::lib::hex", skip_all)]

@@ -70,6 +70,8 @@ use mlua::{
 };
 use parking_lot::RwLock;
 
+use crate::lua::facade::Module;
+
 // ---------------------------------------------------------------------------
 // JsonValue — pure-std representation
 // ---------------------------------------------------------------------------
@@ -809,8 +811,22 @@ pub fn json_value_to_lua(lua: &Lua, v: &JsonValue) -> mlua::Result<Value> {
 // ---------------------------------------------------------------------------
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
-    t.set(
+    Ok(declare(lua)?.into_table())
+}
+
+/// Declares the `lib:json` surface through the facade.
+///
+/// `object` / `array` are registered with [`crate::lua::facade::Module::set`]
+/// rather than `func` because the hand-written constructors carried **no**
+/// `#[instrument]` span — routing them through `func` would add one and break
+/// byte-identical tracing. The `Object` / `Array` userdata types keep their
+/// own `impl UserData` (their methods are unchanged) and are recorded here for
+/// the header via [`crate::lua::facade::Module::userdata`]; `null` is the
+/// cached singleton sentinel, set verbatim and recorded as a `const`.
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "lib:json")?;
+
+    m.set(
         "object",
         lua.create_function(|_, _: ()| {
             Ok(Object {
@@ -818,8 +834,8 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
                 path: Vec::new(),
             })
         })?,
-    )?;
-    t.set(
+    )?
+    .set(
         "array",
         lua.create_function(|_, _: ()| {
             Ok(Array {
@@ -827,7 +843,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
                 path: Vec::new(),
             })
         })?,
-    )?;
+    )?
     // The `JsonNull` sentinel — userdata, **not** a string or any other
     // primitive. Bound on the module table so the comparison is
     // `local json = require("lib:json"); v == json.null`.
@@ -837,8 +853,85 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
     // identity-equal to every value `:get` returns for a JSON null
     // (mlua's userdata equality is identity-based, not metamethod-
     // mediated).
-    t.set("null", null_handle(lua)?)?;
-    Ok(t)
+    .set("null", null_handle(lua)?)?;
+
+    m.record_fn(
+        "object",
+        &[],
+        "Object",
+        "Construct an empty mutable JSON object handle on a fresh root.",
+    );
+    m.record_fn(
+        "array",
+        &[],
+        "Array",
+        "Construct an empty mutable JSON array handle on a fresh root.",
+    );
+
+    m.userdata("Object", |o| {
+        o.method(
+            "get",
+            &[("path", "LuaValue")],
+            "LuaValue",
+            "Walk a path of segments and return the leaf node.",
+        )
+        .method(
+            "set",
+            &[("key", "string"), ("value", "LuaValue")],
+            "()",
+            "Insert or replace `key` with `value`.",
+        )
+        .method(
+            "has",
+            &[("key", "string")],
+            "bool",
+            "Whether the object contains an entry for `key`.",
+        )
+        .method("keys", &[], "LuaValue", "The object's keys as a table.")
+        .method("len", &[], "number", "Number of top-level keys.")
+        .method(
+            "to_table",
+            &[],
+            "LuaValue",
+            "Materialise the subtree as a Lua table.",
+        );
+    });
+
+    m.userdata("Array", |a| {
+        a.method(
+            "get",
+            &[("path", "LuaValue")],
+            "LuaValue",
+            "Walk a path starting from a 1-based index.",
+        )
+        .method(
+            "set",
+            &[("index", "number"), ("value", "LuaValue")],
+            "()",
+            "Replace the element at a 1-based index.",
+        )
+        .method(
+            "push",
+            &[("value", "LuaValue")],
+            "()",
+            "Append `value` to the end of the array.",
+        )
+        .method("len", &[], "number", "Current length of the array.")
+        .method(
+            "to_table",
+            &[],
+            "LuaValue",
+            "Materialise the array as a 1-indexed Lua table.",
+        );
+    });
+
+    m.const_(
+        "null",
+        "LuaValue",
+        "Sentinel userdata for explicit JSON `null`, distinct from Lua `nil`.",
+    );
+
+    Ok(m)
 }
 
 // ---------------------------------------------------------------------------

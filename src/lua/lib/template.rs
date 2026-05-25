@@ -62,7 +62,8 @@ use parking_lot::Mutex;
 use tera::{Context, Filter as TeraFilter, Tera, Value as TeraValue};
 use tracing::instrument;
 
-use crate::lua::sandbox::{err, from_err, ok};
+use crate::lua::facade::Module;
+use crate::lua::sandbox::{from_err, ok};
 
 /// Tera autoescapes by filename suffix. We pick a sentinel that is unlikely
 /// to collide with a real user-supplied template name; one-off render calls
@@ -250,32 +251,75 @@ impl UserData for TemplateHandle {
 // ---------------------------------------------------------------------------
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
+    Ok(declare(lua)?.into_table())
+}
+
+/// Declares the `lib:template` surface through the facade.
+///
+/// `render` and `add_filter` are fallible and routed through
+/// [`crate::lua::facade::Module::try_func`]: each inner function returns the
+/// bare failure reason and the facade prepends the `"template.<fn>: "` prefix.
+///
+/// `compile` is a *mixed* raise-plus-channel shape: a parse failure goes to the
+/// `(value, error)` channel via [`crate::lua::sandbox::from_err`], but the
+/// compiled `Template` handle's `into_lua` (done by `ok`) raises an
+/// `mlua::Error` directly — a mix `try_func` cannot model — so it is registered
+/// verbatim with [`crate::lua::facade::Module::set`] (keeping its
+/// `template.compile` span and channel prefix) and recorded for the header with
+/// [`crate::lua::facade::Module::record_fn`]. The `(value, error)` shape, the
+/// exact error strings, the raise on `into_lua`, and the `luau::lib::template`
+/// spans are byte-identical to the hand-written registration this replaces. The
+/// shared `Engine` is cloned into each closure exactly as before. The compiled
+/// `Template` userdata keeps its own `impl UserData` and is recorded here for
+/// the header via [`crate::lua::facade::Module::userdata`].
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let engine = Engine::new();
-    let t = lua.create_table()?;
+    let mut m = Module::new(lua, "lib:template")?;
 
     let eng = engine.clone();
-    t.set(
+    m.set(
         "compile",
         lua.create_function(move |lua, src: String| compile_impl(lua, &eng, src))?,
     )?;
+    m.record_fn(
+        "compile",
+        &[("source", "string")],
+        "Result<Template, string>",
+        "Parse `source` once and return a reusable `Template`.",
+    );
 
     let eng = engine.clone();
-    t.set(
+    m.try_func(
         "render",
-        lua.create_function(move |lua, args: (String, Value, Option<Table>)| {
-            render_impl(lua, &eng, args.0, args.1, args.2)
-        })?,
+        &[
+            ("source", "string"),
+            ("context", "LuaValue"),
+            ("options", "LuaValue?"),
+        ],
+        "One-shot parse and render of `source` against `context`; `options.autoescape` toggles HTML escaping.",
+        move |lua, (src, ctx, opts): (String, Value, Option<Table>)| {
+            render_impl(lua, &eng, src, ctx, opts)
+        },
     )?;
 
     let eng = engine.clone();
-    t.set(
+    m.try_func(
         "add_filter",
-        lua.create_function(move |lua, args: (String, Function)| {
-            add_filter_impl(lua, &eng, args.0, args.1)
-        })?,
+        &[("name", "string"), ("fn", "LuaValue")],
+        "Register a Lua function as a custom tera filter, visible to every subsequent render.",
+        move |lua, (name, func): (String, Function)| add_filter_impl(lua, &eng, name, func),
     )?;
 
-    Ok(t)
+    m.userdata("Template", |t| {
+        t.method(
+            "render",
+            &[("context", "LuaValue")],
+            "Result<string, string>",
+            "Render the compiled template with `context` as the variable map.",
+        );
+    });
+
+    Ok(m)
 }
 
 // ---------------------------------------------------------------------------
@@ -301,25 +345,18 @@ fn compile_impl(lua: &Lua, engine: &Engine, src: String) -> mlua::Result<(Value,
     )
 }
 
-#[instrument(name = "template.render", target = "luau::lib::template", skip_all)]
 fn render_impl(
     lua: &Lua,
     engine: &Engine,
     src: String,
     ctx: Value,
     opts: Option<Table>,
-) -> mlua::Result<(Value, Value)> {
+) -> Result<String, String> {
     let Some(_render_guard) = RenderGuard::enter() else {
-        return from_err(lua, "template.render", RECURSIVE_RENDER_MSG);
+        return Err(RECURSIVE_RENDER_MSG.to_string());
     };
-    let autoescape = match read_autoescape(opts.as_ref()) {
-        Ok(b) => b,
-        Err(e) => return from_err(lua, "template.render", e),
-    };
-    let ctx_obj = match build_context(lua, &ctx) {
-        Ok(c) => c,
-        Err(e) => return from_err(lua, "template.render", e),
-    };
+    let autoescape = read_autoescape(opts.as_ref())?;
+    let ctx_obj = build_context(lua, &ctx)?;
     let name = if autoescape {
         ONE_OFF_ESCAPED
     } else {
@@ -328,14 +365,11 @@ fn render_impl(
 
     let mut guard = engine.tera.lock();
     if let Err(e) = guard.add_raw_template(name, &src) {
-        return from_err(lua, "template.render", format_tera_error(&e));
+        return Err(format_tera_error(&e));
     }
     let render_result = with_active_lua(lua, || guard.render(name, &ctx_obj));
     drop(guard);
-    match render_result {
-        Ok(s) => ok(lua, s),
-        Err(e) => from_err(lua, "template.render", format_tera_error(&e)),
-    }
+    render_result.map_err(|e| format_tera_error(&e))
 }
 
 fn template_render(lua: &Lua, this: &TemplateHandle, ctx: Value) -> mlua::Result<(Value, Value)> {
@@ -355,20 +389,16 @@ fn template_render(lua: &Lua, this: &TemplateHandle, ctx: Value) -> mlua::Result
     }
 }
 
-#[instrument(name = "template.add_filter", target = "luau::lib::template", skip_all)]
 fn add_filter_impl(
     lua: &Lua,
     engine: &Engine,
     name: String,
     func: Function,
-) -> mlua::Result<(Value, Value)> {
+) -> Result<bool, String> {
     if name.is_empty() {
-        return err(lua, "template.add_filter: filter name must be non-empty");
+        return Err("filter name must be non-empty".to_string());
     }
-    let key = match lua.create_registry_value(func) {
-        Ok(k) => k,
-        Err(e) => return from_err(lua, "template.add_filter", e),
-    };
+    let key = lua.create_registry_value(func).map_err(|e| e.to_string())?;
     let mut guard = engine.tera.lock();
     guard.register_filter(
         &name,
@@ -378,7 +408,7 @@ fn add_filter_impl(
         },
     );
     drop(guard);
-    ok(lua, true)
+    Ok(true)
 }
 
 // ---------------------------------------------------------------------------

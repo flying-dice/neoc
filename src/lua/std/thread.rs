@@ -43,12 +43,36 @@ use mlua::{AnyUserData, IntoLua, Lua, LuaSerdeExt, Table, UserData, UserDataMeth
 use tokio::sync::{Mutex, mpsc};
 use tracing::instrument;
 
+use crate::lua::facade::Module;
 use crate::lua::sandbox::{from_err, make_engine, ok};
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
-    t.set("spawn", lua.create_function(spawn)?)?;
-    t.set(
+    Ok(declare(lua)?.into_table())
+}
+
+/// Declares the `std:thread` surface through the facade.
+///
+/// `spawn` is set verbatim with [`crate::lua::facade::Module::set`]: it carries
+/// its own `#[instrument(name = "thread.spawn", target = "luau::lib::thread")]`
+/// attribute and returns a `WorkerHandle` on success, so routing through the
+/// facade would add a second span. `available_parallelism` carried no span and
+/// returns the core count directly. `parent` / `shared` are dynamically
+/// injected at spawn time (nil at the top level), so they are recorded as
+/// constants via [`crate::lua::facade::Module::const_`]. The `WorkerHandle` and
+/// `Channel` userdata keep their own `impl UserData` and are recorded here for
+/// the header.
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "std:thread")?;
+
+    m.set("spawn", lua.create_function(spawn)?)?;
+    m.record_fn(
+        "spawn",
+        &[("opts", "LuaValue")],
+        "Result<WorkerHandle, string>",
+        "Spawn a new Lua VM as a worker on the same Tokio runtime, given `{ source | file, name?, args?, shared? }`.",
+    );
+
+    m.set(
         "available_parallelism",
         lua.create_function(|_, _: ()| {
             Ok(std::thread::available_parallelism()
@@ -56,14 +80,75 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
                 .unwrap_or(1))
         })?,
     )?;
+    m.record_fn(
+        "available_parallelism",
+        &[],
+        "number",
+        "Return the number of logical CPU cores available to the process. At least 1.",
+    );
+
     // Overwritten by `run_worker` for actual workers; nil at the top level
     // so user code can branch on `if lib.thread.parent then …`.
-    t.set("parent", Value::Nil)?;
+    m.set("parent", Value::Nil)?;
     // `shared` is set to the reconstructed shared table in workers that
     // received `shared = {…}` at spawn time; nil at the top level and in
     // workers spawned without a shared table.
-    t.set("shared", Value::Nil)?;
-    Ok(t)
+    m.set("shared", Value::Nil)?;
+
+    m.const_(
+        "parent",
+        "LuaValue",
+        "The `Channel` to the parent VM inside a spawned worker; nil at the top level.",
+    )
+    .const_(
+        "shared",
+        "LuaValue",
+        "The reconstructed table of Sendable values passed via `shared` at spawn time; nil otherwise.",
+    );
+
+    m.userdata("WorkerHandle", |w| {
+        w.method(
+            "send",
+            &[("value", "LuaValue")],
+            "()",
+            "Send a JSON-serialisable value to the worker; errors if the worker has exited.",
+        )
+        .method(
+            "receive",
+            &[],
+            "Result<LuaValue, string>",
+            "Wait for a message from the worker. Returns `(nil, error)` once the worker has exited.",
+        )
+        .method(
+            "await",
+            &[],
+            "Result<LuaValue, string>",
+            "Wait for the worker to finish and return its result, or `(nil, error)` on failure.",
+        )
+        .method(
+            "terminate",
+            &[],
+            "()",
+            "Abort the worker immediately. A subsequent `:await()` returns `(nil, \"thread.await: terminated\")`.",
+        );
+    });
+
+    m.userdata("Channel", |c| {
+        c.method(
+            "send",
+            &[("value", "LuaValue")],
+            "()",
+            "Send a JSON-serialisable value to the parent's message queue.",
+        )
+        .method(
+            "receive",
+            &[],
+            "Result<LuaValue, string>",
+            "Wait for a message from the parent. Returns `(nil, error)` once the parent has exited.",
+        );
+    });
+
+    Ok(m)
 }
 
 // ---------------------------------------------------------------------------

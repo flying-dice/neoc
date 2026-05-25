@@ -1,0 +1,41 @@
+// @generated from the vnd:testcontainers_modules runtime module — do not edit.
+struct MysqlContainer;
+impl MysqlContainer {
+    /// Return a MySQL connection URL pre-formatted for `sqlx_mysql.open` (user `root`, no password, database `test`).
+    fn url() -> string;
+    /// Return the container host (always `"127.0.0.1"`).
+    fn host() -> string;
+    /// Return the mapped host port for MySQL's 3306.
+    fn port() -> number;
+    /// Stop the container; idempotent. The container also stops on garbage collection if not stopped explicitly.
+    fn stop() -> ();
+}
+struct PostgresContainer;
+impl PostgresContainer {
+    /// Return a Postgres connection URL pre-formatted for `sqlx_postgres.open` (user `postgres`, password `postgres`, database `postgres`).
+    fn url() -> string;
+    /// Return the container host (always `"127.0.0.1"`).
+    fn host() -> string;
+    /// Return the mapped host port for Postgres's 5432.
+    fn port() -> number;
+    /// Stop the container; idempotent. The container also stops on garbage collection if not stopped explicitly.
+    fn stop() -> ();
+}
+struct GenericContainer;
+impl GenericContainer {
+    /// Return the container host (always `"127.0.0.1"`).
+    fn host() -> string;
+    /// Return the mapped host port for the given container port; only ports listed at start time are available, requesting an unmapped port errors.
+    fn port(container_port: number) -> number;
+    /// Stop the container; idempotent.
+    fn stop() -> ();
+}
+#[link(name = "vnd:testcontainers_modules")]
+extern "neoc" {
+    /// Start a MySQL container with default settings, returning a handle once it is ready to accept connections.
+    fn mysql() -> Result<MysqlContainer, string>;
+    /// Start a Postgres container with default settings, returning a handle once it is ready.
+    fn postgres() -> Result<PostgresContainer, string>;
+    /// Start a generic Docker container from any image given `{ image, tag?, ports?, env?, cmd?, wait? }`, returning a handle once its readiness probe passes.
+    fn generic(opts: LuaValue) -> Result<GenericContainer, string>;
+}

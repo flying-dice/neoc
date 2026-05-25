@@ -39,6 +39,7 @@ use sha2::{Sha256, Sha384, Sha512};
 use subtle::ConstantTimeEq;
 use tracing::instrument;
 
+use crate::lua::facade::Module;
 use crate::lua::sandbox::{err, ok};
 
 // `hmac::Hmac` is fully qualified so the Lua-facing UserData below can take the
@@ -155,22 +156,37 @@ impl UserData for Hmac {
 // ---------------------------------------------------------------------------
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
+    Ok(declare(lua)?.into_table())
+}
+
+/// Declares the `lib:hmac` surface through the facade.
+///
+/// Every free function is set verbatim with [`crate::lua::facade::Module::set`]
+/// and recorded for the header with [`crate::lua::facade::Module::record_fn`]:
+/// `hmac.Hmac.new` and `hmac.hmac` raise through [`crate::lua::sandbox::err`]
+/// with a baked `"<stem>.<fn>: <e>"` prefix under their own `#[instrument]`
+/// spans (the `hmac.Hmac.new` span the facade's `type_` would rename to
+/// `Hmac.new`), and `verify` / `algorithms` carry no span at all — routing any
+/// of them through the facade would change the trace shape. The `Hmac` userdata
+/// keeps its own `impl UserData` and is recorded here for the header via
+/// [`crate::lua::facade::Module::userdata`].
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "lib:hmac")?;
 
     let hmac_sub = lua.create_table()?;
     hmac_sub.set("new", lua.create_function(hmac_new)?)?;
-    t.set("Hmac", hmac_sub)?;
+    m.set("Hmac", hmac_sub)?;
 
-    t.set("hmac", lua.create_function(hmac_one_shot)?)?;
+    m.set("hmac", lua.create_function(hmac_one_shot)?)?;
 
-    t.set(
+    m.set(
         "verify",
         lua.create_function(|_, (a, b): (mlua::String, mlua::String)| {
             Ok(verify(&a.as_bytes(), &b.as_bytes()))
         })?,
     )?;
 
-    t.set(
+    m.set(
         "algorithms",
         lua.create_function(|lua, _: ()| {
             let tbl = lua.create_table()?;
@@ -181,7 +197,47 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
         })?,
     )?;
 
-    Ok(t)
+    m.userdata("Hmac", |h| {
+        h.method(
+            "update",
+            &[("data", "string")],
+            "()",
+            "Feed `data` into the running MAC.",
+        )
+        .method(
+            "digest",
+            &[],
+            "string",
+            "Return the current tag as raw bytes; idempotent and does not consume the MAC.",
+        )
+        .method(
+            "algorithm",
+            &[],
+            "string",
+            "Return the algorithm name this MAC was constructed with.",
+        );
+    });
+
+    m.record_fn(
+        "hmac",
+        &[("algo", "string"), ("key", "string"), ("data", "string")],
+        "Result<string, string>",
+        "One-shot tag of `data` under `algo` and `key`, returning the tag as raw bytes.",
+    )
+    .record_fn(
+        "verify",
+        &[("a", "string"), ("b", "string")],
+        "bool",
+        "Compare two tags in constant time; returns `true` iff they are equal.",
+    )
+    .record_fn(
+        "algorithms",
+        &[],
+        "LuaValue",
+        "Return the list of supported algorithm names in canonical order.",
+    );
+
+    Ok(m)
 }
 
 #[instrument(name = "hmac.Hmac.new", target = "luau::lib::hmac", skip_all)]

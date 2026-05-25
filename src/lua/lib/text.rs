@@ -10,28 +10,141 @@ use strsim::levenshtein as strsim_levenshtein;
 use tracing::instrument;
 use unicode_width::UnicodeWidthChar;
 
+use crate::lua::facade::Module;
 use crate::lua::sandbox::{err, ok};
 
 const ELLIPSIS: &str = "...";
 const ELLIPSIS_WIDTH: usize = 3;
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
-    t.set("to_camel_case", lua.create_function(to_camel_case)?)?;
-    t.set("to_snake_case", lua.create_function(to_snake_case)?)?;
-    t.set("to_kebab_case", lua.create_function(to_kebab_case)?)?;
-    t.set("to_pascal_case", lua.create_function(to_pascal_case)?)?;
-    t.set("to_title_case", lua.create_function(to_title_case)?)?;
-    t.set("to_constant_case", lua.create_function(to_constant_case)?)?;
-    t.set("word_wrap", lua.create_function(word_wrap)?)?;
-    t.set("levenshtein", lua.create_function(levenshtein)?)?;
-    t.set("closest", lua.create_function(closest)?)?;
-    t.set("truncate", lua.create_function(truncate)?)?;
-    t.set("pad_left", lua.create_function(pad_left)?)?;
-    t.set("pad_right", lua.create_function(pad_right)?)?;
-    t.set("center", lua.create_function(center)?)?;
-    t.set("slugify", lua.create_function(slugify)?)?;
-    Ok(t)
+    Ok(declare(lua)?.into_table())
+}
+
+/// Declares the `lib:text` surface through the facade.
+///
+/// Every function is set verbatim with [`crate::lua::facade::Module::set`]:
+/// each carries its own `#[instrument]` span, so routing through the facade's
+/// `func` / `try_func` would open a second span. The infallible case-conversion
+/// helpers return a bare value, while `word_wrap` / `closest` / `truncate` /
+/// the pad family build their `(value, error)` returns directly through
+/// `err` / `ok` with a baked `"text.<fn>: "` prefix. Their signatures are
+/// recorded for the header via [`crate::lua::facade::Module::record_fn`].
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "lib:text")?;
+
+    m.set("to_camel_case", lua.create_function(to_camel_case)?)?;
+    m.record_fn(
+        "to_camel_case",
+        &[("text", "string")],
+        "string",
+        "Convert to `camelCase`. Acronym boundaries are detected by the backing `heck` crate.",
+    );
+
+    m.set("to_snake_case", lua.create_function(to_snake_case)?)?;
+    m.record_fn(
+        "to_snake_case",
+        &[("text", "string")],
+        "string",
+        "Convert to `snake_case`.",
+    );
+
+    m.set("to_kebab_case", lua.create_function(to_kebab_case)?)?;
+    m.record_fn(
+        "to_kebab_case",
+        &[("text", "string")],
+        "string",
+        "Convert to `kebab-case`.",
+    );
+
+    m.set("to_pascal_case", lua.create_function(to_pascal_case)?)?;
+    m.record_fn(
+        "to_pascal_case",
+        &[("text", "string")],
+        "string",
+        "Convert to `PascalCase`.",
+    );
+
+    m.set("to_title_case", lua.create_function(to_title_case)?)?;
+    m.record_fn(
+        "to_title_case",
+        &[("text", "string")],
+        "string",
+        "Convert to `Title Case`.",
+    );
+
+    m.set("to_constant_case", lua.create_function(to_constant_case)?)?;
+    m.record_fn(
+        "to_constant_case",
+        &[("text", "string")],
+        "string",
+        "Convert to `CONSTANT_CASE`.",
+    );
+
+    m.set("word_wrap", lua.create_function(word_wrap)?)?;
+    m.record_fn(
+        "word_wrap",
+        &[("text", "string"), ("width", "number"), ("opts", "LuaValue?")],
+        "Result<string, string>",
+        "Greedy word wrap, display-width aware. `width` must be > 0. Defaults: `break_words = false`, `preserve_newlines = true`.",
+    );
+
+    m.set("levenshtein", lua.create_function(levenshtein)?)?;
+    m.record_fn(
+        "levenshtein",
+        &[("a", "string"), ("b", "string")],
+        "number",
+        "Codepoint-based Levenshtein edit distance.",
+    );
+
+    m.set("closest", lua.create_function(closest)?)?;
+    m.record_fn(
+        "closest",
+        &[("input", "string"), ("candidates", "LuaValue"), ("opts", "LuaValue?")],
+        "Result<LuaValue, string>",
+        "Score each candidate against `input` by Levenshtein distance, returning the list sorted ascending (ties broken alphabetically).",
+    );
+
+    m.set("truncate", lua.create_function(truncate)?)?;
+    m.record_fn(
+        "truncate",
+        &[("text", "string"), ("max_len", "number"), ("opts", "LuaValue?")],
+        "Result<string, string>",
+        "Truncate `text` so its display width is at most `max_len`. The `...` ellipsis counts toward the limit.",
+    );
+
+    m.set("pad_left", lua.create_function(pad_left)?)?;
+    m.record_fn(
+        "pad_left",
+        &[("text", "string"), ("width", "number"), ("fill_char", "string?")],
+        "Result<string, string>",
+        "Pad `text` on the left so total display width equals `width`. `fill_char` must be one display-width-1 character (default space).",
+    );
+
+    m.set("pad_right", lua.create_function(pad_right)?)?;
+    m.record_fn(
+        "pad_right",
+        &[("text", "string"), ("width", "number"), ("fill_char", "string?")],
+        "Result<string, string>",
+        "Pad `text` on the right so total display width equals `width`. Same constraints as `pad_left`.",
+    );
+
+    m.set("center", lua.create_function(center)?)?;
+    m.record_fn(
+        "center",
+        &[("text", "string"), ("width", "number"), ("fill_char", "string?")],
+        "Result<string, string>",
+        "Pad `text` on both sides so total display width equals `width`. Uneven padding places the extra column on the right.",
+    );
+
+    m.set("slugify", lua.create_function(slugify)?)?;
+    m.record_fn(
+        "slugify",
+        &[("text", "string")],
+        "string",
+        "Convert `text` to a URL-safe ASCII slug via `deunicode` transliteration, then lowercase and hyphenate.",
+    );
+
+    Ok(m)
 }
 
 // ---------------------------------------------------------------------------

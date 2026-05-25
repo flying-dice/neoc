@@ -1,0 +1,15 @@
+// @generated from the lib:template runtime module — do not edit.
+struct Template;
+impl Template {
+    /// Render the compiled template with `context` as the variable map.
+    fn render(context: LuaValue) -> Result<string, string>;
+}
+#[link(name = "lib:template")]
+extern "neoc" {
+    /// Parse `source` once and return a reusable `Template`.
+    fn compile(source: string) -> Result<Template, string>;
+    /// One-shot parse and render of `source` against `context`; `options.autoescape` toggles HTML escaping.
+    fn render(source: string, context: LuaValue, options: LuaValue?) -> Result<string, string>;
+    /// Register a Lua function as a custom tera filter, visible to every subsequent render.
+    fn add_filter(name: string, fn: LuaValue) -> Result<bool, string>;
+}

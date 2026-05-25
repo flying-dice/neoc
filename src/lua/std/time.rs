@@ -21,6 +21,7 @@ use std::time::{Duration as StdDuration, Instant as StdInstant};
 
 use mlua::{AnyUserData, Lua, MetaMethod, Table, UserData, UserDataMethods, Value};
 
+use crate::lua::facade::Module;
 use crate::lua::sandbox::{err, ok};
 
 // ---------------------------------------------------------------------------
@@ -438,7 +439,23 @@ fn format_fraction(nanos: u128, divisor: u128, unit: &str) -> String {
 // ---------------------------------------------------------------------------
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
+    Ok(declare(lua)?.into_table())
+}
+
+/// Declares the `std:time` surface through the facade.
+///
+/// The `Duration` and `Instant` constructor sub-tables are built verbatim and
+/// set with [`crate::lua::facade::Module::set`]: their constructors carried
+/// **no** `#[instrument]` span and raise `mlua::Error` directly (or bake the
+/// `"time.Duration.parse"` prefix), so routing through the facade's
+/// `type_` / `func` would add a span and change behaviour. The flat `now` and
+/// `sleep` functions likewise carried no span and are set verbatim. The
+/// `Duration` / `Instant` userdata keep their own `impl UserData` and are
+/// recorded here for the header via [`crate::lua::facade::Module::userdata`];
+/// `now` and `sleep` are recorded via
+/// [`crate::lua::facade::Module::record_fn`].
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "std:time")?;
 
     let dur = lua.create_table()?;
     dur.set("ZERO", DurationHandle(StdDuration::ZERO))?;
@@ -454,20 +471,26 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
             Err(msg) => err(lua, format!("time.Duration.parse: {msg}")),
         })?,
     )?;
-    t.set("Duration", dur)?;
+    m.set("Duration", dur)?;
 
     // `Instant.now` and the flat `time.now` alias share one closure so the
     // two surfaces can never diverge.
     let now_fn = lua.create_function(|_, ()| Ok(InstantHandle(StdInstant::now())))?;
     let inst = lua.create_table()?;
     inst.set("now", now_fn.clone())?;
-    t.set("Instant", inst)?;
-    t.set("now", now_fn)?;
+    m.set("Instant", inst)?;
+    m.set("now", now_fn)?;
+    m.record_fn(
+        "now",
+        &[],
+        "Instant",
+        "Flat alias for `Instant.now()` — the current monotonic point in time.",
+    );
 
     // time.sleep(Duration) — async, mirrors `std::thread::sleep` but
     // cooperative. Returns the actual elapsed Duration so callers can
     // detect overruns.
-    t.set(
+    m.set(
         "sleep",
         lua.create_async_function(|_, d: AnyUserData| async move {
             let target = d
@@ -479,8 +502,63 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
             Ok(DurationHandle(start.elapsed()))
         })?,
     )?;
+    m.record_fn(
+        "sleep",
+        &[("duration", "Duration")],
+        "Duration",
+        "Cooperative sleep for `duration` — yields to other tasks while waiting. Returns the actual elapsed `Duration`.",
+    );
 
-    Ok(t)
+    m.userdata("Duration", |d| {
+        d.method(
+            "as_secs",
+            &[],
+            "number",
+            "Whole seconds component (integer).",
+        )
+        .method(
+            "as_millis",
+            &[],
+            "number",
+            "Total milliseconds (integer, saturating).",
+        )
+        .method(
+            "as_micros",
+            &[],
+            "number",
+            "Total microseconds (integer, saturating).",
+        )
+        .method(
+            "as_nanos",
+            &[],
+            "number",
+            "Total nanoseconds (integer, saturating).",
+        )
+        .method("as_secs_f64", &[], "number", "Total seconds as a float.")
+        .method(
+            "is_zero",
+            &[],
+            "bool",
+            "True if the duration is exactly zero.",
+        );
+    });
+
+    m.userdata("Instant", |i| {
+        i.method(
+            "elapsed",
+            &[],
+            "Duration",
+            "Return the `Duration` elapsed since this `Instant` was taken (saturating).",
+        )
+        .method(
+            "duration_since",
+            &[("other", "Instant")],
+            "Duration",
+            "Saturating difference `self - other`; returns `ZERO` if `other` is later.",
+        );
+    });
+
+    Ok(m)
 }
 
 fn reject_negative(value: i64, ctx: &'static str) -> mlua::Result<u64> {

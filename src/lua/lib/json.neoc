@@ -1,0 +1,38 @@
+// @generated from the lib:json runtime module — do not edit.
+struct Object;
+impl Object {
+    /// Walk a path of segments and return the leaf node.
+    fn get(path: LuaValue) -> LuaValue;
+    /// Insert or replace `key` with `value`.
+    fn set(key: string, value: LuaValue) -> ();
+    /// Whether the object contains an entry for `key`.
+    fn has(key: string) -> bool;
+    /// The object's keys as a table.
+    fn keys() -> LuaValue;
+    /// Number of top-level keys.
+    fn len() -> number;
+    /// Materialise the subtree as a Lua table.
+    fn to_table() -> LuaValue;
+}
+struct Array;
+impl Array {
+    /// Walk a path starting from a 1-based index.
+    fn get(path: LuaValue) -> LuaValue;
+    /// Replace the element at a 1-based index.
+    fn set(index: number, value: LuaValue) -> ();
+    /// Append `value` to the end of the array.
+    fn push(value: LuaValue) -> ();
+    /// Current length of the array.
+    fn len() -> number;
+    /// Materialise the array as a 1-indexed Lua table.
+    fn to_table() -> LuaValue;
+}
+#[link(name = "lib:json")]
+extern "neoc" {
+    /// Construct an empty mutable JSON object handle on a fresh root.
+    fn object() -> Object;
+    /// Construct an empty mutable JSON array handle on a fresh root.
+    fn array() -> Array;
+    /// Sentinel userdata for explicit JSON `null`, distinct from Lua `nil`.
+    const null: LuaValue;
+}

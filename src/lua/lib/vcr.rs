@@ -29,9 +29,24 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
 use tracing::instrument;
 
+use crate::lua::facade::Module;
+
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
-    t.set(
+    Ok(declare(lua)?.into_table())
+}
+
+/// Declares the `lib:vcr` surface through the facade.
+///
+/// `cassette` is set verbatim with [`crate::lua::facade::Module::set`]: the
+/// hand-written closure raises `mlua::Error` directly on an unknown mode and
+/// carries no span of its own (the mode-specific constructors `passthrough` /
+/// `recording` / `replay` open their own spans), so routing it through the
+/// facade's `func` / `try_func` path would change its behaviour. Its signature
+/// is recorded for the header via [`crate::lua::facade::Module::record_fn`].
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "lib:vcr")?;
+
+    m.set(
         "cassette",
         lua.create_function(|lua, opts: Table| {
             if forced_off() {
@@ -54,7 +69,14 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
             }
         })?,
     )?;
-    Ok(t)
+    m.record_fn(
+        "cassette",
+        &[("opts", "LuaValue")],
+        "LuaValue",
+        "Create a cassette in the given mode (`record` / `replay` / `off`). Returns a handle exposing `wrap` and `dump`. `NEOC_VCR=off` forces pass-through regardless of `opts.mode`.",
+    );
+
+    Ok(m)
 }
 
 fn forced_off() -> bool {

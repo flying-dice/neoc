@@ -18,6 +18,7 @@ use mlua::{Lua, MetaMethod, Table, UserData, UserDataMethods, Value};
 use regex::{Regex, RegexBuilder};
 use tracing::instrument;
 
+use crate::lua::facade::Module;
 use crate::lua::sandbox::{err, ok};
 
 // ---------------------------------------------------------------------------
@@ -25,21 +26,131 @@ use crate::lua::sandbox::{err, ok};
 // ---------------------------------------------------------------------------
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
+    Ok(declare(lua)?.into_table())
+}
+
+/// Declares the `lib:regex` surface through the facade.
+///
+/// The `Pattern` constructor sub-table and every flat function are set verbatim
+/// with [`crate::lua::facade::Module::set`]: `pattern_new` carries its own
+/// `#[instrument(name = "regex.Pattern.new")]` span (which the facade's
+/// `type_` constructor path could not reproduce — it would name the span
+/// `"Pattern.new"`), and each flat function carries its own `#[instrument]`
+/// span plus a baked `"regex.<fn>: "` prefix built through `err` / `ok`. The
+/// `PatternHandle` userdata keeps its own `impl UserData` and is recorded here
+/// for the header via [`crate::lua::facade::Module::userdata`].
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "lib:regex")?;
 
     let pattern_sub = lua.create_table()?;
     pattern_sub.set("new", lua.create_function(pattern_new)?)?;
-    t.set("Pattern", pattern_sub)?;
+    m.set("Pattern", pattern_sub)?;
 
-    t.set("is_match", lua.create_function(flat_is_match)?)?;
-    t.set("find", lua.create_function(flat_find)?)?;
-    t.set("find_all", lua.create_function(flat_find_all)?)?;
-    t.set("replace", lua.create_function(flat_replace)?)?;
-    t.set("replace_all", lua.create_function(flat_replace_all)?)?;
-    t.set("split", lua.create_function(flat_split)?)?;
-    t.set("escape", lua.create_function(flat_escape)?)?;
+    m.set("is_match", lua.create_function(flat_is_match)?)?;
+    m.record_fn(
+        "is_match",
+        &[
+            ("pattern", "string"),
+            ("text", "string"),
+            ("flags", "string?"),
+        ],
+        "Result<bool, string>",
+        "Compile-and-test in one call. Returns `(nil, err)` on a pattern error.",
+    );
 
-    Ok(t)
+    m.set("find", lua.create_function(flat_find)?)?;
+    m.record_fn(
+        "find",
+        &[("pattern", "string"), ("text", "string"), ("flags", "string?")],
+        "Result<LuaValue, string>",
+        "Compile-and-find-first in one call. Returns the `Match` table on a hit, `(nil, nil)` on a clean miss, `(nil, err)` on a pattern error.",
+    );
+
+    m.set("find_all", lua.create_function(flat_find_all)?)?;
+    m.record_fn(
+        "find_all",
+        &[("pattern", "string"), ("text", "string"), ("flags", "string?")],
+        "Result<LuaValue, string>",
+        "Compile-and-find-all in one call. Returns a (possibly empty) array of `Match` tables, or `(nil, err)` on a pattern error.",
+    );
+
+    m.set("replace", lua.create_function(flat_replace)?)?;
+    m.record_fn(
+        "replace",
+        &[("pattern", "string"), ("text", "string"), ("replacement", "string"), ("flags", "string?")],
+        "Result<string, string>",
+        "Replace the first match. Substitution grammar uses `$0`, `$1`, `${name}` per the regex crate.",
+    );
+
+    m.set("replace_all", lua.create_function(flat_replace_all)?)?;
+    m.record_fn(
+        "replace_all",
+        &[
+            ("pattern", "string"),
+            ("text", "string"),
+            ("replacement", "string"),
+            ("flags", "string?"),
+        ],
+        "Result<string, string>",
+        "Replace every match. Substitution grammar as `replace`.",
+    );
+
+    m.set("split", lua.create_function(flat_split)?)?;
+    m.record_fn(
+        "split",
+        &[("pattern", "string"), ("text", "string"), ("limit", "number?"), ("flags", "string?")],
+        "Result<LuaValue, string>",
+        "Split `text` on every match of `pattern`. `limit` caps the parts (`0`/`nil` unlimited); negative limits return `(nil, err)`.",
+    );
+
+    m.set("escape", lua.create_function(flat_escape)?)?;
+    m.record_fn(
+        "escape",
+        &[("text", "string")],
+        "string",
+        "Escape every regex metacharacter in `text` so the result matches `text` literally.",
+    );
+
+    m.userdata("Pattern", |p| {
+        p.method(
+            "is_match",
+            &[("text", "string")],
+            "bool",
+            "True iff `text` contains at least one match.",
+        )
+        .method(
+            "find",
+            &[("text", "string")],
+            "LuaValue",
+            "First match in `text`, or `nil` if none.",
+        )
+        .method(
+            "find_all",
+            &[("text", "string")],
+            "LuaValue",
+            "Every non-overlapping match in `text`, in order. Empty when nothing matches.",
+        )
+        .method(
+            "replace",
+            &[("text", "string"), ("replacement", "string")],
+            "string",
+            "Replace the first match in `text`. Uses the regex crate's `$0` / `$1` / `${name}` substitution grammar.",
+        )
+        .method(
+            "replace_all",
+            &[("text", "string"), ("replacement", "string")],
+            "string",
+            "Replace every match. Substitution grammar as `replace`.",
+        )
+        .method(
+            "split",
+            &[("text", "string"), ("limit", "number?")],
+            "Result<LuaValue, string>",
+            "Split `text` on every match. `limit` caps the parts (`0`/`nil` unlimited); negative limits return `(nil, err)`.",
+        );
+    });
+
+    Ok(m)
 }
 
 // ---------------------------------------------------------------------------

@@ -72,6 +72,7 @@ use rusqlite::OpenFlags;
 use rusqlite::types::{ToSql, ToSqlOutput, Value as SqlValue, ValueRef};
 use tracing::instrument;
 
+use crate::lua::facade::Module;
 use crate::lua::sandbox::{from_err, ok};
 
 /// Lockless wrapper around a rusqlite connection. See module docs for the
@@ -102,12 +103,89 @@ impl LocalConn {
 }
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
-    t.set(
+    Ok(declare(lua)?.into_table())
+}
+
+/// Declares the `vnd:rusqlite` surface through the facade.
+///
+/// `open` is set verbatim with [`crate::lua::facade::Module::set`] rather than
+/// `try_func` because the hand-written function carries its own
+/// `#[instrument(name = "rusqlite.open", target = "luau::lib::rusqlite")]`
+/// attribute and bakes the `rusqlite.open` error prefix — routing through
+/// `try_func` would add a second span and double the prefix. Its signature is
+/// recorded for the header via [`crate::lua::facade::Module::record_fn`]. The
+/// `Database` and `Statement` userdata types keep their own `impl UserData`
+/// (methods, error prefixes, and the `sqlite.statement.*` op tags unchanged)
+/// and are recorded for the header via [`crate::lua::facade::Module::userdata`].
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "vnd:rusqlite")?;
+
+    m.set(
         "open",
         lua.create_function(|lua, path: String| open(lua, path))?,
     )?;
-    Ok(t)
+    m.record_fn(
+        "open",
+        &[("path", "string")],
+        "Result<Database, string>",
+        "Open a SQLite database file. Pass `\":memory:\"` for an in-memory database.",
+    );
+
+    m.userdata("Database", |d| {
+        d.method(
+            "execute",
+            &[("sql", "string"), ("params", "LuaValue")],
+            "Result<number, string>",
+            "Execute a SQL statement, binding trailing arguments to `?` placeholders; returns rows affected.",
+        )
+        .method(
+            "query",
+            &[("sql", "string"), ("params", "LuaValue")],
+            "Result<LuaValue, string>",
+            "Execute a SELECT and return all rows as a 1-indexed table of column-keyed row tables.",
+        )
+        .method(
+            "query_one",
+            &[("sql", "string"), ("params", "LuaValue")],
+            "Result<LuaValue, string>",
+            "Execute a SELECT and return the first matching row, or nil when none matched.",
+        )
+        .method(
+            "prepare",
+            &[("sql", "string")],
+            "Statement",
+            "Prepare a SQL statement for repeated execution, sharing this connection.",
+        )
+        .method(
+            "close",
+            &[],
+            "()",
+            "Close the connection; subsequent method calls on this handle error.",
+        );
+    });
+
+    m.userdata("Statement", |s| {
+        s.method(
+            "execute",
+            &[("params", "LuaValue")],
+            "Result<number, string>",
+            "Execute the prepared statement with positional parameters; returns rows affected.",
+        )
+        .method(
+            "query",
+            &[("params", "LuaValue")],
+            "Result<LuaValue, string>",
+            "Execute the prepared SELECT and return all rows.",
+        )
+        .method(
+            "query_one",
+            &[("params", "LuaValue")],
+            "Result<LuaValue, string>",
+            "Execute the prepared SELECT and return the first matching row, or nil when none matched.",
+        );
+    });
+
+    Ok(m)
 }
 
 #[derive(Clone)]

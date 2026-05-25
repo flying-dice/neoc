@@ -180,9 +180,271 @@ pub fn install(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
+/// Collects the emitted `.neoc` header for every module that declares its
+/// surface through the facade.
+///
+/// Each entry is `(registry_key, header_text)` — for example
+/// `("lib:base64", "// @generated …\n#[link(name = \"lib:base64\")]\nextern \"neoc\" { … }\n")`.
+/// Only modules migrated to the facade appear here; the rest still register
+/// through a hand-written `module()` and ship a hand-written `.d.luau`.
+pub fn headers(lua: &Lua) -> mlua::Result<Vec<(String, String)>> {
+    let mut out = Vec::new();
+    let mut push = |m: mlua::Result<crate::lua::facade::Module<'_>>| -> mlua::Result<()> {
+        let m = m?;
+        out.push((m.name().to_string(), m.neoc_header()));
+        Ok(())
+    };
+
+    push(stdmod::collections::declare(lua))?;
+    push(stdmod::env::declare(lua))?;
+    push(stdmod::fs::declare(lua))?;
+    push(stdmod::io::declare(lua))?;
+    push(stdmod::net::declare(lua))?;
+    push(stdmod::task::declare(lua))?;
+    push(stdmod::thread::declare(lua))?;
+    push(stdmod::time::declare(lua))?;
+    push(stdmod::workers::declare(lua))?;
+
+    push(lib::args::declare(lua))?;
+    push(lib::base64::declare(lua))?;
+    push(lib::chrono::declare(lua))?;
+    push(lib::compile::declare(lua))?;
+    push(lib::compress::declare(lua))?;
+    push(lib::csv::declare(lua))?;
+    push(lib::diff::declare(lua))?;
+    push(lib::glob::declare(lua))?;
+    push(lib::hash::declare(lua))?;
+    push(lib::hex::declare(lua))?;
+    push(lib::hmac::declare(lua))?;
+    push(lib::html::declare(lua))?;
+    push(lib::http::declare(lua))?;
+    push(lib::ini::declare(lua))?;
+    push(lib::json::declare(lua))?;
+    push(lib::log::declare(lua))?;
+    push(lib::mime::declare(lua))?;
+    push(lib::random::declare(lua))?;
+    push(lib::regex::declare(lua))?;
+    push(lib::semver::declare(lua))?;
+    push(lib::template::declare(lua))?;
+    push(lib::tempfile::declare(lua))?;
+    push(lib::test::declare(lua))?;
+    push(lib::text::declare(lua))?;
+    push(lib::url::declare(lua))?;
+    push(lib::vcr::declare(lua))?;
+
+    push(vnd::hyper::declare(lua))?;
+    push(vnd::jsonschema::declare(lua))?;
+    push(vnd::quick_xml::declare(lua))?;
+    push(vnd::rusqlite::declare(lua))?;
+    push(vnd::serde_json::declare(lua))?;
+    push(vnd::serde_yaml::declare(lua))?;
+    push(vnd::sqlx_mysql::declare(lua))?;
+    push(vnd::sqlx_postgres::declare(lua))?;
+    push(vnd::testcontainers_modules::declare(lua))?;
+    push(vnd::toml::declare(lua))?;
+
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lua::sandbox::make_engine;
+
+    /// Every facade-migrated module reports a `#[link(name = "<key>")]`-keyed
+    /// header. Guards the facade's `#[link]` attribute and the collector wiring;
+    /// the count tracks the modules migrated so far (the rest follow in later
+    /// batches).
+    #[test]
+    fn headers_cover_migrated_modules() {
+        let lua = make_engine().expect("engine");
+        let headers = super::headers(&lua).expect("headers");
+
+        let keys: Vec<&str> = headers.iter().map(|(k, _)| k.as_str()).collect();
+        assert!(keys.contains(&"lib:args"));
+        assert!(keys.contains(&"lib:base64"));
+        assert!(keys.contains(&"lib:chrono"));
+        assert!(keys.contains(&"lib:compile"));
+        assert!(keys.contains(&"lib:compress"));
+        assert!(keys.contains(&"lib:csv"));
+        assert!(keys.contains(&"lib:diff"));
+        assert!(keys.contains(&"lib:glob"));
+        assert!(keys.contains(&"lib:hash"));
+        assert!(keys.contains(&"lib:hex"));
+        assert!(keys.contains(&"lib:hmac"));
+        assert!(keys.contains(&"lib:html"));
+        assert!(keys.contains(&"lib:http"));
+        assert!(keys.contains(&"lib:ini"));
+        assert!(keys.contains(&"lib:json"));
+        assert!(keys.contains(&"lib:log"));
+        assert!(keys.contains(&"lib:mime"));
+        assert!(keys.contains(&"lib:random"));
+        assert!(keys.contains(&"lib:regex"));
+        assert!(keys.contains(&"lib:semver"));
+        assert!(keys.contains(&"lib:template"));
+        assert!(keys.contains(&"lib:tempfile"));
+        assert!(keys.contains(&"lib:test"));
+        assert!(keys.contains(&"lib:text"));
+        assert!(keys.contains(&"lib:url"));
+        assert!(keys.contains(&"lib:vcr"));
+        assert!(keys.contains(&"std:collections"));
+        assert!(keys.contains(&"std:env"));
+        assert!(keys.contains(&"std:fs"));
+        assert!(keys.contains(&"std:io"));
+        assert!(keys.contains(&"std:net"));
+        assert!(keys.contains(&"std:task"));
+        assert!(keys.contains(&"std:thread"));
+        assert!(keys.contains(&"std:time"));
+        assert!(keys.contains(&"std:workers"));
+        assert!(keys.contains(&"vnd:hyper"));
+        assert!(keys.contains(&"vnd:jsonschema"));
+        assert!(keys.contains(&"vnd:quick_xml"));
+        assert!(keys.contains(&"vnd:rusqlite"));
+        assert!(keys.contains(&"vnd:serde_json"));
+        assert!(keys.contains(&"vnd:serde_yaml"));
+        assert!(keys.contains(&"vnd:sqlx_mysql"));
+        assert!(keys.contains(&"vnd:sqlx_postgres"));
+        assert!(keys.contains(&"vnd:testcontainers_modules"));
+        assert!(keys.contains(&"vnd:toml"));
+        assert_eq!(keys.len(), 45, "expected 45 migrated modules, got {keys:?}");
+
+        for (key, header) in &headers {
+            assert!(
+                header.contains(&format!("#[link(name = \"{key}\")]")),
+                "{key} header missing #[link(name = …)]:\n{header}"
+            );
+        }
+    }
+
+    /// Builds every facade-migrated module's runtime `require(...)` table,
+    /// paired with its registry key, in the same order as [`super::headers`].
+    /// The two lists line up by index so a test can cross-check a module's
+    /// live surface against its emitted header.
+    fn runtime_tables(lua: &Lua) -> Vec<(String, Table)> {
+        macro_rules! tables {
+            ($($key:literal => $module:expr),+ $(,)?) => {
+                vec![$(($key.to_string(), $module.expect($key))),+]
+            };
+        }
+        tables! {
+            "std:collections" => stdmod::collections::module(lua),
+            "std:env" => stdmod::env::module(lua),
+            "std:fs" => stdmod::fs::module(lua),
+            "std:io" => stdmod::io::module(lua),
+            "std:net" => stdmod::net::module(lua),
+            "std:task" => stdmod::task::module(lua),
+            "std:thread" => stdmod::thread::module(lua),
+            "std:time" => stdmod::time::module(lua),
+            "std:workers" => stdmod::workers::module(lua),
+            "lib:args" => lib::args::module(lua),
+            "lib:base64" => lib::base64::module(lua),
+            "lib:chrono" => lib::chrono::module(lua),
+            "lib:compile" => lib::compile::module(lua),
+            "lib:compress" => lib::compress::module(lua),
+            "lib:csv" => lib::csv::module(lua),
+            "lib:diff" => lib::diff::module(lua),
+            "lib:glob" => lib::glob::module(lua),
+            "lib:hash" => lib::hash::module(lua),
+            "lib:hex" => lib::hex::module(lua),
+            "lib:hmac" => lib::hmac::module(lua),
+            "lib:html" => lib::html::module(lua),
+            "lib:http" => lib::http::module(lua),
+            "lib:ini" => lib::ini::module(lua),
+            "lib:json" => lib::json::module(lua),
+            "lib:log" => lib::log::module(lua),
+            "lib:mime" => lib::mime::module(lua),
+            "lib:random" => lib::random::module(lua),
+            "lib:regex" => lib::regex::module(lua),
+            "lib:semver" => lib::semver::module(lua),
+            "lib:template" => lib::template::module(lua),
+            "lib:tempfile" => lib::tempfile::module(lua),
+            "lib:test" => lib::test::module(lua),
+            "lib:text" => lib::text::module(lua),
+            "lib:url" => lib::url::module(lua),
+            "lib:vcr" => lib::vcr::module(lua),
+            "vnd:hyper" => vnd::hyper::module(lua),
+            "vnd:jsonschema" => vnd::jsonschema::module(lua),
+            "vnd:quick_xml" => vnd::quick_xml::module(lua),
+            "vnd:rusqlite" => vnd::rusqlite::module(lua),
+            "vnd:serde_json" => vnd::serde_json::module(lua),
+            "vnd:serde_yaml" => vnd::serde_yaml::module(lua),
+            "vnd:sqlx_mysql" => vnd::sqlx_mysql::module(lua),
+            "vnd:sqlx_postgres" => vnd::sqlx_postgres::module(lua),
+            "vnd:testcontainers_modules" => vnd::testcontainers_modules::module(lua),
+            "vnd:toml" => vnd::toml::module(lua),
+        }
+    }
+
+    /// Every top-level key on a module's live `require(...)` table must be
+    /// covered by that module's emitted header. This is the guard that turns a
+    /// missing `record_fn` into a CI failure: register a free function with
+    /// `set` but forget to record its signature and the key is present at
+    /// runtime yet absent from the `extern "neoc"` block, so this fails.
+    ///
+    /// The check is one-directional (live keys ⊆ header surface): the header
+    /// may carry extra entries the base table lacks — most notably
+    /// `std:thread`'s `parent` / `shared`, injected only inside a spawned
+    /// worker — and that is fine. The shape of the assertion per key:
+    ///
+    /// - a function value must appear as a free `fn <key>(` in the
+    ///   `extern "neoc"` block;
+    /// - a table value (a constructor sub-table such as `chrono.Date`) must
+    ///   appear as `struct <Key>;`;
+    /// - any other value (an injected const such as `json.null`) must appear
+    ///   as `const <key>:`.
+    #[test]
+    fn header_surface_covers_runtime_table_keys() {
+        let lua = make_engine().expect("engine");
+        let headers = super::headers(&lua).expect("headers");
+        let tables = runtime_tables(&lua);
+
+        assert_eq!(
+            headers.len(),
+            tables.len(),
+            "headers and runtime tables drifted out of sync"
+        );
+
+        for ((hkey, header), (tkey, table)) in headers.iter().zip(tables.iter()) {
+            assert_eq!(hkey, tkey, "header / table ordering drifted");
+
+            // The `extern "neoc"` block holds the free functions and consts;
+            // userdata / sub-table `struct`s precede it. Splitting lets a
+            // free-function assertion ignore a same-named method inside an
+            // `impl` block.
+            let extern_block = header
+                .split_once("extern \"neoc\" {")
+                .map(|(_, rest)| rest)
+                .unwrap_or(header);
+
+            for pair in table.clone().pairs::<String, mlua::Value>() {
+                let (key, value) = pair.expect("module table pair");
+
+                match value {
+                    mlua::Value::Function(_) => {
+                        let needle = format!("fn {key}(");
+                        assert!(
+                            extern_block.contains(&needle),
+                            "{hkey}: function key {key:?} has no free `{needle}` in its header surface:\n{header}"
+                        );
+                    }
+                    mlua::Value::Table(_) => {
+                        let needle = format!("struct {key};");
+                        assert!(
+                            header.contains(&needle),
+                            "{hkey}: sub-table key {key:?} has no `{needle}` in its header surface:\n{header}"
+                        );
+                    }
+                    _ => {
+                        let needle = format!("const {key}:");
+                        assert!(
+                            extern_block.contains(&needle),
+                            "{hkey}: value key {key:?} has no `{needle}` in its header surface:\n{header}"
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn find_closest_returns_within_threshold() {

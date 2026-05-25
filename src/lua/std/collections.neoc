@@ -1,0 +1,45 @@
+// @generated from the std:collections runtime module — do not edit.
+struct Map;
+impl Map {
+    /// Construct an empty concurrent map.
+    fn new() -> Map;
+    /// Read a key.
+    fn get(key: string) -> LuaValue;
+    /// Insert or replace a key.
+    fn set(key: string, value: LuaValue) -> ();
+    /// Remove a key, returning whether it was present.
+    fn delete(key: string) -> bool;
+    /// Test for a key.
+    fn has(key: string) -> bool;
+    /// Number of entries.
+    fn size() -> number;
+    /// All keys as a 1-indexed table.
+    fn keys() -> LuaValue;
+    /// Remove all entries.
+    fn clear() -> ();
+}
+struct Counter;
+impl Counter {
+    /// Construct a counter, optionally seeded with an initial value.
+    fn new(initial: number?) -> Counter;
+    /// Current value.
+    fn get() -> number;
+    /// Add one, returning the new value.
+    fn increment() -> number;
+    /// Subtract one, returning the new value.
+    fn decrement() -> number;
+    /// Add `n`, returning the new value.
+    fn add(n: number) -> number;
+    /// Set the value to `n`.
+    fn set(n: number) -> ();
+}
+struct Mutex;
+impl Mutex {
+    /// Construct a coordination mutex.
+    fn new() -> Mutex;
+    /// Acquire the lock, call `f`, release, and return `f`'s result.
+    fn with_lock(f: LuaValue) -> LuaValue;
+}
+#[link(name = "std:collections")]
+extern "neoc" {
+}

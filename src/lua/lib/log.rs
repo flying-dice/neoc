@@ -60,6 +60,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use mlua::{Lua, Table, UserData, UserDataMethods, Value};
 use serde_json::{Map, Number, Value as Json};
 
+use crate::lua::facade::Module;
+
 /// Maximum nesting depth for `fields` table serialisation. Anything beyond
 /// this becomes the string `"<depth limit>"`. Three is enough for normal
 /// log payloads (one wrap of headers/params + one nested object) without
@@ -485,33 +487,120 @@ fn emit_tracing(lvl: LogLevel, msg: &str, fields: &Map<String, Json>) {
 // ---------------------------------------------------------------------------
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
+    Ok(declare(lua)?.into_table())
+}
+
+/// Declares the `lib:log` surface through the facade.
+///
+/// Every module function is set verbatim with
+/// [`crate::lua::facade::Module::set`]: the hand-written registration carried
+/// **no** `#[instrument]` span (each log call already emits its own
+/// `tracing::event!`), so routing through the facade's `func` would add a span
+/// and break byte-identical tracing. `new` constructs a `Logger`; the five
+/// module-level level functions delegate to a fresh default-configured
+/// instance on each call. The `Logger` userdata keeps its own `impl UserData`
+/// and is recorded here for the header via
+/// [`crate::lua::facade::Module::userdata`].
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "lib:log")?;
 
     // `log.new({ level?, format? })` — explicit logger instance.
-    t.set(
+    m.set(
         "new",
         lua.create_function(|_, opts: Option<Table>| LuaLogger::from_options(opts))?,
     )?;
 
+    m.record_fn(
+        "new",
+        &[("opts", "LuaValue?")],
+        "Logger",
+        "Construct an explicit logger instance; `opts` may carry `level` and `format`.",
+    );
+
     // Module-level convenience: `log.info(msg, fields?)` delegates to a
     // default-configured instance (level=info, format=json).
-    for (name, lvl) in [
-        ("trace", LogLevel::Trace),
-        ("debug", LogLevel::Debug),
-        ("info", LogLevel::Info),
-        ("warn", LogLevel::Warn),
-        ("error", LogLevel::Error),
+    for (name, lvl, doc) in [
+        (
+            "trace",
+            LogLevel::Trace,
+            "Module-level convenience for the lowest level; delegates to a fresh default logger.",
+        ),
+        (
+            "debug",
+            LogLevel::Debug,
+            "Module-level convenience for `debug`; delegates to a fresh default logger.",
+        ),
+        (
+            "info",
+            LogLevel::Info,
+            "Module-level convenience for `info` — the default level; delegates to a fresh default logger.",
+        ),
+        (
+            "warn",
+            LogLevel::Warn,
+            "Module-level convenience for `warn`; delegates to a fresh default logger.",
+        ),
+        (
+            "error",
+            LogLevel::Error,
+            "Module-level convenience for `error`; delegates to a fresh default logger.",
+        ),
     ] {
         let lvl_copy = lvl;
-        t.set(
+        m.set(
             name,
             lua.create_function(move |lua, (msg, fields): (String, Option<Table>)| {
                 LuaLogger::default_instance().emit(lua, lvl_copy, &msg, fields.as_ref())
             })?,
         )?;
+        m.record_fn(
+            name,
+            &[("msg", "string"), ("fields", "LuaValue?")],
+            "()",
+            doc,
+        );
     }
 
-    Ok(t)
+    m.userdata("Logger", |l| {
+        l.method(
+            "with",
+            &[("fields", "LuaValue")],
+            "Logger",
+            "Return a child logger with `fields` merged into the bound context; the parent is unchanged.",
+        )
+        .method(
+            "trace",
+            &[("msg", "string"), ("fields", "LuaValue?")],
+            "()",
+            "Emit a `trace`-level line if the logger's threshold permits it.",
+        )
+        .method(
+            "debug",
+            &[("msg", "string"), ("fields", "LuaValue?")],
+            "()",
+            "Emit a `debug`-level line if the logger's threshold permits it.",
+        )
+        .method(
+            "info",
+            &[("msg", "string"), ("fields", "LuaValue?")],
+            "()",
+            "Emit an `info`-level line if the logger's threshold permits it.",
+        )
+        .method(
+            "warn",
+            &[("msg", "string"), ("fields", "LuaValue?")],
+            "()",
+            "Emit a `warn`-level line if the logger's threshold permits it.",
+        )
+        .method(
+            "error",
+            &[("msg", "string"), ("fields", "LuaValue?")],
+            "()",
+            "Emit an `error`-level line; highest severity short of `off`.",
+        );
+    });
+
+    Ok(m)
 }
 
 // ---------------------------------------------------------------------------

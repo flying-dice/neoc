@@ -31,6 +31,7 @@ use std::path::Path;
 use mlua::{Lua, Table, Value};
 use tracing::instrument;
 
+use crate::lua::facade::Module;
 use crate::lua::sandbox::ok;
 
 // ---------------------------------------------------------------------------
@@ -226,9 +227,28 @@ fn bundle_impl(entrypoint: &Path, output: &Path) -> Result<(), String> {
 // ---------------------------------------------------------------------------
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
-    t.set("bundle", lua.create_function(bundle)?)?;
-    Ok(t)
+    Ok(declare(lua)?.into_table())
+}
+
+/// Declares the `lib:compile` surface through the facade.
+///
+/// `bundle` is set verbatim with [`crate::lua::facade::Module::set`]: it
+/// carries its own `#[instrument(name = "compile.bundle")]` span and bakes its
+/// own `"compile.bundle: "` error prefix in `bundle_impl` (so it routes through
+/// `ok` / `err` rather than the facade's auto-prefix path). Its signature is
+/// recorded for the header via [`crate::lua::facade::Module::record_fn`].
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "lib:compile")?;
+
+    m.set("bundle", lua.create_function(bundle)?)?;
+    m.record_fn(
+        "bundle",
+        &[("opts", "LuaValue")],
+        "Result<bool, string>",
+        "Bundle a Luau source file into a self-contained executable. `opts` requires `entrypoint` and `output` string fields.",
+    );
+
+    Ok(m)
 }
 
 /// `compile.bundle({ entrypoint = "main.luau", output = "my-app" })`

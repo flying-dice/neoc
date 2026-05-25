@@ -1,0 +1,14 @@
+// @generated from the vnd:toml runtime module — do not edit.
+#[link(name = "vnd:toml")]
+extern "neoc" {
+    /// Read a reader handle to completion and parse it as TOML.
+    fn decode(reader: LuaValue) -> Result<LuaValue, string>;
+    /// Parse a TOML string into a Lua value.
+    fn decode_string(s: string) -> Result<LuaValue, string>;
+    /// Serialise a Lua value to a compact TOML string.
+    fn encode(value: LuaValue) -> Result<string, string>;
+    /// Serialise a Lua value to a pretty-printed TOML string.
+    fn encode_pretty(value: LuaValue) -> Result<string, string>;
+    /// Serialise a Lua value to TOML and write it to a writer handle.
+    fn encode_to(value: LuaValue, writer: LuaValue) -> Result<bool, string>;
+}

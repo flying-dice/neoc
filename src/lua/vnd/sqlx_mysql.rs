@@ -35,6 +35,7 @@ use sqlx::{Column, ConnectOptions, Decode, Row, TypeInfo, ValueRef};
 use tracing::instrument;
 use tracing::log::LevelFilter;
 
+use crate::lua::facade::Module;
 use crate::lua::sandbox::{from_err, ok};
 
 /// sqlx caches prepared statements per connection up to this many entries.
@@ -43,12 +44,90 @@ use crate::lua::sandbox::{from_err, ok};
 const STATEMENT_CACHE_CAPACITY: usize = 1024;
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
-    t.set(
+    Ok(declare(lua)?.into_table())
+}
+
+/// Declares the `vnd:sqlx_mysql` surface through the facade.
+///
+/// `open` is set verbatim with [`crate::lua::facade::Module::set`] rather than
+/// `try_async_func` because the hand-written async function carries its own
+/// `#[instrument(name = "sqlx_mysql.open", target = "luau::lib::sqlx_mysql")]`
+/// attribute and bakes the `sqlx_mysql.open` error prefix into its pre-built
+/// `(Value, Value)` return — routing through the facade would add a second span
+/// and double the prefix. Its signature is recorded for the header via
+/// [`crate::lua::facade::Module::record_fn`]. The `Database` and `Statement`
+/// userdata types keep their own `impl UserData` (the `db_op!` / `stmt_op!`
+/// async methods, error prefixes, and `mysql.statement.*` op tags unchanged)
+/// and are recorded for the header via [`crate::lua::facade::Module::userdata`].
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "vnd:sqlx_mysql")?;
+
+    m.set(
         "open",
         lua.create_async_function(|lua, url: String| open(lua, url))?,
     )?;
-    Ok(t)
+    m.record_fn(
+        "open",
+        &[("url", "string")],
+        "Result<Database, string>",
+        "Open a MySQL connection pool. `url` is a standard MySQL URL: `mysql://user:pass@host:3306/dbname`.",
+    );
+
+    m.userdata("Database", |d| {
+        d.method(
+            "execute",
+            &[("sql", "string"), ("params", "LuaValue")],
+            "Result<number, string>",
+            "Execute a SQL statement, binding trailing arguments to `?` placeholders; returns rows affected.",
+        )
+        .method(
+            "query",
+            &[("sql", "string"), ("params", "LuaValue")],
+            "Result<LuaValue, string>",
+            "Execute a SELECT and return all rows as a 1-indexed table of column-keyed row tables.",
+        )
+        .method(
+            "query_one",
+            &[("sql", "string"), ("params", "LuaValue")],
+            "Result<LuaValue, string>",
+            "Execute a SELECT and return the first matching row, or nil when none matched.",
+        )
+        .method(
+            "prepare",
+            &[("sql", "string")],
+            "Statement",
+            "Prepare a SQL statement for repeated execution, sharing this connection pool.",
+        )
+        .method(
+            "close",
+            &[],
+            "()",
+            "Close all connections in the pool; subsequent method calls on this handle error.",
+        );
+    });
+
+    m.userdata("Statement", |s| {
+        s.method(
+            "execute",
+            &[("params", "LuaValue")],
+            "Result<number, string>",
+            "Execute the prepared statement with positional parameters; returns rows affected.",
+        )
+        .method(
+            "query",
+            &[("params", "LuaValue")],
+            "Result<LuaValue, string>",
+            "Execute the prepared SELECT and return all rows.",
+        )
+        .method(
+            "query_one",
+            &[("params", "LuaValue")],
+            "Result<LuaValue, string>",
+            "Execute the prepared SELECT and return the first matching row, or nil when none matched.",
+        );
+    });
+
+    Ok(m)
 }
 
 #[derive(Clone)]

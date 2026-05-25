@@ -1,0 +1,12 @@
+// @generated from the vnd:quick_xml runtime module — do not edit.
+#[link(name = "vnd:quick_xml")]
+extern "neoc" {
+    /// Read a reader handle to completion and parse it as XML.
+    fn decode(reader: LuaValue) -> Result<LuaValue, string>;
+    /// Parse an XML string into a Lua value.
+    fn decode_string(s: string) -> Result<LuaValue, string>;
+    /// Serialise a Lua value to an XML string rooted at `<root>`.
+    fn encode(value: LuaValue) -> Result<string, string>;
+    /// Serialise a Lua value to XML and write it to a writer handle.
+    fn encode_to(value: LuaValue, writer: LuaValue) -> Result<bool, string>;
+}

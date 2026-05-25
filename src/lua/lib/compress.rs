@@ -10,15 +10,48 @@ use flate2::write::{GzEncoder, ZlibEncoder};
 use mlua::{Lua, Table, Value};
 use tracing::instrument;
 
+use crate::lua::facade::Module;
 use crate::lua::sandbox::{err, from_err, ok};
 
 const DEFAULT_MAX_SIZE: usize = 256 * 1024 * 1024;
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
-    t.set("encode", lua.create_function(encode)?)?;
-    t.set("decode", lua.create_function(decode)?)?;
-    Ok(t)
+    Ok(declare(lua)?.into_table())
+}
+
+/// Declares the `lib:compress` surface through the facade. Both functions are
+/// fallible and return raw bytes as a Lua string.
+///
+/// Both `encode` and `decode` are a *mixed* raise-plus-channel shape:
+/// validation, format, and codec failures go to the `(value, error)` channel
+/// (via [`crate::lua::sandbox::err`] / [`crate::lua::sandbox::from_err`]), but a
+/// `lua.create_string` failure on the produced bytes raises an `mlua::Error`
+/// directly (the bare `?`) — a mix `try_func` cannot model. Both are registered
+/// verbatim with [`crate::lua::facade::Module::set`] (keeping their
+/// `#[instrument]` span and `compress.<fn>` channel prefix) and recorded for the
+/// header with [`crate::lua::facade::Module::record_fn`]. The `(value, error)`
+/// shape, the `compress.encode` / `compress.decode` error prefixes, the raise on
+/// `create_string`, and the `luau::lib::compress` spans are byte-identical to
+/// the hand-written registration this replaces.
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "lib:compress")?;
+    m.set("encode", lua.create_function(encode)?)?
+        .set("decode", lua.create_function(decode)?)?;
+
+    m.record_fn(
+        "encode",
+        &[("format", "string"), ("data", "string"), ("opts", "LuaValue?")],
+        "Result<string, string>",
+        "Compress `data` with `format` (`gzip`, `zlib`, `zstd`, or `brotli`); `opts.level` tunes the compression level.",
+    )
+    .record_fn(
+        "decode",
+        &[("format", "string"), ("data", "string"), ("opts", "LuaValue?")],
+        "Result<string, string>",
+        "Decompress `data` with `format`; `opts.max_size` caps the output size (default 256 MiB).",
+    );
+
+    Ok(m)
 }
 
 #[instrument(name = "compress.encode", target = "luau::lib::compress", skip_all)]

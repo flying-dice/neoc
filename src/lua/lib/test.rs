@@ -9,11 +9,29 @@
 
 use mlua::{Lua, Table, Value};
 
+use crate::lua::facade::Module;
+
 const STATE_KEY: &str = "_NEOC_TEST";
 const CTR_KEY: &str = "_NEOC_EXPECT_CTR";
 
-// TODO: clean-code - 0.6 - SRP: module() does state init, describe/test/it/expect registration, and println formatting — split into init_state, register_suite_fns, register_expect.
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
+    Ok(declare(lua)?.into_table())
+}
+
+/// Declares the `lib:test` surface through the facade.
+///
+/// Every function is set verbatim with [`crate::lua::facade::Module::set`]:
+/// `describe` / `test` / `it` are async (created with `create_async_function`)
+/// and `expect` returns a matcher table whose chained assertions raise
+/// `mlua::Error::RuntimeError` directly — none use the `(value, error)` idiom or
+/// an `#[instrument]` span, so the facade's `func` / `try_func` path does not
+/// apply. The matcher methods live on a plain returned table, not a userdata
+/// type. The free functions' signatures are recorded for the header via
+/// [`crate::lua::facade::Module::record_fn`].
+// TODO: clean-code - 0.6 - SRP: declare() does state init, describe/test/it/expect registration, and println formatting — split into init_state, register_suite_fns, register_expect.
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "lib:test")?;
+
     let state = lua.create_table()?;
     state.set("passed", 0_u32)?;
     state.set("failed", 0_u32)?;
@@ -24,10 +42,8 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
     ctr.set("n", 0_u64)?;
     lua.set_named_registry_value(CTR_KEY, ctr)?;
 
-    let t = lua.create_table()?;
-
     // describe(name, fn) — async so test bodies can call yielding functions
-    t.set(
+    m.set(
         "describe",
         lua.create_async_function(|lua, (name, f): (String, mlua::Function)| async move {
             println!("\n{name}");
@@ -38,6 +54,12 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
             result
         })?,
     )?;
+    m.record_fn(
+        "describe",
+        &[("name", "string"), ("fn", "LuaValue")],
+        "()",
+        "Declare a named test suite. Suites nest — `describe` inside `describe` prefixes the test name.",
+    );
 
     // test(name, fn) / it(name, fn) — async for the same reason
     let run_test =
@@ -63,16 +85,34 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
             }
             Ok(())
         })?;
-    t.set("test", run_test.clone())?;
-    t.set("it", run_test)?;
+    m.set("test", run_test.clone())?;
+    m.record_fn(
+        "test",
+        &[("name", "string"), ("fn", "LuaValue")],
+        "()",
+        "Declare a named test case. The callback may be async. Alias: `it`.",
+    );
+    m.set("it", run_test)?;
+    m.record_fn(
+        "it",
+        &[("name", "string"), ("fn", "LuaValue")],
+        "()",
+        "Alias for `test`. Prefer this inside a `describe` block for BDD-style readability.",
+    );
 
     // expect(value) -> matcher table with standalone (dot-syntax) methods
-    t.set(
+    m.set(
         "expect",
         lua.create_function(|lua, value: Value| make_matcher(lua, value))?,
     )?;
+    m.record_fn(
+        "expect",
+        &[("value", "LuaValue")],
+        "LuaValue",
+        "Wrap `value` in a matcher table exposing dot-syntax assertions (`toBe`, `toBeNil`, `toBeTruthy`, `toBeFalsy`, `toContain`, `toThrow`).",
+    );
 
-    Ok(t)
+    Ok(m)
 }
 
 /// Called by `main` after the script finishes to get (passed, failed) counts.

@@ -11,8 +11,9 @@ use globset::GlobSetBuilder;
 use mlua::{Lua, Table};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
-use tracing::instrument;
 use walkdir::WalkDir;
+
+use crate::lua::facade::Module;
 
 const MAX_HEADER_LINE: u64 = 8192;
 const MAX_HEADERS: usize = 100;
@@ -28,12 +29,25 @@ struct StaticFile {
 type FileMap = HashMap<String, StaticFile>;
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
-    t.set("serve_static", lua.create_async_function(serve_static)?)?;
-    Ok(t)
+    Ok(declare(lua)?.into_table())
 }
 
-#[instrument(name = "http.serve_static", target = "luau::lib::http", skip_all)]
+/// Declares the `lib:http` surface through the facade. `serve_static` is an
+/// infallible (from Lua's view) async function that blocks until the server
+/// stops; it raises on a hard failure (glob resolution, bind). The registered
+/// async Lua surface and the `luau::lib::http` span (`http.serve_static`) are
+/// byte-identical to the hand-written registration this replaces.
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "lib:http")?;
+    m.async_func(
+        "serve_static",
+        &[("glob_pattern", "string"), ("opts", "LuaValue?")],
+        "Serve the files matching `glob_pattern` over HTTP/1.1; `opts.host` / `opts.port` set the bind address (default `0.0.0.0:8080`). Blocks until Ctrl-C.",
+        |lua, args: (String, Option<Table>)| serve_static(lua, args),
+    )?;
+    Ok(m)
+}
+
 async fn serve_static(
     _lua: Lua,
     (glob_pattern, opts): (String, Option<Table>),

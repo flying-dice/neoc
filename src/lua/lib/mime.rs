@@ -5,6 +5,7 @@
 use mlua::{Lua, Table, Value};
 use tracing::instrument;
 
+use crate::lua::facade::Module;
 use crate::lua::sandbox::{from_err, ok};
 
 /// Built-in preference map for canonical extensions where `mime_guess`'s
@@ -21,24 +22,52 @@ static RUNTIME_PREFS: &[(&str, &str)] = &[
 ];
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
-    t.set("from_extension", lua.create_function(from_extension)?)?;
-    t.set("to_extension", lua.create_function(to_extension)?)?;
-    t.set("detect", lua.create_function(detect)?)?;
-    Ok(t)
+    Ok(declare(lua)?.into_table())
 }
 
-#[instrument(name = "mime.from_extension", target = "luau::lib::mime", skip_all)]
-fn from_extension(lua: &Lua, ext: String) -> mlua::Result<(Value, Value)> {
+/// Declares the `lib:mime` surface through the facade.
+///
+/// `from_extension` and `detect` are pure `(value, error)`-channel functions
+/// with no raise path, so they route through
+/// [`crate::lua::facade::Module::try_func`]. `to_extension` propagates an
+/// `mlua::Error` from the prefs-table coercion (`prefs.get::<Option<String>>`)
+/// *as a raise*, not into the channel — a shape `try_func` cannot model — so it
+/// is registered verbatim with [`crate::lua::facade::Module::set`], keeping its
+/// `#[instrument]` span and `mime.to_extension` error prefix, and recorded for
+/// the header with [`crate::lua::facade::Module::record_fn`]. All three keep
+/// their `(value, error)` shape, `mime.<fn>` error prefix, exact error
+/// suffixes, and `luau::lib::mime` span byte-identical to the hand-written
+/// registration this replaces.
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "lib:mime")?;
+    m.try_func(
+        "from_extension",
+        &[("ext", "string")],
+        "Look up the MIME type for a file extension (leading dot optional).",
+        from_extension,
+    )?
+    .set("to_extension", lua.create_function(to_extension)?)?
+    .try_func(
+        "detect",
+        &[("filename", "string")],
+        "Detect the MIME type of a filename from its extension.",
+        detect,
+    )?;
+    m.record_fn(
+        "to_extension",
+        &[("mime_type", "string"), ("prefs", "LuaValue?")],
+        "Result<string, string>",
+        "Pick a file extension for a MIME type, honouring an optional preference map.",
+    );
+    Ok(m)
+}
+
+fn from_extension(_: &Lua, ext: String) -> Result<String, String> {
     // Normalize: strip leading dot if present, so both ".json" and "json" work.
     let ext_clean = ext.strip_prefix('.').unwrap_or(&ext);
     match mime_guess::from_ext(ext_clean).first() {
-        Some(mime) => ok(lua, mime.to_string()),
-        None => from_err(
-            lua,
-            "mime.from_extension",
-            format!("unknown extension: {ext}"),
-        ),
+        Some(mime) => Ok(mime.to_string()),
+        None => Err(format!("unknown extension: {ext}")),
     }
 }
 
@@ -76,15 +105,10 @@ fn to_extension(
     }
 }
 
-#[instrument(name = "mime.detect", target = "luau::lib::mime", skip_all)]
-fn detect(lua: &Lua, filename: String) -> mlua::Result<(Value, Value)> {
+fn detect(_: &Lua, filename: String) -> Result<String, String> {
     match mime_guess::from_path(&filename).first() {
-        Some(mime) => ok(lua, mime.to_string()),
-        None => from_err(
-            lua,
-            "mime.detect",
-            format!("cannot determine MIME type for: {filename}"),
-        ),
+        Some(mime) => Ok(mime.to_string()),
+        None => Err(format!("cannot determine MIME type for: {filename}")),
     }
 }
 

@@ -40,6 +40,7 @@ use std::sync::Arc;
 use mlua::{Lua, UserData, UserDataMethods, Value};
 use serde_json::Value as JV;
 
+use crate::lua::facade::Module;
 use crate::lua::sandbox::{from_err, ok};
 
 /// Compiled schema, shareable across coroutines via `Arc`.
@@ -115,8 +116,24 @@ impl UserData for JValidationResult {
 }
 
 pub fn module(lua: &Lua) -> mlua::Result<mlua::Table> {
-    let t = lua.create_table()?;
-    t.set(
+    Ok(declare(lua)?.into_table())
+}
+
+/// Declares the `vnd:jsonschema` surface through the facade.
+///
+/// `compile` is set verbatim with [`crate::lua::facade::Module::set`] rather
+/// than `try_func` because the hand-written function carries **no**
+/// `#[instrument]` span and bakes its own `jsonschema.compile` error prefix —
+/// routing through `try_func` would add a span and double the prefix. Its
+/// signature is recorded for the header via
+/// [`crate::lua::facade::Module::record_fn`]. The `Schema` (`JSchema`) and
+/// `ValidationResult` (`JValidationResult`) userdata types keep their own
+/// `impl UserData` (methods unchanged) and are recorded for the header via
+/// [`crate::lua::facade::Module::userdata`].
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "vnd:jsonschema")?;
+
+    m.set(
         "compile",
         lua.create_function(|lua, schema_json: mlua::String| {
             let bytes = schema_json.as_bytes();
@@ -135,7 +152,39 @@ pub fn module(lua: &Lua) -> mlua::Result<mlua::Table> {
             }
         })?,
     )?;
-    Ok(t)
+    m.record_fn(
+        "compile",
+        &[("schema_json", "string")],
+        "Result<Schema, string>",
+        "Parse and compile a JSON Schema string into a `Schema` validator.",
+    );
+
+    m.userdata("Schema", |s| {
+        s.method(
+            "is_valid",
+            &[("value", "LuaValue")],
+            "bool",
+            "Fast validation gate: whether `value` conforms to the schema, short-circuiting on the first error.",
+        )
+        .method(
+            "validate",
+            &[("value", "LuaValue")],
+            "ValidationResult",
+            "Full validation run, returning a `ValidationResult` exposing every error message.",
+        );
+    });
+
+    m.userdata("ValidationResult", |r| {
+        r.method("ok", &[], "bool", "Whether the validated value passed.")
+            .method(
+                "errors",
+                &[],
+                "LuaValue",
+                "All validation error messages as a 1-indexed table of strings; empty when ok.",
+            );
+    });
+
+    Ok(m)
 }
 
 // ---------------------------------------------------------------------------

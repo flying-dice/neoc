@@ -35,6 +35,7 @@ use tracing::instrument;
 use xxhash_rust::xxh3::Xxh3;
 use xxhash_rust::xxh64::Xxh64;
 
+use crate::lua::facade::Module;
 use crate::lua::sandbox::{err, ok};
 
 /// Canonical algorithm list. Order is the d.luau / docs order — cryptographic
@@ -169,14 +170,36 @@ impl UserData for Hasher {
 // ---------------------------------------------------------------------------
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
+    Ok(declare(lua)?.into_table())
+}
+
+/// Declares the `lib:hash` surface through the facade.
+///
+/// `hash` is a *mixed* raise-plus-channel one-shot: an unknown-algorithm
+/// failure goes to the `(value, error)` channel via
+/// [`crate::lua::sandbox::err`], but a `lua.create_string` failure on the
+/// digest bytes raises an `mlua::Error` directly (the bare `?`) — a mix
+/// `try_func` cannot model — so it is set verbatim with
+/// [`crate::lua::facade::Module::set`] (keeping its `hash.hash` span and channel
+/// prefix) and recorded for the header with
+/// [`crate::lua::facade::Module::record_fn`]. The `Hasher` constructor sub-table
+/// and the `algorithms` lister are likewise set verbatim with
+/// [`crate::lua::facade::Module::set`] because their hand-written registration
+/// carried (respectively) a `hash.Hasher.new` span the facade's `type_` would
+/// rename to `Hasher.new`, and no span at all — routing them through the facade
+/// would change the trace shape. The `Hasher` userdata keeps its own
+/// `impl UserData` and is recorded here for the header via
+/// [`crate::lua::facade::Module::userdata`].
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "lib:hash")?;
 
     let hasher_sub = lua.create_table()?;
     hasher_sub.set("new", lua.create_function(hasher_new)?)?;
-    t.set("Hasher", hasher_sub)?;
+    m.set("Hasher", hasher_sub)?;
 
-    t.set("hash", lua.create_function(hash_one_shot)?)?;
-    t.set(
+    m.set("hash", lua.create_function(hash_one_shot)?)?;
+
+    m.set(
         "algorithms",
         lua.create_function(|lua, _: ()| {
             let tbl = lua.create_table()?;
@@ -187,7 +210,41 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
         })?,
     )?;
 
-    Ok(t)
+    m.record_fn(
+        "hash",
+        &[("algo", "string"), ("data", "string")],
+        "Result<string, string>",
+        "One-shot hash of `data` under `algo`, returning the digest as raw bytes.",
+    )
+    .record_fn(
+        "algorithms",
+        &[],
+        "LuaValue",
+        "The list of supported algorithm names.",
+    );
+
+    m.userdata("Hasher", |h| {
+        h.method(
+            "update",
+            &[("data", "string")],
+            "()",
+            "Feed `data` into the running digest.",
+        )
+        .method(
+            "digest",
+            &[],
+            "string",
+            "Return the current digest as raw bytes; idempotent and does not consume the hasher.",
+        )
+        .method(
+            "algorithm",
+            &[],
+            "string",
+            "Return the algorithm name this hasher was constructed with.",
+        );
+    });
+
+    Ok(m)
 }
 
 #[instrument(name = "hash.Hasher.new", target = "luau::lib::hash", skip_all)]

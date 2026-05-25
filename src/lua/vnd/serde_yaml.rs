@@ -12,95 +12,96 @@
 //! are flattened to strings/objects in that step and are not preserved.
 
 use mlua::{AnyUserData, Error, Lua, LuaSerdeExt, Table, Value};
-use tracing::instrument;
 
-use crate::lua::sandbox::{from_err, ok};
+use crate::lua::facade::Module;
 use crate::lua::std::io::{ReaderHandle, WriterHandle};
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
-    t.set("decode", lua.create_function(decode)?)?;
-    t.set("decode_string", lua.create_function(decode_string)?)?;
-    t.set("encode", lua.create_function(encode)?)?;
-    t.set("encode_to", lua.create_function(encode_to)?)?;
-    Ok(t)
+    Ok(declare(lua)?.into_table())
 }
 
-#[instrument(name = "serde_yaml.decode", target = "luau::lib::serde_yaml", skip_all)]
+/// Declares the `vnd:serde_yaml` surface through the facade. Every function is
+/// fallible; the `(value, error)` shape, the `serde_yaml.<fn>` error prefixes,
+/// the exact error suffixes (handle, parse, serialize, and I/O failures), and
+/// the `luau::lib::serde_yaml` spans are byte-identical to the hand-written
+/// registration this replaces.
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "vnd:serde_yaml")?;
+    m.try_func(
+        "decode",
+        &[("reader", "LuaValue")],
+        "Read a reader handle to completion and parse it as YAML.",
+        decode,
+    )?
+    .try_func(
+        "decode_string",
+        &[("s", "string")],
+        "Parse a YAML string into a Lua value.",
+        decode_string,
+    )?
+    .try_func(
+        "encode",
+        &[("value", "LuaValue")],
+        "Serialise a Lua value to a YAML string.",
+        encode,
+    )?
+    .try_func(
+        "encode_to",
+        &[("value", "LuaValue"), ("writer", "LuaValue")],
+        "Serialise a Lua value to YAML and write it to a writer handle.",
+        encode_to,
+    )?;
+    Ok(m)
+}
+
 // TODO: clean-code - 0.7 - DRY: reader-handle borrow + error mirrors encode_to's writer-handle pattern
-fn decode(lua: &Lua, ud: AnyUserData) -> mlua::Result<(Value, Value)> {
+fn decode(lua: &Lua, ud: AnyUserData) -> Result<Value, String> {
     let rh = match ud.borrow::<ReaderHandle>() {
         Ok(h) => h,
-        Err(_) => return from_err(lua, "serde_yaml.decode", "expected a reader handle"),
+        Err(_) => return Err("expected a reader handle".to_string()),
     };
     let mut locked = rh.inner.lock();
     let result = serde_yaml::from_reader::<_, serde_json::Value>(&mut **locked);
     drop(locked);
     drop(rh);
-    json_result_to_lua_pair(lua, result, "serde_yaml.decode")
+    json_result_to_value(lua, result)
 }
 
-#[instrument(
-    name = "serde_yaml.decode_string",
-    target = "luau::lib::serde_yaml",
-    skip_all
-)]
-fn decode_string(lua: &Lua, s: mlua::String) -> mlua::Result<(Value, Value)> {
+fn decode_string(lua: &Lua, s: mlua::String) -> Result<Value, String> {
     let bytes = s.as_bytes();
     let result = serde_yaml::from_slice::<serde_json::Value>(&bytes);
-    json_result_to_lua_pair(lua, result, "serde_yaml.decode_string")
+    json_result_to_value(lua, result)
 }
 
 /// Materialise the `Result<serde_json::Value, _>` returned by every YAML
-/// parser into the `(value, error)` Lua tuple shape. Decode and decode_string
+/// parser into a Lua value or a stringified error. Decode and decode_string
 /// share the same parse → lua bridge → wrap tail.
-fn json_result_to_lua_pair<E: std::fmt::Display>(
+fn json_result_to_value<E: std::fmt::Display>(
     lua: &Lua,
     parse_result: Result<serde_json::Value, E>,
-    prefix: &'static str,
-) -> mlua::Result<(Value, Value)> {
-    match parse_result {
-        Ok(json) => match lua.to_value(&json) {
-            Ok(v) => ok(lua, v),
-            Err(e) => from_err(lua, prefix, e),
-        },
-        Err(e) => from_err(lua, prefix, e),
-    }
+) -> Result<Value, String> {
+    let json = parse_result.map_err(|e| e.to_string())?;
+    lua.to_value(&json).map_err(|e| e.to_string())
 }
 
-#[instrument(name = "serde_yaml.encode", target = "luau::lib::serde_yaml", skip_all)]
-fn encode(lua: &Lua, v: Value) -> mlua::Result<(Value, Value)> {
-    let json = match lua_to_json_value(&v) {
-        Ok(j) => j,
-        Err(e) => return from_err(lua, "serde_yaml.encode", e),
-    };
-    match serde_yaml::to_string(&json) {
-        Ok(s) => ok(lua, s),
-        Err(e) => from_err(lua, "serde_yaml.encode", e),
-    }
+fn encode(_: &Lua, v: Value) -> Result<String, String> {
+    let json = lua_to_json_value(&v).map_err(|e| e.to_string())?;
+    serde_yaml::to_string(&json).map_err(|e| e.to_string())
 }
 
-#[instrument(
-    name = "serde_yaml.encode_to",
-    target = "luau::lib::serde_yaml",
-    skip_all
-)]
-fn encode_to(lua: &Lua, (v, ud): (Value, AnyUserData)) -> mlua::Result<(Value, Value)> {
+fn encode_to(_: &Lua, (v, ud): (Value, AnyUserData)) -> Result<bool, String> {
     let wh = match ud.borrow::<WriterHandle>() {
         Ok(h) => h,
-        Err(_) => return from_err(lua, "serde_yaml.encode_to", "expected a writer handle"),
+        Err(_) => return Err("expected a writer handle".to_string()),
     };
-    let json = match lua_to_json_value(&v) {
-        Ok(j) => j,
-        Err(e) => return from_err(lua, "serde_yaml.encode_to", e),
-    };
+    let json = lua_to_json_value(&v).map_err(|e| e.to_string())?;
     let mut locked = wh.0.lock();
     let result = serde_yaml::to_writer(&mut **locked, &json);
     drop(locked);
     drop(wh);
     match result {
-        Ok(()) => ok(lua, true),
-        Err(e) => from_err(lua, "serde_yaml.encode_to", e),
+        Ok(()) => Ok(true),
+        Err(e) => Err(e.to_string()),
     }
 }
 

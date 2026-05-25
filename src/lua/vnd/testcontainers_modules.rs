@@ -43,23 +43,110 @@ use testcontainers_modules::testcontainers::{
 use tokio::sync::Mutex;
 use tracing::instrument;
 
+use crate::lua::facade::Module;
 use crate::lua::sandbox::{from_err, ok};
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
-    t.set(
+    Ok(declare(lua)?.into_table())
+}
+
+/// Declares the `vnd:testcontainers_modules` surface through the facade.
+///
+/// `mysql`, `postgres`, and `generic` are set verbatim with
+/// [`crate::lua::facade::Module::set`] rather than `try_async_func` because each
+/// hand-written async function carries its own
+/// `#[instrument(name = "testcontainers_modules.<fn>", target = "luau::lib::testcontainers_modules")]`
+/// attribute and bakes the `testcontainers_modules.<fn>` error prefix into its
+/// pre-built `(Value, Value)` return — routing through the facade would add a
+/// second span and double the prefix. Their signatures are recorded for the
+/// header via [`crate::lua::facade::Module::record_fn`]. The `MysqlContainer`,
+/// `PostgresContainer`, and `GenericContainer` handle types keep their own
+/// `impl UserData` (the sync accessors and async `stop` unchanged) and are
+/// recorded for the header via [`crate::lua::facade::Module::userdata`]. The
+/// `mysql` / `postgres` shortcuts share one generic `TypedContainer<I>` Rust
+/// type at runtime; the header records the two image-specific surfaces.
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "vnd:testcontainers_modules")?;
+
+    m.set(
         "mysql",
         lua.create_async_function(|lua, _: ()| start_mysql(lua))?,
     )?;
-    t.set(
+    m.record_fn(
+        "mysql",
+        &[],
+        "Result<MysqlContainer, string>",
+        "Start a MySQL container with default settings, returning a handle once it is ready to accept connections.",
+    );
+
+    m.set(
         "postgres",
         lua.create_async_function(|lua, _: ()| start_postgres(lua))?,
     )?;
-    t.set(
+    m.record_fn(
+        "postgres",
+        &[],
+        "Result<PostgresContainer, string>",
+        "Start a Postgres container with default settings, returning a handle once it is ready.",
+    );
+
+    m.set(
         "generic",
         lua.create_async_function(|lua, opts: Table| start_generic(lua, opts))?,
     )?;
-    Ok(t)
+    m.record_fn(
+        "generic",
+        &[("opts", "LuaValue")],
+        "Result<GenericContainer, string>",
+        "Start a generic Docker container from any image given `{ image, tag?, ports?, env?, cmd?, wait? }`, returning a handle once its readiness probe passes.",
+    );
+
+    m.userdata("MysqlContainer", |c| {
+        c.method(
+            "url",
+            &[],
+            "string",
+            "Return a MySQL connection URL pre-formatted for `sqlx_mysql.open` (user `root`, no password, database `test`).",
+        )
+        .method("host", &[], "string", "Return the container host (always `\"127.0.0.1\"`).")
+        .method("port", &[], "number", "Return the mapped host port for MySQL's 3306.")
+        .method(
+            "stop",
+            &[],
+            "()",
+            "Stop the container; idempotent. The container also stops on garbage collection if not stopped explicitly.",
+        );
+    });
+
+    m.userdata("PostgresContainer", |c| {
+        c.method(
+            "url",
+            &[],
+            "string",
+            "Return a Postgres connection URL pre-formatted for `sqlx_postgres.open` (user `postgres`, password `postgres`, database `postgres`).",
+        )
+        .method("host", &[], "string", "Return the container host (always `\"127.0.0.1\"`).")
+        .method("port", &[], "number", "Return the mapped host port for Postgres's 5432.")
+        .method(
+            "stop",
+            &[],
+            "()",
+            "Stop the container; idempotent. The container also stops on garbage collection if not stopped explicitly.",
+        );
+    });
+
+    m.userdata("GenericContainer", |c| {
+        c.method("host", &[], "string", "Return the container host (always `\"127.0.0.1\"`).")
+            .method(
+                "port",
+                &[("container_port", "number")],
+                "number",
+                "Return the mapped host port for the given container port; only ports listed at start time are available, requesting an unmapped port errors.",
+            )
+            .method("stop", &[], "()", "Stop the container; idempotent.");
+    });
+
+    Ok(m)
 }
 
 // ---------------------------------------------------------------------------

@@ -31,15 +31,67 @@ use sqlx::query::Query;
 use sqlx::{Column, Row, TypeInfo, ValueRef};
 use tracing::instrument;
 
+use crate::lua::facade::Module;
 use crate::lua::sandbox::{from_err, ok};
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
-    t.set(
+    Ok(declare(lua)?.into_table())
+}
+
+/// Declares the `vnd:sqlx_postgres` surface through the facade.
+///
+/// `open` is set verbatim with [`crate::lua::facade::Module::set`] rather than
+/// `try_async_func` because the hand-written async function carries its own
+/// `#[instrument(name = "sqlx_postgres.open", target = "luau::lib::sqlx_postgres")]`
+/// attribute and bakes the `sqlx_postgres.open` error prefix into its pre-built
+/// `(Value, Value)` return — routing through the facade would add a second span
+/// and double the prefix. Its signature is recorded for the header via
+/// [`crate::lua::facade::Module::record_fn`]. The `Database` userdata type keeps
+/// its own `impl UserData` (the async methods and `sqlx_postgres.*` error
+/// prefixes unchanged) and is recorded for the header via
+/// [`crate::lua::facade::Module::userdata`].
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "vnd:sqlx_postgres")?;
+
+    m.set(
         "open",
         lua.create_async_function(|lua, url: String| open(lua, url))?,
     )?;
-    Ok(t)
+    m.record_fn(
+        "open",
+        &[("url", "string")],
+        "Result<Database, string>",
+        "Open a Postgres connection pool. `url` is a standard Postgres URL: `postgres://user:pass@host:5432/dbname`.",
+    );
+
+    m.userdata("Database", |d| {
+        d.method(
+            "execute",
+            &[("sql", "string"), ("params", "LuaValue")],
+            "Result<number, string>",
+            "Execute a SQL statement, binding trailing arguments to `$1, $2, …` placeholders; returns rows affected.",
+        )
+        .method(
+            "query",
+            &[("sql", "string"), ("params", "LuaValue")],
+            "Result<LuaValue, string>",
+            "Execute a SELECT and return all rows as a 1-indexed table of column-keyed row tables.",
+        )
+        .method(
+            "query_one",
+            &[("sql", "string"), ("params", "LuaValue")],
+            "Result<LuaValue, string>",
+            "Execute a SELECT and return the first matching row, or nil when none matched.",
+        )
+        .method(
+            "close",
+            &[],
+            "()",
+            "Close all connections in the pool; subsequent method calls on this handle error.",
+        );
+    });
+
+    Ok(m)
 }
 
 #[derive(Clone)]

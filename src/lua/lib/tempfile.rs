@@ -32,6 +32,7 @@ use mlua::{Lua, MetaMethod, Table, UserData, UserDataMethods, Value};
 use tempfile::{Builder, NamedTempFile, TempDir};
 use tracing::instrument;
 
+use crate::lua::facade::Module;
 use crate::lua::sandbox::{from_err, ok};
 
 // ---------------------------------------------------------------------------
@@ -168,21 +169,98 @@ impl UserData for TempDirHandle {
 // ---------------------------------------------------------------------------
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
+    Ok(declare(lua)?.into_table())
+}
+
+/// Declares the `lib:tempfile` surface through the facade.
+///
+/// The `TempFile` / `TempDir` constructor sub-tables and the `tempfile` /
+/// `tempdir` flat helpers are set verbatim with
+/// [`crate::lua::facade::Module::set`]: the constructors carry
+/// `tempfile.<Type>.new`-named spans the facade's `type_` would rename, and the
+/// flat helpers delegate to those constructors so their error prefix is
+/// `tempfile.<Type>.new` (not their own name) under a nested span — neither
+/// shape the facade models. `gettempdir` is an infallible one-shot routed
+/// through [`crate::lua::facade::Module::func`]; its `tempfile.gettempdir` span
+/// matches what the facade emits. Both userdata types keep their own
+/// `impl UserData` and are recorded here for the header via
+/// [`crate::lua::facade::Module::userdata`].
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "lib:tempfile")?;
 
     let tf_sub = lua.create_table()?;
     tf_sub.set("new", lua.create_function(tempfile_new)?)?;
-    t.set("TempFile", tf_sub)?;
+    m.set("TempFile", tf_sub)?;
 
     let td_sub = lua.create_table()?;
     td_sub.set("new", lua.create_function(tempdir_new)?)?;
-    t.set("TempDir", td_sub)?;
+    m.set("TempDir", td_sub)?;
 
-    t.set("tempfile", lua.create_function(flat_tempfile)?)?;
-    t.set("tempdir", lua.create_function(flat_tempdir)?)?;
-    t.set("gettempdir", lua.create_function(flat_gettempdir)?)?;
+    m.set("tempfile", lua.create_function(flat_tempfile)?)?
+        .set("tempdir", lua.create_function(flat_tempdir)?)?
+        .func(
+            "gettempdir",
+            &[],
+            "Return the system's temporary-directory path.",
+            |_, _: ()| flat_gettempdir(),
+        )?;
 
-    Ok(t)
+    m.record_fn(
+        "tempfile",
+        &[("opts", "LuaValue?")],
+        "Result<TempFile, string>",
+        "Create a temporary file under the system temp directory, returning a `TempFile` handle.",
+    )
+    .record_fn(
+        "tempdir",
+        &[("opts", "LuaValue?")],
+        "Result<TempDir, string>",
+        "Create a temporary directory under the system temp directory, returning a `TempDir` handle.",
+    );
+
+    m.userdata("TempFile", |t| {
+        t.method(
+            "path",
+            &[],
+            "string",
+            "Return the absolute path to the temp file; stable across calls and does not consume the handle.",
+        )
+        .method(
+            "keep",
+            &[],
+            "Result<string, string>",
+            "Consume the handle and keep the file on disk past drop, returning the path.",
+        )
+        .method(
+            "close",
+            &[],
+            "()",
+            "Release the handle eagerly; idempotent.",
+        );
+    });
+
+    m.userdata("TempDir", |t| {
+        t.method(
+            "path",
+            &[],
+            "string",
+            "Return the absolute path to the temp directory as a string.",
+        )
+        .method(
+            "keep",
+            &[],
+            "Result<string, string>",
+            "Consume the handle and keep the directory on disk past drop, returning the path.",
+        )
+        .method(
+            "close",
+            &[],
+            "Result<bool, string>",
+            "Remove the directory eagerly, surfacing unlink errors; idempotent.",
+        );
+    });
+
+    Ok(m)
 }
 
 #[instrument(
@@ -231,8 +309,7 @@ fn flat_tempdir(lua: &Lua, opts: Option<Table>) -> mlua::Result<(Value, Value)> 
     tempdir_new(lua, opts)
 }
 
-#[instrument(name = "tempfile.gettempdir", target = "luau::lib::tempfile", skip_all)]
-fn flat_gettempdir(_: &Lua, _: ()) -> mlua::Result<String> {
+fn flat_gettempdir() -> mlua::Result<String> {
     Ok(std::env::temp_dir().to_string_lossy().into_owned())
 }
 
