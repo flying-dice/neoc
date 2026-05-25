@@ -323,9 +323,23 @@ mod tests {
         PORT_CTR.fetch_add(1, Ordering::Relaxed)
     }
 
-    fn binary_path() -> PathBuf {
+    /// Workspace-level `target/` directory. `CARGO_MANIFEST_DIR` points at the
+    /// crate (`crates/neoc`), but Cargo places build output under the workspace
+    /// root, so honour `CARGO_TARGET_DIR` when set and otherwise walk up two
+    /// levels from the crate manifest to the workspace root.
+    fn target_dir() -> PathBuf {
+        if let Some(dir) = std::env::var_os("CARGO_TARGET_DIR") {
+            return PathBuf::from(dir);
+        }
         let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        p.pop(); // crates/
+        p.pop(); // workspace root
         p.push("target");
+        p
+    }
+
+    fn binary_path() -> PathBuf {
+        let mut p = target_dir();
         p.push(if cfg!(debug_assertions) {
             "debug"
         } else {
@@ -336,8 +350,7 @@ mod tests {
     }
 
     fn write_fixture(name: &str, port: u16, script: &str) -> PathBuf {
-        let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        dir.push("target");
+        let mut dir = target_dir();
         dir.push("spawn-fixtures");
         dir.push(name);
         let _ = std::fs::remove_dir_all(&dir);
