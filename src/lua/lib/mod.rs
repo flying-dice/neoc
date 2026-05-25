@@ -14,6 +14,8 @@ pub mod csv;
 pub mod diff;
 pub mod glob;
 pub mod hash;
+pub mod hex;
+pub mod hmac;
 pub mod html;
 pub mod http;
 pub mod ini;
