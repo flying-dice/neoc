@@ -218,6 +218,11 @@ pub fn headers(lua: &Lua) -> mlua::Result<Vec<(String, String)>> {
     push(lib::template::declare(lua))?;
     push(lib::tempfile::declare(lua))?;
 
+    push(vnd::hyper::declare(lua))?;
+    push(vnd::jsonschema::declare(lua))?;
+    push(vnd::quick_xml::declare(lua))?;
+    push(vnd::rusqlite::declare(lua))?;
+    push(vnd::serde_json::declare(lua))?;
     push(vnd::serde_yaml::declare(lua))?;
     push(vnd::toml::declare(lua))?;
 
@@ -262,9 +267,14 @@ mod tests {
         assert!(keys.contains(&"std:thread"));
         assert!(keys.contains(&"std:time"));
         assert!(keys.contains(&"std:workers"));
+        assert!(keys.contains(&"vnd:hyper"));
+        assert!(keys.contains(&"vnd:jsonschema"));
+        assert!(keys.contains(&"vnd:quick_xml"));
+        assert!(keys.contains(&"vnd:rusqlite"));
+        assert!(keys.contains(&"vnd:serde_json"));
         assert!(keys.contains(&"vnd:serde_yaml"));
         assert!(keys.contains(&"vnd:toml"));
-        assert_eq!(keys.len(), 25, "expected 25 migrated modules, got {keys:?}");
+        assert_eq!(keys.len(), 30, "expected 30 migrated modules, got {keys:?}");
 
         for (key, header) in &headers {
             assert!(

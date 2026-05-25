@@ -1,0 +1,14 @@
+// @generated from the vnd:serde_json runtime module — do not edit.
+#[link(name = "vnd:serde_json")]
+extern "neoc" {
+    /// Parse a JSON string into a `JsonObject` or `JsonArray` handle.
+    fn from_str(s: string) -> Result<LuaValue, string>;
+    /// Parse JSON from a reader handle.
+    fn from_reader(reader: LuaValue) -> Result<LuaValue, string>;
+    /// Serialise a Lua value to a compact JSON string.
+    fn to_string(value: LuaValue) -> Result<string, string>;
+    /// Serialise a Lua value to an indented, human-readable JSON string.
+    fn to_string_pretty(value: LuaValue) -> Result<string, string>;
+    /// Serialise a Lua value to JSON and write it to a writer handle.
+    fn to_writer(value: LuaValue, writer: LuaValue) -> Result<bool, string>;
+}

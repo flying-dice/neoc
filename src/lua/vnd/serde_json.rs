@@ -11,10 +11,9 @@
 use std::collections::BTreeMap;
 
 use mlua::{AnyUserData, Lua, Table, Value};
-use tracing::instrument;
 
+use crate::lua::facade::Module;
 use crate::lua::lib::json::{JsonValue, lua_value_to_json_value, wrap_root};
-use crate::lua::sandbox::{from_err, ok};
 use crate::lua::std::io::{ReaderHandle, WriterHandle};
 
 // ---------------------------------------------------------------------------
@@ -89,118 +88,99 @@ pub(crate) fn parse_to_handle(lua: &Lua, bytes: &[u8]) -> mlua::Result<Value> {
 }
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
-    t.set("from_str", lua.create_function(from_str)?)?;
-    t.set("from_reader", lua.create_function(from_reader)?)?;
-    t.set("to_string", lua.create_function(to_string)?)?;
-    t.set("to_string_pretty", lua.create_function(to_string_pretty)?)?;
-    t.set("to_writer", lua.create_function(to_writer)?)?;
-    Ok(t)
+    Ok(declare(lua)?.into_table())
 }
 
-#[instrument(
-    name = "serde_json.from_str",
-    target = "luau::lib::serde_json",
-    skip_all
-)]
-fn from_str(lua: &Lua, s: mlua::String) -> mlua::Result<(Value, Value)> {
-    match parse_to_handle(lua, &s.as_bytes()) {
-        Ok(v) => ok(lua, v),
-        Err(e) => from_err(lua, "serde_json.from_str", e),
-    }
+/// Declares the `vnd:serde_json` surface through the facade. Every function is
+/// fallible; the `(value, error)` shape, the `serde_json.<fn>` error prefixes,
+/// the exact error suffixes (handle, parse, bridge, serialize, and I/O
+/// failures), and the `luau::lib::serde_json` spans are byte-identical to the
+/// hand-written registration this replaces.
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "vnd:serde_json")?;
+    m.try_func(
+        "from_str",
+        &[("s", "string")],
+        "Parse a JSON string into a `JsonObject` or `JsonArray` handle.",
+        from_str,
+    )?
+    .try_func(
+        "from_reader",
+        &[("reader", "LuaValue")],
+        "Parse JSON from a reader handle.",
+        from_reader,
+    )?
+    .try_func(
+        "to_string",
+        &[("value", "LuaValue")],
+        "Serialise a Lua value to a compact JSON string.",
+        to_string,
+    )?
+    .try_func(
+        "to_string_pretty",
+        &[("value", "LuaValue")],
+        "Serialise a Lua value to an indented, human-readable JSON string.",
+        to_string_pretty,
+    )?
+    .try_func(
+        "to_writer",
+        &[("value", "LuaValue"), ("writer", "LuaValue")],
+        "Serialise a Lua value to JSON and write it to a writer handle.",
+        to_writer,
+    )?;
+    Ok(m)
 }
 
-#[instrument(
-    name = "serde_json.from_reader",
-    target = "luau::lib::serde_json",
-    skip_all
-)]
+fn from_str(lua: &Lua, s: mlua::String) -> Result<Value, String> {
+    parse_to_handle(lua, &s.as_bytes()).map_err(|e| e.to_string())
+}
+
 // TODO: clean-code - 0.75 - KISS: nested match pyramid + manual drops; flatten with ? and a scoped block
-fn from_reader(lua: &Lua, ud: AnyUserData) -> mlua::Result<(Value, Value)> {
+fn from_reader(lua: &Lua, ud: AnyUserData) -> Result<Value, String> {
     let rh = match ud.borrow::<ReaderHandle>() {
         Ok(h) => h,
-        Err(_) => {
-            return from_err(
-                lua,
-                "serde_json.from_reader",
-                "expected a reader handle — accepted: Reader",
-            );
-        }
+        Err(_) => return Err("expected a reader handle — accepted: Reader".to_string()),
     };
     let mut locked = rh.inner.lock();
     let result = serde_json::from_reader::<_, serde_json::Value>(&mut **locked);
     drop(locked);
     drop(rh);
     match result {
-        Ok(jv) => match wrap_root(lua, jv_to_json_value(jv)) {
-            Ok(v) => ok(lua, v),
-            Err(e) => from_err(lua, "serde_json.from_reader", e),
-        },
-        Err(e) => from_err(lua, "serde_json.from_reader", e),
+        Ok(jv) => wrap_root(lua, jv_to_json_value(jv)).map_err(|e| e.to_string()),
+        Err(e) => Err(e.to_string()),
     }
 }
 
 fn serialize_with(
-    lua: &Lua,
     v: Value,
-    op: &'static str,
     formatter: impl Fn(&serde_json::Value) -> serde_json::Result<String>,
-) -> mlua::Result<(Value, Value)> {
-    let j = match lua_value_to_json_value(&v) {
-        Ok(j) => j,
-        Err(e) => return from_err(lua, op, e),
-    };
-    match formatter(&json_value_to_jv(&j)) {
-        Ok(s) => ok(lua, s),
-        Err(e) => from_err(lua, op, e),
-    }
+) -> Result<String, String> {
+    let j = lua_value_to_json_value(&v).map_err(|e| e.to_string())?;
+    formatter(&json_value_to_jv(&j)).map_err(|e| e.to_string())
 }
 
-#[instrument(
-    name = "serde_json.to_string",
-    target = "luau::lib::serde_json",
-    skip_all
-)]
-fn to_string(lua: &Lua, v: Value) -> mlua::Result<(Value, Value)> {
-    serialize_with(lua, v, "serde_json.to_string", serde_json::to_string)
+fn to_string(_: &Lua, v: Value) -> Result<String, String> {
+    serialize_with(v, serde_json::to_string)
 }
 
-#[instrument(
-    name = "serde_json.to_string_pretty",
-    target = "luau::lib::serde_json",
-    skip_all
-)]
-fn to_string_pretty(lua: &Lua, v: Value) -> mlua::Result<(Value, Value)> {
-    serialize_with(
-        lua,
-        v,
-        "serde_json.to_string_pretty",
-        serde_json::to_string_pretty,
-    )
+fn to_string_pretty(_: &Lua, v: Value) -> Result<String, String> {
+    serialize_with(v, serde_json::to_string_pretty)
 }
 
-#[instrument(
-    name = "serde_json.to_writer",
-    target = "luau::lib::serde_json",
-    skip_all
-)]
-fn to_writer(lua: &Lua, (v, ud): (Value, AnyUserData)) -> mlua::Result<(Value, Value)> {
+fn to_writer(_: &Lua, (v, ud): (Value, AnyUserData)) -> Result<bool, String> {
     let wh = match ud.borrow::<WriterHandle>() {
         Ok(h) => h,
-        Err(_) => return from_err(lua, "serde_json.to_writer", "expected a writer handle"),
+        Err(_) => return Err("expected a writer handle".to_string()),
     };
-    let j = match lua_value_to_json_value(&v) {
-        Ok(j) => j,
-        Err(e) => return from_err(lua, "serde_json.to_writer", e),
-    };
+    let j = lua_value_to_json_value(&v).map_err(|e| e.to_string())?;
     let jv = json_value_to_jv(&j);
     let mut locked = wh.0.lock();
     let result = serde_json::to_writer(&mut **locked, &jv);
     drop(locked);
     drop(wh);
     match result {
-        Ok(()) => ok(lua, true),
-        Err(e) => from_err(lua, "serde_json.to_writer", e),
+        Ok(()) => Ok(true),
+        Err(e) => Err(e.to_string()),
     }
 }
 

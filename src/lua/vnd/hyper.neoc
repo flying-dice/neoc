@@ -1,0 +1,26 @@
+// @generated from the vnd:hyper runtime module — do not edit.
+struct ServerHandle;
+impl ServerHandle {
+    /// Return the local address the server is bound to.
+    fn addr() -> string;
+    /// Initiate graceful shutdown; returns immediately. Use `:wait()` to block until stopped.
+    fn close() -> ();
+    /// Block until the server stops accepting connections (`:close()` or process shutdown signal).
+    fn wait() -> ();
+}
+struct Request;
+impl Request {
+    /// Look up a request header by name (case-insensitive); returns the value string or nil when absent.
+    fn header(name: string) -> LuaValue;
+}
+#[link(name = "vnd:hyper")]
+extern "neoc" {
+    /// Perform an HTTP GET request, returning a response table `{ status, headers, body }`.
+    fn get(url: string) -> Result<LuaValue, string>;
+    /// Perform an HTTP POST request given `{ url, body?, headers? }`.
+    fn post(opts: LuaValue) -> Result<LuaValue, string>;
+    /// Perform an HTTP request with an arbitrary method given `{ method, url, body?, headers? }`.
+    fn request(opts: LuaValue) -> Result<LuaValue, string>;
+    /// Attach `handler` to `listener` and start accepting HTTP connections.
+    fn serve(listener: LuaValue, handler: LuaValue) -> Result<ServerHandle, string>;
+}
