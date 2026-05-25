@@ -85,6 +85,7 @@ pub fn install(lua: &Lua) -> mlua::Result<()> {
     // lib:* — blessed gap-fillers and our own custom modules.
     modules.insert("lib:args".into(), lib::args::module(lua)?);
     modules.insert("lib:base64".into(), lib::base64::module(lua)?);
+    modules.insert("lib:cache".into(), lib::cache::module(lua)?);
     modules.insert("lib:chrono".into(), lib::chrono::module(lua)?);
     modules.insert("lib:compile".into(), lib::compile::module(lua)?);
     modules.insert("lib:compress".into(), lib::compress::module(lua)?);
@@ -209,6 +210,7 @@ pub fn headers(lua: &Lua) -> mlua::Result<Vec<(String, String)>> {
 
     push(lib::args::declare(lua))?;
     push(lib::base64::declare(lua))?;
+    push(lib::cache::declare(lua))?;
     push(lib::chrono::declare(lua))?;
     push(lib::compile::declare(lua))?;
     push(lib::compress::declare(lua))?;
@@ -267,6 +269,7 @@ mod tests {
         let keys: Vec<&str> = headers.iter().map(|(k, _)| k.as_str()).collect();
         assert!(keys.contains(&"lib:args"));
         assert!(keys.contains(&"lib:base64"));
+        assert!(keys.contains(&"lib:cache"));
         assert!(keys.contains(&"lib:chrono"));
         assert!(keys.contains(&"lib:compile"));
         assert!(keys.contains(&"lib:compress"));
@@ -312,7 +315,7 @@ mod tests {
         assert!(keys.contains(&"vnd:sqlx_postgres"));
         assert!(keys.contains(&"vnd:testcontainers_modules"));
         assert!(keys.contains(&"vnd:toml"));
-        assert_eq!(keys.len(), 47, "expected 47 migrated modules, got {keys:?}");
+        assert_eq!(keys.len(), 48, "expected 48 migrated modules, got {keys:?}");
 
         for (key, header) in &headers {
             assert!(
@@ -344,6 +347,7 @@ mod tests {
             "std:workers" => stdmod::workers::module(lua),
             "lib:args" => lib::args::module(lua),
             "lib:base64" => lib::base64::module(lua),
+            "lib:cache" => lib::cache::module(lua),
             "lib:chrono" => lib::chrono::module(lua),
             "lib:compile" => lib::compile::module(lua),
             "lib:compress" => lib::compress::module(lua),
