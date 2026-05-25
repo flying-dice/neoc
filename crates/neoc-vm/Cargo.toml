@@ -48,6 +48,30 @@ subtle = "2"
 # lockfile.
 aes-gcm = "0.10"
 chacha20poly1305 = "0.10"
+# Asymmetric signing/verification backing `lib:pkey` — the issue's cited
+# RustCrypto `signature` ecosystem, one crate per algorithm family. All three
+# share the `signature` 2.x Signer/Verifier traits and the `pkcs8` 0.10 /
+# `spki` 0.7 encoding layer already in the tree transitively (pulled by `rsa`,
+# itself a sqlx-mysql auth dependency):
+#   ed25519-dalek — Ed25519, the modern default. `rand_core` for keygen off the
+#                   same `OsRng` `lib:random` uses; `pkcs8`/`pem` for PKCS#8 +
+#                   SPKI. Default `zeroize` stays on so secret keys wipe on drop.
+#   p256          — ECDSA over NIST P-256. Default `ecdsa` + `sha256` give ES256
+#                   (SHA-256 prehash); `pem` adds PEM on top of the default pkcs8.
+#   rsa           — RSA-PSS and RSA-PKCS#1 v1.5. `sha2` wires the SHA-256 digest
+#                   and its OID (the v1.5 DigestInfo prefix); `pem` adds PEM.
+#                   SECURITY: 0.9.x carries RUSTSEC-2023-0071 (Marvin timing
+#                   side-channel in RSA sign); no fixed upstream release. Only
+#                   pure-Rust RSA backend (#35) — conscious trade-off. ed25519 /
+#                   ecdsa-p256 unaffected. Advisory gate + tracking: #51.
+# `pkcs8`/`spki` (pinned to the in-tree versions) give the EncodePrivateKey /
+# EncodePublicKey traits + their PEM emitters, used uniformly across all three.
+ed25519-dalek = { version = "2", features = ["pkcs8", "pem", "rand_core"] }
+p256 = { version = "0.13", features = ["pem"] }
+rsa = { version = "0.9", features = ["pem", "sha2"] }
+signature = "2"
+pkcs8 = { version = "0.10", features = ["pem", "std"] }
+spki = { version = "0.7", features = ["pem", "std"] }
 flate2 = "1"
 zstd = "0.13"
 brotli = "7"
