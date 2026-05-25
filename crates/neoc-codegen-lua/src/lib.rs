@@ -128,26 +128,116 @@ pub struct Diagnostic {
     pub message: String,
 }
 
+/// A line-level map from emitted Lua back to the originating neoc source.
+///
+/// Each entry pairs a one-based emitted-Lua line number with the one-based neoc
+/// line it was generated from. The list is sorted by Lua line and sparse: only
+/// lines whose origin differs from the preceding entry are recorded, so a
+/// lookup takes the neoc line of the nearest preceding entry. Boilerplate with
+/// no source node (the `Result`/`Option` prelude, `require` preamble) inherits
+/// the origin of the first real node, which is the desired behaviour for a
+/// runtime traceback.
+///
+/// The map is side-band metadata: it never affects the emitted Lua text.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LineMap {
+    entries: Vec<(u32, u32)>,
+}
+
+impl LineMap {
+    /// Builds a sparse map from a dense per-line origin vector, where
+    /// `origins[i]` is the neoc line that produced emitted-Lua line `i + 1`.
+    /// Consecutive lines sharing an origin collapse to a single entry.
+    fn from_origins(origins: &[u32]) -> Self {
+        let mut entries = Vec::new();
+        let mut last: Option<u32> = None;
+        for (i, &neoc) in origins.iter().enumerate() {
+            if last != Some(neoc) {
+                // One-based Lua line number.
+                let lua = u32::try_from(i + 1).unwrap_or(u32::MAX);
+                entries.push((lua, neoc));
+                last = Some(neoc);
+            }
+        }
+        Self { entries }
+    }
+
+    /// Returns the originating neoc line for a one-based emitted-Lua line, using
+    /// the nearest preceding mapped entry when the Lua line has no exact match.
+    /// Returns `None` only when the map is empty or the Lua line precedes every
+    /// recorded entry.
+    #[must_use]
+    pub fn neoc_line(&self, lua_line: u32) -> Option<u32> {
+        let idx = self.entries.partition_point(|(lua, _)| *lua <= lua_line);
+        (idx > 0).then(|| self.entries[idx - 1].1)
+    }
+}
+
 /// The result of emitting a module.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EmitResult {
     pub lua: String,
     pub diagnostics: Vec<Diagnostic>,
+    /// The line map from emitted Lua back to neoc source. Empty unless the
+    /// module was emitted through [`emit_with_source`], which supplies the
+    /// source text needed to translate byte spans to line numbers.
+    pub source_map: LineMap,
 }
 
-/// Lower a module to Lua 5.1 source.
+/// Lower a module to Lua 5.1 source, with no source map.
+///
+/// Use [`emit_with_source`] when a runtime needs to translate emitted-Lua line
+/// numbers back to neoc positions; the emitted Lua text is identical either way.
 #[must_use]
 pub fn emit(module: &ast::Module) -> EmitResult {
+    emit_inner(module, None)
+}
+
+/// Lower a module to Lua 5.1 source and build a [`LineMap`] from `source`.
+///
+/// `source` must be the exact `.neoc` text the `module` was parsed from; the
+/// node byte spans index into it to derive line numbers. The emitted Lua text
+/// is byte-for-byte identical to [`emit`]'s — only the [`EmitResult::source_map`]
+/// differs.
+#[must_use]
+pub fn emit_with_source(module: &ast::Module, source: &str) -> EmitResult {
+    emit_inner(module, Some(source))
+}
+
+fn emit_inner(module: &ast::Module, source: Option<&str>) -> EmitResult {
     let mut e = Emitter {
         enums: EnumIndex::build(module),
         tuple_structs: TupleStructIndex::build(module),
+        line_index: source.map(LineIndex::build),
         ..Emitter::default()
     };
     e.emit_module(module);
     let diagnostics = std::mem::take(&mut e.diagnostics);
-    EmitResult {
-        lua: e.finish(),
-        diagnostics,
+    e.finish_with_map(diagnostics)
+}
+
+/// A precomputed index of line-start byte offsets, for turning a byte offset
+/// into a one-based line number in `O(log n)`.
+struct LineIndex {
+    /// The byte offset at which each line starts. `starts[0]` is always `0`.
+    starts: Vec<usize>,
+}
+
+impl LineIndex {
+    fn build(source: &str) -> Self {
+        let mut starts = vec![0];
+        for (i, b) in source.bytes().enumerate() {
+            if b == b'\n' {
+                starts.push(i + 1);
+            }
+        }
+        Self { starts }
+    }
+
+    /// The one-based line number a byte offset falls on.
+    fn line(&self, offset: usize) -> u32 {
+        let idx = self.starts.partition_point(|&s| s <= offset);
+        u32::try_from(idx.max(1)).unwrap_or(u32::MAX)
     }
 }
 
@@ -156,6 +246,17 @@ pub fn emit(module: &ast::Module) -> EmitResult {
 #[derive(Default)]
 pub(crate) struct Emitter {
     lines: Vec<String>,
+    /// Parallel to `lines`: the one-based neoc line each emitted Lua line came
+    /// from. Only populated when emitting with a [`LineIndex`]; otherwise stays
+    /// empty and no map is produced.
+    line_origins: Vec<u32>,
+    /// The neoc line of the node currently being emitted. Lines pushed via
+    /// [`Emitter::line`] are tagged with it, so emitted Lua maps back to the
+    /// construct that produced it.
+    cur_neoc_line: u32,
+    /// Line-start index over the neoc source, present only when a source map is
+    /// being built. `None` leaves `line()` tagging cost-free.
+    line_index: Option<LineIndex>,
     indent: usize,
     diagnostics: Vec<Diagnostic>,
     uses_result: bool,
@@ -212,7 +313,27 @@ impl Emitter {
             } else {
                 self.lines.push(format!("{pad}{l}"));
             }
+            // Keep the origin vector in lockstep with `lines` so the map aligns
+            // one-to-one. Only populated when a source map is being built.
+            if self.line_index.is_some() {
+                self.line_origins.push(self.cur_neoc_line);
+            }
         }
+    }
+
+    /// Set the current neoc line from a node span, so lines emitted while
+    /// `f` runs map back to it. The previous origin is restored afterwards, so
+    /// nested nodes don't leak their line to following siblings. A no-op (other
+    /// than running `f`) when no source map is being built.
+    pub(crate) fn at_span<R>(&mut self, span: ast::Span, f: impl FnOnce(&mut Self) -> R) -> R {
+        let Some(index) = self.line_index.as_ref() else {
+            return f(self);
+        };
+        let saved = self.cur_neoc_line;
+        self.cur_neoc_line = index.line(span.start);
+        let r = f(self);
+        self.cur_neoc_line = saved;
+        r
     }
 
     pub(crate) fn indented<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
@@ -222,11 +343,21 @@ impl Emitter {
         r
     }
 
-    fn finish(mut self) -> String {
+    /// Assemble the final Lua text and its line map. The prelude and import
+    /// preamble are prepended here; their origins inherit the first real node's
+    /// line so a traceback into boilerplate still points somewhere sensible.
+    fn finish_with_map(mut self, diagnostics: Vec<Diagnostic>) -> EmitResult {
+        let tracking = self.line_index.is_some();
+        // The neoc line the preamble (prelude / imports) maps to: the first
+        // recorded body origin, or 1 when the body produced none.
+        let preamble_origin = self.line_origins.first().copied().unwrap_or(1);
+
         if self.uses_result {
+            let prelude_lines = RESULT_PRELUDE.split('\n').count() + 1;
             let mut out = vec![RESULT_PRELUDE.to_string(), String::new()];
             out.append(&mut self.lines);
             self.lines = out;
+            self.prepend_origins(tracking, prelude_lines, preamble_origin);
         }
         if !self.imports.is_empty() {
             let mut out = Vec::new();
@@ -238,14 +369,37 @@ impl Emitter {
                 }
             }
             out.push(String::new());
+            let added = out.len();
             out.append(&mut self.lines);
             self.lines = out;
+            self.prepend_origins(tracking, added, preamble_origin);
         }
+
+        let source_map = if tracking {
+            LineMap::from_origins(&self.line_origins)
+        } else {
+            LineMap::default()
+        };
+
         let mut s = self.lines.join("\n");
         if !s.is_empty() {
             s.push('\n');
         }
-        s
+        EmitResult {
+            lua: s,
+            diagnostics,
+            source_map,
+        }
+    }
+
+    /// Prepend `count` origins (all `origin`) to keep `line_origins` aligned with
+    /// `lines` after a preamble is spliced in front. A no-op when not tracking.
+    fn prepend_origins(&mut self, tracking: bool, count: usize, origin: u32) {
+        if tracking {
+            let mut prefix = vec![origin; count];
+            prefix.append(&mut self.line_origins);
+            self.line_origins = prefix;
+        }
     }
 
     fn emit_module(&mut self, module: &ast::Module) {
@@ -300,6 +454,10 @@ impl Emitter {
     }
 
     fn emit_item(&mut self, item: &ast::Item) {
+        self.at_span(item.span, |e| e.emit_item_kind(item));
+    }
+
+    fn emit_item_kind(&mut self, item: &ast::Item) {
         match &item.kind {
             ast::ItemKind::Fn(f) => self.emit_fn(None, f, item.vis),
             ast::ItemKind::Struct(s) => {

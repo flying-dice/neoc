@@ -552,3 +552,58 @@ end
 ";
     assert_eq!(out, expected);
 }
+
+// ---- source map (#55 / #56) -------------------------------------------------
+
+use neoc_codegen_lua::emit_with_source;
+
+/// The neoc line a one-based emitted-Lua line maps back to.
+fn neoc_line_of(src: &str, lua_line: u32) -> Option<u32> {
+    let parsed = neoc_parser::parse(src);
+    assert!(parsed.ok(), "parse diagnostics: {:#?}", parsed.diagnostics);
+    let result = emit_with_source(&parsed.module, src);
+    assert!(
+        result.diagnostics.is_empty(),
+        "unexpected emit diagnostics: {:#?}",
+        result.diagnostics
+    );
+    result.source_map.neoc_line(lua_line)
+}
+
+#[test]
+fn source_map_points_emitted_lines_back_to_neoc_lines() {
+    // neoc line 1: fn main()
+    // neoc line 2:   let x = boom();   <- the offending call
+    // neoc line 3: }
+    let src = "fn main() {\n  let x = boom();\n}\n";
+    // Emitted Lua:
+    //   1: local function main()
+    //   2:   local x = boom()
+    //   3: end
+    assert_eq!(
+        neoc_line_of(src, 1),
+        Some(1),
+        "fn header maps to neoc line 1"
+    );
+    assert_eq!(
+        neoc_line_of(src, 2),
+        Some(2),
+        "the `boom()` call maps to neoc line 2"
+    );
+}
+
+#[test]
+fn source_map_handles_a_later_statement() {
+    // The body statement sits on neoc line 4.
+    let src = "fn main() {\n\n\n  go();\n}\n";
+    // Lua line 2 is `  go()`.
+    assert_eq!(neoc_line_of(src, 2), Some(4));
+}
+
+#[test]
+fn source_map_empty_without_source() {
+    let parsed = neoc_parser::parse("fn main() {\n  go();\n}\n");
+    let result = emit(&parsed.module);
+    assert_eq!(result.source_map, neoc_codegen_lua::LineMap::default());
+    assert_eq!(result.source_map.neoc_line(1), None);
+}

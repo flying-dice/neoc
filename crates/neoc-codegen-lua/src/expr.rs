@@ -35,17 +35,19 @@ impl Emitter {
             self.emit_stmt(stmt);
         }
         if let Some(value) = &block.value {
-            let v = self.emit_expr(value);
-            self.line(format!("return {v}"));
+            self.at_span(value.span, |em| {
+                let v = em.emit_expr(value);
+                em.line(format!("return {v}"));
+            });
         }
     }
 
     fn emit_stmt(&mut self, stmt: &ast::Stmt) {
-        match &stmt.kind {
-            ast::StmtKind::Let(l) => self.emit_let(l),
-            ast::StmtKind::Item(item) => self.emit_item_stmt(item),
-            ast::StmtKind::Expr(e) => self.emit_expr_stmt(e),
-        }
+        self.at_span(stmt.span, |em| match &stmt.kind {
+            ast::StmtKind::Let(l) => em.emit_let(l),
+            ast::StmtKind::Item(item) => em.emit_item_stmt(item),
+            ast::StmtKind::Expr(e) => em.emit_expr_stmt(e),
+        });
     }
 
     fn emit_item_stmt(&mut self, item: &ast::Item) {
@@ -755,9 +757,15 @@ impl Emitter {
     /// build IIFE bodies and nested blocks). Indentation resets to zero inside.
     pub(crate) fn render<F: FnOnce(&mut Self)>(&mut self, f: F) -> Vec<String> {
         let saved_lines = std::mem::take(&mut self.lines);
+        let saved_origins = std::mem::take(&mut self.line_origins);
         let saved_indent = std::mem::replace(&mut self.indent, 0);
         f(self);
         let captured = std::mem::replace(&mut self.lines, saved_lines);
+        // Captured origins are discarded: callers re-emit the captured lines via
+        // `line()` (which re-tags with the then-current origin) or fold them into
+        // an IIFE string passed through one `line()` call. Either way the origin
+        // is reassigned at re-emit, so the buffer here just needs restoring.
+        self.line_origins = saved_origins;
         self.indent = saved_indent;
         captured
     }
