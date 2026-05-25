@@ -1,30 +1,3 @@
 {
-  "globals": ["lib"],
-  "definitionFiles": [
-    "crates/neoc-vm/src/lua/lib/args.d.luau",
-    "crates/neoc-vm/src/lua/lib/base64.d.luau",
-    "crates/neoc-vm/src/lua/lib/compress.d.luau",
-    "crates/neoc-vm/src/lua/lib/csv.d.luau",
-    "crates/neoc-vm/src/lua/lib/json.d.luau",
-    "crates/neoc-vm/src/lua/lib/template.d.luau",
-    "crates/neoc-vm/src/lua/lib/test.d.luau",
-    "crates/neoc-vm/src/lua/lib/text.d.luau",
-    "crates/neoc-vm/src/lua/lib/vcr.d.luau",
-    "crates/neoc-vm/src/lua/std/collections.d.luau",
-    "crates/neoc-vm/src/lua/std/fs.d.luau",
-    "crates/neoc-vm/src/lua/std/io.d.luau",
-    "crates/neoc-vm/src/lua/std/net.d.luau",
-    "crates/neoc-vm/src/lua/std/thread.d.luau",
-    "crates/neoc-vm/src/lua/std/workers.d.luau",
-    "crates/neoc-vm/src/lua/vnd/hyper.d.luau",
-    "crates/neoc-vm/src/lua/vnd/jsonschema.d.luau",
-    "crates/neoc-vm/src/lua/vnd/quick_xml.d.luau",
-    "crates/neoc-vm/src/lua/vnd/rusqlite.d.luau",
-    "crates/neoc-vm/src/lua/vnd/serde_json.d.luau",
-    "crates/neoc-vm/src/lua/vnd/serde_yaml.d.luau",
-    "crates/neoc-vm/src/lua/vnd/sqlx_mysql.d.luau",
-    "crates/neoc-vm/src/lua/vnd/sqlx_postgres.d.luau",
-    "crates/neoc-vm/src/lua/vnd/testcontainers_modules.d.luau",
-    "crates/neoc-vm/src/lua/vnd/toml.d.luau"
-  ]
+  "globals": ["lib"]
 }
