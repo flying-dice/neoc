@@ -13,7 +13,7 @@ cargo build                                          # debug build
 cargo build --release                                # release build
 cargo test --workspace --lib                         # in-module Rust tests
 cargo test -p neoc --bin neoc                         # end-to-end subprocess tests
-cargo run -p neoc -- 'crates/neoc/tests/**/*.test.luau'  # all Luau integration tests
+cargo run -p neoc -- run 'crates/neoc/tests/**/*.test.luau'  # all Luau integration tests
 cargo bench --bench lib                              # Criterion benchmarks (lib modules)
 cargo bench --bench vnd                              # Criterion benchmarks (vnd modules)
 cargo clippy --all-targets                           # lint

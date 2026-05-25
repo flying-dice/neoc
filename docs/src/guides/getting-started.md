@@ -46,7 +46,7 @@ print("hello, neoc")
 ```
 
 ```bash
-neoc hello.luau
+neoc run hello.luau
 ```
 
 Output: `hello, neoc\n`
@@ -54,7 +54,7 @@ Output: `hello, neoc\n`
 ### Multiple scripts
 
 ```bash
-neoc 'tests/**/*.test.luau'
+neoc run 'tests/**/*.test.luau'
 ```
 
 Shell quoting prevents shell expansion; neoc expands the glob internally.

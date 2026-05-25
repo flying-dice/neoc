@@ -3,8 +3,46 @@ use neoc::lua;
 use neoc::lua::lib::compile::{TrailerError, detect_embedded_payload_from};
 use neoc::lua::std::workers::ShutdownSignal;
 
+use std::io::{self, Write};
 use std::path::Path;
 use std::{env, fs, process};
+
+use clap::{Parser, Subcommand};
+
+/// neoc — embedded Luau runtime and neoc-language compiler.
+///
+/// The runtime subcommands (`run`, `emit-headers`) execute and introspect Luau
+/// scripts; the compiler subcommands (`build`, `check`, `fmt`, `lsp`) transpile
+/// neoc source and serve language tooling.
+#[derive(Debug, Parser)]
+#[command(name = "neoc", version, about, long_about = None)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Debug, Subcommand)]
+enum Commands {
+    /// Run one or more Luau scripts (globs expand internally). Pass script
+    /// arguments after `--`.
+    Run {
+        /// Script files or globs (for example `tests/**/*.test.luau`).
+        #[arg(required = true)]
+        paths: Vec<String>,
+        /// Arguments passed through to the script(s) as `_NEOC_ARGS`.
+        #[arg(last = true)]
+        args: Vec<String>,
+    },
+    /// Write every facade-declared module's `.neoc` header under a directory.
+    EmitHeaders {
+        /// Output directory for the generated headers.
+        #[arg(long, value_name = "DIR", default_value = "headers")]
+        out: String,
+    },
+    /// Compiler subcommands: `build`, `check`, `fmt`, `lsp`.
+    #[command(flatten)]
+    Compiler(neoc_cli::Command),
+}
 
 fn report_error(err: NeocError) -> ! {
     eprintln!("{:?}", miette::Report::new(err));
@@ -225,80 +263,86 @@ fn emit_headers(out_dir: &str) {
     println!("\n{} header(s) written to {out_dir}", headers.len());
 }
 
-// TODO: clean-code - 0.65 - SRP: main() interleaves embedded-payload execution, CLI arg parsing, and dispatch — split into run_embedded() / run_cli()
-#[tokio::main]
-async fn main() {
-    // --- emit-headers subcommand: dump facade-declared .neoc headers ---
-    {
-        let mut args = env::args().skip(1).peekable();
-        if args.peek().map(String::as_str) == Some("emit-headers") {
-            args.next();
-            let mut out = "headers".to_string();
-            while let Some(arg) = args.next() {
-                match arg.as_str() {
-                    "--out" => {
-                        out = args.next().unwrap_or_else(|| {
-                            eprintln!("error: --out requires a directory argument");
-                            process::exit(1);
-                        });
-                    }
-                    other => {
-                        eprintln!("error: unknown argument to emit-headers: {other}");
-                        eprintln!("usage: neoc emit-headers [--out <dir>]");
-                        process::exit(1);
-                    }
-                }
-            }
-            emit_headers(&out);
-            return;
+/// Runs the in-memory payload bundled into a self-contained executable.
+async fn run_embedded(payload: &[u8]) {
+    install_shutdown_handler();
+
+    let user_args: Vec<String> = env::args().skip(1).collect();
+
+    let engine = lua::sandbox::make_engine().unwrap_or_else(|e| {
+        report_error(NeocError::EngineInit(e.to_string()));
+    });
+
+    if !user_args.is_empty() {
+        let tbl = engine.create_table().unwrap();
+        for (i, arg) in user_args.iter().enumerate() {
+            tbl.set(i + 1, arg.as_str()).unwrap();
         }
+        engine.globals().set("_NEOC_ARGS", tbl).unwrap();
     }
 
-    // --- single-file executable: check for embedded payload first ---
+    if let Err(e) = engine.load(payload).exec_async().await {
+        report_error(NeocError::Runtime(e.to_string()));
+    }
+
+    if let Some(scheduler) = engine.app_data_ref::<lua::std::task::Scheduler>() {
+        scheduler.wait_all().await;
+        if scheduler.had_task_errors() {
+            process::exit(1);
+        }
+    }
+}
+
+/// Dispatches a compiler subcommand and exits with its process code.
+fn run_compiler(command: neoc_cli::Command) -> ! {
+    let stderr = io::stderr();
+    let mut err = stderr.lock();
+    match command.run(&mut err) {
+        Ok(0) => process::exit(0),
+        Ok(_) => process::exit(1),
+        Err(e) => {
+            let _ = writeln!(err, "neoc: {e:#}");
+            process::exit(1);
+        }
+    }
+}
+
+/// Builds the multi-thread tokio runtime the Luau engine paths drive on, then
+/// blocks on `fut`.
+fn block_on_runtime<F: std::future::Future<Output = ()>>(fut: F) {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap_or_else(|e| report_error(NeocError::EngineInit(e.to_string())))
+        .block_on(fut);
+}
+
+fn main() {
+    // A self-contained executable carries its payload in a trailer and is
+    // invoked as `<exe> [script args]` — no subcommand. Detect and run it
+    // before clap parses, so bundled binaries never see a CLI surface.
     if let Some(payload) = detect_embedded_payload() {
-        install_shutdown_handler();
-
-        let user_args: Vec<String> = env::args().skip(1).collect();
-
-        let engine = lua::sandbox::make_engine().unwrap_or_else(|e| {
-            report_error(NeocError::EngineInit(e.to_string()));
-        });
-
-        if !user_args.is_empty() {
-            let tbl = engine.create_table().unwrap();
-            for (i, arg) in user_args.iter().enumerate() {
-                tbl.set(i + 1, arg.as_str()).unwrap();
-            }
-            engine.globals().set("_NEOC_ARGS", tbl).unwrap();
-        }
-
-        if let Err(e) = engine.load(&payload[..]).exec_async().await {
-            report_error(NeocError::Runtime(e.to_string()));
-        }
-
-        if let Some(scheduler) = engine.app_data_ref::<lua::std::task::Scheduler>() {
-            scheduler.wait_all().await;
-            if scheduler.had_task_errors() {
-                process::exit(1);
-            }
-        }
-
+        block_on_runtime(async move { run_embedded(&payload).await });
         return;
     }
 
-    // --- normal path: run scripts from the filesystem ---
-    let all_args: Vec<String> = env::args().skip(1).collect();
-    let (script_args, user_args) = match all_args.iter().position(|a| a == "--") {
-        Some(pos) => (&all_args[..pos], &all_args[pos + 1..]),
-        None => (&all_args[..], &[][..]),
-    };
-    let paths = expand_args(script_args.iter().cloned());
-    if paths.is_empty() {
-        eprintln!("usage: neoc <script.luau> [script.luau ...] [-- args...]");
-        process::exit(1);
+    // The compiler subcommands are synchronous; `lsp` builds its own
+    // current-thread runtime, so they must not run inside one here. Only the
+    // runtime subcommands (`run`, `emit-headers`) drive a tokio runtime.
+    match Cli::parse().command {
+        Commands::Run { paths, args } => {
+            let resolved = expand_args(paths.into_iter());
+            if resolved.is_empty() {
+                eprintln!("error: no scripts to run");
+                process::exit(1);
+            }
+            block_on_runtime(async move { run(&resolved, &args).await });
+        }
+        Commands::EmitHeaders { out } => {
+            block_on_runtime(async move { emit_headers(&out) });
+        }
+        Commands::Compiler(command) => run_compiler(command),
     }
-
-    run(&paths, user_args).await;
 }
 
 // ---------------------------------------------------------------------------
@@ -377,6 +421,7 @@ mod tests {
         assert!(bin.exists(), "binary not built: {}", bin.display());
 
         let child = Command::new(&bin)
+            .arg("run")
             .arg(fixture.join("server.luau"))
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

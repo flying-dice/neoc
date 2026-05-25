@@ -64,7 +64,7 @@ fn to_lsp(source: &str, diagnostic: &CompilerDiagnostic) -> Diagnostic {
     Diagnostic {
         range,
         severity: Some(DiagnosticSeverity::ERROR),
-        source: Some(format!("neocc:{}", stage_label(diagnostic.stage))),
+        source: Some(format!("neoc:{}", stage_label(diagnostic.stage))),
         message: diagnostic.message.clone(),
         ..Default::default()
     }
@@ -131,7 +131,7 @@ impl LanguageServer for Backend {
                 ..ServerCapabilities::default()
             },
             server_info: Some(ServerInfo {
-                name: "neocc".to_string(),
+                name: "neoc".to_string(),
                 version: Some(env!("CARGO_PKG_VERSION").to_string()),
             }),
         })
@@ -139,7 +139,7 @@ impl LanguageServer for Backend {
 
     async fn initialized(&self, _: InitializedParams) {
         self.client
-            .log_message(MessageType::INFO, "neocc language server ready")
+            .log_message(MessageType::INFO, "neoc language server ready")
             .await;
     }
 
@@ -276,7 +276,7 @@ mod tests {
         let diags = diagnose("fn main() { nope(); }");
         let type_diag = diags
             .iter()
-            .find(|d| d.source.as_deref() == Some("neocc:type"))
+            .find(|d| d.source.as_deref() == Some("neoc:type"))
             .expect("a type diagnostic for the unknown name");
         assert_eq!(type_diag.severity, Some(DiagnosticSeverity::ERROR));
         // No span yet for type errors, so it lands on line 0.

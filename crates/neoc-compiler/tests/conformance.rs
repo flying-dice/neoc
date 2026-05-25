@@ -14,7 +14,7 @@
 //!   `<case>.lua` / `<case>.js` / `<case>.py` checked into the corpus. This pins
 //!   the transformation itself (codegen changes show up as a diff) and needs no
 //!   toolchain, so it runs everywhere. Regenerate the files with
-//!   `neocc build lang/CONFORMANCE/dynamic/*.neoc --target <lua|js|python>`.
+//!   `neoc build lang/CONFORMANCE/dynamic/*.neoc --target <lua|js|python>`.
 //! - `<case>::<target>` — transpile (or, for Rust, compile the `.rs` anchor),
 //!   run under the target's interpreter, and assert trailing-newline-trimmed
 //!   stdout equals the golden. Marked ignored when the toolchain (`node` /
@@ -71,7 +71,7 @@ fn check_source_golden(
     } else {
         Err(Failed::from(format!(
             "case `{case}`: emitted .{ext} differs from the committed golden {} — \
-             regenerate with `neocc build lang/CONFORMANCE/dynamic/*.neoc --target {target}`\n\
+             regenerate with `neoc build lang/CONFORMANCE/dynamic/*.neoc --target {target}`\n\
              --- emitted ---\n{emitted}",
             golden_path.display()
         )))

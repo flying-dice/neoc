@@ -58,7 +58,13 @@ percent-encoding = "2"
 # format. Default features bundle the tzdb on Windows and read /usr/share/zoneinfo
 # on Unix, plus detect the system zone — exactly what `lib:chrono` needs.
 jiff = "0.2"
-clap = { version = "4", default-features = false, features = ["std", "help", "usage", "error-context", "string"] }
+clap = { version = "4", default-features = false, features = ["std", "help", "usage", "error-context", "string", "derive"] }
+
+# The compiler half of the unified `neoc` CLI. `neoc-cli` is a library exposing
+# the `build`/`check`/`fmt`/`lsp` subcommands; the runtime mounts them into its
+# top-level clap tree. This pulls in neoc-compiler / neoc-fmt / neoc-lsp
+# transitively.
+neoc-cli = { path = "../neoc-cli" }
 
 strsim = "0.11"
 heck = "0.5"

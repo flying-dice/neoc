@@ -1,4 +1,5 @@
-//! Integration tests driving the built `neocc` binary.
+//! Integration tests driving the compiler subcommands of the unified `neoc`
+//! binary (`neoc build`/`check`/`fmt`/`lsp`).
 
 use std::fs;
 use std::path::Path;
@@ -6,7 +7,7 @@ use std::process::{Command, Stdio};
 
 use tempfile::tempdir;
 
-const BIN: &str = env!("CARGO_BIN_EXE_neocc");
+const BIN: &str = env!("CARGO_BIN_EXE_neoc");
 
 const VALID: &str = "ext fn println(n: number);\nfn main() {\n  println(1 + 2);\n}\n";
 const BROKEN: &str = "fn main( {\n";
@@ -219,7 +220,7 @@ fn fmt_parse_error_exits_nonzero() {
 
 #[test]
 fn lsp_starts_and_exits_cleanly_when_stdin_closes() {
-    // `neocc lsp` runs the language server over stdio. With a closed stdin the
+    // `neoc lsp` runs the language server over stdio. With a closed stdin the
     // client connection ends immediately, so the server shuts down with exit 0.
     let out = Command::new(BIN)
         .arg("lsp")

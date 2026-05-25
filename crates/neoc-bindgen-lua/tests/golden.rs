@@ -1,5 +1,5 @@
 //! Golden test: the `sample.luau` fixture must transpile to the committed
-//! `sample.neoc`, and that generated header must `neocc check` clean on the
+//! `sample.neoc`, and that generated header must `neoc check` clean on the
 //! current compiler. Exercises clean primitive mapping, a typed constant, an
 //! opaque declared handle (`Rgb`), and the `LuaValue` fallback with a `// was:`
 //! comment (the untyped `debug` export).

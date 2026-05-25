@@ -4,7 +4,7 @@ Defines which token sequences are valid neoc programs. Operates on the tokens de
 
 Notation: EBNF as defined in `NOTATION.md`. Token classes are written `UPPER_SNAKE_CASE` and resolve to the productions in `LEXICAL.md` §8. Keyword and punctuation literals are written as their source spelling: `"struct"`, `"->"`, `"::"`.
 
-This file is the **canonical** syntactic definition of neoc. Any parser implementation — the tree-sitter grammar in `crates/neocc-grammar/`, a future hand-rolled parser, anything in another host language — must accept exactly the language defined here. Where parser and spec disagree, the spec wins.
+This file is the **canonical** syntactic definition of neoc. Any parser implementation — the tree-sitter grammar in `crates/neoc-grammar/`, a future hand-rolled parser, anything in another host language — must accept exactly the language defined here. Where parser and spec disagree, the spec wins.
 
 ---
 
@@ -341,7 +341,7 @@ A `///` line comment and a `/** … */` block comment (`LEXICAL.md` §3) attache
 
 ## 10. Complete grammar
 
-Every production from §1–§9, collected in dependency order. Implementers parse against this section; §1–§9 are commentary. Token classes (`UPPER_SNAKE_CASE`) and keyword/punctuation literals resolve to `LEXICAL.md` §8. Cross-checked against the tree-sitter grammar in `crates/neocc-grammar/grammar.js`; where the two disagree, this section wins.
+Every production from §1–§9, collected in dependency order. Implementers parse against this section; §1–§9 are commentary. Token classes (`UPPER_SNAKE_CASE`) and keyword/punctuation literals resolve to `LEXICAL.md` §8. Cross-checked against the tree-sitter grammar in `crates/neoc-grammar/grammar.js`; where the two disagree, this section wins.
 
 ```
 (* source file *)

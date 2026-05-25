@@ -120,7 +120,7 @@ describe("foo", function()
 end)
 ```
 
-Run: `cargo run -p neoc -- crates/neoc/tests/<ns>/foo.test.luau`.
+Run: `cargo run -p neoc -- run crates/neoc/tests/<ns>/foo.test.luau`.
 
 ### 6. Update README
 
@@ -140,7 +140,7 @@ Add row to modules table. Alphabetical within namespace.
 cargo build
 cargo test --workspace --lib
 cargo test -p neoc --bin neoc
-cargo run -p neoc -- 'crates/neoc/tests/**/*.test.luau'
+cargo run -p neoc -- run 'crates/neoc/tests/**/*.test.luau'
 cargo bench --bench lib <name>
 cargo clippy --all-targets
 cargo fmt --check
