@@ -2068,6 +2068,7 @@ dependencies = [
  "miette",
  "mime_guess",
  "mlua",
+ "neoc-cli",
  "parking_lot",
  "percent-encoding",
  "quick-xml",
@@ -2151,7 +2152,6 @@ dependencies = [
  "neoc-compiler",
  "neoc-fmt",
  "neoc-lsp",
- "tempfile",
 ]
 
 [[package]]

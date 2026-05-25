@@ -1,5 +1,5 @@
 //! Golden test: the `sample.py` fixture must transpile to the committed
-//! `sample.neoc`, and that header must `neocc check` clean — it parses and
+//! `sample.neoc`, and that header must `neoc check` clean — it parses and
 //! type-checks with no diagnostics.
 //!
 //! Exercises a typed function (`lighten`), a function returning a declared
