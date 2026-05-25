@@ -9,36 +9,37 @@ This file is for Claude Code — it describes how to work in this repo.
 ## Build and test
 
 ```sh
-cargo build                              # debug build
-cargo build --release                    # release build
-cargo test --lib                         # in-module Rust tests
-cargo test --bin neoc                    # end-to-end subprocess tests
-cargo run -- 'tests/**/*.test.luau'      # all Luau integration tests
-cargo bench --bench lib                  # Criterion benchmarks (lib modules)
-cargo bench --bench vnd                  # Criterion benchmarks (vnd modules)
-cargo clippy --all-targets               # lint
-cargo fmt --check                        # formatting check
+cargo build                                          # debug build
+cargo build --release                                # release build
+cargo test --workspace --lib                         # in-module Rust tests
+cargo test -p neoc --bin neoc                         # end-to-end subprocess tests
+cargo run -p neoc -- 'crates/neoc/tests/**/*.test.luau'  # all Luau integration tests
+cargo bench --bench lib                              # Criterion benchmarks (lib modules)
+cargo bench --bench vnd                              # Criterion benchmarks (vnd modules)
+cargo clippy --all-targets                           # lint
+cargo fmt --check                                    # formatting check
 ```
 
 ## Project structure
 
 ```
-src/
-  main.rs              # CLI entry point (script runner + serve mode)
-  lib.rs               # Library root (pub mod dto, lua)
-  lua/
-    sandbox.rs         # Engine construction
-    modules.rs         # Module registration
-    std/               # std:* modules (collections, fs, io, net, thread, workers)
-    lib/               # lib:* modules (base64, json, test, vcr)
-    vnd/               # vnd:* modules (hyper, serde_json, rusqlite, sqlx_*, etc.)
-tests/                 # Luau integration tests (*.test.luau, *.spec.luau)
-benches/               # Criterion benchmark suites (lib/, vnd/)
+crates/neoc/
+  src/
+    main.rs            # CLI entry point (script runner + serve mode)
+    lib.rs             # Library root (pub mod dto, lua)
+    lua/
+      sandbox.rs       # Engine construction
+      modules.rs       # Module registration
+      std/             # std:* modules (collections, fs, io, net, thread, workers)
+      lib/             # lib:* modules (base64, json, test, vcr)
+      vnd/             # vnd:* modules (hyper, serde_json, rusqlite, sqlx_*, etc.)
+  tests/               # Luau integration tests (*.test.luau, *.spec.luau)
+  benches/             # Criterion benchmark suites (lib/, vnd/)
 ```
 
 ## Module namespaces
 
-Three namespaces, chosen at registration time in `src/lua/modules.rs`:
+Three namespaces, chosen at registration time in `crates/neoc/src/lua/modules.rs`:
 
 - `std:*` — mirrors Rust std (e.g. `std:collections`, `std:fs`, `std:net`)
 - `lib:*` — blessed gap-fillers and custom modules (e.g. `lib:base64`, `lib:test`)
@@ -66,11 +67,11 @@ Precedence: 1 > 2 > 3 > 4.
 
 ## Adding a module
 
-1. Create `src/lua/<ns>/<name>.rs` with a `module` function
-2. Register in `src/lua/<ns>/mod.rs` (alphabetical)
+1. Create `crates/neoc/src/lua/<ns>/<name>.rs` with a `module` function
+2. Register in `crates/neoc/src/lua/<ns>/mod.rs` (alphabetical)
 3. Add `#[cfg(test)] mod tests` in the file
 4. Add Criterion benches (gated behind `bench` feature)
-5. Add `tests/<ns>/<name>.test.luau`
+5. Add `crates/neoc/tests/<ns>/<name>.test.luau`
 
 ## Commit style
 
