@@ -136,9 +136,6 @@ crates/neoc-fmt        # formatter
 crates/neoc-lsp        # language server
 crates/neoc-cli        # compiler subcommand tree (build/check/fmt/lsp)
 crates/neoc-wasm       # browser entry point
-crates/neoc-bindgen-ts  # standalone CLI: TypeScript → .neoc header
-crates/neoc-bindgen-py  # standalone CLI: Python → .neoc header
-crates/neoc-bindgen-lua # standalone CLI: Luau → .neoc header
 ```
 
 ## Where it fits
