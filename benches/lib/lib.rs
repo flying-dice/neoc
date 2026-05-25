@@ -32,6 +32,7 @@ criterion_group!(
     lib::glob::benches,
     lib::hash::benches,
     lib::hex::benches,
+    lib::hmac::benches,
     lib::http::benches,
     lib::ini::benches,
     lib::json::benches,

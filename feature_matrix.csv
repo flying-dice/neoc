@@ -30,7 +30,7 @@ zstd,—,—,—,—,—,—,—,—,—,—,—,—
 zip archive,zipfile,—,—,—,archive/zip,—,java.util.zip,System.IO.Compression,—,ZipArchive,—,—
 tar archive,tarfile,—,—,—,archive/tar,—,—,System.Formats.Tar,—,PharData,—,—
 Hash (SHA/MD5),hashlib,node:crypto,crypto.subtle+@std/crypto,Bun.hash+node:crypto,crypto/sha256+md5,—,MessageDigest,System.Security.Cryptography,Digest,hash(),—,—
-HMAC,hmac,node:crypto,crypto.subtle,node:crypto,crypto/hmac,—,Mac,HMACSHA256,OpenSSL::HMAC,hash_hmac,—,—
+HMAC,hmac,node:crypto,crypto.subtle,node:crypto,crypto/hmac,—,Mac,HMACSHA256,OpenSSL::HMAC,hash_hmac,—,lib:hmac
 Symmetric crypto (AES),—,node:crypto,crypto.subtle,node:crypto,crypto/aes+cipher,—,Cipher,AesGcm,OpenSSL::Cipher,openssl_encrypt,—,—
 Asymmetric crypto,—,node:crypto,crypto.subtle,node:crypto,crypto/rsa+ecdsa,—,KeyPairGenerator,RSA+ECDsa,OpenSSL::PKey,openssl_*,—,—
 TLS,ssl,node:tls,Deno.connectTls,node:tls,crypto/tls,—,javax.net.ssl,SslStream,OpenSSL::SSL,openssl,—,vnd:hyper (indirect)
