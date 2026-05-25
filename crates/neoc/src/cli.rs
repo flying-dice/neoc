@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::Subcommand;
-use neoc_compiler::{ProjectDiagnostic, Stage, Target, transpile_project};
+use neoc_compiler::{ProjectDiagnostic, SourceMap, Stage, Target, transpile_project};
 
 /// The compiler subcommands: `build`, `check`, `fmt`, and `lsp`.
 #[derive(Debug, Subcommand)]
@@ -216,8 +216,84 @@ fn out_path(source: &Path, output: Option<&Path>, target: Target) -> PathBuf {
     }
 }
 
-/// Prints a multi-file project's diagnostics to `err`, each tagged with the
-/// module it came from.
+/// A transpiled `.neoc` entry ready to run: the emitted Lua and the line map
+/// back to the neoc source, so `neoc run` can rewrite a runtime fault's Lua
+/// line numbers to neoc positions.
+pub struct TranspiledEntry {
+    /// The emitted Lua source for the entry, with `main()` appended when the
+    /// program defines a `main`.
+    pub lua: String,
+    /// Maps emitted-Lua lines back to neoc source lines.
+    pub source_map: SourceMap,
+}
+
+/// Transpiles a single `.neoc` entry file to Lua so `neoc run` can execute it
+/// in-process, with no intermediate file. Diagnostics (parse / type / emit) are
+/// reported to `err` exactly as `neoc build` reports them.
+///
+/// Returns the emitted Lua source for the entry and its line map on success.
+/// Returns `None` when the program reported a diagnostic, or when it imports
+/// other modules via `use` — `run` executes a single file, and the lowered
+/// `require("a.b")` calls have no resolver under the runtime's `namespace:name`
+/// require, so such projects must go through `neoc build`.
+///
+/// # Errors
+///
+/// Returns an error if the entry file cannot be read.
+pub fn transpile_entry_to_lua(
+    file: &Path,
+    err: &mut impl Write,
+) -> Result<Option<TranspiledEntry>> {
+    let project = transpile_project(file, Target::Lua)
+        .with_context(|| format!("reading {}", file.display()))?;
+
+    if !project.diagnostics.is_empty() {
+        report_project(&project.diagnostics, err)?;
+        return Ok(None);
+    }
+
+    if project.files.len() > 1 {
+        writeln!(
+            err,
+            "neoc run: `{}` imports other modules; `run` executes a single file. \
+             Build multi-module projects with `neoc build`.",
+            file.display()
+        )?;
+        return Ok(None);
+    }
+
+    let mut files = project.files.into_iter();
+    let mut maps = project.source_maps.into_iter();
+    let (Some((_, mut lua)), Some(source_map)) = (files.next(), maps.next()) else {
+        return Ok(None);
+    };
+
+    // neoc is item-only at the top level (Rust-style), so a transpiled module
+    // just defines functions. `fn main` is the entry point: if the program
+    // defines one, invoke it so `neoc run app.neoc` actually runs the program —
+    // the call is appended to the same chunk, where the lowered
+    // `local function main` is in scope.
+    if defines_main(&lua) {
+        lua.push_str("\nmain()\n");
+    }
+
+    Ok(Some(TranspiledEntry { lua, source_map }))
+}
+
+/// Whether the emitted Lua defines a top-level `main` function — the entry
+/// point `neoc run` invokes.
+///
+/// The codegen emits top-level items at column zero, so the check is anchored
+/// there (no `trim_start`): an indented `main` inside a nested block — or the
+/// substring appearing mid-line — is never mistaken for the entry point.
+fn defines_main(lua: &str) -> bool {
+    lua.lines()
+        .any(|l| l.starts_with("local function main(") || l.starts_with("function main("))
+}
+
+/// Writes each project diagnostic to `err` as `<path>: <stage>: <message>` —
+/// the shared reporting used by `build`, `check`, and `neoc run`'s in-process
+/// transpile so a `.neoc` fault reads the same regardless of entry point.
 fn report_project(diagnostics: &[ProjectDiagnostic], err: &mut impl Write) -> Result<()> {
     for d in diagnostics {
         writeln!(

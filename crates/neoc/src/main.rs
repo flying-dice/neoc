@@ -1,3 +1,4 @@
+use neoc_compiler::SourceMap;
 use neoc_vm::errors::{self, NeocError};
 use neoc_vm::lua;
 use neoc_vm::lua::lib::compile::{TrailerError, detect_embedded_payload_from};
@@ -51,12 +52,59 @@ fn report_error(err: NeocError) -> ! {
     process::exit(1);
 }
 
-fn report_script_error(e: mlua::Error, source: &str, path: &str) -> ! {
+/// Reports a runtime fault from a script. When `map` is present (a `.neoc`
+/// entry run via `neoc run`), every `<path>:<luaLine>` reference in the error
+/// and its traceback is rewritten to the originating `.neoc` line, so the fault
+/// points at neoc source rather than emitted-Lua lines. A `require` fault still
+/// takes the dedicated module-not-found path first.
+fn report_script_error_mapped(
+    e: mlua::Error,
+    source: &str,
+    path: &str,
+    map: Option<&SourceMap>,
+) -> ! {
     if let Some(neoc_err) = errors::extract_require_error(&e, source, path) {
         report_error(neoc_err);
     }
-    eprintln!("{e}");
+    let text = format!("{e}");
+    let rendered = match map {
+        Some(map) => map_lua_lines_to_neoc(&text, path, map),
+        None => text,
+    };
+    eprintln!("{rendered}");
     process::exit(1);
+}
+
+/// Rewrites every Luau chunk reference for `chunk` in `text` from its emitted-
+/// Lua line to the originating neoc line via `map`.
+///
+/// Luau renders a chunk frame as `[string "<chunk>"]:<line>` (in both the
+/// leading `runtime error:` line and each `stack traceback:` frame). Only frames
+/// whose chunk name equals `chunk` are rewritten — `[C]` frames and any other
+/// chunk are left untouched. On an exact miss the map returns the nearest
+/// preceding mapped line, so a line in appended boilerplate still resolves.
+fn map_lua_lines_to_neoc(text: &str, chunk: &str, map: &SourceMap) -> String {
+    let marker = format!("[string \"{chunk}\"]:");
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(pos) = rest.find(&marker) {
+        let (before, after) = rest.split_at(pos + marker.len());
+        out.push_str(before);
+        // Consume the run of digits following the marker — the Lua line number.
+        let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
+        if digits.is_empty() {
+            rest = after;
+            continue;
+        }
+        let lua_line: u32 = digits.parse().unwrap_or(0);
+        match map.neoc_line(lua_line) {
+            Some(neoc_line) => out.push_str(&neoc_line.to_string()),
+            None => out.push_str(&digits),
+        }
+        rest = &after[digits.len()..];
+    }
+    out.push_str(rest);
+    out
 }
 
 // TODO: clean-code - 0.55 - SRP: expand_args mixes glob detection, walking, and process::exit error handling
@@ -133,10 +181,30 @@ async fn run(paths: &[String], user_args: &[String]) {
     let multi = paths.len() > 1;
 
     for path in paths {
-        let source = fs::read_to_string(path).unwrap_or_else(|e| {
-            eprintln!("error: {path}: {e}");
-            process::exit(1);
-        });
+        // A `.neoc` entry is transpiled to Lua in-process and run directly, so
+        // `neoc run app.neoc` behaves like running a Luau script. `.lua`/`.luau`
+        // scripts load verbatim. For a `.neoc` entry the source map travels with
+        // the Lua so a runtime fault is reported at the neoc line, not the
+        // emitted-Lua line.
+        let is_neoc = Path::new(path)
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("neoc"));
+        let (source, source_map) = if is_neoc {
+            match cli::transpile_entry_to_lua(Path::new(path), &mut io::stderr().lock()) {
+                Ok(Some(entry)) => (entry.lua, Some(entry.source_map)),
+                Ok(None) => process::exit(1),
+                Err(e) => {
+                    eprintln!("error: {e:#}");
+                    process::exit(1);
+                }
+            }
+        } else {
+            let source = fs::read_to_string(path).unwrap_or_else(|e| {
+                eprintln!("error: {path}: {e}");
+                process::exit(1);
+            });
+            (source, None)
+        };
 
         // TODO: clean-code - 0.75 - DRY: engine-init + _NEOC_ARGS binding + scheduler drain duplicated in main() embedded-payload path
         let engine = lua::sandbox::make_engine().unwrap_or_else(|e| {
@@ -157,7 +225,7 @@ async fn run(paths: &[String], user_args: &[String]) {
             .exec_async()
             .await
         {
-            report_script_error(e, &source, path);
+            report_script_error_mapped(e, &source, path, source_map.as_ref());
         }
 
         // Drain any tasks spawned by std:task that outlive the main script.

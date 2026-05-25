@@ -1,5 +1,6 @@
-//! Integration tests driving the compiler subcommands of the unified `neoc`
-//! binary (`neoc build`/`check`/`fmt`/`lsp`).
+//! Integration tests driving the unified `neoc` binary: the compiler
+//! subcommands (`build`/`check`/`fmt`/`lsp`) and `run` of a `.neoc` entry
+//! (in-process transpile + execute, with runtime faults mapped to neoc lines).
 
 use std::fs;
 use std::path::Path;
@@ -232,5 +233,110 @@ fn lsp_starts_and_exits_cleanly_when_stdin_closes() {
         out.status.success(),
         "stderr: {}",
         String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+// `print` is the built-in the sandboxed VM exposes (unlike the conformance
+// harness's `println`), so a runnable `.neoc` binds it as an `ext`.
+const RUNNABLE: &str = "ext fn print(s: string);\nfn main() {\n  print(\"ran neoc\");\n}\n";
+
+#[test]
+fn run_neoc_transpiles_and_executes() {
+    let dir = tempdir().unwrap();
+    let src = write(dir.path(), "app.neoc", RUNNABLE);
+
+    let out = Command::new(BIN).arg("run").arg(&src).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ran neoc");
+    // No intermediate file is written next to the source.
+    assert!(!dir.path().join("app.lua").exists());
+}
+
+#[test]
+fn run_neoc_type_error_reports_neoc_diagnostic_not_lua() {
+    let dir = tempdir().unwrap();
+    let src = write(
+        dir.path(),
+        "bad.neoc",
+        "fn main() {\n  let x: string = 42;\n}\n",
+    );
+
+    let out = Command::new(BIN).arg("run").arg(&src).output().unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("type:"),
+        "expected a neoc type diagnostic, got: {stderr}"
+    );
+}
+
+// A program that compiles cleanly but faults at runtime: `crash()` (neoc line
+// 4) calls an unbound name, so the VM raises `attempt to call a nil value`. The
+// offending call sits on neoc line 4; the emitted Lua puts it on a different
+// line, so a correct source map must report line 4, not the Lua line. (#55, #56)
+const RUNTIME_FAULT: &str = "\
+ext fn print(s: string);
+fn crash() {
+  print(\"in crash\");
+  let n = explode();
+}
+ext fn explode() -> number;
+fn main() {
+  crash();
+}
+";
+
+#[test]
+fn run_neoc_runtime_fault_reports_neoc_line_not_lua_line() {
+    let dir = tempdir().unwrap();
+    let src = write(dir.path(), "fault.neoc", RUNTIME_FAULT);
+
+    let out = Command::new(BIN).arg("run").arg(&src).output().unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+
+    // The fault names the `.neoc` file and the neoc line of the offending call
+    // (`let n = explode();` on line 4), not the emitted-Lua line.
+    assert!(
+        stderr.contains("fault.neoc\"]:4:"),
+        "expected the fault at fault.neoc:4 (neoc line), got: {stderr}"
+    );
+    // The emitted Lua puts `explode()` on line 3 (no `ext`/header lines emit), so
+    // an unmapped report would have said `:3:` — assert that leaked Lua line is
+    // gone from the chunk reference.
+    assert!(
+        !stderr.contains("fault.neoc\"]:3:"),
+        "Lua line 3 leaked into the report; map not applied: {stderr}"
+    );
+}
+
+#[test]
+fn run_neoc_multi_module_is_rejected_with_pointer_to_build() {
+    // `run` executes a single file; a program that `use`s another module lowers
+    // to `require("util")`, which has no resolver under the runtime's
+    // `namespace:name` require — so it's rejected up front (not at a confusing
+    // runtime require failure) with a pointer to `neoc build`.
+    let dir = tempdir().unwrap();
+    write(
+        dir.path(),
+        "util.neoc",
+        "pub fn add(a: number, b: number) -> number { a + b }\n",
+    );
+    let entry = write(
+        dir.path(),
+        "app.neoc",
+        "use util::add;\nfn main() -> number { add(2, 3) }\n",
+    );
+
+    let out = Command::new(BIN).arg("run").arg(&entry).output().unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("imports other modules") && stderr.contains("neoc build"),
+        "expected a multi-module rejection pointing at `neoc build`, got: {stderr}"
     );
 }

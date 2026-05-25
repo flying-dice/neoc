@@ -88,12 +88,36 @@ pub enum Stage {
     Emit,
 }
 
+/// A line-level map from emitted target source back to neoc source.
+///
+/// Built only for [`Target::Lua`] today: [`neoc_codegen_lua::LineMap`] is the
+/// backing representation. Other targets leave it empty until their backends
+/// grow a source map (see #56). A runtime that surfaces target-line numbers in
+/// a fault translates them to neoc positions through [`SourceMap::neoc_line`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SourceMap {
+    lua: codegen_lua::LineMap,
+}
+
+impl SourceMap {
+    /// Returns the originating neoc line for a one-based emitted line, using the
+    /// nearest preceding mapped entry on an exact miss. Returns `None` when the
+    /// map is empty (no source was supplied, or the target has no map yet).
+    #[must_use]
+    pub fn neoc_line(&self, emitted_line: u32) -> Option<u32> {
+        self.lua.neoc_line(emitted_line)
+    }
+}
+
 /// The result of compiling a module.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompileOutput {
     /// The emitted source for the chosen [`Target`].
     pub output: String,
     pub diagnostics: Vec<Diagnostic>,
+    /// The line map from emitted source back to neoc source. Empty for targets
+    /// without a source map yet (everything but Lua). `build`/`check` ignore it.
+    pub source_map: SourceMap,
 }
 
 impl CompileOutput {
@@ -139,7 +163,7 @@ pub fn transpile(source: &str, target: Target) -> CompileOutput {
     // interprets it: Lua picks `..`, JS and Python keep `+` (`lang/DYNAMIC.md`
     // §4.2).
     let elaborated = types::elaborate(&parsed.module);
-    let (output, emit_messages) = emit(target, &elaborated);
+    let (output, emit_messages, source_map) = emit(target, &elaborated, source);
     diagnostics.extend(emit_messages.into_iter().map(|message| Diagnostic {
         stage: Stage::Emit,
         message,
@@ -149,6 +173,7 @@ pub fn transpile(source: &str, target: Target) -> CompileOutput {
     CompileOutput {
         output,
         diagnostics,
+        source_map,
     }
 }
 
@@ -170,6 +195,11 @@ pub struct ProjectDiagnostic {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectOutput {
     pub files: Vec<(PathBuf, String)>,
+    /// One [`SourceMap`] per entry in `files`, positionally aligned, mapping
+    /// emitted lines back to neoc source. `build`/`check` ignore it; `neoc run`
+    /// uses the entry's map to rewrite runtime faults to neoc positions. Empty
+    /// when `files` is (a project that reported a diagnostic emits nothing).
+    pub source_maps: Vec<SourceMap>,
     pub diagnostics: Vec<ProjectDiagnostic>,
 }
 
@@ -185,6 +215,7 @@ impl ProjectOutput {
 /// collected symbol table for its own declarations.
 struct LoadedModule {
     path: PathBuf,
+    source: String,
     module: ast::Module,
     table: types::SymbolTable,
 }
@@ -269,6 +300,7 @@ pub fn transpile_project(entry: &Path, target: Target) -> std::io::Result<Projec
             path.clone(),
             LoadedModule {
                 path: path.clone(),
+                source,
                 module: parsed.module,
                 table,
             },
@@ -279,48 +311,69 @@ pub fn transpile_project(entry: &Path, target: Target) -> std::io::Result<Projec
     // symbols its `use` declarations import. Visibility violations and
     // unresolved module paths are diagnostics.
     let mut files = Vec::new();
+    let mut source_maps = Vec::new();
     for path in &order {
-        let me = &loaded[path];
-        let mut table = types::collect(&me.module);
-        for item in &me.module.items {
-            let ast::ItemKind::Use(u) = &item.kind else {
-                continue;
-            };
-            resolve_use(&root, &loaded, item, u, &mut table, &mut diagnostics, path);
-        }
-        let checked = types::check_with_table(&me.module, &table);
-        for d in &checked.diagnostics {
-            diagnostics.push(ProjectDiagnostic {
-                path: path.clone(),
-                diagnostic: Diagnostic {
-                    stage: Stage::Type,
-                    message: d.message.clone(),
-                    span: (d.start != 0 || d.end != 0).then_some(ByteSpan {
-                        start: d.start,
-                        end: d.end,
-                    }),
-                },
-            });
-        }
-        let elaborated = types::elaborate(&me.module);
-        let (output, emit_messages) = emit(target, &elaborated);
-        for message in emit_messages {
-            diagnostics.push(ProjectDiagnostic {
-                path: path.clone(),
-                diagnostic: Diagnostic {
-                    stage: Stage::Emit,
-                    message,
-                    span: None,
-                },
-            });
-        }
-        files.push((me.path.with_extension(target.extension()), output));
+        let (output, source_map) =
+            check_and_emit_module(&root, &loaded, path, target, &mut diagnostics);
+        files.push((loaded[path].path.with_extension(target.extension()), output));
+        source_maps.push(source_map);
     }
 
     if !diagnostics.is_empty() {
         files.clear();
+        source_maps.clear();
     }
-    Ok(ProjectOutput { files, diagnostics })
+    Ok(ProjectOutput {
+        files,
+        source_maps,
+        diagnostics,
+    })
+}
+
+/// Checks one resolved module's bodies (with its `use`-imported symbols in
+/// scope) and emits it to `target`, pushing any type/emit diagnostics onto
+/// `diagnostics`. Returns the emitted source and its [`SourceMap`].
+fn check_and_emit_module(
+    root: &Path,
+    loaded: &HashMap<PathBuf, LoadedModule>,
+    path: &Path,
+    target: Target,
+    diagnostics: &mut Vec<ProjectDiagnostic>,
+) -> (String, SourceMap) {
+    let me = &loaded[path];
+    let mut table = types::collect(&me.module);
+    for item in &me.module.items {
+        if let ast::ItemKind::Use(u) = &item.kind {
+            resolve_use(root, loaded, item, u, &mut table, diagnostics, path);
+        }
+    }
+    let checked = types::check_with_table(&me.module, &table);
+    for d in &checked.diagnostics {
+        diagnostics.push(ProjectDiagnostic {
+            path: path.to_path_buf(),
+            diagnostic: Diagnostic {
+                stage: Stage::Type,
+                message: d.message.clone(),
+                span: (d.start != 0 || d.end != 0).then_some(ByteSpan {
+                    start: d.start,
+                    end: d.end,
+                }),
+            },
+        });
+    }
+    let elaborated = types::elaborate(&me.module);
+    let (output, emit_messages, source_map) = emit(target, &elaborated, &me.source);
+    for message in emit_messages {
+        diagnostics.push(ProjectDiagnostic {
+            path: path.to_path_buf(),
+            diagnostic: Diagnostic {
+                stage: Stage::Emit,
+                message,
+                span: None,
+            },
+        });
+    }
+    (output, source_map)
 }
 
 /// Resolves one `use` declaration against the loaded module graph, importing
@@ -399,24 +452,37 @@ fn canonical_or(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
-/// Dispatches emission to the backend for `target`, returning its source and
-/// any emit diagnostic messages.
-fn emit(target: Target, module: &ast::Module) -> (String, Vec<String>) {
+/// Dispatches emission to the backend for `target`, returning its source, any
+/// emit diagnostic messages, and a [`SourceMap`] back to neoc.
+///
+/// `source` is the neoc text the module was parsed from; the Lua backend uses
+/// it to map emitted lines to neoc lines. The JS and Python backends have no
+/// source map yet (#56), so they return an empty [`SourceMap`].
+fn emit(target: Target, module: &ast::Module, source: &str) -> (String, Vec<String>, SourceMap) {
     match target {
         Target::Lua => {
-            let r = codegen_lua::emit(module);
+            let r = codegen_lua::emit_with_source(module, source);
             (
                 r.lua,
                 r.diagnostics.into_iter().map(|d| d.message).collect(),
+                SourceMap { lua: r.source_map },
             )
         }
         Target::Js => {
             let r = codegen_js::emit(module);
-            (r.js, r.diagnostics.into_iter().map(|d| d.message).collect())
+            (
+                r.js,
+                r.diagnostics.into_iter().map(|d| d.message).collect(),
+                SourceMap::default(),
+            )
         }
         Target::Python => {
             let r = codegen_py::emit(module);
-            (r.py, r.diagnostics.into_iter().map(|d| d.message).collect())
+            (
+                r.py,
+                r.diagnostics.into_iter().map(|d| d.message).collect(),
+                SourceMap::default(),
+            )
         }
     }
 }
