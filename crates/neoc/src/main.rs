@@ -133,10 +133,24 @@ async fn run(paths: &[String], user_args: &[String]) {
     let multi = paths.len() > 1;
 
     for path in paths {
-        let source = fs::read_to_string(path).unwrap_or_else(|e| {
-            eprintln!("error: {path}: {e}");
-            process::exit(1);
-        });
+        // A `.neoc` entry is transpiled to Lua in-process and run directly, so
+        // `neoc run app.neoc` behaves like running a Luau script. `.lua`/`.luau`
+        // scripts load verbatim.
+        let source = if path.ends_with(".neoc") {
+            match cli::transpile_entry_to_lua(Path::new(path), &mut io::stderr().lock()) {
+                Ok(Some(lua)) => lua,
+                Ok(None) => process::exit(1),
+                Err(e) => {
+                    eprintln!("error: {e:#}");
+                    process::exit(1);
+                }
+            }
+        } else {
+            fs::read_to_string(path).unwrap_or_else(|e| {
+                eprintln!("error: {path}: {e}");
+                process::exit(1);
+            })
+        };
 
         // TODO: clean-code - 0.75 - DRY: engine-init + _NEOC_ARGS binding + scheduler drain duplicated in main() embedded-payload path
         let engine = lua::sandbox::make_engine().unwrap_or_else(|e| {

@@ -218,6 +218,63 @@ fn out_path(source: &Path, output: Option<&Path>, target: Target) -> PathBuf {
 
 /// Prints a multi-file project's diagnostics to `err`, each tagged with the
 /// module it came from.
+/// Transpiles a single `.neoc` entry file to Lua so `neoc run` can execute it
+/// in-process, with no intermediate file. Diagnostics (parse / type / emit) are
+/// reported to `err` exactly as `neoc build` reports them.
+///
+/// Returns the emitted Lua source for the entry on success. Returns `None` when
+/// the program reported a diagnostic, or when it imports other modules via
+/// `use` — `run` executes a single file, and the lowered `require("a.b")` calls
+/// have no resolver under the runtime's `namespace:name` require, so such
+/// projects must go through `neoc build`.
+///
+/// # Errors
+///
+/// Returns an error if the entry file cannot be read.
+pub fn transpile_entry_to_lua(file: &Path, err: &mut impl Write) -> Result<Option<String>> {
+    let project = transpile_project(file, Target::Lua)
+        .with_context(|| format!("reading {}", file.display()))?;
+
+    if !project.diagnostics.is_empty() {
+        report_project(&project.diagnostics, err)?;
+        return Ok(None);
+    }
+
+    if project.files.len() > 1 {
+        writeln!(
+            err,
+            "neoc run: `{}` imports other modules; `run` executes a single file. \
+             Build multi-module projects with `neoc build`.",
+            file.display()
+        )?;
+        return Ok(None);
+    }
+
+    let Some((_, mut lua)) = project.files.into_iter().next() else {
+        return Ok(None);
+    };
+
+    // neoc is item-only at the top level (Rust-style), so a transpiled module
+    // just defines functions. `fn main` is the entry point: if the program
+    // defines one, invoke it so `neoc run app.neoc` actually runs the program —
+    // the call is appended to the same chunk, where the lowered
+    // `local function main` is in scope.
+    if defines_main(&lua) {
+        lua.push_str("\nmain()\n");
+    }
+
+    Ok(Some(lua))
+}
+
+/// Whether the emitted Lua defines a top-level `main` function — the entry
+/// point `neoc run` invokes.
+fn defines_main(lua: &str) -> bool {
+    lua.lines().any(|l| {
+        let l = l.trim_start();
+        l.starts_with("local function main(") || l.starts_with("function main(")
+    })
+}
+
 fn report_project(diagnostics: &[ProjectDiagnostic], err: &mut impl Write) -> Result<()> {
     for d in diagnostics {
         writeln!(

@@ -234,3 +234,41 @@ fn lsp_starts_and_exits_cleanly_when_stdin_closes() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+// `print` is the built-in the sandboxed VM exposes (unlike the conformance
+// harness's `println`), so a runnable `.neoc` binds it as an `ext`.
+const RUNNABLE: &str = "ext fn print(s: string);\nfn main() {\n  print(\"ran neoc\");\n}\n";
+
+#[test]
+fn run_neoc_transpiles_and_executes() {
+    let dir = tempdir().unwrap();
+    let src = write(dir.path(), "app.neoc", RUNNABLE);
+
+    let out = Command::new(BIN).arg("run").arg(&src).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ran neoc");
+    // No intermediate file is written next to the source.
+    assert!(!dir.path().join("app.lua").exists());
+}
+
+#[test]
+fn run_neoc_type_error_reports_neoc_diagnostic_not_lua() {
+    let dir = tempdir().unwrap();
+    let src = write(
+        dir.path(),
+        "bad.neoc",
+        "fn main() {\n  let x: string = 42;\n}\n",
+    );
+
+    let out = Command::new(BIN).arg("run").arg(&src).output().unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("type:"),
+        "expected a neoc type diagnostic, got: {stderr}"
+    );
+}
