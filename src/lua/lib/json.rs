@@ -855,6 +855,19 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     // mediated).
     .set("null", null_handle(lua)?)?;
 
+    m.record_fn(
+        "object",
+        &[],
+        "Object",
+        "Construct an empty mutable JSON object handle on a fresh root.",
+    );
+    m.record_fn(
+        "array",
+        &[],
+        "Array",
+        "Construct an empty mutable JSON array handle on a fresh root.",
+    );
+
     m.userdata("Object", |o| {
         o.method(
             "get",

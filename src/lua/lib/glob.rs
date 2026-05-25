@@ -55,6 +55,13 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
     m.set("scan", lua.create_function(flat_scan)?)?;
 
+    m.record_fn(
+        "scan",
+        &[("pattern", "string"), ("opts", "LuaValue?")],
+        "Result<LuaValue, string>",
+        "Compile `pattern`, walk the filesystem, and return all matching paths plus any per-entry walk errors.",
+    );
+
     m.userdata("Glob", |g| {
         g.method(
             "is_match",

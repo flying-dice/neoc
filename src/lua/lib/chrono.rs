@@ -19,9 +19,7 @@ use std::str::FromStr;
 use jiff::civil::{Date, DateTime, Time};
 use jiff::tz::TimeZone;
 use jiff::{Span, Timestamp, Unit, Zoned};
-use mlua::{
-    AnyUserData, IntoLua, Lua, MetaMethod, Table, UserData, UserDataFields, UserDataMethods, Value,
-};
+use mlua::{AnyUserData, Lua, MetaMethod, Table, UserData, UserDataFields, UserDataMethods, Value};
 use tracing::instrument;
 
 use crate::lua::facade::Module;
@@ -77,14 +75,33 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     // `now` / `utc_now` return a `ZonedDateTime` userdata handle — not a
     // facade `NeocType` — and carry `chrono.now` / `chrono.utc_now` spans, so
     // they are set verbatim with their `#[instrument]` attributes intact.
+    //
+    // `parse` dispatches across handle types and routes a recognition failure
+    // to the `(value, error)` channel, but the chosen handle's `into_lua` (done
+    // by `ok`) raises an `mlua::Error` directly — a mix `try_func` cannot model
+    // — so it too is set verbatim and recorded for the header.
     m.set("now", lua.create_function(flat_now)?)?
         .set("utc_now", lua.create_function(flat_utc_now)?)?
-        .try_func(
-            "parse",
-            &[("s", "string")],
-            "Recognise an ISO 8601 / RFC 9557 string and dispatch it to the matching `Date`, `Time`, `DateTime`, or `ZonedDateTime`.",
-            |lua, s: String| flat_parse(lua, &s),
-        )?;
+        .set("parse", lua.create_function(flat_parse)?)?;
+
+    m.record_fn(
+        "now",
+        &[],
+        "ZonedDateTime",
+        "Current wall-clock instant in the system's local timezone.",
+    )
+    .record_fn(
+        "utc_now",
+        &[],
+        "ZonedDateTime",
+        "Current wall-clock instant in UTC.",
+    )
+    .record_fn(
+        "parse",
+        &[("s", "string")],
+        "Result<LuaValue, string>",
+        "Recognise an ISO 8601 / RFC 9557 string and dispatch it to the matching `Date`, `Time`, `DateTime`, or `ZonedDateTime`.",
+    );
 
     record_userdata(&mut m);
 
@@ -963,39 +980,33 @@ fn flat_utc_now(_: &Lua, _: ()) -> mlua::Result<ZonedDateTimeHandle> {
 // trying it before `Date` would swallow date-only input into a fake DateTime
 // with `00:00:00`. We use the string's structural markers (`T`, `:`, `[`) to
 // route to the right narrower parser.
-fn flat_parse(lua: &Lua, s: &str) -> Result<Value, String> {
+#[instrument(name = "chrono.parse", target = "luau::lib::chrono", skip_all)]
+fn flat_parse(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
     let has_datetime_shape = s.contains('T') || s.contains(' ');
-    let value = if has_datetime_shape {
-        if let Ok(z) = Zoned::from_str(s) {
-            ZonedDateTimeHandle(z).into_lua(lua)
-        } else if let Ok(ts) = Timestamp::from_str(s) {
-            // RFC 3339 with `Z` or numeric offset but no `[zone]` suffix —
-            // `Zoned::from_str` rejects it, but `Timestamp::from_str` accepts.
-            // Normalise to a UTC-zoned instant so the instant is preserved.
-            ZonedDateTimeHandle(ts.to_zoned(TimeZone::UTC)).into_lua(lua)
-        } else if let Ok(dt) = DateTime::from_str(s) {
-            DateTimeHandle(dt).into_lua(lua)
-        } else {
-            return Err(format!(
-                "cannot recognise {s:?} as Date, Time, DateTime, or ZonedDateTime"
-            ));
+    if has_datetime_shape {
+        if let Ok(z) = Zoned::from_str(&s) {
+            return ok(lua, ZonedDateTimeHandle(z));
+        }
+        // RFC 3339 with `Z` or numeric offset but no `[zone]` suffix —
+        // `Zoned::from_str` rejects it, but `Timestamp::from_str` accepts.
+        // Normalise to a UTC-zoned instant so the instant is preserved.
+        if let Ok(ts) = Timestamp::from_str(&s) {
+            return ok(lua, ZonedDateTimeHandle(ts.to_zoned(TimeZone::UTC)));
+        }
+        if let Ok(dt) = DateTime::from_str(&s) {
+            return ok(lua, DateTimeHandle(dt));
         }
     } else if s.contains(':') {
-        if let Ok(t) = Time::from_str(s) {
-            TimeHandle(t).into_lua(lua)
-        } else {
-            return Err(format!(
-                "cannot recognise {s:?} as Date, Time, DateTime, or ZonedDateTime"
-            ));
+        if let Ok(t) = Time::from_str(&s) {
+            return ok(lua, TimeHandle(t));
         }
-    } else if let Ok(d) = Date::from_str(s) {
-        DateHandle(d).into_lua(lua)
-    } else {
-        return Err(format!(
-            "cannot recognise {s:?} as Date, Time, DateTime, or ZonedDateTime"
-        ));
-    };
-    value.map_err(|e| e.to_string())
+    } else if let Ok(d) = Date::from_str(&s) {
+        return ok(lua, DateHandle(d));
+    }
+    err(
+        lua,
+        format!("chrono.parse: cannot recognise {s:?} as Date, Time, DateTime, or ZonedDateTime"),
+    )
 }
 
 // ---------------------------------------------------------------------------

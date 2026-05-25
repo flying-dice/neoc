@@ -8,8 +8,10 @@ use flate2::Compression;
 use flate2::read::{GzDecoder, ZlibDecoder};
 use flate2::write::{GzEncoder, ZlibEncoder};
 use mlua::{Lua, Table, Value};
+use tracing::instrument;
 
 use crate::lua::facade::Module;
+use crate::lua::sandbox::{err, from_err, ok};
 
 const DEFAULT_MAX_SIZE: usize = 256 * 1024 * 1024;
 
@@ -18,85 +20,104 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 }
 
 /// Declares the `lib:compress` surface through the facade. Both functions are
-/// fallible and return raw bytes as a Lua string. The `(value, error)` shape,
-/// the `compress.encode` / `compress.decode` error prefixes (the facade
-/// re-adds them, so the inner functions return the bare suffix), and the
-/// `luau::lib::compress` spans are byte-identical to the hand-written
-/// registration this replaces.
+/// fallible and return raw bytes as a Lua string.
+///
+/// Both `encode` and `decode` are a *mixed* raise-plus-channel shape:
+/// validation, format, and codec failures go to the `(value, error)` channel
+/// (via [`crate::lua::sandbox::err`] / [`crate::lua::sandbox::from_err`]), but a
+/// `lua.create_string` failure on the produced bytes raises an `mlua::Error`
+/// directly (the bare `?`) — a mix `try_func` cannot model. Both are registered
+/// verbatim with [`crate::lua::facade::Module::set`] (keeping their
+/// `#[instrument]` span and `compress.<fn>` channel prefix) and recorded for the
+/// header with [`crate::lua::facade::Module::record_fn`]. The `(value, error)`
+/// shape, the `compress.encode` / `compress.decode` error prefixes, the raise on
+/// `create_string`, and the `luau::lib::compress` spans are byte-identical to
+/// the hand-written registration this replaces.
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:compress")?;
-    m.try_func(
+    m.set("encode", lua.create_function(encode)?)?
+        .set("decode", lua.create_function(decode)?)?;
+
+    m.record_fn(
         "encode",
         &[("format", "string"), ("data", "string"), ("opts", "LuaValue?")],
+        "Result<string, string>",
         "Compress `data` with `format` (`gzip`, `zlib`, `zstd`, or `brotli`); `opts.level` tunes the compression level.",
-        |lua, (format, data, opts): (String, mlua::String, Option<Table>)| {
-            encode(lua, &format, &data.as_bytes(), opts.as_ref())
-        },
-    )?
-    .try_func(
+    )
+    .record_fn(
         "decode",
         &[("format", "string"), ("data", "string"), ("opts", "LuaValue?")],
+        "Result<string, string>",
         "Decompress `data` with `format`; `opts.max_size` caps the output size (default 256 MiB).",
-        |lua, (format, data, opts): (String, mlua::String, Option<Table>)| {
-            decode(lua, &format, &data.as_bytes(), opts.as_ref())
-        },
-    )?;
+    );
+
     Ok(m)
 }
 
+#[instrument(name = "compress.encode", target = "luau::lib::compress", skip_all)]
 fn encode(
     lua: &Lua,
-    format: &str,
-    bytes: &[u8],
-    opts: Option<&Table>,
-) -> Result<mlua::String, String> {
-    let level = extract_integer_opt(opts, "level")?;
-    match format {
-        "gzip" => encode_gzip(lua, bytes, level),
-        "zlib" => encode_zlib(lua, bytes, level),
-        "zstd" => encode_zstd(lua, bytes, level),
-        "brotli" => encode_brotli(lua, bytes, level),
-        _ => Err(format!("unknown format '{format}'")),
+    (format, data, opts): (String, mlua::String, Option<Table>),
+) -> mlua::Result<(Value, Value)> {
+    let bytes = data.as_bytes();
+    let level = match extract_integer_opt(opts.as_ref(), "level", "compress.encode") {
+        Ok(l) => l,
+        Err(msg) => return err(lua, msg),
+    };
+    match format.as_str() {
+        "gzip" => encode_gzip(lua, &bytes, level),
+        "zlib" => encode_zlib(lua, &bytes, level),
+        "zstd" => encode_zstd(lua, &bytes, level),
+        "brotli" => encode_brotli(lua, &bytes, level),
+        _ => err(lua, format!("compress.encode: unknown format '{format}'")),
     }
 }
 
+#[instrument(name = "compress.decode", target = "luau::lib::compress", skip_all)]
 fn decode(
     lua: &Lua,
-    format: &str,
-    bytes: &[u8],
-    opts: Option<&Table>,
-) -> Result<mlua::String, String> {
+    (format, data, opts): (String, mlua::String, Option<Table>),
+) -> mlua::Result<(Value, Value)> {
+    let bytes = data.as_bytes();
     if bytes.is_empty() {
-        return Err("empty input is not a valid compressed stream".to_string());
+        return err(
+            lua,
+            "compress.decode: empty input is not a valid compressed stream",
+        );
     }
-    let max_size = match extract_integer_opt(opts, "max_size")? {
-        Some(n) if n <= 0 => return Err("max_size must be > 0".to_string()),
-        Some(n) => n as usize,
-        None => DEFAULT_MAX_SIZE,
+    let max_size = match extract_integer_opt(opts.as_ref(), "max_size", "compress.decode") {
+        Ok(Some(n)) if n <= 0 => return err(lua, "compress.decode: max_size must be > 0"),
+        Ok(Some(n)) => n as usize,
+        Ok(None) => DEFAULT_MAX_SIZE,
+        Err(msg) => return err(lua, msg),
     };
-    match format {
-        "gzip" => decode_gzip(lua, bytes, max_size),
-        "zlib" => decode_zlib(lua, bytes, max_size),
-        "zstd" => decode_zstd(lua, bytes, max_size),
-        "brotli" => decode_brotli(lua, bytes, max_size),
-        _ => Err(format!("unknown format '{format}'")),
+    match format.as_str() {
+        "gzip" => decode_gzip(lua, &bytes, max_size),
+        "zlib" => decode_zlib(lua, &bytes, max_size),
+        "zstd" => decode_zstd(lua, &bytes, max_size),
+        "brotli" => decode_brotli(lua, &bytes, max_size),
+        _ => err(lua, format!("compress.decode: unknown format '{format}'")),
     }
 }
 
-fn extract_integer_opt(opts: Option<&Table>, key: &str) -> Result<Option<i64>, String> {
+fn extract_integer_opt(
+    opts: Option<&Table>,
+    key: &str,
+    prefix: &str,
+) -> Result<Option<i64>, String> {
     let Some(t) = opts else { return Ok(None) };
-    let v: Value = t.get(key).map_err(|e| e.to_string())?;
+    let v: Value = t.get(key).map_err(|e| format!("{prefix}: {e}"))?;
     match v {
         Value::Nil => Ok(None),
         Value::Integer(i) => Ok(Some(i as i64)),
         Value::Number(f) => {
             if !f.is_finite() || f.fract() != 0.0 {
-                Err(format!("{key} must be an integer"))
+                Err(format!("{prefix}: {key} must be an integer"))
             } else {
                 Ok(Some(f as i64))
             }
         }
-        _ => Err(format!("invalid {key} type")),
+        _ => Err(format!("{prefix}: invalid {key} type")),
     }
 }
 
@@ -110,7 +131,9 @@ fn validate_level(
     match level {
         None => Ok(default),
         Some(n) if n >= min && n <= max => Ok(n),
-        Some(n) => Err(format!("level out of range for {format}: {n}")),
+        Some(n) => Err(format!(
+            "compress.encode: level out of range for {format}: {n}"
+        )),
     }
 }
 
@@ -145,64 +168,104 @@ fn read_with_limit<R: Read>(mut reader: R, max_size: usize) -> Result<Vec<u8>, s
 
 // --- Encode ---
 
-fn encode_gzip(lua: &Lua, data: &[u8], level: Option<i64>) -> Result<mlua::String, String> {
-    let level = validate_level("gzip", level, 0, 9, 6)?;
+fn encode_gzip(lua: &Lua, data: &[u8], level: Option<i64>) -> mlua::Result<(Value, Value)> {
+    let level = match validate_level("gzip", level, 0, 9, 6) {
+        Ok(l) => l,
+        Err(msg) => return err(lua, msg),
+    };
     let mut encoder = GzEncoder::new(Vec::new(), Compression::new(level as u32));
-    encoder.write_all(data).map_err(|e| e.to_string())?;
-    let compressed = encoder.finish().map_err(|e| e.to_string())?;
-    lua.create_string(&compressed).map_err(|e| e.to_string())
+    if let Err(e) = encoder.write_all(data) {
+        return from_err(lua, "compress.encode", e);
+    }
+    match encoder.finish() {
+        Ok(compressed) => ok(lua, lua.create_string(&compressed)?),
+        Err(e) => from_err(lua, "compress.encode", e),
+    }
 }
 
-fn encode_zlib(lua: &Lua, data: &[u8], level: Option<i64>) -> Result<mlua::String, String> {
-    let level = validate_level("zlib", level, 0, 9, 6)?;
+fn encode_zlib(lua: &Lua, data: &[u8], level: Option<i64>) -> mlua::Result<(Value, Value)> {
+    let level = match validate_level("zlib", level, 0, 9, 6) {
+        Ok(l) => l,
+        Err(msg) => return err(lua, msg),
+    };
     let mut encoder = ZlibEncoder::new(Vec::new(), Compression::new(level as u32));
-    encoder.write_all(data).map_err(|e| e.to_string())?;
-    let compressed = encoder.finish().map_err(|e| e.to_string())?;
-    lua.create_string(&compressed).map_err(|e| e.to_string())
+    if let Err(e) = encoder.write_all(data) {
+        return from_err(lua, "compress.encode", e);
+    }
+    match encoder.finish() {
+        Ok(compressed) => ok(lua, lua.create_string(&compressed)?),
+        Err(e) => from_err(lua, "compress.encode", e),
+    }
 }
 
-fn encode_zstd(lua: &Lua, data: &[u8], level: Option<i64>) -> Result<mlua::String, String> {
-    let level = validate_level("zstd", level, 1, 22, 3)?;
-    let mut encoder = zstd::Encoder::new(Vec::new(), level as i32).map_err(|e| e.to_string())?;
-    encoder.write_all(data).map_err(|e| e.to_string())?;
-    let compressed = encoder.finish().map_err(|e| e.to_string())?;
-    lua.create_string(&compressed).map_err(|e| e.to_string())
+fn encode_zstd(lua: &Lua, data: &[u8], level: Option<i64>) -> mlua::Result<(Value, Value)> {
+    let level = match validate_level("zstd", level, 1, 22, 3) {
+        Ok(l) => l,
+        Err(msg) => return err(lua, msg),
+    };
+    let mut encoder = match zstd::Encoder::new(Vec::new(), level as i32) {
+        Ok(e) => e,
+        Err(e) => return from_err(lua, "compress.encode", e),
+    };
+    if let Err(e) = encoder.write_all(data) {
+        return from_err(lua, "compress.encode", e);
+    }
+    match encoder.finish() {
+        Ok(compressed) => ok(lua, lua.create_string(&compressed)?),
+        Err(e) => from_err(lua, "compress.encode", e),
+    }
 }
 
-fn encode_brotli(lua: &Lua, data: &[u8], level: Option<i64>) -> Result<mlua::String, String> {
-    let level = validate_level("brotli", level, 0, 11, 6)?;
+fn encode_brotli(lua: &Lua, data: &[u8], level: Option<i64>) -> mlua::Result<(Value, Value)> {
+    let level = match validate_level("brotli", level, 0, 11, 6) {
+        Ok(l) => l,
+        Err(msg) => return err(lua, msg),
+    };
     let mut output = Vec::new();
     {
         let mut writer = brotli::CompressorWriter::new(&mut output, 4096, level as u32, 22);
-        writer.write_all(data).map_err(|e| e.to_string())?;
+        if let Err(e) = writer.write_all(data) {
+            return from_err(lua, "compress.encode", e);
+        }
     }
-    lua.create_string(&output).map_err(|e| e.to_string())
+    ok(lua, lua.create_string(&output)?)
 }
 
 // --- Decode ---
 
-fn decode_gzip(lua: &Lua, data: &[u8], max_size: usize) -> Result<mlua::String, String> {
+fn decode_gzip(lua: &Lua, data: &[u8], max_size: usize) -> mlua::Result<(Value, Value)> {
     let reader = GzDecoder::new(data);
-    let decompressed = read_with_limit(reader, max_size).map_err(|e| e.to_string())?;
-    lua.create_string(&decompressed).map_err(|e| e.to_string())
+    match read_with_limit(reader, max_size) {
+        Ok(decompressed) => ok(lua, lua.create_string(&decompressed)?),
+        Err(e) => from_err(lua, "compress.decode", e),
+    }
 }
 
-fn decode_zlib(lua: &Lua, data: &[u8], max_size: usize) -> Result<mlua::String, String> {
+fn decode_zlib(lua: &Lua, data: &[u8], max_size: usize) -> mlua::Result<(Value, Value)> {
     let reader = ZlibDecoder::new(data);
-    let decompressed = read_with_limit(reader, max_size).map_err(|e| e.to_string())?;
-    lua.create_string(&decompressed).map_err(|e| e.to_string())
+    match read_with_limit(reader, max_size) {
+        Ok(decompressed) => ok(lua, lua.create_string(&decompressed)?),
+        Err(e) => from_err(lua, "compress.decode", e),
+    }
 }
 
-fn decode_zstd(lua: &Lua, data: &[u8], max_size: usize) -> Result<mlua::String, String> {
-    let reader = zstd::Decoder::new(data).map_err(|e| e.to_string())?;
-    let decompressed = read_with_limit(reader, max_size).map_err(|e| e.to_string())?;
-    lua.create_string(&decompressed).map_err(|e| e.to_string())
+fn decode_zstd(lua: &Lua, data: &[u8], max_size: usize) -> mlua::Result<(Value, Value)> {
+    let reader = match zstd::Decoder::new(data) {
+        Ok(r) => r,
+        Err(e) => return from_err(lua, "compress.decode", e),
+    };
+    match read_with_limit(reader, max_size) {
+        Ok(decompressed) => ok(lua, lua.create_string(&decompressed)?),
+        Err(e) => from_err(lua, "compress.decode", e),
+    }
 }
 
-fn decode_brotli(lua: &Lua, data: &[u8], max_size: usize) -> Result<mlua::String, String> {
+fn decode_brotli(lua: &Lua, data: &[u8], max_size: usize) -> mlua::Result<(Value, Value)> {
     let reader = brotli::Decompressor::new(data, 4096);
-    let decompressed = read_with_limit(reader, max_size).map_err(|e| e.to_string())?;
-    lua.create_string(&decompressed).map_err(|e| e.to_string())
+    match read_with_limit(reader, max_size) {
+        Ok(decompressed) => ok(lua, lua.create_string(&decompressed)?),
+        Err(e) => from_err(lua, "compress.decode", e),
+    }
 }
 
 // --- Benchmarks ---

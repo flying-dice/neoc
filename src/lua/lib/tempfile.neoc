@@ -21,4 +21,8 @@ impl TempDir {
 extern "neoc" {
     /// Return the system's temporary-directory path.
     fn gettempdir() -> string;
+    /// Create a temporary file under the system temp directory, returning a `TempFile` handle.
+    fn tempfile(opts: LuaValue?) -> Result<TempFile, string>;
+    /// Create a temporary directory under the system temp directory, returning a `TempDir` handle.
+    fn tempdir(opts: LuaValue?) -> Result<TempDir, string>;
 }

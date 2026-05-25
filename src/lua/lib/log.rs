@@ -510,14 +510,41 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         lua.create_function(|_, opts: Option<Table>| LuaLogger::from_options(opts))?,
     )?;
 
+    m.record_fn(
+        "new",
+        &[("opts", "LuaValue?")],
+        "Logger",
+        "Construct an explicit logger instance; `opts` may carry `level` and `format`.",
+    );
+
     // Module-level convenience: `log.info(msg, fields?)` delegates to a
     // default-configured instance (level=info, format=json).
-    for (name, lvl) in [
-        ("trace", LogLevel::Trace),
-        ("debug", LogLevel::Debug),
-        ("info", LogLevel::Info),
-        ("warn", LogLevel::Warn),
-        ("error", LogLevel::Error),
+    for (name, lvl, doc) in [
+        (
+            "trace",
+            LogLevel::Trace,
+            "Module-level convenience for the lowest level; delegates to a fresh default logger.",
+        ),
+        (
+            "debug",
+            LogLevel::Debug,
+            "Module-level convenience for `debug`; delegates to a fresh default logger.",
+        ),
+        (
+            "info",
+            LogLevel::Info,
+            "Module-level convenience for `info` — the default level; delegates to a fresh default logger.",
+        ),
+        (
+            "warn",
+            LogLevel::Warn,
+            "Module-level convenience for `warn`; delegates to a fresh default logger.",
+        ),
+        (
+            "error",
+            LogLevel::Error,
+            "Module-level convenience for `error`; delegates to a fresh default logger.",
+        ),
     ] {
         let lvl_copy = lvl;
         m.set(
@@ -526,6 +553,12 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
                 LuaLogger::default_instance().emit(lua, lvl_copy, &msg, fields.as_ref())
             })?,
         )?;
+        m.record_fn(
+            name,
+            &[("msg", "string"), ("fields", "LuaValue?")],
+            "()",
+            doc,
+        );
     }
 
     m.userdata("Logger", |l| {

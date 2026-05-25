@@ -12,4 +12,6 @@ impl Hasher {
 extern "neoc" {
     /// One-shot hash of `data` under `algo`, returning the digest as raw bytes.
     fn hash(algo: string, data: string) -> Result<string, string>;
+    /// The list of supported algorithm names.
+    fn algorithms() -> LuaValue;
 }

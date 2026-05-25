@@ -316,6 +316,136 @@ mod tests {
         }
     }
 
+    /// Builds every facade-migrated module's runtime `require(...)` table,
+    /// paired with its registry key, in the same order as [`super::headers`].
+    /// The two lists line up by index so a test can cross-check a module's
+    /// live surface against its emitted header.
+    fn runtime_tables(lua: &Lua) -> Vec<(String, Table)> {
+        macro_rules! tables {
+            ($($key:literal => $module:expr),+ $(,)?) => {
+                vec![$(($key.to_string(), $module.expect($key))),+]
+            };
+        }
+        tables! {
+            "std:collections" => stdmod::collections::module(lua),
+            "std:env" => stdmod::env::module(lua),
+            "std:fs" => stdmod::fs::module(lua),
+            "std:io" => stdmod::io::module(lua),
+            "std:net" => stdmod::net::module(lua),
+            "std:task" => stdmod::task::module(lua),
+            "std:thread" => stdmod::thread::module(lua),
+            "std:time" => stdmod::time::module(lua),
+            "std:workers" => stdmod::workers::module(lua),
+            "lib:args" => lib::args::module(lua),
+            "lib:base64" => lib::base64::module(lua),
+            "lib:chrono" => lib::chrono::module(lua),
+            "lib:compile" => lib::compile::module(lua),
+            "lib:compress" => lib::compress::module(lua),
+            "lib:csv" => lib::csv::module(lua),
+            "lib:diff" => lib::diff::module(lua),
+            "lib:glob" => lib::glob::module(lua),
+            "lib:hash" => lib::hash::module(lua),
+            "lib:hex" => lib::hex::module(lua),
+            "lib:hmac" => lib::hmac::module(lua),
+            "lib:html" => lib::html::module(lua),
+            "lib:http" => lib::http::module(lua),
+            "lib:ini" => lib::ini::module(lua),
+            "lib:json" => lib::json::module(lua),
+            "lib:log" => lib::log::module(lua),
+            "lib:mime" => lib::mime::module(lua),
+            "lib:random" => lib::random::module(lua),
+            "lib:regex" => lib::regex::module(lua),
+            "lib:semver" => lib::semver::module(lua),
+            "lib:template" => lib::template::module(lua),
+            "lib:tempfile" => lib::tempfile::module(lua),
+            "lib:test" => lib::test::module(lua),
+            "lib:text" => lib::text::module(lua),
+            "lib:url" => lib::url::module(lua),
+            "lib:vcr" => lib::vcr::module(lua),
+            "vnd:hyper" => vnd::hyper::module(lua),
+            "vnd:jsonschema" => vnd::jsonschema::module(lua),
+            "vnd:quick_xml" => vnd::quick_xml::module(lua),
+            "vnd:rusqlite" => vnd::rusqlite::module(lua),
+            "vnd:serde_json" => vnd::serde_json::module(lua),
+            "vnd:serde_yaml" => vnd::serde_yaml::module(lua),
+            "vnd:sqlx_mysql" => vnd::sqlx_mysql::module(lua),
+            "vnd:sqlx_postgres" => vnd::sqlx_postgres::module(lua),
+            "vnd:testcontainers_modules" => vnd::testcontainers_modules::module(lua),
+            "vnd:toml" => vnd::toml::module(lua),
+        }
+    }
+
+    /// Every top-level key on a module's live `require(...)` table must be
+    /// covered by that module's emitted header. This is the guard that turns a
+    /// missing `record_fn` into a CI failure: register a free function with
+    /// `set` but forget to record its signature and the key is present at
+    /// runtime yet absent from the `extern "neoc"` block, so this fails.
+    ///
+    /// The check is one-directional (live keys ⊆ header surface): the header
+    /// may carry extra entries the base table lacks — most notably
+    /// `std:thread`'s `parent` / `shared`, injected only inside a spawned
+    /// worker — and that is fine. The shape of the assertion per key:
+    ///
+    /// - a function value must appear as a free `fn <key>(` in the
+    ///   `extern "neoc"` block;
+    /// - a table value (a constructor sub-table such as `chrono.Date`) must
+    ///   appear as `struct <Key>;`;
+    /// - any other value (an injected const such as `json.null`) must appear
+    ///   as `const <key>:`.
+    #[test]
+    fn header_surface_covers_runtime_table_keys() {
+        let lua = make_engine().expect("engine");
+        let headers = super::headers(&lua).expect("headers");
+        let tables = runtime_tables(&lua);
+
+        assert_eq!(
+            headers.len(),
+            tables.len(),
+            "headers and runtime tables drifted out of sync"
+        );
+
+        for ((hkey, header), (tkey, table)) in headers.iter().zip(tables.iter()) {
+            assert_eq!(hkey, tkey, "header / table ordering drifted");
+
+            // The `extern "neoc"` block holds the free functions and consts;
+            // userdata / sub-table `struct`s precede it. Splitting lets a
+            // free-function assertion ignore a same-named method inside an
+            // `impl` block.
+            let extern_block = header
+                .split_once("extern \"neoc\" {")
+                .map(|(_, rest)| rest)
+                .unwrap_or(header);
+
+            for pair in table.clone().pairs::<String, mlua::Value>() {
+                let (key, value) = pair.expect("module table pair");
+
+                match value {
+                    mlua::Value::Function(_) => {
+                        let needle = format!("fn {key}(");
+                        assert!(
+                            extern_block.contains(&needle),
+                            "{hkey}: function key {key:?} has no free `{needle}` in its header surface:\n{header}"
+                        );
+                    }
+                    mlua::Value::Table(_) => {
+                        let needle = format!("struct {key};");
+                        assert!(
+                            header.contains(&needle),
+                            "{hkey}: sub-table key {key:?} has no `{needle}` in its header surface:\n{header}"
+                        );
+                    }
+                    _ => {
+                        let needle = format!("const {key}:");
+                        assert!(
+                            extern_block.contains(&needle),
+                            "{hkey}: value key {key:?} has no `{needle}` in its header surface:\n{header}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn find_closest_returns_within_threshold() {
         let candidates = ["lib:json", "lib:base64"];

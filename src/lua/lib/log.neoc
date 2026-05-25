@@ -16,4 +16,16 @@ impl Logger {
 }
 #[link(name = "lib:log")]
 extern "neoc" {
+    /// Construct an explicit logger instance; `opts` may carry `level` and `format`.
+    fn new(opts: LuaValue?) -> Logger;
+    /// Module-level convenience for the lowest level; delegates to a fresh default logger.
+    fn trace(msg: string, fields: LuaValue?) -> ();
+    /// Module-level convenience for `debug`; delegates to a fresh default logger.
+    fn debug(msg: string, fields: LuaValue?) -> ();
+    /// Module-level convenience for `info` — the default level; delegates to a fresh default logger.
+    fn info(msg: string, fields: LuaValue?) -> ();
+    /// Module-level convenience for `warn`; delegates to a fresh default logger.
+    fn warn(msg: string, fields: LuaValue?) -> ();
+    /// Module-level convenience for `error`; delegates to a fresh default logger.
+    fn error(msg: string, fields: LuaValue?) -> ();
 }

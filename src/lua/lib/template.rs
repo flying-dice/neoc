@@ -56,11 +56,11 @@ use std::sync::{
 };
 
 use mlua::{
-    Function, IntoLua, Lua, LuaSerdeExt, MetaMethod, RegistryKey, Table, UserData, UserDataMethods,
-    Value,
+    Function, Lua, LuaSerdeExt, MetaMethod, RegistryKey, Table, UserData, UserDataMethods, Value,
 };
 use parking_lot::Mutex;
 use tera::{Context, Filter as TeraFilter, Tera, Value as TeraValue};
+use tracing::instrument;
 
 use crate::lua::facade::Module;
 use crate::lua::sandbox::{from_err, ok};
@@ -256,26 +256,37 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 
 /// Declares the `lib:template` surface through the facade.
 ///
-/// All three module functions are fallible and routed through
+/// `render` and `add_filter` are fallible and routed through
 /// [`crate::lua::facade::Module::try_func`]: each inner function returns the
-/// bare failure reason and the facade prepends the `"template.<fn>: "` prefix,
-/// so the `(value, error)` shape, the exact error strings, and the
-/// `luau::lib::template` spans are byte-identical to the hand-written
-/// registration this replaces. The shared `Engine` is cloned into each closure
-/// exactly as before. The compiled `Template` userdata keeps its own
-/// `impl UserData` and is recorded here for the header via
-/// [`crate::lua::facade::Module::userdata`].
+/// bare failure reason and the facade prepends the `"template.<fn>: "` prefix.
+///
+/// `compile` is a *mixed* raise-plus-channel shape: a parse failure goes to the
+/// `(value, error)` channel via [`crate::lua::sandbox::from_err`], but the
+/// compiled `Template` handle's `into_lua` (done by `ok`) raises an
+/// `mlua::Error` directly — a mix `try_func` cannot model — so it is registered
+/// verbatim with [`crate::lua::facade::Module::set`] (keeping its
+/// `template.compile` span and channel prefix) and recorded for the header with
+/// [`crate::lua::facade::Module::record_fn`]. The `(value, error)` shape, the
+/// exact error strings, the raise on `into_lua`, and the `luau::lib::template`
+/// spans are byte-identical to the hand-written registration this replaces. The
+/// shared `Engine` is cloned into each closure exactly as before. The compiled
+/// `Template` userdata keeps its own `impl UserData` and is recorded here for
+/// the header via [`crate::lua::facade::Module::userdata`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let engine = Engine::new();
     let mut m = Module::new(lua, "lib:template")?;
 
     let eng = engine.clone();
-    m.try_func(
+    m.set(
+        "compile",
+        lua.create_function(move |lua, src: String| compile_impl(lua, &eng, src))?,
+    )?;
+    m.record_fn(
         "compile",
         &[("source", "string")],
+        "Result<Template, string>",
         "Parse `source` once and return a reusable `Template`.",
-        move |lua, src: String| compile_impl(lua, &eng, src),
-    )?;
+    );
 
     let eng = engine.clone();
     m.try_func(
@@ -315,20 +326,23 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 // Compile / render implementations.
 // ---------------------------------------------------------------------------
 
-fn compile_impl(lua: &Lua, engine: &Engine, src: String) -> Result<Value, String> {
+#[instrument(name = "template.compile", target = "luau::lib::template", skip_all)]
+fn compile_impl(lua: &Lua, engine: &Engine, src: String) -> mlua::Result<(Value, Value)> {
     let name = engine.next_template_name();
     let mut guard = engine.tera.lock();
     if let Err(e) = guard.add_raw_template(&name, &src) {
-        return Err(format_tera_error(&e));
+        return from_err(lua, "template.compile", format_tera_error(&e));
     }
     drop(guard);
-    let handle = TemplateHandle {
-        inner: Arc::new(TemplateInner {
-            engine: engine.clone(),
-            name,
-        }),
-    };
-    handle.into_lua(lua).map_err(|e| e.to_string())
+    ok(
+        lua,
+        TemplateHandle {
+            inner: Arc::new(TemplateInner {
+                engine: engine.clone(),
+                name,
+            }),
+        },
+    )
 }
 
 fn render_impl(

@@ -175,9 +175,15 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 
 /// Declares the `lib:hash` surface through the facade.
 ///
-/// `hash` is a fallible one-shot helper routed through
-/// [`crate::lua::facade::Module::try_func`]. The `Hasher` constructor sub-table
-/// and the `algorithms` lister are set verbatim with
+/// `hash` is a *mixed* raise-plus-channel one-shot: an unknown-algorithm
+/// failure goes to the `(value, error)` channel via
+/// [`crate::lua::sandbox::err`], but a `lua.create_string` failure on the
+/// digest bytes raises an `mlua::Error` directly (the bare `?`) — a mix
+/// `try_func` cannot model — so it is set verbatim with
+/// [`crate::lua::facade::Module::set`] (keeping its `hash.hash` span and channel
+/// prefix) and recorded for the header with
+/// [`crate::lua::facade::Module::record_fn`]. The `Hasher` constructor sub-table
+/// and the `algorithms` lister are likewise set verbatim with
 /// [`crate::lua::facade::Module::set`] because their hand-written registration
 /// carried (respectively) a `hash.Hasher.new` span the facade's `type_` would
 /// rename to `Hasher.new`, and no span at all — routing them through the facade
@@ -191,15 +197,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     hasher_sub.set("new", lua.create_function(hasher_new)?)?;
     m.set("Hasher", hasher_sub)?;
 
-    m.try_func(
-        "hash",
-        &[("algo", "string"), ("data", "string")],
-        "One-shot hash of `data` under `algo`, returning the digest as raw bytes.",
-        |lua, (algo, data): (String, mlua::String)| {
-            let digest = hash_one_shot(&algo, &data.as_bytes())?;
-            lua.create_string(&digest).map_err(|e| e.to_string())
-        },
-    )?;
+    m.set("hash", lua.create_function(hash_one_shot)?)?;
 
     m.set(
         "algorithms",
@@ -211,6 +209,19 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             Ok(tbl)
         })?,
     )?;
+
+    m.record_fn(
+        "hash",
+        &[("algo", "string"), ("data", "string")],
+        "Result<string, string>",
+        "One-shot hash of `data` under `algo`, returning the digest as raw bytes.",
+    )
+    .record_fn(
+        "algorithms",
+        &[],
+        "LuaValue",
+        "The list of supported algorithm names.",
+    );
 
     m.userdata("Hasher", |h| {
         h.method(
@@ -244,10 +255,15 @@ fn hasher_new(lua: &Lua, algo: String) -> mlua::Result<(Value, Value)> {
     }
 }
 
-fn hash_one_shot(algo: &str, data: &[u8]) -> Result<Vec<u8>, String> {
-    let mut state = State::new(algo)?;
-    state.update(data);
-    Ok(state.digest())
+#[instrument(name = "hash.hash", target = "luau::lib::hash", skip_all)]
+fn hash_one_shot(lua: &Lua, (algo, data): (String, mlua::String)) -> mlua::Result<(Value, Value)> {
+    match State::new(&algo) {
+        Ok(mut state) => {
+            state.update(&data.as_bytes());
+            ok(lua, lua.create_string(state.digest())?)
+        }
+        Err(msg) => err(lua, format!("hash.hash: {msg}")),
+    }
 }
 
 // ---------------------------------------------------------------------------

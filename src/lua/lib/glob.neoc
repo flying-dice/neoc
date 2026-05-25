@@ -19,4 +19,6 @@ impl GlobSet {
 extern "neoc" {
     /// Compile `pattern` and test whether `path` matches it.
     fn is_match(pattern: string, path: string) -> Result<bool, string>;
+    /// Compile `pattern`, walk the filesystem, and return all matching paths plus any per-entry walk errors.
+    fn scan(pattern: string, opts: LuaValue?) -> Result<LuaValue, string>;
 }

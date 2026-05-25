@@ -2,9 +2,11 @@
 //!
 //! See docs/src/lib/reference/mime.md for the public surface contract.
 
-use mlua::{Lua, Table};
+use mlua::{Lua, Table, Value};
+use tracing::instrument;
 
 use crate::lua::facade::Module;
+use crate::lua::sandbox::{from_err, ok};
 
 /// Built-in preference map for canonical extensions where `mime_guess`'s
 /// alphabetical first entry isn't what users expect. Checked before falling
@@ -23,10 +25,19 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
     Ok(declare(lua)?.into_table())
 }
 
-/// Declares the `lib:mime` surface through the facade. All three functions are
-/// fallible; their `(value, error)` shape, `mime.<fn>` error prefix, exact
-/// error suffixes, and `luau::lib::mime` span are byte-identical to the
-/// hand-written registration this replaces.
+/// Declares the `lib:mime` surface through the facade.
+///
+/// `from_extension` and `detect` are pure `(value, error)`-channel functions
+/// with no raise path, so they route through
+/// [`crate::lua::facade::Module::try_func`]. `to_extension` propagates an
+/// `mlua::Error` from the prefs-table coercion (`prefs.get::<Option<String>>`)
+/// *as a raise*, not into the channel — a shape `try_func` cannot model — so it
+/// is registered verbatim with [`crate::lua::facade::Module::set`], keeping its
+/// `#[instrument]` span and `mime.to_extension` error prefix, and recorded for
+/// the header with [`crate::lua::facade::Module::record_fn`]. All three keep
+/// their `(value, error)` shape, `mime.<fn>` error prefix, exact error
+/// suffixes, and `luau::lib::mime` span byte-identical to the hand-written
+/// registration this replaces.
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:mime")?;
     m.try_func(
@@ -35,18 +46,19 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "Look up the MIME type for a file extension (leading dot optional).",
         from_extension,
     )?
-    .try_func(
-        "to_extension",
-        &[("mime_type", "string"), ("prefs", "LuaValue?")],
-        "Pick a file extension for a MIME type, honouring an optional preference map.",
-        to_extension,
-    )?
+    .set("to_extension", lua.create_function(to_extension)?)?
     .try_func(
         "detect",
         &[("filename", "string")],
         "Detect the MIME type of a filename from its extension.",
         detect,
     )?;
+    m.record_fn(
+        "to_extension",
+        &[("mime_type", "string"), ("prefs", "LuaValue?")],
+        "Result<string, string>",
+        "Pick a file extension for a MIME type, honouring an optional preference map.",
+    );
     Ok(m)
 }
 
@@ -59,33 +71,37 @@ fn from_extension(_: &Lua, ext: String) -> Result<String, String> {
     }
 }
 
+#[instrument(name = "mime.to_extension", target = "luau::lib::mime", skip_all)]
 fn to_extension(
-    _: &Lua,
+    lua: &Lua,
     (mime_type, user_prefs): (String, Option<Table>),
-) -> Result<String, String> {
+) -> mlua::Result<(Value, Value)> {
     // 1. User preference map (optional Lua table arg).
     if let Some(ref prefs) = user_prefs
-        && let Some(ext) = prefs
-            .get::<Option<String>>(mime_type.as_str())
-            .map_err(|e| e.to_string())?
+        && let Some(ext) = prefs.get::<Option<String>>(mime_type.as_str())?
     {
-        return Ok(ext);
+        return ok(lua, ext);
     }
 
     // 2. Runtime preference map (canonical extensions).
     for &(mime, ext) in RUNTIME_PREFS {
         if mime == mime_type {
-            return Ok(ext.to_string());
+            return ok(lua, ext.to_string());
         }
     }
 
     // 3. Fall back to mime_guess.
-    let mime: mime_guess::mime::Mime = mime_type
-        .parse()
-        .map_err(|e: mime_guess::mime::FromStrError| e.to_string())?;
+    let mime: mime_guess::mime::Mime = match mime_type.parse() {
+        Ok(m) => m,
+        Err(e) => return from_err(lua, "mime.to_extension", e),
+    };
     match mime_guess::get_mime_extensions(&mime) {
-        Some(exts) if !exts.is_empty() => Ok(format!(".{}", exts[0])),
-        _ => Err(format!("no extension known for: {mime_type}")),
+        Some(exts) if !exts.is_empty() => ok(lua, format!(".{}", exts[0])),
+        _ => from_err(
+            lua,
+            "mime.to_extension",
+            format!("no extension known for: {mime_type}"),
+        ),
     }
 }
 

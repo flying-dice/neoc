@@ -30,13 +30,15 @@
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use mlua::{Lua, Table};
+use mlua::{Lua, Table, Value};
 use rand::RngCore;
 use rand::rngs::OsRng;
 use rand::seq::SliceRandom;
+use tracing::instrument;
 use uuid::Uuid;
 
 use crate::lua::facade::Module;
+use crate::lua::sandbox::{err, from_err, ok};
 
 /// Default alphabet for `random_string` when no alphabet is supplied.
 /// 62 chars — digits + upper + lower. ~5.95 bits of entropy per char.
@@ -59,56 +61,68 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// `"random.<fn>: "` prefix, so the `(value, error)` shape, the exact error
 /// strings, and the `luau::lib::random` spans are byte-identical to the
 /// hand-written registration this replaces.
+///
+/// `random_bytes` and `uuid_parse` raise an `mlua::Error` from
+/// `lua.create_string` (the bare `?`) when the decoded bytes can't be lifted
+/// into a Lua string, while still routing their own validation/parse failures
+/// to the `(value, error)` channel — a mixed shape `try_func` cannot model. Both
+/// are registered verbatim with [`crate::lua::facade::Module::set`] (keeping
+/// their `#[instrument]` span and `random.<fn>` channel prefix) and recorded for
+/// the header with [`crate::lua::facade::Module::record_fn`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:random")?;
-    m.try_func(
+    m.set("random_bytes", lua.create_function(random_bytes)?)?
+        .try_func(
+            "random_int",
+            &[("min", "number"), ("max", "number")],
+            "Return a uniform random integer in the closed interval `[min, max]`.",
+            |_, (min, max): (i64, i64)| random_int(min, max),
+        )?
+        .try_func(
+            "random_string",
+            &[("n", "number"), ("alphabet", "string?")],
+            "Return a random string of `n` characters drawn from `alphabet` (default `[0-9A-Za-z]`).",
+            |_, (n, alphabet): (i64, Option<mlua::String>)| random_string(n, alphabet),
+        )?
+        .try_func(
+            "token_urlsafe",
+            &[("n_bytes", "number")],
+            "Return a URL-safe base64 token built from `n_bytes` random bytes.",
+            |_, n_bytes: i64| token_urlsafe(n_bytes),
+        )?
+        .func(
+            "uuid_v4",
+            &[],
+            "Generate a random (version 4) UUID as a canonical hyphenated string.",
+            |_, _: ()| uuid_v4(),
+        )?
+        .func(
+            "uuid_v7",
+            &[],
+            "Generate a timestamp-ordered (version 7) UUID as a canonical hyphenated string.",
+            |_, _: ()| uuid_v7(),
+        )?
+        .set("uuid_parse", lua.create_function(uuid_parse)?)?
+        .try_func(
+            "uuid_format",
+            &[("input", "string")],
+            "Format 16 raw bytes as a canonical hyphenated UUID string.",
+            |_, input: mlua::String| uuid_format(input),
+        )?;
+
+    m.record_fn(
         "random_bytes",
         &[("n_bytes", "number")],
+        "Result<string, string>",
         "Return `n_bytes` cryptographically-random bytes as a raw string.",
-        |lua, n_bytes: i64| random_bytes(lua, n_bytes),
-    )?
-    .try_func(
-        "random_int",
-        &[("min", "number"), ("max", "number")],
-        "Return a uniform random integer in the closed interval `[min, max]`.",
-        |_, (min, max): (i64, i64)| random_int(min, max),
-    )?
-    .try_func(
-        "random_string",
-        &[("n", "number"), ("alphabet", "string?")],
-        "Return a random string of `n` characters drawn from `alphabet` (default `[0-9A-Za-z]`).",
-        |_, (n, alphabet): (i64, Option<mlua::String>)| random_string(n, alphabet),
-    )?
-    .try_func(
-        "token_urlsafe",
-        &[("n_bytes", "number")],
-        "Return a URL-safe base64 token built from `n_bytes` random bytes.",
-        |_, n_bytes: i64| token_urlsafe(n_bytes),
-    )?
-    .func(
-        "uuid_v4",
-        &[],
-        "Generate a random (version 4) UUID as a canonical hyphenated string.",
-        |_, _: ()| uuid_v4(),
-    )?
-    .func(
-        "uuid_v7",
-        &[],
-        "Generate a timestamp-ordered (version 7) UUID as a canonical hyphenated string.",
-        |_, _: ()| uuid_v7(),
-    )?
-    .try_func(
+    )
+    .record_fn(
         "uuid_parse",
         &[("input", "string")],
+        "Result<string, string>",
         "Parse a canonical UUID string and return its 16 raw bytes.",
-        |lua, input: mlua::String| uuid_parse(lua, input),
-    )?
-    .try_func(
-        "uuid_format",
-        &[("input", "string")],
-        "Format 16 raw bytes as a canonical hyphenated UUID string.",
-        |_, input: mlua::String| uuid_format(input),
-    )?;
+    );
+
     Ok(m)
 }
 
@@ -116,13 +130,14 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 // CSPRNG
 // ---------------------------------------------------------------------------
 
-fn random_bytes(lua: &Lua, n_bytes: i64) -> Result<mlua::String, String> {
+#[instrument(name = "random.random_bytes", target = "luau::lib::random", skip_all)]
+fn random_bytes(lua: &Lua, n_bytes: i64) -> mlua::Result<(Value, Value)> {
     if n_bytes < 0 {
-        return Err("byte count must be non-negative".to_string());
+        return err(lua, "random.random_bytes: byte count must be non-negative");
     }
     let mut buf = vec![0u8; n_bytes as usize];
     OsRng.fill_bytes(&mut buf);
-    lua.create_string(&buf).map_err(|e| e.to_string())
+    ok(lua, lua.create_string(&buf)?)
 }
 
 fn random_int(min: i64, max: i64) -> Result<i64, String> {
@@ -212,11 +227,17 @@ fn uuid_v7() -> mlua::Result<String> {
     Ok(Uuid::now_v7().to_string())
 }
 
-fn uuid_parse(lua: &Lua, input: mlua::String) -> Result<mlua::String, String> {
+#[instrument(name = "random.uuid_parse", target = "luau::lib::random", skip_all)]
+fn uuid_parse(lua: &Lua, input: mlua::String) -> mlua::Result<(Value, Value)> {
     let bytes = input.as_bytes();
-    let s = std::str::from_utf8(&bytes).map_err(|e| e.to_string())?;
-    let u = Uuid::parse_str(s).map_err(|e| e.to_string())?;
-    lua.create_string(u.as_bytes()).map_err(|e| e.to_string())
+    let s = match std::str::from_utf8(&bytes) {
+        Ok(s) => s,
+        Err(e) => return from_err(lua, "random.uuid_parse", e),
+    };
+    match Uuid::parse_str(s) {
+        Ok(u) => ok(lua, lua.create_string(u.as_bytes())?),
+        Err(e) => from_err(lua, "random.uuid_parse", e),
+    }
 }
 
 fn uuid_format(input: mlua::String) -> Result<String, String> {

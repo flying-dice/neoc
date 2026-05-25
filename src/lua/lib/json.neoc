@@ -29,6 +29,10 @@ impl Array {
 }
 #[link(name = "lib:json")]
 extern "neoc" {
+    /// Construct an empty mutable JSON object handle on a fresh root.
+    fn object() -> Object;
+    /// Construct an empty mutable JSON array handle on a fresh root.
+    fn array() -> Array;
     /// Sentinel userdata for explicit JSON `null`, distinct from Lua `nil`.
     const null: LuaValue;
 }

@@ -150,6 +150,10 @@ impl Duration {
 }
 #[link(name = "lib:chrono")]
 extern "neoc" {
+    /// Current wall-clock instant in the system's local timezone.
+    fn now() -> ZonedDateTime;
+    /// Current wall-clock instant in UTC.
+    fn utc_now() -> ZonedDateTime;
     /// Recognise an ISO 8601 / RFC 9557 string and dispatch it to the matching `Date`, `Time`, `DateTime`, or `ZonedDateTime`.
     fn parse(s: string) -> Result<LuaValue, string>;
 }

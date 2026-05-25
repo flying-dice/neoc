@@ -205,6 +205,19 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             |_, _: ()| flat_gettempdir(),
         )?;
 
+    m.record_fn(
+        "tempfile",
+        &[("opts", "LuaValue?")],
+        "Result<TempFile, string>",
+        "Create a temporary file under the system temp directory, returning a `TempFile` handle.",
+    )
+    .record_fn(
+        "tempdir",
+        &[("opts", "LuaValue?")],
+        "Result<TempDir, string>",
+        "Create a temporary directory under the system temp directory, returning a `TempDir` handle.",
+    );
+
     m.userdata("TempFile", |t| {
         t.method(
             "path",
