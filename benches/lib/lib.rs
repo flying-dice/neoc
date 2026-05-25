@@ -35,6 +35,7 @@ criterion_group!(
     lib::ini::benches,
     lib::json::benches,
     lib::mime::benches,
+    lib::random::benches,
     lib::regex::benches,
     lib::semver::benches,
     lib::template::benches,
