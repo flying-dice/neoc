@@ -8,10 +8,11 @@ Cargo workspace holding two halves:
   `vnd:*`). The unsafe halves of the Lua standard library are stripped;
   everything scripts need is provided through explicit modules.
 - **Compiler** (`neoc-*` crates) — the Rust compiler for the **neoc** language.
-  `.neoc` → Lua 5.1. (5.1 is the lowest common denominator; output runs on
-  Luau, Lua 5.4, LuaJIT, and the runtime above. Other targets plug in behind
-  the codegen seam.) The library crate (`neoc-compiler`) is what the runtime
-  embeds; the grammar lives in the `neoc-grammar` submodule.
+  `.neoc` → Lua 5.1 by default. (5.1 is the lowest common denominator; output
+  runs on Luau, Lua 5.4, LuaJIT, and the runtime above. JavaScript (ES2022) and
+  Python 3 backends sit behind the same codegen seam, selected with `--target`.)
+  The library crate (`neoc-compiler`) is what the runtime embeds; the grammar
+  lives in the `neoc-grammar` submodule.
 
 One binary, `neoc`, drives both: `run` / `emit-headers` (runtime) and `build` /
 `check` / `fmt` / `lsp` (compiler).
@@ -150,11 +151,16 @@ neoc-parser                  # CST → AST adapter; parse diagnostics
 neoc-types                   # declaration collection, inference, well-formedness, elaborate
 neoc-macros                  # built-in derives (Clone/Eq/Debug/Display)
 neoc-codegen-lua             # AST → Lua 5.1; one emit module per construct family
-neoc-compiler                # public lib API: transpile; merges per-stage diagnostics
+neoc-codegen-js              # AST → JavaScript (ES2022)
+neoc-codegen-py              # AST → Python 3
+neoc-compiler                # public lib API: transpile to any target; merges per-stage diagnostics
 neoc-fmt                     # formatter
 neoc-lsp                     # language server (diagnostics over stdio)
 neoc-cli                     # the compiler subcommand tree (build/check/fmt/lsp)
 neoc-wasm                    # browser entry point
+neoc-bindgen-ts              # standalone CLI: TypeScript → .neoc header
+neoc-bindgen-py              # standalone CLI: Python → .neoc header
+neoc-bindgen-lua             # standalone CLI: Luau → .neoc header
 ```
 
 The dependency graph is acyclic; the AST is the frozen contract every compiler
@@ -264,7 +270,7 @@ things stay exact and complete — **never** abbreviate or stylise these:
 | API names | Exact. `#[derive(Clone)]` stays `#[derive(Clone)]`. |
 | Type signatures | Exact. Never trim a type. |
 | Error / log messages | Quote verbatim. |
-| Commands | Exact: `neoc run`, `neoc build`, `neoc check`, `neoc lsp`, `cargo check --target wasm32-unknown-unknown`. (That `--target` is a Rust build target — *not* a neoc output target. neoc emits Lua 5.1.) |
+| Commands | Exact: `neoc run`, `neoc build`, `neoc check`, `neoc lsp`, `cargo check --target wasm32-unknown-unknown`. (That `--target` is a Rust build target — *not* `neoc build --target`, which selects the output language: `lua` / `js` / `python`.) |
 | File paths, env vars | Exact. |
 | Rustdoc (`///`) on public items | Full, normal English — see below. |
 | Legal, LICENSE, security notes | Complete and careful. |
