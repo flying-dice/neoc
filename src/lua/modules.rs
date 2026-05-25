@@ -206,17 +206,27 @@ pub fn headers(lua: &Lua) -> mlua::Result<Vec<(String, String)>> {
     push(lib::args::declare(lua))?;
     push(lib::base64::declare(lua))?;
     push(lib::chrono::declare(lua))?;
+    push(lib::compile::declare(lua))?;
     push(lib::compress::declare(lua))?;
+    push(lib::csv::declare(lua))?;
+    push(lib::diff::declare(lua))?;
     push(lib::glob::declare(lua))?;
     push(lib::hash::declare(lua))?;
     push(lib::html::declare(lua))?;
     push(lib::http::declare(lua))?;
+    push(lib::ini::declare(lua))?;
     push(lib::json::declare(lua))?;
     push(lib::log::declare(lua))?;
     push(lib::mime::declare(lua))?;
     push(lib::random::declare(lua))?;
+    push(lib::regex::declare(lua))?;
+    push(lib::semver::declare(lua))?;
     push(lib::template::declare(lua))?;
     push(lib::tempfile::declare(lua))?;
+    push(lib::test::declare(lua))?;
+    push(lib::text::declare(lua))?;
+    push(lib::url::declare(lua))?;
+    push(lib::vcr::declare(lua))?;
 
     push(vnd::hyper::declare(lua))?;
     push(vnd::jsonschema::declare(lua))?;
@@ -247,17 +257,27 @@ mod tests {
         assert!(keys.contains(&"lib:args"));
         assert!(keys.contains(&"lib:base64"));
         assert!(keys.contains(&"lib:chrono"));
+        assert!(keys.contains(&"lib:compile"));
         assert!(keys.contains(&"lib:compress"));
+        assert!(keys.contains(&"lib:csv"));
+        assert!(keys.contains(&"lib:diff"));
         assert!(keys.contains(&"lib:glob"));
         assert!(keys.contains(&"lib:hash"));
         assert!(keys.contains(&"lib:html"));
         assert!(keys.contains(&"lib:http"));
+        assert!(keys.contains(&"lib:ini"));
         assert!(keys.contains(&"lib:json"));
         assert!(keys.contains(&"lib:log"));
         assert!(keys.contains(&"lib:mime"));
         assert!(keys.contains(&"lib:random"));
+        assert!(keys.contains(&"lib:regex"));
+        assert!(keys.contains(&"lib:semver"));
         assert!(keys.contains(&"lib:template"));
         assert!(keys.contains(&"lib:tempfile"));
+        assert!(keys.contains(&"lib:test"));
+        assert!(keys.contains(&"lib:text"));
+        assert!(keys.contains(&"lib:url"));
+        assert!(keys.contains(&"lib:vcr"));
         assert!(keys.contains(&"std:collections"));
         assert!(keys.contains(&"std:env"));
         assert!(keys.contains(&"std:fs"));
@@ -274,7 +294,7 @@ mod tests {
         assert!(keys.contains(&"vnd:serde_json"));
         assert!(keys.contains(&"vnd:serde_yaml"));
         assert!(keys.contains(&"vnd:toml"));
-        assert_eq!(keys.len(), 30, "expected 30 migrated modules, got {keys:?}");
+        assert_eq!(keys.len(), 40, "expected 40 migrated modules, got {keys:?}");
 
         for (key, header) in &headers {
             assert!(

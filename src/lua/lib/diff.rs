@@ -16,6 +16,7 @@ use mlua::{Lua, Table, Value};
 use similar::{Algorithm, ChangeTag, TextDiff};
 use tracing::instrument;
 
+use crate::lua::facade::Module;
 use crate::lua::sandbox::{err, ok};
 
 const DEFAULT_CONTEXT: usize = 3;
@@ -34,16 +35,86 @@ macro_rules! short_circuit {
 }
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
-    t.set("lines", lua.create_function(lines)?)?;
-    t.set("words", lua.create_function(words)?)?;
-    t.set("chars", lua.create_function(chars)?)?;
-    t.set("unified", lua.create_function(unified)?)?;
-    t.set("parse_unified", lua.create_function(parse_unified)?)?;
-    t.set("apply", lua.create_function(apply)?)?;
-    t.set("apply_changes", lua.create_function(apply_changes)?)?;
-    t.set("similarity", lua.create_function(similarity)?)?;
-    Ok(t)
+    Ok(declare(lua)?.into_table())
+}
+
+/// Declares the `lib:diff` surface through the facade.
+///
+/// Every function is set verbatim with [`crate::lua::facade::Module::set`]:
+/// each carries its own `#[instrument]` span, and the fallible ones build their
+/// `(value, error)` returns directly through `err` / `ok` with a baked
+/// `"diff.<fn>: "` prefix (the option parsers funnel through the module-local
+/// `short_circuit!` macro), so they do not fit the facade's `func` / `try_func`
+/// model. Their signatures are recorded for the header via
+/// [`crate::lua::facade::Module::record_fn`].
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "lib:diff")?;
+
+    m.set("lines", lua.create_function(lines)?)?;
+    m.record_fn(
+        "lines",
+        &[("old", "string"), ("new", "string"), ("opts", "LuaValue?")],
+        "Result<LuaValue, string>",
+        "Line-level change list between `old` and `new`. Default algorithm is patience.",
+    );
+
+    m.set("words", lua.create_function(words)?)?;
+    m.record_fn(
+        "words",
+        &[("old", "string"), ("new", "string"), ("opts", "LuaValue?")],
+        "Result<LuaValue, string>",
+        "Word-level change list, tokenising on whitespace boundaries.",
+    );
+
+    m.set("chars", lua.create_function(chars)?)?;
+    m.record_fn(
+        "chars",
+        &[("old", "string"), ("new", "string"), ("opts", "LuaValue?")],
+        "Result<LuaValue, string>",
+        "Character-level change list, operating on Unicode codepoints.",
+    );
+
+    m.set("unified", lua.create_function(unified)?)?;
+    m.record_fn(
+        "unified",
+        &[("old", "string"), ("new", "string"), ("opts", "LuaValue?")],
+        "Result<LuaValue, string>",
+        "Compute a unified diff. The result carries `.hunks` and a `:format()` method producing the unified diff string.",
+    );
+
+    m.set("parse_unified", lua.create_function(parse_unified)?)?;
+    m.record_fn(
+        "parse_unified",
+        &[("patch", "string")],
+        "Result<LuaValue, string>",
+        "Parse a unified diff string back into the same structured result shape as `unified`.",
+    );
+
+    m.set("apply", lua.create_function(apply)?)?;
+    m.record_fn(
+        "apply",
+        &[("original", "string"), ("patch", "string")],
+        "Result<string, string>",
+        "Apply a unified patch string to `original`. Requires exact context match.",
+    );
+
+    m.set("apply_changes", lua.create_function(apply_changes)?)?;
+    m.record_fn(
+        "apply_changes",
+        &[("original", "string"), ("changes", "LuaValue")],
+        "Result<string, string>",
+        "Apply a structured change list directly, validating that the equal + delete lines reconstruct `original` first.",
+    );
+
+    m.set("similarity", lua.create_function(similarity)?)?;
+    m.record_fn(
+        "similarity",
+        &[("a", "string"), ("b", "string")],
+        "number",
+        "Edit-ratio similarity score in `[0.0, 1.0]`, computed from a character-level patience diff.",
+    );
+
+    Ok(m)
 }
 
 // ---------------------------------------------------------------------------

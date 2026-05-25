@@ -7,6 +7,7 @@ use ini::Ini;
 use mlua::{Lua, Table, Value};
 use tracing::instrument;
 
+use crate::lua::facade::Module;
 use crate::lua::sandbox::{err, from_err, ok};
 
 // Sentinels — safe because we reject null bytes before parsing.
@@ -101,10 +102,37 @@ fn unescape(s: &str) -> String {
 // ---------------------------------------------------------------------------
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
-    t.set("parse", lua.create_function(parse)?)?;
-    t.set("stringify", lua.create_function(stringify)?)?;
-    Ok(t)
+    Ok(declare(lua)?.into_table())
+}
+
+/// Declares the `lib:ini` surface through the facade.
+///
+/// Both functions are set verbatim with [`crate::lua::facade::Module::set`]:
+/// each carries its own `#[instrument]` span and mixes raised `mlua::Error`
+/// (e.g. control-byte rejection) with `(value, error)` returns built directly
+/// from `err` / `from_err`, so neither fits the facade's `func` / `try_func`
+/// return model. Their signatures are recorded for the header via
+/// [`crate::lua::facade::Module::record_fn`].
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "lib:ini")?;
+
+    m.set("parse", lua.create_function(parse)?)?;
+    m.record_fn(
+        "parse",
+        &[("text", "string"), ("opts", "LuaValue?")],
+        "Result<LuaValue, string>",
+        "Parse an INI string into a table of sections. Section-less keys land under the empty-string key; bare keys become `true`.",
+    );
+
+    m.set("stringify", lua.create_function(stringify)?)?;
+    m.record_fn(
+        "stringify",
+        &[("config", "LuaValue"), ("opts", "LuaValue?")],
+        "Result<string, string>",
+        "Serialise a section table back to an INI string. The empty-string section is emitted first as section-less keys.",
+    );
+
+    Ok(m)
 }
 
 // TODO: clean-code - 0.7 - SRP: parse mixes validation, preprocess orchestration, ini load, and Lua table assembly — split assembly into a helper

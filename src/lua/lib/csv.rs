@@ -10,6 +10,7 @@ use mlua::{Function, IntoLua, Lua, Table, UserData, UserDataMethods, Value};
 use parking_lot::Mutex;
 use tracing::instrument;
 
+use crate::lua::facade::Module;
 use crate::lua::sandbox::{err, from_err, ok};
 use crate::lua::std::io::{ExclusiveBorrow, ReaderHandle};
 
@@ -25,13 +26,93 @@ const RAW_CAPTURE_CAP: usize = 64 * 1024;
 // ---------------------------------------------------------------------------
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
-    t.set("parse", lua.create_function(parse_fn)?)?;
-    t.set("rows", lua.create_function(rows_fn)?)?;
-    t.set("reader", lua.create_function(reader_fn)?)?;
-    t.set("stringify", lua.create_function(stringify_fn)?)?;
-    t.set("writer", lua.create_function(writer_fn)?)?;
-    Ok(t)
+    Ok(declare(lua)?.into_table())
+}
+
+/// Declares the `lib:csv` surface through the facade.
+///
+/// Every function is set verbatim with [`crate::lua::facade::Module::set`]:
+/// each carries its own `#[instrument]` span; the fallible ones build their
+/// `(value, error)` returns directly through `err` / `from_err` / `ok` with a
+/// baked `"csv.<fn>: "` prefix, and `rows` returns a bare iterator `Function`
+/// that raises `mlua::Error` (the Luau iterator protocol cannot carry a
+/// `(nil, err)` tuple) — none fit the facade's `func` / `try_func` model. The
+/// `CsvReader` / `CsvWriter` userdata keep their own `impl UserData` and are
+/// recorded here for the header via [`crate::lua::facade::Module::userdata`].
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "lib:csv")?;
+
+    m.set("parse", lua.create_function(parse_fn)?)?;
+    m.record_fn(
+        "parse",
+        &[("data", "string"), ("opts", "LuaValue?")],
+        "Result<LuaValue, string>",
+        "Parse a CSV string into an array of rows. With `headers = true` rows are keyed by header name; typed columns coerce to number/boolean/nil.",
+    );
+
+    m.set("rows", lua.create_function(rows_fn)?)?;
+    m.record_fn(
+        "rows",
+        &[("data", "string"), ("opts", "LuaValue?")],
+        "LuaValue",
+        "Return a Luau iterator over rows in an in-memory CSV string. Iterator errors raise.",
+    );
+
+    m.set("reader", lua.create_function(reader_fn)?)?;
+    m.record_fn(
+        "reader",
+        &[("handle", "LuaValue"), ("opts", "LuaValue?")],
+        "Result<CsvReader, string>",
+        "Construct a streaming reader over a `ReaderHandle`, taking an exclusive borrow on the handle for its lifetime.",
+    );
+
+    m.set("stringify", lua.create_function(stringify_fn)?)?;
+    m.record_fn(
+        "stringify",
+        &[("records", "LuaValue"), ("opts", "LuaValue")],
+        "Result<string, string>",
+        "Serialise an array of records to a CSV string. `opts.headers` is required and controls both the header row and field order.",
+    );
+
+    m.set("writer", lua.create_function(writer_fn)?)?;
+    m.record_fn(
+        "writer",
+        &[("opts", "LuaValue")],
+        "Result<CsvWriter, string>",
+        "Construct an incremental writer that buffers in memory until `:finish()`. `opts.headers` is required and emitted as the first row.",
+    );
+
+    m.userdata("CsvReader", |r| {
+        r.method(
+            "headers",
+            &[],
+            "Result<LuaValue, string>",
+            "Return the cached header row (parsing it if not yet read). Errors if the reader was not created with `headers = true`.",
+        )
+        .method(
+            "rows",
+            &[],
+            "LuaValue",
+            "Return a Luau iterator yielding the next row on each call, `nil` at EOF. Iterator errors raise.",
+        );
+    });
+
+    m.userdata("CsvWriter", |w| {
+        w.method(
+            "row",
+            &[("values", "LuaValue")],
+            "Result<bool, string>",
+            "Append a row. `values` is either a positional array (length must match `headers`) or a keyed table looked up by header name.",
+        )
+        .method(
+            "finish",
+            &[],
+            "Result<string, string>",
+            "Flush and return the accumulated CSV string. Subsequent calls error.",
+        );
+    });
+
+    Ok(m)
 }
 
 // ---------------------------------------------------------------------------

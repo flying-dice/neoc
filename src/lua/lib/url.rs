@@ -15,6 +15,7 @@ use percent_encoding::{AsciiSet, CONTROLS, NON_ALPHANUMERIC, percent_decode_str,
 use tracing::instrument;
 use url::Url;
 
+use crate::lua::facade::Module;
 use crate::lua::sandbox::{err, ok};
 
 // ---------------------------------------------------------------------------
@@ -51,20 +52,131 @@ fn set_for(name: &str) -> Option<&'static AsciiSet> {
 // ---------------------------------------------------------------------------
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
+    Ok(declare(lua)?.into_table())
+}
+
+/// Declares the `lib:url` surface through the facade.
+///
+/// The `Url` constructor sub-table and every flat function are set verbatim
+/// with [`crate::lua::facade::Module::set`]: `url_parse_method` carries its own
+/// `#[instrument(name = "url.Url.parse")]` span (which the facade's `type_`
+/// constructor path could not reproduce), and each flat function carries its
+/// own `#[instrument]` span plus a baked `"url.<fn>: "` prefix built through
+/// `err` / `ok`. The `UrlHandle` userdata keeps its own `impl UserData` and is
+/// recorded here for the header via [`crate::lua::facade::Module::userdata`].
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "lib:url")?;
 
     let url_sub = lua.create_table()?;
     url_sub.set("parse", lua.create_function(url_parse_method)?)?;
-    t.set("Url", url_sub)?;
+    m.set("Url", url_sub)?;
 
-    t.set("parse", lua.create_function(flat_parse)?)?;
-    t.set("resolve", lua.create_function(flat_resolve)?)?;
-    t.set("encode", lua.create_function(flat_encode)?)?;
-    t.set("decode", lua.create_function(flat_decode)?)?;
-    t.set("encode_query", lua.create_function(flat_encode_query)?)?;
-    t.set("decode_query", lua.create_function(flat_decode_query)?)?;
+    m.set("parse", lua.create_function(flat_parse)?)?;
+    m.record_fn(
+        "parse",
+        &[("s", "string")],
+        "Result<Url, string>",
+        "Alias for `Url.parse`. Returns `(nil, err)` on malformed input.",
+    );
 
-    Ok(t)
+    m.set("resolve", lua.create_function(flat_resolve)?)?;
+    m.record_fn(
+        "resolve",
+        &[("base", "LuaValue"), ("reference", "string")],
+        "Result<Url, string>",
+        "Resolve a relative reference against `base` (a `Url` or string) using RFC 3986 § 5 rules.",
+    );
+
+    m.set("encode", lua.create_function(flat_encode)?)?;
+    m.record_fn(
+        "encode",
+        &[("input", "string"), ("set", "string?")],
+        "Result<string, string>",
+        "Percent-encode `input` against the named `set` (defaults to `component`). Returns `(nil, err)` only on an unknown set name.",
+    );
+
+    m.set("decode", lua.create_function(flat_decode)?)?;
+    m.record_fn(
+        "decode",
+        &[("input", "string")],
+        "Result<string, string>",
+        "Percent-decode `input`. Returns `(nil, err)` when the decoded bytes are not valid UTF-8. Does not convert `+` to space.",
+    );
+
+    m.set("encode_query", lua.create_function(flat_encode_query)?)?;
+    m.record_fn(
+        "encode_query",
+        &[("pairs", "LuaValue")],
+        "Result<string, string>",
+        "Form-encode an ordered list of `{ key, value }` pairs into a query string. Spaces become `+`.",
+    );
+
+    m.set("decode_query", lua.create_function(flat_decode_query)?)?;
+    m.record_fn(
+        "decode_query",
+        &[("input", "string")],
+        "LuaValue",
+        "Parse an `application/x-www-form-urlencoded` payload into an ordered list of `{ key, value }` pairs. `+` decodes to space.",
+    );
+
+    m.userdata("Url", |u| {
+        u.method(
+            "resolve",
+            &[("reference", "string")],
+            "Result<Url, string>",
+            "Resolve `reference` against this URL using RFC 3986 § 5 rules.",
+        )
+        .method(
+            "with_scheme",
+            &[("scheme", "string")],
+            "Result<Url, string>",
+            "Return a new `Url` with the scheme replaced. Most special/non-special swaps are rejected by the spec.",
+        )
+        .method(
+            "with_host",
+            &[("host", "string")],
+            "Result<Url, string>",
+            "Return a new `Url` with the host replaced. Returns `(nil, err)` if the host is malformed for the scheme.",
+        )
+        .method(
+            "with_port",
+            &[("port", "number?")],
+            "Result<Url, string>",
+            "Return a new `Url` with the port set (or cleared when `nil`). `port` must be an integer in `0..=65535`.",
+        )
+        .method(
+            "with_path",
+            &[("path", "string")],
+            "Url",
+            "Return a new `Url` with the path replaced. Always succeeds — the path is re-encoded against the WHATWG path set.",
+        )
+        .method(
+            "with_query",
+            &[("query", "string?")],
+            "Url",
+            "Return a new `Url` with the query string replaced (or cleared when `nil`).",
+        )
+        .method(
+            "with_fragment",
+            &[("fragment", "string?")],
+            "Url",
+            "Return a new `Url` with the fragment replaced (or cleared when `nil`).",
+        )
+        .method(
+            "query_pairs",
+            &[],
+            "LuaValue",
+            "Query pairs in order, including any repeated keys.",
+        )
+        .method(
+            "query_map",
+            &[],
+            "LuaValue",
+            "Query as a map. Last value wins on repeated keys.",
+        );
+    });
+
+    Ok(m)
 }
 
 // ---------------------------------------------------------------------------

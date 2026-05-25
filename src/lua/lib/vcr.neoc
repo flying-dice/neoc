@@ -1,0 +1,6 @@
+// @generated from the lib:vcr runtime module — do not edit.
+#[link(name = "lib:vcr")]
+extern "neoc" {
+    /// Create a cassette in the given mode (`record` / `replay` / `off`). Returns a handle exposing `wrap` and `dump`. `NEOC_VCR=off` forces pass-through regardless of `opts.mode`.
+    fn cassette(opts: LuaValue) -> LuaValue;
+}

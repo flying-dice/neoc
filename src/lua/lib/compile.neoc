@@ -1,0 +1,6 @@
+// @generated from the lib:compile runtime module — do not edit.
+#[link(name = "lib:compile")]
+extern "neoc" {
+    /// Bundle a Luau source file into a self-contained executable. `opts` requires `entrypoint` and `output` string fields.
+    fn bundle(opts: LuaValue) -> Result<bool, string>;
+}

@@ -15,6 +15,7 @@ use regex::Regex;
 use semver::{BuildMetadata, Prerelease, Version, VersionReq};
 use tracing::instrument;
 
+use crate::lua::facade::Module;
 use crate::lua::sandbox::{err, ok};
 
 // ---------------------------------------------------------------------------
@@ -22,25 +23,112 @@ use crate::lua::sandbox::{err, ok};
 // ---------------------------------------------------------------------------
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
+    Ok(declare(lua)?.into_table())
+}
+
+/// Declares the `lib:semver` surface through the facade.
+///
+/// The `Version` / `VersionReq` constructor sub-tables and every flat function
+/// are set verbatim with [`crate::lua::facade::Module::set`]: the parse
+/// constructors carry their own `#[instrument(name = "semver.Version.parse")]`
+/// / `"semver.VersionReq.parse"` spans (which the facade's `type_` constructor
+/// path could not reproduce), and each flat function carries its own
+/// `#[instrument]` span plus a baked `"semver.<fn>: "` prefix built through
+/// `err` / `ok`. The `VersionHandle` / `VersionReqHandle` userdata keep their
+/// own `impl UserData` and are recorded here for the header via
+/// [`crate::lua::facade::Module::userdata`].
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "lib:semver")?;
 
     let version_sub = lua.create_table()?;
     version_sub.set("parse", lua.create_function(version_parse_method)?)?;
-    t.set("Version", version_sub)?;
+    m.set("Version", version_sub)?;
 
     let req_sub = lua.create_table()?;
     req_sub.set("parse", lua.create_function(req_parse_method)?)?;
-    t.set("VersionReq", req_sub)?;
+    m.set("VersionReq", req_sub)?;
 
-    t.set("parse", lua.create_function(flat_parse)?)?;
-    t.set("valid", lua.create_function(flat_valid)?)?;
-    t.set("coerce", lua.create_function(flat_coerce)?)?;
-    t.set("compare", lua.create_function(flat_compare)?)?;
-    t.set("satisfies", lua.create_function(flat_satisfies)?)?;
-    t.set("increment", lua.create_function(flat_increment)?)?;
-    t.set("format", lua.create_function(flat_format)?)?;
+    m.set("parse", lua.create_function(flat_parse)?)?;
+    m.record_fn(
+        "parse",
+        &[("s", "string")],
+        "Result<Version, string>",
+        "Alias for `Version.parse`. Returns `(nil, err)` on malformed input.",
+    );
 
-    Ok(t)
+    m.set("valid", lua.create_function(flat_valid)?)?;
+    m.record_fn(
+        "valid",
+        &[("s", "string")],
+        "bool",
+        "True when `s` parses as a strict SemVer 2.0.0 version. Never errors — the predicate form of `parse`.",
+    );
+
+    m.set("coerce", lua.create_function(flat_coerce)?)?;
+    m.record_fn(
+        "coerce",
+        &[("s", "string")],
+        "Result<Version, string>",
+        "Loose extraction: strips a leading `v`/`V`, fills missing minor/patch with `0`, drops build metadata and fourth components.",
+    );
+
+    m.set("compare", lua.create_function(flat_compare)?)?;
+    m.record_fn(
+        "compare",
+        &[("a", "LuaValue"), ("b", "LuaValue")],
+        "Result<number, string>",
+        "Three-way precedence compare returning `-1`, `0`, or `1`. Both args may be a `Version` or a string.",
+    );
+
+    m.set("satisfies", lua.create_function(flat_satisfies)?)?;
+    m.record_fn(
+        "satisfies",
+        &[("version", "LuaValue"), ("range", "LuaValue")],
+        "Result<bool, string>",
+        "True when `version` is in `range`. Returns `(nil, err)` only on a malformed range or version, never on a clean no-match.",
+    );
+
+    m.set("increment", lua.create_function(flat_increment)?)?;
+    m.record_fn(
+        "increment",
+        &[("version", "string"), ("level", "string")],
+        "Result<string, string>",
+        "Increment `version` by `level` (`major`/`minor`/`patch`/`prerelease`) and return a SemVer 2.0.0 string; build metadata is stripped.",
+    );
+
+    m.set("format", lua.create_function(flat_format)?)?;
+    m.record_fn(
+        "format",
+        &[("v", "LuaValue")],
+        "Result<string, string>",
+        "Canonical SemVer 2.0.0 string for `v` (a `Version` or string). Equivalent to `tostring(v)`.",
+    );
+
+    m.userdata("Version", |v| {
+        v.method(
+            "compare",
+            &[("other", "LuaValue")],
+            "number",
+            "Three-way compare returning `-1`, `0`, or `1`. Accepts another `Version` or a string (raises if invalid).",
+        )
+        .method(
+            "increment",
+            &[("level", "string")],
+            "Version",
+            "Return a new `Version` incremented per `level`. The input is not mutated.",
+        );
+    });
+
+    m.userdata("VersionReq", |r| {
+        r.method(
+            "matches",
+            &[("version", "LuaValue")],
+            "bool",
+            "True when `version` is in the range. Accepts a `Version` or a string (raises if invalid).",
+        );
+    });
+
+    Ok(m)
 }
 
 // ---------------------------------------------------------------------------

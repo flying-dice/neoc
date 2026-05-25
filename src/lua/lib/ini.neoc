@@ -1,0 +1,8 @@
+// @generated from the lib:ini runtime module — do not edit.
+#[link(name = "lib:ini")]
+extern "neoc" {
+    /// Parse an INI string into a table of sections. Section-less keys land under the empty-string key; bare keys become `true`.
+    fn parse(text: string, opts: LuaValue?) -> Result<LuaValue, string>;
+    /// Serialise a section table back to an INI string. The empty-string section is emitted first as section-less keys.
+    fn stringify(config: LuaValue, opts: LuaValue?) -> Result<string, string>;
+}

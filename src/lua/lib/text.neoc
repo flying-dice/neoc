@@ -1,0 +1,32 @@
+// @generated from the lib:text runtime module — do not edit.
+#[link(name = "lib:text")]
+extern "neoc" {
+    /// Convert to `camelCase`. Acronym boundaries are detected by the backing `heck` crate.
+    fn to_camel_case(text: string) -> string;
+    /// Convert to `snake_case`.
+    fn to_snake_case(text: string) -> string;
+    /// Convert to `kebab-case`.
+    fn to_kebab_case(text: string) -> string;
+    /// Convert to `PascalCase`.
+    fn to_pascal_case(text: string) -> string;
+    /// Convert to `Title Case`.
+    fn to_title_case(text: string) -> string;
+    /// Convert to `CONSTANT_CASE`.
+    fn to_constant_case(text: string) -> string;
+    /// Greedy word wrap, display-width aware. `width` must be > 0. Defaults: `break_words = false`, `preserve_newlines = true`.
+    fn word_wrap(text: string, width: number, opts: LuaValue?) -> Result<string, string>;
+    /// Codepoint-based Levenshtein edit distance.
+    fn levenshtein(a: string, b: string) -> number;
+    /// Score each candidate against `input` by Levenshtein distance, returning the list sorted ascending (ties broken alphabetically).
+    fn closest(input: string, candidates: LuaValue, opts: LuaValue?) -> Result<LuaValue, string>;
+    /// Truncate `text` so its display width is at most `max_len`. The `...` ellipsis counts toward the limit.
+    fn truncate(text: string, max_len: number, opts: LuaValue?) -> Result<string, string>;
+    /// Pad `text` on the left so total display width equals `width`. `fill_char` must be one display-width-1 character (default space).
+    fn pad_left(text: string, width: number, fill_char: string?) -> Result<string, string>;
+    /// Pad `text` on the right so total display width equals `width`. Same constraints as `pad_left`.
+    fn pad_right(text: string, width: number, fill_char: string?) -> Result<string, string>;
+    /// Pad `text` on both sides so total display width equals `width`. Uneven padding places the extra column on the right.
+    fn center(text: string, width: number, fill_char: string?) -> Result<string, string>;
+    /// Convert `text` to a URL-safe ASCII slug via `deunicode` transliteration, then lowercase and hyphenate.
+    fn slugify(text: string) -> string;
+}
