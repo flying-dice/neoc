@@ -97,6 +97,7 @@ export default defineConfig({
           items: [
             { text: 'base64', link: '/lib/reference/base64' },
             { text: 'hex', link: '/lib/reference/hex' },
+            { text: 'hmac', link: '/lib/reference/hmac' },
             { text: 'json', link: '/lib/reference/json' },
             { text: 'random', link: '/lib/reference/random' },
             { text: 'test', link: '/lib/reference/test' },

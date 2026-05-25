@@ -27,6 +27,14 @@ blake3 = "1"
 md-5 = "0.10"
 sha1 = "0.10"
 xxhash-rust = { version = "0.8", features = ["xxh3", "xxh64"] }
+# HMAC over the sha2 digests, backing `lib:hmac`. RustCrypto `hmac` 0.12 pairs
+# with the `digest` 0.10 traits `sha2` already implements — no new digest
+# backend, just the keyed construction. `subtle` gives the constant-time tag
+# comparison (`verify`); hand-rolling that is the side-channel footgun the
+# module exists to avoid. Both are RustCrypto crates already in the tree
+# transitively via the digest stack.
+hmac = "0.12"
+subtle = "2"
 flate2 = "1"
 zstd = "0.13"
 brotli = "7"
