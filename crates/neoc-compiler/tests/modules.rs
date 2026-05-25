@@ -7,6 +7,7 @@
 //! temp-directory projects built per case.
 
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use neoc_compiler::{Stage, Target, transpile, transpile_project};
@@ -216,4 +217,131 @@ fn single_file_project_matches_single_file_transpile() {
     assert!(project.ok());
     assert_eq!(project.files.len(), 1);
     assert_eq!(project.files[0].1, transpile(src, Target::Lua).output);
+}
+
+/// Whether `node` is on PATH, so the ESM run trial can drive it. When absent
+/// the trial skips the run and asserts only the emitted import shape.
+fn node_present() -> bool {
+    Command::new("node")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
+/// A cross-module project that exports a `pub fn`, a `pub const`, and a
+/// data-only `pub` struct. The `pub fn` and `pub const` carry a runtime binding;
+/// the data-only struct (no `impl`, no `#[derive]`) emits nothing in JS, so its
+/// name is erased. The importing module must `import` only the binding-bearing
+/// names — emitting an `import { Point }` against a module that exports nothing
+/// under that name is an unmatched named import, an ESM `SyntaxError` at link
+/// (#58). The emitted modules are written to disk and run under `node` as ESM to
+/// prove they load and execute.
+#[test]
+fn non_fn_cross_module_export_loads_as_esm() {
+    let dir = tempdir();
+    write(
+        &dir,
+        "lib/geom.neoc",
+        "pub fn add(a: number, b: number) -> number { a + b }\n\
+         \n\
+         pub const ORIGIN_X: number = 10;\n\
+         \n\
+         pub struct Point {\n    x: number,\n    y: number,\n}\n",
+    );
+    // `main` constructs the data-only `Point` across the module boundary, uses
+    // the `pub const`, and calls the `pub fn`.
+    let entry = write(
+        &dir,
+        "main.neoc",
+        "use lib::geom::add;\n\
+         use lib::geom::ORIGIN_X;\n\
+         use lib::geom::Point;\n\
+         \n\
+         ext fn println(n: number);\n\
+         \n\
+         pub fn main() {\n\
+         \x20   let p = Point { x: ORIGIN_X, y: 2 };\n\
+         \x20   println(add(p.x, p.y));\n\
+         }\n",
+    );
+
+    let project = transpile_project(&entry, Target::Js).expect("read project");
+    assert!(
+        project.ok(),
+        "expected a clean project, got: {:#?}",
+        project.diagnostics
+    );
+
+    let main_js = project
+        .files
+        .iter()
+        .find(|(p, _)| p.file_stem().is_some_and(|s| s == "main"))
+        .map(|(_, src)| src.as_str())
+        .expect("main output present");
+
+    // The `pub fn` and `pub const` carry a binding, so each lowers to an import.
+    assert!(
+        main_js.contains("import { add } from \"./lib/geom.js\";"),
+        "main should import the `pub fn`:\n{main_js}"
+    );
+    assert!(
+        main_js.contains("import { ORIGIN_X } from \"./lib/geom.js\";"),
+        "main should import the `pub const`:\n{main_js}"
+    );
+    // The data-only `pub` struct emits no binding, so no import — its name is
+    // erased and the construction inlines to a plain tagged object.
+    assert!(
+        !main_js.contains("Point } from") && !main_js.contains("{ Point }"),
+        "main must NOT import the data-only struct `Point`:\n{main_js}"
+    );
+    assert!(
+        main_js.contains("_struct: \"Point\""),
+        "the `Point` construction should inline to a tagged object:\n{main_js}"
+    );
+
+    if !node_present() {
+        return;
+    }
+
+    // Write the emitted modules to disk under their relative paths and run the
+    // entry as ESM. A runner module supplies the `println` host global, imports
+    // `main`, and calls it. node loading without a `SyntaxError` proves no
+    // import dangles against a missing export.
+    let out = tempdir();
+    // Project file paths are canonicalised against the entry's directory, so
+    // strip against the canonical source root to recover each module's relative
+    // layout (`main.js`, `lib/geom.js`).
+    let src_root = std::fs::canonicalize(&dir).expect("canonicalise source root");
+    for (abs, contents) in &project.files {
+        let rel = abs.strip_prefix(&src_root).expect("file under source root");
+        let dest = out.join(rel);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).expect("create out dir");
+        }
+        std::fs::write(&dest, contents).expect("write emitted module");
+    }
+    let runner = out.join("run.mjs");
+    std::fs::write(
+        &runner,
+        "globalThis.println = (x) => console.log(x);\n\
+         import { main } from \"./main.js\";\n\
+         main();\n",
+    )
+    .expect("write runner");
+
+    let output = Command::new("node")
+        .arg(&runner)
+        .output()
+        .expect("spawn node");
+    assert!(
+        output.status.success(),
+        "node failed to run the emitted ESM:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "12",
+        "main should print add(10, 2) = 12"
+    );
 }
