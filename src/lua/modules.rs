@@ -92,6 +92,7 @@ pub fn install(lua: &Lua) -> mlua::Result<()> {
     modules.insert("lib:diff".into(), lib::diff::module(lua)?);
     modules.insert("lib:glob".into(), lib::glob::module(lua)?);
     modules.insert("lib:hash".into(), lib::hash::module(lua)?);
+    modules.insert("lib:hex".into(), lib::hex::module(lua)?);
     modules.insert("lib:html".into(), lib::html::module(lua)?);
     modules.insert("lib:http".into(), lib::http::module(lua)?);
     modules.insert("lib:ini".into(), lib::ini::module(lua)?);

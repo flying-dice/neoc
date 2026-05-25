@@ -1928,6 +1928,7 @@ dependencies = [
  "futures",
  "globset",
  "heck",
+ "hex",
  "http-body-util",
  "hyper",
  "hyper-util",

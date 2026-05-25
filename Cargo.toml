@@ -18,6 +18,9 @@ mlua = { version = "0.10", features = ["luau", "async", "send", "vendored", "ser
 parking_lot = "0.12"
 regex = "1"
 base64 = "0.22"
+# De-facto Rust standard for hex (cited in the lib:hex issue) and already in
+# the tree transitively. Zero-dep, backs `lib:hex` alongside the base64 crate.
+hex = "0.4"
 sha2 = "0.10"
 sha3 = "0.10"
 blake3 = "1"

@@ -31,6 +31,7 @@ criterion_group!(
     lib::csv::benches,
     lib::glob::benches,
     lib::hash::benches,
+    lib::hex::benches,
     lib::http::benches,
     lib::ini::benches,
     lib::json::benches,
