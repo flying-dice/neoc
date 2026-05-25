@@ -20,7 +20,7 @@
 //! HTML report: target/criterion/report/index.html
 
 use criterion::{criterion_group, criterion_main};
-use neoc::lua::lib;
+use neoc_vm::lua::lib;
 
 criterion_group!(
     benches,
