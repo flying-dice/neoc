@@ -5,3 +5,43 @@ members = ["crates/*"]
 [workspace.package]
 edition = "2024"
 version = "0.1.0"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/flying-dice/neoc"
+
+[workspace.dependencies]
+neoc-ast = { path = "crates/neoc-ast" }
+neoc-grammar = { path = "crates/neoc-grammar" }
+neoc-parser = { path = "crates/neoc-parser" }
+neoc-types = { path = "crates/neoc-types" }
+neoc-macros = { path = "crates/neoc-macros" }
+neoc-codegen-lua = { path = "crates/neoc-codegen-lua" }
+neoc-codegen-js = { path = "crates/neoc-codegen-js" }
+neoc-codegen-py = { path = "crates/neoc-codegen-py" }
+neoc-compiler = { path = "crates/neoc-compiler" }
+neoc-fmt = { path = "crates/neoc-fmt" }
+neoc-lsp = { path = "crates/neoc-lsp" }
+neoc-bindgen-ts = { path = "crates/neoc-bindgen-ts" }
+neoc-bindgen-py = { path = "crates/neoc-bindgen-py" }
+neoc-bindgen-lua = { path = "crates/neoc-bindgen-lua" }
+tree-sitter = "0.25"
+tree-sitter-language = "0.1"
+
+[workspace.lints.rust]
+# `deny` not `forbid` so the one FFI binding in neoc-grammar can opt in with a
+# documented `#![allow(unsafe_code)]`. Every other crate stays unsafe-free.
+unsafe_code = "deny"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# enable case-by-case as crates land
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_name_repetitions = "allow"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
