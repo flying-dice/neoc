@@ -92,7 +92,7 @@ neoc run fetch.luau
 
 ## What's inside
 
-Three layers, one binary — `std:*` mirrors Rust's standard library, `lib:*` are curated helpers and gap-fillers, `vnd:*` are handpicked third-party libraries. Browse [crates/neoc/src/lua/](crates/neoc/src/lua) for the live catalogue.
+Three layers, one binary — `std:*` mirrors Rust's standard library, `lib:*` are curated helpers and gap-fillers, `vnd:*` are handpicked third-party libraries. Browse [crates/neoc-vm/src/lua/](crates/neoc-vm/src/lua) for the live catalogue.
 
 `require("namespace:name")` is the only way in. No ambient globals, no path search. Unknown names error with the catalogue.
 
@@ -122,7 +122,8 @@ neoc lsp                               # language server (stdio)
 ## Workspace layout
 
 ```
-crates/neoc            # the Luau runtime + the `neoc` binary
+crates/neoc            # the `neoc` binary: unified CLI + folded compiler subcommands
+crates/neoc-vm         # the Luau runtime: engine, script execution, .neoc headers
 crates/neoc-grammar    # vendors tree-sitter-neoc (submodule); cc-builds the parser
 crates/neoc-ast        # typed AST — pure data, span-free
 crates/neoc-parser     # CST → AST adapter
@@ -134,7 +135,6 @@ crates/neoc-codegen-py  # AST → Python 3
 crates/neoc-compiler   # public lib API: transpile to any target (the runtime embeds this)
 crates/neoc-fmt        # formatter
 crates/neoc-lsp        # language server
-crates/neoc-cli        # compiler subcommand tree (build/check/fmt/lsp)
 crates/neoc-wasm       # browser entry point
 ```
 

@@ -32,7 +32,7 @@ Picking:
 - Our code or small helper crate → `lib:*`
 - Recognisable crate from `Cargo.toml` → `vnd:*` (exact name)
 
-Registry built once at boot in `crates/neoc/src/lua/lib/mod.rs::install`.
+Registry built once at boot in `crates/neoc-vm/src/lua/lib/mod.rs::install`.
 
 ---
 

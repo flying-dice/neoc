@@ -1,13 +1,15 @@
-use neoc::errors::{self, NeocError};
-use neoc::lua;
-use neoc::lua::lib::compile::{TrailerError, detect_embedded_payload_from};
-use neoc::lua::std::workers::ShutdownSignal;
+use neoc_vm::errors::{self, NeocError};
+use neoc_vm::lua;
+use neoc_vm::lua::lib::compile::{TrailerError, detect_embedded_payload_from};
+use neoc_vm::lua::std::workers::ShutdownSignal;
 
 use std::io::{self, Write};
 use std::path::Path;
 use std::{env, fs, process};
 
 use clap::{Parser, Subcommand};
+
+mod cli;
 
 /// neoc — embedded Luau runtime and neoc-language compiler.
 ///
@@ -36,12 +38,12 @@ enum Commands {
     /// Write every facade-declared module's `.neoc` header under a directory.
     EmitHeaders {
         /// Output directory for the generated headers.
-        #[arg(long, value_name = "DIR", default_value = "headers")]
+        #[arg(long, value_name = "DIR", default_value = "crates/neoc-vm/src/lua")]
         out: String,
     },
     /// Compiler subcommands: `build`, `check`, `fmt`, `lsp`.
     #[command(flatten)]
-    Compiler(neoc_cli::Command),
+    Compiler(cli::Command),
 }
 
 fn report_error(err: NeocError) -> ! {
@@ -294,7 +296,7 @@ async fn run_embedded(payload: &[u8]) {
 }
 
 /// Dispatches a compiler subcommand and exits with its process code.
-fn run_compiler(command: neoc_cli::Command) -> ! {
+fn run_compiler(command: cli::Command) -> ! {
     let stderr = io::stderr();
     let mut err = stderr.lock();
     match command.run(&mut err) {

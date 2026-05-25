@@ -10,6 +10,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/flying-dice/neoc"
 
 [workspace.dependencies]
+neoc-vm = { path = "crates/neoc-vm" }
 neoc-ast = { path = "crates/neoc-ast" }
 neoc-grammar = { path = "crates/neoc-grammar" }
 neoc-parser = { path = "crates/neoc-parser" }

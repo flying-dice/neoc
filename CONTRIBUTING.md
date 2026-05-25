@@ -14,7 +14,7 @@ Example: adding `foo` module. First pick namespace per [STYLEGUIDE.md → Module
 
 ### 1. Create module file
 
-`crates/neoc/src/lua/lib/foo.rs`:
+`crates/neoc-vm/src/lua/lib/foo.rs`:
 
 ```rust
 use mlua::{Lua, Table};
@@ -32,7 +32,7 @@ fn greet(_: &Lua, name: mlua::String) -> mlua::Result<String> {
 
 ### 2. Register
 
-Add to `crates/neoc/src/lua/lib/mod.rs` — `pub mod` declaration + `install` body. Alphabetical.
+Add to `crates/neoc-vm/src/lua/lib/mod.rs` — `pub mod` declaration + `install` body. Alphabetical.
 
 ```rust
 pub mod foo;
@@ -128,7 +128,7 @@ Add row to modules table. Alphabetical within namespace.
 
 ## Adding to existing module
 
-1. Add function in `crates/neoc/src/lua/lib/<name>.rs`
+1. Add function in `crates/neoc-vm/src/lua/lib/<name>.rs`
 2. Register on table in `module()`
 3. Add `#[cfg(test)]` cases
 4. Extend bench group (3 tiers)
