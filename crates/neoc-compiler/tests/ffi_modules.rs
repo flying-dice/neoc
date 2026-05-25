@@ -9,9 +9,11 @@
 
 use neoc_compiler::{Target, transpile};
 
-/// One hosted block per backend, each `#[link]`ed to a module, plus a stray
-/// un-hosted `ext fn`. Each backend should emit the import for the block whose
-/// host maps to it and skip the other two.
+/// One hosted block per supported backend, each `#[link]`ed to a module, plus a
+/// block hosted by an unknown runtime (`extern "python"`) and a stray un-hosted
+/// `ext fn`. Each backend should emit the import for the block whose host maps
+/// to it and skip the rest; the unknown-host block maps to no target and never
+/// emits.
 const SOURCE: &str = r#"
 #[link(name = "color")]
 extern "node" {
@@ -41,7 +43,7 @@ fn js_emits_named_import_for_its_host_only() {
         out.contains("import { lighten, WHITE } from \"color\";"),
         "missing JS import:\n{out}"
     );
-    // The Lua- and Python-hosted blocks emit nothing in the JS backend.
+    // The Lua-hosted and unknown-host blocks emit nothing in the JS backend.
     assert!(
         !out.contains("palette") && !out.contains("huelib"),
         "mismatched-host block leaked into JS output:\n{out}"
@@ -58,20 +60,16 @@ fn js_emits_named_import_for_its_host_only() {
 }
 
 #[test]
-fn python_emits_from_import_for_its_host_only() {
-    let out = transpile(SOURCE, Target::Python).output;
-    assert!(
-        out.contains("from huelib import invert"),
-        "missing Python import:\n{out}"
-    );
-    assert!(
-        !out.contains("color") && !out.contains("palette"),
-        "mismatched-host block leaked into Python output:\n{out}"
-    );
-    assert!(
-        !out.contains("import print"),
-        "print should not be imported:\n{out}"
-    );
+fn unknown_host_block_emits_in_no_backend() {
+    // `extern "python"` names a host no target recognises, so the block maps to
+    // nothing and never reaches an import in any backend.
+    for target in [Target::Js, Target::Lua] {
+        let out = transpile(SOURCE, target).output;
+        assert!(
+            !out.contains("huelib") && !out.contains("invert"),
+            "unknown-host block leaked into {target} output:\n{out}"
+        );
+    }
 }
 
 #[test]
@@ -129,7 +127,7 @@ fn main() { let _ = host_fn(1); }
 fn un_hosted_ext_emits_no_import() {
     // A module with only an un-hosted `ext fn` emits no import preamble.
     let src = "ext fn print(s: string);\nfn main() { print(\"hi\"); }\n";
-    for target in [Target::Js, Target::Python, Target::Lua] {
+    for target in [Target::Js, Target::Lua] {
         let out = transpile(src, target).output;
         assert!(
             !out.contains("import"),

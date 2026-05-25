@@ -11,14 +11,14 @@
 //! diverged instead of one opaque blob. Two kinds of trial per target:
 //!
 //! - `<case>::<target>::source` — the live emit equals the committed, readable
-//!   `<case>.lua` / `<case>.js` / `<case>.py` checked into the corpus. This pins
-//!   the transformation itself (codegen changes show up as a diff) and needs no
+//!   `<case>.lua` / `<case>.js` checked into the corpus. This pins the
+//!   transformation itself (codegen changes show up as a diff) and needs no
 //!   toolchain, so it runs everywhere. Regenerate the files with
-//!   `neoc build lang/CONFORMANCE/dynamic/*.neoc --target <lua|js|python>`.
+//!   `neoc build lang/CONFORMANCE/dynamic/*.neoc --target <lua|js>`.
 //! - `<case>::<target>` — transpile (or, for Rust, compile the `.rs` anchor),
 //!   run under the target's interpreter, and assert trailing-newline-trimmed
 //!   stdout equals the golden. Marked ignored when the toolchain (`node` /
-//!   `python3` / `lua` / `rustc`) is absent, so the suite still passes without it.
+//!   `lua` / `rustc`) is absent, so the suite still passes without it.
 //!
 //! Two extra trials guard the corpus shape: it is non-empty, and every `.neoc`
 //! has a sibling `.rs`.
@@ -33,7 +33,7 @@ use neoc_compiler::{Target, transpile};
 
 /// A conformance backend: how to turn a case into a runnable program and run it.
 struct TargetSpec {
-    /// Short name shown after `::` in the test id (`lua`, `js`, `python`, `rust`).
+    /// Short name shown after `::` in the test id (`lua`, `js`, `rust`).
     name: &'static str,
     /// Whether the toolchain this target needs is present on PATH. When false,
     /// the target's run trials are marked ignored rather than failed.
@@ -170,33 +170,6 @@ fn run_js(neoc: &str, case: &str, _neoc_path: &Path) -> Result<String, Failed> {
     run_program("node", &program, "js", case, "js")
 }
 
-/// The Python harness: a value formatter matching the Lua/Rust goldens (whole
-/// floats lose the `.0`, booleans render lowercase) plus `print` / `println`.
-const PY_HARNESS: &str = "\
-def _fmt(v):
-    if isinstance(v, bool):
-        return \"true\" if v else \"false\"
-    if isinstance(v, float):
-        return str(int(v)) if v.is_integer() else repr(v)
-    return str(v)
-
-
-def print(v):
-    import builtins
-    builtins.print(_fmt(v))
-
-
-def println(v):
-    print(v)
-";
-
-/// python: prepend the `_fmt` harness, then call `main()`.
-fn run_python(neoc: &str, case: &str, _neoc_path: &Path) -> Result<String, Failed> {
-    let output = emit(neoc, Target::Python, case)?;
-    let program = format!("{PY_HARNESS}\n\n{output}\n\nmain()\n");
-    run_program("python3", &program, "py", case, "python")
-}
-
 /// rust: compile the case's `.rs` anchor with `rustc --edition 2021` and run it.
 fn run_rust(_neoc: &str, case: &str, neoc_path: &Path) -> Result<String, Failed> {
     let rs_path = neoc_path.with_extension("rs");
@@ -278,12 +251,6 @@ fn collect_trials() -> Vec<Trial> {
             available: binary_present("node"),
             run: run_js,
             emit: Some((Target::Js, "js")),
-        },
-        TargetSpec {
-            name: "python",
-            available: binary_present("python3"),
-            run: run_python,
-            emit: Some((Target::Python, "py")),
         },
         TargetSpec {
             name: "rust",
