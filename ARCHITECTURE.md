@@ -18,12 +18,12 @@ typed AST
    │  elaborate                    crates/neoc-types  (string `+` → Concat)
    ▼
 elaborated AST
-   │  emit (+ derives)             crates/neoc-codegen-{lua,js,py}, crates/neoc-macros
+   │  emit (+ derives)             crates/neoc-codegen-{lua,js}, crates/neoc-macros
    ▼
-Lua 5.1 / JavaScript (ES2022) / Python 3 source
+Lua 5.1 / JavaScript (ES2022) source
 ```
 
-`crates/neoc-compiler` orchestrates the run (`transpile(src, target) -> CompileOutput`) and is the stable seam an embedding runtime depends on; the target selects the codegen backend (`lua` / `js` / `python`). Each stage is single-purpose and reads its predecessor's output without mutating it.
+`crates/neoc-compiler` orchestrates the run (`transpile(src, target) -> CompileOutput`) and is the stable seam an embedding runtime depends on; the target selects the codegen backend (`lua` / `js`). Each stage is single-purpose and reads its predecessor's output without mutating it.
 
 ## Crates
 
@@ -36,8 +36,7 @@ Lua 5.1 / JavaScript (ES2022) / Python 3 source
 | `neoc-macros` | built-in derives (Clone/Eq/Debug/Display), structural over the AST | ast |
 | `neoc-codegen-lua` | AST → Lua 5.1; one emit module per construct family | ast, macros |
 | `neoc-codegen-js` | AST → JavaScript (ES2022); mirrors `neoc-codegen-lua`'s structure | ast, macros |
-| `neoc-codegen-py` | AST → Python 3; follows the `lang/DYNAMIC.md` lowering table | ast, macros |
-| `neoc-compiler` | the public lib API: `transpile` to any target; merges per-stage diagnostics | ast, parser, types, codegen-lua, codegen-js, codegen-py, macros |
+| `neoc-compiler` | the public lib API: `transpile` to any target; merges per-stage diagnostics | ast, parser, types, codegen-lua, codegen-js, macros |
 | `neoc-fmt` | formatter | ast, parser |
 | `neoc-lsp` | language server | compiler, parser |
 | `neoc-wasm` | browser entry point | compiler |

@@ -21,7 +21,7 @@ One sub-directory per spec layer. A test in `lexical/` exercises the lexer in is
 | `lexical/` | `name.neoc` | `name.tokens` — one token per line, format `KIND@line:col "lexeme"`. **Deferred** — see `lexical/README.md`; neoc has no flat tokeniser to assert against. |
 | `syntax/`  | `name.neoc` (accept) | the source must parse against the tree-sitter grammar with no error node. A second form, `name.reject`, is a source the parser must reject (the tree contains an error or missing node); `name.reject.expected` names the error category in prose. |
 | `static/`  | `name.neoc` | `name.diagnostics` — the set of static errors the checker must report, one per line (empty file = well-typed). The match is order-independent. |
-| `dynamic/` | `name.neoc` | `name.lua` / `name.js` / `name.py` (the byte-for-byte lowering to each target — readable, committed), `name.stdout` (the output every target must produce when run), and `name.rs` (the closest working Rust translation — see below). |
+| `dynamic/` | `name.neoc` | `name.lua` / `name.js` (the byte-for-byte lowering to each target — readable, committed), `name.stdout` (the output every target must produce when run), and `name.rs` (the closest working Rust translation — see below). |
 
 Pairs live side-by-side. The test runner glob is `*.neoc` and the expected files are derived by extension.
 
@@ -34,7 +34,6 @@ dynamic/4-05-match-literal-arms.neoc   ← the source
 dynamic/4-05-match-literal-arms.rs     ← closest Rust (design anchor)
 dynamic/4-05-match-literal-arms.lua    ← emitted Lua  5.1
 dynamic/4-05-match-literal-arms.js     ← emitted JavaScript (ES2022)
-dynamic/4-05-match-literal-arms.py     ← emitted Python 3
 dynamic/4-05-match-literal-arms.stdout ← the output every target must produce
 ```
 
@@ -42,12 +41,11 @@ dynamic/4-05-match-literal-arms.stdout ← the output every target must produce
 
 ## Readable per-target output
 
-The `.lua` / `.js` / `.py` files are the **committed, readable lowering** of each case to each backend — exactly what `neoc build --target <lua|js|python>` emits. Read them to see the transformation; regenerate them after a codegen change with:
+The `.lua` / `.js` files are the **committed, readable lowering** of each case to each backend — exactly what `neoc build --target <lua|js>` emits. Read them to see the transformation; regenerate them after a codegen change with:
 
 ```
 neoc build lang/CONFORMANCE/dynamic/*.neoc --target lua
 neoc build lang/CONFORMANCE/dynamic/*.neoc --target js
-neoc build lang/CONFORMANCE/dynamic/*.neoc --target python
 ```
 
 ## Dynamic Rust anchors
@@ -56,10 +54,10 @@ Each dynamic case also ships a `name.rs`: the closest working Rust translation. 
 
 The single data-driven runner `crates/neoc-compiler/tests/conformance.rs` pins the whole contract, one visible test per case × target:
 
-- `<case>::<target>::source` — the live emit equals the committed `.lua` / `.js` / `.py` (the transformation is pinned; no toolchain needed).
-- `<case>::<target>` — transpile (or compile the `.rs`) and run under `lua` / `node` / `python3` / `rustc`, asserting `name.stdout`.
+- `<case>::<target>::source` — the live emit equals the committed `.lua` / `.js` (the transformation is pinned; no toolchain needed).
+- `<case>::<target>` — transpile (or compile the `.rs`) and run under `lua` / `node` / `rustc`, asserting `name.stdout`.
 
-So Lua == JavaScript == Python == Rust output == golden `name.stdout`. The `.rs` is the design anchor: start a new dynamic case from a working `.rs`, then derive the neoc, the per-target lowerings, and the stdout from it.
+So Lua == JavaScript == Rust output == golden `name.stdout`. The `.rs` is the design anchor: start a new dynamic case from a working `.rs`, then derive the neoc, the per-target lowerings, and the stdout from it.
 
 ## What a passing implementation looks like
 

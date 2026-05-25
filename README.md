@@ -16,7 +16,7 @@ This monorepo ships a single `neoc` binary that does both jobs:
 |---|---|
 | `neoc run <script>` | run a Luau script in the sandboxed runtime |
 | `neoc emit-headers --out <dir>` | emit `ext` headers describing the runtime surface |
-| `neoc build <src>` | compile `.neoc` → Lua 5.1 (or JS/Python via `--target`) |
+| `neoc build <src>` | compile `.neoc` → Lua 5.1 (or JS via `--target`) |
 | `neoc check <src>` | parse + type-check, no output |
 | `neoc fmt <src>` | format `.neoc` source |
 | `neoc lsp` | language server over stdio |
@@ -111,13 +111,12 @@ neoc run one.luau two.luau             # several in sequence
 ```sh
 neoc build main.neoc                   # → Lua 5.1 (default target)
 neoc build main.neoc --target js       # → JavaScript (ES2022)
-neoc build main.neoc --target python   # → Python 3
 neoc check main.neoc                   # parse + type-check only
 neoc fmt main.neoc                     # canonical formatting
 neoc lsp                               # language server (stdio)
 ```
 
-`.neoc` compiles to Lua 5.1 by default — the lowest common denominator, so the output runs unchanged on Luau, Lua 5.4, LuaJIT, and this runtime. The codegen layer is decoupled from the language surface, so JavaScript (ES2022) and Python 3 backends ship alongside it, selected with `--target`.
+`.neoc` compiles to Lua 5.1 by default — the lowest common denominator, so the output runs unchanged on Luau, Lua 5.4, LuaJIT, and this runtime. The codegen layer is decoupled from the language surface, so a JavaScript (ES2022) backend ships alongside it, selected with `--target`.
 
 ## Workspace layout
 
@@ -131,7 +130,6 @@ crates/neoc-types      # name resolution, inference, well-formedness
 crates/neoc-macros     # built-in derives (Clone/Eq/Debug/Display)
 crates/neoc-codegen-lua # AST → Lua 5.1
 crates/neoc-codegen-js  # AST → JavaScript (ES2022)
-crates/neoc-codegen-py  # AST → Python 3
 crates/neoc-compiler   # public lib API: transpile to any target (the runtime embeds this)
 crates/neoc-fmt        # formatter
 crates/neoc-lsp        # language server

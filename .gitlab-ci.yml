@@ -63,8 +63,8 @@ test:
     - cargo build
     # Full workspace suite: runtime lib/bin tests plus the compiler's
     # integration tests (conformance.rs/_static/_syntax, cli.rs, LSP). The
-    # conformance exec arms self-skip when lua/node/python3/rustc are absent on
-    # the runner via a binary_present gate, so no toolchain installs are needed.
+    # conformance exec arms self-skip when lua/node/rustc are absent on the
+    # runner via a binary_present gate, so no toolchain installs are needed.
     - cargo test --workspace
     # Docker-dependent tests (sqlx_mysql, sqlx_postgres, testcontainers_modules)
     # require a live Docker daemon and are excluded from the runner.
