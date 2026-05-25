@@ -1,0 +1,19 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "agent",
+            "if": "Bash(git commit*)",
+            "prompt": "A `git commit` is about to run in this repo. Perform a review of the STAGED changes by following the project's `change-review` skill (.claude/skills/change-review/SKILL.md): inspect `git diff --staged` (and `git status` for new files the change depends on), run the build/lint/tests the change touches, and weigh unhappy paths. BLOCK the commit (deny) if you find any `bug` or `issue`, listing each as `**[type]** summary` followed by detail so the author can fix it before committing. Allow the commit when there are no `bug`/`issue` findings; `nit` and `question` do not block. $ARGUMENTS",
+            "model": "claude-sonnet-4-6",
+            "timeout": 300,
+            "statusMessage": "Pre-commit review (staged changes)…"
+          }
+        ]
+      }
+    ]
+  }
+}
