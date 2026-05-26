@@ -26,7 +26,7 @@ pub fn signature_help(source: &str, position: Position) -> Option<SignatureHelp>
 
     let call = enclosing_call(&tree, byte)?;
     let callee = call.child_by_field_name("function")?;
-    let name = callee_name(callee, source)?;
+    let name = cst::callee_name(callee, source)?;
     let decl = cst::find_decl(&tree, source, name)?;
     if decl.node.kind() != "function_declaration" {
         return None;
@@ -70,22 +70,6 @@ fn enclosing_call(tree: &Tree, byte: usize) -> Option<Node<'_>> {
         }
         node = node.parent()?;
     }
-}
-
-/// The callee name of a `call_expression`'s `function` field: the identifier
-/// itself, or the final identifier of a path (`Mod::foo`).
-fn callee_name<'a>(callee: Node, source: &'a str) -> Option<&'a str> {
-    if callee.kind() == "identifier" {
-        return node_text(&callee, source);
-    }
-    let mut last = None;
-    let mut cursor = callee.walk();
-    for child in callee.named_children(&mut cursor) {
-        if child.kind() == "identifier" {
-            last = Some(child);
-        }
-    }
-    node_text(&last?, source)
 }
 
 /// The number of argument separators (commas) before `byte` in the call's

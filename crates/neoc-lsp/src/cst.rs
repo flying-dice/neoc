@@ -55,6 +55,24 @@ pub fn identifier_at<'a>(tree: &Tree, source: &'a str, byte: usize) -> Option<&'
     node_text(&identifier_node_at(tree, byte)?, source)
 }
 
+/// The callee name of a call's `function` node: the identifier itself, or the
+/// final identifier of a path (`Mod::foo`). `None` for callees with no name
+/// (e.g. a parenthesised expression).
+#[must_use]
+pub fn callee_name<'a>(callee: Node, source: &'a str) -> Option<&'a str> {
+    if callee.kind() == "identifier" {
+        return node_text(&callee, source);
+    }
+    let mut last = None;
+    let mut cursor = callee.walk();
+    for child in callee.named_children(&mut cursor) {
+        if child.kind() == "identifier" {
+            last = Some(child);
+        }
+    }
+    node_text(&last?, source)
+}
+
 /// The source text a node spans, or `None` when the range is not valid UTF-8
 /// boundaries (which the tree-sitter spans always are for a `&str`).
 #[must_use]

@@ -20,7 +20,7 @@
 use std::path::Path;
 
 use cucumber::{World, gherkin::Step, given, then, when};
-use tower_lsp::lsp_types::{DocumentHighlightKind, Documentation, TextEdit};
+use tower_lsp::lsp_types::{DocumentHighlightKind, Documentation, InlayHintLabel, TextEdit};
 
 /// State threaded through one scenario: the document under test and the result
 /// produced by the last `When` step — hover markdown, reference locations as
@@ -41,6 +41,7 @@ struct Ide {
     highlights: Vec<(u32, u32, String)>,
     folds: Vec<(u32, u32)>,
     selection_steps: Vec<String>,
+    inlay_labels: Vec<String>,
 }
 
 #[given("the source:")]
@@ -326,6 +327,32 @@ fn selection_covers(world: &mut Ide, expected: String) {
         "no selection step covers {expected:?}; steps: {:?}",
         world.selection_steps,
     );
+}
+
+#[when("I request inlay hints")]
+fn request_inlay_hints(world: &mut Ide) {
+    world.inlay_labels = neoc_lsp::inlay_hints(&world.source)
+        .into_iter()
+        .map(|hint| match hint.label {
+            InlayHintLabel::String(text) => text,
+            InlayHintLabel::LabelParts(_) => String::new(),
+        })
+        .collect();
+}
+
+#[then("the inlay hints are:")]
+fn inlay_hints_are(world: &mut Ide, step: &Step) {
+    let table = step
+        .table
+        .as_ref()
+        .unwrap_or_else(|| panic!("step {:?} requires a table", step.value));
+    let expected: Vec<String> = table
+        .rows
+        .iter()
+        .skip(1)
+        .map(|row| row[0].trim().to_string())
+        .collect();
+    assert_eq!(world.inlay_labels, expected, "inlay hints mismatch");
 }
 
 #[when("I request folds")]

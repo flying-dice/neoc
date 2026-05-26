@@ -2,8 +2,8 @@
 //!
 //! Capabilities: diagnostics, document symbols (outline), goto (definition,
 //! type-definition, implementation), find-all-references, document highlight,
-//! folding ranges, selection ranges, signature help, rename, hover, and
-//! completion (with lazy per-item resolve).
+//! folding ranges, selection ranges, inlay hints, signature help, rename,
+//! hover, and completion (with lazy per-item resolve).
 //! Diagnostics come from [`neoc_compiler::transpile`];
 //! syntax errors carry precise byte ranges from the parser, while type and emit
 //! diagnostics fall back to the document's first line because those stages do
@@ -18,6 +18,7 @@ mod folding;
 mod goto;
 mod highlight;
 mod hover;
+mod inlay;
 mod position;
 mod references;
 mod rename;
@@ -36,6 +37,7 @@ pub use folding::folding_ranges;
 pub use goto::{goto_definition, goto_implementation, goto_type_definition};
 pub use highlight::document_highlight;
 pub use hover::hover;
+pub use inlay::inlay_hints;
 pub use position::{byte_to_position, position_to_byte};
 pub use references::references;
 pub use rename::{prepare_rename, rename};
@@ -51,12 +53,13 @@ use tower_lsp::lsp_types::{
     DocumentSymbolResponse, FoldingRange, FoldingRangeParams, FoldingRangeProviderCapability,
     GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams,
     HoverProviderCapability, ImplementationProviderCapability, InitializeParams, InitializeResult,
-    InitializedParams, Location, LocationLink, MarkupContent, MarkupKind, MessageType, OneOf,
-    Position, PrepareRenameResponse, Range, ReferenceParams, RenameOptions, RenameParams,
-    SelectionRange, SelectionRangeParams, SelectionRangeProviderCapability, ServerCapabilities,
-    ServerInfo, SignatureHelp, SignatureHelpOptions, SignatureHelpParams,
-    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit,
-    TypeDefinitionProviderCapability, Url, WorkspaceEdit,
+    InitializedParams, InlayHint, InlayHintParams, Location, LocationLink, MarkupContent,
+    MarkupKind, MessageType, OneOf, Position, PrepareRenameResponse, Range, ReferenceParams,
+    RenameOptions, RenameParams, SelectionRange, SelectionRangeParams,
+    SelectionRangeProviderCapability, ServerCapabilities, ServerInfo, SignatureHelp,
+    SignatureHelpOptions, SignatureHelpParams, TextDocumentPositionParams,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, TypeDefinitionProviderCapability,
+    Url, WorkspaceEdit,
 };
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
@@ -169,6 +172,7 @@ impl LanguageServer for Backend {
                 document_highlight_provider: Some(OneOf::Left(true)),
                 folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
                 selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
+                inlay_hint_provider: Some(OneOf::Left(true)),
                 rename_provider: Some(OneOf::Right(RenameOptions {
                     // prepareRename validates the cursor and highlights the name.
                     prepare_provider: Some(true),
@@ -316,6 +320,13 @@ impl LanguageServer for Backend {
                 .map(|range| Location::new(tdp.text_document.uri.clone(), range))
                 .collect();
         Ok(Some(locations))
+    }
+
+    async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
+        let Some(source) = self.source(&params.text_document.uri) else {
+            return Ok(None);
+        };
+        Ok(Some(inlay::inlay_hints(&source)))
     }
 
     async fn selection_range(

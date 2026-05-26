@@ -72,7 +72,10 @@ Dependency-ordered. `[ ]` todo · `[~]` in-progress · `[x]` done.
 8. `[ ]` Workspace symbols (`workspace/symbol`) — needs the cross-file index.
 9. `[x]` Folding ranges (`foldingRange`) — brace-delimited bodies + block
    comments, found generically from `{`/`}` CST tokens.
-10. `[ ]` Inlay hints (`inlayHint`) — Type + Parameter kinds first.
+10. `[x]` Inlay hints (`inlayHint`) — Parameter kind: each call argument
+    labelled with its parameter name, suppressed when the argument already names
+    it. Type-hint kind (inferred `let` types) deferred until binding types are
+    exposed.
 11. `[x]` Selection range (`selectionRange`) — expand-selection up the CST
     ancestry, equal-range wrappers collapsed.
 12. `[deferred]` Matching brace — rust-analyzer custom request
