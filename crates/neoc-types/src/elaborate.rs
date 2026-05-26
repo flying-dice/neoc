@@ -83,6 +83,7 @@ impl<'a> Elaborator<'a> {
             trait_: b.trait_.clone(),
             ty: b.ty.clone(),
             items,
+            assoc_bindings: b.assoc_bindings.clone(),
         }
     }
 
@@ -102,6 +103,7 @@ impl<'a> Elaborator<'a> {
             name: t.name.clone(),
             generics: t.generics.clone(),
             supertraits: t.supertraits.clone(),
+            assoc_types: t.assoc_types.clone(),
             items,
         }
     }

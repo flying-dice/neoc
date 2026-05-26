@@ -39,6 +39,12 @@ fn lower_path(path: &ast::TypePath, params: &[String]) -> Ty {
     let Some(last) = path.segments.last() else {
         return Ty::Unknown;
     };
+    // `Self::Item` — an associated-type projection — lowers to a `Self::Item`
+    // sentinel the checker resolves against an impl's binding (`STATIC.md`
+    // §3.4). Leading `Self` is significant here, unlike a module qualifier.
+    if path.segments.len() == 2 && path.segments[0].name == "Self" {
+        return Ty::named(format!("Self::{}", last.name));
+    }
     // Only the final segment names the type; leading segments are module
     // qualifiers, which a single-module checker treats as transparent.
     let name = &last.name;
@@ -469,6 +475,7 @@ fn collect_trait(table: &mut SymbolTable, t: &ast::TraitDecl) {
             generics,
             methods,
             supertraits,
+            assoc_types: t.assoc_types.clone(),
         }),
     );
 }
@@ -485,14 +492,22 @@ fn collect_impl(table: &mut SymbolTable, b: &ast::ImplBlock) {
             .trait_impls
             .insert((type_name.clone(), trait_name.name.clone()));
     }
+    // The impl's associated-type bindings, so a method signature mentioning
+    // `Self::Item` is stored already resolved to the bound type — call sites
+    // see the concrete type, not the projection sentinel.
+    let assoc: HashMap<String, Ty> = b
+        .assoc_bindings
+        .iter()
+        .map(|(name, ty)| (name.clone(), lower_type(ty, &impl_generics)))
+        .collect();
     for f in &b.items {
         let (params, ret, has_receiver) = fn_type(&f.sig, &impl_generics);
-        // Substitute `Self` with the target type in params/ret.
+        // Substitute `Self` with the target type, then project `Self::Item`.
         let params = params
             .into_iter()
-            .map(|p| subst_self(p, &type_name))
+            .map(|p| project_assoc(subst_self(p, &type_name), &assoc))
             .collect();
-        let ret = subst_self(ret, &type_name);
+        let ret = project_assoc(subst_self(ret, &type_name), &assoc);
         table.methods.insert(
             (type_name.clone(), f.sig.name.clone()),
             MethodInfo {
@@ -509,6 +524,38 @@ fn impl_target_name(ty: &ast::Type) -> Option<String> {
     match ty {
         ast::Type::Path(p) => p.segments.last().map(|s| s.name.clone()),
         _ => None,
+    }
+}
+
+/// Resolves any `Self::Item` projection sentinel in `ty` to its binding from
+/// `bindings` (associated-type name → bound type), recursing through lists,
+/// function types, and nominal type arguments. A no-op when `bindings` is empty
+/// or the name is unbound (left as-is, where it surfaces as a mismatch).
+pub(crate) fn project_assoc(ty: Ty, bindings: &HashMap<String, Ty>) -> Ty {
+    if bindings.is_empty() {
+        return ty;
+    }
+    match ty {
+        Ty::Named { name, args } => {
+            if let Some(assoc) = name.strip_prefix("Self::") {
+                if let Some(bound) = bindings.get(assoc) {
+                    return bound.clone();
+                }
+            }
+            Ty::Named {
+                name,
+                args: args
+                    .into_iter()
+                    .map(|a| project_assoc(a, bindings))
+                    .collect(),
+            }
+        }
+        Ty::List(inner) => Ty::List(Box::new(project_assoc(*inner, bindings))),
+        Ty::Fn(ps, r) => Ty::Fn(
+            ps.into_iter().map(|p| project_assoc(p, bindings)).collect(),
+            Box::new(project_assoc(*r, bindings)),
+        ),
+        other => other,
     }
 }
 

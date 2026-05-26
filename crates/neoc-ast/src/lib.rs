@@ -209,6 +209,9 @@ pub struct TraitDecl {
     /// Each is the path of a required trait; an `impl A for T` must also
     /// provide an `impl B for T`.
     pub supertraits: Vec<TypePath>,
+    /// Associated types the trait declares (`type Item;`). An implementor binds
+    /// each in its `impl`, and trait methods may refer to them as `Self::Item`.
+    pub assoc_types: Vec<Ident>,
     pub items: Vec<TraitItem>,
 }
 
@@ -226,6 +229,9 @@ pub struct ImplBlock {
     pub trait_: Option<TypePath>,
     pub ty: Type,
     pub items: Vec<FnDecl>,
+    /// Associated-type bindings (`type Item = number;`) declared in the impl
+    /// body, pairing each name with its concrete type.
+    pub assoc_bindings: Vec<(Ident, Type)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

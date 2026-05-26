@@ -28,6 +28,10 @@ pub struct Checker<'a> {
     /// a bounded parameter resolve through the bound trait's methods
     /// (`STATIC.md` §method-resolution).
     pub(crate) type_bounds: std::collections::HashMap<String, Vec<String>>,
+    /// Associated-type bindings in scope for the current `impl` body: `Item` →
+    /// the type it is bound to. Lets `Self::Item` resolve to the concrete type
+    /// the impl assigned it (`STATIC.md` §3.4). Empty outside a trait impl.
+    pub(crate) assoc_bindings: std::collections::HashMap<String, Ty>,
     diagnostics: Vec<Diagnostic>,
     /// When set, every inferred expression's type is recorded in `expr_types`.
     /// Off by default so the compile path pays nothing; tooling turns it on for
@@ -59,6 +63,7 @@ impl<'a> Checker<'a> {
             ret_ty: Ty::Unit,
             type_params: Vec::new(),
             type_bounds: std::collections::HashMap::new(),
+            assoc_bindings: std::collections::HashMap::new(),
             diagnostics: Vec::new(),
             record_types: false,
             expr_types: Vec::new(),
@@ -166,10 +171,21 @@ impl<'a> Checker<'a> {
 
     /// Lowers an AST type and expands any transparent `type` aliases through
     /// the symbol table, so an annotation written with an alias compares equal
-    /// to its underlying type (`STATIC.md` §3.3).
+    /// to its underlying type (`STATIC.md` §3.3). Inside a trait impl, a
+    /// `Self::Item` projection resolves to the impl's binding for `Item`.
     pub(crate) fn lower(&self, ty: &ast::Type) -> Ty {
-        self.table
-            .resolve_alias_ty(lower_type(ty, &self.type_params))
+        let lowered = self
+            .table
+            .resolve_alias_ty(lower_type(ty, &self.type_params));
+        self.project_assoc(lowered)
+    }
+
+    /// Resolves any `Self::Item` projection sentinel in `ty` to the impl's
+    /// binding for that associated type, recursing through composites. A no-op
+    /// outside an impl (no bindings) or for an unbound name (left as-is, where
+    /// it surfaces as a mismatch).
+    fn project_assoc(&self, ty: Ty) -> Ty {
+        crate::collect::project_assoc(ty, &self.assoc_bindings)
     }
 
     // ---- item walking ------------------------------------------------------
@@ -379,9 +395,18 @@ impl<'a> Checker<'a> {
         if let Some(trait_path) = &b.trait_ {
             self.check_trait_impl(b, &target, trait_path);
         }
+        // Bring the impl's associated-type bindings into scope so `Self::Item`
+        // in method signatures and bodies resolves to the bound type.
+        let prev_assoc = std::mem::take(&mut self.assoc_bindings);
+        self.assoc_bindings = b
+            .assoc_bindings
+            .iter()
+            .map(|(name, ty)| (name.clone(), self.lower(ty)))
+            .collect();
         for f in &b.items {
             self.check_fn(f, Some(&target));
         }
+        self.assoc_bindings = prev_assoc;
     }
 
     fn check_trait_impl(&mut self, b: &ast::ImplBlock, target: &str, trait_path: &ast::TypePath) {
@@ -422,6 +447,30 @@ impl<'a> Checker<'a> {
                 ));
             }
         }
+        // Associated-type completeness: every declared `type Item;` must be
+        // bound, and a binding must name a declared associated type.
+        for at in &t.assoc_types {
+            if !b.assoc_bindings.iter().any(|(n, _)| n == at) {
+                self.error(format!(
+                    "`impl {trait_name} for {target}` is missing associated type `{at}`"
+                ));
+            }
+        }
+        for (n, _) in &b.assoc_bindings {
+            if !t.assoc_types.iter().any(|at| at == n) {
+                self.error(format!(
+                    "`{n}` is not an associated type of trait `{trait_name}`"
+                ));
+            }
+        }
+        // The impl's bindings, used to project `Self::Item` on both sides of
+        // the signature comparison so an impl may write the bound type or
+        // `Self::Item` interchangeably.
+        let impl_bindings: std::collections::HashMap<String, Ty> = b
+            .assoc_bindings
+            .iter()
+            .map(|(name, ty)| (name.clone(), self.lower(ty)))
+            .collect();
         // Signature conformance: a provided method must match the trait's
         // declared signature — parameter types, return type, and receiver —
         // with `Self` read as the target type (`STATIC.md` §3.4). The impl's
@@ -440,21 +489,29 @@ impl<'a> Checker<'a> {
             let want_params: Vec<Ty> = m
                 .params
                 .iter()
-                .map(|p| subst_self_param(p, &self_ty))
+                .map(|p| {
+                    crate::collect::project_assoc(subst_self_param(p, &self_ty), &impl_bindings)
+                })
                 .collect();
-            let want_ret = subst_self_param(&m.ret, &self_ty);
+            let want_ret =
+                crate::collect::project_assoc(subst_self_param(&m.ret, &self_ty), &impl_bindings);
+            let got_params: Vec<Ty> = info
+                .params
+                .iter()
+                .map(|p| crate::collect::project_assoc(p.clone(), &impl_bindings))
+                .collect();
+            let got_ret = crate::collect::project_assoc(info.ret.clone(), &impl_bindings);
             let exact = |a: &Ty, b: &Ty| a == b || a.is_unknown() || b.is_unknown();
             let matches = info.has_receiver == m.has_receiver
-                && info.params.len() == want_params.len()
-                && info
-                    .params
+                && got_params.len() == want_params.len()
+                && got_params
                     .iter()
                     .zip(&want_params)
                     .all(|(a, b)| exact(a, b))
-                && exact(&info.ret, &want_ret);
+                && exact(&got_ret, &want_ret);
             if !matches {
                 let want = Ty::Fn(want_params, Box::new(want_ret));
-                let got = Ty::Fn(info.params.clone(), Box::new(info.ret.clone()));
+                let got = Ty::Fn(got_params, Box::new(got_ret));
                 self.error(format!(
                     "method `{}` does not match trait `{trait_name}`: expected `{want}`, found `{got}`",
                     m.name

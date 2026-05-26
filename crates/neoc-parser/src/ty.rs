@@ -14,7 +14,23 @@ impl Adapter {
                     .map_or(ast::Type::Unit, |c| self.walk_type(c));
                 ast::Type::List(Box::new(inner))
             }
-            "self_type" => ast::Type::SelfType,
+            "self_type" => match self.field(node, "assoc") {
+                // `Self::Item` is an associated-type projection, carried as a
+                // two-segment path `[Self, Item]` so it reuses `Type::Path`.
+                Some(assoc) => ast::Type::Path(ast::TypePath {
+                    segments: vec![
+                        ast::TypeSegment {
+                            name: "Self".to_string(),
+                            args: Vec::new(),
+                        },
+                        ast::TypeSegment {
+                            name: self.text(assoc).to_string(),
+                            args: Vec::new(),
+                        },
+                    ],
+                }),
+                None => ast::Type::SelfType,
+            },
             "function_type" => {
                 let mut cursor = node.walk();
                 let mut types: Vec<ast::Type> = node

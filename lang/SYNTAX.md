@@ -103,10 +103,11 @@ neoc has no anonymous union types. A sum is always a named `enum`; there is no `
 TraitDecl   ::= "trait" IDENT [ Generics ] [ ":" Bounds ] "{" { TraitItem } "}"
 TraitItem   ::= FnSig ";"                        (* required method *)
               | FnSig Block                       (* default method  *)
+              | "type" IDENT ";"                  (* associated type *)
 FnSig       ::= "fn" IDENT [ Generics ] "(" [ ParamList ] ")" [ "->" Type ]
 ```
 
-A trait is a set of method signatures. A method with a body is a default; an implementing type may override it. A method without a body is required. The optional `: Bounds` names the trait's **supertraits** (`trait Greet: Show`): traits an implementor must also implement (`STATIC.md` §3.4).
+A trait is a set of method signatures and associated types. A method with a body is a default; an implementing type may override it. A method without a body is required. An associated type (`type Item;`) is a type each implementor binds and methods refer to as `Self::Item`. The optional `: Bounds` names the trait's **supertraits** (`trait Greet: Show`): traits an implementor must also implement (`STATIC.md` §3.4).
 
 ### 3.7 `impl`
 
@@ -115,9 +116,10 @@ ImplBlock  ::= "impl" [ Generics ] ImplHead "{" { ImplItem } "}"
 ImplHead   ::= Type                              (* inherent impl *)
              | TypePath "for" Type                (* trait impl    *)
 ImplItem   ::= [ Attribute ] FnDecl
+             | "type" IDENT "=" Type ";"          (* associated-type binding *)
 ```
 
-An inherent impl (`impl Point { … }`) attaches methods and associated functions to a type. A trait impl (`impl Display for Point { … }`) provides that type's implementation of a trait.
+An inherent impl (`impl Point { … }`) attaches methods and associated functions to a type. A trait impl (`impl Display for Point { … }`) provides that type's implementation of a trait, and binds each associated type the trait declares (`type Item = number;`).
 
 ### 3.8 `fn`
 
@@ -171,7 +173,7 @@ Type     ::= TypePath
            | "(" ")"                              (* unit type *)
            | "[" Type "]"                         (* list type *)
            | "fn" "(" [ TypeList ] ")" [ "->" Type ]   (* function type *)
-           | "Self"
+           | "Self" [ "::" IDENT ]                  (* assoc-type projection *)
 TypePath ::= IDENT [ TypeArgs ] { "::" IDENT [ TypeArgs ] }
 TypeArgs ::= "<" Type { "," Type } [ "," ] ">"
 ```
@@ -385,12 +387,14 @@ VariantTail ::= "(" [ Type { "," Type } [ "," ] ] ")"
 TraitDecl   ::= "trait" IDENT [ Generics ] [ ":" Bounds ] "{" { TraitItem } "}"
 TraitItem   ::= FnSig ";"
               | FnSig Block
+              | "type" IDENT ";"
 FnSig       ::= "fn" IDENT [ Generics ] ParamList [ "->" Type ] [ WhereClause ]
 
 ImplBlock   ::= "impl" [ Generics ] ImplHead "{" { ImplItem } "}"
 ImplHead    ::= TypePath "for" Type
               | Type
 ImplItem    ::= { Attribute } FnDecl
+              | "type" IDENT "=" Type ";"
 
 FnDecl      ::= FnSig Block
 ParamList   ::= "(" [ ( SelfParam | Param ) { "," Param } [ "," ] ] ")"
@@ -415,7 +419,7 @@ WherePred   ::= IDENT ":" Bounds
 Type        ::= "(" ")"
               | "[" Type "]"
               | "fn" "(" [ Type { "," Type } [ "," ] ] ")" [ "->" Type ]
-              | "Self"
+              | "Self" [ "::" IDENT ]
               | TypePath
 TypePath    ::= IDENT [ TypeArgs ] { "::" IDENT [ TypeArgs ] }
 TypeArgs    ::= "<" Type { "," Type } [ "," ] ">"

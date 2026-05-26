@@ -59,6 +59,10 @@ pub struct TraitInfo {
     /// implementor of this trait must also implement each, and a bound by this
     /// trait grants access to their methods.
     pub supertraits: Vec<String>,
+    /// Names of the associated types this trait declares (`type Item;`). Each
+    /// must be bound by every implementor, and trait methods may refer to them
+    /// as `Self::Item`.
+    pub assoc_types: Vec<String>,
 }
 
 /// One method signature of a trait.

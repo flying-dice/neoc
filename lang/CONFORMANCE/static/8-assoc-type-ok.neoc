@@ -1,0 +1,21 @@
+// STATIC.md §3.4: a trait declares an associated type, an impl binds it, and
+// `Self::Item` in a method resolves to the binding.
+trait Container {
+  type Item;
+  fn first(self) -> Self::Item;
+}
+
+struct Bag {
+  v: number,
+}
+
+impl Container for Bag {
+  type Item = number;
+  fn first(self) -> Self::Item {
+    self.v
+  }
+}
+
+fn go(b: Bag) -> number {
+  b.first()
+}

@@ -1,0 +1,15 @@
+// STATIC.md §3.4: an impl must bind every associated type its trait declares.
+trait Container {
+  type Item;
+  fn count(self) -> number;
+}
+
+struct Bag {
+  v: number,
+}
+
+impl Container for Bag {
+  fn count(self) -> number {
+    1
+  }
+}
