@@ -30,8 +30,14 @@ pub(crate) struct EnumIndex {
 }
 
 impl EnumIndex {
-    /// Build the index from a module, seeding the `Result`/`Option` prelude.
-    fn build(module: &ast::Module) -> Self {
+    /// Build the index from a module plus the `pub` enums it imports, seeding the
+    /// `Result`/`Option` prelude.
+    ///
+    /// Imported enums are registered for *resolution* only — so a `match` on, or
+    /// a variant construction of, an enum brought in by `use` lowers correctly —
+    /// not for emission; their definitions belong to (and are emitted by) the
+    /// module that declares them.
+    fn build(module: &ast::Module, imported_enums: &[&ast::EnumDecl]) -> Self {
         let mut enums: HashMap<String, HashMap<String, VariantShape>> = HashMap::new();
         enums.insert(
             "Result".to_string(),
@@ -53,22 +59,30 @@ impl EnumIndex {
         );
         for item in &module.items {
             if let ast::ItemKind::Enum(e) = &item.kind {
-                let variants = e
-                    .variants
-                    .iter()
-                    .map(|v| {
-                        let shape = match v.body {
-                            ast::VariantBody::Unit => VariantShape::Unit,
-                            ast::VariantBody::Tuple(_) => VariantShape::Tuple,
-                            ast::VariantBody::Named(_) => VariantShape::Named,
-                        };
-                        (v.name.clone(), shape)
-                    })
-                    .collect();
-                enums.insert(e.name.clone(), variants);
+                Self::register(&mut enums, e);
             }
         }
+        for e in imported_enums {
+            Self::register(&mut enums, e);
+        }
         Self { enums }
+    }
+
+    /// Records an enum's variants and their shapes under its name.
+    fn register(enums: &mut HashMap<String, HashMap<String, VariantShape>>, e: &ast::EnumDecl) {
+        let variants = e
+            .variants
+            .iter()
+            .map(|v| {
+                let shape = match v.body {
+                    ast::VariantBody::Unit => VariantShape::Unit,
+                    ast::VariantBody::Tuple(_) => VariantShape::Tuple,
+                    ast::VariantBody::Named(_) => VariantShape::Named,
+                };
+                (v.name.clone(), shape)
+            })
+            .collect();
+        enums.insert(e.name.clone(), variants);
     }
 
     /// Resolve an unqualified variant name (`Ok`, `Err`, `Some`, `None`) to its
@@ -190,7 +204,7 @@ pub struct EmitResult {
 /// numbers back to neoc positions; the emitted Lua text is identical either way.
 #[must_use]
 pub fn emit(module: &ast::Module) -> EmitResult {
-    emit_inner(module, None)
+    emit_inner(module, None, &[])
 }
 
 /// Lower a module to Lua 5.1 source and build a [`LineMap`] from `source`.
@@ -201,12 +215,29 @@ pub fn emit(module: &ast::Module) -> EmitResult {
 /// differs.
 #[must_use]
 pub fn emit_with_source(module: &ast::Module, source: &str) -> EmitResult {
-    emit_inner(module, Some(source))
+    emit_inner(module, Some(source), &[])
 }
 
-fn emit_inner(module: &ast::Module, source: Option<&str>) -> EmitResult {
+/// Like [`emit_with_source`], but also given the `pub` enum declarations the
+/// module imports, so `match` and variant construction on an imported enum
+/// lower correctly. The imported enums are used only to resolve those forms;
+/// their definitions are emitted by the module that declares them.
+#[must_use]
+pub fn emit_with_imports(
+    module: &ast::Module,
+    source: &str,
+    imported_enums: &[&ast::EnumDecl],
+) -> EmitResult {
+    emit_inner(module, Some(source), imported_enums)
+}
+
+fn emit_inner(
+    module: &ast::Module,
+    source: Option<&str>,
+    imported_enums: &[&ast::EnumDecl],
+) -> EmitResult {
     let mut e = Emitter {
-        enums: EnumIndex::build(module),
+        enums: EnumIndex::build(module, imported_enums),
         tuple_structs: TupleStructIndex::build(module),
         line_index: source.map(LineIndex::build),
         forward_decls: forward_declared_fns(module),

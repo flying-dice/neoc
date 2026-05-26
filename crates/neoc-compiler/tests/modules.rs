@@ -449,3 +449,39 @@ fn binding_and_type_only_name_collision_loads_as_esm() {
         "main should print CfgHue = 7"
     );
 }
+
+#[test]
+fn cross_module_enum_match_and_construction_lower_correctly() {
+    // An enum imported via `use` must lower the same as a local one: `match`
+    // tests the variant tag, and construction builds the tagged table. The
+    // emitter learns the imported enum's variants through the module graph.
+    let dir = tempdir();
+    write(&dir, "palette.neoc", "pub enum Color {\n  Red,\n  Green,\n}\n");
+    let entry = write(
+        &dir,
+        "main.neoc",
+        "use palette::Color;\n\nfn name(c: Color) -> string {\n  match c {\n    Color::Red => \"red\",\n    Color::Green => \"green\",\n  }\n}\n\nfn main() -> string {\n  let c = Color::Green\n  name(c)\n}\n",
+    );
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
+    assert!(
+        project.ok(),
+        "expected a clean project, got: {:#?}",
+        project.diagnostics
+    );
+
+    let main_lua = project
+        .files
+        .iter()
+        .find(|(p, _)| p.file_stem().is_some_and(|s| s == "main"))
+        .map(|(_, src)| src.as_str())
+        .expect("main output present");
+
+    assert!(
+        main_lua.contains("tag == \"Red\"") && main_lua.contains("tag == \"Green\""),
+        "match on an imported enum should test the variant tag:\n{main_lua}"
+    );
+    assert!(
+        main_lua.contains("tag = \"Green\""),
+        "constructing an imported variant should build the tagged table:\n{main_lua}"
+    );
+}

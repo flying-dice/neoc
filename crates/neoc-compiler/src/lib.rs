@@ -155,12 +155,13 @@ pub fn transpile(source: &str, target: Target) -> CompileOutput {
     // interprets it: Lua picks `..`, JS keeps `+` (`lang/DYNAMIC.md` §4.2).
     let elaborated = types::elaborate(&parsed.module);
     // A single-file `transpile` has no resolved module graph, so no cross-module
-    // `use` can resolve to a binding — pass an empty set.
+    // `use` can resolve to a binding or an imported enum — pass empty sets.
     let (output, emit_messages, source_map) = emit(
         target,
         &elaborated,
         source,
         &std::collections::HashSet::new(),
+        &[],
     );
     diagnostics.extend(emit_messages.into_iter().map(|message| Diagnostic {
         stage: Stage::Emit,
@@ -361,8 +362,14 @@ fn check_and_emit_module(
     }
     let elaborated = types::elaborate(&me.module);
     let imported_bindings = js_imported_bindings(root, loaded, &me.module);
-    let (output, emit_messages, source_map) =
-        emit(target, &elaborated, &me.source, &imported_bindings);
+    let imported_enums = imported_enums(root, loaded, &me.module);
+    let (output, emit_messages, source_map) = emit(
+        target,
+        &elaborated,
+        &me.source,
+        &imported_bindings,
+        &imported_enums,
+    );
     for message in emit_messages {
         diagnostics.push(ProjectDiagnostic {
             path: path.to_path_buf(),
@@ -476,10 +483,11 @@ fn emit(
     module: &ast::Module,
     source: &str,
     imported_bindings: &std::collections::HashSet<String>,
+    imported_enums: &[&ast::EnumDecl],
 ) -> (String, Vec<String>, SourceMap) {
     match target {
         Target::Lua => {
-            let r = codegen_lua::emit_with_source(module, source);
+            let r = codegen_lua::emit_with_imports(module, source, imported_enums);
             (
                 r.lua,
                 r.diagnostics.into_iter().map(|d| d.message).collect(),
@@ -537,4 +545,35 @@ fn js_imported_bindings(
         }
     }
     bindings
+}
+
+/// The `pub` enum declarations `module` imports, gathered through its `use`
+/// graph. The backend registers these so a `match` on, or a construction of, an
+/// enum brought in by `use` lowers correctly; the enum definitions are emitted
+/// by the modules that declare them, not here.
+fn imported_enums<'a>(
+    root: &Path,
+    loaded: &'a HashMap<PathBuf, LoadedModule>,
+    module: &ast::Module,
+) -> Vec<&'a ast::EnumDecl> {
+    let mut enums = Vec::new();
+    for item in &module.items {
+        let ast::ItemKind::Use(u) = &item.kind else {
+            continue;
+        };
+        let Some(dep) = module_file(root, &u.path).map(|p| canonical_or(&p)) else {
+            continue;
+        };
+        let Some(source) = loaded.get(&dep) else {
+            continue;
+        };
+        for dep_item in &source.module.items {
+            if let ast::ItemKind::Enum(e) = &dep_item.kind
+                && dep_item.vis == ast::Visibility::Public
+            {
+                enums.push(e);
+            }
+        }
+    }
+    enums
 }
