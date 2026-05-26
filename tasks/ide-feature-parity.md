@@ -39,12 +39,18 @@ Dependency-ordered. `[ ]` todo · `[~]` in-progress · `[x]` done.
 > symbols, call hierarchy, semantic tokens. Everything still open is blocked on
 > infrastructure outside the LSP crate (see below), not on more LSP work.
 >
-> **Blocked, needs other work first:**
-> - Code actions / organize-imports / refactors (#6, #13, #16) — need structured
->   fix data on `neoc_compiler::Diagnostic`, or a refactor engine.
+> **Type-aware depth — landed.** AST nodes already carry spans
+> (`tasks/done/21-lsp-spans.md`), so `neoc_types::expression_types` exposes
+> inferred types by span: inferred-type hover on locals and Type-kind inlay
+> hints both ship. (My earlier "blocked on AST spans" call was wrong — a stale
+> doc comment in `neoc-lsp/lib.rs`.)
+>
+> **Still open:**
+> - Diagnostic-attached quick-fixes (#6) — need structured fix data on
+>   `neoc_compiler::Diagnostic`. CST-derivable actions (organize-imports,
+>   remove-unused-import) already ship.
 > - Project-wide workspace symbols + cross-file references/rename — need a
->   multi-document index (scope-aware resolution).
-> - Type-hint inlay kind — needs `let`-binding inferred types exposed.
+>   multi-document index (scope-aware, import-aware resolution).
 > - Matching brace, on-enter, on-type, join-lines — non-standard / low-value.
 
 ### Tier 1 — table-stakes
@@ -85,10 +91,10 @@ Dependency-ordered. `[ ]` todo · `[~]` in-progress · `[x]` done.
    project-wide scan (closed files) still needs the cross-file index.
 9. `[x]` Folding ranges (`foldingRange`) — brace-delimited bodies + block
    comments, found generically from `{`/`}` CST tokens.
-10. `[x]` Inlay hints (`inlayHint`) — Parameter kind: each call argument
-    labelled with its parameter name, suppressed when the argument already names
-    it. Type-hint kind (inferred `let` types) deferred until binding types are
-    exposed.
+10. `[x]` Inlay hints (`inlayHint`) — Parameter kind (each call argument
+    labelled with its parameter name, suppressed when redundant) **and** Type
+    kind (each unannotated `let` shows its inferred type, via
+    `neoc_types::expression_types`).
 11. `[x]` Selection range (`selectionRange`) — expand-selection up the CST
     ancestry, equal-range wrappers collapsed.
 12. `[deferred]` Matching brace — rust-analyzer custom request

@@ -5,13 +5,14 @@
 //! folding ranges, selection ranges, inlay hints, semantic tokens, call
 //! hierarchy, code actions (organize imports), formatting (via `neoc-fmt`),
 //! signature help, rename, hover, and completion (with lazy per-item resolve).
-//! Diagnostics come from [`neoc_compiler::transpile`];
-//! syntax errors carry precise byte ranges from the parser, while type and emit
-//! diagnostics fall back to the document's first line because those stages do
-//! not track spans yet (see `tasks/lsp-spans.md`). The IDE features are built on
-//! the tree-sitter CST (`neoc-grammar`) for position→node mapping and on the
-//! `neoc-types` symbol table for declaration signatures, so each feature
-//! handler is a pure, unit-tested function over the source text.
+//! Diagnostics come from [`neoc_compiler::transpile`]; syntax errors carry
+//! parser byte ranges and type errors carry AST-node spans, so both land on the
+//! offending source. A few unspanned emit-stage checks still fall back to the
+//! document's first line. The IDE features are built on the tree-sitter CST
+//! (`neoc-grammar`) for position→node mapping, the `neoc-types` symbol table for
+//! declaration signatures, and `neoc_types::expression_types` for inferred types
+//! by position — so each feature handler is a pure, unit-tested function over
+//! the source text.
 
 mod call_hierarchy;
 mod code_action;

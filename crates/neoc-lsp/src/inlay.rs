@@ -1,23 +1,86 @@
-//! Inlay hints: inline parameter-name annotations at call sites.
+//! Inlay hints: inline parameter-name and inferred-type annotations.
 //!
-//! At each free-function call, every argument gets a `name:` hint naming the
-//! parameter it fills, read from the callee's declaration. A hint is omitted
-//! when the argument is exactly the parameter name (it would only repeat what
-//! is already on screen). Method calls and type hints are not handled yet.
+//! Two kinds. At each free-function call, every argument gets a `name:` hint
+//! naming the parameter it fills, read from the callee's declaration (omitted
+//! when the argument is exactly that name). Each `let` binding without a written
+//! type gets a `: type` hint after the name, from `neoc_types`' inference. Method
+//! calls are not handled yet.
 
+use neoc_types::{ExprType, Ty};
 use tower_lsp::lsp_types::{InlayHint, InlayHintKind, InlayHintLabel};
 use tree_sitter::{Node, Tree};
 
 use crate::cst::{self, node_text};
 use crate::position::byte_to_position;
 
-/// The parameter-name inlay hints for `source`, in document order.
+/// The inlay hints for `source`, in document order.
 #[must_use]
 pub fn inlay_hints(source: &str) -> Vec<InlayHint> {
     let tree = cst::parse(source);
     let mut out = Vec::new();
     collect(tree.root_node(), source, &tree, &mut out);
+
+    let types = neoc_types::expression_types(&neoc_parser::parse(source).module);
+    collect_let_types(tree.root_node(), source, &types, &mut out);
+
+    out.sort_by_key(|hint| (hint.position.line, hint.position.character));
     out
+}
+
+/// Walks for `let` bindings without a written type, emitting a `: type` hint
+/// after each binding name from the inferred type of its value.
+fn collect_let_types(node: Node, source: &str, types: &[ExprType], out: &mut Vec<InlayHint>) {
+    if node.kind() == "let_statement" {
+        let_type_hint(node, source, types, out);
+    }
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        collect_let_types(child, source, types, out);
+    }
+}
+
+fn let_type_hint(let_stmt: Node, source: &str, types: &[ExprType], out: &mut Vec<InlayHint>) {
+    // Already written, or a destructuring pattern with no single name to tag.
+    if let_stmt.child_by_field_name("type").is_some() {
+        return;
+    }
+    let Some(pattern) = let_stmt.child_by_field_name("pattern") else {
+        return;
+    };
+    if pattern.kind() != "binding_pattern" {
+        return;
+    }
+    let Some(value) = let_stmt.child_by_field_name("value") else {
+        return;
+    };
+    let Some(ty) = type_of_value(types, value.start_byte(), value.end_byte()) else {
+        return;
+    };
+    // An unresolved type would only add noise.
+    if matches!(ty, Ty::Unknown) {
+        return;
+    }
+    out.push(InlayHint {
+        position: byte_to_position(source, pattern.end_byte()),
+        label: InlayHintLabel::String(format!(": {ty}")),
+        kind: Some(InlayHintKind::TYPE),
+        text_edits: None,
+        tooltip: None,
+        padding_left: Some(false),
+        padding_right: Some(false),
+        data: None,
+    });
+}
+
+/// The inferred type of the value spanning `[start, end)` — the narrowest
+/// recorded expression that fully contains the value, which is the value
+/// expression itself.
+fn type_of_value(types: &[ExprType], start: usize, end: usize) -> Option<Ty> {
+    types
+        .iter()
+        .filter(|t| t.start <= start && t.end >= end)
+        .min_by_key(|t| t.end - t.start)
+        .map(|t| t.ty.clone())
 }
 
 fn collect(node: Node, source: &str, tree: &Tree, out: &mut Vec<InlayHint>) {
@@ -117,6 +180,26 @@ mod tests {
     fn no_hints_for_unknown_callee() {
         let src = "fn m() -> number { nope(1, 2) }\n";
         assert!(labels(src).is_empty());
+    }
+
+    #[test]
+    fn types_an_unannotated_let_binding() {
+        let src = "fn main() -> number {\n  let total = 1 + 2\n  total\n}\n";
+        assert!(
+            labels(src).contains(&": number".to_string()),
+            "{:?}",
+            labels(src)
+        );
+    }
+
+    #[test]
+    fn skips_a_let_with_a_written_type() {
+        let src = "fn main() -> number {\n  let total: number = 1\n  total\n}\n";
+        assert!(
+            !labels(src).iter().any(|l| l.starts_with(':')),
+            "{:?}",
+            labels(src)
+        );
     }
 
     #[test]
