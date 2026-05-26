@@ -114,7 +114,9 @@ impl<'a> Elaborator<'a> {
         self_ty: Option<&str>,
     ) -> ast::Block {
         let prev_params = std::mem::take(&mut self.checker.type_params);
+        let prev_bounds = std::mem::take(&mut self.checker.type_bounds);
         self.checker.type_params = sig.generics.iter().map(|g| g.name.clone()).collect();
+        self.checker.type_bounds = Checker::param_bounds(sig);
 
         self.checker.scopes.push();
         for p in &sig.params {
@@ -139,6 +141,7 @@ impl<'a> Elaborator<'a> {
         self.checker.ret_ty = prev_ret;
         self.checker.scopes.pop();
         self.checker.type_params = prev_params;
+        self.checker.type_bounds = prev_bounds;
         block
     }
 

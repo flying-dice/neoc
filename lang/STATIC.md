@@ -89,7 +89,7 @@ A newtype `struct N(τ)` has one positional field accessed as `.0`; its construc
 
 A trait names a set of method signatures. A type satisfies a trait when an `impl Trait for Type` provides every required method with matching signatures. A trait bound `T: Trait` constrains a type parameter to types that satisfy `Trait`.
 
-Method resolution for `e.m(…)`: the static type of `e` determines which inherent or trait-impl method named `m` applies. There is no dynamic dispatch and no `dyn Trait`; every method call resolves to a single statically known function.
+Method resolution for `e.m(…)`: the static type of `e` determines which inherent or trait-impl method named `m` applies. When that static type is a **type parameter** `T`, `m` resolves against the methods of `T`'s declared bounds (the union of its `<T: …>` and `where` bounds); `Self` in the chosen signature is the parameter `T`. A method named on a parameter with no bound that provides it is an error. There is no dynamic dispatch and no `dyn Trait`; every method call resolves to a single statically known function.
 
 ### 3.5 Generics
 

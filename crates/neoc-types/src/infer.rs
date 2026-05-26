@@ -23,6 +23,11 @@ pub struct Checker<'a> {
     pub(crate) ret_ty: Ty,
     /// Type parameters in scope for the current item.
     pub(crate) type_params: Vec<String>,
+    /// Bounds for the in-scope type parameters: `T` → the trait names it is
+    /// bound by (from `<T: Trait>` and `where T: Trait`). Lets a method call on
+    /// a bounded parameter resolve through the bound trait's methods
+    /// (`STATIC.md` §method-resolution).
+    pub(crate) type_bounds: std::collections::HashMap<String, Vec<String>>,
     diagnostics: Vec<Diagnostic>,
     /// When set, every inferred expression's type is recorded in `expr_types`.
     /// Off by default so the compile path pays nothing; tooling turns it on for
@@ -53,6 +58,7 @@ impl<'a> Checker<'a> {
             scopes: Scopes::new(),
             ret_ty: Ty::Unit,
             type_params: Vec::new(),
+            type_bounds: std::collections::HashMap::new(),
             diagnostics: Vec::new(),
             record_types: false,
             expr_types: Vec::new(),
@@ -202,7 +208,9 @@ impl<'a> Checker<'a> {
 
     fn check_fn_body(&mut self, sig: &ast::FnSig, body: &ast::Block, self_ty: Option<&str>) {
         let prev_params = std::mem::take(&mut self.type_params);
+        let prev_bounds = std::mem::take(&mut self.type_bounds);
         self.type_params = sig.generics.iter().map(|g| g.name.clone()).collect();
+        self.type_bounds = Self::param_bounds(sig);
 
         self.scopes.push();
         for p in &sig.params {
@@ -228,6 +236,87 @@ impl<'a> Checker<'a> {
         self.ret_ty = prev_ret;
         self.scopes.pop();
         self.type_params = prev_params;
+        self.type_bounds = prev_bounds;
+    }
+
+    /// The trait-name bounds of each type parameter of a signature, gathered
+    /// from both the inline form (`<T: Display>`) and the `where` clause
+    /// (`where T: Display`). The bound's trait name is the last segment of its
+    /// path. Used to resolve a method call on a bounded parameter.
+    pub(crate) fn param_bounds(sig: &ast::FnSig) -> std::collections::HashMap<String, Vec<String>> {
+        let trait_name = |p: &ast::TypePath| p.segments.last().map(|s| s.name.clone());
+        let mut out: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        for g in &sig.generics {
+            let names: Vec<String> = g.bounds.iter().filter_map(trait_name).collect();
+            if !names.is_empty() {
+                out.entry(g.name.clone()).or_default().extend(names);
+            }
+        }
+        for w in &sig.where_clause {
+            let names: Vec<String> = w.bounds.iter().filter_map(trait_name).collect();
+            if !names.is_empty() {
+                out.entry(w.ty.clone()).or_default().extend(names);
+            }
+        }
+        out
+    }
+
+    /// A method `method` provided by one of the trait bounds on type parameter
+    /// `param`, with `Self` projected to the parameter itself. `None` when no
+    /// bound supplies it. Only receiver methods resolve through method syntax —
+    /// an associated fn (no `self`) is not callable as `x.m()`. The cross-bound
+    /// search is first-match in declaration order.
+    fn bound_method(&self, param: &str, method: &str) -> Option<(Vec<Ty>, Ty)> {
+        let bounds = self.type_bounds.get(param)?;
+        for trait_name in bounds {
+            if let Some(TypeDef::Trait(t)) = self.table.types.get(trait_name) {
+                if let Some(m) = t
+                    .methods
+                    .iter()
+                    .find(|m| m.name == method && m.has_receiver)
+                {
+                    let self_param = Ty::Param(param.to_string());
+                    let proj = |ty: &Ty| subst_self_param(ty, &self_param);
+                    return Some((m.params.iter().map(proj).collect(), proj(&m.ret)));
+                }
+            }
+        }
+        None
+    }
+
+    /// Checks a call's argument count and types against an already-projected
+    /// parameter list, pushing a diagnostic per mismatch.
+    fn check_call_args(
+        &mut self,
+        method: &str,
+        params: &[Ty],
+        arg_tys: &[Ty],
+        args: &[ast::Expr],
+        span: ast::Span,
+    ) {
+        if params.len() != arg_tys.len() {
+            self.error_at(
+                span,
+                format!(
+                    "method `{method}` takes {} argument(s) but {} were supplied",
+                    params.len(),
+                    arg_tys.len()
+                ),
+            );
+            return;
+        }
+        for (i, (p, a)) in params.iter().zip(arg_tys).enumerate() {
+            if !p.compatible(a) {
+                self.error_at(
+                    args[i].span,
+                    format!(
+                        "argument {} of `{method}` expects `{p}`, found `{a}`",
+                        i + 1
+                    ),
+                );
+            }
+        }
     }
 
     pub(crate) fn subst_self(ty: Ty, self_ty: Option<&str>) -> Ty {
@@ -757,6 +846,19 @@ impl<'a> Checker<'a> {
     ) -> Ty {
         let recv = self.infer(receiver);
         let arg_tys: Vec<Ty> = args.iter().map(|a| self.infer(a)).collect();
+        // A method on a bounded type parameter resolves through its bounds:
+        // `fn f<T: Display>(x: T) { x.show() }` finds `show` on `Display`.
+        if let Ty::Param(p) = &recv {
+            if let Some((params, ret)) = self.bound_method(p, method) {
+                self.check_call_args(method, &params, &arg_tys, args, span);
+                return ret;
+            }
+            self.error_at(
+                span,
+                format!("type parameter `{p}` has no method `{method}` from its bounds"),
+            );
+            return Ty::Unknown;
+        }
         let Ty::Named { name, .. } = &recv else {
             if recv.is_unknown() {
                 return Ty::Unknown;
@@ -1464,5 +1566,30 @@ fn collect_covered(pattern: &ast::Pattern, out: &mut Vec<String>) {
             }
         }
         _ => {}
+    }
+}
+
+/// Replaces `Self` with `self_param` throughout a type. Used to project a trait
+/// method's signature onto the bounded type parameter whose bound supplied it,
+/// so `T: Clone`'s `clone(self) -> Self` reads as `-> T` at the call site.
+fn subst_self_param(ty: &Ty, self_param: &Ty) -> Ty {
+    match ty {
+        Ty::Named { name, args } if name == "Self" && args.is_empty() => self_param.clone(),
+        Ty::Named { name, args } => Ty::Named {
+            name: name.clone(),
+            args: args
+                .iter()
+                .map(|a| subst_self_param(a, self_param))
+                .collect(),
+        },
+        Ty::List(inner) => Ty::List(Box::new(subst_self_param(inner, self_param))),
+        Ty::Fn(params, ret) => Ty::Fn(
+            params
+                .iter()
+                .map(|p| subst_self_param(p, self_param))
+                .collect(),
+            Box::new(subst_self_param(ret, self_param)),
+        ),
+        other => other.clone(),
     }
 }
