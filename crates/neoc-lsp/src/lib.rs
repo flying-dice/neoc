@@ -1,8 +1,8 @@
 //! Language server for neoc, over stdio.
 //!
 //! Capabilities: diagnostics, document symbols (outline), goto-definition,
-//! find-all-references, hover, and completion (with lazy per-item resolve).
-//! Diagnostics come from [`neoc_compiler::transpile`];
+//! find-all-references, signature help, rename, hover, and completion (with
+//! lazy per-item resolve). Diagnostics come from [`neoc_compiler::transpile`];
 //! syntax errors carry precise byte ranges from the parser, while type and emit
 //! diagnostics fall back to the document's first line because those stages do
 //! not track spans yet (see `tasks/lsp-spans.md`). The IDE features are built on
@@ -16,6 +16,7 @@ mod goto;
 mod hover;
 mod position;
 mod references;
+mod rename;
 mod signature;
 mod signature_help;
 mod symbols;
@@ -27,8 +28,9 @@ use neoc_compiler::{ByteSpan, Diagnostic as CompilerDiagnostic, Stage, Target, t
 // builds the `Position` they take from a byte offset into the source.
 pub use completion::{completions, resolve as resolve_completion};
 pub use hover::hover;
-pub use position::byte_to_position;
+pub use position::{byte_to_position, position_to_byte};
 pub use references::references;
+pub use rename::{prepare_rename, rename};
 pub use signature_help::signature_help;
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -39,9 +41,10 @@ use tower_lsp::lsp_types::{
     DidOpenTextDocumentParams, DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams,
     GotoDefinitionResponse, Hover, HoverContents, HoverParams, HoverProviderCapability,
     InitializeParams, InitializeResult, InitializedParams, Location, LocationLink, MarkupContent,
-    MarkupKind, MessageType, OneOf, Position, Range, ReferenceParams, ServerCapabilities,
-    ServerInfo, SignatureHelp, SignatureHelpOptions, SignatureHelpParams,
-    TextDocumentSyncCapability, TextDocumentSyncKind, Url,
+    MarkupKind, MessageType, OneOf, Position, PrepareRenameResponse, Range, ReferenceParams,
+    RenameOptions, RenameParams, ServerCapabilities, ServerInfo, SignatureHelp,
+    SignatureHelpOptions, SignatureHelpParams, TextDocumentPositionParams,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Url, WorkspaceEdit,
 };
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
@@ -149,6 +152,12 @@ impl LanguageServer for Backend {
                 document_symbol_provider: Some(OneOf::Left(true)),
                 definition_provider: Some(OneOf::Left(true)),
                 references_provider: Some(OneOf::Left(true)),
+                rename_provider: Some(OneOf::Right(RenameOptions {
+                    // prepareRename validates the cursor and highlights the name.
+                    prepare_provider: Some(true),
+                    work_done_progress_options:
+                        tower_lsp::lsp_types::WorkDoneProgressOptions::default(),
+                })),
                 signature_help_provider: Some(SignatureHelpOptions {
                     // `(` opens the help; `,` advances to the next parameter.
                     trigger_characters: Some(vec!["(".to_string(), ",".to_string()]),
@@ -255,6 +264,32 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
         Ok(signature_help::signature_help(&source, tdp.position))
+    }
+
+    async fn prepare_rename(
+        &self,
+        params: TextDocumentPositionParams,
+    ) -> Result<Option<PrepareRenameResponse>> {
+        let Some(source) = self.source(&params.text_document.uri) else {
+            return Ok(None);
+        };
+        Ok(rename::prepare_rename(&source, params.position).map(PrepareRenameResponse::Range))
+    }
+
+    async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
+        let tdp = params.text_document_position;
+        let Some(source) = self.source(&tdp.text_document.uri) else {
+            return Ok(None);
+        };
+        let edits = rename::rename(&source, tdp.position, &params.new_name);
+        if edits.is_empty() {
+            return Ok(None);
+        }
+        let changes: HashMap<Url, Vec<TextEdit>> = [(tdp.text_document.uri, edits)].into();
+        Ok(Some(WorkspaceEdit {
+            changes: Some(changes),
+            ..WorkspaceEdit::default()
+        }))
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {

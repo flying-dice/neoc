@@ -33,21 +33,26 @@ pub fn named_node_at(tree: &Tree, byte: usize) -> Option<Node<'_>> {
     Some(node)
 }
 
-/// The identifier text under `byte`, if the cursor sits on an `identifier`
-/// node.
+/// The `identifier` node under `byte`, if the cursor sits on one.
 ///
 /// Walks up at most one level so a cursor on the `identifier` child of a
-/// `path` (e.g. the callee of `fib(3)`) still resolves to the name.
+/// `path` (e.g. the callee of `fib(3)`) still resolves to the name node.
 #[must_use]
-pub fn identifier_at<'a>(tree: &Tree, source: &'a str, byte: usize) -> Option<&'a str> {
+pub fn identifier_node_at(tree: &Tree, byte: usize) -> Option<Node<'_>> {
     let node = named_node_at(tree, byte)?;
-    let ident = if node.kind() == "identifier" {
-        node
+    if node.kind() == "identifier" {
+        Some(node)
     } else {
         node.named_children(&mut node.walk())
-            .find(|c| c.kind() == "identifier" && c.byte_range().contains(&byte))?
-    };
-    node_text(&ident, source)
+            .find(|c| c.kind() == "identifier" && c.byte_range().contains(&byte))
+    }
+}
+
+/// The identifier text under `byte`, if the cursor sits on an `identifier`
+/// node.
+#[must_use]
+pub fn identifier_at<'a>(tree: &Tree, source: &'a str, byte: usize) -> Option<&'a str> {
+    node_text(&identifier_node_at(tree, byte)?, source)
 }
 
 /// The source text a node spans, or `None` when the range is not valid UTF-8

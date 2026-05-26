@@ -48,9 +48,10 @@ Dependency-ordered. `[ ]` todo · `[~]` in-progress · `[x]` done.
    Callee signature + active parameter (comma count) at a free-function call.
    Method calls / tuple-struct constructors deferred (need receiver-type
    resolution); pinned by test.
-4. `[ ]` **Rename + prepare** — `rename.feature`. `rename`, `prepareRename`.
-   Builds directly on References — rename = references → `WorkspaceEdit`.
-   `prepareRename` rejects the cursor when it's not on a renameable name.
+4. `[x]` **Rename + prepare** — `rename.feature`. `rename`, `prepareRename`.
+   Rename = references → `WorkspaceEdit`; `prepareRename` returns the
+   identifier range or rejects a non-identifier cursor. New-name validity is
+   left to the client for now (no keyword/identifier guard).
 5. `[ ]` **Goto type-definition / implementation / declaration** — extend
    `goto.feature`. Small deltas on goto-definition: type-def resolves the type of
    an expression; implementation finds `impl`s of a trait/type.

@@ -20,7 +20,7 @@
 use std::path::Path;
 
 use cucumber::{World, gherkin::Step, given, then, when};
-use tower_lsp::lsp_types::Documentation;
+use tower_lsp::lsp_types::{Documentation, TextEdit};
 
 /// State threaded through one scenario: the document under test and the result
 /// produced by the last `When` step — hover markdown, reference locations as
@@ -36,6 +36,7 @@ struct Ide {
     completion_documentation: Option<String>,
     signature_label: Option<String>,
     signature_active_parameter: Option<u32>,
+    renamed_source: Option<String>,
 }
 
 #[given("the source:")]
@@ -175,6 +176,50 @@ fn no_signature_help(world: &mut Ide) {
         "expected no signature help, got {:?}",
         world.signature_label,
     );
+}
+
+#[when(regex = r#"^I rename "([^"]+)" to "([^"]+)"$"#)]
+fn rename_symbol(world: &mut Ide, old: String, new: String) {
+    let byte = nth_occurrence(&world.source, &old, 1) + old.len() / 2;
+    let position = neoc_lsp::byte_to_position(&world.source, byte);
+    let edits = neoc_lsp::rename(&world.source, position, &new);
+    world.renamed_source = Some(apply_text_edits(&world.source, &edits));
+}
+
+#[then("the source becomes:")]
+fn the_source_becomes(world: &mut Ide, step: &Step) {
+    let expected = docstring(step).trim();
+    let actual = world
+        .renamed_source
+        .as_deref()
+        .unwrap_or_else(|| panic!("no edits produced\nsource:\n{}", world.source));
+    assert_eq!(
+        actual.trim(),
+        expected,
+        "renamed source mismatch\n  expected:\n{expected}\n  actual:\n{}",
+        actual.trim(),
+    );
+}
+
+/// Applies `edits` to `source`, right-to-left so earlier byte offsets stay
+/// valid as later (rightward) edits are applied first.
+fn apply_text_edits(source: &str, edits: &[TextEdit]) -> String {
+    let mut spans: Vec<(usize, usize, &str)> = edits
+        .iter()
+        .map(|edit| {
+            (
+                neoc_lsp::position_to_byte(source, edit.range.start),
+                neoc_lsp::position_to_byte(source, edit.range.end),
+                edit.new_text.as_str(),
+            )
+        })
+        .collect();
+    spans.sort_by_key(|&(start, _, _)| start);
+    let mut result = source.to_string();
+    for (start, end, text) in spans.into_iter().rev() {
+        result.replace_range(start..end, text);
+    }
+    result
 }
 
 /// The reference locations for `ident` in `source`, as 1-based `(line, column)`
