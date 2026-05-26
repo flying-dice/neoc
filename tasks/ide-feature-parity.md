@@ -1,0 +1,91 @@
+# IDE feature parity for `neoc-lsp`
+
+- **Status:** in-progress
+- **Priority:** P2
+- **Depends on:** neoc#60 (cucumber IDE-spec harness — landed)
+
+Build out `neoc-lsp` toward the editor-feature surface of mature servers
+(rust-analyzer, the TypeScript language service). The inventory and upstream
+test-suite cross-walk live in `tooling/ide/PRIOR-ART.md`; this file is the
+ordered build plan. Each feature is its own MR with its own `.feature` spec.
+
+## Ground rules
+
+- **One feature, one MR, one `.feature`.** A feature lands when: pure handler in
+  `crates/neoc-lsp/src/<feature>.rs`, wired into the `LanguageServer` impl +
+  advertised in `ServerCapabilities`, a `tooling/ide/<feature>.feature` spec
+  driven by `tests/cucumber.rs`, and unit tests beside the handler.
+- **Golden rule binds.** Every rendered / surfaced string speaks neoc, never the
+  host. Tooling-only — not part of the language re-implementation guarantee, so
+  no `lang/CONFORMANCE/` entry.
+- **Name-based, file-local resolution** is the current model (see `cst.rs`): no
+  scope/shadowing analysis, no cross-file index. Features inherit that limit and
+  document it. Cross-file + scope-aware resolution is a separate track (below).
+
+## Current surface
+
+Handlers (pure fns over `&str`, on the tree-sitter CST + `neoc-types` table):
+diagnostics, document symbols, goto-definition, hover, completion. Spec coverage:
+`hover.feature`.
+
+## Build order
+
+Dependency-ordered. `[ ]` todo · `[~]` in-progress · `[x]` done.
+
+> **Progress:** building on `feat/lsp-ide-feature-parity`, one commit per
+> feature. Shared signature renderer lifted into
+> `hover::item_signature_and_doc`.
+
+### Tier 1 — table-stakes
+
+1. `[x]` **References** — `references.feature`. `textDocument/references`.
+   Collect every `identifier` node matching the resolved name; honour
+   `context.includeDeclaration`. Foundation rename + highlight reuse.
+2. `[x]` **Completion resolve / details** — `completionItem/resolve`. Lazy
+   signature + `///` docs on the focused item (URI round-tripped through
+   `CompletionItem.data`). Reuses the shared signature renderer.
+3. `[ ]` **Signature help** — `signature.feature`. `textDocument/signatureHelp`.
+   Active-param info from the callee's signature at a call site.
+4. `[ ]` **Rename + prepare** — `rename.feature`. `rename`, `prepareRename`.
+   Builds directly on References — rename = references → `WorkspaceEdit`.
+   `prepareRename` rejects the cursor when it's not on a renameable name.
+5. `[ ]` **Goto type-definition / implementation / declaration** — extend
+   `goto.feature`. Small deltas on goto-definition: type-def resolves the type of
+   an expression; implementation finds `impl`s of a trait/type.
+6. `[ ]` **Code actions / quick-fixes** — `code-action.feature`. `codeAction`.
+   Start with fixes attached to the diagnostics already emitted.
+7. `[ ]` **Document highlight** — `highlight.feature`. `documentHighlight`.
+   References scoped to the open file, with read/write kinds. Cheap once 1 lands.
+
+### Tier 2 — depth / polish
+
+8. `[ ]` Workspace symbols (`workspace/symbol`) — needs the cross-file index.
+9. `[ ]` Folding ranges (`foldingRange`).
+10. `[ ]` Inlay hints (`inlayHint`) — Type + Parameter kinds first.
+11. `[ ]` Selection range (`selectionRange`).
+12. `[ ]` Matching brace.
+13. `[ ]` Organize imports (code action `source.organizeImports`).
+
+### Tier 3 — high effort / advanced
+
+14. `[ ]` Semantic tokens (`semanticTokens/full`).
+15. `[ ]` Call hierarchy.
+16. `[ ]` Refactors (extract / inline).
+17. `[ ]` Format passthrough via `neoc-fmt` (`formatting`, `rangeFormatting`).
+
+### Deferred (dev-only / non-LSP / out of scope)
+
+join lines, on-enter, on-type formatting, runnables / code lens, linked editing,
+expand macro, view-IR, SSR. rust-analyzer has **no** type hierarchy — not a gap.
+
+## Cross-cutting tracks (unblock several features)
+
+- **Harness vocabulary.** `tests/cucumber.rs` step library grows reusable steps
+  as features land: multi-file `Given the file "<path>":`, table `Then`s
+  (references, completions, diagnostics — order-independent), post-edit-buffer
+  `Then the source becomes:` (rename, code actions). See PRIOR-ART "Test-harness
+  mechanics".
+- **Cross-file + scope-aware resolution.** A document index + real name
+  resolution (scopes, shadowing, imports). Unblocks correct references, rename,
+  workspace symbols, auto-import. Largest single lift; schedule before Tier 2
+  cross-file work. Track as its own task when it starts.
