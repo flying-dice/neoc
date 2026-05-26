@@ -17,6 +17,7 @@ mod hover;
 mod position;
 mod references;
 mod signature;
+mod signature_help;
 mod symbols;
 
 use neoc_compiler::{ByteSpan, Diagnostic as CompilerDiagnostic, Stage, Target, transpile};
@@ -28,6 +29,7 @@ pub use completion::{completions, resolve as resolve_completion};
 pub use hover::hover;
 pub use position::byte_to_position;
 pub use references::references;
+pub use signature_help::signature_help;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use tower_lsp::jsonrpc::Result;
@@ -38,7 +40,8 @@ use tower_lsp::lsp_types::{
     GotoDefinitionResponse, Hover, HoverContents, HoverParams, HoverProviderCapability,
     InitializeParams, InitializeResult, InitializedParams, Location, LocationLink, MarkupContent,
     MarkupKind, MessageType, OneOf, Position, Range, ReferenceParams, ServerCapabilities,
-    ServerInfo, TextDocumentSyncCapability, TextDocumentSyncKind, Url,
+    ServerInfo, SignatureHelp, SignatureHelpOptions, SignatureHelpParams,
+    TextDocumentSyncCapability, TextDocumentSyncKind, Url,
 };
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
@@ -146,6 +149,11 @@ impl LanguageServer for Backend {
                 document_symbol_provider: Some(OneOf::Left(true)),
                 definition_provider: Some(OneOf::Left(true)),
                 references_provider: Some(OneOf::Left(true)),
+                signature_help_provider: Some(SignatureHelpOptions {
+                    // `(` opens the help; `,` advances to the next parameter.
+                    trigger_characters: Some(vec!["(".to_string(), ",".to_string()]),
+                    ..SignatureHelpOptions::default()
+                }),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 completion_provider: Some(CompletionOptions {
                     // `.` and `:` open member- and path-completion.
@@ -239,6 +247,14 @@ impl LanguageServer for Backend {
                 .map(|range| Location::new(tdp.text_document.uri.clone(), range))
                 .collect();
         Ok(Some(locations))
+    }
+
+    async fn signature_help(&self, params: SignatureHelpParams) -> Result<Option<SignatureHelp>> {
+        let tdp = params.text_document_position_params;
+        let Some(source) = self.source(&tdp.text_document.uri) else {
+            return Ok(None);
+        };
+        Ok(signature_help::signature_help(&source, tdp.position))
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {

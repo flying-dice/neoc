@@ -44,8 +44,10 @@ Dependency-ordered. `[ ]` todo · `[~]` in-progress · `[x]` done.
 2. `[x]` **Completion resolve / details** — `completionItem/resolve`. Lazy
    signature + `///` docs on the focused item (URI round-tripped through
    `CompletionItem.data`). Reuses the shared signature renderer.
-3. `[ ]` **Signature help** — `signature.feature`. `textDocument/signatureHelp`.
-   Active-param info from the callee's signature at a call site.
+3. `[x]` **Signature help** — `signature.feature`. `textDocument/signatureHelp`.
+   Callee signature + active parameter (comma count) at a free-function call.
+   Method calls / tuple-struct constructors deferred (need receiver-type
+   resolution); pinned by test.
 4. `[ ]` **Rename + prepare** — `rename.feature`. `rename`, `prepareRename`.
    Builds directly on References — rename = references → `WorkspaceEdit`.
    `prepareRename` rejects the cursor when it's not on a renameable name.

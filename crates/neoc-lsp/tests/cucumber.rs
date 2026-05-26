@@ -24,8 +24,9 @@ use tower_lsp::lsp_types::Documentation;
 
 /// State threaded through one scenario: the document under test and the result
 /// produced by the last `When` step — hover markdown, reference locations as
-/// 1-based `(line, column)` pairs (the editor's own coordinates), or a resolved
-/// completion's detail and documentation.
+/// 1-based `(line, column)` pairs (the editor's own coordinates), a resolved
+/// completion's detail and documentation, or the active signature and parameter
+/// of a call.
 #[derive(Debug, Default, World)]
 struct Ide {
     source: String,
@@ -33,6 +34,8 @@ struct Ide {
     references: Vec<(u32, u32)>,
     completion_detail: Option<String>,
     completion_documentation: Option<String>,
+    signature_label: Option<String>,
+    signature_active_parameter: Option<u32>,
 }
 
 #[given("the source:")]
@@ -127,6 +130,50 @@ fn completion_has_no_detail(world: &mut Ide) {
         world.completion_detail, None,
         "expected no detail, got {:?}",
         world.completion_detail,
+    );
+}
+
+#[when(regex = r#"^I request signature help after "([^"]+)"$"#)]
+fn request_signature_help(world: &mut Ide, marker: String) {
+    // The cursor sits at the end of the marker's last occurrence — a call like
+    // `add(` also appears in the declaration `fn add(`, and the call follows it.
+    let byte = world
+        .source
+        .rfind(&marker)
+        .unwrap_or_else(|| panic!("marker {marker:?} not in source"))
+        + marker.len();
+    let help = neoc_lsp::signature_help(
+        &world.source,
+        neoc_lsp::byte_to_position(&world.source, byte),
+    );
+    world.signature_label = help.as_ref().map(|h| h.signatures[0].label.clone());
+    world.signature_active_parameter = help.and_then(|h| h.active_parameter);
+}
+
+#[then(regex = r#"^the active signature is "([^"]+)"$"#)]
+fn active_signature_is(world: &mut Ide, expected: String) {
+    assert_eq!(
+        world.signature_label.as_deref(),
+        Some(expected.as_str()),
+        "active signature mismatch",
+    );
+}
+
+#[then(regex = r"^the active parameter is (\d+)$")]
+fn active_parameter_is(world: &mut Ide, expected: u32) {
+    assert_eq!(
+        world.signature_active_parameter,
+        Some(expected),
+        "active parameter mismatch",
+    );
+}
+
+#[then("there is no signature help")]
+fn no_signature_help(world: &mut Ide) {
+    assert_eq!(
+        world.signature_label, None,
+        "expected no signature help, got {:?}",
+        world.signature_label,
     );
 }
 
