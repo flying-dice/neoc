@@ -42,22 +42,43 @@ Concretely:
 
 ## Runtime model (ties to `#54`)
 
-Every value already carries `__struct: string` (its concrete type). Trait impls
-extend this with `__traits: [string]` — the set of traits the value's type
-declares an `impl` for, recorded on the type's metatable at codegen.
+Every value carries `__struct: string` (its concrete type). Trait impls extend
+this with `__traits: [string]` — the traits the value's type declares an `impl`
+for, recorded on the type's metatable at codegen.
+
+**Naming:** codegen emits `_struct` (single underscore) today; the decision is
+to standardise on **double underscore** (`__struct`, `__traits`). A precursor MR
+renames `_struct → __struct` across `codegen-lua`/`codegen-js` and the
+conformance goldens (mechanical; pure churn, no behaviour). Phase 0 below.
+
+**Emit `__traits` on *every* type unconditionally** — not only types used in a
+trait-typed position. A value flowing existentially must already carry its tag,
+or the `#54` check has nothing to read. Computed from the impls present in the
+(post-expansion) module, so macro-generated impls are included automatically.
 
 - **Existential use** (`x: Drawable`): the `#54` drift-point check is the
   *nominal assertion* `x.__traits ∋ "Drawable"`. O(1), strong, unambiguous —
   not a deep structural method-shape walk. Once asserted at the boundary, the
   value is a verified `Drawable`; internal neoc→neoc calls passing it on skip
   the check (`#54`'s "already-validated → redundant" rule).
-- **Concrete recovery**: `x.__struct == "Circle"` lets dynamic code narrow back
-  to the concrete type and call its full API — so the runtime supports both the
-  erased and the preserved view; the static type just chooses which the checker
-  tracks.
 - This is the answer to "what does the trait-type give us": it is the **declared
   type the enforcement keys on**, the **cheap nominal predicate**, and the
   **verified token** trait-gated code trusts.
+
+**Hard dependency:** the `#54` runtime-enforcement machinery (validators,
+drift-point checks) **does not exist yet**. The `__traits` tag is inert metadata
+until #54 lands, so #54's drift-point mechanism is a prerequisite for the
+existential's runtime safety — sequence it first (or co-deliver the trait-typed
+drift point as part of #54).
+
+**Concrete recovery is *not* part of this model.** Recovering the concrete type
+from a `Drawable` value (to call `Circle`-only methods) needs a *downcast /
+type-narrowing* construct neoc does not have (`match x as Circle`, `if x is
+Circle`). The existential deliberately doesn't require it — heterogeneous
+collections, trait-method dispatch, and bounds all work without ever recovering
+the concrete type. Downcast is a **separate, later feature** (its own RFC); it
+is where `__struct` earns a second use. Listing it here would smuggle an
+unnamed language feature into the trait model — explicitly out of scope.
 
 ## What's missing today (the gap)
 
@@ -78,12 +99,21 @@ static dispatch, known sizes) that a GC'd, dynamically-dispatched, tagged-table
 runtime does not have. Dropping them is not a simplification *of* Rust's model —
 it is the *correct* model for this runtime.
 
-## Phased plan (each its own RFC + MR, spec-first)
+## Phased plan (each its own MR, spec-first)
 
+Sequencing: **traits before macros** (`macro-expansion.md` is deferred behind
+this). The two meet only at derives — see the note after the list.
+
+0. `[ ]` **Rename `_struct → __struct` + emit `__traits` unconditionally** — pure
+   codegen + golden churn, no RFC (it's a `DYNAMIC.md` lowering detail, not a
+   semantic change). Establishes the runtime tag the rest builds on. Confirm the
+   wasm-leaf gate and conformance stay green.
 1. `[ ]` **Bound-directed method resolution + bound enforcement** — `x.show()`
    on `x: T where T: Display` resolves to the trait method; `<T: Display>` is
-   enforced (the instantiating type must `impl Display`). Smallest real slice;
-   seeds the resolver. `STATIC.md` §method-resolution + §bounds.
+   enforced (the instantiating type must `impl Display`). ~150–260 lines wiring
+   existing pieces (bounds are parsed but unread today; `TraitInfo` methods and
+   `check_trait_impl` already exist). Smallest real slice; seeds the resolver.
+   `STATIC.md` §method-resolution + §bounds. RFC-gated.
 2. `[ ]` **Trait-as-type (the existential) + `__traits` tagging** — a trait name
    as a type; `[Trait]` heterogeneous collections; codegen emits `__traits` on
    each type's metatable; `#54` drift-point check becomes the nominal
@@ -93,7 +123,22 @@ it is the *correct* model for this runtime.
    the type level (runtime unaffected; checker tracks the binding).
 4. `[ ]` **Supertraits** — `trait A: B`; `__traits` includes the transitive set.
 5. `[ ]` **Blanket / generic impls** — `impl<T: A> B for T`; the point where a
-   real (still non-recursive-first) solver/coherence story is needed.
+   real (still non-recursive-first) solver/coherence story is needed. (Coherence
+   /overlap is genuinely hard — this is the one slice where "simple solver" is
+   optimistic; budget for it.)
+
+### Derives are the seam with macros
+
+The four built-in derives (`Clone`/`Eq`/`Debug`/`Display`) **are trait impls**,
+but today they are synthesised at *codegen* (`neoc_macros::derive` → Lua lines),
+invisible to the checker. For traits to cover them — a derived-`Eq` type usable
+as `Eq`, tagged in `__traits` — the checker must treat a derive as an `impl`.
+Until macros land, do this with a **hardcoded bridge**: the checker/codegen know
+the four built-in derives produce impls of those four traits. When macros land
+(`macro-expansion.md`), the expansion stage turns `#[derive(..)]` into real
+`impl` blocks in the AST and the bridge is deleted — macros *subsume* it. So
+fixing traits first does not undermine macros; it pins the contract macros must
+satisfy (emit `impl` AST, which `__traits` is computed from).
 
 ## Acceptance (per slice)
 

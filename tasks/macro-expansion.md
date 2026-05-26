@@ -1,11 +1,14 @@
 # User-defined macros & macro expansion
 
-- **Status:** plan — design-space framing (no design chosen yet); RFC-gated
+- **Status:** plan — design-space framing; **deferred behind the trait/type
+  model** (`trait-type-model.md`). RFC-gated.
 - **Priority:** P2 — confirmed coming feature; `SYNTAX.md` §8 currently says
   "no general user-defined macro system in the first edition" — this lifts that
-- **Depends on:** the parser/AST pipeline; informs the tooling architecture
+- **Depends on:** the parser/AST pipeline; a Span provenance model (see below);
+  informs the tooling architecture
 - **Touches:** `lang/SYNTAX.md`, a new `lang/` expansion-semantics section,
-  `lang/DYNAMIC.md`, the `neoc-parser` → `neoc-types` pipeline, `neoc-lsp`
+  `lang/DYNAMIC.md`, **`neoc-ast` (Span)**, the `neoc-parser` → `neoc-types`
+  pipeline, `neoc-lsp`
 
 ## Goal
 
@@ -21,10 +24,18 @@ expand → check → elaborate → emit`. Expansion is a CST/AST→AST rewrite t
 resolves macro invocations into the constructs they produce, then the existing
 stages run unchanged on the expanded tree. Consequences:
 - the type checker, codegen, and `#54` enforcement see only *expanded* neoc —
-  no stage downstream of expansion needs to know macros exist;
+  no stage downstream of expansion needs to know macros exist (the insertion
+  point in `transpile`/`transpile_project` is clean — confirmed);
 - diagnostics and spans must carry **expansion provenance** (a span maps back to
   the invocation *and* the macro definition) so errors and goto land sensibly —
-  this is the load-bearing hard part, same as rust-analyzer's.
+  the load-bearing hard part, same as rust-analyzer's.
+
+  **This requires changing `neoc-ast`'s `Span`.** Today `Span` is `{start, end}`
+  with no origin — adequate for single-source spans, useless for expanded code.
+  Expansion needs either a provenance field on `Span` (macro/invocation id) or a
+  side-table mapping nodes → origin. `neoc-ast` is a **wasm-leaf crate**, so a
+  `Span` change ripples across every compiler crate and the wasm gate — plan it
+  as an explicit early sub-task, not an implementation afterthought.
 
 ## The design space (the RFC must choose)
 
@@ -33,10 +44,15 @@ stages run unchanged on the expanded tree. Consequences:
    to make the tooling see through. Strong candidate for v1.
 2. **Procedural later** (a macro is *code that runs at compile time* and returns
    a tree). More powerful, but needs to *execute* user code during compilation.
-   - **neoc-specific opportunity:** neoc already embeds a runtime (`neoc-vm`,
-     Luau). Procedural macros could **run on neoc's own VM** — self-hosting
-     metaprogramming, Lisp-style — instead of Rust's separate proc-macro crates.
-     Distinctive, and it reuses the sandbox we already have.
+   - **The "run on neoc-vm" idea is architecturally blocked as stated.** Compiler
+     crates carry **no host deps** (`CLAUDE.md`: no `mlua`), and `neoc-vm` (which
+     bundles `mlua`) sits *above* the compiler in the graph. An expansion stage
+     in a compiler crate cannot depend on `neoc-vm` without violating crate
+     isolation and cycling the graph. So procedural-on-`neoc-vm` is **not** a
+     drop-in; if procedural macros are ever wanted they need an **out-of-process
+     proc-macro server** (the compiler drives it over IPC, staying pure) — its
+     own large design. **v1 is declarative-only**; procedural is explicitly
+     out of scope until that server is designed.
 3. **Hygiene** — macro-introduced bindings must not capture or be captured by the
    call site. The scope-aware resolution model (binding identities) is the
    foundation hygiene builds on; decide the hygiene algorithm in the RFC.
@@ -62,7 +78,12 @@ correlators. (See the architecture note in `cross-file-resolution.md`.)
    contract. `SYNTAX.md` + a new expansion-semantics section.
 2. `[ ]` **Expansion stage in the pipeline** — `expand(module) -> module` with
    provenance-carrying spans; the existing stages run on the output unchanged.
-   Re-express the built-in derives through it as the first real macros.
+   Re-express the built-in derives through it as the first real macros. **Note:**
+   `neoc_macros::derive` returns `Vec<String>` (Lua lines), not AST — to expand
+   into the AST a macro must produce *AST* (synthetic `impl` blocks), or the
+   expander parses the derived source back. Decide which in the RFC. This is also
+   the seam with `trait-type-model.md`: once derives are real `impl` AST, the
+   trait checker's hardcoded derive-bridge is deleted.
 3. `[ ]` **Tooling through expansion** — goto/completion/references/hover resolve
    over the expanded tree and map back to source spans (the rust-analyzer
    problem, neoc-sized).
