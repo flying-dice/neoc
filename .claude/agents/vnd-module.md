@@ -55,7 +55,9 @@ ext header) and the namespace's registration in `vnd/mod.rs`.
 
 ## Conventions you uphold
 
-- Every module exports a single `pub fn module(lua: &Lua) -> mlua::Result<Table>`.
+- Each module file exposes **one public entry point** — `pub fn module(lua: &Lua) ->
+  mlua::Result<Table>` — that returns a table of all the module's functions. That table is what
+  `require("vnd:name")` hands back. Helpers and `UserData` impls stay private; nothing else is `pub`.
 - Infallible functions return the value directly; fallible ones return `(Value, Value)` via the
   `ok`/`from_err` helpers.
 - Error prefixes are `"module.function"` (no namespace prefix), script-shaped — never leak a
