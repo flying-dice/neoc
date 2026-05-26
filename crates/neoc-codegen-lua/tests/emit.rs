@@ -98,7 +98,7 @@ fn emits_a_pub_unit_struct() {
             span: ast::Span::default(),
         }],
     };
-    assert_eq!(lua(&module), "Marker = { _struct = \"Marker\" }\n");
+    assert_eq!(lua(&module), "Marker = { __struct = \"Marker\" }\n");
 }
 
 /// A module with a single `enum E { … }` declaration and a `fn` whose body is
@@ -284,7 +284,7 @@ fn golden_named_struct_and_field_access() {
 local Point = {}
 Point.__index = Point
 function Point.new(fields)
-  fields._struct = \"Point\"
+  fields.__struct = \"Point\"
   return setmetatable(fields, Point)
 end
 local function shift(p)
@@ -450,7 +450,7 @@ fn golden_let_struct_destructure() {
 local Point = {}
 Point.__index = Point
 function Point.new(fields)
-  fields._struct = \"Point\"
+  fields.__struct = \"Point\"
   return setmetatable(fields, Point)
 end
 local function sum(p)
@@ -466,7 +466,7 @@ end
 #[test]
 fn golden_newtype_construction_routes_through_new() {
     // Calling a tuple/newtype struct constructs through `.new` (§4.4), so the
-    // value carries its `_struct` tag and metatable — not a bare Lua call.
+    // value carries its `__struct` tag and metatable — not a bare Lua call.
     let out = lua_from_source(
         "struct Wrapper(number);\n\
          fn wrap() -> Wrapper { Wrapper(42) }",
@@ -475,7 +475,7 @@ fn golden_newtype_construction_routes_through_new() {
 local Wrapper = {}
 Wrapper.__index = Wrapper
 function Wrapper.new(value)
-  return setmetatable({ _struct = \"Wrapper\", value }, Wrapper)
+  return setmetatable({ __struct = \"Wrapper\", value }, Wrapper)
 end
 local function wrap()
   return Wrapper.new(42)
@@ -494,7 +494,7 @@ fn golden_functional_struct_update() {
 local Point = {}
 Point.__index = Point
 function Point.new(fields)
-  fields._struct = \"Point\"
+  fields.__struct = \"Point\"
   return setmetatable(fields, Point)
 end
 local function shift(p)

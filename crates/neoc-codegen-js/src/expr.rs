@@ -475,12 +475,12 @@ impl Emitter {
             return self.emit_struct_update(name, fields, base);
         }
         let body = self.emit_field_inits(fields);
-        format!("{{ _struct: \"{name}\"{body} }}")
+        format!("{{ __struct: \"{name}\"{body} }}")
     }
 
     /// Lower `S { f: e, .. base }` (functional update): spread the base's
     /// properties into a fresh object, then override the listed fields and
-    /// re-stamp the `_struct` tag.
+    /// re-stamp the `__struct` tag.
     fn emit_struct_update(
         &mut self,
         name: &str,
@@ -489,7 +489,7 @@ impl Emitter {
     ) -> String {
         let base_js = self.emit_expr(base);
         let body = self.emit_field_inits(fields);
-        format!("{{ ...{base_js}, _struct: \"{name}\"{body} }}")
+        format!("{{ ...{base_js}, __struct: \"{name}\"{body} }}")
     }
 
     /// Lower struct-literal / struct-variant fields to `name: value` entries,
@@ -519,7 +519,7 @@ impl Emitter {
     /// Lower a tuple/newtype struct construction `N(a, …)` to its tagged object.
     fn emit_tuple_struct_lit(&mut self, name: &str, args: &[ast::Expr]) -> String {
         let payload = self.emit_positional(args);
-        format!("{{ _struct: \"{name}\"{payload} }}")
+        format!("{{ __struct: \"{name}\"{payload} }}")
     }
 
     /// Render positional payload args as `, _0: a, _1: b, …`, ready to append

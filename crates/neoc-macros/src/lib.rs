@@ -5,7 +5,7 @@
 //! attaches a method to the type's table. No type information is required.
 //!
 //! The emitted Lua follows the runtime conventions in `lang/DYNAMIC.md` §6–§7:
-//! a struct value is `{ _struct = "Name", <fields> }` (newtype field at `[1]`);
+//! a struct value is `{ __struct = "Name", <fields> }` (newtype field at `[1]`);
 //! an enum value is `{ _enum = "Name", tag = "Variant", <payload> }` (tuple
 //! payload at `[1..]`, struct payload by field name); methods are plain
 //! functions on the type's table taking the receiver first.
@@ -142,7 +142,7 @@ fn derive_clone(target: DeriveTarget) -> Vec<String> {
 }
 
 fn clone_struct_body(name: &str, body: &ast::StructBody) -> Vec<String> {
-    let mut entries = vec![format!("_struct = \"{name}\"")];
+    let mut entries = vec![format!("__struct = \"{name}\"")];
     entries.extend(struct_keys(body).into_iter().map(|k| k.copy_entry("self")));
     // Re-attach the type's metatable so the clone is a full value methods can
     // be called on, not a bare table (matches the `.new` constructor).
@@ -185,7 +185,7 @@ fn derive_eq(target: DeriveTarget) -> Vec<String> {
 }
 
 fn eq_struct_body(body: &ast::StructBody) -> Vec<String> {
-    let mut conds = vec!["a._struct == b._struct".to_string()];
+    let mut conds = vec!["a.__struct == b.__struct".to_string()];
     for k in struct_keys(body) {
         conds.push(format!("{} == {}", k.access("a"), k.access("b")));
     }
@@ -414,7 +414,7 @@ mod tests {
             lua,
             vec![
                 "function Point.clone(self)",
-                "  return setmetatable({ _struct = \"Point\", x = self.x, y = self.y }, Point)",
+                "  return setmetatable({ __struct = \"Point\", x = self.x, y = self.y }, Point)",
                 "end",
             ]
         );
@@ -428,7 +428,7 @@ mod tests {
             lua,
             vec![
                 "function Meters.clone(self)",
-                "  return setmetatable({ _struct = \"Meters\", self[1] }, Meters)",
+                "  return setmetatable({ __struct = \"Meters\", self[1] }, Meters)",
                 "end",
             ]
         );
@@ -464,7 +464,7 @@ mod tests {
             lua,
             vec![
                 "function Point.eq(a, b)",
-                "  return a._struct == b._struct and a.x == b.x and a.y == b.y",
+                "  return a.__struct == b.__struct and a.x == b.x and a.y == b.y",
                 "end",
             ]
         );
@@ -478,7 +478,7 @@ mod tests {
             lua,
             vec![
                 "function Meters.eq(a, b)",
-                "  return a._struct == b._struct and a[1] == b[1]",
+                "  return a.__struct == b.__struct and a[1] == b[1]",
                 "end",
             ]
         );

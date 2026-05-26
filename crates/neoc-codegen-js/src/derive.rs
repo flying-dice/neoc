@@ -7,7 +7,7 @@
 //! required.
 //!
 //! The emitted JavaScript follows the runtime conventions in `lang/DYNAMIC.md`
-//! §6–§7, adapted to JS objects: a struct value is `{ _struct: "Name",
+//! §6–§7, adapted to JS objects: a struct value is `{ __struct: "Name",
 //! <fields> }` (newtype payload under `_0`); an enum value is `{ _enum: "Name",
 //! tag: "Variant", <payload> }` (tuple payload under `_0`, `_1`, …, struct
 //! payload by field name); methods are functions on `__m[Name]` taking the
@@ -107,7 +107,7 @@ impl Emitter {
     }
 
     fn clone_struct_body(&mut self, name: &str, body: &ast::StructBody) {
-        let mut entries = vec![format!("_struct: \"{name}\"")];
+        let mut entries = vec![format!("__struct: \"{name}\"")];
         entries.extend(struct_keys(body).into_iter().map(|k| k.copy_entry("self")));
         self.line(format!("return {{ {} }};", entries.join(", ")));
     }
@@ -139,7 +139,7 @@ impl Emitter {
     }
 
     fn eq_struct_body(&mut self, body: &ast::StructBody) {
-        let mut conds = vec!["a._struct === b._struct".to_string()];
+        let mut conds = vec!["a.__struct === b.__struct".to_string()];
         for k in struct_keys(body) {
             conds.push(format!("{} === {}", k.access("a"), k.access("b")));
         }

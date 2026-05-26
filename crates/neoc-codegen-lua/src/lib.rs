@@ -607,7 +607,7 @@ impl Emitter {
         match &s.body {
             ast::StructBody::Unit => {
                 self.line(format!(
-                    "{local}{} = {{ _struct = \"{}\" }}",
+                    "{local}{} = {{ __struct = \"{}\" }}",
                     s.name, s.name
                 ));
             }
@@ -617,7 +617,7 @@ impl Emitter {
                 self.line(format!("function {}.new(value)", s.name));
                 self.indented(|e| {
                     e.line(format!(
-                        "return setmetatable({{ _struct = \"{}\", value }}, {})",
+                        "return setmetatable({{ __struct = \"{}\", value }}, {})",
                         s.name, s.name
                     ));
                 });
@@ -628,7 +628,7 @@ impl Emitter {
                 self.line(format!("{}.__index = {}", s.name, s.name));
                 self.line(format!("function {}.new(fields)", s.name));
                 self.indented(|e| {
-                    e.line(format!("fields._struct = \"{}\"", s.name));
+                    e.line(format!("fields.__struct = \"{}\"", s.name));
                     e.line(format!("return setmetatable(fields, {})", s.name));
                 });
                 self.line("end");

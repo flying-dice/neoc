@@ -1,11 +1,11 @@
 local Pair = {}
 Pair.__index = Pair
 function Pair.new(fields)
-  fields._struct = "Pair"
+  fields.__struct = "Pair"
   return setmetatable(fields, Pair)
 end
 function Pair.eq(a, b)
-  return a._struct == b._struct and a.a == b.a and a.b == b.b
+  return a.__struct == b.__struct and a.a == b.a and a.b == b.b
 end
 local function main()
   local p = Pair.new({ a = 1, b = 2 })

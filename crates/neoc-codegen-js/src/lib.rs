@@ -17,7 +17,7 @@
 //!
 //! # Runtime representation
 //!
-//! - **struct** → a plain object carrying a `_struct` tag and its fields. A
+//! - **struct** → a plain object carrying a `__struct` tag and its fields. A
 //!   newtype/tuple struct stores its payload positionally under integer keys
 //!   (`_0`, `_1`, …). Named structs store fields by name.
 //! - **enum** → a tagged object `{ _enum, tag, … }`. Tuple payload is stored
@@ -26,7 +26,7 @@
 //! - **methods** → every type with an `impl` or `#[derive]` gets an entry in the
 //!   global method table `__m` (`__m.Point.manhattan = (self) => …`). A method
 //!   call `x.m(a)` dispatches through `__call(x, "m", a)`, which reads the
-//!   receiver's `_struct`/`_enum` tag and invokes the stored function with the
+//!   receiver's `__struct`/`_enum` tag and invokes the stored function with the
 //!   receiver as the first argument — the JS analogue of Lua metatable dispatch.
 //! - **`?`** → a hoisted guard: `e?` binds `e` to a temp, early-returns the
 //!   carrier from the enclosing function on `Err`/`None`, and yields the payload
@@ -306,7 +306,7 @@ const None = { _enum: \"Option\", tag: \"None\" };";
 /// receiver first — the JS analogue of Lua metatable dispatch.
 const METHOD_PRELUDE: &str = "\
 const __m = {};
-const __call = (recv, name, ...args) => __m[recv._struct ?? recv._enum][name](recv, ...args);";
+const __call = (recv, name, ...args) => __m[recv.__struct ?? recv._enum][name](recv, ...args);";
 
 impl Emitter {
     pub(crate) fn error(&mut self, message: impl Into<String>) {
@@ -672,7 +672,7 @@ mod tests {
         assert_eq!(
             out.js,
             "function make() {\n  \
-             return { _struct: \"Point\", x: 1, y: 2 }.x;\n}\n"
+             return { __struct: \"Point\", x: 1, y: 2 }.x;\n}\n"
         );
     }
 
@@ -766,7 +766,7 @@ mod tests {
             out.js,
             "const __m = {};\n\
              const __call = (recv, name, ...args) => \
-             __m[recv._struct ?? recv._enum][name](recv, ...args);\n\
+             __m[recv.__struct ?? recv._enum][name](recv, ...args);\n\
              \n\
              __m.Point = {};\n\
              __m.Point.debug = function(self) {\n  \

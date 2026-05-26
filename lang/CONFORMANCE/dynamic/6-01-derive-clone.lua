@@ -1,11 +1,11 @@
 local Counter = {}
 Counter.__index = Counter
 function Counter.new(fields)
-  fields._struct = "Counter"
+  fields.__struct = "Counter"
   return setmetatable(fields, Counter)
 end
 function Counter.clone(self)
-  return setmetatable({ _struct = "Counter", value = self.value }, Counter)
+  return setmetatable({ __struct = "Counter", value = self.value }, Counter)
 end
 local function main()
   local a = Counter.new({ value = 5 })

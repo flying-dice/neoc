@@ -86,7 +86,7 @@ impl Emitter {
     }
 
     /// A struct pattern: either a named struct (`Point { x, y }`, tested by
-    /// `_struct`) or a struct-shaped enum variant (`Shape::Circle { r }`,
+    /// `__struct`) or a struct-shaped enum variant (`Shape::Circle { r }`,
     /// tested by `tag`). Each field recurses against `subject.field`.
     fn compile_struct(
         &mut self,
@@ -99,7 +99,7 @@ impl Emitter {
             self.note_prelude(&en);
             c.tests.push(format!("{subject}.tag == \"{var}\""));
         } else if let Some(name) = path.last() {
-            c.tests.push(format!("{subject}._struct == \"{name}\""));
+            c.tests.push(format!("{subject}.__struct == \"{name}\""));
         }
         for f in fields {
             let field_subject = format!("{subject}.{}", f.name);
@@ -125,7 +125,7 @@ impl Emitter {
             c.tests.push(format!("{subject}.tag == \"{var}\""));
         } else if let Some(name) = path.last() {
             // A newtype struct pattern destructures the `[1]` payload.
-            c.tests.push(format!("{subject}._struct == \"{name}\""));
+            c.tests.push(format!("{subject}.__struct == \"{name}\""));
         }
         for (i, elem) in elems.iter().enumerate() {
             let elem_subject = format!("{subject}[{}]", i + 1);

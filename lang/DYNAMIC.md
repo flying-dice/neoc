@@ -38,15 +38,15 @@ A struct value is a Lua table tagged with its type name. The type's own table do
   local S = {}
   S.__index = S
   function S.new(fields)
-    fields._struct = "S"
+    fields.__struct = "S"
     return setmetatable(fields, S)
   end
 ```
 
-`S.new` is an internal constructor; `S { … }` literals (§4) call it. The `_struct` tag is the value's runtime identity, read by `match` (§4.5) and `Eq`/`Debug` (§6); the metatable carries dispatch (§4.7).
+`S.new` is an internal constructor; `S { … }` literals (§4) call it. The `__struct` tag is the value's runtime identity, read by `match` (§4.5) and `Eq`/`Debug` (§6); the metatable carries dispatch (§4.7).
 
-- **Unit struct** `struct S;` lowers to a single shared value `local S = { _struct = "S" }`. Methods (§3.3) attach to `S` itself, so `S:m(…)` resolves directly with no separate metatable.
-- **Newtype** `struct N(τ)` lowers like a named struct with one field stored at key `[1]`; `N(x)` constructs `setmetatable({ _struct = "N", [1] = x }, N)` and `.0` reads `[1]`.
+- **Unit struct** `struct S;` lowers to a single shared value `local S = { __struct = "S" }`. Methods (§3.3) attach to `S` itself, so `S:m(…)` resolves directly with no separate metatable.
+- **Newtype** `struct N(τ)` lowers like a named struct with one field stored at key `[1]`; `N(x)` constructs `setmetatable({ __struct = "N", [1] = x }, N)` and `.0` reads `[1]`.
 
 Methods are not emitted here; they come from `impl` (§3.3).
 
@@ -251,7 +251,7 @@ Patterns lower only inside `match` (§4.5) and `let` destructuring. Each pattern
 _              test: true                          bind: —
 x              test: true                          bind: local x = __s
 42 / "s" / true test: __s == 42                    bind: —
-S { f: p }     test: __s._struct == "S" and <test p over __s.f>   bind: <p over __s.f>
+S { f: p }     test: __s.__struct == "S" and <test p over __s.f>   bind: <p over __s.f>
 E::V           test: __s.tag == "V"                bind: —
 E::V(p₁, …)    test: __s.tag == "V" and <tests>    bind: <pᵢ over __s[i]>
 p₁ | p₂        test: <test p₁> or <test p₂>        bind: shared names
@@ -263,7 +263,7 @@ A guard `if g` is appended to the arm's test with `and ⟦g⟧`, evaluated only 
 
 ### 6.1 `#[derive(Clone)]`
 
-Emits `function S.clone(self)` returning a shallow copy carrying the same `_struct`/`_enum` tag.
+Emits `function S.clone(self)` returning a shallow copy carrying the same `__struct`/`_enum` tag.
 
 ### 6.2 `#[derive(Eq)]`
 
@@ -291,7 +291,7 @@ The shape of `__tests` is part of the runtime contract (§7).
 
 The shapes the emitted Lua relies on. These are part of the spec: a passing `CONFORMANCE/` test depends on them, and the embedding runtime must agree.
 
-- **Struct**: `{ _struct = "TypeName", <fields> }`, with the type table as its metatable (`Type.__index = Type`) so methods resolve. Newtype field at `[1]`.
+- **Struct**: `{ __struct = "TypeName", <fields> }`, with the type table as its metatable (`Type.__index = Type`) so methods resolve. Newtype field at `[1]`.
 - **Enum**: `{ _enum = "TypeName", tag = "VariantName", <payload> }`. Tuple payload at `[1..]`, struct payload by field name.
 - **`Result<T, E>`**: the prelude enum, lowered per §3.2 — `Ok(v)` is `{ _enum = "Result", tag = "Ok", v }`, `Err(e)` is `{ _enum = "Result", tag = "Err", e }`.
 - **`Option<T>`**: `Some(v)` is `{ _enum = "Option", tag = "Some", v }`, `None` is `{ _enum = "Option", tag = "None" }`.

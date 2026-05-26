@@ -540,7 +540,7 @@ impl Emitter {
     /// Lower `S { f: e, .. base }` (functional update). The emitter has no field
     /// list, so it copies `base`'s keys at runtime into a fresh table, overrides
     /// the listed fields, then constructs through `S.new` so the value re-stamps
-    /// its `_struct` tag and metatable (§4.4).
+    /// its `__struct` tag and metatable (§4.4).
     fn emit_struct_update(
         &mut self,
         name: &str,

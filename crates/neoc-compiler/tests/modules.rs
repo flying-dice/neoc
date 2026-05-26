@@ -295,7 +295,7 @@ fn non_fn_cross_module_export_loads_as_esm() {
         "main must NOT import the data-only struct `Point`:\n{main_js}"
     );
     assert!(
-        main_js.contains("_struct: \"Point\""),
+        main_js.contains("__struct: \"Point\""),
         "the `Point` construction should inline to a tagged object:\n{main_js}"
     );
 
@@ -406,7 +406,7 @@ fn binding_and_type_only_name_collision_loads_as_esm() {
     // Its construction inlines to a tagged object — the erased name never appears
     // as an import binding.
     assert!(
-        main_js.contains("_struct: \"PalHue\"") || main_js.contains("_struct: \"Hue\""),
+        main_js.contains("__struct: \"PalHue\"") || main_js.contains("__struct: \"Hue\""),
         "the `PalHue` construction should inline to a tagged object:\n{main_js}"
     );
 

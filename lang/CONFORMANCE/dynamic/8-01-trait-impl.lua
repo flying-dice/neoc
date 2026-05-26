@@ -1,7 +1,7 @@
 local Dog = {}
 Dog.__index = Dog
 function Dog.new(fields)
-  fields._struct = "Dog"
+  fields.__struct = "Dog"
   return setmetatable(fields, Dog)
 end
 function Dog.greet(self)
