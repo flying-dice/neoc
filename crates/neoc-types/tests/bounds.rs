@@ -78,3 +78,65 @@ fn bound_method_call_checks_argument_types() {
         "a bound method's argument types are checked: {d:?}"
     );
 }
+
+// --- Slice B: call-site bound enforcement ------------------------------------
+
+/// A trait, a struct that implements it, and a generic fn that requires it.
+const SINK_IMPL: &str = "trait Sink {\n  fn take(self, x: string) -> bool;\n}\n\
+struct Wrap(number);\n\
+impl Sink for Wrap {\n  fn take(self, x: string) -> bool {\n    true\n  }\n}\n\
+fn run<T: Sink>(s: T) -> bool {\n  s.take(\"hi\")\n}\n";
+
+#[test]
+fn argument_satisfying_the_bound_is_accepted() {
+    let src = format!("{SINK_IMPL}fn go() -> bool {{\n  run(Wrap(1))\n}}\n");
+    assert!(
+        diagnostics(&src).is_empty(),
+        "`Wrap` implements `Sink`, so the call is well-typed: {:?}",
+        diagnostics(&src)
+    );
+}
+
+#[test]
+fn argument_not_implementing_the_bound_is_an_error() {
+    let src = format!("{SINK_IMPL}fn go() -> bool {{\n  run(42)\n}}\n");
+    let d = diagnostics(&src);
+    assert!(
+        d.iter()
+            .any(|m| m.contains("the type `number` does not satisfy the bound `Sink`")),
+        "a `number` does not implement `Sink`: {d:?}"
+    );
+}
+
+#[test]
+fn a_matching_bound_propagates_through_a_caller() {
+    let src = format!("{SINK_IMPL}fn forward<U: Sink>(u: U) -> bool {{\n  run(u)\n}}\n");
+    assert!(
+        diagnostics(&src).is_empty(),
+        "the caller's `U: Sink` satisfies `run`'s bound: {:?}",
+        diagnostics(&src)
+    );
+}
+
+#[test]
+fn an_unbounded_caller_param_does_not_satisfy_the_bound() {
+    let src = format!("{SINK_IMPL}fn forward<U>(u: U) -> bool {{\n  run(u)\n}}\n");
+    let d = diagnostics(&src);
+    assert!(
+        d.iter()
+            .any(|m| m.contains("the type `U` does not satisfy the bound `Sink`")),
+        "an unbounded `U` cannot satisfy `run`'s `Sink` bound: {d:?}"
+    );
+}
+
+#[test]
+fn a_derive_satisfies_the_corresponding_bound() {
+    let src = "#[derive(Eq)]\nstruct P(number);\n\
+fn tagged<T: Eq>(x: T) -> T {\n  x\n}\n\
+fn go() -> P {\n  tagged(P(1))\n}\n";
+    assert!(
+        diagnostics(src).is_empty(),
+        "`#[derive(Eq)]` satisfies a `T: Eq` bound: {:?}",
+        diagnostics(src)
+    );
+}

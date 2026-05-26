@@ -116,7 +116,7 @@ impl<'a> Elaborator<'a> {
         let prev_params = std::mem::take(&mut self.checker.type_params);
         let prev_bounds = std::mem::take(&mut self.checker.type_bounds);
         self.checker.type_params = sig.generics.iter().map(|g| g.name.clone()).collect();
-        self.checker.type_bounds = Checker::param_bounds(sig);
+        self.checker.type_bounds = crate::collect::param_bounds(sig);
 
         self.checker.scopes.push();
         for p in &sig.params {

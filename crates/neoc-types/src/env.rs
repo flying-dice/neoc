@@ -105,6 +105,16 @@ pub struct SymbolTable {
     pub pub_values: HashSet<String>,
     /// Type-namespace names this module declares `pub`.
     pub pub_types: HashSet<String>,
+    /// Trait implementations as `(type name, trait name)` pairs — one per
+    /// `impl Trait for Type` and per `#[derive(Trait)]`. The checker consults
+    /// this to decide whether a concrete type satisfies a type parameter's
+    /// bound at a call site (`STATIC.md` §3.5).
+    pub trait_impls: HashSet<(String, String)>,
+    /// Per-function declared bounds: function name → (type parameter → the
+    /// trait names bounding it), from both `<T: …>` and `where T: …`. Lets a
+    /// call site enforce that each argument's concrete type satisfies the bound
+    /// the callee declared.
+    pub fn_bounds: HashMap<String, HashMap<String, Vec<String>>>,
 }
 
 impl SymbolTable {
@@ -124,6 +134,14 @@ impl SymbolTable {
     #[must_use]
     pub fn type_is_public(&self, name: &str) -> bool {
         self.pub_types.contains(name)
+    }
+
+    /// Whether `type_name` has an implementation of `trait_name` — an explicit
+    /// `impl Trait for Type` or a `#[derive(Trait)]`.
+    #[must_use]
+    pub fn implements(&self, type_name: &str, trait_name: &str) -> bool {
+        self.trait_impls
+            .contains(&(type_name.to_string(), trait_name.to_string()))
     }
 
     /// Imports the symbol `name` from `source` into this table under `binding`.

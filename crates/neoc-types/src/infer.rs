@@ -210,7 +210,7 @@ impl<'a> Checker<'a> {
         let prev_params = std::mem::take(&mut self.type_params);
         let prev_bounds = std::mem::take(&mut self.type_bounds);
         self.type_params = sig.generics.iter().map(|g| g.name.clone()).collect();
-        self.type_bounds = Self::param_bounds(sig);
+        self.type_bounds = crate::collect::param_bounds(sig);
 
         self.scopes.push();
         for p in &sig.params {
@@ -237,29 +237,6 @@ impl<'a> Checker<'a> {
         self.scopes.pop();
         self.type_params = prev_params;
         self.type_bounds = prev_bounds;
-    }
-
-    /// The trait-name bounds of each type parameter of a signature, gathered
-    /// from both the inline form (`<T: Display>`) and the `where` clause
-    /// (`where T: Display`). The bound's trait name is the last segment of its
-    /// path. Used to resolve a method call on a bounded parameter.
-    pub(crate) fn param_bounds(sig: &ast::FnSig) -> std::collections::HashMap<String, Vec<String>> {
-        let trait_name = |p: &ast::TypePath| p.segments.last().map(|s| s.name.clone());
-        let mut out: std::collections::HashMap<String, Vec<String>> =
-            std::collections::HashMap::new();
-        for g in &sig.generics {
-            let names: Vec<String> = g.bounds.iter().filter_map(trait_name).collect();
-            if !names.is_empty() {
-                out.entry(g.name.clone()).or_default().extend(names);
-            }
-        }
-        for w in &sig.where_clause {
-            let names: Vec<String> = w.bounds.iter().filter_map(trait_name).collect();
-            if !names.is_empty() {
-                out.entry(w.ty.clone()).or_default().extend(names);
-            }
-        }
-        out
     }
 
     /// A method `method` provided by one of the trait bounds on type parameter
@@ -745,7 +722,9 @@ impl<'a> Checker<'a> {
                         );
                     }
                 }
-                Self::instantiate_return(&params, &arg_tys, &ret)
+                let subst = Self::param_subst(&params, &arg_tys);
+                self.check_call_bounds(callee, &subst, span);
+                Self::apply_subst(&ret, &subst)
             }
             Ty::Unknown => Ty::Unknown,
             other => {
@@ -758,11 +737,65 @@ impl<'a> Checker<'a> {
     /// Substitutes type parameters in a function's return type from the
     /// argument types (rank-1 inference for generic constructors like `Ok`).
     fn instantiate_return(params: &[Ty], args: &[Ty], ret: &Ty) -> Ty {
+        Self::apply_subst(ret, &Self::param_subst(params, args))
+    }
+
+    /// The substitution binding each of a function's type parameters to the
+    /// concrete type the matching argument supplied, inferred by unifying every
+    /// parameter type against its argument.
+    fn param_subst(params: &[Ty], args: &[Ty]) -> std::collections::HashMap<String, Ty> {
         let mut subst = std::collections::HashMap::new();
         for (p, a) in params.iter().zip(args) {
             Self::unify_param(p, a, &mut subst);
         }
-        Self::apply_subst(ret, &subst)
+        subst
+    }
+
+    /// Enforces the callee's declared trait bounds against the concrete types
+    /// its type parameters were instantiated to (`STATIC.md` §3.5). Applies only
+    /// to a direct call of a named function whose bounds were collected; an
+    /// indirect call through a value carries no bounds to check.
+    fn check_call_bounds(
+        &mut self,
+        callee: &ast::Expr,
+        subst: &std::collections::HashMap<String, Ty>,
+        span: ast::Span,
+    ) {
+        let ast::ExprKind::Path(segs) = &callee.kind else {
+            return;
+        };
+        let Some(name) = segs.last() else { return };
+        let Some(bounds) = self.table.fn_bounds.get(name).cloned() else {
+            return;
+        };
+        for (param, traits) in &bounds {
+            let Some(concrete) = subst.get(param) else {
+                continue;
+            };
+            for tr in traits {
+                if !self.type_satisfies(concrete, tr) {
+                    self.error_at(
+                        span,
+                        format!("the type `{concrete}` does not satisfy the bound `{tr}`"),
+                    );
+                }
+            }
+        }
+    }
+
+    /// Whether `ty` satisfies the bound `trait_name`. A concrete type satisfies
+    /// it when an `impl` or derive records the pair; a type parameter satisfies
+    /// it when its own in-scope bounds include the trait (bound propagation); an
+    /// unknown type satisfies it vacuously, so an earlier error does not cascade.
+    fn type_satisfies(&self, ty: &Ty, trait_name: &str) -> bool {
+        match ty {
+            Ty::Unknown => true,
+            Ty::Param(p) => self
+                .type_bounds
+                .get(p)
+                .is_some_and(|bs| bs.iter().any(|b| b == trait_name)),
+            _ => ty_impl_name(ty).is_some_and(|n| self.table.implements(&n, trait_name)),
+        }
     }
 
     fn unify_param(param: &Ty, arg: &Ty, subst: &mut std::collections::HashMap<String, Ty>) {
@@ -1591,5 +1624,18 @@ fn subst_self_param(ty: &Ty, self_param: &Ty) -> Ty {
             Box::new(subst_self_param(ret, self_param)),
         ),
         other => other.clone(),
+    }
+}
+
+/// The name a type registers under in the trait-impl table: a nominal type's
+/// own name, or a primitive's spelling. List and function types carry no
+/// nominal identity, so they cannot be the target of an `impl` — `None`.
+fn ty_impl_name(ty: &Ty) -> Option<String> {
+    match ty {
+        Ty::Named { name, .. } => Some(name.clone()),
+        Ty::Number => Some("number".to_string()),
+        Ty::Str => Some("string".to_string()),
+        Ty::Bool => Some("bool".to_string()),
+        _ => None,
     }
 }

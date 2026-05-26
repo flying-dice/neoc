@@ -5,6 +5,8 @@
 //! lowers AST `Type` nodes into checker [`Ty`] values, resolving names against
 //! the in-scope type parameters and the predeclared primitives.
 
+use std::collections::HashMap;
+
 use neoc_ast as ast;
 
 use crate::env::{
@@ -57,6 +59,29 @@ fn lower_path(path: &ast::TypePath, params: &[String]) -> Ty {
 
 fn generic_names(generics: &[ast::GenericParam]) -> Vec<String> {
     generics.iter().map(|g| g.name.clone()).collect()
+}
+
+/// The trait-name bounds of each type parameter of a signature, gathered from
+/// both the inline form (`<T: Display>`) and the `where` clause
+/// (`where T: Display`). The bound's trait name is the last segment of its
+/// path. Drives method resolution on a bounded parameter and call-site bound
+/// enforcement (`STATIC.md` §3.4, §3.5).
+pub(crate) fn param_bounds(sig: &ast::FnSig) -> HashMap<String, Vec<String>> {
+    let trait_name = |p: &ast::TypePath| p.segments.last().map(|s| s.name.clone());
+    let mut out: HashMap<String, Vec<String>> = HashMap::new();
+    for g in &sig.generics {
+        let names: Vec<String> = g.bounds.iter().filter_map(trait_name).collect();
+        if !names.is_empty() {
+            out.entry(g.name.clone()).or_default().extend(names);
+        }
+    }
+    for w in &sig.where_clause {
+        let names: Vec<String> = w.bounds.iter().filter_map(trait_name).collect();
+        if !names.is_empty() {
+            out.entry(w.ty.clone()).or_default().extend(names);
+        }
+    }
+    out
 }
 
 /// The function type of a signature, plus whether it has a `self` receiver.
@@ -161,6 +186,9 @@ fn collect_derives(table: &mut SymbolTable, item: &ast::Item) {
         let Some((method, info)) = derived_method(&derive, &self_ty) else {
             continue;
         };
+        // A recognised derive is an implicit trait impl — the derive name is
+        // the trait name, so a `<T: Clone>` bound is satisfied by `#[derive(Clone)]`.
+        table.trait_impls.insert((name.clone(), derive.clone()));
         let key = (name.clone(), method.to_string());
         if table.methods.contains_key(&key) {
             continue;
@@ -293,6 +321,10 @@ fn collect_item(table: &mut SymbolTable, item: &ast::Item) {
             table
                 .values
                 .insert(f.sig.name.clone(), Ty::Fn(params, Box::new(ret)));
+            let bounds = param_bounds(&f.sig);
+            if !bounds.is_empty() {
+                table.fn_bounds.insert(f.sig.name.clone(), bounds);
+            }
         }
         ast::ItemKind::Const(c) => {
             table.values.insert(c.name.clone(), lower_type(&c.ty, &[]));
@@ -417,6 +449,13 @@ fn collect_impl(table: &mut SymbolTable, b: &ast::ImplBlock) {
     let Some(type_name) = impl_target_name(&b.ty) else {
         return;
     };
+    // A trait impl records the `(type, trait)` pair so call-site bound checks
+    // can see that `type_name` satisfies the trait.
+    if let Some(trait_name) = b.trait_.as_ref().and_then(|p| p.segments.last()) {
+        table
+            .trait_impls
+            .insert((type_name.clone(), trait_name.name.clone()));
+    }
     for f in &b.items {
         let (params, ret, has_receiver) = fn_type(&f.sig, &impl_generics);
         // Substitute `Self` with the target type in params/ret.

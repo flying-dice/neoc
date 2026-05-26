@@ -87,13 +87,13 @@ A newtype `struct N(τ)` has one positional field accessed as `.0`; its construc
 
 ### 3.4 Traits and trait bounds
 
-A trait names a set of method signatures. A type satisfies a trait when an `impl Trait for Type` provides every required method with matching signatures. A trait bound `T: Trait` constrains a type parameter to types that satisfy `Trait`.
+A trait names a set of method signatures. A type satisfies a trait when an `impl Trait for Type` provides every required method with matching signatures; a `#[derive(Trait)]` on the type is an implicit such impl. A trait bound `T: Trait` constrains a type parameter to types that satisfy `Trait`.
 
 Method resolution for `e.m(…)`: the static type of `e` determines which inherent or trait-impl method named `m` applies. When that static type is a **type parameter** `T`, `m` resolves against the methods of `T`'s declared bounds (the union of its `<T: …>` and `where` bounds); `Self` in the chosen signature is the parameter `T`. A method named on a parameter with no bound that provides it is an error. There is no dynamic dispatch and no `dyn Trait`; every method call resolves to a single statically known function.
 
 ### 3.5 Generics
 
-Type parameters are universally quantified over the item that declares them. Instantiation infers type arguments from the call site (`T-CALL` with `τᵢ` unified against argument types) and checks each inferred argument against its bounds.
+Type parameters are universally quantified over the item that declares them. Instantiation infers type arguments from the call site (`T-CALL` with `τᵢ` unified against argument types) and checks each inferred argument against its bounds: the type bound to a parameter `T` must satisfy every trait in `T`'s bounds, or the call is an error. When the argument is itself a type parameter of the enclosing item, it satisfies a bound exactly when its own declared bounds include that trait (bounds propagate; they are not re-derived).
 
 neoc uses Hindley–Milner inference restricted to the rank-1, no-subtyping fragment: inference flows from arguments and annotations; there is no variance, no implicit coercion (not even `number`-to-`string`), and no inference across function boundaries beyond the declared signature. A type annotation is required wherever this fragment cannot determine a type (empty list literals, ambiguous numeric contexts produced by generic returns).
 
