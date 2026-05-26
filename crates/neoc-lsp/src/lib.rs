@@ -60,9 +60,9 @@ pub use rename::{prepare_rename, rename};
 pub use selection::selection_range;
 pub use semantic_tokens::{TOKEN_TYPES, semantic_tokens};
 pub use signature_help::signature_help;
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::Mutex;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 pub use symbols::workspace_symbols;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::{
@@ -194,6 +194,60 @@ fn workspace_root(params: &InitializeParams) -> Option<PathBuf> {
         .and_then(|uri| uri.to_file_path().ok())
 }
 
+/// Seeds `index` with every `.neoc` file under its root, skipping any URI in
+/// `open` (the open buffer is authoritative and already indexed). Runs on a
+/// blocking task off the request path; per-file locking keeps query latency low
+/// rather than holding the index for the whole walk.
+fn discover_workspace(index: &Mutex<WorkspaceIndex>, open: &HashSet<Url>) {
+    let Some(root) = index.lock().ok().map(|i| i.root().to_path_buf()) else {
+        return;
+    };
+    for path in neoc_files(&root) {
+        let Ok(uri) = Url::from_file_path(&path) else {
+            continue;
+        };
+        if open.contains(&uri) {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        if let Ok(mut index) = index.lock() {
+            // Version 0 marks disk-sourced content; a later `did_open` replaces
+            // it with the editor buffer at the buffer's own version.
+            index.set_document(uri, 0, text);
+        }
+    }
+}
+
+/// Every `.neoc` file under `root`, recursing into subdirectories but skipping
+/// build and vcs directories (`target`, `node_modules`, `.git`) so discovery
+/// stays `O(source)` rather than walking generated trees.
+fn neoc_files(root: &Path) -> Vec<PathBuf> {
+    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let skip = matches!(
+                    path.file_name().and_then(|n| n.to_str()),
+                    Some("target" | "node_modules" | ".git")
+                );
+                if !skip {
+                    walk(&path, out);
+                }
+            } else if path.extension().and_then(|e| e.to_str()) == Some("neoc") {
+                out.push(path);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(root, &mut out);
+    out
+}
+
 struct Backend {
     client: Client,
     /// Open documents by URI. Feature requests carry only a URI and position,
@@ -203,8 +257,9 @@ struct Backend {
     /// Project-wide index backing the cross-file features (workspace symbols,
     /// goto/references/rename across modules). Maintained from the document
     /// lifecycle; rooted from `initialize` so its `use`-path resolution matches
-    /// the compiler's. See `tasks/cross-file-resolution.md`.
-    index: Mutex<WorkspaceIndex>,
+    /// the compiler's. Behind an `Arc` so background discovery can share it.
+    /// See `tasks/cross-file-resolution.md`.
+    index: Arc<Mutex<WorkspaceIndex>>,
 }
 
 impl Backend {
@@ -215,7 +270,7 @@ impl Backend {
         Self {
             client,
             documents: Mutex::new(HashMap::new()),
-            index: Mutex::new(WorkspaceIndex::new(root)),
+            index: Arc::new(Mutex::new(WorkspaceIndex::new(root))),
         }
     }
 
@@ -314,6 +369,17 @@ impl LanguageServer for Backend {
         self.client
             .log_message(MessageType::INFO, "neoc language server ready")
             .await;
+        // Lazy/background discovery: seed the index with the workspace's `.neoc`
+        // files so cross-file queries reach unopened files. Off the request path
+        // (a `spawn_blocking` task, never a synchronous startup scan) and skipping
+        // any file already open, since the open buffer is authoritative.
+        let open: HashSet<Url> = self
+            .documents
+            .lock()
+            .map(|docs| docs.keys().cloned().collect())
+            .unwrap_or_default();
+        let index = Arc::clone(&self.index);
+        tokio::task::spawn_blocking(move || discover_workspace(&index, &open));
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
@@ -749,5 +815,37 @@ mod tests {
         assert_eq!(type_diag.severity, Some(DiagnosticSeverity::ERROR));
         // No span yet for type errors, so it lands on line 0.
         assert_eq!(type_diag.range.start.line, 0);
+    }
+
+    #[test]
+    fn discovery_finds_neoc_files_and_skips_build_dirs() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "neoc_disc_{}_{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
+        let write = |rel: &str| {
+            let path = root.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, "fn main() {}\n").unwrap();
+            path
+        };
+        let top = write("main.neoc");
+        let nested = write("util/helpers.neoc");
+        write("target/generated.neoc"); // build dir — must be skipped
+        write("README.md"); // not .neoc — ignored
+
+        let mut found = neoc_files(&root);
+        found.sort();
+        let mut want = vec![top, nested];
+        want.sort();
+        assert_eq!(
+            found, want,
+            "recurse into subdirs, skip target/, ignore non-.neoc"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
     }
 }

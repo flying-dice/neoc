@@ -223,6 +223,13 @@ impl WorkspaceIndex {
         Url::from_file_path(file).ok()
     }
 
+    /// The workspace root the index resolves `use` paths against. Background
+    /// discovery walks this directory to seed unopened files.
+    #[must_use]
+    pub fn root(&self) -> &std::path::Path {
+        &self.root
+    }
+
     /// Every declaration of `name` across the project. Empty slice when none.
     // Used by the goto/references slices of Phase 3 (see cross-file-resolution.md).
     #[allow(dead_code)]
