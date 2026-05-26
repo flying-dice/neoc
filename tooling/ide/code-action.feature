@@ -20,3 +20,17 @@ Feature: Code actions
       use std::io;
       fn main() {}
       """
+
+  Scenario: Remove an unused import deletes its declaration
+    Given the source:
+      """
+      use std::fs;
+      use std::io;
+      fn main() -> number { io::run() }
+      """
+    When I remove the unused import "fs"
+    Then the source becomes:
+      """
+      use std::io;
+      fn main() -> number { io::run() }
+      """

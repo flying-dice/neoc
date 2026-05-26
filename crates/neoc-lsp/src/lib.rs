@@ -38,7 +38,7 @@ use neoc_compiler::{ByteSpan, Diagnostic as CompilerDiagnostic, Stage, Target, t
 // (`tests/cucumber.rs` over `tooling/ide/`) drives directly; `byte_to_position`
 // builds the `Position` they take from a byte offset into the source.
 pub use call_hierarchy::{incoming_calls, outgoing_calls};
-pub use code_action::organize_imports;
+pub use code_action::{organize_imports, unused_imports};
 pub use completion::{completions, resolve as resolve_completion};
 pub use folding::folding_ranges;
 pub use format::formatting;
@@ -157,6 +157,12 @@ fn call_hierarchy_item(uri: Url, item: call_hierarchy::CallItem) -> CallHierarch
         selection_range: item.name_range,
         data: None,
     }
+}
+
+/// Whether two ranges overlap, comparing positions as `(line, character)`.
+fn ranges_overlap(a: Range, b: Range) -> bool {
+    let le = |x: Position, y: Position| (x.line, x.character) <= (y.line, y.character);
+    le(a.start, b.end) && le(b.start, a.end)
 }
 
 struct Backend {
@@ -420,6 +426,26 @@ impl LanguageServer for Backend {
             actions.push(CodeActionOrCommand::CodeAction(CodeAction {
                 title: "Organize imports".to_string(),
                 kind: Some(CodeActionKind::SOURCE_ORGANIZE_IMPORTS),
+                edit: Some(WorkspaceEdit {
+                    changes: Some(changes),
+                    ..WorkspaceEdit::default()
+                }),
+                ..CodeAction::default()
+            }));
+        }
+        // Offer to remove each unused import the request's range touches.
+        for unused in code_action::unused_imports(&source) {
+            if !ranges_overlap(params.range, unused.removal) {
+                continue;
+            }
+            let edit = TextEdit {
+                range: unused.removal,
+                new_text: String::new(),
+            };
+            let changes = [(uri.clone(), vec![edit])].into();
+            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                title: format!("Remove unused import `{}`", unused.name),
+                kind: Some(CodeActionKind::QUICKFIX),
                 edit: Some(WorkspaceEdit {
                     changes: Some(changes),
                     ..WorkspaceEdit::default()

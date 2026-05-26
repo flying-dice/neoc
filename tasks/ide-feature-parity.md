@@ -68,12 +68,12 @@ Dependency-ordered. `[ ]` todo · `[~]` in-progress · `[x]` done.
    values only — locals/params untracked); implementation lists the impl blocks
    targeting a type or implementing a trait. Goto-declaration skipped: redundant
    with definition in neoc (no header/impl split).
-6. `[blocked]` **Code actions / quick-fixes** — `code-action.feature`.
-   `codeAction`. Blocked: neoc's `transpile` diagnostics carry no structured fix
-   data (just message + span + stage), so diagnostic-attached quick-fixes have
-   nothing to hang off, and message-text matching would be a golden-rule-fragile
-   hack. Needs either fix metadata on `neoc_compiler::Diagnostic` or a dedicated
-   generative-refactor design. Deferred until that lands.
+6. `[~]` **Code actions / quick-fixes** — `code-action.feature`. `codeAction`.
+   Shipped the CST-derivable actions: organize-imports (#13) and remove-unused
+   -import. Diagnostic-attached quick-fixes (e.g. "did you mean") still need
+   structured fix data on `neoc_compiler::Diagnostic` — message-text matching
+   would be golden-rule-fragile. Generative refactors that need a scrutinee's
+   type (fill match arms) wait on AST spans + inference exposure.
 7. `[x]` **Document highlight** — `highlight.feature`. `documentHighlight`.
    The find-all-references set (already file-local) tagged read/write — the
    declaration is a write, its uses reads.

@@ -198,6 +198,19 @@ fn organize_imports(world: &mut Ide) {
     world.edited_source = Some(apply_text_edits(&world.source, &edits));
 }
 
+#[when(regex = r#"^I remove the unused import "([^"]+)"$"#)]
+fn remove_unused_import(world: &mut Ide, name: String) {
+    let edits: Vec<TextEdit> = neoc_lsp::unused_imports(&world.source)
+        .into_iter()
+        .filter(|unused| unused.name == name)
+        .map(|unused| TextEdit {
+            range: unused.removal,
+            new_text: String::new(),
+        })
+        .collect();
+    world.edited_source = Some(apply_text_edits(&world.source, &edits));
+}
+
 #[when(regex = r#"^I rename "([^"]+)" to "([^"]+)"$"#)]
 fn rename_symbol(world: &mut Ide, old: String, new: String) {
     let byte = nth_occurrence(&world.source, &old, 1) + old.len() / 2;
