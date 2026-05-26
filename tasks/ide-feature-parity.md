@@ -32,9 +32,20 @@ diagnostics, document symbols, goto-definition, hover, completion. Spec coverage
 
 Dependency-ordered. `[ ]` todo · `[~]` in-progress · `[x]` done.
 
-> **Progress:** building on `feat/lsp-ide-feature-parity`, one commit per
-> feature. Shared signature renderer lifted into
-> `hover::item_signature_and_doc`.
+> **Progress:** the feasible standard-LSP surface is complete on
+> `feat/lsp-ide-feature-parity`, one commit per feature. Shipped: references,
+> completion-resolve, signature help, rename, goto type-def/impl, document
+> highlight, folding, selection range, inlay hints, formatting, workspace
+> symbols, call hierarchy, semantic tokens. Everything still open is blocked on
+> infrastructure outside the LSP crate (see below), not on more LSP work.
+>
+> **Blocked, needs other work first:**
+> - Code actions / organize-imports / refactors (#6, #13, #16) — need structured
+>   fix data on `neoc_compiler::Diagnostic`, or a refactor engine.
+> - Project-wide workspace symbols + cross-file references/rename — need a
+>   multi-document index (scope-aware resolution).
+> - Type-hint inlay kind — needs `let`-binding inferred types exposed.
+> - Matching brace, on-enter, on-type, join-lines — non-standard / low-value.
 
 ### Tier 1 — table-stakes
 
