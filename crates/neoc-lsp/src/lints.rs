@@ -89,6 +89,7 @@ const REGISTRY: &[&dyn Lint] = &[
     &UnusedImport,
     &UnusedDeclaration,
     &UnusedLet,
+    &UnusedParam,
     &NeedlessReturn,
     &BoolComparison,
     &NeedlessParens,
@@ -164,6 +165,36 @@ impl Lint for UnusedLet {
                     "unused `let` binding `{}`; prefix with `_` to silence",
                     b.name
                 ),
+                tag: Some(DiagnosticTag::UNNECESSARY),
+            })
+            .collect()
+    }
+}
+
+/// `unused_param`: a function parameter that is never read. Like Rust's
+/// `unused_variables`, it fires uniformly — free functions, inherent methods,
+/// and trait-impl methods alike (a trait forces the parameter, but the idiom is
+/// to silence it, not exempt it) — with a `_`-prefix opt-out. `self` is never
+/// flagged (it is not recorded as a binding). Scope-aware via the resolution
+/// map, so it pays no attention to spelling.
+struct UnusedParam;
+
+impl Lint for UnusedParam {
+    fn name(&self) -> &'static str {
+        "unused_param"
+    }
+
+    fn check(&self, cx: &LintContext) -> Vec<Finding> {
+        let resolution = neoc_types::resolution(cx.module());
+        resolution
+            .bindings()
+            .iter()
+            .filter(|b| b.kind == neoc_types::BindingKind::Param)
+            .filter(|b| !b.name.starts_with('_'))
+            .filter(|b| !resolution.is_used(b.id))
+            .map(|b| Finding {
+                range: byte_range(cx.source(), b.def.0, b.def.1),
+                message: format!("unused parameter `{}`; prefix with `_` to silence", b.name),
                 tag: Some(DiagnosticTag::UNNECESSARY),
             })
             .collect()
@@ -400,6 +431,34 @@ mod tests {
         let msgs = messages(src);
         let hits: Vec<_> = msgs.iter().filter(|m| m.contains("unused `let`")).collect();
         assert_eq!(hits.len(), 1, "exactly one unused binding: {msgs:?}");
+    }
+
+    fn unused_params(source: &str) -> Vec<String> {
+        lints(source)
+            .into_iter()
+            .filter(|d| d.code == Some(NumberOrString::String("unused_param".into())))
+            .map(|d| d.message)
+            .collect()
+    }
+
+    #[test]
+    fn warns_on_an_unused_param_with_underscore_and_self_exempt() {
+        // `unused` fires; `_skip` opts out; `used` is read; `self` is never a
+        // candidate. Mirrors Rust's `unused_variables`.
+        let src = "struct P {}\nimpl P {\n  fn m(self, unused: number, _skip: number, used: number) -> number {\n    used\n  }\n}\n";
+        let hits = unused_params(src);
+        assert_eq!(hits.len(), 1, "only `unused` fires: {hits:?}");
+        assert!(hits[0].contains("unused parameter `unused`"));
+    }
+
+    #[test]
+    fn warns_on_an_unused_trait_impl_param() {
+        // Rust warns even when a trait forces the parameter — the fix is `_`,
+        // not an exemption. So the impl's unused `x` fires.
+        let src = "trait T {\n  fn f(self, x: number) -> number;\n}\nstruct P {}\nimpl T for P {\n  fn f(self, x: number) -> number { 0 }\n}\n";
+        let hits = unused_params(src);
+        assert_eq!(hits.len(), 1, "the impl's unused `x` fires: {hits:?}");
+        assert!(hits[0].contains("unused parameter `x`"));
     }
 
     #[test]
