@@ -30,6 +30,7 @@ pub use env::{
     EnumInfo, MethodInfo, StructFields, StructInfo, SymbolTable, TraitInfo, TraitMethod, TypeDef,
     VariantFields, VariantInfo,
 };
+pub use infer::ExprType;
 pub use ty::Ty;
 
 use infer::Checker;
@@ -113,4 +114,22 @@ pub fn check_with_table(module: &neoc_ast::Module, table: &SymbolTable) -> Check
 #[must_use]
 pub fn collect(module: &neoc_ast::Module) -> SymbolTable {
     collect::collect(module)
+}
+
+/// The inferred type of every expression in `module`, each with the byte range
+/// it occupies in the source.
+///
+/// Runs the same checker as [`check`] with expression-type recording enabled,
+/// so tooling can map a cursor position to a type (hover, type inlay hints).
+/// Diagnostics are discarded; use [`check`] when only the diagnostics are
+/// wanted. The returned spans may overlap — an outer expression's range
+/// contains its sub-expressions' — so a position query should prefer the
+/// narrowest containing span.
+#[must_use]
+pub fn expression_types(module: &neoc_ast::Module) -> Vec<ExprType> {
+    let table = collect::collect(module);
+    let mut checker = Checker::new(&table);
+    checker.record_types();
+    checker.check_module(module);
+    checker.into_expr_types()
 }

@@ -24,6 +24,21 @@ pub struct Checker<'a> {
     /// Type parameters in scope for the current item.
     pub(crate) type_params: Vec<String>,
     diagnostics: Vec<Diagnostic>,
+    /// When set, every inferred expression's type is recorded in `expr_types`.
+    /// Off by default so the compile path pays nothing; tooling turns it on for
+    /// position→type queries.
+    record_types: bool,
+    expr_types: Vec<ExprType>,
+}
+
+/// The inferred type of one expression, with the byte range it occupies. The
+/// basis for tooling that maps a cursor position to a type (hover, type inlay
+/// hints).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExprType {
+    pub start: usize,
+    pub end: usize,
+    pub ty: Ty,
 }
 
 impl<'a> Checker<'a> {
@@ -35,7 +50,21 @@ impl<'a> Checker<'a> {
             ret_ty: Ty::Unit,
             type_params: Vec::new(),
             diagnostics: Vec::new(),
+            record_types: false,
+            expr_types: Vec::new(),
         }
+    }
+
+    /// Records every inferred expression's type and span from here on, for
+    /// tooling position→type queries. The compile path leaves this off.
+    pub fn record_types(&mut self) {
+        self.record_types = true;
+    }
+
+    /// The expression types recorded since [`Self::record_types`] was enabled.
+    #[must_use]
+    pub fn into_expr_types(self) -> Vec<ExprType> {
+        self.expr_types
     }
 
     #[must_use]
@@ -271,7 +300,7 @@ impl<'a> Checker<'a> {
     /// Infers the type of an expression, emitting diagnostics on the way.
     pub fn infer(&mut self, expr: &ast::Expr) -> Ty {
         let span = expr.span;
-        match &expr.kind {
+        let ty = match &expr.kind {
             ast::ExprKind::Int(_) | ast::ExprKind::Float(_) => Ty::Number,
             ast::ExprKind::Str(_) => Ty::Str,
             ast::ExprKind::Bool(_) => Ty::Bool,
@@ -350,7 +379,15 @@ impl<'a> Checker<'a> {
                 Ty::Unknown
             }
             ast::ExprKind::Break | ast::ExprKind::Continue => Ty::Unknown,
+        };
+        if self.record_types {
+            self.expr_types.push(ExprType {
+                start: span.start,
+                end: span.end,
+                ty: ty.clone(),
+            });
         }
+        ty
     }
 
     fn infer_path(&mut self, segs: &[ast::Ident], span: ast::Span) -> Ty {
