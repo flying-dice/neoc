@@ -113,6 +113,61 @@ fn match_with_guard_and_or_pattern() {
 }
 
 #[test]
+fn block_bodied_arm_needs_no_separating_comma() {
+    // A `=> { … }` arm bounds itself with its `}`, so the comma before the next
+    // arm is optional (as in Rust). Without this the `_` arm was swallowed and
+    // the match looked non-exhaustive.
+    let m = module(
+        "fn f(x: number) -> number {\n\
+           match x {\n\
+             0 => {\n\
+               let y = 1;\n\
+               y\n\
+             }\n\
+             _ => 2\n\
+           }\n\
+         }",
+    );
+    let ast::ItemKind::Fn(f) = &m.items[0].kind else {
+        panic!("expected fn");
+    };
+    let Some(ast::Expr {
+        kind: ast::ExprKind::Match { arms, .. },
+        ..
+    }) = f.body.value.as_deref()
+    else {
+        panic!("expected match as block value");
+    };
+    assert_eq!(arms.len(), 2, "both arms must parse without the comma");
+    assert_eq!(
+        arms[0].pattern,
+        ast::Pattern::Literal(ast::LiteralPat::Int("0".into()))
+    );
+    assert_eq!(arms[1].pattern, ast::Pattern::Wildcard);
+}
+
+#[test]
+fn non_block_arm_without_a_comma_is_rejected() {
+    // The flip side: a non-block value would run across the arm boundary
+    // (`g(0)` then `(1)` reads as `g(0)(1)`), so the comma stays mandatory.
+    // Dropping it is a syntax error, not a silent single-arm parse.
+    let result = parse(
+        "fn g(n: number) -> number { n }\n\
+         fn f(x: number) -> number {\n\
+           match x {\n\
+             0 => g(0)\n\
+             1 => 2\n\
+             _ => 3\n\
+           }\n\
+         }",
+    );
+    assert!(
+        !result.ok(),
+        "a non-block arm missing its comma must be rejected, not silently parsed"
+    );
+}
+
+#[test]
 fn qualified_unit_variant_pattern_keeps_its_path() {
     // Regression: `Color::Red` arms must carry their segments, not lower to an
     // empty `Pattern::Path([])`, or match exhaustiveness can't see the variant.

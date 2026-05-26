@@ -1,8 +1,25 @@
 # `match` arm comma after a block body
 
-- **Status:** deferred (needs a grammar refactor; first attempt reverted)
+- **Status:** done — landed via the disjoint-category refactor (see Resolution)
 - **Priority:** P3
 - **Repo:** grammar lives in the `tree-sitter-neoc` submodule
+
+## Resolution
+
+Split `_expr_no_assign` into two **disjoint** halves — `_expr_ending_with_block`
+(`{ … }`, `if`, `match`, `while`, `for`, `loop`) and `_expr_not_ending_with_block`
+(everything else) — and defined `_expr_no_assign` as their union, so every
+general context still accepts a block-ending expression unchanged. A non-final
+`match_arm` is `choice(seq(value: not_ending, ','), seq(value: ending,
+optional(',')))`; the final arm (`last_match_arm`, aliased back to `match_arm`)
+takes any value with an optional comma. The two value categories never overlap,
+so there is no silent arm-drop and no precedence hack — only a declared
+`[$._expr_no_assign, $.match_arm]` conflict for the final-arm lookahead, settled
+by GLR on the next token. `node-types.json` is unchanged but for a `required`
+flag (an empty `match {}` is now syntactically allowed, caught later by
+exhaustiveness). Coverage: parser `block_bodied_arm_needs_no_separating_comma` +
+`non_block_arm_without_a_comma_is_rejected`; conformance `6-match-block-arm`
+(accept) + `6-match-nonblock-arm-no-comma` (reject).
 
 ## The gap
 
