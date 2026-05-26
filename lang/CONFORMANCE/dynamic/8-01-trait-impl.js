@@ -1,5 +1,5 @@
 const __m = {};
-const __call = (recv, name, ...args) => __m[recv.__struct ?? recv._enum][name](recv, ...args);
+const __call = (recv, name, ...args) => __m[recv.__struct ?? recv.__enum][name](recv, ...args);
 
 __m.Dog = {};
 __m.Dog.greet = function(self) {

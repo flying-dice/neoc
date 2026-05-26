@@ -423,7 +423,7 @@ impl Emitter {
             Some(PathKind::Assoc(ty, name)) => format!("{ty}.{name}"),
             Some(PathKind::Variant(en, var, VariantShape::Unit)) => {
                 self.note_prelude(&en);
-                self.variant_table(&en, format!("{{ _enum = \"{en}\", tag = \"{var}\" }}"))
+                self.variant_table(&en, format!("{{ __enum = \"{en}\", __tag = \"{var}\" }}"))
             }
             // A tuple/struct variant in path position (no payload applied) is a
             // constructor function. Without first-class enum constructors in the
@@ -478,7 +478,7 @@ impl Emitter {
     /// Resolve a path *in pattern position* to the variant it matches:
     /// `(enum, variant, shape)`. Unlike [`resolve_path`], a single-segment
     /// unqualified prelude variant (`Ok`/`Err`/`Some`/`None`) resolves here, so
-    /// `match` tests its `tag`. A qualified `Enum::Variant` resolves via the
+    /// `match` tests its `__tag`. A qualified `Enum::Variant` resolves via the
     /// enum index. Returns `None` when the path is not a known variant (then the
     /// caller treats it as a struct pattern or a fresh binding).
     pub(crate) fn pattern_variant(
@@ -524,7 +524,7 @@ impl Emitter {
             let body = self.emit_field_inits(fields);
             return self.variant_table(
                 &en,
-                format!("{{ _enum = \"{en}\", tag = \"{var}\", {body} }}"),
+                format!("{{ __enum = \"{en}\", __tag = \"{var}\", {body} }}"),
             );
         }
         let Some(name) = path.last() else {
@@ -585,9 +585,9 @@ impl Emitter {
         self.note_prelude(en);
         let payload = self.emit_args(args);
         let table = if payload.is_empty() {
-            format!("{{ _enum = \"{en}\", tag = \"{var}\" }}")
+            format!("{{ __enum = \"{en}\", __tag = \"{var}\" }}")
         } else {
-            format!("{{ _enum = \"{en}\", tag = \"{var}\", {payload} }}")
+            format!("{{ __enum = \"{en}\", __tag = \"{var}\", {payload} }}")
         };
         self.variant_table(en, table)
     }
@@ -702,8 +702,8 @@ impl Emitter {
     /// Lower `e?` (§4.10). The short-circuit must return the carrier from the
     /// *enclosing function*, which a self-contained IIFE cannot do (its `return`
     /// would only exit the wrapper). So the guard is hoisted as statements into
-    /// the current buffer — `local __try_N = e; if __try_N.tag == "Err" or
-    /// __try_N.tag == "None" then return __try_N end` — and the expression value
+    /// the current buffer — `local __try_N = e; if __try_N.__tag == "Err" or
+    /// __try_N.__tag == "None" then return __try_N end` — and the expression value
     /// of `e?` is the unwrapped payload `__try_N[1]`. The `return` then belongs
     /// to the surrounding function body, exactly as the operator requires.
     fn emit_try(&mut self, inner: &ast::Expr) -> String {
@@ -712,7 +712,7 @@ impl Emitter {
         self.try_seq += 1;
         self.line(format!("local {tmp} = {value}"));
         self.line(format!(
-            "if {tmp}.tag == \"Err\" or {tmp}.tag == \"None\" then return {tmp} end"
+            "if {tmp}.__tag == \"Err\" or {tmp}.__tag == \"None\" then return {tmp} end"
         ));
         format!("{tmp}[1]")
     }

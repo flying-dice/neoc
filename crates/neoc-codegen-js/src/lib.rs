@@ -20,13 +20,13 @@
 //! - **struct** → a plain object carrying a `__struct` tag and its fields. A
 //!   newtype/tuple struct stores its payload positionally under integer keys
 //!   (`_0`, `_1`, …). Named structs store fields by name.
-//! - **enum** → a tagged object `{ _enum, tag, … }`. Tuple payload is stored
+//! - **enum** → a tagged object `{ __enum, __tag, … }`. Tuple payload is stored
 //!   under `_0`, `_1`, …; struct-variant payload by field name. The
 //!   `Result`/`Option` prelude follows the same shape.
 //! - **methods** → every type with an `impl` or `#[derive]` gets an entry in the
 //!   global method table `__m` (`__m.Point.manhattan = (self) => …`). A method
 //!   call `x.m(a)` dispatches through `__call(x, "m", a)`, which reads the
-//!   receiver's `__struct`/`_enum` tag and invokes the stored function with the
+//!   receiver's `__struct`/`__enum` tag and invokes the stored function with the
 //!   receiver as the first argument — the JS analogue of Lua metatable dispatch.
 //! - **`?`** → a hoisted guard: `e?` binds `e` to a temp, early-returns the
 //!   carrier from the enclosing function on `Err`/`None`, and yields the payload
@@ -296,17 +296,17 @@ pub(crate) struct Emitter {
 
 /// The `Result`/`Option` prelude: variant constructors as plain tagged objects.
 const RESULT_PRELUDE: &str = "\
-const Ok = (v) => ({ _enum: \"Result\", tag: \"Ok\", _0: v });
-const Err = (e) => ({ _enum: \"Result\", tag: \"Err\", _0: e });
-const Some = (v) => ({ _enum: \"Option\", tag: \"Some\", _0: v });
-const None = { _enum: \"Option\", tag: \"None\" };";
+const Ok = (v) => ({ __enum: \"Result\", __tag: \"Ok\", _0: v });
+const Err = (e) => ({ __enum: \"Result\", __tag: \"Err\", _0: e });
+const Some = (v) => ({ __enum: \"Option\", __tag: \"Some\", _0: v });
+const None = { __enum: \"Option\", __tag: \"None\" };";
 
 /// The method-dispatch runtime: a registry keyed by type name, and `__call`,
 /// which reads the receiver's tag and invokes the stored function with the
 /// receiver first — the JS analogue of Lua metatable dispatch.
 const METHOD_PRELUDE: &str = "\
 const __m = {};
-const __call = (recv, name, ...args) => __m[recv.__struct ?? recv._enum][name](recv, ...args);";
+const __call = (recv, name, ...args) => __m[recv.__struct ?? recv.__enum][name](recv, ...args);";
 
 impl Emitter {
     pub(crate) fn error(&mut self, message: impl Into<String>) {
@@ -736,11 +736,11 @@ mod tests {
             out.js,
             "function pick() {\n  \
              return (() => {\n    \
-             const __s1 = { _enum: \"Color\", tag: \"Red\" };\n    \
-             if (__s1.tag === \"Red\") {\n      \
+             const __s1 = { __enum: \"Color\", __tag: \"Red\" };\n    \
+             if (__s1.__tag === \"Red\") {\n      \
              return 1;\n    \
              }\n    \
-             if (__s1.tag === \"Green\") {\n      \
+             if (__s1.__tag === \"Green\") {\n      \
              return 2;\n    \
              }\n  \
              })();\n}\n"
@@ -766,7 +766,7 @@ mod tests {
             out.js,
             "const __m = {};\n\
              const __call = (recv, name, ...args) => \
-             __m[recv.__struct ?? recv._enum][name](recv, ...args);\n\
+             __m[recv.__struct ?? recv.__enum][name](recv, ...args);\n\
              \n\
              __m.Point = {};\n\
              __m.Point.debug = function(self) {\n  \

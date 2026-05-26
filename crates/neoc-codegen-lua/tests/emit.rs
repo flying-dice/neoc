@@ -157,7 +157,7 @@ fn emits_a_unit_enum_variant() {
     );
     let expected = "\
 local function make()
-  return { _enum = \"Shape\", tag = \"Origin\" }
+  return { __enum = \"Shape\", __tag = \"Origin\" }
 end
 ";
     assert_eq!(lua(&module), expected);
@@ -181,7 +181,7 @@ fn emits_a_tuple_enum_variant() {
     );
     let expected = "\
 local function make()
-  return { _enum = \"Shape\", tag = \"Move\", 1, 2 }
+  return { __enum = \"Shape\", __tag = \"Move\", 1, 2 }
 end
 ";
     assert_eq!(lua(&module), expected);
@@ -203,7 +203,7 @@ fn emits_a_struct_enum_variant() {
     );
     let expected = "\
 local function make()
-  return { _enum = \"Shape\", tag = \"Circle\", radius = 3 }
+  return { __enum = \"Shape\", __tag = \"Circle\", radius = 3 }
 end
 ";
     assert_eq!(lua(&module), expected);
@@ -334,16 +334,16 @@ fn golden_match_over_enum_variants() {
 local function area(s)
   return (function()
     local __s = s
-    if __s.tag == \"Circle\" then
+    if __s.__tag == \"Circle\" then
       local r = __s.radius
       return r
     end
-    if __s.tag == \"Move\" then
+    if __s.__tag == \"Move\" then
       local x = __s[1]
       local y = __s[2]
       return x
     end
-    if __s.tag == \"Origin\" then
+    if __s.__tag == \"Origin\" then
       return 0
     end
   end)()
@@ -522,10 +522,10 @@ fn golden_enum_with_methods_gets_a_metatable() {
 local Dir = {}
 Dir.__index = Dir
 function Dir.flip(self)
-  return setmetatable({ _enum = \"Dir\", tag = \"N\" }, Dir)
+  return setmetatable({ __enum = \"Dir\", __tag = \"N\" }, Dir)
 end
 local function make()
-  return setmetatable({ _enum = \"Dir\", tag = \"S\" }, Dir)
+  return setmetatable({ __enum = \"Dir\", __tag = \"S\" }, Dir)
 end
 ";
     assert_eq!(out, expected);
@@ -540,14 +540,14 @@ fn golden_try_operator() {
          }",
     );
     let expected = "\
-local Ok   = function(v) return { _enum = \"Result\", tag = \"Ok\", v } end
-local Err  = function(e) return { _enum = \"Result\", tag = \"Err\", e } end
-local Some = function(v) return { _enum = \"Option\", tag = \"Some\", v } end
-local None = { _enum = \"Option\", tag = \"None\" }
+local Ok   = function(v) return { __enum = \"Result\", __tag = \"Ok\", v } end
+local Err  = function(e) return { __enum = \"Result\", __tag = \"Err\", e } end
+local Some = function(v) return { __enum = \"Option\", __tag = \"Some\", v } end
+local None = { __enum = \"Option\", __tag = \"None\" }
 
 local function run(r)
   local __try_0 = parse()
-  if __try_0.tag == \"Err\" or __try_0.tag == \"None\" then return __try_0 end
+  if __try_0.__tag == \"Err\" or __try_0.__tag == \"None\" then return __try_0 end
   local v = __try_0[1]
   return Ok(v)
 end

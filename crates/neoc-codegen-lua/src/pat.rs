@@ -50,7 +50,7 @@ impl Emitter {
                     self.pattern_variant(std::slice::from_ref(name))
                 {
                     self.note_prelude(&en);
-                    c.tests.push(format!("{subject}.tag == \"{var}\""));
+                    c.tests.push(format!("{subject}.__tag == \"{var}\""));
                 } else {
                     c.binds.push(format!("local {name} = {subject}"));
                 }
@@ -74,7 +74,7 @@ impl Emitter {
     fn compile_path(&mut self, segments: &[ast::Ident], subject: &str, c: &mut Compiled) {
         if let Some((en, var, _)) = self.pattern_variant(segments) {
             self.note_prelude(&en);
-            c.tests.push(format!("{subject}.tag == \"{var}\""));
+            c.tests.push(format!("{subject}.__tag == \"{var}\""));
         } else if let [name] = segments {
             c.binds.push(format!("local {name} = {subject}"));
         } else {
@@ -87,7 +87,7 @@ impl Emitter {
 
     /// A struct pattern: either a named struct (`Point { x, y }`, tested by
     /// `__struct`) or a struct-shaped enum variant (`Shape::Circle { r }`,
-    /// tested by `tag`). Each field recurses against `subject.field`.
+    /// tested by `__tag`). Each field recurses against `subject.field`.
     fn compile_struct(
         &mut self,
         path: &[ast::Ident],
@@ -97,7 +97,7 @@ impl Emitter {
     ) {
         if let Some((en, var, VariantShape::Named)) = self.pattern_variant(path) {
             self.note_prelude(&en);
-            c.tests.push(format!("{subject}.tag == \"{var}\""));
+            c.tests.push(format!("{subject}.__tag == \"{var}\""));
         } else if let Some(name) = path.last() {
             c.tests.push(format!("{subject}.__struct == \"{name}\""));
         }
@@ -122,7 +122,7 @@ impl Emitter {
     ) {
         if let Some((en, var, _)) = self.pattern_variant(path) {
             self.note_prelude(&en);
-            c.tests.push(format!("{subject}.tag == \"{var}\""));
+            c.tests.push(format!("{subject}.__tag == \"{var}\""));
         } else if let Some(name) = path.last() {
             // A newtype struct pattern destructures the `[1]` payload.
             c.tests.push(format!("{subject}.__struct == \"{name}\""));

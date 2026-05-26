@@ -386,7 +386,7 @@ impl Emitter {
             }
             Some(PathKind::Variant(en, var, VariantShape::Unit)) => {
                 self.note_prelude(&en);
-                format!("{{ _enum: \"{en}\", tag: \"{var}\" }}")
+                format!("{{ __enum: \"{en}\", __tag: \"{var}\" }}")
             }
             // A tuple/struct variant in path position (no payload applied) is a
             // constructor function; the type checker should have rewritten it.
@@ -466,7 +466,7 @@ impl Emitter {
         if let Some(PathKind::Variant(en, var, VariantShape::Named)) = self.resolve_path(path) {
             self.note_prelude(&en);
             let body = self.emit_field_inits(fields);
-            return format!("{{ _enum: \"{en}\", tag: \"{var}\"{body} }}");
+            return format!("{{ __enum: \"{en}\", __tag: \"{var}\"{body} }}");
         }
         let Some(name) = path.last() else {
             return "undefined".to_string();
@@ -513,7 +513,7 @@ impl Emitter {
     fn emit_tuple_variant(&mut self, en: &str, var: &str, args: &[ast::Expr]) -> String {
         self.note_prelude(en);
         let payload = self.emit_positional(args);
-        format!("{{ _enum: \"{en}\", tag: \"{var}\"{payload} }}")
+        format!("{{ __enum: \"{en}\", __tag: \"{var}\"{payload} }}")
     }
 
     /// Lower a tuple/newtype struct construction `N(a, …)` to its tagged object.
@@ -625,7 +625,7 @@ impl Emitter {
     /// Lower `e?`. The short-circuit must return the carrier from the enclosing
     /// function, which a self-contained IIFE cannot do. So the guard is hoisted
     /// as statements into the current buffer — `const __try_N = e; if
-    /// (__try_N.tag === "Err" || __try_N.tag === "None") return __try_N;` — and
+    /// (__try_N.__tag === "Err" || __try_N.__tag === "None") return __try_N;` — and
     /// the expression value of `e?` is the unwrapped payload `__try_N._0`.
     fn emit_try(&mut self, inner: &ast::Expr) -> String {
         let value = self.emit_expr(inner);
@@ -633,7 +633,7 @@ impl Emitter {
         self.try_seq += 1;
         self.line(format!("const {tmp} = {value};"));
         self.line(format!(
-            "if ({tmp}.tag === \"Err\" || {tmp}.tag === \"None\") return {tmp};"
+            "if ({tmp}.__tag === \"Err\" || {tmp}.__tag === \"None\") return {tmp};"
         ));
         format!("{tmp}._0")
     }

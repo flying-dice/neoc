@@ -333,10 +333,10 @@ pub(crate) struct LoopFrame {
 }
 
 const RESULT_PRELUDE: &str = "\
-local Ok   = function(v) return { _enum = \"Result\", tag = \"Ok\", v } end
-local Err  = function(e) return { _enum = \"Result\", tag = \"Err\", e } end
-local Some = function(v) return { _enum = \"Option\", tag = \"Some\", v } end
-local None = { _enum = \"Option\", tag = \"None\" }";
+local Ok   = function(v) return { __enum = \"Result\", __tag = \"Ok\", v } end
+local Err  = function(e) return { __enum = \"Result\", __tag = \"Err\", e } end
+local Some = function(v) return { __enum = \"Option\", __tag = \"Some\", v } end
+local None = { __enum = \"Option\", __tag = \"None\" }";
 
 impl Emitter {
     pub(crate) fn error(&mut self, message: impl Into<String>) {

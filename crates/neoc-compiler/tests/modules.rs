@@ -485,7 +485,7 @@ fn cross_module_enum_match_and_construction_lower_correctly() {
         "match on an imported enum should test the variant tag:\n{main_lua}"
     );
     assert!(
-        main_lua.contains("tag = \"Green\""),
+        main_lua.contains("__tag = \"Green\""),
         "constructing an imported variant should build the tagged table:\n{main_lua}"
     );
 }

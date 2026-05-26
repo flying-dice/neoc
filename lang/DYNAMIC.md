@@ -61,11 +61,11 @@ An enum value is a tagged table carrying its variant name and payload:
 
 A variant constructor lowers at each use site (§4.4):
 
-- **Unit variant** `E::V` → `{ _enum = "E", tag = "V" }`
-- **Tuple variant** `E::V(a, b)` → `{ _enum = "E", tag = "V", ⟦a⟧, ⟦b⟧ }` (payload at `[1]`, `[2]`, …)
-- **Struct variant** `E::V { x: a }` → `{ _enum = "E", tag = "V", x = ⟦a⟧ }`
+- **Unit variant** `E::V` → `{ __enum = "E", __tag = "V" }`
+- **Tuple variant** `E::V(a, b)` → `{ __enum = "E", __tag = "V", ⟦a⟧, ⟦b⟧ }` (payload at `[1]`, `[2]`, …)
+- **Struct variant** `E::V { x: a }` → `{ __enum = "E", __tag = "V", x = ⟦a⟧ }`
 
-`tag` is read by `match`; `_enum` guards against matching a same-tagged variant of a different enum.
+`__tag` is read by `match`; `__enum` guards against matching a same-tagged variant of a different enum.
 
 **Enums with methods.** When an enum has any `impl` block or `#[derive(...)]`, it emits a method table doubling as the shared metatable — exactly like a struct (§3.1):
 
@@ -77,11 +77,11 @@ A variant constructor lowers at each use site (§4.4):
 
 Every variant construction is then `setmetatable`d onto `E`, so a value finds its methods through the metatable and a method call lowers to a Lua colon call (§3.3, §4.7):
 
-- **Unit variant** `E::V` → `setmetatable({ _enum = "E", tag = "V" }, E)`
-- **Tuple variant** `E::V(a, b)` → `setmetatable({ _enum = "E", tag = "V", ⟦a⟧, ⟦b⟧ }, E)`
-- **Struct variant** `E::V { x: a }` → `setmetatable({ _enum = "E", tag = "V", x = ⟦a⟧ }, E)`
+- **Unit variant** `E::V` → `setmetatable({ __enum = "E", __tag = "V" }, E)`
+- **Tuple variant** `E::V(a, b)` → `setmetatable({ __enum = "E", __tag = "V", ⟦a⟧, ⟦b⟧ }, E)`
+- **Struct variant** `E::V { x: a }` → `setmetatable({ __enum = "E", __tag = "V", x = ⟦a⟧ }, E)`
 
-`impl` methods (§3.3) and derived methods (§6) attach to `E` as for a struct. The metatable changes nothing `match` or `?` rely on — they read `.tag`/`._enum`, which a metatable does not shadow. A plain enum with no methods keeps the bare tagged table (no metatable). The `Result`/`Option` prelude enums (§7) are always plain.
+`impl` methods (§3.3) and derived methods (§6) attach to `E` as for a struct. The metatable changes nothing `match` or `?` rely on — they read `.__tag`/`.__enum`, which a metatable does not shadow. A plain enum with no methods keeps the bare tagged table (no metatable). The `Result`/`Option` prelude enums (§7) are always plain.
 
 ### 3.3 `impl`
 
@@ -161,9 +161,9 @@ Number, string, and bool literals lower to their Lua spelling (`STRING_LITERAL` 
 ⟦ S { f: e, … } ⟧ₑ      = S.new({ f = ⟦e⟧, … })
 ⟦ S { f, .. base } ⟧ₑ   = S.new({ f = f, <copied fields from ⟦base⟧> })
 ⟦ N(a) ⟧ₑ               = N.new(⟦a⟧)     (tuple/newtype struct: a call constructs through .new)
-⟦ E::V ⟧ₑ               = { _enum = "E", tag = "V" }
-⟦ E::V(a, …) ⟧ₑ         = { _enum = "E", tag = "V", ⟦a⟧, … }
-⟦ E::V { x: a, … } ⟧ₑ   = { _enum = "E", tag = "V", x = ⟦a⟧, … }
+⟦ E::V ⟧ₑ               = { __enum = "E", __tag = "V" }
+⟦ E::V(a, …) ⟧ₑ         = { __enum = "E", __tag = "V", ⟦a⟧, … }
+⟦ E::V { x: a, … } ⟧ₑ   = { __enum = "E", __tag = "V", x = ⟦a⟧, … }
 ```
 
 Prelude constructors `Ok`/`Err`/`Some`/`None` follow §7.
@@ -237,7 +237,7 @@ A value-producing block is an IIFE; a statement block is a Lua `do … end`.
 ```
 ⟦ e? ⟧ₑ  hoists, before the statement that uses the value:
   local ⟪t⟫ = ⟦e⟧
-  if ⟪t⟫.tag == "Err" or ⟪t⟫.tag == "None" then return ⟪t⟫ end
+  if ⟪t⟫.__tag == "Err" or ⟪t⟫.__tag == "None" then return ⟪t⟫ end
 and yields the expression  ⟪t⟫[1]
 ```
 
@@ -252,8 +252,8 @@ _              test: true                          bind: —
 x              test: true                          bind: local x = __s
 42 / "s" / true test: __s == 42                    bind: —
 S { f: p }     test: __s.__struct == "S" and <test p over __s.f>   bind: <p over __s.f>
-E::V           test: __s.tag == "V"                bind: —
-E::V(p₁, …)    test: __s.tag == "V" and <tests>    bind: <pᵢ over __s[i]>
+E::V           test: __s.__tag == "V"                bind: —
+E::V(p₁, …)    test: __s.__tag == "V" and <tests>    bind: <pᵢ over __s[i]>
 p₁ | p₂        test: <test p₁> or <test p₂>        bind: shared names
 ```
 
@@ -263,7 +263,7 @@ A guard `if g` is appended to the arm's test with `and ⟦g⟧`, evaluated only 
 
 ### 6.1 `#[derive(Clone)]`
 
-Emits `function S.clone(self)` returning a shallow copy carrying the same `__struct`/`_enum` tag.
+Emits `function S.clone(self)` returning a shallow copy carrying the same `__struct`/`__enum` tag.
 
 ### 6.2 `#[derive(Eq)]`
 
@@ -292,9 +292,9 @@ The shape of `__tests` is part of the runtime contract (§7).
 The shapes the emitted Lua relies on. These are part of the spec: a passing `CONFORMANCE/` test depends on them, and the embedding runtime must agree.
 
 - **Struct**: `{ __struct = "TypeName", <fields> }`, with the type table as its metatable (`Type.__index = Type`) so methods resolve. Newtype field at `[1]`.
-- **Enum**: `{ _enum = "TypeName", tag = "VariantName", <payload> }`. Tuple payload at `[1..]`, struct payload by field name.
-- **`Result<T, E>`**: the prelude enum, lowered per §3.2 — `Ok(v)` is `{ _enum = "Result", tag = "Ok", v }`, `Err(e)` is `{ _enum = "Result", tag = "Err", e }`.
-- **`Option<T>`**: `Some(v)` is `{ _enum = "Option", tag = "Some", v }`, `None` is `{ _enum = "Option", tag = "None" }`.
+- **Enum**: `{ __enum = "TypeName", __tag = "VariantName", <payload> }`. Tuple payload at `[1..]`, struct payload by field name.
+- **`Result<T, E>`**: the prelude enum, lowered per §3.2 — `Ok(v)` is `{ __enum = "Result", __tag = "Ok", v }`, `Err(e)` is `{ __enum = "Result", __tag = "Err", e }`.
+- **`Option<T>`**: `Some(v)` is `{ __enum = "Option", __tag = "Some", v }`, `None` is `{ __enum = "Option", __tag = "None" }`.
 - **Method dispatch**: `value:method(…)` (Lua colon call), resolved through the value's metatable. The method lives on the type table as `Type.method(self, …)`.
 - **Indexing**: neoc is 0-based; lists lower to 1-based Lua tables with a `+ 1` adjustment at every index site.
 - **Tests**: `__tests` maps test names to zero-argument functions.
@@ -302,10 +302,10 @@ The shapes the emitted Lua relies on. These are part of the spec: a passing `CON
 The Result/Option prelude is emitted only when the module references them:
 
 ```
-local Ok   = function(v) return { _enum = "Result", tag = "Ok", v } end
-local Err  = function(e) return { _enum = "Result", tag = "Err", e } end
-local Some = function(v) return { _enum = "Option", tag = "Some", v } end
-local None = { _enum = "Option", tag = "None" }
+local Ok   = function(v) return { __enum = "Result", __tag = "Ok", v } end
+local Err  = function(e) return { __enum = "Result", __tag = "Err", e } end
+local Some = function(v) return { __enum = "Option", __tag = "Some", v } end
+local None = { __enum = "Option", __tag = "None" }
 ```
 
 ## 8. Lua 5.1 deference

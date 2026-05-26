@@ -6,7 +6,7 @@
 //!
 //! The emitted Lua follows the runtime conventions in `lang/DYNAMIC.md` §6–§7:
 //! a struct value is `{ __struct = "Name", <fields> }` (newtype field at `[1]`);
-//! an enum value is `{ _enum = "Name", tag = "Variant", <payload> }` (tuple
+//! an enum value is `{ __enum = "Name", __tag = "Variant", <payload> }` (tuple
 //! payload at `[1..]`, struct payload by field name); methods are plain
 //! functions on the type's table taking the receiver first.
 //!
@@ -156,15 +156,15 @@ fn clone_enum_body(name: &str, variants: &[ast::Variant]) -> Vec<String> {
     let mut out = Vec::new();
     for v in variants {
         let mut entries = vec![
-            format!("_enum = \"{name}\""),
-            format!("tag = \"{}\"", v.name),
+            format!("__enum = \"{name}\""),
+            format!("__tag = \"{}\"", v.name),
         ];
         entries.extend(
             variant_keys(&v.body)
                 .into_iter()
                 .map(|k| k.copy_entry("self")),
         );
-        out.push(format!("  if self.tag == \"{}\" then", v.name));
+        out.push(format!("  if self.__tag == \"{}\" then", v.name));
         out.push(format!("    return {{ {} }}", entries.join(", ")));
         out.push("  end".to_string());
     }
@@ -193,7 +193,7 @@ fn eq_struct_body(body: &ast::StructBody) -> Vec<String> {
 }
 
 fn eq_enum_body(variants: &[ast::Variant]) -> Vec<String> {
-    let mut out = vec!["  if a._enum ~= b._enum or a.tag ~= b.tag then".to_string()];
+    let mut out = vec!["  if a.__enum ~= b.__enum or a.__tag ~= b.__tag then".to_string()];
     out.push("    return false".to_string());
     out.push("  end".to_string());
     for v in variants {
@@ -205,7 +205,7 @@ fn eq_enum_body(variants: &[ast::Variant]) -> Vec<String> {
             .iter()
             .map(|k| format!("{} == {}", k.access("a"), k.access("b")))
             .collect();
-        out.push(format!("  if a.tag == \"{}\" then", v.name));
+        out.push(format!("  if a.__tag == \"{}\" then", v.name));
         out.push(format!("    return {}", conds.join(" and ")));
         out.push("  end".to_string());
     }
@@ -236,7 +236,7 @@ fn debug_struct_body(name: &str, body: &ast::StructBody) -> Vec<String> {
 fn debug_enum_body(variants: &[ast::Variant]) -> Vec<String> {
     let mut out = Vec::new();
     for v in variants {
-        out.push(format!("  if self.tag == \"{}\" then", v.name));
+        out.push(format!("  if self.__tag == \"{}\" then", v.name));
         out.push(format!(
             "    return {}",
             debug_render(&v.name, &variant_keys(&v.body), "self")
@@ -304,7 +304,7 @@ fn display_struct_body(name: &str, body: &ast::StructBody) -> Vec<String> {
 fn display_enum_body(variants: &[ast::Variant]) -> Vec<String> {
     let mut out = Vec::new();
     for v in variants {
-        out.push(format!("  if self.tag == \"{}\" then", v.name));
+        out.push(format!("  if self.__tag == \"{}\" then", v.name));
         out.push(format!(
             "    return {}",
             display_render(&v.name, &variant_keys(&v.body), "self")
@@ -442,14 +442,14 @@ mod tests {
             lua,
             vec![
                 "function Shape.clone(self)",
-                "  if self.tag == \"Dot\" then",
-                "    return { _enum = \"Shape\", tag = \"Dot\" }",
+                "  if self.__tag == \"Dot\" then",
+                "    return { __enum = \"Shape\", __tag = \"Dot\" }",
                 "  end",
-                "  if self.tag == \"Pair\" then",
-                "    return { _enum = \"Shape\", tag = \"Pair\", self[1], self[2] }",
+                "  if self.__tag == \"Pair\" then",
+                "    return { __enum = \"Shape\", __tag = \"Pair\", self[1], self[2] }",
                 "  end",
-                "  if self.tag == \"Named\" then",
-                "    return { _enum = \"Shape\", tag = \"Named\", label = self.label }",
+                "  if self.__tag == \"Named\" then",
+                "    return { __enum = \"Shape\", __tag = \"Named\", label = self.label }",
                 "  end",
                 "end",
             ]
@@ -492,13 +492,13 @@ mod tests {
             lua,
             vec![
                 "function Shape.eq(a, b)",
-                "  if a._enum ~= b._enum or a.tag ~= b.tag then",
+                "  if a.__enum ~= b.__enum or a.__tag ~= b.__tag then",
                 "    return false",
                 "  end",
-                "  if a.tag == \"Pair\" then",
+                "  if a.__tag == \"Pair\" then",
                 "    return a[1] == b[1] and a[2] == b[2]",
                 "  end",
-                "  if a.tag == \"Named\" then",
+                "  if a.__tag == \"Named\" then",
                 "    return a.label == b.label",
                 "  end",
                 "  return true",
@@ -543,13 +543,13 @@ mod tests {
             lua,
             vec![
                 "function Shape.debug(self)",
-                "  if self.tag == \"Dot\" then",
+                "  if self.__tag == \"Dot\" then",
                 "    return \"Dot\"",
                 "  end",
-                "  if self.tag == \"Pair\" then",
+                "  if self.__tag == \"Pair\" then",
                 "    return \"Pair(\" .. tostring(self[1]) .. \", \" .. tostring(self[2]) .. \")\"",
                 "  end",
-                "  if self.tag == \"Named\" then",
+                "  if self.__tag == \"Named\" then",
                 "    return \"Named { \" .. \"label = \" .. tostring(self.label) .. \" }\"",
                 "  end",
                 "end",
@@ -579,13 +579,13 @@ mod tests {
             lua,
             vec![
                 "function Shape.display(self)",
-                "  if self.tag == \"Dot\" then",
+                "  if self.__tag == \"Dot\" then",
                 "    return \"Dot\"",
                 "  end",
-                "  if self.tag == \"Pair\" then",
+                "  if self.__tag == \"Pair\" then",
                 "    return tostring(self[1]) .. \", \" .. tostring(self[2])",
                 "  end",
-                "  if self.tag == \"Named\" then",
+                "  if self.__tag == \"Named\" then",
                 "    return tostring(self.label)",
                 "  end",
                 "end",
