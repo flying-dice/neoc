@@ -38,9 +38,7 @@ lint:
   stage: lint
   cache:
     - *tools_cache
-    - key:
-        files: [Cargo.lock]
-        prefix: lint
+    - key: lint-target
       paths:
         - target/
   script:
@@ -54,9 +52,7 @@ test:
   needs: [lint]
   cache:
     - *tools_cache
-    - key:
-        files: [Cargo.lock]
-        prefix: test
+    - key: test-target
       paths:
         - target/
   script:
@@ -93,9 +89,7 @@ wasm:
   needs: [lint]
   cache:
     - *tools_cache
-    - key:
-        files: [Cargo.lock]
-        prefix: wasm
+    - key: wasm-target
       paths:
         - target/
   script:
@@ -116,9 +110,7 @@ build:linux-x86_64:
   stage: build
   cache:
     - *tools_cache
-    - key:
-        files: [Cargo.lock]
-        prefix: build-x86_64-linux-gnu
+    - key: build-x86_64-linux-gnu-target
       paths:
         - target/
   script:
@@ -140,9 +132,7 @@ build:windows-x86_64:
     CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: x86_64-w64-mingw32-gcc
   cache:
     - *tools_cache
-    - key:
-        files: [Cargo.lock]
-        prefix: build-x86_64-windows-gnu
+    - key: build-x86_64-windows-gnu-target
       paths:
         - target/
   script:
