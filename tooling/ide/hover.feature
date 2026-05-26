@@ -14,6 +14,20 @@ Feature: Hover
       fn first<T>(a: T, b: T) -> T
       """
 
+  Scenario: Hover on a local binding shows its inferred type
+    Given the source:
+      """
+      fn main() -> number {
+        let total = 1 + 2
+        total
+      }
+      """
+    When I hover on "total" at the call site
+    Then the hover shows:
+      """
+      total: number
+      """
+
   # Call-site instantiation — resolving T from the argument types — is not
   # implemented yet (see neoc#60 "Out of scope"). @pending keeps this scenario
   # out of the run so CI stays green; drop the tag when the instantiation query

@@ -68,7 +68,21 @@ pub fn hover(source: &str, position: tower_lsp::lsp_types::Position) -> Option<S
         ));
     }
 
-    None
+    // 5. A local binding or sub-expression with no declaration to resolve —
+    //    show the inferred type of the narrowest expression under the cursor,
+    //    `name: ty` for an identifier, the bare type otherwise.
+    let ty = inferred_type_at(source, byte)?;
+    let label = format!("{name}: {ty}");
+    Some(code_block(&label))
+}
+
+/// The neoc type inferred for the narrowest expression covering `byte`, if any.
+fn inferred_type_at(source: &str, byte: usize) -> Option<String> {
+    neoc_types::expression_types(&neoc_parser::parse(source).module)
+        .into_iter()
+        .filter(|t| t.start <= byte && byte < t.end)
+        .min_by_key(|t| t.end - t.start)
+        .map(|t| t.ty.to_string())
 }
 
 /// Appends a `///` doc comment below a signature block, if present.
@@ -182,9 +196,19 @@ mod tests {
     }
 
     #[test]
-    fn unknown_local_is_none() {
-        let src = "fn m() { let x = 1; x }\n";
-        assert_eq!(hover_on(src, "x", 2), None);
+    fn local_binding_hover_shows_inferred_type() {
+        // A local has no declaration to resolve, so hover falls back to the
+        // inferred type of the expression under the cursor.
+        let src = "fn m() -> number { let count = 1; count }\n";
+        let h = hover_on(src, "count", 2).expect("hover on local use");
+        assert!(h.contains("count: number"), "{h}");
+    }
+
+    #[test]
+    fn unknown_name_outside_any_expression_is_none() {
+        // The `fn` keyword is not an expression and names nothing.
+        let src = "fn m() -> number { 1 }\n";
+        assert_eq!(hover(src, byte_to_position(src, 0)), None);
     }
 
     #[test]
