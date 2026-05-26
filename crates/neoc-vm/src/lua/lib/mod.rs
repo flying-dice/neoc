@@ -10,6 +10,7 @@ pub mod base64;
 pub mod chrono;
 pub mod compile;
 pub mod compress;
+pub mod crypto;
 pub mod csv;
 pub mod diff;
 pub mod glob;

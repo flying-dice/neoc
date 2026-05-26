@@ -39,6 +39,15 @@ xxhash-rust = { version = "0.8", features = ["xxh3", "xxh64"] }
 # transitively via the digest stack.
 hmac = "0.12"
 subtle = "2"
+# AEAD primitives backing `lib:crypto`. `aes-gcm` 0.10 ships Aes128Gcm /
+# Aes256Gcm; `chacha20poly1305` 0.10 ships ChaCha20Poly1305. Both implement
+# the `aead::Aead` trait we dispatch through, and verify the tag in constant
+# time inside the crate. RustCrypto family — same maintainers and audit basis
+# as the `hmac`/`sha2`/`subtle` crates already in the tree, though they pull
+# their own AEAD primitive crates (aes, ghash, chacha20, poly1305) into the
+# lockfile.
+aes-gcm = "0.10"
+chacha20poly1305 = "0.10"
 flate2 = "1"
 zstd = "0.13"
 brotli = "7"

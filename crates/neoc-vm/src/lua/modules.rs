@@ -88,6 +88,7 @@ pub fn install(lua: &Lua) -> mlua::Result<()> {
     modules.insert("lib:chrono".into(), lib::chrono::module(lua)?);
     modules.insert("lib:compile".into(), lib::compile::module(lua)?);
     modules.insert("lib:compress".into(), lib::compress::module(lua)?);
+    modules.insert("lib:crypto".into(), lib::crypto::module(lua)?);
     modules.insert("lib:csv".into(), lib::csv::module(lua)?);
     modules.insert("lib:diff".into(), lib::diff::module(lua)?);
     modules.insert("lib:glob".into(), lib::glob::module(lua)?);
@@ -210,6 +211,7 @@ pub fn headers(lua: &Lua) -> mlua::Result<Vec<(String, String)>> {
     push(lib::chrono::declare(lua))?;
     push(lib::compile::declare(lua))?;
     push(lib::compress::declare(lua))?;
+    push(lib::crypto::declare(lua))?;
     push(lib::csv::declare(lua))?;
     push(lib::diff::declare(lua))?;
     push(lib::glob::declare(lua))?;
@@ -266,6 +268,7 @@ mod tests {
         assert!(keys.contains(&"lib:chrono"));
         assert!(keys.contains(&"lib:compile"));
         assert!(keys.contains(&"lib:compress"));
+        assert!(keys.contains(&"lib:crypto"));
         assert!(keys.contains(&"lib:csv"));
         assert!(keys.contains(&"lib:diff"));
         assert!(keys.contains(&"lib:glob"));
@@ -306,7 +309,7 @@ mod tests {
         assert!(keys.contains(&"vnd:sqlx_postgres"));
         assert!(keys.contains(&"vnd:testcontainers_modules"));
         assert!(keys.contains(&"vnd:toml"));
-        assert_eq!(keys.len(), 45, "expected 45 migrated modules, got {keys:?}");
+        assert_eq!(keys.len(), 46, "expected 46 migrated modules, got {keys:?}");
 
         for (key, header) in &headers {
             assert!(
@@ -341,6 +344,7 @@ mod tests {
             "lib:chrono" => lib::chrono::module(lua),
             "lib:compile" => lib::compile::module(lua),
             "lib:compress" => lib::compress::module(lua),
+            "lib:crypto" => lib::crypto::module(lua),
             "lib:csv" => lib::csv::module(lua),
             "lib:diff" => lib::diff::module(lua),
             "lib:glob" => lib::glob::module(lua),
