@@ -1,9 +1,13 @@
 # Scope-aware name resolution (cross-file Phase 5)
 
-- **Status:** plan (not started) — needs an RFC against `STATIC.md` before code
+- **Status:** in progress — slices 1–4 landed (binding spans, resolution map,
+  scope-aware references/rename/goto, `unused_let`). `unused_param` and the
+  `shadowing` lint remain, gated on the RFC below.
 - **Priority:** P3 — the largest single tooling item left
 - **Depends on:** `cross-file-resolution` Phases 2–4 (landed); the `WorkspaceIndex`
-- **Gate:** changes language-level static semantics → RFC/design per `CLAUDE.md`
+- **Gate:** the two remaining lints change language-level static semantics →
+  RFC/design per `CLAUDE.md`. The resolution machinery (slices 1–3) is tooling
+  and is opt-in, so it carries no semantic change and landed without the RFC.
 
 ## The gap
 
@@ -172,26 +176,38 @@ then earn a CONFORMANCE home. Pick one in the RFC; do not assume CONFORMANCE.
 
 ## Phased plan (each its own MR)
 
-1. `[ ]` **Binding-site spans in the AST** — add `span` to `Param::Named`,
-   `Pattern::Binding`, `ClosureParam`, and `FieldPat`; thread through
-   `neoc-parser` (`walk_*`). ~35 mechanical sites; AST-equality goldens are
-   unaffected (`Span::eq` is always-true). No behaviour yet.
-2. `[ ]` **Resolution map in `neoc-types`** — `BindingId`, `Binding`,
-   `ResolutionMap` over both locals **and** items; scope frames carry the id;
-   record uses behind a flag at `infer_path:399` only (not `:840`); expose
-   `resolution(module)`. Unit-tested against shadowing / sibling-scope /
-   local-shadows-item fixtures. No LSP change.
-3. `[ ]` **Wire references / rename / highlight / goto to the binding** — resolve
-   the cursor to a `BindingId` and operate on its `uses`, both directions of
-   shadowing. Update the cross-file per-file step. `.feature` scenarios for
-   local-shadows-local *and* local-shadows-item (in-file and cross-file).
-4. `[ ]` **Scope lints** — `unused_let`, `unused_param` (trait-forced params
-   exempt), `shadowing` (gated on the §2 amendment). Tested in `neoc-lsp`
-   alongside the existing lints (not CONFORMANCE/static — they are warnings),
-   unless the RFC adds a compiler warning channel.
+1. `[x]` **Binding-site spans in the AST** — `span` on `Param::Named`,
+   `Pattern::Binding`, `ClosureParam`, `FieldPat`, threaded through the parser.
+   Mechanical; AST-equality goldens unaffected (`Span::eq` is always-true).
+   (commit `a958a2b`.)
+2. `[x]` **Resolution map in `neoc-types`** — `BindingId`, `Binding`,
+   `Resolution` over locals **and** items; scope frames carry the id; uses
+   recorded behind a flag at `infer_path` single-segment resolution only (not
+   the `:840` field-init fallback); `neoc_types::resolution(module)` exposed.
+   Unit-tested: param, both shadowing directions, local-shadows-item, item use.
+   (commit `0807d48`.)
+3. `[x]` **Wire references / rename / highlight / goto to the binding** — locals
+   resolve via the map; items use the text match minus shadowing locals
+   (`item_references`); goto-local jumps to the binding site; cross-file per-file
+   step uses the item path. Tested both shadowing directions + item-vs-local.
+   (commit `e68dc09`.)
+4. `[~]` **Scope lints** — `unused_let` landed, scope-precise with `_`-opt-out
+   (commit `f0658a1`). `unused_param` (trait-forced-param exemption) and
+   `shadowing` (needs the §2 amendment) **remain, RFC-gated** — they change
+   static semantics. Tested in `neoc-lsp` like the existing lints.
 5. `[ ]` **Earn Phase 6** — the resolution recompute on edits is the first
    workspace consumer heavy enough to debounce/cancel (see
    `cross-file-resolution.md` §6).
+
+## Remaining (RFC-gated)
+
+- **`unused_param`** — needs the trait-forced-param exemption (a trait method's
+  params are mandatory on the impl even when unused). The resolution map carries
+  binding kind but not the enclosing-fn context; the lint must learn which params
+  belong to a trait-impl method (an AST walk) before it can fire without false
+  positives. RFC decides the `_`-opt-out and whether impl params are exempt.
+- **`shadowing`** — `STATIC.md` §2 says "Shadowing is allowed and is not a
+  warning." A shadowing lint contradicts that until the RFC amends §2.
 
 ## Pitfalls to avoid
 
