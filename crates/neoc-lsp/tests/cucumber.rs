@@ -40,6 +40,7 @@ struct Ide {
     goto_lines: Vec<u32>,
     highlights: Vec<(u32, u32, String)>,
     folds: Vec<(u32, u32)>,
+    selection_steps: Vec<String>,
 }
 
 #[given("the source:")]
@@ -291,6 +292,40 @@ fn highlight_symbol(world: &mut Ide, ident: String) {
             )
         })
         .collect();
+}
+
+#[when(regex = r#"^I expand the selection at "([^"]+)"$"#)]
+fn expand_selection(world: &mut Ide, marker: String) {
+    let byte = nth_occurrence(&world.source, &marker, 1) + marker.len() / 2;
+    let position = neoc_lsp::byte_to_position(&world.source, byte);
+    let mut steps = Vec::new();
+    let mut node = neoc_lsp::selection_range(&world.source, position);
+    while let Some(selection) = node {
+        let start = neoc_lsp::position_to_byte(&world.source, selection.range.start);
+        let end = neoc_lsp::position_to_byte(&world.source, selection.range.end);
+        steps.push(world.source[start..end].to_string());
+        node = selection.parent.map(|parent| *parent);
+    }
+    world.selection_steps = steps;
+}
+
+#[then(regex = r#"^the innermost selection is "([^"]+)"$"#)]
+fn innermost_selection_is(world: &mut Ide, expected: String) {
+    assert_eq!(
+        world.selection_steps.first().map(String::as_str),
+        Some(expected.as_str()),
+        "innermost selection mismatch; steps: {:?}",
+        world.selection_steps,
+    );
+}
+
+#[then(regex = r#"^the selection eventually covers "([^"]+)"$"#)]
+fn selection_covers(world: &mut Ide, expected: String) {
+    assert!(
+        world.selection_steps.iter().any(|step| step == &expected),
+        "no selection step covers {expected:?}; steps: {:?}",
+        world.selection_steps,
+    );
 }
 
 #[when("I request folds")]

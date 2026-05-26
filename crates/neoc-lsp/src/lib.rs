@@ -2,8 +2,8 @@
 //!
 //! Capabilities: diagnostics, document symbols (outline), goto (definition,
 //! type-definition, implementation), find-all-references, document highlight,
-//! folding ranges, signature help, rename, hover, and completion (with lazy
-//! per-item resolve).
+//! folding ranges, selection ranges, signature help, rename, hover, and
+//! completion (with lazy per-item resolve).
 //! Diagnostics come from [`neoc_compiler::transpile`];
 //! syntax errors carry precise byte ranges from the parser, while type and emit
 //! diagnostics fall back to the document's first line because those stages do
@@ -21,6 +21,7 @@ mod hover;
 mod position;
 mod references;
 mod rename;
+mod selection;
 mod signature;
 mod signature_help;
 mod symbols;
@@ -38,6 +39,7 @@ pub use hover::hover;
 pub use position::{byte_to_position, position_to_byte};
 pub use references::references;
 pub use rename::{prepare_rename, rename};
+pub use selection::selection_range;
 pub use signature_help::signature_help;
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -51,7 +53,8 @@ use tower_lsp::lsp_types::{
     HoverProviderCapability, ImplementationProviderCapability, InitializeParams, InitializeResult,
     InitializedParams, Location, LocationLink, MarkupContent, MarkupKind, MessageType, OneOf,
     Position, PrepareRenameResponse, Range, ReferenceParams, RenameOptions, RenameParams,
-    ServerCapabilities, ServerInfo, SignatureHelp, SignatureHelpOptions, SignatureHelpParams,
+    SelectionRange, SelectionRangeParams, SelectionRangeProviderCapability, ServerCapabilities,
+    ServerInfo, SignatureHelp, SignatureHelpOptions, SignatureHelpParams,
     TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit,
     TypeDefinitionProviderCapability, Url, WorkspaceEdit,
 };
@@ -165,6 +168,7 @@ impl LanguageServer for Backend {
                 references_provider: Some(OneOf::Left(true)),
                 document_highlight_provider: Some(OneOf::Left(true)),
                 folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
+                selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
                 rename_provider: Some(OneOf::Right(RenameOptions {
                     // prepareRename validates the cursor and highlights the name.
                     prepare_provider: Some(true),
@@ -312,6 +316,28 @@ impl LanguageServer for Backend {
                 .map(|range| Location::new(tdp.text_document.uri.clone(), range))
                 .collect();
         Ok(Some(locations))
+    }
+
+    async fn selection_range(
+        &self,
+        params: SelectionRangeParams,
+    ) -> Result<Option<Vec<SelectionRange>>> {
+        let Some(source) = self.source(&params.text_document.uri) else {
+            return Ok(None);
+        };
+        // One selection range per requested position; a position outside every
+        // node degenerates to an empty range so the response stays aligned.
+        let ranges = params
+            .positions
+            .into_iter()
+            .map(|position| {
+                selection::selection_range(&source, position).unwrap_or(SelectionRange {
+                    range: Range::new(position, position),
+                    parent: None,
+                })
+            })
+            .collect();
+        Ok(Some(ranges))
     }
 
     async fn folding_range(&self, params: FoldingRangeParams) -> Result<Option<Vec<FoldingRange>>> {

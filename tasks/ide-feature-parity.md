@@ -73,8 +73,11 @@ Dependency-ordered. `[ ]` todo · `[~]` in-progress · `[x]` done.
 9. `[x]` Folding ranges (`foldingRange`) — brace-delimited bodies + block
    comments, found generically from `{`/`}` CST tokens.
 10. `[ ]` Inlay hints (`inlayHint`) — Type + Parameter kinds first.
-11. `[ ]` Selection range (`selectionRange`).
-12. `[ ]` Matching brace.
+11. `[x]` Selection range (`selectionRange`) — expand-selection up the CST
+    ancestry, equal-range wrappers collapsed.
+12. `[deferred]` Matching brace — rust-analyzer custom request
+    (`experimental/matchingBrace`), not standard LSP; skip until there's a
+    client that wants it.
 13. `[ ]` Organize imports (code action `source.organizeImports`).
 
 ### Tier 3 — high effort / advanced
