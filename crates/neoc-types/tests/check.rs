@@ -382,6 +382,45 @@ fn trait_default_method_may_be_omitted() {
     );
 }
 
+#[test]
+fn trait_impl_parameter_type_must_match() {
+    let d = diags(
+        "trait Show { fn show(self, n: number) -> string; } \
+         struct P; \
+         impl Show for P { fn show(self, n: string) -> string { \"x\" } }",
+    );
+    assert!(
+        d.iter().any(|m| m
+            == "method `show` does not match trait `Show`: expected `fn(number) -> string`, found `fn(string) -> string`"),
+        "{d:?}"
+    );
+}
+
+#[test]
+fn trait_impl_return_type_must_match() {
+    let d = diags(
+        "trait Area { fn area(self) -> number; } \
+         struct Sq; \
+         impl Area for Sq { fn area(self) -> string { \"big\" } }",
+    );
+    assert!(
+        d.iter().any(|m| m
+            == "method `area` does not match trait `Area`: expected `fn() -> number`, found `fn() -> string`"),
+        "{d:?}"
+    );
+}
+
+#[test]
+fn trait_impl_self_returning_method_matches() {
+    // `-> Self` in the trait reads as the target type in the impl: a faithful
+    // `-> P` impl conforms.
+    assert_clean(
+        "trait Dup { fn dup(self) -> Self; } \
+         struct P; \
+         impl Dup for P { fn dup(self) -> P { P } }",
+    );
+}
+
 // ---- method calls & associated functions (STATIC.md §3.4) -----------------
 
 #[test]

@@ -364,6 +364,45 @@ impl<'a> Checker<'a> {
                 ));
             }
         }
+        // Signature conformance: a provided method must match the trait's
+        // declared signature — parameter types, return type, and receiver —
+        // with `Self` read as the target type (`STATIC.md` §3.4). The impl's
+        // collected signature already substitutes `Self` to the target; the
+        // trait's is projected here. An `Unknown` on either side is left to the
+        // error that produced it, so resolution failures do not cascade.
+        let self_ty = Ty::named(target);
+        for m in &t.methods {
+            let Some(info) = self
+                .table
+                .methods
+                .get(&(target.to_string(), m.name.clone()))
+            else {
+                continue;
+            };
+            let want_params: Vec<Ty> = m
+                .params
+                .iter()
+                .map(|p| subst_self_param(p, &self_ty))
+                .collect();
+            let want_ret = subst_self_param(&m.ret, &self_ty);
+            let exact = |a: &Ty, b: &Ty| a == b || a.is_unknown() || b.is_unknown();
+            let matches = info.has_receiver == m.has_receiver
+                && info.params.len() == want_params.len()
+                && info
+                    .params
+                    .iter()
+                    .zip(&want_params)
+                    .all(|(a, b)| exact(a, b))
+                && exact(&info.ret, &want_ret);
+            if !matches {
+                let want = Ty::Fn(want_params, Box::new(want_ret));
+                let got = Ty::Fn(info.params.clone(), Box::new(info.ret.clone()));
+                self.error(format!(
+                    "method `{}` does not match trait `{trait_name}`: expected `{want}`, found `{got}`",
+                    m.name
+                ));
+            }
+        }
     }
 
     // ---- statements & blocks ----------------------------------------------
