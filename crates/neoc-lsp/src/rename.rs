@@ -36,13 +36,13 @@ pub fn rename(source: &str, position: Position, new_name: &str) -> Vec<TextEdit>
         .collect()
 }
 
-/// The edits renaming every occurrence of `name` in `source` to `new_name` — the
-/// name-based core of [`rename`], for rewriting a file other than the one the
-/// cursor is in (a cross-file rename touches the defining file and its
-/// importers).
+/// The edits renaming every occurrence of the item `name` in `source` to
+/// `new_name` — for rewriting a file other than the one the cursor is in (a
+/// cross-file rename touches the defining file and its importers). Uses the
+/// item path, so a local that shadows `name` in this file is left untouched.
 #[must_use]
 pub fn rename_by_name(source: &str, name: &str, new_name: &str) -> Vec<TextEdit> {
-    references::references_by_name(source, name, true)
+    references::item_references(source, name, true)
         .into_iter()
         .map(|range| TextEdit {
             range,
@@ -109,6 +109,46 @@ mod tests {
         assert_eq!(
             renamed,
             "use util::plus;\nfn main() -> number { plus(1, 2) }\n"
+        );
+    }
+
+    #[test]
+    fn renames_a_local_without_touching_a_shadowed_outer() {
+        // `let x` shadows the param `x`. Renaming the inner binding (the trailing
+        // `x`) must leave the param and the `let y = x` use that reads it alone.
+        let src = "fn f(x: number) -> number {\n  let y = x;\n  let x = y;\n  x\n}\n";
+        let edits = rename(src, position_of(src, "x", 4), "z");
+        assert_eq!(
+            apply(src, &edits),
+            "fn f(x: number) -> number {\n  let y = x;\n  let z = y;\n  z\n}\n",
+            "only the inner binding and its use move"
+        );
+    }
+
+    #[test]
+    fn renames_a_param_without_touching_a_shadowing_inner() {
+        // The mirror: renaming the param edits its `let y = x` use but not the
+        // inner `let x` that shadows it.
+        let src = "fn f(x: number) -> number {\n  let y = x;\n  let x = y;\n  x\n}\n";
+        let edits = rename(src, position_of(src, "x", 1), "n");
+        assert_eq!(
+            apply(src, &edits),
+            "fn f(n: number) -> number {\n  let y = n;\n  let x = y;\n  x\n}\n",
+            "the param and its read move; the shadowing local stays"
+        );
+    }
+
+    #[test]
+    fn renames_an_item_without_touching_a_shadowing_local() {
+        // `let helper` shadows the top-level `helper`. Renaming the item (cursor
+        // on its declaration) rewrites the function but not the unrelated local.
+        let src =
+            "fn helper() -> number { 1 }\nfn main() -> number {\n  let helper = 2;\n  helper\n}\n";
+        let edits = rename(src, position_of(src, "helper", 1), "aide");
+        assert_eq!(
+            apply(src, &edits),
+            "fn aide() -> number { 1 }\nfn main() -> number {\n  let helper = 2;\n  helper\n}\n",
+            "the item moves; the shadowing local is left alone"
         );
     }
 

@@ -33,12 +33,13 @@ pub fn name_at(source: &str, position: tower_lsp::lsp_types::Position) -> Option
     cst::identifier_at(&tree, source, byte).map(str::to_string)
 }
 
-/// The definition for the identifier at `position`, if it names a top-level
-/// declaration.
+/// The definition for the identifier at `position`.
 ///
-/// Resolves against the document's top-level items (fns, structs, enums,
-/// traits, consts, type aliases). Returns `None` when the name is unknown or
-/// the cursor already sits on the defining name itself.
+/// A use of a *local* binding (param, `let`, closure or pattern bind) jumps to
+/// that binding's site via [`neoc_types::resolution`], so scope and shadowing
+/// are respected. Otherwise it resolves against the document's top-level items
+/// (fns, structs, enums, traits, consts, type aliases). Returns `None` when the
+/// name is unknown or the cursor already sits on the defining name itself.
 #[must_use]
 pub fn goto_definition(
     source: &str,
@@ -46,6 +47,24 @@ pub fn goto_definition(
 ) -> Option<Definition> {
     let tree = cst::parse(source);
     let byte = position_to_byte(source, position);
+
+    // A local binding: jump to its def site, unless the cursor is already there.
+    let module = neoc_parser::parse(source).module;
+    let resolution = neoc_types::resolution(&module);
+    if let Some(neoc_types::Resolved::Local(id)) = resolution.at(byte) {
+        if let Some(binding) = resolution.binding(id) {
+            let (start, end) = binding.def;
+            if (start..end).contains(&byte) {
+                return None;
+            }
+            let range = byte_range(source, start, end);
+            return Some(Definition {
+                full_range: range,
+                name_range: range,
+            });
+        }
+    }
+
     let name = cst::identifier_at(&tree, source, byte)?;
     let decl = cst::find_decl(&tree, source, name)?;
     // Don't report a no-op jump when the cursor already sits on the defining

@@ -55,7 +55,7 @@ pub use highlight::document_highlight;
 pub use hover::hover;
 pub use inlay::inlay_hints;
 pub use position::{byte_to_position, position_to_byte};
-pub use references::{references, references_by_name};
+pub use references::{item_references, references, references_by_name};
 pub use rename::{prepare_rename, rename, rename_by_name};
 pub use selection::selection_range;
 pub use semantic_tokens::{TOKEN_TYPES, semantic_tokens};
@@ -241,7 +241,8 @@ pub fn project_references(
         let Some(text) = index.document_text(&file) else {
             continue;
         };
-        for range in references::references_by_name(text, name, include_declaration) {
+        // Item path: text match minus any local shadowing the name in that file.
+        for range in references::item_references(text, name, include_declaration) {
             out.push((file.clone(), range));
         }
     }

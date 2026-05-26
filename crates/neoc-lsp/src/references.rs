@@ -1,14 +1,18 @@
-//! Find-all-references: every occurrence of the name under the cursor.
+//! Find-all-references: every occurrence the name under the cursor refers to.
 //!
-//! Resolution is name-based and file-local — the same model goto-definition
-//! uses. The identifier under the cursor is matched against every `identifier`
-//! node in the document; each match is a reference. There is no scope analysis
-//! yet, so a local that shadows a top-level name is reported alongside it
-//! (consistent with goto and hover, which also resolve by name), and references
-//! in other files wait on a multi-document index.
+//! Resolution is scope-aware for *local* bindings (params, `let`s, closure and
+//! pattern binds): the cursor resolves to a binding via
+//! [`neoc_types::resolution`], and only that binding's occurrences are returned
+//! — a shadowing inner `x` and an outer `x` no longer conflate. For a top-level
+//! item (or an unknown name) it falls back to matching the identifier text
+//! across the file, *minus* any occurrence the resolution map marks as a
+//! shadowing local, so a rename of the item never reaches into a local's scope.
+//! Cross-file is the same item path, run per file (`tasks/scope-aware-resolution.md`).
 
 use tower_lsp::lsp_types::{Position, Range};
 use tree_sitter::Tree;
+
+use neoc_types::Resolved;
 
 use crate::cst;
 use crate::position::{byte_range, position_to_byte};
@@ -22,19 +26,29 @@ use crate::position::{byte_range, position_to_byte};
 pub fn references(source: &str, position: Position, include_declaration: bool) -> Vec<Range> {
     let tree = cst::parse(source);
     let byte = position_to_byte(source, position);
+    let module = neoc_parser::parse(source).module;
+    let resolution = neoc_types::resolution(&module);
+
+    // A local binding: return exactly its scope occurrences (def + uses).
+    if let Some(Resolved::Local(id)) = resolution.at(byte) {
+        let def = resolution.binding(id).map(|b| b.def);
+        return resolution
+            .local_occurrences(id)
+            .into_iter()
+            .filter(|range| include_declaration || Some(*range) != def)
+            .map(|(start, end)| byte_range(source, start, end))
+            .collect();
+    }
+
+    // A top-level item or unknown name: text match minus shadowing locals.
     let Some(name) = cst::identifier_at(&tree, source, byte) else {
         return Vec::new();
     };
-    references_by_name(source, name, include_declaration)
+    item_references(source, name, include_declaration)
 }
 
 /// Every occurrence of the identifier `name` in `source`, in source order — the
-/// name-based core of [`references`].
-///
-/// A cross-file caller uses this to find references in a file other than the one
-/// the cursor is in, where there is no position to resolve. `include_declaration`
-/// drops the declaring name when this file declares `name`; in a file that only
-/// *uses* the name there is no declaration to drop.
+/// raw name-based match, with no scope analysis.
 #[must_use]
 pub fn references_by_name(source: &str, name: &str, include_declaration: bool) -> Vec<Range> {
     let tree = cst::parse(source);
@@ -43,6 +57,25 @@ pub fn references_by_name(source: &str, name: &str, include_declaration: bool) -
         .into_iter()
         .map(|node| byte_range(source, node.start_byte(), node.end_byte()))
         .filter(|range| include_declaration || Some(*range) != decl)
+        .collect()
+}
+
+/// Occurrences of a top-level item `name`, excluding any that the resolution map
+/// marks as a *local* binding shadowing the name. This is the cross-file and
+/// item path: a rename of `add` must rewrite its declaration, its `use` segment,
+/// and its call sites, but never a `let add` that shadows it. The map records
+/// only single-segment value uses, so type-position and struct-literal uses
+/// (never locals) correctly survive the filter.
+#[must_use]
+pub fn item_references(source: &str, name: &str, include_declaration: bool) -> Vec<Range> {
+    let module = neoc_parser::parse(source).module;
+    let resolution = neoc_types::resolution(&module);
+    references_by_name(source, name, include_declaration)
+        .into_iter()
+        .filter(|range| {
+            let byte = position_to_byte(source, range.start);
+            !matches!(resolution.at(byte), Some(Resolved::Local(_)))
+        })
         .collect()
 }
 

@@ -69,15 +69,18 @@ impl Resolution {
     }
 
     /// The binding a byte position falls on — a use site, or a local binding's
-    /// own def site. `None` when the position is on no resolved identifier.
+    /// own def site. The end is inclusive, so a cursor touching either edge of
+    /// the identifier resolves; identifier spans are always separated by a
+    /// non-identifier character, so no two are adjacent. `None` when the
+    /// position is on no resolved identifier.
     #[must_use]
     pub fn at(&self, pos: usize) -> Option<Resolved> {
-        if let Some((_, _, target)) = self.uses.iter().find(|(s, e, _)| pos >= *s && pos < *e) {
+        if let Some((_, _, target)) = self.uses.iter().find(|(s, e, _)| pos >= *s && pos <= *e) {
             return Some(target.clone());
         }
         self.bindings
             .iter()
-            .find(|b| pos >= b.def.0 && pos < b.def.1)
+            .find(|b| pos >= b.def.0 && pos <= b.def.1)
             .map(|b| Resolved::Local(b.id))
     }
 
