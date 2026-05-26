@@ -88,6 +88,7 @@ pub trait Lint {
 const REGISTRY: &[&dyn Lint] = &[
     &UnusedImport,
     &UnusedDeclaration,
+    &UnusedLet,
     &NeedlessReturn,
     &BoolComparison,
     &NeedlessParens,
@@ -130,6 +131,39 @@ impl Lint for UnusedImport {
             .map(|unused| Finding {
                 range: unused.range,
                 message: format!("unused import `{}`", unused.name),
+                tag: Some(DiagnosticTag::UNNECESSARY),
+            })
+            .collect()
+    }
+}
+
+/// `unused_let`: a `let` binding that is never read. Scope-aware — it asks
+/// `neoc_types::resolution` whether the binding has any use, so a shadowed-then-
+/// unused binding is caught precisely. A `_`-prefixed name opts out (the
+/// convention for a deliberately-unused binding). Scoped to `let` for now;
+/// unused parameters and shadowing wait on the RFC
+/// (`tasks/scope-aware-resolution.md`).
+struct UnusedLet;
+
+impl Lint for UnusedLet {
+    fn name(&self) -> &'static str {
+        "unused_let"
+    }
+
+    fn check(&self, cx: &LintContext) -> Vec<Finding> {
+        let resolution = neoc_types::resolution(cx.module());
+        resolution
+            .bindings()
+            .iter()
+            .filter(|b| b.kind == neoc_types::BindingKind::Let)
+            .filter(|b| !b.name.starts_with('_'))
+            .filter(|b| !resolution.is_used(b.id))
+            .map(|b| Finding {
+                range: byte_range(cx.source(), b.def.0, b.def.1),
+                message: format!(
+                    "unused `let` binding `{}`; prefix with `_` to silence",
+                    b.name
+                ),
                 tag: Some(DiagnosticTag::UNNECESSARY),
             })
             .collect()
@@ -340,6 +374,32 @@ mod tests {
         assert_eq!(d.message, "unused import `fs`");
         assert_eq!(d.severity, Some(DiagnosticSeverity::WARNING));
         assert_eq!(d.tags, Some(vec![DiagnosticTag::UNNECESSARY]));
+    }
+
+    #[test]
+    fn warns_on_an_unused_let_but_not_a_used_or_underscored_one() {
+        let src = "fn f() -> number {\n  let unused = 1;\n  let used = 2;\n  let _ignored = 3;\n  used\n}\n";
+        let unused_lets: Vec<_> = lints(src)
+            .into_iter()
+            .filter(|d| d.code == Some(NumberOrString::String("unused_let".into())))
+            .collect();
+        assert_eq!(unused_lets.len(), 1, "only `unused` should fire");
+        assert!(
+            unused_lets[0]
+                .message
+                .contains("unused `let` binding `unused`")
+        );
+        assert_eq!(unused_lets[0].tags, Some(vec![DiagnosticTag::UNNECESSARY]));
+    }
+
+    #[test]
+    fn unused_let_is_scope_precise_for_a_shadow() {
+        // The inner `x` is read; the outer `x` is shadowed before any use, so it
+        // is the unused one. Name-based matching could not tell them apart.
+        let src = "fn f() -> number {\n  let x = 1;\n  let x = 2;\n  x\n}\n";
+        let msgs = messages(src);
+        let hits: Vec<_> = msgs.iter().filter(|m| m.contains("unused `let`")).collect();
+        assert_eq!(hits.len(), 1, "exactly one unused binding: {msgs:?}");
     }
 
     #[test]

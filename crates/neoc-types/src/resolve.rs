@@ -118,6 +118,15 @@ impl Resolution {
         out
     }
 
+    /// Whether the local binding `id` is read anywhere — has at least one use.
+    /// The basis for the unused-binding lints.
+    #[must_use]
+    pub fn is_used(&self, id: BindingId) -> bool {
+        self.uses
+            .iter()
+            .any(|(_, _, target)| matches!(target, Resolved::Local(i) if *i == id))
+    }
+
     /// The binding with the given id, if any.
     #[must_use]
     pub fn binding(&self, id: BindingId) -> Option<&Binding> {
