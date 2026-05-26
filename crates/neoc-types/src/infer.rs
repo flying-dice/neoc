@@ -792,8 +792,8 @@ impl<'a> Checker<'a> {
 
     /// Enforces the callee's declared trait bounds against the concrete types
     /// its type parameters were instantiated to (`STATIC.md` §3.5). Applies only
-    /// to a direct call of a named function whose bounds were collected; an
-    /// indirect call through a value carries no bounds to check.
+    /// to a direct call of a named function or constructor whose bounds were
+    /// collected; an indirect call through a value carries no bounds to check.
     fn check_call_bounds(
         &mut self,
         callee: &ast::Expr,
@@ -804,6 +804,18 @@ impl<'a> Checker<'a> {
             return;
         };
         let Some(name) = segs.last() else { return };
+        self.check_collected_bounds(name, subst, span);
+    }
+
+    /// Enforces the bounds collected under `name` (a function, constructor, or
+    /// generic type) against the substitution that instantiated its parameters,
+    /// pushing one diagnostic per parameter whose concrete type fails a bound.
+    fn check_collected_bounds(
+        &mut self,
+        name: &str,
+        subst: &std::collections::HashMap<String, Ty>,
+        span: ast::Span,
+    ) {
         let Some(bounds) = self.table.fn_bounds.get(name).cloned() else {
             return;
         };
@@ -1044,7 +1056,7 @@ impl<'a> Checker<'a> {
         // type against its initialiser's type, so `Box { value: 99 }` yields
         // `Box<number>` and downstream field/method projection (§generics) sees
         // the concrete argument.
-        let result = self.infer_nominal_args(name, &generics, &decl, fields, base);
+        let result = self.infer_nominal_args(name, &generics, &decl, fields, base, span);
         if let Some(b) = base {
             let bt = self.infer(b);
             self.expect(&Ty::named(name), &bt, "struct update base");
@@ -1064,6 +1076,7 @@ impl<'a> Checker<'a> {
         decl: &[(String, Ty)],
         inits: &[ast::FieldInit],
         base: Option<&ast::Expr>,
+        span: ast::Span,
     ) -> Ty {
         if generics.is_empty() {
             return Ty::named(name);
@@ -1091,6 +1104,9 @@ impl<'a> Checker<'a> {
                 }
             }
         }
+        // The named-literal construction site: a parameter's bound must be
+        // satisfied by the type its field initialisers pinned it to (§3.5).
+        self.check_collected_bounds(name, &subst, span);
         let args = generics
             .iter()
             .map(|g| subst.get(g).cloned().unwrap_or(Ty::Unknown))

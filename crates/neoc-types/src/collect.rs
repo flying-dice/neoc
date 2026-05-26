@@ -61,20 +61,28 @@ fn generic_names(generics: &[ast::GenericParam]) -> Vec<String> {
     generics.iter().map(|g| g.name.clone()).collect()
 }
 
-/// The trait-name bounds of each type parameter of a signature, gathered from
-/// both the inline form (`<T: Display>`) and the `where` clause
-/// (`where T: Display`). The bound's trait name is the last segment of its
-/// path. Drives method resolution on a bounded parameter and call-site bound
-/// enforcement (`STATIC.md` §3.4, §3.5).
-pub(crate) fn param_bounds(sig: &ast::FnSig) -> HashMap<String, Vec<String>> {
+/// The trait-name bounds declared inline on a set of generic parameters
+/// (`<T: Display, U: Clone>`). The bound's trait name is the last segment of
+/// its path. Shared by function signatures and generic type declarations.
+fn generic_param_bounds(generics: &[ast::GenericParam]) -> HashMap<String, Vec<String>> {
     let trait_name = |p: &ast::TypePath| p.segments.last().map(|s| s.name.clone());
     let mut out: HashMap<String, Vec<String>> = HashMap::new();
-    for g in &sig.generics {
+    for g in generics {
         let names: Vec<String> = g.bounds.iter().filter_map(trait_name).collect();
         if !names.is_empty() {
             out.entry(g.name.clone()).or_default().extend(names);
         }
     }
+    out
+}
+
+/// The trait-name bounds of each type parameter of a signature, gathered from
+/// both the inline form (`<T: Display>`) and the `where` clause
+/// (`where T: Display`). Drives method resolution on a bounded parameter and
+/// call-site bound enforcement (`STATIC.md` §3.4, §3.5).
+pub(crate) fn param_bounds(sig: &ast::FnSig) -> HashMap<String, Vec<String>> {
+    let trait_name = |p: &ast::TypePath| p.segments.last().map(|s| s.name.clone());
+    let mut out = generic_param_bounds(&sig.generics);
     for w in &sig.where_clause {
         let names: Vec<String> = w.bounds.iter().filter_map(trait_name).collect();
         if !names.is_empty() {
@@ -348,6 +356,12 @@ fn collect_item(table: &mut SymbolTable, item: &ast::Item) {
 
 fn collect_struct(table: &mut SymbolTable, s: &ast::StructDecl) {
     let generics = generic_names(&s.generics);
+    // The struct's parameter bounds are enforced at construction — keyed by the
+    // type name, read by the named-literal path and the tuple constructor call.
+    let bounds = generic_param_bounds(&s.generics);
+    if !bounds.is_empty() {
+        table.fn_bounds.insert(s.name.clone(), bounds);
+    }
     let fields = match &s.body {
         ast::StructBody::Unit => {
             // Unit struct value constructor: the type itself.
@@ -379,6 +393,9 @@ fn collect_struct(table: &mut SymbolTable, s: &ast::StructDecl) {
 
 fn collect_enum(table: &mut SymbolTable, e: &ast::EnumDecl) {
     let generics = generic_names(&e.generics);
+    // The enum's parameter bounds are enforced at each tuple-variant
+    // construction, so they are keyed by the variant's constructor name.
+    let bounds = generic_param_bounds(&e.generics);
     let mut variants = Vec::new();
     for v in &e.variants {
         let fields = match &v.body {
@@ -394,6 +411,9 @@ fn collect_enum(table: &mut SymbolTable, e: &ast::EnumDecl) {
                 table
                     .values
                     .insert(v.name.clone(), Ty::Fn(lowered.clone(), Box::new(ret)));
+                if !bounds.is_empty() {
+                    table.fn_bounds.insert(v.name.clone(), bounds.clone());
+                }
                 VariantFields::Tuple(lowered)
             }
             ast::VariantBody::Named(fs) => {

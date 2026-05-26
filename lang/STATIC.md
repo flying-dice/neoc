@@ -93,7 +93,7 @@ Method resolution for `e.m(…)`: the static type of `e` determines which inhere
 
 ### 3.5 Generics
 
-Type parameters are universally quantified over the item that declares them. Instantiation infers type arguments from the call site (`T-CALL` with `τᵢ` unified against argument types) and checks each inferred argument against its bounds: the type bound to a parameter `T` must satisfy every trait in `T`'s bounds, or the call is an error. When the argument is itself a type parameter of the enclosing item, it satisfies a bound exactly when its own declared bounds include that trait (bounds propagate; they are not re-derived).
+Type parameters are universally quantified over the item that declares them. Instantiation infers type arguments — at a function call (`T-CALL` with `τᵢ` unified against argument types) and equally at the construction of a generic type (a struct literal, a tuple-struct or enum-variant constructor) — and checks each inferred argument against its bounds: the type bound to a parameter `T` must satisfy every trait in `T`'s bounds, or the instantiation is an error. When the argument is itself a type parameter of the enclosing item, it satisfies a bound exactly when its own declared bounds include that trait (bounds propagate; they are not re-derived).
 
 neoc uses Hindley–Milner inference restricted to the rank-1, no-subtyping fragment: inference flows from arguments and annotations; there is no variance, no implicit coercion (not even `number`-to-`string`), and no inference across function boundaries beyond the declared signature. A type annotation is required wherever this fragment cannot determine a type (empty list literals, ambiguous numeric contexts produced by generic returns).
 

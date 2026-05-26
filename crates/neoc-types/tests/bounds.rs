@@ -140,3 +140,58 @@ fn go() -> P {\n  tagged(P(1))\n}\n";
         diagnostics(src)
     );
 }
+
+// --- bounds at generic type construction (STATIC.md §3.5) --------------------
+
+const SHOW: &str = "trait Show {\n  fn show(self) -> string;\n}\n";
+
+#[test]
+fn named_struct_literal_enforces_field_bound() {
+    let src = format!(
+        "{SHOW}struct Boxed<T: Show> {{\n  item: T,\n}}\nfn go() -> number {{\n  let b = Boxed {{ item: 42 }};\n  1\n}}\n"
+    );
+    let d = diagnostics(&src);
+    assert!(
+        d.iter()
+            .any(|m| m.contains("the type `number` does not satisfy the bound `Show`")),
+        "a `number` field cannot instantiate `Boxed<T: Show>`: {d:?}"
+    );
+}
+
+#[test]
+fn tuple_struct_constructor_enforces_bound() {
+    let src = format!(
+        "{SHOW}struct Wrap<T: Show>(T);\nfn go() -> number {{\n  let w = Wrap(42);\n  1\n}}\n"
+    );
+    let d = diagnostics(&src);
+    assert!(
+        d.iter()
+            .any(|m| m.contains("the type `number` does not satisfy the bound `Show`")),
+        "a tuple-struct constructor enforces its parameter bound: {d:?}"
+    );
+}
+
+#[test]
+fn enum_variant_constructor_enforces_bound() {
+    let src = format!(
+        "{SHOW}enum Holder<T: Show> {{ Has(T) }}\nfn go() -> number {{\n  let h = Holder::Has(42);\n  1\n}}\n"
+    );
+    let d = diagnostics(&src);
+    assert!(
+        d.iter()
+            .any(|m| m.contains("the type `number` does not satisfy the bound `Show`")),
+        "an enum variant constructor enforces its parameter bound: {d:?}"
+    );
+}
+
+#[test]
+fn construction_with_a_satisfying_type_is_accepted() {
+    let src = format!(
+        "{SHOW}struct P;\nimpl Show for P {{\n  fn show(self) -> string {{\n    \"p\"\n  }}\n}}\nstruct Boxed<T: Show> {{\n  item: T,\n}}\nfn go() -> number {{\n  let b = Boxed {{ item: P }};\n  1\n}}\n"
+    );
+    assert!(
+        diagnostics(&src).is_empty(),
+        "`P` implements `Show`, so `Boxed {{ item: P }}` is well-typed: {:?}",
+        diagnostics(&src)
+    );
+}
