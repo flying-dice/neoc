@@ -21,7 +21,7 @@ use std::path::Path;
 
 use cucumber::{World, gherkin::Step, given, then, when};
 use tower_lsp::lsp_types::{
-    DiagnosticSeverity, DocumentHighlightKind, Documentation, InlayHintLabel, TextEdit,
+    DiagnosticSeverity, DocumentHighlightKind, Documentation, InlayHintLabel, TextEdit, Url,
 };
 
 /// State threaded through one scenario: the document under test and the result
@@ -45,6 +45,10 @@ struct Ide {
     selection_steps: Vec<String>,
     inlay_labels: Vec<String>,
     workspace_symbol_names: Vec<String>,
+    /// Project index for multi-file scenarios, populated by `Given the file
+    /// "<path>":`. When present, cross-file `When` steps query it instead of the
+    /// single `source`.
+    index: Option<neoc_lsp::WorkspaceIndex>,
     call_hierarchy_names: Vec<String>,
     semantic_tokens: Vec<(u32, u32, String)>,
     diagnostics: Vec<(String, String)>,
@@ -459,12 +463,40 @@ fn call_hierarchy_lists(world: &mut Ide, step: &Step) {
     );
 }
 
+/// The synthetic workspace root for multi-file scenarios; `use` paths resolve
+/// relative to it the same way the compiler resolves a project.
+const SPEC_ROOT: &str = if cfg!(windows) { "C:\\spec" } else { "/spec" };
+
+#[given(regex = r#"^the file "([^"]+)":$"#)]
+fn given_file(world: &mut Ide, path: String, step: &Step) {
+    let text = docstring(step).trim().to_string();
+    let root = Path::new(SPEC_ROOT);
+    let index = world
+        .index
+        .get_or_insert_with(|| neoc_lsp::WorkspaceIndex::new(root));
+    let uri = Url::from_file_path(root.join(path)).expect("a valid file path");
+    index.set_document(uri, 1, text);
+}
+
 #[when(regex = r#"^I search workspace symbols for "([^"]*)"$"#)]
 fn search_workspace_symbols(world: &mut Ide, query: String) {
-    world.workspace_symbol_names = neoc_lsp::workspace_symbols(&world.source, &query)
-        .into_iter()
-        .map(|symbol| symbol.name)
-        .collect();
+    // A multi-file scenario queries the project index (results sorted, since the
+    // index has no inherent file order); a single-file one keeps the document
+    // scan and its declaration order.
+    world.workspace_symbol_names = if let Some(index) = &world.index {
+        let mut names: Vec<String> = index
+            .workspace_symbols(&query)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        names.sort();
+        names
+    } else {
+        neoc_lsp::workspace_symbols(&world.source, &query)
+            .into_iter()
+            .map(|symbol| symbol.name)
+            .collect()
+    };
 }
 
 #[then("the workspace symbols are:")]

@@ -44,7 +44,7 @@ use neoc_compiler::{ByteSpan, Diagnostic as CompilerDiagnostic, Stage, Target, t
 // Public handler facade. The pure feature functions the IDE-UX spec
 // (`tests/cucumber.rs` over `tooling/ide/`) drives directly; `byte_to_position`
 // builds the `Position` they take from a byte offset into the source.
-use crate::workspace::WorkspaceIndex;
+pub use crate::workspace::{DeclLoc, WorkspaceIndex};
 pub use call_hierarchy::{incoming_calls, outgoing_calls};
 pub use code_action::{organize_imports, unused_imports};
 pub use completion::{completions, resolve as resolve_completion};

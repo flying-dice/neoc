@@ -66,6 +66,7 @@ struct Decl {
 
 /// The cached, version-keyed summary of one file: enough to answer queries and
 /// to maintain the project-wide maps, without retaining the parse tree.
+#[derive(Debug)]
 struct FileSummary {
     /// Hash of the source the summary was built from; an edit with the same
     /// text is a no-op.
@@ -97,6 +98,7 @@ impl FileSummary {
 }
 
 /// An open or on-disk document and the version it was last set at.
+#[derive(Debug)]
 struct Document {
     text: String,
     /// Tracked for the open-buffer-authoritative model; read once the debounce
@@ -108,6 +110,7 @@ struct Document {
 /// The project-wide index. Construct with [`WorkspaceIndex::new`], feed it
 /// documents with [`WorkspaceIndex::set_document`], and query the `decls` /
 /// `importers` views.
+#[derive(Debug)]
 pub struct WorkspaceIndex {
     /// The workspace root, against which `use` paths resolve to files.
     root: PathBuf,

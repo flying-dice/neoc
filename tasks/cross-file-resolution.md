@@ -143,26 +143,27 @@ WorkspaceIndex
    returning a `SurfaceChange` early-cutoff signal. Imports resolve via
    `module_file`. Built and unit-tested in isolation; `#[allow(dead_code)]` until
    Phase 3 wires it. (12 unit tests.)
-3. `[ ]` **Wire cross-file queries** — *next up; the live-server integration.*
-   - **Lifecycle**: hold a `Mutex<WorkspaceIndex>` on `Backend`; capture the root
-     from `initialize` (`root_uri`/`workspace_folders`); maintain the index in
-     `did_open`/`did_change`/`did_close`. Drop the `#[allow(dead_code)]`.
-   - **Discovery** must be lazy/background, *not* a blocking startup scan (the
-     gopls lesson) — a `tokio` task globbing `**/*.neoc` (skip `target`,
-     `node_modules`, `.git`), plus `workspace/didChangeWatchedFiles` for on-disk
-     invalidation. This is the piece that needs care; do not bolt on a synchronous
-     scan in `initialize`.
-   - **Workspace symbols** → read `index.workspace_symbols(query)` (project-wide,
-     including unopened files). The cleanest first query to flip over.
-   - **References / rename** → text-prefilter candidate files (the name must
-     appear), resolve against the index, **scope by visibility** (a private decl's
-     refs stay in its file) so a rename does not over-reach across modules. This
-     is the correctness-critical part — needs the scope work in Phase 5 to stop
-     over-approximating.
-   - **Goto-definition** → follow `use` across files via the `importers`/import
-     resolution.
-   - **Tests**: `.feature` specs with multi-file `Given the file "<path>":`.
-   Land as its own MR; it touches every cross-file handler.
+3. `[x]` **Wire cross-file queries** — landed across four slices on
+   `feat/lsp-ide-feature-parity`.
+   - **Lifecycle** `[x]` — `Backend` holds an `Arc<Mutex<WorkspaceIndex>>`, rooted
+     from `initialize` (`workspace_folders`/`root_uri`), maintained in
+     `did_open`/`did_change`/`did_close`. Dead-code allow dropped.
+   - **Discovery** `[x]` — `initialized` spawns a `spawn_blocking` walk of the root
+     for `.neoc` files (skips `target`/`node_modules`/`.git`, open buffers win); no
+     synchronous startup scan. `workspace/didChangeWatchedFiles` on-disk
+     invalidation is still TODO (open/edit re-indexes through the lifecycle).
+   - **Workspace symbols** `[x]` — the handler reads `index.workspace_symbols`,
+     project-wide over every indexed file.
+   - **References / rename** `[x]` — `reference_scope` bounds the file set by
+     visibility (a `pub` decl's defining file + its importers; private/local stays
+     in-file) and `references_by_name`/`rename_by_name` rewrite the other files.
+     Within a scoped file the match is still text-level — the Phase 5 scope work
+     stops the remaining over-approximation.
+   - **Goto-definition** `[x]` — follows `use` across files, scoped to the file's
+     own import targets so it never lands in an unrelated module.
+   - **Tests** — every new unit covered; the multi-file cucumber harness (`Given
+     the file "<path>":`) is in, exercising workspace symbols across files.
+     Extending the multi-file specs to goto/references/rename is follow-up polish.
 4. `[ ]` **Auto-import completion** — `pub` decls from other files, with the
    `use` insertion edit.
 5. `[ ]` **Scope-aware resolution** — real name resolution (scopes, shadowing,
