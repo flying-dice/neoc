@@ -48,10 +48,38 @@ pub fn parse(source: &str) -> ParseResult {
         .parse(source, None)
         .expect("tree-sitter never returns None here");
     let mut adapter = Adapter::new(source);
-    let module = adapter.walk_module(tree.root_node());
+    let root = tree.root_node();
+    let module = adapter.walk_module(root);
+    // Surface every syntax error in the tree, not just those at the top level:
+    // tree-sitter recovers from a malformed construct with an `ERROR`/missing
+    // node nested anywhere (e.g. a bad `struct` field), and a silently accepted
+    // parse would let malformed source reach the checker and emitter.
+    if root.has_error() {
+        collect_syntax_errors(root, &mut adapter.diagnostics);
+    }
     ParseResult {
         module,
         diagnostics: adapter.diagnostics,
+    }
+}
+
+/// Walks the whole tree, pushing one diagnostic per `ERROR` or missing node.
+///
+/// `has_error` on the root tells us a syntax error exists somewhere; this
+/// locates each. An `ERROR` node's subtree is not descended into — one
+/// diagnostic marks the whole malformed region rather than a cascade.
+fn collect_syntax_errors(node: Node, diagnostics: &mut Vec<Diagnostic>) {
+    if node.is_error() || node.is_missing() {
+        diagnostics.push(Diagnostic {
+            message: "syntax error".to_string(),
+            start: node.start_byte(),
+            end: node.end_byte(),
+        });
+        return;
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_syntax_errors(child, diagnostics);
     }
 }
 
@@ -95,10 +123,8 @@ impl Adapter {
         let mut items = Vec::new();
         let mut cursor = root.walk();
         for child in root.named_children(&mut cursor) {
-            if child.is_error() {
-                self.error(child, "syntax error");
-                continue;
-            }
+            // Syntax errors anywhere in the tree are surfaced by the tree-wide
+            // scan in `parse`; here we only build items from the valid nodes.
             if child.kind() == "item" {
                 if let Some(item) = self.walk_item(child) {
                     items.push(item);

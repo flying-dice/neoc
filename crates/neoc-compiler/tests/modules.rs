@@ -464,7 +464,7 @@ fn cross_module_enum_match_and_construction_lower_correctly() {
     let entry = write(
         &dir,
         "main.neoc",
-        "use palette::Color;\n\nfn name(c: Color) -> string {\n  match c {\n    Color::Red => \"red\",\n    Color::Green => \"green\",\n  }\n}\n\nfn main() -> string {\n  let c = Color::Green\n  name(c)\n}\n",
+        "use palette::Color;\n\nfn name(c: Color) -> string {\n  match c {\n    Color::Red => \"red\",\n    Color::Green => \"green\",\n  }\n}\n\nfn main() -> string {\n  let c = Color::Green;\n  name(c)\n}\n",
     );
     let project = transpile_project(&entry, Target::Lua).expect("read project");
     assert!(
@@ -592,7 +592,7 @@ fn field_access_on_a_transitively_imported_type_resolves() {
     let entry = write(
         &dir,
         "main.neoc",
-        "use factory::make;\n\nfn main() -> number {\n  let c = make()\n  c.level\n}\n",
+        "use factory::make;\n\nfn main() -> number {\n  let c = make();\n  c.level\n}\n",
     );
     let project = transpile_project(&entry, Target::Lua).expect("read project");
     assert!(
@@ -628,7 +628,7 @@ fn an_unrelated_pub_type_is_not_silently_in_scope() {
     let entry = write(
         &dir,
         "main.neoc",
-        "use util::noop;\n\nfn main() -> number {\n  let h = Hidden { v: 1 }\n  noop()\n}\n",
+        "use util::noop;\n\nfn main() -> number {\n  let h = Hidden { v: 1 };\n  noop()\n}\n",
     );
     let project = transpile_project(&entry, Target::Lua).expect("read project");
     assert!(

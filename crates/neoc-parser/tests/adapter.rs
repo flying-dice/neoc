@@ -235,3 +235,36 @@ fn expression_span_slices_the_source() {
     let value = l.value.as_ref().expect("let has a value");
     assert_eq!(&src[value.span.start..value.span.end], "foo");
 }
+
+#[test]
+fn a_nested_syntax_error_is_surfaced() {
+    // Regression: the adapter only checked the root's direct children for error
+    // nodes, so a malformed construct deeper in the tree — here `pub` on a
+    // struct field, which the spec does not allow (§3.4) — parsed silently and
+    // let malformed source reach the checker. The whole tree must be scanned.
+    let result = parse("struct P {\n  pub x: number,\n}\n");
+    assert!(
+        !result.ok(),
+        "a `pub` field is a syntax error and must produce a diagnostic"
+    );
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.message == "syntax error"),
+        "expected a syntax-error diagnostic, got: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn a_let_without_a_terminating_semicolon_is_rejected() {
+    // SYNTAX.md §6.1: a `let` is a statement and ends in `;`; only a trailing
+    // expression with no `;` is the block value. A missing `;` left a recovery
+    // node the adapter used to swallow.
+    let result = parse("fn f() -> number {\n  let x = 1\n  x\n}\n");
+    assert!(
+        !result.ok(),
+        "a `let` missing its `;` must produce a diagnostic, got none"
+    );
+}
