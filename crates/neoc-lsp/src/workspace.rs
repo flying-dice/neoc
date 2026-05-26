@@ -99,6 +99,9 @@ impl FileSummary {
 /// An open or on-disk document and the version it was last set at.
 struct Document {
     text: String,
+    /// Tracked for the open-buffer-authoritative model; read once the debounce
+    /// layer (Phase 6) keys cancellation off document versions.
+    #[allow(dead_code)]
     version: i32,
 }
 
@@ -221,18 +224,24 @@ impl WorkspaceIndex {
     }
 
     /// Every declaration of `name` across the project. Empty slice when none.
+    // Used by the goto/references slices of Phase 3 (see cross-file-resolution.md).
+    #[allow(dead_code)]
     #[must_use]
     pub fn find_decls(&self, name: &str) -> &[DeclLoc] {
         self.decls.get(name).map_or(&[], Vec::as_slice)
     }
 
     /// The files whose `use` imports resolve to `uri` — its direct dependents.
+    // Used by the references/rename slice of Phase 3 (see cross-file-resolution.md).
+    #[allow(dead_code)]
     #[must_use]
     pub fn importers_of(&self, uri: &Url) -> &[Url] {
         self.importers.get(uri).map_or(&[], Vec::as_slice)
     }
 
     /// The current text of a document, if indexed.
+    // Used by the goto/references slices of Phase 3 (see cross-file-resolution.md).
+    #[allow(dead_code)]
     #[must_use]
     pub fn document_text(&self, uri: &Url) -> Option<&str> {
         self.documents.get(uri).map(|d| d.text.as_str())
@@ -487,6 +496,31 @@ mod tests {
             idx.workspace_symbols("").len(),
             3,
             "empty query matches all"
+        );
+    }
+
+    #[test]
+    fn workspace_symbols_span_every_indexed_file() {
+        // The handler relies on this: a project-wide symbol search reaches
+        // declarations in every indexed file, each carrying its own file's URI.
+        let root = Path::new("/proj");
+        let mut idx = WorkspaceIndex::new(root);
+        idx.set_document(uri(root, "a.neoc"), 1, "pub fn alpha() {}\n".to_string());
+        idx.set_document(uri(root, "b.neoc"), 1, "pub fn beta() {}\n".to_string());
+
+        let mut found: Vec<(String, Url)> = idx
+            .workspace_symbols("")
+            .into_iter()
+            .map(|(name, loc)| (name, loc.uri))
+            .collect();
+        found.sort();
+        assert_eq!(
+            found,
+            vec![
+                ("alpha".to_string(), uri(root, "a.neoc")),
+                ("beta".to_string(), uri(root, "b.neoc")),
+            ],
+            "symbols from both files, each with its own URI"
         );
     }
 

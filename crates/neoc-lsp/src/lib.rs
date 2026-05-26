@@ -35,9 +35,8 @@ mod signature;
 mod signature_help;
 mod symbols;
 // Phase 2 of cross-file resolution: the index is built and unit-tested in
-// isolation here; the live handlers start reading it in Phase 3, at which point
-// this allow comes off (see tasks/cross-file-resolution.md).
-#[allow(dead_code)]
+// isolation here; the live handlers read it from Phase 3 on
+// (see tasks/cross-file-resolution.md).
 mod workspace;
 
 use neoc_compiler::{ByteSpan, Diagnostic as CompilerDiagnostic, Stage, Target, transpile};
@@ -45,6 +44,7 @@ use neoc_compiler::{ByteSpan, Diagnostic as CompilerDiagnostic, Stage, Target, t
 // Public handler facade. The pure feature functions the IDE-UX spec
 // (`tests/cucumber.rs` over `tooling/ide/`) drives directly; `byte_to_position`
 // builds the `Position` they take from a byte offset into the source.
+use crate::workspace::WorkspaceIndex;
 pub use call_hierarchy::{incoming_calls, outgoing_calls};
 pub use code_action::{organize_imports, unused_imports};
 pub use completion::{completions, resolve as resolve_completion};
@@ -61,6 +61,7 @@ pub use selection::selection_range;
 pub use semantic_tokens::{TOKEN_TYPES, semantic_tokens};
 pub use signature_help::signature_help;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Mutex;
 pub use symbols::workspace_symbols;
 use tower_lsp::jsonrpc::Result;
@@ -176,19 +177,53 @@ fn ranges_overlap(a: Range, b: Range) -> bool {
     le(a.start, b.end) && le(b.start, a.end)
 }
 
+/// The workspace root from an `initialize` request, preferring the first
+/// `workspace_folders` entry and falling back to the (deprecated but still
+/// widely sent) `root_uri`. `None` when the client opened a single file with no
+/// workspace, in which case the index keeps its working-directory root.
+fn workspace_root(params: &InitializeParams) -> Option<PathBuf> {
+    if let Some(folder) = params.workspace_folders.as_ref().and_then(|f| f.first()) {
+        if let Ok(path) = folder.uri.to_file_path() {
+            return Some(path);
+        }
+    }
+    #[allow(deprecated)] // `root_uri` is deprecated in LSP but clients still send it
+    params
+        .root_uri
+        .as_ref()
+        .and_then(|uri| uri.to_file_path().ok())
+}
+
 struct Backend {
     client: Client,
     /// Open documents by URI. Feature requests carry only a URI and position,
     /// so the server keeps the latest full text of each open document to answer
     /// them. Full-sync means every change replaces the stored text.
     documents: Mutex<HashMap<Url, String>>,
+    /// Project-wide index backing the cross-file features (workspace symbols,
+    /// goto/references/rename across modules). Maintained from the document
+    /// lifecycle; rooted from `initialize` so its `use`-path resolution matches
+    /// the compiler's. See `tasks/cross-file-resolution.md`.
+    index: Mutex<WorkspaceIndex>,
 }
 
 impl Backend {
     fn new(client: Client) -> Self {
+        // Rooted at the working directory until `initialize` supplies the real
+        // workspace root; replaced there before any document is indexed.
+        let root = std::env::current_dir().unwrap_or_default();
         Self {
             client,
             documents: Mutex::new(HashMap::new()),
+            index: Mutex::new(WorkspaceIndex::new(root)),
+        }
+    }
+
+    /// Re-indexes a document from the lifecycle callbacks, keeping the
+    /// project-wide index in step with the open-buffer set.
+    fn index_document(&self, uri: &Url, version: i32, text: &str) {
+        if let Ok(mut index) = self.index.lock() {
+            index.set_document(uri.clone(), version, text.to_string());
         }
     }
 
@@ -206,7 +241,15 @@ impl Backend {
 
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
-    async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
+    async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
+        // Root the index at the workspace so `use`-path resolution matches the
+        // compiler's. Runs before any document is opened, so replacing the
+        // placeholder index discards nothing.
+        if let Some(root) = workspace_root(&params) {
+            if let Ok(mut index) = self.index.lock() {
+                *index = WorkspaceIndex::new(root);
+            }
+        }
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
@@ -278,6 +321,7 @@ impl LanguageServer for Backend {
         if let Ok(mut docs) = self.documents.lock() {
             docs.insert(doc.uri.clone(), doc.text.clone());
         }
+        self.index_document(&doc.uri, doc.version, &doc.text);
         self.publish(doc.uri, &doc.text, Some(doc.version)).await;
     }
 
@@ -288,6 +332,7 @@ impl LanguageServer for Backend {
             if let Ok(mut docs) = self.documents.lock() {
                 docs.insert(uri.clone(), change.text.clone());
             }
+            self.index_document(&uri, params.text_document.version, &change.text);
             self.publish(uri, &change.text, Some(params.text_document.version))
                 .await;
         }
@@ -296,6 +341,11 @@ impl LanguageServer for Backend {
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         if let Ok(mut docs) = self.documents.lock() {
             docs.remove(&params.text_document.uri);
+        }
+        // The open buffer is gone; drop it from the index too. (Disk fallback
+        // for closed-but-on-disk files arrives with background discovery.)
+        if let Ok(mut index) = self.index.lock() {
+            index.remove_document(&params.text_document.uri);
         }
         self.client
             .publish_diagnostics(params.text_document.uri, Vec::new(), None)
@@ -318,22 +368,22 @@ impl LanguageServer for Backend {
         &self,
         params: WorkspaceSymbolParams,
     ) -> Result<Option<Vec<SymbolInformation>>> {
-        let Ok(documents) = self.documents.lock() else {
+        let Ok(index) = self.index.lock() else {
             return Ok(None);
         };
+        // Project-wide: the name index spans every indexed file, not just the
+        // document the request happens to touch.
         let mut out = Vec::new();
-        for (uri, source) in documents.iter() {
-            for symbol in symbols::workspace_symbols(source, &params.query) {
-                #[allow(deprecated)] // `deprecated` field is required by the struct literal
-                out.push(SymbolInformation {
-                    name: symbol.name,
-                    kind: symbol.kind,
-                    tags: None,
-                    deprecated: None,
-                    location: Location::new(uri.clone(), symbol.range),
-                    container_name: None,
-                });
-            }
+        for (name, loc) in index.workspace_symbols(&params.query) {
+            #[allow(deprecated)] // `deprecated` field is required by the struct literal
+            out.push(SymbolInformation {
+                name,
+                kind: loc.kind,
+                tags: None,
+                deprecated: None,
+                location: Location::new(loc.uri, loc.range),
+                container_name: None,
+            });
         }
         Ok(Some(out))
     }
