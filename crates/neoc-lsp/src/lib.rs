@@ -1,7 +1,8 @@
 //! Language server for neoc, over stdio.
 //!
 //! Capabilities: diagnostics, document symbols (outline), goto-definition,
-//! hover, and completion. Diagnostics come from [`neoc_compiler::transpile`];
+//! find-all-references, hover, and completion.
+//! Diagnostics come from [`neoc_compiler::transpile`];
 //! syntax errors carry precise byte ranges from the parser, while type and emit
 //! diagnostics fall back to the document's first line because those stages do
 //! not track spans yet (see `tasks/lsp-spans.md`). The IDE features are built on
@@ -14,6 +15,7 @@ mod cst;
 mod goto;
 mod hover;
 mod position;
+mod references;
 mod symbols;
 
 use neoc_compiler::{ByteSpan, Diagnostic as CompilerDiagnostic, Stage, Target, transpile};
@@ -23,6 +25,7 @@ use neoc_compiler::{ByteSpan, Diagnostic as CompilerDiagnostic, Stage, Target, t
 // builds the `Position` they take from a byte offset into the source.
 pub use hover::hover;
 pub use position::byte_to_position;
+pub use references::references;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use tower_lsp::jsonrpc::Result;
@@ -31,8 +34,9 @@ use tower_lsp::lsp_types::{
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
     DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse,
     Hover, HoverContents, HoverParams, HoverProviderCapability, InitializeParams, InitializeResult,
-    InitializedParams, LocationLink, MarkupContent, MarkupKind, MessageType, OneOf, Position,
-    Range, ServerCapabilities, ServerInfo, TextDocumentSyncCapability, TextDocumentSyncKind, Url,
+    InitializedParams, Location, LocationLink, MarkupContent, MarkupKind, MessageType, OneOf,
+    Position, Range, ReferenceParams, ServerCapabilities, ServerInfo, TextDocumentSyncCapability,
+    TextDocumentSyncKind, Url,
 };
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
@@ -127,6 +131,7 @@ impl LanguageServer for Backend {
                 )),
                 document_symbol_provider: Some(OneOf::Left(true)),
                 definition_provider: Some(OneOf::Left(true)),
+                references_provider: Some(OneOf::Left(true)),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 completion_provider: Some(CompletionOptions {
                     // `.` and `:` open member- and path-completion.
@@ -205,6 +210,19 @@ impl LanguageServer for Backend {
                 target_selection_range: def.name_range,
             }])
         }))
+    }
+
+    async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
+        let tdp = params.text_document_position;
+        let Some(source) = self.source(&tdp.text_document.uri) else {
+            return Ok(None);
+        };
+        let locations =
+            references::references(&source, tdp.position, params.context.include_declaration)
+                .into_iter()
+                .map(|range| Location::new(tdp.text_document.uri.clone(), range))
+                .collect();
+        Ok(Some(locations))
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {

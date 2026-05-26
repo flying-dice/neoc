@@ -207,6 +207,30 @@ pub fn find_unique_member<'t>(tree: &'t Tree, source: &str, name: &str) -> Optio
     }
 }
 
+/// Every `identifier` node in the document whose text is exactly `name`, in
+/// source order.
+///
+/// The basis for find-all-references: resolution is name-based (the same model
+/// goto-definition uses), so every identically-spelled identifier — declaration,
+/// call, type position, field — counts as a reference. No scope analysis, so a
+/// local that shadows a top-level name is included.
+#[must_use]
+pub fn identifier_nodes<'t>(tree: &'t Tree, source: &str, name: &str) -> Vec<Node<'t>> {
+    let mut out = Vec::new();
+    collect_identifiers(tree.root_node(), source, name, &mut out);
+    out
+}
+
+fn collect_identifiers<'t>(node: Node<'t>, source: &str, name: &str, out: &mut Vec<Node<'t>>) {
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        if child.kind() == "identifier" && node_text(&child, source) == Some(name) {
+            out.push(child);
+        }
+        collect_identifiers(child, source, name, out);
+    }
+}
+
 fn collect_members<'t>(node: Node<'t>, source: &str, name: &str, out: &mut Vec<Node<'t>>) {
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {

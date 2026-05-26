@@ -2,9 +2,9 @@
 //!
 //! The Gherkin features in `tooling/ide/` are the behavioural contract for the
 //! language server's editor interactions — one feature per interaction (hover,
-//! completion, goto, symbols). The step definitions below drive them against
-//! the real handlers (`neoc_lsp::hover`, …) over source text, so the features
-//! *are* the spec; there is no separate prose document. This mirrors
+//! references, completion, goto, symbols). The step definitions below drive them
+//! against the real handlers (`neoc_lsp::hover`, …) over source text, so the
+//! features *are* the spec; there is no separate prose document. This mirrors
 //! `lang/CONFORMANCE/`: the spec lives at the repo top, executed by a crate
 //! test. See `flying-dice/neoc#60`.
 //!
@@ -21,17 +21,22 @@ use std::path::Path;
 
 use cucumber::{World, gherkin::Step, given, then, when};
 
-/// State threaded through one scenario: the document under test and the hover
-/// markdown produced by the last `When` step.
+/// State threaded through one scenario: the document under test and the result
+/// produced by the last `When` step — hover markdown, or reference locations as
+/// 1-based `(line, column)` pairs (the editor's own coordinates).
 #[derive(Debug, Default, World)]
 struct Ide {
     source: String,
     hover: Option<String>,
+    references: Vec<(u32, u32)>,
 }
 
 #[given("the source:")]
 fn given_source(world: &mut Ide, step: &Step) {
-    docstring(step).clone_into(&mut world.source);
+    // Trim the docstring's surrounding newlines so the first line of source is
+    // line 1 — location-based assertions (references) read in editor
+    // coordinates, and byte-based ones (hover) are unaffected.
+    docstring(step).trim().clone_into(&mut world.source);
 }
 
 #[when(regex = r#"^I hover on "([^"]+)" at its declaration$"#)]
@@ -57,6 +62,57 @@ fn hover_shows(world: &mut Ide, step: &Step) {
         actual.contains(expected),
         "hover missing the expected signature\n  expected substring: {expected:?}\n  actual hover: {actual:?}",
     );
+}
+
+#[when(regex = r#"^I find all references to "([^"]+)"$"#)]
+fn find_all_references(world: &mut Ide, ident: String) {
+    world.references = references_to(&world.source, &ident, true);
+}
+
+#[when(regex = r#"^I find references to "([^"]+)" excluding the declaration$"#)]
+fn find_references_excluding_declaration(world: &mut Ide, ident: String) {
+    world.references = references_to(&world.source, &ident, false);
+}
+
+#[then("the references are at:")]
+fn references_are_at(world: &mut Ide, step: &Step) {
+    let expected = expected_positions(step);
+    assert_eq!(
+        world.references, expected,
+        "references mismatch (line, column, 1-based)\n  expected: {expected:?}\n  actual:   {:?}",
+        world.references,
+    );
+}
+
+/// The reference locations for `ident` in `source`, as 1-based `(line, column)`
+/// pairs. The cursor is placed inside the name's first occurrence — references
+/// resolve by name, so any occurrence yields the same set.
+fn references_to(source: &str, ident: &str, include_declaration: bool) -> Vec<(u32, u32)> {
+    let byte = nth_occurrence(source, ident, 1) + ident.len() / 2;
+    let position = neoc_lsp::byte_to_position(source, byte);
+    neoc_lsp::references(source, position, include_declaration)
+        .iter()
+        .map(|range| (range.start.line + 1, range.start.character + 1))
+        .collect()
+}
+
+/// The `(line, column)` rows of a step's data table, 1-based, skipping the
+/// header row.
+fn expected_positions(step: &Step) -> Vec<(u32, u32)> {
+    let table = step
+        .table
+        .as_ref()
+        .unwrap_or_else(|| panic!("step {:?} requires a table", step.value));
+    table
+        .rows
+        .iter()
+        .skip(1)
+        .map(|row| {
+            let line = row[0].trim().parse().expect("line number");
+            let column = row[1].trim().parse().expect("column number");
+            (line, column)
+        })
+        .collect()
 }
 
 /// The hover markdown for the `occurrence`-th appearance of `ident` in `source`,
