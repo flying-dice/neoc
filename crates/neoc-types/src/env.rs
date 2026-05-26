@@ -400,11 +400,21 @@ fn normalize_variant_fields(fields: &mut VariantFields, table: &SymbolTable) {
     }
 }
 
+/// An opaque identity for one binding occurrence (one `let`/param/closure
+/// param/pattern binding), unique within a [`Scopes`]. Two bindings of the same
+/// name — a shadow, or siblings in different scopes — have distinct ids, which
+/// is what lets scope-aware resolution tell a use of one from a use of the
+/// other (`tasks/scope-aware-resolution.md`).
+pub type BindingId = u32;
+
 /// The lexical scope stack for value bindings (`let`, params, closure params,
-/// pattern bindings). Innermost scope is last.
+/// pattern bindings). Innermost scope is last. Each binding carries a
+/// [`BindingId`] minted on `bind`, so a later `lookup` can report *which*
+/// binding a name resolved to, not just its type.
 #[derive(Debug, Default)]
 pub struct Scopes {
-    frames: Vec<HashMap<String, Ty>>,
+    frames: Vec<HashMap<String, (Ty, BindingId)>>,
+    next_id: BindingId,
 }
 
 impl Scopes {
@@ -412,6 +422,7 @@ impl Scopes {
     pub fn new() -> Self {
         Self {
             frames: vec![HashMap::new()],
+            next_id: 0,
         }
     }
 
@@ -423,17 +434,37 @@ impl Scopes {
         self.frames.pop();
     }
 
-    /// Binds a name in the innermost scope. Shadowing is allowed (`STATIC.md`
-    /// §2) and silently overwrites within the same frame.
-    pub fn bind(&mut self, name: impl Into<String>, ty: Ty) {
+    /// Binds a name in the innermost scope and returns its fresh
+    /// [`BindingId`]. Shadowing is allowed (`STATIC.md` §2) and silently
+    /// overwrites within the same frame (the new id wins for later lookups).
+    pub fn bind(&mut self, name: impl Into<String>, ty: Ty) -> BindingId {
+        let id = self.next_id;
+        self.next_id += 1;
         if let Some(frame) = self.frames.last_mut() {
-            frame.insert(name.into(), ty);
+            frame.insert(name.into(), (ty, id));
         }
+        id
     }
 
-    /// Looks a name up from the innermost scope outward.
+    /// Looks a name's type up from the innermost scope outward.
     #[must_use]
     pub fn lookup(&self, name: &str) -> Option<&Ty> {
-        self.frames.iter().rev().find_map(|f| f.get(name))
+        self.frames
+            .iter()
+            .rev()
+            .find_map(|f| f.get(name))
+            .map(|(ty, _)| ty)
+    }
+
+    /// The [`BindingId`] a name resolves to from the innermost scope outward —
+    /// the binding a use of `name` refers to. `None` when no binding is in
+    /// scope (the name is a top-level item, a prelude name, or unresolved).
+    #[must_use]
+    pub fn binding_of(&self, name: &str) -> Option<BindingId> {
+        self.frames
+            .iter()
+            .rev()
+            .find_map(|f| f.get(name))
+            .map(|(_, id)| *id)
     }
 }

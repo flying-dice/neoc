@@ -23,14 +23,16 @@ mod collect;
 mod elaborate;
 mod env;
 mod infer;
+mod resolve;
 mod ty;
 
 pub use elaborate::{elaborate, elaborate_with_table};
 pub use env::{
-    EnumInfo, MethodInfo, StructFields, StructInfo, SymbolTable, TraitInfo, TraitMethod, TypeDef,
-    VariantFields, VariantInfo,
+    BindingId, EnumInfo, MethodInfo, StructFields, StructInfo, SymbolTable, TraitInfo, TraitMethod,
+    TypeDef, VariantFields, VariantInfo,
 };
 pub use infer::ExprType;
+pub use resolve::{Binding, BindingKind, Resolution, Resolved};
 pub use ty::Ty;
 
 use infer::Checker;
@@ -132,4 +134,21 @@ pub fn expression_types(module: &neoc_ast::Module) -> Vec<ExprType> {
     checker.record_types();
     checker.check_module(module);
     checker.into_expr_types()
+}
+
+/// The scope-aware name resolution of `module`: every local binding it
+/// introduces and what each single-segment identifier use resolves to (a local
+/// binding or a top-level item).
+///
+/// Runs the same checker as [`check`] with resolution recording enabled, so
+/// tooling can resolve a cursor to a *binding* and find that binding's
+/// occurrences — references, rename, and goto that respect scope and shadowing,
+/// rather than matching by spelling. Diagnostics are discarded.
+#[must_use]
+pub fn resolution(module: &neoc_ast::Module) -> Resolution {
+    let table = collect::collect(module);
+    let mut checker = Checker::new(&table);
+    checker.record_resolution();
+    checker.check_module(module);
+    checker.into_resolution()
 }

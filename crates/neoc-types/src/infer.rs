@@ -29,6 +29,10 @@ pub struct Checker<'a> {
     /// position→type queries.
     record_types: bool,
     expr_types: Vec<ExprType>,
+    /// When set, every binding and single-segment identifier use is recorded in
+    /// `resolution`, for scope-aware references/rename/goto. Off by default.
+    record_resolution: bool,
+    resolution: crate::resolve::Resolution,
 }
 
 /// The inferred type of one expression, with the byte range it occupies. The
@@ -52,6 +56,8 @@ impl<'a> Checker<'a> {
             diagnostics: Vec::new(),
             record_types: false,
             expr_types: Vec::new(),
+            record_resolution: false,
+            resolution: crate::resolve::Resolution::default(),
         }
     }
 
@@ -65,6 +71,42 @@ impl<'a> Checker<'a> {
     #[must_use]
     pub fn into_expr_types(self) -> Vec<ExprType> {
         self.expr_types
+    }
+
+    /// Records every binding and single-segment identifier use from here on, for
+    /// scope-aware tooling (references, rename, goto). The compile path leaves
+    /// this off.
+    pub fn record_resolution(&mut self) {
+        self.record_resolution = true;
+    }
+
+    /// The scope resolution recorded since [`Self::record_resolution`] was
+    /// enabled.
+    #[must_use]
+    pub fn into_resolution(self) -> crate::resolve::Resolution {
+        self.resolution
+    }
+
+    /// Binds `name` of type `ty` in the current scope and, when recording,
+    /// notes the binding's def-span and kind. The single funnel every binding
+    /// site goes through, so the resolution map and the type scope never drift.
+    fn bind_local(
+        &mut self,
+        name: impl Into<String>,
+        ty: Ty,
+        def: ast::Span,
+        kind: crate::resolve::BindingKind,
+    ) {
+        let name = name.into();
+        let id = self.scopes.bind(name.clone(), ty);
+        if self.record_resolution {
+            self.resolution.note_binding(crate::resolve::Binding {
+                id,
+                name,
+                def: (def.start, def.end),
+                kind,
+            });
+        }
     }
 
     #[must_use]
@@ -170,9 +212,9 @@ impl<'a> Checker<'a> {
                         self.scopes.bind("self", Ty::named(t));
                     }
                 }
-                ast::Param::Named { name, ty, .. } => {
+                ast::Param::Named { name, ty, span } => {
                     let pty = Self::subst_self(self.lower(ty), self_ty);
-                    self.scopes.bind(name.clone(), pty);
+                    self.bind_local(name.clone(), pty, *span, crate::resolve::BindingKind::Param);
                 }
             }
         }
@@ -292,7 +334,7 @@ impl<'a> Checker<'a> {
             (None, Some(v)) => v.clone(),
             (None, None) => Ty::Unknown,
         };
-        self.bind_pattern(&l.pattern, &ty);
+        self.bind_pattern(&l.pattern, &ty, crate::resolve::BindingKind::Let);
     }
 
     // ---- expression inference ---------------------------------------------
@@ -362,7 +404,7 @@ impl<'a> Checker<'a> {
                     }
                 };
                 self.scopes.push();
-                self.bind_pattern(pattern, &elem);
+                self.bind_pattern(pattern, &elem, crate::resolve::BindingKind::ForPattern);
                 let _ = self.infer_block(body);
                 self.scopes.pop();
                 Ty::Unit
@@ -397,9 +439,30 @@ impl<'a> Checker<'a> {
         if segs.len() == 1 {
             let name = &segs[0];
             if let Some(t) = self.scopes.lookup(name) {
-                return t.clone();
+                let t = t.clone();
+                // Record the use → the local binding it resolves to. A shadow
+                // wins because `binding_of` reads the innermost frame first.
+                if self.record_resolution {
+                    if let Some(id) = self.scopes.binding_of(name) {
+                        self.resolution.note_use(
+                            span.start,
+                            span.end,
+                            crate::resolve::Resolved::Local(id),
+                        );
+                    }
+                }
+                return t;
             }
             if let Some(t) = self.table.values.get(name) {
+                // Resolves to a top-level item, not a local — record it as such
+                // so a rename of the item skips a shadowing local elsewhere.
+                if self.record_resolution {
+                    self.resolution.note_use(
+                        span.start,
+                        span.end,
+                        crate::resolve::Resolved::Item(name.clone()),
+                    );
+                }
                 return t.clone();
             }
             // A bare uppercase name may be a unit struct or unit variant.
@@ -991,7 +1054,12 @@ impl<'a> Checker<'a> {
         let mut ptys = Vec::new();
         for p in params {
             let ty = p.ty.as_ref().map_or(Ty::Unknown, |t| self.lower(t));
-            self.scopes.bind(p.name.clone(), ty.clone());
+            self.bind_local(
+                p.name.clone(),
+                ty.clone(),
+                p.span,
+                crate::resolve::BindingKind::ClosureParam,
+            );
             ptys.push(ty);
         }
         let ret = self.infer(body);
@@ -1054,7 +1122,7 @@ impl<'a> Checker<'a> {
         let mut result: Option<Ty> = None;
         for arm in arms {
             self.scopes.push();
-            self.bind_pattern(&arm.pattern, &scrut);
+            self.bind_pattern(&arm.pattern, &scrut, crate::resolve::BindingKind::MatchArm);
             if let Some(g) = &arm.guard {
                 let gt = self.infer(g);
                 self.expect(&Ty::Bool, &gt, "match guard");
@@ -1186,34 +1254,45 @@ impl<'a> Checker<'a> {
 
     /// Binds the names a pattern introduces against the scrutinee type. Also
     /// validates structural patterns against the scrutinee's declaration.
-    pub(crate) fn bind_pattern(&mut self, pattern: &ast::Pattern, ty: &Ty) {
+    pub(crate) fn bind_pattern(
+        &mut self,
+        pattern: &ast::Pattern,
+        ty: &Ty,
+        kind: crate::resolve::BindingKind,
+    ) {
         match pattern {
             ast::Pattern::Wildcard | ast::Pattern::Literal(_) | ast::Pattern::Path(_) => {}
-            ast::Pattern::Binding { name, .. } => {
+            ast::Pattern::Binding { name, span } => {
                 // An uppercase bare ident may be a unit variant/struct, not a
                 // binding. Treat as a binding unless it resolves to one.
                 if self.resolve_unit_value(name).is_some() {
                     return;
                 }
-                self.scopes.bind(name.clone(), ty.clone());
+                self.bind_local(name.clone(), ty.clone(), *span, kind);
             }
             ast::Pattern::Or(alts) => {
                 for alt in alts {
-                    self.bind_pattern(alt, ty);
+                    self.bind_pattern(alt, ty, kind);
                 }
             }
-            ast::Pattern::Tuple { path, elems } => self.bind_tuple_pattern(path, elems, ty),
+            ast::Pattern::Tuple { path, elems } => self.bind_tuple_pattern(path, elems, ty, kind),
             ast::Pattern::Struct { path, fields, .. } => {
-                self.bind_struct_pattern(path, fields, ty);
+                self.bind_struct_pattern(path, fields, ty, kind);
             }
         }
     }
 
-    fn bind_tuple_pattern(&mut self, path: &[ast::Ident], elems: &[ast::Pattern], ty: &Ty) {
+    fn bind_tuple_pattern(
+        &mut self,
+        path: &[ast::Ident],
+        elems: &[ast::Pattern],
+        ty: &Ty,
+        kind: crate::resolve::BindingKind,
+    ) {
         // Element types come from the variant or newtype the path names.
         let elem_tys = self.tuple_pattern_field_tys(path, ty, elems.len());
         for (pat, ety) in elems.iter().zip(elem_tys) {
-            self.bind_pattern(pat, &ety);
+            self.bind_pattern(pat, &ety, kind);
         }
     }
 
@@ -1262,7 +1341,13 @@ impl<'a> Checker<'a> {
             .collect()
     }
 
-    fn bind_struct_pattern(&mut self, path: &[ast::Ident], fields: &[ast::FieldPat], ty: &Ty) {
+    fn bind_struct_pattern(
+        &mut self,
+        path: &[ast::Ident],
+        fields: &[ast::FieldPat],
+        ty: &Ty,
+        kind: crate::resolve::BindingKind,
+    ) {
         let decl = self.struct_pattern_field_tys(path, ty);
         for fp in fields {
             let fty = decl
@@ -1270,8 +1355,9 @@ impl<'a> Checker<'a> {
                 .find(|(n, _)| *n == fp.name)
                 .map_or(Ty::Unknown, |(_, t)| t.clone());
             match &fp.pattern {
-                Some(p) => self.bind_pattern(p, &fty),
-                None => self.scopes.bind(fp.name.clone(), fty),
+                Some(p) => self.bind_pattern(p, &fty, kind),
+                // Shorthand `Point { x }` binds the field name itself.
+                None => self.bind_local(fp.name.clone(), fty, fp.span, kind),
             }
         }
     }

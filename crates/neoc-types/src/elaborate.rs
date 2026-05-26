@@ -172,7 +172,9 @@ impl<'a> Elaborator<'a> {
             (None, Some(v)) => v.clone(),
             (None, None) => Ty::Unknown,
         };
-        self.checker.bind_pattern(&l.pattern, &ty);
+        // Elaboration does not record resolution; the kind is immaterial here.
+        self.checker
+            .bind_pattern(&l.pattern, &ty, crate::resolve::BindingKind::Let);
         ast::LetStmt {
             mutable: l.mutable,
             pattern: l.pattern.clone(),
@@ -337,7 +339,11 @@ impl<'a> Elaborator<'a> {
             .iter()
             .map(|arm| {
                 self.checker.scopes.push();
-                self.checker.bind_pattern(&arm.pattern, &scrut);
+                self.checker.bind_pattern(
+                    &arm.pattern,
+                    &scrut,
+                    crate::resolve::BindingKind::MatchArm,
+                );
                 let guard = arm.guard.as_ref().map(|g| self.expr(g));
                 let body = self.expr(&arm.body);
                 self.checker.scopes.pop();
@@ -366,7 +372,8 @@ impl<'a> Elaborator<'a> {
             _ => Ty::Unknown,
         };
         self.checker.scopes.push();
-        self.checker.bind_pattern(pattern, &elem);
+        self.checker
+            .bind_pattern(pattern, &elem, crate::resolve::BindingKind::ForPattern);
         let new_body = self.block(body);
         self.checker.scopes.pop();
         ast::ExprKind::For {
