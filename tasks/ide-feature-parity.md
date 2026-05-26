@@ -126,11 +126,14 @@ them), `Finding`s mapped to `WARNING` diagnostics carrying the lint name as
 `code` and `Unnecessary` tags where apt, and a `REGISTRY`. Adding a lint is one
 `impl Lint` + one registry entry.
 
-Lints so far: **`unused_import`** (CST; pairs with the remove-unused-import fix)
-and **`needless_return`** (AST; a `return` in a fn body's tail position). Next,
-same shape: redundant parens, unused private `fn`. Scope-sensitive lints (unused
-`let`/param, shadowing) wait on scope-aware resolution. A compiler-side `neoc
-lint` CLI (warnings outside the editor) is a separate track.
+Lints (the CST/AST-safe set that makes sense without scope analysis):
+`unused_import`, `unused_declaration` (dead private fn/const/struct/enum/type),
+`needless_return`, `bool_comparison` (`x == true`), `needless_parens`. That is
+full coverage of the file-local, no-scope-analysis lints. Scope-sensitive lints
+(unused `let`/param, shadowing, unused assignment) genuinely need scope-aware
+resolution — the same enabler that gates cross-file — so they are out of scope
+until it lands, not missing. A compiler-side `neoc lint` CLI (warnings outside
+the editor) is a separate track.
 
 ### Deferred (dev-only / non-LSP / out of scope)
 

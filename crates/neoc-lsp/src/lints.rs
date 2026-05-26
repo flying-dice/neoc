@@ -15,9 +15,9 @@
 
 use std::cell::OnceCell;
 
-use neoc_ast::{ExprKind, ItemKind};
+use neoc_ast::{ExprKind, ItemKind, Visibility};
 use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, DiagnosticTag, NumberOrString, Range};
-use tree_sitter::Tree;
+use tree_sitter::{Node, Tree};
 
 use crate::code_action;
 use crate::cst;
@@ -85,7 +85,13 @@ pub trait Lint {
 }
 
 /// Every registered lint. Add a lint here once its `impl Lint` exists.
-const REGISTRY: &[&dyn Lint] = &[&UnusedImport, &NeedlessReturn];
+const REGISTRY: &[&dyn Lint] = &[
+    &UnusedImport,
+    &UnusedDeclaration,
+    &NeedlessReturn,
+    &BoolComparison,
+    &NeedlessParens,
+];
 
 /// The lint diagnostics for `source`: every registered lint's findings, mapped
 /// to LSP diagnostics tagged with the lint name.
@@ -178,6 +184,142 @@ fn tail_return(body: &neoc_ast::Block, source: &str, out: &mut Vec<Finding>) {
     }
 }
 
+/// `unused_declaration`: a private top-level `fn`/`const`/`struct`/`enum`/`type`
+/// whose name is referenced nowhere else in the file — dead code. Only private
+/// items, since a `pub` one may be used from another file. `main` is exempt.
+struct UnusedDeclaration;
+
+impl Lint for UnusedDeclaration {
+    fn name(&self) -> &'static str {
+        "unused_declaration"
+    }
+
+    fn check(&self, cx: &LintContext) -> Vec<Finding> {
+        let mut out = Vec::new();
+        for item in &cx.module().items {
+            if item.vis != Visibility::Private {
+                continue;
+            }
+            let Some((kind, name)) = decl_kind_and_name(&item.kind) else {
+                continue;
+            };
+            if name == "main" {
+                continue;
+            }
+            // Resolution is name-based, so the only safe direction is a false
+            // negative: if the name appears solely at its declaration it is
+            // unused; a same-named identifier elsewhere suppresses the lint.
+            if cst::identifier_nodes(cx.tree(), cx.source(), name).len() <= 1 {
+                out.push(Finding {
+                    range: byte_range(cx.source(), item.span.start, item.span.end),
+                    message: format!("unused {kind} `{name}`"),
+                    tag: Some(DiagnosticTag::UNNECESSARY),
+                });
+            }
+        }
+        out
+    }
+}
+
+/// The kind label and declared name of a named top-level item, if it is one.
+fn decl_kind_and_name(kind: &ItemKind) -> Option<(&'static str, &str)> {
+    match kind {
+        ItemKind::Fn(f) => Some(("function", &f.sig.name)),
+        ItemKind::Const(c) => Some(("constant", &c.name)),
+        ItemKind::Struct(s) => Some(("struct", &s.name)),
+        ItemKind::Enum(e) => Some(("enum", &e.name)),
+        ItemKind::TypeAlias(t) => Some(("type", &t.name)),
+        _ => None,
+    }
+}
+
+/// `bool_comparison`: comparing to a boolean literal (`x == true`, `x != false`)
+/// — the value should be used directly. Found on the CST.
+struct BoolComparison;
+
+impl Lint for BoolComparison {
+    fn name(&self) -> &'static str {
+        "bool_comparison"
+    }
+
+    fn check(&self, cx: &LintContext) -> Vec<Finding> {
+        let mut out = Vec::new();
+        let source = cx.source();
+        walk_named(cx.tree().root_node(), &mut |node| {
+            if node.kind() != "binary_expression" {
+                return;
+            }
+            let is_eq = node
+                .child_by_field_name("operator")
+                .is_some_and(|op| matches!(op.kind(), "==" | "!="));
+            let has_bool = ["left", "right"]
+                .iter()
+                .filter_map(|f| node.child_by_field_name(f))
+                .any(|operand| operand.kind() == "boolean_literal");
+            if is_eq && has_bool {
+                out.push(Finding {
+                    range: byte_range(source, node.start_byte(), node.end_byte()),
+                    message: "comparison with a boolean literal; use the value itself".to_string(),
+                    tag: None,
+                });
+            }
+        });
+        out
+    }
+}
+
+/// `needless_parens`: parentheses around an expression that never needs them — a
+/// name, literal, call, or already-parenthesised expression. The precedence-
+/// dependent cases (`(a + b) * c`) are left alone.
+struct NeedlessParens;
+
+/// Expression kinds that are atomic — parentheses around them are always
+/// redundant, regardless of the surrounding precedence.
+const PRIMARY: &[&str] = &[
+    "identifier",
+    "path",
+    "integer_literal",
+    "float_literal",
+    "string_literal",
+    "boolean_literal",
+    "unit_expression",
+    "call_expression",
+    "parenthesized_expression",
+];
+
+impl Lint for NeedlessParens {
+    fn name(&self) -> &'static str {
+        "needless_parens"
+    }
+
+    fn check(&self, cx: &LintContext) -> Vec<Finding> {
+        let mut out = Vec::new();
+        let source = cx.source();
+        walk_named(cx.tree().root_node(), &mut |node| {
+            if node.kind() == "parenthesized_expression"
+                && let Some(inner) = node.named_child(0)
+                && PRIMARY.contains(&inner.kind())
+            {
+                out.push(Finding {
+                    range: byte_range(source, node.start_byte(), node.end_byte()),
+                    message: "redundant parentheses".to_string(),
+                    tag: None,
+                });
+            }
+        });
+        out
+    }
+}
+
+/// Visits every named node in the tree, depth-first.
+fn walk_named(node: Node, visit: &mut impl FnMut(Node)) {
+    visit(node);
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        walk_named(child, visit);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -219,6 +361,58 @@ mod tests {
             messages(src).iter().all(|m| !m.contains("unneeded")),
             "{:?}",
             messages(src)
+        );
+    }
+
+    #[test]
+    fn flags_an_unused_private_function() {
+        let src = "fn helper() -> number { 1 }\nfn main() -> number { 2 }\n";
+        assert!(
+            messages(src)
+                .iter()
+                .any(|m| m == "unused function `helper`"),
+            "{:?}",
+            messages(src)
+        );
+    }
+
+    #[test]
+    fn a_used_or_public_declaration_is_not_unused() {
+        let used = "fn helper() -> number { 1 }\nfn main() -> number { helper() }\n";
+        assert!(
+            messages(used)
+                .iter()
+                .all(|m| !m.contains("unused function"))
+        );
+        let public = "pub fn helper() -> number { 1 }\nfn main() -> number { 2 }\n";
+        assert!(messages(public).iter().all(|m| !m.contains("helper")));
+    }
+
+    #[test]
+    fn flags_comparison_with_a_boolean_literal() {
+        let src = "fn check(b: bool) -> bool { b == true }\nfn main() -> bool { check(true) }\n";
+        assert!(
+            messages(src).iter().any(|m| m.contains("boolean literal")),
+            "{:?}",
+            messages(src)
+        );
+    }
+
+    #[test]
+    fn flags_redundant_parens_but_not_a_sum() {
+        let redundant = "fn one() -> number { (1) }\nfn main() -> number { one() }\n";
+        assert!(
+            messages(redundant)
+                .iter()
+                .any(|m| m == "redundant parentheses")
+        );
+        let needed = "fn sum(a: number, b: number) -> number { (a + b) }\nfn main() -> number { sum(1, 2) }\n";
+        assert!(
+            messages(needed)
+                .iter()
+                .all(|m| m != "redundant parentheses"),
+            "{:?}",
+            messages(needed)
         );
     }
 

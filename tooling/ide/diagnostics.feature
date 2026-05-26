@@ -16,6 +16,17 @@ Feature: Diagnostics
       | severity | message            |
       | warning  | unused import `fs` |
 
+  Scenario: A dead private declaration is a warning
+    Given the source:
+      """
+      fn helper() -> number { 1 }
+      fn main() -> number { 2 }
+      """
+    When I check the document
+    Then the diagnostics include:
+      | severity | message                   |
+      | warning  | unused function `helper`  |
+
   Scenario: A needless return is a warning
     Given the source:
       """
