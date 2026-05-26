@@ -49,6 +49,12 @@ struct Ide {
     /// "<path>":`. When present, cross-file `When` steps query it instead of the
     /// single `source`.
     index: Option<neoc_lsp::WorkspaceIndex>,
+    /// The file a cross-file goto resolved to, as a project-relative path.
+    cross_file_goto: Option<String>,
+    /// Project-relative paths a cross-file references query touched, sorted.
+    cross_file_reference_files: Vec<String>,
+    /// Project-relative paths a cross-file rename edited, sorted.
+    cross_file_rename_files: Vec<String>,
     call_hierarchy_names: Vec<String>,
     semantic_tokens: Vec<(u32, u32, String)>,
     diagnostics: Vec<(String, String)>,
@@ -497,6 +503,84 @@ fn search_workspace_symbols(world: &mut Ide, query: String) {
             .map(|symbol| symbol.name)
             .collect()
     };
+}
+
+/// The URI of a spec file path under the synthetic project root.
+fn spec_uri(path: &str) -> Url {
+    Url::from_file_path(Path::new(SPEC_ROOT).join(path)).expect("a valid file path")
+}
+
+/// A spec URI rendered back to its project-relative path (forward slashes), for
+/// asserting which file a cross-file result landed in.
+fn relative_path(uri: &Url) -> String {
+    let path = uri.to_file_path().expect("a file URI");
+    path.strip_prefix(SPEC_ROOT)
+        .unwrap_or(&path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+/// The first column of a step's table, skipping the header row.
+fn table_column(step: &Step) -> Vec<String> {
+    step.table
+        .as_ref()
+        .unwrap_or_else(|| panic!("step {:?} requires a table", step.value))
+        .rows
+        .iter()
+        .skip(1)
+        .map(|row| row[0].trim().to_string())
+        .collect()
+}
+
+#[when(regex = r#"^I goto the definition of "([^"]+)" from "([^"]+)"$"#)]
+fn goto_def_cross_file(world: &mut Ide, name: String, path: String) {
+    let index = world.index.as_ref().expect("a multi-file scenario");
+    world.cross_file_goto = index
+        .imported_definition(&spec_uri(&path), &name)
+        .map(|loc| relative_path(&loc.uri));
+}
+
+#[then(regex = r#"^the definition is in "([^"]+)"$"#)]
+fn definition_is_in(world: &mut Ide, path: String) {
+    assert_eq!(
+        world.cross_file_goto.as_deref(),
+        Some(path.as_str()),
+        "cross-file goto landed in the wrong file",
+    );
+}
+
+#[when(regex = r#"^I find references to "([^"]+)" from "([^"]+)"$"#)]
+fn references_cross_file(world: &mut Ide, name: String, path: String) {
+    let index = world.index.as_ref().expect("a multi-file scenario");
+    let mut files: Vec<String> = neoc_lsp::project_references(index, &spec_uri(&path), &name, true)
+        .into_iter()
+        .map(|(uri, _)| relative_path(&uri))
+        .collect();
+    files.sort();
+    files.dedup();
+    world.cross_file_reference_files = files;
+}
+
+#[then("the references span the files:")]
+fn references_span_files(world: &mut Ide, step: &Step) {
+    assert_eq!(world.cross_file_reference_files, table_column(step));
+}
+
+#[when(regex = r#"^I rename "([^"]+)" to "([^"]+)" from "([^"]+)"$"#)]
+fn rename_cross_file(world: &mut Ide, name: String, new_name: String, path: String) {
+    let index = world.index.as_ref().expect("a multi-file scenario");
+    let mut files: Vec<String> =
+        neoc_lsp::project_rename(index, &spec_uri(&path), &name, &new_name)
+            .into_keys()
+            .map(|uri| relative_path(&uri))
+            .collect();
+    files.sort();
+    world.cross_file_rename_files = files;
+}
+
+#[then("the rename edits the files:")]
+fn rename_edits_files(world: &mut Ide, step: &Step) {
+    assert_eq!(world.cross_file_rename_files, table_column(step));
 }
 
 #[then("the workspace symbols are:")]

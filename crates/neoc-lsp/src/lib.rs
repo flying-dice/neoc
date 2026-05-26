@@ -222,41 +222,53 @@ fn discover_workspace(index: &Mutex<WorkspaceIndex>, open: &HashSet<Url>) {
     }
 }
 
-/// The files a reference/rename of `name` — used from `from_uri` — may touch,
-/// scoped by visibility so an edit's blast radius stays bounded.
+/// Every reference to `name` (used in `from_uri`) across the project, as
+/// `(file, range)` pairs, reading each file's text from the index.
 ///
-/// A name that resolves to a private or purely-local declaration stays in its
-/// own file. A `pub` declaration's references span its defining file plus every
-/// file that imports that module (its `importers`). Within those files the match
-/// is still text-level, so a same-named local can be over-included until
-/// scope-aware resolution lands (Phase 5) — but the *file set* never reaches an
-/// unrelated module that doesn't import the definition.
-fn reference_scope(index: &WorkspaceIndex, from_uri: &Url, name: &str) -> Vec<Url> {
-    let decls = index.find_decls(name);
-    let targets = index.import_targets(from_uri);
-    // The declaration this use resolves to: one in the current file, else a
-    // `pub` one in a module the current file imports.
-    let def = decls.iter().find(|d| &d.uri == from_uri).or_else(|| {
-        decls
-            .iter()
-            .find(|d| d.exported && targets.contains(&d.uri))
-    });
-    let Some(def) = def else {
-        return vec![from_uri.clone()];
-    };
-    if !def.exported {
-        return vec![from_uri.clone()];
-    }
-    let mut scope = vec![def.uri.clone()];
-    for importer in index.importers_of(&def.uri) {
-        if !scope.contains(importer) {
-            scope.push(importer.clone());
+/// Visibility-scoped through [`WorkspaceIndex::reference_scope`]: a `pub` name
+/// reaches its defining file and every importer, a private one stays in-file.
+/// `include_declaration` drops the declaring name in the file that declares it.
+/// The pure core both the live handler and the IDE-UX spec drive.
+#[must_use]
+pub fn project_references(
+    index: &WorkspaceIndex,
+    from_uri: &Url,
+    name: &str,
+    include_declaration: bool,
+) -> Vec<(Url, Range)> {
+    let mut out = Vec::new();
+    for file in index.reference_scope(from_uri, name) {
+        let Some(text) = index.document_text(&file) else {
+            continue;
+        };
+        for range in references::references_by_name(text, name, include_declaration) {
+            out.push((file.clone(), range));
         }
     }
-    if !scope.iter().any(|u| u == from_uri) {
-        scope.push(from_uri.clone());
+    out
+}
+
+/// The edits renaming `name` (used in `from_uri`) to `new_name` across the
+/// project, grouped per file. Same visibility scope as [`project_references`];
+/// rewrites the `use` path segment and the call sites in each file.
+#[must_use]
+pub fn project_rename(
+    index: &WorkspaceIndex,
+    from_uri: &Url,
+    name: &str,
+    new_name: &str,
+) -> HashMap<Url, Vec<TextEdit>> {
+    let mut changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
+    for file in index.reference_scope(from_uri, name) {
+        let Some(text) = index.document_text(&file) else {
+            continue;
+        };
+        let edits = rename::rename_by_name(text, name, new_name);
+        if !edits.is_empty() {
+            changes.insert(file, edits);
+        }
     }
-    scope
+    changes
 }
 
 /// Every `.neoc` file under `root`, recursing into subdirectories but skipping
@@ -575,11 +587,8 @@ impl LanguageServer for Backend {
         let Ok(index) = self.index.lock() else {
             return Ok(None);
         };
-        let targets = index.import_targets(&uri);
         let target = index
-            .find_decls(&name)
-            .iter()
-            .find(|loc| loc.exported && targets.contains(&loc.uri))
+            .imported_definition(&uri, &name)
             .map(|loc| GotoDefinitionResponse::Scalar(Location::new(loc.uri.clone(), loc.range)));
         Ok(target)
     }
@@ -645,21 +654,13 @@ impl LanguageServer for Backend {
                 .collect();
             return Ok(Some(locations));
         };
-        // Project-wide, visibility-scoped: the defining file and the modules that
-        // import it. The current file reads its live buffer; the rest read the
-        // index's stored text.
-        let mut locations = Vec::new();
-        for file in reference_scope(&index, &uri, &name) {
-            let text = if file == uri {
-                Some(source.clone())
-            } else {
-                index.document_text(&file).map(str::to_string)
-            };
-            let Some(text) = text else { continue };
-            for range in references::references_by_name(&text, &name, include_decl) {
-                locations.push(Location::new(file.clone(), range));
-            }
-        }
+        // Project-wide, visibility-scoped. Reads each file (including this one)
+        // from the index, which the document lifecycle keeps in step with the
+        // open buffers.
+        let locations = project_references(&index, &uri, &name, include_decl)
+            .into_iter()
+            .map(|(file, range)| Location::new(file, range))
+            .collect();
         Ok(Some(locations))
     }
 
@@ -860,19 +861,7 @@ impl LanguageServer for Backend {
         };
         // Project-wide, visibility-scoped: rewrite the defining file and every
         // module that imports it (the `use` path segment and the call sites).
-        let mut changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
-        for file in reference_scope(&index, &uri, &name) {
-            let text = if file == uri {
-                Some(source.clone())
-            } else {
-                index.document_text(&file).map(str::to_string)
-            };
-            let Some(text) = text else { continue };
-            let edits = rename::rename_by_name(&text, &name, &params.new_name);
-            if !edits.is_empty() {
-                changes.insert(file, edits);
-            }
-        }
+        let changes = project_rename(&index, &uri, &name, &params.new_name);
         if changes.is_empty() {
             return Ok(None);
         }
@@ -994,7 +983,7 @@ mod tests {
         index.set_document(f("solo.neoc"), 1, "fn secret() { secret() }\n".to_string());
 
         // A `pub` decl used across files: its file plus every importer.
-        let mut pub_scope = reference_scope(&index, &f("main.neoc"), "add");
+        let mut pub_scope = index.reference_scope(&f("main.neoc"), "add");
         pub_scope.sort();
         let mut want = vec![f("util.neoc"), f("main.neoc")];
         want.sort();
@@ -1002,16 +991,32 @@ mod tests {
 
         // A private, file-local name stays in its own file.
         assert_eq!(
-            reference_scope(&index, &f("solo.neoc"), "secret"),
+            index.reference_scope(&f("solo.neoc"), "secret"),
             vec![f("solo.neoc")],
             "private: file-local only"
         );
 
         // An unknown name does not reach beyond the current file.
         assert_eq!(
-            reference_scope(&index, &f("main.neoc"), "nonesuch"),
+            index.reference_scope(&f("main.neoc"), "nonesuch"),
             vec![f("main.neoc")],
             "unknown: file-local only"
+        );
+
+        // `imported_definition` is the goto half: the `pub` decl in the imported
+        // module, and nothing for a private or unknown name.
+        assert_eq!(
+            index
+                .imported_definition(&f("main.neoc"), "add")
+                .map(|d| &d.uri),
+            Some(&f("util.neoc")),
+            "goto resolves the imported pub decl"
+        );
+        assert!(
+            index
+                .imported_definition(&f("main.neoc"), "secret")
+                .is_none(),
+            "a non-imported name has no cross-file definition"
         );
     }
 

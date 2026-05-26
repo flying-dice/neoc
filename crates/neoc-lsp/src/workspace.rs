@@ -239,6 +239,56 @@ impl WorkspaceIndex {
         self.decls.get(name).map_or(&[], Vec::as_slice)
     }
 
+    /// The `pub` declaration the name `name`, used in `from_uri`, resolves to
+    /// across files: a declaration in a module `from_uri` imports. `None` when no
+    /// imported module declares it (the name is local, unknown, or private). The
+    /// cross-file half of goto-definition.
+    #[must_use]
+    pub fn imported_definition(&self, from_uri: &Url, name: &str) -> Option<&DeclLoc> {
+        let targets = self.import_targets(from_uri);
+        self.find_decls(name)
+            .iter()
+            .find(|d| d.exported && targets.contains(&d.uri))
+    }
+
+    /// The files a reference or rename of `name`, used in `from_uri`, may touch —
+    /// scoped by visibility so an edit's blast radius stays bounded.
+    ///
+    /// A name resolving to a private or purely-local declaration stays in its own
+    /// file. A `pub` declaration's references span its defining file plus every
+    /// file that imports that module (its importers). The match within those
+    /// files is still text-level, so a same-named local can be over-included
+    /// until scope-aware resolution lands; but the *file set* never reaches a
+    /// module that does not import the definition.
+    #[must_use]
+    pub fn reference_scope(&self, from_uri: &Url, name: &str) -> Vec<Url> {
+        let decls = self.find_decls(name);
+        let targets = self.import_targets(from_uri);
+        // The declaration this use resolves to: one in the current file, else a
+        // `pub` one in a module the current file imports.
+        let def = decls.iter().find(|d| &d.uri == from_uri).or_else(|| {
+            decls
+                .iter()
+                .find(|d| d.exported && targets.contains(&d.uri))
+        });
+        let Some(def) = def else {
+            return vec![from_uri.clone()];
+        };
+        if !def.exported {
+            return vec![from_uri.clone()];
+        }
+        let mut scope = vec![def.uri.clone()];
+        for importer in self.importers_of(&def.uri) {
+            if !scope.contains(importer) {
+                scope.push(importer.clone());
+            }
+        }
+        if !scope.iter().any(|u| u == from_uri) {
+            scope.push(from_uri.clone());
+        }
+        scope
+    }
+
     /// The files `uri`'s `use` declarations resolve to — the modules it imports
     /// from. The forward direction of [`Self::importers_of`]; used to scope a
     /// cross-file goto to a module the current file actually imports.

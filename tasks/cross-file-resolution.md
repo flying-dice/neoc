@@ -162,8 +162,12 @@ WorkspaceIndex
    - **Goto-definition** `[x]` — follows `use` across files, scoped to the file's
      own import targets so it never lands in an unrelated module.
    - **Tests** — every new unit covered; the multi-file cucumber harness (`Given
-     the file "<path>":`) is in, exercising workspace symbols across files.
-     Extending the multi-file specs to goto/references/rename is follow-up polish.
+     the file "<path>":`) drives workspace symbols, goto, references, and rename
+     across files (`tooling/ide/cross-file.feature`,
+     `tooling/ide/workspace-symbols.feature`). The cross-file query cores are
+     pure functions (`project_references`, `project_rename`,
+     `WorkspaceIndex::{imported_definition, reference_scope}`); the handlers are
+     thin wrappers, so the spec drives the same logic the live server runs.
 4. `[ ]` **Auto-import completion** — `pub` decls from other files, with the
    `use` insertion edit.
 5. `[ ]` **Scope-aware resolution** — real name resolution (scopes, shadowing,
