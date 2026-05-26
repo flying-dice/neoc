@@ -179,6 +179,7 @@ WorkspaceIndex
    scope-sensitive lints (unused `let`/param, shadowing) land. This changes
    language-level static semantics, so it goes through an RFC/design per
    `CLAUDE.md` rather than a drive-by. Largest single item left; its own effort.
+   **Detailed, review-corrected plan:** `tasks/scope-aware-resolution.md`.
 6. `[deferred]` **Debounce + cancellation** — revision token, debounced
    workspace diagnostics. **Trigger:** a workspace-wide *async* consumer that is
    expensive enough to debounce or worth cancelling — project-wide diagnostics,
