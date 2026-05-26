@@ -1,9 +1,10 @@
 //! Language server for neoc, over stdio.
 //!
-//! Capabilities: diagnostics, document + workspace symbols, goto (definition,
-//! type-definition, implementation), find-all-references, document highlight,
-//! folding ranges, selection ranges, inlay hints, semantic tokens, call
-//! hierarchy, code actions (organize imports), formatting (via `neoc-fmt`),
+//! Capabilities: diagnostics (compiler errors + lint warnings), document +
+//! workspace symbols, goto (definition, type-definition, implementation),
+//! find-all-references, document highlight, folding ranges, selection ranges,
+//! inlay hints (parameter + type), semantic tokens, call hierarchy, code actions
+//! (organize imports, remove unused import), formatting (via `neoc-fmt`),
 //! signature help, rename, hover, and completion (with lazy per-item resolve).
 //! Diagnostics come from [`neoc_compiler::transpile`]; syntax errors carry
 //! parser byte ranges and type errors carry AST-node spans, so both land on the
@@ -24,6 +25,7 @@ mod goto;
 mod highlight;
 mod hover;
 mod inlay;
+mod lints;
 mod position;
 mod references;
 mod rename;
@@ -119,18 +121,21 @@ fn to_lsp(source: &str, diagnostic: &CompilerDiagnostic) -> Diagnostic {
     }
 }
 
-/// Transpiles `source` and returns its problems as LSP diagnostics.
+/// The diagnostics for `source`: hard correctness errors from the compiler plus
+/// warning-level lints.
 ///
 /// Pure and free of I/O, so it can be unit-tested without a running server.
 #[must_use]
 pub fn diagnose(source: &str) -> Vec<Diagnostic> {
     // Parse and type diagnostics are target-independent; emit against the
     // default target so the editor still surfaces any backend complaint.
-    transpile(source, Target::default())
+    let mut diagnostics: Vec<Diagnostic> = transpile(source, Target::default())
         .diagnostics
         .iter()
         .map(|d| to_lsp(source, d))
-        .collect()
+        .collect();
+    diagnostics.extend(lints::lints(source));
+    diagnostics
 }
 
 /// Encodes a document URI for `CompletionItem.data`, the opaque round-trip slot

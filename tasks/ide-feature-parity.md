@@ -117,6 +117,15 @@ Dependency-ordered. `[ ]` todo · `[~]` in-progress · `[x]` done.
     full-document edit; a syntax error leaves the document untouched.
     Range/on-type formatting still open.
 
+### Lints (clippy-style warnings)
+
+`[~]` A lint layer (`neoc-lsp/src/lints.rs`) emits `WARNING`-severity, `Unnecessary`
+-tagged diagnostics distinct from the compiler's correctness errors, merged into
+`diagnose`. First lint: **unused import** (pairs with the remove-unused-import
+fix). More lints (unused local binding, redundant constructs) follow the same
+shape; scope-sensitive ones wait on scope-aware resolution. A compiler-side
+`neoc lint` CLI (warnings outside the editor) is a separate track.
+
 ### Deferred (dev-only / non-LSP / out of scope)
 
 join lines, on-enter, on-type formatting, runnables / code lens, linked editing,

@@ -47,6 +47,8 @@ pub fn organize_imports(source: &str) -> Option<Vec<TextEdit>> {
 pub struct UnusedImport {
     /// The bound name (the alias, or the last segment of the path).
     pub name: String,
+    /// The declaration's own range — what a lint underlines.
+    pub range: Range,
     /// The range to delete to remove the import — the declaration and its
     /// trailing newline.
     pub removal: Range,
@@ -65,6 +67,7 @@ pub fn unused_imports(source: &str) -> Vec<UnusedImport> {
         if !is_used_outside_imports(&tree, source, binding) {
             out.push(UnusedImport {
                 name: binding.to_string(),
+                range: byte_range(source, use_decl.start_byte(), use_decl.end_byte()),
                 removal: removal_range(use_decl, source),
             });
         }

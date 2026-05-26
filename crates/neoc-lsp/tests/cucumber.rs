@@ -20,7 +20,9 @@
 use std::path::Path;
 
 use cucumber::{World, gherkin::Step, given, then, when};
-use tower_lsp::lsp_types::{DocumentHighlightKind, Documentation, InlayHintLabel, TextEdit};
+use tower_lsp::lsp_types::{
+    DiagnosticSeverity, DocumentHighlightKind, Documentation, InlayHintLabel, TextEdit,
+};
 
 /// State threaded through one scenario: the document under test and the result
 /// produced by the last `When` step — hover markdown, reference locations as
@@ -45,6 +47,7 @@ struct Ide {
     workspace_symbol_names: Vec<String>,
     call_hierarchy_names: Vec<String>,
     semantic_tokens: Vec<(u32, u32, String)>,
+    diagnostics: Vec<(String, String)>,
 }
 
 #[given("the source:")]
@@ -387,6 +390,37 @@ fn semantic_tokens_include(world: &mut Ide, step: &Step) {
             world.semantic_tokens.contains(&expected),
             "missing token {expected:?}; got {:?}",
             world.semantic_tokens,
+        );
+    }
+}
+
+#[when("I check the document")]
+fn check_document(world: &mut Ide) {
+    world.diagnostics = neoc_lsp::diagnose(&world.source)
+        .into_iter()
+        .map(|diag| {
+            let severity = match diag.severity {
+                Some(DiagnosticSeverity::ERROR) => "error",
+                Some(DiagnosticSeverity::WARNING) => "warning",
+                _ => "info",
+            };
+            (severity.to_string(), diag.message)
+        })
+        .collect();
+}
+
+#[then("the diagnostics include:")]
+fn diagnostics_include(world: &mut Ide, step: &Step) {
+    let table = step
+        .table
+        .as_ref()
+        .unwrap_or_else(|| panic!("step {:?} requires a table", step.value));
+    for row in table.rows.iter().skip(1) {
+        let expected = (row[0].trim().to_string(), row[1].trim().to_string());
+        assert!(
+            world.diagnostics.contains(&expected),
+            "missing diagnostic {expected:?}; got {:?}",
+            world.diagnostics,
         );
     }
 }
