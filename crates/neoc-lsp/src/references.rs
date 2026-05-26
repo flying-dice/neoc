@@ -25,6 +25,19 @@ pub fn references(source: &str, position: Position, include_declaration: bool) -
     let Some(name) = cst::identifier_at(&tree, source, byte) else {
         return Vec::new();
     };
+    references_by_name(source, name, include_declaration)
+}
+
+/// Every occurrence of the identifier `name` in `source`, in source order — the
+/// name-based core of [`references`].
+///
+/// A cross-file caller uses this to find references in a file other than the one
+/// the cursor is in, where there is no position to resolve. `include_declaration`
+/// drops the declaring name when this file declares `name`; in a file that only
+/// *uses* the name there is no declaration to drop.
+#[must_use]
+pub fn references_by_name(source: &str, name: &str, include_declaration: bool) -> Vec<Range> {
+    let tree = cst::parse(source);
     let decl = declaration_name_range(&tree, source, name);
     cst::identifier_nodes(&tree, source, name)
         .into_iter()
@@ -113,6 +126,24 @@ mod tests {
         // decl name, return type, and struct literal — three occurrences.
         let refs = references(src, position_of(src, "Point", 2), true);
         assert_eq!(refs.len(), 3, "{refs:?}");
+    }
+
+    #[test]
+    fn by_name_finds_uses_without_a_cursor() {
+        // The cross-file core: in a file that only *uses* an imported name (no
+        // declaration), every occurrence is a reference and none is dropped.
+        let src = "use util::add;\nfn main() -> number { add(add(1, 2), 3) }\n";
+        let refs = references_by_name(src, "add", false);
+        assert_eq!(refs.len(), 3, "the `use` segment and both calls: {refs:?}");
+    }
+
+    #[test]
+    fn by_name_drops_the_declaration_when_excluded() {
+        // In the defining file, excluding the declaration drops exactly one.
+        let src = "fn add(a: number, b: number) -> number { a + b }\nfn main() { add(1, 2) }\n";
+        let with = references_by_name(src, "add", true);
+        let without = references_by_name(src, "add", false);
+        assert_eq!(with.len(), without.len() + 1);
     }
 
     #[test]

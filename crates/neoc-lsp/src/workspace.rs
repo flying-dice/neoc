@@ -252,8 +252,6 @@ impl WorkspaceIndex {
     }
 
     /// The files whose `use` imports resolve to `uri` — its direct dependents.
-    // Used by the references/rename slice of Phase 3 (see cross-file-resolution.md).
-    #[allow(dead_code)]
     #[must_use]
     pub fn importers_of(&self, uri: &Url) -> &[Url] {
         self.importers.get(uri).map_or(&[], Vec::as_slice)

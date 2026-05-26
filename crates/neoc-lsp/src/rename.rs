@@ -36,6 +36,21 @@ pub fn rename(source: &str, position: Position, new_name: &str) -> Vec<TextEdit>
         .collect()
 }
 
+/// The edits renaming every occurrence of `name` in `source` to `new_name` — the
+/// name-based core of [`rename`], for rewriting a file other than the one the
+/// cursor is in (a cross-file rename touches the defining file and its
+/// importers).
+#[must_use]
+pub fn rename_by_name(source: &str, name: &str, new_name: &str) -> Vec<TextEdit> {
+    references::references_by_name(source, name, true)
+        .into_iter()
+        .map(|range| TextEdit {
+            range,
+            new_text: new_name.to_string(),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -81,6 +96,19 @@ mod tests {
         assert_eq!(
             renamed,
             "fn fibonacci(n: number) -> number { fibonacci(n) }\nfn main() -> number { fibonacci(3) }\n"
+        );
+    }
+
+    #[test]
+    fn by_name_rewrites_an_importing_file() {
+        // The cross-file core, applied to a file that imports the symbol: both
+        // the `use` path segment and the call sites move to the new name.
+        let src = "use util::add;\nfn main() -> number { add(1, 2) }\n";
+        let edits = rename_by_name(src, "add", "plus");
+        let renamed = apply(src, &edits);
+        assert_eq!(
+            renamed,
+            "use util::plus;\nfn main() -> number { plus(1, 2) }\n"
         );
     }
 
