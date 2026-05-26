@@ -139,6 +139,10 @@ impl Adapter {
     fn walk_trait(&mut self, node: Node) -> ast::TraitDecl {
         let name = self.name_field(node);
         let generics = self.walk_generics(node);
+        let supertraits = self
+            .field(node, "supertraits")
+            .map(|b| self.walk_bounds(b))
+            .unwrap_or_default();
         let mut items = Vec::new();
         let mut cursor = node.walk();
         for child in node.named_children(&mut cursor) {
@@ -151,6 +155,7 @@ impl Adapter {
         ast::TraitDecl {
             name,
             generics,
+            supertraits,
             items,
         }
     }

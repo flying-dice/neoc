@@ -458,9 +458,18 @@ fn collect_trait(table: &mut SymbolTable, t: &ast::TraitDecl) {
             }
         })
         .collect();
+    let supertraits = t
+        .supertraits
+        .iter()
+        .filter_map(|p| p.segments.last().map(|s| s.name.clone()))
+        .collect();
     table.types.insert(
         t.name.clone(),
-        TypeDef::Trait(TraitInfo { generics, methods }),
+        TypeDef::Trait(TraitInfo {
+            generics,
+            methods,
+            supertraits,
+        }),
     );
 }
 

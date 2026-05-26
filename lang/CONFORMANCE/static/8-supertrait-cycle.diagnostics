@@ -1,0 +1,2 @@
+supertrait cycle: `A` and `B` are mutually dependent
+supertrait cycle: `B` and `A` are mutually dependent

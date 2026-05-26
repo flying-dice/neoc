@@ -100,13 +100,13 @@ neoc has no anonymous union types. A sum is always a named `enum`; there is no `
 ### 3.6 `trait`
 
 ```
-TraitDecl   ::= "trait" IDENT [ Generics ] "{" { TraitItem } "}"
+TraitDecl   ::= "trait" IDENT [ Generics ] [ ":" Bounds ] "{" { TraitItem } "}"
 TraitItem   ::= FnSig ";"                        (* required method *)
               | FnSig Block                       (* default method  *)
 FnSig       ::= "fn" IDENT [ Generics ] "(" [ ParamList ] ")" [ "->" Type ]
 ```
 
-A trait is a set of method signatures. A method with a body is a default; an implementing type may override it. A method without a body is required.
+A trait is a set of method signatures. A method with a body is a default; an implementing type may override it. A method without a body is required. The optional `: Bounds` names the trait's **supertraits** (`trait Greet: Show`): traits an implementor must also implement (`STATIC.md` §3.4).
 
 ### 3.7 `impl`
 
@@ -382,7 +382,7 @@ Variant     ::= { Attribute } IDENT [ VariantTail ]
 VariantTail ::= "(" [ Type { "," Type } [ "," ] ] ")"
               | FieldDeclList
 
-TraitDecl   ::= "trait" IDENT [ Generics ] "{" { TraitItem } "}"
+TraitDecl   ::= "trait" IDENT [ Generics ] [ ":" Bounds ] "{" { TraitItem } "}"
 TraitItem   ::= FnSig ";"
               | FnSig Block
 FnSig       ::= "fn" IDENT [ Generics ] ParamList [ "->" Type ] [ WhereClause ]

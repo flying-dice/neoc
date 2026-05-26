@@ -205,6 +205,10 @@ pub enum VariantBody {
 pub struct TraitDecl {
     pub name: Ident,
     pub generics: Vec<GenericParam>,
+    /// Supertraits the trait requires of its implementors (`trait A: B + C`).
+    /// Each is the path of a required trait; an `impl A for T` must also
+    /// provide an `impl B for T`.
+    pub supertraits: Vec<TypePath>,
     pub items: Vec<TraitItem>,
 }
 

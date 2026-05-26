@@ -192,6 +192,7 @@ impl<'a> Checker<'a> {
             }
             ast::ItemKind::Impl(b) => self.check_impl(b),
             ast::ItemKind::Trait(t) => {
+                self.check_supertraits(t);
                 for ti in &t.items {
                     if let Some(body) = &ti.default {
                         self.check_fn_body(&ti.sig, body, Some("Self"));
@@ -199,6 +200,24 @@ impl<'a> Checker<'a> {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Validates a trait's supertrait list: each named supertrait must be a
+    /// trait, and the supertrait relation must be acyclic (`STATIC.md` §3.4).
+    fn check_supertraits(&mut self, t: &ast::TraitDecl) {
+        for sup in &t.supertraits {
+            let Some(name) = sup.segments.last().map(|s| &s.name) else {
+                continue;
+            };
+            if !self.is_trait(name) {
+                self.error(format!("unknown supertrait `{name}` on trait `{}`", t.name));
+            } else if self.trait_chain_includes(name, &t.name) {
+                self.error(format!(
+                    "supertrait cycle: `{}` and `{name}` are mutually dependent",
+                    t.name
+                ));
+            }
         }
     }
 
@@ -249,15 +268,28 @@ impl<'a> Checker<'a> {
         method: &str,
         self_ty: &Ty,
     ) -> Option<(Vec<Ty>, Ty)> {
-        let Some(TypeDef::Trait(t)) = self.table.types.get(trait_name) else {
-            return None;
-        };
-        let m = t
-            .methods
-            .iter()
-            .find(|m| m.name == method && m.has_receiver)?;
-        let proj = |ty: &Ty| subst_self_param(ty, self_ty);
-        Some((m.params.iter().map(proj).collect(), proj(&m.ret)))
+        // Search the trait and its transitive supertraits, first match wins, so
+        // a `Greet: Show` bound resolves `show` declared on `Show`.
+        let mut stack = vec![trait_name.to_string()];
+        let mut seen = std::collections::HashSet::new();
+        while let Some(tn) = stack.pop() {
+            if !seen.insert(tn.clone()) {
+                continue;
+            }
+            let Some(TypeDef::Trait(t)) = self.table.types.get(&tn) else {
+                continue;
+            };
+            if let Some(m) = t
+                .methods
+                .iter()
+                .find(|m| m.name == method && m.has_receiver)
+            {
+                let proj = |ty: &Ty| subst_self_param(ty, self_ty);
+                return Some((m.params.iter().map(proj).collect(), proj(&m.ret)));
+            }
+            stack.extend(t.supertraits.iter().cloned());
+        }
+        None
     }
 
     /// A method `method` provided by one of the trait bounds on type parameter
@@ -362,6 +394,15 @@ impl<'a> Checker<'a> {
             ));
             return;
         };
+        // Supertrait completeness: an implementor must also implement every
+        // supertrait the trait requires (`STATIC.md` §3.4).
+        for sup in &t.supertraits {
+            if !self.table.implements(target, sup) {
+                self.error(format!(
+                    "`{target}` implements `{trait_name}` but not its supertrait `{sup}`; add `impl {sup} for {target}`"
+                ));
+            }
+        }
         let provided: Vec<&String> = b.items.iter().map(|f| &f.sig.name).collect();
         // Missing required methods.
         for m in &t.methods {
@@ -861,9 +902,35 @@ impl<'a> Checker<'a> {
             Ty::Param(p) => self
                 .type_bounds
                 .get(p)
-                .is_some_and(|bs| bs.iter().any(|b| b == trait_name)),
-            _ => ty_impl_name(ty).is_some_and(|n| self.table.implements(&n, trait_name)),
+                .is_some_and(|bs| bs.iter().any(|b| self.trait_chain_includes(b, trait_name))),
+            _ => ty_impl_name(ty).is_some_and(|n| {
+                self.table
+                    .trait_impls
+                    .iter()
+                    .any(|(t, tr)| *t == n && self.trait_chain_includes(tr, trait_name))
+            }),
         }
+    }
+
+    /// Whether `trait_name` is `target` or reaches it through its transitive
+    /// supertraits — so a `T: Greet` bound satisfies a `Show` requirement when
+    /// `trait Greet: Show`. Cycle-guarded: a malformed `trait A: B` / `trait B:
+    /// A` pair terminates instead of looping.
+    fn trait_chain_includes(&self, trait_name: &str, target: &str) -> bool {
+        let mut stack = vec![trait_name.to_string()];
+        let mut seen = std::collections::HashSet::new();
+        while let Some(t) = stack.pop() {
+            if t == target {
+                return true;
+            }
+            if !seen.insert(t.clone()) {
+                continue;
+            }
+            if let Some(TypeDef::Trait(info)) = self.table.types.get(&t) {
+                stack.extend(info.supertraits.iter().cloned());
+            }
+        }
+        false
     }
 
     fn unify_param(param: &Ty, arg: &Ty, subst: &mut std::collections::HashMap<String, Ty>) {
@@ -1680,8 +1747,13 @@ impl<'a> Checker<'a> {
         match (expected, actual) {
             (Ty::Unknown | Ty::Param(_), _) | (_, Ty::Unknown | Ty::Param(_)) => true,
             (Ty::Named { name, args }, actual) if args.is_empty() && self.is_trait(name) => {
-                matches!(actual, Ty::Named { name: a, .. } if a == name)
-                    || self.type_satisfies(actual, name)
+                match actual {
+                    // A trait value flows into the same trait or a supertrait.
+                    Ty::Named { name: a, .. } if self.is_trait(a) => {
+                        self.trait_chain_includes(a, name)
+                    }
+                    _ => self.type_satisfies(actual, name),
+                }
             }
             (Ty::List(a), Ty::List(b)) => self.assignable(a, b),
             (Ty::Fn(pa, ra), Ty::Fn(pb, rb)) => {

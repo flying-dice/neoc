@@ -1,0 +1,17 @@
+// STATIC.md §3.4: an implementor of a subtrait must also implement its
+// supertrait.
+trait Show {
+  fn show(self) -> string;
+}
+
+trait Greet: Show {
+  fn greet(self) -> string;
+}
+
+struct P;
+
+impl Greet for P {
+  fn greet(self) -> string {
+    "hi"
+  }
+}

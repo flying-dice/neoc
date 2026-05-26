@@ -101,6 +101,7 @@ impl<'a> Elaborator<'a> {
         ast::TraitDecl {
             name: t.name.clone(),
             generics: t.generics.clone(),
+            supertraits: t.supertraits.clone(),
             items,
         }
     }

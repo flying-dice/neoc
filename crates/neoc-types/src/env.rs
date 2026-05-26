@@ -55,6 +55,10 @@ pub enum VariantFields {
 pub struct TraitInfo {
     pub generics: Vec<String>,
     pub methods: Vec<TraitMethod>,
+    /// Names of the supertraits this trait requires (`trait A: B + C`). An
+    /// implementor of this trait must also implement each, and a bound by this
+    /// trait grants access to their methods.
+    pub supertraits: Vec<String>,
 }
 
 /// One method signature of a trait.

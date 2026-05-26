@@ -1,0 +1,37 @@
+// STATIC.md §3.4: `trait Greet: Show` — a bound by the subtrait grants the
+// supertrait's methods, and a subtrait value flows where the supertrait is
+// expected.
+trait Show {
+  fn show(self) -> string;
+}
+
+trait Greet: Show {
+  fn greet(self) -> string;
+}
+
+struct P;
+
+impl Show for P {
+  fn show(self) -> string {
+    "p"
+  }
+}
+
+impl Greet for P {
+  fn greet(self) -> string {
+    "hi"
+  }
+}
+
+fn describe<T: Greet>(x: T) -> string {
+  x.show()
+}
+
+fn want_show(s: Show) -> string {
+  s.show()
+}
+
+fn go() -> string {
+  let g: Greet = P;
+  want_show(g)
+}
