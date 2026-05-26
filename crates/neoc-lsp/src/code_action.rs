@@ -81,6 +81,18 @@ pub fn unused_imports_in(tree: &Tree, source: &str) -> Vec<UnusedImport> {
     out
 }
 
+/// The set of names the file's top-level `use` declarations bind into scope
+/// (each import's alias, or its path's last segment). Auto-import consults it to
+/// skip a name that is already imported.
+#[must_use]
+pub fn imported_names(source: &str) -> std::collections::HashSet<String> {
+    let tree = cst::parse(source);
+    top_level_uses(&tree)
+        .iter()
+        .filter_map(|u| import_binding(*u, source).map(str::to_string))
+        .collect()
+}
+
 /// The name an import binds: its alias, or the last identifier of its path.
 fn import_binding<'a>(use_decl: Node, source: &'a str) -> Option<&'a str> {
     if let Some(alias) = use_decl.child_by_field_name("alias") {

@@ -168,8 +168,11 @@ WorkspaceIndex
      pure functions (`project_references`, `project_rename`,
      `WorkspaceIndex::{imported_definition, reference_scope}`); the handlers are
      thin wrappers, so the spec drives the same logic the live server runs.
-4. `[ ]` **Auto-import completion** — `pub` decls from other files, with the
-   `use` insertion edit.
+4. `[x]` **Auto-import completion** — completion offers every `pub` declaration
+   from another file not yet imported, each with a `use` insertion edit
+   (`auto_import_completions`; `WorkspaceIndex::use_path_for` reverses the
+   `module_file` rule to build the path). Suppressed after `.`/`::`. Skips local
+   and already-imported names.
 5. `[ ]` **Scope-aware resolution** — real name resolution (scopes, shadowing,
    imports) so references/rename stop over-approximating and the scope-sensitive
    lints (unused `let`/param, shadowing) land.

@@ -70,8 +70,8 @@ use tower_lsp::lsp_types::{
     CallHierarchyOutgoingCall, CallHierarchyOutgoingCallsParams, CallHierarchyPrepareParams,
     CallHierarchyServerCapability, CodeAction, CodeActionKind, CodeActionOrCommand,
     CodeActionParams, CodeActionProviderCapability, CodeActionResponse, CompletionItem,
-    CompletionOptions, CompletionParams, CompletionResponse, Diagnostic, DiagnosticSeverity,
-    DidChangeTextDocumentParams, DidChangeWatchedFilesParams,
+    CompletionItemKind, CompletionOptions, CompletionParams, CompletionResponse, Diagnostic,
+    DiagnosticSeverity, DidChangeTextDocumentParams, DidChangeWatchedFilesParams,
     DidChangeWatchedFilesRegistrationOptions, DidCloseTextDocumentParams,
     DidOpenTextDocumentParams, DocumentFormattingParams, DocumentHighlight,
     DocumentHighlightParams, DocumentSymbolParams, DocumentSymbolResponse, FileChangeType,
@@ -269,6 +269,69 @@ pub fn project_rename(
         }
     }
     changes
+}
+
+/// Auto-import completion items: every `pub` declaration in another file that
+/// `from_uri` does not already import, each carrying a `use` insertion edit so
+/// accepting it both writes the name and brings it into scope. The editor
+/// filters the list by the typed prefix. Sorted by name; deduped by
+/// (name, use-path) so two modules exporting the same name both appear.
+#[must_use]
+pub fn auto_import_completions(
+    index: &WorkspaceIndex,
+    from_uri: &Url,
+    source: &str,
+) -> Vec<CompletionItem> {
+    let already = code_action::imported_names(source);
+    let mut seen: HashSet<(String, String)> = HashSet::new();
+    let mut out = Vec::new();
+    for (name, loc) in index.all_declarations() {
+        if !loc.exported || &loc.uri == from_uri || already.contains(name) {
+            continue;
+        }
+        let Some(use_path) = index.use_path_for(&loc.uri, name) else {
+            continue;
+        };
+        if !seen.insert((name.to_string(), use_path.clone())) {
+            continue;
+        }
+        out.push(CompletionItem {
+            label: name.to_string(),
+            kind: Some(completion_kind(loc.kind)),
+            detail: Some(format!("auto-import `{use_path}`")),
+            // Inserted at the top of the file; `organize imports` can reflow it.
+            additional_text_edits: Some(vec![TextEdit {
+                range: Range::new(Position::new(0, 0), Position::new(0, 0)),
+                new_text: format!("use {use_path};\n"),
+            }]),
+            ..CompletionItem::default()
+        });
+    }
+    out.sort_by(|a, b| a.label.cmp(&b.label));
+    out
+}
+
+/// Maps a declaration's [`SymbolKind`] to the matching [`CompletionItemKind`].
+fn completion_kind(kind: SymbolKind) -> CompletionItemKind {
+    match kind {
+        SymbolKind::STRUCT => CompletionItemKind::STRUCT,
+        SymbolKind::ENUM => CompletionItemKind::ENUM,
+        SymbolKind::INTERFACE => CompletionItemKind::INTERFACE,
+        SymbolKind::CONSTANT => CompletionItemKind::CONSTANT,
+        _ => CompletionItemKind::FUNCTION,
+    }
+}
+
+/// Whether the cursor sits after a `.` or `::` — a member or path position,
+/// where an unqualified auto-import would be noise. Scans left over the
+/// identifier being typed to the character that precedes it.
+fn is_member_or_path_context(source: &str, position: Position) -> bool {
+    let bytes = source.as_bytes();
+    let mut i = position_to_byte(source, position).min(bytes.len());
+    while i > 0 && (bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_') {
+        i -= 1;
+    }
+    i > 0 && (bytes[i - 1] == b'.' || bytes[i - 1] == b':')
 }
 
 /// Every `.neoc` file under `root`, recursing into subdirectories but skipping
@@ -887,19 +950,34 @@ impl LanguageServer for Backend {
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
         let tdp = params.text_document_position;
-        let Some(source) = self.source(&tdp.text_document.uri) else {
+        let uri = tdp.text_document.uri;
+        let Some(source) = self.source(&uri) else {
             return Ok(None);
         };
         // Stash the document URI on each item so `completion_resolve` can find
         // the source again — resolve receives only the item the user focused.
-        let stashed = stash_uri(&tdp.text_document.uri);
-        let items = completion::completions(&source, tdp.position)
+        let stashed = stash_uri(&uri);
+        let mut items: Vec<CompletionItem> = completion::completions(&source, tdp.position)
             .into_iter()
             .map(|item| CompletionItem {
                 data: Some(stashed.clone()),
                 ..item
             })
             .collect();
+        // Auto-import: importable `pub` names from other files, each with a `use`
+        // edit. Only in an unqualified position — not after `.`/`::`.
+        if !is_member_or_path_context(&source, tdp.position) {
+            if let Ok(index) = self.index.lock() {
+                items.extend(
+                    auto_import_completions(&index, &uri, &source)
+                        .into_iter()
+                        .map(|item| CompletionItem {
+                            data: Some(stashed.clone()),
+                            ..item
+                        }),
+                );
+            }
+        }
         Ok(Some(CompletionResponse::Array(items)))
     }
 
@@ -1018,6 +1096,64 @@ mod tests {
                 .is_none(),
             "a non-imported name has no cross-file definition"
         );
+    }
+
+    #[test]
+    fn auto_import_offers_unimported_pub_decls_with_a_use_edit() {
+        let root = Path::new("/proj");
+        let f = |rel: &str| Url::from_file_path(root.join(rel)).unwrap();
+        let mut index = WorkspaceIndex::new(root);
+        index.set_document(
+            f("util.neoc"),
+            1,
+            "pub fn add() {}\nfn secret() {}\n".to_string(),
+        );
+        let main_src = "fn main() -> number { 0 }\n";
+        index.set_document(f("main.neoc"), 1, main_src.to_string());
+
+        let items = auto_import_completions(&index, &f("main.neoc"), main_src);
+        let add = items
+            .iter()
+            .find(|i| i.label == "add")
+            .expect("`add` offered");
+        assert_eq!(add.kind, Some(CompletionItemKind::FUNCTION));
+        assert_eq!(
+            add.additional_text_edits.as_ref().unwrap()[0].new_text,
+            "use util::add;\n",
+            "accepting the item also writes the import"
+        );
+        assert!(
+            !items.iter().any(|i| i.label == "secret"),
+            "a private decl is not importable"
+        );
+    }
+
+    #[test]
+    fn auto_import_skips_already_imported_and_local_names() {
+        let root = Path::new("/proj");
+        let f = |rel: &str| Url::from_file_path(root.join(rel)).unwrap();
+        let mut index = WorkspaceIndex::new(root);
+        index.set_document(f("util.neoc"), 1, "pub fn add() {}\n".to_string());
+        let main_src = "use util::add;\npub fn helper() {}\n";
+        index.set_document(f("main.neoc"), 1, main_src.to_string());
+
+        let items = auto_import_completions(&index, &f("main.neoc"), main_src);
+        assert!(
+            !items.iter().any(|i| i.label == "add"),
+            "already imported — not offered again"
+        );
+        assert!(
+            !items.iter().any(|i| i.label == "helper"),
+            "a local declaration needs no import"
+        );
+    }
+
+    #[test]
+    fn member_and_path_context_suppress_auto_import() {
+        let at = |src: &str| is_member_or_path_context(src, byte_to_position(src, src.len()));
+        assert!(at("foo.ba"), "after a `.` member access");
+        assert!(at("Color::Re"), "after a `::` path");
+        assert!(!at("ba"), "a bare identifier prefix is fair game");
     }
 
     #[test]

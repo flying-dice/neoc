@@ -239,6 +239,37 @@ impl WorkspaceIndex {
         self.decls.get(name).map_or(&[], Vec::as_slice)
     }
 
+    /// The `use` path that imports `item` from the file `file` — the reverse of
+    /// the compiler's `module_file` rule. `<root>/math/vec.neoc` + `dot` yields
+    /// `math::vec::dot`; `<root>/util.neoc` + `add` yields `util::add`. `None`
+    /// when `file` is not under the index root. Used to build the `use` insertion
+    /// an auto-import completion offers.
+    #[must_use]
+    pub fn use_path_for(&self, file: &Url, item: &str) -> Option<String> {
+        let path = file.to_file_path().ok()?;
+        let rel = path.strip_prefix(&self.root).ok()?.with_extension("");
+        let mut segments: Vec<String> = rel
+            .components()
+            .filter_map(|c| match c {
+                std::path::Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
+                _ => None,
+            })
+            .collect();
+        if segments.is_empty() {
+            return None;
+        }
+        segments.push(item.to_string());
+        Some(segments.join("::"))
+    }
+
+    /// Every declaration in the project, as `(name, location)` pairs — the whole
+    /// name index. Used by auto-import to scan importable `pub` declarations.
+    pub fn all_declarations(&self) -> impl Iterator<Item = (&str, &DeclLoc)> {
+        self.decls
+            .iter()
+            .flat_map(|(name, locs)| locs.iter().map(move |loc| (name.as_str(), loc)))
+    }
+
     /// The `pub` declaration the name `name`, used in `from_uri`, resolves to
     /// across files: a declaration in a module `from_uri` imports. `None` when no
     /// imported module declares it (the name is local, unknown, or private). The
@@ -567,6 +598,23 @@ mod tests {
             idx.workspace_symbols("").len(),
             3,
             "empty query matches all"
+        );
+    }
+
+    #[test]
+    fn use_path_for_reverses_the_module_file_rule() {
+        let root = Path::new("/proj");
+        let idx = WorkspaceIndex::new(root);
+        assert_eq!(
+            idx.use_path_for(&uri(root, "util.neoc"), "add").as_deref(),
+            Some("util::add"),
+            "a top-level sibling"
+        );
+        assert_eq!(
+            idx.use_path_for(&uri(root, "math/vec.neoc"), "dot")
+                .as_deref(),
+            Some("math::vec::dot"),
+            "a nested module"
         );
     }
 
