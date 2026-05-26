@@ -209,6 +209,7 @@ fn emit_inner(module: &ast::Module, source: Option<&str>) -> EmitResult {
         enums: EnumIndex::build(module),
         tuple_structs: TupleStructIndex::build(module),
         line_index: source.map(LineIndex::build),
+        forward_decls: forward_declared_fns(module),
         ..Emitter::default()
     };
     e.emit_module(module);
@@ -280,6 +281,11 @@ pub(crate) struct Emitter {
     try_seq: usize,
     /// Native imports from module-bound `ext` blocks, sorted by specifier.
     imports: Vec<(String, Vec<String>)>,
+    /// Private free functions referenced before their definition. They are
+    /// declared `local` up front and assigned in place, so a caller emitted
+    /// earlier closes over the (later-assigned) local rather than a nil global.
+    /// A plain `local function` is only in scope after its line.
+    forward_decls: std::collections::HashSet<String>,
 }
 
 /// A loop being emitted. When `break_flag` is set the loop uses the
@@ -405,6 +411,13 @@ impl Emitter {
     fn emit_module(&mut self, module: &ast::Module) {
         self.collect_method_enums(module);
         self.imports = ast::module_imports(module, ast::Target::Lua);
+        // Hoist the locals of forward-referenced private functions so a caller
+        // emitted earlier captures the local, not a nil global.
+        if !self.forward_decls.is_empty() {
+            let mut names: Vec<String> = self.forward_decls.iter().cloned().collect();
+            names.sort_unstable();
+            self.line(format!("local {}", names.join(", ")));
+        }
         for item in &module.items {
             self.emit_item(item);
         }
@@ -602,6 +615,12 @@ impl Emitter {
             None if vis == ast::Visibility::Public => {
                 format!("function {}({param_list})", f.sig.name)
             }
+            // A forward-referenced private fn: assign the pre-declared `local`
+            // (hoisted in `emit_module`) instead of declaring it here, where a
+            // `local function` would be invisible to earlier callers.
+            None if self.forward_decls.contains(&f.sig.name) => {
+                format!("{} = function({param_list})", f.sig.name)
+            }
             None => format!("local function {}({param_list})", f.sig.name),
         };
         self.line(header);
@@ -634,4 +653,165 @@ fn has_derive(attrs: &[ast::Attribute]) -> bool {
         .iter()
         .flat_map(|a| &a.items)
         .any(|i| i.name == "derive")
+}
+
+/// The private free functions referenced by an item that precedes their
+/// definition. Those must be declared `local` up front (see [`Emitter`]'s
+/// `forward_decls`); a `local function` is only visible from its own line on, so
+/// an earlier caller would otherwise close over a nil global. Pub functions emit
+/// as globals (visible everywhere) and methods as table fields, so neither
+/// needs this.
+fn forward_declared_fns(module: &ast::Module) -> std::collections::HashSet<String> {
+    use std::collections::{HashMap, HashSet};
+    let mut def_index: HashMap<&str, usize> = HashMap::new();
+    for (i, item) in module.items.iter().enumerate() {
+        if let ast::ItemKind::Fn(f) = &item.kind
+            && item.vis == ast::Visibility::Private
+        {
+            def_index.entry(f.sig.name.as_str()).or_insert(i);
+        }
+    }
+    let mut forward = HashSet::new();
+    for (i, item) in module.items.iter().enumerate() {
+        let mut used = HashSet::new();
+        item_refs(item, &mut used);
+        for name in used {
+            if def_index.get(name).is_some_and(|&def| def > i) {
+                forward.insert(name.to_string());
+            }
+        }
+    }
+    forward
+}
+
+/// Collects the names an item's bodies reference (path heads), for forward-
+/// reference detection.
+fn item_refs<'a>(item: &'a ast::Item, used: &mut std::collections::HashSet<&'a str>) {
+    match &item.kind {
+        ast::ItemKind::Fn(f) => block_refs(&f.body, used),
+        ast::ItemKind::Const(c) => expr_refs(&c.value, used),
+        ast::ItemKind::Impl(b) => {
+            for method in &b.items {
+                block_refs(&method.body, used);
+            }
+        }
+        ast::ItemKind::Trait(t) => {
+            for trait_item in &t.items {
+                if let Some(body) = &trait_item.default {
+                    block_refs(body, used);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn block_refs<'a>(block: &'a ast::Block, used: &mut std::collections::HashSet<&'a str>) {
+    for stmt in &block.stmts {
+        match &stmt.kind {
+            ast::StmtKind::Let(l) => {
+                if let Some(value) = &l.value {
+                    expr_refs(value, used);
+                }
+            }
+            ast::StmtKind::Expr(e) => expr_refs(e, used),
+            ast::StmtKind::Item(item) => item_refs(item, used),
+        }
+    }
+    if let Some(value) = &block.value {
+        expr_refs(value, used);
+    }
+}
+
+fn expr_refs<'a>(expr: &'a ast::Expr, used: &mut std::collections::HashSet<&'a str>) {
+    use ast::ExprKind::{
+        Assign, Binary, Block, Bool, Break, Call, Closure, Continue, Field, Float, For, If, Index,
+        Int, List, Loop, Match, MethodCall, Path, Range, Return, Str, StructLit, Try, Unary, Unit,
+        While,
+    };
+    match &expr.kind {
+        Path(segs) => {
+            if let Some(head) = segs.first() {
+                used.insert(head.as_str());
+            }
+        }
+        Binary { lhs, rhs, .. } => {
+            expr_refs(lhs, used);
+            expr_refs(rhs, used);
+        }
+        Unary { operand, .. } | Try(operand) => expr_refs(operand, used),
+        Range { start, end, .. } => {
+            expr_refs(start, used);
+            expr_refs(end, used);
+        }
+        Call { callee, args } => {
+            expr_refs(callee, used);
+            for a in args {
+                expr_refs(a, used);
+            }
+        }
+        MethodCall { receiver, args, .. } => {
+            expr_refs(receiver, used);
+            for a in args {
+                expr_refs(a, used);
+            }
+        }
+        Field { base, .. } => expr_refs(base, used),
+        Index { base, index } => {
+            expr_refs(base, used);
+            expr_refs(index, used);
+        }
+        StructLit { fields, base, .. } => {
+            for field in fields {
+                if let Some(value) = &field.value {
+                    expr_refs(value, used);
+                }
+            }
+            if let Some(base) = base {
+                expr_refs(base, used);
+            }
+        }
+        List(items) => {
+            for x in items {
+                expr_refs(x, used);
+            }
+        }
+        Assign { target, value, .. } => {
+            expr_refs(target, used);
+            expr_refs(value, used);
+        }
+        If { cond, then, else_ } => {
+            expr_refs(cond, used);
+            block_refs(then, used);
+            if let Some(e) = else_ {
+                expr_refs(e, used);
+            }
+        }
+        Match { scrutinee, arms } => {
+            expr_refs(scrutinee, used);
+            for arm in arms {
+                if let Some(guard) = &arm.guard {
+                    expr_refs(guard, used);
+                }
+                expr_refs(&arm.body, used);
+            }
+        }
+        While { cond, body } => {
+            expr_refs(cond, used);
+            block_refs(body, used);
+        }
+        For { iter, body, .. } => {
+            expr_refs(iter, used);
+            block_refs(body, used);
+        }
+        Loop { body } => block_refs(body, used),
+        Closure { body, .. } => expr_refs(body, used),
+        Block(b) => block_refs(b, used),
+        Return(opt) => {
+            if let Some(e) = opt {
+                expr_refs(e, used);
+            }
+        }
+        Int(_) | Float(_) | Str(_) | Bool(_) | Unit | Break | Continue => {}
+    }
 }

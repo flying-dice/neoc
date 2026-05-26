@@ -607,3 +607,31 @@ fn source_map_empty_without_source() {
     assert_eq!(result.source_map, neoc_codegen_lua::LineMap::default());
     assert_eq!(result.source_map.neoc_line(1), None);
 }
+
+// ---- forward-referenced private functions ----------------------------------
+
+#[test]
+fn forward_referenced_private_fn_is_hoisted() {
+    // `main` calls `helper`, defined after it. `helper` must be declared `local`
+    // up front and assigned in place, so `main` closes over the local, not a nil
+    // global — a plain `local function helper` would be invisible to `main`.
+    let lua = lua_from_source("fn main() -> number { helper() }\nfn helper() -> number { 1 }\n");
+    let hoist = lua.find("local helper").expect("forward declaration");
+    let caller = lua.find("local function main").expect("caller");
+    assert!(hoist < caller, "hoist must precede the caller\n{lua}");
+    assert!(
+        lua.contains("helper = function"),
+        "assigned in place\n{lua}"
+    );
+}
+
+#[test]
+fn a_fn_defined_before_use_is_not_hoisted() {
+    // `helper` precedes its use — an ordinary `local function`, no hoist.
+    let lua = lua_from_source("fn helper() -> number { 1 }\nfn main() -> number { helper() }\n");
+    assert!(lua.contains("local function helper"), "{lua}");
+    assert!(
+        !lua.lines().any(|l| l.trim() == "local helper"),
+        "no forward declaration expected\n{lua}"
+    );
+}
