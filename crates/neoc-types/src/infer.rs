@@ -1236,20 +1236,53 @@ impl<'a> Checker<'a> {
     }
 
     fn infer_list(&mut self, items: &[ast::Expr]) -> Ty {
-        let mut elem: Option<Ty> = None;
-        for item in items {
-            let t = self.infer(item);
-            match &elem {
-                None => elem = Some(t),
-                Some(e) => {
-                    if !e.compatible(&t) {
-                        self.error(format!("list elements disagree: `{e}` vs `{t}`"));
-                    }
-                }
-            }
-        }
+        let tys: Vec<Ty> = items.iter().map(|i| self.infer(i)).collect();
         // An empty list needs an annotation; with none, its element is unknown.
-        Ty::List(Box::new(elem.unwrap_or(Ty::Unknown)))
+        let Some(first) = tys.first() else {
+            return Ty::List(Box::new(Ty::Unknown));
+        };
+        // Homogeneous (modulo `Unknown`/`Param`): the first type is the element.
+        if tys.iter().all(|t| first.compatible(t)) {
+            return Ty::List(Box::new(first.clone()));
+        }
+        // Heterogeneous: if every element's concrete type implements exactly one
+        // common trait, the list is of that trait — the existential element type
+        // (`STATIC.md` §3.4). A shared set of zero or several traits is ambiguous
+        // and reported as a disagreement (the author annotates to choose).
+        if let Some(trait_ty) = self.common_trait(&tys) {
+            return Ty::List(Box::new(trait_ty));
+        }
+        let clash = tys.iter().find(|t| !first.compatible(t)).unwrap_or(first);
+        self.error(format!("list elements disagree: `{first}` vs `{clash}`"));
+        Ty::List(Box::new(first.clone()))
+    }
+
+    /// The single trait every element type implements, when exactly one exists
+    /// — the element type of a heterogeneous list of implementors. `None` when
+    /// the element types share no trait, share more than one (ambiguous), or
+    /// any element is not a concrete nominal type.
+    fn common_trait(&self, tys: &[Ty]) -> Option<Ty> {
+        let mut common: Option<std::collections::BTreeSet<String>> = None;
+        for t in tys {
+            let name = ty_impl_name(t)?;
+            let traits: std::collections::BTreeSet<String> = self
+                .table
+                .trait_impls
+                .iter()
+                .filter(|(ty, _)| *ty == name)
+                .map(|(_, tr)| tr.clone())
+                .collect();
+            common = Some(match common {
+                None => traits,
+                Some(c) => &c & &traits,
+            });
+        }
+        let common = common?;
+        if common.len() == 1 {
+            common.into_iter().next().map(Ty::named)
+        } else {
+            None
+        }
     }
 
     fn infer_index(&mut self, base: &ast::Expr, index: &ast::Expr, span: ast::Span) -> Ty {

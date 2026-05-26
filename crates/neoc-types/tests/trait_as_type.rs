@@ -86,3 +86,39 @@ fn a_homogeneous_list_of_implementors_is_assignable_to_a_trait_list() {
         diagnostics(&src)
     );
 }
+
+const TWO_SHAPES: &str = "trait Drawable {\n  fn draw(self) -> string;\n}\n\
+struct Circle;\nstruct Square;\n\
+impl Drawable for Circle {\n  fn draw(self) -> string {\n    \"o\"\n  }\n}\n\
+impl Drawable for Square {\n  fn draw(self) -> string {\n    \"[]\"\n  }\n}\n";
+
+#[test]
+fn a_heterogeneous_list_infers_the_common_trait() {
+    let src = format!(
+        "{TWO_SHAPES}fn scene() -> number {{\n  let items: [Drawable] = [Circle, Square];\n  1\n}}\n"
+    );
+    assert!(
+        diagnostics(&src).is_empty(),
+        "`[Circle, Square]` infers `[Drawable]` (the one shared trait): {:?}",
+        diagnostics(&src)
+    );
+}
+
+#[test]
+fn a_list_sharing_several_traits_is_ambiguous() {
+    // `Circle` and `Square` both implement `Drawable` and `Named`, so the
+    // element type cannot be chosen from the values alone.
+    let src = "trait Drawable {\n  fn draw(self) -> string;\n}\n\
+trait Named {\n  fn name(self) -> string;\n}\n\
+struct Circle;\nstruct Square;\n\
+impl Drawable for Circle {\n  fn draw(self) -> string {\n    \"o\"\n  }\n}\n\
+impl Named for Circle {\n  fn name(self) -> string {\n    \"c\"\n  }\n}\n\
+impl Drawable for Square {\n  fn draw(self) -> string {\n    \"[]\"\n  }\n}\n\
+impl Named for Square {\n  fn name(self) -> string {\n    \"s\"\n  }\n}\n\
+fn scene() -> number {\n  let items: [Drawable] = [Circle, Square];\n  1\n}\n";
+    let d = diagnostics(src);
+    assert!(
+        d.iter().any(|m| m.contains("list elements disagree")),
+        "two shared traits is ambiguous without a per-element choice: {d:?}"
+    );
+}
