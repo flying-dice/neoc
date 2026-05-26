@@ -134,16 +134,35 @@ WorkspaceIndex
 
 ## Phased plan
 
-1. `[ ]` **Module-graph API in `neoc-compiler`** — expose entry → reachable
-   files + `use` edges (the resolver `transpile_project` already uses),
-   unit-tested. No LSP change yet.
-2. `[ ]` **`WorkspaceIndex` foundation in `neoc-lsp`** — document store (open +
-   disk fallback, version/hash keyed), per-file parse+declaration cache, the
-   `decls`/`imports`/`importers` maps. Lazy discovery. Targeted invalidation with
-   early cutoff. Unit-tested in isolation.
-3. `[ ]` **Wire cross-file queries** — references, rename, workspace symbols read
-   the index (text-prefilter + visibility scope). Goto-definition follows `use`
-   across files. `.feature` specs with multi-file `Given the file "<path>":`.
+1. `[x]` **Module-graph API in `neoc-compiler`** — `module_file` is the shared
+   `use`-path → file rule, exposed and unit-tested (commit `a06bad3`,
+   `tests/module_file.rs`). The `WorkspaceIndex` resolves imports through it.
+2. `[x]` **`WorkspaceIndex` foundation in `neoc-lsp`** — `crates/neoc-lsp/src/workspace.rs`:
+   content-hash-keyed per-file summary (declarations + `use` imports), the
+   `decls` name index, the reverse-dependency `importers` map, and `set_document`
+   returning a `SurfaceChange` early-cutoff signal. Imports resolve via
+   `module_file`. Built and unit-tested in isolation; `#[allow(dead_code)]` until
+   Phase 3 wires it. (12 unit tests.)
+3. `[ ]` **Wire cross-file queries** — *next up; the live-server integration.*
+   - **Lifecycle**: hold a `Mutex<WorkspaceIndex>` on `Backend`; capture the root
+     from `initialize` (`root_uri`/`workspace_folders`); maintain the index in
+     `did_open`/`did_change`/`did_close`. Drop the `#[allow(dead_code)]`.
+   - **Discovery** must be lazy/background, *not* a blocking startup scan (the
+     gopls lesson) — a `tokio` task globbing `**/*.neoc` (skip `target`,
+     `node_modules`, `.git`), plus `workspace/didChangeWatchedFiles` for on-disk
+     invalidation. This is the piece that needs care; do not bolt on a synchronous
+     scan in `initialize`.
+   - **Workspace symbols** → read `index.workspace_symbols(query)` (project-wide,
+     including unopened files). The cleanest first query to flip over.
+   - **References / rename** → text-prefilter candidate files (the name must
+     appear), resolve against the index, **scope by visibility** (a private decl's
+     refs stay in its file) so a rename does not over-reach across modules. This
+     is the correctness-critical part — needs the scope work in Phase 5 to stop
+     over-approximating.
+   - **Goto-definition** → follow `use` across files via the `importers`/import
+     resolution.
+   - **Tests**: `.feature` specs with multi-file `Given the file "<path>":`.
+   Land as its own MR; it touches every cross-file handler.
 4. `[ ]` **Auto-import completion** — `pub` decls from other files, with the
    `use` insertion edit.
 5. `[ ]` **Scope-aware resolution** — real name resolution (scopes, shadowing,
