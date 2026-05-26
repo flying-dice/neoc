@@ -70,7 +70,8 @@ Dependency-ordered. `[ ]` todo · `[~]` in-progress · `[x]` done.
 ### Tier 2 — depth / polish
 
 8. `[ ]` Workspace symbols (`workspace/symbol`) — needs the cross-file index.
-9. `[ ]` Folding ranges (`foldingRange`).
+9. `[x]` Folding ranges (`foldingRange`) — brace-delimited bodies + block
+   comments, found generically from `{`/`}` CST tokens.
 10. `[ ]` Inlay hints (`inlayHint`) — Type + Parameter kinds first.
 11. `[ ]` Selection range (`selectionRange`).
 12. `[ ]` Matching brace.

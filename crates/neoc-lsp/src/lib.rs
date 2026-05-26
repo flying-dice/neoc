@@ -2,7 +2,8 @@
 //!
 //! Capabilities: diagnostics, document symbols (outline), goto (definition,
 //! type-definition, implementation), find-all-references, document highlight,
-//! signature help, rename, hover, and completion (with lazy per-item resolve).
+//! folding ranges, signature help, rename, hover, and completion (with lazy
+//! per-item resolve).
 //! Diagnostics come from [`neoc_compiler::transpile`];
 //! syntax errors carry precise byte ranges from the parser, while type and emit
 //! diagnostics fall back to the document's first line because those stages do
@@ -13,6 +14,7 @@
 
 mod completion;
 mod cst;
+mod folding;
 mod goto;
 mod highlight;
 mod hover;
@@ -29,6 +31,7 @@ use neoc_compiler::{ByteSpan, Diagnostic as CompilerDiagnostic, Stage, Target, t
 // (`tests/cucumber.rs` over `tooling/ide/`) drives directly; `byte_to_position`
 // builds the `Position` they take from a byte offset into the source.
 pub use completion::{completions, resolve as resolve_completion};
+pub use folding::folding_ranges;
 pub use goto::{goto_definition, goto_implementation, goto_type_definition};
 pub use highlight::document_highlight;
 pub use hover::hover;
@@ -43,13 +46,14 @@ use tower_lsp::lsp_types::{
     CompletionItem, CompletionOptions, CompletionParams, CompletionResponse, Diagnostic,
     DiagnosticSeverity, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
     DidOpenTextDocumentParams, DocumentHighlight, DocumentHighlightParams, DocumentSymbolParams,
-    DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents,
-    HoverParams, HoverProviderCapability, ImplementationProviderCapability, InitializeParams,
-    InitializeResult, InitializedParams, Location, LocationLink, MarkupContent, MarkupKind,
-    MessageType, OneOf, Position, PrepareRenameResponse, Range, ReferenceParams, RenameOptions,
-    RenameParams, ServerCapabilities, ServerInfo, SignatureHelp, SignatureHelpOptions,
-    SignatureHelpParams, TextDocumentPositionParams, TextDocumentSyncCapability,
-    TextDocumentSyncKind, TextEdit, TypeDefinitionProviderCapability, Url, WorkspaceEdit,
+    DocumentSymbolResponse, FoldingRange, FoldingRangeParams, FoldingRangeProviderCapability,
+    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams,
+    HoverProviderCapability, ImplementationProviderCapability, InitializeParams, InitializeResult,
+    InitializedParams, Location, LocationLink, MarkupContent, MarkupKind, MessageType, OneOf,
+    Position, PrepareRenameResponse, Range, ReferenceParams, RenameOptions, RenameParams,
+    ServerCapabilities, ServerInfo, SignatureHelp, SignatureHelpOptions, SignatureHelpParams,
+    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit,
+    TypeDefinitionProviderCapability, Url, WorkspaceEdit,
 };
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
@@ -160,6 +164,7 @@ impl LanguageServer for Backend {
                 implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
                 references_provider: Some(OneOf::Left(true)),
                 document_highlight_provider: Some(OneOf::Left(true)),
+                folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
                 rename_provider: Some(OneOf::Right(RenameOptions {
                     // prepareRename validates the cursor and highlights the name.
                     prepare_provider: Some(true),
@@ -307,6 +312,13 @@ impl LanguageServer for Backend {
                 .map(|range| Location::new(tdp.text_document.uri.clone(), range))
                 .collect();
         Ok(Some(locations))
+    }
+
+    async fn folding_range(&self, params: FoldingRangeParams) -> Result<Option<Vec<FoldingRange>>> {
+        let Some(source) = self.source(&params.text_document.uri) else {
+            return Ok(None);
+        };
+        Ok(Some(folding::folding_ranges(&source)))
     }
 
     async fn document_highlight(

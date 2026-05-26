@@ -39,6 +39,7 @@ struct Ide {
     renamed_source: Option<String>,
     goto_lines: Vec<u32>,
     highlights: Vec<(u32, u32, String)>,
+    folds: Vec<(u32, u32)>,
 }
 
 #[given("the source:")]
@@ -290,6 +291,24 @@ fn highlight_symbol(world: &mut Ide, ident: String) {
             )
         })
         .collect();
+}
+
+#[when("I request folds")]
+fn request_folds(world: &mut Ide) {
+    world.folds = neoc_lsp::folding_ranges(&world.source)
+        .into_iter()
+        .map(|fold| (fold.start_line + 1, fold.end_line + 1))
+        .collect();
+}
+
+#[then("the folds are:")]
+fn the_folds_are(world: &mut Ide, step: &Step) {
+    let expected = expected_positions(step);
+    assert_eq!(
+        world.folds, expected,
+        "folds mismatch (start, end, 1-based)\n  expected: {expected:?}\n  actual:   {:?}",
+        world.folds,
+    );
 }
 
 #[then("the highlights are:")]
