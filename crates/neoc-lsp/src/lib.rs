@@ -71,14 +71,16 @@ use tower_lsp::lsp_types::{
     CallHierarchyServerCapability, CodeAction, CodeActionKind, CodeActionOrCommand,
     CodeActionParams, CodeActionProviderCapability, CodeActionResponse, CompletionItem,
     CompletionOptions, CompletionParams, CompletionResponse, Diagnostic, DiagnosticSeverity,
-    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DocumentFormattingParams, DocumentHighlight, DocumentHighlightParams, DocumentSymbolParams,
-    DocumentSymbolResponse, FoldingRange, FoldingRangeParams, FoldingRangeProviderCapability,
-    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams,
+    DidChangeTextDocumentParams, DidChangeWatchedFilesParams,
+    DidChangeWatchedFilesRegistrationOptions, DidCloseTextDocumentParams,
+    DidOpenTextDocumentParams, DocumentFormattingParams, DocumentHighlight,
+    DocumentHighlightParams, DocumentSymbolParams, DocumentSymbolResponse, FileChangeType,
+    FileSystemWatcher, FoldingRange, FoldingRangeParams, FoldingRangeProviderCapability,
+    GlobPattern, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams,
     HoverProviderCapability, ImplementationProviderCapability, InitializeParams, InitializeResult,
     InitializedParams, InlayHint, InlayHintParams, Location, LocationLink, MarkupContent,
     MarkupKind, MessageType, OneOf, Position, PrepareRenameResponse, Range, ReferenceParams,
-    RenameOptions, RenameParams, SelectionRange, SelectionRangeParams,
+    Registration, RenameOptions, RenameParams, SelectionRange, SelectionRangeParams,
     SelectionRangeProviderCapability, SemanticTokens, SemanticTokensFullOptions,
     SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams, SemanticTokensResult,
     SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo, SignatureHelp,
@@ -417,6 +419,60 @@ impl LanguageServer for Backend {
             .unwrap_or_default();
         let index = Arc::clone(&self.index);
         tokio::task::spawn_blocking(move || discover_workspace(&index, &open));
+
+        // Watch `.neoc` files on disk so an edit made outside the editor (a
+        // branch switch, a generated file) re-indexes without the file being
+        // opened. Dynamic registration — the client drives the watch.
+        let registration = Registration {
+            id: "neoc-watch-source".to_string(),
+            method: "workspace/didChangeWatchedFiles".to_string(),
+            register_options: serde_json::to_value(DidChangeWatchedFilesRegistrationOptions {
+                watchers: vec![FileSystemWatcher {
+                    glob_pattern: GlobPattern::String("**/*.neoc".to_string()),
+                    kind: None,
+                }],
+            })
+            .ok(),
+        };
+        if let Err(e) = self.client.register_capability(vec![registration]).await {
+            self.client
+                .log_message(
+                    MessageType::WARNING,
+                    format!("file-watch registration failed: {e}"),
+                )
+                .await;
+        }
+    }
+
+    async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
+        // The editor's open buffer is authoritative; a disk event for an open
+        // file is ignored (its `did_change` already maintains the index).
+        let open: HashSet<Url> = self
+            .documents
+            .lock()
+            .map(|docs| docs.keys().cloned().collect())
+            .unwrap_or_default();
+        for change in params.changes {
+            if open.contains(&change.uri) {
+                continue;
+            }
+            if change.typ == FileChangeType::DELETED {
+                if let Ok(mut index) = self.index.lock() {
+                    index.remove_document(&change.uri);
+                }
+                continue;
+            }
+            // Created or changed on disk: re-read and re-index at version 0.
+            let Ok(path) = change.uri.to_file_path() else {
+                continue;
+            };
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            if let Ok(mut index) = self.index.lock() {
+                index.set_document(change.uri, 0, text);
+            }
+        }
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
