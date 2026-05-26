@@ -94,7 +94,9 @@ Dependency-ordered. `[ ]` todo · `[~]` in-progress · `[x]` done.
 12. `[deferred]` Matching brace — rust-analyzer custom request
     (`experimental/matchingBrace`), not standard LSP; skip until there's a
     client that wants it.
-13. `[ ]` Organize imports (code action `source.organizeImports`).
+13. `[x]` Organize imports (code action `source.organizeImports`) — sort +
+    dedupe the contiguous `use` run, CST-only. Establishes the `codeAction`
+    request; diagnostic-attached quick-fixes still need fix metadata (#6).
 
 ### Tier 3 — high effort / advanced
 

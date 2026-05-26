@@ -192,6 +192,12 @@ fn format_document(world: &mut Ide) {
     world.edited_source = Some(apply_text_edits(&world.source, &edits));
 }
 
+#[when("I organize imports")]
+fn organize_imports(world: &mut Ide) {
+    let edits = neoc_lsp::organize_imports(&world.source).unwrap_or_default();
+    world.edited_source = Some(apply_text_edits(&world.source, &edits));
+}
+
 #[when(regex = r#"^I rename "([^"]+)" to "([^"]+)"$"#)]
 fn rename_symbol(world: &mut Ide, old: String, new: String) {
     let byte = nth_occurrence(&world.source, &old, 1) + old.len() / 2;
