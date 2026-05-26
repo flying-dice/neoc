@@ -2,8 +2,8 @@
 //!
 //! Capabilities: diagnostics, document symbols (outline), goto (definition,
 //! type-definition, implementation), find-all-references, document highlight,
-//! folding ranges, selection ranges, inlay hints, signature help, rename,
-//! hover, and completion (with lazy per-item resolve).
+//! folding ranges, selection ranges, inlay hints, formatting (via `neoc-fmt`),
+//! signature help, rename, hover, and completion (with lazy per-item resolve).
 //! Diagnostics come from [`neoc_compiler::transpile`];
 //! syntax errors carry precise byte ranges from the parser, while type and emit
 //! diagnostics fall back to the document's first line because those stages do
@@ -15,6 +15,7 @@
 mod completion;
 mod cst;
 mod folding;
+mod format;
 mod goto;
 mod highlight;
 mod hover;
@@ -34,6 +35,7 @@ use neoc_compiler::{ByteSpan, Diagnostic as CompilerDiagnostic, Stage, Target, t
 // builds the `Position` they take from a byte offset into the source.
 pub use completion::{completions, resolve as resolve_completion};
 pub use folding::folding_ranges;
+pub use format::formatting;
 pub use goto::{goto_definition, goto_implementation, goto_type_definition};
 pub use highlight::document_highlight;
 pub use hover::hover;
@@ -49,17 +51,17 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::{
     CompletionItem, CompletionOptions, CompletionParams, CompletionResponse, Diagnostic,
     DiagnosticSeverity, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, DocumentHighlight, DocumentHighlightParams, DocumentSymbolParams,
-    DocumentSymbolResponse, FoldingRange, FoldingRangeParams, FoldingRangeProviderCapability,
-    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams,
-    HoverProviderCapability, ImplementationProviderCapability, InitializeParams, InitializeResult,
-    InitializedParams, InlayHint, InlayHintParams, Location, LocationLink, MarkupContent,
-    MarkupKind, MessageType, OneOf, Position, PrepareRenameResponse, Range, ReferenceParams,
-    RenameOptions, RenameParams, SelectionRange, SelectionRangeParams,
-    SelectionRangeProviderCapability, ServerCapabilities, ServerInfo, SignatureHelp,
-    SignatureHelpOptions, SignatureHelpParams, TextDocumentPositionParams,
-    TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, TypeDefinitionProviderCapability,
-    Url, WorkspaceEdit,
+    DidOpenTextDocumentParams, DocumentFormattingParams, DocumentHighlight,
+    DocumentHighlightParams, DocumentSymbolParams, DocumentSymbolResponse, FoldingRange,
+    FoldingRangeParams, FoldingRangeProviderCapability, GotoDefinitionParams,
+    GotoDefinitionResponse, Hover, HoverContents, HoverParams, HoverProviderCapability,
+    ImplementationProviderCapability, InitializeParams, InitializeResult, InitializedParams,
+    InlayHint, InlayHintParams, Location, LocationLink, MarkupContent, MarkupKind, MessageType,
+    OneOf, Position, PrepareRenameResponse, Range, ReferenceParams, RenameOptions, RenameParams,
+    SelectionRange, SelectionRangeParams, SelectionRangeProviderCapability, ServerCapabilities,
+    ServerInfo, SignatureHelp, SignatureHelpOptions, SignatureHelpParams,
+    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit,
+    TypeDefinitionProviderCapability, Url, WorkspaceEdit,
 };
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
@@ -173,6 +175,7 @@ impl LanguageServer for Backend {
                 folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
                 selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
                 inlay_hint_provider: Some(OneOf::Left(true)),
+                document_formatting_provider: Some(OneOf::Left(true)),
                 rename_provider: Some(OneOf::Right(RenameOptions {
                     // prepareRename validates the cursor and highlights the name.
                     prepare_provider: Some(true),
@@ -327,6 +330,13 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
         Ok(Some(inlay::inlay_hints(&source)))
+    }
+
+    async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
+        let Some(source) = self.source(&params.text_document.uri) else {
+            return Ok(None);
+        };
+        Ok(format::formatting(&source))
     }
 
     async fn selection_range(

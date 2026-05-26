@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 neoc-compiler.workspace = true
+neoc-fmt.workspace = true
 neoc-grammar.workspace = true
 neoc-parser.workspace = true
 neoc-types.workspace = true

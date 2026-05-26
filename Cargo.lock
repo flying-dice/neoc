@@ -2534,6 +2534,7 @@ version = "0.0.0"
 dependencies = [
  "cucumber",
  "neoc-compiler",
+ "neoc-fmt",
  "neoc-grammar",
  "neoc-parser",
  "neoc-types",

@@ -36,7 +36,7 @@ struct Ide {
     completion_documentation: Option<String>,
     signature_label: Option<String>,
     signature_active_parameter: Option<u32>,
-    renamed_source: Option<String>,
+    edited_source: Option<String>,
     goto_lines: Vec<u32>,
     highlights: Vec<(u32, u32, String)>,
     folds: Vec<(u32, u32)>,
@@ -183,19 +183,25 @@ fn no_signature_help(world: &mut Ide) {
     );
 }
 
+#[when("I format the document")]
+fn format_document(world: &mut Ide) {
+    let edits = neoc_lsp::formatting(&world.source).unwrap_or_default();
+    world.edited_source = Some(apply_text_edits(&world.source, &edits));
+}
+
 #[when(regex = r#"^I rename "([^"]+)" to "([^"]+)"$"#)]
 fn rename_symbol(world: &mut Ide, old: String, new: String) {
     let byte = nth_occurrence(&world.source, &old, 1) + old.len() / 2;
     let position = neoc_lsp::byte_to_position(&world.source, byte);
     let edits = neoc_lsp::rename(&world.source, position, &new);
-    world.renamed_source = Some(apply_text_edits(&world.source, &edits));
+    world.edited_source = Some(apply_text_edits(&world.source, &edits));
 }
 
 #[then("the source becomes:")]
 fn the_source_becomes(world: &mut Ide, step: &Step) {
     let expected = docstring(step).trim();
     let actual = world
-        .renamed_source
+        .edited_source
         .as_deref()
         .unwrap_or_else(|| panic!("no edits produced\nsource:\n{}", world.source));
     assert_eq!(

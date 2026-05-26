@@ -88,7 +88,9 @@ Dependency-ordered. `[ ]` todo · `[~]` in-progress · `[x]` done.
 14. `[ ]` Semantic tokens (`semanticTokens/full`).
 15. `[ ]` Call hierarchy.
 16. `[ ]` Refactors (extract / inline).
-17. `[ ]` Format passthrough via `neoc-fmt` (`formatting`, `rangeFormatting`).
+17. `[x]` Whole-document formatting via `neoc-fmt` (`formatting`) — one
+    full-document edit; a syntax error leaves the document untouched.
+    Range/on-type formatting still open.
 
 ### Deferred (dev-only / non-LSP / out of scope)
 
