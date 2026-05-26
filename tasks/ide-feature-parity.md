@@ -52,9 +52,11 @@ Dependency-ordered. `[ ]` todo · `[~]` in-progress · `[x]` done.
    Rename = references → `WorkspaceEdit`; `prepareRename` returns the
    identifier range or rejects a non-identifier cursor. New-name validity is
    left to the client for now (no keyword/identifier guard).
-5. `[ ]` **Goto type-definition / implementation / declaration** — extend
-   `goto.feature`. Small deltas on goto-definition: type-def resolves the type of
-   an expression; implementation finds `impl`s of a trait/type.
+5. `[x]` **Goto type-definition / implementation** — `goto.feature`.
+   type-definition jumps from a value to its named type's declaration (top-level
+   values only — locals/params untracked); implementation lists the impl blocks
+   targeting a type or implementing a trait. Goto-declaration skipped: redundant
+   with definition in neoc (no header/impl split).
 6. `[ ]` **Code actions / quick-fixes** — `code-action.feature`. `codeAction`.
    Start with fixes attached to the diagnostics already emitted.
 7. `[ ]` **Document highlight** — `highlight.feature`. `documentHighlight`.

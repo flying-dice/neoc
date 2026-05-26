@@ -1,8 +1,9 @@
 //! Language server for neoc, over stdio.
 //!
-//! Capabilities: diagnostics, document symbols (outline), goto-definition,
-//! find-all-references, signature help, rename, hover, and completion (with
-//! lazy per-item resolve). Diagnostics come from [`neoc_compiler::transpile`];
+//! Capabilities: diagnostics, document symbols (outline), goto (definition,
+//! type-definition, implementation), find-all-references, signature help,
+//! rename, hover, and completion (with lazy per-item resolve). Diagnostics come
+//! from [`neoc_compiler::transpile`];
 //! syntax errors carry precise byte ranges from the parser, while type and emit
 //! diagnostics fall back to the document's first line because those stages do
 //! not track spans yet (see `tasks/lsp-spans.md`). The IDE features are built on
@@ -27,6 +28,7 @@ use neoc_compiler::{ByteSpan, Diagnostic as CompilerDiagnostic, Stage, Target, t
 // (`tests/cucumber.rs` over `tooling/ide/`) drives directly; `byte_to_position`
 // builds the `Position` they take from a byte offset into the source.
 pub use completion::{completions, resolve as resolve_completion};
+pub use goto::{goto_definition, goto_implementation, goto_type_definition};
 pub use hover::hover;
 pub use position::{byte_to_position, position_to_byte};
 pub use references::references;
@@ -40,11 +42,12 @@ use tower_lsp::lsp_types::{
     DiagnosticSeverity, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
     DidOpenTextDocumentParams, DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams,
     GotoDefinitionResponse, Hover, HoverContents, HoverParams, HoverProviderCapability,
-    InitializeParams, InitializeResult, InitializedParams, Location, LocationLink, MarkupContent,
-    MarkupKind, MessageType, OneOf, Position, PrepareRenameResponse, Range, ReferenceParams,
-    RenameOptions, RenameParams, ServerCapabilities, ServerInfo, SignatureHelp,
-    SignatureHelpOptions, SignatureHelpParams, TextDocumentPositionParams,
-    TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Url, WorkspaceEdit,
+    ImplementationProviderCapability, InitializeParams, InitializeResult, InitializedParams,
+    Location, LocationLink, MarkupContent, MarkupKind, MessageType, OneOf, Position,
+    PrepareRenameResponse, Range, ReferenceParams, RenameOptions, RenameParams, ServerCapabilities,
+    ServerInfo, SignatureHelp, SignatureHelpOptions, SignatureHelpParams,
+    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit,
+    TypeDefinitionProviderCapability, Url, WorkspaceEdit,
 };
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
@@ -151,6 +154,8 @@ impl LanguageServer for Backend {
                 )),
                 document_symbol_provider: Some(OneOf::Left(true)),
                 definition_provider: Some(OneOf::Left(true)),
+                type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
+                implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
                 references_provider: Some(OneOf::Left(true)),
                 rename_provider: Some(OneOf::Right(RenameOptions {
                     // prepareRename validates the cursor and highlights the name.
@@ -243,6 +248,49 @@ impl LanguageServer for Backend {
                 target_selection_range: def.name_range,
             }])
         }))
+    }
+
+    async fn goto_type_definition(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> Result<Option<GotoDefinitionResponse>> {
+        let tdp = params.text_document_position_params;
+        let Some(source) = self.source(&tdp.text_document.uri) else {
+            return Ok(None);
+        };
+        Ok(
+            goto::goto_type_definition(&source, tdp.position).map(|def| {
+                GotoDefinitionResponse::Link(vec![LocationLink {
+                    origin_selection_range: None,
+                    target_uri: tdp.text_document.uri,
+                    target_range: def.full_range,
+                    target_selection_range: def.name_range,
+                }])
+            }),
+        )
+    }
+
+    async fn goto_implementation(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> Result<Option<GotoDefinitionResponse>> {
+        let tdp = params.text_document_position_params;
+        let Some(source) = self.source(&tdp.text_document.uri) else {
+            return Ok(None);
+        };
+        let links: Vec<LocationLink> = goto::goto_implementation(&source, tdp.position)
+            .into_iter()
+            .map(|def| LocationLink {
+                origin_selection_range: None,
+                target_uri: tdp.text_document.uri.clone(),
+                target_range: def.full_range,
+                target_selection_range: def.name_range,
+            })
+            .collect();
+        if links.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(GotoDefinitionResponse::Link(links)))
     }
 
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {

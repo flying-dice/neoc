@@ -37,6 +37,7 @@ struct Ide {
     signature_label: Option<String>,
     signature_active_parameter: Option<u32>,
     renamed_source: Option<String>,
+    goto_lines: Vec<u32>,
 }
 
 #[given("the source:")]
@@ -220,6 +221,60 @@ fn apply_text_edits(source: &str, edits: &[TextEdit]) -> String {
         result.replace_range(start..end, text);
     }
     result
+}
+
+#[when(regex = r#"^I go to the definition of "([^"]+)"$"#)]
+fn go_to_definition(world: &mut Ide, ident: String) {
+    let position = at_use(&world.source, &ident);
+    world.goto_lines = neoc_lsp::goto_definition(&world.source, position)
+        .map(|def| def.name_range.start.line + 1)
+        .into_iter()
+        .collect();
+}
+
+#[when(regex = r#"^I go to the type of "([^"]+)"$"#)]
+fn go_to_type(world: &mut Ide, ident: String) {
+    let position = at_use(&world.source, &ident);
+    world.goto_lines = neoc_lsp::goto_type_definition(&world.source, position)
+        .map(|def| def.name_range.start.line + 1)
+        .into_iter()
+        .collect();
+}
+
+#[when(regex = r#"^I go to the implementations of "([^"]+)"$"#)]
+fn go_to_implementations(world: &mut Ide, ident: String) {
+    // The declaration name is the first occurrence; clicking it lists impls.
+    let byte = nth_occurrence(&world.source, &ident, 1) + ident.len() / 2;
+    let position = neoc_lsp::byte_to_position(&world.source, byte);
+    world.goto_lines = neoc_lsp::goto_implementation(&world.source, position)
+        .iter()
+        .map(|def| def.name_range.start.line + 1)
+        .collect();
+}
+
+#[then(regex = r"^it resolves to line (\d+)$")]
+fn it_resolves_to_line(world: &mut Ide, line: u32) {
+    assert_eq!(
+        world.goto_lines,
+        vec![line],
+        "goto target lines (1-based) mismatch",
+    );
+}
+
+#[then("it resolves to nothing")]
+fn it_resolves_to_nothing(world: &mut Ide) {
+    assert!(
+        world.goto_lines.is_empty(),
+        "expected no target, got lines {:?}",
+        world.goto_lines,
+    );
+}
+
+/// The cursor at a use of `ident` — its last occurrence, which in these sources
+/// follows the declaration, so goto jumps back to the declaration.
+fn at_use(source: &str, ident: &str) -> tower_lsp::lsp_types::Position {
+    let byte = source.rfind(ident).expect("identifier") + ident.len() / 2;
+    neoc_lsp::byte_to_position(source, byte)
 }
 
 /// The reference locations for `ident` in `source`, as 1-based `(line, column)`
