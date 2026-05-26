@@ -9,8 +9,9 @@
 //!   keywords.
 
 use neoc_types::{StructFields, SymbolTable, TypeDef};
-use tower_lsp::lsp_types::{CompletionItem, CompletionItemKind};
+use tower_lsp::lsp_types::{CompletionItem, CompletionItemKind, Documentation};
 
+use crate::hover;
 use crate::position::position_to_byte;
 
 /// neoc keywords offered at the top level (`SYNTAX.md`).
@@ -32,6 +33,23 @@ pub fn completions(source: &str, position: tower_lsp::lsp_types::Position) -> Ve
         return items;
     }
     top_level_completions(&table)
+}
+
+/// Fills a completion `item`'s detail and documentation, resolved by its label
+/// against the document's top-level items.
+///
+/// The editor sends this back for the entry the user focuses; until then the
+/// item carries only a label and kind. Top-level functions, types, and consts
+/// gain a signature (`detail`) and their `///` doc comment (`documentation`);
+/// keywords and members — which name no top-level item — are returned
+/// unchanged.
+#[must_use]
+pub fn resolve(source: &str, mut item: CompletionItem) -> CompletionItem {
+    if let Some((signature, doc)) = hover::item_signature_and_doc(source, &item.label) {
+        item.detail = Some(signature);
+        item.documentation = doc.map(Documentation::String);
+    }
+    item
 }
 
 /// After `Type::`, the variants of that enum.
@@ -139,6 +157,23 @@ mod tests {
         items.iter().map(|i| i.label.clone()).collect()
     }
 
+    /// Resolves the top-level completion labelled `label`, as the editor would
+    /// when the user focuses it.
+    fn resolve_labelled(src: &str, label: &str) -> CompletionItem {
+        let item = completions(src, byte_to_position(src, 0))
+            .into_iter()
+            .find(|i| i.label == label)
+            .unwrap_or_else(|| panic!("no completion labelled {label:?}"));
+        resolve(src, item)
+    }
+
+    fn doc_text(item: &CompletionItem) -> Option<&str> {
+        match &item.documentation {
+            Some(Documentation::String(s)) => Some(s),
+            _ => None,
+        }
+    }
+
     #[test]
     fn top_level_includes_items_and_keywords() {
         let src = "fn fib(n: number) -> number { n }\nstruct Point { x: number }\n";
@@ -165,5 +200,32 @@ mod tests {
         let items = completions(src, byte_to_position(src, byte));
         let ls = labels(&items);
         assert_eq!(ls, vec!["x", "y"]);
+    }
+
+    #[test]
+    fn resolve_fills_function_signature_and_doc() {
+        let src =
+            "/// Adds one.\nfn inc(n: number) -> number { n }\nfn main() -> number { inc(1) }\n";
+        let item = resolve_labelled(src, "inc");
+        assert_eq!(item.detail.as_deref(), Some("fn inc(number) -> number"));
+        assert_eq!(doc_text(&item), Some("Adds one."));
+    }
+
+    #[test]
+    fn resolve_fills_struct_signature() {
+        let src = "struct Point { x: number, y: number }\n";
+        let item = resolve_labelled(src, "Point");
+        assert_eq!(
+            item.detail.as_deref(),
+            Some("struct Point { x: number, y: number }")
+        );
+    }
+
+    #[test]
+    fn resolve_leaves_keywords_unchanged() {
+        let src = "fn main() {}\n";
+        let item = resolve_labelled(src, "fn");
+        assert_eq!(item.detail, None);
+        assert!(item.documentation.is_none());
     }
 }

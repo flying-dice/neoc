@@ -133,6 +133,21 @@ fn signature(table: &SymbolTable, name: &str) -> Option<String> {
     None
 }
 
+/// The neoc signature for a top-level `name` and its `///` doc comment, for
+/// callers that resolve by name rather than cursor position (completion
+/// resolve). The signature is the bare type form (`fn inc(number) -> number`),
+/// the same rendering hover shows at a call site. `None` when the name is not a
+/// known top-level item.
+#[must_use]
+pub(crate) fn item_signature_and_doc(source: &str, name: &str) -> Option<(String, Option<String>)> {
+    let table = neoc_types::collect(&neoc_parser::parse(source).module);
+    let sig = signature(&table, name)?;
+    let tree = cst::parse(source);
+    let doc = cst::find_decl(&tree, source, name)
+        .and_then(|decl| cst::leading_doc_comment(decl.node, source));
+    Some((sig, doc))
+}
+
 fn type_signature(name: &str, def: &TypeDef) -> String {
     match def {
         TypeDef::Struct(s) => struct_signature(name, s),

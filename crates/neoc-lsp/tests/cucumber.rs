@@ -20,15 +20,19 @@
 use std::path::Path;
 
 use cucumber::{World, gherkin::Step, given, then, when};
+use tower_lsp::lsp_types::Documentation;
 
 /// State threaded through one scenario: the document under test and the result
-/// produced by the last `When` step — hover markdown, or reference locations as
-/// 1-based `(line, column)` pairs (the editor's own coordinates).
+/// produced by the last `When` step — hover markdown, reference locations as
+/// 1-based `(line, column)` pairs (the editor's own coordinates), or a resolved
+/// completion's detail and documentation.
 #[derive(Debug, Default, World)]
 struct Ide {
     source: String,
     hover: Option<String>,
     references: Vec<(u32, u32)>,
+    completion_detail: Option<String>,
+    completion_documentation: Option<String>,
 }
 
 #[given("the source:")]
@@ -81,6 +85,48 @@ fn references_are_at(world: &mut Ide, step: &Step) {
         world.references, expected,
         "references mismatch (line, column, 1-based)\n  expected: {expected:?}\n  actual:   {:?}",
         world.references,
+    );
+}
+
+#[when(regex = r#"^I resolve the completion "([^"]+)"$"#)]
+fn resolve_completion(world: &mut Ide, label: String) {
+    let source = &world.source;
+    let item = neoc_lsp::completions(source, neoc_lsp::byte_to_position(source, 0))
+        .into_iter()
+        .find(|item| item.label == label)
+        .unwrap_or_else(|| panic!("no completion labelled {label:?}"));
+    let resolved = neoc_lsp::resolve_completion(source, item);
+    world.completion_detail = resolved.detail;
+    world.completion_documentation = match resolved.documentation {
+        Some(Documentation::String(text)) => Some(text),
+        _ => None,
+    };
+}
+
+#[then(regex = r#"^the completion detail is "([^"]+)"$"#)]
+fn completion_detail_is(world: &mut Ide, expected: String) {
+    assert_eq!(
+        world.completion_detail.as_deref(),
+        Some(expected.as_str()),
+        "completion detail mismatch",
+    );
+}
+
+#[then(regex = r#"^the completion documentation is "([^"]+)"$"#)]
+fn completion_documentation_is(world: &mut Ide, expected: String) {
+    assert_eq!(
+        world.completion_documentation.as_deref(),
+        Some(expected.as_str()),
+        "completion documentation mismatch",
+    );
+}
+
+#[then("the completion has no detail")]
+fn completion_has_no_detail(world: &mut Ide) {
+    assert_eq!(
+        world.completion_detail, None,
+        "expected no detail, got {:?}",
+        world.completion_detail,
     );
 }
 

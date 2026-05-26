@@ -1,7 +1,7 @@
 //! Language server for neoc, over stdio.
 //!
 //! Capabilities: diagnostics, document symbols (outline), goto-definition,
-//! find-all-references, hover, and completion.
+//! find-all-references, hover, and completion (with lazy per-item resolve).
 //! Diagnostics come from [`neoc_compiler::transpile`];
 //! syntax errors carry precise byte ranges from the parser, while type and emit
 //! diagnostics fall back to the document's first line because those stages do
@@ -23,6 +23,7 @@ use neoc_compiler::{ByteSpan, Diagnostic as CompilerDiagnostic, Stage, Target, t
 // Public handler facade. The pure feature functions the IDE-UX spec
 // (`tests/cucumber.rs` over `tooling/ide/`) drives directly; `byte_to_position`
 // builds the `Position` they take from a byte offset into the source.
+pub use completion::{completions, resolve as resolve_completion};
 pub use hover::hover;
 pub use position::byte_to_position;
 pub use references::references;
@@ -30,13 +31,13 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::{
-    CompletionOptions, CompletionParams, CompletionResponse, Diagnostic, DiagnosticSeverity,
-    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse,
-    Hover, HoverContents, HoverParams, HoverProviderCapability, InitializeParams, InitializeResult,
-    InitializedParams, Location, LocationLink, MarkupContent, MarkupKind, MessageType, OneOf,
-    Position, Range, ReferenceParams, ServerCapabilities, ServerInfo, TextDocumentSyncCapability,
-    TextDocumentSyncKind, Url,
+    CompletionItem, CompletionOptions, CompletionParams, CompletionResponse, Diagnostic,
+    DiagnosticSeverity, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
+    DidOpenTextDocumentParams, DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams,
+    GotoDefinitionResponse, Hover, HoverContents, HoverParams, HoverProviderCapability,
+    InitializeParams, InitializeResult, InitializedParams, Location, LocationLink, MarkupContent,
+    MarkupKind, MessageType, OneOf, Position, Range, ReferenceParams, ServerCapabilities,
+    ServerInfo, TextDocumentSyncCapability, TextDocumentSyncKind, Url,
 };
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
@@ -136,6 +137,8 @@ impl LanguageServer for Backend {
                 completion_provider: Some(CompletionOptions {
                     // `.` and `:` open member- and path-completion.
                     trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
+                    // Detail and docs are filled lazily, per focused item.
+                    resolve_provider: Some(true),
                     ..CompletionOptions::default()
                 }),
                 ..ServerCapabilities::default()
@@ -244,10 +247,33 @@ impl LanguageServer for Backend {
         let Some(source) = self.source(&tdp.text_document.uri) else {
             return Ok(None);
         };
-        Ok(Some(CompletionResponse::Array(completion::completions(
-            &source,
-            tdp.position,
-        ))))
+        // Stash the document URI on each item so `completion_resolve` can find
+        // the source again — resolve receives only the item the user focused.
+        let uri = serde_json::Value::String(tdp.text_document.uri.to_string());
+        let items = completion::completions(&source, tdp.position)
+            .into_iter()
+            .map(|item| CompletionItem {
+                data: Some(uri.clone()),
+                ..item
+            })
+            .collect();
+        Ok(Some(CompletionResponse::Array(items)))
+    }
+
+    async fn completion_resolve(&self, item: CompletionItem) -> Result<CompletionItem> {
+        // The URI stashed in `completion` locates the document; without it (or
+        // its source) there is nothing to resolve against, so pass the item back
+        // untouched.
+        let source = item
+            .data
+            .as_ref()
+            .and_then(serde_json::Value::as_str)
+            .and_then(|uri| Url::parse(uri).ok())
+            .and_then(|uri| self.source(&uri));
+        Ok(match source {
+            Some(source) => completion::resolve(&source, item),
+            None => item,
+        })
     }
 
     async fn shutdown(&self) -> Result<()> {

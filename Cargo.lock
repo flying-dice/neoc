@@ -2537,6 +2537,7 @@ dependencies = [
  "neoc-grammar",
  "neoc-parser",
  "neoc-types",
+ "serde_json",
  "tokio",
  "tower-lsp",
  "tree-sitter",
