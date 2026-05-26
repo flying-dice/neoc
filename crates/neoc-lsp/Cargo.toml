@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+neoc-ast.workspace = true
 neoc-compiler.workspace = true
 neoc-fmt.workspace = true
 neoc-grammar.workspace = true

@@ -58,13 +58,19 @@ pub struct UnusedImport {
 /// declarations. The remedy is the [`UnusedImport::removal`] range.
 #[must_use]
 pub fn unused_imports(source: &str) -> Vec<UnusedImport> {
-    let tree = cst::parse(source);
+    unused_imports_in(&cst::parse(source), source)
+}
+
+/// [`unused_imports`] over an already-parsed tree, so a lint pass that holds the
+/// CST need not re-parse.
+#[must_use]
+pub fn unused_imports_in(tree: &Tree, source: &str) -> Vec<UnusedImport> {
     let mut out = Vec::new();
-    for use_decl in top_level_uses(&tree) {
+    for use_decl in top_level_uses(tree) {
         let Some(binding) = import_binding(use_decl, source) else {
             continue;
         };
-        if !is_used_outside_imports(&tree, source, binding) {
+        if !is_used_outside_imports(tree, source, binding) {
             out.push(UnusedImport {
                 name: binding.to_string(),
                 range: byte_range(source, use_decl.start_byte(), use_decl.end_byte()),

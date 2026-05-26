@@ -16,6 +16,16 @@ Feature: Diagnostics
       | severity | message            |
       | warning  | unused import `fs` |
 
+  Scenario: A needless return is a warning
+    Given the source:
+      """
+      fn answer() -> number { return 42 }
+      """
+    When I check the document
+    Then the diagnostics include:
+      | severity | message                                                            |
+      | warning  | unneeded `return`; a function body's last expression is its value |
+
   Scenario: A type error is reported
     Given the source:
       """
@@ -23,5 +33,5 @@ Feature: Diagnostics
       """
     When I check the document
     Then the diagnostics include:
-      | severity | message                 |
-      | error    | unknown name `nope`     |
+      | severity | message             |
+      | error    | unknown name `nope` |

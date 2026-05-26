@@ -119,12 +119,18 @@ Dependency-ordered. `[ ]` todo · `[~]` in-progress · `[x]` done.
 
 ### Lints (clippy-style warnings)
 
-`[~]` A lint layer (`neoc-lsp/src/lints.rs`) emits `WARNING`-severity, `Unnecessary`
--tagged diagnostics distinct from the compiler's correctness errors, merged into
-`diagnose`. First lint: **unused import** (pairs with the remove-unused-import
-fix). More lints (unused local binding, redundant constructs) follow the same
-shape; scope-sensitive ones wait on scope-aware resolution. A compiler-side
-`neoc lint` CLI (warnings outside the editor) is a separate track.
+`[~]` A lint **framework** (`neoc-lsp/src/lints.rs`): a `Lint` trait (named,
+severity-carrying), a `LintContext` that computes the document's parsed views
+once and shares them (CST eager, AST module lazy; typed views join as lints need
+them), `Finding`s mapped to `WARNING` diagnostics carrying the lint name as
+`code` and `Unnecessary` tags where apt, and a `REGISTRY`. Adding a lint is one
+`impl Lint` + one registry entry.
+
+Lints so far: **`unused_import`** (CST; pairs with the remove-unused-import fix)
+and **`needless_return`** (AST; a `return` in a fn body's tail position). Next,
+same shape: redundant parens, unused private `fn`. Scope-sensitive lints (unused
+`let`/param, shadowing) wait on scope-aware resolution. A compiler-side `neoc
+lint` CLI (warnings outside the editor) is a separate track.
 
 ### Deferred (dev-only / non-LSP / out of scope)
 

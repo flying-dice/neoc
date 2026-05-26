@@ -2533,6 +2533,7 @@ name = "neoc-lsp"
 version = "0.0.0"
 dependencies = [
  "cucumber",
+ "neoc-ast",
  "neoc-compiler",
  "neoc-fmt",
  "neoc-grammar",
