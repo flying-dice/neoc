@@ -431,12 +431,20 @@ fn resolve_use(
 }
 
 /// Maps a `use` path to the source file of the module it names, relative to the
-/// project `root`. The final segment is the imported item, not part of the
-/// module path; the preceding segments are the module path (`a::b` →
-/// `<root>/a/b.neoc`). Returns `None` for a single-segment path (no module
-/// qualifier, so nothing to resolve to a sibling file).
-fn module_file(root: &Path, path: &[ast::Ident]) -> Option<PathBuf> {
-    let (_, prefix) = path.split_last()?;
+/// project `root`.
+///
+/// The final segment is the imported item, not part of the module path; the
+/// preceding segments are the module path (`a::b::Item` → `<root>/a/b.neoc`).
+/// Returns `None` for a single-segment path (no module qualifier, so nothing to
+/// resolve to a sibling file).
+///
+/// This is the single source of truth for `use`→file resolution. `neoc build` /
+/// `check` walk the disk with it; tooling (the language server's cross-file
+/// index) resolves against its own in-memory document set with the same rule, so
+/// navigation and the compiler never disagree about where a module lives.
+#[must_use]
+pub fn module_file(root: &Path, use_path: &[ast::Ident]) -> Option<PathBuf> {
+    let (_, prefix) = use_path.split_last()?;
     let (file, dirs) = prefix.split_last()?;
     let mut p = root.to_path_buf();
     for dir in dirs {
