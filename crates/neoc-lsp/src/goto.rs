@@ -23,6 +23,16 @@ pub struct Definition {
     pub name_range: Range,
 }
 
+/// The identifier text under `position`, if the cursor sits on one. Lets a
+/// cross-file caller take the name to resolve against the project index when the
+/// document-local [`goto_definition`] finds nothing.
+#[must_use]
+pub fn name_at(source: &str, position: tower_lsp::lsp_types::Position) -> Option<String> {
+    let tree = cst::parse(source);
+    let byte = position_to_byte(source, position);
+    cst::identifier_at(&tree, source, byte).map(str::to_string)
+}
+
 /// The definition for the identifier at `position`, if it names a top-level
 /// declaration.
 ///
@@ -173,6 +183,17 @@ mod tests {
             from = i + 1;
         }
         byte_to_position(src, idx + 1)
+    }
+
+    #[test]
+    fn name_at_reads_the_identifier_under_the_cursor() {
+        let src = "fn main() -> number { helper() }\n";
+        let call = src.find("helper").unwrap();
+        let pos = byte_to_position(src, call + 1);
+        assert_eq!(name_at(src, pos).as_deref(), Some("helper"));
+        // Whitespace carries no identifier.
+        let space = byte_to_position(src, src.find(" -> ").unwrap() + 1);
+        assert_eq!(name_at(src, space), None);
     }
 
     #[test]

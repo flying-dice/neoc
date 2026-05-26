@@ -50,7 +50,7 @@ pub use code_action::{organize_imports, unused_imports};
 pub use completion::{completions, resolve as resolve_completion};
 pub use folding::folding_ranges;
 pub use format::formatting;
-pub use goto::{goto_definition, goto_implementation, goto_type_definition};
+pub use goto::{goto_definition, goto_implementation, goto_type_definition, name_at};
 pub use highlight::document_highlight;
 pub use hover::hover;
 pub use inlay::inlay_hints;
@@ -459,17 +459,36 @@ impl LanguageServer for Backend {
         params: GotoDefinitionParams,
     ) -> Result<Option<GotoDefinitionResponse>> {
         let tdp = params.text_document_position_params;
-        let Some(source) = self.source(&tdp.text_document.uri) else {
+        let uri = tdp.text_document.uri;
+        let Some(source) = self.source(&uri) else {
             return Ok(None);
         };
-        Ok(goto::goto_definition(&source, tdp.position).map(|def| {
-            GotoDefinitionResponse::Link(vec![LocationLink {
+        // A definition in the same file wins.
+        if let Some(def) = goto::goto_definition(&source, tdp.position) {
+            return Ok(Some(GotoDefinitionResponse::Link(vec![LocationLink {
                 origin_selection_range: None,
-                target_uri: tdp.text_document.uri,
+                target_uri: uri,
                 target_range: def.full_range,
                 target_selection_range: def.name_range,
-            }])
-        }))
+            }])));
+        }
+        // Otherwise follow `use` across files: jump to a `pub` declaration of the
+        // name in a module this file imports. Scoping to the file's own imports
+        // (not every project-wide declaration of the name) keeps the jump from
+        // landing in an unrelated module that happens to reuse the name.
+        let Some(name) = goto::name_at(&source, tdp.position) else {
+            return Ok(None);
+        };
+        let Ok(index) = self.index.lock() else {
+            return Ok(None);
+        };
+        let targets = index.import_targets(&uri);
+        let target = index
+            .find_decls(&name)
+            .iter()
+            .find(|loc| loc.exported && targets.contains(&loc.uri))
+            .map(|loc| GotoDefinitionResponse::Scalar(Location::new(loc.uri.clone(), loc.range)));
+        Ok(target)
     }
 
     async fn goto_type_definition(

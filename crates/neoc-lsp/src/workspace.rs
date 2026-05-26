@@ -231,11 +231,24 @@ impl WorkspaceIndex {
     }
 
     /// Every declaration of `name` across the project. Empty slice when none.
-    // Used by the goto/references slices of Phase 3 (see cross-file-resolution.md).
-    #[allow(dead_code)]
     #[must_use]
     pub fn find_decls(&self, name: &str) -> &[DeclLoc] {
         self.decls.get(name).map_or(&[], Vec::as_slice)
+    }
+
+    /// The files `uri`'s `use` declarations resolve to — the modules it imports
+    /// from. The forward direction of [`Self::importers_of`]; used to scope a
+    /// cross-file goto to a module the current file actually imports.
+    #[must_use]
+    pub fn import_targets(&self, uri: &Url) -> Vec<Url> {
+        let Some(summary) = self.summaries.get(uri) else {
+            return Vec::new();
+        };
+        summary
+            .imports
+            .iter()
+            .filter_map(|path| self.resolve_import(path))
+            .collect()
     }
 
     /// The files whose `use` imports resolve to `uri` — its direct dependents.
@@ -503,6 +516,33 @@ mod tests {
             idx.workspace_symbols("").len(),
             3,
             "empty query matches all"
+        );
+    }
+
+    #[test]
+    fn import_targets_resolve_a_files_use_paths_to_modules() {
+        let root = Path::new("/proj");
+        let mut idx = WorkspaceIndex::new(root);
+        idx.set_document(uri(root, "util.neoc"), 1, "pub fn add() {}\n".to_string());
+        idx.set_document(
+            uri(root, "math/vec.neoc"),
+            1,
+            "pub fn dot() {}\n".to_string(),
+        );
+        idx.set_document(
+            uri(root, "main.neoc"),
+            1,
+            "use util::add;\nuse math::vec::dot;\nfn main() {}\n".to_string(),
+        );
+
+        let mut targets = idx.import_targets(&uri(root, "main.neoc"));
+        targets.sort();
+        let mut want = vec![uri(root, "util.neoc"), uri(root, "math/vec.neoc")];
+        want.sort();
+        assert_eq!(targets, want, "each `use` resolves to its module file");
+        assert!(
+            idx.import_targets(&uri(root, "util.neoc")).is_empty(),
+            "a file with no `use` imports nothing"
         );
     }
 
