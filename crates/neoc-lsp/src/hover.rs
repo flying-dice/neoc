@@ -34,16 +34,34 @@ pub fn hover(source: &str, position: tower_lsp::lsp_types::Position) -> Option<S
     }
 
     let name = cst::identifier_at(&tree, source, byte)?;
+    let decl = cst::find_decl(&tree, source, name);
+
+    // 2. The cursor sits on a top-level function's own declaration name. Render
+    //    the written signature from the CST so generic parameters and parameter
+    //    names survive verbatim (`fn first<T>(a: T, b: T) -> T`) — detail the
+    //    type-table rendering below (used at call sites) cannot reconstruct.
+    if let Some(decl) = &decl
+        && decl.node.kind() == "function_declaration"
+        && decl.name_node.byte_range().contains(&byte)
+    {
+        let sig = function_signature(decl.node, source)?;
+        return Some(with_doc(
+            code_block(&sig),
+            cst::leading_doc_comment(decl.node, source),
+        ));
+    }
+
     let table = neoc_types::collect(&neoc_parser::parse(source).module);
 
-    // 2. A top-level item (fn / struct / enum / trait / const / alias).
+    // 3. A top-level item resolved by name (a call site, or a type / const /
+    //    alias). Drawn from the symbol table; functions render as their type,
+    //    `fn name(types) -> ret`.
     if let Some(sig) = signature(&table, name) {
-        let doc = cst::find_decl(&tree, source, name)
-            .and_then(|decl| cst::leading_doc_comment(decl.node, source));
+        let doc = decl.and_then(|decl| cst::leading_doc_comment(decl.node, source));
         return Some(with_doc(code_block(&sig), doc));
     }
 
-    // 3. A member used at a call / field / `Type::Variant` site, resolved by
+    // 4. A member used at a call / field / `Type::Variant` site, resolved by
     //    unique name across the file (silent when ambiguous).
     if let Some(node) = cst::find_unique_member(&tree, source, name) {
         let sig = member_signature(node, source)?;
@@ -72,22 +90,32 @@ fn with_doc(mut markdown: String, doc: Option<String>) -> String {
 fn member_signature(node: Node, source: &str) -> Option<String> {
     match node.kind() {
         "field_declaration" | "variant" => Some(source.get(node.byte_range())?.trim().to_string()),
-        "function_declaration" => {
-            let name = node.child_by_field_name("name")?;
-            let params = node.child_by_field_name("parameters")?;
-            let mut sig = format!(
-                "fn {}{}",
-                source.get(name.byte_range())?,
-                source.get(params.byte_range())?
-            );
-            if let Some(ret) = node.child_by_field_name("return_type") {
-                sig.push_str(" -> ");
-                sig.push_str(source.get(ret.byte_range())?);
-            }
-            Some(sig)
-        }
+        "function_declaration" => function_signature(node, source),
         _ => None,
     }
+}
+
+/// The written signature of a `function_declaration`, read straight from the
+/// CST: `fn name<generics>(params) -> ret`. Generic parameters and parameter
+/// names survive verbatim — the type-table rendering ([`value_signature`])
+/// keeps neither.
+fn function_signature(node: Node, source: &str) -> Option<String> {
+    let name = node.child_by_field_name("name")?;
+    let params = node.child_by_field_name("parameters")?;
+    let generics = node
+        .child_by_field_name("generics")
+        .and_then(|g| source.get(g.byte_range()))
+        .unwrap_or_default();
+    let mut sig = format!(
+        "fn {}{generics}{}",
+        source.get(name.byte_range())?,
+        source.get(params.byte_range())?,
+    );
+    if let Some(ret) = node.child_by_field_name("return_type") {
+        sig.push_str(" -> ");
+        sig.push_str(source.get(ret.byte_range())?);
+    }
+    Some(sig)
 }
 
 /// The neoc signature string for `name`, drawn from both namespaces.
@@ -242,6 +270,16 @@ mod tests {
         let src = "fn fib(n: number) -> number { fib(n) }\n";
         let h = hover_on(src, "fib", 2).expect("hover");
         assert!(h.contains("fn fib(number) -> number"), "{h}");
+    }
+
+    #[test]
+    fn fn_declaration_shows_generics_and_param_names() {
+        // On the declaration name, hover renders the written signature from the
+        // CST: generic parameters (`<T>`) and parameter names (`a`, `b`) survive,
+        // unlike the call-site form `fn first(T, T) -> T`.
+        let src = "fn first<T>(a: T, b: T) -> T { a }\n";
+        let h = hover_on(src, "first", 1).expect("hover at declaration");
+        assert!(h.contains("fn first<T>(a: T, b: T) -> T"), "{h}");
     }
 
     #[test]
