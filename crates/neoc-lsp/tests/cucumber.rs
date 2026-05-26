@@ -20,7 +20,7 @@
 use std::path::Path;
 
 use cucumber::{World, gherkin::Step, given, then, when};
-use tower_lsp::lsp_types::{Documentation, TextEdit};
+use tower_lsp::lsp_types::{DocumentHighlightKind, Documentation, TextEdit};
 
 /// State threaded through one scenario: the document under test and the result
 /// produced by the last `When` step — hover markdown, reference locations as
@@ -38,6 +38,7 @@ struct Ide {
     signature_active_parameter: Option<u32>,
     renamed_source: Option<String>,
     goto_lines: Vec<u32>,
+    highlights: Vec<(u32, u32, String)>,
 }
 
 #[given("the source:")]
@@ -267,6 +268,51 @@ fn it_resolves_to_nothing(world: &mut Ide) {
         world.goto_lines.is_empty(),
         "expected no target, got lines {:?}",
         world.goto_lines,
+    );
+}
+
+#[when(regex = r#"^I highlight "([^"]+)"$"#)]
+fn highlight_symbol(world: &mut Ide, ident: String) {
+    let byte = nth_occurrence(&world.source, &ident, 1) + ident.len() / 2;
+    let position = neoc_lsp::byte_to_position(&world.source, byte);
+    world.highlights = neoc_lsp::document_highlight(&world.source, position)
+        .into_iter()
+        .map(|highlight| {
+            let kind = match highlight.kind {
+                Some(DocumentHighlightKind::WRITE) => "write",
+                Some(DocumentHighlightKind::READ) => "read",
+                _ => "text",
+            };
+            (
+                highlight.range.start.line + 1,
+                highlight.range.start.character + 1,
+                kind.to_string(),
+            )
+        })
+        .collect();
+}
+
+#[then("the highlights are:")]
+fn highlights_are(world: &mut Ide, step: &Step) {
+    let table = step
+        .table
+        .as_ref()
+        .unwrap_or_else(|| panic!("step {:?} requires a table", step.value));
+    let expected: Vec<(u32, u32, String)> = table
+        .rows
+        .iter()
+        .skip(1)
+        .map(|row| {
+            (
+                row[0].trim().parse().expect("line"),
+                row[1].trim().parse().expect("column"),
+                row[2].trim().to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        world.highlights, expected,
+        "highlights mismatch (line, column, kind)",
     );
 }
 

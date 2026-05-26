@@ -1,9 +1,9 @@
 //! Language server for neoc, over stdio.
 //!
 //! Capabilities: diagnostics, document symbols (outline), goto (definition,
-//! type-definition, implementation), find-all-references, signature help,
-//! rename, hover, and completion (with lazy per-item resolve). Diagnostics come
-//! from [`neoc_compiler::transpile`];
+//! type-definition, implementation), find-all-references, document highlight,
+//! signature help, rename, hover, and completion (with lazy per-item resolve).
+//! Diagnostics come from [`neoc_compiler::transpile`];
 //! syntax errors carry precise byte ranges from the parser, while type and emit
 //! diagnostics fall back to the document's first line because those stages do
 //! not track spans yet (see `tasks/lsp-spans.md`). The IDE features are built on
@@ -14,6 +14,7 @@
 mod completion;
 mod cst;
 mod goto;
+mod highlight;
 mod hover;
 mod position;
 mod references;
@@ -29,6 +30,7 @@ use neoc_compiler::{ByteSpan, Diagnostic as CompilerDiagnostic, Stage, Target, t
 // builds the `Position` they take from a byte offset into the source.
 pub use completion::{completions, resolve as resolve_completion};
 pub use goto::{goto_definition, goto_implementation, goto_type_definition};
+pub use highlight::document_highlight;
 pub use hover::hover;
 pub use position::{byte_to_position, position_to_byte};
 pub use references::references;
@@ -40,14 +42,14 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::{
     CompletionItem, CompletionOptions, CompletionParams, CompletionResponse, Diagnostic,
     DiagnosticSeverity, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams,
-    GotoDefinitionResponse, Hover, HoverContents, HoverParams, HoverProviderCapability,
-    ImplementationProviderCapability, InitializeParams, InitializeResult, InitializedParams,
-    Location, LocationLink, MarkupContent, MarkupKind, MessageType, OneOf, Position,
-    PrepareRenameResponse, Range, ReferenceParams, RenameOptions, RenameParams, ServerCapabilities,
-    ServerInfo, SignatureHelp, SignatureHelpOptions, SignatureHelpParams,
-    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit,
-    TypeDefinitionProviderCapability, Url, WorkspaceEdit,
+    DidOpenTextDocumentParams, DocumentHighlight, DocumentHighlightParams, DocumentSymbolParams,
+    DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents,
+    HoverParams, HoverProviderCapability, ImplementationProviderCapability, InitializeParams,
+    InitializeResult, InitializedParams, Location, LocationLink, MarkupContent, MarkupKind,
+    MessageType, OneOf, Position, PrepareRenameResponse, Range, ReferenceParams, RenameOptions,
+    RenameParams, ServerCapabilities, ServerInfo, SignatureHelp, SignatureHelpOptions,
+    SignatureHelpParams, TextDocumentPositionParams, TextDocumentSyncCapability,
+    TextDocumentSyncKind, TextEdit, TypeDefinitionProviderCapability, Url, WorkspaceEdit,
 };
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
@@ -157,6 +159,7 @@ impl LanguageServer for Backend {
                 type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
                 implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
                 references_provider: Some(OneOf::Left(true)),
+                document_highlight_provider: Some(OneOf::Left(true)),
                 rename_provider: Some(OneOf::Right(RenameOptions {
                     // prepareRename validates the cursor and highlights the name.
                     prepare_provider: Some(true),
@@ -304,6 +307,17 @@ impl LanguageServer for Backend {
                 .map(|range| Location::new(tdp.text_document.uri.clone(), range))
                 .collect();
         Ok(Some(locations))
+    }
+
+    async fn document_highlight(
+        &self,
+        params: DocumentHighlightParams,
+    ) -> Result<Option<Vec<DocumentHighlight>>> {
+        let tdp = params.text_document_position_params;
+        let Some(source) = self.source(&tdp.text_document.uri) else {
+            return Ok(None);
+        };
+        Ok(Some(highlight::document_highlight(&source, tdp.position)))
     }
 
     async fn signature_help(&self, params: SignatureHelpParams) -> Result<Option<SignatureHelp>> {

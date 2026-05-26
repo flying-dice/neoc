@@ -33,6 +33,17 @@ pub fn references(source: &str, position: Position, include_declaration: bool) -
         .collect()
 }
 
+/// The declaring-name range for the identifier at `position`, if it resolves to
+/// a top-level declaration or a unique member. Lets document highlight mark the
+/// defining occurrence distinctly from its reads.
+#[must_use]
+pub(crate) fn declaration_range_at(source: &str, position: Position) -> Option<Range> {
+    let tree = cst::parse(source);
+    let byte = position_to_byte(source, position);
+    let name = cst::identifier_at(&tree, source, byte)?;
+    declaration_name_range(&tree, source, name)
+}
+
 /// The range of the declaring name for `name`, when it resolves to a top-level
 /// declaration or a unique member. `None` leaves every occurrence in the
 /// result, since there is no defining name to single out.
