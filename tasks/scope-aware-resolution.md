@@ -1,13 +1,16 @@
 # Scope-aware name resolution (cross-file Phase 5)
 
-- **Status:** in progress — slices 1–4 landed (binding spans, resolution map,
-  scope-aware references/rename/goto, `unused_let`). `unused_param` and the
-  `shadowing` lint remain, gated on the RFC below.
+- **Status:** done for the Rust-faithful scope — binding spans, resolution map,
+  scope-aware references/rename/goto, `unused_let`, and `unused_param` landed.
+  A default-on `shadowing` lint is intentionally **not** built (it would diverge
+  from Rust); see below.
 - **Priority:** P3 — the largest single tooling item left
 - **Depends on:** `cross-file-resolution` Phases 2–4 (landed); the `WorkspaceIndex`
-- **Gate:** the two remaining lints change language-level static semantics →
-  RFC/design per `CLAUDE.md`. The resolution machinery (slices 1–3) is tooling
-  and is opt-in, so it carries no semantic change and landed without the RFC.
+- **Gate:** none of the shipped pieces change static semantics — the resolution
+  map is opt-in tooling and the two lints are warnings (like the existing five),
+  so they landed without an RFC. The only spec-touching item, a default
+  shadowing warning, is declined to stay Rust-faithful (`STATIC.md` §2 already
+  matches Rust).
 
 ## The gap
 
@@ -191,23 +194,27 @@ then earn a CONFORMANCE home. Pick one in the RFC; do not assume CONFORMANCE.
    (`item_references`); goto-local jumps to the binding site; cross-file per-file
    step uses the item path. Tested both shadowing directions + item-vs-local.
    (commit `e68dc09`.)
-4. `[~]` **Scope lints** — `unused_let` landed, scope-precise with `_`-opt-out
-   (commit `f0658a1`). `unused_param` (trait-forced-param exemption) and
-   `shadowing` (needs the §2 amendment) **remain, RFC-gated** — they change
-   static semantics. Tested in `neoc-lsp` like the existing lints.
+4. `[x]` **Scope lints** — `unused_let` (commit `f0658a1`) and `unused_param`
+   (commit `0b11299`), both scope-precise with `_`-opt-out, tested in `neoc-lsp`
+   like the existing lints. `unused_param` mirrors Rust's `unused_variables`:
+   fires on every unused param incl. trait-impl methods, never on `self`. (The
+   earlier "trait-forced-param exemption" was dropped — it was a divergence from
+   Rust, which warns and expects `_`.)
 5. `[ ]` **Earn Phase 6** — the resolution recompute on edits is the first
    workspace consumer heavy enough to debounce/cancel (see
    `cross-file-resolution.md` §6).
 
-## Remaining (RFC-gated)
+## The shadowing lint — declined to stay Rust-faithful
 
-- **`unused_param`** — needs the trait-forced-param exemption (a trait method's
-  params are mandatory on the impl even when unused). The resolution map carries
-  binding kind but not the enclosing-fn context; the lint must learn which params
-  belong to a trait-impl method (an AST walk) before it can fire without false
-  positives. RFC decides the `_`-opt-out and whether impl params are exempt.
-- **`shadowing`** — `STATIC.md` §2 says "Shadowing is allowed and is not a
-  warning." A shadowing lint contradicts that until the RFC amends §2.
+`STATIC.md` §2 says "Shadowing is allowed and is not a warning," which **matches
+Rust**: rustc does not warn on shadowing, and `clippy::shadow_*` are
+`restriction`/`pedantic` lints, off by default. neoc-lsp has no per-lint
+opt-in/config yet (every registered lint fires), so adding a `shadowing` lint
+would warn by default — diverging from Rust and contradicting §2. The faithful
+choice is to **not** add it now. If we later want it, it should arrive with a
+lint-config mechanism (opt-in), which is its own piece of work and would not
+need a §2 amendment (an opt-in lint is consistent with "not a warning" by
+default).
 
 ## Pitfalls to avoid
 
