@@ -258,8 +258,6 @@ MatchArm  ::= Pattern [ "if" Expr ] "=>" Expr [ "," ]
 
 `match` is an expression. It evaluates the scrutinee once and selects the first arm whose pattern matches and whose guard (if present) holds. All arms must yield the same type, and the arms must be exhaustive (`STATIC.md` §7).
 
-The comma after an arm is optional when the arm's value is a block-bounded form — a `{ … }` block, `if`, `match`, `while`, `for`, or `loop` — because its closing brace already delimits the arm; the last arm may always omit it. Any other arm value requires the comma, so that `a => b` `(c) => d` reads as two arms rather than a call `b(c)`.
-
 ### 6.4 Struct and enum literals
 
 ```
@@ -463,8 +461,8 @@ PathExpr    ::= IDENT { "::" IDENT }
 Block       ::= "{" { Stmt } [ Expr ] "}"
 
 IfExpr      ::= "if" CondExpr Block [ "else" ( IfExpr | Block ) ]
-MatchExpr   ::= "match" CondExpr "{" { MatchArm } "}"
-MatchArm    ::= Pattern [ "if" Expr ] "=>" Expr [ "," ]
+MatchExpr   ::= "match" CondExpr "{" [ MatchArm { "," MatchArm } [ "," ] ] "}"
+MatchArm    ::= Pattern [ "if" Expr ] "=>" Expr
 WhileExpr   ::= "while" CondExpr Block
 ForExpr     ::= "for" Pattern "in" CondExpr Block
 LoopExpr    ::= "loop" Block
