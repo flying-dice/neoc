@@ -17,3 +17,13 @@ tokio = { version = "1", features = ["rt", "io-std", "io-util", "macros"] }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+cucumber = "0.21.1"
+
+# IDE-UX spec: Gherkin features in `tooling/ide/` driven against the real
+# handlers. cucumber supplies its own runner, so the default libtest harness is
+# disabled. `cargo test --workspace` (CI) runs it; the features are the spec.
+[[test]]
+name = "cucumber"
+harness = false

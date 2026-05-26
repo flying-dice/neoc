@@ -17,7 +17,12 @@ mod position;
 mod symbols;
 
 use neoc_compiler::{ByteSpan, Diagnostic as CompilerDiagnostic, Stage, Target, transpile};
-use position::byte_to_position;
+
+// Public handler facade. The pure feature functions the IDE-UX spec
+// (`tests/cucumber.rs` over `tooling/ide/`) drives directly; `byte_to_position`
+// builds the `Position` they take from a byte offset into the source.
+pub use hover::hover;
+pub use position::byte_to_position;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use tower_lsp::jsonrpc::Result;
