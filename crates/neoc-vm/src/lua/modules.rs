@@ -101,6 +101,7 @@ pub fn install(lua: &Lua) -> mlua::Result<()> {
     modules.insert("lib:json".into(), lib::json::module(lua)?);
     modules.insert("lib:log".into(), lib::log::module(lua)?);
     modules.insert("lib:mime".into(), lib::mime::module(lua)?);
+    modules.insert("lib:pkey".into(), lib::pkey::module(lua)?);
     modules.insert("lib:random".into(), lib::random::module(lua)?);
     modules.insert("lib:regex".into(), lib::regex::module(lua)?);
     modules.insert("lib:semver".into(), lib::semver::module(lua)?);
@@ -224,6 +225,7 @@ pub fn headers(lua: &Lua) -> mlua::Result<Vec<(String, String)>> {
     push(lib::json::declare(lua))?;
     push(lib::log::declare(lua))?;
     push(lib::mime::declare(lua))?;
+    push(lib::pkey::declare(lua))?;
     push(lib::random::declare(lua))?;
     push(lib::regex::declare(lua))?;
     push(lib::semver::declare(lua))?;
@@ -281,6 +283,7 @@ mod tests {
         assert!(keys.contains(&"lib:json"));
         assert!(keys.contains(&"lib:log"));
         assert!(keys.contains(&"lib:mime"));
+        assert!(keys.contains(&"lib:pkey"));
         assert!(keys.contains(&"lib:random"));
         assert!(keys.contains(&"lib:regex"));
         assert!(keys.contains(&"lib:semver"));
@@ -309,7 +312,7 @@ mod tests {
         assert!(keys.contains(&"vnd:sqlx_postgres"));
         assert!(keys.contains(&"vnd:testcontainers_modules"));
         assert!(keys.contains(&"vnd:toml"));
-        assert_eq!(keys.len(), 46, "expected 46 migrated modules, got {keys:?}");
+        assert_eq!(keys.len(), 47, "expected 47 migrated modules, got {keys:?}");
 
         for (key, header) in &headers {
             assert!(
@@ -357,6 +360,7 @@ mod tests {
             "lib:json" => lib::json::module(lua),
             "lib:log" => lib::log::module(lua),
             "lib:mime" => lib::mime::module(lua),
+            "lib:pkey" => lib::pkey::module(lua),
             "lib:random" => lib::random::module(lua),
             "lib:regex" => lib::regex::module(lua),
             "lib:semver" => lib::semver::module(lua),

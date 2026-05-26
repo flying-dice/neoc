@@ -1,0 +1,40 @@
+// @generated from the lib:pkey runtime module — do not edit.
+struct KeyPair;
+impl KeyPair {
+    /// Generate a fresh keypair for `algo` (one of `algorithms()`). RSA keys are 2048-bit.
+    fn generate(algo: string) -> Result<KeyPair, string>;
+    /// Load a private key from a PKCS#8 PEM string. `algo` is required: a plain RSA key does not record the signing scheme (PSS vs PKCS#1 v1.5).
+    fn from_pem(algo: string, pem: string) -> Result<KeyPair, string>;
+    /// Load a private key from PKCS#8 DER bytes. `algo` is required, as for `from_pem`.
+    fn from_der(algo: string, der: string) -> Result<KeyPair, string>;
+    /// Extract the public key.
+    fn public_key() -> PublicKey;
+    /// Sign `message` with the private key, returning the raw signature bytes.
+    fn sign(message: string) -> Result<string, string>;
+    /// Return the algorithm name this keypair was built with.
+    fn algorithm() -> string;
+    /// Serialise the private key as a PKCS#8 PEM string (LF line endings).
+    fn to_pem() -> Result<string, string>;
+    /// Serialise the private key as PKCS#8 DER bytes.
+    fn to_der() -> Result<string, string>;
+}
+struct PublicKey;
+impl PublicKey {
+    /// Load a public key from an SPKI PEM string under `algo`.
+    fn from_pem(algo: string, pem: string) -> Result<PublicKey, string>;
+    /// Load a public key from SPKI DER bytes under `algo`.
+    fn from_der(algo: string, der: string) -> Result<PublicKey, string>;
+    /// Verify `signature` over `message`; returns `true` iff valid, `false` on any mismatch or malformed signature.
+    fn verify(message: string, signature: string) -> bool;
+    /// Return the algorithm name this public key was built with.
+    fn algorithm() -> string;
+    /// Serialise the public key as an SPKI PEM string (LF line endings).
+    fn to_pem() -> Result<string, string>;
+    /// Serialise the public key as SPKI DER bytes.
+    fn to_der() -> Result<string, string>;
+}
+#[link(name = "lib:pkey")]
+extern "neoc" {
+    /// Return the list of supported algorithm names in canonical order.
+    fn algorithms() -> LuaValue;
+}
