@@ -1,111 +1,257 @@
 # User-defined macros & macro expansion
 
-- **Status:** plan — design-space framing; **deferred behind the trait/type
-  model** (`trait-type-model.md`). RFC-gated.
-- **Priority:** P2 — confirmed coming feature; `SYNTAX.md` §8 currently says
-  "no general user-defined macro system in the first edition" — this lifts that
-- **Depends on:** the parser/AST pipeline; a Span provenance model (see below);
-  informs the tooling architecture
-- **Touches:** `lang/SYNTAX.md`, a new `lang/` expansion-semantics section,
-  `lang/DYNAMIC.md`, **`neoc-ast` (Span)**, the `neoc-parser` → `neoc-types`
-  pipeline, `neoc-lsp`
+- **Status:** PARKED — resumable plan. Design-space framed and the hard
+  constraints found; **deferred behind the trait/type model** (`trait-type-model.md`).
+  No code written. RFC-gated when picked up.
+- **Priority:** P2 — confirmed coming feature ("user macros is absolutely a
+  coming feature"). `SYNTAX.md` §8 currently says *"There is no general
+  user-defined macro system in the first edition; the attribute set is fixed."* —
+  this work lifts that.
+- **Depends on:** the parser/AST pipeline; a Span **provenance** model (a real
+  `neoc-ast` change — see below); ideally the scope-aware resolution map (for
+  hygiene); the trait work (derives are the shared seam).
+- **Touches:** the `tree-sitter-neoc` grammar (submodule), `neoc-ast` (new nodes
+  **and** `Span`), `neoc-parser`, a new expansion stage in `neoc-compiler`,
+  `neoc-types`, `neoc-lsp`; spec: `SYNTAX.md`, a new expansion-semantics section,
+  `DYNAMIC.md`.
+
+---
+
+## Resuming cold — read this first
+
+This is a handoff. Everything you need is in this file; you do not need prior
+conversation. The state:
+
+- **Decided:** declarative macros first; an expansion stage *between parse and
+  check* (`parse → expand → check → elaborate → emit`), AST→AST, so every
+  downstream stage sees only expanded neoc; **procedural-on-`neoc-vm` is
+  architecturally blocked** (it would cycle the crate graph — see below) so it's
+  out of scope for v1; hygiene rides the binding-identity resolution map; macros
+  expand to *neoc*, never to target code.
+- **Open (RFC decides):** declarative match level (token-tree vs AST), the
+  hygiene algorithm, invocation/definition syntax, and the exact provenance
+  representation.
+- **Start here:** §"First steps when you resume" at the bottom.
+- **Follow:** `checklist.md` (repo root) — this is a sweeping language feature and
+  goes through every stage; and the `rfc` process if RFCs are in force again.
+- **Related docs:** `trait-type-model.md` (derives seam), `checklist.md` (process),
+  `cross-file-resolution.md` (the architecture note this reinforces), GitLab
+  work-item **#54** (runtime type enforcement — interacts cleanly; see below).
+
+---
 
 ## Goal
 
-A user-defined macro system. `SYNTAX.md` §8's "fixed attribute set, no macros"
-is a first-edition limit, not a design boundary. Macros generate neoc
-constructs that then flow through the normal stages (parse → check → emit) — a
-macro expands to *neoc*, never directly to target code.
+A user-defined macro system. A macro generates neoc constructs that then flow
+through the normal stages unchanged. **A macro expands to neoc, never directly to
+target code** (so the checker, codegen, and #54 enforcement all run on the
+expanded tree — no stage downstream of expansion needs to know macros exist).
 
-## Where expansion sits in the pipeline
+---
 
-A new **expansion stage between parse and type-check**: `source → parse →
-expand → check → elaborate → emit`. Expansion is a CST/AST→AST rewrite that
-resolves macro invocations into the constructs they produce, then the existing
-stages run unchanged on the expanded tree. Consequences:
-- the type checker, codegen, and `#54` enforcement see only *expanded* neoc —
-  no stage downstream of expansion needs to know macros exist (the insertion
-  point in `transpile`/`transpile_project` is clean — confirmed);
-- diagnostics and spans must carry **expansion provenance** (a span maps back to
-  the invocation *and* the macro definition) so errors and goto land sensibly —
-  the load-bearing hard part, same as rust-analyzer's.
+## Grounded codebase facts (verified this session — don't re-derive)
 
-  **This requires changing `neoc-ast`'s `Span`.** Today `Span` is `{start, end}`
-  with no origin — adequate for single-source spans, useless for expanded code.
-  Expansion needs either a provenance field on `Span` (macro/invocation id) or a
-  side-table mapping nodes → origin. `neoc-ast` is a **wasm-leaf crate**, so a
-  `Span` change ripples across every compiler crate and the wasm gate — plan it
-  as an explicit early sub-task, not an implementation afterthought.
+**The pipeline** (`crates/neoc-compiler/src/lib.rs`):
+- `transpile(source, target)` (~line 125): `parser::parse(source)` →
+  `types::check(&module)` → `types::elaborate(&module)` → `emit(target, …)`.
+- `transpile_project(entry, target)`: a load loop (~line 263–307) parses each
+  file, **scans `module.items` for `use` decls to discover the dependency graph**,
+  and stores a `LoadedModule { module, … }`; then `check_and_emit_module`
+  per file does `collect` → `resolve_use` → `import_referenced_types` →
+  `check_with_table` → `elaborate_with_table` → `emit`.
+- **Expansion insertion point** — `expand(module) -> module`, AST→AST:
+  - single-file: between `parser::parse` and `types::check`.
+  - multi-file: in the load loop, expand `parsed.module` **before** it is stored
+    *and before the `use`-discovery scan* — because a macro may generate `use`
+    decls that must be in the graph. This ordering is a real gotcha: expand
+    first, then discover imports.
 
-## The design space (the RFC must choose)
+**`Span`** (`crates/neoc-ast/src/lib.rs`): `pub struct Span { pub start: usize,
+pub end: usize }`, with a hand-written `impl PartialEq` that returns `true`
+always (so AST-equality tests ignore spans). **It carries no origin** — fine for
+single-source, useless for expanded code. `neoc-ast` is a **wasm-leaf** crate
+(gated by `cargo check --target wasm32-unknown-unknown`), so a `Span` change
+ripples to every compiler crate + the wasm gate.
 
-1. **Declarative first** (`macro_rules`-style: match an input token/AST pattern,
-   emit a template). Hygienic by construction, no arbitrary computation, easiest
-   to make the tooling see through. Strong candidate for v1.
-2. **Procedural later** (a macro is *code that runs at compile time* and returns
-   a tree). More powerful, but needs to *execute* user code during compilation.
-   - **The "run on neoc-vm" idea is architecturally blocked as stated.** Compiler
-     crates carry **no host deps** (`CLAUDE.md`: no `mlua`), and `neoc-vm` (which
-     bundles `mlua`) sits *above* the compiler in the graph. An expansion stage
-     in a compiler crate cannot depend on `neoc-vm` without violating crate
-     isolation and cycling the graph. So procedural-on-`neoc-vm` is **not** a
-     drop-in; if procedural macros are ever wanted they need an **out-of-process
-     proc-macro server** (the compiler drives it over IPC, staying pure) — its
-     own large design. **v1 is declarative-only**; procedural is explicitly
-     out of scope until that server is designed.
-3. **Hygiene** — macro-introduced bindings must not capture or be captured by the
-   call site. The scope-aware resolution model (binding identities) is the
-   foundation hygiene builds on; decide the hygiene algorithm in the RFC.
-4. **Invocation & definition syntax** — `name!(...)`? attribute macros
-   (`#[derive]` generalised)? The four built-in derives (`Clone`/`Eq`/`Debug`/
-   `Display`) become the first *user-expressible* case once the mechanism lands.
+**Derives today** (`crates/neoc-macros`): `pub fn derive(derive_name: &str,
+target: DeriveTarget) -> Result<Vec<String>, String>` returns **Lua lines**, not
+AST. Called at **codegen** time (`neoc-codegen-lua` `emit_derives`, ~line 536, and
+the JS equivalent). So `#[derive(Eq)]` is a codegen-time string emit; the
+checker never sees a derived method as a trait impl. `DeriveTarget` is
+`Struct(&StructDecl)` / `Enum(&EnumDecl)`.
+
+**Crate graph** (`CLAUDE.md` "Crate isolation"): compiler crates carry **no host
+deps** (no `mlua`); `neoc-vm` bundles `mlua` and sits *above* the compiler
+(`neoc-vm` embeds `neoc-compiler`). So a compiler-crate expansion stage **cannot**
+depend on `neoc-vm` — that both violates isolation and cycles the graph.
+
+**AST shape:** `Module { items: Vec<Item> }`; `Item`/`Stmt`/`Expr` carry spans;
+binding/decl *name* sites historically don't (see `trait-type-model.md`).
+
+**Conformance:** `lang/CONFORMANCE/{syntax,static,dynamic}`, driven by
+`crates/neoc-compiler/tests/conformance_{syntax,static,dynamic}.rs`.
+
+---
+
+## The expansion stage
+
+`expand(module: &Module) -> Module`, an AST→AST rewrite that resolves every
+macro **invocation** into the constructs it produces and removes the invocation
+node, so `check`/`elaborate`/`emit` never see a macro node. Macro **definitions**
+are consumed by the expander (kept addressable for tooling/provenance).
+
+Invariant (the desync rule from `checklist.md`): after `expand`, the tree
+contains **no** macro nodes. A macro node reaching the checker or a codegen is a
+desync bug.
+
+---
+
+## Span / provenance — the load-bearing piece
+
+Expanded nodes need spans that map back to **both** the invocation site and the
+macro definition, or diagnostics and goto land at synthesised offsets. This is
+the hardest part (it's exactly rust-analyzer's macro problem, neoc-sized).
+
+Options (RFC picks):
+- a provenance field on `Span` (e.g. an optional `origin: ExpansionId`), or
+- a side-table mapping expanded nodes → origin.
+
+Either way it's an early sub-task, **not** an implementation afterthought,
+because `neoc-ast` is a wasm leaf and the change ripples. The acceptance bar: an
+error inside or around an expansion points at a sensible source span.
+
+---
+
+## Hygiene
+
+Macro-introduced bindings must not capture, or be captured by, call-site names
+(`let x` inside a macro must not collide with a caller's `x`). The foundation is
+the **binding-identity resolution map** (`neoc-types/src/resolve.rs`, `BindingId`
+— built for scope-aware resolution): hygiene is expressed in terms of binding
+identities, not spellings. RFC chooses the algorithm: sets-of-scopes (Racket-style)
+or simpler rename-based.
+
+---
+
+## Grammar + AST additions
+
+- Grammar (submodule, per `checklist.md` §2): a **macro definition** form and a
+  **macro invocation** form (`name!(...)`?, attribute-macro form generalising
+  `#[derive]`?). Decide whether invocation args are a parsed expression list or
+  an unparsed **token tree** (Rust uses token trees, which let macros take
+  arbitrary syntax; that needs a delimited-token-tree CST node, not a parsed
+  arg list). This is a real grammar design fork.
+- AST: `MacroDef` and `MacroInvocation` nodes (invocation removed by `expand`).
+- Token-level vs AST-level matching for declarative macros follows from the
+  token-tree decision.
+
+---
+
+## Derives are the seam with the trait work
+
+The four built-in derives (`Clone`/`Eq`/`Debug`/`Display`) **are trait impls**,
+synthesised at codegen as Lua strings (above). Two consequences:
+
+1. `trait-type-model.md` adds a **hardcoded bridge** so the trait checker treats
+   the four derives as impls (needed so a derived-`Eq` type is usable as the `Eq`
+   existential and tagged in `__traits`).
+2. When macros land, the expansion stage turns `#[derive(..)]` into real `impl`
+   blocks **in the AST** — and the trait checker's hardcoded bridge is **deleted**.
+   So macros *subsume* the bridge; traits-first does not undermine macros, it pins
+   the contract macros must satisfy (emit `impl` AST).
+   - **Migration detail:** `neoc_macros::derive` returns `Vec<String>` (Lua), not
+     AST. To re-express derives as macros, either make derive logic produce AST
+     (synthetic `impl` blocks), or have the expander parse the derived source
+     back into AST. RFC decides. Goldens must stay stable (no change to emitted
+     output).
+
+---
+
+## Procedural macros — blocked as "run on neoc-vm"
+
+A procedural macro is code that runs at compile time and returns a tree. The
+tempting "run it on neoc's own VM (`neoc-vm`/Luau), Lisp-style" is
+**architecturally impossible** as a drop-in: a compiler-crate expansion stage
+can't depend on `neoc-vm`/`mlua` (crate isolation + graph cycle). If procedural
+macros are ever wanted, they need an **out-of-process proc-macro server** the
+compiler drives over IPC (staying pure) — its own large design. **v1 is
+declarative-only.** Procedural is out of scope until that server is designed.
+
+---
+
+## #54 interaction (clean)
+
+Work-item #54 (runtime type enforcement at drift points) sees only the
+**expanded** AST, so macro-generated code is enforced exactly like
+hand-written code — no special interaction. Good: nothing to coordinate beyond
+"expand before check".
+
+---
 
 ## Why this re-justifies the heavier tooling architecture
 
-Macro expansion (and full traits) are exactly the features that make the
-bespoke, name-based, recompute-per-request resolvers a dead end (you cannot
-resolve a name *inside* or *around* a macro expansion by matching CST text). A
-macro-aware IDE needs: expand → resolve over the expanded tree → map results back
-to original spans. That is the semantic-model + provenance machinery rust-analyzer
-has. So this feature is the strongest argument for investing in a real semantic
-resolution layer + (eventually) incrementality, rather than per-feature
-correlators. (See the architecture note in `cross-file-resolution.md`.)
+You cannot resolve a name *inside* or *around* a macro expansion by matching CST
+text. A macro-aware IDE must: expand → resolve over the expanded tree → map
+results back to source spans. That is the semantic-model + provenance machinery
+rust-analyzer has, and it's the strongest argument for a real semantic resolution
+layer over the bespoke, name-based resolvers (see `cross-file-resolution.md`'s
+architecture note). Macros + full traits are *why* that investment is warranted.
 
-## Phased plan (each its own RFC + MR, spec-first)
+---
 
-1. `[ ]` **RFC: the macro model** — declarative-first; invocation/definition
-   grammar; hygiene algorithm; expansion-stage placement; span/provenance
-   contract. `SYNTAX.md` + a new expansion-semantics section.
-2. `[ ]` **Expansion stage in the pipeline** — `expand(module) -> module` with
-   provenance-carrying spans; the existing stages run on the output unchanged.
-   Re-express the built-in derives through it as the first real macros. **Note:**
-   `neoc_macros::derive` returns `Vec<String>` (Lua lines), not AST — to expand
-   into the AST a macro must produce *AST* (synthetic `impl` blocks), or the
-   expander parses the derived source back. Decide which in the RFC. This is also
-   the seam with `trait-type-model.md`: once derives are real `impl` AST, the
-   trait checker's hardcoded derive-bridge is deleted.
-3. `[ ]` **Tooling through expansion** — goto/completion/references/hover resolve
-   over the expanded tree and map back to source spans (the rust-analyzer
-   problem, neoc-sized).
-4. `[ ]` **Procedural macros (optional, later)** — run macro code on `neoc-vm`;
-   sandboxing, determinism, and the compile-time/runtime boundary are the open
-   risks.
+## Phased plan (each its own MR, spec-first; RFC-gated)
+
+1. `[ ]` **RFC: the macro model** — declarative-first; token-tree vs AST matching;
+   invocation/definition grammar; hygiene algorithm; expansion-stage placement;
+   the span/provenance contract. `SYNTAX.md` + a new expansion-semantics section.
+2. `[ ]` **Span provenance in `neoc-ast`** — the load-bearing change; do it early,
+   mind the wasm-leaf ripple.
+3. `[ ]` **Grammar + AST + parser** — macro def + invocation nodes (submodule
+   regen per `checklist.md` §2); `walk_*` in `neoc-parser`.
+4. `[ ]` **Expansion stage** — `expand(module) -> module` in `neoc-compiler`,
+   inserted before `use`-discovery / check (see insertion point above);
+   provenance carried; downstream stages unchanged.
+5. `[ ]` **Re-express the built-in derives** through the mechanism; delete the
+   trait checker's derive-bridge; goldens stable.
+6. `[ ]` **Tooling through expansion** — goto/completion/references/hover resolve
+   over the expanded tree, map back to source spans.
+7. `[ ]` **Procedural macros (later, optional)** — out-of-process server; sandbox,
+   determinism, the compile-time/runtime boundary are the open risks.
+
+---
 
 ## Acceptance (per slice)
 
-- A declarative macro expands to neoc that then type-checks and lowers normally
-  on every target; a `lang/CONFORMANCE` pair pins the expansion.
+- A declarative macro expands to neoc that type-checks and lowers normally on
+  every target; a `lang/CONFORMANCE` pair pins the expansion.
 - Errors inside or around an expansion point at a sensible span (invocation or
   definition), never at synthesised offsets.
 - Hygiene: a macro-introduced `let x` does not collide with a call-site `x`
   (conformance case).
-- The built-in derives are re-expressed through the mechanism with no change to
-  their emitted output (goldens stable).
+- The built-in derives are re-expressed through the mechanism with **no change**
+  to their emitted output (goldens stable), and the trait derive-bridge is gone.
+- No macro node survives into `check`/codegen (desync check).
+
+---
 
 ## Open questions (for the RFC)
 
-- Declarative-only v1, or design for procedural from the start?
-- Token-level vs AST-level matching for declarative macros.
-- Hygiene model (sets-of-scopes à la Racket, or simpler rename-based).
-- For procedural-on-`neoc-vm`: determinism, sandbox limits, and how a macro's
-  compile-time dependencies are resolved.
+- Declarative-only v1 (assumed), or design the procedural server boundary now?
+- Token-tree vs AST-level matching for declarative macros.
+- Hygiene model: sets-of-scopes vs rename-based.
+- Provenance representation: `Span` field vs side-table.
+- Derive re-expression: macro-produces-AST vs parse-derived-source-back.
+- Invocation/definition surface syntax (`name!(...)`, attribute macros).
+
+---
+
+## First steps when you resume
+
+1. Re-read this file + `checklist.md` + the "Grounded codebase facts" above
+   (re-verify the line numbers; the code will have moved).
+2. Confirm the trait work landed the derive-bridge — that's the contract macros
+   must satisfy and the thing they'll delete.
+3. Write the RFC (phase 1): pin declarative-first, token-tree-vs-AST, hygiene,
+   and the provenance contract. Get it gated.
+4. Land provenance (phase 2) before the expansion stage — it's the ripple that's
+   painful to retrofit.
