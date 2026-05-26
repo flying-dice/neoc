@@ -218,11 +218,14 @@ impl Adapter {
             match child.kind() {
                 "self_parameter" => params.push(ast::Param::Receiver),
                 "parameter" => {
+                    let span = self
+                        .field(child, "name")
+                        .map_or_else(|| crate::expr::span_of(child), crate::expr::span_of);
                     let name = self.name_field(child);
                     let ty = self
                         .field(child, "type")
                         .map_or(ast::Type::Unit, |t| self.walk_type(t));
-                    params.push(ast::Param::Named { name, ty });
+                    params.push(ast::Param::Named { name, ty, span });
                 }
                 _ => {}
             }

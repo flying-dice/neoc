@@ -67,7 +67,7 @@ impl Emitter {
     fn emit_let(&mut self, l: &ast::LetStmt) {
         // A simple binding or wildcard maps straight to a `local`.
         let name = match &l.pattern {
-            ast::Pattern::Binding(name) => Some(name.clone()),
+            ast::Pattern::Binding { name, .. } => Some(name.clone()),
             ast::Pattern::Wildcard => Some("_".to_string()),
             _ => None,
         };
@@ -114,7 +114,7 @@ impl Emitter {
     /// sibling variant) and stays a diagnostic.
     fn is_irrefutable_let_pattern(&self, pattern: &ast::Pattern) -> bool {
         match pattern {
-            ast::Pattern::Wildcard | ast::Pattern::Binding(_) => true,
+            ast::Pattern::Wildcard | ast::Pattern::Binding { .. } => true,
             ast::Pattern::Struct { path, fields, .. } => {
                 self.pattern_variant(path).is_none()
                     && fields.iter().all(|f| {
@@ -251,7 +251,7 @@ impl Emitter {
 
     fn emit_for(&mut self, pattern: &ast::Pattern, iter: &ast::Expr, body: &ast::Block) {
         let var = match pattern {
-            ast::Pattern::Binding(name) => name.clone(),
+            ast::Pattern::Binding { name, .. } => name.clone(),
             ast::Pattern::Wildcard => "_".to_string(),
             _ => {
                 self.error("only a binding pattern is supported in `for`");

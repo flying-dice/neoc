@@ -287,9 +287,12 @@ impl Adapter {
             let mut cursor = plist.walk();
             for child in plist.named_children(&mut cursor) {
                 if child.kind() == "closure_parameter" {
+                    let span = self
+                        .field(child, "name")
+                        .map_or_else(|| span_of(child), span_of);
                     let name = self.name_field(child);
                     let ty = self.field(child, "type").map(|t| self.walk_type(t));
-                    params.push(ast::ClosureParam { name, ty });
+                    params.push(ast::ClosureParam { name, ty, span });
                 }
             }
         }

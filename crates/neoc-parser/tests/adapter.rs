@@ -41,13 +41,21 @@ fn function_with_let_and_return() {
                     args: vec![]
                 }],
             }),
+            // Span compares always-equal, so a default is fine here.
+            span: ast::Span::default(),
         }
     );
     assert_eq!(f.body.stmts.len(), 2);
     let ast::StmtKind::Let(let_stmt) = &f.body.stmts[0].kind else {
         panic!("expected let");
     };
-    assert_eq!(let_stmt.pattern, ast::Pattern::Binding("s".into()));
+    assert_eq!(
+        let_stmt.pattern,
+        ast::Pattern::Binding {
+            name: "s".into(),
+            span: ast::Span::default()
+        }
+    );
     assert_eq!(
         let_stmt.value,
         Some(e(ast::ExprKind::Binary {
@@ -107,7 +115,13 @@ fn match_with_guard_and_or_pattern() {
         ast::Pattern::Literal(ast::LiteralPat::Int("0".into()))
     );
     assert!(matches!(arms[1].pattern, ast::Pattern::Or(_)));
-    assert_eq!(arms[2].pattern, ast::Pattern::Binding("x".into()));
+    assert_eq!(
+        arms[2].pattern,
+        ast::Pattern::Binding {
+            name: "x".into(),
+            span: ast::Span::default()
+        }
+    );
     assert!(arms[2].guard.is_some());
     assert_eq!(arms[3].pattern, ast::Pattern::Wildcard);
 }

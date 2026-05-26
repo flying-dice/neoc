@@ -55,10 +55,12 @@ fn emits_a_function_with_a_value_body() {
                         ast::Param::Named {
                             name: "a".into(),
                             ty: num.clone(),
+                            span: ast::Span::default(),
                         },
                         ast::Param::Named {
                             name: "b".into(),
                             ty: num.clone(),
+                            span: ast::Span::default(),
                         },
                     ],
                     ret: Some(num),

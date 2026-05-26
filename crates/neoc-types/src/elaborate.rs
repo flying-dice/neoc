@@ -124,7 +124,7 @@ impl<'a> Elaborator<'a> {
                         self.checker.scopes.bind("self", Ty::named(t));
                     }
                 }
-                ast::Param::Named { name, ty } => {
+                ast::Param::Named { name, ty, .. } => {
                     let pty = Checker::subst_self(self.checker.lower(ty), self_ty);
                     self.checker.scopes.bind(name.clone(), pty);
                 }

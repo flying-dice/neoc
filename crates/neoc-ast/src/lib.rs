@@ -247,6 +247,9 @@ pub enum Param {
     Named {
         name: Ident,
         ty: Type,
+        /// The span of the parameter name — its binding site, for scope-aware
+        /// resolution (`tasks/scope-aware-resolution.md`).
+        span: Span,
     },
 }
 
@@ -470,6 +473,8 @@ pub struct MatchArm {
 pub struct ClosureParam {
     pub name: Ident,
     pub ty: Option<Type>,
+    /// The span of the parameter name — its binding site.
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -562,8 +567,12 @@ pub enum Pattern {
     Literal(LiteralPat),
     /// A lone identifier. The adapter leaves it as a binding; name resolution
     /// reinterprets it as a unit struct/variant pattern when it resolves to
-    /// one (as Rust does).
-    Binding(Ident),
+    /// one (as Rust does). `span` is the binding site, for scope-aware
+    /// resolution (`tasks/scope-aware-resolution.md`).
+    Binding {
+        name: Ident,
+        span: Span,
+    },
     /// A multi-segment path: a unit variant like `Color::Red`.
     Path(Vec<Ident>),
     Struct {
@@ -592,6 +601,8 @@ pub struct FieldPat {
     pub name: Ident,
     /// `None` for shorthand (`Point { x, y }`).
     pub pattern: Option<Pattern>,
+    /// The span of the field name — the binding site for shorthand (`{ x }`).
+    pub span: Span,
 }
 
 // ---- attributes ------------------------------------------------------------

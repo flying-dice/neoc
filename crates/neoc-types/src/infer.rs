@@ -170,7 +170,7 @@ impl<'a> Checker<'a> {
                         self.scopes.bind("self", Ty::named(t));
                     }
                 }
-                ast::Param::Named { name, ty } => {
+                ast::Param::Named { name, ty, .. } => {
                     let pty = Self::subst_self(self.lower(ty), self_ty);
                     self.scopes.bind(name.clone(), pty);
                 }
@@ -1166,7 +1166,7 @@ impl<'a> Checker<'a> {
     fn is_catch_all(&self, pattern: &ast::Pattern) -> bool {
         match pattern {
             ast::Pattern::Wildcard => true,
-            ast::Pattern::Binding(name) => self.resolve_unit_value(name).is_none(),
+            ast::Pattern::Binding { name, .. } => self.resolve_unit_value(name).is_none(),
             ast::Pattern::Or(alts) => alts.iter().any(|a| self.is_catch_all(a)),
             _ => false,
         }
@@ -1189,7 +1189,7 @@ impl<'a> Checker<'a> {
     pub(crate) fn bind_pattern(&mut self, pattern: &ast::Pattern, ty: &Ty) {
         match pattern {
             ast::Pattern::Wildcard | ast::Pattern::Literal(_) | ast::Pattern::Path(_) => {}
-            ast::Pattern::Binding(name) => {
+            ast::Pattern::Binding { name, .. } => {
                 // An uppercase bare ident may be a unit variant/struct, not a
                 // binding. Treat as a binding unless it resolves to one.
                 if self.resolve_unit_value(name).is_some() {
@@ -1346,7 +1346,7 @@ fn pattern_matches_bool(pattern: &ast::Pattern, value: bool) -> bool {
 /// literal or variant path is refutable.
 fn is_irrefutable(p: &ast::Pattern) -> bool {
     match p {
-        ast::Pattern::Wildcard | ast::Pattern::Binding(_) => true,
+        ast::Pattern::Wildcard | ast::Pattern::Binding { .. } => true,
         ast::Pattern::Struct { fields, .. } => fields
             .iter()
             .all(|f| f.pattern.as_ref().is_none_or(is_irrefutable)),
@@ -1371,7 +1371,7 @@ fn collect_covered(pattern: &ast::Pattern, out: &mut Vec<String>) {
         }
         // A bare unit variant reaches here as a binding (e.g. `None`); the
         // catch-all case returns before this runs (see `is_catch_all`).
-        ast::Pattern::Binding(name) => out.push(name.clone()),
+        ast::Pattern::Binding { name, .. } => out.push(name.clone()),
         ast::Pattern::Or(alts) => {
             for a in alts {
                 collect_covered(a, out);

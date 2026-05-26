@@ -43,7 +43,7 @@ impl Emitter {
     fn compile_into(&mut self, pattern: &ast::Pattern, subject: &str, c: &mut Compiled) {
         match pattern {
             ast::Pattern::Wildcard => {}
-            ast::Pattern::Binding(name) => {
+            ast::Pattern::Binding { name, .. } => {
                 // A bare name that resolves to a unit variant (e.g. `None`) is
                 // a constant pattern, not a fresh binding — test the tag.
                 if let Some((en, var, VariantShape::Unit)) =
