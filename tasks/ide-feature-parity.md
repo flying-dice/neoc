@@ -87,7 +87,9 @@ Dependency-ordered. `[ ]` todo · `[~]` in-progress · `[x]` done.
 
 ### Tier 3 — high effort / advanced
 
-14. `[ ]` Semantic tokens (`semanticTokens/full`).
+14. `[x]` Semantic tokens (`semanticTokens/full`) — CST classifier: keywords,
+    comments, literals, and identifier roles (function/type/parameter/field/
+    variant), defaulting to variable. Modifiers and delta/range requests open.
 15. `[x]` Call hierarchy (`prepareCallHierarchy` + incoming/outgoing) —
     name-based over top-level functions; incoming = callers, outgoing = callees,
     grouped per function with call-site ranges. Method calls excluded.

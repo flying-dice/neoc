@@ -44,6 +44,7 @@ struct Ide {
     inlay_labels: Vec<String>,
     workspace_symbol_names: Vec<String>,
     call_hierarchy_names: Vec<String>,
+    semantic_tokens: Vec<(u32, u32, String)>,
 }
 
 #[given("the source:")]
@@ -335,6 +336,40 @@ fn selection_covers(world: &mut Ide, expected: String) {
         "no selection step covers {expected:?}; steps: {:?}",
         world.selection_steps,
     );
+}
+
+#[when("I request semantic tokens")]
+fn request_semantic_tokens(world: &mut Ide) {
+    world.semantic_tokens = neoc_lsp::semantic_tokens(&world.source)
+        .into_iter()
+        .map(|token| {
+            let kind = neoc_lsp::TOKEN_TYPES[token.type_index as usize]
+                .as_str()
+                .to_string();
+            // 1-based line and column for the editor's coordinates.
+            (token.line + 1, token.start + 1, kind)
+        })
+        .collect();
+}
+
+#[then("the semantic tokens include:")]
+fn semantic_tokens_include(world: &mut Ide, step: &Step) {
+    let table = step
+        .table
+        .as_ref()
+        .unwrap_or_else(|| panic!("step {:?} requires a table", step.value));
+    for row in table.rows.iter().skip(1) {
+        let expected = (
+            row[0].trim().parse::<u32>().expect("line"),
+            row[1].trim().parse::<u32>().expect("column"),
+            row[2].trim().to_string(),
+        );
+        assert!(
+            world.semantic_tokens.contains(&expected),
+            "missing token {expected:?}; got {:?}",
+            world.semantic_tokens,
+        );
+    }
 }
 
 #[when(regex = r#"^I find the callers of "([^"]+)"$"#)]

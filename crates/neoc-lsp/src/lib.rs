@@ -2,9 +2,9 @@
 //!
 //! Capabilities: diagnostics, document + workspace symbols, goto (definition,
 //! type-definition, implementation), find-all-references, document highlight,
-//! folding ranges, selection ranges, inlay hints, call hierarchy, formatting
-//! (via `neoc-fmt`), signature help, rename, hover, and completion (with lazy
-//! per-item resolve).
+//! folding ranges, selection ranges, inlay hints, semantic tokens, call
+//! hierarchy, formatting (via `neoc-fmt`), signature help, rename, hover, and
+//! completion (with lazy per-item resolve).
 //! Diagnostics come from [`neoc_compiler::transpile`];
 //! syntax errors carry precise byte ranges from the parser, while type and emit
 //! diagnostics fall back to the document's first line because those stages do
@@ -26,6 +26,7 @@ mod position;
 mod references;
 mod rename;
 mod selection;
+mod semantic_tokens;
 mod signature;
 mod signature_help;
 mod symbols;
@@ -47,6 +48,7 @@ pub use position::{byte_to_position, position_to_byte};
 pub use references::references;
 pub use rename::{prepare_rename, rename};
 pub use selection::selection_range;
+pub use semantic_tokens::{TOKEN_TYPES, semantic_tokens};
 pub use signature_help::signature_help;
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -64,10 +66,12 @@ use tower_lsp::lsp_types::{
     ImplementationProviderCapability, InitializeParams, InitializeResult, InitializedParams,
     InlayHint, InlayHintParams, Location, LocationLink, MarkupContent, MarkupKind, MessageType,
     OneOf, Position, PrepareRenameResponse, Range, ReferenceParams, RenameOptions, RenameParams,
-    SelectionRange, SelectionRangeParams, SelectionRangeProviderCapability, ServerCapabilities,
-    ServerInfo, SignatureHelp, SignatureHelpOptions, SignatureHelpParams, SymbolInformation,
-    SymbolKind, TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
-    TextEdit, TypeDefinitionProviderCapability, Url, WorkspaceEdit, WorkspaceSymbolParams,
+    SelectionRange, SelectionRangeParams, SelectionRangeProviderCapability, SemanticTokens,
+    SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams,
+    SemanticTokensResult, SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo,
+    SignatureHelp, SignatureHelpOptions, SignatureHelpParams, SymbolInformation, SymbolKind,
+    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit,
+    TypeDefinitionProviderCapability, Url, WorkspaceEdit, WorkspaceSymbolParams,
 };
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
@@ -198,6 +202,20 @@ impl LanguageServer for Backend {
                 selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
                 inlay_hint_provider: Some(OneOf::Left(true)),
                 call_hierarchy_provider: Some(CallHierarchyServerCapability::Simple(true)),
+                semantic_tokens_provider: Some(
+                    SemanticTokensServerCapabilities::SemanticTokensOptions(
+                        SemanticTokensOptions {
+                            legend: SemanticTokensLegend {
+                                token_types: TOKEN_TYPES.to_vec(),
+                                token_modifiers: vec![],
+                            },
+                            full: Some(SemanticTokensFullOptions::Bool(true)),
+                            range: None,
+                            work_done_progress_options:
+                                tower_lsp::lsp_types::WorkDoneProgressOptions::default(),
+                        },
+                    ),
+                ),
                 document_formatting_provider: Some(OneOf::Left(true)),
                 rename_provider: Some(OneOf::Right(RenameOptions {
                     // prepareRename validates the cursor and highlights the name.
@@ -384,6 +402,20 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
         Ok(format::formatting(&source))
+    }
+
+    async fn semantic_tokens_full(
+        &self,
+        params: SemanticTokensParams,
+    ) -> Result<Option<SemanticTokensResult>> {
+        let Some(source) = self.source(&params.text_document.uri) else {
+            return Ok(None);
+        };
+        let data = semantic_tokens::encode(&semantic_tokens::semantic_tokens(&source));
+        Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
+            result_id: None,
+            data,
+        })))
     }
 
     async fn prepare_call_hierarchy(
