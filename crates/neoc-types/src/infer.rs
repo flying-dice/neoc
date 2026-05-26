@@ -239,27 +239,44 @@ impl<'a> Checker<'a> {
         self.type_bounds = prev_bounds;
     }
 
+    /// A receiver method `method` declared on the named trait, with the
+    /// trait's `Self` projected to `self_ty`. `None` when the trait has no such
+    /// receiver method — only receiver methods resolve through method syntax,
+    /// an associated fn (no `self`) is not callable as `x.m()`.
+    fn resolve_trait_method(
+        &self,
+        trait_name: &str,
+        method: &str,
+        self_ty: &Ty,
+    ) -> Option<(Vec<Ty>, Ty)> {
+        let Some(TypeDef::Trait(t)) = self.table.types.get(trait_name) else {
+            return None;
+        };
+        let m = t
+            .methods
+            .iter()
+            .find(|m| m.name == method && m.has_receiver)?;
+        let proj = |ty: &Ty| subst_self_param(ty, self_ty);
+        Some((m.params.iter().map(proj).collect(), proj(&m.ret)))
+    }
+
     /// A method `method` provided by one of the trait bounds on type parameter
     /// `param`, with `Self` projected to the parameter itself. `None` when no
-    /// bound supplies it. Only receiver methods resolve through method syntax —
-    /// an associated fn (no `self`) is not callable as `x.m()`. The cross-bound
-    /// search is first-match in declaration order.
+    /// bound supplies it. The cross-bound search is first-match in declaration
+    /// order.
     fn bound_method(&self, param: &str, method: &str) -> Option<(Vec<Ty>, Ty)> {
         let bounds = self.type_bounds.get(param)?;
-        for trait_name in bounds {
-            if let Some(TypeDef::Trait(t)) = self.table.types.get(trait_name) {
-                if let Some(m) = t
-                    .methods
-                    .iter()
-                    .find(|m| m.name == method && m.has_receiver)
-                {
-                    let self_param = Ty::Param(param.to_string());
-                    let proj = |ty: &Ty| subst_self_param(ty, &self_param);
-                    return Some((m.params.iter().map(proj).collect(), proj(&m.ret)));
-                }
-            }
-        }
-        None
+        let self_param = Ty::Param(param.to_string());
+        bounds
+            .iter()
+            .find_map(|trait_name| self.resolve_trait_method(trait_name, method, &self_param))
+    }
+
+    /// A method `method` on a trait used directly as a type (the existential),
+    /// with the trait's `Self` projected to the trait type itself, so
+    /// `x.clone()` on `x: Drawable` yields `Drawable` (`STATIC.md` §3.4).
+    fn trait_method(&self, trait_name: &str, method: &str) -> Option<(Vec<Ty>, Ty)> {
+        self.resolve_trait_method(trait_name, method, &Ty::named(trait_name))
     }
 
     /// Checks a call's argument count and types against an already-projected
@@ -284,7 +301,7 @@ impl<'a> Checker<'a> {
             return;
         }
         for (i, (p, a)) in params.iter().zip(arg_tys).enumerate() {
-            if !p.compatible(a) {
+            if !self.assignable(p, a) {
                 self.error_at(
                     args[i].span,
                     format!(
@@ -754,7 +771,7 @@ impl<'a> Checker<'a> {
                     return Self::instantiate_return(&params, &arg_tys, &ret);
                 }
                 for (i, (p, a)) in params.iter().zip(&arg_tys).enumerate() {
-                    if !p.compatible(a) {
+                    if !self.assignable(p, a) {
                         self.error_at(
                             args[i].span,
                             format!("argument {} expects `{p}`, found `{a}`", i + 1),
@@ -953,6 +970,16 @@ impl<'a> Checker<'a> {
             );
             return Ty::Unknown;
         };
+        // A method on a trait used as a type (the existential) resolves through
+        // the trait's own methods, with `Self` read as the trait type.
+        if self.is_trait(name) {
+            if let Some((params, ret)) = self.trait_method(name, method) {
+                self.check_call_args(method, &params, &arg_tys, args, span);
+                return ret;
+            }
+            self.error_at(span, format!("type `{name}` has no method `{method}`"));
+            return Ty::Unknown;
+        }
         let Some(m) = self.table.methods.get(&(name.clone(), method.to_string())) else {
             self.error_at(span, format!("type `{name}` has no method `{method}`"));
             return Ty::Unknown;
@@ -973,7 +1000,7 @@ impl<'a> Checker<'a> {
         let subst = self.nominal_subst(&recv);
         for (i, (p, a)) in m.params.iter().zip(&arg_tys).enumerate() {
             let p = Self::subst_named(p, &subst);
-            if !p.compatible(a) {
+            if !self.assignable(&p, a) {
                 self.error_at(
                     args[i].span,
                     format!(
@@ -1166,7 +1193,7 @@ impl<'a> Checker<'a> {
                             .cloned()
                             .unwrap_or(Ty::Unknown),
                     };
-                    if !expected.compatible(&actual) {
+                    if !self.assignable(expected, &actual) {
                         self.error(format!(
                             "field `{}` of `{owner}` expects `{expected}`, found `{actual}`",
                             init.name
@@ -1600,12 +1627,47 @@ impl<'a> Checker<'a> {
 
     // ---- shared --------------------------------------------------------------
 
-    /// Records a mismatch diagnostic when `actual` is not compatible with
-    /// `expected`. `Unknown` on either side suppresses the report.
+    /// Records a mismatch diagnostic when `actual` may not be used where
+    /// `expected` is required. `Unknown` on either side suppresses the report.
     fn expect(&mut self, expected: &Ty, actual: &Ty, context: &str) {
-        if !expected.compatible(actual) {
+        if !self.assignable(expected, actual) {
             self.error(format!("{context} expects `{expected}`, found `{actual}`"));
         }
+    }
+
+    /// Whether a value of type `actual` may be used where `expected` is
+    /// required. This is [`Ty::compatible`] plus the existential rule: when
+    /// `expected` is a trait name used as a type, any concrete type that
+    /// implements the trait — or the same trait itself — is admissible (the
+    /// trait-as-type existential, `STATIC.md` §3.4). The relation is
+    /// directional: an implementor flows into the trait, never the reverse
+    /// (neoc has no implicit downcast). It recurses through lists, function
+    /// types, and nominal type arguments, so `[Drawable]` accepts `[Circle]`.
+    fn assignable(&self, expected: &Ty, actual: &Ty) -> bool {
+        match (expected, actual) {
+            (Ty::Unknown | Ty::Param(_), _) | (_, Ty::Unknown | Ty::Param(_)) => true,
+            (Ty::Named { name, args }, actual) if args.is_empty() && self.is_trait(name) => {
+                matches!(actual, Ty::Named { name: a, .. } if a == name)
+                    || self.type_satisfies(actual, name)
+            }
+            (Ty::List(a), Ty::List(b)) => self.assignable(a, b),
+            (Ty::Fn(pa, ra), Ty::Fn(pb, rb)) => {
+                pa.len() == pb.len()
+                    && pa.iter().zip(pb).all(|(x, y)| self.assignable(x, y))
+                    && self.assignable(ra, rb)
+            }
+            (Ty::Named { name: na, args: aa }, Ty::Named { name: nb, args: ab }) => {
+                na == nb
+                    && aa.len() == ab.len()
+                    && aa.iter().zip(ab).all(|(x, y)| self.assignable(x, y))
+            }
+            _ => expected.compatible(actual),
+        }
+    }
+
+    /// Whether `name` names a trait in the type namespace.
+    fn is_trait(&self, name: &str) -> bool {
+        matches!(self.table.types.get(name), Some(TypeDef::Trait(_)))
     }
 }
 
