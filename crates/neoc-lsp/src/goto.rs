@@ -1,9 +1,10 @@
 //! Goto navigation: definition, type-definition, and implementation.
 //!
-//! Resolution is name-based against the document's own top-level items: fns,
-//! structs, enums, traits, consts, and type aliases. Locals and impl methods
-//! are out of scope for this pass — the functions return nothing when the name
-//! does not match a top-level declaration.
+//! Definition and implementation resolve names against the document's top-level
+//! items (fns, structs, enums, traits, consts, type aliases). Type-definition
+//! also handles locals: when a name isn't a top-level value, it uses the type
+//! inferred for the expression under the cursor (`neoc_types::expression_types`)
+//! and jumps to that type's declaration.
 
 use neoc_types::Ty;
 use tower_lsp::lsp_types::Range;
@@ -54,11 +55,11 @@ pub fn goto_definition(
 
 /// The declaration of the *type* of the value named at `position`.
 ///
-/// Resolves the identifier to a value entry in the symbol table and, when its
-/// type is a named type (struct/enum/trait/alias), jumps to that type's
-/// declaration. Limited to top-level values (e.g. consts) — locals and
-/// parameters are not tracked yet — and to named types; returns `None`
-/// otherwise.
+/// The value's type is its declared type when it names a top-level value (e.g.
+/// a `const`), otherwise the type inferred for the expression under the cursor
+/// (a local binding or parameter). When that type is a named type
+/// (struct/enum/trait/alias), the result is that type's declaration; `None` for
+/// a primitive or unresolved type.
 #[must_use]
 pub fn goto_type_definition(
     source: &str,
@@ -68,13 +69,18 @@ pub fn goto_type_definition(
     let byte = position_to_byte(source, position);
     let name = cst::identifier_at(&tree, source, byte)?;
     let table = neoc_types::collect(&neoc_parser::parse(source).module);
+    let ty = table
+        .values
+        .get(name)
+        .cloned()
+        .or_else(|| inferred_type_at(source, byte))?;
     let Ty::Named {
         name: type_name, ..
-    } = table.values.get(name)?
+    } = ty
     else {
         return None;
     };
-    let decl = cst::find_decl(&tree, source, type_name)?;
+    let decl = cst::find_decl(&tree, source, &type_name)?;
     Some(Definition {
         full_range: byte_range(source, decl.node.start_byte(), decl.node.end_byte()),
         name_range: byte_range(
@@ -83,6 +89,15 @@ pub fn goto_type_definition(
             decl.name_node.end_byte(),
         ),
     })
+}
+
+/// The neoc type inferred for the narrowest expression covering `byte`.
+fn inferred_type_at(source: &str, byte: usize) -> Option<Ty> {
+    neoc_types::expression_types(&neoc_parser::parse(source).module)
+        .into_iter()
+        .filter(|t| t.start <= byte && byte < t.end)
+        .min_by_key(|t| t.end - t.start)
+        .map(|t| t.ty)
 }
 
 /// Every `impl` block that targets the type, or implements the trait, named at
@@ -201,6 +216,14 @@ mod tests {
         let def =
             goto_type_definition(src, position_of(src, "ORIGIN", 2)).expect("type definition");
         assert_eq!(def.name_range, byte_range(src, 7, 12)); // "Point" in the struct decl
+    }
+
+    #[test]
+    fn type_definition_of_a_local_jumps_to_its_inferred_type() {
+        let src = "struct Point { x: number }\nfn make() -> Point { Point { x: 1 } }\nfn run() -> number { let point = make(); point.x }\n";
+        // Cursor on the use of the local `point`, whose inferred type is `Point`.
+        let def = goto_type_definition(src, position_of(src, "point", 2)).expect("type definition");
+        assert_eq!(def.name_range, byte_range(src, 7, 12)); // `Point` in the struct decl
     }
 
     #[test]
