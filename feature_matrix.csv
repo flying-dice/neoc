@@ -93,7 +93,7 @@ Sandbox/permissions,—,Permission Model,Permission flags,—,—,—,SecurityMa
 Plugin/module loader,importlib,require/import,import,import,plugin,—,ServiceLoader,Assembly.Load,require,require,require,require
 Hot reload/watch,—,—watch,--watch,--watch,—,—,—,dotnet watch,—,—,—,—
 Cron/scheduler,sched,—,Deno.cron,Bun.cron,—,—,Timer+ScheduledExecutor,Timer,—,—,—,—
-Cache (LRU),functools.lru_cache,—,—,—,—,—,LinkedHashMap,MemoryCache,—,APCu,—,—
+Cache (LRU),functools.lru_cache,—,—,—,—,—,LinkedHashMap,MemoryCache,—,APCu,—,lib:cache
 Path expansion (~),os.path.expanduser,os.homedir,Deno.env+expandHome,os.homedir,os/user.HomeDir,dirs (3p),System.getProperty,Environment.GetFolderPath,Dir.home,getenv HOME,—,std:env
 Process info (pid/uid),os.getpid+os.getuid,process.pid+getuid,Deno.pid,process.pid,os.Getpid+Getuid,std::process::id,ProcessHandle,Process.GetCurrentProcess,Process.pid,getmypid+posix_getuid,—,—
 Memory stats,resource,process.memoryUsage,Deno.memoryUsage,process.memoryUsage,runtime.MemStats,—,Runtime.totalMemory,GC.GetTotalMemory,GC.stat,memory_get_usage,—,—

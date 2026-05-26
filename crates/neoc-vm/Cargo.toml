@@ -149,6 +149,12 @@ testcontainers-modules = { version = "0.11", features = ["mysql", "postgres"] }
 # semantic the Lua-facing UserData layer mirrors via mlua's GC.
 tempfile = "3"
 
+# Bounded LRU map backing `lib:cache` — the crate the issue (#46) names as the
+# de-facto Rust standard (alongside `hashicorp/golang-lru` in Go). Provides the
+# capacity-bounded recency map; per-entry TTL is layered on top in the module.
+# Its only dependency is `hashbrown`, already in the tree transitively.
+lru = "0.12"
+
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 
