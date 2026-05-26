@@ -157,6 +157,56 @@ impl SymbolTable {
         found
     }
 
+    /// Pulls in the *structure* of every type this table's symbols reference but
+    /// does not yet define, drawing from `universe`, transitively.
+    ///
+    /// A multi-file driver uses this after resolving a module's `use` imports.
+    /// When module `c` imports a function `make` whose return type is a `struct`
+    /// `Config` declared in module `a` — but `c` never names `Config` in a `use`
+    /// — field and method access on a `Config` value (`c.level`) needs the
+    /// type's shape. The direct import brings in `make`'s signature; this brings
+    /// in the shapes that signature (and theirs, recursively) refer to.
+    ///
+    /// Only the type namespace and its methods are copied, not the visibility
+    /// sets: a transitively-known type is resolvable, not re-exported. The
+    /// `universe` is the project-wide pool of `pub` type definitions; a type
+    /// name is taken to be project-unique (neoc has no module-qualified type
+    /// identity), so a name already defined here is left untouched.
+    ///
+    /// # Arguments
+    ///
+    /// * `universe` — the aggregate of every module's `pub` type definitions and
+    ///   their methods. The caller owns it; this table borrows it for the call.
+    pub fn import_referenced_types(&mut self, universe: &SymbolTable) {
+        let mut pending: Vec<String> = Vec::new();
+        for ty in self.values.values() {
+            collect_ty_names(ty, &mut pending);
+        }
+        for def in self.types.values() {
+            collect_typedef_names(def, &mut pending);
+        }
+        for info in self.methods.values() {
+            collect_method_names(info, &mut pending);
+        }
+        while let Some(name) = pending.pop() {
+            if self.types.contains_key(&name) {
+                continue;
+            }
+            let Some(def) = universe.types.get(&name) else {
+                continue;
+            };
+            self.types.insert(name.clone(), def.clone());
+            collect_typedef_names(def, &mut pending);
+            for ((ty_name, method), info) in &universe.methods {
+                if ty_name == &name {
+                    self.methods
+                        .insert((name.clone(), method.clone()), info.clone());
+                    collect_method_names(info, &mut pending);
+                }
+            }
+        }
+    }
+
     /// Resolves a type name through alias chains to its underlying definition
     /// name. Returns the input unchanged if it is not an alias.
     #[must_use]
@@ -216,6 +266,87 @@ impl SymbolTable {
                 Box::new(self.resolve_alias_ty(*ret)),
             ),
             other => other,
+        }
+    }
+}
+
+/// Pushes every nominal type name a [`Ty`] mentions onto `out` (recursing
+/// through lists, function params/returns, and type arguments). Primitives,
+/// `Unit`, type parameters, and `Unknown` carry no name.
+fn collect_ty_names(ty: &Ty, out: &mut Vec<String>) {
+    match ty {
+        Ty::List(inner) => collect_ty_names(inner, out),
+        Ty::Fn(params, ret) => {
+            for p in params {
+                collect_ty_names(p, out);
+            }
+            collect_ty_names(ret, out);
+        }
+        Ty::Named { name, args } => {
+            out.push(name.clone());
+            for a in args {
+                collect_ty_names(a, out);
+            }
+        }
+        Ty::Number | Ty::Str | Ty::Bool | Ty::Unit | Ty::Param(_) | Ty::Unknown => {}
+    }
+}
+
+/// Pushes every type name referenced by a definition's fields, variants, alias
+/// target, or trait-method signatures onto `out`.
+fn collect_typedef_names(def: &TypeDef, out: &mut Vec<String>) {
+    match def {
+        TypeDef::Struct(s) => collect_struct_field_names(&s.fields, out),
+        TypeDef::Enum(e) => {
+            for v in &e.variants {
+                collect_variant_field_names(&v.fields, out);
+            }
+        }
+        TypeDef::Trait(t) => {
+            for m in &t.methods {
+                for p in &m.params {
+                    collect_ty_names(p, out);
+                }
+                collect_ty_names(&m.ret, out);
+            }
+        }
+        TypeDef::Alias { value, .. } => collect_ty_names(value, out),
+        TypeDef::Opaque => {}
+    }
+}
+
+/// Pushes the type names referenced by a method's parameter and return types.
+fn collect_method_names(info: &MethodInfo, out: &mut Vec<String>) {
+    for p in &info.params {
+        collect_ty_names(p, out);
+    }
+    collect_ty_names(&info.ret, out);
+}
+
+fn collect_struct_field_names(fields: &StructFields, out: &mut Vec<String>) {
+    match fields {
+        StructFields::Unit => {}
+        StructFields::Tuple(ty) => collect_ty_names(ty, out),
+        StructFields::Named(fs) => {
+            for (_, ty) in fs {
+                collect_ty_names(ty, out);
+            }
+        }
+    }
+}
+
+fn collect_variant_field_names(fields: &VariantFields, out: &mut Vec<String>) {
+    match fields {
+        VariantFields::Unit => {}
+        VariantFields::Tuple(tys) => {
+            for ty in tys {
+                collect_ty_names(ty, out);
+            }
+        }
+        VariantFields::Named(fs) => {
+            for (_, ty) in fs {
+                collect_ty_names(ty, out);
+            }
         }
     }
 }

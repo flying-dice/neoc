@@ -571,3 +571,69 @@ fn cross_module_string_plus_lowers_to_concatenation() {
         "the `+` must not stay arithmetic for a string concatenation:\n{main_lua}"
     );
 }
+
+#[test]
+fn field_access_on_a_transitively_imported_type_resolves() {
+    // `main` imports only `factory::make`; `make` returns `Config`, declared in
+    // a third module `types` that `main` never names in a `use`. Accessing
+    // `c.level` needs `Config`'s shape, which the driver pulls in transitively
+    // from the imported signature — without it the checker rejects the field.
+    let dir = tempdir();
+    write(
+        &dir,
+        "types.neoc",
+        "pub struct Config {\n  level: number,\n}\n",
+    );
+    write(
+        &dir,
+        "factory.neoc",
+        "use types::Config;\n\npub fn make() -> Config {\n  Config { level: 1 }\n}\n",
+    );
+    let entry = write(
+        &dir,
+        "main.neoc",
+        "use factory::make;\n\nfn main() -> number {\n  let c = make()\n  c.level\n}\n",
+    );
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
+    assert!(
+        project.ok(),
+        "field access on a transitively-imported type should resolve, got: {:#?}",
+        project.diagnostics
+    );
+
+    let main_lua = project
+        .files
+        .iter()
+        .find(|(p, _)| p.file_stem().is_some_and(|s| s == "main"))
+        .map(|(_, src)| src.as_str())
+        .expect("main output present");
+    assert!(
+        main_lua.contains("c.level"),
+        "the field access should lower to a Lua field read:\n{main_lua}"
+    );
+}
+
+#[test]
+fn an_unrelated_pub_type_is_not_silently_in_scope() {
+    // The transitive pull is scoped to types an import's signature reaches. A
+    // `pub` type in a module nothing imports must not leak into another module's
+    // scope: naming it without a `use` is still a resolution error.
+    let dir = tempdir();
+    write(
+        &dir,
+        "secret.neoc",
+        "pub struct Hidden {\n  v: number,\n}\n",
+    );
+    write(&dir, "util.neoc", "pub fn noop() -> number {\n  0\n}\n");
+    let entry = write(
+        &dir,
+        "main.neoc",
+        "use util::noop;\n\nfn main() -> number {\n  let h = Hidden { v: 1 }\n  noop()\n}\n",
+    );
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
+    assert!(
+        !project.ok(),
+        "constructing an unimported `Hidden` should not type-check:\n{:#?}",
+        project.diagnostics
+    );
+}

@@ -309,11 +309,12 @@ pub fn transpile_project(entry: &Path, target: Target) -> std::io::Result<Projec
     // Check every module's bodies against a table augmented with the `pub`
     // symbols its `use` declarations import. Visibility violations and
     // unresolved module paths are diagnostics.
+    let universe = type_universe(&loaded);
     let mut files = Vec::new();
     let mut source_maps = Vec::new();
     for path in &order {
         let (output, source_map) =
-            check_and_emit_module(&root, &loaded, path, target, &mut diagnostics);
+            check_and_emit_module(&root, &loaded, &universe, path, target, &mut diagnostics);
         files.push((loaded[path].path.with_extension(target.extension()), output));
         source_maps.push(source_map);
     }
@@ -335,6 +336,7 @@ pub fn transpile_project(entry: &Path, target: Target) -> std::io::Result<Projec
 fn check_and_emit_module(
     root: &Path,
     loaded: &HashMap<PathBuf, LoadedModule>,
+    universe: &types::SymbolTable,
     path: &Path,
     target: Target,
     diagnostics: &mut Vec<ProjectDiagnostic>,
@@ -346,6 +348,10 @@ fn check_and_emit_module(
             resolve_use(root, loaded, item, u, &mut table, diagnostics, path);
         }
     }
+    // Bring in the shape of any type reached only through an imported
+    // signature — e.g. accessing a field of a value returned by an imported
+    // function whose type the module never names in a `use`.
+    table.import_referenced_types(universe);
     let checked = types::check_with_table(&me.module, &table);
     for d in &checked.diagnostics {
         diagnostics.push(ProjectDiagnostic {
@@ -548,6 +554,35 @@ fn js_imported_bindings(
         }
     }
     bindings
+}
+
+/// The project-wide pool of every module's `pub` type definitions and their
+/// methods, merged into one [`types::SymbolTable`].
+///
+/// A module that imports a function whose signature mentions a type it never
+/// names in a `use` still needs that type's shape to resolve field and method
+/// access on the returned value. This pool is the source those shapes are
+/// pulled from (see [`types::SymbolTable::import_referenced_types`]). Type names
+/// are taken to be project-unique; if two modules declare a `pub` type of the
+/// same name, the merge keeps one — neoc has no module-qualified type identity.
+fn type_universe(loaded: &HashMap<PathBuf, LoadedModule>) -> types::SymbolTable {
+    let mut universe = types::SymbolTable::new();
+    for module in loaded.values() {
+        let t = &module.table;
+        for name in &t.pub_types {
+            if let Some(def) = t.types.get(name) {
+                universe.types.insert(name.clone(), def.clone());
+            }
+            for ((ty_name, method), info) in &t.methods {
+                if ty_name == name {
+                    universe
+                        .methods
+                        .insert((name.clone(), method.clone()), info.clone());
+                }
+            }
+        }
+    }
+    universe
 }
 
 /// The `pub` enum declarations `module` imports, gathered through its `use`
