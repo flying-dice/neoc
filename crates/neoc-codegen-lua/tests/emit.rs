@@ -635,3 +635,21 @@ fn a_fn_defined_before_use_is_not_hoisted() {
         "no forward declaration expected\n{lua}"
     );
 }
+
+#[test]
+fn associated_fn_call_keeps_the_type_qualifier() {
+    // `Counter::zero()` is an associated function on `Counter`'s table; it must
+    // emit `Counter.zero()`, not a bare `zero()` (an unbound global). The impl
+    // target makes `Counter` a known associated-item carrier.
+    let lua = lua_from_source(
+        "struct Counter { n: number }\nimpl Counter { fn zero() -> Counter { Counter { n: 0 } } }\nfn main() -> Counter { Counter::zero() }\n",
+    );
+    assert!(
+        lua.contains("return Counter.zero()"),
+        "associated call keeps the `Counter.` qualifier\n{lua}"
+    );
+    assert!(
+        !lua.lines().any(|l| l.trim() == "return zero()"),
+        "the bare `zero()` would reference an unbound global\n{lua}"
+    );
+}

@@ -317,6 +317,11 @@ pub(crate) struct Emitter {
     /// earlier closes over the (later-assigned) local rather than a nil global.
     /// A plain `local function` is only in scope after its line.
     forward_decls: std::collections::HashSet<String>,
+    /// Type names whose `Type::member` path is a table-field access: a local
+    /// `impl` target, or a type brought in by `use`. At a call site
+    /// `Type::assoc_fn()` this keeps the `Type.` qualifier instead of dropping
+    /// to the bare member name (an unbound global).
+    assoc_types: std::collections::HashSet<String>,
 }
 
 /// A loop being emitted. When `break_flag` is set the loop uses the
@@ -441,6 +446,7 @@ impl Emitter {
 
     fn emit_module(&mut self, module: &ast::Module) {
         self.collect_method_enums(module);
+        self.collect_assoc_types(module);
         self.imports = ast::module_imports(module, ast::Target::Lua);
         // Hoist the locals of forward-referenced private functions so a caller
         // emitted earlier captures the local, not a nil global.
@@ -478,6 +484,33 @@ impl Emitter {
                                 self.method_enums.insert(seg.name.clone());
                             }
                         }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Record every type name whose `Type::member` access reads a table field:
+    /// a local `impl` target, or a type imported by `use`. A 2-segment path
+    /// `Type::assoc_fn` then keeps its `Type.` qualifier (the value lives on the
+    /// type's table); a path whose head is none of these still drops to its last
+    /// segment, as before. An imported *value* (a `use`d fn/const) can never
+    /// head a multi-segment path, so recording every `use` binding is safe.
+    fn collect_assoc_types(&mut self, module: &ast::Module) {
+        for item in &module.items {
+            match &item.kind {
+                ast::ItemKind::Impl(b) => {
+                    if let ast::Type::Path(p) = &b.ty {
+                        if let Some(seg) = p.segments.last() {
+                            self.assoc_types.insert(seg.name.clone());
+                        }
+                    }
+                }
+                ast::ItemKind::Use(u) => {
+                    if let Some((last, _)) = u.path.split_last() {
+                        let binding = u.alias.as_deref().unwrap_or(last);
+                        self.assoc_types.insert(binding.to_string());
                     }
                 }
                 _ => {}

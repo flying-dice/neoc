@@ -456,7 +456,11 @@ fn cross_module_enum_match_and_construction_lower_correctly() {
     // tests the variant tag, and construction builds the tagged table. The
     // emitter learns the imported enum's variants through the module graph.
     let dir = tempdir();
-    write(&dir, "palette.neoc", "pub enum Color {\n  Red,\n  Green,\n}\n");
+    write(
+        &dir,
+        "palette.neoc",
+        "pub enum Color {\n  Red,\n  Green,\n}\n",
+    );
     let entry = write(
         &dir,
         "main.neoc",
@@ -483,5 +487,45 @@ fn cross_module_enum_match_and_construction_lower_correctly() {
     assert!(
         main_lua.contains("tag = \"Green\""),
         "constructing an imported variant should build the tagged table:\n{main_lua}"
+    );
+}
+
+#[test]
+fn cross_module_associated_fn_call_keeps_the_type_qualifier() {
+    // `Counter::zero()` on a `use`d type must emit `Counter.zero()`, reading the
+    // imported type's table. Dropping to a bare `zero()` would reference an
+    // unbound global. The `use` binding marks `Counter` as a qualified carrier.
+    let dir = tempdir();
+    write(
+        &dir,
+        "counter.neoc",
+        "pub struct Counter {\n  n: number,\n}\n\nimpl Counter {\n  fn zero() -> Counter {\n    Counter { n: 0 }\n  }\n}\n",
+    );
+    let entry = write(
+        &dir,
+        "main.neoc",
+        "use counter::Counter;\n\nfn main() -> Counter {\n  Counter::zero()\n}\n",
+    );
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
+    assert!(
+        project.ok(),
+        "expected a clean project, got: {:#?}",
+        project.diagnostics
+    );
+
+    let main_lua = project
+        .files
+        .iter()
+        .find(|(p, _)| p.file_stem().is_some_and(|s| s == "main"))
+        .map(|(_, src)| src.as_str())
+        .expect("main output present");
+
+    assert!(
+        main_lua.contains("Counter.zero()"),
+        "an imported associated call should keep the `Counter.` qualifier:\n{main_lua}"
+    );
+    assert!(
+        !main_lua.lines().any(|l| l.trim() == "return zero()"),
+        "a bare `zero()` would reference an unbound global:\n{main_lua}"
     );
 }

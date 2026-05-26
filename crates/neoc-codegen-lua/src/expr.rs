@@ -17,6 +17,11 @@ pub(crate) enum PathKind {
     Value(String),
     /// The path names an enum variant: `(enum name, variant name, shape)`.
     Variant(String, String, VariantShape),
+    /// The path is an associated item on a type — `Type::member`, where `Type`
+    /// is a local `impl` target or a `use`d type. Emits `Type.member`, keeping
+    /// the qualifier so it reads the type's table rather than dropping to a
+    /// bare (unbound) name.
+    Assoc(String, String),
 }
 
 /// The runtime payload shape of an enum variant.
@@ -413,6 +418,9 @@ impl Emitter {
                 self.note_prelude(&name);
                 name
             }
+            // `Type::member` reads the type's table — keep the qualifier so the
+            // associated function/const resolves against `Type`, not a bare name.
+            Some(PathKind::Assoc(ty, name)) => format!("{ty}.{name}"),
             Some(PathKind::Variant(en, var, VariantShape::Unit)) => {
                 self.note_prelude(&en);
                 self.variant_table(&en, format!("{{ _enum = \"{en}\", tag = \"{var}\" }}"))
@@ -452,6 +460,11 @@ impl Emitter {
             [.., en, var] => self
                 .variant_shape(en, var)
                 .map(|shape| PathKind::Variant(en.clone(), var.clone(), shape))
+                .or_else(|| {
+                    self.assoc_types
+                        .contains(en)
+                        .then(|| PathKind::Assoc(en.clone(), var.clone()))
+                })
                 .or_else(|| Some(PathKind::Value(var.clone()))),
         }
     }
