@@ -16,6 +16,7 @@ mod goto;
 mod hover;
 mod position;
 mod references;
+mod signature;
 mod symbols;
 
 use neoc_compiler::{ByteSpan, Diagnostic as CompilerDiagnostic, Stage, Target, transpile};
@@ -92,6 +93,18 @@ pub fn diagnose(source: &str) -> Vec<Diagnostic> {
         .iter()
         .map(|d| to_lsp(source, d))
         .collect()
+}
+
+/// Encodes a document URI for `CompletionItem.data`, the opaque round-trip slot
+/// the editor returns on `completionItem/resolve`. Paired with [`stashed_uri`].
+fn stash_uri(uri: &Url) -> serde_json::Value {
+    serde_json::Value::String(uri.to_string())
+}
+
+/// Decodes the document URI a completion item carries in its `data` slot, the
+/// inverse of [`stash_uri`]. `None` if the slot is absent or not a valid URI.
+fn stashed_uri(item: &CompletionItem) -> Option<Url> {
+    Url::parse(item.data.as_ref()?.as_str()?).ok()
 }
 
 struct Backend {
@@ -249,11 +262,11 @@ impl LanguageServer for Backend {
         };
         // Stash the document URI on each item so `completion_resolve` can find
         // the source again — resolve receives only the item the user focused.
-        let uri = serde_json::Value::String(tdp.text_document.uri.to_string());
+        let stashed = stash_uri(&tdp.text_document.uri);
         let items = completion::completions(&source, tdp.position)
             .into_iter()
             .map(|item| CompletionItem {
-                data: Some(uri.clone()),
+                data: Some(stashed.clone()),
                 ..item
             })
             .collect();
@@ -261,15 +274,9 @@ impl LanguageServer for Backend {
     }
 
     async fn completion_resolve(&self, item: CompletionItem) -> Result<CompletionItem> {
-        // The URI stashed in `completion` locates the document; without it (or
-        // its source) there is nothing to resolve against, so pass the item back
-        // untouched.
-        let source = item
-            .data
-            .as_ref()
-            .and_then(serde_json::Value::as_str)
-            .and_then(|uri| Url::parse(uri).ok())
-            .and_then(|uri| self.source(&uri));
+        // Without the stashed URI (or its source) there is nothing to resolve
+        // against, so pass the item back untouched.
+        let source = stashed_uri(&item).and_then(|uri| self.source(&uri));
         Ok(match source {
             Some(source) => completion::resolve(&source, item),
             None => item,

@@ -200,11 +200,27 @@ pub fn member_decl_at(tree: &Tree, byte: usize) -> Option<Node<'_>> {
 #[must_use]
 pub fn find_unique_member<'t>(tree: &'t Tree, source: &str, name: &str) -> Option<Node<'t>> {
     let mut found = Vec::new();
-    collect_members(tree.root_node(), source, name, &mut found);
+    collect_matching(
+        tree.root_node(),
+        &|node| is_member_named(node, source, name),
+        &mut found,
+    );
     match found.as_slice() {
         [only] => Some(*only),
         _ => None,
     }
+}
+
+/// Whether `node` is a member declaration — a struct field, enum variant, or
+/// `impl`/`trait` method — whose declared name is exactly `name`.
+fn is_member_named(node: Node, source: &str, name: &str) -> bool {
+    let is_member = matches!(node.kind(), "field_declaration" | "variant")
+        || (node.kind() == "function_declaration" && is_method(node));
+    is_member
+        && node
+            .child_by_field_name("name")
+            .and_then(|n| node_text(&n, source))
+            == Some(name)
 }
 
 /// Every `identifier` node in the document whose text is exactly `name`, in
@@ -217,34 +233,25 @@ pub fn find_unique_member<'t>(tree: &'t Tree, source: &str, name: &str) -> Optio
 #[must_use]
 pub fn identifier_nodes<'t>(tree: &'t Tree, source: &str, name: &str) -> Vec<Node<'t>> {
     let mut out = Vec::new();
-    collect_identifiers(tree.root_node(), source, name, &mut out);
+    collect_matching(
+        tree.root_node(),
+        &|node| node.kind() == "identifier" && node_text(&node, source) == Some(name),
+        &mut out,
+    );
     out
 }
 
-fn collect_identifiers<'t>(node: Node<'t>, source: &str, name: &str, out: &mut Vec<Node<'t>>) {
+/// Every named descendant of `node`, in source order, for which `keep` holds.
+///
+/// One pre-order walk shared by the by-name lookups (`identifier_nodes`,
+/// `find_unique_member`); each supplies its own match predicate.
+fn collect_matching<'t>(node: Node<'t>, keep: &impl Fn(Node<'t>) -> bool, out: &mut Vec<Node<'t>>) {
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        if child.kind() == "identifier" && node_text(&child, source) == Some(name) {
+        if keep(child) {
             out.push(child);
         }
-        collect_identifiers(child, source, name, out);
-    }
-}
-
-fn collect_members<'t>(node: Node<'t>, source: &str, name: &str, out: &mut Vec<Node<'t>>) {
-    let mut cursor = node.walk();
-    for child in node.named_children(&mut cursor) {
-        let is_member = matches!(child.kind(), "field_declaration" | "variant")
-            || (child.kind() == "function_declaration" && is_method(child));
-        if is_member
-            && child
-                .child_by_field_name("name")
-                .and_then(|n| node_text(&n, source))
-                == Some(name)
-        {
-            out.push(child);
-        }
-        collect_members(child, source, name, out);
+        collect_matching(child, keep, out);
     }
 }
 

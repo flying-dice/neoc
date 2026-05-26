@@ -11,8 +11,8 @@
 use neoc_types::{StructFields, SymbolTable, TypeDef};
 use tower_lsp::lsp_types::{CompletionItem, CompletionItemKind, Documentation};
 
-use crate::hover;
 use crate::position::position_to_byte;
+use crate::signature;
 
 /// neoc keywords offered at the top level (`SYNTAX.md`).
 const KEYWORDS: &[&str] = &[
@@ -45,8 +45,8 @@ pub fn completions(source: &str, position: tower_lsp::lsp_types::Position) -> Ve
 /// unchanged.
 #[must_use]
 pub fn resolve(source: &str, mut item: CompletionItem) -> CompletionItem {
-    if let Some((signature, doc)) = hover::item_signature_and_doc(source, &item.label) {
-        item.detail = Some(signature);
+    if let Some((sig, doc)) = signature::item_signature_and_doc(source, &item.label) {
+        item.detail = Some(sig);
         item.documentation = doc.map(Documentation::String);
     }
     item
