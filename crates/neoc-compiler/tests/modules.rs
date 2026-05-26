@@ -529,3 +529,45 @@ fn cross_module_associated_fn_call_keeps_the_type_qualifier() {
         "a bare `zero()` would reference an unbound global:\n{main_lua}"
     );
 }
+
+#[test]
+fn cross_module_string_plus_lowers_to_concatenation() {
+    // `+` is overloaded: `string + string` is concatenation (`..`), `number +
+    // number` is arithmetic (`+`). The choice is type-directed, so when an
+    // operand's type resolves through a `use` import the elaborator must see the
+    // imported signature — otherwise it cannot tell the `+` is on strings and
+    // leaves arithmetic `+`, which is wrong Lua for a concatenation.
+    let dir = tempdir();
+    write(
+        &dir,
+        "greet.neoc",
+        "pub fn hello() -> string {\n  \"hello\"\n}\n",
+    );
+    let entry = write(
+        &dir,
+        "main.neoc",
+        "use greet::hello;\n\nfn main() -> string {\n  hello() + \" world\"\n}\n",
+    );
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
+    assert!(
+        project.ok(),
+        "expected a clean project, got: {:#?}",
+        project.diagnostics
+    );
+
+    let main_lua = project
+        .files
+        .iter()
+        .find(|(p, _)| p.file_stem().is_some_and(|s| s == "main"))
+        .map(|(_, src)| src.as_str())
+        .expect("main output present");
+
+    assert!(
+        main_lua.contains(".."),
+        "a string `+` across modules should lower to Lua `..`:\n{main_lua}"
+    );
+    assert!(
+        !main_lua.contains("hello() +"),
+        "the `+` must not stay arithmetic for a string concatenation:\n{main_lua}"
+    );
+}

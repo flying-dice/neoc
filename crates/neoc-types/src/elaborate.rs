@@ -16,6 +16,7 @@
 use neoc_ast as ast;
 
 use crate::collect::collect;
+use crate::env::SymbolTable;
 use crate::infer::Checker;
 use crate::ty::Ty;
 
@@ -420,6 +421,27 @@ impl<'a> Elaborator<'a> {
 #[must_use]
 pub fn elaborate(module: &ast::Module) -> ast::Module {
     let table = collect(module);
-    let checker = Checker::new(&table);
+    elaborate_with_table(module, &table)
+}
+
+/// Elaborates a module against a caller-supplied [`SymbolTable`].
+///
+/// Like [`elaborate`], but the table is provided rather than freshly collected
+/// from the module. A multi-file driver uses this so a `+` whose operand type
+/// resolves through an imported `pub` item is still inferred as `string` and
+/// rewritten to [`ast::BinOp::Concat`]; with a local-only table the operand's
+/// type would be unknown and the node would stay [`ast::BinOp::Add`], emitting
+/// arithmetic `+` for what is a concatenation. Mirrors [`crate::check_with_table`]:
+/// collect the module's own declarations first, then add the `use` imports.
+///
+/// # Arguments
+///
+/// * `module` — the parsed source file to elaborate. The caller owns it; this
+///   function borrows it and returns a fresh, owned [`ast::Module`].
+/// * `table` — the symbol table to resolve operand types against. Ownership
+///   stays with the caller; the elaborator borrows it for the call.
+#[must_use]
+pub fn elaborate_with_table(module: &ast::Module, table: &SymbolTable) -> ast::Module {
+    let checker = Checker::new(table);
     Elaborator::new(checker).module(module)
 }

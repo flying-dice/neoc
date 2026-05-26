@@ -360,7 +360,10 @@ fn check_and_emit_module(
             },
         });
     }
-    let elaborated = types::elaborate(&me.module);
+    // Elaborate against the same import-enriched table the checker used, so a
+    // string `+` whose operand type resolves through a `use` import is rewritten
+    // to concatenation rather than left as arithmetic.
+    let elaborated = types::elaborate_with_table(&me.module, &table);
     let imported_bindings = js_imported_bindings(root, loaded, &me.module);
     let imported_enums = imported_enums(root, loaded, &me.module);
     let (output, emit_messages, source_map) = emit(

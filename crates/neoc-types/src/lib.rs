@@ -25,7 +25,7 @@ mod env;
 mod infer;
 mod ty;
 
-pub use elaborate::elaborate;
+pub use elaborate::{elaborate, elaborate_with_table};
 pub use env::{
     EnumInfo, MethodInfo, StructFields, StructInfo, SymbolTable, TraitInfo, TraitMethod, TypeDef,
     VariantFields, VariantInfo,
