@@ -2,8 +2,9 @@
 //!
 //! Capabilities: diagnostics, document + workspace symbols, goto (definition,
 //! type-definition, implementation), find-all-references, document highlight,
-//! folding ranges, selection ranges, inlay hints, formatting (via `neoc-fmt`),
-//! signature help, rename, hover, and completion (with lazy per-item resolve).
+//! folding ranges, selection ranges, inlay hints, call hierarchy, formatting
+//! (via `neoc-fmt`), signature help, rename, hover, and completion (with lazy
+//! per-item resolve).
 //! Diagnostics come from [`neoc_compiler::transpile`];
 //! syntax errors carry precise byte ranges from the parser, while type and emit
 //! diagnostics fall back to the document's first line because those stages do
@@ -12,6 +13,7 @@
 //! `neoc-types` symbol table for declaration signatures, so each feature
 //! handler is a pure, unit-tested function over the source text.
 
+mod call_hierarchy;
 mod completion;
 mod cst;
 mod folding;
@@ -33,6 +35,7 @@ use neoc_compiler::{ByteSpan, Diagnostic as CompilerDiagnostic, Stage, Target, t
 // Public handler facade. The pure feature functions the IDE-UX spec
 // (`tests/cucumber.rs` over `tooling/ide/`) drives directly; `byte_to_position`
 // builds the `Position` they take from a byte offset into the source.
+pub use call_hierarchy::{incoming_calls, outgoing_calls};
 pub use completion::{completions, resolve as resolve_completion};
 pub use folding::folding_ranges;
 pub use format::formatting;
@@ -50,19 +53,21 @@ use std::sync::Mutex;
 pub use symbols::workspace_symbols;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::{
-    CompletionItem, CompletionOptions, CompletionParams, CompletionResponse, Diagnostic,
-    DiagnosticSeverity, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, DocumentFormattingParams, DocumentHighlight,
-    DocumentHighlightParams, DocumentSymbolParams, DocumentSymbolResponse, FoldingRange,
-    FoldingRangeParams, FoldingRangeProviderCapability, GotoDefinitionParams,
+    CallHierarchyIncomingCall, CallHierarchyIncomingCallsParams, CallHierarchyItem,
+    CallHierarchyOutgoingCall, CallHierarchyOutgoingCallsParams, CallHierarchyPrepareParams,
+    CallHierarchyServerCapability, CompletionItem, CompletionOptions, CompletionParams,
+    CompletionResponse, Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams,
+    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentFormattingParams,
+    DocumentHighlight, DocumentHighlightParams, DocumentSymbolParams, DocumentSymbolResponse,
+    FoldingRange, FoldingRangeParams, FoldingRangeProviderCapability, GotoDefinitionParams,
     GotoDefinitionResponse, Hover, HoverContents, HoverParams, HoverProviderCapability,
     ImplementationProviderCapability, InitializeParams, InitializeResult, InitializedParams,
     InlayHint, InlayHintParams, Location, LocationLink, MarkupContent, MarkupKind, MessageType,
     OneOf, Position, PrepareRenameResponse, Range, ReferenceParams, RenameOptions, RenameParams,
     SelectionRange, SelectionRangeParams, SelectionRangeProviderCapability, ServerCapabilities,
     ServerInfo, SignatureHelp, SignatureHelpOptions, SignatureHelpParams, SymbolInformation,
-    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit,
-    TypeDefinitionProviderCapability, Url, WorkspaceEdit, WorkspaceSymbolParams,
+    SymbolKind, TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
+    TextEdit, TypeDefinitionProviderCapability, Url, WorkspaceEdit, WorkspaceSymbolParams,
 };
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
@@ -131,6 +136,21 @@ fn stashed_uri(item: &CompletionItem) -> Option<Url> {
     Url::parse(item.data.as_ref()?.as_str()?).ok()
 }
 
+/// Wraps a pure [`call_hierarchy::CallItem`] as the LSP `CallHierarchyItem` for
+/// `uri`. The name and URI are what the incoming/outgoing requests round-trip.
+fn call_hierarchy_item(uri: Url, item: call_hierarchy::CallItem) -> CallHierarchyItem {
+    CallHierarchyItem {
+        name: item.name,
+        kind: SymbolKind::FUNCTION,
+        tags: None,
+        detail: None,
+        uri,
+        range: item.full_range,
+        selection_range: item.name_range,
+        data: None,
+    }
+}
+
 struct Backend {
     client: Client,
     /// Open documents by URI. Feature requests carry only a URI and position,
@@ -177,6 +197,7 @@ impl LanguageServer for Backend {
                 folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
                 selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
                 inlay_hint_provider: Some(OneOf::Left(true)),
+                call_hierarchy_provider: Some(CallHierarchyServerCapability::Simple(true)),
                 document_formatting_provider: Some(OneOf::Left(true)),
                 rename_provider: Some(OneOf::Right(RenameOptions {
                     // prepareRename validates the cursor and highlights the name.
@@ -363,6 +384,54 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
         Ok(format::formatting(&source))
+    }
+
+    async fn prepare_call_hierarchy(
+        &self,
+        params: CallHierarchyPrepareParams,
+    ) -> Result<Option<Vec<CallHierarchyItem>>> {
+        let tdp = params.text_document_position_params;
+        let Some(source) = self.source(&tdp.text_document.uri) else {
+            return Ok(None);
+        };
+        Ok(call_hierarchy::prepare(&source, tdp.position)
+            .map(|item| vec![call_hierarchy_item(tdp.text_document.uri, item)]))
+    }
+
+    async fn incoming_calls(
+        &self,
+        params: CallHierarchyIncomingCallsParams,
+    ) -> Result<Option<Vec<CallHierarchyIncomingCall>>> {
+        let uri = params.item.uri;
+        let Some(source) = self.source(&uri) else {
+            return Ok(None);
+        };
+        let calls = call_hierarchy::incoming_calls(&source, &params.item.name)
+            .into_iter()
+            .map(|edge| CallHierarchyIncomingCall {
+                from: call_hierarchy_item(uri.clone(), edge.item),
+                from_ranges: edge.ranges,
+            })
+            .collect();
+        Ok(Some(calls))
+    }
+
+    async fn outgoing_calls(
+        &self,
+        params: CallHierarchyOutgoingCallsParams,
+    ) -> Result<Option<Vec<CallHierarchyOutgoingCall>>> {
+        let uri = params.item.uri;
+        let Some(source) = self.source(&uri) else {
+            return Ok(None);
+        };
+        let calls = call_hierarchy::outgoing_calls(&source, &params.item.name)
+            .into_iter()
+            .map(|edge| CallHierarchyOutgoingCall {
+                to: call_hierarchy_item(uri.clone(), edge.item),
+                from_ranges: edge.ranges,
+            })
+            .collect();
+        Ok(Some(calls))
     }
 
     async fn selection_range(

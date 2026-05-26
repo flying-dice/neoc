@@ -43,6 +43,7 @@ struct Ide {
     selection_steps: Vec<String>,
     inlay_labels: Vec<String>,
     workspace_symbol_names: Vec<String>,
+    call_hierarchy_names: Vec<String>,
 }
 
 #[given("the source:")]
@@ -333,6 +334,40 @@ fn selection_covers(world: &mut Ide, expected: String) {
         world.selection_steps.iter().any(|step| step == &expected),
         "no selection step covers {expected:?}; steps: {:?}",
         world.selection_steps,
+    );
+}
+
+#[when(regex = r#"^I find the callers of "([^"]+)"$"#)]
+fn find_callers(world: &mut Ide, function: String) {
+    world.call_hierarchy_names = neoc_lsp::incoming_calls(&world.source, &function)
+        .into_iter()
+        .map(|edge| edge.item.name)
+        .collect();
+}
+
+#[when(regex = r#"^I find the callees of "([^"]+)"$"#)]
+fn find_callees(world: &mut Ide, function: String) {
+    world.call_hierarchy_names = neoc_lsp::outgoing_calls(&world.source, &function)
+        .into_iter()
+        .map(|edge| edge.item.name)
+        .collect();
+}
+
+#[then("the call hierarchy lists:")]
+fn call_hierarchy_lists(world: &mut Ide, step: &Step) {
+    let table = step
+        .table
+        .as_ref()
+        .unwrap_or_else(|| panic!("step {:?} requires a table", step.value));
+    let expected: Vec<String> = table
+        .rows
+        .iter()
+        .skip(1)
+        .map(|row| row[0].trim().to_string())
+        .collect();
+    assert_eq!(
+        world.call_hierarchy_names, expected,
+        "call hierarchy mismatch",
     );
 }
 

@@ -88,7 +88,9 @@ Dependency-ordered. `[ ]` todo · `[~]` in-progress · `[x]` done.
 ### Tier 3 — high effort / advanced
 
 14. `[ ]` Semantic tokens (`semanticTokens/full`).
-15. `[ ]` Call hierarchy.
+15. `[x]` Call hierarchy (`prepareCallHierarchy` + incoming/outgoing) —
+    name-based over top-level functions; incoming = callers, outgoing = callees,
+    grouped per function with call-site ranges. Method calls excluded.
 16. `[ ]` Refactors (extract / inline).
 17. `[x]` Whole-document formatting via `neoc-fmt` (`formatting`) — one
     full-document edit; a syntax error leaves the document untouched.
