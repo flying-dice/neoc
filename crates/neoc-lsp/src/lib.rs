@@ -34,6 +34,11 @@ mod semantic_tokens;
 mod signature;
 mod signature_help;
 mod symbols;
+// Phase 2 of cross-file resolution: the index is built and unit-tested in
+// isolation here; the live handlers start reading it in Phase 3, at which point
+// this allow comes off (see tasks/cross-file-resolution.md).
+#[allow(dead_code)]
+mod workspace;
 
 use neoc_compiler::{ByteSpan, Diagnostic as CompilerDiagnostic, Stage, Target, transpile};
 
