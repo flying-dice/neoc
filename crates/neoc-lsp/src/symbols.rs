@@ -4,11 +4,45 @@
 //! enum variants, and `impl` methods as children. Ranges come straight from
 //! the CST byte spans.
 
-use tower_lsp::lsp_types::{DocumentSymbol, SymbolKind};
+use tower_lsp::lsp_types::{DocumentSymbol, Range, SymbolKind};
 use tree_sitter::Node;
 
 use crate::cst::{self, node_text};
 use crate::position::byte_range;
+
+/// A flattened outline entry for workspace search: a symbol's name, kind, and
+/// the range an editor jumps to (its declaring name).
+pub struct FlatSymbol {
+    pub name: String,
+    pub kind: SymbolKind,
+    pub range: Range,
+}
+
+/// Every symbol in `source` whose name contains `query` (case-insensitive; an
+/// empty query matches all), flattened from the document outline so nested
+/// members — fields, variants, methods — are searchable too.
+#[must_use]
+pub fn workspace_symbols(source: &str, query: &str) -> Vec<FlatSymbol> {
+    let query = query.to_lowercase();
+    let mut out = Vec::new();
+    flatten(&document_symbols(source), &query, &mut out);
+    out
+}
+
+fn flatten(symbols: &[DocumentSymbol], query: &str, out: &mut Vec<FlatSymbol>) {
+    for symbol in symbols {
+        if query.is_empty() || symbol.name.to_lowercase().contains(query) {
+            out.push(FlatSymbol {
+                name: symbol.name.clone(),
+                kind: symbol.kind,
+                range: symbol.selection_range,
+            });
+        }
+        if let Some(children) = &symbol.children {
+            flatten(children, query, out);
+        }
+    }
+}
 
 /// Builds the outline for `source`.
 #[must_use]
@@ -275,5 +309,22 @@ mod tests {
                 ("scale", SymbolKind::METHOD)
             ]
         );
+    }
+
+    #[test]
+    fn workspace_symbols_filter_by_query_and_include_members() {
+        let src = "struct Point { x: number }\nfn paint() {}\nfn main() {}\n";
+        let found = workspace_symbols(src, "p");
+        let matched: Vec<&str> = found.iter().map(|s| s.name.as_str()).collect();
+        // Case-insensitive substring: `Point`, `paint`; the field `x` lacks `p`.
+        assert_eq!(matched, vec!["Point", "paint"]);
+    }
+
+    #[test]
+    fn workspace_symbols_empty_query_returns_all() {
+        let src = "struct Point { x: number }\nfn main() {}\n";
+        let found = workspace_symbols(src, "");
+        let all: Vec<&str> = found.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(all, vec!["Point", "x", "main"]);
     }
 }

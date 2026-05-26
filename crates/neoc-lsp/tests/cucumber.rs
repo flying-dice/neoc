@@ -42,6 +42,7 @@ struct Ide {
     folds: Vec<(u32, u32)>,
     selection_steps: Vec<String>,
     inlay_labels: Vec<String>,
+    workspace_symbol_names: Vec<String>,
 }
 
 #[given("the source:")]
@@ -332,6 +333,32 @@ fn selection_covers(world: &mut Ide, expected: String) {
         world.selection_steps.iter().any(|step| step == &expected),
         "no selection step covers {expected:?}; steps: {:?}",
         world.selection_steps,
+    );
+}
+
+#[when(regex = r#"^I search workspace symbols for "([^"]*)"$"#)]
+fn search_workspace_symbols(world: &mut Ide, query: String) {
+    world.workspace_symbol_names = neoc_lsp::workspace_symbols(&world.source, &query)
+        .into_iter()
+        .map(|symbol| symbol.name)
+        .collect();
+}
+
+#[then("the workspace symbols are:")]
+fn workspace_symbols_are(world: &mut Ide, step: &Step) {
+    let table = step
+        .table
+        .as_ref()
+        .unwrap_or_else(|| panic!("step {:?} requires a table", step.value));
+    let expected: Vec<String> = table
+        .rows
+        .iter()
+        .skip(1)
+        .map(|row| row[0].trim().to_string())
+        .collect();
+    assert_eq!(
+        world.workspace_symbol_names, expected,
+        "workspace symbols mismatch",
     );
 }
 

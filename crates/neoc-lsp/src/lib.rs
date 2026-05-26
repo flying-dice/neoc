@@ -1,6 +1,6 @@
 //! Language server for neoc, over stdio.
 //!
-//! Capabilities: diagnostics, document symbols (outline), goto (definition,
+//! Capabilities: diagnostics, document + workspace symbols, goto (definition,
 //! type-definition, implementation), find-all-references, document highlight,
 //! folding ranges, selection ranges, inlay hints, formatting (via `neoc-fmt`),
 //! signature help, rename, hover, and completion (with lazy per-item resolve).
@@ -47,6 +47,7 @@ pub use selection::selection_range;
 pub use signature_help::signature_help;
 use std::collections::HashMap;
 use std::sync::Mutex;
+pub use symbols::workspace_symbols;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::{
     CompletionItem, CompletionOptions, CompletionParams, CompletionResponse, Diagnostic,
@@ -59,9 +60,9 @@ use tower_lsp::lsp_types::{
     InlayHint, InlayHintParams, Location, LocationLink, MarkupContent, MarkupKind, MessageType,
     OneOf, Position, PrepareRenameResponse, Range, ReferenceParams, RenameOptions, RenameParams,
     SelectionRange, SelectionRangeParams, SelectionRangeProviderCapability, ServerCapabilities,
-    ServerInfo, SignatureHelp, SignatureHelpOptions, SignatureHelpParams,
+    ServerInfo, SignatureHelp, SignatureHelpOptions, SignatureHelpParams, SymbolInformation,
     TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit,
-    TypeDefinitionProviderCapability, Url, WorkspaceEdit,
+    TypeDefinitionProviderCapability, Url, WorkspaceEdit, WorkspaceSymbolParams,
 };
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
@@ -167,6 +168,7 @@ impl LanguageServer for Backend {
                     TextDocumentSyncKind::FULL,
                 )),
                 document_symbol_provider: Some(OneOf::Left(true)),
+                workspace_symbol_provider: Some(OneOf::Left(true)),
                 definition_provider: Some(OneOf::Left(true)),
                 type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
                 implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
@@ -249,6 +251,30 @@ impl LanguageServer for Backend {
         Ok(Some(DocumentSymbolResponse::Nested(
             symbols::document_symbols(&source),
         )))
+    }
+
+    async fn symbol(
+        &self,
+        params: WorkspaceSymbolParams,
+    ) -> Result<Option<Vec<SymbolInformation>>> {
+        let Ok(documents) = self.documents.lock() else {
+            return Ok(None);
+        };
+        let mut out = Vec::new();
+        for (uri, source) in documents.iter() {
+            for symbol in symbols::workspace_symbols(source, &params.query) {
+                #[allow(deprecated)] // `deprecated` field is required by the struct literal
+                out.push(SymbolInformation {
+                    name: symbol.name,
+                    kind: symbol.kind,
+                    tags: None,
+                    deprecated: None,
+                    location: Location::new(uri.clone(), symbol.range),
+                    container_name: None,
+                });
+            }
+        }
+        Ok(Some(out))
     }
 
     async fn goto_definition(
