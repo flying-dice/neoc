@@ -173,11 +173,20 @@ WorkspaceIndex
    (`auto_import_completions`; `WorkspaceIndex::use_path_for` reverses the
    `module_file` rule to build the path). Suppressed after `.`/`::`. Skips local
    and already-imported names.
-5. `[ ]` **Scope-aware resolution** — real name resolution (scopes, shadowing,
-   imports) so references/rename stop over-approximating and the scope-sensitive
-   lints (unused `let`/param, shadowing) land.
-6. `[ ]` **Debounce + cancellation** — revision token, debounced workspace
-   diagnostics. (Adopt the token in Phase 2; tune here.)
+5. `[ ]` **Scope-aware resolution** — the one remaining major phase. Real name
+   resolution (scopes, shadowing, imports) so references/rename stop
+   over-approximating (a same-named local is no longer over-included) and the
+   scope-sensitive lints (unused `let`/param, shadowing) land. This changes
+   language-level static semantics, so it goes through an RFC/design per
+   `CLAUDE.md` rather than a drive-by. Largest single item left; its own effort.
+6. `[deferred]` **Debounce + cancellation** — revision token, debounced
+   workspace diagnostics. **Trigger:** a workspace-wide *async* consumer that is
+   expensive enough to debounce or worth cancelling — project-wide diagnostics,
+   or a background index rebuild slow enough to outlast a keystroke. None exists
+   yet: per-file diagnostics are cheap and synchronous, and discovery is a
+   one-shot startup task. Building the token/debounce now would be unused
+   machinery (the repo forbids speculative abstractions), so it waits for that
+   consumer — most likely the Phase 5 work above.
 
 Benchmark corpus: `samples/openfeature/` (multi-file neoc) is the realistic
 target to measure index build + query latency against.
