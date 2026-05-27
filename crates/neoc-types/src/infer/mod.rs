@@ -260,10 +260,11 @@ impl<'a> Checker<'a> {
             }
         }
         for bl in &self.table.blanket_impls {
-            for (ty, tr) in &self.table.trait_impls {
-                if tr == &bl.trait_name {
+            for (ty, traits) in &self.table.trait_impls {
+                if traits.contains(&bl.trait_name) {
                     self.error(format!(
-                        "`impl {tr} for {ty}` overlaps the blanket impl of `{tr}`"
+                        "`impl {} for {ty}` overlaps the blanket impl of `{}`",
+                        bl.trait_name, bl.trait_name
                     ));
                 }
             }
@@ -1220,9 +1221,10 @@ impl<'a> Checker<'a> {
             let traits: std::collections::BTreeSet<String> = self
                 .table
                 .trait_impls
-                .iter()
-                .filter(|(ty, _)| *ty == name)
-                .map(|(_, tr)| tr.clone())
+                .get(&name)
+                .into_iter()
+                .flatten()
+                .cloned()
                 .collect();
             common = Some(match common {
                 None => traits,

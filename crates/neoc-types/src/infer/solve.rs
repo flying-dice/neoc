@@ -104,11 +104,14 @@ impl Checker<'_> {
                 .type_bounds
                 .get(p)
                 .is_some_and(|bs| bs.iter().any(|b| self.trait_chain_includes(b, trait_name))),
+            // Head-indexed: look up the type's own traits, then check each
+            // reaches `trait_name` through the supertrait chain.
             _ => ty_impl_name(ty).is_some_and(|n| {
-                self.table()
-                    .trait_impls
-                    .iter()
-                    .any(|(t, tr)| *t == n && self.trait_chain_includes(tr, trait_name))
+                self.table().trait_impls.get(&n).is_some_and(|traits| {
+                    traits
+                        .iter()
+                        .any(|tr| self.trait_chain_includes(tr, trait_name))
+                })
             }),
         };
         direct || self.satisfies_via_blanket(ty, trait_name, seen)

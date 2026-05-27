@@ -202,7 +202,11 @@ fn collect_derives(table: &mut SymbolTable, item: &ast::Item) {
         };
         // A recognised derive is an implicit trait impl — the derive name is
         // the trait name, so a `<T: Clone>` bound is satisfied by `#[derive(Clone)]`.
-        table.trait_impls.insert((name.clone(), derive.clone()));
+        table
+            .trait_impls
+            .entry(name.clone())
+            .or_default()
+            .insert(derive.clone());
         let key = (name.clone(), method.to_string());
         if table.methods.contains_key(&key) {
             continue;
@@ -512,12 +516,14 @@ fn collect_impl(table: &mut SymbolTable, b: &ast::ImplBlock) {
         }
         return;
     }
-    // A trait impl records the `(type, trait)` pair so call-site bound checks
-    // can see that `type_name` satisfies the trait.
+    // A trait impl records that `type_name` implements the trait, so call-site
+    // bound checks can see the satisfaction.
     if let Some(trait_name) = b.trait_.as_ref().and_then(|p| p.segments.last()) {
         table
             .trait_impls
-            .insert((type_name.clone(), trait_name.name.clone()));
+            .entry(type_name.clone())
+            .or_default()
+            .insert(trait_name.name.clone());
     }
     // The impl's associated-type bindings, so a method signature mentioning
     // `Self::Item` is stored already resolved to the bound type — call sites
