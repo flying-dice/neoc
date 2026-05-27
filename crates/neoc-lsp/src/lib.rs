@@ -1194,6 +1194,36 @@ mod tests {
     }
 
     #[test]
+    fn diagnostic_labels_become_related_information() {
+        // A trait-conformance mismatch carries a "declared here" label that the
+        // facade maps to LSP related-information pointing into the same file.
+        let root = Path::new("/proj");
+        let f = |rel: &str| Url::from_file_path(root.join(rel)).unwrap();
+        let uri = f("shapes.neoc");
+        let src = "trait Area { fn area(self) -> number; }\n\
+                   struct Sq;\n\
+                   impl Area for Sq { fn area(self) -> string { \"big\" } }\n";
+        let mut index = WorkspaceIndex::new(root);
+        index.set_document(uri.clone(), 1, src.to_string());
+        let diags = diagnose_in_project(&index, &uri, src);
+        let mismatch = diags
+            .iter()
+            .find(|d| d.message.contains("does not match trait `Area`"))
+            .expect("conformance mismatch");
+        let related = mismatch
+            .related_information
+            .as_ref()
+            .expect("mismatch carries related information");
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].location.uri, uri);
+        assert!(
+            related[0].message.contains("declared here in trait `Area`"),
+            "{:?}",
+            related[0]
+        );
+    }
+
+    #[test]
     fn a_closed_on_disk_module_is_checked_in_the_project() {
         // A module seeded from disk (version 0, never opened) is still part of
         // the project and reports its own errors — the whole-project publish

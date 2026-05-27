@@ -56,14 +56,30 @@ impl std::str::FromStr for Target {
 }
 
 /// A problem found anywhere in the pipeline, tagged with its stage.
+///
+/// `#[non_exhaustive]`: construct these only through the compiler; new fields
+/// may be added without a breaking change.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Diagnostic {
     pub stage: Stage,
     pub message: String,
     /// Byte range in the source the diagnostic refers to, when the producing
-    /// stage tracks one. The parser records spans; the type and emit stages do
-    /// not yet, so theirs is `None`.
+    /// stage tracks one. The parser records spans; the type stage records them
+    /// for most nodes; the emit stage does not, so its span is `None`.
     pub span: Option<ByteSpan>,
+    /// Related source locations that explain this diagnostic (where a trait
+    /// method was declared, which arm already matches), each with its own
+    /// message. Editors surface these as related information. Usually empty.
+    pub labels: Vec<DiagnosticLabel>,
+}
+
+/// A secondary span attached to a [`Diagnostic`]: a related byte range with a
+/// short message of its own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiagnosticLabel {
+    pub message: String,
+    pub span: ByteSpan,
 }
 
 /// A half-open byte range `[start, end)` into the source text.
@@ -88,6 +104,7 @@ impl Diagnostic {
             stage: Stage::Parse,
             message,
             span: Some(ByteSpan { start, end }),
+            labels: Vec::new(),
         }
     }
 
@@ -100,6 +117,26 @@ impl Diagnostic {
             stage: Stage::Type,
             message,
             span: (start != 0 || end != 0).then_some(ByteSpan { start, end }),
+            labels: Vec::new(),
+        }
+    }
+
+    /// A type-stage diagnostic mapped from the type checker's own diagnostic,
+    /// carrying its span and any related-information labels through.
+    fn typed_from(d: &types::Diagnostic) -> Self {
+        Self {
+            labels: d
+                .labels
+                .iter()
+                .map(|l| DiagnosticLabel {
+                    message: l.message.clone(),
+                    span: ByteSpan {
+                        start: l.start,
+                        end: l.end,
+                    },
+                })
+                .collect(),
+            ..Self::typed(d.message.clone(), d.start, d.end)
         }
     }
 
@@ -109,6 +146,7 @@ impl Diagnostic {
             stage: Stage::Emit,
             message,
             span: None,
+            labels: Vec::new(),
         }
     }
 }
@@ -164,12 +202,7 @@ pub fn transpile(source: &str, target: Target) -> CompileOutput {
         .collect();
 
     let checked = types::check(&parsed.module);
-    diagnostics.extend(
-        checked
-            .diagnostics
-            .iter()
-            .map(|d| Diagnostic::typed(d.message.clone(), d.start, d.end)),
-    );
+    diagnostics.extend(checked.diagnostics.iter().map(Diagnostic::typed_from));
 
     // Mark string-typed `+` as concatenation before emitting. Each backend
     // interprets it: Lua picks `..`, JS keeps `+` (`lang/DYNAMIC.md` §4.2).
@@ -402,7 +435,7 @@ pub fn check_module_in_project<H: std::hash::BuildHasher>(
     table.import_referenced_types(&universe);
     let checked = types::check_with_table(&me.module, &table);
     for d in &checked.diagnostics {
-        out.push(Diagnostic::typed(d.message.clone(), d.start, d.end));
+        out.push(Diagnostic::typed_from(d));
     }
     out
 }
@@ -433,7 +466,7 @@ fn check_and_emit_module(
     for d in &checked.diagnostics {
         diagnostics.push(ProjectDiagnostic {
             path: path.to_path_buf(),
-            diagnostic: Diagnostic::typed(d.message.clone(), d.start, d.end),
+            diagnostic: Diagnostic::typed_from(d),
         });
     }
     // Elaborate against the same import-enriched table the checker used, so a

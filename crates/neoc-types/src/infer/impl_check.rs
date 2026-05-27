@@ -165,10 +165,37 @@ impl Checker<'_> {
             if !matches {
                 let want = Ty::Fn(want_params, Box::new(want_ret));
                 let got = Ty::Fn(got_params, Box::new(got_ret));
-                self.error(format!(
-                    "method `{}` does not match trait `{trait_name}`: expected `{want}`, found `{got}`",
-                    m.name
-                ));
+                // Anchor on the offending impl method; point a label at the
+                // trait's declaration so the editor links the two.
+                let primary = self
+                    .table
+                    .member_defs
+                    .get(&(target.to_string(), m.name.clone()))
+                    .copied()
+                    .unwrap_or((0, 0));
+                let labels = self
+                    .table
+                    .member_defs
+                    .get(&(trait_name.to_string(), m.name.clone()))
+                    .map(|&(start, end)| {
+                        vec![crate::Label {
+                            message: format!(
+                                "`{}` is declared here in trait `{trait_name}`",
+                                m.name
+                            ),
+                            start,
+                            end,
+                        }]
+                    })
+                    .unwrap_or_default();
+                self.error_labeled(
+                    primary,
+                    format!(
+                        "method `{}` does not match trait `{trait_name}`: expected `{want}`, found `{got}`",
+                        m.name
+                    ),
+                    labels,
+                );
             }
         }
     }

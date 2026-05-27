@@ -448,6 +448,37 @@ fn trait_impl_return_type_must_match() {
 }
 
 #[test]
+fn trait_mismatch_labels_the_trait_declaration() {
+    // A conformance mismatch anchors on the impl method and carries a related
+    // label pointing at the trait's declaration (STATIC.md §8).
+    let src = "trait Area { fn area(self) -> number; } \
+               struct Sq; \
+               impl Area for Sq { fn area(self) -> string { \"big\" } }";
+    let parsed = neoc_parser::parse(src);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    let diags = check(&parsed.module).diagnostics;
+    let mismatch = diags
+        .iter()
+        .find(|d| d.message.contains("does not match trait `Area`"))
+        .expect("expected a conformance mismatch");
+    assert_eq!(mismatch.labels.len(), 1, "{:?}", mismatch.labels);
+    assert!(
+        mismatch.labels[0]
+            .message
+            .contains("declared here in trait `Area`"),
+        "{:?}",
+        mismatch.labels
+    );
+    // The label points at the trait's `area`, which precedes the impl's.
+    assert!(
+        mismatch.labels[0].start < mismatch.start,
+        "label {:?} should precede the impl method at {}",
+        mismatch.labels[0],
+        mismatch.start
+    );
+}
+
+#[test]
 fn trait_impl_self_returning_method_matches() {
     // `-> Self` in the trait reads as the target type in the impl: a faithful
     // `-> P` impl conforms.

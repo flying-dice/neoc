@@ -186,6 +186,7 @@ impl<'a> Checker<'a> {
             message: message.into(),
             start: 0,
             end: 0,
+            labels: Vec::new(),
         });
     }
 
@@ -196,6 +197,25 @@ impl<'a> Checker<'a> {
             message: message.into(),
             start: span.start,
             end: span.end,
+            labels: Vec::new(),
+        });
+    }
+
+    /// Records a diagnostic with one or more secondary labels — related source
+    /// locations (each a byte range plus its own message) that explain the
+    /// primary one, such as where a trait method was declared. Surfaced as LSP
+    /// related-information.
+    pub(crate) fn error_labeled(
+        &mut self,
+        span: (usize, usize),
+        message: impl Into<String>,
+        labels: Vec<crate::Label>,
+    ) {
+        self.diagnostics.push(Diagnostic {
+            message: message.into(),
+            start: span.0,
+            end: span.1,
+            labels,
         });
     }
 

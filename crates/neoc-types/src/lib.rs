@@ -48,6 +48,20 @@ pub struct Diagnostic {
     pub message: String,
     pub start: usize,
     pub end: usize,
+    /// Secondary source locations that explain the diagnostic — where a trait
+    /// method was declared, which earlier arm already matches, and the like.
+    /// Each becomes an editor "related information" entry pointing into the
+    /// same source. Usually empty.
+    pub labels: Vec<Label>,
+}
+
+/// A secondary span attached to a [`Diagnostic`]: a related location with its
+/// own short message (`method declared here`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Label {
+    pub message: String,
+    pub start: usize,
+    pub end: usize,
 }
 
 /// The outcome of checking a module: every diagnostic the checker produced.

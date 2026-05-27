@@ -21,10 +21,18 @@ impl Checker<'_> {
             .position(|a| a.guard.is_none() && self.is_catch_all(&a.pattern));
         if let Some(idx) = catch_all {
             if idx + 1 < arms.len() {
-                self.error_at(
-                    span,
+                // Anchor on the first dead arm; label the catch-all that shadows it.
+                let dead = arms[idx + 1].body.span;
+                let cover = arms[idx].body.span;
+                self.error_labeled(
+                    (dead.start, dead.end),
                     "this match arm is unreachable; an earlier arm already matches every value"
                         .to_string(),
+                    vec![crate::Label {
+                        message: "this arm already matches every value".to_string(),
+                        start: cover.start,
+                        end: cover.end,
+                    }],
                 );
             }
             return;

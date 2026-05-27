@@ -2,7 +2,9 @@
 //! `Diagnostic`s, both single-file and project-resolved. Free of the server
 //! transport, so it is unit-testable without a running server.
 
-use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range, Url};
+use tower_lsp::lsp_types::{
+    Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, Location, Position, Range, Url,
+};
 
 use neoc_compiler::{ByteSpan, Diagnostic as CompilerDiagnostic, Stage, Target, transpile};
 
@@ -36,15 +38,29 @@ fn stage_label(stage: Stage) -> &'static str {
     }
 }
 
-fn to_lsp(source: &str, diagnostic: &CompilerDiagnostic) -> Diagnostic {
+fn to_lsp(source: &str, uri: Option<&Url>, diagnostic: &CompilerDiagnostic) -> Diagnostic {
     let range = diagnostic
         .span
         .map_or_else(|| fallback_range(source), |s| span_range(source, s));
+    // Labels are byte ranges in this same source, so each related-information
+    // entry points back into the document being diagnosed. Needs the document
+    // URI, so an untitled single-file buffer drops them.
+    let related_information = uri.filter(|_| !diagnostic.labels.is_empty()).map(|uri| {
+        diagnostic
+            .labels
+            .iter()
+            .map(|label| DiagnosticRelatedInformation {
+                location: Location::new(uri.clone(), span_range(source, label.span)),
+                message: label.message.clone(),
+            })
+            .collect()
+    });
     Diagnostic {
         range,
         severity: Some(DiagnosticSeverity::ERROR),
         source: Some(format!("neoc:{}", stage_label(diagnostic.stage))),
         message: diagnostic.message.clone(),
+        related_information,
         ..Default::default()
     }
 }
@@ -60,7 +76,7 @@ pub fn diagnose(source: &str) -> Vec<Diagnostic> {
     let mut diagnostics: Vec<Diagnostic> = transpile(source, Target::default())
         .diagnostics
         .iter()
-        .map(|d| to_lsp(source, d))
+        .map(|d| to_lsp(source, None, d))
         .collect();
     diagnostics.extend(lints::lints(source));
     diagnostics
@@ -83,7 +99,7 @@ pub fn diagnose_in_project(index: &WorkspaceIndex, uri: &Url, source: &str) -> V
     let mut diagnostics: Vec<Diagnostic> =
         neoc_compiler::check_module_in_project(index.root(), &sources, &focus)
             .iter()
-            .map(|d| to_lsp(source, d))
+            .map(|d| to_lsp(source, Some(uri), d))
             .collect();
     diagnostics.extend(lints::lints(source));
     diagnostics
