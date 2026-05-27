@@ -146,6 +146,10 @@ pub struct BlanketImpl {
     pub conditions: Vec<String>,
     /// The trait this blanket provides for every satisfying type.
     pub trait_name: String,
+    /// The blanket's associated-type bindings (`type Item = …`), written in
+    /// terms of `param`. Carried so a satisfying type's call site can project a
+    /// method's `Self::Item` to the bound type, with `param` read as that type.
+    pub assoc_bindings: HashMap<String, Ty>,
 }
 
 impl SymbolTable {

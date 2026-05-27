@@ -499,19 +499,39 @@ fn collect_impl(table: &mut SymbolTable, b: &ast::ImplBlock) {
     let Some(type_name) = impl_target_name(&b.ty) else {
         return;
     };
+    // The impl's associated-type bindings, so a method signature mentioning
+    // `Self::Item` is stored already resolved to the bound type — call sites
+    // see the concrete type, not the projection sentinel. Shared by both paths.
+    let assoc: HashMap<String, Ty> = b
+        .assoc_bindings
+        .iter()
+        .map(|(name, ty)| (name.clone(), lower_type(ty, &impl_generics)))
+        .collect();
     // A blanket impl `impl<T: Show> Describe for T` targets one of the impl's
-    // own generics. It records no concrete `(type, trait)` pair or methods —
-    // those would key on the parameter name — but a `BlanketImpl` whose
-    // conditions are the parameter's bounds, queried on demand.
+    // own generics. It records no concrete `(type, trait)` pair, but a
+    // `BlanketImpl` whose conditions are the parameter's bounds (queried on
+    // demand). Its methods are still recorded — keyed on the parameter, with
+    // `Self` read as that parameter — so trait/impl signature conformance has an
+    // entry to check; its bindings are carried so a satisfying type's call site
+    // can project `Self::Item`.
     if impl_generics.contains(&type_name) {
         if let Some(trait_name) = b.trait_.as_ref().and_then(|p| p.segments.last()) {
             let conditions = generic_param_bounds(&b.generics)
                 .remove(&type_name)
                 .unwrap_or_default();
+            record_impl_methods(
+                table,
+                &type_name,
+                &Ty::Param(type_name.clone()),
+                &b.items,
+                &impl_generics,
+                &assoc,
+            );
             table.blanket_impls.push(crate::env::BlanketImpl {
                 param: type_name.clone(),
                 conditions,
                 trait_name: trait_name.name.clone(),
+                assoc_bindings: assoc,
             });
         }
         return;
@@ -525,29 +545,44 @@ fn collect_impl(table: &mut SymbolTable, b: &ast::ImplBlock) {
             .or_default()
             .insert(trait_name.name.clone());
     }
-    // The impl's associated-type bindings, so a method signature mentioning
-    // `Self::Item` is stored already resolved to the bound type — call sites
-    // see the concrete type, not the projection sentinel.
-    let assoc: HashMap<String, Ty> = b
-        .assoc_bindings
-        .iter()
-        .map(|(name, ty)| (name.clone(), lower_type(ty, &impl_generics)))
-        .collect();
-    let self_ty = Ty::named(&type_name);
-    for f in &b.items {
-        let (params, ret, has_receiver) = fn_type(&f.sig, &impl_generics);
-        // Substitute `Self` with the target type, then project `Self::Item`.
+    record_impl_methods(
+        table,
+        &type_name,
+        &Ty::named(&type_name),
+        &b.items,
+        &impl_generics,
+        &assoc,
+    );
+}
+
+/// Records each impl method in `items` into `table.methods` (and its name span
+/// into `member_defs`), keyed on `type_name` — the concrete target for a normal
+/// impl, the target parameter for a blanket impl. `self_ty` is what `Self`
+/// substitutes to (the named type, or the parameter for a blanket); `assoc`
+/// projects any `Self::Item` to its bound type. Both impl paths share this so
+/// the lowering rule lives in exactly one place.
+fn record_impl_methods(
+    table: &mut SymbolTable,
+    type_name: &str,
+    self_ty: &Ty,
+    items: &[ast::FnDecl],
+    impl_generics: &[String],
+    assoc: &HashMap<String, Ty>,
+) {
+    for f in items {
+        let (params, ret, has_receiver) = fn_type(&f.sig, impl_generics);
+        // Substitute `Self` with the target, then project `Self::Item`.
         let params = params
             .into_iter()
-            .map(|p| project_assoc(p.subst_self(&self_ty), &assoc))
+            .map(|p| project_assoc(p.subst_self(self_ty), assoc))
             .collect();
-        let ret = project_assoc(ret.subst_self(&self_ty), &assoc);
+        let ret = project_assoc(ret.subst_self(self_ty), assoc);
         table.member_defs.insert(
-            (type_name.clone(), f.sig.name.clone()),
+            (type_name.to_string(), f.sig.name.clone()),
             (f.sig.name_span.start, f.sig.name_span.end),
         );
         table.methods.insert(
-            (type_name.clone(), f.sig.name.clone()),
+            (type_name.to_string(), f.sig.name.clone()),
             MethodInfo {
                 params,
                 ret,

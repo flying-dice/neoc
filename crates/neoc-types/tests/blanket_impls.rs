@@ -91,6 +91,40 @@ impl<T: B> Show for T {\n  fn show(self) -> string {\n    self.b()\n  }\n}\n";
 }
 
 #[test]
+fn a_blanket_method_signature_is_checked_against_the_trait() {
+    // The blanket's `describe` returns `number`, but the trait declares
+    // `-> string`. A blanket impl's methods must conform like any other impl's;
+    // before they were recorded under the target parameter, this mismatch went
+    // unflagged because conformance found no method entry to check.
+    let src = "trait Show {\n  fn show(self) -> string;\n}\n\
+trait Describe {\n  fn describe(self) -> string;\n}\n\
+impl<T: Show> Describe for T {\n  fn describe(self) -> number {\n    1\n  }\n}\n";
+    let d = diagnostics(src);
+    assert!(
+        d.iter()
+            .any(|m| m.contains("method `describe` does not match trait `Describe`")),
+        "a blanket method that violates the trait signature is flagged: {d:?}"
+    );
+}
+
+#[test]
+fn a_satisfying_type_projects_the_blanket_associated_type() {
+    // The blanket binds `type Item = number`; a satisfying type's call site must
+    // see `item()` return the bound `number`, not the phantom `Self::Item`. The
+    // `-> number` return on `go` only type-checks if the projection lands.
+    let src = "trait Source {\n  fn raw(self) -> number;\n}\n\
+trait Boxed {\n  type Item;\n  fn item(self) -> Self::Item;\n}\n\
+impl<T: Source> Boxed for T {\n  type Item = number;\n  fn item(self) -> Self::Item {\n    self.raw()\n  }\n}\n\
+struct P;\nimpl Source for P {\n  fn raw(self) -> number {\n    1\n  }\n}\n\
+fn go(p: P) -> number {\n  p.item()\n}\n";
+    assert!(
+        diagnostics(src).is_empty(),
+        "`p.item()` projects the blanket's `Item = number` at the call site: {:?}",
+        diagnostics(src)
+    );
+}
+
+#[test]
 fn a_blanket_overlapping_a_concrete_impl_is_rejected() {
     let src = format!(
         "{BLANKET}struct P;\nimpl Show for P {{\n  fn show(self) -> string {{\n    \"p\"\n  }}\n}}\nimpl Describe for P {{\n  fn describe(self) -> string {{\n    \"d\"\n  }}\n}}\n"

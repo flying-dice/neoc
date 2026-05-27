@@ -105,6 +105,17 @@ impl Ty {
         })
     }
 
+    /// Replaces every occurrence of the type parameter `param` with `with`,
+    /// recursing through composites — how a blanket impl's binding, written in
+    /// terms of its target parameter, is read for a concrete satisfying type.
+    #[must_use]
+    pub(crate) fn subst_param(&self, param: &str, with: &Ty) -> Ty {
+        self.map(&|t| match t {
+            Ty::Param(p) if p == param => Some(with.clone()),
+            _ => None,
+        })
+    }
+
     /// Structural compatibility for the no-subtyping fragment.
     ///
     /// `Unknown` is compatible with anything (error recovery). A type

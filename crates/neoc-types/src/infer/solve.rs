@@ -5,7 +5,7 @@
 //! (resolution ≠ inference). These are methods on [`Checker`]; this module is a
 //! child of `infer`, so it shares the checker's fields and helpers.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::{Checker, ty_impl_name};
 use crate::env::TypeDef;
@@ -75,11 +75,21 @@ impl Checker<'_> {
         method: &str,
     ) -> Option<(Vec<Ty>, Ty)> {
         self.table().blanket_impls.iter().find_map(|bl| {
-            if bl.conditions.iter().all(|c| self.type_satisfies(recv, c)) {
-                self.resolve_trait_method(&bl.trait_name, method, &Ty::named(name))
-            } else {
-                None
+            if !bl.conditions.iter().all(|c| self.type_satisfies(recv, c)) {
+                return None;
             }
+            let (params, ret) =
+                self.resolve_trait_method(&bl.trait_name, method, &Ty::named(name))?;
+            // The blanket's bindings are written in terms of its target
+            // parameter; read them for the concrete receiver, then project any
+            // `Self::Item` in the resolved signature to the bound type.
+            let bindings: HashMap<String, Ty> = bl
+                .assoc_bindings
+                .iter()
+                .map(|(k, v)| (k.clone(), v.subst_param(&bl.param, &Ty::named(name))))
+                .collect();
+            let project = |ty: Ty| crate::collect::project_assoc(ty, &bindings);
+            Some((params.into_iter().map(project).collect(), project(ret)))
         })
     }
 
