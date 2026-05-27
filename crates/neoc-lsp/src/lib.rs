@@ -23,6 +23,7 @@ mod call_hierarchy;
 mod code_action;
 mod completion;
 mod cst;
+mod diagnostics;
 mod folding;
 mod format;
 mod goto;
@@ -43,8 +44,6 @@ mod symbols;
 // (see tasks/cross-file-resolution.md).
 mod workspace;
 
-use neoc_compiler::{ByteSpan, Diagnostic as CompilerDiagnostic, Stage, Target, transpile};
-
 // Public handler facade. The pure feature functions the IDE-UX spec
 // (`tests/cucumber.rs` over `tooling/ide/`) drives directly; `byte_to_position`
 // builds the `Position` they take from a byte offset into the source.
@@ -52,6 +51,7 @@ pub use crate::workspace::{DeclLoc, WorkspaceIndex};
 pub use call_hierarchy::{incoming_calls, outgoing_calls};
 pub use code_action::{organize_imports, unused_imports};
 pub use completion::{completions, resolve as resolve_completion};
+pub use diagnostics::{diagnose, diagnose_in_project};
 pub use folding::folding_ranges;
 pub use format::formatting;
 pub use goto::{goto_definition, goto_implementation, goto_type_definition, name_at};
@@ -75,7 +75,7 @@ use tower_lsp::lsp_types::{
     CallHierarchyServerCapability, CodeAction, CodeActionKind, CodeActionOrCommand,
     CodeActionParams, CodeActionProviderCapability, CodeActionResponse, CompletionItem,
     CompletionItemKind, CompletionOptions, CompletionParams, CompletionResponse, Diagnostic,
-    DiagnosticSeverity, DidChangeTextDocumentParams, DidChangeWatchedFilesParams,
+    DidChangeTextDocumentParams, DidChangeWatchedFilesParams,
     DidChangeWatchedFilesRegistrationOptions, DidCloseTextDocumentParams,
     DidOpenTextDocumentParams, DocumentFormattingParams, DocumentHighlight,
     DocumentHighlightParams, DocumentSymbolParams, DocumentSymbolResponse, FileChangeType,
@@ -93,85 +93,6 @@ use tower_lsp::lsp_types::{
     TypeDefinitionProviderCapability, Url, WorkspaceEdit, WorkspaceSymbolParams,
 };
 use tower_lsp::{Client, LanguageServer, LspService, Server};
-
-/// The range a diagnostic with no recorded span points at: the document's
-/// first line. The message still surfaces in the editor's problem list.
-#[must_use]
-fn fallback_range(source: &str) -> Range {
-    let end = source.find('\n').unwrap_or(source.len());
-    Range::new(Position::new(0, 0), byte_to_position(source, end))
-}
-
-#[must_use]
-fn span_range(source: &str, span: ByteSpan) -> Range {
-    Range::new(
-        byte_to_position(source, span.start),
-        byte_to_position(source, span.end),
-    )
-}
-
-/// The `source` label an editor shows beside a diagnostic.
-#[must_use]
-fn stage_label(stage: Stage) -> &'static str {
-    match stage {
-        Stage::Parse => "syntax",
-        Stage::Type => "type",
-        Stage::Emit => "codegen",
-    }
-}
-
-fn to_lsp(source: &str, diagnostic: &CompilerDiagnostic) -> Diagnostic {
-    let range = diagnostic
-        .span
-        .map_or_else(|| fallback_range(source), |s| span_range(source, s));
-    Diagnostic {
-        range,
-        severity: Some(DiagnosticSeverity::ERROR),
-        source: Some(format!("neoc:{}", stage_label(diagnostic.stage))),
-        message: diagnostic.message.clone(),
-        ..Default::default()
-    }
-}
-
-/// The diagnostics for `source`: hard correctness errors from the compiler plus
-/// warning-level lints.
-///
-/// Pure and free of I/O, so it can be unit-tested without a running server.
-#[must_use]
-pub fn diagnose(source: &str) -> Vec<Diagnostic> {
-    // Parse and type diagnostics are target-independent; emit against the
-    // default target so the editor still surfaces any backend complaint.
-    let mut diagnostics: Vec<Diagnostic> = transpile(source, Target::default())
-        .diagnostics
-        .iter()
-        .map(|d| to_lsp(source, d))
-        .collect();
-    diagnostics.extend(lints::lints(source));
-    diagnostics
-}
-
-/// Project-aware diagnostics for `uri`: the file is checked against the
-/// workspace's other modules (open buffers authoritative), so its `use`
-/// imports resolve and a non-entry module no longer reports phantom
-/// `unresolved module` errors. Falls back to single-file [`diagnose`] for an
-/// untitled buffer (no file path) or when the focus is otherwise unresolvable.
-#[must_use]
-pub fn diagnose_in_project(index: &WorkspaceIndex, uri: &Url, source: &str) -> Vec<Diagnostic> {
-    let Ok(focus) = uri.to_file_path() else {
-        return diagnose(source);
-    };
-    // The handler's live buffer is authoritative and may be a step ahead of the
-    // index, so the focus carries the current text explicitly.
-    let mut sources = index.project_sources();
-    sources.insert(focus.clone(), source.to_string());
-    let mut diagnostics: Vec<Diagnostic> =
-        neoc_compiler::check_module_in_project(index.root(), &sources, &focus)
-            .iter()
-            .map(|d| to_lsp(source, d))
-            .collect();
-    diagnostics.extend(lints::lints(source));
-    diagnostics
-}
 
 /// Encodes a document URI for `CompletionItem.data`, the opaque round-trip slot
 /// the editor returns on `completionItem/resolve`. Paired with [`stashed_uri`].
@@ -1153,18 +1074,7 @@ pub fn run() -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn fallback_is_the_first_line() {
-        assert_eq!(
-            fallback_range("abc\ndef"),
-            Range::new(Position::new(0, 0), Position::new(0, 3))
-        );
-        assert_eq!(
-            fallback_range(""),
-            Range::new(Position::new(0, 0), Position::new(0, 0))
-        );
-    }
+    use tower_lsp::lsp_types::DiagnosticSeverity;
 
     #[test]
     fn clean_program_has_no_diagnostics() {
