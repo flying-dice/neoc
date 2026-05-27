@@ -379,16 +379,18 @@ fn product(cols: &[Vec<Pat>]) -> Vec<Vec<Pat>> {
     acc
 }
 
-/// Renders a witness pattern as neoc source text for the diagnostic. A
-/// constructor whose arguments are all wildcards renders as its bare name (the
-/// whole variant is missing — `Err`); sub-patterns appear only where a payload
-/// gap narrows the witness — `Some(false)`.
+/// Renders a witness pattern as neoc source text for the diagnostic. A nullary
+/// constructor (unit variant/struct, `bool`/literal) renders as its bare name —
+/// `None`, `Red`; a payload-bearing one shows its slots — `Err(_)`, `Some(false)`,
+/// `P(false, false)` — so a partially-covered variant reads unambiguously
+/// (`N(_)` when `N(0)` is matched but other numbers are not), the way Rust
+/// reports an uncovered pattern.
 fn render(pat: &Pat) -> String {
     match pat {
         Pat::Wild => "_".to_string(),
         Pat::Ctor(Ctor::Bool(b), _) => b.to_string(),
         Pat::Ctor(Ctor::Lit(s), _) => s.clone(),
-        Pat::Ctor(Ctor::Named(n), args) if args.iter().all(|a| matches!(a, Pat::Wild)) => n.clone(),
+        Pat::Ctor(Ctor::Named(n), args) if args.is_empty() => n.clone(),
         Pat::Ctor(Ctor::Named(n), args) => {
             let inner: Vec<String> = args.iter().map(render).collect();
             format!("{n}({})", inner.join(", "))

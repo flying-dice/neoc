@@ -244,7 +244,7 @@ fn non_exhaustive_result_match() {
     let d = diags("fn f(r: Result<number, string>) -> number { match r { Ok(v) => v } }");
     assert!(
         d.iter()
-            .any(|m| m == "this match on `Result` is not exhaustive; missing variant(s): Err"),
+            .any(|m| m == "this match on `Result` is not exhaustive; missing variant(s): Err(_)"),
         "{d:?}"
     );
 }
@@ -283,6 +283,80 @@ fn guarded_arm_does_not_cover() {
         d.iter()
             .any(|m| m == "this match on `Color` is not exhaustive; missing variant(s): Red"),
         "{d:?}"
+    );
+}
+
+#[test]
+fn non_exhaustive_nested_variant_payload_reports_deep_witness() {
+    // Exhaustiveness recurses through nested constructors; the witness names the
+    // uncovered value at depth (STATIC.md §7).
+    let d = diags(
+        "enum Opt { Some(bool), None } \
+         enum Wrap { W(Opt) } \
+         fn f(x: Wrap) -> number { match x { Wrap::W(Opt::Some(true)) => 1, Wrap::W(Opt::None) => 0 } }",
+    );
+    assert!(
+        d.iter()
+            .any(|m| m
+                == "this match on `Wrap` is not exhaustive; missing variant(s): W(Some(false))"),
+        "{d:?}"
+    );
+}
+
+#[test]
+fn non_exhaustive_tuple_variant_combination() {
+    // A multi-field variant is covered only when every field combination is.
+    let d = diags(
+        "enum E { P(bool, bool) } \
+         fn f(x: E) -> number { match x { E::P(true, true) => 1, E::P(true, false) => 2, E::P(false, true) => 3 } }",
+    );
+    assert!(
+        d.iter().any(
+            |m| m == "this match on `E` is not exhaustive; missing variant(s): P(false, false)"
+        ),
+        "{d:?}"
+    );
+}
+
+#[test]
+fn clean_tuple_variant_all_combinations() {
+    assert_clean(
+        "enum E { P(bool, bool) } \
+         fn f(x: E) -> number { match x { E::P(true, true) => 1, E::P(true, false) => 2, E::P(false, true) => 3, E::P(false, false) => 4 } }",
+    );
+}
+
+#[test]
+fn or_pattern_and_or_payload_cover_a_variant() {
+    // Separate arms covering each payload, and an or-pattern inside the payload,
+    // both fully cover `Some`.
+    assert_clean(
+        "enum Opt { Some(bool), None } \
+         fn f(o: Opt) -> number { match o { Opt::Some(true) | Opt::Some(false) => 1, Opt::None => 0 } }",
+    );
+    assert_clean(
+        "enum Opt { Some(bool), None } \
+         fn f(o: Opt) -> number { match o { Opt::Some(true | false) => 1, Opt::None => 0 } }",
+    );
+}
+
+#[test]
+fn open_payload_partial_cover_shows_the_slot() {
+    // `N(0)` is matched but `number` is unbounded, so the variant is not fully
+    // covered; the witness shows the open slot rather than the bare name.
+    let d = diags(
+        "enum E { N(number) } \
+         fn f(x: E) -> number { match x { E::N(0) => 1 } }",
+    );
+    assert!(
+        d.iter()
+            .any(|m| m == "this match on `E` is not exhaustive; missing variant(s): N(_)"),
+        "{d:?}"
+    );
+    // A binding on the payload closes it.
+    assert_clean(
+        "enum E { N(number) } \
+         fn f(x: E) -> number { match x { E::N(0) => 1, E::N(n) => n } }",
     );
 }
 
