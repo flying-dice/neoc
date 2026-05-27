@@ -62,6 +62,10 @@ struct Decl {
     kind: SymbolKind,
     range: Range,
     exported: bool,
+    /// The declaration's externally-relevant text — its signature — so a change
+    /// a dependent can observe (a parameter type, a field, a variant) registers
+    /// as a surface change. Excludes a function's body; see [`decl_signature`].
+    signature: String,
 }
 
 /// The cached, version-keyed summary of one file: enough to answer queries and
@@ -78,17 +82,20 @@ struct FileSummary {
 }
 
 impl FileSummary {
-    /// The exported surface: a sorted key per `pub` declaration (its name and
-    /// kind) and the sorted import paths, so the comparison is order-insensitive.
-    /// Two summaries with equal surfaces are interchangeable to every dependent.
-    /// `SymbolKind` is not `Ord`, so each export is rendered to a `name:kind`
-    /// string that sorts and compares cleanly.
+    /// The exported surface: a sorted key per `pub` declaration (its name, kind,
+    /// and signature) and the sorted import paths, so the comparison is
+    /// order-insensitive. Two summaries with equal surfaces are interchangeable
+    /// to every dependent. `SymbolKind` is not `Ord`, so each export is rendered
+    /// to a `name:kind:signature` string that sorts and compares cleanly;
+    /// folding the signature in means a signature-only edit (the same name and
+    /// kind, a changed parameter or return type) still moves the surface, so
+    /// dependents are re-diagnosed.
     fn surface(&self) -> (Vec<String>, Vec<Vec<String>>) {
         let mut exports: Vec<String> = self
             .decls
             .iter()
             .filter(|d| d.exported)
-            .map(|d| format!("{}:{:?}", d.name, d.kind))
+            .map(|d| format!("{}:{:?}:{}", d.name, d.kind, d.signature))
             .collect();
         exports.sort();
         let mut imports = self.imports.clone();
@@ -438,6 +445,7 @@ fn summarize(source: &str, hash: u64) -> FileSummary {
                     kind,
                     range,
                     exported,
+                    signature: decl_signature(&decl, source),
                 });
             }
         }
@@ -465,6 +473,26 @@ fn decl_summary(decl: &tree_sitter::Node, source: &str) -> Option<(String, Symbo
     let name = node_text(&name_node, source)?.to_string();
     let range = byte_range(source, name_node.start_byte(), name_node.end_byte());
     Some((name, kind, range))
+}
+
+/// A declaration's signature — the text a dependent module resolves against.
+///
+/// For a function this is the text up to (excluding) its body block, so a
+/// body-only edit leaves the signature unchanged and dependents are not
+/// re-diagnosed; for every other declaration the whole node is its surface (a
+/// struct's fields, an enum's variants, a const's type and value, an alias's
+/// target). Whitespace is collapsed so a pure reformat does not register as a
+/// surface change.
+fn decl_signature(decl: &tree_sitter::Node, source: &str) -> String {
+    let end = decl
+        .child_by_field_name("body")
+        .map_or(decl.end_byte(), |body| body.start_byte());
+    source
+        .get(decl.start_byte()..end)
+        .unwrap_or_default()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// The `::`-separated identifier segments of a `use_declaration`'s path.
@@ -618,6 +646,28 @@ mod tests {
         assert!(
             !change.changed,
             "a body-only edit must not flag a surface change"
+        );
+    }
+
+    #[test]
+    fn a_signature_edit_changes_the_surface() {
+        let root = Path::new("/proj");
+        let mut idx = WorkspaceIndex::new(root);
+        idx.set_document(
+            uri(root, "a.neoc"),
+            1,
+            "pub fn add(a: number) -> number { 0 }\n".to_string(),
+        );
+        // Same name, kind, and body — only the parameter type changes. A
+        // dependent's `add(1)` may now be ill-typed, so the surface must move.
+        let change = idx.set_document(
+            uri(root, "a.neoc"),
+            2,
+            "pub fn add(a: string) -> number { 0 }\n".to_string(),
+        );
+        assert!(
+            change.changed,
+            "a parameter-type edit changes the exported surface"
         );
     }
 
