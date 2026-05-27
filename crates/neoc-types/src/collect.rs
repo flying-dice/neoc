@@ -5,6 +5,8 @@
 //! lowers AST `Type` nodes into checker [`Ty`] values, resolving names against
 //! the in-scope type parameters and the predeclared primitives.
 
+use std::collections::HashMap;
+
 use neoc_ast as ast;
 
 use crate::env::{
@@ -37,6 +39,12 @@ fn lower_path(path: &ast::TypePath, params: &[String]) -> Ty {
     let Some(last) = path.segments.last() else {
         return Ty::Unknown;
     };
+    // `Self::Item` — an associated-type projection — lowers to a `Self::Item`
+    // sentinel the checker resolves against an impl's binding (`STATIC.md`
+    // §3.4). Leading `Self` is significant here, unlike a module qualifier.
+    if path.segments.len() == 2 && path.segments[0].name == "Self" {
+        return Ty::named(format!("Self::{}", last.name));
+    }
     // Only the final segment names the type; leading segments are module
     // qualifiers, which a single-module checker treats as transparent.
     let name = &last.name;
@@ -57,6 +65,37 @@ fn lower_path(path: &ast::TypePath, params: &[String]) -> Ty {
 
 fn generic_names(generics: &[ast::GenericParam]) -> Vec<String> {
     generics.iter().map(|g| g.name.clone()).collect()
+}
+
+/// The trait-name bounds declared inline on a set of generic parameters
+/// (`<T: Display, U: Clone>`). The bound's trait name is the last segment of
+/// its path. Shared by function signatures and generic type declarations.
+pub(crate) fn generic_param_bounds(generics: &[ast::GenericParam]) -> HashMap<String, Vec<String>> {
+    let trait_name = |p: &ast::TypePath| p.segments.last().map(|s| s.name.clone());
+    let mut out: HashMap<String, Vec<String>> = HashMap::new();
+    for g in generics {
+        let names: Vec<String> = g.bounds.iter().filter_map(trait_name).collect();
+        if !names.is_empty() {
+            out.entry(g.name.clone()).or_default().extend(names);
+        }
+    }
+    out
+}
+
+/// The trait-name bounds of each type parameter of a signature, gathered from
+/// both the inline form (`<T: Display>`) and the `where` clause
+/// (`where T: Display`). Drives method resolution on a bounded parameter and
+/// call-site bound enforcement (`STATIC.md` §3.4, §3.5).
+pub(crate) fn param_bounds(sig: &ast::FnSig) -> HashMap<String, Vec<String>> {
+    let trait_name = |p: &ast::TypePath| p.segments.last().map(|s| s.name.clone());
+    let mut out = generic_param_bounds(&sig.generics);
+    for w in &sig.where_clause {
+        let names: Vec<String> = w.bounds.iter().filter_map(trait_name).collect();
+        if !names.is_empty() {
+            out.entry(w.ty.clone()).or_default().extend(names);
+        }
+    }
+    out
 }
 
 /// The function type of a signature, plus whether it has a `self` receiver.
@@ -161,6 +200,13 @@ fn collect_derives(table: &mut SymbolTable, item: &ast::Item) {
         let Some((method, info)) = derived_method(&derive, &self_ty) else {
             continue;
         };
+        // A recognised derive is an implicit trait impl — the derive name is
+        // the trait name, so a `<T: Clone>` bound is satisfied by `#[derive(Clone)]`.
+        table
+            .trait_impls
+            .entry(name.clone())
+            .or_default()
+            .insert(derive.clone());
         let key = (name.clone(), method.to_string());
         if table.methods.contains_key(&key) {
             continue;
@@ -293,6 +339,10 @@ fn collect_item(table: &mut SymbolTable, item: &ast::Item) {
             table
                 .values
                 .insert(f.sig.name.clone(), Ty::Fn(params, Box::new(ret)));
+            let bounds = param_bounds(&f.sig);
+            if !bounds.is_empty() {
+                table.fn_bounds.insert(f.sig.name.clone(), bounds);
+            }
         }
         ast::ItemKind::Const(c) => {
             table.values.insert(c.name.clone(), lower_type(&c.ty, &[]));
@@ -316,6 +366,12 @@ fn collect_item(table: &mut SymbolTable, item: &ast::Item) {
 
 fn collect_struct(table: &mut SymbolTable, s: &ast::StructDecl) {
     let generics = generic_names(&s.generics);
+    // The struct's parameter bounds are enforced at construction — keyed by the
+    // type name, read by the named-literal path and the tuple constructor call.
+    let bounds = generic_param_bounds(&s.generics);
+    if !bounds.is_empty() {
+        table.fn_bounds.insert(s.name.clone(), bounds);
+    }
     let fields = match &s.body {
         ast::StructBody::Unit => {
             // Unit struct value constructor: the type itself.
@@ -332,6 +388,12 @@ fn collect_struct(table: &mut SymbolTable, s: &ast::StructDecl) {
             StructFields::Tuple(inner)
         }
         ast::StructBody::Named(fs) => {
+            for f in fs {
+                table.member_defs.insert(
+                    (s.name.clone(), f.name.clone()),
+                    (f.name_span.start, f.name_span.end),
+                );
+            }
             let named = fs
                 .iter()
                 .map(|f| (f.name.clone(), lower_type(&f.ty, &generics)))
@@ -347,6 +409,9 @@ fn collect_struct(table: &mut SymbolTable, s: &ast::StructDecl) {
 
 fn collect_enum(table: &mut SymbolTable, e: &ast::EnumDecl) {
     let generics = generic_names(&e.generics);
+    // The enum's parameter bounds are enforced at each tuple-variant
+    // construction, so they are keyed by the variant's constructor name.
+    let bounds = generic_param_bounds(&e.generics);
     let mut variants = Vec::new();
     for v in &e.variants {
         let fields = match &v.body {
@@ -362,6 +427,9 @@ fn collect_enum(table: &mut SymbolTable, e: &ast::EnumDecl) {
                 table
                     .values
                     .insert(v.name.clone(), Ty::Fn(lowered.clone(), Box::new(ret)));
+                if !bounds.is_empty() {
+                    table.fn_bounds.insert(v.name.clone(), bounds.clone());
+                }
                 VariantFields::Tuple(lowered)
             }
             ast::VariantBody::Named(fs) => {
@@ -397,6 +465,10 @@ fn collect_trait(table: &mut SymbolTable, t: &ast::TraitDecl) {
         .iter()
         .map(|item| {
             let (params, ret, has_receiver) = fn_type(&item.sig, &generics);
+            table.member_defs.insert(
+                (t.name.clone(), item.sig.name.clone()),
+                (item.sig.name_span.start, item.sig.name_span.end),
+            );
             TraitMethod {
                 name: item.sig.name.clone(),
                 params,
@@ -406,9 +478,19 @@ fn collect_trait(table: &mut SymbolTable, t: &ast::TraitDecl) {
             }
         })
         .collect();
+    let supertraits = t
+        .supertraits
+        .iter()
+        .filter_map(|p| p.segments.last().map(|s| s.name.clone()))
+        .collect();
     table.types.insert(
         t.name.clone(),
-        TypeDef::Trait(TraitInfo { generics, methods }),
+        TypeDef::Trait(TraitInfo {
+            generics,
+            methods,
+            supertraits,
+            assoc_types: t.assoc_types.clone(),
+        }),
     );
 }
 
@@ -417,16 +499,90 @@ fn collect_impl(table: &mut SymbolTable, b: &ast::ImplBlock) {
     let Some(type_name) = impl_target_name(&b.ty) else {
         return;
     };
-    for f in &b.items {
-        let (params, ret, has_receiver) = fn_type(&f.sig, &impl_generics);
-        // Substitute `Self` with the target type in params/ret.
+    // The impl's associated-type bindings, so a method signature mentioning
+    // `Self::Item` is stored already resolved to the bound type — call sites
+    // see the concrete type, not the projection sentinel. Shared by both paths.
+    let assoc: HashMap<String, Ty> = b
+        .assoc_bindings
+        .iter()
+        .map(|(name, ty)| (name.clone(), lower_type(ty, &impl_generics)))
+        .collect();
+    // A blanket impl `impl<T: Show> Describe for T` targets one of the impl's
+    // own generics. It records no concrete `(type, trait)` pair, but a
+    // `BlanketImpl` whose conditions are the parameter's bounds (queried on
+    // demand). Its methods are still recorded — keyed on the parameter, with
+    // `Self` read as that parameter — so trait/impl signature conformance has an
+    // entry to check; its bindings are carried so a satisfying type's call site
+    // can project `Self::Item`.
+    if impl_generics.contains(&type_name) {
+        if let Some(trait_name) = b.trait_.as_ref().and_then(|p| p.segments.last()) {
+            let conditions = generic_param_bounds(&b.generics)
+                .remove(&type_name)
+                .unwrap_or_default();
+            record_impl_methods(
+                table,
+                &type_name,
+                &Ty::Param(type_name.clone()),
+                &b.items,
+                &impl_generics,
+                &assoc,
+            );
+            table.blanket_impls.push(crate::env::BlanketImpl {
+                param: type_name.clone(),
+                conditions,
+                trait_name: trait_name.name.clone(),
+                assoc_bindings: assoc,
+            });
+        }
+        return;
+    }
+    // A trait impl records that `type_name` implements the trait, so call-site
+    // bound checks can see the satisfaction.
+    if let Some(trait_name) = b.trait_.as_ref().and_then(|p| p.segments.last()) {
+        table
+            .trait_impls
+            .entry(type_name.clone())
+            .or_default()
+            .insert(trait_name.name.clone());
+    }
+    record_impl_methods(
+        table,
+        &type_name,
+        &Ty::named(&type_name),
+        &b.items,
+        &impl_generics,
+        &assoc,
+    );
+}
+
+/// Records each impl method in `items` into `table.methods` (and its name span
+/// into `member_defs`), keyed on `type_name` — the concrete target for a normal
+/// impl, the target parameter for a blanket impl. `self_ty` is what `Self`
+/// substitutes to (the named type, or the parameter for a blanket); `assoc`
+/// projects any `Self::Item` to its bound type. Both impl paths share this so
+/// the lowering rule lives in exactly one place.
+fn record_impl_methods(
+    table: &mut SymbolTable,
+    type_name: &str,
+    self_ty: &Ty,
+    items: &[ast::FnDecl],
+    impl_generics: &[String],
+    assoc: &HashMap<String, Ty>,
+) {
+    for f in items {
+        let (params, ret, has_receiver) = fn_type(&f.sig, impl_generics);
+        // Substitute `Self` with the target, then project `Self::Item`.
         let params = params
             .into_iter()
-            .map(|p| subst_self(p, &type_name))
+            .map(|p| project_assoc(p.subst_self(self_ty), assoc))
             .collect();
-        let ret = subst_self(ret, &type_name);
+        let ret = project_assoc(ret.subst_self(self_ty), assoc);
+        table.member_defs.insert(
+            (type_name.to_string(), f.sig.name.clone()),
+            (f.sig.name_span.start, f.sig.name_span.end),
+        );
         table.methods.insert(
-            (type_name.clone(), f.sig.name.clone()),
+            (type_name.to_string(), f.sig.name.clone()),
             MethodInfo {
                 params,
                 ret,
@@ -444,20 +600,20 @@ fn impl_target_name(ty: &ast::Type) -> Option<String> {
     }
 }
 
-fn subst_self(ty: Ty, target: &str) -> Ty {
-    match ty {
-        Ty::Named { name, args } if name == "Self" && args.is_empty() => Ty::named(target),
-        Ty::Named { name, args } => Ty::Named {
-            name,
-            args: args.into_iter().map(|a| subst_self(a, target)).collect(),
-        },
-        Ty::List(inner) => Ty::List(Box::new(subst_self(*inner, target))),
-        Ty::Fn(params, ret) => Ty::Fn(
-            params.into_iter().map(|p| subst_self(p, target)).collect(),
-            Box::new(subst_self(*ret, target)),
-        ),
-        other => other,
+/// Resolves any `Self::Item` projection sentinel in `ty` to its binding from
+/// `bindings` (associated-type name → bound type), recursing through lists,
+/// function types, and nominal type arguments. A no-op when `bindings` is empty
+/// or the name is unbound (left as-is, where it surfaces as a mismatch).
+pub(crate) fn project_assoc(ty: Ty, bindings: &HashMap<String, Ty>) -> Ty {
+    if bindings.is_empty() {
+        return ty;
     }
+    ty.map(&|t| match t {
+        Ty::Named { name, .. } => name
+            .strip_prefix("Self::")
+            .and_then(|assoc| bindings.get(assoc).cloned()),
+        _ => None,
+    })
 }
 
 fn collect_ext(table: &mut SymbolTable, ext: &ast::ExtItem) {

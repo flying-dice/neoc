@@ -1,0 +1,8 @@
+// STATIC.md §3.4: the supertrait relation must be acyclic.
+trait A: B {
+  fn a(self) -> string;
+}
+
+trait B: A {
+  fn b(self) -> string;
+}

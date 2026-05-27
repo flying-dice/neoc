@@ -295,7 +295,7 @@ fn non_fn_cross_module_export_loads_as_esm() {
         "main must NOT import the data-only struct `Point`:\n{main_js}"
     );
     assert!(
-        main_js.contains("_struct: \"Point\""),
+        main_js.contains("__struct: \"Point\""),
         "the `Point` construction should inline to a tagged object:\n{main_js}"
     );
 
@@ -406,7 +406,7 @@ fn binding_and_type_only_name_collision_loads_as_esm() {
     // Its construction inlines to a tagged object — the erased name never appears
     // as an import binding.
     assert!(
-        main_js.contains("_struct: \"PalHue\"") || main_js.contains("_struct: \"Hue\""),
+        main_js.contains("__struct: \"PalHue\"") || main_js.contains("__struct: \"Hue\""),
         "the `PalHue` construction should inline to a tagged object:\n{main_js}"
     );
 
@@ -448,4 +448,277 @@ fn binding_and_type_only_name_collision_loads_as_esm() {
         "7",
         "main should print CfgHue = 7"
     );
+}
+
+#[test]
+fn cross_module_enum_match_and_construction_lower_correctly() {
+    // An enum imported via `use` must lower the same as a local one: `match`
+    // tests the variant tag, and construction builds the tagged table. The
+    // emitter learns the imported enum's variants through the module graph.
+    let dir = tempdir();
+    write(
+        &dir,
+        "palette.neoc",
+        "pub enum Color {\n  Red,\n  Green,\n}\n",
+    );
+    let entry = write(
+        &dir,
+        "main.neoc",
+        "use palette::Color;\n\nfn name(c: Color) -> string {\n  match c {\n    Color::Red => \"red\",\n    Color::Green => \"green\",\n  }\n}\n\nfn main() -> string {\n  let c = Color::Green;\n  name(c)\n}\n",
+    );
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
+    assert!(
+        project.ok(),
+        "expected a clean project, got: {:#?}",
+        project.diagnostics
+    );
+
+    let main_lua = project
+        .files
+        .iter()
+        .find(|(p, _)| p.file_stem().is_some_and(|s| s == "main"))
+        .map(|(_, src)| src.as_str())
+        .expect("main output present");
+
+    assert!(
+        main_lua.contains("tag == \"Red\"") && main_lua.contains("tag == \"Green\""),
+        "match on an imported enum should test the variant tag:\n{main_lua}"
+    );
+    assert!(
+        main_lua.contains("__tag = \"Green\""),
+        "constructing an imported variant should build the tagged table:\n{main_lua}"
+    );
+}
+
+#[test]
+fn cross_module_associated_fn_call_keeps_the_type_qualifier() {
+    // `Counter::zero()` on a `use`d type must emit `Counter.zero()`, reading the
+    // imported type's table. Dropping to a bare `zero()` would reference an
+    // unbound global. The `use` binding marks `Counter` as a qualified carrier.
+    let dir = tempdir();
+    write(
+        &dir,
+        "counter.neoc",
+        "pub struct Counter {\n  n: number,\n}\n\nimpl Counter {\n  fn zero() -> Counter {\n    Counter { n: 0 }\n  }\n}\n",
+    );
+    let entry = write(
+        &dir,
+        "main.neoc",
+        "use counter::Counter;\n\nfn main() -> Counter {\n  Counter::zero()\n}\n",
+    );
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
+    assert!(
+        project.ok(),
+        "expected a clean project, got: {:#?}",
+        project.diagnostics
+    );
+
+    let main_lua = project
+        .files
+        .iter()
+        .find(|(p, _)| p.file_stem().is_some_and(|s| s == "main"))
+        .map(|(_, src)| src.as_str())
+        .expect("main output present");
+
+    assert!(
+        main_lua.contains("Counter.zero()"),
+        "an imported associated call should keep the `Counter.` qualifier:\n{main_lua}"
+    );
+    assert!(
+        !main_lua.lines().any(|l| l.trim() == "return zero()"),
+        "a bare `zero()` would reference an unbound global:\n{main_lua}"
+    );
+}
+
+#[test]
+fn cross_module_string_plus_lowers_to_concatenation() {
+    // `+` is overloaded: `string + string` is concatenation (`..`), `number +
+    // number` is arithmetic (`+`). The choice is type-directed, so when an
+    // operand's type resolves through a `use` import the elaborator must see the
+    // imported signature — otherwise it cannot tell the `+` is on strings and
+    // leaves arithmetic `+`, which is wrong Lua for a concatenation.
+    let dir = tempdir();
+    write(
+        &dir,
+        "greet.neoc",
+        "pub fn hello() -> string {\n  \"hello\"\n}\n",
+    );
+    let entry = write(
+        &dir,
+        "main.neoc",
+        "use greet::hello;\n\nfn main() -> string {\n  hello() + \" world\"\n}\n",
+    );
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
+    assert!(
+        project.ok(),
+        "expected a clean project, got: {:#?}",
+        project.diagnostics
+    );
+
+    let main_lua = project
+        .files
+        .iter()
+        .find(|(p, _)| p.file_stem().is_some_and(|s| s == "main"))
+        .map(|(_, src)| src.as_str())
+        .expect("main output present");
+
+    assert!(
+        main_lua.contains(".."),
+        "a string `+` across modules should lower to Lua `..`:\n{main_lua}"
+    );
+    assert!(
+        !main_lua.contains("hello() +"),
+        "the `+` must not stay arithmetic for a string concatenation:\n{main_lua}"
+    );
+}
+
+#[test]
+fn field_access_on_a_transitively_imported_type_resolves() {
+    // `main` imports only `factory::make`; `make` returns `Config`, declared in
+    // a third module `types` that `main` never names in a `use`. Accessing
+    // `c.level` needs `Config`'s shape, which the driver pulls in transitively
+    // from the imported signature — without it the checker rejects the field.
+    let dir = tempdir();
+    write(
+        &dir,
+        "types.neoc",
+        "pub struct Config {\n  level: number,\n}\n",
+    );
+    write(
+        &dir,
+        "factory.neoc",
+        "use types::Config;\n\npub fn make() -> Config {\n  Config { level: 1 }\n}\n",
+    );
+    let entry = write(
+        &dir,
+        "main.neoc",
+        "use factory::make;\n\nfn main() -> number {\n  let c = make();\n  c.level\n}\n",
+    );
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
+    assert!(
+        project.ok(),
+        "field access on a transitively-imported type should resolve, got: {:#?}",
+        project.diagnostics
+    );
+
+    let main_lua = project
+        .files
+        .iter()
+        .find(|(p, _)| p.file_stem().is_some_and(|s| s == "main"))
+        .map(|(_, src)| src.as_str())
+        .expect("main output present");
+    assert!(
+        main_lua.contains("c.level"),
+        "the field access should lower to a Lua field read:\n{main_lua}"
+    );
+}
+
+#[test]
+fn an_unrelated_pub_type_is_not_silently_in_scope() {
+    // The transitive pull is scoped to types an import's signature reaches. A
+    // `pub` type in a module nothing imports must not leak into another module's
+    // scope: naming it without a `use` is still a resolution error.
+    let dir = tempdir();
+    write(
+        &dir,
+        "secret.neoc",
+        "pub struct Hidden {\n  v: number,\n}\n",
+    );
+    write(&dir, "util.neoc", "pub fn noop() -> number {\n  0\n}\n");
+    let entry = write(
+        &dir,
+        "main.neoc",
+        "use util::noop;\n\nfn main() -> number {\n  let h = Hidden { v: 1 };\n  noop()\n}\n",
+    );
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
+    assert!(
+        !project.ok(),
+        "constructing an unimported `Hidden` should not type-check:\n{:#?}",
+        project.diagnostics
+    );
+}
+
+// ---- in-memory project diagnostics (check_module_in_project, the LSP path) --
+
+mod project_check {
+    use neoc_compiler::check_module_in_project;
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    fn project(files: &[(&str, &str)]) -> (PathBuf, HashMap<PathBuf, String>) {
+        let root = PathBuf::from("/proj");
+        let sources = files
+            .iter()
+            .map(|(name, src)| (root.join(name), (*src).to_string()))
+            .collect();
+        (root, sources)
+    }
+
+    fn messages(d: &[neoc_compiler::Diagnostic]) -> Vec<String> {
+        d.iter().map(|x| x.message.clone()).collect()
+    }
+
+    #[test]
+    fn a_non_entry_importer_resolves_its_imports() {
+        // The confirmed bug: a module that `use`s a sibling must not report a
+        // phantom `unresolved module` when checked in the project.
+        let (root, sources) = project(&[
+            (
+                "util.neoc",
+                "pub fn add(a: number, b: number) -> number { a + b }\n",
+            ),
+            (
+                "main.neoc",
+                "use util::add;\nfn go() -> number { add(1, 2) }\n",
+            ),
+        ]);
+        let diags = check_module_in_project(&root, &sources, &root.join("main.neoc"));
+        assert!(
+            diags.is_empty(),
+            "imported `add` resolves: {:?}",
+            messages(&diags)
+        );
+    }
+
+    #[test]
+    fn a_real_type_error_in_the_focus_is_reported() {
+        let (root, sources) = project(&[
+            (
+                "util.neoc",
+                "pub fn add(a: number, b: number) -> number { a + b }\n",
+            ),
+            (
+                "main.neoc",
+                "use util::add;\nfn go() -> string { add(1, 2) }\n",
+            ),
+        ]);
+        let diags = check_module_in_project(&root, &sources, &root.join("main.neoc"));
+        assert!(
+            messages(&diags)
+                .iter()
+                .any(|m| m.contains("expects `string`")),
+            "the return mismatch surfaces: {:?}",
+            messages(&diags)
+        );
+    }
+
+    #[test]
+    fn a_missing_imported_module_is_reported() {
+        let (root, sources) = project(&[("main.neoc", "use gone::x;\nfn go() -> number { 1 }\n")]);
+        let diags = check_module_in_project(&root, &sources, &root.join("main.neoc"));
+        assert!(
+            messages(&diags)
+                .iter()
+                .any(|m| m.contains("unresolved module")),
+            "a genuinely missing module is a real error: {:?}",
+            messages(&diags)
+        );
+    }
+
+    #[test]
+    fn a_focus_absent_from_sources_yields_nothing() {
+        let (root, sources) = project(&[("a.neoc", "fn a() -> number { 1 }\n")]);
+        let diags = check_module_in_project(&root, &sources, &root.join("missing.neoc"));
+        assert!(diags.is_empty(), "{:?}", messages(&diags));
+    }
 }

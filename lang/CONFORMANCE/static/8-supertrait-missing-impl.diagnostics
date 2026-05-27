@@ -1,0 +1,1 @@
+`P` implements `Greet` but not its supertrait `Show`; add `impl Show for P`

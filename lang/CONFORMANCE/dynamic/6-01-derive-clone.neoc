@@ -1,5 +1,5 @@
 // DYNAMIC.md §6.1: `#[derive(Clone)]` emits `Counter.clone(self)` returning a
-// shallow copy carrying the same `_struct` tag. The clone reads back the same
+// shallow copy carrying the same `__struct` tag. The clone reads back the same
 // field value as the original.
 ext fn println(n: number);
 

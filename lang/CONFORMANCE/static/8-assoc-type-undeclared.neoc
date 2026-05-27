@@ -1,0 +1,13 @@
+// STATIC.md §3.4: a binding must name an associated type the trait declares.
+trait Marker {
+  fn m(self) -> number;
+}
+
+struct P;
+
+impl Marker for P {
+  type Bogus = number;
+  fn m(self) -> number {
+    1
+  }
+}

@@ -1,7 +1,7 @@
 local Point = {}
 Point.__index = Point
 function Point.new(fields)
-  fields._struct = "Point"
+  fields.__struct = "Point"
   return setmetatable(fields, Point)
 end
 local function main()

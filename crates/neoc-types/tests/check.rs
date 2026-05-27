@@ -244,8 +244,119 @@ fn non_exhaustive_result_match() {
     let d = diags("fn f(r: Result<number, string>) -> number { match r { Ok(v) => v } }");
     assert!(
         d.iter()
-            .any(|m| m == "this match on `Result` is not exhaustive; missing variant(s): Err"),
+            .any(|m| m == "this match on `Result` is not exhaustive; missing variant(s): Err(_)"),
         "{d:?}"
+    );
+}
+
+#[test]
+fn non_exhaustive_nested_variant_payload() {
+    // A variant's payload must itself be covered: `Some` and `None` are both
+    // named, but `Some(false)` is uncovered (STATIC.md §7).
+    let d = diags(
+        "enum Opt { Some(bool), None } \
+         fn f(o: Opt) -> number { match o { Opt::Some(true) => 1, Opt::None => 0 } }",
+    );
+    assert!(
+        d.iter()
+            .any(|m| m == "this match on `Opt` is not exhaustive; missing variant(s): Some(false)"),
+        "{d:?}"
+    );
+}
+
+#[test]
+fn clean_exhaustive_nested_variant_payload() {
+    assert_clean(
+        "enum Opt { Some(bool), None } \
+         fn f(o: Opt) -> number { match o { Opt::Some(true) => 1, Opt::Some(false) => 2, Opt::None => 0 } }",
+    );
+}
+
+#[test]
+fn guarded_arm_does_not_cover() {
+    // A guarded arm cannot guarantee coverage, so it leaves the value missing.
+    let d = diags(
+        "enum Color { Red, Green, Blue } \
+         fn f(c: Color, b: bool) -> number { match c { Red if b => 0, Green => 1, Blue => 2 } }",
+    );
+    assert!(
+        d.iter()
+            .any(|m| m == "this match on `Color` is not exhaustive; missing variant(s): Red"),
+        "{d:?}"
+    );
+}
+
+#[test]
+fn non_exhaustive_nested_variant_payload_reports_deep_witness() {
+    // Exhaustiveness recurses through nested constructors; the witness names the
+    // uncovered value at depth (STATIC.md §7).
+    let d = diags(
+        "enum Opt { Some(bool), None } \
+         enum Wrap { W(Opt) } \
+         fn f(x: Wrap) -> number { match x { Wrap::W(Opt::Some(true)) => 1, Wrap::W(Opt::None) => 0 } }",
+    );
+    assert!(
+        d.iter()
+            .any(|m| m
+                == "this match on `Wrap` is not exhaustive; missing variant(s): W(Some(false))"),
+        "{d:?}"
+    );
+}
+
+#[test]
+fn non_exhaustive_tuple_variant_combination() {
+    // A multi-field variant is covered only when every field combination is.
+    let d = diags(
+        "enum E { P(bool, bool) } \
+         fn f(x: E) -> number { match x { E::P(true, true) => 1, E::P(true, false) => 2, E::P(false, true) => 3 } }",
+    );
+    assert!(
+        d.iter().any(
+            |m| m == "this match on `E` is not exhaustive; missing variant(s): P(false, false)"
+        ),
+        "{d:?}"
+    );
+}
+
+#[test]
+fn clean_tuple_variant_all_combinations() {
+    assert_clean(
+        "enum E { P(bool, bool) } \
+         fn f(x: E) -> number { match x { E::P(true, true) => 1, E::P(true, false) => 2, E::P(false, true) => 3, E::P(false, false) => 4 } }",
+    );
+}
+
+#[test]
+fn or_pattern_and_or_payload_cover_a_variant() {
+    // Separate arms covering each payload, and an or-pattern inside the payload,
+    // both fully cover `Some`.
+    assert_clean(
+        "enum Opt { Some(bool), None } \
+         fn f(o: Opt) -> number { match o { Opt::Some(true) | Opt::Some(false) => 1, Opt::None => 0 } }",
+    );
+    assert_clean(
+        "enum Opt { Some(bool), None } \
+         fn f(o: Opt) -> number { match o { Opt::Some(true | false) => 1, Opt::None => 0 } }",
+    );
+}
+
+#[test]
+fn open_payload_partial_cover_shows_the_slot() {
+    // `N(0)` is matched but `number` is unbounded, so the variant is not fully
+    // covered; the witness shows the open slot rather than the bare name.
+    let d = diags(
+        "enum E { N(number) } \
+         fn f(x: E) -> number { match x { E::N(0) => 1 } }",
+    );
+    assert!(
+        d.iter()
+            .any(|m| m == "this match on `E` is not exhaustive; missing variant(s): N(_)"),
+        "{d:?}"
+    );
+    // A binding on the payload closes it.
+    assert_clean(
+        "enum E { N(number) } \
+         fn f(x: E) -> number { match x { E::N(0) => 1, E::N(n) => n } }",
     );
 }
 
@@ -379,6 +490,76 @@ fn trait_default_method_may_be_omitted() {
         "trait Greet { fn hi(self) -> string { \"hi\" } fn bye(self) -> string; } \
          struct P; \
          impl Greet for P { fn bye(self) -> string { \"bye\" } }",
+    );
+}
+
+#[test]
+fn trait_impl_parameter_type_must_match() {
+    let d = diags(
+        "trait Show { fn show(self, n: number) -> string; } \
+         struct P; \
+         impl Show for P { fn show(self, n: string) -> string { \"x\" } }",
+    );
+    assert!(
+        d.iter().any(|m| m
+            == "method `show` does not match trait `Show`: expected `fn(number) -> string`, found `fn(string) -> string`"),
+        "{d:?}"
+    );
+}
+
+#[test]
+fn trait_impl_return_type_must_match() {
+    let d = diags(
+        "trait Area { fn area(self) -> number; } \
+         struct Sq; \
+         impl Area for Sq { fn area(self) -> string { \"big\" } }",
+    );
+    assert!(
+        d.iter().any(|m| m
+            == "method `area` does not match trait `Area`: expected `fn() -> number`, found `fn() -> string`"),
+        "{d:?}"
+    );
+}
+
+#[test]
+fn trait_mismatch_labels_the_trait_declaration() {
+    // A conformance mismatch anchors on the impl method and carries a related
+    // label pointing at the trait's declaration (STATIC.md §8).
+    let src = "trait Area { fn area(self) -> number; } \
+               struct Sq; \
+               impl Area for Sq { fn area(self) -> string { \"big\" } }";
+    let parsed = neoc_parser::parse(src);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    let diags = check(&parsed.module).diagnostics;
+    let mismatch = diags
+        .iter()
+        .find(|d| d.message.contains("does not match trait `Area`"))
+        .expect("expected a conformance mismatch");
+    assert_eq!(mismatch.labels.len(), 1, "{:?}", mismatch.labels);
+    assert!(
+        mismatch.labels[0]
+            .message
+            .contains("declared here in trait `Area`"),
+        "{:?}",
+        mismatch.labels
+    );
+    // The label points at the trait's `area`, which precedes the impl's.
+    assert!(
+        mismatch.labels[0].start < mismatch.start,
+        "label {:?} should precede the impl method at {}",
+        mismatch.labels[0],
+        mismatch.start
+    );
+}
+
+#[test]
+fn trait_impl_self_returning_method_matches() {
+    // `-> Self` in the trait reads as the target type in the impl: a faithful
+    // `-> P` impl conforms.
+    assert_clean(
+        "trait Dup { fn dup(self) -> Self; } \
+         struct P; \
+         impl Dup for P { fn dup(self) -> P { P } }",
     );
 }
 

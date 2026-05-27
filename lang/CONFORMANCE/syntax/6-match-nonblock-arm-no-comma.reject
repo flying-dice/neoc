@@ -1,0 +1,12 @@
+// SYNTAX.md §6.3: a non-block arm without its separating comma is rejected. The
+// value would otherwise run across the arm boundary — `g(0)` then `(1)` reads as
+// one call `g(0)(1)` — silently collapsing arms. Block arms self-delimit and so
+// keep the comma optional; this is the non-block case that must not.
+fn g(n: number) -> number { n }
+fn f(x: number) -> number {
+    match x {
+        0 => g(0)
+        1 => 2
+        _ => 3
+    }
+}

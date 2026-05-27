@@ -7,9 +7,9 @@
 //! required.
 //!
 //! The emitted JavaScript follows the runtime conventions in `lang/DYNAMIC.md`
-//! §6–§7, adapted to JS objects: a struct value is `{ _struct: "Name",
-//! <fields> }` (newtype payload under `_0`); an enum value is `{ _enum: "Name",
-//! tag: "Variant", <payload> }` (tuple payload under `_0`, `_1`, …, struct
+//! §6–§7, adapted to JS objects: a struct value is `{ __struct: "Name",
+//! <fields> }` (newtype payload under `_0`); an enum value is `{ __enum: "Name",
+//! __tag: "Variant", <payload> }` (tuple payload under `_0`, `_1`, …, struct
 //! payload by field name); methods are functions on `__m[Name]` taking the
 //! receiver first.
 
@@ -107,20 +107,23 @@ impl Emitter {
     }
 
     fn clone_struct_body(&mut self, name: &str, body: &ast::StructBody) {
-        let mut entries = vec![format!("_struct: \"{name}\"")];
+        let mut entries = vec![format!("__struct: \"{name}\"")];
         entries.extend(struct_keys(body).into_iter().map(|k| k.copy_entry("self")));
         self.line(format!("return {{ {} }};", entries.join(", ")));
     }
 
     fn clone_enum_body(&mut self, name: &str, variants: &[ast::Variant]) {
         for v in variants {
-            let mut entries = vec![format!("_enum: \"{name}\""), format!("tag: \"{}\"", v.name)];
+            let mut entries = vec![
+                format!("__enum: \"{name}\""),
+                format!("__tag: \"{}\"", v.name),
+            ];
             entries.extend(
                 variant_keys(&v.body)
                     .into_iter()
                     .map(|k| k.copy_entry("self")),
             );
-            self.line(format!("if (self.tag === \"{}\") {{", v.name));
+            self.line(format!("if (self.__tag === \"{}\") {{", v.name));
             self.indented(|e| e.line(format!("return {{ {} }};", entries.join(", "))));
             self.line("}");
         }
@@ -139,7 +142,7 @@ impl Emitter {
     }
 
     fn eq_struct_body(&mut self, body: &ast::StructBody) {
-        let mut conds = vec!["a._struct === b._struct".to_string()];
+        let mut conds = vec!["a.__struct === b.__struct".to_string()];
         for k in struct_keys(body) {
             conds.push(format!("{} === {}", k.access("a"), k.access("b")));
         }
@@ -147,7 +150,7 @@ impl Emitter {
     }
 
     fn eq_enum_body(&mut self, variants: &[ast::Variant]) {
-        self.line("if (a._enum !== b._enum || a.tag !== b.tag) {");
+        self.line("if (a.__enum !== b.__enum || a.__tag !== b.__tag) {");
         self.indented(|e| e.line("return false;"));
         self.line("}");
         for v in variants {
@@ -159,7 +162,7 @@ impl Emitter {
                 .iter()
                 .map(|k| format!("{} === {}", k.access("a"), k.access("b")))
                 .collect();
-            self.line(format!("if (a.tag === \"{}\") {{", v.name));
+            self.line(format!("if (a.__tag === \"{}\") {{", v.name));
             self.indented(|e| e.line(format!("return {};", conds.join(" && "))));
             self.line("}");
         }
@@ -183,7 +186,7 @@ impl Emitter {
 
     fn debug_enum_body(&mut self, variants: &[ast::Variant]) {
         for v in variants {
-            self.line(format!("if (self.tag === \"{}\") {{", v.name));
+            self.line(format!("if (self.__tag === \"{}\") {{", v.name));
             let r = debug_render(&v.name, &variant_keys(&v.body), "self");
             self.indented(|e| e.line(format!("return {r};")));
             self.line("}");
@@ -207,7 +210,7 @@ impl Emitter {
 
     fn display_enum_body(&mut self, variants: &[ast::Variant]) {
         for v in variants {
-            self.line(format!("if (self.tag === \"{}\") {{", v.name));
+            self.line(format!("if (self.__tag === \"{}\") {{", v.name));
             let r = display_render(&v.name, &variant_keys(&v.body), "self");
             self.indented(|e| e.line(format!("return {r};")));
             self.line("}");

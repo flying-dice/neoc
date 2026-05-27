@@ -13,6 +13,11 @@ use crate::collect::lower_type;
 use crate::env::{Scopes, StructFields, SymbolTable, TypeDef, VariantFields};
 use crate::ty::Ty;
 
+mod impl_check;
+mod pattern;
+mod solve;
+mod usefulness;
+
 /// The walking type-checker. Holds the collected declarations, the lexical
 /// scope stack, the enclosing function's return type (for `?` and bare
 /// `return`), and the accumulated diagnostics.
@@ -23,7 +28,35 @@ pub struct Checker<'a> {
     pub(crate) ret_ty: Ty,
     /// Type parameters in scope for the current item.
     pub(crate) type_params: Vec<String>,
+    /// Bounds for the in-scope type parameters: `T` → the trait names it is
+    /// bound by (from `<T: Trait>` and `where T: Trait`). Lets a method call on
+    /// a bounded parameter resolve through the bound trait's methods
+    /// (`STATIC.md` §method-resolution).
+    pub(crate) type_bounds: std::collections::HashMap<String, Vec<String>>,
+    /// Associated-type bindings in scope for the current `impl` body: `Item` →
+    /// the type it is bound to. Lets `Self::Item` resolve to the concrete type
+    /// the impl assigned it (`STATIC.md` §3.4). Empty outside a trait impl.
+    pub(crate) assoc_bindings: std::collections::HashMap<String, Ty>,
     diagnostics: Vec<Diagnostic>,
+    /// When set, every inferred expression's type is recorded in `expr_types`.
+    /// Off by default so the compile path pays nothing; tooling turns it on for
+    /// position→type queries.
+    record_types: bool,
+    expr_types: Vec<ExprType>,
+    /// When set, every binding and single-segment identifier use is recorded in
+    /// `resolution`, for scope-aware references/rename/goto. Off by default.
+    record_resolution: bool,
+    resolution: crate::resolve::Resolution,
+}
+
+/// The inferred type of one expression, with the byte range it occupies. The
+/// basis for tooling that maps a cursor position to a type (hover, type inlay
+/// hints).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExprType {
+    pub start: usize,
+    pub end: usize,
+    pub ty: Ty,
 }
 
 impl<'a> Checker<'a> {
@@ -34,7 +67,86 @@ impl<'a> Checker<'a> {
             scopes: Scopes::new(),
             ret_ty: Ty::Unit,
             type_params: Vec::new(),
+            type_bounds: std::collections::HashMap::new(),
+            assoc_bindings: std::collections::HashMap::new(),
             diagnostics: Vec::new(),
+            record_types: false,
+            expr_types: Vec::new(),
+            record_resolution: false,
+            resolution: crate::resolve::Resolution::default(),
+        }
+    }
+
+    /// Records every inferred expression's type and span from here on, for
+    /// tooling position→type queries. The compile path leaves this off.
+    pub fn record_types(&mut self) {
+        self.record_types = true;
+    }
+
+    /// The expression types recorded since [`Self::record_types`] was enabled.
+    #[must_use]
+    pub fn into_expr_types(self) -> Vec<ExprType> {
+        self.expr_types
+    }
+
+    /// Records every binding and single-segment identifier use from here on, for
+    /// scope-aware tooling (references, rename, goto). The compile path leaves
+    /// this off.
+    pub fn record_resolution(&mut self) {
+        self.record_resolution = true;
+    }
+
+    /// The scope resolution recorded since [`Self::record_resolution`] was
+    /// enabled.
+    #[must_use]
+    pub fn into_resolution(self) -> crate::resolve::Resolution {
+        self.resolution
+    }
+
+    /// Binds `name` of type `ty` in the current scope and, when recording,
+    /// notes the binding's def-span and kind. The single funnel every binding
+    /// site goes through, so the resolution map and the type scope never drift.
+    fn bind_local(
+        &mut self,
+        name: impl Into<String>,
+        ty: Ty,
+        def: ast::Span,
+        kind: crate::resolve::BindingKind,
+    ) {
+        let name = name.into();
+        let id = self.scopes.bind(name.clone(), ty);
+        if self.record_resolution {
+            self.resolution.note_binding(crate::resolve::Binding {
+                id,
+                name,
+                def: (def.start, def.end),
+                kind,
+            });
+        }
+    }
+
+    /// Records a `recv.member` access as resolving to `member` on `owner` (a
+    /// type or trait), when recording is on and the member's def-span is known.
+    /// The single funnel for member resolution, called at each point method or
+    /// field resolution settles on an owner.
+    fn record_member(&mut self, use_span: ast::Span, owner: &str, member: &str) {
+        if !self.record_resolution {
+            return;
+        }
+        if let Some(&def) = self
+            .table
+            .member_defs
+            .get(&(owner.to_string(), member.to_string()))
+        {
+            self.resolution.note_member(
+                use_span.start,
+                use_span.end,
+                crate::resolve::MemberRef {
+                    owner: owner.to_string(),
+                    member: member.to_string(),
+                    def,
+                },
+            );
         }
     }
 
@@ -74,6 +186,7 @@ impl<'a> Checker<'a> {
             message: message.into(),
             start: 0,
             end: 0,
+            labels: Vec::new(),
         });
     }
 
@@ -84,23 +197,77 @@ impl<'a> Checker<'a> {
             message: message.into(),
             start: span.start,
             end: span.end,
+            labels: Vec::new(),
+        });
+    }
+
+    /// Records a diagnostic with one or more secondary labels — related source
+    /// locations (each a byte range plus its own message) that explain the
+    /// primary one, such as where a trait method was declared. Surfaced as LSP
+    /// related-information.
+    pub(crate) fn error_labeled(
+        &mut self,
+        span: (usize, usize),
+        message: impl Into<String>,
+        labels: Vec<crate::Label>,
+    ) {
+        self.diagnostics.push(Diagnostic {
+            message: message.into(),
+            start: span.0,
+            end: span.1,
+            labels,
         });
     }
 
     /// Lowers an AST type and expands any transparent `type` aliases through
     /// the symbol table, so an annotation written with an alias compares equal
-    /// to its underlying type (`STATIC.md` §3.3).
+    /// to its underlying type (`STATIC.md` §3.3). Inside a trait impl, a
+    /// `Self::Item` projection resolves to the impl's binding for `Item`.
     pub(crate) fn lower(&self, ty: &ast::Type) -> Ty {
-        self.table
-            .resolve_alias_ty(lower_type(ty, &self.type_params))
+        let lowered = self
+            .table
+            .resolve_alias_ty(lower_type(ty, &self.type_params));
+        self.project_assoc(lowered)
+    }
+
+    /// Resolves any `Self::Item` projection sentinel in `ty` to the impl's
+    /// binding for that associated type, recursing through composites. A no-op
+    /// outside an impl (no bindings) or for an unbound name (left as-is, where
+    /// it surfaces as a mismatch).
+    fn project_assoc(&self, ty: Ty) -> Ty {
+        crate::collect::project_assoc(ty, &self.assoc_bindings)
     }
 
     // ---- item walking ------------------------------------------------------
 
     /// Checks every item in the module.
     pub fn check_module(&mut self, module: &ast::Module) {
+        self.check_coherence();
         for item in &module.items {
             self.check_item(item);
+        }
+    }
+
+    /// Rejects the two blanket-impl overlaps a simple checker can detect: two
+    /// blanket impls of the same trait (unorderable), and a blanket impl of a
+    /// trait that a concrete type also implements directly (`STATIC.md` §3.5).
+    /// neoc has no general coherence solver beyond these.
+    fn check_coherence(&mut self) {
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for bl in &self.table.blanket_impls {
+            if !seen.insert(bl.trait_name.as_str()) {
+                self.error(format!("conflicting blanket impls of `{}`", bl.trait_name));
+            }
+        }
+        for bl in &self.table.blanket_impls {
+            for (ty, traits) in &self.table.trait_impls {
+                if traits.contains(&bl.trait_name) {
+                    self.error(format!(
+                        "`impl {} for {ty}` overlaps the blanket impl of `{}`",
+                        bl.trait_name, bl.trait_name
+                    ));
+                }
+            }
         }
     }
 
@@ -115,6 +282,7 @@ impl<'a> Checker<'a> {
             }
             ast::ItemKind::Impl(b) => self.check_impl(b),
             ast::ItemKind::Trait(t) => {
+                self.check_supertraits(t);
                 for ti in &t.items {
                     if let Some(body) = &ti.default {
                         self.check_fn_body(&ti.sig, body, Some("Self"));
@@ -125,30 +293,71 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// Validates a trait's supertrait list: each named supertrait must be a
+    /// trait, and the supertrait relation must be acyclic (`STATIC.md` §3.4).
+    fn check_supertraits(&mut self, t: &ast::TraitDecl) {
+        for sup in &t.supertraits {
+            let Some(name) = sup.segments.last().map(|s| &s.name) else {
+                continue;
+            };
+            if !self.is_trait(name) {
+                self.error(format!("unknown supertrait `{name}` on trait `{}`", t.name));
+            } else if self.trait_chain_includes(name, &t.name) {
+                self.error(format!(
+                    "supertrait cycle: `{}` and `{name}` are mutually dependent",
+                    t.name
+                ));
+            }
+        }
+    }
+
     fn check_fn(&mut self, f: &ast::FnDecl, self_ty: Option<&str>) {
         self.check_fn_body(&f.sig, &f.body, self_ty);
     }
 
     fn check_fn_body(&mut self, sig: &ast::FnSig, body: &ast::Block, self_ty: Option<&str>) {
-        let prev_params = std::mem::take(&mut self.type_params);
-        self.type_params = sig.generics.iter().map(|g| g.name.clone()).collect();
+        // Extend (not replace) the in-scope parameters/bounds with the
+        // function's own, so an enclosing impl's generics stay visible.
+        let prev_params = self.type_params.clone();
+        let prev_bounds = self.type_bounds.clone();
+        self.type_params
+            .extend(sig.generics.iter().map(|g| g.name.clone()));
+        for (k, v) in crate::collect::param_bounds(sig) {
+            self.type_bounds.entry(k).or_default().extend(v);
+        }
+        // `self`'s type is the target — a type parameter (a blanket impl's
+        // target) or a concrete type. `Self` in the signature is read the same.
+        let self_target: Option<Ty> = self_ty.map(|t| {
+            if self.type_params.iter().any(|p| p == t) {
+                Ty::Param(t.to_string())
+            } else {
+                Ty::named(t)
+            }
+        });
 
         self.scopes.push();
         for p in &sig.params {
             match p {
                 ast::Param::Receiver => {
-                    if let Some(t) = self_ty {
-                        self.scopes.bind("self", Ty::named(t));
+                    if let Some(st) = &self_target {
+                        self.scopes.bind("self", st.clone());
                     }
                 }
-                ast::Param::Named { name, ty } => {
-                    let pty = Self::subst_self(self.lower(ty), self_ty);
-                    self.scopes.bind(name.clone(), pty);
+                ast::Param::Named { name, ty, span } => {
+                    let lowered = self.lower(ty);
+                    let pty = match &self_target {
+                        Some(st) => lowered.subst_self(st),
+                        None => lowered,
+                    };
+                    self.bind_local(name.clone(), pty, *span, crate::resolve::BindingKind::Param);
                 }
             }
         }
-        let ret = sig.ret.as_ref().map_or(Ty::Unit, |r| self.lower(r));
-        let ret = Self::subst_self(ret, self_ty);
+        let lowered_ret = sig.ret.as_ref().map_or(Ty::Unit, |r| self.lower(r));
+        let ret = match &self_target {
+            Some(st) => lowered_ret.subst_self(st),
+            None => lowered_ret,
+        };
         let prev_ret = std::mem::replace(&mut self.ret_ty, ret.clone());
 
         let actual = self.infer_block(body);
@@ -157,75 +366,47 @@ impl<'a> Checker<'a> {
         self.ret_ty = prev_ret;
         self.scopes.pop();
         self.type_params = prev_params;
+        self.type_bounds = prev_bounds;
+    }
+
+    /// Checks a call's argument count and types against an already-projected
+    /// parameter list, pushing a diagnostic per mismatch.
+    fn check_call_args(
+        &mut self,
+        method: &str,
+        params: &[Ty],
+        arg_tys: &[Ty],
+        args: &[ast::Expr],
+        span: ast::Span,
+    ) {
+        if params.len() != arg_tys.len() {
+            self.error_at(
+                span,
+                format!(
+                    "method `{method}` takes {} argument(s) but {} were supplied",
+                    params.len(),
+                    arg_tys.len()
+                ),
+            );
+            return;
+        }
+        for (i, (p, a)) in params.iter().zip(arg_tys).enumerate() {
+            if !self.assignable(p, a) {
+                self.error_at(
+                    args[i].span,
+                    format!(
+                        "argument {} of `{method}` expects `{p}`, found `{a}`",
+                        i + 1
+                    ),
+                );
+            }
+        }
     }
 
     pub(crate) fn subst_self(ty: Ty, self_ty: Option<&str>) -> Ty {
-        let Some(target) = self_ty else { return ty };
-        match ty {
-            Ty::Named { name, args } if name == "Self" && args.is_empty() => Ty::named(target),
-            Ty::Named { name, args } => Ty::Named {
-                name,
-                args: args
-                    .into_iter()
-                    .map(|a| Self::subst_self(a, self_ty))
-                    .collect(),
-            },
-            Ty::List(inner) => Ty::List(Box::new(Self::subst_self(*inner, self_ty))),
-            Ty::Fn(params, r) => Ty::Fn(
-                params
-                    .into_iter()
-                    .map(|p| Self::subst_self(p, self_ty))
-                    .collect(),
-                Box::new(Self::subst_self(*r, self_ty)),
-            ),
-            other => other,
-        }
-    }
-
-    fn check_impl(&mut self, b: &ast::ImplBlock) {
-        let Some(target) = (match &b.ty {
-            ast::Type::Path(p) => p.segments.last().map(|s| s.name.clone()),
-            _ => None,
-        }) else {
-            return;
-        };
-        // Trait-impl completeness (`STATIC.md` §8).
-        if let Some(trait_path) = &b.trait_ {
-            self.check_trait_impl(b, &target, trait_path);
-        }
-        for f in &b.items {
-            self.check_fn(f, Some(&target));
-        }
-    }
-
-    fn check_trait_impl(&mut self, b: &ast::ImplBlock, target: &str, trait_path: &ast::TypePath) {
-        let Some(trait_name) = trait_path.segments.last().map(|s| &s.name) else {
-            return;
-        };
-        let Some(TypeDef::Trait(t)) = self.table.types.get(trait_name) else {
-            self.error(format!(
-                "unknown trait `{trait_name}` in impl for `{target}`"
-            ));
-            return;
-        };
-        let provided: Vec<&String> = b.items.iter().map(|f| &f.sig.name).collect();
-        // Missing required methods.
-        for m in &t.methods {
-            if !m.has_default && !provided.iter().any(|p| **p == m.name) {
-                self.error(format!(
-                    "`impl {trait_name} for {target}` is missing method `{}`",
-                    m.name
-                ));
-            }
-        }
-        // Extraneous methods not declared by the trait.
-        for f in &b.items {
-            if !t.methods.iter().any(|m| m.name == f.sig.name) {
-                self.error(format!(
-                    "method `{}` is not a member of trait `{trait_name}`",
-                    f.sig.name
-                ));
-            }
+        match self_ty {
+            Some(target) => ty.subst_self(&Ty::named(target)),
+            None => ty,
         }
     }
 
@@ -263,7 +444,7 @@ impl<'a> Checker<'a> {
             (None, Some(v)) => v.clone(),
             (None, None) => Ty::Unknown,
         };
-        self.bind_pattern(&l.pattern, &ty);
+        self.bind_pattern(&l.pattern, &ty, crate::resolve::BindingKind::Let);
     }
 
     // ---- expression inference ---------------------------------------------
@@ -271,7 +452,7 @@ impl<'a> Checker<'a> {
     /// Infers the type of an expression, emitting diagnostics on the way.
     pub fn infer(&mut self, expr: &ast::Expr) -> Ty {
         let span = expr.span;
-        match &expr.kind {
+        let ty = match &expr.kind {
             ast::ExprKind::Int(_) | ast::ExprKind::Float(_) => Ty::Number,
             ast::ExprKind::Str(_) => Ty::Str,
             ast::ExprKind::Bool(_) => Ty::Bool,
@@ -283,8 +464,9 @@ impl<'a> Checker<'a> {
             ast::ExprKind::MethodCall {
                 receiver,
                 method,
+                method_span,
                 args,
-            } => self.infer_method_call(receiver, method, args, span),
+            } => self.infer_method_call(receiver, method, *method_span, args, span),
             ast::ExprKind::Field { base, field } => self.infer_field(base, field, span),
             ast::ExprKind::StructLit { path, fields, base } => {
                 self.infer_struct_lit(path, fields, base.as_deref(), span)
@@ -333,7 +515,7 @@ impl<'a> Checker<'a> {
                     }
                 };
                 self.scopes.push();
-                self.bind_pattern(pattern, &elem);
+                self.bind_pattern(pattern, &elem, crate::resolve::BindingKind::ForPattern);
                 let _ = self.infer_block(body);
                 self.scopes.pop();
                 Ty::Unit
@@ -350,7 +532,15 @@ impl<'a> Checker<'a> {
                 Ty::Unknown
             }
             ast::ExprKind::Break | ast::ExprKind::Continue => Ty::Unknown,
+        };
+        if self.record_types {
+            self.expr_types.push(ExprType {
+                start: span.start,
+                end: span.end,
+                ty: ty.clone(),
+            });
         }
+        ty
     }
 
     fn infer_path(&mut self, segs: &[ast::Ident], span: ast::Span) -> Ty {
@@ -360,9 +550,30 @@ impl<'a> Checker<'a> {
         if segs.len() == 1 {
             let name = &segs[0];
             if let Some(t) = self.scopes.lookup(name) {
-                return t.clone();
+                let t = t.clone();
+                // Record the use → the local binding it resolves to. A shadow
+                // wins because `binding_of` reads the innermost frame first.
+                if self.record_resolution {
+                    if let Some(id) = self.scopes.binding_of(name) {
+                        self.resolution.note_use(
+                            span.start,
+                            span.end,
+                            crate::resolve::Resolved::Local(id),
+                        );
+                    }
+                }
+                return t;
             }
             if let Some(t) = self.table.values.get(name) {
+                // Resolves to a top-level item, not a local — record it as such
+                // so a rename of the item skips a shadowing local elsewhere.
+                if self.record_resolution {
+                    self.resolution.note_use(
+                        span.start,
+                        span.end,
+                        crate::resolve::Resolved::Item(name.clone()),
+                    );
+                }
                 return t.clone();
             }
             // A bare uppercase name may be a unit struct or unit variant.
@@ -549,14 +760,16 @@ impl<'a> Checker<'a> {
                     return Self::instantiate_return(&params, &arg_tys, &ret);
                 }
                 for (i, (p, a)) in params.iter().zip(&arg_tys).enumerate() {
-                    if !p.compatible(a) {
+                    if !self.assignable(p, a) {
                         self.error_at(
                             args[i].span,
                             format!("argument {} expects `{p}`, found `{a}`", i + 1),
                         );
                     }
                 }
-                Self::instantiate_return(&params, &arg_tys, &ret)
+                let subst = Self::param_subst(&params, &arg_tys);
+                self.check_call_bounds(callee, &subst, span);
+                Self::apply_subst(&ret, &subst)
             }
             Ty::Unknown => Ty::Unknown,
             other => {
@@ -569,11 +782,62 @@ impl<'a> Checker<'a> {
     /// Substitutes type parameters in a function's return type from the
     /// argument types (rank-1 inference for generic constructors like `Ok`).
     fn instantiate_return(params: &[Ty], args: &[Ty], ret: &Ty) -> Ty {
+        Self::apply_subst(ret, &Self::param_subst(params, args))
+    }
+
+    /// The substitution binding each of a function's type parameters to the
+    /// concrete type the matching argument supplied, inferred by unifying every
+    /// parameter type against its argument.
+    fn param_subst(params: &[Ty], args: &[Ty]) -> std::collections::HashMap<String, Ty> {
         let mut subst = std::collections::HashMap::new();
         for (p, a) in params.iter().zip(args) {
             Self::unify_param(p, a, &mut subst);
         }
-        Self::apply_subst(ret, &subst)
+        subst
+    }
+
+    /// Enforces the callee's declared trait bounds against the concrete types
+    /// its type parameters were instantiated to (`STATIC.md` §3.5). Applies only
+    /// to a direct call of a named function or constructor whose bounds were
+    /// collected; an indirect call through a value carries no bounds to check.
+    fn check_call_bounds(
+        &mut self,
+        callee: &ast::Expr,
+        subst: &std::collections::HashMap<String, Ty>,
+        span: ast::Span,
+    ) {
+        let ast::ExprKind::Path(segs) = &callee.kind else {
+            return;
+        };
+        let Some(name) = segs.last() else { return };
+        self.check_collected_bounds(name, subst, span);
+    }
+
+    /// Enforces the bounds collected under `name` (a function, constructor, or
+    /// generic type) against the substitution that instantiated its parameters,
+    /// pushing one diagnostic per parameter whose concrete type fails a bound.
+    fn check_collected_bounds(
+        &mut self,
+        name: &str,
+        subst: &std::collections::HashMap<String, Ty>,
+        span: ast::Span,
+    ) {
+        let Some(bounds) = self.table.fn_bounds.get(name).cloned() else {
+            return;
+        };
+        for (param, traits) in &bounds {
+            let Some(concrete) = subst.get(param) else {
+                continue;
+            };
+            for tr in traits {
+                if !self.type_satisfies(concrete, tr) {
+                    self.error_at(
+                        span,
+                        format!("the type `{concrete}` does not satisfy the bound `{tr}`"),
+                    );
+                }
+            }
+        }
     }
 
     fn unify_param(param: &Ty, arg: &Ty, subst: &mut std::collections::HashMap<String, Ty>) {
@@ -592,19 +856,10 @@ impl<'a> Checker<'a> {
     }
 
     fn apply_subst(ty: &Ty, subst: &std::collections::HashMap<String, Ty>) -> Ty {
-        match ty {
-            Ty::Param(name) => subst.get(name).cloned().unwrap_or(Ty::Unknown),
-            Ty::List(inner) => Ty::List(Box::new(Self::apply_subst(inner, subst))),
-            Ty::Fn(params, ret) => Ty::Fn(
-                params.iter().map(|p| Self::apply_subst(p, subst)).collect(),
-                Box::new(Self::apply_subst(ret, subst)),
-            ),
-            Ty::Named { name, args } => Ty::Named {
-                name: name.clone(),
-                args: args.iter().map(|a| Self::apply_subst(a, subst)).collect(),
-            },
-            other => other.clone(),
-        }
+        ty.map(&|t| match t {
+            Ty::Param(name) => Some(subst.get(name).cloned().unwrap_or(Ty::Unknown)),
+            _ => None,
+        })
     }
 
     /// Substitute the type parameters in `ty` from `subst`, leaving any
@@ -614,19 +869,10 @@ impl<'a> Checker<'a> {
     /// through its concrete type arguments, where a parameter outside the
     /// nominal type's own generics must survive.
     fn subst_named(ty: &Ty, subst: &std::collections::HashMap<String, Ty>) -> Ty {
-        match ty {
-            Ty::Param(name) => subst.get(name).cloned().unwrap_or_else(|| ty.clone()),
-            Ty::List(inner) => Ty::List(Box::new(Self::subst_named(inner, subst))),
-            Ty::Fn(params, ret) => Ty::Fn(
-                params.iter().map(|p| Self::subst_named(p, subst)).collect(),
-                Box::new(Self::subst_named(ret, subst)),
-            ),
-            Ty::Named { name, args } => Ty::Named {
-                name: name.clone(),
-                args: args.iter().map(|a| Self::subst_named(a, subst)).collect(),
-            },
-            other => other.clone(),
-        }
+        ty.map(&|t| match t {
+            Ty::Param(name) => Some(subst.get(name).cloned().unwrap_or_else(|| t.clone())),
+            _ => None,
+        })
     }
 
     /// The substitution mapping a nominal type's generic parameter names to the
@@ -652,11 +898,25 @@ impl<'a> Checker<'a> {
         &mut self,
         receiver: &ast::Expr,
         method: &str,
+        method_span: ast::Span,
         args: &[ast::Expr],
         span: ast::Span,
     ) -> Ty {
         let recv = self.infer(receiver);
         let arg_tys: Vec<Ty> = args.iter().map(|a| self.infer(a)).collect();
+        // A method on a bounded type parameter resolves through its bounds:
+        // `fn f<T: Display>(x: T) { x.show() }` finds `show` on `Display`.
+        if let Ty::Param(p) = &recv {
+            if let Some((params, ret)) = self.bound_method(p, method) {
+                self.check_call_args(method, &params, &arg_tys, args, span);
+                return ret;
+            }
+            self.error_at(
+                span,
+                format!("type parameter `{p}` has no method `{method}` from its bounds"),
+            );
+            return Ty::Unknown;
+        }
         let Ty::Named { name, .. } = &recv else {
             if recv.is_unknown() {
                 return Ty::Unknown;
@@ -667,37 +927,41 @@ impl<'a> Checker<'a> {
             );
             return Ty::Unknown;
         };
+        // A method on a trait used as a type (the existential) resolves through
+        // the trait's own methods, with `Self` read as the trait type.
+        if self.is_trait(name) {
+            if let Some((params, ret)) = self.trait_method(name, method) {
+                self.record_member(method_span, name, method);
+                self.check_call_args(method, &params, &arg_tys, args, span);
+                return ret;
+            }
+            self.error_at(span, format!("type `{name}` has no method `{method}`"));
+            return Ty::Unknown;
+        }
+        self.record_member(method_span, name, method);
         let Some(m) = self.table.methods.get(&(name.clone(), method.to_string())) else {
+            // A blanket impl may grant the method: if the receiver satisfies a
+            // blanket's conditions and its trait declares `method`, resolve
+            // through that trait with `Self` read as the concrete type.
+            if let Some((params, ret)) = self.blanket_method(name, &recv, method) {
+                self.check_call_args(method, &params, &arg_tys, args, span);
+                return ret;
+            }
             self.error_at(span, format!("type `{name}` has no method `{method}`"));
             return Ty::Unknown;
         };
-        if m.params.len() != arg_tys.len() {
-            self.error_at(
-                span,
-                format!(
-                    "method `{method}` takes {} argument(s) but {} were supplied",
-                    m.params.len(),
-                    arg_tys.len()
-                ),
-            );
-            return m.ret.clone();
-        }
         // Project the method signature through the receiver's concrete type
-        // arguments, so `Box<number>::get(self) -> T` yields `number`.
+        // arguments, so `Box<number>::get(self) -> T` yields `number`, then
+        // check the call against the projected parameters.
         let subst = self.nominal_subst(&recv);
-        for (i, (p, a)) in m.params.iter().zip(&arg_tys).enumerate() {
-            let p = Self::subst_named(p, &subst);
-            if !p.compatible(a) {
-                self.error_at(
-                    args[i].span,
-                    format!(
-                        "argument {} of `{method}` expects `{p}`, found `{a}`",
-                        i + 1
-                    ),
-                );
-            }
-        }
-        Self::subst_named(&m.ret, &subst)
+        let params: Vec<Ty> = m
+            .params
+            .iter()
+            .map(|p| Self::subst_named(p, &subst))
+            .collect();
+        let ret = Self::subst_named(&m.ret, &subst);
+        self.check_call_args(method, &params, &arg_tys, args, span);
+        ret
     }
 
     fn infer_field(&mut self, base: &ast::Expr, field: &ast::FieldAccess, span: ast::Span) -> Ty {
@@ -720,9 +984,11 @@ impl<'a> Checker<'a> {
         // `Box<number>.value` yields `number` rather than the parameter `T`.
         let subst = self.nominal_subst(&base_ty);
         match (field, &s.fields) {
-            (ast::FieldAccess::Named(f), StructFields::Named(fields)) => {
+            (ast::FieldAccess::Named(f, fspan), StructFields::Named(fields)) => {
                 if let Some((_, ty)) = fields.iter().find(|(n, _)| n == f) {
-                    Self::subst_named(ty, &subst)
+                    let ty = Self::subst_named(ty, &subst);
+                    self.record_member(*fspan, name, f);
+                    ty
                 } else {
                     self.error_at(span, format!("struct `{name}` has no field `{f}`"));
                     Ty::Unknown
@@ -770,7 +1036,7 @@ impl<'a> Checker<'a> {
         // type against its initialiser's type, so `Box { value: 99 }` yields
         // `Box<number>` and downstream field/method projection (§generics) sees
         // the concrete argument.
-        let result = self.infer_nominal_args(name, &generics, &decl, fields, base);
+        let result = self.infer_nominal_args(name, &generics, &decl, fields, base, span);
         if let Some(b) = base {
             let bt = self.infer(b);
             self.expect(&Ty::named(name), &bt, "struct update base");
@@ -790,6 +1056,7 @@ impl<'a> Checker<'a> {
         decl: &[(String, Ty)],
         inits: &[ast::FieldInit],
         base: Option<&ast::Expr>,
+        span: ast::Span,
     ) -> Ty {
         if generics.is_empty() {
             return Ty::named(name);
@@ -817,6 +1084,9 @@ impl<'a> Checker<'a> {
                 }
             }
         }
+        // The named-literal construction site: a parameter's bound must be
+        // satisfied by the type its field initialisers pinned it to (§3.5).
+        self.check_collected_bounds(name, &subst, span);
         let args = generics
             .iter()
             .map(|g| subst.get(g).cloned().unwrap_or(Ty::Unknown))
@@ -876,7 +1146,7 @@ impl<'a> Checker<'a> {
                             .cloned()
                             .unwrap_or(Ty::Unknown),
                     };
-                    if !expected.compatible(&actual) {
+                    if !self.assignable(expected, &actual) {
                         self.error(format!(
                             "field `{}` of `{owner}` expects `{expected}`, found `{actual}`",
                             init.name
@@ -919,20 +1189,54 @@ impl<'a> Checker<'a> {
     }
 
     fn infer_list(&mut self, items: &[ast::Expr]) -> Ty {
-        let mut elem: Option<Ty> = None;
-        for item in items {
-            let t = self.infer(item);
-            match &elem {
-                None => elem = Some(t),
-                Some(e) => {
-                    if !e.compatible(&t) {
-                        self.error(format!("list elements disagree: `{e}` vs `{t}`"));
-                    }
-                }
-            }
-        }
+        let tys: Vec<Ty> = items.iter().map(|i| self.infer(i)).collect();
         // An empty list needs an annotation; with none, its element is unknown.
-        Ty::List(Box::new(elem.unwrap_or(Ty::Unknown)))
+        let Some(first) = tys.first() else {
+            return Ty::List(Box::new(Ty::Unknown));
+        };
+        // Homogeneous (modulo `Unknown`/`Param`): the first type is the element.
+        if tys.iter().all(|t| first.compatible(t)) {
+            return Ty::List(Box::new(first.clone()));
+        }
+        // Heterogeneous: if every element's concrete type implements exactly one
+        // common trait, the list is of that trait — the existential element type
+        // (`STATIC.md` §3.4). A shared set of zero or several traits is ambiguous
+        // and reported as a disagreement (the author annotates to choose).
+        if let Some(trait_ty) = self.common_trait(&tys) {
+            return Ty::List(Box::new(trait_ty));
+        }
+        let clash = tys.iter().find(|t| !first.compatible(t)).unwrap_or(first);
+        self.error(format!("list elements disagree: `{first}` vs `{clash}`"));
+        Ty::List(Box::new(first.clone()))
+    }
+
+    /// The single trait every element type implements, when exactly one exists
+    /// — the element type of a heterogeneous list of implementors. `None` when
+    /// the element types share no trait, share more than one (ambiguous), or
+    /// any element is not a concrete nominal type.
+    fn common_trait(&self, tys: &[Ty]) -> Option<Ty> {
+        let mut common: Option<std::collections::BTreeSet<String>> = None;
+        for t in tys {
+            let name = ty_impl_name(t)?;
+            let traits: std::collections::BTreeSet<String> = self
+                .table
+                .trait_impls
+                .get(&name)
+                .into_iter()
+                .flatten()
+                .cloned()
+                .collect();
+            common = Some(match common {
+                None => traits,
+                Some(c) => &c & &traits,
+            });
+        }
+        let common = common?;
+        if common.len() == 1 {
+            common.into_iter().next().map(Ty::named)
+        } else {
+            None
+        }
     }
 
     fn infer_index(&mut self, base: &ast::Expr, index: &ast::Expr, span: ast::Span) -> Ty {
@@ -954,7 +1258,12 @@ impl<'a> Checker<'a> {
         let mut ptys = Vec::new();
         for p in params {
             let ty = p.ty.as_ref().map_or(Ty::Unknown, |t| self.lower(t));
-            self.scopes.bind(p.name.clone(), ty.clone());
+            self.bind_local(
+                p.name.clone(),
+                ty.clone(),
+                p.span,
+                crate::resolve::BindingKind::ClosureParam,
+            );
             ptys.push(ty);
         }
         let ret = self.infer(body);
@@ -1017,7 +1326,7 @@ impl<'a> Checker<'a> {
         let mut result: Option<Ty> = None;
         for arm in arms {
             self.scopes.push();
-            self.bind_pattern(&arm.pattern, &scrut);
+            self.bind_pattern(&arm.pattern, &scrut, crate::resolve::BindingKind::MatchArm);
             if let Some(g) = &arm.guard {
                 let gt = self.infer(g);
                 self.expect(&Ty::Bool, &gt, "match guard");
@@ -1040,306 +1349,70 @@ impl<'a> Checker<'a> {
         result.unwrap_or(Ty::Unit)
     }
 
-    /// Checks `match` exhaustiveness and redundant arms (`STATIC.md` §7). The
-    /// `span` is the whole `match` expression, used to anchor exhaustiveness
-    /// diagnostics.
-    fn check_exhaustive(&mut self, scrut: &Ty, arms: &[ast::MatchArm], span: ast::Span) {
-        // Redundant-arm check: anything after an unguarded catch-all is dead.
-        let catch_all = arms
-            .iter()
-            .position(|a| a.guard.is_none() && self.is_catch_all(&a.pattern));
-        if let Some(idx) = catch_all {
-            if idx + 1 < arms.len() {
-                self.error_at(
-                    span,
-                    "this match arm is unreachable; an earlier arm already matches every value"
-                        .to_string(),
-                );
-            }
-            return;
-        }
-
-        match scrut {
-            Ty::Bool => {
-                let covers_true = arms.iter().any(|a| pattern_matches_bool(&a.pattern, true));
-                let covers_false = arms.iter().any(|a| pattern_matches_bool(&a.pattern, false));
-                if !(covers_true && covers_false) {
-                    self.error_at(
-                        span,
-                        "this match on `bool` is not exhaustive; cover both `true` and `false` or add a `_` arm"
-                            .to_string(),
-                    );
-                }
-            }
-            Ty::Named { name, .. } => match self.table.types.get(name) {
-                Some(TypeDef::Enum(e)) => {
-                    let covered = Self::covered_variants(arms);
-                    let missing: Vec<&str> = e
-                        .variants
-                        .iter()
-                        .filter(|v| !covered.iter().any(|c| c == &v.name))
-                        .map(|v| v.name.as_str())
-                        .collect();
-                    if !missing.is_empty() {
-                        self.error_at(
-                            span,
-                            format!(
-                                "this match on `{name}` is not exhaustive; missing variant(s): {}",
-                                missing.join(", ")
-                            ),
-                        );
-                    }
-                }
-                Some(TypeDef::Struct(_)) => {
-                    // A struct has a single shape, so one unguarded irrefutable
-                    // struct/tuple pattern (every sub-pattern irrefutable) covers
-                    // every value — like an irrefutable `let` destructure.
-                    let covered = arms
-                        .iter()
-                        .any(|a| a.guard.is_none() && is_irrefutable(&a.pattern));
-                    if !covered {
-                        self.error_at(
-                            span,
-                            format!(
-                                "this match on `{name}` is not exhaustive; bind its fields with a struct pattern or add a `_` arm"
-                            ),
-                        );
-                    }
-                }
-                _ => self.error_at(
-                    span,
-                    format!("this match on `{name}` is not exhaustive; add a `_` arm"),
-                ),
-            },
-            Ty::Number | Ty::Str => {
-                self.error_at(
-                    span,
-                    format!(
-                        "this match on `{scrut}` needs a binding or `_` arm; literal arms can never be exhaustive"
-                    ),
-                );
-            }
-            _ => {}
-        }
-    }
-
-    /// `true` for a pattern that matches every value of the scrutinee: a `_`
-    /// wildcard or a bare binding that does *not* resolve to a unit variant or
-    /// unit struct (those are coverage of one case, not a catch-all).
-    fn is_catch_all(&self, pattern: &ast::Pattern) -> bool {
-        match pattern {
-            ast::Pattern::Wildcard => true,
-            ast::Pattern::Binding(name) => self.resolve_unit_value(name).is_none(),
-            ast::Pattern::Or(alts) => alts.iter().any(|a| self.is_catch_all(a)),
-            _ => false,
-        }
-    }
-
-    /// The set of enum-variant names an arm list covers via variant patterns.
-    /// Unqualified bare-ident patterns that resolve to a unit variant count too.
-    fn covered_variants(arms: &[ast::MatchArm]) -> Vec<String> {
-        let mut covered = Vec::new();
-        for arm in arms {
-            collect_covered(&arm.pattern, &mut covered);
-        }
-        covered
-    }
-
-    // ---- patterns (STATIC.md §4.2) ----------------------------------------
-
-    /// Binds the names a pattern introduces against the scrutinee type. Also
-    /// validates structural patterns against the scrutinee's declaration.
-    pub(crate) fn bind_pattern(&mut self, pattern: &ast::Pattern, ty: &Ty) {
-        match pattern {
-            ast::Pattern::Wildcard | ast::Pattern::Literal(_) | ast::Pattern::Path(_) => {}
-            ast::Pattern::Binding(name) => {
-                // An uppercase bare ident may be a unit variant/struct, not a
-                // binding. Treat as a binding unless it resolves to one.
-                if self.resolve_unit_value(name).is_some() {
-                    return;
-                }
-                self.scopes.bind(name.clone(), ty.clone());
-            }
-            ast::Pattern::Or(alts) => {
-                for alt in alts {
-                    self.bind_pattern(alt, ty);
-                }
-            }
-            ast::Pattern::Tuple { path, elems } => self.bind_tuple_pattern(path, elems, ty),
-            ast::Pattern::Struct { path, fields, .. } => {
-                self.bind_struct_pattern(path, fields, ty);
-            }
-        }
-    }
-
-    fn bind_tuple_pattern(&mut self, path: &[ast::Ident], elems: &[ast::Pattern], ty: &Ty) {
-        // Element types come from the variant or newtype the path names.
-        let elem_tys = self.tuple_pattern_field_tys(path, ty, elems.len());
-        for (pat, ety) in elems.iter().zip(elem_tys) {
-            self.bind_pattern(pat, &ety);
-        }
-    }
-
-    fn tuple_pattern_field_tys(&self, path: &[ast::Ident], ty: &Ty, arity: usize) -> Vec<Ty> {
-        let unknowns = vec![Ty::Unknown; arity];
-        let Some(ctor) = path.last() else {
-            return unknowns;
-        };
-        // Newtype struct pattern `UserId(x)`.
-        if let Some(TypeDef::Struct(s)) = self.table.types.get(ctor) {
-            if let StructFields::Tuple(inner) = &s.fields {
-                return vec![inner.clone()];
-            }
-        }
-        // Enum tuple variant `Ok(v)`, `Shape::Move(a, b)`.
-        let enum_name = if path.len() >= 2 {
-            Some(path[path.len() - 2].clone())
-        } else {
-            self.owning_enum(ctor)
-        };
-        if let Some(en) = enum_name {
-            if let Some(TypeDef::Enum(e)) = self.table.types.get(&en) {
-                if let Some(v) = e.variants.iter().find(|v| v.name == *ctor) {
-                    if let VariantFields::Tuple(tys) = &v.fields {
-                        return Self::instantiate_variant_fields(ty, e, tys);
-                    }
-                }
-            }
-        }
-        unknowns
-    }
-
-    /// Substitutes the enum's type arguments (from the scrutinee `ty`) into a
-    /// variant's declared field types, so `Ok(v)` binds `v` at the scrutinee's
-    /// `T` rather than the bare parameter.
-    fn instantiate_variant_fields(ty: &Ty, e: &crate::env::EnumInfo, fields: &[Ty]) -> Vec<Ty> {
-        let mut subst = std::collections::HashMap::new();
-        if let Ty::Named { args, .. } = ty {
-            for (g, a) in e.generics.iter().zip(args) {
-                subst.insert(g.clone(), a.clone());
-            }
-        }
-        fields
-            .iter()
-            .map(|f| Self::apply_subst(f, &subst))
-            .collect()
-    }
-
-    fn bind_struct_pattern(&mut self, path: &[ast::Ident], fields: &[ast::FieldPat], ty: &Ty) {
-        let decl = self.struct_pattern_field_tys(path, ty);
-        for fp in fields {
-            let fty = decl
-                .iter()
-                .find(|(n, _)| *n == fp.name)
-                .map_or(Ty::Unknown, |(_, t)| t.clone());
-            match &fp.pattern {
-                Some(p) => self.bind_pattern(p, &fty),
-                None => self.scopes.bind(fp.name.clone(), fty),
-            }
-        }
-    }
-
-    fn struct_pattern_field_tys(&self, path: &[ast::Ident], ty: &Ty) -> Vec<(String, Ty)> {
-        let Some(ctor) = path.last() else {
-            return Vec::new();
-        };
-        if let Some(TypeDef::Struct(s)) = self.table.types.get(ctor) {
-            if let StructFields::Named(fields) = &s.fields {
-                return fields.clone();
-            }
-        }
-        let enum_name = if path.len() >= 2 {
-            Some(path[path.len() - 2].clone())
-        } else {
-            self.owning_enum(ctor)
-        };
-        if let Some(en) = enum_name {
-            if let Some(TypeDef::Enum(e)) = self.table.types.get(&en) {
-                if let Some(v) = e.variants.iter().find(|v| v.name == *ctor) {
-                    if let VariantFields::Named(fields) = &v.fields {
-                        let subst_fields: Vec<(String, Ty)> = fields
-                            .iter()
-                            .map(|(n, t)| {
-                                let mut subst = std::collections::HashMap::new();
-                                if let Ty::Named { args, .. } = ty {
-                                    for (g, a) in e.generics.iter().zip(args) {
-                                        subst.insert(g.clone(), a.clone());
-                                    }
-                                }
-                                (n.clone(), Self::apply_subst(t, &subst))
-                            })
-                            .collect();
-                        return subst_fields;
-                    }
-                }
-            }
-        }
-        Vec::new()
-    }
-
-    /// Finds the enum that declares a variant of the given name.
-    fn owning_enum(&self, variant: &str) -> Option<String> {
-        self.table.types.iter().find_map(|(name, def)| match def {
-            TypeDef::Enum(e) if e.variants.iter().any(|v| v.name == variant) => Some(name.clone()),
-            _ => None,
-        })
-    }
-
     // ---- shared --------------------------------------------------------------
 
-    /// Records a mismatch diagnostic when `actual` is not compatible with
-    /// `expected`. `Unknown` on either side suppresses the report.
+    /// Records a mismatch diagnostic when `actual` may not be used where
+    /// `expected` is required. `Unknown` on either side suppresses the report.
     fn expect(&mut self, expected: &Ty, actual: &Ty, context: &str) {
-        if !expected.compatible(actual) {
+        if !self.assignable(expected, actual) {
             self.error(format!("{context} expects `{expected}`, found `{actual}`"));
         }
     }
-}
 
-fn pattern_matches_bool(pattern: &ast::Pattern, value: bool) -> bool {
-    match pattern {
-        ast::Pattern::Literal(ast::LiteralPat::Bool(b)) => *b == value,
-        ast::Pattern::Or(alts) => alts.iter().any(|a| pattern_matches_bool(a, value)),
-        _ => false,
+    /// Whether a value of type `actual` may be used where `expected` is
+    /// required. This is [`Ty::compatible`] plus the existential rule: when
+    /// `expected` is a trait name used as a type, any concrete type that
+    /// implements the trait — or the same trait itself — is admissible (the
+    /// trait-as-type existential, `STATIC.md` §3.4). The relation is
+    /// directional: an implementor flows into the trait, never the reverse
+    /// (neoc has no implicit downcast). It recurses through lists, function
+    /// types, and nominal type arguments, so `[Drawable]` accepts `[Circle]`.
+    fn assignable(&self, expected: &Ty, actual: &Ty) -> bool {
+        expected.relate(actual, &|expected, actual| {
+            self.existential(expected, actual)
+        })
+    }
+
+    /// The trait-as-type existential rule, as a [`Ty::relate`] hook. When
+    /// `expected` is a trait name used directly as a type, any concrete type
+    /// that implements it — or the same trait or a subtrait — is admissible
+    /// (`STATIC.md` §3.4), directional: an implementor flows into the trait,
+    /// never the reverse. Returns `None` (defer to the structural relation)
+    /// when `expected` is not a trait-as-type, or when `actual` is a wildcard
+    /// (`Unknown`/`Param`), which `relate` accepts unconditionally — so a value
+    /// of unbounded parameter type is still passable where a trait is expected.
+    fn existential(&self, expected: &Ty, actual: &Ty) -> Option<bool> {
+        let Ty::Named { name, args } = expected else {
+            return None;
+        };
+        if !args.is_empty() || !self.is_trait(name) {
+            return None;
+        }
+        if matches!(actual, Ty::Unknown | Ty::Param(_)) {
+            return None;
+        }
+        Some(match actual {
+            // A trait value flows into the same trait or a supertrait.
+            Ty::Named { name: a, .. } if self.is_trait(a) => self.trait_chain_includes(a, name),
+            _ => self.type_satisfies(actual, name),
+        })
+    }
+
+    /// Whether `name` names a trait in the type namespace.
+    fn is_trait(&self, name: &str) -> bool {
+        matches!(self.table.types.get(name), Some(TypeDef::Trait(_)))
     }
 }
 
-/// Whether a pattern matches every value of its type (binds, never rejects).
-/// A struct/tuple pattern is irrefutable when all its sub-patterns are; a
-/// literal or variant path is refutable.
-fn is_irrefutable(p: &ast::Pattern) -> bool {
-    match p {
-        ast::Pattern::Wildcard | ast::Pattern::Binding(_) => true,
-        ast::Pattern::Struct { fields, .. } => fields
-            .iter()
-            .all(|f| f.pattern.as_ref().is_none_or(is_irrefutable)),
-        ast::Pattern::Tuple { elems, .. } => elems.iter().all(is_irrefutable),
-        ast::Pattern::Or(alts) => alts.iter().any(is_irrefutable),
-        ast::Pattern::Literal(_) | ast::Pattern::Path(_) => false,
-    }
-}
-
-/// Walks a pattern, pushing any unit/tuple/struct variant names it covers.
-fn collect_covered(pattern: &ast::Pattern, out: &mut Vec<String>) {
-    match pattern {
-        // A qualified unit variant (`Color::Red`), a tuple variant
-        // (`Shape::Move(..)`), or a struct variant (`Shape::Circle { .. }`):
-        // the final path segment is the variant name.
-        ast::Pattern::Path(path)
-        | ast::Pattern::Tuple { path, .. }
-        | ast::Pattern::Struct { path, .. } => {
-            if let Some(name) = path.last() {
-                out.push(name.clone());
-            }
-        }
-        // A bare unit variant reaches here as a binding (e.g. `None`); the
-        // catch-all case returns before this runs (see `is_catch_all`).
-        ast::Pattern::Binding(name) => out.push(name.clone()),
-        ast::Pattern::Or(alts) => {
-            for a in alts {
-                collect_covered(a, out);
-            }
-        }
-        _ => {}
+/// The name a type registers under in the trait-impl table: a nominal type's
+/// own name, or a primitive's spelling. List and function types carry no
+/// nominal identity, so they cannot be the target of an `impl` — `None`.
+fn ty_impl_name(ty: &Ty) -> Option<String> {
+    match ty {
+        Ty::Named { name, .. } => Some(name.clone()),
+        Ty::Number => Some("number".to_string()),
+        Ty::Str => Some("string".to_string()),
+        Ty::Bool => Some("bool".to_string()),
+        _ => None,
     }
 }

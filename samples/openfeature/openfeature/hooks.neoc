@@ -1,0 +1,87 @@
+//! The hooks mechanism.
+//!
+//! OpenFeature hooks inject logic at four stages around a flag evaluation:
+//! `before` (prior to resolution), `after` (on success), `error` (on failure),
+//! and `finally` (always, last). This implementation models a hook as the
+//! `Hook` trait with one method per stage and a `HookContext` carrying the
+//! invocation's facts.
+//!
+//! neoc has no dynamic dispatch — there is no `dyn Trait`, so a heterogeneous
+//! list of differently-typed hooks cannot be stored. The client therefore runs
+//! a list of one concrete hook type (`LoggingHook`); the trait still defines
+//! the contract every hook honours, and the stage ordering is demonstrated
+//! end-to-end. A production binding would generate one runner per hook type or
+//! lower trait objects through an `ext` seam.
+
+use openfeature::evaluation::EvaluationDetails;
+
+/// The facts a hook sees at each stage: the flag key being evaluated and the
+/// neoc type name requested (`bool`, `string`, `number`). The specification's
+/// hook context also carries the evaluation context and default value; those
+/// are omitted here to keep the stage signatures small.
+pub struct HookContext {
+    flag_key: string,
+    flag_type: string,
+}
+
+/// A line of output a hook produced, tagged with the stage that produced it.
+/// The runner collects these so the demo can show the stages firing in order
+/// without the hook reaching for an I/O `ext` of its own.
+pub struct HookLog {
+    stage: string,
+    message: string,
+}
+
+/// Middleware around a flag evaluation. Each method corresponds to one stage;
+/// every method has a default body returning no log line, so a hook overrides
+/// only the stages it cares about. `before` runs first; `after` runs on a
+/// successful evaluation and `error` on a failed one; `finally` always runs
+/// last.
+pub trait Hook {
+    /// Runs before resolution.
+    fn before(self, context: HookContext) -> Option<HookLog> {
+        None
+    }
+
+    /// Runs after a successful resolution, with the resulting details.
+    fn after(self, context: HookContext, details: EvaluationDetails) -> Option<HookLog> {
+        None
+    }
+
+    /// Runs after a failed resolution, with the failing details.
+    fn error(self, context: HookContext, details: EvaluationDetails) -> Option<HookLog> {
+        None
+    }
+
+    /// Runs unconditionally, last, after the other stages.
+    fn finally(self, context: HookContext) -> Option<HookLog> {
+        None
+    }
+}
+
+/// A hook that records every stage it sees, demonstrating the full lifecycle.
+/// Stateless: it carries no fields, so the same value can observe every
+/// evaluation.
+pub struct LoggingHook;
+
+impl Hook for LoggingHook {
+    fn before(self, context: HookContext) -> Option<HookLog> {
+        Some(HookLog { stage: "before", message: "evaluating `" + context.flag_key + "` as " + context.flag_type })
+    }
+
+    fn after(self, context: HookContext, details: EvaluationDetails) -> Option<HookLog> {
+        // `details` is the imported `EvaluationDetails`; bind its rendering to
+        // an annotated `string` local to keep the message string concatenation.
+        let rendered: string = details.render();
+        Some(HookLog { stage: "after", message: "resolved `" + context.flag_key + "`: " + rendered })
+    }
+
+    fn error(self, context: HookContext, details: EvaluationDetails) -> Option<HookLog> {
+        let rendered: string = details.render();
+        Some(HookLog { stage: "error", message: "failed `" + context.flag_key + "`: " + rendered })
+    }
+
+    fn finally(self, context: HookContext) -> Option<HookLog> {
+        Some(HookLog { stage: "finally", message: "done `" + context.flag_key + "`" })
+    }
+}

@@ -6,14 +6,11 @@
 //! enum variants, consts. Best-effort for locals; returns `None` when the name
 //! is not a known item so the editor shows nothing.
 
-use neoc_types::{
-    EnumInfo, StructFields, StructInfo, SymbolTable, TraitInfo, Ty, TypeDef, VariantFields,
-};
-
 use tree_sitter::Node;
 
 use crate::cst::{self};
 use crate::position::position_to_byte;
+use crate::signature;
 
 /// The hover markdown for the identifier at `position`, if it resolves to a
 /// known declaration. Each result is a signature code block, optionally
@@ -56,22 +53,40 @@ pub fn hover(source: &str, position: tower_lsp::lsp_types::Position) -> Option<S
     // 3. A top-level item resolved by name (a call site, or a type / const /
     //    alias). Drawn from the symbol table; functions render as their type,
     //    `fn name(types) -> ret`.
-    if let Some(sig) = signature(&table, name) {
+    if let Some(sig) = signature::signature(&table, name) {
         let doc = decl.and_then(|decl| cst::leading_doc_comment(decl.node, source));
         return Some(with_doc(code_block(&sig), doc));
     }
 
-    // 4. A member used at a call / field / `Type::Variant` site, resolved by
-    //    unique name across the file (silent when ambiguous).
-    if let Some(node) = cst::find_unique_member(&tree, source, name) {
-        let sig = member_signature(node, source)?;
-        return Some(with_doc(
-            code_block(&sig),
-            cst::leading_doc_comment(node, source),
-        ));
+    // 4. A member used at a call / field site, resolved type-aware through the
+    //    checker — the receiver's type disambiguates same-named members of
+    //    different types (which the old name-only scan could not).
+    let module = neoc_parser::parse(source).module;
+    if let Some(member) = neoc_types::resolution(&module).member_at(byte) {
+        if let Some(node) = cst::member_decl_at(&tree, member.def.0) {
+            let sig = member_signature(node, source)?;
+            return Some(with_doc(
+                code_block(&sig),
+                cst::leading_doc_comment(node, source),
+            ));
+        }
     }
 
-    None
+    // 5. A local binding or sub-expression with no declaration to resolve —
+    //    show the inferred type of the narrowest expression under the cursor,
+    //    `name: ty` for an identifier, the bare type otherwise.
+    let ty = inferred_type_at(source, byte)?;
+    let label = format!("{name}: {ty}");
+    Some(code_block(&label))
+}
+
+/// The neoc type inferred for the narrowest expression covering `byte`, if any.
+fn inferred_type_at(source: &str, byte: usize) -> Option<String> {
+    neoc_types::expression_types(&neoc_parser::parse(source).module)
+        .into_iter()
+        .filter(|t| t.start <= byte && byte < t.end)
+        .min_by_key(|t| t.end - t.start)
+        .map(|t| t.ty.to_string())
 }
 
 /// Appends a `///` doc comment below a signature block, if present.
@@ -116,127 +131,6 @@ fn function_signature(node: Node, source: &str) -> Option<String> {
         sig.push_str(source.get(ret.byte_range())?);
     }
     Some(sig)
-}
-
-/// The neoc signature string for `name`, drawn from both namespaces.
-///
-/// Prefers a type-namespace definition (struct/enum/trait/alias) and falls
-/// back to a value-namespace entry (fn/const/constructor).
-#[must_use]
-fn signature(table: &SymbolTable, name: &str) -> Option<String> {
-    if let Some(def) = table.types.get(name) {
-        return Some(type_signature(name, def));
-    }
-    if let Some(ty) = table.values.get(name) {
-        return Some(value_signature(name, ty));
-    }
-    None
-}
-
-fn type_signature(name: &str, def: &TypeDef) -> String {
-    match def {
-        TypeDef::Struct(s) => struct_signature(name, s),
-        TypeDef::Enum(e) => enum_signature(name, e),
-        TypeDef::Trait(t) => trait_signature(name, t),
-        TypeDef::Alias { generics, value } => {
-            format!("type {name}{} = {value}", generic_list(generics))
-        }
-        TypeDef::Opaque => format!("ext type {name}"),
-    }
-}
-
-fn struct_signature(name: &str, s: &StructInfo) -> String {
-    let head = format!("struct {name}{}", generic_list(&s.generics));
-    match &s.fields {
-        StructFields::Unit => format!("{head};"),
-        StructFields::Tuple(ty) => format!("{head}({ty});"),
-        StructFields::Named(fields) => {
-            let body = fields
-                .iter()
-                .map(|(fname, ty)| format!("{fname}: {ty}"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("{head} {{ {body} }}")
-        }
-    }
-}
-
-fn enum_signature(name: &str, e: &EnumInfo) -> String {
-    let head = format!("enum {name}{}", generic_list(&e.generics));
-    let variants = e
-        .variants
-        .iter()
-        .map(|v| match &v.fields {
-            VariantFields::Unit => v.name.clone(),
-            VariantFields::Tuple(tys) => {
-                let inner = tys
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                format!("{}({inner})", v.name)
-            }
-            VariantFields::Named(fields) => {
-                let inner = fields
-                    .iter()
-                    .map(|(fname, ty)| format!("{fname}: {ty}"))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                format!("{} {{ {inner} }}", v.name)
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!("{head} {{ {variants} }}")
-}
-
-fn trait_signature(name: &str, t: &TraitInfo) -> String {
-    let head = format!("trait {name}{}", generic_list(&t.generics));
-    let methods = t
-        .methods
-        .iter()
-        .map(|m| {
-            let params = m
-                .params
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(", ");
-            let recv = if m.has_receiver { "self" } else { "" };
-            let sep = if m.has_receiver && !params.is_empty() {
-                ", "
-            } else {
-                ""
-            };
-            format!("  fn {}({recv}{sep}{params}) -> {};", m.name, m.ret)
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    format!("{head} {{\n{methods}\n}}")
-}
-
-/// Renders a value-namespace entry. A function type becomes `fn name(...) ->
-/// ret`; anything else becomes `name: ty` (consts, bindings).
-fn value_signature(name: &str, ty: &Ty) -> String {
-    match ty {
-        Ty::Fn(params, ret) => {
-            let params = params
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("fn {name}({params}) -> {ret}")
-        }
-        other => format!("{name}: {other}"),
-    }
-}
-
-fn generic_list(generics: &[String]) -> String {
-    if generics.is_empty() {
-        String::new()
-    } else {
-        format!("<{}>", generics.join(", "))
-    }
 }
 
 fn code_block(sig: &str) -> String {
@@ -306,9 +200,19 @@ mod tests {
     }
 
     #[test]
-    fn unknown_local_is_none() {
-        let src = "fn m() { let x = 1; x }\n";
-        assert_eq!(hover_on(src, "x", 2), None);
+    fn local_binding_hover_shows_inferred_type() {
+        // A local has no declaration to resolve, so hover falls back to the
+        // inferred type of the expression under the cursor.
+        let src = "fn m() -> number { let count = 1; count }\n";
+        let h = hover_on(src, "count", 2).expect("hover on local use");
+        assert!(h.contains("count: number"), "{h}");
+    }
+
+    #[test]
+    fn unknown_name_outside_any_expression_is_none() {
+        // The `fn` keyword is not an expression and names nothing.
+        let src = "fn m() -> number { 1 }\n";
+        assert_eq!(hover(src, byte_to_position(src, 0)), None);
     }
 
     #[test]
@@ -376,6 +280,27 @@ fn m(b: Box) -> number { b.width }
         // On the usage `b.width`, resolved by unique member name.
         let at_use = hover_on(src, "width", 2).expect("hover at use");
         assert!(at_use.contains("the horizontal size"), "{at_use}");
+    }
+
+    #[test]
+    fn same_named_fields_disambiguate_by_receiver_type() {
+        // Two structs both have a `width`; hover on `b.width` must resolve to
+        // `B`'s field via the receiver's type — the old name-only scan was
+        // silent here because the name was ambiguous.
+        let src = "\
+struct A {
+  /// a's measure
+  width: number,
+}
+struct B {
+  /// b's measure
+  width: number,
+}
+fn m(b: B) -> number { b.width }
+";
+        let h = hover_on(src, "width", 3).expect("hover on b.width");
+        assert!(h.contains("b's measure"), "{h}");
+        assert!(!h.contains("a's measure"), "{h}");
     }
 
     #[test]

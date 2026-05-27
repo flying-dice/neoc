@@ -97,10 +97,16 @@ impl Adapter {
             if child.kind() == "field_declaration" {
                 let attrs = self.walk_attributes(child);
                 let name = self.name_field(child);
+                let name_span = self.name_span_field(child);
                 let ty = self
                     .field(child, "type")
                     .map_or(ast::Type::Unit, |t| self.walk_type(t));
-                fields.push(ast::Field { attrs, name, ty });
+                fields.push(ast::Field {
+                    attrs,
+                    name,
+                    name_span,
+                    ty,
+                });
             }
         }
         fields
@@ -126,6 +132,7 @@ impl Adapter {
     fn walk_variant(&mut self, node: Node) -> ast::Variant {
         let attrs = self.walk_attributes(node);
         let name = self.name_field(node);
+        let name_span = self.name_span_field(node);
         let body = if let Some(body) = self.field(node, "body") {
             ast::VariantBody::Named(self.walk_field_decls(body))
         } else if let Some(tuple) = tuple_types(node) {
@@ -133,16 +140,34 @@ impl Adapter {
         } else {
             ast::VariantBody::Unit
         };
-        ast::Variant { attrs, name, body }
+        ast::Variant {
+            attrs,
+            name,
+            name_span,
+            body,
+        }
     }
 
     fn walk_trait(&mut self, node: Node) -> ast::TraitDecl {
         let name = self.name_field(node);
         let generics = self.walk_generics(node);
+        let supertraits = self
+            .field(node, "supertraits")
+            .map(|b| self.walk_bounds(b))
+            .unwrap_or_default();
         let mut items = Vec::new();
+        let mut assoc_types = Vec::new();
         let mut cursor = node.walk();
         for child in node.named_children(&mut cursor) {
-            if child.kind() == "trait_item" {
+            if child.kind() != "trait_item" {
+                continue;
+            }
+            if let Some(at) = child
+                .named_children(&mut child.walk())
+                .find(|c| c.kind() == "associated_type")
+            {
+                assoc_types.push(self.name_field(at));
+            } else {
                 let sig = self.walk_fn_sig(child);
                 let default = self.field(child, "body").map(|b| self.walk_block(b));
                 items.push(ast::TraitItem { sig, default });
@@ -151,6 +176,8 @@ impl Adapter {
         ast::TraitDecl {
             name,
             generics,
+            supertraits,
+            assoc_types,
             items,
         }
     }
@@ -162,16 +189,23 @@ impl Adapter {
             .field(node, "type")
             .map_or(ast::Type::Unit, |t| self.walk_type(t));
         let mut items = Vec::new();
+        let mut assoc_bindings = Vec::new();
         let mut cursor = node.walk();
         for child in node.named_children(&mut cursor) {
-            if child.kind() == "impl_item" {
+            if child.kind() != "impl_item" {
+                continue;
+            }
+            let mut ic = child.walk();
+            let inner: Vec<Node> = child.named_children(&mut ic).collect();
+            if let Some(f) = inner.iter().find(|c| c.kind() == "function_declaration") {
                 let attrs = self.walk_attributes(child);
-                if let Some(f) = child
-                    .named_children(&mut child.walk())
-                    .find(|c| c.kind() == "function_declaration")
-                {
-                    items.push(self.walk_fn(f, attrs));
-                }
+                items.push(self.walk_fn(*f, attrs));
+            } else if let Some(b) = inner.iter().find(|c| c.kind() == "associated_type_binding") {
+                let name = self.name_field(*b);
+                let value = self
+                    .field(*b, "value")
+                    .map_or(ast::Type::Unit, |t| self.walk_type(t));
+                assoc_bindings.push((name, value));
             }
         }
         ast::ImplBlock {
@@ -179,6 +213,7 @@ impl Adapter {
             trait_,
             ty,
             items,
+            assoc_bindings,
         }
     }
 
@@ -192,6 +227,7 @@ impl Adapter {
 
     pub(crate) fn walk_fn_sig(&mut self, node: Node) -> ast::FnSig {
         let name = self.name_field(node);
+        let name_span = self.name_span_field(node);
         let generics = self.walk_generics(node);
         let params = self
             .field(node, "parameters")
@@ -204,6 +240,7 @@ impl Adapter {
             .unwrap_or_default();
         ast::FnSig {
             name,
+            name_span,
             generics,
             params,
             ret,
@@ -218,11 +255,14 @@ impl Adapter {
             match child.kind() {
                 "self_parameter" => params.push(ast::Param::Receiver),
                 "parameter" => {
+                    let span = self
+                        .field(child, "name")
+                        .map_or_else(|| crate::expr::span_of(child), crate::expr::span_of);
                     let name = self.name_field(child);
                     let ty = self
                         .field(child, "type")
                         .map_or(ast::Type::Unit, |t| self.walk_type(t));
-                    params.push(ast::Param::Named { name, ty });
+                    params.push(ast::Param::Named { name, ty, span });
                 }
                 _ => {}
             }

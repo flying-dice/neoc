@@ -1,0 +1,10 @@
+// STATIC.md §7: a variant's payload must itself be exhaustively covered.
+// `Some` and `None` are both named, but `Some(false)` is left uncovered.
+enum Opt { Some(bool), None }
+
+fn check(o: Opt) -> number {
+    match o {
+        Opt::Some(true) => 1,
+        Opt::None => 0,
+    }
+}

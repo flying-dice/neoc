@@ -23,13 +23,16 @@ mod collect;
 mod elaborate;
 mod env;
 mod infer;
+mod resolve;
 mod ty;
 
-pub use elaborate::elaborate;
+pub use elaborate::{elaborate, elaborate_with_table};
 pub use env::{
-    EnumInfo, MethodInfo, StructFields, StructInfo, SymbolTable, TraitInfo, TraitMethod, TypeDef,
-    VariantFields, VariantInfo,
+    BindingId, EnumInfo, MethodInfo, StructFields, StructInfo, SymbolTable, TraitInfo, TraitMethod,
+    TypeDef, VariantFields, VariantInfo,
 };
+pub use infer::ExprType;
+pub use resolve::{Binding, BindingKind, MemberRef, Resolution, Resolved};
 pub use ty::Ty;
 
 use infer::Checker;
@@ -42,6 +45,20 @@ use infer::Checker;
 /// node span to attach (a fallback the compiler maps to the start of the file).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
+    pub message: String,
+    pub start: usize,
+    pub end: usize,
+    /// Secondary source locations that explain the diagnostic — where a trait
+    /// method was declared, which earlier arm already matches, and the like.
+    /// Each becomes an editor "related information" entry pointing into the
+    /// same source. Usually empty.
+    pub labels: Vec<Label>,
+}
+
+/// A secondary span attached to a [`Diagnostic`]: a related location with its
+/// own short message (`method declared here`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Label {
     pub message: String,
     pub start: usize,
     pub end: usize,
@@ -113,4 +130,39 @@ pub fn check_with_table(module: &neoc_ast::Module, table: &SymbolTable) -> Check
 #[must_use]
 pub fn collect(module: &neoc_ast::Module) -> SymbolTable {
     collect::collect(module)
+}
+
+/// The inferred type of every expression in `module`, each with the byte range
+/// it occupies in the source.
+///
+/// Runs the same checker as [`check`] with expression-type recording enabled,
+/// so tooling can map a cursor position to a type (hover, type inlay hints).
+/// Diagnostics are discarded; use [`check`] when only the diagnostics are
+/// wanted. The returned spans may overlap — an outer expression's range
+/// contains its sub-expressions' — so a position query should prefer the
+/// narrowest containing span.
+#[must_use]
+pub fn expression_types(module: &neoc_ast::Module) -> Vec<ExprType> {
+    let table = collect::collect(module);
+    let mut checker = Checker::new(&table);
+    checker.record_types();
+    checker.check_module(module);
+    checker.into_expr_types()
+}
+
+/// The scope-aware name resolution of `module`: every local binding it
+/// introduces and what each single-segment identifier use resolves to (a local
+/// binding or a top-level item).
+///
+/// Runs the same checker as [`check`] with resolution recording enabled, so
+/// tooling can resolve a cursor to a *binding* and find that binding's
+/// occurrences — references, rename, and goto that respect scope and shadowing,
+/// rather than matching by spelling. Diagnostics are discarded.
+#[must_use]
+pub fn resolution(module: &neoc_ast::Module) -> Resolution {
+    let table = collect::collect(module);
+    let mut checker = Checker::new(&table);
+    checker.record_resolution();
+    checker.check_module(module);
+    checker.into_resolution()
 }

@@ -1,12 +1,14 @@
 const __m = {};
-const __call = (recv, name, ...args) => __m[recv._struct ?? recv._enum][name](recv, ...args);
+const __call = (recv, name, ...args) => __m[recv.__struct ?? recv.__enum][name](recv, ...args);
+const __t = {};
 
 __m.Counter = {};
 __m.Counter.clone = function(self) {
-  return { _struct: "Counter", value: self.value };
+  return { __struct: "Counter", value: self.value };
 };
+__t.Counter = ["Clone"];
 function main() {
-  let a = { _struct: "Counter", value: 5 };
+  let a = { __struct: "Counter", value: 5 };
   let b = __call(a, "clone");
   println(a.value);
   println(b.value);

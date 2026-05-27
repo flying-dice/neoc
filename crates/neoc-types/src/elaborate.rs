@@ -16,6 +16,7 @@
 use neoc_ast as ast;
 
 use crate::collect::collect;
+use crate::env::SymbolTable;
 use crate::infer::Checker;
 use crate::ty::Ty;
 
@@ -34,9 +35,80 @@ impl<'a> Elaborator<'a> {
     // ---- items -------------------------------------------------------------
 
     fn module(&mut self, module: &ast::Module) -> ast::Module {
-        ast::Module {
-            items: module.items.iter().map(|i| self.item(i)).collect(),
+        let mut items = Vec::with_capacity(module.items.len());
+        let mut expansions = Vec::new();
+        for item in &module.items {
+            // A blanket impl has no runtime home (its target is a parameter), so
+            // it is replaced by a concrete `impl Trait for X` for every type X
+            // that satisfies its conditions — the methods dispatch identically.
+            // Expansions are appended after all items, so each target type's
+            // table is already declared when its blanket methods attach to it.
+            if let ast::ItemKind::Impl(b) = &item.kind {
+                if let Some(param) = blanket_param(b) {
+                    expansions.extend(self.expand_blanket(item, b, &param));
+                    continue;
+                }
+            }
+            items.push(self.item(item));
         }
+        items.extend(expansions);
+        ast::Module { items }
+    }
+
+    /// Expands a blanket impl into one concrete impl per satisfying type. The
+    /// satisfying types are sorted for deterministic emission.
+    fn expand_blanket(
+        &mut self,
+        item: &ast::Item,
+        b: &ast::ImplBlock,
+        param: &str,
+    ) -> Vec<ast::Item> {
+        let conditions: Vec<String> = crate::collect::generic_param_bounds(&b.generics)
+            .remove(param)
+            .unwrap_or_default();
+        let mut targets: Vec<String> = self
+            .checker
+            .table()
+            .types
+            .iter()
+            .filter(|(_, def)| {
+                matches!(
+                    def,
+                    crate::env::TypeDef::Struct(_) | crate::env::TypeDef::Enum(_)
+                )
+            })
+            .map(|(name, _)| name.clone())
+            .filter(|name| {
+                let ty = Ty::named(name);
+                conditions
+                    .iter()
+                    .all(|c| self.checker.type_satisfies(&ty, c))
+            })
+            .collect();
+        targets.sort();
+        targets
+            .into_iter()
+            .map(|target| {
+                let concrete = ast::ImplBlock {
+                    generics: Vec::new(),
+                    trait_: b.trait_.clone(),
+                    ty: ast::Type::Path(ast::TypePath {
+                        segments: vec![ast::TypeSegment {
+                            name: target,
+                            args: Vec::new(),
+                        }],
+                    }),
+                    items: b.items.clone(),
+                    assoc_bindings: Vec::new(),
+                };
+                ast::Item {
+                    attrs: item.attrs.clone(),
+                    vis: item.vis,
+                    kind: ast::ItemKind::Impl(self.impl_block(&concrete)),
+                    span: item.span,
+                }
+            })
+            .collect()
     }
 
     fn item(&mut self, item: &ast::Item) -> ast::Item {
@@ -82,6 +154,7 @@ impl<'a> Elaborator<'a> {
             trait_: b.trait_.clone(),
             ty: b.ty.clone(),
             items,
+            assoc_bindings: b.assoc_bindings.clone(),
         }
     }
 
@@ -100,6 +173,8 @@ impl<'a> Elaborator<'a> {
         ast::TraitDecl {
             name: t.name.clone(),
             generics: t.generics.clone(),
+            supertraits: t.supertraits.clone(),
+            assoc_types: t.assoc_types.clone(),
             items,
         }
     }
@@ -113,7 +188,9 @@ impl<'a> Elaborator<'a> {
         self_ty: Option<&str>,
     ) -> ast::Block {
         let prev_params = std::mem::take(&mut self.checker.type_params);
+        let prev_bounds = std::mem::take(&mut self.checker.type_bounds);
         self.checker.type_params = sig.generics.iter().map(|g| g.name.clone()).collect();
+        self.checker.type_bounds = crate::collect::param_bounds(sig);
 
         self.checker.scopes.push();
         for p in &sig.params {
@@ -123,7 +200,7 @@ impl<'a> Elaborator<'a> {
                         self.checker.scopes.bind("self", Ty::named(t));
                     }
                 }
-                ast::Param::Named { name, ty } => {
+                ast::Param::Named { name, ty, .. } => {
                     let pty = Checker::subst_self(self.checker.lower(ty), self_ty);
                     self.checker.scopes.bind(name.clone(), pty);
                 }
@@ -138,6 +215,7 @@ impl<'a> Elaborator<'a> {
         self.checker.ret_ty = prev_ret;
         self.checker.scopes.pop();
         self.checker.type_params = prev_params;
+        self.checker.type_bounds = prev_bounds;
         block
     }
 
@@ -171,7 +249,9 @@ impl<'a> Elaborator<'a> {
             (None, Some(v)) => v.clone(),
             (None, None) => Ty::Unknown,
         };
-        self.checker.bind_pattern(&l.pattern, &ty);
+        // Elaboration does not record resolution; the kind is immaterial here.
+        self.checker
+            .bind_pattern(&l.pattern, &ty, crate::resolve::BindingKind::Let);
         ast::LetStmt {
             mutable: l.mutable,
             pattern: l.pattern.clone(),
@@ -211,10 +291,12 @@ impl<'a> Elaborator<'a> {
             ast::ExprKind::MethodCall {
                 receiver,
                 method,
+                method_span,
                 args,
             } => ast::ExprKind::MethodCall {
                 receiver: self.boxed(receiver),
                 method: method.clone(),
+                method_span: *method_span,
                 args: self.exprs(args),
             },
             ast::ExprKind::Field { base, field } => ast::ExprKind::Field {
@@ -297,6 +379,7 @@ impl<'a> Elaborator<'a> {
                     ast::ExprKind::MethodCall {
                         receiver: Box::new(new_lhs),
                         method: "eq".to_string(),
+                        method_span: span,
                         args: vec![new_rhs],
                     },
                     span,
@@ -336,7 +419,11 @@ impl<'a> Elaborator<'a> {
             .iter()
             .map(|arm| {
                 self.checker.scopes.push();
-                self.checker.bind_pattern(&arm.pattern, &scrut);
+                self.checker.bind_pattern(
+                    &arm.pattern,
+                    &scrut,
+                    crate::resolve::BindingKind::MatchArm,
+                );
                 let guard = arm.guard.as_ref().map(|g| self.expr(g));
                 let body = self.expr(&arm.body);
                 self.checker.scopes.pop();
@@ -365,7 +452,8 @@ impl<'a> Elaborator<'a> {
             _ => Ty::Unknown,
         };
         self.checker.scopes.push();
-        self.checker.bind_pattern(pattern, &elem);
+        self.checker
+            .bind_pattern(pattern, &elem, crate::resolve::BindingKind::ForPattern);
         let new_body = self.block(body);
         self.checker.scopes.pop();
         ast::ExprKind::For {
@@ -420,6 +508,41 @@ impl<'a> Elaborator<'a> {
 #[must_use]
 pub fn elaborate(module: &ast::Module) -> ast::Module {
     let table = collect(module);
-    let checker = Checker::new(&table);
+    elaborate_with_table(module, &table)
+}
+
+/// Elaborates a module against a caller-supplied [`SymbolTable`].
+///
+/// Like [`elaborate`], but the table is provided rather than freshly collected
+/// from the module. A multi-file driver uses this so a `+` whose operand type
+/// resolves through an imported `pub` item is still inferred as `string` and
+/// rewritten to [`ast::BinOp::Concat`]; with a local-only table the operand's
+/// type would be unknown and the node would stay [`ast::BinOp::Add`], emitting
+/// arithmetic `+` for what is a concatenation. Mirrors [`crate::check_with_table`]:
+/// collect the module's own declarations first, then add the `use` imports.
+///
+/// # Arguments
+///
+/// * `module` — the parsed source file to elaborate. The caller owns it; this
+///   function borrows it and returns a fresh, owned [`ast::Module`].
+/// * `table` — the symbol table to resolve operand types against. Ownership
+///   stays with the caller; the elaborator borrows it for the call.
+#[must_use]
+pub fn elaborate_with_table(module: &ast::Module, table: &SymbolTable) -> ast::Module {
+    let checker = Checker::new(table);
     Elaborator::new(checker).module(module)
+}
+
+/// The target parameter of a blanket impl `impl<T: …> Trait for T`, or `None`
+/// for a concrete or inherent impl.
+fn blanket_param(b: &ast::ImplBlock) -> Option<String> {
+    b.trait_.as_ref()?;
+    let target = match &b.ty {
+        ast::Type::Path(p) => p.segments.last().map(|s| s.name.clone())?,
+        _ => return None,
+    };
+    b.generics
+        .iter()
+        .any(|g| g.name == target)
+        .then_some(target)
 }

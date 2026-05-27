@@ -17,6 +17,11 @@ pub(crate) enum PathKind {
     Value(String),
     /// The path names an enum variant: `(enum name, variant name, shape)`.
     Variant(String, String, VariantShape),
+    /// The path is an associated item on a type — `Type::member`, where `Type`
+    /// is a local `impl` target or a `use`d type. Emits `Type.member`, keeping
+    /// the qualifier so it reads the type's table rather than dropping to a
+    /// bare (unbound) name.
+    Assoc(String, String),
 }
 
 /// The runtime payload shape of an enum variant.
@@ -62,7 +67,7 @@ impl Emitter {
     fn emit_let(&mut self, l: &ast::LetStmt) {
         // A simple binding or wildcard maps straight to a `local`.
         let name = match &l.pattern {
-            ast::Pattern::Binding(name) => Some(name.clone()),
+            ast::Pattern::Binding { name, .. } => Some(name.clone()),
             ast::Pattern::Wildcard => Some("_".to_string()),
             _ => None,
         };
@@ -109,7 +114,7 @@ impl Emitter {
     /// sibling variant) and stays a diagnostic.
     fn is_irrefutable_let_pattern(&self, pattern: &ast::Pattern) -> bool {
         match pattern {
-            ast::Pattern::Wildcard | ast::Pattern::Binding(_) => true,
+            ast::Pattern::Wildcard | ast::Pattern::Binding { .. } => true,
             ast::Pattern::Struct { path, fields, .. } => {
                 self.pattern_variant(path).is_none()
                     && fields.iter().all(|f| {
@@ -246,7 +251,7 @@ impl Emitter {
 
     fn emit_for(&mut self, pattern: &ast::Pattern, iter: &ast::Expr, body: &ast::Block) {
         let var = match pattern {
-            ast::Pattern::Binding(name) => name.clone(),
+            ast::Pattern::Binding { name, .. } => name.clone(),
             ast::Pattern::Wildcard => "_".to_string(),
             _ => {
                 self.error("only a binding pattern is supported in `for`");
@@ -350,7 +355,7 @@ impl Emitter {
             ast::ExprKind::Field { base, field } => {
                 let b = self.emit_expr(base);
                 match field {
-                    ast::FieldAccess::Named(n) => format!("{b}.{n}"),
+                    ast::FieldAccess::Named(n, _) => format!("{b}.{n}"),
                     // Tuple/newtype payload is stored positionally (Lua arrays
                     // are 1-based), so `.0` reads `[1]`. Matches the constructor
                     // (`N.new` stores at `[1]`) and the derive/pattern lowering.
@@ -378,6 +383,7 @@ impl Emitter {
             ast::ExprKind::MethodCall {
                 receiver,
                 method,
+                method_span: _,
                 args,
             } => {
                 let recv = self.emit_expr(receiver);
@@ -413,9 +419,12 @@ impl Emitter {
                 self.note_prelude(&name);
                 name
             }
+            // `Type::member` reads the type's table — keep the qualifier so the
+            // associated function/const resolves against `Type`, not a bare name.
+            Some(PathKind::Assoc(ty, name)) => format!("{ty}.{name}"),
             Some(PathKind::Variant(en, var, VariantShape::Unit)) => {
                 self.note_prelude(&en);
-                self.variant_table(&en, format!("{{ _enum = \"{en}\", tag = \"{var}\" }}"))
+                self.variant_table(&en, format!("{{ __enum = \"{en}\", __tag = \"{var}\" }}"))
             }
             // A tuple/struct variant in path position (no payload applied) is a
             // constructor function. Without first-class enum constructors in the
@@ -452,6 +461,11 @@ impl Emitter {
             [.., en, var] => self
                 .variant_shape(en, var)
                 .map(|shape| PathKind::Variant(en.clone(), var.clone(), shape))
+                .or_else(|| {
+                    self.assoc_types
+                        .contains(en)
+                        .then(|| PathKind::Assoc(en.clone(), var.clone()))
+                })
                 .or_else(|| Some(PathKind::Value(var.clone()))),
         }
     }
@@ -465,7 +479,7 @@ impl Emitter {
     /// Resolve a path *in pattern position* to the variant it matches:
     /// `(enum, variant, shape)`. Unlike [`resolve_path`], a single-segment
     /// unqualified prelude variant (`Ok`/`Err`/`Some`/`None`) resolves here, so
-    /// `match` tests its `tag`. A qualified `Enum::Variant` resolves via the
+    /// `match` tests its `__tag`. A qualified `Enum::Variant` resolves via the
     /// enum index. Returns `None` when the path is not a known variant (then the
     /// caller treats it as a struct pattern or a fresh binding).
     pub(crate) fn pattern_variant(
@@ -511,7 +525,7 @@ impl Emitter {
             let body = self.emit_field_inits(fields);
             return self.variant_table(
                 &en,
-                format!("{{ _enum = \"{en}\", tag = \"{var}\", {body} }}"),
+                format!("{{ __enum = \"{en}\", __tag = \"{var}\", {body} }}"),
             );
         }
         let Some(name) = path.last() else {
@@ -527,7 +541,7 @@ impl Emitter {
     /// Lower `S { f: e, .. base }` (functional update). The emitter has no field
     /// list, so it copies `base`'s keys at runtime into a fresh table, overrides
     /// the listed fields, then constructs through `S.new` so the value re-stamps
-    /// its `_struct` tag and metatable (§4.4).
+    /// its `__struct` tag and metatable (§4.4).
     fn emit_struct_update(
         &mut self,
         name: &str,
@@ -572,9 +586,9 @@ impl Emitter {
         self.note_prelude(en);
         let payload = self.emit_args(args);
         let table = if payload.is_empty() {
-            format!("{{ _enum = \"{en}\", tag = \"{var}\" }}")
+            format!("{{ __enum = \"{en}\", __tag = \"{var}\" }}")
         } else {
-            format!("{{ _enum = \"{en}\", tag = \"{var}\", {payload} }}")
+            format!("{{ __enum = \"{en}\", __tag = \"{var}\", {payload} }}")
         };
         self.variant_table(en, table)
     }
@@ -689,8 +703,8 @@ impl Emitter {
     /// Lower `e?` (§4.10). The short-circuit must return the carrier from the
     /// *enclosing function*, which a self-contained IIFE cannot do (its `return`
     /// would only exit the wrapper). So the guard is hoisted as statements into
-    /// the current buffer — `local __try_N = e; if __try_N.tag == "Err" or
-    /// __try_N.tag == "None" then return __try_N end` — and the expression value
+    /// the current buffer — `local __try_N = e; if __try_N.__tag == "Err" or
+    /// __try_N.__tag == "None" then return __try_N end` — and the expression value
     /// of `e?` is the unwrapped payload `__try_N[1]`. The `return` then belongs
     /// to the surrounding function body, exactly as the operator requires.
     fn emit_try(&mut self, inner: &ast::Expr) -> String {
@@ -699,7 +713,7 @@ impl Emitter {
         self.try_seq += 1;
         self.line(format!("local {tmp} = {value}"));
         self.line(format!(
-            "if {tmp}.tag == \"Err\" or {tmp}.tag == \"None\" then return {tmp} end"
+            "if {tmp}.__tag == \"Err\" or {tmp}.__tag == \"None\" then return {tmp} end"
         ));
         format!("{tmp}[1]")
     }

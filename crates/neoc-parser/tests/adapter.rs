@@ -41,13 +41,21 @@ fn function_with_let_and_return() {
                     args: vec![]
                 }],
             }),
+            // Span compares always-equal, so a default is fine here.
+            span: ast::Span::default(),
         }
     );
     assert_eq!(f.body.stmts.len(), 2);
     let ast::StmtKind::Let(let_stmt) = &f.body.stmts[0].kind else {
         panic!("expected let");
     };
-    assert_eq!(let_stmt.pattern, ast::Pattern::Binding("s".into()));
+    assert_eq!(
+        let_stmt.pattern,
+        ast::Pattern::Binding {
+            name: "s".into(),
+            span: ast::Span::default()
+        }
+    );
     assert_eq!(
         let_stmt.value,
         Some(e(ast::ExprKind::Binary {
@@ -107,9 +115,70 @@ fn match_with_guard_and_or_pattern() {
         ast::Pattern::Literal(ast::LiteralPat::Int("0".into()))
     );
     assert!(matches!(arms[1].pattern, ast::Pattern::Or(_)));
-    assert_eq!(arms[2].pattern, ast::Pattern::Binding("x".into()));
+    assert_eq!(
+        arms[2].pattern,
+        ast::Pattern::Binding {
+            name: "x".into(),
+            span: ast::Span::default()
+        }
+    );
     assert!(arms[2].guard.is_some());
     assert_eq!(arms[3].pattern, ast::Pattern::Wildcard);
+}
+
+#[test]
+fn block_bodied_arm_needs_no_separating_comma() {
+    // A `=> { … }` arm bounds itself with its `}`, so the comma before the next
+    // arm is optional (as in Rust). Without this the `_` arm was swallowed and
+    // the match looked non-exhaustive.
+    let m = module(
+        "fn f(x: number) -> number {\n\
+           match x {\n\
+             0 => {\n\
+               let y = 1;\n\
+               y\n\
+             }\n\
+             _ => 2\n\
+           }\n\
+         }",
+    );
+    let ast::ItemKind::Fn(f) = &m.items[0].kind else {
+        panic!("expected fn");
+    };
+    let Some(ast::Expr {
+        kind: ast::ExprKind::Match { arms, .. },
+        ..
+    }) = f.body.value.as_deref()
+    else {
+        panic!("expected match as block value");
+    };
+    assert_eq!(arms.len(), 2, "both arms must parse without the comma");
+    assert_eq!(
+        arms[0].pattern,
+        ast::Pattern::Literal(ast::LiteralPat::Int("0".into()))
+    );
+    assert_eq!(arms[1].pattern, ast::Pattern::Wildcard);
+}
+
+#[test]
+fn non_block_arm_without_a_comma_is_rejected() {
+    // The flip side: a non-block value would run across the arm boundary
+    // (`g(0)` then `(1)` reads as `g(0)(1)`), so the comma stays mandatory.
+    // Dropping it is a syntax error, not a silent single-arm parse.
+    let result = parse(
+        "fn g(n: number) -> number { n }\n\
+         fn f(x: number) -> number {\n\
+           match x {\n\
+             0 => g(0)\n\
+             1 => 2\n\
+             _ => 3\n\
+           }\n\
+         }",
+    );
+    assert!(
+        !result.ok(),
+        "a non-block arm missing its comma must be rejected, not silently parsed"
+    );
 }
 
 #[test]
@@ -214,7 +283,10 @@ fn method_call_and_field_access() {
     let ast::ExprKind::Field { base, field } = &l.value.as_ref().unwrap().kind else {
         panic!("expected field access");
     };
-    assert_eq!(*field, ast::FieldAccess::Named("x".into()));
+    assert_eq!(
+        *field,
+        ast::FieldAccess::Named("x".into(), ast::Span::default())
+    );
     assert!(
         matches!(&base.kind, ast::ExprKind::MethodCall { method, .. } if method == "translate")
     );
@@ -234,4 +306,37 @@ fn expression_span_slices_the_source() {
     };
     let value = l.value.as_ref().expect("let has a value");
     assert_eq!(&src[value.span.start..value.span.end], "foo");
+}
+
+#[test]
+fn a_nested_syntax_error_is_surfaced() {
+    // Regression: the adapter only checked the root's direct children for error
+    // nodes, so a malformed construct deeper in the tree — here `pub` on a
+    // struct field, which the spec does not allow (§3.4) — parsed silently and
+    // let malformed source reach the checker. The whole tree must be scanned.
+    let result = parse("struct P {\n  pub x: number,\n}\n");
+    assert!(
+        !result.ok(),
+        "a `pub` field is a syntax error and must produce a diagnostic"
+    );
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.message == "syntax error"),
+        "expected a syntax-error diagnostic, got: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn a_let_without_a_terminating_semicolon_is_rejected() {
+    // SYNTAX.md §6.1: a `let` is a statement and ends in `;`; only a trailing
+    // expression with no `;` is the block value. A missing `;` left a recovery
+    // node the adapter used to swallow.
+    let result = parse("fn f() -> number {\n  let x = 1\n  x\n}\n");
+    assert!(
+        !result.ok(),
+        "a `let` missing its `;` must produce a diagnostic, got none"
+    );
 }

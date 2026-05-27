@@ -71,6 +71,51 @@ impl Ty {
         matches!(self, Ty::Unknown)
     }
 
+    /// Rebuilds the type, replacing any subterm for which `f` returns `Some`
+    /// and recursing into list, function, and nominal-argument positions
+    /// otherwise. The single structural-substitution primitive every
+    /// `subst_*`/projection reuses, so the `List`/`Fn`/`Named` recursion lives
+    /// in exactly one place rather than being re-written per substitution.
+    #[must_use]
+    pub(crate) fn map(&self, f: &impl Fn(&Ty) -> Option<Ty>) -> Ty {
+        if let Some(replaced) = f(self) {
+            return replaced;
+        }
+        match self {
+            Ty::List(inner) => Ty::List(Box::new(inner.map(f))),
+            Ty::Fn(params, ret) => Ty::Fn(
+                params.iter().map(|p| p.map(f)).collect(),
+                Box::new(ret.map(f)),
+            ),
+            Ty::Named { name, args } => Ty::Named {
+                name: name.clone(),
+                args: args.iter().map(|a| a.map(f)).collect(),
+            },
+            other => other.clone(),
+        }
+    }
+
+    /// Replaces every `Self` with `target`, recursing through composites — how
+    /// a trait or impl signature's `Self` is read as the implementing type.
+    #[must_use]
+    pub(crate) fn subst_self(&self, target: &Ty) -> Ty {
+        self.map(&|t| match t {
+            Ty::Named { name, args } if name == "Self" && args.is_empty() => Some(target.clone()),
+            _ => None,
+        })
+    }
+
+    /// Replaces every occurrence of the type parameter `param` with `with`,
+    /// recursing through composites — how a blanket impl's binding, written in
+    /// terms of its target parameter, is read for a concrete satisfying type.
+    #[must_use]
+    pub(crate) fn subst_param(&self, param: &str, with: &Ty) -> Ty {
+        self.map(&|t| match t {
+            Ty::Param(p) if p == param => Some(with.clone()),
+            _ => None,
+        })
+    }
+
     /// Structural compatibility for the no-subtyping fragment.
     ///
     /// `Unknown` is compatible with anything (error recovery). A type
@@ -80,6 +125,24 @@ impl Ty {
     /// nominal type arguments.
     #[must_use]
     pub fn compatible(&self, other: &Ty) -> bool {
+        self.relate(other, &|_, _| None)
+    }
+
+    /// The single structural relation between two types, parameterised by a
+    /// per-node `hook`. At each node the hook is consulted first: `Some(result)`
+    /// overrides the structural comparison there, `None` falls through to it.
+    /// The structural comparison treats `Unknown` and `Param` as wildcards on
+    /// either side and otherwise requires equal shape, recursing through lists,
+    /// function types, and nominal type arguments — carrying the same hook down,
+    /// so the override applies at every depth.
+    ///
+    /// [`Ty::compatible`] is this with no hook; the checker's `assignable`
+    /// supplies a hook for the trait-as-type existential. One walker, so the two
+    /// relations cannot drift apart.
+    pub(crate) fn relate(&self, other: &Ty, hook: &impl Fn(&Ty, &Ty) -> Option<bool>) -> bool {
+        if let Some(result) = hook(self, other) {
+            return result;
+        }
         match (self, other) {
             (Ty::Unknown | Ty::Param(_), _)
             | (_, Ty::Unknown | Ty::Param(_))
@@ -87,14 +150,16 @@ impl Ty {
             | (Ty::Str, Ty::Str)
             | (Ty::Bool, Ty::Bool)
             | (Ty::Unit, Ty::Unit) => true,
-            (Ty::List(a), Ty::List(b)) => a.compatible(b),
+            (Ty::List(a), Ty::List(b)) => a.relate(b, hook),
             (Ty::Fn(pa, ra), Ty::Fn(pb, rb)) => {
                 pa.len() == pb.len()
-                    && pa.iter().zip(pb).all(|(x, y)| x.compatible(y))
-                    && ra.compatible(rb)
+                    && pa.iter().zip(pb).all(|(x, y)| x.relate(y, hook))
+                    && ra.relate(rb, hook)
             }
             (Ty::Named { name: na, args: aa }, Ty::Named { name: nb, args: ab }) => {
-                na == nb && aa.len() == ab.len() && aa.iter().zip(ab).all(|(x, y)| x.compatible(y))
+                na == nb
+                    && aa.len() == ab.len()
+                    && aa.iter().zip(ab).all(|(x, y)| x.relate(y, hook))
             }
             _ => false,
         }

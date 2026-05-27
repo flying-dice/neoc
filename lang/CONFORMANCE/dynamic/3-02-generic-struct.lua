@@ -1,7 +1,7 @@
 local Box = {}
 Box.__index = Box
 function Box.new(fields)
-  fields._struct = "Box"
+  fields.__struct = "Box"
   return setmetatable(fields, Box)
 end
 function Box.get(self)

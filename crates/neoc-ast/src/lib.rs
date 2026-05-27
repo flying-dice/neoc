@@ -177,6 +177,8 @@ pub enum StructBody {
 pub struct Field {
     pub attrs: Vec<Attribute>,
     pub name: Ident,
+    /// Byte span of the field name at its declaration, for member resolution.
+    pub name_span: Span,
     pub ty: Type,
 }
 
@@ -191,6 +193,8 @@ pub struct EnumDecl {
 pub struct Variant {
     pub attrs: Vec<Attribute>,
     pub name: Ident,
+    /// Byte span of the variant name at its declaration, for member resolution.
+    pub name_span: Span,
     pub body: VariantBody,
 }
 
@@ -205,6 +209,13 @@ pub enum VariantBody {
 pub struct TraitDecl {
     pub name: Ident,
     pub generics: Vec<GenericParam>,
+    /// Supertraits the trait requires of its implementors (`trait A: B + C`).
+    /// Each is the path of a required trait; an `impl A for T` must also
+    /// provide an `impl B for T`.
+    pub supertraits: Vec<TypePath>,
+    /// Associated types the trait declares (`type Item;`). An implementor binds
+    /// each in its `impl`, and trait methods may refer to them as `Self::Item`.
+    pub assoc_types: Vec<Ident>,
     pub items: Vec<TraitItem>,
 }
 
@@ -222,6 +233,9 @@ pub struct ImplBlock {
     pub trait_: Option<TypePath>,
     pub ty: Type,
     pub items: Vec<FnDecl>,
+    /// Associated-type bindings (`type Item = number;`) declared in the impl
+    /// body, pairing each name with its concrete type.
+    pub assoc_bindings: Vec<(Ident, Type)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -234,6 +248,9 @@ pub struct FnDecl {
 #[derive(Debug, Clone, PartialEq)]
 pub struct FnSig {
     pub name: Ident,
+    /// Byte span of the function/method name at its declaration, for member
+    /// resolution (goto a method from a call site).
+    pub name_span: Span,
     pub generics: Vec<GenericParam>,
     pub params: Vec<Param>,
     pub ret: Option<Type>,
@@ -247,6 +264,9 @@ pub enum Param {
     Named {
         name: Ident,
         ty: Type,
+        /// The span of the parameter name — its binding site, for scope-aware
+        /// resolution (`tasks/scope-aware-resolution.md`).
+        span: Span,
     },
 }
 
@@ -312,6 +332,103 @@ pub fn module_imports(module: &Module, target: Target) -> Vec<(String, Vec<Ident
         }
     }
     by_spec.into_iter().collect()
+}
+
+/// The trait names listed by every `#[derive(...)]` in `attrs`, in source order.
+#[must_use]
+pub fn derive_names(attrs: &[Attribute]) -> Vec<String> {
+    let mut names = Vec::new();
+    for attr in attrs {
+        for item in &attr.items {
+            if item.name != "derive" {
+                continue;
+            }
+            for arg in &item.args {
+                if let AttrArg::Item(inner) = arg {
+                    names.push(inner.name.clone());
+                }
+            }
+        }
+    }
+    names
+}
+
+/// Maps each `struct`/`enum` to the set of traits it implements, transitively
+/// closed over supertraits — the `__traits` runtime tag (`DYNAMIC.md`). A trait
+/// impl (`impl Trait for Type`) and a `#[derive(Trait)]` both count; `trait A:
+/// B` means a type implementing `A` also lists `B`. Types implementing no trait
+/// are absent. The sets are sorted ([`BTreeSet`]) so codegen emits them
+/// deterministically.
+///
+/// The supertrait closure is within this module: the `trait A: B` declarations
+/// it can see. When `A` is implemented here but declared in another module
+/// (with its `: B`), only `A` is recorded — closing that gap needs the
+/// project-wide trait graph, which the runtime trait-enforcement work (#54)
+/// must supply at its check site rather than relying on this per-module tag.
+#[must_use]
+pub fn trait_index(
+    module: &Module,
+) -> std::collections::BTreeMap<String, std::collections::BTreeSet<String>> {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    // trait → its direct supertraits, by final path segment.
+    let mut supertraits: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for item in &module.items {
+        if let ItemKind::Trait(t) = &item.kind {
+            let ups = t
+                .supertraits
+                .iter()
+                .filter_map(|p| p.segments.last().map(|s| s.name.clone()))
+                .collect();
+            supertraits.insert(t.name.clone(), ups);
+        }
+    }
+
+    let mut index: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for item in &module.items {
+        match &item.kind {
+            ItemKind::Impl(b) => {
+                if let (Some(trait_path), Type::Path(p)) = (&b.trait_, &b.ty) {
+                    if let (Some(tr), Some(target)) =
+                        (trait_path.segments.last(), p.segments.last())
+                    {
+                        add_trait(&mut index, &supertraits, &target.name, &tr.name);
+                    }
+                }
+            }
+            ItemKind::Struct(s) => {
+                for d in derive_names(&item.attrs) {
+                    add_trait(&mut index, &supertraits, &s.name, &d);
+                }
+            }
+            ItemKind::Enum(e) => {
+                for d in derive_names(&item.attrs) {
+                    add_trait(&mut index, &supertraits, &e.name, &d);
+                }
+            }
+            _ => {}
+        }
+    }
+    index
+}
+
+/// Records that `ty` implements `trait_name`, then walks the supertrait chain so
+/// the recorded set is transitively closed. Cycle-guarded via the set itself.
+fn add_trait(
+    index: &mut std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
+    supertraits: &std::collections::BTreeMap<String, Vec<String>>,
+    ty: &str,
+    trait_name: &str,
+) {
+    let set = index.entry(ty.to_string()).or_default();
+    let mut stack = vec![trait_name.to_string()];
+    while let Some(t) = stack.pop() {
+        if set.insert(t.clone()) {
+            if let Some(ups) = supertraits.get(&t) {
+                stack.extend(ups.iter().cloned());
+            }
+        }
+    }
 }
 
 // ---- types -----------------------------------------------------------------
@@ -392,6 +509,8 @@ pub enum ExprKind {
     MethodCall {
         receiver: Box<Expr>,
         method: Ident,
+        /// Byte span of the method name at the call site, for member resolution.
+        method_span: Span,
         args: Vec<Expr>,
     },
     Field {
@@ -447,7 +566,8 @@ pub enum ExprKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum FieldAccess {
-    Named(Ident),
+    /// A named field access `value.field`, with the byte span of the field name.
+    Named(Ident, Span),
     /// Newtype / positional field: `value.0`.
     Tuple(usize),
 }
@@ -470,6 +590,8 @@ pub struct MatchArm {
 pub struct ClosureParam {
     pub name: Ident,
     pub ty: Option<Type>,
+    /// The span of the parameter name — its binding site.
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -562,8 +684,12 @@ pub enum Pattern {
     Literal(LiteralPat),
     /// A lone identifier. The adapter leaves it as a binding; name resolution
     /// reinterprets it as a unit struct/variant pattern when it resolves to
-    /// one (as Rust does).
-    Binding(Ident),
+    /// one (as Rust does). `span` is the binding site, for scope-aware
+    /// resolution (`tasks/scope-aware-resolution.md`).
+    Binding {
+        name: Ident,
+        span: Span,
+    },
     /// A multi-segment path: a unit variant like `Color::Red`.
     Path(Vec<Ident>),
     Struct {
@@ -592,6 +718,8 @@ pub struct FieldPat {
     pub name: Ident,
     /// `None` for shorthand (`Point { x, y }`).
     pub pattern: Option<Pattern>,
+    /// The span of the field name — the binding site for shorthand (`{ x }`).
+    pub span: Span,
 }
 
 // ---- attributes ------------------------------------------------------------
@@ -639,5 +767,68 @@ mod tests {
         let lhs = Expr::new(ExprKind::Int("1".into()), a);
         let rhs = Expr::new(ExprKind::Int("1".into()), b);
         assert_eq!(lhs, rhs);
+    }
+
+    #[test]
+    fn trait_index_closes_over_supertraits_and_derives() {
+        let tpath = |n: &str| TypePath {
+            segments: vec![TypeSegment {
+                name: n.to_string(),
+                args: Vec::new(),
+            }],
+        };
+        let item = |kind, attrs| Item {
+            attrs,
+            vis: Visibility::Private,
+            kind,
+            span: Span::default(),
+        };
+        let trait_decl = |name: &str, supers: Vec<TypePath>| {
+            ItemKind::Trait(TraitDecl {
+                name: name.to_string(),
+                generics: Vec::new(),
+                supertraits: supers,
+                assoc_types: Vec::new(),
+                items: Vec::new(),
+            })
+        };
+        let derive_clone = Attribute {
+            items: vec![AttrItem {
+                name: "derive".to_string(),
+                args: vec![AttrArg::Item(AttrItem {
+                    name: "Clone".to_string(),
+                    args: Vec::new(),
+                })],
+            }],
+        };
+        let module = Module {
+            items: vec![
+                item(trait_decl("Show", Vec::new()), Vec::new()),
+                item(trait_decl("Greet", vec![tpath("Show")]), Vec::new()),
+                item(
+                    ItemKind::Struct(StructDecl {
+                        name: "P".to_string(),
+                        generics: Vec::new(),
+                        body: StructBody::Unit,
+                    }),
+                    vec![derive_clone],
+                ),
+                item(
+                    ItemKind::Impl(ImplBlock {
+                        generics: Vec::new(),
+                        trait_: Some(tpath("Greet")),
+                        ty: Type::Path(tpath("P")),
+                        items: Vec::new(),
+                        assoc_bindings: Vec::new(),
+                    }),
+                    Vec::new(),
+                ),
+            ],
+        };
+        let index = trait_index(&module);
+        // `impl Greet for P` pulls in `Greet` and its supertrait `Show`;
+        // `#[derive(Clone)]` adds `Clone`. Sorted by the `BTreeSet`.
+        let p: Vec<&str> = index["P"].iter().map(String::as_str).collect();
+        assert_eq!(p, vec!["Clone", "Greet", "Show"]);
     }
 }

@@ -56,14 +56,30 @@ impl std::str::FromStr for Target {
 }
 
 /// A problem found anywhere in the pipeline, tagged with its stage.
+///
+/// `#[non_exhaustive]`: construct these only through the compiler; new fields
+/// may be added without a breaking change.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Diagnostic {
     pub stage: Stage,
     pub message: String,
     /// Byte range in the source the diagnostic refers to, when the producing
-    /// stage tracks one. The parser records spans; the type and emit stages do
-    /// not yet, so theirs is `None`.
+    /// stage tracks one. The parser records spans; the type stage records them
+    /// for most nodes; the emit stage does not, so its span is `None`.
     pub span: Option<ByteSpan>,
+    /// Related source locations that explain this diagnostic (where a trait
+    /// method was declared, which arm already matches), each with its own
+    /// message. Editors surface these as related information. Usually empty.
+    pub labels: Vec<DiagnosticLabel>,
+}
+
+/// A secondary span attached to a [`Diagnostic`]: a related byte range with a
+/// short message of its own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiagnosticLabel {
+    pub message: String,
+    pub span: ByteSpan,
 }
 
 /// A half-open byte range `[start, end)` into the source text.
@@ -78,6 +94,61 @@ pub enum Stage {
     Parse,
     Type,
     Emit,
+}
+
+impl Diagnostic {
+    /// A parse-stage diagnostic. The parser always records the offending byte
+    /// range, so it is always spanned.
+    fn parse(message: String, start: usize, end: usize) -> Self {
+        Self {
+            stage: Stage::Parse,
+            message,
+            span: Some(ByteSpan { start, end }),
+            labels: Vec::new(),
+        }
+    }
+
+    /// A type-stage diagnostic. A located diagnostic carries the byte range of
+    /// the node it reports against; the `0..0` fallback (no node span) stays
+    /// `None`, so the LSP renders it at the file start rather than mislocating
+    /// it.
+    fn typed(message: String, start: usize, end: usize) -> Self {
+        Self {
+            stage: Stage::Type,
+            message,
+            span: (start != 0 || end != 0).then_some(ByteSpan { start, end }),
+            labels: Vec::new(),
+        }
+    }
+
+    /// A type-stage diagnostic mapped from the type checker's own diagnostic,
+    /// carrying its span and any related-information labels through.
+    fn typed_from(d: &types::Diagnostic) -> Self {
+        Self {
+            labels: d
+                .labels
+                .iter()
+                .map(|l| DiagnosticLabel {
+                    message: l.message.clone(),
+                    span: ByteSpan {
+                        start: l.start,
+                        end: l.end,
+                    },
+                })
+                .collect(),
+            ..Self::typed(d.message.clone(), d.start, d.end)
+        }
+    }
+
+    /// An emit-stage diagnostic. Emit messages carry no source range.
+    fn emit(message: String) -> Self {
+        Self {
+            stage: Stage::Emit,
+            message,
+            span: None,
+            labels: Vec::new(),
+        }
+    }
 }
 
 /// A line-level map from emitted target source back to neoc source.
@@ -127,46 +198,25 @@ pub fn transpile(source: &str, target: Target) -> CompileOutput {
     let mut diagnostics: Vec<Diagnostic> = parsed
         .diagnostics
         .iter()
-        .map(|d| Diagnostic {
-            stage: Stage::Parse,
-            message: d.message.clone(),
-            span: Some(ByteSpan {
-                start: d.start,
-                end: d.end,
-            }),
-        })
+        .map(|d| Diagnostic::parse(d.message.clone(), d.start, d.end))
         .collect();
 
     let checked = types::check(&parsed.module);
-    diagnostics.extend(checked.diagnostics.iter().map(|d| Diagnostic {
-        stage: Stage::Type,
-        message: d.message.clone(),
-        // A located type diagnostic carries the byte range of the node it
-        // reports against; the `0..0` fallback (no node span) stays `None` so
-        // the LSP renders it at the start of the file rather than mislocating
-        // it.
-        span: (d.start != 0 || d.end != 0).then_some(ByteSpan {
-            start: d.start,
-            end: d.end,
-        }),
-    }));
+    diagnostics.extend(checked.diagnostics.iter().map(Diagnostic::typed_from));
 
     // Mark string-typed `+` as concatenation before emitting. Each backend
     // interprets it: Lua picks `..`, JS keeps `+` (`lang/DYNAMIC.md` §4.2).
     let elaborated = types::elaborate(&parsed.module);
     // A single-file `transpile` has no resolved module graph, so no cross-module
-    // `use` can resolve to a binding — pass an empty set.
+    // `use` can resolve to a binding or an imported enum — pass empty sets.
     let (output, emit_messages, source_map) = emit(
         target,
         &elaborated,
         source,
         &std::collections::HashSet::new(),
+        &[],
     );
-    diagnostics.extend(emit_messages.into_iter().map(|message| Diagnostic {
-        stage: Stage::Emit,
-        message,
-        span: None,
-    }));
+    diagnostics.extend(emit_messages.into_iter().map(Diagnostic::emit));
 
     CompileOutput {
         output,
@@ -216,6 +266,9 @@ struct LoadedModule {
     source: String,
     module: ast::Module,
     table: types::SymbolTable,
+    /// The module's own parse diagnostics, kept so a focus check reports them
+    /// without re-parsing.
+    parse_diagnostics: Vec<parser::Diagnostic>,
 }
 
 /// Compiles a multi-file neoc project rooted at `entry` to `target`.
@@ -272,14 +325,7 @@ pub fn transpile_project(entry: &Path, target: Target) -> std::io::Result<Projec
         for d in &parsed.diagnostics {
             diagnostics.push(ProjectDiagnostic {
                 path: path.clone(),
-                diagnostic: Diagnostic {
-                    stage: Stage::Parse,
-                    message: d.message.clone(),
-                    span: Some(ByteSpan {
-                        start: d.start,
-                        end: d.end,
-                    }),
-                },
+                diagnostic: Diagnostic::parse(d.message.clone(), d.start, d.end),
             });
         }
         let table = types::collect(&parsed.module);
@@ -301,6 +347,7 @@ pub fn transpile_project(entry: &Path, target: Target) -> std::io::Result<Projec
                 source,
                 module: parsed.module,
                 table,
+                parse_diagnostics: parsed.diagnostics,
             },
         );
     }
@@ -308,11 +355,12 @@ pub fn transpile_project(entry: &Path, target: Target) -> std::io::Result<Projec
     // Check every module's bodies against a table augmented with the `pub`
     // symbols its `use` declarations import. Visibility violations and
     // unresolved module paths are diagnostics.
+    let universe = type_universe(&loaded);
     let mut files = Vec::new();
     let mut source_maps = Vec::new();
     for path in &order {
         let (output, source_map) =
-            check_and_emit_module(&root, &loaded, path, target, &mut diagnostics);
+            check_and_emit_module(&root, &loaded, &universe, path, target, &mut diagnostics);
         files.push((loaded[path].path.with_extension(target.extension()), output));
         source_maps.push(source_map);
     }
@@ -328,12 +376,127 @@ pub fn transpile_project(entry: &Path, target: Target) -> std::io::Result<Projec
     })
 }
 
+/// Diagnoses one module against an in-memory project, for the editor.
+///
+/// `sources` maps each module's file path to its current text — open editor
+/// buffers, authoritative over disk. `focus` is the module to diagnose. The
+/// whole set is parsed and collected so the focus module's `use` imports
+/// resolve against the real project (no phantom `unresolved module` errors on
+/// a non-entry file); only the focus module is type-checked, and nothing is
+/// emitted (parse and type diagnostics are target-independent). `root` is the
+/// project root that `use` paths resolve against.
+///
+/// Returns the focus module's diagnostics — parse errors, `use`-resolution and
+/// visibility errors, and type errors — attributed to `focus`. An empty result
+/// means the module is well-formed in the project; a `focus` not present in
+/// `sources` yields no diagnostics.
+#[must_use]
+pub fn check_module_in_project<H: std::hash::BuildHasher>(
+    root: &Path,
+    sources: &HashMap<PathBuf, String, H>,
+    focus: &Path,
+) -> Vec<Diagnostic> {
+    let loaded = load_in_memory(sources);
+    let universe = type_universe(&loaded);
+    focus_diagnostics(root, &loaded, &universe, &canonical_or(focus))
+}
+
+/// Diagnoses several modules against one shared in-memory project, for the
+/// editor — the batch form of [`check_module_in_project`].
+///
+/// `sources` maps each module's file path to its current text; `foci` are the
+/// modules to diagnose (each must appear in `sources`). The project is parsed
+/// and collected **once**, then every focus is checked against that shared set,
+/// so re-diagnosing a module and all its importers after an edit costs one
+/// universe parse rather than one per file. Returns each focus's diagnostics
+/// keyed by the path passed in `foci`; a focus absent from `sources` maps to an
+/// empty vector. `root` is the project root `use` paths resolve against.
+#[must_use]
+pub fn check_modules_in_project<H: std::hash::BuildHasher>(
+    root: &Path,
+    sources: &HashMap<PathBuf, String, H>,
+    foci: &[PathBuf],
+) -> HashMap<PathBuf, Vec<Diagnostic>> {
+    let loaded = load_in_memory(sources);
+    let universe = type_universe(&loaded);
+    foci.iter()
+        .map(|focus| {
+            (
+                focus.clone(),
+                focus_diagnostics(root, &loaded, &universe, &canonical_or(focus)),
+            )
+        })
+        .collect()
+}
+
+/// Parses and collects every in-memory module (no disk I/O), keyed by a
+/// canonicalised path so a focus lookup matches regardless of path spelling.
+fn load_in_memory<H: std::hash::BuildHasher>(
+    sources: &HashMap<PathBuf, String, H>,
+) -> HashMap<PathBuf, LoadedModule> {
+    let mut loaded: HashMap<PathBuf, LoadedModule> = HashMap::new();
+    for (path, source) in sources {
+        let key = canonical_or(path);
+        let parsed = parser::parse(source);
+        let table = types::collect(&parsed.module);
+        loaded.insert(
+            key.clone(),
+            LoadedModule {
+                path: key,
+                source: source.clone(),
+                module: parsed.module,
+                table,
+                parse_diagnostics: parsed.diagnostics,
+            },
+        );
+    }
+    loaded
+}
+
+/// The diagnostics attributed to one focus module within an already-loaded
+/// project: its stored parse diagnostics, its `use`-resolution and visibility
+/// errors, and its type errors. `focus` is the canonicalised path; a focus not
+/// in `loaded` yields an empty vector.
+fn focus_diagnostics(
+    root: &Path,
+    loaded: &HashMap<PathBuf, LoadedModule>,
+    universe: &types::SymbolTable,
+    focus: &Path,
+) -> Vec<Diagnostic> {
+    let Some(me) = loaded.get(focus) else {
+        return Vec::new();
+    };
+    let mut out: Vec<Diagnostic> = me
+        .parse_diagnostics
+        .iter()
+        .map(|d| Diagnostic::parse(d.message.clone(), d.start, d.end))
+        .collect();
+    // Resolve the focus module's `use` imports against the project, then check
+    // its bodies. `resolve_use` reports against the importing (focus) module,
+    // so every diagnostic it pushes belongs to the focus.
+    let mut table = types::collect(&me.module);
+    let mut use_diags: Vec<ProjectDiagnostic> = Vec::new();
+    for item in &me.module.items {
+        if let ast::ItemKind::Use(u) = &item.kind {
+            resolve_use(root, loaded, item, u, &mut table, &mut use_diags, focus);
+        }
+    }
+    out.extend(use_diags.into_iter().map(|pd| pd.diagnostic));
+    table.import_referenced_types(universe);
+    let checked = types::check_with_table(&me.module, &table);
+    for d in &checked.diagnostics {
+        out.push(Diagnostic::typed_from(d));
+    }
+    out
+}
+
 /// Checks one resolved module's bodies (with its `use`-imported symbols in
 /// scope) and emits it to `target`, pushing any type/emit diagnostics onto
 /// `diagnostics`. Returns the emitted source and its [`SourceMap`].
 fn check_and_emit_module(
     root: &Path,
     loaded: &HashMap<PathBuf, LoadedModule>,
+    universe: &types::SymbolTable,
     path: &Path,
     target: Target,
     diagnostics: &mut Vec<ProjectDiagnostic>,
@@ -345,32 +508,34 @@ fn check_and_emit_module(
             resolve_use(root, loaded, item, u, &mut table, diagnostics, path);
         }
     }
+    // Bring in the shape of any type reached only through an imported
+    // signature — e.g. accessing a field of a value returned by an imported
+    // function whose type the module never names in a `use`.
+    table.import_referenced_types(universe);
     let checked = types::check_with_table(&me.module, &table);
     for d in &checked.diagnostics {
         diagnostics.push(ProjectDiagnostic {
             path: path.to_path_buf(),
-            diagnostic: Diagnostic {
-                stage: Stage::Type,
-                message: d.message.clone(),
-                span: (d.start != 0 || d.end != 0).then_some(ByteSpan {
-                    start: d.start,
-                    end: d.end,
-                }),
-            },
+            diagnostic: Diagnostic::typed_from(d),
         });
     }
-    let elaborated = types::elaborate(&me.module);
+    // Elaborate against the same import-enriched table the checker used, so a
+    // string `+` whose operand type resolves through a `use` import is rewritten
+    // to concatenation rather than left as arithmetic.
+    let elaborated = types::elaborate_with_table(&me.module, &table);
     let imported_bindings = js_imported_bindings(root, loaded, &me.module);
-    let (output, emit_messages, source_map) =
-        emit(target, &elaborated, &me.source, &imported_bindings);
+    let imported_enums = imported_enums(root, loaded, &me.module);
+    let (output, emit_messages, source_map) = emit(
+        target,
+        &elaborated,
+        &me.source,
+        &imported_bindings,
+        &imported_enums,
+    );
     for message in emit_messages {
         diagnostics.push(ProjectDiagnostic {
             path: path.to_path_buf(),
-            diagnostic: Diagnostic {
-                stage: Stage::Emit,
-                message,
-                span: None,
-            },
+            diagnostic: Diagnostic::emit(message),
         });
     }
     (output, source_map)
@@ -400,14 +565,7 @@ fn resolve_use(
     let push = |diagnostics: &mut Vec<ProjectDiagnostic>, message: String| {
         diagnostics.push(ProjectDiagnostic {
             path: from.to_path_buf(),
-            diagnostic: Diagnostic {
-                stage: Stage::Type,
-                message,
-                span: (item.span.start != 0 || item.span.end != 0).then_some(ByteSpan {
-                    start: item.span.start,
-                    end: item.span.end,
-                }),
-            },
+            diagnostic: Diagnostic::typed(message, item.span.start, item.span.end),
         });
     };
     let Some(dep_path) = module_file(root, &u.path).map(|p| canonical_or(&p)) else {
@@ -431,12 +589,20 @@ fn resolve_use(
 }
 
 /// Maps a `use` path to the source file of the module it names, relative to the
-/// project `root`. The final segment is the imported item, not part of the
-/// module path; the preceding segments are the module path (`a::b` →
-/// `<root>/a/b.neoc`). Returns `None` for a single-segment path (no module
-/// qualifier, so nothing to resolve to a sibling file).
-fn module_file(root: &Path, path: &[ast::Ident]) -> Option<PathBuf> {
-    let (_, prefix) = path.split_last()?;
+/// project `root`.
+///
+/// The final segment is the imported item, not part of the module path; the
+/// preceding segments are the module path (`a::b::Item` → `<root>/a/b.neoc`).
+/// Returns `None` for a single-segment path (no module qualifier, so nothing to
+/// resolve to a sibling file).
+///
+/// This is the single source of truth for `use`→file resolution. `neoc build` /
+/// `check` walk the disk with it; tooling (the language server's cross-file
+/// index) resolves against its own in-memory document set with the same rule, so
+/// navigation and the compiler never disagree about where a module lives.
+#[must_use]
+pub fn module_file(root: &Path, use_path: &[ast::Ident]) -> Option<PathBuf> {
+    let (_, prefix) = use_path.split_last()?;
     let (file, dirs) = prefix.split_last()?;
     let mut p = root.to_path_buf();
     for dir in dirs {
@@ -468,10 +634,11 @@ fn emit(
     module: &ast::Module,
     source: &str,
     imported_bindings: &std::collections::HashSet<String>,
+    imported_enums: &[&ast::EnumDecl],
 ) -> (String, Vec<String>, SourceMap) {
     match target {
         Target::Lua => {
-            let r = codegen_lua::emit_with_source(module, source);
+            let r = codegen_lua::emit_with_imports(module, source, imported_enums);
             (
                 r.lua,
                 r.diagnostics.into_iter().map(|d| d.message).collect(),
@@ -529,4 +696,64 @@ fn js_imported_bindings(
         }
     }
     bindings
+}
+
+/// The project-wide pool of every module's `pub` type definitions and their
+/// methods, merged into one [`types::SymbolTable`].
+///
+/// A module that imports a function whose signature mentions a type it never
+/// names in a `use` still needs that type's shape to resolve field and method
+/// access on the returned value. This pool is the source those shapes are
+/// pulled from (see [`types::SymbolTable::import_referenced_types`]). Type names
+/// are taken to be project-unique; if two modules declare a `pub` type of the
+/// same name, the merge keeps one — neoc has no module-qualified type identity.
+fn type_universe(loaded: &HashMap<PathBuf, LoadedModule>) -> types::SymbolTable {
+    let mut universe = types::SymbolTable::new();
+    for module in loaded.values() {
+        let t = &module.table;
+        for name in &t.pub_types {
+            if let Some(def) = t.types.get(name) {
+                universe.types.insert(name.clone(), def.clone());
+            }
+            for ((ty_name, method), info) in &t.methods {
+                if ty_name == name {
+                    universe
+                        .methods
+                        .insert((name.clone(), method.clone()), info.clone());
+                }
+            }
+        }
+    }
+    universe
+}
+
+/// The `pub` enum declarations `module` imports, gathered through its `use`
+/// graph. The backend registers these so a `match` on, or a construction of, an
+/// enum brought in by `use` lowers correctly; the enum definitions are emitted
+/// by the modules that declare them, not here.
+fn imported_enums<'a>(
+    root: &Path,
+    loaded: &'a HashMap<PathBuf, LoadedModule>,
+    module: &ast::Module,
+) -> Vec<&'a ast::EnumDecl> {
+    let mut enums = Vec::new();
+    for item in &module.items {
+        let ast::ItemKind::Use(u) = &item.kind else {
+            continue;
+        };
+        let Some(dep) = module_file(root, &u.path).map(|p| canonical_or(&p)) else {
+            continue;
+        };
+        let Some(source) = loaded.get(&dep) else {
+            continue;
+        };
+        for dep_item in &source.module.items {
+            if let ast::ItemKind::Enum(e) = &dep_item.kind
+                && dep_item.vis == ast::Visibility::Public
+            {
+                enums.push(e);
+            }
+        }
+    }
+    enums
 }

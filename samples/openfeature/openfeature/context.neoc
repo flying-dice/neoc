@@ -1,0 +1,54 @@
+//! The evaluation context.
+//!
+//! OpenFeature's evaluation context carries the data targeting rules evaluate
+//! against: a `targeting_key` identifying the subject (a user, a device, a
+//! request) plus arbitrary key/value attributes. neoc has no map literal in
+//! the language, so attributes are a list of `Attribute` pairs searched
+//! linearly — a small, explicit store that needs no runtime collection module.
+
+/// One context attribute: a string-keyed, string-valued pair. The
+/// specification allows richer attribute types; this implementation keeps
+/// every attribute a string, which is sufficient for equality-based targeting.
+pub struct Attribute {
+    key: string,
+    value: string,
+}
+
+/// The data a flag evaluation targets. `targeting_key` is the stable
+/// identifier for the subject; `attributes` are the additional facts targeting
+/// rules consult. An empty `targeting_key` models the absence of a subject,
+/// which targeting-key-sensitive flags treat as a missing key.
+pub struct EvaluationContext {
+    targeting_key: string,
+    attributes: [Attribute],
+}
+
+/// An empty context: no targeting key, no attributes. Evaluating against it
+/// exercises the default and disabled paths, never a targeting match. A free
+/// function rather than an associated function so an importing module can call
+/// it (an imported type's associated function does not resolve cross-module —
+/// see the README note on cross-module lowering).
+pub fn anonymous_context() -> EvaluationContext {
+    EvaluationContext { targeting_key: "", attributes: [] }
+}
+
+impl EvaluationContext {
+    /// Looks up an attribute value by key. Returns `None` when the context
+    /// carries no attribute under that key, so a rule referencing an absent
+    /// attribute simply does not match.
+    fn attribute(self, key: string) -> Option<string> {
+        for a in self.attributes {
+            if a.key == key {
+                return Some(a.value);
+            }
+        }
+        None
+    }
+
+    /// Whether a targeting key is present. The specification distinguishes a
+    /// missing targeting key as its own error condition; flags that require one
+    /// consult this before matching rules.
+    fn has_targeting_key(self) -> bool {
+        self.targeting_key != ""
+    }
+}

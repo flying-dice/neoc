@@ -43,14 +43,14 @@ impl Emitter {
     fn compile_into(&mut self, pattern: &ast::Pattern, subject: &str, c: &mut Compiled) {
         match pattern {
             ast::Pattern::Wildcard => {}
-            ast::Pattern::Binding(name) => {
+            ast::Pattern::Binding { name, .. } => {
                 // A bare name that resolves to a unit variant (e.g. `None`) is
                 // a constant pattern, not a fresh binding — test the tag.
                 if let Some((en, var, VariantShape::Unit)) =
                     self.pattern_variant(std::slice::from_ref(name))
                 {
                     self.note_prelude(&en);
-                    c.tests.push(format!("{subject}.tag === \"{var}\""));
+                    c.tests.push(format!("{subject}.__tag === \"{var}\""));
                 } else {
                     c.binds.push(format!("const {name} = {subject};"));
                 }
@@ -74,7 +74,7 @@ impl Emitter {
     fn compile_path(&mut self, segments: &[ast::Ident], subject: &str, c: &mut Compiled) {
         if let Some((en, var, _)) = self.pattern_variant(segments) {
             self.note_prelude(&en);
-            c.tests.push(format!("{subject}.tag === \"{var}\""));
+            c.tests.push(format!("{subject}.__tag === \"{var}\""));
         } else if let [name] = segments {
             c.binds.push(format!("const {name} = {subject};"));
         } else {
@@ -86,8 +86,8 @@ impl Emitter {
     }
 
     /// A struct pattern: either a named struct (`Point { x, y }`, tested by
-    /// `_struct`) or a struct-shaped enum variant (`Shape::Circle { r }`,
-    /// tested by `tag`). Each field recurses against `subject.field`.
+    /// `__struct`) or a struct-shaped enum variant (`Shape::Circle { r }`,
+    /// tested by `__tag`). Each field recurses against `subject.field`.
     fn compile_struct(
         &mut self,
         path: &[ast::Ident],
@@ -97,9 +97,9 @@ impl Emitter {
     ) {
         if let Some((en, var, VariantShape::Named)) = self.pattern_variant(path) {
             self.note_prelude(&en);
-            c.tests.push(format!("{subject}.tag === \"{var}\""));
+            c.tests.push(format!("{subject}.__tag === \"{var}\""));
         } else if let Some(name) = path.last() {
-            c.tests.push(format!("{subject}._struct === \"{name}\""));
+            c.tests.push(format!("{subject}.__struct === \"{name}\""));
         }
         for f in fields {
             let field_subject = format!("{subject}.{}", f.name);
@@ -122,10 +122,10 @@ impl Emitter {
     ) {
         if let Some((en, var, _)) = self.pattern_variant(path) {
             self.note_prelude(&en);
-            c.tests.push(format!("{subject}.tag === \"{var}\""));
+            c.tests.push(format!("{subject}.__tag === \"{var}\""));
         } else if let Some(name) = path.last() {
             // A newtype struct pattern destructures the `_0` payload.
-            c.tests.push(format!("{subject}._struct === \"{name}\""));
+            c.tests.push(format!("{subject}.__struct === \"{name}\""));
         }
         for (i, elem) in elems.iter().enumerate() {
             let elem_subject = format!("{subject}._{i}");

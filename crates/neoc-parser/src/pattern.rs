@@ -12,9 +12,13 @@ impl Adapter {
             "literal_pattern" => node
                 .named_child(0)
                 .map_or(ast::Pattern::Wildcard, |lit| self.literal_pattern(lit)),
-            "binding_pattern" => node.named_child(0).map_or(ast::Pattern::Wildcard, |id| {
-                ast::Pattern::Binding(self.text(id).to_string())
-            }),
+            "binding_pattern" => {
+                node.named_child(0)
+                    .map_or(ast::Pattern::Wildcard, |id| ast::Pattern::Binding {
+                        name: self.text(id).to_string(),
+                        span: crate::expr::span_of(id),
+                    })
+            }
             "path_pattern" => ast::Pattern::Path(self.pattern_path_idents(node)),
             "struct_pattern" => self.walk_struct_pattern(node),
             "tuple_pattern" => self.walk_tuple_pattern(node),
@@ -57,9 +61,16 @@ impl Adapter {
         let mut cursor = node.walk();
         for child in node.named_children(&mut cursor) {
             if child.kind() == "field_pattern" {
+                let span = self
+                    .field(child, "name")
+                    .map_or_else(|| crate::expr::span_of(child), crate::expr::span_of);
                 let name = self.name_field(child);
                 let pattern = self.field(child, "pattern").map(|p| self.walk_pattern(p));
-                fields.push(ast::FieldPat { name, pattern });
+                fields.push(ast::FieldPat {
+                    name,
+                    pattern,
+                    span,
+                });
             }
         }
         ast::Pattern::Struct { path, fields, rest }

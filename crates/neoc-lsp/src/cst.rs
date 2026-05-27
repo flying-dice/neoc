@@ -33,21 +33,44 @@ pub fn named_node_at(tree: &Tree, byte: usize) -> Option<Node<'_>> {
     Some(node)
 }
 
-/// The identifier text under `byte`, if the cursor sits on an `identifier`
-/// node.
+/// The `identifier` node under `byte`, if the cursor sits on one.
 ///
 /// Walks up at most one level so a cursor on the `identifier` child of a
-/// `path` (e.g. the callee of `fib(3)`) still resolves to the name.
+/// `path` (e.g. the callee of `fib(3)`) still resolves to the name node.
 #[must_use]
-pub fn identifier_at<'a>(tree: &Tree, source: &'a str, byte: usize) -> Option<&'a str> {
+pub fn identifier_node_at(tree: &Tree, byte: usize) -> Option<Node<'_>> {
     let node = named_node_at(tree, byte)?;
-    let ident = if node.kind() == "identifier" {
-        node
+    if node.kind() == "identifier" {
+        Some(node)
     } else {
         node.named_children(&mut node.walk())
-            .find(|c| c.kind() == "identifier" && c.byte_range().contains(&byte))?
-    };
-    node_text(&ident, source)
+            .find(|c| c.kind() == "identifier" && c.byte_range().contains(&byte))
+    }
+}
+
+/// The identifier text under `byte`, if the cursor sits on an `identifier`
+/// node.
+#[must_use]
+pub fn identifier_at<'a>(tree: &Tree, source: &'a str, byte: usize) -> Option<&'a str> {
+    node_text(&identifier_node_at(tree, byte)?, source)
+}
+
+/// The callee name of a call's `function` node: the identifier itself, or the
+/// final identifier of a path (`Mod::foo`). `None` for callees with no name
+/// (e.g. a parenthesised expression).
+#[must_use]
+pub fn callee_name<'a>(callee: Node, source: &'a str) -> Option<&'a str> {
+    if callee.kind() == "identifier" {
+        return node_text(&callee, source);
+    }
+    let mut last = None;
+    let mut cursor = callee.walk();
+    for child in callee.named_children(&mut cursor) {
+        if child.kind() == "identifier" {
+            last = Some(child);
+        }
+    }
+    node_text(&last?, source)
 }
 
 /// The source text a node spans, or `None` when the range is not valid UTF-8
@@ -200,27 +223,58 @@ pub fn member_decl_at(tree: &Tree, byte: usize) -> Option<Node<'_>> {
 #[must_use]
 pub fn find_unique_member<'t>(tree: &'t Tree, source: &str, name: &str) -> Option<Node<'t>> {
     let mut found = Vec::new();
-    collect_members(tree.root_node(), source, name, &mut found);
+    collect_matching(
+        tree.root_node(),
+        &|node| is_member_named(node, source, name),
+        &mut found,
+    );
     match found.as_slice() {
         [only] => Some(*only),
         _ => None,
     }
 }
 
-fn collect_members<'t>(node: Node<'t>, source: &str, name: &str, out: &mut Vec<Node<'t>>) {
+/// Whether `node` is a member declaration — a struct field, enum variant, or
+/// `impl`/`trait` method — whose declared name is exactly `name`.
+fn is_member_named(node: Node, source: &str, name: &str) -> bool {
+    let is_member = matches!(node.kind(), "field_declaration" | "variant")
+        || (node.kind() == "function_declaration" && is_method(node));
+    is_member
+        && node
+            .child_by_field_name("name")
+            .and_then(|n| node_text(&n, source))
+            == Some(name)
+}
+
+/// Every `identifier` node in the document whose text is exactly `name`, in
+/// source order.
+///
+/// The basis for find-all-references: resolution is name-based (the same model
+/// goto-definition uses), so every identically-spelled identifier — declaration,
+/// call, type position, field — counts as a reference. No scope analysis, so a
+/// local that shadows a top-level name is included.
+#[must_use]
+pub fn identifier_nodes<'t>(tree: &'t Tree, source: &str, name: &str) -> Vec<Node<'t>> {
+    let mut out = Vec::new();
+    collect_matching(
+        tree.root_node(),
+        &|node| node.kind() == "identifier" && node_text(&node, source) == Some(name),
+        &mut out,
+    );
+    out
+}
+
+/// Every named descendant of `node`, in source order, for which `keep` holds.
+///
+/// One pre-order walk shared by the by-name lookups (`identifier_nodes`,
+/// `find_unique_member`); each supplies its own match predicate.
+fn collect_matching<'t>(node: Node<'t>, keep: &impl Fn(Node<'t>) -> bool, out: &mut Vec<Node<'t>>) {
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        let is_member = matches!(child.kind(), "field_declaration" | "variant")
-            || (child.kind() == "function_declaration" && is_method(child));
-        if is_member
-            && child
-                .child_by_field_name("name")
-                .and_then(|n| node_text(&n, source))
-                == Some(name)
-        {
+        if keep(child) {
             out.push(child);
         }
-        collect_members(child, source, name, out);
+        collect_matching(child, keep, out);
     }
 }
 

@@ -1,5 +1,5 @@
 const __m = {};
-const __call = (recv, name, ...args) => __m[recv._struct ?? recv._enum][name](recv, ...args);
+const __call = (recv, name, ...args) => __m[recv.__struct ?? recv.__enum][name](recv, ...args);
 
 __m.Wrapper = {};
 __m.Wrapper.get = function(self) {
@@ -8,7 +8,7 @@ __m.Wrapper.get = function(self) {
   return n;
 }
 function main() {
-  let w = { _struct: "Wrapper", _0: 42 };
+  let w = { __struct: "Wrapper", _0: 42 };
   println(__call(w, "get"));
   const __d2 = w;
   const m = __d2._0;

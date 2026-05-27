@@ -1,0 +1,26 @@
+// STATIC.md §3.4: a heterogeneous list of implementors infers the one trait
+// they share as its element type — `[Drawable]`.
+trait Drawable {
+  fn draw(self) -> string;
+}
+
+struct Circle;
+
+struct Square;
+
+impl Drawable for Circle {
+  fn draw(self) -> string {
+    "o"
+  }
+}
+
+impl Drawable for Square {
+  fn draw(self) -> string {
+    "[]"
+  }
+}
+
+fn scene() -> number {
+  let items: [Drawable] = [Circle, Square];
+  1
+}

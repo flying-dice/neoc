@@ -2533,10 +2533,13 @@ name = "neoc-lsp"
 version = "0.0.0"
 dependencies = [
  "cucumber",
+ "neoc-ast",
  "neoc-compiler",
+ "neoc-fmt",
  "neoc-grammar",
  "neoc-parser",
  "neoc-types",
+ "serde_json",
  "tokio",
  "tower-lsp",
  "tree-sitter",

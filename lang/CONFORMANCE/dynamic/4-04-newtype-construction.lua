@@ -1,7 +1,7 @@
 local Wrapper = {}
 Wrapper.__index = Wrapper
 function Wrapper.new(value)
-  return setmetatable({ _struct = "Wrapper", value }, Wrapper)
+  return setmetatable({ __struct = "Wrapper", value }, Wrapper)
 end
 function Wrapper.get(self)
   local __d = self

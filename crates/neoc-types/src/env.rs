@@ -55,6 +55,14 @@ pub enum VariantFields {
 pub struct TraitInfo {
     pub generics: Vec<String>,
     pub methods: Vec<TraitMethod>,
+    /// Names of the supertraits this trait requires (`trait A: B + C`). An
+    /// implementor of this trait must also implement each, and a bound by this
+    /// trait grants access to their methods.
+    pub supertraits: Vec<String>,
+    /// Names of the associated types this trait declares (`type Item;`). Each
+    /// must be bound by every implementor, and trait methods may refer to them
+    /// as `Self::Item`.
+    pub assoc_types: Vec<String>,
 }
 
 /// One method signature of a trait.
@@ -105,6 +113,43 @@ pub struct SymbolTable {
     pub pub_values: HashSet<String>,
     /// Type-namespace names this module declares `pub`.
     pub pub_types: HashSet<String>,
+    /// Trait implementations, indexed by implementing type: type name → the set
+    /// of traits it implements, one entry per `impl Trait for Type` and per
+    /// `#[derive(Trait)]`. Keyed by head (the type) so the checker answers "does
+    /// this type satisfy a bound" with a lookup rather than a scan of every
+    /// impl (`STATIC.md` §3.5).
+    pub trait_impls: HashMap<String, HashSet<String>>,
+    /// Per-function declared bounds: function name → (type parameter → the
+    /// trait names bounding it), from both `<T: …>` and `where T: …`. Lets a
+    /// call site enforce that each argument's concrete type satisfies the bound
+    /// the callee declared.
+    pub fn_bounds: HashMap<String, HashMap<String, Vec<String>>>,
+    /// Blanket impls (`impl<T: Show> Describe for T`): every type satisfying
+    /// the conditions also implements the trait (`STATIC.md` §3.5). Kept apart
+    /// from `trait_impls` because the target is a parameter, not a concrete
+    /// type — satisfaction is queried on demand against the conditions.
+    pub blanket_impls: Vec<BlanketImpl>,
+    /// Byte span of each member's declaration, keyed `(owning type or trait,
+    /// member name)`. Covers struct fields and impl/trait methods; lets the
+    /// checker record a `recv.member` use as resolving to its definition, for
+    /// goto/hover/references (member resolution).
+    pub member_defs: HashMap<(String, String), (usize, usize)>,
+}
+
+/// A generic (blanket) trait implementation `impl<T: Conditions> Trait for T`.
+#[derive(Debug, Clone)]
+pub struct BlanketImpl {
+    /// The impl's generic parameter that is the target type (`T`).
+    pub param: String,
+    /// Traits the target must satisfy for the impl to apply (the bounds on
+    /// `param`); empty means it applies to every type.
+    pub conditions: Vec<String>,
+    /// The trait this blanket provides for every satisfying type.
+    pub trait_name: String,
+    /// The blanket's associated-type bindings (`type Item = …`), written in
+    /// terms of `param`. Carried so a satisfying type's call site can project a
+    /// method's `Self::Item` to the bound type, with `param` read as that type.
+    pub assoc_bindings: HashMap<String, Ty>,
 }
 
 impl SymbolTable {
@@ -124,6 +169,15 @@ impl SymbolTable {
     #[must_use]
     pub fn type_is_public(&self, name: &str) -> bool {
         self.pub_types.contains(name)
+    }
+
+    /// Whether `type_name` has an implementation of `trait_name` — an explicit
+    /// `impl Trait for Type` or a `#[derive(Trait)]`.
+    #[must_use]
+    pub fn implements(&self, type_name: &str, trait_name: &str) -> bool {
+        self.trait_impls
+            .get(type_name)
+            .is_some_and(|traits| traits.contains(trait_name))
     }
 
     /// Imports the symbol `name` from `source` into this table under `binding`.
@@ -155,6 +209,56 @@ impl SymbolTable {
             found = true;
         }
         found
+    }
+
+    /// Pulls in the *structure* of every type this table's symbols reference but
+    /// does not yet define, drawing from `universe`, transitively.
+    ///
+    /// A multi-file driver uses this after resolving a module's `use` imports.
+    /// When module `c` imports a function `make` whose return type is a `struct`
+    /// `Config` declared in module `a` — but `c` never names `Config` in a `use`
+    /// — field and method access on a `Config` value (`c.level`) needs the
+    /// type's shape. The direct import brings in `make`'s signature; this brings
+    /// in the shapes that signature (and theirs, recursively) refer to.
+    ///
+    /// Only the type namespace and its methods are copied, not the visibility
+    /// sets: a transitively-known type is resolvable, not re-exported. The
+    /// `universe` is the project-wide pool of `pub` type definitions; a type
+    /// name is taken to be project-unique (neoc has no module-qualified type
+    /// identity), so a name already defined here is left untouched.
+    ///
+    /// # Arguments
+    ///
+    /// * `universe` — the aggregate of every module's `pub` type definitions and
+    ///   their methods. The caller owns it; this table borrows it for the call.
+    pub fn import_referenced_types(&mut self, universe: &SymbolTable) {
+        let mut pending: Vec<String> = Vec::new();
+        for ty in self.values.values() {
+            collect_ty_names(ty, &mut pending);
+        }
+        for def in self.types.values() {
+            collect_typedef_names(def, &mut pending);
+        }
+        for info in self.methods.values() {
+            collect_method_names(info, &mut pending);
+        }
+        while let Some(name) = pending.pop() {
+            if self.types.contains_key(&name) {
+                continue;
+            }
+            let Some(def) = universe.types.get(&name) else {
+                continue;
+            };
+            self.types.insert(name.clone(), def.clone());
+            collect_typedef_names(def, &mut pending);
+            for ((ty_name, method), info) in &universe.methods {
+                if ty_name == &name {
+                    self.methods
+                        .insert((name.clone(), method.clone()), info.clone());
+                    collect_method_names(info, &mut pending);
+                }
+            }
+        }
     }
 
     /// Resolves a type name through alias chains to its underlying definition
@@ -220,6 +324,87 @@ impl SymbolTable {
     }
 }
 
+/// Pushes every nominal type name a [`Ty`] mentions onto `out` (recursing
+/// through lists, function params/returns, and type arguments). Primitives,
+/// `Unit`, type parameters, and `Unknown` carry no name.
+fn collect_ty_names(ty: &Ty, out: &mut Vec<String>) {
+    match ty {
+        Ty::List(inner) => collect_ty_names(inner, out),
+        Ty::Fn(params, ret) => {
+            for p in params {
+                collect_ty_names(p, out);
+            }
+            collect_ty_names(ret, out);
+        }
+        Ty::Named { name, args } => {
+            out.push(name.clone());
+            for a in args {
+                collect_ty_names(a, out);
+            }
+        }
+        Ty::Number | Ty::Str | Ty::Bool | Ty::Unit | Ty::Param(_) | Ty::Unknown => {}
+    }
+}
+
+/// Pushes every type name referenced by a definition's fields, variants, alias
+/// target, or trait-method signatures onto `out`.
+fn collect_typedef_names(def: &TypeDef, out: &mut Vec<String>) {
+    match def {
+        TypeDef::Struct(s) => collect_struct_field_names(&s.fields, out),
+        TypeDef::Enum(e) => {
+            for v in &e.variants {
+                collect_variant_field_names(&v.fields, out);
+            }
+        }
+        TypeDef::Trait(t) => {
+            for m in &t.methods {
+                for p in &m.params {
+                    collect_ty_names(p, out);
+                }
+                collect_ty_names(&m.ret, out);
+            }
+        }
+        TypeDef::Alias { value, .. } => collect_ty_names(value, out),
+        TypeDef::Opaque => {}
+    }
+}
+
+/// Pushes the type names referenced by a method's parameter and return types.
+fn collect_method_names(info: &MethodInfo, out: &mut Vec<String>) {
+    for p in &info.params {
+        collect_ty_names(p, out);
+    }
+    collect_ty_names(&info.ret, out);
+}
+
+fn collect_struct_field_names(fields: &StructFields, out: &mut Vec<String>) {
+    match fields {
+        StructFields::Unit => {}
+        StructFields::Tuple(ty) => collect_ty_names(ty, out),
+        StructFields::Named(fs) => {
+            for (_, ty) in fs {
+                collect_ty_names(ty, out);
+            }
+        }
+    }
+}
+
+fn collect_variant_field_names(fields: &VariantFields, out: &mut Vec<String>) {
+    match fields {
+        VariantFields::Unit => {}
+        VariantFields::Tuple(tys) => {
+            for ty in tys {
+                collect_ty_names(ty, out);
+            }
+        }
+        VariantFields::Named(fs) => {
+            for (_, ty) in fs {
+                collect_ty_names(ty, out);
+            }
+        }
+    }
+}
+
 /// Expands aliases inside the field/variant types of a single definition.
 fn normalize_typedef(def: &mut TypeDef, table: &SymbolTable) {
     match def {
@@ -269,11 +454,21 @@ fn normalize_variant_fields(fields: &mut VariantFields, table: &SymbolTable) {
     }
 }
 
+/// An opaque identity for one binding occurrence (one `let`/param/closure
+/// param/pattern binding), unique within a [`Scopes`]. Two bindings of the same
+/// name — a shadow, or siblings in different scopes — have distinct ids, which
+/// is what lets scope-aware resolution tell a use of one from a use of the
+/// other (`tasks/scope-aware-resolution.md`).
+pub type BindingId = u32;
+
 /// The lexical scope stack for value bindings (`let`, params, closure params,
-/// pattern bindings). Innermost scope is last.
+/// pattern bindings). Innermost scope is last. Each binding carries a
+/// [`BindingId`] minted on `bind`, so a later `lookup` can report *which*
+/// binding a name resolved to, not just its type.
 #[derive(Debug, Default)]
 pub struct Scopes {
-    frames: Vec<HashMap<String, Ty>>,
+    frames: Vec<HashMap<String, (Ty, BindingId)>>,
+    next_id: BindingId,
 }
 
 impl Scopes {
@@ -281,6 +476,7 @@ impl Scopes {
     pub fn new() -> Self {
         Self {
             frames: vec![HashMap::new()],
+            next_id: 0,
         }
     }
 
@@ -292,17 +488,37 @@ impl Scopes {
         self.frames.pop();
     }
 
-    /// Binds a name in the innermost scope. Shadowing is allowed (`STATIC.md`
-    /// §2) and silently overwrites within the same frame.
-    pub fn bind(&mut self, name: impl Into<String>, ty: Ty) {
+    /// Binds a name in the innermost scope and returns its fresh
+    /// [`BindingId`]. Shadowing is allowed (`STATIC.md` §2) and silently
+    /// overwrites within the same frame (the new id wins for later lookups).
+    pub fn bind(&mut self, name: impl Into<String>, ty: Ty) -> BindingId {
+        let id = self.next_id;
+        self.next_id += 1;
         if let Some(frame) = self.frames.last_mut() {
-            frame.insert(name.into(), ty);
+            frame.insert(name.into(), (ty, id));
         }
+        id
     }
 
-    /// Looks a name up from the innermost scope outward.
+    /// Looks a name's type up from the innermost scope outward.
     #[must_use]
     pub fn lookup(&self, name: &str) -> Option<&Ty> {
-        self.frames.iter().rev().find_map(|f| f.get(name))
+        self.frames
+            .iter()
+            .rev()
+            .find_map(|f| f.get(name))
+            .map(|(ty, _)| ty)
+    }
+
+    /// The [`BindingId`] a name resolves to from the innermost scope outward —
+    /// the binding a use of `name` refers to. `None` when no binding is in
+    /// scope (the name is a top-level item, a prelude name, or unresolved).
+    #[must_use]
+    pub fn binding_of(&self, name: &str) -> Option<BindingId> {
+        self.frames
+            .iter()
+            .rev()
+            .find_map(|f| f.get(name))
+            .map(|(_, id)| *id)
     }
 }

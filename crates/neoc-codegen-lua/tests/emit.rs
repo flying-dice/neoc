@@ -50,15 +50,18 @@ fn emits_a_function_with_a_value_body() {
                 attrs: vec![],
                 sig: ast::FnSig {
                     name: "add".into(),
+                    name_span: ast::Span::default(),
                     generics: vec![],
                     params: vec![
                         ast::Param::Named {
                             name: "a".into(),
                             ty: num.clone(),
+                            span: ast::Span::default(),
                         },
                         ast::Param::Named {
                             name: "b".into(),
                             ty: num.clone(),
+                            span: ast::Span::default(),
                         },
                     ],
                     ret: Some(num),
@@ -96,7 +99,7 @@ fn emits_a_pub_unit_struct() {
             span: ast::Span::default(),
         }],
     };
-    assert_eq!(lua(&module), "Marker = { _struct = \"Marker\" }\n");
+    assert_eq!(lua(&module), "Marker = { __struct = \"Marker\" }\n");
 }
 
 /// A module with a single `enum E { … }` declaration and a `fn` whose body is
@@ -122,6 +125,7 @@ fn enum_and_fn(variants: Vec<ast::Variant>, expr: ast::Expr) -> ast::Module {
                     attrs: vec![],
                     sig: ast::FnSig {
                         name: "make".into(),
+                        name_span: ast::Span::default(),
                         generics: vec![],
                         params: vec![],
                         ret: None,
@@ -142,6 +146,7 @@ fn variant(name: &str, body: ast::VariantBody) -> ast::Variant {
     ast::Variant {
         attrs: vec![],
         name: name.into(),
+        name_span: ast::Span::default(),
         body,
     }
 }
@@ -155,7 +160,7 @@ fn emits_a_unit_enum_variant() {
     );
     let expected = "\
 local function make()
-  return { _enum = \"Shape\", tag = \"Origin\" }
+  return { __enum = \"Shape\", __tag = \"Origin\" }
 end
 ";
     assert_eq!(lua(&module), expected);
@@ -179,7 +184,7 @@ fn emits_a_tuple_enum_variant() {
     );
     let expected = "\
 local function make()
-  return { _enum = \"Shape\", tag = \"Move\", 1, 2 }
+  return { __enum = \"Shape\", __tag = \"Move\", 1, 2 }
 end
 ";
     assert_eq!(lua(&module), expected);
@@ -201,7 +206,7 @@ fn emits_a_struct_enum_variant() {
     );
     let expected = "\
 local function make()
-  return { _enum = \"Shape\", tag = \"Circle\", radius = 3 }
+  return { __enum = \"Shape\", __tag = \"Circle\", radius = 3 }
 end
 ";
     assert_eq!(lua(&module), expected);
@@ -218,6 +223,7 @@ fn emits_a_method_call_as_a_colon_call() {
                 attrs: vec![],
                 sig: ast::FnSig {
                     name: "run".into(),
+                    name_span: ast::Span::default(),
                     generics: vec![],
                     params: vec![],
                     ret: None,
@@ -228,6 +234,7 @@ fn emits_a_method_call_as_a_colon_call() {
                         ast::StmtKind::Expr(e(ast::ExprKind::MethodCall {
                             receiver: Box::new(e(ast::ExprKind::Path(vec!["p".into()]))),
                             method: "translate".into(),
+                            method_span: ast::Span::default(),
                             args: vec![
                                 e(ast::ExprKind::Int("1".into())),
                                 e(ast::ExprKind::Int("2".into())),
@@ -282,7 +289,7 @@ fn golden_named_struct_and_field_access() {
 local Point = {}
 Point.__index = Point
 function Point.new(fields)
-  fields._struct = \"Point\"
+  fields.__struct = \"Point\"
   return setmetatable(fields, Point)
 end
 local function shift(p)
@@ -332,16 +339,16 @@ fn golden_match_over_enum_variants() {
 local function area(s)
   return (function()
     local __s = s
-    if __s.tag == \"Circle\" then
+    if __s.__tag == \"Circle\" then
       local r = __s.radius
       return r
     end
-    if __s.tag == \"Move\" then
+    if __s.__tag == \"Move\" then
       local x = __s[1]
       local y = __s[2]
       return x
     end
-    if __s.tag == \"Origin\" then
+    if __s.__tag == \"Origin\" then
       return 0
     end
   end)()
@@ -448,7 +455,7 @@ fn golden_let_struct_destructure() {
 local Point = {}
 Point.__index = Point
 function Point.new(fields)
-  fields._struct = \"Point\"
+  fields.__struct = \"Point\"
   return setmetatable(fields, Point)
 end
 local function sum(p)
@@ -464,7 +471,7 @@ end
 #[test]
 fn golden_newtype_construction_routes_through_new() {
     // Calling a tuple/newtype struct constructs through `.new` (§4.4), so the
-    // value carries its `_struct` tag and metatable — not a bare Lua call.
+    // value carries its `__struct` tag and metatable — not a bare Lua call.
     let out = lua_from_source(
         "struct Wrapper(number);\n\
          fn wrap() -> Wrapper { Wrapper(42) }",
@@ -473,7 +480,7 @@ fn golden_newtype_construction_routes_through_new() {
 local Wrapper = {}
 Wrapper.__index = Wrapper
 function Wrapper.new(value)
-  return setmetatable({ _struct = \"Wrapper\", value }, Wrapper)
+  return setmetatable({ __struct = \"Wrapper\", value }, Wrapper)
 end
 local function wrap()
   return Wrapper.new(42)
@@ -492,7 +499,7 @@ fn golden_functional_struct_update() {
 local Point = {}
 Point.__index = Point
 function Point.new(fields)
-  fields._struct = \"Point\"
+  fields.__struct = \"Point\"
   return setmetatable(fields, Point)
 end
 local function shift(p)
@@ -520,10 +527,10 @@ fn golden_enum_with_methods_gets_a_metatable() {
 local Dir = {}
 Dir.__index = Dir
 function Dir.flip(self)
-  return setmetatable({ _enum = \"Dir\", tag = \"N\" }, Dir)
+  return setmetatable({ __enum = \"Dir\", __tag = \"N\" }, Dir)
 end
 local function make()
-  return setmetatable({ _enum = \"Dir\", tag = \"S\" }, Dir)
+  return setmetatable({ __enum = \"Dir\", __tag = \"S\" }, Dir)
 end
 ";
     assert_eq!(out, expected);
@@ -538,14 +545,14 @@ fn golden_try_operator() {
          }",
     );
     let expected = "\
-local Ok   = function(v) return { _enum = \"Result\", tag = \"Ok\", v } end
-local Err  = function(e) return { _enum = \"Result\", tag = \"Err\", e } end
-local Some = function(v) return { _enum = \"Option\", tag = \"Some\", v } end
-local None = { _enum = \"Option\", tag = \"None\" }
+local Ok   = function(v) return { __enum = \"Result\", __tag = \"Ok\", v } end
+local Err  = function(e) return { __enum = \"Result\", __tag = \"Err\", e } end
+local Some = function(v) return { __enum = \"Option\", __tag = \"Some\", v } end
+local None = { __enum = \"Option\", __tag = \"None\" }
 
 local function run(r)
   local __try_0 = parse()
-  if __try_0.tag == \"Err\" or __try_0.tag == \"None\" then return __try_0 end
+  if __try_0.__tag == \"Err\" or __try_0.__tag == \"None\" then return __try_0 end
   local v = __try_0[1]
   return Ok(v)
 end
@@ -606,4 +613,50 @@ fn source_map_empty_without_source() {
     let result = emit(&parsed.module);
     assert_eq!(result.source_map, neoc_codegen_lua::LineMap::default());
     assert_eq!(result.source_map.neoc_line(1), None);
+}
+
+// ---- forward-referenced private functions ----------------------------------
+
+#[test]
+fn forward_referenced_private_fn_is_hoisted() {
+    // `main` calls `helper`, defined after it. `helper` must be declared `local`
+    // up front and assigned in place, so `main` closes over the local, not a nil
+    // global — a plain `local function helper` would be invisible to `main`.
+    let lua = lua_from_source("fn main() -> number { helper() }\nfn helper() -> number { 1 }\n");
+    let hoist = lua.find("local helper").expect("forward declaration");
+    let caller = lua.find("local function main").expect("caller");
+    assert!(hoist < caller, "hoist must precede the caller\n{lua}");
+    assert!(
+        lua.contains("helper = function"),
+        "assigned in place\n{lua}"
+    );
+}
+
+#[test]
+fn a_fn_defined_before_use_is_not_hoisted() {
+    // `helper` precedes its use — an ordinary `local function`, no hoist.
+    let lua = lua_from_source("fn helper() -> number { 1 }\nfn main() -> number { helper() }\n");
+    assert!(lua.contains("local function helper"), "{lua}");
+    assert!(
+        !lua.lines().any(|l| l.trim() == "local helper"),
+        "no forward declaration expected\n{lua}"
+    );
+}
+
+#[test]
+fn associated_fn_call_keeps_the_type_qualifier() {
+    // `Counter::zero()` is an associated function on `Counter`'s table; it must
+    // emit `Counter.zero()`, not a bare `zero()` (an unbound global). The impl
+    // target makes `Counter` a known associated-item carrier.
+    let lua = lua_from_source(
+        "struct Counter { n: number }\nimpl Counter { fn zero() -> Counter { Counter { n: 0 } } }\nfn main() -> Counter { Counter::zero() }\n",
+    );
+    assert!(
+        lua.contains("return Counter.zero()"),
+        "associated call keeps the `Counter.` qualifier\n{lua}"
+    );
+    assert!(
+        !lua.lines().any(|l| l.trim() == "return zero()"),
+        "the bare `zero()` would reference an unbound global\n{lua}"
+    );
 }

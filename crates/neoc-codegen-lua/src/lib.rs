@@ -30,8 +30,14 @@ pub(crate) struct EnumIndex {
 }
 
 impl EnumIndex {
-    /// Build the index from a module, seeding the `Result`/`Option` prelude.
-    fn build(module: &ast::Module) -> Self {
+    /// Build the index from a module plus the `pub` enums it imports, seeding the
+    /// `Result`/`Option` prelude.
+    ///
+    /// Imported enums are registered for *resolution* only — so a `match` on, or
+    /// a variant construction of, an enum brought in by `use` lowers correctly —
+    /// not for emission; their definitions belong to (and are emitted by) the
+    /// module that declares them.
+    fn build(module: &ast::Module, imported_enums: &[&ast::EnumDecl]) -> Self {
         let mut enums: HashMap<String, HashMap<String, VariantShape>> = HashMap::new();
         enums.insert(
             "Result".to_string(),
@@ -53,22 +59,30 @@ impl EnumIndex {
         );
         for item in &module.items {
             if let ast::ItemKind::Enum(e) = &item.kind {
-                let variants = e
-                    .variants
-                    .iter()
-                    .map(|v| {
-                        let shape = match v.body {
-                            ast::VariantBody::Unit => VariantShape::Unit,
-                            ast::VariantBody::Tuple(_) => VariantShape::Tuple,
-                            ast::VariantBody::Named(_) => VariantShape::Named,
-                        };
-                        (v.name.clone(), shape)
-                    })
-                    .collect();
-                enums.insert(e.name.clone(), variants);
+                Self::register(&mut enums, e);
             }
         }
+        for e in imported_enums {
+            Self::register(&mut enums, e);
+        }
         Self { enums }
+    }
+
+    /// Records an enum's variants and their shapes under its name.
+    fn register(enums: &mut HashMap<String, HashMap<String, VariantShape>>, e: &ast::EnumDecl) {
+        let variants = e
+            .variants
+            .iter()
+            .map(|v| {
+                let shape = match v.body {
+                    ast::VariantBody::Unit => VariantShape::Unit,
+                    ast::VariantBody::Tuple(_) => VariantShape::Tuple,
+                    ast::VariantBody::Named(_) => VariantShape::Named,
+                };
+                (v.name.clone(), shape)
+            })
+            .collect();
+        enums.insert(e.name.clone(), variants);
     }
 
     /// Resolve an unqualified variant name (`Ok`, `Err`, `Some`, `None`) to its
@@ -190,7 +204,7 @@ pub struct EmitResult {
 /// numbers back to neoc positions; the emitted Lua text is identical either way.
 #[must_use]
 pub fn emit(module: &ast::Module) -> EmitResult {
-    emit_inner(module, None)
+    emit_inner(module, None, &[])
 }
 
 /// Lower a module to Lua 5.1 source and build a [`LineMap`] from `source`.
@@ -201,14 +215,33 @@ pub fn emit(module: &ast::Module) -> EmitResult {
 /// differs.
 #[must_use]
 pub fn emit_with_source(module: &ast::Module, source: &str) -> EmitResult {
-    emit_inner(module, Some(source))
+    emit_inner(module, Some(source), &[])
 }
 
-fn emit_inner(module: &ast::Module, source: Option<&str>) -> EmitResult {
+/// Like [`emit_with_source`], but also given the `pub` enum declarations the
+/// module imports, so `match` and variant construction on an imported enum
+/// lower correctly. The imported enums are used only to resolve those forms;
+/// their definitions are emitted by the module that declares them.
+#[must_use]
+pub fn emit_with_imports(
+    module: &ast::Module,
+    source: &str,
+    imported_enums: &[&ast::EnumDecl],
+) -> EmitResult {
+    emit_inner(module, Some(source), imported_enums)
+}
+
+fn emit_inner(
+    module: &ast::Module,
+    source: Option<&str>,
+    imported_enums: &[&ast::EnumDecl],
+) -> EmitResult {
     let mut e = Emitter {
-        enums: EnumIndex::build(module),
+        enums: EnumIndex::build(module, imported_enums),
         tuple_structs: TupleStructIndex::build(module),
+        traits: ast::trait_index(module),
         line_index: source.map(LineIndex::build),
+        forward_decls: forward_declared_fns(module),
         ..Emitter::default()
     };
     e.emit_module(module);
@@ -270,6 +303,10 @@ pub(crate) struct Emitter {
     /// Variant construction for these enums is `setmetatable`d onto the table so
     /// `:method` dispatch resolves (§3.2).
     method_enums: std::collections::HashSet<String>,
+    /// Per-type trait set (transitively closed over supertraits) for the
+    /// `__traits` runtime tag — `Type.__traits = { … }` on the type table
+    /// (`DYNAMIC.md`). Inert until the runtime trait-enforcement work (#54).
+    traits: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
     /// The enclosing-loop stack. Each frame records whether the loop body was
     /// restructured for `continue` (the repeat/break idiom) and, if so, the name
     /// of its outer-break flag — see [`expr`].
@@ -280,6 +317,16 @@ pub(crate) struct Emitter {
     try_seq: usize,
     /// Native imports from module-bound `ext` blocks, sorted by specifier.
     imports: Vec<(String, Vec<String>)>,
+    /// Private free functions referenced before their definition. They are
+    /// declared `local` up front and assigned in place, so a caller emitted
+    /// earlier closes over the (later-assigned) local rather than a nil global.
+    /// A plain `local function` is only in scope after its line.
+    forward_decls: std::collections::HashSet<String>,
+    /// Type names whose `Type::member` path is a table-field access: a local
+    /// `impl` target, or a type brought in by `use`. At a call site
+    /// `Type::assoc_fn()` this keeps the `Type.` qualifier instead of dropping
+    /// to the bare member name (an unbound global).
+    assoc_types: std::collections::HashSet<String>,
 }
 
 /// A loop being emitted. When `break_flag` is set the loop uses the
@@ -291,10 +338,10 @@ pub(crate) struct LoopFrame {
 }
 
 const RESULT_PRELUDE: &str = "\
-local Ok   = function(v) return { _enum = \"Result\", tag = \"Ok\", v } end
-local Err  = function(e) return { _enum = \"Result\", tag = \"Err\", e } end
-local Some = function(v) return { _enum = \"Option\", tag = \"Some\", v } end
-local None = { _enum = \"Option\", tag = \"None\" }";
+local Ok   = function(v) return { __enum = \"Result\", __tag = \"Ok\", v } end
+local Err  = function(e) return { __enum = \"Result\", __tag = \"Err\", e } end
+local Some = function(v) return { __enum = \"Option\", __tag = \"Some\", v } end
+local None = { __enum = \"Option\", __tag = \"None\" }";
 
 impl Emitter {
     pub(crate) fn error(&mut self, message: impl Into<String>) {
@@ -404,7 +451,15 @@ impl Emitter {
 
     fn emit_module(&mut self, module: &ast::Module) {
         self.collect_method_enums(module);
+        self.collect_assoc_types(module);
         self.imports = ast::module_imports(module, ast::Target::Lua);
+        // Hoist the locals of forward-referenced private functions so a caller
+        // emitted earlier captures the local, not a nil global.
+        if !self.forward_decls.is_empty() {
+            let mut names: Vec<String> = self.forward_decls.iter().cloned().collect();
+            names.sort_unstable();
+            self.line(format!("local {}", names.join(", ")));
+        }
         for item in &module.items {
             self.emit_item(item);
         }
@@ -441,6 +496,33 @@ impl Emitter {
         }
     }
 
+    /// Record every type name whose `Type::member` access reads a table field:
+    /// a local `impl` target, or a type imported by `use`. A 2-segment path
+    /// `Type::assoc_fn` then keeps its `Type.` qualifier (the value lives on the
+    /// type's table); a path whose head is none of these still drops to its last
+    /// segment, as before. An imported *value* (a `use`d fn/const) can never
+    /// head a multi-segment path, so recording every `use` binding is safe.
+    fn collect_assoc_types(&mut self, module: &ast::Module) {
+        for item in &module.items {
+            match &item.kind {
+                ast::ItemKind::Impl(b) => {
+                    if let ast::Type::Path(p) = &b.ty {
+                        if let Some(seg) = p.segments.last() {
+                            self.assoc_types.insert(seg.name.clone());
+                        }
+                    }
+                }
+                ast::ItemKind::Use(u) => {
+                    if let Some((last, _)) = u.path.split_last() {
+                        let binding = u.alias.as_deref().unwrap_or(last);
+                        self.assoc_types.insert(binding.to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// Whether `name` is an enum with a method table (§3.2). Used at variant
     /// construction sites to decide whether to `setmetatable` the value.
     pub(crate) fn enum_has_methods(&self, name: &str) -> bool {
@@ -463,6 +545,7 @@ impl Emitter {
             ast::ItemKind::Struct(s) => {
                 self.emit_struct(s, item.vis);
                 self.emit_derives(&item.attrs, neoc_macros::DeriveTarget::Struct(s));
+                self.emit_traits_tag(&s.name);
             }
             ast::ItemKind::Const(c) => self.emit_const(c, item.vis),
             ast::ItemKind::Impl(b) => self.emit_impl(b),
@@ -475,6 +558,7 @@ impl Emitter {
                 if self.enum_has_methods(&e.name) {
                     self.emit_enum_table(&e.name, item.vis);
                     self.emit_derives(&item.attrs, neoc_macros::DeriveTarget::Enum(e));
+                    self.emit_traits_tag(&e.name);
                 }
             }
             // No inline Lua output: aliases erase; ext / extern externals are
@@ -490,7 +574,7 @@ impl Emitter {
     /// Emit the methods generated by each `#[derive(...)]` on a type, right
     /// after its constructor so they land on the type's table.
     fn emit_derives(&mut self, attrs: &[ast::Attribute], target: neoc_macros::DeriveTarget) {
-        for name in derive_names(attrs) {
+        for name in ast::derive_names(attrs) {
             match neoc_macros::derive(&name, target) {
                 Ok(lines) => {
                     for l in lines {
@@ -530,7 +614,7 @@ impl Emitter {
         match &s.body {
             ast::StructBody::Unit => {
                 self.line(format!(
-                    "{local}{} = {{ _struct = \"{}\" }}",
+                    "{local}{} = {{ __struct = \"{}\" }}",
                     s.name, s.name
                 ));
             }
@@ -540,7 +624,7 @@ impl Emitter {
                 self.line(format!("function {}.new(value)", s.name));
                 self.indented(|e| {
                     e.line(format!(
-                        "return setmetatable({{ _struct = \"{}\", value }}, {})",
+                        "return setmetatable({{ __struct = \"{}\", value }}, {})",
                         s.name, s.name
                     ));
                 });
@@ -551,12 +635,32 @@ impl Emitter {
                 self.line(format!("{}.__index = {}", s.name, s.name));
                 self.line(format!("function {}.new(fields)", s.name));
                 self.indented(|e| {
-                    e.line(format!("fields._struct = \"{}\"", s.name));
+                    e.line(format!("fields.__struct = \"{}\"", s.name));
                     e.line(format!("return setmetatable(fields, {})", s.name));
                 });
                 self.line("end");
             }
         }
+    }
+
+    /// Emit the `Type.__traits = { … }` runtime tag on a type's table, listing
+    /// every trait it implements (its supertraits included). On the type table —
+    /// the metatable for tuple/named structs and method-bearing enums, and the
+    /// value itself for a unit struct — so `value.__traits` resolves for any
+    /// instance. Skipped for a type implementing no trait. Inert until #54.
+    fn emit_traits_tag(&mut self, name: &str) {
+        let Some(traits) = self.traits.get(name) else {
+            return;
+        };
+        if traits.is_empty() {
+            return;
+        }
+        let list = traits
+            .iter()
+            .map(|t| format!("\"{t}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.line(format!("{name}.__traits = {{ {list} }}"));
     }
 
     /// Emit the method table for an enum that has `impl`/derived methods. The
@@ -602,6 +706,12 @@ impl Emitter {
             None if vis == ast::Visibility::Public => {
                 format!("function {}({param_list})", f.sig.name)
             }
+            // A forward-referenced private fn: assign the pre-declared `local`
+            // (hoisted in `emit_module`) instead of declaring it here, where a
+            // `local function` would be invisible to earlier callers.
+            None if self.forward_decls.contains(&f.sig.name) => {
+                format!("{} = function({param_list})", f.sig.name)
+            }
             None => format!("local function {}({param_list})", f.sig.name),
         };
         self.line(header);
@@ -610,28 +720,171 @@ impl Emitter {
     }
 }
 
-/// The trait names requested by every `#[derive(...)]` in `attrs`, in order.
-fn derive_names(attrs: &[ast::Attribute]) -> Vec<String> {
-    let mut names = Vec::new();
-    for attr in attrs {
-        for item in &attr.items {
-            if item.name != "derive" {
-                continue;
-            }
-            for arg in &item.args {
-                if let ast::AttrArg::Item(inner) = arg {
-                    names.push(inner.name.clone());
-                }
-            }
-        }
-    }
-    names
-}
-
 /// Whether `attrs` contains any `#[derive(...)]`.
 fn has_derive(attrs: &[ast::Attribute]) -> bool {
     attrs
         .iter()
         .flat_map(|a| &a.items)
         .any(|i| i.name == "derive")
+}
+
+/// The private free functions referenced by an item that precedes their
+/// definition. Those must be declared `local` up front (see [`Emitter`]'s
+/// `forward_decls`); a `local function` is only visible from its own line on, so
+/// an earlier caller would otherwise close over a nil global. Pub functions emit
+/// as globals (visible everywhere) and methods as table fields, so neither
+/// needs this.
+fn forward_declared_fns(module: &ast::Module) -> std::collections::HashSet<String> {
+    use std::collections::{HashMap, HashSet};
+    let mut def_index: HashMap<&str, usize> = HashMap::new();
+    for (i, item) in module.items.iter().enumerate() {
+        if let ast::ItemKind::Fn(f) = &item.kind
+            && item.vis == ast::Visibility::Private
+        {
+            def_index.entry(f.sig.name.as_str()).or_insert(i);
+        }
+    }
+    let mut forward = HashSet::new();
+    for (i, item) in module.items.iter().enumerate() {
+        let mut used = HashSet::new();
+        item_refs(item, &mut used);
+        for name in used {
+            if def_index.get(name).is_some_and(|&def| def > i) {
+                forward.insert(name.to_string());
+            }
+        }
+    }
+    forward
+}
+
+/// Collects the names an item's bodies reference (path heads), for forward-
+/// reference detection.
+fn item_refs<'a>(item: &'a ast::Item, used: &mut std::collections::HashSet<&'a str>) {
+    match &item.kind {
+        ast::ItemKind::Fn(f) => block_refs(&f.body, used),
+        ast::ItemKind::Const(c) => expr_refs(&c.value, used),
+        ast::ItemKind::Impl(b) => {
+            for method in &b.items {
+                block_refs(&method.body, used);
+            }
+        }
+        ast::ItemKind::Trait(t) => {
+            for trait_item in &t.items {
+                if let Some(body) = &trait_item.default {
+                    block_refs(body, used);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn block_refs<'a>(block: &'a ast::Block, used: &mut std::collections::HashSet<&'a str>) {
+    for stmt in &block.stmts {
+        match &stmt.kind {
+            ast::StmtKind::Let(l) => {
+                if let Some(value) = &l.value {
+                    expr_refs(value, used);
+                }
+            }
+            ast::StmtKind::Expr(e) => expr_refs(e, used),
+            ast::StmtKind::Item(item) => item_refs(item, used),
+        }
+    }
+    if let Some(value) = &block.value {
+        expr_refs(value, used);
+    }
+}
+
+fn expr_refs<'a>(expr: &'a ast::Expr, used: &mut std::collections::HashSet<&'a str>) {
+    use ast::ExprKind::{
+        Assign, Binary, Block, Bool, Break, Call, Closure, Continue, Field, Float, For, If, Index,
+        Int, List, Loop, Match, MethodCall, Path, Range, Return, Str, StructLit, Try, Unary, Unit,
+        While,
+    };
+    match &expr.kind {
+        Path(segs) => {
+            if let Some(head) = segs.first() {
+                used.insert(head.as_str());
+            }
+        }
+        Binary { lhs, rhs, .. } => {
+            expr_refs(lhs, used);
+            expr_refs(rhs, used);
+        }
+        Unary { operand, .. } | Try(operand) => expr_refs(operand, used),
+        Range { start, end, .. } => {
+            expr_refs(start, used);
+            expr_refs(end, used);
+        }
+        Call { callee, args } => {
+            expr_refs(callee, used);
+            for a in args {
+                expr_refs(a, used);
+            }
+        }
+        MethodCall { receiver, args, .. } => {
+            expr_refs(receiver, used);
+            for a in args {
+                expr_refs(a, used);
+            }
+        }
+        Field { base, .. } => expr_refs(base, used),
+        Index { base, index } => {
+            expr_refs(base, used);
+            expr_refs(index, used);
+        }
+        StructLit { fields, base, .. } => {
+            for field in fields {
+                if let Some(value) = &field.value {
+                    expr_refs(value, used);
+                }
+            }
+            if let Some(base) = base {
+                expr_refs(base, used);
+            }
+        }
+        List(items) => {
+            for x in items {
+                expr_refs(x, used);
+            }
+        }
+        Assign { target, value, .. } => {
+            expr_refs(target, used);
+            expr_refs(value, used);
+        }
+        If { cond, then, else_ } => {
+            expr_refs(cond, used);
+            block_refs(then, used);
+            if let Some(e) = else_ {
+                expr_refs(e, used);
+            }
+        }
+        Match { scrutinee, arms } => {
+            expr_refs(scrutinee, used);
+            for arm in arms {
+                if let Some(guard) = &arm.guard {
+                    expr_refs(guard, used);
+                }
+                expr_refs(&arm.body, used);
+            }
+        }
+        While { cond, body } => {
+            expr_refs(cond, used);
+            block_refs(body, used);
+        }
+        For { iter, body, .. } => {
+            expr_refs(iter, used);
+            block_refs(body, used);
+        }
+        Loop { body } => block_refs(body, used),
+        Closure { body, .. } => expr_refs(body, used),
+        Block(b) => block_refs(b, used),
+        Return(opt) => {
+            if let Some(e) = opt {
+                expr_refs(e, used);
+            }
+        }
+        Int(_) | Float(_) | Str(_) | Bool(_) | Unit | Break | Continue => {}
+    }
 }

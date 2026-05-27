@@ -1,16 +1,16 @@
-local Ok   = function(v) return { _enum = "Result", tag = "Ok", v } end
-local Err  = function(e) return { _enum = "Result", tag = "Err", e } end
-local Some = function(v) return { _enum = "Option", tag = "Some", v } end
-local None = { _enum = "Option", tag = "None" }
+local Ok   = function(v) return { __enum = "Result", __tag = "Ok", v } end
+local Err  = function(e) return { __enum = "Result", __tag = "Err", e } end
+local Some = function(v) return { __enum = "Option", __tag = "Some", v } end
+local None = { __enum = "Option", __tag = "None" }
 
 local function describe(r)
   return (function()
     local __s = r
-    if __s.tag == "Ok" then
+    if __s.__tag == "Ok" then
       local n = __s[1]
       return "ok"
     end
-    if __s.tag == "Err" then
+    if __s.__tag == "Err" then
       local e = __s[1]
       return e
     end

@@ -87,13 +87,21 @@ A newtype `struct N(τ)` has one positional field accessed as `.0`; its construc
 
 ### 3.4 Traits and trait bounds
 
-A trait names a set of method signatures. A type satisfies a trait when an `impl Trait for Type` provides every required method with matching signatures. A trait bound `T: Trait` constrains a type parameter to types that satisfy `Trait`.
+A trait names a set of method signatures. A type satisfies a trait when an `impl Trait for Type` provides every required method with matching signatures; a `#[derive(Trait)]` on the type is an implicit such impl. A trait bound `T: Trait` constrains a type parameter to types that satisfy `Trait`.
 
-Method resolution for `e.m(…)`: the static type of `e` determines which inherent or trait-impl method named `m` applies. There is no dynamic dispatch and no `dyn Trait`; every method call resolves to a single statically known function.
+A trait may declare **associated types** (`type Item;`): named types each implementor binds (`type Item = number;`), referred to within the trait and its methods as `Self::Item`. Every declared associated type must be bound by every impl, and a binding must name a declared associated type. Inside an impl, `Self::Item` resolves to the impl's binding — so a method may write either the bound type or `Self::Item`, and a call site sees the bound concrete type. (Associated types are erased at runtime.)
+
+A trait may declare **supertraits** (`trait Greet: Show`): traits its implementors must also implement. An `impl Greet for P` is incomplete unless `P` also implements `Show`. A supertrait grants its methods through the subtrait — a bound `T: Greet` resolves methods declared on `Show`, and a `Greet` value is usable wherever `Show` is expected (subsumption is transitive and one-directional: the subtrait flows into the supertrait, never the reverse). A type satisfies a trait when it implements that trait or any subtrait of it. The supertrait relation must be acyclic, and each named supertrait must be a trait.
+
+Method resolution for `e.m(…)`: the static type of `e` determines which inherent or trait-impl method named `m` applies. When that static type is a **type parameter** `T`, `m` resolves against the methods of `T`'s declared bounds (the union of its `<T: …>` and `where` bounds); `Self` in the chosen signature is the parameter `T`. When that static type is a **trait used as a type** (below), `m` resolves against the trait's own methods, with `Self` read as the trait type. A method named on a parameter or trait type that does not provide it is an error.
+
+**A trait name is usable directly as a type — this is the existential.** A parameter, field, list element, or return typed `Drawable` accepts a value of *any* type that satisfies `Drawable`; `[Drawable]` is a heterogeneous list of implementors. A list literal whose elements have differing concrete types infers its element type as the single trait every element implements; if the elements share no trait, or more than one, the list is ambiguous and must be annotated. There is no `dyn` keyword and no object-safety ceremony — a bare trait name *is* the existential. Assignability is directional: an implementor flows into the trait type, never the reverse (the existential is type-erasing — a trait-typed value is **not** assignable back to a concrete type; neoc has no implicit downcast). This is distinct from a generic `<T: Trait>`, which is type-*preserving*: `pick<T: Drawable>(xs: [T]) -> T` returns the concrete element type, whereas `pick(xs: [Drawable]) -> Drawable` returns the erased trait surface. Method calls on a trait-typed value dispatch dynamically at runtime; calls on a concrete or generic-parameter value resolve to a single statically known function.
 
 ### 3.5 Generics
 
-Type parameters are universally quantified over the item that declares them. Instantiation infers type arguments from the call site (`T-CALL` with `τᵢ` unified against argument types) and checks each inferred argument against its bounds.
+Type parameters are universally quantified over the item that declares them. Instantiation infers type arguments — at a function call (`T-CALL` with `τᵢ` unified against argument types) and equally at the construction of a generic type (a struct literal, a tuple-struct or enum-variant constructor) — and checks each inferred argument against its bounds: the type bound to a parameter `T` must satisfy every trait in `T`'s bounds, or the instantiation is an error. When the argument is itself a type parameter of the enclosing item, it satisfies a bound exactly when its own declared bounds include that trait (bounds propagate; they are not re-derived).
+
+**Blanket impls.** An `impl<T: Bound> Trait for T` (the target is the impl's own parameter) makes *every* type satisfying `Bound` satisfy `Trait` and gain its methods; satisfaction is transitive (a blanket condition may itself be met through another blanket). Inside the impl, the target `T` is an ordinary bounded parameter — `self.m()` resolves through `T`'s bounds exactly as in a `<T: Bound>` function. neoc has no general coherence solver; it rejects only the two detectable overlaps — two blanket impls of the same trait, and a blanket impl of a trait a concrete type also implements directly.
 
 neoc uses Hindley–Milner inference restricted to the rank-1, no-subtyping fragment: inference flows from arguments and annotations; there is no variance, no implicit coercion (not even `number`-to-`string`), and no inference across function boundaries beyond the declared signature. A type annotation is required wherever this fragment cannot determine a type (empty list literals, ambiguous numeric contexts produced by generic returns).
 
@@ -206,13 +214,14 @@ For `Result`, the error type `ε` of `e` must unify with the error type of the e
 
 ## 7. Pattern-matching exhaustiveness
 
-A `match` must cover every value of the scrutinee's type. Exhaustiveness is checked structurally:
+A `match` must cover every value of the scrutinee's type. Exhaustiveness is checked structurally, and recursively into a constructor's fields:
 
-- Scrutinee of an `enum`: every variant must be covered, either by a matching variant pattern or by a wildcard/binding pattern. A `match` over `Result<T, E>` is exhaustive iff it covers both `Ok` and `Err` (or has a catch-all); likewise `Some`/`None` for `Option`.
+- Scrutinee of an `enum`: every variant must be covered, either by a matching variant pattern or by a wildcard/binding pattern. A `match` over `Result<T, E>` is exhaustive iff it covers both `Ok` and `Err` (or has a catch-all); likewise `Some`/`None` for `Option`. A variant pattern covers the variant only when its sub-patterns cover the variant's fields: `match o { Some(true) => …, None => … }` is *not* exhaustive — `Some(false)` is uncovered.
 - Scrutinee of `bool`: both `true` and `false`, or a catch-all.
+- Scrutinee of a `struct`: a single irrefutable pattern (every field bound by a wildcard or binding) covers it; a refutable sub-pattern on a field leaves a gap.
 - Scrutinee of `number`, `string`, or any type with unbounded values: a binding or wildcard arm is required, since the literals can never be exhaustive alone.
 
-A non-exhaustive `match` is a static error — never a runtime failure. Redundant arms (a pattern that can never match because earlier arms already cover it) are a static error.
+A guard makes an arm conditional, so a guarded arm does not contribute to coverage — the value it matches may still fall through. A non-exhaustive `match` is a static error — never a runtime failure. Redundant arms (a pattern that can never match because earlier arms already cover it) are a static error.
 
 ## 8. Trait-impl completeness
 

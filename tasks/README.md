@@ -33,14 +33,17 @@ language, with assertions at every stage. See `done.md`. What remains is below.
 
 | File | Item | Status | Priority | Blocked on |
 | --- | --- | --- | --- | --- |
+| `ide-feature-parity.md` | build `neoc-lsp` toward rust-analyzer / tsserver IDE surface | in-progress | P2 | neoc#60 (landed) |
+| `cross-file-resolution.md` | project-wide resolution + index for `neoc-lsp`, performance-first | in-progress | P2 | `ide-feature-parity` |
 | `runtime-integration.md` | the `crates/neoc` runtime embeds `neoc-compiler` | blocked | P1 | parked `Result`-at-`ext` boundary decision |
 | `wasm-build.md` | tree-sitter→wasm32 + `neoc-wasm` | blocked | P2 | tree-sitter C → wasm32 toolchain |
 | `non-goals.md` | intentional deferrals (advanced Rust) | deferred | — | by design |
 | `done.md` | completed work, for context | done | — | — |
 
-**Every ready task is done.** Critical path complete (`cli` → `lsp` →
-`lsp-spans` → `modules-visibility`), plus formatter, the LSP IDE features, the
-three codegen targets, the `extern "<host>"` FFI, and the conformance breadth +
-attribute checks. The only open items are both **blocked**: `runtime-integration`
-awaits a boundary-design decision (and is cross-repo), and `wasm-build` awaits a
-wasm toolchain. Completed items live in `done/` (see `done/README.md`).
+**Critical path is done** (`cli` → `lsp` → `lsp-spans` → `modules-visibility`),
+plus formatter, the core LSP IDE features, the three codegen targets, the
+`extern "<host>"` FFI, and the conformance breadth + attribute checks. Open
+work: `ide-feature-parity` (in-progress — extending `neoc-lsp` past the core
+five handlers), and two **blocked** items — `runtime-integration` (parked on a
+cross-repo boundary decision) and `wasm-build` (awaiting a wasm toolchain).
+Completed items live in `done/` (see `done/README.md`).

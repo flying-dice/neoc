@@ -17,16 +17,16 @@
 //!
 //! # Runtime representation
 //!
-//! - **struct** → a plain object carrying a `_struct` tag and its fields. A
+//! - **struct** → a plain object carrying a `__struct` tag and its fields. A
 //!   newtype/tuple struct stores its payload positionally under integer keys
 //!   (`_0`, `_1`, …). Named structs store fields by name.
-//! - **enum** → a tagged object `{ _enum, tag, … }`. Tuple payload is stored
+//! - **enum** → a tagged object `{ __enum, __tag, … }`. Tuple payload is stored
 //!   under `_0`, `_1`, …; struct-variant payload by field name. The
 //!   `Result`/`Option` prelude follows the same shape.
 //! - **methods** → every type with an `impl` or `#[derive]` gets an entry in the
 //!   global method table `__m` (`__m.Point.manhattan = (self) => …`). A method
 //!   call `x.m(a)` dispatches through `__call(x, "m", a)`, which reads the
-//!   receiver's `_struct`/`_enum` tag and invokes the stored function with the
+//!   receiver's `__struct`/`__enum` tag and invokes the stored function with the
 //!   receiver as the first argument — the JS analogue of Lua metatable dispatch.
 //! - **`?`** → a hoisted guard: `e?` binds `e` to a temp, early-returns the
 //!   carrier from the enclosing function on `Err`/`None`, and yields the payload
@@ -178,6 +178,7 @@ pub fn emit<S: std::hash::BuildHasher>(
     let mut e = Emitter {
         enums: EnumIndex::build(module),
         tuple_structs: TupleStructIndex::build(module),
+        traits: ast::trait_index(module),
         imported_bindings: imported_bindings.iter().cloned().collect(),
         ..Emitter::default()
     };
@@ -279,6 +280,12 @@ pub(crate) struct Emitter {
     /// Types (struct/enum names) that carry a method-table entry — any `impl`
     /// block or `#[derive]`.
     method_types: HashSet<String>,
+    /// Whether any `__t` trait-registry entry was emitted (gates its prelude).
+    uses_traits: bool,
+    /// Per-type trait set (transitively closed over supertraits) for the
+    /// `__t` trait registry — `__t.Type = [ … ]` keyed by type name
+    /// (`DYNAMIC.md`). Inert until the runtime trait-enforcement work (#54).
+    traits: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
     /// Counter feeding unique temporaries for the `?` operator.
     try_seq: usize,
     /// Counter feeding unique temporaries for destructuring / match scrutinees.
@@ -296,17 +303,21 @@ pub(crate) struct Emitter {
 
 /// The `Result`/`Option` prelude: variant constructors as plain tagged objects.
 const RESULT_PRELUDE: &str = "\
-const Ok = (v) => ({ _enum: \"Result\", tag: \"Ok\", _0: v });
-const Err = (e) => ({ _enum: \"Result\", tag: \"Err\", _0: e });
-const Some = (v) => ({ _enum: \"Option\", tag: \"Some\", _0: v });
-const None = { _enum: \"Option\", tag: \"None\" };";
+const Ok = (v) => ({ __enum: \"Result\", __tag: \"Ok\", _0: v });
+const Err = (e) => ({ __enum: \"Result\", __tag: \"Err\", _0: e });
+const Some = (v) => ({ __enum: \"Option\", __tag: \"Some\", _0: v });
+const None = { __enum: \"Option\", __tag: \"None\" };";
 
 /// The method-dispatch runtime: a registry keyed by type name, and `__call`,
 /// which reads the receiver's tag and invokes the stored function with the
 /// receiver first — the JS analogue of Lua metatable dispatch.
 const METHOD_PRELUDE: &str = "\
 const __m = {};
-const __call = (recv, name, ...args) => __m[recv._struct ?? recv._enum][name](recv, ...args);";
+const __call = (recv, name, ...args) => __m[recv.__struct ?? recv.__enum][name](recv, ...args);";
+
+/// The trait registry: a table keyed by type name listing the traits each type
+/// implements (`__traits` runtime tag). Read as `__t[recv.__struct ?? recv.__enum]`.
+const TRAITS_PRELUDE: &str = "const __t = {};";
 
 impl Emitter {
     pub(crate) fn error(&mut self, message: impl Into<String>) {
@@ -345,6 +356,9 @@ impl Emitter {
         }
         if self.uses_methods {
             preamble.push(METHOD_PRELUDE.to_string());
+        }
+        if self.uses_traits {
+            preamble.push(TRAITS_PRELUDE.to_string());
         }
         if self.uses_result {
             preamble.push(RESULT_PRELUDE.to_string());
@@ -400,6 +414,7 @@ impl Emitter {
             ast::ItemKind::Struct(s) => {
                 self.ensure_method_slot(&s.name, item.vis);
                 self.emit_derives(&item.attrs, neoc_ast_derive_target(item));
+                self.emit_traits_tag(&s.name);
             }
             ast::ItemKind::Const(c) => self.emit_const(c, item.vis),
             ast::ItemKind::Impl(b) => self.emit_impl(b),
@@ -407,6 +422,7 @@ impl Emitter {
             ast::ItemKind::Enum(e) => {
                 self.ensure_method_slot(&e.name, item.vis);
                 self.emit_derives(&item.attrs, neoc_ast_derive_target(item));
+                self.emit_traits_tag(&e.name);
             }
             // No JS output: aliases erase, ext is provided by the runtime harness.
             ast::ItemKind::TypeAlias(_)
@@ -414,6 +430,26 @@ impl Emitter {
             | ast::ItemKind::Extern { .. }
             | ast::ItemKind::Trait(_) => {}
         }
+    }
+
+    /// Emit the `__t.Type = [ … ]` trait-registry entry for a type, listing
+    /// every trait it implements (its supertraits included). Keyed by type name,
+    /// so `__t[value.__struct ?? value.__enum]` resolves for any instance.
+    /// Skipped for a type implementing no trait. Inert until #54.
+    fn emit_traits_tag(&mut self, name: &str) {
+        let Some(traits) = self.traits.get(name) else {
+            return;
+        };
+        if traits.is_empty() {
+            return;
+        }
+        self.uses_traits = true;
+        let list = traits
+            .iter()
+            .map(|t| format!("\"{t}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.line(format!("__t.{name} = [{list}];"));
     }
 
     /// Register the `__m[name] = {}` method slot for a type that carries one. A
@@ -432,7 +468,7 @@ impl Emitter {
 
     /// Emit the methods generated by each `#[derive(...)]` on a type.
     fn emit_derives(&mut self, attrs: &[ast::Attribute], target: DeriveTarget<'_>) {
-        for name in derive_names(attrs) {
+        for name in ast::derive_names(attrs) {
             self.uses_methods = true;
             self.emit_derive(&name, target);
         }
@@ -535,24 +571,6 @@ fn neoc_ast_derive_target(item: &ast::Item) -> DeriveTarget<'_> {
     }
 }
 
-/// The trait names requested by every `#[derive(...)]` in `attrs`, in order.
-fn derive_names(attrs: &[ast::Attribute]) -> Vec<String> {
-    let mut names = Vec::new();
-    for attr in attrs {
-        for item in &attr.items {
-            if item.name != "derive" {
-                continue;
-            }
-            for arg in &item.args {
-                if let ast::AttrArg::Item(inner) = arg {
-                    names.push(inner.name.clone());
-                }
-            }
-        }
-    }
-    names
-}
-
 /// Whether `attrs` contains any `#[derive(...)]`.
 fn has_derive(attrs: &[ast::Attribute]) -> bool {
     attrs
@@ -590,6 +608,7 @@ mod tests {
         ast::Field {
             attrs: Vec::new(),
             name: name.to_string(),
+            name_span: ast::Span::default(),
             ty: ast::Type::Unit,
         }
     }
@@ -613,6 +632,7 @@ mod tests {
                 attrs: Vec::new(),
                 sig: ast::FnSig {
                     name: name.to_string(),
+                    name_span: ast::Span::default(),
                     generics: Vec::new(),
                     params: Vec::new(),
                     ret: None,
@@ -662,7 +682,7 @@ mod tests {
                             ],
                             base: None,
                         })),
-                        field: ast::FieldAccess::Named("x".to_string()),
+                        field: ast::FieldAccess::Named("x".to_string(), ast::Span::default()),
                     }),
                 ),
             ],
@@ -672,7 +692,7 @@ mod tests {
         assert_eq!(
             out.js,
             "function make() {\n  \
-             return { _struct: \"Point\", x: 1, y: 2 }.x;\n}\n"
+             return { __struct: \"Point\", x: 1, y: 2 }.x;\n}\n"
         );
     }
 
@@ -690,11 +710,13 @@ mod tests {
                             ast::Variant {
                                 attrs: Vec::new(),
                                 name: "Red".to_string(),
+                                name_span: ast::Span::default(),
                                 body: ast::VariantBody::Unit,
                             },
                             ast::Variant {
                                 attrs: Vec::new(),
                                 name: "Green".to_string(),
+                                name_span: ast::Span::default(),
                                 body: ast::VariantBody::Unit,
                             },
                         ],
@@ -736,11 +758,11 @@ mod tests {
             out.js,
             "function pick() {\n  \
              return (() => {\n    \
-             const __s1 = { _enum: \"Color\", tag: \"Red\" };\n    \
-             if (__s1.tag === \"Red\") {\n      \
+             const __s1 = { __enum: \"Color\", __tag: \"Red\" };\n    \
+             if (__s1.__tag === \"Red\") {\n      \
              return 1;\n    \
              }\n    \
-             if (__s1.tag === \"Green\") {\n      \
+             if (__s1.__tag === \"Green\") {\n      \
              return 2;\n    \
              }\n  \
              })();\n}\n"
@@ -766,13 +788,15 @@ mod tests {
             out.js,
             "const __m = {};\n\
              const __call = (recv, name, ...args) => \
-             __m[recv._struct ?? recv._enum][name](recv, ...args);\n\
+             __m[recv.__struct ?? recv.__enum][name](recv, ...args);\n\
+             const __t = {};\n\
              \n\
              __m.Point = {};\n\
              __m.Point.debug = function(self) {\n  \
              return \"Point { \" + \"x = \" + String(self.x) + \", \" + \
              \"y = \" + String(self.y) + \" }\";\n\
-             };\n"
+             };\n\
+             __t.Point = [\"Debug\"];\n"
         );
     }
 

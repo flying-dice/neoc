@@ -60,7 +60,7 @@ impl Emitter {
     fn emit_let(&mut self, l: &ast::LetStmt) {
         // A simple binding or wildcard maps straight to a `let`.
         let name = match &l.pattern {
-            ast::Pattern::Binding(name) => Some(name.clone()),
+            ast::Pattern::Binding { name, .. } => Some(name.clone()),
             ast::Pattern::Wildcard => Some("_".to_string()),
             _ => None,
         };
@@ -107,7 +107,7 @@ impl Emitter {
     /// irrefutable. An enum-variant path is refutable and stays a diagnostic.
     fn is_irrefutable_let_pattern(&self, pattern: &ast::Pattern) -> bool {
         match pattern {
-            ast::Pattern::Wildcard | ast::Pattern::Binding(_) => true,
+            ast::Pattern::Wildcard | ast::Pattern::Binding { .. } => true,
             ast::Pattern::Struct { path, fields, .. } => {
                 self.pattern_variant(path).is_none()
                     && fields.iter().all(|f| {
@@ -192,7 +192,7 @@ impl Emitter {
 
     fn emit_for(&mut self, pattern: &ast::Pattern, iter: &ast::Expr, body: &ast::Block) {
         let var = match pattern {
-            ast::Pattern::Binding(name) => name.clone(),
+            ast::Pattern::Binding { name, .. } => name.clone(),
             ast::Pattern::Wildcard => "_".to_string(),
             _ => {
                 self.error("only a binding pattern is supported in `for`");
@@ -317,7 +317,7 @@ impl Emitter {
             ast::ExprKind::Field { base, field } => {
                 let b = self.emit_expr(base);
                 match field {
-                    ast::FieldAccess::Named(n) => format!("{b}.{n}"),
+                    ast::FieldAccess::Named(n, _) => format!("{b}.{n}"),
                     // Tuple/newtype payload is stored under integer-keyed
                     // properties `_0`, `_1`, …; `.0` reads `._0`.
                     ast::FieldAccess::Tuple(i) => format!("{b}._{i}"),
@@ -344,6 +344,7 @@ impl Emitter {
             ast::ExprKind::MethodCall {
                 receiver,
                 method,
+                method_span: _,
                 args,
             } => {
                 self.uses_methods = true;
@@ -386,7 +387,7 @@ impl Emitter {
             }
             Some(PathKind::Variant(en, var, VariantShape::Unit)) => {
                 self.note_prelude(&en);
-                format!("{{ _enum: \"{en}\", tag: \"{var}\" }}")
+                format!("{{ __enum: \"{en}\", __tag: \"{var}\" }}")
             }
             // A tuple/struct variant in path position (no payload applied) is a
             // constructor function; the type checker should have rewritten it.
@@ -466,7 +467,7 @@ impl Emitter {
         if let Some(PathKind::Variant(en, var, VariantShape::Named)) = self.resolve_path(path) {
             self.note_prelude(&en);
             let body = self.emit_field_inits(fields);
-            return format!("{{ _enum: \"{en}\", tag: \"{var}\"{body} }}");
+            return format!("{{ __enum: \"{en}\", __tag: \"{var}\"{body} }}");
         }
         let Some(name) = path.last() else {
             return "undefined".to_string();
@@ -475,12 +476,12 @@ impl Emitter {
             return self.emit_struct_update(name, fields, base);
         }
         let body = self.emit_field_inits(fields);
-        format!("{{ _struct: \"{name}\"{body} }}")
+        format!("{{ __struct: \"{name}\"{body} }}")
     }
 
     /// Lower `S { f: e, .. base }` (functional update): spread the base's
     /// properties into a fresh object, then override the listed fields and
-    /// re-stamp the `_struct` tag.
+    /// re-stamp the `__struct` tag.
     fn emit_struct_update(
         &mut self,
         name: &str,
@@ -489,7 +490,7 @@ impl Emitter {
     ) -> String {
         let base_js = self.emit_expr(base);
         let body = self.emit_field_inits(fields);
-        format!("{{ ...{base_js}, _struct: \"{name}\"{body} }}")
+        format!("{{ ...{base_js}, __struct: \"{name}\"{body} }}")
     }
 
     /// Lower struct-literal / struct-variant fields to `name: value` entries,
@@ -513,13 +514,13 @@ impl Emitter {
     fn emit_tuple_variant(&mut self, en: &str, var: &str, args: &[ast::Expr]) -> String {
         self.note_prelude(en);
         let payload = self.emit_positional(args);
-        format!("{{ _enum: \"{en}\", tag: \"{var}\"{payload} }}")
+        format!("{{ __enum: \"{en}\", __tag: \"{var}\"{payload} }}")
     }
 
     /// Lower a tuple/newtype struct construction `N(a, …)` to its tagged object.
     fn emit_tuple_struct_lit(&mut self, name: &str, args: &[ast::Expr]) -> String {
         let payload = self.emit_positional(args);
-        format!("{{ _struct: \"{name}\"{payload} }}")
+        format!("{{ __struct: \"{name}\"{payload} }}")
     }
 
     /// Render positional payload args as `, _0: a, _1: b, …`, ready to append
@@ -625,7 +626,7 @@ impl Emitter {
     /// Lower `e?`. The short-circuit must return the carrier from the enclosing
     /// function, which a self-contained IIFE cannot do. So the guard is hoisted
     /// as statements into the current buffer — `const __try_N = e; if
-    /// (__try_N.tag === "Err" || __try_N.tag === "None") return __try_N;` — and
+    /// (__try_N.__tag === "Err" || __try_N.__tag === "None") return __try_N;` — and
     /// the expression value of `e?` is the unwrapped payload `__try_N._0`.
     fn emit_try(&mut self, inner: &ast::Expr) -> String {
         let value = self.emit_expr(inner);
@@ -633,7 +634,7 @@ impl Emitter {
         self.try_seq += 1;
         self.line(format!("const {tmp} = {value};"));
         self.line(format!(
-            "if ({tmp}.tag === \"Err\" || {tmp}.tag === \"None\") return {tmp};"
+            "if ({tmp}.__tag === \"Err\" || {tmp}.__tag === \"None\") return {tmp};"
         ));
         format!("{tmp}._0")
     }
