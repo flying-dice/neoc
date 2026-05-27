@@ -80,6 +80,39 @@ pub enum Stage {
     Emit,
 }
 
+impl Diagnostic {
+    /// A parse-stage diagnostic. The parser always records the offending byte
+    /// range, so it is always spanned.
+    fn parse(message: String, start: usize, end: usize) -> Self {
+        Self {
+            stage: Stage::Parse,
+            message,
+            span: Some(ByteSpan { start, end }),
+        }
+    }
+
+    /// A type-stage diagnostic. A located diagnostic carries the byte range of
+    /// the node it reports against; the `0..0` fallback (no node span) stays
+    /// `None`, so the LSP renders it at the file start rather than mislocating
+    /// it.
+    fn typed(message: String, start: usize, end: usize) -> Self {
+        Self {
+            stage: Stage::Type,
+            message,
+            span: (start != 0 || end != 0).then_some(ByteSpan { start, end }),
+        }
+    }
+
+    /// An emit-stage diagnostic. Emit messages carry no source range.
+    fn emit(message: String) -> Self {
+        Self {
+            stage: Stage::Emit,
+            message,
+            span: None,
+        }
+    }
+}
+
 /// A line-level map from emitted target source back to neoc source.
 ///
 /// Built only for [`Target::Lua`] today: [`neoc_codegen_lua::LineMap`] is the
@@ -127,29 +160,16 @@ pub fn transpile(source: &str, target: Target) -> CompileOutput {
     let mut diagnostics: Vec<Diagnostic> = parsed
         .diagnostics
         .iter()
-        .map(|d| Diagnostic {
-            stage: Stage::Parse,
-            message: d.message.clone(),
-            span: Some(ByteSpan {
-                start: d.start,
-                end: d.end,
-            }),
-        })
+        .map(|d| Diagnostic::parse(d.message.clone(), d.start, d.end))
         .collect();
 
     let checked = types::check(&parsed.module);
-    diagnostics.extend(checked.diagnostics.iter().map(|d| Diagnostic {
-        stage: Stage::Type,
-        message: d.message.clone(),
-        // A located type diagnostic carries the byte range of the node it
-        // reports against; the `0..0` fallback (no node span) stays `None` so
-        // the LSP renders it at the start of the file rather than mislocating
-        // it.
-        span: (d.start != 0 || d.end != 0).then_some(ByteSpan {
-            start: d.start,
-            end: d.end,
-        }),
-    }));
+    diagnostics.extend(
+        checked
+            .diagnostics
+            .iter()
+            .map(|d| Diagnostic::typed(d.message.clone(), d.start, d.end)),
+    );
 
     // Mark string-typed `+` as concatenation before emitting. Each backend
     // interprets it: Lua picks `..`, JS keeps `+` (`lang/DYNAMIC.md` §4.2).
@@ -163,11 +183,7 @@ pub fn transpile(source: &str, target: Target) -> CompileOutput {
         &std::collections::HashSet::new(),
         &[],
     );
-    diagnostics.extend(emit_messages.into_iter().map(|message| Diagnostic {
-        stage: Stage::Emit,
-        message,
-        span: None,
-    }));
+    diagnostics.extend(emit_messages.into_iter().map(Diagnostic::emit));
 
     CompileOutput {
         output,
@@ -273,14 +289,7 @@ pub fn transpile_project(entry: &Path, target: Target) -> std::io::Result<Projec
         for d in &parsed.diagnostics {
             diagnostics.push(ProjectDiagnostic {
                 path: path.clone(),
-                diagnostic: Diagnostic {
-                    stage: Stage::Parse,
-                    message: d.message.clone(),
-                    span: Some(ByteSpan {
-                        start: d.start,
-                        end: d.end,
-                    }),
-                },
+                diagnostic: Diagnostic::parse(d.message.clone(), d.start, d.end),
             });
         }
         let table = types::collect(&parsed.module);
@@ -377,14 +386,7 @@ pub fn check_module_in_project<H: std::hash::BuildHasher>(
     // Parse diagnostics for the focus module.
     let parsed = parser::parse(&me.source);
     for d in &parsed.diagnostics {
-        out.push(Diagnostic {
-            stage: Stage::Parse,
-            message: d.message.clone(),
-            span: Some(ByteSpan {
-                start: d.start,
-                end: d.end,
-            }),
-        });
+        out.push(Diagnostic::parse(d.message.clone(), d.start, d.end));
     }
     // Resolve the focus module's `use` imports against the project, then check
     // its bodies. `resolve_use` reports against the importing (focus) module,
@@ -400,14 +402,7 @@ pub fn check_module_in_project<H: std::hash::BuildHasher>(
     table.import_referenced_types(&universe);
     let checked = types::check_with_table(&me.module, &table);
     for d in &checked.diagnostics {
-        out.push(Diagnostic {
-            stage: Stage::Type,
-            message: d.message.clone(),
-            span: (d.start != 0 || d.end != 0).then_some(ByteSpan {
-                start: d.start,
-                end: d.end,
-            }),
-        });
+        out.push(Diagnostic::typed(d.message.clone(), d.start, d.end));
     }
     out
 }
@@ -438,14 +433,7 @@ fn check_and_emit_module(
     for d in &checked.diagnostics {
         diagnostics.push(ProjectDiagnostic {
             path: path.to_path_buf(),
-            diagnostic: Diagnostic {
-                stage: Stage::Type,
-                message: d.message.clone(),
-                span: (d.start != 0 || d.end != 0).then_some(ByteSpan {
-                    start: d.start,
-                    end: d.end,
-                }),
-            },
+            diagnostic: Diagnostic::typed(d.message.clone(), d.start, d.end),
         });
     }
     // Elaborate against the same import-enriched table the checker used, so a
@@ -464,11 +452,7 @@ fn check_and_emit_module(
     for message in emit_messages {
         diagnostics.push(ProjectDiagnostic {
             path: path.to_path_buf(),
-            diagnostic: Diagnostic {
-                stage: Stage::Emit,
-                message,
-                span: None,
-            },
+            diagnostic: Diagnostic::emit(message),
         });
     }
     (output, source_map)
@@ -498,14 +482,7 @@ fn resolve_use(
     let push = |diagnostics: &mut Vec<ProjectDiagnostic>, message: String| {
         diagnostics.push(ProjectDiagnostic {
             path: from.to_path_buf(),
-            diagnostic: Diagnostic {
-                stage: Stage::Type,
-                message,
-                span: (item.span.start != 0 || item.span.end != 0).then_some(ByteSpan {
-                    start: item.span.start,
-                    end: item.span.end,
-                }),
-            },
+            diagnostic: Diagnostic::typed(message, item.span.start, item.span.end),
         });
     };
     let Some(dep_path) = module_file(root, &u.path).map(|p| canonical_or(&p)) else {
