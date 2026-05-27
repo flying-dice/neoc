@@ -1,0 +1,26 @@
+// DYNAMIC.md §3.3: an associated function (an `impl` fn with no `self`) is a
+// plain entry on the type's table, called as `Type::f(a)` — no receiver, no
+// metatable dispatch. The call keeps the `Type` qualifier rather than dropping
+// to a bare, unbound name. Pairs an associated constructor with an instance
+// method so both lowerings appear in one case.
+ext fn println(n: number);
+
+struct Counter {
+    value: number,
+}
+
+impl Counter {
+    fn start(v: number) -> Counter {
+        Counter { value: v }
+    }
+
+    fn bump(self) -> number {
+        self.value + 1
+    }
+}
+
+fn main() {
+    let c = Counter::start(41);
+    println(c.value);
+    println(c.bump());
+}
