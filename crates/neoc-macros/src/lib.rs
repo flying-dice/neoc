@@ -350,6 +350,7 @@ mod tests {
         ast::Field {
             attrs: Vec::new(),
             name: name.to_string(),
+            name_span: ast::Span::default(),
             ty: ast::Type::Unit,
         }
     }
@@ -358,6 +359,7 @@ mod tests {
         ast::Variant {
             attrs: Vec::new(),
             name: name.to_string(),
+            name_span: ast::Span::default(),
             body,
         }
     }

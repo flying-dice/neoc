@@ -50,6 +50,7 @@ fn emits_a_function_with_a_value_body() {
                 attrs: vec![],
                 sig: ast::FnSig {
                     name: "add".into(),
+                    name_span: ast::Span::default(),
                     generics: vec![],
                     params: vec![
                         ast::Param::Named {
@@ -124,6 +125,7 @@ fn enum_and_fn(variants: Vec<ast::Variant>, expr: ast::Expr) -> ast::Module {
                     attrs: vec![],
                     sig: ast::FnSig {
                         name: "make".into(),
+                        name_span: ast::Span::default(),
                         generics: vec![],
                         params: vec![],
                         ret: None,
@@ -144,6 +146,7 @@ fn variant(name: &str, body: ast::VariantBody) -> ast::Variant {
     ast::Variant {
         attrs: vec![],
         name: name.into(),
+        name_span: ast::Span::default(),
         body,
     }
 }
@@ -220,6 +223,7 @@ fn emits_a_method_call_as_a_colon_call() {
                 attrs: vec![],
                 sig: ast::FnSig {
                     name: "run".into(),
+                    name_span: ast::Span::default(),
                     generics: vec![],
                     params: vec![],
                     ret: None,
@@ -230,6 +234,7 @@ fn emits_a_method_call_as_a_colon_call() {
                         ast::StmtKind::Expr(e(ast::ExprKind::MethodCall {
                             receiver: Box::new(e(ast::ExprKind::Path(vec!["p".into()]))),
                             method: "translate".into(),
+                            method_span: ast::Span::default(),
                             args: vec![
                                 e(ast::ExprKind::Int("1".into())),
                                 e(ast::ExprKind::Int("2".into())),

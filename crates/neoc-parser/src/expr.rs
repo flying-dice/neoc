@@ -132,19 +132,23 @@ impl Adapter {
                 method: self
                     .field(node, "method")
                     .map_or_else(String::new, |m| self.text(m).to_string()),
+                method_span: self
+                    .field(node, "method")
+                    .map_or_else(ast::Span::default, span_of),
                 args: self.walk_args(node),
             },
             "field_expression" | "cond_field_expression" => {
                 let base = self.boxed_field(node, "value");
-                let field =
-                    self.field(node, "field")
-                        .map_or(ast::FieldAccess::Named(String::new()), |f| {
-                            if f.kind() == "integer_literal" {
-                                ast::FieldAccess::Tuple(self.text(f).parse().unwrap_or(0))
-                            } else {
-                                ast::FieldAccess::Named(self.text(f).to_string())
-                            }
-                        });
+                let field = self.field(node, "field").map_or(
+                    ast::FieldAccess::Named(String::new(), ast::Span::default()),
+                    |f| {
+                        if f.kind() == "integer_literal" {
+                            ast::FieldAccess::Tuple(self.text(f).parse().unwrap_or(0))
+                        } else {
+                            ast::FieldAccess::Named(self.text(f).to_string(), span_of(f))
+                        }
+                    },
+                );
                 ast::ExprKind::Field { base, field }
             }
             "index_expression" | "cond_index_expression" => ast::ExprKind::Index {

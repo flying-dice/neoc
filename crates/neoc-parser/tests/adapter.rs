@@ -283,7 +283,10 @@ fn method_call_and_field_access() {
     let ast::ExprKind::Field { base, field } = &l.value.as_ref().unwrap().kind else {
         panic!("expected field access");
     };
-    assert_eq!(*field, ast::FieldAccess::Named("x".into()));
+    assert_eq!(
+        *field,
+        ast::FieldAccess::Named("x".into(), ast::Span::default())
+    );
     assert!(
         matches!(&base.kind, ast::ExprKind::MethodCall { method, .. } if method == "translate")
     );

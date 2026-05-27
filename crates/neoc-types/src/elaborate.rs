@@ -291,10 +291,12 @@ impl<'a> Elaborator<'a> {
             ast::ExprKind::MethodCall {
                 receiver,
                 method,
+                method_span,
                 args,
             } => ast::ExprKind::MethodCall {
                 receiver: self.boxed(receiver),
                 method: method.clone(),
+                method_span: *method_span,
                 args: self.exprs(args),
             },
             ast::ExprKind::Field { base, field } => ast::ExprKind::Field {
@@ -377,6 +379,7 @@ impl<'a> Elaborator<'a> {
                     ast::ExprKind::MethodCall {
                         receiver: Box::new(new_lhs),
                         method: "eq".to_string(),
+                        method_span: span,
                         args: vec![new_rhs],
                     },
                     span,

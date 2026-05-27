@@ -317,7 +317,7 @@ impl Emitter {
             ast::ExprKind::Field { base, field } => {
                 let b = self.emit_expr(base);
                 match field {
-                    ast::FieldAccess::Named(n) => format!("{b}.{n}"),
+                    ast::FieldAccess::Named(n, _) => format!("{b}.{n}"),
                     // Tuple/newtype payload is stored under integer-keyed
                     // properties `_0`, `_1`, …; `.0` reads `._0`.
                     ast::FieldAccess::Tuple(i) => format!("{b}._{i}"),
@@ -344,6 +344,7 @@ impl Emitter {
             ast::ExprKind::MethodCall {
                 receiver,
                 method,
+                method_span: _,
                 args,
             } => {
                 self.uses_methods = true;

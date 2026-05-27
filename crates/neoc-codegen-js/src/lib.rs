@@ -590,6 +590,7 @@ mod tests {
         ast::Field {
             attrs: Vec::new(),
             name: name.to_string(),
+            name_span: ast::Span::default(),
             ty: ast::Type::Unit,
         }
     }
@@ -613,6 +614,7 @@ mod tests {
                 attrs: Vec::new(),
                 sig: ast::FnSig {
                     name: name.to_string(),
+                    name_span: ast::Span::default(),
                     generics: Vec::new(),
                     params: Vec::new(),
                     ret: None,
@@ -662,7 +664,7 @@ mod tests {
                             ],
                             base: None,
                         })),
-                        field: ast::FieldAccess::Named("x".to_string()),
+                        field: ast::FieldAccess::Named("x".to_string(), ast::Span::default()),
                     }),
                 ),
             ],
@@ -690,11 +692,13 @@ mod tests {
                             ast::Variant {
                                 attrs: Vec::new(),
                                 name: "Red".to_string(),
+                                name_span: ast::Span::default(),
                                 body: ast::VariantBody::Unit,
                             },
                             ast::Variant {
                                 attrs: Vec::new(),
                                 name: "Green".to_string(),
+                                name_span: ast::Span::default(),
                                 body: ast::VariantBody::Unit,
                             },
                         ],

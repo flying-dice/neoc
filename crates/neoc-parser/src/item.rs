@@ -97,10 +97,16 @@ impl Adapter {
             if child.kind() == "field_declaration" {
                 let attrs = self.walk_attributes(child);
                 let name = self.name_field(child);
+                let name_span = self.name_span_field(child);
                 let ty = self
                     .field(child, "type")
                     .map_or(ast::Type::Unit, |t| self.walk_type(t));
-                fields.push(ast::Field { attrs, name, ty });
+                fields.push(ast::Field {
+                    attrs,
+                    name,
+                    name_span,
+                    ty,
+                });
             }
         }
         fields
@@ -126,6 +132,7 @@ impl Adapter {
     fn walk_variant(&mut self, node: Node) -> ast::Variant {
         let attrs = self.walk_attributes(node);
         let name = self.name_field(node);
+        let name_span = self.name_span_field(node);
         let body = if let Some(body) = self.field(node, "body") {
             ast::VariantBody::Named(self.walk_field_decls(body))
         } else if let Some(tuple) = tuple_types(node) {
@@ -133,7 +140,12 @@ impl Adapter {
         } else {
             ast::VariantBody::Unit
         };
-        ast::Variant { attrs, name, body }
+        ast::Variant {
+            attrs,
+            name,
+            name_span,
+            body,
+        }
     }
 
     fn walk_trait(&mut self, node: Node) -> ast::TraitDecl {
@@ -215,6 +227,7 @@ impl Adapter {
 
     pub(crate) fn walk_fn_sig(&mut self, node: Node) -> ast::FnSig {
         let name = self.name_field(node);
+        let name_span = self.name_span_field(node);
         let generics = self.walk_generics(node);
         let params = self
             .field(node, "parameters")
@@ -227,6 +240,7 @@ impl Adapter {
             .unwrap_or_default();
         ast::FnSig {
             name,
+            name_span,
             generics,
             params,
             ret,

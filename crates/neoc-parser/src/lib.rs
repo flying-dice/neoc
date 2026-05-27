@@ -143,4 +143,10 @@ impl Adapter {
             String::new()
         }
     }
+
+    /// Byte span of a node's `name` field, for member-resolution def-sites.
+    fn name_span_field(&self, node: Node) -> ast::Span {
+        self.field(node, "name")
+            .map_or_else(ast::Span::default, crate::expr::span_of)
+    }
 }

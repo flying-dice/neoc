@@ -656,6 +656,7 @@ impl<'a> Checker<'a> {
             ast::ExprKind::MethodCall {
                 receiver,
                 method,
+                method_span: _,
                 args,
             } => self.infer_method_call(receiver, method, args, span),
             ast::ExprKind::Field { base, field } => self.infer_field(base, field, span),
@@ -1286,7 +1287,7 @@ impl<'a> Checker<'a> {
         // `Box<number>.value` yields `number` rather than the parameter `T`.
         let subst = self.nominal_subst(&base_ty);
         match (field, &s.fields) {
-            (ast::FieldAccess::Named(f), StructFields::Named(fields)) => {
+            (ast::FieldAccess::Named(f, _), StructFields::Named(fields)) => {
                 if let Some((_, ty)) = fields.iter().find(|(n, _)| n == f) {
                     Self::subst_named(ty, &subst)
                 } else {

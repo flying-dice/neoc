@@ -355,7 +355,7 @@ impl Emitter {
             ast::ExprKind::Field { base, field } => {
                 let b = self.emit_expr(base);
                 match field {
-                    ast::FieldAccess::Named(n) => format!("{b}.{n}"),
+                    ast::FieldAccess::Named(n, _) => format!("{b}.{n}"),
                     // Tuple/newtype payload is stored positionally (Lua arrays
                     // are 1-based), so `.0` reads `[1]`. Matches the constructor
                     // (`N.new` stores at `[1]`) and the derive/pattern lowering.
@@ -383,6 +383,7 @@ impl Emitter {
             ast::ExprKind::MethodCall {
                 receiver,
                 method,
+                method_span: _,
                 args,
             } => {
                 let recv = self.emit_expr(receiver);

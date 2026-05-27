@@ -177,6 +177,8 @@ pub enum StructBody {
 pub struct Field {
     pub attrs: Vec<Attribute>,
     pub name: Ident,
+    /// Byte span of the field name at its declaration, for member resolution.
+    pub name_span: Span,
     pub ty: Type,
 }
 
@@ -191,6 +193,8 @@ pub struct EnumDecl {
 pub struct Variant {
     pub attrs: Vec<Attribute>,
     pub name: Ident,
+    /// Byte span of the variant name at its declaration, for member resolution.
+    pub name_span: Span,
     pub body: VariantBody,
 }
 
@@ -244,6 +248,9 @@ pub struct FnDecl {
 #[derive(Debug, Clone, PartialEq)]
 pub struct FnSig {
     pub name: Ident,
+    /// Byte span of the function/method name at its declaration, for member
+    /// resolution (goto a method from a call site).
+    pub name_span: Span,
     pub generics: Vec<GenericParam>,
     pub params: Vec<Param>,
     pub ret: Option<Type>,
@@ -405,6 +412,8 @@ pub enum ExprKind {
     MethodCall {
         receiver: Box<Expr>,
         method: Ident,
+        /// Byte span of the method name at the call site, for member resolution.
+        method_span: Span,
         args: Vec<Expr>,
     },
     Field {
@@ -460,7 +469,8 @@ pub enum ExprKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum FieldAccess {
-    Named(Ident),
+    /// A named field access `value.field`, with the byte span of the field name.
+    Named(Ident, Span),
     /// Newtype / positional field: `value.0`.
     Tuple(usize),
 }
