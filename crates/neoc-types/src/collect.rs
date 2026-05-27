@@ -384,6 +384,12 @@ fn collect_struct(table: &mut SymbolTable, s: &ast::StructDecl) {
             StructFields::Tuple(inner)
         }
         ast::StructBody::Named(fs) => {
+            for f in fs {
+                table.member_defs.insert(
+                    (s.name.clone(), f.name.clone()),
+                    (f.name_span.start, f.name_span.end),
+                );
+            }
             let named = fs
                 .iter()
                 .map(|f| (f.name.clone(), lower_type(&f.ty, &generics)))
@@ -455,6 +461,10 @@ fn collect_trait(table: &mut SymbolTable, t: &ast::TraitDecl) {
         .iter()
         .map(|item| {
             let (params, ret, has_receiver) = fn_type(&item.sig, &generics);
+            table.member_defs.insert(
+                (t.name.clone(), item.sig.name.clone()),
+                (item.sig.name_span.start, item.sig.name_span.end),
+            );
             TraitMethod {
                 name: item.sig.name.clone(),
                 params,
@@ -525,6 +535,10 @@ fn collect_impl(table: &mut SymbolTable, b: &ast::ImplBlock) {
             .map(|p| project_assoc(subst_self(p, &type_name), &assoc))
             .collect();
         let ret = project_assoc(subst_self(ret, &type_name), &assoc);
+        table.member_defs.insert(
+            (type_name.clone(), f.sig.name.clone()),
+            (f.sig.name_span.start, f.sig.name_span.end),
+        );
         table.methods.insert(
             (type_name.clone(), f.sig.name.clone()),
             MethodInfo {

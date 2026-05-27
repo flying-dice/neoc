@@ -128,6 +128,11 @@ pub struct SymbolTable {
     /// from `trait_impls` because the target is a parameter, not a concrete
     /// type — satisfaction is queried on demand against the conditions.
     pub blanket_impls: Vec<BlanketImpl>,
+    /// Byte span of each member's declaration, keyed `(owning type or trait,
+    /// member name)`. Covers struct fields and impl/trait methods; lets the
+    /// checker record a `recv.member` use as resolving to its definition, for
+    /// goto/hover/references (member resolution).
+    pub member_defs: HashMap<(String, String), (usize, usize)>,
 }
 
 /// A generic (blanket) trait implementation `impl<T: Conditions> Trait for T`.

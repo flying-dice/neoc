@@ -32,7 +32,7 @@ pub use env::{
     TypeDef, VariantFields, VariantInfo,
 };
 pub use infer::ExprType;
-pub use resolve::{Binding, BindingKind, Resolution, Resolved};
+pub use resolve::{Binding, BindingKind, MemberRef, Resolution, Resolved};
 pub use ty::Ty;
 
 use infer::Checker;

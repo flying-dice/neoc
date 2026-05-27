@@ -51,12 +51,25 @@ pub enum Resolved {
     Item(String),
 }
 
+/// What a member access `recv.member` resolves to: the owning type or trait,
+/// the member name, and the byte range of the member's declaration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemberRef {
+    /// The type or trait that declares the member.
+    pub owner: String,
+    /// The field or method name.
+    pub member: String,
+    /// The `[start, end)` byte range of the member's name at its def site.
+    pub def: (usize, usize),
+}
+
 /// The scope-resolution of one module: every local binding it introduces, and
 /// what each recorded identifier use resolves to.
 #[derive(Debug, Default)]
 pub struct Resolution {
     bindings: Vec<Binding>,
     uses: Vec<(usize, usize, Resolved)>,
+    members: Vec<(usize, usize, MemberRef)>,
 }
 
 impl Resolution {
@@ -66,6 +79,37 @@ impl Resolution {
 
     pub(crate) fn note_use(&mut self, start: usize, end: usize, target: Resolved) {
         self.uses.push((start, end, target));
+    }
+
+    pub(crate) fn note_member(&mut self, start: usize, end: usize, target: MemberRef) {
+        self.members.push((start, end, target));
+    }
+
+    /// The member access a byte position falls on (a `recv.member` use site).
+    /// `None` when the position is on no recorded member name.
+    #[must_use]
+    pub fn member_at(&self, pos: usize) -> Option<&MemberRef> {
+        self.members
+            .iter()
+            .find(|(s, e, _)| pos >= *s && pos <= *e)
+            .map(|(_, _, m)| m)
+    }
+
+    /// Every member use that resolves to the same `(owner, member)` — its
+    /// def-site plus all uses, in source order, deduplicated. The basis for
+    /// type-aware member references and rename.
+    #[must_use]
+    pub fn member_occurrences(&self, owner: &str, member: &str) -> Vec<(usize, usize)> {
+        let mut out: Vec<(usize, usize)> = Vec::new();
+        for (s, e, m) in &self.members {
+            if m.owner == owner && m.member == member {
+                out.push((*s, *e));
+                out.push(m.def);
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
     }
 
     /// The binding a byte position falls on — a use site, or a local binding's

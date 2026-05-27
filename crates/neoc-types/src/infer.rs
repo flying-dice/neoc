@@ -120,6 +120,31 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// Records a `recv.member` access as resolving to `member` on `owner` (a
+    /// type or trait), when recording is on and the member's def-span is known.
+    /// The single funnel for member resolution, called at each point method or
+    /// field resolution settles on an owner.
+    fn record_member(&mut self, use_span: ast::Span, owner: &str, member: &str) {
+        if !self.record_resolution {
+            return;
+        }
+        if let Some(&def) = self
+            .table
+            .member_defs
+            .get(&(owner.to_string(), member.to_string()))
+        {
+            self.resolution.note_member(
+                use_span.start,
+                use_span.end,
+                crate::resolve::MemberRef {
+                    owner: owner.to_string(),
+                    member: member.to_string(),
+                    def,
+                },
+            );
+        }
+    }
+
     #[must_use]
     pub fn into_diagnostics(self) -> Vec<Diagnostic> {
         self.diagnostics
@@ -656,9 +681,9 @@ impl<'a> Checker<'a> {
             ast::ExprKind::MethodCall {
                 receiver,
                 method,
-                method_span: _,
+                method_span,
                 args,
-            } => self.infer_method_call(receiver, method, args, span),
+            } => self.infer_method_call(receiver, method, *method_span, args, span),
             ast::ExprKind::Field { base, field } => self.infer_field(base, field, span),
             ast::ExprKind::StructLit { path, fields, base } => {
                 self.infer_struct_lit(path, fields, base.as_deref(), span)
@@ -1189,6 +1214,7 @@ impl<'a> Checker<'a> {
         &mut self,
         receiver: &ast::Expr,
         method: &str,
+        method_span: ast::Span,
         args: &[ast::Expr],
         span: ast::Span,
     ) -> Ty {
@@ -1221,12 +1247,14 @@ impl<'a> Checker<'a> {
         // the trait's own methods, with `Self` read as the trait type.
         if self.is_trait(name) {
             if let Some((params, ret)) = self.trait_method(name, method) {
+                self.record_member(method_span, name, method);
                 self.check_call_args(method, &params, &arg_tys, args, span);
                 return ret;
             }
             self.error_at(span, format!("type `{name}` has no method `{method}`"));
             return Ty::Unknown;
         }
+        self.record_member(method_span, name, method);
         let Some(m) = self.table.methods.get(&(name.clone(), method.to_string())) else {
             // A blanket impl may grant the method: if the receiver satisfies a
             // blanket's conditions and its trait declares `method`, resolve
@@ -1287,9 +1315,11 @@ impl<'a> Checker<'a> {
         // `Box<number>.value` yields `number` rather than the parameter `T`.
         let subst = self.nominal_subst(&base_ty);
         match (field, &s.fields) {
-            (ast::FieldAccess::Named(f, _), StructFields::Named(fields)) => {
+            (ast::FieldAccess::Named(f, fspan), StructFields::Named(fields)) => {
                 if let Some((_, ty)) = fields.iter().find(|(n, _)| n == f) {
-                    Self::subst_named(ty, &subst)
+                    let ty = Self::subst_named(ty, &subst);
+                    self.record_member(*fspan, name, f);
+                    ty
                 } else {
                     self.error_at(span, format!("struct `{name}` has no field `{f}`"));
                     Ty::Unknown
