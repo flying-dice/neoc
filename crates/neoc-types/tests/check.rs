@@ -250,6 +250,43 @@ fn non_exhaustive_result_match() {
 }
 
 #[test]
+fn non_exhaustive_nested_variant_payload() {
+    // A variant's payload must itself be covered: `Some` and `None` are both
+    // named, but `Some(false)` is uncovered (STATIC.md §7).
+    let d = diags(
+        "enum Opt { Some(bool), None } \
+         fn f(o: Opt) -> number { match o { Opt::Some(true) => 1, Opt::None => 0 } }",
+    );
+    assert!(
+        d.iter()
+            .any(|m| m == "this match on `Opt` is not exhaustive; missing variant(s): Some(false)"),
+        "{d:?}"
+    );
+}
+
+#[test]
+fn clean_exhaustive_nested_variant_payload() {
+    assert_clean(
+        "enum Opt { Some(bool), None } \
+         fn f(o: Opt) -> number { match o { Opt::Some(true) => 1, Opt::Some(false) => 2, Opt::None => 0 } }",
+    );
+}
+
+#[test]
+fn guarded_arm_does_not_cover() {
+    // A guarded arm cannot guarantee coverage, so it leaves the value missing.
+    let d = diags(
+        "enum Color { Red, Green, Blue } \
+         fn f(c: Color, b: bool) -> number { match c { Red if b => 0, Green => 1, Blue => 2 } }",
+    );
+    assert!(
+        d.iter()
+            .any(|m| m == "this match on `Color` is not exhaustive; missing variant(s): Red"),
+        "{d:?}"
+    );
+}
+
+#[test]
 fn non_exhaustive_bool_match() {
     let d = diags("fn f(b: bool) -> number { match b { true => 1 } }");
     assert!(

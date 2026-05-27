@@ -6,7 +6,7 @@
 
 use neoc_ast as ast;
 
-use super::Checker;
+use super::{Checker, usefulness};
 use crate::env::{StructFields, TypeDef, VariantFields};
 use crate::ty::Ty;
 
@@ -43,14 +43,11 @@ impl Checker<'_> {
                 }
             }
             Ty::Named { name, .. } => match self.table.types.get(name) {
-                Some(TypeDef::Enum(e)) => {
-                    let covered = Self::covered_variants(arms);
-                    let missing: Vec<&str> = e
-                        .variants
-                        .iter()
-                        .filter(|v| !covered.iter().any(|c| c == &v.name))
-                        .map(|v| v.name.as_str())
-                        .collect();
+                // Usefulness decomposes constructors recursively, so a payload
+                // gap (`Some(true)` present, `Some(false)` and `None` covered)
+                // is reported with a nested witness, not just a missing variant.
+                Some(TypeDef::Enum(_)) => {
+                    let missing = usefulness::missing_patterns(self.table, scrut, arms);
                     if !missing.is_empty() {
                         self.error_at(
                             span,
@@ -63,12 +60,9 @@ impl Checker<'_> {
                 }
                 Some(TypeDef::Struct(_)) => {
                     // A struct has a single shape, so one unguarded irrefutable
-                    // struct/tuple pattern (every sub-pattern irrefutable) covers
-                    // every value — like an irrefutable `let` destructure.
-                    let covered = arms
-                        .iter()
-                        .any(|a| a.guard.is_none() && is_irrefutable(&a.pattern));
-                    if !covered {
+                    // struct/tuple pattern covers every value — but a refutable
+                    // sub-pattern on a field leaves a gap usefulness catches.
+                    if !usefulness::missing_patterns(self.table, scrut, arms).is_empty() {
                         self.error_at(
                             span,
                             format!(
@@ -104,16 +98,6 @@ impl Checker<'_> {
             ast::Pattern::Or(alts) => alts.iter().any(|a| self.is_catch_all(a)),
             _ => false,
         }
-    }
-
-    /// The set of enum-variant names an arm list covers via variant patterns.
-    /// Unqualified bare-ident patterns that resolve to a unit variant count too.
-    fn covered_variants(arms: &[ast::MatchArm]) -> Vec<String> {
-        let mut covered = Vec::new();
-        for arm in arms {
-            collect_covered(&arm.pattern, &mut covered);
-        }
-        covered
     }
 
     /// Binds the names a pattern introduces against the scrutinee type. Also
@@ -278,45 +262,5 @@ fn pattern_matches_bool(pattern: &ast::Pattern, value: bool) -> bool {
         ast::Pattern::Literal(ast::LiteralPat::Bool(b)) => *b == value,
         ast::Pattern::Or(alts) => alts.iter().any(|a| pattern_matches_bool(a, value)),
         _ => false,
-    }
-}
-
-/// Whether a pattern matches every value of its type (binds, never rejects).
-/// A struct/tuple pattern is irrefutable when all its sub-patterns are; a
-/// literal or variant path is refutable.
-fn is_irrefutable(p: &ast::Pattern) -> bool {
-    match p {
-        ast::Pattern::Wildcard | ast::Pattern::Binding { .. } => true,
-        ast::Pattern::Struct { fields, .. } => fields
-            .iter()
-            .all(|f| f.pattern.as_ref().is_none_or(is_irrefutable)),
-        ast::Pattern::Tuple { elems, .. } => elems.iter().all(is_irrefutable),
-        ast::Pattern::Or(alts) => alts.iter().any(is_irrefutable),
-        ast::Pattern::Literal(_) | ast::Pattern::Path(_) => false,
-    }
-}
-
-/// Walks a pattern, pushing any unit/tuple/struct variant names it covers.
-fn collect_covered(pattern: &ast::Pattern, out: &mut Vec<String>) {
-    match pattern {
-        // A qualified unit variant (`Color::Red`), a tuple variant
-        // (`Shape::Move(..)`), or a struct variant (`Shape::Circle { .. }`):
-        // the final path segment is the variant name.
-        ast::Pattern::Path(path)
-        | ast::Pattern::Tuple { path, .. }
-        | ast::Pattern::Struct { path, .. } => {
-            if let Some(name) = path.last() {
-                out.push(name.clone());
-            }
-        }
-        // A bare unit variant reaches here as a binding (e.g. `None`); the
-        // catch-all case returns before this runs (see `is_catch_all`).
-        ast::Pattern::Binding { name, .. } => out.push(name.clone()),
-        ast::Pattern::Or(alts) => {
-            for a in alts {
-                collect_covered(a, out);
-            }
-        }
-        _ => {}
     }
 }

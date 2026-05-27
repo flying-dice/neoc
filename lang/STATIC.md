@@ -214,13 +214,14 @@ For `Result`, the error type `ε` of `e` must unify with the error type of the e
 
 ## 7. Pattern-matching exhaustiveness
 
-A `match` must cover every value of the scrutinee's type. Exhaustiveness is checked structurally:
+A `match` must cover every value of the scrutinee's type. Exhaustiveness is checked structurally, and recursively into a constructor's fields:
 
-- Scrutinee of an `enum`: every variant must be covered, either by a matching variant pattern or by a wildcard/binding pattern. A `match` over `Result<T, E>` is exhaustive iff it covers both `Ok` and `Err` (or has a catch-all); likewise `Some`/`None` for `Option`.
+- Scrutinee of an `enum`: every variant must be covered, either by a matching variant pattern or by a wildcard/binding pattern. A `match` over `Result<T, E>` is exhaustive iff it covers both `Ok` and `Err` (or has a catch-all); likewise `Some`/`None` for `Option`. A variant pattern covers the variant only when its sub-patterns cover the variant's fields: `match o { Some(true) => …, None => … }` is *not* exhaustive — `Some(false)` is uncovered.
 - Scrutinee of `bool`: both `true` and `false`, or a catch-all.
+- Scrutinee of a `struct`: a single irrefutable pattern (every field bound by a wildcard or binding) covers it; a refutable sub-pattern on a field leaves a gap.
 - Scrutinee of `number`, `string`, or any type with unbounded values: a binding or wildcard arm is required, since the literals can never be exhaustive alone.
 
-A non-exhaustive `match` is a static error — never a runtime failure. Redundant arms (a pattern that can never match because earlier arms already cover it) are a static error.
+A guard makes an arm conditional, so a guarded arm does not contribute to coverage — the value it matches may still fall through. A non-exhaustive `match` is a static error — never a runtime failure. Redundant arms (a pattern that can never match because earlier arms already cover it) are a static error.
 
 ## 8. Trait-impl completeness
 

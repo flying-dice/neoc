@@ -16,6 +16,7 @@ use crate::ty::Ty;
 mod impl_check;
 mod pattern;
 mod solve;
+mod usefulness;
 
 /// The walking type-checker. Holds the collected declarations, the lexical
 /// scope stack, the enclosing function's return type (for `?` and bare
