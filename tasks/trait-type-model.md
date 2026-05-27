@@ -104,10 +104,14 @@ it is the *correct* model for this runtime.
 Sequencing: **traits before macros** (`macro-expansion.md` is deferred behind
 this). The two meet only at derives — see the note after the list.
 
-0. `[ ]` **Rename `_struct → __struct` + emit `__traits` unconditionally** — pure
+0. `[x]` **Rename `_struct → __struct` + emit `__traits` unconditionally** — pure
    codegen + golden churn, no RFC (it's a `DYNAMIC.md` lowering detail, not a
    semantic change). Establishes the runtime tag the rest builds on. Confirm the
-   wasm-leaf gate and conformance stay green.
+   wasm-leaf gate and conformance stay green. *Done: the rename predates this;
+   `__traits` now emits on every trait-implementing type, transitively closed
+   over supertraits, from `neoc_ast::trait_index` (shared by both backends).
+   Lua puts it on the type table (`Type.__traits = { … }`); JS uses a `__t`
+   registry. Inert until #54. `DYNAMIC.md` §3.2a.*
 1. `[ ]` **Bound-directed method resolution + bound enforcement** — `x.show()`
    on `x: T where T: Display` resolves to the trait method; `<T: Display>` is
    enforced (the instantiating type must `impl Display`). ~150–260 lines wiring

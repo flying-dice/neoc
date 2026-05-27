@@ -334,6 +334,97 @@ pub fn module_imports(module: &Module, target: Target) -> Vec<(String, Vec<Ident
     by_spec.into_iter().collect()
 }
 
+/// The trait names listed by every `#[derive(...)]` in `attrs`, in source order.
+#[must_use]
+pub fn derive_names(attrs: &[Attribute]) -> Vec<String> {
+    let mut names = Vec::new();
+    for attr in attrs {
+        for item in &attr.items {
+            if item.name != "derive" {
+                continue;
+            }
+            for arg in &item.args {
+                if let AttrArg::Item(inner) = arg {
+                    names.push(inner.name.clone());
+                }
+            }
+        }
+    }
+    names
+}
+
+/// Maps each `struct`/`enum` to the set of traits it implements, transitively
+/// closed over supertraits — the `__traits` runtime tag (`DYNAMIC.md`). A trait
+/// impl (`impl Trait for Type`) and a `#[derive(Trait)]` both count; `trait A:
+/// B` means a type implementing `A` also lists `B`. Types implementing no trait
+/// are absent. The sets are sorted ([`BTreeSet`]) so codegen emits them
+/// deterministically.
+#[must_use]
+pub fn trait_index(
+    module: &Module,
+) -> std::collections::BTreeMap<String, std::collections::BTreeSet<String>> {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    // trait → its direct supertraits, by final path segment.
+    let mut supertraits: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for item in &module.items {
+        if let ItemKind::Trait(t) = &item.kind {
+            let ups = t
+                .supertraits
+                .iter()
+                .filter_map(|p| p.segments.last().map(|s| s.name.clone()))
+                .collect();
+            supertraits.insert(t.name.clone(), ups);
+        }
+    }
+
+    let mut index: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for item in &module.items {
+        match &item.kind {
+            ItemKind::Impl(b) => {
+                if let (Some(trait_path), Type::Path(p)) = (&b.trait_, &b.ty) {
+                    if let (Some(tr), Some(target)) =
+                        (trait_path.segments.last(), p.segments.last())
+                    {
+                        add_trait(&mut index, &supertraits, &target.name, &tr.name);
+                    }
+                }
+            }
+            ItemKind::Struct(s) => {
+                for d in derive_names(&item.attrs) {
+                    add_trait(&mut index, &supertraits, &s.name, &d);
+                }
+            }
+            ItemKind::Enum(e) => {
+                for d in derive_names(&item.attrs) {
+                    add_trait(&mut index, &supertraits, &e.name, &d);
+                }
+            }
+            _ => {}
+        }
+    }
+    index
+}
+
+/// Records that `ty` implements `trait_name`, then walks the supertrait chain so
+/// the recorded set is transitively closed. Cycle-guarded via the set itself.
+fn add_trait(
+    index: &mut std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
+    supertraits: &std::collections::BTreeMap<String, Vec<String>>,
+    ty: &str,
+    trait_name: &str,
+) {
+    let set = index.entry(ty.to_string()).or_default();
+    let mut stack = vec![trait_name.to_string()];
+    while let Some(t) = stack.pop() {
+        if set.insert(t.clone()) {
+            if let Some(ups) = supertraits.get(&t) {
+                stack.extend(ups.iter().cloned());
+            }
+        }
+    }
+}
+
 // ---- types -----------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq)]
@@ -670,5 +761,68 @@ mod tests {
         let lhs = Expr::new(ExprKind::Int("1".into()), a);
         let rhs = Expr::new(ExprKind::Int("1".into()), b);
         assert_eq!(lhs, rhs);
+    }
+
+    #[test]
+    fn trait_index_closes_over_supertraits_and_derives() {
+        let tpath = |n: &str| TypePath {
+            segments: vec![TypeSegment {
+                name: n.to_string(),
+                args: Vec::new(),
+            }],
+        };
+        let item = |kind, attrs| Item {
+            attrs,
+            vis: Visibility::Private,
+            kind,
+            span: Span::default(),
+        };
+        let trait_decl = |name: &str, supers: Vec<TypePath>| {
+            ItemKind::Trait(TraitDecl {
+                name: name.to_string(),
+                generics: Vec::new(),
+                supertraits: supers,
+                assoc_types: Vec::new(),
+                items: Vec::new(),
+            })
+        };
+        let derive_clone = Attribute {
+            items: vec![AttrItem {
+                name: "derive".to_string(),
+                args: vec![AttrArg::Item(AttrItem {
+                    name: "Clone".to_string(),
+                    args: Vec::new(),
+                })],
+            }],
+        };
+        let module = Module {
+            items: vec![
+                item(trait_decl("Show", Vec::new()), Vec::new()),
+                item(trait_decl("Greet", vec![tpath("Show")]), Vec::new()),
+                item(
+                    ItemKind::Struct(StructDecl {
+                        name: "P".to_string(),
+                        generics: Vec::new(),
+                        body: StructBody::Unit,
+                    }),
+                    vec![derive_clone],
+                ),
+                item(
+                    ItemKind::Impl(ImplBlock {
+                        generics: Vec::new(),
+                        trait_: Some(tpath("Greet")),
+                        ty: Type::Path(tpath("P")),
+                        items: Vec::new(),
+                        assoc_bindings: Vec::new(),
+                    }),
+                    Vec::new(),
+                ),
+            ],
+        };
+        let index = trait_index(&module);
+        // `impl Greet for P` pulls in `Greet` and its supertrait `Show`;
+        // `#[derive(Clone)]` adds `Clone`. Sorted by the `BTreeSet`.
+        let p: Vec<&str> = index["P"].iter().map(String::as_str).collect();
+        assert_eq!(p, vec!["Clone", "Greet", "Show"]);
     }
 }

@@ -83,6 +83,15 @@ Every variant construction is then `setmetatable`d onto `E`, so a value finds it
 
 `impl` methods (§3.3) and derived methods (§6) attach to `E` as for a struct. The metatable changes nothing `match` or `?` rely on — they read `.__tag`/`.__enum`, which a metatable does not shadow. A plain enum with no methods keeps the bare tagged table (no metatable). The `Result`/`Option` prelude enums (§7) are always plain.
 
+### 3.2a The `__traits` tag
+
+Alongside `__struct`/`__enum`, a type that implements one or more traits carries `__traits`: the names of those traits, transitively closed over supertraits (a type implementing `Greet` where `trait Greet: Show` lists both). A `#[derive(T)]` counts as an `impl T`. The set is computed from the impls present in the lowered module, so a blanket impl (§3.5) that expanded to a concrete `impl` is included. Type-keyed and sorted, so the emission is deterministic.
+
+- **Lua** — `Type.__traits = { "A", "B" }` on the type's table. For a struct or method-bearing enum that table is the metatable, so `value.__traits` resolves through `__index`; for a unit struct the table *is* the value.
+- **JS** — a registry `const __t = {}` with one entry per type, `__t.Type = ["A", "B"]`, read as `__t[value.__struct ?? value.__enum]` — the same shape as the `__m` method registry (§4.7).
+
+A type implementing no trait carries no entry: a reader treats the absence (Lua `nil`, JS `undefined`) as the empty set. The tag is inert metadata — nothing in the current lowering reads it. It is the runtime identity a future trait-enforcement check keys on (the nominal assertion `value` *has* trait `T`).
+
 ### 3.3 `impl`
 
 Inherent and trait-impl methods attach to the target type's table as plain functions taking `self` first:

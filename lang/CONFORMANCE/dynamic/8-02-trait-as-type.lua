@@ -4,12 +4,14 @@ function Circle.new(fields)
   fields.__struct = "Circle"
   return setmetatable(fields, Circle)
 end
+Circle.__traits = { "Drawable" }
 local Square = {}
 Square.__index = Square
 function Square.new(fields)
   fields.__struct = "Square"
   return setmetatable(fields, Square)
 end
+Square.__traits = { "Drawable" }
 function Circle.draw(self)
   return "O"
 end

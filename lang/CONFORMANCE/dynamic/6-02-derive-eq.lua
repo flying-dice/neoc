@@ -7,6 +7,7 @@ end
 function Pair.eq(a, b)
   return a.__struct == b.__struct and a.a == b.a and a.b == b.b
 end
+Pair.__traits = { "Eq" }
 local function main()
   local p = Pair.new({ a = 1, b = 2 })
   local q = Pair.new({ a = 1, b = 2 })

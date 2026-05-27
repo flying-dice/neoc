@@ -7,6 +7,7 @@ end
 function Counter.clone(self)
   return setmetatable({ __struct = "Counter", value = self.value }, Counter)
 end
+Counter.__traits = { "Clone" }
 local function main()
   local a = Counter.new({ value = 5 })
   local b = a:clone()

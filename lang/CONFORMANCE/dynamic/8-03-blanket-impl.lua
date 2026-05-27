@@ -4,6 +4,7 @@ function Dog.new(fields)
   fields.__struct = "Dog"
   return setmetatable(fields, Dog)
 end
+Dog.__traits = { "Describe", "Show" }
 function Dog.show(self)
   return self.name
 end
