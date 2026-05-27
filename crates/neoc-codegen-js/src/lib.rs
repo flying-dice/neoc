@@ -696,6 +696,91 @@ mod tests {
         );
     }
 
+    /// An associated-function call `Type::fn(args)` reads the type's method
+    /// table — `__m.Type.fn(args)` — not a bare `fn(args)`, which would be an
+    /// unbound name at runtime. Regression for #67.
+    #[test]
+    fn associated_fn_call_reads_method_table() {
+        // struct P { x }
+        // impl P { fn make(v) -> P { P { x: v } } }
+        // fn caller() { P::make(5) }
+        let make = ast::FnDecl {
+            attrs: Vec::new(),
+            sig: ast::FnSig {
+                name: "make".to_string(),
+                name_span: ast::Span::default(),
+                generics: Vec::new(),
+                params: vec![ast::Param::Named {
+                    name: "v".to_string(),
+                    ty: ast::Type::Unit,
+                    span: ast::Span::default(),
+                }],
+                ret: None,
+                where_clause: Vec::new(),
+            },
+            body: ast::Block {
+                stmts: Vec::new(),
+                value: Some(Box::new(e(ast::ExprKind::StructLit {
+                    path: vec!["P".to_string()],
+                    fields: vec![ast::FieldInit {
+                        name: "x".to_string(),
+                        value: Some(e(ast::ExprKind::Path(vec!["v".to_string()]))),
+                    }],
+                    base: None,
+                }))),
+            },
+        };
+        let module = ast::Module {
+            items: vec![
+                item(
+                    ast::ItemKind::Struct(ast::StructDecl {
+                        name: "P".to_string(),
+                        generics: Vec::new(),
+                        body: ast::StructBody::Named(vec![field("x")]),
+                    }),
+                    Vec::new(),
+                ),
+                item(
+                    ast::ItemKind::Impl(ast::ImplBlock {
+                        generics: Vec::new(),
+                        trait_: None,
+                        ty: ast::Type::Path(ast::TypePath {
+                            segments: vec![ast::TypeSegment {
+                                name: "P".to_string(),
+                                args: Vec::new(),
+                            }],
+                        }),
+                        items: vec![make],
+                        assoc_bindings: Vec::new(),
+                    }),
+                    Vec::new(),
+                ),
+                fn_item(
+                    "caller",
+                    e(ast::ExprKind::Call {
+                        callee: Box::new(e(ast::ExprKind::Path(vec![
+                            "P".to_string(),
+                            "make".to_string(),
+                        ]))),
+                        args: vec![int("5")],
+                    }),
+                ),
+            ],
+        };
+        let out = emit_solo(&module);
+        assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
+        assert!(
+            out.js.contains("__m.P.make = function(v) {"),
+            "associated fn defined on the method table:\n{}",
+            out.js
+        );
+        assert!(
+            out.js.contains("return __m.P.make(5);"),
+            "call site reads the method table, not a bare name:\n{}",
+            out.js
+        );
+    }
+
     #[test]
     fn enum_match_on_tag() {
         // enum Color { Red, Green }

@@ -17,6 +17,11 @@ pub(crate) enum PathKind {
     Value(String),
     /// The path names an enum variant: `(enum name, variant name, shape)`.
     Variant(String, String, VariantShape),
+    /// The path is an associated function on a method-bearing type —
+    /// `Type::fn`, where `Type` carries an `__m` slot. Emits `__m.Type.fn`,
+    /// keeping the qualifier so the call reads the type's method table instead
+    /// of dropping to a bare (unbound) name. Mirrors `Assoc` in the Lua backend.
+    Assoc(String, String),
 }
 
 /// The runtime payload shape of an enum variant.
@@ -385,6 +390,13 @@ impl Emitter {
                 self.note_prelude(&name);
                 name
             }
+            // `Type::fn` reads the type's method table — keep the qualifier so
+            // the associated function resolves against `__m.Type`, not a bare
+            // name. The call site `Type::fn(args)` then composes through this.
+            Some(PathKind::Assoc(ty, name)) => {
+                self.uses_methods = true;
+                format!("__m.{ty}.{name}")
+            }
             Some(PathKind::Variant(en, var, VariantShape::Unit)) => {
                 self.note_prelude(&en);
                 format!("{{ __enum: \"{en}\", __tag: \"{var}\" }}")
@@ -416,6 +428,14 @@ impl Emitter {
             [.., en, var] => self
                 .variant_shape(en, var)
                 .map(|shape| PathKind::Variant(en.clone(), var.clone(), shape))
+                .or_else(|| {
+                    // `Type::fn` on a method-bearing type is an associated
+                    // function living on `__m.Type`; keep the qualifier. A head
+                    // that is not a known method-bearing type (a module prefix)
+                    // still drops to its last segment, as before.
+                    self.type_has_methods(en)
+                        .then(|| PathKind::Assoc(en.clone(), var.clone()))
+                })
                 .or_else(|| Some(PathKind::Value(var.clone()))),
         }
     }
