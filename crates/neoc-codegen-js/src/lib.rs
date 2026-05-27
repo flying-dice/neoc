@@ -972,4 +972,50 @@ mod tests {
             HashSet::from(["f".to_string(), "MAX".to_string(), "Point".to_string()])
         );
     }
+
+    /// Two `let _ = …` discards in one scope must not both lower to `let _`: a
+    /// second `_` in the same JS scope is a redeclaration (`SyntaxError`). A
+    /// wildcard binds no name, so each discard becomes a bare expression
+    /// statement run for effect. Regression for #65.
+    #[test]
+    fn repeated_wildcard_let_lowers_to_bare_expr_stmt() {
+        // fn main() { let _ = g(); let _ = g(); }
+        let discard = || {
+            ast::Stmt::new(
+                ast::StmtKind::Let(ast::LetStmt {
+                    mutable: false,
+                    pattern: ast::Pattern::Wildcard,
+                    ty: None,
+                    value: Some(e(ast::ExprKind::Call {
+                        callee: Box::new(e(ast::ExprKind::Path(vec!["g".to_string()]))),
+                        args: Vec::new(),
+                    })),
+                }),
+                ast::Span::default(),
+            )
+        };
+        let module = ast::Module {
+            items: vec![item(
+                ast::ItemKind::Fn(ast::FnDecl {
+                    attrs: Vec::new(),
+                    sig: ast::FnSig {
+                        name: "main".to_string(),
+                        name_span: ast::Span::default(),
+                        generics: Vec::new(),
+                        params: Vec::new(),
+                        ret: None,
+                        where_clause: Vec::new(),
+                    },
+                    body: ast::Block {
+                        stmts: vec![discard(), discard()],
+                        value: None,
+                    },
+                }),
+                Vec::new(),
+            )],
+        };
+        let out = emit_solo(&module);
+        assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
+        assert_eq!(out.js, "function main() {\n  g();\n  g();\n}\n");
+    }
 }
