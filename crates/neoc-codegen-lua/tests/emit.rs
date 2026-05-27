@@ -286,11 +286,23 @@ fn golden_named_struct_and_field_access() {
          fn shift(p: Point) -> number { let q = Point { x: p.x, y: p.y }; q.x }",
     );
     let expected = "\
+local function __type_error(path, expected, got)
+  local actual = type(got) == \"table\" and (got.__struct or got.__enum or \"table\") or type(got)
+  error(path .. \": expected \" .. expected .. \", got \" .. actual)
+end
+local function __check_number(v, path) if type(v) ~= \"number\" then __type_error(path, \"number\", v) end return v end
+local __check_Point
+function __check_Point(v, path)
+  if type(v) ~= \"table\" or v.__struct ~= \"Point\" then __type_error(path, \"Point\", v) end
+  __check_number(v.x, path .. \".x\")
+  __check_number(v.y, path .. \".y\")
+  return v
+end
 local Point = {}
 Point.__index = Point
 function Point.new(fields)
   fields.__struct = \"Point\"
-  return setmetatable(fields, Point)
+  return __check_Point(setmetatable(fields, Point), \"Point\")
 end
 local function shift(p)
   local q = Point.new({ x = p.x, y = p.y })
@@ -452,11 +464,23 @@ fn golden_let_struct_destructure() {
          fn sum(p: Point) -> number { let Point { x, y } = p; x + y }",
     );
     let expected = "\
+local function __type_error(path, expected, got)
+  local actual = type(got) == \"table\" and (got.__struct or got.__enum or \"table\") or type(got)
+  error(path .. \": expected \" .. expected .. \", got \" .. actual)
+end
+local function __check_number(v, path) if type(v) ~= \"number\" then __type_error(path, \"number\", v) end return v end
+local __check_Point
+function __check_Point(v, path)
+  if type(v) ~= \"table\" or v.__struct ~= \"Point\" then __type_error(path, \"Point\", v) end
+  __check_number(v.x, path .. \".x\")
+  __check_number(v.y, path .. \".y\")
+  return v
+end
 local Point = {}
 Point.__index = Point
 function Point.new(fields)
   fields.__struct = \"Point\"
-  return setmetatable(fields, Point)
+  return __check_Point(setmetatable(fields, Point), \"Point\")
 end
 local function sum(p)
   local __d = p
@@ -477,10 +501,21 @@ fn golden_newtype_construction_routes_through_new() {
          fn wrap() -> Wrapper { Wrapper(42) }",
     );
     let expected = "\
+local function __type_error(path, expected, got)
+  local actual = type(got) == \"table\" and (got.__struct or got.__enum or \"table\") or type(got)
+  error(path .. \": expected \" .. expected .. \", got \" .. actual)
+end
+local function __check_number(v, path) if type(v) ~= \"number\" then __type_error(path, \"number\", v) end return v end
+local __check_Wrapper
+function __check_Wrapper(v, path)
+  if type(v) ~= \"table\" or v.__struct ~= \"Wrapper\" then __type_error(path, \"Wrapper\", v) end
+  __check_number(v[1], path .. \".0\")
+  return v
+end
 local Wrapper = {}
 Wrapper.__index = Wrapper
 function Wrapper.new(value)
-  return setmetatable({ __struct = \"Wrapper\", value }, Wrapper)
+  return __check_Wrapper(setmetatable({ __struct = \"Wrapper\", value }, Wrapper), \"Wrapper\")
 end
 local function wrap()
   return Wrapper.new(42)
@@ -496,11 +531,23 @@ fn golden_functional_struct_update() {
          fn shift(p: Point) -> Point { Point { x: 9, ..p } }",
     );
     let expected = "\
+local function __type_error(path, expected, got)
+  local actual = type(got) == \"table\" and (got.__struct or got.__enum or \"table\") or type(got)
+  error(path .. \": expected \" .. expected .. \", got \" .. actual)
+end
+local function __check_number(v, path) if type(v) ~= \"number\" then __type_error(path, \"number\", v) end return v end
+local __check_Point
+function __check_Point(v, path)
+  if type(v) ~= \"table\" or v.__struct ~= \"Point\" then __type_error(path, \"Point\", v) end
+  __check_number(v.x, path .. \".x\")
+  __check_number(v.y, path .. \".y\")
+  return v
+end
 local Point = {}
 Point.__index = Point
 function Point.new(fields)
   fields.__struct = \"Point\"
-  return setmetatable(fields, Point)
+  return __check_Point(setmetatable(fields, Point), \"Point\")
 end
 local function shift(p)
   return Point.new((function()
@@ -512,6 +559,120 @@ local function shift(p)
 end
 ";
     assert_eq!(out, expected);
+}
+
+// ---- runtime type enforcement (DYNAMIC.md §9, STATIC.md §10) ----------------
+
+#[test]
+fn validators_check_pub_fn_params_but_not_private() {
+    // A `pub` free function is host-reachable, so each typed parameter is
+    // validated at entry (DRIFT-PARAM); a private function's are vouched
+    // (STABLE-PARAM) and emit no check.
+    let out = lua_from_source(
+        "pub fn area(w: number, label: string) -> number { w }\n\
+         fn helper(n: number) -> number { n }",
+    );
+    let expected = "\
+local function __type_error(path, expected, got)
+  local actual = type(got) == \"table\" and (got.__struct or got.__enum or \"table\") or type(got)
+  error(path .. \": expected \" .. expected .. \", got \" .. actual)
+end
+local function __check_number(v, path) if type(v) ~= \"number\" then __type_error(path, \"number\", v) end return v end
+local function __check_string(v, path) if type(v) ~= \"string\" then __type_error(path, \"string\", v) end return v end
+function area(w, label)
+  __check_number(w, \"area.w\")
+  __check_string(label, \"area.label\")
+  return w
+end
+local function helper(n)
+  return n
+end
+";
+    assert_eq!(out, expected);
+}
+
+#[test]
+fn validators_dispatch_enum_variants_and_recurse_into_fields() {
+    // An enum validator checks the tag, then dispatches on the variant and
+    // validates that variant's payload — tuple slots positionally, struct
+    // fields by name, a unit variant carrying nothing. A struct field of the
+    // enum type recurses into it (deep), the two validators mutually
+    // forward-declared so either order resolves.
+    let out = lua_from_source(
+        "enum Shape { Dot, Pair(number, number), Named { side: number } }\n\
+         struct Holder { s: Shape }",
+    );
+    let expected = "\
+local function __type_error(path, expected, got)
+  local actual = type(got) == \"table\" and (got.__struct or got.__enum or \"table\") or type(got)
+  error(path .. \": expected \" .. expected .. \", got \" .. actual)
+end
+local function __check_number(v, path) if type(v) ~= \"number\" then __type_error(path, \"number\", v) end return v end
+local __check_Holder, __check_Shape
+function __check_Holder(v, path)
+  if type(v) ~= \"table\" or v.__struct ~= \"Holder\" then __type_error(path, \"Holder\", v) end
+  __check_Shape(v.s, path .. \".s\")
+  return v
+end
+function __check_Shape(v, path)
+  if type(v) ~= \"table\" or v.__enum ~= \"Shape\" then __type_error(path, \"Shape\", v) end
+  local t = v.__tag
+  if t == \"Dot\" then
+  elseif t == \"Pair\" then
+    __check_number(v[1], path .. \".0\")
+    __check_number(v[2], path .. \".1\")
+  elseif t == \"Named\" then
+    __check_number(v.side, path .. \".side\")
+  else __type_error(path, \"Shape\", v) end
+  return v
+end
+local Holder = {}
+Holder.__index = Holder
+function Holder.new(fields)
+  fields.__struct = \"Holder\"
+  return __check_Holder(setmetatable(fields, Holder), \"Holder\")
+end
+";
+    assert_eq!(out, expected);
+}
+
+#[test]
+fn validators_compose_list_option_and_result_combinators() {
+    // A structural field type validates through a combinator that takes its
+    // element/payload validator as an argument, so it composes without
+    // inlining (DYNAMIC.md §9.1).
+    let out = lua_from_source(
+        "struct Bag { items: [number], tag: Option<string>, outcome: Result<number, string> }",
+    );
+    assert!(out.contains("__check_list(v.items, path .. \".items\", __check_number)"));
+    assert!(out.contains("__check_option(v.tag, path .. \".tag\", __check_string)"));
+    assert!(out.contains(
+        "__check_result(v.outcome, path .. \".outcome\", __check_number, __check_string)"
+    ));
+    // Each combinator it composes is emitted once.
+    assert!(out.contains("local function __check_list(v, path, elem)"));
+    assert!(out.contains("local function __check_option(v, path, some)"));
+    assert!(out.contains("local function __check_result(v, path, ok, err)"));
+}
+
+#[test]
+fn validators_omitted_when_no_drift_point_exists() {
+    // No struct, enum, or `pub fn` — nothing to enforce, so no preamble at all.
+    let out = lua_from_source("fn helper(n: number) -> number { n }");
+    assert!(!out.contains("__type_error"));
+    assert!(!out.contains("__check_"));
+}
+
+#[test]
+fn validators_skip_imported_and_type_parameter_fields() {
+    // A field whose type the module cannot inspect — a bare type parameter —
+    // degrades to a presence-only check (the tag), never a dangling reference
+    // to a validator this module does not own.
+    let out = lua_from_source("struct Box<T> { value: T }");
+    assert!(out.contains("function __check_Box(v, path)"));
+    assert!(out.contains("if type(v) ~= \"table\" or v.__struct ~= \"Box\""));
+    assert!(!out.contains("__check_T"));
+    assert!(!out.contains("v.value")); // the `T` field carries no check
 }
 
 #[test]
