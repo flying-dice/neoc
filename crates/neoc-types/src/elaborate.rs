@@ -35,9 +35,80 @@ impl<'a> Elaborator<'a> {
     // ---- items -------------------------------------------------------------
 
     fn module(&mut self, module: &ast::Module) -> ast::Module {
-        ast::Module {
-            items: module.items.iter().map(|i| self.item(i)).collect(),
+        let mut items = Vec::with_capacity(module.items.len());
+        let mut expansions = Vec::new();
+        for item in &module.items {
+            // A blanket impl has no runtime home (its target is a parameter), so
+            // it is replaced by a concrete `impl Trait for X` for every type X
+            // that satisfies its conditions — the methods dispatch identically.
+            // Expansions are appended after all items, so each target type's
+            // table is already declared when its blanket methods attach to it.
+            if let ast::ItemKind::Impl(b) = &item.kind {
+                if let Some(param) = blanket_param(b) {
+                    expansions.extend(self.expand_blanket(item, b, &param));
+                    continue;
+                }
+            }
+            items.push(self.item(item));
         }
+        items.extend(expansions);
+        ast::Module { items }
+    }
+
+    /// Expands a blanket impl into one concrete impl per satisfying type. The
+    /// satisfying types are sorted for deterministic emission.
+    fn expand_blanket(
+        &mut self,
+        item: &ast::Item,
+        b: &ast::ImplBlock,
+        param: &str,
+    ) -> Vec<ast::Item> {
+        let conditions: Vec<String> = crate::collect::generic_param_bounds(&b.generics)
+            .remove(param)
+            .unwrap_or_default();
+        let mut targets: Vec<String> = self
+            .checker
+            .table()
+            .types
+            .iter()
+            .filter(|(_, def)| {
+                matches!(
+                    def,
+                    crate::env::TypeDef::Struct(_) | crate::env::TypeDef::Enum(_)
+                )
+            })
+            .map(|(name, _)| name.clone())
+            .filter(|name| {
+                let ty = Ty::named(name);
+                conditions
+                    .iter()
+                    .all(|c| self.checker.type_satisfies(&ty, c))
+            })
+            .collect();
+        targets.sort();
+        targets
+            .into_iter()
+            .map(|target| {
+                let concrete = ast::ImplBlock {
+                    generics: Vec::new(),
+                    trait_: b.trait_.clone(),
+                    ty: ast::Type::Path(ast::TypePath {
+                        segments: vec![ast::TypeSegment {
+                            name: target,
+                            args: Vec::new(),
+                        }],
+                    }),
+                    items: b.items.clone(),
+                    assoc_bindings: Vec::new(),
+                };
+                ast::Item {
+                    attrs: item.attrs.clone(),
+                    vis: item.vis,
+                    kind: ast::ItemKind::Impl(self.impl_block(&concrete)),
+                    span: item.span,
+                }
+            })
+            .collect()
     }
 
     fn item(&mut self, item: &ast::Item) -> ast::Item {
@@ -457,4 +528,18 @@ pub fn elaborate(module: &ast::Module) -> ast::Module {
 pub fn elaborate_with_table(module: &ast::Module, table: &SymbolTable) -> ast::Module {
     let checker = Checker::new(table);
     Elaborator::new(checker).module(module)
+}
+
+/// The target parameter of a blanket impl `impl<T: …> Trait for T`, or `None`
+/// for a concrete or inherent impl.
+fn blanket_param(b: &ast::ImplBlock) -> Option<String> {
+    b.trait_.as_ref()?;
+    let target = match &b.ty {
+        ast::Type::Path(p) => p.segments.last().map(|s| s.name.clone())?,
+        _ => return None,
+    };
+    b.generics
+        .iter()
+        .any(|g| g.name == target)
+        .then_some(target)
 }

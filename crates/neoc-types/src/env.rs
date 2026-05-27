@@ -123,6 +123,23 @@ pub struct SymbolTable {
     /// call site enforce that each argument's concrete type satisfies the bound
     /// the callee declared.
     pub fn_bounds: HashMap<String, HashMap<String, Vec<String>>>,
+    /// Blanket impls (`impl<T: Show> Describe for T`): every type satisfying
+    /// the conditions also implements the trait (`STATIC.md` §3.5). Kept apart
+    /// from `trait_impls` because the target is a parameter, not a concrete
+    /// type — satisfaction is queried on demand against the conditions.
+    pub blanket_impls: Vec<BlanketImpl>,
+}
+
+/// A generic (blanket) trait implementation `impl<T: Conditions> Trait for T`.
+#[derive(Debug, Clone)]
+pub struct BlanketImpl {
+    /// The impl's generic parameter that is the target type (`T`).
+    pub param: String,
+    /// Traits the target must satisfy for the impl to apply (the bounds on
+    /// `param`); empty means it applies to every type.
+    pub conditions: Vec<String>,
+    /// The trait this blanket provides for every satisfying type.
+    pub trait_name: String,
 }
 
 impl SymbolTable {

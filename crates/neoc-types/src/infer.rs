@@ -192,8 +192,31 @@ impl<'a> Checker<'a> {
 
     /// Checks every item in the module.
     pub fn check_module(&mut self, module: &ast::Module) {
+        self.check_coherence();
         for item in &module.items {
             self.check_item(item);
+        }
+    }
+
+    /// Rejects the two blanket-impl overlaps a simple checker can detect: two
+    /// blanket impls of the same trait (unorderable), and a blanket impl of a
+    /// trait that a concrete type also implements directly (`STATIC.md` §3.5).
+    /// neoc has no general coherence solver beyond these.
+    fn check_coherence(&mut self) {
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for bl in &self.table.blanket_impls {
+            if !seen.insert(bl.trait_name.as_str()) {
+                self.error(format!("conflicting blanket impls of `{}`", bl.trait_name));
+            }
+        }
+        for bl in &self.table.blanket_impls {
+            for (ty, tr) in &self.table.trait_impls {
+                if tr == &bl.trait_name {
+                    self.error(format!(
+                        "`impl {tr} for {ty}` overlaps the blanket impl of `{tr}`"
+                    ));
+                }
+            }
         }
     }
 
@@ -242,27 +265,48 @@ impl<'a> Checker<'a> {
     }
 
     fn check_fn_body(&mut self, sig: &ast::FnSig, body: &ast::Block, self_ty: Option<&str>) {
-        let prev_params = std::mem::take(&mut self.type_params);
-        let prev_bounds = std::mem::take(&mut self.type_bounds);
-        self.type_params = sig.generics.iter().map(|g| g.name.clone()).collect();
-        self.type_bounds = crate::collect::param_bounds(sig);
+        // Extend (not replace) the in-scope parameters/bounds with the
+        // function's own, so an enclosing impl's generics stay visible.
+        let prev_params = self.type_params.clone();
+        let prev_bounds = self.type_bounds.clone();
+        self.type_params
+            .extend(sig.generics.iter().map(|g| g.name.clone()));
+        for (k, v) in crate::collect::param_bounds(sig) {
+            self.type_bounds.entry(k).or_default().extend(v);
+        }
+        // `self`'s type is the target — a type parameter (a blanket impl's
+        // target) or a concrete type. `Self` in the signature is read the same.
+        let self_target: Option<Ty> = self_ty.map(|t| {
+            if self.type_params.iter().any(|p| p == t) {
+                Ty::Param(t.to_string())
+            } else {
+                Ty::named(t)
+            }
+        });
 
         self.scopes.push();
         for p in &sig.params {
             match p {
                 ast::Param::Receiver => {
-                    if let Some(t) = self_ty {
-                        self.scopes.bind("self", Ty::named(t));
+                    if let Some(st) = &self_target {
+                        self.scopes.bind("self", st.clone());
                     }
                 }
                 ast::Param::Named { name, ty, span } => {
-                    let pty = Self::subst_self(self.lower(ty), self_ty);
+                    let lowered = self.lower(ty);
+                    let pty = match &self_target {
+                        Some(st) => subst_self_param(&lowered, st),
+                        None => lowered,
+                    };
                     self.bind_local(name.clone(), pty, *span, crate::resolve::BindingKind::Param);
                 }
             }
         }
-        let ret = sig.ret.as_ref().map_or(Ty::Unit, |r| self.lower(r));
-        let ret = Self::subst_self(ret, self_ty);
+        let lowered_ret = sig.ret.as_ref().map_or(Ty::Unit, |r| self.lower(r));
+        let ret = match &self_target {
+            Some(st) => subst_self_param(&lowered_ret, st),
+            None => lowered_ret,
+        };
         let prev_ret = std::mem::replace(&mut self.ret_ty, ret.clone());
 
         let actual = self.infer_block(body);
@@ -325,6 +369,19 @@ impl<'a> Checker<'a> {
     /// `x.clone()` on `x: Drawable` yields `Drawable` (`STATIC.md` §3.4).
     fn trait_method(&self, trait_name: &str, method: &str) -> Option<(Vec<Ty>, Ty)> {
         self.resolve_trait_method(trait_name, method, &Ty::named(trait_name))
+    }
+
+    /// A method granted to concrete type `name` (of type `recv`) by a blanket
+    /// impl whose conditions `recv` satisfies, resolved through the blanket's
+    /// trait with `Self` read as `name` (`STATIC.md` §3.5).
+    fn blanket_method(&self, name: &str, recv: &Ty, method: &str) -> Option<(Vec<Ty>, Ty)> {
+        self.table.blanket_impls.iter().find_map(|bl| {
+            if bl.conditions.iter().all(|c| self.type_satisfies(recv, c)) {
+                self.resolve_trait_method(&bl.trait_name, method, &Ty::named(name))
+            } else {
+                None
+            }
+        })
     }
 
     /// Checks a call's argument count and types against an already-projected
@@ -395,6 +452,13 @@ impl<'a> Checker<'a> {
         if let Some(trait_path) = &b.trait_ {
             self.check_trait_impl(b, &target, trait_path);
         }
+        // Bring the impl's own generic parameters and their bounds into scope,
+        // so a generic impl's `T` (and, for a blanket impl, the target param's
+        // bounds) is visible in every method body.
+        let prev_params = std::mem::take(&mut self.type_params);
+        let prev_bounds = std::mem::take(&mut self.type_bounds);
+        self.type_params = b.generics.iter().map(|g| g.name.clone()).collect();
+        self.type_bounds = crate::collect::generic_param_bounds(&b.generics);
         // Bring the impl's associated-type bindings into scope so `Self::Item`
         // in method signatures and bodies resolves to the bound type.
         let prev_assoc = std::mem::take(&mut self.assoc_bindings);
@@ -407,6 +471,8 @@ impl<'a> Checker<'a> {
             self.check_fn(f, Some(&target));
         }
         self.assoc_bindings = prev_assoc;
+        self.type_params = prev_params;
+        self.type_bounds = prev_bounds;
     }
 
     fn check_trait_impl(&mut self, b: &ast::ImplBlock, target: &str, trait_path: &ast::TypePath) {
@@ -419,10 +485,21 @@ impl<'a> Checker<'a> {
             ));
             return;
         };
+        // A blanket impl `impl<T: …> Trait for T` targets one of its own
+        // generics; `Self` reads as that parameter, and supertrait coverage is
+        // checked against the parameter's bounds rather than a concrete impl.
+        let is_blanket = b.generics.iter().any(|g| g.name == target);
         // Supertrait completeness: an implementor must also implement every
         // supertrait the trait requires (`STATIC.md` §3.4).
         for sup in &t.supertraits {
-            if !self.table.implements(target, sup) {
+            let covered = if is_blanket {
+                crate::collect::generic_param_bounds(&b.generics)
+                    .get(target)
+                    .is_some_and(|conds| conds.iter().any(|c| self.trait_chain_includes(c, sup)))
+            } else {
+                self.table.implements(target, sup)
+            };
+            if !covered {
                 self.error(format!(
                     "`{target}` implements `{trait_name}` but not its supertrait `{sup}`; add `impl {sup} for {target}`"
                 ));
@@ -463,21 +540,32 @@ impl<'a> Checker<'a> {
                 ));
             }
         }
-        // The impl's bindings, used to project `Self::Item` on both sides of
-        // the signature comparison so an impl may write the bound type or
-        // `Self::Item` interchangeably.
+        self.check_sig_conformance(b, target, trait_name, t, is_blanket);
+    }
+
+    /// Checks each provided method's signature against the trait's declared one
+    /// — parameter types, return type, and receiver — with `Self` read as the
+    /// target type (a parameter for a blanket impl) and `Self::Item` projected
+    /// through the impl's associated-type bindings on both sides. An `Unknown`
+    /// on either side is left to the error that produced it.
+    fn check_sig_conformance(
+        &mut self,
+        b: &ast::ImplBlock,
+        target: &str,
+        trait_name: &str,
+        t: &crate::env::TraitInfo,
+        is_blanket: bool,
+    ) {
         let impl_bindings: std::collections::HashMap<String, Ty> = b
             .assoc_bindings
             .iter()
             .map(|(name, ty)| (name.clone(), self.lower(ty)))
             .collect();
-        // Signature conformance: a provided method must match the trait's
-        // declared signature — parameter types, return type, and receiver —
-        // with `Self` read as the target type (`STATIC.md` §3.4). The impl's
-        // collected signature already substitutes `Self` to the target; the
-        // trait's is projected here. An `Unknown` on either side is left to the
-        // error that produced it, so resolution failures do not cascade.
-        let self_ty = Ty::named(target);
+        let self_ty = if is_blanket {
+            Ty::Param(target.to_string())
+        } else {
+            Ty::named(target)
+        };
         for m in &t.methods {
             let Some(info) = self
                 .table
@@ -486,21 +574,15 @@ impl<'a> Checker<'a> {
             else {
                 continue;
             };
+            let project = |ty: Ty| crate::collect::project_assoc(ty, &impl_bindings);
             let want_params: Vec<Ty> = m
                 .params
                 .iter()
-                .map(|p| {
-                    crate::collect::project_assoc(subst_self_param(p, &self_ty), &impl_bindings)
-                })
+                .map(|p| project(subst_self_param(p, &self_ty)))
                 .collect();
-            let want_ret =
-                crate::collect::project_assoc(subst_self_param(&m.ret, &self_ty), &impl_bindings);
-            let got_params: Vec<Ty> = info
-                .params
-                .iter()
-                .map(|p| crate::collect::project_assoc(p.clone(), &impl_bindings))
-                .collect();
-            let got_ret = crate::collect::project_assoc(info.ret.clone(), &impl_bindings);
+            let want_ret = project(subst_self_param(&m.ret, &self_ty));
+            let got_params: Vec<Ty> = info.params.iter().map(|p| project(p.clone())).collect();
+            let got_ret = project(info.ret.clone());
             let exact = |a: &Ty, b: &Ty| a == b || a.is_unknown() || b.is_unknown();
             let matches = info.has_receiver == m.has_receiver
                 && got_params.len() == want_params.len()
@@ -951,11 +1033,21 @@ impl<'a> Checker<'a> {
 
     /// Whether `ty` satisfies the bound `trait_name`. A concrete type satisfies
     /// it when an `impl` or derive records the pair; a type parameter satisfies
-    /// it when its own in-scope bounds include the trait (bound propagation); an
+    /// it when its own in-scope bounds include the trait (bound propagation); a
+    /// blanket impl whose conditions `ty` meets contributes its trait; an
     /// unknown type satisfies it vacuously, so an earlier error does not cascade.
-    fn type_satisfies(&self, ty: &Ty, trait_name: &str) -> bool {
-        match ty {
-            Ty::Unknown => true,
+    pub(crate) fn type_satisfies(&self, ty: &Ty, trait_name: &str) -> bool {
+        self.type_satisfies_rec(ty, trait_name, &mut std::collections::HashSet::new())
+    }
+
+    fn type_satisfies_rec(
+        &self,
+        ty: &Ty,
+        trait_name: &str,
+        seen: &mut std::collections::HashSet<(String, String)>,
+    ) -> bool {
+        let direct = match ty {
+            Ty::Unknown => return true,
             Ty::Param(p) => self
                 .type_bounds
                 .get(p)
@@ -966,7 +1058,37 @@ impl<'a> Checker<'a> {
                     .iter()
                     .any(|(t, tr)| *t == n && self.trait_chain_includes(tr, trait_name))
             }),
+        };
+        direct || self.satisfies_via_blanket(ty, trait_name, seen)
+    }
+
+    /// Whether a blanket impl of `trait_name` (or a subtrait of it) applies to
+    /// `ty` — i.e. `ty` satisfies every one of the blanket's conditions. The
+    /// condition checks recurse; `seen` guards against a blanket cycle
+    /// (`impl<T: A> B for T` + `impl<T: B> A for T`).
+    fn satisfies_via_blanket(
+        &self,
+        ty: &Ty,
+        trait_name: &str,
+        seen: &mut std::collections::HashSet<(String, String)>,
+    ) -> bool {
+        let key_name = match ty {
+            Ty::Param(p) => p.clone(),
+            _ => match ty_impl_name(ty) {
+                Some(n) => n,
+                None => return false,
+            },
+        };
+        if !seen.insert((key_name, trait_name.to_string())) {
+            return false;
         }
+        self.table.blanket_impls.iter().any(|bl| {
+            self.trait_chain_includes(&bl.trait_name, trait_name)
+                && bl
+                    .conditions
+                    .iter()
+                    .all(|c| self.type_satisfies_rec(ty, c, seen))
+        })
     }
 
     /// Whether `trait_name` is `target` or reaches it through its transitive
@@ -1105,6 +1227,13 @@ impl<'a> Checker<'a> {
             return Ty::Unknown;
         }
         let Some(m) = self.table.methods.get(&(name.clone(), method.to_string())) else {
+            // A blanket impl may grant the method: if the receiver satisfies a
+            // blanket's conditions and its trait declares `method`, resolve
+            // through that trait with `Self` read as the concrete type.
+            if let Some((params, ret)) = self.blanket_method(name, &recv, method) {
+                self.check_call_args(method, &params, &arg_tys, args, span);
+                return ret;
+            }
             self.error_at(span, format!("type `{name}` has no method `{method}`"));
             return Ty::Unknown;
         };

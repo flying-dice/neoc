@@ -70,7 +70,7 @@ fn generic_names(generics: &[ast::GenericParam]) -> Vec<String> {
 /// The trait-name bounds declared inline on a set of generic parameters
 /// (`<T: Display, U: Clone>`). The bound's trait name is the last segment of
 /// its path. Shared by function signatures and generic type declarations.
-fn generic_param_bounds(generics: &[ast::GenericParam]) -> HashMap<String, Vec<String>> {
+pub(crate) fn generic_param_bounds(generics: &[ast::GenericParam]) -> HashMap<String, Vec<String>> {
     let trait_name = |p: &ast::TypePath| p.segments.last().map(|s| s.name.clone());
     let mut out: HashMap<String, Vec<String>> = HashMap::new();
     for g in generics {
@@ -485,6 +485,23 @@ fn collect_impl(table: &mut SymbolTable, b: &ast::ImplBlock) {
     let Some(type_name) = impl_target_name(&b.ty) else {
         return;
     };
+    // A blanket impl `impl<T: Show> Describe for T` targets one of the impl's
+    // own generics. It records no concrete `(type, trait)` pair or methods —
+    // those would key on the parameter name — but a `BlanketImpl` whose
+    // conditions are the parameter's bounds, queried on demand.
+    if impl_generics.contains(&type_name) {
+        if let Some(trait_name) = b.trait_.as_ref().and_then(|p| p.segments.last()) {
+            let conditions = generic_param_bounds(&b.generics)
+                .remove(&type_name)
+                .unwrap_or_default();
+            table.blanket_impls.push(crate::env::BlanketImpl {
+                param: type_name.clone(),
+                conditions,
+                trait_name: trait_name.name.clone(),
+            });
+        }
+        return;
+    }
     // A trait impl records the `(type, trait)` pair so call-site bound checks
     // can see that `type_name` satisfies the trait.
     if let Some(trait_name) = b.trait_.as_ref().and_then(|p| p.segments.last()) {
