@@ -7,7 +7,7 @@
 
 use neoc_ast as ast;
 
-use super::{Checker, subst_self_param};
+use super::Checker;
 use crate::env::TypeDef;
 use crate::ty::Ty;
 
@@ -149,9 +149,9 @@ impl Checker<'_> {
             let want_params: Vec<Ty> = m
                 .params
                 .iter()
-                .map(|p| project(subst_self_param(p, &self_ty)))
+                .map(|p| project(p.subst_self(&self_ty)))
                 .collect();
-            let want_ret = project(subst_self_param(&m.ret, &self_ty));
+            let want_ret = project(m.ret.subst_self(&self_ty));
             let got_params: Vec<Ty> = info.params.iter().map(|p| project(p.clone())).collect();
             let got_ret = project(info.ret.clone());
             let exact = |a: &Ty, b: &Ty| a == b || a.is_unknown() || b.is_unknown();

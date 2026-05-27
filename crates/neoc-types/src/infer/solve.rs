@@ -7,7 +7,7 @@
 
 use std::collections::HashSet;
 
-use super::{Checker, subst_self_param, ty_impl_name};
+use super::{Checker, ty_impl_name};
 use crate::env::TypeDef;
 use crate::ty::Ty;
 
@@ -38,7 +38,7 @@ impl Checker<'_> {
                 .iter()
                 .find(|m| m.name == method && m.has_receiver)
             {
-                let proj = |ty: &Ty| subst_self_param(ty, self_ty);
+                let proj = |ty: &Ty| ty.subst_self(self_ty);
                 return Some((m.params.iter().map(proj).collect(), proj(&m.ret)));
             }
             stack.extend(t.supertraits.iter().cloned());

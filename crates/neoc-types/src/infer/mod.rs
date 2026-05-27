@@ -323,7 +323,7 @@ impl<'a> Checker<'a> {
                 ast::Param::Named { name, ty, span } => {
                     let lowered = self.lower(ty);
                     let pty = match &self_target {
-                        Some(st) => subst_self_param(&lowered, st),
+                        Some(st) => lowered.subst_self(st),
                         None => lowered,
                     };
                     self.bind_local(name.clone(), pty, *span, crate::resolve::BindingKind::Param);
@@ -332,7 +332,7 @@ impl<'a> Checker<'a> {
         }
         let lowered_ret = sig.ret.as_ref().map_or(Ty::Unit, |r| self.lower(r));
         let ret = match &self_target {
-            Some(st) => subst_self_param(&lowered_ret, st),
+            Some(st) => lowered_ret.subst_self(st),
             None => lowered_ret,
         };
         let prev_ret = std::mem::replace(&mut self.ret_ty, ret.clone());
@@ -1685,13 +1685,6 @@ fn collect_covered(pattern: &ast::Pattern, out: &mut Vec<String>) {
         }
         _ => {}
     }
-}
-
-/// Replaces `Self` with `self_param` throughout a type. Used to project a trait
-/// method's signature onto the bounded type parameter whose bound supplied it,
-/// so `T: Clone`'s `clone(self) -> Self` reads as `-> T` at the call site.
-fn subst_self_param(ty: &Ty, self_param: &Ty) -> Ty {
-    ty.subst_self(self_param)
 }
 
 /// The name a type registers under in the trait-impl table: a nominal type's
