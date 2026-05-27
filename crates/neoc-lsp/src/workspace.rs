@@ -342,11 +342,45 @@ impl WorkspaceIndex {
     }
 
     /// The current text of a document, if indexed.
-    // Used by the goto/references slices of Phase 3 (see cross-file-resolution.md).
-    #[allow(dead_code)]
     #[must_use]
     pub fn document_text(&self, uri: &Url) -> Option<&str> {
         self.documents.get(uri).map(|d| d.text.as_str())
+    }
+
+    /// Every indexed document as `(file path, text)` — the in-memory source map
+    /// a project-wide check runs against. Open buffers are authoritative (they
+    /// overwrote disk text via [`Self::set_document`]). A URI that is not a file
+    /// path (an untitled buffer) is skipped.
+    #[must_use]
+    pub fn project_sources(&self) -> HashMap<PathBuf, String> {
+        self.documents
+            .iter()
+            .filter_map(|(uri, doc)| uri.to_file_path().ok().map(|p| (p, doc.text.clone())))
+            .collect()
+    }
+
+    /// Every indexed document URI.
+    pub fn document_uris(&self) -> impl Iterator<Item = &Url> {
+        self.documents.keys()
+    }
+
+    /// `uri` plus every module that transitively imports it — the blast radius
+    /// of an edit to `uri` (the set to re-diagnose). Cycle-safe: each URI is
+    /// visited once.
+    #[must_use]
+    pub fn dependents_closure(&self, uri: &Url) -> Vec<Url> {
+        let mut out = vec![uri.clone()];
+        let mut i = 0;
+        while i < out.len() {
+            let current = out[i].clone();
+            for importer in self.importers_of(&current) {
+                if !out.contains(importer) {
+                    out.push(importer.clone());
+                }
+            }
+            i += 1;
+        }
+        out
     }
 
     /// Project-wide symbol search: every declaration whose name contains `query`

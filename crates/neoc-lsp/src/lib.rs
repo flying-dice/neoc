@@ -146,6 +146,29 @@ pub fn diagnose(source: &str) -> Vec<Diagnostic> {
     diagnostics
 }
 
+/// Project-aware diagnostics for `uri`: the file is checked against the
+/// workspace's other modules (open buffers authoritative), so its `use`
+/// imports resolve and a non-entry module no longer reports phantom
+/// `unresolved module` errors. Falls back to single-file [`diagnose`] for an
+/// untitled buffer (no file path) or when the focus is otherwise unresolvable.
+#[must_use]
+pub fn diagnose_in_project(index: &WorkspaceIndex, uri: &Url, source: &str) -> Vec<Diagnostic> {
+    let Ok(focus) = uri.to_file_path() else {
+        return diagnose(source);
+    };
+    // The handler's live buffer is authoritative and may be a step ahead of the
+    // index, so the focus carries the current text explicitly.
+    let mut sources = index.project_sources();
+    sources.insert(focus.clone(), source.to_string());
+    let mut diagnostics: Vec<Diagnostic> =
+        neoc_compiler::check_module_in_project(index.root(), &sources, &focus)
+            .iter()
+            .map(|d| to_lsp(source, d))
+            .collect();
+    diagnostics.extend(lints::lints(source));
+    diagnostics
+}
+
 /// Encodes a document URI for `CompletionItem.data`, the opaque round-trip slot
 /// the editor returns on `completionItem/resolve`. Paired with [`stashed_uri`].
 fn stash_uri(uri: &Url) -> serde_json::Value {
@@ -398,9 +421,13 @@ impl Backend {
     }
 
     async fn publish(&self, uri: Url, source: &str, version: Option<i32>) {
-        self.client
-            .publish_diagnostics(uri, diagnose(source), version)
-            .await;
+        // Resolve diagnostics against the project (lock released before the
+        // await — never hold the index mutex across `.await`).
+        let diags = match self.index.lock() {
+            Ok(index) => diagnose_in_project(&index, &uri, source),
+            Err(_) => diagnose(source),
+        };
+        self.client.publish_diagnostics(uri, diags, version).await;
     }
 
     /// The current source of an open document, if the server has it.
@@ -1097,6 +1124,65 @@ mod tests {
                 .is_none(),
             "a non-imported name has no cross-file definition"
         );
+    }
+
+    #[test]
+    fn project_diagnose_resolves_imported_names() {
+        // The headline fix: a module that `use`s a sibling is clean in the
+        // project, where single-file `diagnose` reports phantom errors.
+        let root = Path::new("/proj");
+        let f = |rel: &str| Url::from_file_path(root.join(rel)).unwrap();
+        let mut index = WorkspaceIndex::new(root);
+        index.set_document(
+            f("util.neoc"),
+            1,
+            "pub fn add(a: number, b: number) -> number { a + b }\n".to_string(),
+        );
+        let main_src = "use util::add;\nfn go() -> number { add(1, 2) }\n";
+        index.set_document(f("main.neoc"), 1, main_src.to_string());
+
+        let diags = diagnose_in_project(&index, &f("main.neoc"), main_src);
+        assert!(
+            !diags
+                .iter()
+                .any(|d| d.message.contains("unresolved module")),
+            "imported `util` resolves in the project: {diags:?}"
+        );
+        assert!(
+            !diags
+                .iter()
+                .any(|d| d.severity == Some(DiagnosticSeverity::ERROR)),
+            "no errors in the project (an unused-fn warning is fine): {diags:?}"
+        );
+    }
+
+    #[test]
+    fn project_diagnose_reports_a_real_cross_module_error() {
+        let root = Path::new("/proj");
+        let f = |rel: &str| Url::from_file_path(root.join(rel)).unwrap();
+        let mut index = WorkspaceIndex::new(root);
+        index.set_document(
+            f("util.neoc"),
+            1,
+            "pub fn add(a: number, b: number) -> number { a + b }\n".to_string(),
+        );
+        let main_src = "use util::add;\nfn go() -> string { add(1, 2) }\n";
+        index.set_document(f("main.neoc"), 1, main_src.to_string());
+        let diags = diagnose_in_project(&index, &f("main.neoc"), main_src);
+        assert!(
+            diags.iter().any(|d| d.message.contains("expects `string`")),
+            "a genuine type error still surfaces: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn untitled_buffer_falls_back_to_single_file() {
+        // A buffer with no file path can't be placed in the project, so it
+        // diagnoses exactly as the single-file path would.
+        let index = WorkspaceIndex::new(Path::new("/proj"));
+        let uri = Url::parse("untitled:Untitled-1").unwrap();
+        let src = "fn m() -> number { 1 }\n";
+        assert_eq!(diagnose_in_project(&index, &uri, src), diagnose(src));
     }
 
     #[test]
