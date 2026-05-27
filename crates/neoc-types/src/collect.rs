@@ -527,14 +527,15 @@ fn collect_impl(table: &mut SymbolTable, b: &ast::ImplBlock) {
         .iter()
         .map(|(name, ty)| (name.clone(), lower_type(ty, &impl_generics)))
         .collect();
+    let self_ty = Ty::named(&type_name);
     for f in &b.items {
         let (params, ret, has_receiver) = fn_type(&f.sig, &impl_generics);
         // Substitute `Self` with the target type, then project `Self::Item`.
         let params = params
             .into_iter()
-            .map(|p| project_assoc(subst_self(p, &type_name), &assoc))
+            .map(|p| project_assoc(p.subst_self(&self_ty), &assoc))
             .collect();
-        let ret = project_assoc(subst_self(ret, &type_name), &assoc);
+        let ret = project_assoc(ret.subst_self(&self_ty), &assoc);
         table.member_defs.insert(
             (type_name.clone(), f.sig.name.clone()),
             (f.sig.name_span.start, f.sig.name_span.end),
@@ -566,44 +567,12 @@ pub(crate) fn project_assoc(ty: Ty, bindings: &HashMap<String, Ty>) -> Ty {
     if bindings.is_empty() {
         return ty;
     }
-    match ty {
-        Ty::Named { name, args } => {
-            if let Some(assoc) = name.strip_prefix("Self::") {
-                if let Some(bound) = bindings.get(assoc) {
-                    return bound.clone();
-                }
-            }
-            Ty::Named {
-                name,
-                args: args
-                    .into_iter()
-                    .map(|a| project_assoc(a, bindings))
-                    .collect(),
-            }
-        }
-        Ty::List(inner) => Ty::List(Box::new(project_assoc(*inner, bindings))),
-        Ty::Fn(ps, r) => Ty::Fn(
-            ps.into_iter().map(|p| project_assoc(p, bindings)).collect(),
-            Box::new(project_assoc(*r, bindings)),
-        ),
-        other => other,
-    }
-}
-
-fn subst_self(ty: Ty, target: &str) -> Ty {
-    match ty {
-        Ty::Named { name, args } if name == "Self" && args.is_empty() => Ty::named(target),
-        Ty::Named { name, args } => Ty::Named {
-            name,
-            args: args.into_iter().map(|a| subst_self(a, target)).collect(),
-        },
-        Ty::List(inner) => Ty::List(Box::new(subst_self(*inner, target))),
-        Ty::Fn(params, ret) => Ty::Fn(
-            params.into_iter().map(|p| subst_self(p, target)).collect(),
-            Box::new(subst_self(*ret, target)),
-        ),
-        other => other,
-    }
+    ty.map(&|t| match t {
+        Ty::Named { name, .. } => name
+            .strip_prefix("Self::")
+            .and_then(|assoc| bindings.get(assoc).cloned()),
+        _ => None,
+    })
 }
 
 fn collect_ext(table: &mut SymbolTable, ext: &ast::ExtItem) {

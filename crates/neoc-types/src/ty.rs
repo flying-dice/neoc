@@ -71,6 +71,40 @@ impl Ty {
         matches!(self, Ty::Unknown)
     }
 
+    /// Rebuilds the type, replacing any subterm for which `f` returns `Some`
+    /// and recursing into list, function, and nominal-argument positions
+    /// otherwise. The single structural-substitution primitive every
+    /// `subst_*`/projection reuses, so the `List`/`Fn`/`Named` recursion lives
+    /// in exactly one place rather than being re-written per substitution.
+    #[must_use]
+    pub(crate) fn map(&self, f: &impl Fn(&Ty) -> Option<Ty>) -> Ty {
+        if let Some(replaced) = f(self) {
+            return replaced;
+        }
+        match self {
+            Ty::List(inner) => Ty::List(Box::new(inner.map(f))),
+            Ty::Fn(params, ret) => Ty::Fn(
+                params.iter().map(|p| p.map(f)).collect(),
+                Box::new(ret.map(f)),
+            ),
+            Ty::Named { name, args } => Ty::Named {
+                name: name.clone(),
+                args: args.iter().map(|a| a.map(f)).collect(),
+            },
+            other => other.clone(),
+        }
+    }
+
+    /// Replaces every `Self` with `target`, recursing through composites — how
+    /// a trait or impl signature's `Self` is read as the implementing type.
+    #[must_use]
+    pub(crate) fn subst_self(&self, target: &Ty) -> Ty {
+        self.map(&|t| match t {
+            Ty::Named { name, args } if name == "Self" && args.is_empty() => Some(target.clone()),
+            _ => None,
+        })
+    }
+
     /// Structural compatibility for the no-subtyping fragment.
     ///
     /// `Unknown` is compatible with anything (error recovery). A type

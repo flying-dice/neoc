@@ -444,25 +444,9 @@ impl<'a> Checker<'a> {
     }
 
     pub(crate) fn subst_self(ty: Ty, self_ty: Option<&str>) -> Ty {
-        let Some(target) = self_ty else { return ty };
-        match ty {
-            Ty::Named { name, args } if name == "Self" && args.is_empty() => Ty::named(target),
-            Ty::Named { name, args } => Ty::Named {
-                name,
-                args: args
-                    .into_iter()
-                    .map(|a| Self::subst_self(a, self_ty))
-                    .collect(),
-            },
-            Ty::List(inner) => Ty::List(Box::new(Self::subst_self(*inner, self_ty))),
-            Ty::Fn(params, r) => Ty::Fn(
-                params
-                    .into_iter()
-                    .map(|p| Self::subst_self(p, self_ty))
-                    .collect(),
-                Box::new(Self::subst_self(*r, self_ty)),
-            ),
-            other => other,
+        match self_ty {
+            Some(target) => ty.subst_self(&Ty::named(target)),
+            None => ty,
         }
     }
 
@@ -1154,19 +1138,10 @@ impl<'a> Checker<'a> {
     }
 
     fn apply_subst(ty: &Ty, subst: &std::collections::HashMap<String, Ty>) -> Ty {
-        match ty {
-            Ty::Param(name) => subst.get(name).cloned().unwrap_or(Ty::Unknown),
-            Ty::List(inner) => Ty::List(Box::new(Self::apply_subst(inner, subst))),
-            Ty::Fn(params, ret) => Ty::Fn(
-                params.iter().map(|p| Self::apply_subst(p, subst)).collect(),
-                Box::new(Self::apply_subst(ret, subst)),
-            ),
-            Ty::Named { name, args } => Ty::Named {
-                name: name.clone(),
-                args: args.iter().map(|a| Self::apply_subst(a, subst)).collect(),
-            },
-            other => other.clone(),
-        }
+        ty.map(&|t| match t {
+            Ty::Param(name) => Some(subst.get(name).cloned().unwrap_or(Ty::Unknown)),
+            _ => None,
+        })
     }
 
     /// Substitute the type parameters in `ty` from `subst`, leaving any
@@ -1176,19 +1151,10 @@ impl<'a> Checker<'a> {
     /// through its concrete type arguments, where a parameter outside the
     /// nominal type's own generics must survive.
     fn subst_named(ty: &Ty, subst: &std::collections::HashMap<String, Ty>) -> Ty {
-        match ty {
-            Ty::Param(name) => subst.get(name).cloned().unwrap_or_else(|| ty.clone()),
-            Ty::List(inner) => Ty::List(Box::new(Self::subst_named(inner, subst))),
-            Ty::Fn(params, ret) => Ty::Fn(
-                params.iter().map(|p| Self::subst_named(p, subst)).collect(),
-                Box::new(Self::subst_named(ret, subst)),
-            ),
-            Ty::Named { name, args } => Ty::Named {
-                name: name.clone(),
-                args: args.iter().map(|a| Self::subst_named(a, subst)).collect(),
-            },
-            other => other.clone(),
-        }
+        ty.map(&|t| match t {
+            Ty::Param(name) => Some(subst.get(name).cloned().unwrap_or_else(|| t.clone())),
+            _ => None,
+        })
     }
 
     /// The substitution mapping a nominal type's generic parameter names to the
@@ -2045,25 +2011,7 @@ fn collect_covered(pattern: &ast::Pattern, out: &mut Vec<String>) {
 /// method's signature onto the bounded type parameter whose bound supplied it,
 /// so `T: Clone`'s `clone(self) -> Self` reads as `-> T` at the call site.
 fn subst_self_param(ty: &Ty, self_param: &Ty) -> Ty {
-    match ty {
-        Ty::Named { name, args } if name == "Self" && args.is_empty() => self_param.clone(),
-        Ty::Named { name, args } => Ty::Named {
-            name: name.clone(),
-            args: args
-                .iter()
-                .map(|a| subst_self_param(a, self_param))
-                .collect(),
-        },
-        Ty::List(inner) => Ty::List(Box::new(subst_self_param(inner, self_param))),
-        Ty::Fn(params, ret) => Ty::Fn(
-            params
-                .iter()
-                .map(|p| subst_self_param(p, self_param))
-                .collect(),
-            Box::new(subst_self_param(ret, self_param)),
-        ),
-        other => other.clone(),
-    }
+    ty.subst_self(self_param)
 }
 
 /// The name a type registers under in the trait-impl table: a nominal type's
