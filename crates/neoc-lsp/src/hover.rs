@@ -58,14 +58,18 @@ pub fn hover(source: &str, position: tower_lsp::lsp_types::Position) -> Option<S
         return Some(with_doc(code_block(&sig), doc));
     }
 
-    // 4. A member used at a call / field / `Type::Variant` site, resolved by
-    //    unique name across the file (silent when ambiguous).
-    if let Some(node) = cst::find_unique_member(&tree, source, name) {
-        let sig = member_signature(node, source)?;
-        return Some(with_doc(
-            code_block(&sig),
-            cst::leading_doc_comment(node, source),
-        ));
+    // 4. A member used at a call / field site, resolved type-aware through the
+    //    checker — the receiver's type disambiguates same-named members of
+    //    different types (which the old name-only scan could not).
+    let module = neoc_parser::parse(source).module;
+    if let Some(member) = neoc_types::resolution(&module).member_at(byte) {
+        if let Some(node) = cst::member_decl_at(&tree, member.def.0) {
+            let sig = member_signature(node, source)?;
+            return Some(with_doc(
+                code_block(&sig),
+                cst::leading_doc_comment(node, source),
+            ));
+        }
     }
 
     // 5. A local binding or sub-expression with no declaration to resolve —
@@ -276,6 +280,27 @@ fn m(b: Box) -> number { b.width }
         // On the usage `b.width`, resolved by unique member name.
         let at_use = hover_on(src, "width", 2).expect("hover at use");
         assert!(at_use.contains("the horizontal size"), "{at_use}");
+    }
+
+    #[test]
+    fn same_named_fields_disambiguate_by_receiver_type() {
+        // Two structs both have a `width`; hover on `b.width` must resolve to
+        // `B`'s field via the receiver's type — the old name-only scan was
+        // silent here because the name was ambiguous.
+        let src = "\
+struct A {
+  /// a's measure
+  width: number,
+}
+struct B {
+  /// b's measure
+  width: number,
+}
+fn m(b: B) -> number { b.width }
+";
+        let h = hover_on(src, "width", 3).expect("hover on b.width");
+        assert!(h.contains("b's measure"), "{h}");
+        assert!(!h.contains("a's measure"), "{h}");
     }
 
     #[test]

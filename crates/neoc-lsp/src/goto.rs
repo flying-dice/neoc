@@ -65,6 +65,20 @@ pub fn goto_definition(
         }
     }
 
+    // A member access (`recv.field` / `recv.method()`): jump to the member's
+    // declaration, resolved type-aware through the checker.
+    if let Some(member) = resolution.member_at(byte) {
+        let (start, end) = member.def;
+        if (start..end).contains(&byte) {
+            return None;
+        }
+        let range = byte_range(source, start, end);
+        return Some(Definition {
+            full_range: range,
+            name_range: range,
+        });
+    }
+
     let name = cst::identifier_at(&tree, source, byte)?;
     let decl = cst::find_decl(&tree, source, name)?;
     // Don't report a no-op jump when the cursor already sits on the defining
@@ -225,6 +239,24 @@ mod tests {
         // The decl name `fib` starts at byte 3; the item spans the whole fn.
         assert_eq!(def.name_range, byte_range(src, 3, 6));
         assert_eq!(def.full_range.start, byte_to_position(src, 0));
+    }
+
+    #[test]
+    fn field_access_resolves_to_the_field_declaration() {
+        let src = "struct Point { x: number }\nfn get(p: Point) -> number { p.x }\n";
+        let cur = src.find("p.x").unwrap() + 2; // on `x`
+        let def = goto_definition(src, byte_to_position(src, cur)).expect("field def");
+        let fx = src.find("x: number").unwrap();
+        assert_eq!(def.name_range, byte_range(src, fx, fx + 1));
+    }
+
+    #[test]
+    fn method_call_resolves_to_the_method_declaration() {
+        let src = "struct C { n: number }\nimpl C { fn get(self) -> number { self.n } }\nfn run(c: C) -> number { c.get() }\n";
+        let cur = src.find("c.get()").unwrap() + 2; // on `get`
+        let def = goto_definition(src, byte_to_position(src, cur)).expect("method def");
+        let g = src.find("fn get").unwrap() + 3;
+        assert_eq!(def.name_range, byte_range(src, g, g + 3));
     }
 
     #[test]
