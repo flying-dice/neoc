@@ -69,3 +69,13 @@ contract or when a fix needs another context.
 `#[cfg(test)]` in `neoc-parser`: every `walk_*` asserts its AST, every error-recovery path
 asserts a neoc-shaped diagnostic and graceful continuation. Round-trip/AST-equality tests stay
 position-independent. Parsing-side `lang/CONFORMANCE` pairs.
+
+## Diagnostics corpus — mandatory
+
+You are one of **exactly three** contexts that emit user-facing diagnostics (with `type-system`
+for semantic errors and `codegen-backends` for emit errors). For your share — parse and
+syntax-recovery errors — **every change that adds, alters, or removes a diagnostic you emit must
+land in the same commit with its self-documenting case** in the buggy-code → expected-error suite
+(the parse-error `lang/CONFORMANCE` pairs: buggy `.neoc` + expected diagnostic).
+`compiler-architect` owns the suite; **you own its cases**. A diagnostic touched without its case
+updated is an incomplete change — never ship one.

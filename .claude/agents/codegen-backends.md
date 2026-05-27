@@ -67,3 +67,12 @@ trait-tagging contract, and any proposed mid-level IR to `compiler-architect`.
 Emit goldens per construct, `lang/CONFORMANCE` dynamic (`.neoc` → expected `.lua`) pairs, and an
 end-to-end run for behaviour. Derive tests in `neoc-macros`. A feature isn't done until its emit
 golden and conformance pair are green and the wasm-leaf gate still passes.
+
+## Diagnostics corpus — mandatory
+
+You are one of **exactly three** contexts that emit user-facing diagnostics (with
+`syntax-frontend` for parse errors and `type-system` for semantic errors). For your share —
+emit-time diagnostics — **every change that adds, alters, or removes a diagnostic you emit must
+land in the same commit with its self-documenting case** in the buggy-code → expected-error suite
+(buggy `.neoc` + expected diagnostic). `compiler-architect` owns the suite; **you own its cases**.
+A diagnostic touched without its case updated is an incomplete change — never ship one.

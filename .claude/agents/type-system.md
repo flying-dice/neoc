@@ -75,3 +75,13 @@ new runtime tag (e.g. trait tags read by the runtime) to `compiler-architect`.
 `#[cfg(test)]` in `neoc-types` (inference, bounds, exhaustiveness, resolution) **and**
 `lang/CONFORMANCE/static` ok/err pairs per rule. Every static rule asserts a neoc-shaped
 diagnostic. New lints get both an in-crate test and a conformance pair.
+
+## Diagnostics corpus — mandatory
+
+You are one of **exactly three** contexts that emit user-facing diagnostics (with
+`syntax-frontend` for parse errors and `codegen-backends` for emit errors). For your share —
+type, trait, bounds, exhaustiveness, and name-resolution errors — **every change that adds,
+alters, or removes a diagnostic you emit must land in the same commit with its self-documenting
+case** in the buggy-code → expected-error suite (`lang/CONFORMANCE/static` err pairs: buggy
+`.neoc` + expected `.diagnostics`). `compiler-architect` owns the suite; **you own its cases**.
+A diagnostic touched without its case updated is an incomplete change — never ship one.
