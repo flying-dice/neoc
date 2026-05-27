@@ -651,6 +651,38 @@ mod tests {
         e(ast::ExprKind::Int(n.to_string()))
     }
 
+    /// A `fn main() { <stmts> }` item with no trailing value.
+    fn main_fn(stmts: Vec<ast::Stmt>) -> ast::Item {
+        item(
+            ast::ItemKind::Fn(ast::FnDecl {
+                attrs: Vec::new(),
+                sig: ast::FnSig {
+                    name: "main".to_string(),
+                    name_span: ast::Span::default(),
+                    generics: Vec::new(),
+                    params: Vec::new(),
+                    ret: None,
+                    where_clause: Vec::new(),
+                },
+                body: ast::Block { stmts, value: None },
+            }),
+            Vec::new(),
+        )
+    }
+
+    /// A `let _ = <value>;` wildcard-discard statement.
+    fn wildcard_discard(value: ast::Expr) -> ast::Stmt {
+        ast::Stmt::new(
+            ast::StmtKind::Let(ast::LetStmt {
+                mutable: false,
+                pattern: ast::Pattern::Wildcard,
+                ty: None,
+                value: Some(value),
+            }),
+            ast::Span::default(),
+        )
+    }
+
     #[test]
     fn named_struct_literal_and_field_access() {
         // struct Point { x, y }
@@ -1055,6 +1087,112 @@ mod tests {
         assert_eq!(
             bindings,
             HashSet::from(["f".to_string(), "MAX".to_string(), "Point".to_string()])
+        );
+    }
+
+    /// Two `let _ = …` discards in one scope must not both lower to `let _`: a
+    /// second `_` in the same JS scope is a redeclaration (`SyntaxError`). A
+    /// wildcard binds no name, so each discard becomes a bare expression
+    /// statement run for effect. Regression for #65.
+    #[test]
+    fn repeated_wildcard_let_lowers_to_bare_expr_stmt() {
+        // fn main() { let _ = g(); let _ = g(); }
+        let discard = || {
+            wildcard_discard(e(ast::ExprKind::Call {
+                callee: Box::new(e(ast::ExprKind::Path(vec!["g".to_string()]))),
+                args: Vec::new(),
+            }))
+        };
+        let module = ast::Module {
+            items: vec![main_fn(vec![discard(), discard()])],
+        };
+        let out = emit_solo(&module);
+        assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
+        assert_eq!(out.js, "function main() {\n  g();\n  g();\n}\n");
+    }
+
+    /// A wildcard discard of a struct literal must paren-wrap the value: a bare
+    /// `{ __struct: … };` at statement start parses as a JS block, not an object
+    /// literal, so the module fails with `SyntaxError`. Regression for the #65
+    /// follow-up — `let _ = g()` (identifier-prefixed) was safe; a `{`-prefixed
+    /// initialiser was not.
+    #[test]
+    fn wildcard_let_discards_struct_literal_paren_wrapped() {
+        // struct Point { x, y } fn main() { let _ = Point { x: 1, y: 2 }; }
+        let module = ast::Module {
+            items: vec![
+                item(
+                    ast::ItemKind::Struct(ast::StructDecl {
+                        name: "Point".to_string(),
+                        generics: Vec::new(),
+                        body: ast::StructBody::Named(vec![field("x"), field("y")]),
+                    }),
+                    Vec::new(),
+                ),
+                main_fn(vec![wildcard_discard(e(ast::ExprKind::StructLit {
+                    path: vec!["Point".to_string()],
+                    fields: vec![
+                        ast::FieldInit {
+                            name: "x".to_string(),
+                            value: Some(int("1")),
+                        },
+                        ast::FieldInit {
+                            name: "y".to_string(),
+                            value: Some(int("2")),
+                        },
+                    ],
+                    base: None,
+                }))]),
+            ],
+        };
+        let out = emit_solo(&module);
+        assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
+        assert_eq!(
+            out.js,
+            "function main() {\n  ({ __struct: \"Point\", x: 1, y: 2 });\n}\n"
+        );
+    }
+
+    /// A wildcard discard of an enum-variant construction is the other
+    /// `{`-prefixed value class — `{ __enum: … }` — and must paren-wrap for the
+    /// same reason. Regression for the #65 follow-up.
+    #[test]
+    fn wildcard_let_discards_enum_variant_paren_wrapped() {
+        // enum Color { Red, Green } fn main() { let _ = Color::Red; }
+        let module = ast::Module {
+            items: vec![
+                item(
+                    ast::ItemKind::Enum(ast::EnumDecl {
+                        name: "Color".to_string(),
+                        generics: Vec::new(),
+                        variants: vec![
+                            ast::Variant {
+                                attrs: Vec::new(),
+                                name: "Red".to_string(),
+                                name_span: ast::Span::default(),
+                                body: ast::VariantBody::Unit,
+                            },
+                            ast::Variant {
+                                attrs: Vec::new(),
+                                name: "Green".to_string(),
+                                name_span: ast::Span::default(),
+                                body: ast::VariantBody::Unit,
+                            },
+                        ],
+                    }),
+                    Vec::new(),
+                ),
+                main_fn(vec![wildcard_discard(e(ast::ExprKind::Path(vec![
+                    "Color".to_string(),
+                    "Red".to_string(),
+                ])))]),
+            ],
+        };
+        let out = emit_solo(&module);
+        assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
+        assert_eq!(
+            out.js,
+            "function main() {\n  ({ __enum: \"Color\", __tag: \"Red\" });\n}\n"
         );
     }
 }

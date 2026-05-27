@@ -63,23 +63,27 @@ impl Emitter {
     }
 
     fn emit_let(&mut self, l: &ast::LetStmt) {
-        // A simple binding or wildcard maps straight to a `let`.
-        let name = match &l.pattern {
-            ast::Pattern::Binding { name, .. } => Some(name.clone()),
-            ast::Pattern::Wildcard => Some("_".to_string()),
-            _ => None,
-        };
-        if let Some(name) = name {
-            match &l.value {
+        match &l.pattern {
+            // A wildcard binds no name: run the initialiser for its effect and
+            // discard the value. A literal `let _ = …` is invalid JS the moment
+            // a scope holds two of them — the second `_` is a redeclaration — so
+            // lower to a bare expression statement, which discards without a name.
+            ast::Pattern::Wildcard => {
+                if let Some(v) = &l.value {
+                    self.emit_expr_stmt(v);
+                }
+            }
+            // A simple binding maps straight to a `let`.
+            ast::Pattern::Binding { name, .. } => match &l.value {
                 Some(v) => {
                     let value = self.emit_expr(v);
                     self.line(format!("let {name} = {value};"));
                 }
                 None => self.line(format!("let {name};")),
-            }
-            return;
+            },
+            // Everything else is an irrefutable destructure (or a diagnostic).
+            _ => self.emit_let_destructure(&l.pattern, l.value.as_ref()),
         }
-        self.emit_let_destructure(&l.pattern, l.value.as_ref());
     }
 
     /// Lower an irrefutable destructuring `let`: a struct (`let Point { x, y } =
@@ -179,7 +183,18 @@ impl Emitter {
             }
             _ => {
                 let s = self.emit_expr(e);
-                self.line(format!("{s};"));
+                // A value that lowers to a `{`-prefixed object literal — a
+                // struct or enum-variant construction — parses as a block, not
+                // an expression, at statement start, so `{ … };` is a
+                // `SyntaxError`. Paren-wrap it to keep it an expression run for
+                // effect. This is the only statement-vs-expression ambiguity
+                // `emit_expr` can produce; every other value form is `(`-,
+                // identifier-, or literal-prefixed.
+                if s.starts_with('{') {
+                    self.line(format!("({s});"));
+                } else {
+                    self.line(format!("{s};"));
+                }
             }
         }
     }
