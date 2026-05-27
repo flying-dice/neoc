@@ -178,7 +178,18 @@ impl Emitter {
             }
             _ => {
                 let s = self.emit_expr(e);
-                self.line(format!("{s};"));
+                // A value that lowers to a `{`-prefixed object literal — a
+                // struct or enum-variant construction — parses as a block, not
+                // an expression, at statement start, so `{ … };` is a
+                // `SyntaxError`. Paren-wrap it to keep it an expression run for
+                // effect. This is the only statement-vs-expression ambiguity
+                // `emit_expr` can produce; every other value form is `(`-,
+                // identifier-, or literal-prefixed.
+                if s.starts_with('{') {
+                    self.line(format!("({s});"));
+                } else {
+                    self.line(format!("{s};"));
+                }
             }
         }
     }
