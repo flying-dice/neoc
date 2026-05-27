@@ -214,6 +214,7 @@ pub fn transpile(source: &str, target: Target) -> CompileOutput {
         &elaborated,
         source,
         &std::collections::HashSet::new(),
+        &std::collections::HashSet::new(),
         &[],
     );
     diagnostics.extend(emit_messages.into_iter().map(Diagnostic::emit));
@@ -524,12 +525,14 @@ fn check_and_emit_module(
     // to concatenation rather than left as arithmetic.
     let elaborated = types::elaborate_with_table(&me.module, &table);
     let imported_bindings = js_imported_bindings(root, loaded, &me.module);
+    let imported_method_types = js_imported_method_types(root, loaded, &me.module);
     let imported_enums = imported_enums(root, loaded, &me.module);
     let (output, emit_messages, source_map) = emit(
         target,
         &elaborated,
         &me.source,
         &imported_bindings,
+        &imported_method_types,
         &imported_enums,
     );
     for message in emit_messages {
@@ -628,12 +631,16 @@ fn canonical_or(path: &Path) -> PathBuf {
 /// `imported_bindings` are the module's `use`d names whose source module emits
 /// a runtime JS binding (see [`codegen_js::module_js_bindings`]); the JS backend
 /// filters its `import` emission against it so a type-only `use` produces no
-/// dangling import. The Lua backend ignores it.
+/// dangling import. `imported_method_types` is the subset of those whose source
+/// binding is a method-bearing type (see [`codegen_js::module_js_method_types`]);
+/// the JS backend wires each into the importing module's `__m` so methods
+/// dispatch across the `use` boundary (#66). The Lua backend ignores both.
 fn emit(
     target: Target,
     module: &ast::Module,
     source: &str,
     imported_bindings: &std::collections::HashSet<String>,
+    imported_method_types: &std::collections::HashSet<String>,
     imported_enums: &[&ast::EnumDecl],
 ) -> (String, Vec<String>, SourceMap) {
     match target {
@@ -646,7 +653,7 @@ fn emit(
             )
         }
         Target::Js => {
-            let r = codegen_js::emit(module, imported_bindings);
+            let r = codegen_js::emit(module, imported_bindings, imported_method_types);
             (
                 r.js,
                 r.diagnostics.into_iter().map(|d| d.message).collect(),
@@ -696,6 +703,42 @@ fn js_imported_bindings(
         }
     }
     bindings
+}
+
+/// The `use`d imports in `module` that resolve to a method-bearing type in their
+/// source module, keyed per resolved import as `prefix::last`.
+///
+/// A subset of [`js_imported_bindings`]: a `pub` struct/enum carrying an `impl`
+/// or `#[derive]` (see [`codegen_js::module_js_method_types`]). The JS emitter
+/// wires each such import into the importing module's `__m`, so methods dispatch
+/// on values that cross the `use` boundary — the per-module `__m` is otherwise
+/// empty for an imported type (#66). A plain `pub fn`/`pub const` import needs no
+/// wiring and is absent. Same per-resolved-import keying as [`js_imported_bindings`],
+/// rebuilt by the emitter from each `use`. Target-agnostic; the Lua backend ignores it.
+fn js_imported_method_types(
+    root: &Path,
+    loaded: &HashMap<PathBuf, LoadedModule>,
+    module: &ast::Module,
+) -> std::collections::HashSet<String> {
+    let mut method_types = std::collections::HashSet::new();
+    for item in &module.items {
+        let ast::ItemKind::Use(u) = &item.kind else {
+            continue;
+        };
+        let Some((last, _)) = u.path.split_last() else {
+            continue;
+        };
+        let Some(dep) = module_file(root, &u.path).map(|p| canonical_or(&p)) else {
+            continue;
+        };
+        let Some(source) = loaded.get(&dep) else {
+            continue;
+        };
+        if codegen_js::module_js_method_types(&source.module).contains(last) {
+            method_types.insert(u.path.join("::"));
+        }
+    }
+    method_types
 }
 
 /// The project-wide pool of every module's `pub` type definitions and their

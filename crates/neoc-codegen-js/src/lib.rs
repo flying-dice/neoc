@@ -170,16 +170,24 @@ pub struct EmitResult {
 /// name, so two modules sharing a final segment — one a binding, one type-only —
 /// get independent decisions. Pass an empty set when no module graph is resolved
 /// (single-file `transpile`), where no cross-module `use` can resolve anyway.
+///
+/// `imported_method_types` is the subset of `imported_bindings` whose source
+/// binding is a method-bearing type (see [`module_js_method_types`]). Each such
+/// `use` additionally wires the imported binding into this module's `__m` so
+/// methods dispatch on values that cross the `use` boundary (#66). Same keying;
+/// pass an empty set when no graph is resolved.
 #[must_use]
 pub fn emit<S: std::hash::BuildHasher>(
     module: &ast::Module,
     imported_bindings: &HashSet<String, S>,
+    imported_method_types: &HashSet<String, S>,
 ) -> EmitResult {
     let mut e = Emitter {
         enums: EnumIndex::build(module),
         tuple_structs: TupleStructIndex::build(module),
         traits: ast::trait_index(module),
         imported_bindings: imported_bindings.iter().cloned().collect(),
+        imported_method_types: imported_method_types.iter().cloned().collect(),
         ..Emitter::default()
     };
     e.emit_module(module);
@@ -199,8 +207,9 @@ pub fn emit<S: std::hash::BuildHasher>(
 /// importing module's `use` names to decide which imports to emit.
 #[must_use]
 pub fn module_js_bindings(module: &ast::Module) -> HashSet<String> {
-    let method_types = method_type_names(module);
-    let mut bindings = HashSet::new();
+    // A `pub` method-bearing type is a binding (its name is its method table); a
+    // `pub fn`/`pub const` adds one too. A data-only type or alias emits nothing.
+    let mut bindings = module_js_method_types(module);
     for item in &module.items {
         if item.vis != ast::Visibility::Public {
             continue;
@@ -212,6 +221,28 @@ pub fn module_js_bindings(module: &ast::Module) -> HashSet<String> {
             ast::ItemKind::Const(c) => {
                 bindings.insert(c.name.clone());
             }
+            _ => {}
+        }
+    }
+    bindings
+}
+
+/// The subset of [`module_js_bindings`] that are method-bearing types: a `pub`
+/// struct/enum carrying an `impl` block or `#[derive]`, emitted as
+/// `export const Name = (__m.Name = {})`. The exported binding *is* the type's
+/// method-table object, so an importing module wires it into its own `__m`
+/// (`__m.Name = Name`) to dispatch methods on values that cross the `use`
+/// boundary — the per-module `__m` would otherwise be empty for that type (#66).
+/// A `pub fn`/`pub const` binding needs no such wiring and is absent.
+#[must_use]
+pub fn module_js_method_types(module: &ast::Module) -> HashSet<String> {
+    let method_types = method_type_names(module);
+    let mut bindings = HashSet::new();
+    for item in &module.items {
+        if item.vis != ast::Visibility::Public {
+            continue;
+        }
+        match &item.kind {
             ast::ItemKind::Struct(s) if method_types.contains(s.name.as_str()) => {
                 bindings.insert(s.name.clone());
             }
@@ -299,6 +330,12 @@ pub(crate) struct Emitter {
     /// bare name keeps two modules' shared final segment independent. See
     /// [`emit`].
     imported_bindings: HashSet<String>,
+    /// The subset of [`imported_bindings`](Self::imported_bindings) that resolve
+    /// to a method-bearing type. A `use` whose key is here additionally wires the
+    /// imported binding into this module's `__m` (`__m.Type = Type`), so methods
+    /// dispatch on values that crossed the `use` boundary (#66). Same
+    /// `prefix::last` keying. See [`emit`].
+    imported_method_types: HashSet<String>,
 }
 
 /// The `Result`/`Option` prelude: variant constructors as plain tagged objects.
@@ -453,8 +490,9 @@ impl Emitter {
     }
 
     /// Register the `__m[name] = {}` method slot for a type that carries one. A
-    /// `pub` type also binds its name to the slot and exports it, so importing
-    /// modules can reach the type's methods through their own `__m`.
+    /// `pub` type also binds its name to the slot and exports it, so the exported
+    /// binding *is* the method-table object; an importing module wires it into
+    /// its own `__m` ([`emit_use`](Self::emit_use)) to reach the type's methods.
     fn ensure_method_slot(&mut self, name: &str, vis: ast::Visibility) {
         if self.type_has_methods(name) {
             self.uses_methods = true;
@@ -494,6 +532,18 @@ impl Emitter {
             None => last.clone(),
         };
         self.line(format!("import {{ {named} }} from \"./{module}.js\";"));
+        // A method-bearing type's exported binding *is* its method-table object
+        // (`export const T = (__m.T = {})`); this module's own `__m` lacks an
+        // entry, so dispatching on an imported value reads `undefined[name]` and
+        // throws (#66). Wire the binding in under the type's runtime tag — the
+        // *original* name baked into instances in their defining module, not a
+        // local alias — so `__call` resolves it. Constructing via an alias *here*
+        // would bake the alias as the tag instead: a separate, unhandled path.
+        if self.imported_method_types.contains(&u.path.join("::")) {
+            self.uses_methods = true;
+            let local = u.alias.as_deref().unwrap_or(last);
+            self.line(format!("__m.{last} = {local};"));
+        }
     }
 
     fn emit_const(&mut self, c: &ast::ConstDecl, vis: ast::Visibility) {
@@ -586,7 +636,7 @@ mod tests {
     /// Emit `module` with no resolved cross-module bindings — the common case
     /// for these single-module fixtures, which carry no cross-module `use`.
     fn emit_solo(module: &ast::Module) -> EmitResult {
-        emit(module, &HashSet::new())
+        emit(module, &HashSet::new(), &HashSet::new())
     }
 
     fn item(kind: ast::ItemKind, attrs: Vec<ast::Attribute>) -> ast::Item {
@@ -932,7 +982,7 @@ mod tests {
         };
         let bindings = HashSet::from(["a::b::c".to_string()]);
         assert_eq!(
-            emit(&module, &bindings).js,
+            emit(&module, &bindings, &HashSet::new()).js,
             "import { c } from \"./a/b.js\";\n"
         );
     }
@@ -952,8 +1002,65 @@ mod tests {
         };
         let bindings = HashSet::from(["a::b::c".to_string()]);
         assert_eq!(
-            emit(&module, &bindings).js,
+            emit(&module, &bindings, &HashSet::new()).js,
             "import { c as d } from \"./a/b.js\";\n"
+        );
+    }
+
+    /// A `use` of a method-bearing type wires the imported binding into this
+    /// module's `__m` under the type's runtime tag, so `__call` dispatches its
+    /// methods on values that crossed the `use` boundary (#66). The binding *is*
+    /// the defining module's method-table object, so the wiring is an alias, not
+    /// a fresh slot.
+    #[test]
+    fn use_of_method_type_wires_into_local_method_table() {
+        let module = ast::Module {
+            items: vec![item(
+                ast::ItemKind::Use(ast::UseDecl {
+                    path: vec!["lib".to_string(), "Thing".to_string()],
+                    alias: None,
+                }),
+                Vec::new(),
+            )],
+        };
+        let bindings = HashSet::from(["lib::Thing".to_string()]);
+        let method_types = HashSet::from(["lib::Thing".to_string()]);
+        assert_eq!(
+            emit(&module, &bindings, &method_types).js,
+            "const __m = {};\n\
+             const __call = (recv, name, ...args) => \
+             __m[recv.__struct ?? recv.__enum][name](recv, ...args);\n\
+             \n\
+             import { Thing } from \"./lib.js\";\n\
+             __m.Thing = Thing;\n"
+        );
+    }
+
+    /// Aliasing a method-bearing type wires under its *original* runtime tag —
+    /// the name baked into instances at construction in the defining module —
+    /// while the value is the local alias binding. `__call` keys on the tag, so
+    /// the slot name must be the original, not the alias.
+    #[test]
+    fn use_of_method_type_alias_wires_under_original_tag() {
+        let module = ast::Module {
+            items: vec![item(
+                ast::ItemKind::Use(ast::UseDecl {
+                    path: vec!["lib".to_string(), "Thing".to_string()],
+                    alias: Some("Widget".to_string()),
+                }),
+                Vec::new(),
+            )],
+        };
+        let bindings = HashSet::from(["lib::Thing".to_string()]);
+        let method_types = HashSet::from(["lib::Thing".to_string()]);
+        assert_eq!(
+            emit(&module, &bindings, &method_types).js,
+            "const __m = {};\n\
+             const __call = (recv, name, ...args) => \
+             __m[recv.__struct ?? recv.__enum][name](recv, ...args);\n\
+             \n\
+             import { Thing as Widget } from \"./lib.js\";\n\
+             __m.Thing = Widget;\n"
         );
     }
 
@@ -1193,6 +1300,89 @@ mod tests {
         assert_eq!(
             out.js,
             "function main() {\n  ({ __enum: \"Color\", __tag: \"Red\" });\n}\n"
+        );
+    }
+
+    /// `module_js_method_types` reports only the `pub` types carrying a method
+    /// slot — the subset of [`module_js_bindings`] an importer must wire into its
+    /// `__m`. A `pub fn`/`pub const`, a data-only `pub` struct, and a private
+    /// method-bearing type are all excluded; a method-bearing `pub` enum is in.
+    #[test]
+    fn module_js_method_types_reports_only_method_bearing_types() {
+        let mut pub_fn = fn_item("f", int("1"));
+        pub_fn.vis = ast::Visibility::Public;
+
+        let mut pub_const = item(
+            ast::ItemKind::Const(ast::ConstDecl {
+                name: "MAX".to_string(),
+                ty: ast::Type::Unit,
+                value: int("10"),
+            }),
+            Vec::new(),
+        );
+        pub_const.vis = ast::Visibility::Public;
+
+        // Data-only `pub` struct: no slot, not a method type.
+        let mut data_struct = item(
+            ast::ItemKind::Struct(ast::StructDecl {
+                name: "Plain".to_string(),
+                generics: Vec::new(),
+                body: ast::StructBody::Named(vec![field("x")]),
+            }),
+            Vec::new(),
+        );
+        data_struct.vis = ast::Visibility::Public;
+
+        // `pub` struct with a slot via `#[derive]` → method type.
+        let mut method_struct = item(
+            ast::ItemKind::Struct(ast::StructDecl {
+                name: "Point".to_string(),
+                generics: Vec::new(),
+                body: ast::StructBody::Named(vec![field("x")]),
+            }),
+            vec![derive_attr("Debug")],
+        );
+        method_struct.vis = ast::Visibility::Public;
+
+        // `pub` enum with a slot → method type (the `__enum` dispatch arm).
+        let mut method_enum = item(
+            ast::ItemKind::Enum(ast::EnumDecl {
+                name: "Color".to_string(),
+                generics: Vec::new(),
+                variants: vec![ast::Variant {
+                    attrs: Vec::new(),
+                    name: "Red".to_string(),
+                    name_span: ast::Span::default(),
+                    body: ast::VariantBody::Unit,
+                }],
+            }),
+            vec![derive_attr("Debug")],
+        );
+        method_enum.vis = ast::Visibility::Public;
+
+        // A method-bearing but *private* struct: erased in JS, never importable.
+        let private_method_struct = item(
+            ast::ItemKind::Struct(ast::StructDecl {
+                name: "Secret".to_string(),
+                generics: Vec::new(),
+                body: ast::StructBody::Named(vec![field("x")]),
+            }),
+            vec![derive_attr("Debug")],
+        );
+
+        let module = ast::Module {
+            items: vec![
+                pub_fn,
+                pub_const,
+                data_struct,
+                method_struct,
+                method_enum,
+                private_method_struct,
+            ],
+        };
+        assert_eq!(
+            module_js_method_types(&module),
+            HashSet::from(["Point".to_string(), "Color".to_string()])
         );
     }
 }
