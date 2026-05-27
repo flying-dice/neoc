@@ -2,6 +2,8 @@
 //! `Diagnostic`s, both single-file and project-resolved. Free of the server
 //! transport, so it is unit-testable without a running server.
 
+use std::path::PathBuf;
+
 use tower_lsp::lsp_types::{
     Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, Location, Position, Range, Url,
 };
@@ -103,6 +105,41 @@ pub fn diagnose_in_project(index: &WorkspaceIndex, uri: &Url, source: &str) -> V
             .collect();
     diagnostics.extend(lints::lints(source));
     diagnostics
+}
+
+/// Project-aware diagnostics for several documents at once — the batch form of
+/// [`diagnose_in_project`], for re-diagnosing a changed module and all its
+/// importers. The project is parsed once and shared across every focus
+/// ([`neoc_compiler::check_modules_in_project`]), so the cost is one universe
+/// parse rather than one per file. Each result is keyed by its `Url`; a `uri`
+/// with no file path (an untitled buffer) is skipped.
+#[must_use]
+pub fn diagnose_many_in_project(
+    index: &WorkspaceIndex,
+    uris: &[Url],
+) -> Vec<(Url, Vec<Diagnostic>)> {
+    let sources = index.project_sources();
+    // Pair each diagnosable uri with its file-path focus, preserving the uri to
+    // map results and label locations back.
+    let foci: Vec<(Url, PathBuf)> = uris
+        .iter()
+        .filter_map(|uri| uri.to_file_path().ok().map(|path| (uri.clone(), path)))
+        .collect();
+    let focus_paths: Vec<PathBuf> = foci.iter().map(|(_, path)| path.clone()).collect();
+    let mut results = neoc_compiler::check_modules_in_project(index.root(), &sources, &focus_paths);
+    foci.into_iter()
+        .map(|(uri, path)| {
+            let source = sources.get(&path).map_or("", String::as_str);
+            let mut diagnostics: Vec<Diagnostic> = results
+                .remove(&path)
+                .unwrap_or_default()
+                .iter()
+                .map(|d| to_lsp(source, Some(&uri), d))
+                .collect();
+            diagnostics.extend(lints::lints(source));
+            (uri, diagnostics)
+        })
+        .collect()
 }
 
 #[cfg(test)]

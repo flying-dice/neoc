@@ -266,6 +266,9 @@ struct LoadedModule {
     source: String,
     module: ast::Module,
     table: types::SymbolTable,
+    /// The module's own parse diagnostics, kept so a focus check reports them
+    /// without re-parsing.
+    parse_diagnostics: Vec<parser::Diagnostic>,
 }
 
 /// Compiles a multi-file neoc project rooted at `entry` to `target`.
@@ -344,6 +347,7 @@ pub fn transpile_project(entry: &Path, target: Target) -> std::io::Result<Projec
                 source,
                 module: parsed.module,
                 table,
+                parse_diagnostics: parsed.diagnostics,
             },
         );
     }
@@ -392,8 +396,44 @@ pub fn check_module_in_project<H: std::hash::BuildHasher>(
     sources: &HashMap<PathBuf, String, H>,
     focus: &Path,
 ) -> Vec<Diagnostic> {
-    // Parse + collect every in-memory module (no disk I/O); keys are
-    // canonicalised so the focus lookup matches regardless of path spelling.
+    let loaded = load_in_memory(sources);
+    let universe = type_universe(&loaded);
+    focus_diagnostics(root, &loaded, &universe, &canonical_or(focus))
+}
+
+/// Diagnoses several modules against one shared in-memory project, for the
+/// editor — the batch form of [`check_module_in_project`].
+///
+/// `sources` maps each module's file path to its current text; `foci` are the
+/// modules to diagnose (each must appear in `sources`). The project is parsed
+/// and collected **once**, then every focus is checked against that shared set,
+/// so re-diagnosing a module and all its importers after an edit costs one
+/// universe parse rather than one per file. Returns each focus's diagnostics
+/// keyed by the path passed in `foci`; a focus absent from `sources` maps to an
+/// empty vector. `root` is the project root `use` paths resolve against.
+#[must_use]
+pub fn check_modules_in_project<H: std::hash::BuildHasher>(
+    root: &Path,
+    sources: &HashMap<PathBuf, String, H>,
+    foci: &[PathBuf],
+) -> HashMap<PathBuf, Vec<Diagnostic>> {
+    let loaded = load_in_memory(sources);
+    let universe = type_universe(&loaded);
+    foci.iter()
+        .map(|focus| {
+            (
+                focus.clone(),
+                focus_diagnostics(root, &loaded, &universe, &canonical_or(focus)),
+            )
+        })
+        .collect()
+}
+
+/// Parses and collects every in-memory module (no disk I/O), keyed by a
+/// canonicalised path so a focus lookup matches regardless of path spelling.
+fn load_in_memory<H: std::hash::BuildHasher>(
+    sources: &HashMap<PathBuf, String, H>,
+) -> HashMap<PathBuf, LoadedModule> {
     let mut loaded: HashMap<PathBuf, LoadedModule> = HashMap::new();
     for (path, source) in sources {
         let key = canonical_or(path);
@@ -406,21 +446,31 @@ pub fn check_module_in_project<H: std::hash::BuildHasher>(
                 source: source.clone(),
                 module: parsed.module,
                 table,
+                parse_diagnostics: parsed.diagnostics,
             },
         );
     }
-    let universe = type_universe(&loaded);
-    let focus = canonical_or(focus);
-    let Some(me) = loaded.get(&focus) else {
+    loaded
+}
+
+/// The diagnostics attributed to one focus module within an already-loaded
+/// project: its stored parse diagnostics, its `use`-resolution and visibility
+/// errors, and its type errors. `focus` is the canonicalised path; a focus not
+/// in `loaded` yields an empty vector.
+fn focus_diagnostics(
+    root: &Path,
+    loaded: &HashMap<PathBuf, LoadedModule>,
+    universe: &types::SymbolTable,
+    focus: &Path,
+) -> Vec<Diagnostic> {
+    let Some(me) = loaded.get(focus) else {
         return Vec::new();
     };
-
-    let mut out: Vec<Diagnostic> = Vec::new();
-    // Parse diagnostics for the focus module.
-    let parsed = parser::parse(&me.source);
-    for d in &parsed.diagnostics {
-        out.push(Diagnostic::parse(d.message.clone(), d.start, d.end));
-    }
+    let mut out: Vec<Diagnostic> = me
+        .parse_diagnostics
+        .iter()
+        .map(|d| Diagnostic::parse(d.message.clone(), d.start, d.end))
+        .collect();
     // Resolve the focus module's `use` imports against the project, then check
     // its bodies. `resolve_use` reports against the importing (focus) module,
     // so every diagnostic it pushes belongs to the focus.
@@ -428,11 +478,11 @@ pub fn check_module_in_project<H: std::hash::BuildHasher>(
     let mut use_diags: Vec<ProjectDiagnostic> = Vec::new();
     for item in &me.module.items {
         if let ast::ItemKind::Use(u) = &item.kind {
-            resolve_use(root, &loaded, item, u, &mut table, &mut use_diags, &focus);
+            resolve_use(root, loaded, item, u, &mut table, &mut use_diags, focus);
         }
     }
     out.extend(use_diags.into_iter().map(|pd| pd.diagnostic));
-    table.import_referenced_types(&universe);
+    table.import_referenced_types(universe);
     let checked = types::check_with_table(&me.module, &table);
     for d in &checked.diagnostics {
         out.push(Diagnostic::typed_from(d));

@@ -51,7 +51,7 @@ pub use crate::workspace::{DeclLoc, WorkspaceIndex};
 pub use call_hierarchy::{incoming_calls, outgoing_calls};
 pub use code_action::{organize_imports, unused_imports};
 pub use completion::{completions, resolve as resolve_completion};
-pub use diagnostics::{diagnose, diagnose_in_project};
+pub use diagnostics::{diagnose, diagnose_in_project, diagnose_many_in_project};
 pub use folding::folding_ranges;
 pub use format::formatting;
 pub use goto::{goto_definition, goto_implementation, goto_type_definition, name_at};
@@ -388,15 +388,10 @@ impl Backend {
             let Ok(index) = self.index.lock() else {
                 return;
             };
-            index
-                .dependents_closure(changed)
-                .into_iter()
-                .filter_map(|uri| {
-                    let src = index.document_text(&uri)?.to_string();
-                    let diags = diagnose_in_project(&index, &uri, &src);
-                    Some((uri, diags))
-                })
-                .collect()
+            // Diagnose the changed module and every transitive importer in one
+            // batch, so the shared project is parsed once rather than per file.
+            let affected = index.dependents_closure(changed);
+            diagnose_many_in_project(&index, &affected)
         };
         for (uri, diags) in jobs {
             self.client.publish_diagnostics(uri, diags, None).await;
@@ -1190,6 +1185,52 @@ mod tests {
         assert!(
             diags.iter().any(|d| d.message.contains("expects `string`")),
             "a genuine type error still surfaces: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn batch_diagnose_matches_per_file() {
+        let root = Path::new("/proj");
+        let f = |rel: &str| Url::from_file_path(root.join(rel)).unwrap();
+        let mut index = WorkspaceIndex::new(root);
+        index.set_document(
+            f("util.neoc"),
+            1,
+            "pub fn add(a: number, b: number) -> number { a + b }\n".to_string(),
+        );
+        index.set_document(
+            f("ok.neoc"),
+            1,
+            "use util::add;\nfn go() -> number { add(1, 2) }\n".to_string(),
+        );
+        index.set_document(
+            f("bad.neoc"),
+            1,
+            "use util::add;\nfn go() -> string { add(1, 2) }\n".to_string(),
+        );
+        let uris = vec![f("util.neoc"), f("ok.neoc"), f("bad.neoc")];
+        let batch = diagnose_many_in_project(&index, &uris);
+        assert_eq!(batch.len(), 3);
+        // The batch result for each file equals the per-file project diagnose.
+        for uri in &uris {
+            let src = index.document_text(uri).unwrap().to_string();
+            let per_file = diagnose_in_project(&index, uri, &src);
+            let batched = batch
+                .iter()
+                .find(|(u, _)| u == uri)
+                .map(|(_, d)| d)
+                .unwrap();
+            assert_eq!(batched, &per_file, "batch vs per-file mismatch for {uri}");
+        }
+        // The bad importer carries the cross-module type error; the others clean.
+        let bad = batch
+            .iter()
+            .find(|(u, _)| *u == f("bad.neoc"))
+            .map(|(_, d)| d)
+            .unwrap();
+        assert!(
+            bad.iter().any(|d| d.message.contains("expects `string`")),
+            "{bad:?}"
         );
     }
 
