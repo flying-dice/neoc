@@ -6,10 +6,14 @@
 //! inlay hints (parameter + type), semantic tokens, call hierarchy, code actions
 //! (organize imports, remove unused import), formatting (via `neoc-fmt`),
 //! signature help, rename, hover, and completion (with lazy per-item resolve).
-//! Diagnostics come from [`neoc_compiler::transpile`]; syntax errors carry
-//! parser byte ranges and type errors carry AST-node spans, so both land on the
-//! offending source. A few unspanned emit-stage checks still fall back to the
-//! document's first line. The IDE features are built on the tree-sitter CST
+//! Diagnostics are project-wide: each file is checked against the workspace's
+//! other modules ([`neoc_compiler::check_module_in_project`]), so a non-entry
+//! module's `use` imports resolve instead of reporting phantom errors. An edit
+//! that moves a module's exported surface re-diagnoses its importers; closed
+//! but on-disk modules are diagnosed too. Syntax errors carry parser byte
+//! ranges and type errors carry AST-node spans, so both land on the offending
+//! source. (An untitled buffer with no project falls back to single-file
+//! [`diagnose`].) The IDE features are built on the tree-sitter CST
 //! (`neoc-grammar`) for position→node mapping, the `neoc-types` symbol table for
 //! declaration signatures, and `neoc_types::expression_types` for inferred types
 //! by position — so each feature handler is a pure, unit-tested function over
