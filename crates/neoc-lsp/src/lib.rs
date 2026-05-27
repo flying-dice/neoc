@@ -437,6 +437,23 @@ impl Backend {
         self.client.publish_diagnostics(uri, diags, version).await;
     }
 
+    /// Publishes one file's project-resolved diagnostics, reading its text from
+    /// the index. A no-op if the file is not indexed.
+    async fn publish_from_index(&self, uri: &Url) {
+        let diags = {
+            let Ok(index) = self.index.lock() else {
+                return;
+            };
+            let Some(src) = index.document_text(uri).map(str::to_string) else {
+                return;
+            };
+            diagnose_in_project(&index, uri, &src)
+        };
+        self.client
+            .publish_diagnostics(uri.clone(), diags, None)
+            .await;
+    }
+
     /// Re-publishes diagnostics for `changed` and every module that
     /// transitively imports it — an exported-surface edit can introduce or fix
     /// errors in dependents. All diagnostics are computed under the index lock
@@ -552,7 +569,33 @@ impl LanguageServer for Backend {
             .map(|docs| docs.keys().cloned().collect())
             .unwrap_or_default();
         let index = Arc::clone(&self.index);
-        tokio::task::spawn_blocking(move || discover_workspace(&index, &open));
+        let client = self.client.clone();
+        tokio::spawn(async move {
+            // Discover (blocking I/O), then publish project-wide diagnostics for
+            // every module — closed-but-on-disk files included, so a project's
+            // errors surface without each file being opened first.
+            let discover_index = Arc::clone(&index);
+            let _ = tokio::task::spawn_blocking(move || {
+                discover_workspace(&discover_index, &open);
+            })
+            .await;
+            let jobs: Vec<(Url, Vec<Diagnostic>)> = match index.lock() {
+                Ok(guard) => guard
+                    .document_uris()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .filter_map(|uri| {
+                        let src = guard.document_text(&uri)?.to_string();
+                        Some((uri.clone(), diagnose_in_project(&guard, &uri, &src)))
+                    })
+                    .collect(),
+                Err(_) => Vec::new(),
+            };
+            for (uri, diags) in jobs {
+                client.publish_diagnostics(uri, diags, None).await;
+            }
+        });
 
         // Watch `.neoc` files on disk so an edit made outside the editor (a
         // branch switch, a generated file) re-indexes without the file being
@@ -591,21 +634,36 @@ impl LanguageServer for Backend {
                 continue;
             }
             if change.typ == FileChangeType::DELETED {
-                if let Ok(mut index) = self.index.lock() {
-                    index.remove_document(&change.uri);
+                // Capture the importers before dropping the file, clear the
+                // deleted file's diagnostics, then re-diagnose its former
+                // importers — they now have a real `unresolved module` error.
+                let importers: Vec<Url> = match self.index.lock() {
+                    Ok(mut index) => {
+                        let mut a = index.dependents_closure(&change.uri);
+                        index.remove_document(&change.uri);
+                        a.retain(|u| *u != change.uri);
+                        a
+                    }
+                    Err(_) => Vec::new(),
+                };
+                self.client
+                    .publish_diagnostics(change.uri, Vec::new(), None)
+                    .await;
+                for uri in importers {
+                    self.publish_from_index(&uri).await;
                 }
                 continue;
             }
-            // Created or changed on disk: re-read and re-index at version 0.
+            // Created or changed on disk: re-read, re-index at version 0, and
+            // re-diagnose it plus everything that imports it.
             let Ok(path) = change.uri.to_file_path() else {
                 continue;
             };
             let Ok(text) = std::fs::read_to_string(&path) else {
                 continue;
             };
-            if let Ok(mut index) = self.index.lock() {
-                index.set_document(change.uri, 0, text);
-            }
+            self.index_document(&change.uri, 0, &text);
+            self.publish_affected(&change.uri).await;
         }
     }
 
@@ -638,17 +696,26 @@ impl LanguageServer for Backend {
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
+        let uri = params.text_document.uri;
         if let Ok(mut docs) = self.documents.lock() {
-            docs.remove(&params.text_document.uri);
+            docs.remove(&uri);
         }
-        // The open buffer is gone; drop it from the index too. (Disk fallback
-        // for closed-but-on-disk files arrives with background discovery.)
+        // The buffer is gone, but the file is still part of the project. Re-seed
+        // the index from disk (version 0) so it keeps reporting; only when the
+        // file no longer exists on disk is it dropped and its diagnostics
+        // cleared. This makes close self-correcting rather than trusting the
+        // ordering of close-vs-delete events.
+        if let Ok(path) = uri.to_file_path() {
+            if let Ok(disk) = std::fs::read_to_string(&path) {
+                self.index_document(&uri, 0, &disk);
+                self.publish(uri, &disk, None).await;
+                return;
+            }
+        }
         if let Ok(mut index) = self.index.lock() {
-            index.remove_document(&params.text_document.uri);
+            index.remove_document(&uri);
         }
-        self.client
-            .publish_diagnostics(params.text_document.uri, Vec::new(), None)
-            .await;
+        self.client.publish_diagnostics(uri, Vec::new(), None).await;
     }
 
     async fn document_symbol(
@@ -1209,6 +1276,25 @@ mod tests {
         assert!(
             diags.iter().any(|d| d.message.contains("expects `string`")),
             "a genuine type error still surfaces: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn a_closed_on_disk_module_is_checked_in_the_project() {
+        // A module seeded from disk (version 0, never opened) is still part of
+        // the project and reports its own errors — the whole-project publish
+        // pass focuses every indexed file, not just open ones.
+        let root = Path::new("/proj");
+        let f = |rel: &str| Url::from_file_path(root.join(rel)).unwrap();
+        let mut index = WorkspaceIndex::new(root);
+        let util = "pub fn bad() -> number {\n  \"x\"\n}\n";
+        index.set_document(f("util.neoc"), 0, util.to_string());
+        let diags = diagnose_in_project(&index, &f("util.neoc"), util);
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.severity == Some(DiagnosticSeverity::ERROR)),
+            "a closed module's type error still surfaces: {diags:?}"
         );
     }
 
