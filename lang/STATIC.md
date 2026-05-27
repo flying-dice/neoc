@@ -306,7 +306,7 @@ A function is **host-reachable** iff it is `pub` (lowered to a binding shared wi
 ### 10.5 Depth and limits
 
 - **Deep.** A drift check recurses through the full declared shape — nested structs, list elements, `Option`/`Result` payloads, enum-variant fields — so divergence at any depth is caught.
-- **Opaque `ext type`** (§5) has no shape neoc can inspect; its check is presence only, and recursion stops at the opaque boundary.
+- **Opaque `ext type`** (§5) has no shape neoc can inspect; its validator is the identity — it returns the value unexamined (`DYNAMIC.md` §9.1) — and recursion stops at the opaque boundary.
 - **`fn(…) -> _`** is checked as callable; a signature is not runtime-observable.
 - **Bare type parameter** with no concrete witness at the position is checked only to the depth its static type reveals; the deep check lands where the parameter is instantiated to a concrete type — itself a `DRIFT-CONSTRUCT` or `DRIFT-INGRESS` position.
 

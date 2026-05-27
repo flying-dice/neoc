@@ -27,8 +27,9 @@
 //! ## Cross-module limit
 //!
 //! Validators are emitted for the types *declared in this module*. A field or
-//! parameter of a type imported by `use` degrades to a presence-only identity
-//! check rather than a dangling reference to a validator the other module owns —
+//! parameter of a type imported by `use` degrades to the identity check
+//! (`__check_any`) rather than a dangling reference to a validator the other
+//! module owns —
 //! the deep cross-module check lands when that value is constructed in its home
 //! module. Mirrors the per-module `__traits` tag (`neoc_ast::trait_index`).
 
@@ -77,7 +78,7 @@ end"
                 "local function __check_fn(v, path) if type(v) ~= \"function\" then __type_error(path, \"fn\", v) end return v end"
             }
             // Opaque `ext type`, bare type parameter, or imported type: no
-            // inspectable shape, so the check is presence-only (`STATIC.md` §10.5).
+            // inspectable shape, so the validator is the identity (`STATIC.md` §10.5).
             Helper::Any => "local function __check_any(v) return v end",
             Helper::List => {
                 "\
