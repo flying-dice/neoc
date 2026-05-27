@@ -359,6 +359,12 @@ pub fn derive_names(attrs: &[Attribute]) -> Vec<String> {
 /// B` means a type implementing `A` also lists `B`. Types implementing no trait
 /// are absent. The sets are sorted ([`BTreeSet`]) so codegen emits them
 /// deterministically.
+///
+/// The supertrait closure is within this module: the `trait A: B` declarations
+/// it can see. When `A` is implemented here but declared in another module
+/// (with its `: B`), only `A` is recorded — closing that gap needs the
+/// project-wide trait graph, which the runtime trait-enforcement work (#54)
+/// must supply at its check site rather than relying on this per-module tag.
 #[must_use]
 pub fn trait_index(
     module: &Module,
