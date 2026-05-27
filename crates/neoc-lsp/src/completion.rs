@@ -2,8 +2,9 @@
 //!
 //! Two modes, chosen from the CST context just before the cursor:
 //!
-//! - **Member access** after `.` — the fields of the receiver's struct type,
-//!   when the receiver type is known.
+//! - **Member access** after `.` — the fields and methods of the receiver's
+//!   type, found from the type inferred for the receiver expression (so a
+//!   parameter or local receiver resolves), falling back to the name.
 //! - **Path access** after `Type::` — the variants of that enum.
 //! - **Top-level** otherwise — every declared item name plus the neoc
 //!   keywords.
@@ -29,7 +30,7 @@ pub fn completions(source: &str, position: tower_lsp::lsp_types::Position) -> Ve
     if let Some(items) = path_completions(source, byte, &table) {
         return items;
     }
-    if let Some(items) = field_completions(source, byte, &table) {
+    if let Some(items) = member_completions(source, byte, &table) {
         return items;
     }
     top_level_completions(&table)
@@ -78,49 +79,67 @@ fn path_completions(source: &str, byte: usize, table: &SymbolTable) -> Option<Ve
     )
 }
 
-/// After `receiver.`, the fields of the receiver's struct type.
-fn field_completions(
+/// After `receiver.`, the members of the receiver's type — its named fields
+/// (for a struct) and every method on it (inherent, trait-impl, derived).
+fn member_completions(
     source: &str,
     byte: usize,
     table: &SymbolTable,
 ) -> Option<Vec<CompletionItem>> {
     let prefix = source.get(..byte)?;
-    let trimmed = prefix.trim_end();
-    let receiver = trimmed.strip_suffix('.')?;
-    let recv_name = receiver
+    let before_dot = prefix.trim_end().strip_suffix('.')?.trim_end();
+    let recv_name = before_dot
         .rsplit(|c: char| !c.is_alphanumeric() && c != '_')
         .next()?;
     if recv_name.is_empty() {
         return None;
     }
-    // Resolve the receiver name to a struct type: either a const/binding whose
-    // type is a named struct, or the struct name itself.
-    let struct_name = resolve_struct_name(table, recv_name)?;
-    let TypeDef::Struct(s) = table.types.get(&struct_name)? else {
-        return None;
-    };
-    let StructFields::Named(fields) = &s.fields else {
-        return None;
-    };
-    Some(
-        fields
-            .iter()
-            .map(|(name, _)| simple_item(name, CompletionItemKind::FIELD))
-            .collect(),
-    )
+    let type_name = receiver_type(source, before_dot.len(), recv_name, table)?;
+    let mut out = Vec::new();
+    if let Some(TypeDef::Struct(s)) = table.types.get(&type_name)
+        && let StructFields::Named(fields) = &s.fields
+    {
+        for (name, _) in fields {
+            out.push(simple_item(name, CompletionItemKind::FIELD));
+        }
+    }
+    for (ty, method) in table.methods.keys() {
+        if *ty == type_name {
+            out.push(simple_item(method, CompletionItemKind::METHOD));
+        }
+    }
+    if out.is_empty() { None } else { Some(out) }
 }
 
-/// The struct type a receiver name denotes, if determinable from the symbol
-/// table: the name is itself a struct, or it is a value whose type is a named
-/// struct.
-fn resolve_struct_name(table: &SymbolTable, name: &str) -> Option<String> {
-    if matches!(table.types.get(name), Some(TypeDef::Struct(_))) {
-        return Some(name.to_string());
-    }
-    if let Some(neoc_types::Ty::Named { name: ty, .. }) = table.values.get(name)
-        && matches!(table.types.get(ty), Some(TypeDef::Struct(_)))
+/// The named type of the receiver: first the type inferred for the receiver
+/// expression ending at `recv_end` (handles parameters, locals, and chained
+/// access), falling back to the receiver name itself naming a type or a
+/// top-level value of a named type.
+fn receiver_type(
+    source: &str,
+    recv_end: usize,
+    recv_name: &str,
+    table: &SymbolTable,
+) -> Option<String> {
+    // The receiver's last byte is `recv_end - 1`; find the narrowest expression
+    // type covering it, written to avoid the underflow-prone subtraction.
+    let inferred = neoc_types::expression_types(&neoc_parser::parse(source).module)
+        .into_iter()
+        .filter(|t| t.start < recv_end && recv_end <= t.end)
+        .min_by_key(|t| t.end - t.start);
+    if let Some(t) = inferred
+        && let neoc_types::Ty::Named { name, .. } = t.ty
+        && table.types.contains_key(&name)
     {
-        return Some(ty.clone());
+        return Some(name);
+    }
+    if table.types.contains_key(recv_name) {
+        return Some(recv_name.to_string());
+    }
+    if let Some(neoc_types::Ty::Named { name, .. }) = table.values.get(recv_name)
+        && table.types.contains_key(name)
+    {
+        return Some(name.clone());
     }
     None
 }
@@ -200,6 +219,20 @@ mod tests {
         let items = completions(src, byte_to_position(src, byte));
         let ls = labels(&items);
         assert_eq!(ls, vec!["x", "y"]);
+    }
+
+    #[test]
+    fn member_completion_offers_fields_and_methods_on_a_parameter() {
+        // The receiver is a parameter `c: C` — the old name-only resolver could
+        // not type it. Members include the field `n` and the method `get`.
+        let src = "struct C { n: number }\nimpl C {\n  fn get(self) -> number { self.n }\n}\nfn m(c: C) -> number { c. }\n";
+        let byte = src.rfind("c.").unwrap() + 2;
+        let ls = labels(&completions(src, byte_to_position(src, byte)));
+        assert!(ls.iter().any(|l| l == "n"), "field `n` missing: {ls:?}");
+        assert!(
+            ls.iter().any(|l| l == "get"),
+            "method `get` missing: {ls:?}"
+        );
     }
 
     #[test]
