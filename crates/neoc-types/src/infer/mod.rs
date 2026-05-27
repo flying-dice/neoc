@@ -1366,30 +1366,34 @@ impl<'a> Checker<'a> {
     /// (neoc has no implicit downcast). It recurses through lists, function
     /// types, and nominal type arguments, so `[Drawable]` accepts `[Circle]`.
     fn assignable(&self, expected: &Ty, actual: &Ty) -> bool {
-        match (expected, actual) {
-            (Ty::Unknown | Ty::Param(_), _) | (_, Ty::Unknown | Ty::Param(_)) => true,
-            (Ty::Named { name, args }, actual) if args.is_empty() && self.is_trait(name) => {
-                match actual {
-                    // A trait value flows into the same trait or a supertrait.
-                    Ty::Named { name: a, .. } if self.is_trait(a) => {
-                        self.trait_chain_includes(a, name)
-                    }
-                    _ => self.type_satisfies(actual, name),
-                }
-            }
-            (Ty::List(a), Ty::List(b)) => self.assignable(a, b),
-            (Ty::Fn(pa, ra), Ty::Fn(pb, rb)) => {
-                pa.len() == pb.len()
-                    && pa.iter().zip(pb).all(|(x, y)| self.assignable(x, y))
-                    && self.assignable(ra, rb)
-            }
-            (Ty::Named { name: na, args: aa }, Ty::Named { name: nb, args: ab }) => {
-                na == nb
-                    && aa.len() == ab.len()
-                    && aa.iter().zip(ab).all(|(x, y)| self.assignable(x, y))
-            }
-            _ => expected.compatible(actual),
+        expected.relate(actual, &|expected, actual| {
+            self.existential(expected, actual)
+        })
+    }
+
+    /// The trait-as-type existential rule, as a [`Ty::relate`] hook. When
+    /// `expected` is a trait name used directly as a type, any concrete type
+    /// that implements it — or the same trait or a subtrait — is admissible
+    /// (`STATIC.md` §3.4), directional: an implementor flows into the trait,
+    /// never the reverse. Returns `None` (defer to the structural relation)
+    /// when `expected` is not a trait-as-type, or when `actual` is a wildcard
+    /// (`Unknown`/`Param`), which `relate` accepts unconditionally — so a value
+    /// of unbounded parameter type is still passable where a trait is expected.
+    fn existential(&self, expected: &Ty, actual: &Ty) -> Option<bool> {
+        let Ty::Named { name, args } = expected else {
+            return None;
+        };
+        if !args.is_empty() || !self.is_trait(name) {
+            return None;
         }
+        if matches!(actual, Ty::Unknown | Ty::Param(_)) {
+            return None;
+        }
+        Some(match actual {
+            // A trait value flows into the same trait or a supertrait.
+            Ty::Named { name: a, .. } if self.is_trait(a) => self.trait_chain_includes(a, name),
+            _ => self.type_satisfies(actual, name),
+        })
     }
 
     /// Whether `name` names a trait in the type namespace.

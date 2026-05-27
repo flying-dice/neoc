@@ -122,3 +122,21 @@ fn scene() -> number {\n  let items: [Drawable] = [Circle, Square];\n  1\n}\n";
         "two shared traits is ambiguous without a per-element choice: {d:?}"
     );
 }
+
+#[test]
+fn an_unbounded_parameter_is_passable_where_a_trait_is_expected() {
+    // A value of unbounded parameter type flows into a trait-typed slot: the
+    // checker treats parameters permissively (it does not solve bounds here),
+    // so this is accepted rather than rejected. Guards the structural relation's
+    // wildcard precedence — the existential check must not fire for a `Param`
+    // actual (regression for the assignable/compatible unification).
+    let src = format!(
+        "{SETUP}fn render(x: Drawable) -> string {{\n  x.draw()\n}}\n\
+         fn forward<T>(t: T) -> string {{\n  render(t)\n}}\n"
+    );
+    assert!(
+        diagnostics(&src).is_empty(),
+        "an unbounded `T` is passable where `Drawable` is expected: {:?}",
+        diagnostics(&src)
+    );
+}

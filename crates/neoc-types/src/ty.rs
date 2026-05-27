@@ -114,6 +114,24 @@ impl Ty {
     /// nominal type arguments.
     #[must_use]
     pub fn compatible(&self, other: &Ty) -> bool {
+        self.relate(other, &|_, _| None)
+    }
+
+    /// The single structural relation between two types, parameterised by a
+    /// per-node `hook`. At each node the hook is consulted first: `Some(result)`
+    /// overrides the structural comparison there, `None` falls through to it.
+    /// The structural comparison treats `Unknown` and `Param` as wildcards on
+    /// either side and otherwise requires equal shape, recursing through lists,
+    /// function types, and nominal type arguments — carrying the same hook down,
+    /// so the override applies at every depth.
+    ///
+    /// [`Ty::compatible`] is this with no hook; the checker's `assignable`
+    /// supplies a hook for the trait-as-type existential. One walker, so the two
+    /// relations cannot drift apart.
+    pub(crate) fn relate(&self, other: &Ty, hook: &impl Fn(&Ty, &Ty) -> Option<bool>) -> bool {
+        if let Some(result) = hook(self, other) {
+            return result;
+        }
         match (self, other) {
             (Ty::Unknown | Ty::Param(_), _)
             | (_, Ty::Unknown | Ty::Param(_))
@@ -121,14 +139,16 @@ impl Ty {
             | (Ty::Str, Ty::Str)
             | (Ty::Bool, Ty::Bool)
             | (Ty::Unit, Ty::Unit) => true,
-            (Ty::List(a), Ty::List(b)) => a.compatible(b),
+            (Ty::List(a), Ty::List(b)) => a.relate(b, hook),
             (Ty::Fn(pa, ra), Ty::Fn(pb, rb)) => {
                 pa.len() == pb.len()
-                    && pa.iter().zip(pb).all(|(x, y)| x.compatible(y))
-                    && ra.compatible(rb)
+                    && pa.iter().zip(pb).all(|(x, y)| x.relate(y, hook))
+                    && ra.relate(rb, hook)
             }
             (Ty::Named { name: na, args: aa }, Ty::Named { name: nb, args: ab }) => {
-                na == nb && aa.len() == ab.len() && aa.iter().zip(ab).all(|(x, y)| x.compatible(y))
+                na == nb
+                    && aa.len() == ab.len()
+                    && aa.iter().zip(ab).all(|(x, y)| x.relate(y, hook))
             }
             _ => false,
         }
