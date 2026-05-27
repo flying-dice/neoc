@@ -353,7 +353,7 @@ Combinators for the structural types take the element validator as an argument, 
 -- ({name=…}: n≥1 but v[1]==nil) and a holed table ({[1],[3]}: v[2]==nil) are
 -- rejected rather than read as a short or empty list off #v.
 local function __check_list(v, path, elem)
-  if type(v) ~= "table" or v._struct or v._enum then __type_error(path, "list", v) end
+  if type(v) ~= "table" or v.__struct or v.__enum then __type_error(path, "list", v) end
   local n = 0
   for _ in pairs(v) do n = n + 1 end
   for i = 1, n do
@@ -365,17 +365,17 @@ end
 
 -- Option<τ>
 local function __check_option(v, path, some)
-  if type(v) ~= "table" or v._enum ~= "Option" then __type_error(path, "Option", v) end
-  if v.tag == "Some" then some(v[1], path .. ".0")
-  elseif v.tag ~= "None" then __type_error(path, "Option", v) end
+  if type(v) ~= "table" or v.__enum ~= "Option" then __type_error(path, "Option", v) end
+  if v.__tag == "Some" then some(v[1], path .. ".0")
+  elseif v.__tag ~= "None" then __type_error(path, "Option", v) end
   return v
 end
 
 -- Result<τ, ε>
 local function __check_result(v, path, ok, err)
-  if type(v) ~= "table" or v._enum ~= "Result" then __type_error(path, "Result", v) end
-  if     v.tag == "Ok"  then ok(v[1],  path .. ".0")
-  elseif v.tag == "Err" then err(v[1], path .. ".0")
+  if type(v) ~= "table" or v.__enum ~= "Result" then __type_error(path, "Result", v) end
+  if     v.__tag == "Ok"  then ok(v[1],  path .. ".0")
+  elseif v.__tag == "Err" then err(v[1], path .. ".0")
   else __type_error(path, "Result", v) end
   return v
 end
@@ -389,7 +389,7 @@ One validator per user-declared type. It checks the runtime tag, then each field
 local __check_User, __check_Address   -- in scope for every body below
 
 function __check_User(v, path)
-  if type(v) ~= "table" or v._struct ~= "User" then __type_error(path, "User", v) end
+  if type(v) ~= "table" or v.__struct ~= "User" then __type_error(path, "User", v) end
   __check_string(v.name, path .. ".name")
   __check_list(v.addresses, path .. ".addresses", __check_Address)   -- resolves
   return v
@@ -399,7 +399,7 @@ function __check_Address(v, path) … end   -- references __check_User likewise
 ```
 
 - **Newtype** `struct N(τ)`: validate `v[1]` against `τ` at path `⟪path⟫ .. ".0"`.
-- **Enum** `E`: check `v._enum == "E"`, then dispatch on `v.tag` and validate that variant's payload — tuple slots at `v[1], v[2], …`, struct-variant fields by name. An unrecognised `tag` is an error.
+- **Enum** `E`: check `v.__enum == "E"`, then dispatch on `v.__tag` and validate that variant's payload — tuple slots at `v[1], v[2], …`, struct-variant fields by name. An unrecognised `__tag` is an error.
 - **`Option<τ>` / `Result<τ, ε>`**: the combinators above, composed with the payload validators.
 - **`fn(…) -> _`**: checked as callable (`type(v) == "function"`); a signature is not runtime-observable.
 - **Opaque `ext type`**: no inspectable shape — the validator is the identity (`STATIC.md` §10). Recursion stops at the opaque boundary.
@@ -412,12 +412,12 @@ A mismatch raises through the target's idiom — Lua `error` — a path-aware me
 
 ```
 local function __type_error(path, expected, got)
-  local actual = type(got) == "table" and (got._struct or got._enum or "table") or type(got)
+  local actual = type(got) == "table" and (got.__struct or got.__enum or "table") or type(got)
   error(path .. ": expected " .. expected .. ", got " .. actual)
 end
 ```
 
-`actual` is the value's neoc-visible shape — a tagged table reports its `_struct`/`_enum`. The example `User.addresses[2].zip: expected string, got number` is produced by `__check_User` recursing into `addresses` (a `[Address]`), element `[2]`, then `Address`'s `zip` field. (`number`, not a Lua-specific name — neoc's `number` is the runtime numeric type, §8.)
+`actual` is the value's neoc-visible shape — a tagged table reports its `__struct`/`__enum`. The example `User.addresses[2].zip: expected string, got number` is produced by `__check_User` recursing into `addresses` (a `[Address]`), element `[2]`, then `Address`'s `zip` field. (`number`, not a Lua-specific name — neoc's `number` is the runtime numeric type, §8.)
 
 ### 9.3 Drift-point lowerings
 
@@ -433,7 +433,7 @@ Each drift point (`STATIC.md` §10) passes the incoming value through its type's
     ⟦check τ₁⟧(fields.f₁, "S.f₁")    (* one per field, deep *)
     …
     ⟦check τₙ⟧(fields.fₙ, "S.fₙ")
-    fields._struct = "S"
+    fields.__struct = "S"
     return setmetatable(fields, S)
   end
 ```

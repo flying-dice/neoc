@@ -14,6 +14,7 @@
 
 mod expr;
 mod pat;
+mod validate;
 
 use std::collections::{HashMap, HashSet};
 
@@ -242,6 +243,7 @@ fn emit_inner(
         traits: ast::trait_index(module),
         line_index: source.map(LineIndex::build),
         forward_decls: forward_declared_fns(module),
+        validation: validate::plan(module),
         ..Emitter::default()
     };
     e.emit_module(module);
@@ -327,6 +329,9 @@ pub(crate) struct Emitter {
     /// `Type::assoc_fn()` this keeps the `Type.` qualifier instead of dropping
     /// to the bare member name (an unbound global).
     assoc_types: std::collections::HashSet<String>,
+    /// Runtime type-enforcement plan: the validators to emit at module top and
+    /// the per-site checks at drift points (`DYNAMIC.md` §9, `STATIC.md` §10).
+    validation: validate::Validation,
 }
 
 /// A loop being emitted. When `break_flag` is set the loop uses the
@@ -459,6 +464,11 @@ impl Emitter {
             let mut names: Vec<String> = self.forward_decls.iter().cloned().collect();
             names.sort_unstable();
             self.line(format!("local {}", names.join(", ")));
+        }
+        // Runtime type-enforcement preamble: the validators and their helpers,
+        // emitted before any `.new` or `pub fn` entry that calls them (§9.1).
+        for block in std::mem::take(&mut self.validation.preamble) {
+            self.line(block);
         }
         for item in &module.items {
             self.emit_item(item);
@@ -623,10 +633,11 @@ impl Emitter {
                 self.line(format!("{}.__index = {}", s.name, s.name));
                 self.line(format!("function {}.new(value)", s.name));
                 self.indented(|e| {
-                    e.line(format!(
-                        "return setmetatable({{ __struct = \"{}\", value }}, {})",
+                    let built = format!(
+                        "setmetatable({{ __struct = \"{}\", value }}, {})",
                         s.name, s.name
-                    ));
+                    );
+                    e.line(format!("return {}", e.construct_check(&s.name, &built)));
                 });
                 self.line("end");
             }
@@ -636,11 +647,24 @@ impl Emitter {
                 self.line(format!("function {}.new(fields)", s.name));
                 self.indented(|e| {
                     e.line(format!("fields.__struct = \"{}\"", s.name));
-                    e.line(format!("return setmetatable(fields, {})", s.name));
+                    let built = format!("setmetatable(fields, {})", s.name);
+                    e.line(format!("return {}", e.construct_check(&s.name, &built)));
                 });
                 self.line("end");
             }
         }
+    }
+
+    /// Wrap a freshly constructed struct value in its validator (`DRIFT-CONSTRUCT`,
+    /// `DYNAMIC.md` §9.3): `__check_T(<built>, "T")`, which validates every field
+    /// deep and returns the value. Every named/tuple struct is seeded into the
+    /// validator set, so a construction site always has a validator to call.
+    fn construct_check(&self, name: &str, built: &str) -> String {
+        debug_assert!(
+            self.validation.has_validator(name),
+            "every constructed struct is seeded into the validator set"
+        );
+        format!("__check_{name}({built}, \"{name}\")")
     }
 
     /// Emit the `Type.__traits = { … }` runtime tag on a type's table, listing
@@ -715,7 +739,18 @@ impl Emitter {
             None => format!("local function {}({param_list})", f.sig.name),
         };
         self.line(header);
-        self.indented(|e| e.emit_block_as_body(&f.body));
+        self.indented(|e| {
+            // Untyped boundary params: a `pub` free function is reachable from
+            // the host, so it validates each typed parameter at entry
+            // (`DRIFT-PARAM`, `STATIC.md` §10.4). Methods and internal-only
+            // functions are reached only by vouched neoc callers (`STABLE-PARAM`).
+            if target.is_none() && vis == ast::Visibility::Public {
+                for check in e.validation.param_checks(&f.sig.name, &f.sig.params) {
+                    e.line(check);
+                }
+            }
+            e.emit_block_as_body(&f.body);
+        });
         self.line("end");
     }
 }
