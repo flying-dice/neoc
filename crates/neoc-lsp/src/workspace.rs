@@ -492,6 +492,70 @@ mod tests {
     }
 
     #[test]
+    fn dependents_closure_is_transitive() {
+        let root = Path::new("/proj");
+        let mut idx = WorkspaceIndex::new(root);
+        idx.set_document(uri(root, "a.neoc"), 1, "pub fn a() {}\n".to_string());
+        idx.set_document(
+            uri(root, "b.neoc"),
+            1,
+            "use a::a;\npub fn b() { a() }\n".to_string(),
+        );
+        idx.set_document(
+            uri(root, "c.neoc"),
+            1,
+            "use b::b;\nfn c() { b() }\n".to_string(),
+        );
+        let mut closure = idx.dependents_closure(&uri(root, "a.neoc"));
+        closure.sort();
+        let mut want = vec![
+            uri(root, "a.neoc"),
+            uri(root, "b.neoc"),
+            uri(root, "c.neoc"),
+        ];
+        want.sort();
+        assert_eq!(
+            closure, want,
+            "edit to a re-checks a, its importer b, and b's importer c"
+        );
+    }
+
+    #[test]
+    fn dependents_closure_handles_cycles() {
+        let root = Path::new("/proj");
+        let mut idx = WorkspaceIndex::new(root);
+        idx.set_document(
+            uri(root, "a.neoc"),
+            1,
+            "use b::b;\npub fn a() { b() }\n".to_string(),
+        );
+        idx.set_document(
+            uri(root, "b.neoc"),
+            1,
+            "use a::a;\npub fn b() { a() }\n".to_string(),
+        );
+        let mut closure = idx.dependents_closure(&uri(root, "a.neoc"));
+        closure.sort();
+        let mut want = vec![uri(root, "a.neoc"), uri(root, "b.neoc")];
+        want.sort();
+        assert_eq!(
+            closure, want,
+            "a mutual-import cycle terminates with both files"
+        );
+    }
+
+    #[test]
+    fn dependents_closure_of_an_unimported_leaf_is_just_itself() {
+        let root = Path::new("/proj");
+        let mut idx = WorkspaceIndex::new(root);
+        idx.set_document(uri(root, "solo.neoc"), 1, "fn s() { s() }\n".to_string());
+        assert_eq!(
+            idx.dependents_closure(&uri(root, "solo.neoc")),
+            vec![uri(root, "solo.neoc")]
+        );
+    }
+
+    #[test]
     fn indexes_declarations_for_project_wide_lookup() {
         let root = Path::new("/proj");
         let mut idx = WorkspaceIndex::new(root);

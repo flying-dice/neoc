@@ -413,10 +413,17 @@ impl Backend {
     }
 
     /// Re-indexes a document from the lifecycle callbacks, keeping the
-    /// project-wide index in step with the open-buffer set.
-    fn index_document(&self, uri: &Url, version: i32, text: &str) {
-        if let Ok(mut index) = self.index.lock() {
-            index.set_document(uri.clone(), version, text.to_string());
+    /// project-wide index in step with the open-buffer set. Returns whether the
+    /// document's exported surface changed — the signal to re-diagnose its
+    /// importers, not just itself.
+    fn index_document(&self, uri: &Url, version: i32, text: &str) -> bool {
+        match self.index.lock() {
+            Ok(mut index) => {
+                index
+                    .set_document(uri.clone(), version, text.to_string())
+                    .changed
+            }
+            Err(_) => false,
         }
     }
 
@@ -428,6 +435,30 @@ impl Backend {
             Err(_) => diagnose(source),
         };
         self.client.publish_diagnostics(uri, diags, version).await;
+    }
+
+    /// Re-publishes diagnostics for `changed` and every module that
+    /// transitively imports it — an exported-surface edit can introduce or fix
+    /// errors in dependents. All diagnostics are computed under the index lock
+    /// (no nested locks, no `.await`); the lock is released before publishing.
+    async fn publish_affected(&self, changed: &Url) {
+        let jobs: Vec<(Url, Vec<Diagnostic>)> = {
+            let Ok(index) = self.index.lock() else {
+                return;
+            };
+            index
+                .dependents_closure(changed)
+                .into_iter()
+                .filter_map(|uri| {
+                    let src = index.document_text(&uri)?.to_string();
+                    let diags = diagnose_in_project(&index, &uri, &src);
+                    Some((uri, diags))
+                })
+                .collect()
+        };
+        for (uri, diags) in jobs {
+            self.client.publish_diagnostics(uri, diags, None).await;
+        }
     }
 
     /// The current source of an open document, if the server has it.
@@ -594,9 +625,15 @@ impl LanguageServer for Backend {
             if let Ok(mut docs) = self.documents.lock() {
                 docs.insert(uri.clone(), change.text.clone());
             }
-            self.index_document(&uri, params.text_document.version, &change.text);
-            self.publish(uri, &change.text, Some(params.text_document.version))
-                .await;
+            let version = params.text_document.version;
+            let surface_changed = self.index_document(&uri, version, &change.text);
+            if surface_changed {
+                // The exported surface moved — re-diagnose every dependent too.
+                self.publish_affected(&uri).await;
+            } else {
+                // A body-only edit can only affect this file's own diagnostics.
+                self.publish(uri, &change.text, Some(version)).await;
+            }
         }
     }
 
