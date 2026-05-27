@@ -7,7 +7,8 @@
 //! the symbol table, free of I/O.
 
 use neoc_types::{
-    EnumInfo, StructFields, StructInfo, SymbolTable, TraitInfo, Ty, TypeDef, VariantFields,
+    CallSignature, EnumInfo, StructFields, StructInfo, SymbolTable, TraitInfo, Ty, TypeDef,
+    VariantFields,
 };
 
 use crate::cst;
@@ -122,6 +123,34 @@ fn trait_signature(name: &str, t: &TraitInfo) -> String {
         .collect::<Vec<_>>()
         .join("\n");
     format!("{head} {{\n{methods}\n}}")
+}
+
+/// Renders a generic function's signature *at a call site*, with its type
+/// parameters instantiated from the argument types:
+/// `fn first<number>(a: number, b: number) -> number`. The type arguments and
+/// parameter types come from the [`CallSignature`]; the parameter names from the
+/// declaration. Unlike [`value_signature`]'s declared form
+/// (`fn first(T, T) -> T`), this shows the concrete types the call resolved and
+/// keeps the parameter names.
+pub(crate) fn instantiated_call_signature(name: &str, sig: &CallSignature) -> String {
+    let params = sig
+        .params
+        .iter()
+        .map(|(pname, ty)| format!("{pname}: {ty}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let type_args = sig
+        .type_args
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let generics = if type_args.is_empty() {
+        String::new()
+    } else {
+        format!("<{type_args}>")
+    };
+    format!("fn {name}{generics}({params}) -> {}", sig.ret)
 }
 
 /// Renders a value-namespace entry. A function type becomes `fn name(...) ->

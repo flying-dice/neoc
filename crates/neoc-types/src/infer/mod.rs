@@ -47,6 +47,11 @@ pub struct Checker<'a> {
     /// `resolution`, for scope-aware references/rename/goto. Off by default.
     record_resolution: bool,
     resolution: crate::resolve::Resolution,
+    /// When set, every call that instantiates a generic function's type
+    /// parameters is recorded in `calls`, for call-site signature hover. Off by
+    /// default.
+    record_calls: bool,
+    calls: Vec<CallSite>,
 }
 
 /// The inferred type of one expression, with the byte range it occupies. The
@@ -57,6 +62,34 @@ pub struct ExprType {
     pub start: usize,
     pub end: usize,
     pub ty: Ty,
+}
+
+/// A call that instantiates a generic function's type parameters, captured at
+/// the callee identifier's span together with the substitution its arguments
+/// forced. The raw record; [`call_signatures`](crate::call_signatures) resolves
+/// it against the callee's declaration into a renderable [`CallSignature`].
+struct CallSite {
+    start: usize,
+    end: usize,
+    name: String,
+    subst: std::collections::HashMap<String, Ty>,
+}
+
+/// A generic function's signature *at one call site*: its type parameters
+/// instantiated from the argument types, with the resulting parameter and
+/// return types. The basis for hover at a call site
+/// (`fn first<number>(a: number, b: number) -> number`) — the view the declared
+/// signature cannot show. `start..end` is the callee identifier's byte range.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CallSignature {
+    pub start: usize,
+    pub end: usize,
+    /// Type arguments inferred for the callee's generics, in declaration order.
+    pub type_args: Vec<Ty>,
+    /// The callee's parameters as `(name, type)`, each type instantiated.
+    pub params: Vec<(String, Ty)>,
+    /// The callee's return type, instantiated.
+    pub ret: Ty,
 }
 
 impl<'a> Checker<'a> {
@@ -74,6 +107,8 @@ impl<'a> Checker<'a> {
             expr_types: Vec::new(),
             record_resolution: false,
             resolution: crate::resolve::Resolution::default(),
+            record_calls: false,
+            calls: Vec::new(),
         }
     }
 
@@ -101,6 +136,37 @@ impl<'a> Checker<'a> {
     #[must_use]
     pub fn into_resolution(self) -> crate::resolve::Resolution {
         self.resolution
+    }
+
+    /// Records every generic-instantiating call from here on, for call-site
+    /// signature hover. The compile path leaves this off.
+    fn record_calls(&mut self) {
+        self.record_calls = true;
+    }
+
+    /// The generic-instantiating calls recorded since [`Self::record_calls`].
+    fn into_calls(self) -> Vec<CallSite> {
+        self.calls
+    }
+
+    /// Records a generic-instantiating call against the callee's span. Only a
+    /// direct named call with a non-empty substitution is recorded — an
+    /// indirect or non-generic call has no instantiated signature to show. The
+    /// single funnel call recording goes through, mirroring [`Self::record_member`].
+    fn record_call(&mut self, callee: &ast::Expr, subst: &std::collections::HashMap<String, Ty>) {
+        if !self.record_calls || subst.is_empty() {
+            return;
+        }
+        if let ast::ExprKind::Path(segs) = &callee.kind
+            && let Some(name) = segs.last()
+        {
+            self.calls.push(CallSite {
+                start: callee.span.start,
+                end: callee.span.end,
+                name: name.clone(),
+                subst: subst.clone(),
+            });
+        }
     }
 
     /// Binds `name` of type `ty` in the current scope and, when recording,
@@ -769,6 +835,7 @@ impl<'a> Checker<'a> {
                 }
                 let subst = Self::param_subst(&params, &arg_tys);
                 self.check_call_bounds(callee, &subst, span);
+                self.record_call(callee, &subst);
                 Self::apply_subst(&ret, &subst)
             }
             Ty::Unknown => Ty::Unknown,
@@ -1415,4 +1482,76 @@ fn ty_impl_name(ty: &Ty) -> Option<String> {
         Ty::Bool => Some("bool".to_string()),
         _ => None,
     }
+}
+
+/// The instantiated signatures of every generic call in `module`, each keyed by
+/// the callee identifier's byte range. Runs the checker with call recording on,
+/// then resolves each recorded call against its callee's declaration. Backs
+/// [`call_signatures`](crate::call_signatures).
+pub(crate) fn call_signatures_of(module: &ast::Module, table: &SymbolTable) -> Vec<CallSignature> {
+    let mut checker = Checker::new(table);
+    checker.record_calls();
+    checker.check_module(module);
+    checker
+        .into_calls()
+        .into_iter()
+        .filter_map(|site| build_call_signature(module, table, &site))
+        .collect()
+}
+
+/// Resolves a recorded [`CallSite`] into a renderable [`CallSignature`]: pairs
+/// the callee's declared parameter *names* (from the AST) with their *types*
+/// (from the symbol table) instantiated through the call's substitution, and
+/// orders the type arguments by the callee's declared generics. `None` when the
+/// callee is not a top-level function — a constructor or enum variant has no
+/// parameter names to render.
+fn build_call_signature(
+    module: &ast::Module,
+    table: &SymbolTable,
+    site: &CallSite,
+) -> Option<CallSignature> {
+    let Some(Ty::Fn(param_tys, ret)) = table.values.get(&site.name) else {
+        return None;
+    };
+    let sig = find_fn_sig(module, &site.name)?;
+    // The names and `param_tys` are both `sig.params`' `Named` entries in
+    // declaration order — `collect::fn_type` lowered the same params into the
+    // stored `Ty::Fn`, and a top-level `fn` has no receiver to drop — so the zip
+    // pairs each name with its own type.
+    let params = sig
+        .params
+        .iter()
+        .filter_map(|p| match p {
+            ast::Param::Named { name, .. } => Some(name),
+            ast::Param::Receiver => None,
+        })
+        .zip(param_tys)
+        .map(|(name, ty)| (name.clone(), Checker::apply_subst(ty, &site.subst)))
+        .collect();
+    let type_args = sig
+        .generics
+        .iter()
+        .map(|g| {
+            site.subst
+                .get(&g.name)
+                .cloned()
+                .unwrap_or_else(|| Ty::Param(g.name.clone()))
+        })
+        .collect();
+    Some(CallSignature {
+        start: site.start,
+        end: site.end,
+        type_args,
+        params,
+        ret: Checker::apply_subst(ret, &site.subst),
+    })
+}
+
+/// The signature of the top-level function named `name`, if `module` declares
+/// one.
+fn find_fn_sig<'a>(module: &'a ast::Module, name: &str) -> Option<&'a ast::FnSig> {
+    module.items.iter().find_map(|item| match &item.kind {
+        ast::ItemKind::Fn(decl) if decl.sig.name == name => Some(&decl.sig),
+        _ => None,
+    })
 }
