@@ -330,6 +330,88 @@ pub fn transpile_project(entry: &Path, target: Target) -> std::io::Result<Projec
     })
 }
 
+/// Diagnoses one module against an in-memory project, for the editor.
+///
+/// `sources` maps each module's file path to its current text — open editor
+/// buffers, authoritative over disk. `focus` is the module to diagnose. The
+/// whole set is parsed and collected so the focus module's `use` imports
+/// resolve against the real project (no phantom `unresolved module` errors on
+/// a non-entry file); only the focus module is type-checked, and nothing is
+/// emitted (parse and type diagnostics are target-independent). `root` is the
+/// project root that `use` paths resolve against.
+///
+/// Returns the focus module's diagnostics — parse errors, `use`-resolution and
+/// visibility errors, and type errors — attributed to `focus`. An empty result
+/// means the module is well-formed in the project; a `focus` not present in
+/// `sources` yields no diagnostics.
+#[must_use]
+pub fn check_module_in_project<H: std::hash::BuildHasher>(
+    root: &Path,
+    sources: &HashMap<PathBuf, String, H>,
+    focus: &Path,
+) -> Vec<Diagnostic> {
+    // Parse + collect every in-memory module (no disk I/O); keys are
+    // canonicalised so the focus lookup matches regardless of path spelling.
+    let mut loaded: HashMap<PathBuf, LoadedModule> = HashMap::new();
+    for (path, source) in sources {
+        let key = canonical_or(path);
+        let parsed = parser::parse(source);
+        let table = types::collect(&parsed.module);
+        loaded.insert(
+            key.clone(),
+            LoadedModule {
+                path: key,
+                source: source.clone(),
+                module: parsed.module,
+                table,
+            },
+        );
+    }
+    let universe = type_universe(&loaded);
+    let focus = canonical_or(focus);
+    let Some(me) = loaded.get(&focus) else {
+        return Vec::new();
+    };
+
+    let mut out: Vec<Diagnostic> = Vec::new();
+    // Parse diagnostics for the focus module.
+    let parsed = parser::parse(&me.source);
+    for d in &parsed.diagnostics {
+        out.push(Diagnostic {
+            stage: Stage::Parse,
+            message: d.message.clone(),
+            span: Some(ByteSpan {
+                start: d.start,
+                end: d.end,
+            }),
+        });
+    }
+    // Resolve the focus module's `use` imports against the project, then check
+    // its bodies. `resolve_use` reports against the importing (focus) module,
+    // so every diagnostic it pushes belongs to the focus.
+    let mut table = types::collect(&me.module);
+    let mut use_diags: Vec<ProjectDiagnostic> = Vec::new();
+    for item in &me.module.items {
+        if let ast::ItemKind::Use(u) = &item.kind {
+            resolve_use(root, &loaded, item, u, &mut table, &mut use_diags, &focus);
+        }
+    }
+    out.extend(use_diags.into_iter().map(|pd| pd.diagnostic));
+    table.import_referenced_types(&universe);
+    let checked = types::check_with_table(&me.module, &table);
+    for d in &checked.diagnostics {
+        out.push(Diagnostic {
+            stage: Stage::Type,
+            message: d.message.clone(),
+            span: (d.start != 0 || d.end != 0).then_some(ByteSpan {
+                start: d.start,
+                end: d.end,
+            }),
+        });
+    }
+    out
+}
+
 /// Checks one resolved module's bodies (with its `use`-imported symbols in
 /// scope) and emits it to `target`, pushing any type/emit diagnostics onto
 /// `diagnostics`. Returns the emitted source and its [`SourceMap`].

@@ -637,3 +637,88 @@ fn an_unrelated_pub_type_is_not_silently_in_scope() {
         project.diagnostics
     );
 }
+
+// ---- in-memory project diagnostics (check_module_in_project, the LSP path) --
+
+mod project_check {
+    use neoc_compiler::check_module_in_project;
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    fn project(files: &[(&str, &str)]) -> (PathBuf, HashMap<PathBuf, String>) {
+        let root = PathBuf::from("/proj");
+        let sources = files
+            .iter()
+            .map(|(name, src)| (root.join(name), (*src).to_string()))
+            .collect();
+        (root, sources)
+    }
+
+    fn messages(d: &[neoc_compiler::Diagnostic]) -> Vec<String> {
+        d.iter().map(|x| x.message.clone()).collect()
+    }
+
+    #[test]
+    fn a_non_entry_importer_resolves_its_imports() {
+        // The confirmed bug: a module that `use`s a sibling must not report a
+        // phantom `unresolved module` when checked in the project.
+        let (root, sources) = project(&[
+            (
+                "util.neoc",
+                "pub fn add(a: number, b: number) -> number { a + b }\n",
+            ),
+            (
+                "main.neoc",
+                "use util::add;\nfn go() -> number { add(1, 2) }\n",
+            ),
+        ]);
+        let diags = check_module_in_project(&root, &sources, &root.join("main.neoc"));
+        assert!(
+            diags.is_empty(),
+            "imported `add` resolves: {:?}",
+            messages(&diags)
+        );
+    }
+
+    #[test]
+    fn a_real_type_error_in_the_focus_is_reported() {
+        let (root, sources) = project(&[
+            (
+                "util.neoc",
+                "pub fn add(a: number, b: number) -> number { a + b }\n",
+            ),
+            (
+                "main.neoc",
+                "use util::add;\nfn go() -> string { add(1, 2) }\n",
+            ),
+        ]);
+        let diags = check_module_in_project(&root, &sources, &root.join("main.neoc"));
+        assert!(
+            messages(&diags)
+                .iter()
+                .any(|m| m.contains("expects `string`")),
+            "the return mismatch surfaces: {:?}",
+            messages(&diags)
+        );
+    }
+
+    #[test]
+    fn a_missing_imported_module_is_reported() {
+        let (root, sources) = project(&[("main.neoc", "use gone::x;\nfn go() -> number { 1 }\n")]);
+        let diags = check_module_in_project(&root, &sources, &root.join("main.neoc"));
+        assert!(
+            messages(&diags)
+                .iter()
+                .any(|m| m.contains("unresolved module")),
+            "a genuinely missing module is a real error: {:?}",
+            messages(&diags)
+        );
+    }
+
+    #[test]
+    fn a_focus_absent_from_sources_yields_nothing() {
+        let (root, sources) = project(&[("a.neoc", "fn a() -> number { 1 }\n")]);
+        let diags = check_module_in_project(&root, &sources, &root.join("missing.neoc"));
+        assert!(diags.is_empty(), "{:?}", messages(&diags));
+    }
+}
