@@ -927,33 +927,18 @@ impl<'a> Checker<'a> {
             self.error_at(span, format!("type `{name}` has no method `{method}`"));
             return Ty::Unknown;
         };
-        if m.params.len() != arg_tys.len() {
-            self.error_at(
-                span,
-                format!(
-                    "method `{method}` takes {} argument(s) but {} were supplied",
-                    m.params.len(),
-                    arg_tys.len()
-                ),
-            );
-            return m.ret.clone();
-        }
         // Project the method signature through the receiver's concrete type
-        // arguments, so `Box<number>::get(self) -> T` yields `number`.
+        // arguments, so `Box<number>::get(self) -> T` yields `number`, then
+        // check the call against the projected parameters.
         let subst = self.nominal_subst(&recv);
-        for (i, (p, a)) in m.params.iter().zip(&arg_tys).enumerate() {
-            let p = Self::subst_named(p, &subst);
-            if !self.assignable(&p, a) {
-                self.error_at(
-                    args[i].span,
-                    format!(
-                        "argument {} of `{method}` expects `{p}`, found `{a}`",
-                        i + 1
-                    ),
-                );
-            }
-        }
-        Self::subst_named(&m.ret, &subst)
+        let params: Vec<Ty> = m
+            .params
+            .iter()
+            .map(|p| Self::subst_named(p, &subst))
+            .collect();
+        let ret = Self::subst_named(&m.ret, &subst);
+        self.check_call_args(method, &params, &arg_tys, args, span);
+        ret
     }
 
     fn infer_field(&mut self, base: &ast::Expr, field: &ast::FieldAccess, span: ast::Span) -> Ty {
