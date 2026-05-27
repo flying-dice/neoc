@@ -166,7 +166,7 @@ Number, string, and bool literals lower to their Lua spelling (`STRING_LITERAL` 
 ⟦ E::V { x: a, … } ⟧ₑ   = { _enum = "E", tag = "V", x = ⟦a⟧, … }
 ```
 
-Prelude constructors `Ok`/`Err`/`Some`/`None` follow §7.
+Prelude constructors `Ok`/`Err`/`Some`/`None` follow §7. Each component is validated against its declared field, slot, or element type at construction — a drift point (§9.3).
 
 ### 4.5 `match`
 
@@ -316,3 +316,133 @@ Everything not specified here defers to the Lua 5.1 Reference Manual (§2 Basic 
 - **Strings, tables, truthiness, coercion, arithmetic, comparison**: as Lua 5.1 defines them.
 - **`continue`**: Lua 5.1 has no `continue` statement. neoc's `continue` lowers to a loop-body restructuring that skips to the next iteration without `goto` (which 5.1 also lacks) — the canonical encoding wraps the remainder of the loop body in a guard. The exact shape is pinned by the conformance cases under `CONFORMANCE/dynamic/`.
 - **`nil`**: neoc has no `nil` and no null. `()` lowers to `nil` only as the value of effectful expressions; it is never observable as a neoc value, because `Option<T>` is how absence is modelled.
+
+## 9. Runtime type enforcement
+
+Generated code enforces declared types at runtime — **deep, always-on, at drift points**. A `string` field rejects a non-string at construction and at any later mutation; the full shape is validated recursively. This section defines *what* a check lowers to. *Where* checks go — which positions require one and which are statically guaranteed not to — is `STATIC.md` §10. As with the rest of this file, the lowering is to Lua 5.1; every other target meets the same observable contract through `CONFORMANCE/` (§9.4).
+
+### 9.1 Validators
+
+One reusable validator per declared type, emitted once at module top and shared by every checked site — never inlined per site. A validator takes the value and a path string, raises a structured error (§9.2) on the first mismatch, and returns the value on success. Composite validators recurse, so a single call validates the full depth.
+
+Primitive validators, emitted when referenced:
+
+```
+local function __check_number(v, path) if type(v) ~= "number"  then __type_error(path, "number", v) end return v end
+local function __check_string(v, path) if type(v) ~= "string"  then __type_error(path, "string", v) end return v end
+local function __check_bool(v, path)   if type(v) ~= "boolean" then __type_error(path, "bool",   v) end return v end
+```
+
+Combinators for the structural types take the element validator as an argument, so they compose without inlining:
+
+```
+-- [τ] — a sequence; each element validated against τ. neoc indexes from 0,
+-- so the reported index is the Lua index minus one (§4.7).
+local function __check_list(v, path, elem)
+  if type(v) ~= "table" or v._struct or v._enum then __type_error(path, "list", v) end
+  for i = 1, #v do elem(v[i], path .. "[" .. (i - 1) .. "]") end
+  return v
+end
+
+-- Option<τ>
+local function __check_option(v, path, some)
+  if type(v) ~= "table" or v._enum ~= "Option" then __type_error(path, "Option", v) end
+  if v.tag == "Some" then some(v[1], path .. ".0")
+  elseif v.tag ~= "None" then __type_error(path, "Option", v) end
+  return v
+end
+
+-- Result<τ, ε>
+local function __check_result(v, path, ok, err)
+  if type(v) ~= "table" or v._enum ~= "Result" then __type_error(path, "Result", v) end
+  if     v.tag == "Ok"  then ok(v[1],  path .. ".0")
+  elseif v.tag == "Err" then err(v[1], path .. ".0")
+  else __type_error(path, "Result", v) end
+  return v
+end
+```
+
+One validator per user-declared type. It checks the runtime tag, then each field/payload against its declared type. Validators are declared as locals up front so mutually recursive types resolve:
+
+```
+-- struct User { name: string, addresses: [Address] }
+local function __check_User(v, path)
+  if type(v) ~= "table" or v._struct ~= "User" then __type_error(path, "User", v) end
+  __check_string(v.name, path .. ".name")
+  __check_list(v.addresses, path .. ".addresses", __check_Address)
+  return v
+end
+```
+
+- **Newtype** `struct N(τ)`: validate `v[1]` against `τ` at path `⟪path⟫ .. ".0"`.
+- **Enum** `E`: check `v._enum == "E"`, then dispatch on `v.tag` and validate that variant's payload — tuple slots at `v[1], v[2], …`, struct-variant fields by name. An unrecognised `tag` is an error.
+- **`Option<τ>` / `Result<τ, ε>`**: the combinators above, composed with the payload validators.
+- **`fn(…) -> _`**: checked as callable (`type(v) == "function"`); a signature is not runtime-observable.
+- **Opaque `ext type`**: no inspectable shape — the validator is the identity (`STATIC.md` §10). Recursion stops at the opaque boundary.
+- **Bare type parameter** with no concrete witness at the position: validated only to the depth its static type reveals; the deep check lands where the parameter is instantiated (`STATIC.md` §10).
+
+### 9.2 Structured errors
+
+A mismatch raises through the target's idiom — Lua `error` — a path-aware message `⟪path⟫: expected ⟪type⟫, got ⟪actual⟫`:
+
+```
+local function __type_error(path, expected, got)
+  local actual = type(got) == "table" and (got._struct or got._enum or "table") or type(got)
+  error(path .. ": expected " .. expected .. ", got " .. actual)
+end
+```
+
+`actual` is the value's neoc-visible shape — a tagged table reports its `_struct`/`_enum`. The example `User.addresses[2].zip: expected string, got number` is produced by `__check_User` recursing into `addresses` (a `[Address]`), element `[2]`, then `Address`'s `zip` field. (`number`, not a Lua-specific name — neoc's `number` is the runtime numeric type, §8.)
+
+### 9.3 Drift-point lowerings
+
+Each drift point (`STATIC.md` §10) passes the incoming value through its type's validator; a stable position lowers unchanged. `⟦check τ⟧` denotes `τ`'s validator from §9.1.
+
+**Construction** — the constructor validates each declared field; variant and list literals validate each payload/element. Extends §3.1 and §4.4:
+
+```
+⟦ struct S { f₁: τ₁, …, fₙ: τₙ } ⟧ =
+  local S = {}
+  S.__index = S
+  function S.new(fields)
+    ⟦check τ₁⟧(fields.f₁, "S.f₁")    (* one per field, deep *)
+    …
+    ⟦check τₙ⟧(fields.fₙ, "S.fₙ")
+    fields._struct = "S"
+    return setmetatable(fields, S)
+  end
+```
+
+A newtype/tuple `N(e)` validates `e` against the wrapped type inside `N.new` (extending §4.4); an enum-variant construction `E::V(e₁, …)` validates each `eᵢ` against `V`'s declared slot type; a list literal `[e₁, …]` of type `[τ]` validates each `eᵢ` against `τ`.
+
+**Mutation** — assignment to a typed lvalue validates the new value before storing it. The value is bound once so it is not evaluated twice:
+
+```
+⟦ e.f = v ⟧ₛ    = local ⟪t⟫ = ⟦v⟧ₑ ; ⟦check τ_f⟧(⟪t⟫, "S.f") ; ⟦e⟧ₑ.f = ⟪t⟫
+⟦ xs[i] = v ⟧ₛ  = local ⟪t⟫ = ⟦v⟧ₑ ; ⟦check τ_e⟧(⟪t⟫, "xs[i]") ; ⟦xs⟧ₑ[⟦i⟧ₑ + 1] = ⟪t⟫
+```
+
+`τ_f` is the declared type of field `f` on the lvalue's type; `τ_e` is the list element type. Both are supplied by the drift analysis. Compound assignment (`e.f += v`, …) desugars to `e.f = e.f + v` and lowers through the same barrier. A metatable `__newindex` guard is **not** used: in Lua 5.1 `__newindex` fires only for an *absent* key, so it cannot intercept reassignment of an already-set field. The barrier is the assignment lowering itself, where the field's static type is known.
+
+**Dynamic ingress** — a value crossing from untyped (host) into a typed position is validated at the boundary:
+
+```
+⟦ f(a…) ⟧ₑ   where  ext fn f(…) -> τ   = ⟦check τ⟧(f(⟦a⟧…), "f()")
+```
+
+The same wrap applies to a value produced by a host decode or coercion declared to yield `τ`, and to runtime-supplied entry arguments (validated against the entry's declared parameter types). The host produces the value; neoc validates it before any typed use.
+
+**Untyped boundary params** — a function reachable from untyped host code validates each typed parameter at entry; an internal-only function does not (`STATIC.md` §10):
+
+```
+⟦ pub fn g(p: τ, …) { body } ⟧ =
+  function g(p, …)
+    ⟦check τ⟧(p, "g.p")    (* one per typed parameter *)
+    …
+    ⟦ body ⟧ₛ
+  end
+```
+
+### 9.4 Cross-target obligation
+
+This file is the Lua lowering; the validator *mechanism* on another target is that target's choice — a write-trap or accessor native to it may realise the mutation barrier in place of an explicit lowered call. What is fixed, and pinned per target by `CONFORMANCE/`, is the *what* and *where*: the identical wrong-typed value is rejected at the identical drift point, raising through the target's idiom with a matching path-aware message and a non-zero exit.
