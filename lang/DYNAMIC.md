@@ -337,10 +337,20 @@ Combinators for the structural types take the element validator as an argument, 
 
 ```
 -- [τ] — a sequence; each element validated against τ. neoc indexes from 0,
--- so the reported index is the Lua index minus one (§4.7).
+-- so the reported index is the Lua index minus one (§4.7). A host-supplied
+-- table (ingress, STATIC §10.2) need not be a sequence, so sequence-ness is
+-- verified, not assumed: count every key, then require 1..n present. n keys
+-- filling 1..n leaves no room for a hole or a stray key, so a dict
+-- ({name=…}: n≥1 but v[1]==nil) and a holed table ({[1],[3]}: v[2]==nil) are
+-- rejected rather than read as a short or empty list off #v.
 local function __check_list(v, path, elem)
   if type(v) ~= "table" or v._struct or v._enum then __type_error(path, "list", v) end
-  for i = 1, #v do elem(v[i], path .. "[" .. (i - 1) .. "]") end
+  local n = 0
+  for _ in pairs(v) do n = n + 1 end
+  for i = 1, n do
+    if v[i] == nil then __type_error(path, "list", v) end
+    elem(v[i], path .. "[" .. (i - 1) .. "]")
+  end
   return v
 end
 
@@ -362,16 +372,21 @@ local function __check_result(v, path, ok, err)
 end
 ```
 
-One validator per user-declared type. It checks the runtime tag, then each field/payload against its declared type. Validators are declared as locals up front so mutually recursive types resolve:
+One validator per user-declared type. It checks the runtime tag, then each field/payload against its declared type. The validator locals are **forward-declared up front and then assigned** so mutually recursive types resolve — `local function __check_X` would scope the name to its own body only, leaving a sibling reference (`__check_Address` below) bound to a nil global and failing at the first mutual call. A single `local` declaration puts every name in scope before any body is assigned:
 
 ```
--- struct User { name: string, addresses: [Address] }
-local function __check_User(v, path)
+-- struct User    { name: string, addresses: [Address] }
+-- struct Address { zip: string, resident: Option<User> }   -- closes the cycle
+local __check_User, __check_Address   -- in scope for every body below
+
+function __check_User(v, path)
   if type(v) ~= "table" or v._struct ~= "User" then __type_error(path, "User", v) end
   __check_string(v.name, path .. ".name")
-  __check_list(v.addresses, path .. ".addresses", __check_Address)
+  __check_list(v.addresses, path .. ".addresses", __check_Address)   -- resolves
   return v
 end
+
+function __check_Address(v, path) … end   -- references __check_User likewise
 ```
 
 - **Newtype** `struct N(τ)`: validate `v[1]` against `τ` at path `⟪path⟫ .. ".0"`.
@@ -380,6 +395,7 @@ end
 - **`fn(…) -> _`**: checked as callable (`type(v) == "function"`); a signature is not runtime-observable.
 - **Opaque `ext type`**: no inspectable shape — the validator is the identity (`STATIC.md` §10). Recursion stops at the opaque boundary.
 - **Bare type parameter** with no concrete witness at the position: validated only to the depth its static type reveals; the deep check lands where the parameter is instantiated (`STATIC.md` §10).
+- **`()`**: lowers to `nil` and is never observable as a neoc value (§8). It has no validator, and a position declared `-> ()` — including an `ext`/ingress result — emits no check.
 
 ### 9.2 Structured errors
 

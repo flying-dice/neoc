@@ -237,9 +237,14 @@ The judgements, in the predicate style of `Γ ⊢ τ ok`:
 
 ### 10.1 Provenance
 
-A value is **vouched** when the type system alone guarantees its runtime shape matches its static type, and **unvouched** otherwise. Every value is born vouched — a literal, or a construction whose components are themselves checked — or enters unvouched across the host boundary (`ext`, decode, entry). A check converts unvouched to vouched. The analysis places a check exactly where an unvouched value first reaches a typed position; everywhere else is stable.
+A value is **vouched** when the type system alone guarantees its runtime shape matches its static type, and **unvouched** otherwise. Every value is born vouched — a literal, or a value built from vouched parts — or enters unvouched across the host boundary (`ext`, decode, entry). A check converts unvouched to vouched.
 
-The boundary is the only source of drift because within neoc the type system is sound: a well-typed expression of type `τ` evaluates to a `τ`, provided every value it was built from was itself a `τ`. The host honours no such guarantee — it may hand neoc a number where a `string` was declared — so each crossing is suspect.
+Positions split into two kinds, and the analysis classifies them on different principles:
+
+- **Pass-through** — a parameter, a call argument, a read (§10.2–§10.3). The value flows on unchanged. Here classification is *minimal*: a check goes exactly where an unvouched value first reaches such a position — the host boundary (`DRIFT-PARAM`, `DRIFT-INGRESS`) — and a vouched value passing through is never re-checked. This is sound because within neoc the type system is sound: a well-typed expression of type `τ` evaluates to a `τ`, provided every value it was built from was itself a `τ`. The host honours no such guarantee — it may hand neoc a number where a `string` was declared — so each crossing is suspect, and nothing purely internal is.
+- **Typed write** — a construction component or a mutation target (§10.2, `DRIFT-CONSTRUCT` / `DRIFT-MUTATE`). Committing a value into typed storage is an *unconditional* barrier, checked at the write regardless of the component's provenance. This is deliberately not minimal, for two reasons: it is the site where a generic or opaque value carries a concrete witness, so its deep check lands here (§10.5) instead of being lost at a pass-through that knew only `T`; and it is the one moment neoc governs what enters storage that may later be aliased or handed back to the host.
+
+So **stable** (no check) is a property of pass-through positions only. A typed write is always drift — see §10.6.
 
 ### 10.2 Drift positions
 
@@ -249,7 +254,7 @@ S { …, f: e, … } : S        N(e) : N        E::V(…, e, …) : E        [ �
 Γ ⊢ each component of the construction drift
 ```
 
-A construction literal validates each component against its declared field, slot, or element type — recursively, so the validator descends the full shape (§10.5).
+A construction literal validates each component against its declared field, slot, or element type — recursively, so the validator descends the full shape (§10.5). The rule is **unconditional** — construction is a typed write (§10.1), not a pass-through, so it fires even when a component is provably vouched (e.g. an internally-computed `number` reaching a `number` field). That redundant check on a vouched component is the accepted cost of the barrier: it is where a generic or opaque value's deferred deep check lands (§10.5), and the point at which neoc fixes what enters storage. Host-reachability gates `DRIFT-PARAM` vs `STABLE-PARAM`; it does **not** gate construction.
 
 ```
 Γ ⊢ lhs : τ    lhs is a field-access or index lvalue
@@ -298,4 +303,4 @@ A function is **host-reachable** iff it is `pub` (lowered to a binding shared wi
 
 ### 10.6 Always-on
 
-Drift checks are unconditional — no debug/release split, no opt-out. A well-typed program's checks fire identically in every build. Conversely, a stable position emits no check at all, so "always-on" never means "everywhere": it means every *drift* position is always checked.
+Drift checks are unconditional — no debug/release split, no opt-out. A well-typed program's checks fire identically in every build. Conversely, a stable position emits no check at all, so "always-on" never means "everywhere": it means every *drift* position is always checked. Stable is a pass-through property only (§10.1, §10.3); a typed write — construction, mutation — is never stable, so the always-on guarantee covers every commit into typed storage.
