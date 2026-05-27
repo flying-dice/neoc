@@ -31,7 +31,7 @@ pub use env::{
     BindingId, EnumInfo, MethodInfo, StructFields, StructInfo, SymbolTable, TraitInfo, TraitMethod,
     TypeDef, VariantFields, VariantInfo,
 };
-pub use infer::ExprType;
+pub use infer::{CallSignature, ExprType};
 pub use resolve::{Binding, BindingKind, MemberRef, Resolution, Resolved};
 pub use ty::Ty;
 
@@ -148,6 +148,21 @@ pub fn expression_types(module: &neoc_ast::Module) -> Vec<ExprType> {
     checker.record_types();
     checker.check_module(module);
     checker.into_expr_types()
+}
+
+/// The instantiated signature of every generic call in `module`, each keyed by
+/// the byte range of its callee identifier.
+///
+/// A call to a generic function resolves that function's type parameters from
+/// the argument types (`first(7, 9)` instantiates `fn first<T>(a: T, b: T) -> T`
+/// to `fn first<number>(a: number, b: number) -> number`). Runs the same
+/// checker as [`check`] with call recording enabled, so hover at a call site can
+/// render the concrete signature the declaration alone cannot show.
+/// Non-generic and indirect calls record nothing. Diagnostics are discarded.
+#[must_use]
+pub fn call_signatures(module: &neoc_ast::Module) -> Vec<CallSignature> {
+    let table = collect::collect(module);
+    infer::call_signatures_of(module, &table)
 }
 
 /// The scope-aware name resolution of `module`: every local binding it

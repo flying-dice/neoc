@@ -9,8 +9,8 @@
 //! test. See `flying-dice/neoc#60`.
 //!
 //! Scenarios tagged `@pending` describe behaviour that is specified but not yet
-//! implemented (e.g. call-site type instantiation). The runner filters them out
-//! so the suite stays green; drop the tag once the behaviour lands.
+//! implemented. The runner filters them out so the suite stays green; drop the
+//! tag once the behaviour lands.
 
 // cucumber parses each captured step argument into an owned value — it has no
 // borrow to lend — so capturing step functions take their arguments by value.

@@ -48,20 +48,37 @@ pub fn hover(source: &str, position: tower_lsp::lsp_types::Position) -> Option<S
         ));
     }
 
-    let table = neoc_types::collect(&neoc_parser::parse(source).module);
+    let module = neoc_parser::parse(source).module;
 
-    // 3. A top-level item resolved by name (a call site, or a type / const /
-    //    alias). Drawn from the symbol table; functions render as their type,
-    //    `fn name(types) -> ret`.
+    // 3. A call site of a generic function: instantiate its type parameters from
+    //    the argument types and render the concrete signature
+    //    (`fn first<number>(a: number, b: number) -> number`) — the call's view,
+    //    which the declared form below cannot reconstruct.
+    if let Some(sig) = neoc_types::call_signatures(&module)
+        .into_iter()
+        .find(|sig| sig.start <= byte && byte < sig.end)
+    {
+        let rendered = signature::instantiated_call_signature(name, &sig);
+        let doc = decl
+            .as_ref()
+            .and_then(|decl| cst::leading_doc_comment(decl.node, source));
+        return Some(with_doc(code_block(&rendered), doc));
+    }
+
+    // 4. A top-level item resolved by name (a non-generic call site, or a type /
+    //    const / alias). Drawn from the symbol table; functions render as their
+    //    type, `fn name(types) -> ret`.
+    let table = neoc_types::collect(&module);
     if let Some(sig) = signature::signature(&table, name) {
-        let doc = decl.and_then(|decl| cst::leading_doc_comment(decl.node, source));
+        let doc = decl
+            .as_ref()
+            .and_then(|decl| cst::leading_doc_comment(decl.node, source));
         return Some(with_doc(code_block(&sig), doc));
     }
 
-    // 4. A member used at a call / field site, resolved type-aware through the
+    // 5. A member used at a call / field site, resolved type-aware through the
     //    checker — the receiver's type disambiguates same-named members of
     //    different types (which the old name-only scan could not).
-    let module = neoc_parser::parse(source).module;
     if let Some(member) = neoc_types::resolution(&module).member_at(byte) {
         if let Some(node) = cst::member_decl_at(&tree, member.def.0) {
             let sig = member_signature(node, source)?;
@@ -72,7 +89,7 @@ pub fn hover(source: &str, position: tower_lsp::lsp_types::Position) -> Option<S
         }
     }
 
-    // 5. A local binding or sub-expression with no declaration to resolve —
+    // 6. A local binding or sub-expression with no declaration to resolve —
     //    show the inferred type of the narrowest expression under the cursor,
     //    `name: ty` for an identifier, the bare type otherwise.
     let ty = inferred_type_at(source, byte)?;
@@ -174,6 +191,20 @@ mod tests {
         let src = "fn first<T>(a: T, b: T) -> T { a }\n";
         let h = hover_on(src, "first", 1).expect("hover at declaration");
         assert!(h.contains("fn first<T>(a: T, b: T) -> T"), "{h}");
+    }
+
+    #[test]
+    fn generic_call_site_instantiates_type_params() {
+        // At a call site the type parameters resolve from the argument types:
+        // `first(7, 9)` instantiates `<T>` to `<number>`, rendering the
+        // parameter names with their concrete types — the declared form
+        // `fn first(T, T) -> T` shows neither.
+        let src = "fn first<T>(a: T, b: T) -> T { a }\nfn main() { first(7, 9); }\n";
+        let h = hover_on(src, "first", 2).expect("hover at call site");
+        assert!(
+            h.contains("fn first<number>(a: number, b: number) -> number"),
+            "{h}"
+        );
     }
 
     #[test]

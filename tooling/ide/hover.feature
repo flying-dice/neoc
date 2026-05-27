@@ -28,11 +28,6 @@ Feature: Hover
       total: number
       """
 
-  # Call-site instantiation — resolving T from the argument types — is not
-  # implemented yet (see neoc#60 "Out of scope"). @pending keeps this scenario
-  # out of the run so CI stays green; drop the tag when the instantiation query
-  # lands and the scenario goes live.
-  @pending
   Scenario: Hover at a call site instantiates type parameters
     Given the source:
       """
