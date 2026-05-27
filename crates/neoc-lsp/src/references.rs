@@ -40,6 +40,19 @@ pub fn references(source: &str, position: Position, include_declaration: bool) -
             .collect();
     }
 
+    // A member access (`recv.field` / `recv.method()`): every access resolving
+    // to the same `(owner, member)`, plus the declaration — type-aware, so a
+    // same-named member of another type is not conflated.
+    if let Some(member) = resolution.member_at(byte) {
+        let def = member.def;
+        return resolution
+            .member_occurrences(&member.owner, &member.member)
+            .into_iter()
+            .filter(|range| include_declaration || *range != def)
+            .map(|(start, end)| byte_range(source, start, end))
+            .collect();
+    }
+
     // A top-level item or unknown name: text match minus shadowing locals.
     let Some(name) = cst::identifier_at(&tree, source, byte) else {
         return Vec::new();
@@ -177,6 +190,18 @@ mod tests {
         let with = references_by_name(src, "add", true);
         let without = references_by_name(src, "add", false);
         assert_eq!(with.len(), without.len() + 1);
+    }
+
+    #[test]
+    fn member_references_are_type_scoped() {
+        // Two types have a field `x`. Find-refs on `b.x` returns `B`'s field
+        // declaration and the `b.x` access only — never `A`'s `x` or `a.x`,
+        // which the old name-only match would have swept in.
+        let src = "struct A { x: number }\nstruct B { x: number }\n\
+fn f(a: A, b: B) -> number { a.x + b.x }\n";
+        let cur = src.rfind("b.x").unwrap() + 2; // on `x` in `b.x`
+        let refs = references(src, byte_to_position(src, cur), true);
+        assert_eq!(refs.len(), 2, "B.x declaration + the b.x access: {refs:?}");
     }
 
     #[test]
