@@ -346,6 +346,118 @@ fn non_fn_cross_module_export_loads_as_esm() {
     );
 }
 
+/// A method called on a `use`-imported, method-bearing type dispatches across
+/// the module boundary (#66). The defining module registers the type's methods
+/// in *its* `__m`; the importer's own `__m` starts empty, so before the fix
+/// `__call` read `__m["Thing"]` as `undefined` and threw `TypeError` at runtime.
+/// The importer now wires the imported binding into its `__m` (`__m.Thing =
+/// Thing`) — the binding *is* the defining module's method table — so dispatch
+/// resolves. Asserted on the emitted source, then proven under `node` where present.
+#[test]
+fn method_on_use_imported_type_dispatches_across_modules() {
+    let dir = tempdir();
+    write(
+        &dir,
+        "lib.neoc",
+        "pub struct Thing {\n    n: number,\n}\n\
+         \n\
+         impl Thing {\n\
+         \x20   fn doubled(self) -> number {\n\
+         \x20       self.n + self.n\n\
+         \x20   }\n\
+         }\n\
+         \n\
+         pub fn make(v: number) -> Thing {\n    Thing { n: v }\n}\n",
+    );
+    // `main` imports the type and its constructor, then calls a method on the
+    // value returned across the boundary.
+    let entry = write(
+        &dir,
+        "main.neoc",
+        "use lib::Thing;\n\
+         use lib::make;\n\
+         \n\
+         ext fn println(n: number);\n\
+         \n\
+         pub fn main() {\n\
+         \x20   let t = make(21);\n\
+         \x20   println(t.doubled());\n\
+         }\n",
+    );
+
+    let project = transpile_project(&entry, Target::Js).expect("read project");
+    assert!(
+        project.ok(),
+        "expected a clean project, got: {:#?}",
+        project.diagnostics
+    );
+
+    let main_js = project
+        .files
+        .iter()
+        .find(|(p, _)| p.file_stem().is_some_and(|s| s == "main"))
+        .map(|(_, src)| src.as_str())
+        .expect("main output present");
+
+    // The type binding is imported and wired into the importer's own method
+    // table under its runtime tag — the fix for #66.
+    assert!(
+        main_js.contains("import { Thing } from \"./lib.js\";"),
+        "main should import the method-bearing type:\n{main_js}"
+    );
+    assert!(
+        main_js.contains("__m.Thing = Thing;"),
+        "main should wire the imported type into its own `__m`:\n{main_js}"
+    );
+    // The method call lowers to a tag-keyed dispatch, which the wiring resolves.
+    assert!(
+        main_js.contains("__call(t, \"doubled\")"),
+        "the method call should dispatch through `__call`:\n{main_js}"
+    );
+
+    if !node_present() {
+        return;
+    }
+
+    // Write the emitted modules to disk under their relative paths and run the
+    // entry as ESM. Pre-fix this throws `TypeError: Cannot read properties of
+    // undefined` from `__call`; post-fix it prints the method's result.
+    let out = tempdir();
+    let src_root = std::fs::canonicalize(&dir).expect("canonicalise source root");
+    for (abs, contents) in &project.files {
+        let rel = abs.strip_prefix(&src_root).expect("file under source root");
+        let dest = out.join(rel);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).expect("create out dir");
+        }
+        std::fs::write(&dest, contents).expect("write emitted module");
+    }
+    let runner = out.join("run.mjs");
+    std::fs::write(
+        &runner,
+        "globalThis.println = (x) => console.log(x);\n\
+         import { main } from \"./main.js\";\n\
+         main();\n",
+    )
+    .expect("write runner");
+
+    let output = Command::new("node")
+        .arg(&runner)
+        .output()
+        .expect("spawn node");
+    assert!(
+        output.status.success(),
+        "node failed to run the emitted ESM (the #66 crash if unfixed):\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "42",
+        "main should print Thing::doubled(21) = 42"
+    );
+}
+
 /// Two modules share a final segment `Hue`: `pal` declares a type-only data-only
 /// `pub struct Hue` (no `impl`, no `#[derive]`, so JS erases its name and its
 /// module exports nothing for it), while `cfg` exports a binding `pub const Hue`.
