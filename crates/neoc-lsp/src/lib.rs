@@ -163,9 +163,15 @@ fn discover_workspace(index: &Mutex<WorkspaceIndex>, open: &HashSet<Url>) {
             continue;
         };
         if let Ok(mut index) = index.lock() {
-            // Version 0 marks disk-sourced content; a later `did_open` replaces
-            // it with the editor buffer at the buffer's own version.
-            index.set_document(uri, 0, text);
+            // Skip a file the index already holds. The `open` snapshot is taken
+            // before this walk starts, so it misses a buffer a `did_open`
+            // indexes mid-scan; re-checking presence here, under the same lock
+            // the handlers take, closes that race — disk content (version 0)
+            // must never clobber a live buffer. A genuinely unindexed file is
+            // seeded at version 0, which a later `did_open` replaces.
+            if index.document_text(&uri).is_none() {
+                index.set_document(uri, 0, text);
+            }
         }
     }
 }
@@ -499,17 +505,14 @@ impl LanguageServer for Backend {
                 discover_workspace(&discover_index, &open);
             })
             .await;
+            // One batch diagnose over every indexed module: the project is
+            // parsed once, not once per file (the K×N startup cost). Mirrors
+            // `publish_affected`.
             let jobs: Vec<(Url, Vec<Diagnostic>)> = match index.lock() {
-                Ok(guard) => guard
-                    .document_uris()
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .filter_map(|uri| {
-                        let src = guard.document_text(&uri)?.to_string();
-                        Some((uri.clone(), diagnose_in_project(&guard, &uri, &src)))
-                    })
-                    .collect(),
+                Ok(guard) => {
+                    let uris: Vec<Url> = guard.document_uris().cloned().collect();
+                    diagnose_many_in_project(&guard, &uris)
+                }
                 Err(_) => Vec::new(),
             };
             for (uri, diags) in jobs {
