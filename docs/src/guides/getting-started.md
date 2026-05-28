@@ -6,10 +6,10 @@ Install neoc and run a first Luau script. Assumes a working CLI and basic Lua fa
 
 Pre-built binaries for Linux x86_64 and Windows x86_64 on the [GitLab Package Registry](https://gitlab.beluga-sirius.ts.net/flying-dice/neoc/-/releases).
 
-### Linux x86_64
+### Linux / macOS
 
 ```sh
-curl -fsSL https://gitlab.beluga-sirius.ts.net/api/v4/projects/13/packages/generic/neoc/v0.1.0/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/flying-dice/neoc/main/scripts/install.sh | bash
 ```
 
 Downloads binary, places in `$NEOC_INSTALL_DIR` (default `~/.neoc/bin`). Add to `$PATH` if needed.
