@@ -5,17 +5,11 @@
 // holds the contract, `migrate` runs the DDL, and each query lives in its own
 // module.
 use autots::bun_sqlite::Database;
-
 use autosql::ports::SqlValue;
-
 use autosql::ports::SqlExecutor;
-
 use autosql::migrate::migrate;
-
 use autosql::list_notes::ListNotesRow;
-
 use autosql::list_notes::list_notes;
-
 use autosql::add_note::add_note;
 
 // `serve` comes from the generated `autots::globals`, which declares the full
@@ -28,9 +22,11 @@ use autosql::add_note::add_note;
 use autots::globals::serve;
 
 extern {
-    #[extern(ambient)] struct Response;
+    #[extern(ambient)]
+    struct Response;
     impl Response {
-        #[extern(constructor)] fn new(body: string);
+        #[extern(constructor)]
+        fn new(body: string);
     }
     struct ServeOptions {
         port: number,
