@@ -151,13 +151,21 @@ impl<'a> Printer<'a> {
         let mut cursor = node.walk();
         let mut prev_end: Option<usize> = None;
         let mut prev_was_item = false;
+        let mut prev_was_use = false;
         for child in node.named_children(&mut cursor) {
+            let is_item = !Self::is_comment(child.kind());
+            let is_use = is_item && Self::item_is_use(child);
             if let Some(end) = prev_end {
                 // One blank line between top-level items, and wherever the
                 // author left a blank. A comment hugging the item below it
                 // (no blank between) is leading and stays attached.
-                let is_item = !Self::is_comment(child.kind());
-                if (prev_was_item && is_item) || self.blank_between(end, child.start_byte()) {
+                // Consecutive `use` declarations form a tight block: any blank
+                // between them is collapsed (Rust-style import grouping), even
+                // one the author wrote. A comment between two uses still
+                // separates (it is not itself a `use`).
+                let both_use = prev_was_use && is_use;
+                let force_blank = prev_was_item && is_item && !both_use;
+                if !both_use && (force_blank || self.blank_between(end, child.start_byte())) {
                     self.newline();
                 }
             }
@@ -169,8 +177,24 @@ impl<'a> Printer<'a> {
             }
             self.newline();
             prev_end = Some(child.end_byte());
-            prev_was_item = !Self::is_comment(child.kind());
+            prev_was_item = is_item;
+            prev_was_use = is_use;
         }
+    }
+
+    /// Whether an `item` node wraps a bare `use_declaration` with no attributes.
+    /// Attributed items break onto their own block and never group tightly.
+    fn item_is_use(node: Node) -> bool {
+        let mut cursor = node.walk();
+        let mut saw_use = false;
+        for child in node.children(&mut cursor) {
+            match child.kind() {
+                "use_declaration" => saw_use = true,
+                "attribute" => return false,
+                _ => {}
+            }
+        }
+        saw_use
     }
 
     // ---- items ---------------------------------------------------------
@@ -522,7 +546,8 @@ impl<'a> Printer<'a> {
             match child.kind() {
                 "attribute" => {
                     self.attribute(child);
-                    self.push(" ");
+                    self.newline();
+                    self.write_indent();
                 }
                 "pub" => self.push("pub "),
                 "extern_mod" => self.extern_mod(child),
@@ -583,7 +608,8 @@ impl<'a> Printer<'a> {
             match child.kind() {
                 "attribute" => {
                     self.attribute(child);
-                    self.push(" ");
+                    self.newline();
+                    self.write_indent();
                 }
                 "pub" => self.push("pub "),
                 k if Self::is_comment(k) => self.comment(child),

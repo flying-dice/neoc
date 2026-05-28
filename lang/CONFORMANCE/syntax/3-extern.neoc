@@ -6,20 +6,24 @@ extern {
     // bodyless fn, with #[extern(name)]
     #[extern(name = "readFile")]
     fn read_file(path: string) -> string;
-
     // opaque struct (no readable fields) and a struct with fields
     struct Response;
-    struct ServeOptions { port: number, fetch: fn(Response) -> Response }
-    struct Changes { changes: number, lastInsertRowid: Unknown }
-
+    struct ServeOptions {
+        port: number,
+        fetch: fn(Response) -> Response,
+    }
+    struct Changes {
+        changes: number,
+        lastInsertRowid: Unknown,
+    }
     // bodyless impl with a constructor and methods
     struct Database;
     impl Database {
-        #[extern(constructor)] fn new(filename: string);
+        #[extern(constructor)]
+        fn new(filename: string);
         fn query(self, sql: string) -> Response;
         fn run(self, sql: string) -> Changes;
     }
-
     // mod with #[extern(path)] and nesting
     #[extern(path = "node:fs")]
     mod fs {
@@ -27,18 +31,17 @@ extern {
             fn read_file(path: string) -> string;
         }
     }
-
     // struct *inside* a path mod: its value (constructor, associated call) is
     // reached through the mod's import, not a bare name
     #[extern(path = "bun:sqlite")]
     mod db {
         struct Handle;
         impl Handle {
-            #[extern(constructor)] fn open(filename: string);
+            #[extern(constructor)]
+            fn open(filename: string);
             fn run(self, sql: string) -> Changes;
         }
     }
-
     // ambient mod — no import, global member-access chain
     #[extern(ambient, path = "globalThis.crypto.subtle")]
     mod subtle {

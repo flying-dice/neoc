@@ -29,7 +29,8 @@ fn extern_block_reaches_canonical_form() {
     assert_eq!(
         out,
         "extern {\n    \
-         #[extern(path = \"vnd:rusqlite\")] mod rusqlite {\n        \
+         #[extern(path = \"vnd:rusqlite\")]\n    \
+         mod rusqlite {\n        \
          fn open(p: string) -> Unknown;\n    \
          }\n    \
          struct Changes {\n        \
@@ -38,6 +39,58 @@ fn extern_block_reaches_canonical_form() {
          impl Changes {\n        \
          fn total(self) -> number;\n    \
          }\n}\n"
+    );
+    assert_idempotent(messy);
+}
+
+#[test]
+fn consecutive_uses_group_without_blank_lines() {
+    // Author-written blanks between consecutive uses are collapsed.
+    let messy = "use a::B;\n\nuse c::D;\n\nuse e::F;\n";
+    let out = format(messy).unwrap();
+    assert_eq!(out, "use a::B;\nuse c::D;\nuse e::F;\n");
+    assert_idempotent(messy);
+    // And no blank is introduced when there wasn't one.
+    assert_eq!(
+        format("use a::B;\nuse c::D;\n").unwrap(),
+        "use a::B;\nuse c::D;\n"
+    );
+}
+
+#[test]
+fn use_block_separated_from_other_items_by_blank() {
+    let messy = "use a::B;\nuse c::D;\nstruct G;\n";
+    let out = format(messy).unwrap();
+    assert_eq!(out, "use a::B;\nuse c::D;\n\nstruct G;\n");
+    assert_idempotent(messy);
+}
+
+#[test]
+fn comment_between_uses_is_preserved_and_not_joined_across() {
+    let messy = "use a::B;\n// keep me\nuse c::D;\n";
+    let out = format(messy).unwrap();
+    assert_eq!(out, "use a::B;\n// keep me\nuse c::D;\n");
+    assert_idempotent(messy);
+}
+
+#[test]
+fn extern_block_item_attribute_breaks_onto_own_line() {
+    let messy = "extern { #[extern(ambient)] struct Response; }";
+    let out = format(messy).unwrap();
+    assert_eq!(
+        out,
+        "extern {\n    #[extern(ambient)]\n    struct Response;\n}\n"
+    );
+    assert_idempotent(messy);
+}
+
+#[test]
+fn extern_impl_method_attribute_breaks_onto_own_line() {
+    let messy = "extern { impl D { #[extern(constructor)] fn new(x: number); } }";
+    let out = format(messy).unwrap();
+    assert_eq!(
+        out,
+        "extern {\n    impl D {\n        #[extern(constructor)]\n        fn new(x: number);\n    }\n}\n"
     );
     assert_idempotent(messy);
 }
