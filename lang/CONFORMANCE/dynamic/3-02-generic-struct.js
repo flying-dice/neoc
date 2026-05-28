@@ -1,11 +1,8 @@
-const __m = {};
-const __call = (recv, name, ...args) => __m[recv.__struct ?? recv.__enum][name](recv, ...args);
-
-__m.Box = {};
-__m.Box.get = function(self) {
-  return self.value;
+const Box$ = {};
+Box$.get = function() {
+  return this.value;
 }
 function main() {
-  let b = { __struct: "Box", value: 99 };
-  println(__call(b, "get"));
+  let b = { __struct: "Box", value: 99, __proto__: Box$ };
+  println(b.get());
 }

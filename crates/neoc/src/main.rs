@@ -26,12 +26,25 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    /// Run one or more Luau scripts (globs expand internally). Pass script
-    /// arguments after `--`.
+    /// Run one or more Luau scripts (globs expand internally), or evaluate an
+    /// inline snippet with `--eval`. Pass script arguments after `--`.
     Run {
         /// Script files or globs (for example `tests/**/*.test.luau`).
-        #[arg(required = true)]
+        #[arg(required_unless_present = "eval", conflicts_with = "eval")]
         paths: Vec<String>,
+        /// Evaluate the given source string in-process instead of reading
+        /// files. Treated as neoc by default (one module; its `main` runs if it
+        /// defines one); pass `--lua` to run it as raw Lua/Luau instead.
+        #[arg(short = 'e', long = "eval", value_name = "SOURCE")]
+        eval: Option<String>,
+        /// Treat the `--eval` source as raw Lua/Luau, loaded into the engine
+        /// verbatim with no neoc compilation.
+        #[arg(long, requires = "eval", conflicts_with_all = ["neoc", "paths"])]
+        lua: bool,
+        /// Treat the `--eval` source as neoc. This is the default; the flag is
+        /// here to state it explicitly.
+        #[arg(long, requires = "eval", conflicts_with = "paths")]
+        neoc: bool,
         /// Arguments passed through to the script(s) as `_NEOC_ARGS`.
         #[arg(last = true)]
         args: Vec<String>,
@@ -279,6 +292,52 @@ async fn run(paths: &[String], user_args: &[String]) {
     }
 }
 
+/// Evaluates an inline snippet in-process, with no file on disk, under the chunk
+/// name `<eval>`. By default the snippet is neoc: transpiled to Lua first, with
+/// its source map carried along so a runtime fault is reported at the neoc line.
+/// With `as_lua` set, the snippet is raw Lua/Luau loaded into the engine
+/// verbatim — no compilation, no source map. Script arguments after `--` are
+/// bound as `_NEOC_ARGS`.
+async fn run_eval(source: &str, as_lua: bool, user_args: &[String]) {
+    install_shutdown_handler();
+
+    let (script, source_map) = if as_lua {
+        (source.to_string(), None)
+    } else {
+        match cli::transpile_source_to_lua(source, &mut io::stderr().lock()) {
+            Ok(Some(entry)) => (entry.lua, Some(entry.source_map)),
+            Ok(None) => process::exit(1),
+            Err(e) => {
+                eprintln!("error: {e:#}");
+                process::exit(1);
+            }
+        }
+    };
+
+    let engine = lua::sandbox::make_engine().unwrap_or_else(|e| {
+        report_error(NeocError::EngineInit(e.to_string()));
+    });
+
+    if !user_args.is_empty() {
+        let tbl = engine.create_table().unwrap();
+        for (i, arg) in user_args.iter().enumerate() {
+            tbl.set(i + 1, arg.as_str()).unwrap();
+        }
+        engine.globals().set("_NEOC_ARGS", tbl).unwrap();
+    }
+
+    if let Err(e) = engine.load(&script).set_name("<eval>").exec_async().await {
+        report_script_error_mapped(e, &script, "<eval>", source_map.as_ref());
+    }
+
+    if let Some(scheduler) = engine.app_data_ref::<lua::std::task::Scheduler>() {
+        scheduler.wait_all().await;
+        if scheduler.had_task_errors() {
+            process::exit(1);
+        }
+    }
+}
+
 /// Check for an embedded payload in the current executable. If found, run it
 /// directly and skip the normal filesystem-based entry path.
 fn detect_embedded_payload() -> Option<Vec<u8>> {
@@ -400,13 +459,23 @@ fn main() {
     // current-thread runtime, so they must not run inside one here. Only the
     // runtime subcommands (`run`, `emit-headers`) drive a tokio runtime.
     match Cli::parse().command {
-        Commands::Run { paths, args } => {
-            let resolved = expand_args(paths.into_iter());
-            if resolved.is_empty() {
-                eprintln!("error: no scripts to run");
-                process::exit(1);
+        Commands::Run {
+            paths,
+            eval,
+            lua,
+            neoc: _,
+            args,
+        } => {
+            if let Some(source) = eval {
+                block_on_runtime(async move { run_eval(&source, lua, &args).await });
+            } else {
+                let resolved = expand_args(paths.into_iter());
+                if resolved.is_empty() {
+                    eprintln!("error: no scripts to run");
+                    process::exit(1);
+                }
+                block_on_runtime(async move { run(&resolved, &args).await });
             }
-            block_on_runtime(async move { run(&resolved, &args).await });
         }
         Commands::EmitHeaders { out } => {
             block_on_runtime(async move { emit_headers(&out) });

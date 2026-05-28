@@ -53,6 +53,9 @@ fn lower_path(path: &ast::TypePath, params: &[String]) -> Ty {
         "number" => Ty::Number,
         "string" => Ty::Str,
         "bool" => Ty::Bool,
+        // `Unknown` is the dynamic boundary type (`STATIC.md` §3.7): a foreign
+        // value whose runtime type neoc cannot know.
+        "Unknown" if path.segments.len() == 1 => Ty::Dynamic,
         _ if path.segments.len() == 1 && params.iter().any(|p| p == name) => {
             Ty::Param(name.clone())
         }
@@ -293,6 +296,13 @@ fn seed_prelude(table: &mut SymbolTable) {
 /// §2). A private item records nothing; an item declared `pub` registers the
 /// name(s) it introduces in the value and/or type namespace.
 fn record_visibility(table: &mut SymbolTable, item: &ast::Item) {
+    // An `extern` block takes no visibility of its own (its `Item.vis` is always
+    // private), but its *items* carry their own — gate before the block-level
+    // `pub` guard, which would otherwise skip every extern export.
+    if let ast::ItemKind::Extern(block) = &item.kind {
+        record_extern_visibility(table, &block.items);
+        return;
+    }
     if item.vis != ast::Visibility::Public {
         return;
     }
@@ -320,12 +330,32 @@ fn record_visibility(table: &mut SymbolTable, item: &ast::Item) {
         ast::ItemKind::Trait(t) => {
             table.pub_types.insert(t.name.clone());
         }
-        // `use` re-exports, `impl` blocks, and `ext`/`extern` items do not
-        // introduce a fresh module-level export name to gate.
-        ast::ItemKind::Use(_)
-        | ast::ItemKind::Impl(_)
-        | ast::ItemKind::Ext(_)
-        | ast::ItemKind::Extern { .. } => {}
+        // `use` re-exports and `impl` blocks introduce no fresh export name.
+        // `extern` blocks are handled above (before the block-level `pub` guard).
+        ast::ItemKind::Use(_) | ast::ItemKind::Impl(_) | ast::ItemKind::Extern(_) => {}
+    }
+}
+
+/// Records the `pub` names an `extern` block exports into the visibility sets,
+/// recursing through `mod`s. A `pub` extern `struct` is a `pub` type (its value
+/// — a `#[extern(constructor)]` call — rides along as a method when the type is
+/// imported); a `pub` extern `fn` is a `pub` value. `impl` blocks carry methods,
+/// not a fresh export name, so they are not gated here.
+fn record_extern_visibility(table: &mut SymbolTable, items: &[ast::ExternItem]) {
+    for ext in items {
+        match &ext.kind {
+            ast::ExternItemKind::Struct(s) if ext.vis == ast::Visibility::Public => {
+                table.pub_types.insert(s.name.clone());
+            }
+            ast::ExternItemKind::Fn(sig) if ext.vis == ast::Visibility::Public => {
+                table.pub_values.insert(sig.name.clone());
+            }
+            // A `mod`'s `pub` items export at the file level regardless of the
+            // mod's own visibility (the mod is a target-path scope, not a neoc
+            // namespace), so recurse unconditionally.
+            ast::ExternItemKind::Mod(m) => record_extern_visibility(table, &m.items),
+            _ => {}
+        }
     }
 }
 
@@ -355,12 +385,30 @@ fn collect_item(table: &mut SymbolTable, item: &ast::Item) {
                 .insert(a.name.clone(), TypeDef::Alias { generics, value });
         }
         ast::ItemKind::Impl(b) => collect_impl(table, b),
-        ast::ItemKind::Ext(items) | ast::ItemKind::Extern { items, .. } => {
-            for ext in items {
-                collect_ext(table, ext);
-            }
-        }
+        ast::ItemKind::Extern(block) => collect_extern_items(table, &block.items),
         ast::ItemKind::Use(_) => {}
+    }
+}
+
+/// Collects every item in an `extern` block (recursively through `mod`) into
+/// the symbol table (`lang/EXTERN.md`). An extern `struct` registers as a
+/// nominal type (opaque, or with its fields); an extern `fn` adds its function
+/// type; an extern `impl` adds its methods. The extern value *is* the target
+/// value, so these bindings let the checker name-resolve and type-check
+/// references without describing a wrapper.
+fn collect_extern_items(table: &mut SymbolTable, items: &[ast::ExternItem]) {
+    for ext in items {
+        match &ext.kind {
+            ast::ExternItemKind::Fn(sig) => {
+                let (params, ret, _) = fn_type(sig, &[]);
+                table
+                    .values
+                    .insert(sig.name.clone(), Ty::Fn(params, Box::new(ret)));
+            }
+            ast::ExternItemKind::Struct(s) => collect_struct(table, s),
+            ast::ExternItemKind::Impl(b) => collect_impl(table, b),
+            ast::ExternItemKind::Mod(m) => collect_extern_items(table, &m.items),
+        }
     }
 }
 
@@ -576,7 +624,14 @@ fn record_impl_methods(
             .into_iter()
             .map(|p| project_assoc(p.subst_self(self_ty), assoc))
             .collect();
-        let ret = project_assoc(ret.subst_self(self_ty), assoc);
+        // An `#[extern(constructor)]` has no written return type but yields the
+        // enclosing type (`lang/EXTERN.md` §Attributes); make its return the
+        // target so `T::new(…)` types as `T`, not `()`.
+        let ret = if ast::ExternAttr::parse(&f.attrs).is_some_and(|a| a.constructor) {
+            self_ty.clone()
+        } else {
+            project_assoc(ret.subst_self(self_ty), assoc)
+        };
         table.member_defs.insert(
             (type_name.to_string(), f.sig.name.clone()),
             (f.sig.name_span.start, f.sig.name_span.end),
@@ -614,21 +669,4 @@ pub(crate) fn project_assoc(ty: Ty, bindings: &HashMap<String, Ty>) -> Ty {
             .and_then(|assoc| bindings.get(assoc).cloned()),
         _ => None,
     })
-}
-
-fn collect_ext(table: &mut SymbolTable, ext: &ast::ExtItem) {
-    match ext {
-        ast::ExtItem::Fn(sig) => {
-            let (params, ret, _) = fn_type(sig, &[]);
-            table
-                .values
-                .insert(sig.name.clone(), Ty::Fn(params, Box::new(ret)));
-        }
-        ast::ExtItem::Type { name, .. } => {
-            table.types.insert(name.clone(), TypeDef::Opaque);
-        }
-        ast::ExtItem::Const { name, ty } => {
-            table.values.insert(name.clone(), lower_type(ty, &[]));
-        }
-    }
 }

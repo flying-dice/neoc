@@ -2,7 +2,9 @@
 // restructured with the repeat/break idiom. `continue` skips to the next
 // iteration; a neoc `break` still exits the loop. Here i == 3 is skipped and
 // i == 7 breaks, so the sum is 0+1+2+4+5+6 = 18.
-ext fn println(n: number);
+extern {
+    fn println(n: number);
+}
 
 fn main() {
     let mut acc = 0;

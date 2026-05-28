@@ -310,7 +310,48 @@ impl<'a> Checker<'a> {
     pub fn check_module(&mut self, module: &ast::Module) {
         self.check_coherence();
         for item in &module.items {
+            self.check_field_names(item);
             self.check_item(item);
+        }
+    }
+
+    /// Rejects any named field that begins with `__` (`STATIC.md` §3.3). A
+    /// struct field or named-enum-variant field becomes an object key in the
+    /// emitted data record, where the `__`-prefix is reserved for the runtime's
+    /// own tag keys — a user field spelled that way would collide with them.
+    /// Tuple slots (single-underscore `_0`, `_1`, …) are compiler-generated and
+    /// never user-named, so they are unaffected; type and variant *names* become
+    /// string values, not keys, so they are unaffected too.
+    fn check_field_names(&mut self, item: &ast::Item) {
+        match &item.kind {
+            ast::ItemKind::Struct(s) => {
+                if let ast::StructBody::Named(fields) = &s.body {
+                    self.check_reserved_fields(fields);
+                }
+            }
+            ast::ItemKind::Enum(e) => {
+                for v in &e.variants {
+                    if let ast::VariantBody::Named(fields) = &v.body {
+                        self.check_reserved_fields(fields);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Reports each field in `fields` whose name begins with `__`.
+    fn check_reserved_fields(&mut self, fields: &[ast::Field]) {
+        for f in fields {
+            if f.name.starts_with("__") {
+                self.error_at(
+                    f.name_span,
+                    format!(
+                        "field name `{}` is reserved: field names may not begin with `__`",
+                        f.name
+                    ),
+                );
+            }
         }
     }
 
@@ -355,6 +396,7 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
+            ast::ItemKind::Extern(block) => self.check_extern_block(&block.items, false, item.span),
             _ => {}
         }
     }
@@ -726,6 +768,14 @@ impl<'a> Checker<'a> {
                 Ty::Unknown
             }
             _ => {
+                // A leading segment that is not a known type is a module
+                // qualifier (an extern `mod`, or a plain namespace path); it is
+                // transparent, so the value is named by the final segment. This
+                // resolves `rusqlite::open`, `console::log`, and
+                // `fs::promises::read_file` to their collected `fn` bindings.
+                if let Some(t) = self.table.values.get(member) {
+                    return t.clone();
+                }
                 self.error_at(span, format!("unresolved path `{}`", segs.join("::")));
                 Ty::Unknown
             }
@@ -839,6 +889,10 @@ impl<'a> Checker<'a> {
                 Self::apply_subst(&ret, &subst)
             }
             Ty::Unknown => Ty::Unknown,
+            // A dynamic value is callable — this is how an imported `class X;`
+            // is constructed (`X(args) : Unknown`). The call yields `Unknown`
+            // again (`STATIC.md` §5).
+            Ty::Dynamic => Ty::Dynamic,
             other => {
                 self.error_at(callee.span, format!("`{other}` is not callable"));
                 Ty::Unknown
@@ -988,6 +1042,11 @@ impl<'a> Checker<'a> {
             if recv.is_unknown() {
                 return Ty::Unknown;
             }
+            // A method call on a dynamic value is the foreign boundary: it is
+            // permitted and yields `Unknown` again (`STATIC.md` §3).
+            if recv.is_dynamic() {
+                return Ty::Dynamic;
+            }
             self.error_at(
                 receiver.span,
                 format!("type `{recv}` has no method `{method}`"),
@@ -1036,6 +1095,10 @@ impl<'a> Checker<'a> {
         let Ty::Named { name, .. } = &base_ty else {
             if base_ty.is_unknown() {
                 return Ty::Unknown;
+            }
+            // Field access through a dynamic value yields `Unknown` again.
+            if base_ty.is_dynamic() {
+                return Ty::Dynamic;
             }
             self.error_at(base.span, format!("type `{base_ty}` has no fields"));
             return Ty::Unknown;
@@ -1313,6 +1376,8 @@ impl<'a> Checker<'a> {
         match b {
             Ty::List(inner) => *inner,
             Ty::Unknown => Ty::Unknown,
+            // Indexing through a dynamic value yields `Unknown` again.
+            Ty::Dynamic => Ty::Dynamic,
             other => {
                 self.error_at(span, format!("cannot index into `{other}`"));
                 Ty::Unknown

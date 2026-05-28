@@ -1,7 +1,9 @@
 // DYNAMIC.md §4.2: arithmetic operators lower to their Lua counterparts with
 // the usual precedence (`*` before `+`/`-`, `%` at `*` precedence). `number` is
 // Lua's single IEEE-754 type, so `/` is true division, not integer division.
-ext fn println(n: number);
+extern {
+    fn println(n: number);
+}
 
 fn main() {
     println(2 + 3 * 4 - 1);

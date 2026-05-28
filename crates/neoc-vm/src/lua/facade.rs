@@ -86,15 +86,61 @@ struct Entry {
 }
 
 impl Entry {
-    fn signature(&self) -> String {
+    /// Emits a bodyless `fn` line.
+    ///
+    /// `receiver` is the leading `self` parameter when the entry is an instance
+    /// method (prepended ahead of the recorded params), or `None` for a free or
+    /// associated function. A `()` return is elided to a bare signature, since
+    /// the extern grammar treats the return clause as optional.
+    fn signature(&self, receiver: Option<&str>) -> String {
+        let mut parts = Vec::new();
+        if let Some(r) = receiver {
+            parts.push(r.to_string());
+        }
+        parts.extend(
+            self.params
+                .iter()
+                .map(|(n, t)| format!("{n}: {}", neoc_ty(t))),
+        );
+        let params = parts.join(", ");
+        let ret = neoc_ty(&self.ret);
+        if ret == "()" {
+            format!("fn {}({params});", self.name)
+        } else {
+            format!("fn {}({params}) -> {ret};", self.name)
+        }
+    }
+
+    /// Emits a constructor line: `#[extern(constructor)] fn <name>(<params>);`.
+    /// A constructor has no return clause — it constructs the enclosing `Self`.
+    fn constructor_signature(&self) -> String {
         let params = self
             .params
             .iter()
-            .map(|(n, t)| format!("{n}: {t}"))
+            .map(|(n, t)| format!("{n}: {}", neoc_ty(t)))
             .collect::<Vec<_>>()
             .join(", ");
-        format!("fn {}({}) -> {};", self.name, params, self.ret)
+        format!("#[extern(constructor)] fn {}({params});", self.name)
     }
+}
+
+/// Translates a recorded neoc type string to its emitted surface form.
+///
+/// Two normalisations:
+///
+/// 1. The facade records the opaque dynamic type as `LuaValue` (its bridge
+///    name), but the extern surface speaks the language primitive `Unknown`.
+/// 2. The facade records optionality with a trailing `?` (`string?`), but neoc
+///    has no `?` sugar — optionality is the nominal `Option<T>`. A trailing `?`
+///    becomes `Option<…>` around the (recursively translated) base type.
+///
+/// Every other type passes through unchanged.
+fn neoc_ty(ty: &str) -> String {
+    let ty = ty.trim();
+    if let Some(base) = ty.strip_suffix('?') {
+        return format!("Option<{}>", neoc_ty(base));
+    }
+    ty.replace("LuaValue", "Unknown")
 }
 
 /// One recorded `struct` + `impl` for a resource-handle userdata type. The
@@ -117,8 +163,9 @@ struct TypeEntry {
 
 /// One recorded module-level constant: a value bound directly on the module
 /// table whose shape the facade does not model as a function (for example
-/// `std:thread`'s dynamically-injected `parent` / `shared`). Emitted inside
-/// the `extern "neoc"` block as `const <name>: <type>;`.
+/// `std:thread`'s dynamically-injected `parent` / `shared`). The extern item
+/// set has no `const`, so it is emitted inside the `mod` as a zero-argument
+/// accessor `fn <name>() -> <type>;`.
 struct ConstEntry {
     name: String,
     ty: String,
@@ -439,10 +486,11 @@ impl<'l> Module<'l> {
     /// For a value bound directly on the module table whose shape the facade
     /// does not model as a function — most notably a dynamically-injected
     /// global such as `std:thread`'s `parent` / `shared`, which only exists in
-    /// a spawned worker and cannot be typed beyond opaque `LuaValue`. This
-    /// only records the neoc surface (`const <name>: <type>;` in the
-    /// `extern "neoc"` block); the runtime value is set elsewhere (or injected
-    /// at spawn time), so the registration is unchanged.
+    /// a spawned worker and cannot be typed beyond the opaque `Unknown`. This
+    /// only records the neoc surface (a zero-argument accessor
+    /// `fn <name>() -> <type>;` inside the `mod`, since the extern item set has
+    /// no `const`); the runtime value is set elsewhere (or injected at spawn
+    /// time), so the registration is unchanged.
     pub fn const_(&mut self, name: &str, ty: &str, doc: &str) -> &mut Self {
         self.consts.push(ConstEntry {
             name: name.to_string(),
@@ -477,52 +525,66 @@ impl<'l> Module<'l> {
 
     /// Emits the `.neoc` header text for this module.
     ///
-    /// The output is one `struct` + `impl` per recorded userdata type, then a
-    /// `#[link(name = "…")] extern "neoc" { … }` block — the proper Rust-style
-    /// FFI form, where `"neoc"` is the host and `#[link(name)]` is the module
-    /// require path. One `///` doc line and one `fn` per recorded free
-    /// function, indented four spaces, terminated by a single trailing newline.
+    /// The output is one `extern { … }` block wrapping a single
+    /// `#[extern(path = "<key>")] mod <name> { … }`, where `<key>` is the exact
+    /// registry key (`require()` path) and `<name>` is the neoc identifier
+    /// derived from the key's last segment. The module's whole surface lives
+    /// inside the `mod`: each resource-handle type as a `struct` + bodyless
+    /// `impl`, each free function as a bodyless `fn`, and each former module
+    /// constant as a zero-argument accessor `fn`. Every nested item is indented
+    /// one level deeper than its enclosing block, and the output is terminated
+    /// by a single trailing newline.
     pub fn neoc_header(&self) -> String {
         let mut out = String::new();
         out.push_str(&format!(
             "// @generated from the {} runtime module — do not edit.\n",
             self.name
         ));
+        out.push_str("extern {\n");
+        out.push_str(&format!("    #[extern(path = \"{}\")]\n", self.name));
+        out.push_str(&format!("    mod {} {{\n", mod_name(&self.name)));
 
+        // Resource-handle types: every method takes the implicit `self`.
         for ud in &self.userdata {
-            out.push_str(&format!("struct {};\n", ud.type_name));
-            out.push_str(&format!("impl {} {{\n", ud.type_name));
+            out.push_str(&format!("        struct {};\n", ud.type_name));
+            out.push_str(&format!("        impl {} {{\n", ud.type_name));
             for m in &ud.methods {
-                out.push_str(&format!("    /// {}\n", m.doc));
-                out.push_str(&format!("    {}\n", m.signature()));
+                out.push_str(&format!("            /// {}\n", m.doc));
+                out.push_str(&format!("            {}\n", m.signature(Some("self"))));
             }
-            out.push_str("}\n");
+            out.push_str("        }\n");
         }
 
+        // Constructor-bearing types: constructors are associated (no `self`,
+        // marked `#[extern(constructor)]`); instance methods take `self`.
         for ty in &self.types {
-            out.push_str(&format!("struct {};\n", ty.type_name));
-            out.push_str(&format!("impl {} {{\n", ty.type_name));
+            out.push_str(&format!("        struct {};\n", ty.type_name));
+            out.push_str(&format!("        impl {} {{\n", ty.type_name));
             for c in &ty.constructors {
-                out.push_str(&format!("    /// {}\n", c.doc));
-                out.push_str(&format!("    {}\n", c.signature()));
+                out.push_str(&format!("            /// {}\n", c.doc));
+                out.push_str(&format!("            {}\n", c.constructor_signature()));
             }
             for m in &ty.methods {
-                out.push_str(&format!("    /// {}\n", m.doc));
-                out.push_str(&format!("    {}\n", m.signature()));
+                out.push_str(&format!("            /// {}\n", m.doc));
+                out.push_str(&format!("            {}\n", m.signature(Some("self"))));
             }
-            out.push_str("}\n");
+            out.push_str("        }\n");
         }
 
-        out.push_str(&format!("#[link(name = \"{}\")]\n", self.name));
-        out.push_str("extern \"neoc\" {\n");
+        // Free functions.
         for e in &self.entries {
-            out.push_str(&format!("    /// {}\n", e.doc));
-            out.push_str(&format!("    {}\n", e.signature()));
+            out.push_str(&format!("        /// {}\n", e.doc));
+            out.push_str(&format!("        {}\n", e.signature(None)));
         }
+
+        // Former module constants: a value bound on the module table, modelled
+        // as a zero-argument accessor `fn` (the extern item set has no `const`).
         for c in &self.consts {
-            out.push_str(&format!("    /// {}\n", c.doc));
-            out.push_str(&format!("    const {}: {};\n", c.name, c.ty));
+            out.push_str(&format!("        /// {}\n", c.doc));
+            out.push_str(&format!("        fn {}() -> {};\n", c.name, neoc_ty(&c.ty)));
         }
+
+        out.push_str("    }\n");
         out.push_str("}\n");
         out
     }
@@ -698,6 +760,16 @@ fn own_params(params: &[(&str, &str)]) -> Vec<(String, String)> {
 /// style guide).
 fn module_stem(name: &str) -> &str {
     name.split_once(':').map_or(name, |(_, stem)| stem)
+}
+
+/// Derives the `mod` identifier emitted in a header from a registry key: the
+/// key's last segment (`"vnd:rusqlite"` → `"rusqlite"`, `"std:fs"` → `"fs"`).
+/// This is what makes the backend emit `local <name> = require("<key>")` and
+/// lower member access to `<name>.member`. Runtime keys already use
+/// identifier-safe last segments (letters, digits, underscores), so the segment
+/// is returned verbatim.
+fn mod_name(name: &str) -> &str {
+    module_stem(name)
 }
 
 // ---------------------------------------------------------------------------
@@ -893,8 +965,9 @@ mod tests {
         assert!(err.is_none());
     }
 
-    /// `userdata` records a `struct` + `impl` block; the header uses
-    /// `#[link("…")]` and lists each method with an implicit `self`.
+    /// `userdata` records a `struct` + `impl` block inside the `mod`; each
+    /// method takes an implicit `self`, and the dynamic `LuaValue` bridge type
+    /// surfaces as the `Unknown` primitive.
     #[test]
     fn userdata_emits_struct_impl() {
         let lua = Lua::new();
@@ -905,14 +978,19 @@ mod tests {
         });
 
         let header = m.neoc_header();
-        assert!(header.contains("#[link(name = \"lib:json\")]"), "{header}");
+        assert!(header.contains("extern {"), "{header}");
+        assert!(
+            header.contains("#[extern(path = \"lib:json\")]"),
+            "{header}"
+        );
+        assert!(header.contains("mod json {"), "{header}");
         assert!(header.contains("struct Object;"), "{header}");
         assert!(header.contains("impl Object {"), "{header}");
         assert!(
-            header.contains("    fn get(path: LuaValue) -> LuaValue;"),
+            header.contains("fn get(self, path: Unknown) -> Unknown;"),
             "{header}"
         );
-        assert!(header.contains("    fn len() -> number;"), "{header}");
+        assert!(header.contains("fn len(self) -> number;"), "{header}");
     }
 
     /// `type_` registers a constructor on the type's sub-table (so
@@ -937,9 +1015,12 @@ mod tests {
 
             let header = m.neoc_header();
             assert!(header.contains("struct Map;"), "{header}");
-            assert!(header.contains("    fn new() -> Map;"), "{header}");
             assert!(
-                header.contains("    fn set(k: string, v: LuaValue) -> ();"),
+                header.contains("#[extern(constructor)] fn new();"),
+                "{header}"
+            );
+            assert!(
+                header.contains("fn set(self, k: string, v: Unknown);"),
                 "{header}"
             );
             m.into_table()
@@ -977,7 +1058,7 @@ mod tests {
 
         let header = m.neoc_header();
         assert!(
-            header.contains("    fn bind(addr: string) -> Result<TcpListener, string>;"),
+            header.contains("#[extern(constructor)] fn bind(addr: string);"),
             "{header}"
         );
 
@@ -987,16 +1068,17 @@ mod tests {
         assert_eq!(err.as_deref(), Some("TcpListener.bind: empty addr"));
     }
 
-    /// `const_` records a `const <name>: <type>;` line inside the
-    /// `extern "neoc"` block.
+    /// `const_` records a former module constant as a zero-argument accessor
+    /// `fn` inside the `mod`, with `LuaValue` surfaced as `Unknown` (the extern
+    /// item set has no `const`).
     #[test]
-    fn const_records_extern_const() {
+    fn const_records_accessor_fn() {
         let lua = Lua::new();
         let mut m = Module::new(&lua, "std:thread").expect("module");
         m.const_("parent", "LuaValue", "Dynamic parent channel.");
 
         let header = m.neoc_header();
-        assert!(header.contains("    const parent: LuaValue;"), "{header}");
+        assert!(header.contains("fn parent() -> Unknown;"), "{header}");
     }
 
     /// `try_async_func` records the same `Result<<T>, string>` signature as

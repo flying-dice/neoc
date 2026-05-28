@@ -1,141 +1,358 @@
-//! A `#[link(name = "...")]` `extern "<host>" { ... }` block lowers to a native
-//! import in the backend its host maps to, bringing the block's value items
-//! (`fn`/`const`) into scope so call sites stay bare. A block hosted by a
-//! different runtime emits nothing in this backend. An un-hosted `ext` item
-//! (here `print`) keeps its bare-global behaviour and produces no import.
+//! `extern { }` lowering end-to-end (`lang/EXTERN.md`). A `mod` imports its
+//! target handle; an extern `struct` literal is a bare target object; an
+//! `#[extern(constructor)]` call constructs; field/method access lowers
+//! directly to the target value (no wrapper). `ambient` emits no import.
 //!
-//! These are emit-level assertions: the program references an external module,
-//! so it is not run.
+//! These are emit-level assertions: the programs reference external modules, so
+//! they are not run.
 
 use neoc_compiler::{Target, transpile};
 
-/// One hosted block per supported backend, each `#[link]`ed to a module, plus a
-/// block hosted by an unknown runtime (`extern "python"`) and a stray un-hosted
-/// `ext fn`. Each backend should emit the import for the block whose host maps
-/// to it and skip the rest; the unknown-host block maps to no target and never
-/// emits.
-const SOURCE: &str = r#"
-#[link(name = "color")]
-extern "node" {
-    fn lighten(c: string, amount: number) -> string;
-    const WHITE: string;
+/// An extern `mod` with a target `path`, referenced as `mod::item`.
+const MOD_SOURCE: &str = r#"
+extern {
+    #[extern(path = "vnd:rusqlite")]
+    mod rusqlite {
+        fn open(path: string) -> Unknown;
+    }
 }
-
-#[link(name = "palette")]
-extern "neoc" {
-    fn darken(c: string) -> string;
-}
-
-#[link(name = "huelib")]
-extern "python" {
-    fn invert(c: string) -> string;
-}
-
-ext fn print(s: string);
-
-fn main() { print(lighten(WHITE, 0.1)); }
+fn main() { let _ = rusqlite::open(":memory:"); }
 "#;
 
 #[test]
-fn js_emits_named_import_for_its_host_only() {
-    let out = transpile(SOURCE, Target::Js).output;
+fn lua_mod_imports_via_require_and_reads_member() {
+    let out = transpile(MOD_SOURCE, Target::Lua).output;
     assert!(
-        out.contains("import { lighten, WHITE } from \"color\";"),
-        "missing JS import:\n{out}"
-    );
-    // The Lua-hosted and unknown-host blocks emit nothing in the JS backend.
-    assert!(
-        !out.contains("palette") && !out.contains("huelib"),
-        "mismatched-host block leaked into JS output:\n{out}"
-    );
-    // `print` is un-hosted: a bare call, no import generated for it.
-    assert!(
-        !out.contains("print } from"),
-        "print should not be imported:\n{out}"
+        out.contains("local rusqlite = require(\"vnd:rusqlite\")"),
+        "missing Lua require for the mod path:\n{out}"
     );
     assert!(
-        out.contains("print(lighten(WHITE, 0.1));"),
-        "call site changed:\n{out}"
+        out.contains("rusqlite.open(\":memory:\")"),
+        "mod member call should read the imported handle:\n{out}"
     );
 }
 
 #[test]
-fn unknown_host_block_emits_in_no_backend() {
-    // `extern "python"` names a host no target recognises, so the block maps to
-    // nothing and never reaches an import in any backend.
+fn js_mod_imports_namespace_and_reads_member() {
+    let out = transpile(MOD_SOURCE, Target::Js).output;
+    assert!(
+        out.contains("import * as rusqlite from \"vnd:rusqlite\";"),
+        "missing JS namespace import for the mod path:\n{out}"
+    );
+    assert!(
+        out.contains("rusqlite.open(\":memory:\")"),
+        "mod member call should read the imported handle:\n{out}"
+    );
+}
+
+/// An extern `struct` with fields and an `#[extern(constructor)]` impl.
+const STRUCT_SOURCE: &str = r#"
+extern {
+    struct Changes { changes: number }
+    struct Database;
+    impl Database {
+        #[extern(constructor)] fn new(filename: string);
+        fn run(self, sql: string) -> Changes;
+    }
+}
+fn main() {
+    let db = Database::new(":memory:");
+    let c = db.run("VACUUM");
+    let n = c.changes;
+    let _ = Changes { changes: n };
+}
+"#;
+
+#[test]
+fn js_extern_struct_literal_is_bare_object_and_constructor_uses_new() {
+    let out = transpile(STRUCT_SOURCE, Target::Js).output;
+    // Constructor → `new T(args)`.
+    assert!(
+        out.contains("new Database(\":memory:\")"),
+        "constructor should lower to `new`:\n{out}"
+    );
+    // A method call on an extern-struct receiver lowers to a native call — the
+    // value carries no neoc tag, so registry dispatch is pure noise.
+    assert!(
+        out.contains("db.run(\"VACUUM\")"),
+        "method call on an extern receiver should be native:\n{out}"
+    );
+    assert!(
+        !out.contains("__call"),
+        "no `__call` for a wholly-foreign module:\n{out}"
+    );
+    // Field read is direct.
+    assert!(out.contains("c.changes"), "field read changed:\n{out}");
+    // Extern struct literal is a bare object — no `__struct` tag.
+    assert!(
+        out.contains("{ changes: n }") && !out.contains("__struct: \"Changes\""),
+        "extern struct literal should be a bare object:\n{out}"
+    );
+}
+
+#[test]
+fn lua_extern_struct_literal_is_bare_table_and_constructor_is_static() {
+    let out = transpile(STRUCT_SOURCE, Target::Lua).output;
+    // Lua has no `new` operator: a constructor is a static/namespaced call.
+    assert!(
+        out.contains("Database.new(\":memory:\")"),
+        "constructor should be a static call:\n{out}"
+    );
+    // Method call uses the colon-call (runtime UserData convention).
+    assert!(
+        out.contains("db:run(\"VACUUM\")"),
+        "method call should be a colon call:\n{out}"
+    );
+    assert!(out.contains("c.changes"), "field read changed:\n{out}");
+    // Extern struct literal is a bare table — no `.new`, no `__struct`.
+    assert!(
+        out.contains("{ changes = n }") && !out.contains("Changes.new"),
+        "extern struct literal should be a bare table:\n{out}"
+    );
+}
+
+/// An extern `struct` declared *inside* a path `mod`: its value (constructor,
+/// the constructed identity) is reached through the `mod`'s import, not a bare
+/// name (`lang/EXTERN.md` §Lowering). Free functions already qualify; this pins
+/// that struct values do too.
+const MOD_STRUCT_SOURCE: &str = r#"
+extern {
+    #[extern(path = "bun:sqlite")]
+    mod sqlite {
+        struct Changes { changes: number }
+        struct Database;
+        impl Database {
+            #[extern(constructor)] fn new(filename: string);
+            fn run(self, sql: string) -> Changes;
+        }
+    }
+}
+fn main() {
+    let db = Database::new(":memory:");
+    let c = db.run("VACUUM");
+    let n = c.changes;
+    let _ = Changes { changes: n };
+}
+"#;
+
+#[test]
+fn js_extern_struct_in_mod_constructs_through_namespace_import() {
+    let out = transpile(MOD_STRUCT_SOURCE, Target::Js).output;
+    // The constructor qualifies through the imported namespace; only `sqlite`
+    // is bound, so a bare `new Database(...)` would not resolve.
+    assert!(
+        out.contains("new sqlite.Database(\":memory:\")"),
+        "in-mod constructor should qualify through the namespace import:\n{out}"
+    );
+    assert!(
+        !out.contains("new Database("),
+        "bare `new Database(...)` is unbound — only `sqlite` is imported:\n{out}"
+    );
+    // Instance method on an extern receiver lowers to a native call.
+    assert!(
+        out.contains("db.run(\"VACUUM\")"),
+        "method call on an extern receiver should be native:\n{out}"
+    );
+    assert!(
+        !out.contains("__call"),
+        "no `__call` for a wholly-foreign module:\n{out}"
+    );
+    // The struct *literal* stays a bare object — no qualifier, no tag.
+    assert!(
+        out.contains("{ changes: n }") && !out.contains("__struct: \"Changes\""),
+        "extern struct literal should stay a bare object:\n{out}"
+    );
+}
+
+#[test]
+fn lua_extern_struct_in_mod_constructs_through_require_binding() {
+    let out = transpile(MOD_STRUCT_SOURCE, Target::Lua).output;
+    // The constructor qualifies through the `require` binding; only `sqlite` is
+    // bound, so a bare `Database.new(...)` would read a nil global.
+    assert!(
+        out.contains("sqlite.Database.new(\":memory:\")"),
+        "in-mod constructor should qualify through the require binding:\n{out}"
+    );
+    assert!(
+        !out.contains("\nlocal db = Database.new("),
+        "bare `Database.new(...)` reads a nil global — only `sqlite` is bound:\n{out}"
+    );
+    assert!(
+        out.contains("db:run(\"VACUUM\")"),
+        "method call should be a colon call:\n{out}"
+    );
+    // The struct *literal* stays a bare table.
+    assert!(
+        out.contains("{ changes = n }") && !out.contains("Changes.new"),
+        "extern struct literal should stay a bare table:\n{out}"
+    );
+}
+
+#[test]
+fn mod_struct_block_checks_clean() {
     for target in [Target::Js, Target::Lua] {
-        let out = transpile(SOURCE, target).output;
+        let out = transpile(MOD_STRUCT_SOURCE, target);
         assert!(
-            !out.contains("huelib") && !out.contains("invert"),
-            "unknown-host block leaked into {target} output:\n{out}"
+            out.ok(),
+            "{target} slice should check clean: {:#?}",
+            out.diagnostics
         );
     }
 }
 
 #[test]
-fn lua_emits_require_for_its_host_only() {
-    let out = transpile(SOURCE, Target::Lua).output;
-    assert!(
-        out.contains("require(\"palette\")"),
-        "missing Lua require:\n{out}"
-    );
-    assert!(
-        out.contains("local darken = "),
-        "missing darken local:\n{out}"
-    );
-    assert!(
-        !out.contains("color") && !out.contains("huelib"),
-        "mismatched-host block leaked into Lua output:\n{out}"
-    );
-    // `print` is un-hosted: no require, no local, bare call.
-    assert!(
-        !out.contains("local print ="),
-        "print should not be a local:\n{out}"
-    );
+fn extern_block_checks_clean() {
+    for target in [Target::Js, Target::Lua] {
+        let out = transpile(STRUCT_SOURCE, target);
+        assert!(
+            out.ok(),
+            "{target} slice should check clean: {:#?}",
+            out.diagnostics
+        );
+    }
 }
 
 #[test]
-fn positional_link_attr_also_emits() {
-    // The positional `#[link("m")]` form is accepted alongside the key-value one.
+fn ambient_mod_emits_no_import_in_either_target() {
+    // An ambient mod is reached through the target global; no import emitted.
     let src = r#"
-#[link("color")]
-extern "node" { fn f(x: number) -> number; }
-fn main() { let _ = f(1); }
-"#;
-    let out = transpile(src, Target::Js).output;
-    assert!(
-        out.contains("import { f } from \"color\";"),
-        "positional #[link] should emit:\n{out}"
-    );
+extern {
+    #[extern(ambient)]
+    mod console { fn log(s: string); }
 }
-
-#[test]
-fn extern_without_link_emits_no_import() {
-    // A hosted block without `#[link]` declares host globals: no import.
-    let src = r#"
-extern "neoc" { fn host_fn(n: number) -> number; }
-fn main() { let _ = host_fn(1); }
+fn main() { console::log("hi"); }
 "#;
-    let out = transpile(src, Target::Lua).output;
-    assert!(
-        !out.contains("require("),
-        "no-link extern should not require:\n{out}"
-    );
-}
-
-#[test]
-fn un_hosted_ext_emits_no_import() {
-    // A module with only an un-hosted `ext fn` emits no import preamble.
-    let src = "ext fn print(s: string);\nfn main() { print(\"hi\"); }\n";
     for target in [Target::Js, Target::Lua] {
         let out = transpile(src, target).output;
         assert!(
-            !out.contains("import"),
-            "unexpected import for {target}:\n{out}"
+            !out.contains("import") && !out.contains("require("),
+            "ambient mod should emit no import for {target}:\n{out}"
         );
         assert!(
-            !out.contains("require("),
-            "unexpected require for {target}:\n{out}"
+            out.contains("console.log(\"hi\")"),
+            "ambient mod member access changed for {target}:\n{out}"
         );
     }
+}
+
+#[test]
+fn top_level_extern_fn_is_a_bare_global() {
+    // A top-level extern `fn` (not in a mod) is a host global: no import, bare
+    // call.
+    let src = "extern { fn print(s: string); }\nfn main() { print(\"hi\"); }\n";
+    for target in [Target::Js, Target::Lua] {
+        let out = transpile(src, target).output;
+        assert!(
+            !out.contains("import") && !out.contains("require("),
+            "top-level extern fn should emit no import for {target}:\n{out}"
+        );
+        assert!(
+            out.contains("print(\"hi\")"),
+            "extern fn call changed for {target}:\n{out}"
+        );
+    }
+}
+
+/// A free extern `fn` declared *inside* a `mod` is reached through the `mod`'s
+/// binding, not a bare name (`lang/EXTERN.md` §Lowering): a call `serve(opts)`
+/// to a `fn serve` in an ambient `mod Bun` lowers to `Bun.serve(opts)`. Mirrors
+/// how an in-mod extern struct's constructor qualifies through its namespace.
+/// The fn name flattens to the file level (the `mod` is a target-path scope, not
+/// a neoc namespace), so it is *called* bare and qualified at emit.
+const MOD_FN_SOURCE: &str = r#"
+extern {
+    #[extern(ambient, path = "Bun")]
+    mod Bun {
+        fn serve(options: Unknown) -> Unknown;
+    }
+}
+fn main() { let _ = serve(0); }
+"#;
+
+#[test]
+fn js_ambient_mod_fn_called_bare_qualifies_through_its_namespace() {
+    let out = transpile(MOD_FN_SOURCE, Target::Js).output;
+    // No import for an ambient mod; the call qualifies through the global root.
+    assert!(
+        !out.contains("import"),
+        "ambient mod emits no import:\n{out}"
+    );
+    assert!(
+        out.contains("Bun.serve(0)"),
+        "in-mod fn called bare should qualify through its namespace:\n{out}"
+    );
+}
+
+#[test]
+fn lua_ambient_mod_fn_called_bare_qualifies_through_its_namespace() {
+    let out = transpile(MOD_FN_SOURCE, Target::Lua).output;
+    assert!(
+        !out.contains("require("),
+        "ambient mod emits no require:\n{out}"
+    );
+    assert!(
+        out.contains("Bun.serve(0)"),
+        "in-mod fn called bare should qualify through its namespace:\n{out}"
+    );
+}
+
+/// A method call on a dynamic `Unknown` receiver lowers to a native JS call: the
+/// foreign value carries no neoc tag, so registry dispatch is noise. A *chained*
+/// foreign call — `a.b(x).c()`, where `b` returns `Unknown` — is native at both
+/// links.
+#[test]
+fn js_method_call_on_unknown_receiver_is_native_and_chains() {
+    let src = r#"
+extern {
+    fn fetch(url: string) -> Unknown;
+}
+fn main() {
+    let res = fetch("/x");
+    let _ = res.json().rows;
+}
+"#;
+    let out = transpile(src, Target::Js).output;
+    assert!(
+        out.contains("res.json()"),
+        "method call on an `Unknown` receiver should be native:\n{out}"
+    );
+    assert!(
+        !out.contains("__call"),
+        "no `__call` should remain for a foreign-only program:\n{out}"
+    );
+    assert!(
+        !out.contains("__m"),
+        "no `__m` registry for a program with no neoc structs:\n{out}"
+    );
+}
+
+/// A method call on a *neoc* `struct` is a native property call resolving up the
+/// value's prototype chain — uniform with a foreign receiver. The struct's
+/// prototype is `Counter$`, its method lands there, and the constructed value
+/// links to it via `__proto__` (`lang/DYNAMIC.md` §3.1, §3.3, §4.7).
+#[test]
+fn js_method_call_on_neoc_struct_is_native_prototype_dispatch() {
+    let src = r"
+struct Counter { n: number }
+impl Counter {
+    fn bump(self) -> number { self.n + 1 }
+}
+fn main() {
+    let c = Counter { n: 0 };
+    let _ = c.bump();
+}
+";
+    let out = transpile(src, Target::Js).output;
+    assert!(
+        out.contains("c.bump()") && !out.contains("__call") && !out.contains("__m"),
+        "method call on a neoc struct should be native prototype dispatch:\n{out}"
+    );
+    assert!(
+        out.contains("const Counter$ = {};") && out.contains("Counter$.bump = function() {"),
+        "the struct should get a prototype with its method:\n{out}"
+    );
+    assert!(
+        out.contains("__proto__: Counter$"),
+        "the constructed value should link to its prototype:\n{out}"
+    );
 }

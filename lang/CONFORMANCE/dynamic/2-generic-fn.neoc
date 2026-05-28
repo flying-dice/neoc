@@ -2,7 +2,9 @@
 // neoc's number is Lua's only number type; generics carry no runtime tag), so
 // `first` lowers to a plain Lua function returning its first argument. Called at
 // `number` it returns 7.
-ext fn println(n: number);
+extern {
+    fn println(n: number);
+}
 
 fn first<T>(a: T, b: T) -> T {
     a

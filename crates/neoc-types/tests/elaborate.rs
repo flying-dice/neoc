@@ -66,7 +66,7 @@ fn string_let_binding_becomes_concat() {
 #[test]
 fn nested_concat_at_the_right_node() {
     // `("x: " + name)` is the argument to `print`; the inner `+` is on strings.
-    let src = r#"ext { fn print(s: string); }
+    let src = r#"extern { fn print(s: string); }
 fn f(name: string) { print("x: " + name); }"#;
     let m = elaborate(&parse(src));
     let item = m.items.get(1).expect("second item is the fn");

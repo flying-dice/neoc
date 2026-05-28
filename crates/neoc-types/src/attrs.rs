@@ -11,9 +11,10 @@
 //!   built-in derivable trait (`Clone`, `Eq`, `Debug`, `Display`). Deriving
 //!   `Eq` requires every field's type to support equality; deriving `Display`
 //!   requires every field's type to itself satisfy `Display`.
-//! - `#[link(name = "...")]` / `#[link("...")]` — only on a hosted
-//!   `extern "<host>"` or ambient `ext` block; the argument is a string module
-//!   specifier.
+//! - `#[extern(...)]` — only on an item inside an `extern` block; the closed
+//!   param set is `ambient` / `path = "..."` / `name = "..."` / `constructor`
+//!   (`lang/EXTERN.md` §Attributes). Validated by [`Checker::check_extern_block`],
+//!   not the top-level item pass — extern items are nested, not module items.
 //! - `#[test]` — only on a `fn` taking no parameters and returning `()` or
 //!   `Result<(), E>`.
 //!
@@ -30,8 +31,10 @@ use crate::ty::Ty;
 /// The built-in derivable traits (`DYNAMIC.md` §6); mirrors `neoc_macros`.
 const DERIVABLE: [&str; 4] = ["Clone", "Eq", "Debug", "Display"];
 
-/// The recognised attribute names. Anything else is an unknown attribute.
-const KNOWN_ATTRS: [&str; 3] = ["derive", "link", "test"];
+/// The recognised attribute names at module level. Anything else is unknown.
+/// `#[extern(...)]` is valid only inside an `extern` block, validated
+/// separately, so it is not listed here.
+const KNOWN_ATTRS: [&str; 2] = ["derive", "test"];
 
 impl Checker<'_> {
     /// Validates every attribute attached to an item against `STATIC.md` §9.
@@ -114,8 +117,13 @@ impl Checker<'_> {
     fn check_attr_item(&mut self, entry: &ast::AttrItem, item: &ast::Item) {
         match entry.name.as_str() {
             "derive" => self.check_derive(entry, item),
-            "link" => self.check_link(entry, item),
             "test" => self.check_test(entry, item),
+            // `#[extern(...)]` outside an `extern` block is misplaced; inside
+            // one it is validated by `check_extern_block`.
+            "extern" => self.error_at(
+                item.span,
+                "`extern` attributes apply only to items inside an `extern` block".to_string(),
+            ),
             other => {
                 debug_assert!(!KNOWN_ATTRS.contains(&other));
                 self.error_at(item.span, format!("unknown attribute `{other}`"));
@@ -246,31 +254,160 @@ impl Checker<'_> {
         }
     }
 
-    /// `#[link(...)]`: extern/ext block only; argument must be a string.
-    fn check_link(&mut self, entry: &ast::AttrItem, item: &ast::Item) {
-        let on_extern = matches!(
-            item.kind,
-            ast::ItemKind::Extern { .. } | ast::ItemKind::Ext(_)
-        );
-        if !on_extern {
-            self.error_at(
-                item.span,
-                "`link` applies only to an extern block".to_string(),
-            );
-            return;
-        }
-        let has_string = entry.args.iter().any(|arg| match arg {
-            ast::AttrArg::Str(_) => true,
-            ast::AttrArg::Named { name, value } => {
-                name == "name" && matches!(value.as_ref(), ast::AttrArg::Str(_))
+    /// Validates the items of an `extern` block (`lang/EXTERN.md` §Errors).
+    ///
+    /// Enforces body-elision, the closed `#[extern(...)]` param set, where each
+    /// param may appear, and constructor/ambient rules. `ambient` is whether an
+    /// enclosing `mod` is already ambient (it propagates to descendants, so
+    /// re-applying it deeper is an error). `span` anchors block-level
+    /// diagnostics. Recurses through nested `mod`s. Every message speaks neoc.
+    pub(crate) fn check_extern_block(
+        &mut self,
+        items: &[ast::ExternItem],
+        ambient: bool,
+        span: ast::Span,
+    ) {
+        for ext in items {
+            let attr = self.check_extern_attr(&ext.attrs, &ext.kind, ambient, span);
+            let child_ambient = ambient || attr.ambient;
+            match &ext.kind {
+                ast::ExternItemKind::Fn(_) | ast::ExternItemKind::Struct(_) => {}
+                ast::ExternItemKind::Impl(b) => {
+                    for m in &b.items {
+                        self.check_extern_method_attr(m, span);
+                    }
+                }
+                ast::ExternItemKind::Mod(m) => {
+                    self.check_extern_block(&m.items, child_ambient, span);
+                }
             }
-            _ => false,
-        });
-        if !has_string {
+        }
+    }
+
+    /// Validates the `#[extern(...)]` attribute(s) on a non-method extern item
+    /// (`mod`/`struct`/`fn`), returning the parsed attribute. Reports unknown
+    /// bare attributes, path-based attributes, duplicate `#[extern]`, unknown
+    /// params, params on the wrong item kind, and ambient re-application.
+    fn check_extern_attr(
+        &mut self,
+        attrs: &[ast::Attribute],
+        kind: &ast::ExternItemKind,
+        ambient: bool,
+        span: ast::Span,
+    ) -> ast::ExternAttr {
+        self.guard_extern_attr_shape(attrs, span);
+        let parsed = ast::ExternAttr::parse(attrs).unwrap_or_default();
+        let is_mod = matches!(kind, ast::ExternItemKind::Mod(_));
+        if parsed.path.is_some() && !is_mod {
             self.error_at(
-                item.span,
-                "`link` needs a string module name, e.g. `#[link(name = \"color\")]`".to_string(),
+                span,
+                "`#[extern(path = \"…\")]` applies only to a `mod`".to_string(),
             );
+        }
+        if parsed.name.is_some() && is_mod {
+            self.error_at(
+                span,
+                "`#[extern(name = \"…\")]` applies to an `fn` or `struct`, not a `mod`".to_string(),
+            );
+        }
+        if parsed.constructor {
+            self.error_at(
+                span,
+                "`#[extern(constructor)]` applies only to an `fn` inside an `impl`".to_string(),
+            );
+        }
+        if parsed.ambient && ambient {
+            self.error_at(
+                span,
+                "`#[extern(ambient)]` is already in effect from an enclosing ambient `mod`"
+                    .to_string(),
+            );
+        }
+        parsed
+    }
+
+    /// Validates the `#[extern(...)]` attribute on an extern `impl` method.
+    /// `constructor` is permitted here; `name` is incompatible with it, and a
+    /// constructor takes no explicit return type.
+    fn check_extern_method_attr(&mut self, m: &ast::FnDecl, span: ast::Span) {
+        self.guard_extern_attr_shape(&m.attrs, span);
+        let parsed = ast::ExternAttr::parse(&m.attrs).unwrap_or_default();
+        if parsed.path.is_some() {
+            self.error_at(
+                span,
+                "`#[extern(path = \"…\")]` applies only to a `mod`".to_string(),
+            );
+        }
+        if parsed.constructor {
+            if parsed.name.is_some() {
+                self.error_at(
+                    span,
+                    "a constructor cannot also set `#[extern(name = \"…\")]`".to_string(),
+                );
+            }
+            if m.sig.ret.is_some() {
+                self.error_at(
+                    span,
+                    "a `#[extern(constructor)]` takes no return type — it constructs `Self`"
+                        .to_string(),
+                );
+            }
+        }
+    }
+
+    /// Reports the shape errors common to every `#[extern(...)]` site: an
+    /// unknown bare attribute, a path-based attribute (reserved for future
+    /// macros), a duplicate `#[extern(...)]`, or an unknown `#[extern(...)]`
+    /// param.
+    fn guard_extern_attr_shape(&mut self, attrs: &[ast::Attribute], span: ast::Span) {
+        let mut extern_count = 0;
+        for entry in attrs.iter().flat_map(|a| &a.items) {
+            match entry.name.as_str() {
+                "extern" => {
+                    extern_count += 1;
+                    self.check_extern_params(entry, span);
+                }
+                other => self.error_at(
+                    span,
+                    format!("unknown attribute `{other}` inside an `extern` block"),
+                ),
+            }
+        }
+        if extern_count > 1 {
+            self.error_at(
+                span,
+                "only one `#[extern(…)]` attribute is allowed per item".to_string(),
+            );
+        }
+    }
+
+    /// Reports any unrecognised parameter of a `#[extern(...)]` attribute. The
+    /// closed set is `ambient`, `constructor`, `path = "…"`, `name = "…"`.
+    fn check_extern_params(&mut self, entry: &ast::AttrItem, span: ast::Span) {
+        for arg in &entry.args {
+            match arg {
+                ast::AttrArg::Item(inner)
+                    if matches!(inner.name.as_str(), "ambient" | "constructor") => {}
+                ast::AttrArg::Named { name, value } if matches!(name.as_str(), "path" | "name") => {
+                    if !matches!(value.as_ref(), ast::AttrArg::Str(_)) {
+                        self.error_at(
+                            span,
+                            format!("`#[extern({name} = \"…\")]` needs a string value"),
+                        );
+                    }
+                }
+                ast::AttrArg::Item(inner) => self.error_at(
+                    span,
+                    format!("unknown `#[extern]` parameter `{}`", inner.name),
+                ),
+                ast::AttrArg::Named { name, .. } => {
+                    self.error_at(span, format!("unknown `#[extern]` parameter `{name}`"));
+                }
+                _ => self.error_at(
+                    span,
+                    "`#[extern]` parameters are bare names or `key = \"value\"`".to_string(),
+                ),
+            }
         }
     }
 

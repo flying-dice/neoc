@@ -1,0 +1,67 @@
+// EXTERN.md: the full `extern { }` surface — every item form, every
+// `#[extern(...)]` parameter, and every use form (field read/write, struct
+// literal, method call, associated call, constructor, mod path, ambient, name)
+// — parses.
+extern {
+    // bodyless fn, with #[extern(name)]
+    #[extern(name = "readFile")]
+    fn read_file(path: string) -> string;
+
+    // opaque struct (no readable fields) and a struct with fields
+    struct Response;
+    struct ServeOptions { port: number, fetch: fn(Response) -> Response }
+    struct Changes { changes: number, lastInsertRowid: Unknown }
+
+    // bodyless impl with a constructor and methods
+    struct Database;
+    impl Database {
+        #[extern(constructor)] fn new(filename: string);
+        fn query(self, sql: string) -> Response;
+        fn run(self, sql: string) -> Changes;
+    }
+
+    // mod with #[extern(path)] and nesting
+    #[extern(path = "node:fs")]
+    mod fs {
+        mod promises {
+            fn read_file(path: string) -> string;
+        }
+    }
+
+    // struct *inside* a path mod: its value (constructor, associated call) is
+    // reached through the mod's import, not a bare name
+    #[extern(path = "bun:sqlite")]
+    mod db {
+        struct Handle;
+        impl Handle {
+            #[extern(constructor)] fn open(filename: string);
+            fn run(self, sql: string) -> Changes;
+        }
+    }
+
+    // ambient mod — no import, global member-access chain
+    #[extern(ambient, path = "globalThis.crypto.subtle")]
+    mod subtle {
+        fn digest(algo: string, data: Unknown) -> Unknown;
+    }
+}
+
+fn main() {
+    // associated call + constructor
+    let db = Database::new(":memory:");
+    // method call
+    let c = db.run("VACUUM");
+    // field read
+    let n = c.changes;
+    // field write
+    let opts = ServeOptions { port: 3000, fetch: |r| r };
+    opts.port = 8080;
+    // struct literal → object literal
+    let _ = Changes { changes: n, lastInsertRowid: c.lastInsertRowid };
+    // mod path import + ambient member access
+    let _ = fs::promises::read_file("a.txt");
+    let _ = subtle::digest("SHA-256", c.lastInsertRowid);
+    // in-mod struct value: constructor through the mod import, then a method
+    let h = Handle::open(":memory:");
+    let _ = h.run("VACUUM");
+}

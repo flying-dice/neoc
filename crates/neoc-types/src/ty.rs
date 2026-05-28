@@ -35,6 +35,12 @@ pub enum Ty {
     /// The placeholder used after a resolution or inference failure. Compares
     /// equal to every type so a single root error stays a single diagnostic.
     Unknown,
+    /// The dynamic boundary type, spelled `Unknown` in source. An honest
+    /// "foreign value whose runtime type neoc cannot know", used at the host
+    /// boundary. It opts out of static structure checking: it is compatible
+    /// with every type, callable, and member-access / index / assignment
+    /// through it all yield `Unknown` again (`STATIC.md` §3, §10).
+    Dynamic,
 }
 
 impl Ty {
@@ -69,6 +75,15 @@ impl Ty {
     #[must_use]
     pub fn is_unknown(&self) -> bool {
         matches!(self, Ty::Unknown)
+    }
+
+    /// Returns `true` if this is the dynamic boundary type (`Unknown` in
+    /// source). Member access, call, index, and assignment through it all yield
+    /// `Ty::Dynamic` again, so a binding author can pass a foreign value around
+    /// untyped until asserting a concrete type at the surface.
+    #[must_use]
+    pub fn is_dynamic(&self) -> bool {
+        matches!(self, Ty::Dynamic)
     }
 
     /// Rebuilds the type, replacing any subterm for which `f` returns `Some`
@@ -131,10 +146,10 @@ impl Ty {
     /// The single structural relation between two types, parameterised by a
     /// per-node `hook`. At each node the hook is consulted first: `Some(result)`
     /// overrides the structural comparison there, `None` falls through to it.
-    /// The structural comparison treats `Unknown` and `Param` as wildcards on
-    /// either side and otherwise requires equal shape, recursing through lists,
-    /// function types, and nominal type arguments — carrying the same hook down,
-    /// so the override applies at every depth.
+    /// The structural comparison treats `Unknown`, `Dynamic`, and `Param` as
+    /// wildcards on either side and otherwise requires equal shape, recursing
+    /// through lists, function types, and nominal type arguments — carrying the
+    /// same hook down, so the override applies at every depth.
     ///
     /// [`Ty::compatible`] is this with no hook; the checker's `assignable`
     /// supplies a hook for the trait-as-type existential. One walker, so the two
@@ -144,8 +159,8 @@ impl Ty {
             return result;
         }
         match (self, other) {
-            (Ty::Unknown | Ty::Param(_), _)
-            | (_, Ty::Unknown | Ty::Param(_))
+            (Ty::Unknown | Ty::Dynamic | Ty::Param(_), _)
+            | (_, Ty::Unknown | Ty::Dynamic | Ty::Param(_))
             | (Ty::Number, Ty::Number)
             | (Ty::Str, Ty::Str)
             | (Ty::Bool, Ty::Bool)
@@ -200,6 +215,7 @@ impl fmt::Display for Ty {
             }
             Ty::Param(name) => f.write_str(name),
             Ty::Unknown => f.write_str("<unknown>"),
+            Ty::Dynamic => f.write_str("Unknown"),
         }
     }
 }

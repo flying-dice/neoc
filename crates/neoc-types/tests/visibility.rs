@@ -59,6 +59,63 @@ fn import_from_brings_a_pub_fn_into_scope() {
 }
 
 #[test]
+fn collect_records_pub_extern_items_at_the_file_module_level() {
+    // A `pub` extern `struct`/`fn` is `use`-able across files exactly as a plain
+    // `pub` item is (`lang/EXTERN.md` §Visibility). The enclosing extern `mod` is
+    // an import-path concern, not a `use`-namespace segment, so the items export
+    // at the file-module level. The `extern` block itself is private.
+    let table = collect(&module(
+        "extern {\n  \
+         #[extern(path = \"bun:sqlite\")]\n  \
+         pub mod sqlite {\n    \
+         pub struct Database;\n    \
+         pub fn open(path: string) -> Database;\n    \
+         struct Hidden;\n  \
+         }\n}\n",
+    ));
+
+    assert!(
+        table.type_is_public("Database"),
+        "a `pub` extern struct exports at the file level"
+    );
+    assert!(
+        table.value_is_public("open"),
+        "a `pub` extern fn exports at the file level"
+    );
+    assert!(
+        !table.type_is_public("Hidden"),
+        "a non-`pub` extern struct stays private"
+    );
+}
+
+#[test]
+fn import_from_brings_a_pub_extern_struct_and_its_constructor() {
+    let db = collect(&module(
+        "extern {\n  \
+         #[extern(path = \"bun:sqlite\")]\n  \
+         pub mod sqlite {\n    \
+         pub struct Database;\n    \
+         impl Database {\n      \
+         #[extern(constructor)] pub fn new(filename: string);\n    \
+         }\n  \
+         }\n}\n",
+    ));
+    assert!(db.type_is_public("Database"));
+
+    // Importing the `pub` extern struct carries its type and its methods (the
+    // constructor rides along as a method), so `Database::new` resolves.
+    let mut table = collect(&module("fn main() {}\n"));
+    assert!(table.import_from(&db, "Database", "Database"));
+    assert!(table.types.contains_key("Database"));
+    assert!(
+        table
+            .methods
+            .contains_key(&("Database".to_string(), "new".to_string())),
+        "the imported extern struct carries its constructor"
+    );
+}
+
+#[test]
 fn import_from_reports_a_missing_symbol() {
     let util = collect(&module(
         "pub fn add(a: number, b: number) -> number { a + b }\n",

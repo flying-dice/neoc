@@ -3,15 +3,15 @@
 //!
 //! Each derive is **structural** — it reads a `struct` or `enum` declaration's
 //! fields and variants straight from the AST and attaches a method to the
-//! type's entry in the global method table `__m`. No type information is
-//! required.
+//! type's prototype `Name$`. No type information is required.
 //!
 //! The emitted JavaScript follows the runtime conventions in `lang/DYNAMIC.md`
 //! §6–§7, adapted to JS objects: a struct value is `{ __struct: "Name",
-//! <fields> }` (newtype payload under `_0`); an enum value is `{ __enum: "Name",
-//! __tag: "Variant", <payload> }` (tuple payload under `_0`, `_1`, …, struct
-//! payload by field name); methods are functions on `__m[Name]` taking the
-//! receiver first.
+//! <fields>, __proto__: Name$ }` (newtype payload under `_0`); an enum value is
+//! `{ __enum: "Name", __tag: "Variant", <payload>, __proto__: Name$ }` (tuple
+//! payload under `_0`, `_1`, …, struct payload by field name). A derived method
+//! is a `function` over the implicit `this` — except `Eq`, a two-argument
+//! comparison taking both operands explicitly (`Name$.eq = function(a, b)`).
 
 use crate::{DeriveTarget, Emitter};
 use neoc_ast as ast;
@@ -35,7 +35,7 @@ impl DataKey<'_> {
     }
 
     /// Object-literal entry copying the key from receiver `recv`, e.g.
-    /// `x: self.x` or `_0: self._0`.
+    /// `x: this.x` or `_0: this._0`.
     fn copy_entry(self, recv: &str) -> String {
         match self {
             DataKey::Named(name) => format!("{name}: {recv}.{name}"),
@@ -74,7 +74,7 @@ fn variant_keys(body: &ast::VariantBody) -> Vec<DataKey<'_>> {
 
 impl Emitter {
     /// Emit the JavaScript implementing `derive_name` for `target`, attaching it
-    /// to the type's `__m` entry. An unknown derive is a diagnostic.
+    /// to the type's prototype `Name$`. An unknown derive is a diagnostic.
     pub(crate) fn emit_derive(&mut self, derive_name: &str, target: DeriveTarget<'_>) {
         match derive_name {
             "Clone" => self.derive_clone(target),
@@ -98,7 +98,7 @@ impl Emitter {
 
     fn derive_clone(&mut self, target: DeriveTarget<'_>) {
         let ty = Self::type_name(target);
-        self.line(format!("__m.{ty}.clone = function(self) {{"));
+        self.line(format!("{ty}$.clone = function() {{"));
         self.indented(|e| match target {
             DeriveTarget::Struct(s) => e.clone_struct_body(&s.name, &s.body),
             DeriveTarget::Enum(en) => e.clone_enum_body(&en.name, &en.variants),
@@ -108,7 +108,10 @@ impl Emitter {
 
     fn clone_struct_body(&mut self, name: &str, body: &ast::StructBody) {
         let mut entries = vec![format!("__struct: \"{name}\"")];
-        entries.extend(struct_keys(body).into_iter().map(|k| k.copy_entry("self")));
+        entries.extend(struct_keys(body).into_iter().map(|k| k.copy_entry("this")));
+        // Re-link the prototype so the clone is a full value methods resolve on
+        // (`lang/DYNAMIC.md` §6.1).
+        entries.push(format!("__proto__: {name}$"));
         self.line(format!("return {{ {} }};", entries.join(", ")));
     }
 
@@ -121,9 +124,10 @@ impl Emitter {
             entries.extend(
                 variant_keys(&v.body)
                     .into_iter()
-                    .map(|k| k.copy_entry("self")),
+                    .map(|k| k.copy_entry("this")),
             );
-            self.line(format!("if (self.__tag === \"{}\") {{", v.name));
+            entries.push(format!("__proto__: {name}$"));
+            self.line(format!("if (this.__tag === \"{}\") {{", v.name));
             self.indented(|e| e.line(format!("return {{ {} }};", entries.join(", "))));
             self.line("}");
         }
@@ -133,7 +137,7 @@ impl Emitter {
 
     fn derive_eq(&mut self, target: DeriveTarget<'_>) {
         let ty = Self::type_name(target);
-        self.line(format!("__m.{ty}.eq = function(a, b) {{"));
+        self.line(format!("{ty}$.eq = function(a, b) {{"));
         self.indented(|e| match target {
             DeriveTarget::Struct(s) => e.eq_struct_body(&s.body),
             DeriveTarget::Enum(en) => e.eq_enum_body(&en.variants),
@@ -173,10 +177,10 @@ impl Emitter {
 
     fn derive_debug(&mut self, target: DeriveTarget<'_>) {
         let ty = Self::type_name(target);
-        self.line(format!("__m.{ty}.debug = function(self) {{"));
+        self.line(format!("{ty}$.debug = function() {{"));
         self.indented(|e| match target {
             DeriveTarget::Struct(s) => {
-                let r = debug_render(&s.name, &struct_keys(&s.body), "self");
+                let r = debug_render(&s.name, &struct_keys(&s.body), "this");
                 e.line(format!("return {r};"));
             }
             DeriveTarget::Enum(en) => e.debug_enum_body(&en.variants),
@@ -186,8 +190,8 @@ impl Emitter {
 
     fn debug_enum_body(&mut self, variants: &[ast::Variant]) {
         for v in variants {
-            self.line(format!("if (self.__tag === \"{}\") {{", v.name));
-            let r = debug_render(&v.name, &variant_keys(&v.body), "self");
+            self.line(format!("if (this.__tag === \"{}\") {{", v.name));
+            let r = debug_render(&v.name, &variant_keys(&v.body), "this");
             self.indented(|e| e.line(format!("return {r};")));
             self.line("}");
         }
@@ -197,10 +201,10 @@ impl Emitter {
 
     fn derive_display(&mut self, target: DeriveTarget<'_>) {
         let ty = Self::type_name(target);
-        self.line(format!("__m.{ty}.display = function(self) {{"));
+        self.line(format!("{ty}$.display = function() {{"));
         self.indented(|e| match target {
             DeriveTarget::Struct(s) => {
-                let r = display_render(&s.name, &struct_keys(&s.body), "self");
+                let r = display_render(&s.name, &struct_keys(&s.body), "this");
                 e.line(format!("return {r};"));
             }
             DeriveTarget::Enum(en) => e.display_enum_body(&en.variants),
@@ -210,8 +214,8 @@ impl Emitter {
 
     fn display_enum_body(&mut self, variants: &[ast::Variant]) {
         for v in variants {
-            self.line(format!("if (self.__tag === \"{}\") {{", v.name));
-            let r = display_render(&v.name, &variant_keys(&v.body), "self");
+            self.line(format!("if (this.__tag === \"{}\") {{", v.name));
+            let r = display_render(&v.name, &variant_keys(&v.body), "this");
             self.indented(|e| e.line(format!("return {r};")));
             self.line("}");
         }

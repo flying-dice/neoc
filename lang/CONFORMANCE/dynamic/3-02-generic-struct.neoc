@@ -2,7 +2,9 @@
 // type parameter is erased and the value is a tagged table. `impl<T> Box<T>`
 // attaches `get`, which returns the stored field; at `Box<number>` the checker
 // projects `T` to `number` so the result feeds `println`. Reads 99 back out.
-ext fn println(n: number);
+extern {
+    fn println(n: number);
+}
 
 struct Box<T> {
     value: T,

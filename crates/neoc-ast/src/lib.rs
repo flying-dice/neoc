@@ -50,63 +50,12 @@ pub struct Item {
     pub span: Span,
 }
 
-impl Item {
-    /// Returns the module named by a `#[link(...)]` attribute on this item, if
-    /// present.
-    ///
-    /// Accepts both the positional form `#[link("module")]` and the
-    /// Rust-faithful key-value form `#[link(name = "module")]`; the latter
-    /// takes precedence when both are present. Used by the backends to lower an
-    /// `extern "<host>" { ... }` block into a native import from the named
-    /// module. Returns `None` when no `link` attribute is present or its
-    /// argument is not a string.
-    #[must_use]
-    pub fn link_name(&self) -> Option<&str> {
-        let link = self
-            .attrs
-            .iter()
-            .flat_map(|attr| &attr.items)
-            .find(|item| item.name == "link")?;
-        // Prefer `name = "..."`, then fall back to the first positional string.
-        link.args
-            .iter()
-            .find_map(|arg| match arg {
-                AttrArg::Named { name, value } if name == "name" => match value.as_ref() {
-                    AttrArg::Str(s) => Some(s.as_str()),
-                    _ => None,
-                },
-                _ => None,
-            })
-            .or_else(|| {
-                link.args.iter().find_map(|arg| match arg {
-                    AttrArg::Str(s) => Some(s.as_str()),
-                    _ => None,
-                })
-            })
-    }
-}
-
-/// A backend target. A hosted `extern "<host>"` block names the runtime its
-/// externals come from; that host maps to exactly one of these.
+/// A backend target. One target is chosen per compilation; `extern` blocks
+/// describe that target's surface (`lang/EXTERN.md`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Target {
     Lua,
     Js,
-}
-
-impl Target {
-    /// Maps an `extern "<host>"` host string to the backend it targets.
-    ///
-    /// Returns `None` for an unrecognised host. The recognised hosts are
-    /// `neoc`, `lua`, `luau` (Lua); and `node`, `bun`, `deno` (JavaScript).
-    #[must_use]
-    pub fn from_host(host: &str) -> Option<Self> {
-        match host {
-            "neoc" | "lua" | "luau" => Some(Target::Lua),
-            "node" | "bun" | "deno" => Some(Target::Js),
-            _ => None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,18 +74,504 @@ pub enum ItemKind {
     Trait(TraitDecl),
     Impl(ImplBlock),
     Fn(FnDecl),
-    /// An un-hosted ambient extern block (`ext { ... }` / `ext fn ...`). Its
-    /// items are host globals provided by the runtime; no import is emitted.
-    Ext(Vec<ExtItem>),
-    /// A hosted external block (`extern "<host>" { ... }`). `host` names the
-    /// runtime the externals come from and implies the target backend (see
-    /// [`Target::from_host`]). When the item carries `#[link(name = "...")]`
-    /// the matching backend emits a native import; without it the items are
-    /// host globals.
-    Extern {
-        host: String,
-        items: Vec<ExtItem>,
-    },
+    /// An `extern { ... }` block: the surface of the external target
+    /// (`lang/EXTERN.md`). A syntactic region carrying bodyless `mod`/`struct`/
+    /// `impl`/`fn` items. The block itself takes no visibility and binds no
+    /// name; its contents describe target values that lower directly — the neoc
+    /// value of an extern type *is* the target value.
+    Extern(ExternBlock),
+}
+
+/// An `extern { ... }` block (`lang/EXTERN.md` §Block syntax). A region whose
+/// items have no bodies; each describes a piece of the bound target's surface.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternBlock {
+    pub items: Vec<ExternItem>,
+}
+
+/// One item inside an `extern` block: its attributes, visibility, and the form
+/// it declares (`lang/EXTERN.md` §Items).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternItem {
+    pub attrs: Vec<Attribute>,
+    pub vis: Visibility,
+    pub kind: ExternItemKind,
+    pub span: Span,
+}
+
+/// The four item forms permitted in an `extern` block. `struct` reuses
+/// [`StructDecl`] (carrying fields), `impl` reuses [`ImplBlock`] (its methods
+/// bodyless), and `fn` reuses [`FnSig`] (no body). `mod` is a named scope that
+/// nests further extern items.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExternItemKind {
+    /// A named target-module scope. Nesting maps to the target path joined by
+    /// `/` unless overridden by `#[extern(path = "...")]`.
+    Mod(ExternMod),
+    /// A nominal target handle, with data/callback fields but no methods.
+    Struct(StructDecl),
+    /// A bodyless inherent method block (method signatures only).
+    Impl(ImplBlock),
+    /// A bodyless function signature.
+    Fn(FnSig),
+}
+
+/// A `mod` inside an `extern` block.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternMod {
+    pub name: Ident,
+    pub items: Vec<ExternItem>,
+}
+
+/// A target module to import, computed from an extern `mod`
+/// (`lang/EXTERN.md` §Lowering). The neoc-side binding is `local_name`; the
+/// target value is reached via `path` (a module specifier to import, or — when
+/// `ambient` — a dotted member-access chain rooted at the target global, with
+/// no import emitted).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternImport {
+    /// The neoc-side identifier a `mod::item` reference resolves through (the
+    /// `mod`'s name, or its `#[extern(name = "...")]`).
+    pub local_name: Ident,
+    /// The target path: a module specifier (`vnd:rusqlite`, `fs/promises`) for a
+    /// normal `mod`, or the dotted global root (`globalThis.crypto.subtle`) for
+    /// an ambient one.
+    pub path: String,
+    /// Whether the `mod` is `#[extern(ambient)]` — no import is emitted; the
+    /// `path` is a member-access chain from the target global.
+    pub ambient: bool,
+}
+
+/// The top-level extern `mod` imports a `target` backend must wire, computed
+/// from the `extern` blocks in `module` (`lang/EXTERN.md` §Lowering).
+///
+/// One entry per top-level `mod` declared directly under an `extern` block. Its
+/// `path` is the `mod`'s `#[extern(path = "...")]`, or its name when none is
+/// set; `ambient` mods carry their global-root path and emit no import. Entries
+/// preserve declaration order. Nested mods append to the path with `/` but are
+/// not surfaced as separate imports — they are reached through the top-level
+/// binding. `target` is accepted for parity with the other backend queries; the
+/// computed imports are target-agnostic, so it does not yet vary the result.
+#[must_use]
+pub fn extern_imports(module: &Module, target: Target) -> Vec<ExternImport> {
+    let mut out = Vec::new();
+    for item in &module.items {
+        if let ItemKind::Extern(block) = &item.kind {
+            out.extend(extern_imports_from_items(&block.items, target));
+        }
+    }
+    out
+}
+
+/// The extern-`mod` imports declared directly among `items`, the item-list form
+/// of [`extern_imports`].
+///
+/// A backend feeds it both its own module's extern items and the extern items a
+/// `use` brought in from another file (`lang/EXTERN.md` §Lowering): a `use`d
+/// extern item lowers to its **native** import in the consumer, not an import
+/// from the defining file's emitted module, so the consumer reconstructs the
+/// `mod`'s import from the imported item's `#[extern(...)]` metadata. Only
+/// top-level `mod`s among `items` produce imports; nested mods are reached
+/// through the top-level binding.
+#[must_use]
+pub fn extern_imports_from_items(items: &[ExternItem], _target: Target) -> Vec<ExternImport> {
+    let mut out = Vec::new();
+    for ext in items {
+        let ExternItemKind::Mod(m) = &ext.kind else {
+            continue;
+        };
+        // `#[extern(name)]` is for `fn`/`struct`, not `mod`; a mod's neoc
+        // binding is always its declared name. `#[extern(path)]` overrides
+        // the target path; `ambient` makes the path a global-root chain.
+        let attr = ExternAttr::parse(&ext.attrs).unwrap_or_default();
+        let path = attr.path.clone().unwrap_or_else(|| m.name.clone());
+        out.push(ExternImport {
+            local_name: m.name.clone(),
+            path,
+            ambient: attr.ambient,
+        });
+    }
+    out
+}
+
+/// Extracts the top-level extern items from `source` whose names are in
+/// `names`, preserving each enclosing `mod` so the import path / `ambient` /
+/// `name` metadata survives. The result is the slice a consumer needs to
+/// reconstruct the native import and lowering for the extern items it `use`s
+/// across files (`lang/EXTERN.md` §Lowering).
+///
+/// An extern item is kept when it (or, for a `mod`, any descendant `struct`/`fn`)
+/// names one of `names`. A kept `mod` carries the full descendant subtree of
+/// matching items — its constructors (`impl`s targeting a kept struct) and the
+/// `mod`'s own `#[extern(...)]` attributes ride along — so the consumer's
+/// backend can run the same extern collectors over the result it runs over its
+/// own blocks.
+#[must_use]
+pub fn imported_extern_items<S: std::hash::BuildHasher>(
+    source: &Module,
+    names: &std::collections::HashSet<Ident, S>,
+) -> Vec<ExternItem> {
+    let mut out = Vec::new();
+    for item in &source.items {
+        let ItemKind::Extern(block) = &item.kind else {
+            continue;
+        };
+        for ext in &block.items {
+            if let Some(kept) = filter_extern_item(ext, names) {
+                out.push(kept);
+            }
+        }
+    }
+    out
+}
+
+/// Keeps `ext` if it (or, for a `mod`, any descendant) names one of `names`.
+/// A `mod` is rebuilt with only its matching descendants and any `impl` whose
+/// target type matches (its constructors). A bare `struct`/`fn` is kept whole.
+fn filter_extern_item<S: std::hash::BuildHasher>(
+    ext: &ExternItem,
+    names: &std::collections::HashSet<Ident, S>,
+) -> Option<ExternItem> {
+    match &ext.kind {
+        ExternItemKind::Struct(s) if names.contains(&s.name) => Some(ext.clone()),
+        ExternItemKind::Fn(sig) if names.contains(&sig.name) => Some(ext.clone()),
+        ExternItemKind::Mod(m) => {
+            let kept = filter_extern_items(&m.items, names);
+            if kept.is_empty() {
+                return None;
+            }
+            Some(ExternItem {
+                attrs: ext.attrs.clone(),
+                vis: ext.vis,
+                kind: ExternItemKind::Mod(ExternMod {
+                    name: m.name.clone(),
+                    items: kept,
+                }),
+                span: ext.span,
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Filters a list of extern items to those reaching `names`, keeping any `impl`
+/// whose target type is among the kept structs so a `use`d struct carries its
+/// constructors and associated functions.
+fn filter_extern_items<S: std::hash::BuildHasher>(
+    items: &[ExternItem],
+    names: &std::collections::HashSet<Ident, S>,
+) -> Vec<ExternItem> {
+    // First pass: kept structs/fns/mods. Second pass: impls whose target type
+    // was kept, so the consumer reconstructs constructors and assoc calls.
+    let mut kept: Vec<ExternItem> = items
+        .iter()
+        .filter_map(|e| filter_extern_item(e, names))
+        .collect();
+    let kept_types: std::collections::HashSet<Ident> = kept
+        .iter()
+        .filter_map(|e| match &e.kind {
+            ExternItemKind::Struct(s) => Some(s.name.clone()),
+            _ => None,
+        })
+        .collect();
+    for ext in items {
+        if let ExternItemKind::Impl(b) = &ext.kind
+            && let Type::Path(p) = &b.ty
+            && let Some(seg) = p.segments.last()
+            && kept_types.contains(&seg.name)
+        {
+            kept.push(ext.clone());
+        }
+    }
+    kept
+}
+
+/// The names declared as extern `struct`s anywhere in `module`'s `extern`
+/// blocks (recursively, including inside `mod`s).
+///
+/// A struct-literal `T { f: v }` of such a name lowers to a bare target object
+/// literal `{ f: v }` (not a tagged neoc struct), and a method/associated call
+/// on it lowers directly. Backends consult this set to tell an extern handle
+/// apart from a native neoc struct.
+#[must_use]
+pub fn extern_struct_names(module: &Module) -> std::collections::HashSet<Ident> {
+    let mut names = std::collections::HashSet::new();
+    for item in &module.items {
+        if let ItemKind::Extern(block) = &item.kind {
+            collect_extern_structs(&block.items, &mut names);
+        }
+    }
+    names
+}
+
+/// The extern `struct` names among `items` (recursively through `mod`s), the
+/// item-list form of [`extern_struct_names`]. A backend feeds it the extern
+/// items a `use` brought in so an imported extern struct lowers the same as a
+/// local one.
+#[must_use]
+pub fn extern_struct_names_from_items(items: &[ExternItem]) -> std::collections::HashSet<Ident> {
+    let mut names = std::collections::HashSet::new();
+    collect_extern_structs(items, &mut names);
+    names
+}
+
+/// The neoc-side names of every extern `struct` and `fn` among `items`
+/// (recursively through `mod`s). A backend uses this to recognise a `use`d name
+/// as extern-origin and so suppress an import from the defining file — a `use`d
+/// extern value is reached through its native import, not the defining module's
+/// emitted output (`lang/EXTERN.md` §Lowering).
+#[must_use]
+pub fn extern_value_names_from_items(items: &[ExternItem]) -> std::collections::HashSet<Ident> {
+    let mut names = std::collections::HashSet::new();
+    collect_extern_value_names(items, &mut names);
+    names
+}
+
+fn collect_extern_value_names(items: &[ExternItem], names: &mut std::collections::HashSet<Ident>) {
+    for ext in items {
+        match &ext.kind {
+            ExternItemKind::Struct(s) => {
+                names.insert(s.name.clone());
+            }
+            ExternItemKind::Fn(sig) => {
+                names.insert(sig.name.clone());
+            }
+            ExternItemKind::Mod(m) => collect_extern_value_names(&m.items, names),
+            ExternItemKind::Impl(_) => {}
+        }
+    }
+}
+
+fn collect_extern_structs(items: &[ExternItem], names: &mut std::collections::HashSet<Ident>) {
+    for ext in items {
+        match &ext.kind {
+            ExternItemKind::Struct(s) => {
+                names.insert(s.name.clone());
+            }
+            ExternItemKind::Mod(m) => collect_extern_structs(&m.items, names),
+            _ => {}
+        }
+    }
+}
+
+/// The `(type, method)` pairs marked `#[extern(constructor)]` across every
+/// `impl` in `module`'s `extern` blocks.
+///
+/// A call `T::new(args)` to such a pair lowers to the target's constructor form
+/// (`new T(args)` on JavaScript) rather than a static call. The `type` is the
+/// impl's target name; the `method` is the constructor `fn`'s name.
+#[must_use]
+pub fn extern_constructors(module: &Module) -> std::collections::HashSet<(Ident, Ident)> {
+    let mut out = std::collections::HashSet::new();
+    for item in &module.items {
+        if let ItemKind::Extern(block) = &item.kind {
+            collect_extern_constructors(&block.items, &mut out);
+        }
+    }
+    out
+}
+
+/// The `(type, method)` constructor pairs among `items`, the item-list form of
+/// [`extern_constructors`]. A backend feeds it `use`-imported extern items so an
+/// imported `T::new(args)` lowers to the target's constructor form.
+#[must_use]
+pub fn extern_constructors_from_items(
+    items: &[ExternItem],
+) -> std::collections::HashSet<(Ident, Ident)> {
+    let mut out = std::collections::HashSet::new();
+    collect_extern_constructors(items, &mut out);
+    out
+}
+
+fn collect_extern_constructors(
+    items: &[ExternItem],
+    out: &mut std::collections::HashSet<(Ident, Ident)>,
+) {
+    for ext in items {
+        match &ext.kind {
+            ExternItemKind::Impl(b) => {
+                let Type::Path(p) = &b.ty else { continue };
+                let Some(ty) = p.segments.last().map(|s| s.name.clone()) else {
+                    continue;
+                };
+                for m in &b.items {
+                    if ExternAttr::parse(&m.attrs).is_some_and(|a| a.constructor) {
+                        out.insert((ty.clone(), m.sig.name.clone()));
+                    }
+                }
+            }
+            ExternItemKind::Mod(m) => collect_extern_constructors(&m.items, out),
+            _ => {}
+        }
+    }
+}
+
+/// Maps each extern `struct` declared inside an extern `mod` to the neoc-side
+/// binding its enclosing `mod` resolves through (the `mod`'s name — its
+/// [`ExternImport::local_name`]).
+///
+/// An extern struct's **value** — its `#[extern(constructor)]` call
+/// `T::new(args)`, any associated/static call `T::f(args)`, and the constructed
+/// identity — is reached through the enclosing module's import, not a bare name
+/// (`lang/EXTERN.md` §Lowering). Backends qualify the reference with the
+/// returned binding (`sqlite.Database` for a `Database` in `mod sqlite`). A
+/// struct declared directly under an `extern` block (no enclosing `mod`) is
+/// absent from the map and keeps its bare name.
+#[must_use]
+pub fn extern_struct_namespaces(module: &Module) -> std::collections::HashMap<Ident, Ident> {
+    let mut out = std::collections::HashMap::new();
+    for item in &module.items {
+        if let ItemKind::Extern(block) = &item.kind {
+            collect_extern_struct_namespaces(&block.items, None, &mut out);
+        }
+    }
+    out
+}
+
+/// The extern-struct-to-`mod`-binding map among `items`, the item-list form of
+/// [`extern_struct_namespaces`]. A backend feeds it `use`-imported extern items
+/// so an imported struct's value reference qualifies through its `mod`'s import
+/// binding (`sqlite.Database`).
+#[must_use]
+pub fn extern_struct_namespaces_from_items(
+    items: &[ExternItem],
+) -> std::collections::HashMap<Ident, Ident> {
+    let mut out = std::collections::HashMap::new();
+    collect_extern_struct_namespaces(items, None, &mut out);
+    out
+}
+
+fn collect_extern_struct_namespaces(
+    items: &[ExternItem],
+    ns: Option<&Ident>,
+    out: &mut std::collections::HashMap<Ident, Ident>,
+) {
+    for ext in items {
+        match &ext.kind {
+            ExternItemKind::Struct(s) => {
+                if let Some(ns) = ns {
+                    out.insert(s.name.clone(), ns.clone());
+                }
+            }
+            // A `mod`'s neoc binding is its declared name (`#[extern(path)]`
+            // only retargets the import specifier, `#[extern(name)]` is not a
+            // `mod` attribute). Nested mods are reached through the top-level
+            // binding, so the namespace stays the outermost mod's name.
+            ExternItemKind::Mod(m) => {
+                let inner = ns.unwrap_or(&m.name);
+                collect_extern_struct_namespaces(&m.items, Some(inner), out);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Maps each extern `fn` declared inside an extern `mod` to the neoc-side
+/// binding its enclosing `mod` resolves through (the `mod`'s name — its
+/// [`ExternImport::local_name`]).
+///
+/// A free extern `fn` in a `mod` is reached through the enclosing module's
+/// import, not a bare name (`lang/EXTERN.md` §Lowering): a call `serve(opts)` to
+/// a `fn serve` declared in `mod Bun` lowers to `Bun.serve(opts)` — the `mod`'s
+/// binding qualifies the call, exactly as an extern struct's constructor /
+/// associated calls qualify through [`extern_struct_namespaces`]. A fn declared
+/// directly under an `extern` block (no enclosing `mod`) is absent from the map
+/// and keeps its bare name.
+#[must_use]
+pub fn extern_fn_namespaces(module: &Module) -> std::collections::HashMap<Ident, Ident> {
+    let mut out = std::collections::HashMap::new();
+    for item in &module.items {
+        if let ItemKind::Extern(block) = &item.kind {
+            collect_extern_fn_namespaces(&block.items, None, &mut out);
+        }
+    }
+    out
+}
+
+/// The extern-fn-to-`mod`-binding map among `items`, the item-list form of
+/// [`extern_fn_namespaces`]. A backend feeds it `use`-imported extern items so a
+/// `use`d free fn's call qualifies through its `mod`'s import binding
+/// (`Bun.serve`), matching the locally-declared case.
+#[must_use]
+pub fn extern_fn_namespaces_from_items(
+    items: &[ExternItem],
+) -> std::collections::HashMap<Ident, Ident> {
+    let mut out = std::collections::HashMap::new();
+    collect_extern_fn_namespaces(items, None, &mut out);
+    out
+}
+
+fn collect_extern_fn_namespaces(
+    items: &[ExternItem],
+    ns: Option<&Ident>,
+    out: &mut std::collections::HashMap<Ident, Ident>,
+) {
+    for ext in items {
+        match &ext.kind {
+            ExternItemKind::Fn(sig) => {
+                if let Some(ns) = ns {
+                    out.insert(sig.name.clone(), ns.clone());
+                }
+            }
+            // A `mod`'s neoc binding is its declared name; nested mods are
+            // reached through the top-level binding, so the namespace stays the
+            // outermost mod's name (mirrors `collect_extern_struct_namespaces`).
+            ExternItemKind::Mod(m) => {
+                let inner = ns.unwrap_or(&m.name);
+                collect_extern_fn_namespaces(&m.items, Some(inner), out);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The parsed `#[extern(...)]` attribute on an extern item
+/// (`lang/EXTERN.md` §Attributes). A closed set of params; absent params are
+/// `false`/`None`. Built from an item's [`Attribute`] list.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ExternAttr {
+    /// `#[extern(ambient)]` — no import; referenced from the target global root.
+    pub ambient: bool,
+    /// `#[extern(path = "...")]` — a `mod`'s target path.
+    pub path: Option<String>,
+    /// `#[extern(name = "...")]` — an `fn`/`struct`'s target identifier.
+    pub name: Option<String>,
+    /// `#[extern(constructor)]` — marks a constructor `fn` in an `impl`.
+    pub constructor: bool,
+}
+
+impl ExternAttr {
+    /// Parses the single `#[extern(...)]` attribute in `attrs`, if present.
+    ///
+    /// Recognises the closed param set (`ambient`, `path = "..."`,
+    /// `name = "..."`, `constructor`). Unknown params and malformed shapes are
+    /// surfaced by the type checker; this accessor reads what is well-formed and
+    /// ignores the rest, so codegen can lower without re-validating.
+    #[must_use]
+    pub fn parse(attrs: &[Attribute]) -> Option<Self> {
+        let entry = attrs
+            .iter()
+            .flat_map(|a| &a.items)
+            .find(|i| i.name == "extern")?;
+        let mut out = ExternAttr::default();
+        for arg in &entry.args {
+            match arg {
+                AttrArg::Item(inner) if inner.name == "ambient" => out.ambient = true,
+                AttrArg::Item(inner) if inner.name == "constructor" => out.constructor = true,
+                AttrArg::Named { name, value } => {
+                    if let AttrArg::Str(s) = value.as_ref() {
+                        match name.as_str() {
+                            "path" => out.path = Some(s.clone()),
+                            "name" => out.name = Some(s.clone()),
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        Some(out)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -271,19 +706,6 @@ pub enum Param {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ExtItem {
-    Fn(FnSig),
-    Type {
-        name: Ident,
-        generics: Vec<GenericParam>,
-    },
-    Const {
-        name: Ident,
-        ty: Type,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq)]
 pub struct GenericParam {
     pub name: Ident,
     pub bounds: Vec<TypePath>,
@@ -293,45 +715,6 @@ pub struct GenericParam {
 pub struct WherePredicate {
     pub ty: Ident,
     pub bounds: Vec<TypePath>,
-}
-
-/// Collects the native imports a `target` backend must emit for the hosted
-/// `extern "<host>" { ... }` blocks in `module`.
-///
-/// Only blocks whose host maps to `target` (via [`Target::from_host`]) and that
-/// carry a `#[link(name = "...")]` / `#[link("...")]` module specifier
-/// contribute. Returns one entry per distinct module specifier, each pairing
-/// the specifier with the value names (`fn` and `const` items) declared in the
-/// matching blocks. The entries are sorted by specifier and the names within
-/// each entry preserve declaration order, so backends emit a deterministic
-/// import preamble. Un-hosted `ext` blocks, hosted blocks without `#[link]`,
-/// blocks targeting another backend, and `type` items all contribute nothing —
-/// they are either host globals or erased.
-#[must_use]
-pub fn module_imports(module: &Module, target: Target) -> Vec<(String, Vec<Ident>)> {
-    use std::collections::BTreeMap;
-
-    let mut by_spec: BTreeMap<String, Vec<Ident>> = BTreeMap::new();
-    for item in &module.items {
-        let ItemKind::Extern { host, items } = &item.kind else {
-            continue;
-        };
-        if Target::from_host(host) != Some(target) {
-            continue;
-        }
-        let Some(spec) = item.link_name() else {
-            continue;
-        };
-        let names = by_spec.entry(spec.to_string()).or_default();
-        for ext in items {
-            match ext {
-                ExtItem::Fn(sig) => names.push(sig.name.clone()),
-                ExtItem::Const { name, .. } => names.push(name.clone()),
-                ExtItem::Type { .. } => {}
-            }
-        }
-    }
-    by_spec.into_iter().collect()
 }
 
 /// The trait names listed by every `#[derive(...)]` in `attrs`, in source order.
@@ -830,5 +1213,404 @@ mod tests {
         // `#[derive(Clone)]` adds `Clone`. Sorted by the `BTreeSet`.
         let p: Vec<&str> = index["P"].iter().map(String::as_str).collect();
         assert_eq!(p, vec!["Clone", "Greet", "Show"]);
+    }
+
+    /// An `extern` attribute with a single `#[extern(...)]` item.
+    fn extern_attr(args: Vec<AttrArg>) -> Attribute {
+        Attribute {
+            items: vec![AttrItem {
+                name: "extern".to_string(),
+                args,
+            }],
+        }
+    }
+
+    fn extern_item(attrs: Vec<Attribute>, kind: ExternItemKind) -> ExternItem {
+        ExternItem {
+            attrs,
+            vis: Visibility::Public,
+            kind,
+            span: Span::default(),
+        }
+    }
+
+    #[test]
+    fn extern_attr_parses_the_closed_param_set() {
+        let attrs = vec![extern_attr(vec![
+            AttrArg::Item(AttrItem {
+                name: "ambient".to_string(),
+                args: Vec::new(),
+            }),
+            AttrArg::Named {
+                name: "path".to_string(),
+                value: Box::new(AttrArg::Str("globalThis.crypto".to_string())),
+            },
+        ])];
+        let parsed = ExternAttr::parse(&attrs).expect("extern attr present");
+        assert!(parsed.ambient);
+        assert_eq!(parsed.path.as_deref(), Some("globalThis.crypto"));
+        assert!(parsed.name.is_none());
+        assert!(!parsed.constructor);
+    }
+
+    #[test]
+    fn extern_imports_compute_path_name_and_ambient() {
+        // extern {
+        //   #[extern(path = "vnd:rusqlite")] mod rusqlite { ... }
+        //   #[extern(ambient)] mod console { ... }
+        //   #[extern(path = "fs")] mod files { ... }
+        // }
+        let module = Module {
+            items: vec![Item {
+                attrs: Vec::new(),
+                vis: Visibility::Private,
+                kind: ItemKind::Extern(ExternBlock {
+                    items: vec![
+                        extern_item(
+                            vec![extern_attr(vec![AttrArg::Named {
+                                name: "path".to_string(),
+                                value: Box::new(AttrArg::Str("vnd:rusqlite".to_string())),
+                            }])],
+                            ExternItemKind::Mod(ExternMod {
+                                name: "rusqlite".to_string(),
+                                items: Vec::new(),
+                            }),
+                        ),
+                        extern_item(
+                            vec![extern_attr(vec![AttrArg::Item(AttrItem {
+                                name: "ambient".to_string(),
+                                args: Vec::new(),
+                            })])],
+                            ExternItemKind::Mod(ExternMod {
+                                name: "console".to_string(),
+                                items: Vec::new(),
+                            }),
+                        ),
+                        extern_item(
+                            vec![extern_attr(vec![AttrArg::Named {
+                                name: "path".to_string(),
+                                value: Box::new(AttrArg::Str("fs".to_string())),
+                            }])],
+                            ExternItemKind::Mod(ExternMod {
+                                name: "files".to_string(),
+                                items: Vec::new(),
+                            }),
+                        ),
+                    ],
+                }),
+                span: Span::default(),
+            }],
+        };
+        let imports = extern_imports(&module, Target::Lua);
+        assert_eq!(
+            imports,
+            vec![
+                ExternImport {
+                    local_name: "rusqlite".to_string(),
+                    path: "vnd:rusqlite".to_string(),
+                    ambient: false,
+                },
+                ExternImport {
+                    local_name: "console".to_string(),
+                    path: "console".to_string(),
+                    ambient: true,
+                },
+                ExternImport {
+                    local_name: "files".to_string(),
+                    path: "fs".to_string(),
+                    ambient: false,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn extern_struct_names_and_constructors_are_collected() {
+        // extern {
+        //   struct Database;
+        //   impl Database { #[extern(constructor)] fn new(p: string); fn q(self); }
+        // }
+        let module = Module {
+            items: vec![Item {
+                attrs: Vec::new(),
+                vis: Visibility::Private,
+                kind: ItemKind::Extern(ExternBlock {
+                    items: vec![
+                        extern_item(
+                            Vec::new(),
+                            ExternItemKind::Struct(StructDecl {
+                                name: "Database".to_string(),
+                                generics: Vec::new(),
+                                body: StructBody::Unit,
+                            }),
+                        ),
+                        extern_item(
+                            Vec::new(),
+                            ExternItemKind::Impl(ImplBlock {
+                                generics: Vec::new(),
+                                trait_: None,
+                                ty: Type::Path(TypePath {
+                                    segments: vec![TypeSegment {
+                                        name: "Database".to_string(),
+                                        args: Vec::new(),
+                                    }],
+                                }),
+                                items: vec![
+                                    FnDecl {
+                                        attrs: vec![extern_attr(vec![AttrArg::Item(AttrItem {
+                                            name: "constructor".to_string(),
+                                            args: Vec::new(),
+                                        })])],
+                                        sig: FnSig {
+                                            name: "new".to_string(),
+                                            name_span: Span::default(),
+                                            generics: Vec::new(),
+                                            params: vec![Param::Named {
+                                                name: "p".to_string(),
+                                                ty: Type::Path(TypePath {
+                                                    segments: vec![TypeSegment {
+                                                        name: "string".to_string(),
+                                                        args: Vec::new(),
+                                                    }],
+                                                }),
+                                                span: Span::default(),
+                                            }],
+                                            ret: None,
+                                            where_clause: Vec::new(),
+                                        },
+                                        body: Block::default(),
+                                    },
+                                    FnDecl {
+                                        attrs: Vec::new(),
+                                        sig: FnSig {
+                                            name: "q".to_string(),
+                                            name_span: Span::default(),
+                                            generics: Vec::new(),
+                                            params: vec![Param::Receiver],
+                                            ret: None,
+                                            where_clause: Vec::new(),
+                                        },
+                                        body: Block::default(),
+                                    },
+                                ],
+                                assoc_bindings: Vec::new(),
+                            }),
+                        ),
+                    ],
+                }),
+                span: Span::default(),
+            }],
+        };
+        assert!(extern_struct_names(&module).contains("Database"));
+        let ctors = extern_constructors(&module);
+        assert!(ctors.contains(&("Database".to_string(), "new".to_string())));
+        assert_eq!(ctors.len(), 1);
+    }
+
+    #[test]
+    fn extern_struct_namespaces_map_in_mod_structs_to_their_mod_binding() {
+        // extern {
+        //   struct Top;                                  // no enclosing mod
+        //   #[extern(path = "bun:sqlite")]
+        //   mod sqlite { struct Database; struct Changes; }
+        // }
+        let struct_item = |name: &str| {
+            extern_item(
+                Vec::new(),
+                ExternItemKind::Struct(StructDecl {
+                    name: name.to_string(),
+                    generics: Vec::new(),
+                    body: StructBody::Unit,
+                }),
+            )
+        };
+        let module = Module {
+            items: vec![Item {
+                attrs: Vec::new(),
+                vis: Visibility::Private,
+                kind: ItemKind::Extern(ExternBlock {
+                    items: vec![
+                        struct_item("Top"),
+                        extern_item(
+                            vec![extern_attr(vec![AttrArg::Named {
+                                name: "path".to_string(),
+                                value: Box::new(AttrArg::Str("bun:sqlite".to_string())),
+                            }])],
+                            ExternItemKind::Mod(ExternMod {
+                                name: "sqlite".to_string(),
+                                items: vec![struct_item("Database"), struct_item("Changes")],
+                            }),
+                        ),
+                    ],
+                }),
+                span: Span::default(),
+            }],
+        };
+        let ns = extern_struct_namespaces(&module);
+        // The path overrides the import specifier, not the neoc-side binding: a
+        // struct's value qualifies through the `mod`'s name (`sqlite`).
+        assert_eq!(ns.get("Database"), Some(&"sqlite".to_string()));
+        assert_eq!(ns.get("Changes"), Some(&"sqlite".to_string()));
+        // A struct with no enclosing `mod` keeps its bare name — absent here.
+        assert!(!ns.contains_key("Top"));
+    }
+
+    #[test]
+    fn extern_fn_namespaces_map_in_mod_fns_to_their_mod_binding() {
+        // extern {
+        //   fn top();                                     // no enclosing mod
+        //   #[extern(ambient, path = "Bun")]
+        //   mod Bun { fn serve(o: Unknown); fn sleep(ms: Unknown); }
+        // }
+        let fn_item = |name: &str| {
+            extern_item(
+                Vec::new(),
+                ExternItemKind::Fn(FnSig {
+                    name: name.to_string(),
+                    name_span: Span::default(),
+                    generics: Vec::new(),
+                    params: vec![Param::Named {
+                        name: "o".to_string(),
+                        ty: Type::Unit,
+                        span: Span::default(),
+                    }],
+                    ret: None,
+                    where_clause: Vec::new(),
+                }),
+            )
+        };
+        let module = Module {
+            items: vec![Item {
+                attrs: Vec::new(),
+                vis: Visibility::Private,
+                kind: ItemKind::Extern(ExternBlock {
+                    items: vec![
+                        fn_item("top"),
+                        extern_item(
+                            vec![extern_attr(vec![
+                                AttrArg::Item(AttrItem {
+                                    name: "ambient".to_string(),
+                                    args: Vec::new(),
+                                }),
+                                AttrArg::Named {
+                                    name: "path".to_string(),
+                                    value: Box::new(AttrArg::Str("Bun".to_string())),
+                                },
+                            ])],
+                            ExternItemKind::Mod(ExternMod {
+                                name: "Bun".to_string(),
+                                items: vec![fn_item("serve"), fn_item("sleep")],
+                            }),
+                        ),
+                    ],
+                }),
+                span: Span::default(),
+            }],
+        };
+        let ns = extern_fn_namespaces(&module);
+        // A fn inside a `mod` qualifies through the `mod`'s name (`Bun`).
+        assert_eq!(ns.get("serve"), Some(&"Bun".to_string()));
+        assert_eq!(ns.get("sleep"), Some(&"Bun".to_string()));
+        // A fn with no enclosing `mod` keeps its bare name — absent here.
+        assert!(!ns.contains_key("top"));
+    }
+
+    #[test]
+    fn imported_extern_items_keeps_the_named_struct_its_mod_and_its_constructor() {
+        // extern {
+        //   #[extern(path = "bun:sqlite")]
+        //   mod sqlite {
+        //     struct Database;
+        //     struct Other;
+        //     impl Database { #[extern(constructor)] fn new(p: string); }
+        //   }
+        // }
+        let new_sig = FnDecl {
+            attrs: vec![extern_attr(vec![AttrArg::Item(AttrItem {
+                name: "constructor".to_string(),
+                args: Vec::new(),
+            })])],
+            sig: FnSig {
+                name: "new".to_string(),
+                name_span: Span::default(),
+                generics: Vec::new(),
+                params: vec![Param::Named {
+                    name: "p".to_string(),
+                    ty: Type::Unit,
+                    span: Span::default(),
+                }],
+                ret: None,
+                where_clause: Vec::new(),
+            },
+            body: Block::default(),
+        };
+        let struct_item = |name: &str| {
+            extern_item(
+                Vec::new(),
+                ExternItemKind::Struct(StructDecl {
+                    name: name.to_string(),
+                    generics: Vec::new(),
+                    body: StructBody::Unit,
+                }),
+            )
+        };
+        let module = Module {
+            items: vec![Item {
+                attrs: Vec::new(),
+                vis: Visibility::Private,
+                kind: ItemKind::Extern(ExternBlock {
+                    items: vec![extern_item(
+                        vec![extern_attr(vec![AttrArg::Named {
+                            name: "path".to_string(),
+                            value: Box::new(AttrArg::Str("bun:sqlite".to_string())),
+                        }])],
+                        ExternItemKind::Mod(ExternMod {
+                            name: "sqlite".to_string(),
+                            items: vec![
+                                struct_item("Database"),
+                                struct_item("Other"),
+                                extern_item(
+                                    Vec::new(),
+                                    ExternItemKind::Impl(ImplBlock {
+                                        generics: Vec::new(),
+                                        trait_: None,
+                                        ty: Type::Path(TypePath {
+                                            segments: vec![TypeSegment {
+                                                name: "Database".to_string(),
+                                                args: Vec::new(),
+                                            }],
+                                        }),
+                                        items: vec![new_sig],
+                                        assoc_bindings: Vec::new(),
+                                    }),
+                                ),
+                            ],
+                        }),
+                    )],
+                }),
+                span: Span::default(),
+            }],
+        };
+
+        // `use db::Database` → extract only `Database`, but carry its enclosing
+        // `mod` (for the import path) and the `impl` that holds its constructor.
+        let names = std::collections::HashSet::from(["Database".to_string()]);
+        let kept = imported_extern_items(&module, &names);
+
+        // The native import survives (path metadata carried via the kept `mod`).
+        let imports = extern_imports_from_items(&kept, Target::Js);
+        assert_eq!(imports.len(), 1);
+        assert_eq!(imports[0].path, "bun:sqlite");
+        assert_eq!(imports[0].local_name, "sqlite");
+
+        // The struct and its constructor carry; the un-named sibling `Other`
+        // does not.
+        let structs = extern_struct_names_from_items(&kept);
+        assert!(structs.contains("Database"));
+        assert!(!structs.contains("Other"));
+        let ctors = extern_constructors_from_items(&kept);
+        assert!(ctors.contains(&("Database".to_string(), "new".to_string())));
+        let ns = extern_struct_namespaces_from_items(&kept);
+        assert_eq!(ns.get("Database"), Some(&"sqlite".to_string()));
     }
 }

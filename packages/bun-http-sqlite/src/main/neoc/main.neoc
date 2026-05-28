@@ -1,0 +1,155 @@
+// Real multi-file: the bun:sqlite handle comes from the autots-generated
+// `autots/bun_sqlite` module (autots also emits `autots/globals` for the ambient
+// `Bun` surface — see the note on the extern block below), the typed
+// data-access layer from the autosql-generated `autosql/` modules — `ports`
+// holds the contract, `migrate` runs the DDL, and each query lives in its own
+// module.
+use autots::bun_sqlite::Database;
+
+use autosql::ports::SqlValue;
+
+use autosql::ports::SqlExecutor;
+
+use autosql::migrate::migrate;
+
+use autosql::list_notes::ListNotesRow;
+
+use autosql::list_notes::list_notes;
+
+use autosql::add_note::add_note;
+
+// `serve` comes from the generated `autots::globals`, which declares the full
+// ambient `Bun` surface (`#[extern(ambient, path = "Bun")] mod Bun { serve, … }`).
+// A `use` of an in-mod free fn flattens it to the file level and the call
+// qualifies through its namespace at emit (`serve(opts)` → `Bun.serve(opts)`),
+// the same as an in-mod extern struct's constructor. `Response` is a DOM lib
+// type whose conditional declaration autots can't faithfully translate, and
+// `ServeOptions` is this app's own option bag — both stay hand-written.
+use autots::globals::serve;
+
+extern {
+    #[extern(ambient)] struct Response;
+    impl Response {
+        #[extern(constructor)] fn new(body: string);
+    }
+    struct ServeOptions {
+        port: number,
+        fetch: fn(Unknown) -> Response,
+    }
+}
+
+// --- the SqlExecutor impl: the only code that touches the database ---
+// A neoc struct over the bun:sqlite `Database` (the autots-generated handle),
+// implementing the autosql `SqlExecutor` trait. Params are inlined into the SQL
+// (the generated binding has no parameter slot), and result cells are tagged
+// back into `SqlValue` by their JS runtime type.
+
+struct BunSqlite {
+    db: Database,
+}
+
+fn num_str(n: number) -> string {
+    let u: Unknown = n;
+    u.toString()
+}
+
+fn sql_literal(v: SqlValue) -> string {
+    match v {
+        SqlValue::Int(n) => num_str(n),
+        SqlValue::Real(n) => num_str(n),
+        SqlValue::Text(s) => "'" + s + "'",
+        SqlValue::Bool(b) => if b {
+            "1"
+        } else {
+            "0"
+        },
+        SqlValue::Null => "NULL",
+    }
+}
+
+// Replace each `?` in `sql` with the SQL literal of the next param, in order.
+fn bind(sql: string, params: [SqlValue]) -> string {
+    let mut s: Unknown = sql;
+    for p in params {
+        let idx = s.indexOf("?");
+        let head = s.slice(0, idx);
+        let tail = s.slice(idx + 1);
+        s = head + sql_literal(p) + tail;
+    }
+    s
+}
+
+// Tag a foreign cell value back into `SqlValue` by its JS constructor name.
+fn cell(value: Unknown) -> SqlValue {
+    let kind = value.constructor.name;
+    if kind == "Number" {
+        SqlValue::Real(value)
+    } else if kind == "String" {
+        SqlValue::Text(value)
+    } else if kind == "Boolean" {
+        SqlValue::Bool(value)
+    } else {
+        SqlValue::Null
+    }
+}
+
+impl autosql::ports::SqlExecutor for BunSqlite {
+    fn execute(self, sql: string, params: [SqlValue]) -> Result<number, string> {
+        let changes = self.db.run(bind(sql, params));
+        Ok(changes.changes)
+    }
+
+    fn query(self, sql: string, params: [SqlValue]) -> Result<[[SqlValue]], string> {
+        let raw = self.db.query(bind(sql, params)).values();
+        let mut out: [[SqlValue]] = [];
+        let mut ri = 0;
+        for row in raw {
+            let mut cols: [SqlValue] = [];
+            let mut ci = 0;
+            for c in row {
+                cols[ci] = cell(c);
+                ci = ci + 1;
+            }
+            out[ri] = cols;
+            ri = ri + 1;
+        }
+        Ok(out)
+    }
+}
+
+// --- the HTTP server, driven entirely through the typed DAO ---
+
+fn render(notes: [ListNotesRow]) -> string {
+    let mut out = "";
+    for n in notes {
+        out = out + num_str(n.id) + ":" + n.body + " | ";
+    }
+    out
+}
+
+// GET /add/<text> inserts a note; anything else lists every note. Both go
+// through the autosql-generated `add_note` / `list_notes`.
+fn handle(db: BunSqlite, req: Unknown) -> Response {
+    let url = req.url;
+    if url.includes("/add/") {
+        let body = url.split("/add/")[1];
+        match add_note(db, body) {
+            Ok(_) => Response::new("added: " + body),
+            Err(e) => Response::new("error: " + e),
+        }
+    } else {
+        match list_notes(db) {
+            Ok(notes) => Response::new(render(notes)),
+            Err(e) => Response::new("error: " + e),
+        }
+    }
+}
+
+pub fn main() {
+    let raw = Database::new(":memory:");
+    let db = BunSqlite { db: raw };
+    migrate(db);
+    add_note(db, "hello");
+    add_note(db, "world");
+    serve(ServeOptions { port: 38573, fetch: |req| handle(db, req) });
+}

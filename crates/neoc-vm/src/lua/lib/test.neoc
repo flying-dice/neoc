@@ -1,12 +1,14 @@
 // @generated from the lib:test runtime module — do not edit.
-#[link(name = "lib:test")]
-extern "neoc" {
-    /// Declare a named test suite. Suites nest — `describe` inside `describe` prefixes the test name.
-    fn describe(name: string, fn: LuaValue) -> ();
-    /// Declare a named test case. The callback may be async. Alias: `it`.
-    fn test(name: string, fn: LuaValue) -> ();
-    /// Alias for `test`. Prefer this inside a `describe` block for BDD-style readability.
-    fn it(name: string, fn: LuaValue) -> ();
-    /// Wrap `value` in a matcher table exposing dot-syntax assertions (`toBe`, `toBeNil`, `toBeTruthy`, `toBeFalsy`, `toContain`, `toThrow`).
-    fn expect(value: LuaValue) -> LuaValue;
+extern {
+    #[extern(path = "lib:test")]
+    mod test {
+        /// Declare a named test suite. Suites nest — `describe` inside `describe` prefixes the test name.
+        fn describe(name: string, fn: Unknown);
+        /// Declare a named test case. The callback may be async. Alias: `it`.
+        fn test(name: string, fn: Unknown);
+        /// Alias for `test`. Prefer this inside a `describe` block for BDD-style readability.
+        fn it(name: string, fn: Unknown);
+        /// Wrap `value` in a matcher table exposing dot-syntax assertions (`toBe`, `toBeNil`, `toBeTruthy`, `toBeFalsy`, `toContain`, `toThrow`).
+        fn expect(value: Unknown) -> Unknown;
+    }
 }

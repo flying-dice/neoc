@@ -1,7 +1,9 @@
 // DYNAMIC.md §3.6 + §5: an irrefutable `let` pattern destructures a struct,
 // binding each field from the initialiser. `let Point { x, y } = p` binds x = 3
 // and y = 4, so the sum is 7.
-ext fn println(n: number);
+extern {
+    fn println(n: number);
+}
 
 struct Point {
     x: number,

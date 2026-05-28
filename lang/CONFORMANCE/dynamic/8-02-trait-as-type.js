@@ -1,21 +1,19 @@
-const __m = {};
-const __call = (recv, name, ...args) => __m[recv.__struct ?? recv.__enum][name](recv, ...args);
 const __t = {};
 
-__m.Circle = {};
+const Circle$ = {};
 __t.Circle = ["Drawable"];
-__m.Square = {};
+const Square$ = {};
 __t.Square = ["Drawable"];
-__m.Circle.draw = function(self) {
+Circle$.draw = function() {
   return "O";
 }
-__m.Square.draw = function(self) {
+Square$.draw = function() {
   return "[]";
 }
 function render(shape) {
-  return __call(shape, "draw");
+  return shape.draw();
 }
 function main() {
-  println(render({ __struct: "Circle", r: 1 }));
-  println(render({ __struct: "Square", side: 2 }));
+  println(render({ __struct: "Circle", r: 1, __proto__: Circle$ }));
+  println(render({ __struct: "Square", side: 2, __proto__: Square$ }));
 }

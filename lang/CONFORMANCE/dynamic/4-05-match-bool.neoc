@@ -1,7 +1,9 @@
 // DYNAMIC.md §4.5 + §5: a `match` over a `bool` scrutinee with literal arms.
 // Both `true` and `false` must be covered for the match to be exhaustive
 // (STATIC.md §7).
-ext fn println(s: string);
+extern {
+    fn println(s: string);
+}
 
 fn yes_no(b: bool) -> string {
     match b {

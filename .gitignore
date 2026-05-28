@@ -10,6 +10,11 @@ docs/.vitepress/dist
 docs/.vitepress/cache
 docs/node_modules
 
+# Bun workspace
+/node_modules
+packages/*/node_modules
+packages/*/dist
+
 # OS / editor metadata
 .DS_Store
 **/.DS_Store

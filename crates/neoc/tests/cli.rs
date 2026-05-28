@@ -10,7 +10,7 @@ use tempfile::tempdir;
 
 const BIN: &str = env!("CARGO_BIN_EXE_neoc");
 
-const VALID: &str = "ext fn println(n: number);\nfn main() {\n  println(1 + 2);\n}\n";
+const VALID: &str = "extern { fn println(n: number); }\nfn main() {\n  println(1 + 2);\n}\n";
 const BROKEN: &str = "fn main( {\n";
 
 fn write(dir: &Path, name: &str, src: &str) -> std::path::PathBuf {
@@ -195,7 +195,8 @@ fn fmt_check_exits_nonzero_for_unformatted_and_writes_nothing() {
 
 #[test]
 fn fmt_check_exits_zero_when_already_formatted() {
-    const CANONICAL: &str = "ext fn println(n: number);\n\nfn main() {\n    println(1 + 2);\n}\n";
+    const CANONICAL: &str =
+        "extern {\n    fn println(n: number);\n}\n\nfn main() {\n    println(1 + 2);\n}\n";
     let dir = tempdir().unwrap();
     let src = write(dir.path(), "ok.neoc", CANONICAL);
 
@@ -238,7 +239,7 @@ fn lsp_starts_and_exits_cleanly_when_stdin_closes() {
 
 // `print` is the built-in the sandboxed VM exposes (unlike the conformance
 // harness's `println`), so a runnable `.neoc` binds it as an `ext`.
-const RUNNABLE: &str = "ext fn print(s: string);\nfn main() {\n  print(\"ran neoc\");\n}\n";
+const RUNNABLE: &str = "extern { fn print(s: string); }\nfn main() {\n  print(\"ran neoc\");\n}\n";
 
 #[test]
 fn run_neoc_transpiles_and_executes() {
@@ -279,12 +280,12 @@ fn run_neoc_type_error_reports_neoc_diagnostic_not_lua() {
 // offending call sits on neoc line 4; the emitted Lua puts it on a different
 // line, so a correct source map must report line 4, not the Lua line. (#55, #56)
 const RUNTIME_FAULT: &str = "\
-ext fn print(s: string);
+extern { fn print(s: string); }
 fn crash() {
   print(\"in crash\");
   let n = explode();
 }
-ext fn explode() -> number;
+extern { fn explode() -> number; }
 fn main() {
   crash();
 }
@@ -312,6 +313,88 @@ fn run_neoc_runtime_fault_reports_neoc_line_not_lua_line() {
         !stderr.contains("fault.neoc\"]:3:"),
         "Lua line 3 leaked into the report; map not applied: {stderr}"
     );
+}
+
+#[test]
+fn run_eval_executes_inline_snippet() {
+    // An inline neoc snippet transpiles and runs in-process with no file on
+    // disk. A clean program that defines `main` runs to a zero exit.
+    let out = Command::new(BIN)
+        .arg("run")
+        .arg("-e")
+        .arg("fn main() -> number { 1 + 2 }")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn run_eval_type_error_reports_eval_chunk() {
+    // A diagnostic in an inline snippet is reported against the `<eval>` chunk
+    // name (the snippet has no file path) and exits non-zero.
+    let out = Command::new(BIN)
+        .arg("run")
+        .arg("--eval")
+        .arg("fn main() { let x: string = 42; }")
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("<eval>: type:"),
+        "expected a neoc type diagnostic against <eval>, got: {stderr}"
+    );
+}
+
+#[test]
+fn run_eval_lua_runs_source_verbatim() {
+    // `--lua` treats the snippet as raw Lua/Luau: loaded into the engine with no
+    // neoc compilation, so `print` (a Luau global) works directly.
+    let out = Command::new(BIN)
+        .arg("run")
+        .arg("--lua")
+        .arg("-e")
+        .arg(r#"print("from lua eval")"#)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "from lua eval");
+}
+
+#[test]
+fn run_eval_lua_and_neoc_flags_conflict() {
+    // The two language selectors are mutually exclusive.
+    let out = Command::new(BIN)
+        .arg("run")
+        .arg("--lua")
+        .arg("--neoc")
+        .arg("-e")
+        .arg("print(1)")
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+}
+
+#[test]
+fn run_eval_conflicts_with_paths() {
+    // `--eval` and file paths are mutually exclusive: one source of program
+    // text, not two.
+    let out = Command::new(BIN)
+        .arg("run")
+        .arg("-e")
+        .arg("fn main() {}")
+        .arg("script.luau")
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
 }
 
 #[test]

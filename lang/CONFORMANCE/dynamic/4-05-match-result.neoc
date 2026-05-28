@@ -1,4 +1,6 @@
-ext fn print(s: string);
+extern {
+    fn print(s: string);
+}
 
 fn describe(r: Result<number, string>) -> string {
     match r {

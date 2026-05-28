@@ -206,7 +206,6 @@ impl<'a> Printer<'a> {
             "trait_declaration" => self.trait_declaration(node),
             "impl_block" => self.impl_block(node),
             "function_declaration" => self.function_declaration(node),
-            "ext_block" => self.ext_block(node),
             "extern_block" => self.extern_block(node),
             other => self.fallback(node, other),
         }
@@ -484,47 +483,23 @@ impl<'a> Printer<'a> {
         }
     }
 
-    fn ext_block(&mut self, node: Node) {
-        let mut cursor = node.walk();
-        let items: Vec<Node> = node
-            .named_children(&mut cursor)
-            .filter(|c| c.kind() == "ext_item" || Self::is_comment(c.kind()))
-            .collect();
-        let braced = node.children(&mut node.walk()).any(|c| c.kind() == "{");
-        if braced {
-            self.push("ext {");
-            self.indent += 1;
-            for item in &items {
-                self.newline();
-                self.write_indent();
-                if Self::is_comment(item.kind()) {
-                    self.comment(*item);
-                } else {
-                    self.ext_item(*item);
-                }
-            }
-            self.indent -= 1;
-            self.newline();
-            self.write_indent();
-            self.push("}");
-        } else {
-            self.push("ext ");
-            if let Some(item) = items.iter().find(|c| c.kind() == "ext_item") {
-                self.ext_item(*item);
-            }
-        }
+    /// Formats an `extern { … }` block (`lang/EXTERN.md`): a region of bodyless
+    /// `mod`/`struct`/`impl`/`fn` items.
+    fn extern_block(&mut self, node: Node) {
+        self.push("extern {");
+        self.extern_items(node);
+        self.newline();
+        self.write_indent();
+        self.push("}");
     }
 
-    fn extern_block(&mut self, node: Node) {
-        self.push("extern ");
-        if let Some(host) = node.child_by_field_name("host") {
-            self.push(self.text(host));
-        }
-        self.push(" {");
+    /// Formats the `extern_item` (and comment) children of an `extern_block` or
+    /// `extern_mod`, one per indented line.
+    fn extern_items(&mut self, node: Node) {
         let mut cursor = node.walk();
         let items: Vec<Node> = node
             .named_children(&mut cursor)
-            .filter(|c| c.kind() == "ext_item" || Self::is_comment(c.kind()))
+            .filter(|c| c.kind() == "extern_item" || Self::is_comment(c.kind()))
             .collect();
         self.indent += 1;
         for item in &items {
@@ -533,7 +508,67 @@ impl<'a> Printer<'a> {
             if Self::is_comment(item.kind()) {
                 self.comment(*item);
             } else {
-                self.ext_item(*item);
+                self.extern_item(*item);
+            }
+        }
+        self.indent -= 1;
+    }
+
+    /// Formats one `extern_item`: its attributes, optional `pub`, and one inner
+    /// form (`extern_mod` / `struct_declaration` / `extern_impl` / `extern_fn`).
+    fn extern_item(&mut self, node: Node) {
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            match child.kind() {
+                "attribute" => {
+                    self.attribute(child);
+                    self.push(" ");
+                }
+                "pub" => self.push("pub "),
+                "extern_mod" => self.extern_mod(child),
+                "struct_declaration" => self.struct_declaration(child),
+                "extern_impl" => self.extern_impl(child),
+                "extern_fn" => {
+                    self.function_signature(child);
+                    self.push(";");
+                }
+                k if Self::is_comment(k) => self.comment(child),
+                _ => {}
+            }
+        }
+    }
+
+    fn extern_mod(&mut self, node: Node) {
+        self.push("mod ");
+        self.push(self.text(node.child_by_field_name("name").unwrap()));
+        self.push(" {");
+        self.extern_items(node);
+        self.newline();
+        self.write_indent();
+        self.push("}");
+    }
+
+    fn extern_impl(&mut self, node: Node) {
+        self.push("impl");
+        if let Some(generics) = node.child_by_field_name("generics") {
+            self.generic_params(generics);
+        }
+        self.push(" ");
+        self.ty(node.child_by_field_name("type").unwrap());
+        self.push(" {");
+        let mut cursor = node.walk();
+        let methods: Vec<Node> = node
+            .named_children(&mut cursor)
+            .filter(|c| c.kind() == "extern_method" || Self::is_comment(c.kind()))
+            .collect();
+        self.indent += 1;
+        for m in &methods {
+            self.newline();
+            self.write_indent();
+            if Self::is_comment(m.kind()) {
+                self.comment(*m);
+            } else {
+                self.extern_method(*m);
             }
         }
         self.indent -= 1;
@@ -542,30 +577,21 @@ impl<'a> Printer<'a> {
         self.push("}");
     }
 
-    fn ext_item(&mut self, node: Node) {
+    fn extern_method(&mut self, node: Node) {
         let mut cursor = node.walk();
-        let first = node.children(&mut cursor).next().map(|c| c.kind());
-        if first == Some("fn") {
-            self.function_signature(node);
-            self.push(";");
-        } else if first == Some("type") {
-            self.push("type ");
-            self.push(self.text(node.child_by_field_name("name").unwrap()));
-            if let Some(generics) = node
-                .children(&mut node.walk())
-                .find(|c| c.kind() == "generic_params")
-            {
-                self.generic_params(generics);
+        for child in node.children(&mut cursor) {
+            match child.kind() {
+                "attribute" => {
+                    self.attribute(child);
+                    self.push(" ");
+                }
+                "pub" => self.push("pub "),
+                k if Self::is_comment(k) => self.comment(child),
+                _ => {}
             }
-            self.push(";");
-        } else {
-            // const
-            self.push("const ");
-            self.push(self.text(node.child_by_field_name("name").unwrap()));
-            self.push(": ");
-            self.ty(node.child_by_field_name("type").unwrap());
-            self.push(";");
         }
+        self.function_signature(node);
+        self.push(";");
     }
 
     fn function_declaration(&mut self, node: Node) {

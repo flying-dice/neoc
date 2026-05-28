@@ -1,21 +1,23 @@
 // @generated from the lib:cache runtime module — do not edit.
-struct Cache;
-impl Cache {
-    /// Create a bounded LRU cache from an options table: `max_size` (required, ≥ 1) caps the entry count; `ttl` (optional, seconds, fractional allowed) sets a default per-entry expiry; `on_evict` (optional, `function(key, value)`) fires when the cache drops an entry itself — capacity eviction or TTL expiry — but not on `delete`, `clear`, or overwrite.
-    fn new(options: LuaValue) -> Result<Cache, string>;
-    /// Look up `key`, returning the stored value or nil on a miss or expiry. A hit promotes the entry to most-recently-used and counts a hit; a miss or a freshly-expired entry counts a miss (an expired entry is also dropped, counting as an eviction). Key must be a string, number, or boolean.
-    fn get(key: LuaValue) -> LuaValue;
-    /// Store `value` under `key` as most-recently-used, evicting the least-recently-used entry when over `max_size`. `ttl` (seconds) overrides the cache default: omit it for the default, pass > 0 for a custom expiry, pass ≤ 0 to pin the entry so it never expires. Key must be a string, number, or boolean; `value` must not be nil.
-    fn set(key: LuaValue, value: LuaValue, ttl: number?) -> ();
-    /// Remove `key`, returning true if it was present. Caller-driven, so it never fires `on_evict` nor counts as an eviction.
-    fn delete(key: LuaValue) -> bool;
-    /// Remove every entry. Caller-driven: no `on_evict`, no eviction count; the cumulative statistics are preserved.
-    fn clear() -> ();
-    /// Number of live entries. Expired entries are purged first (each counts as an eviction and fires `on_evict`), so the count never includes stale data.
-    fn len() -> number;
-    /// Snapshot of the cumulative counters as a table with `hits`, `misses`, and `evictions`. Counts persist across `clear`.
-    fn stats() -> LuaValue;
-}
-#[link(name = "lib:cache")]
-extern "neoc" {
+extern {
+    #[extern(path = "lib:cache")]
+    mod cache {
+        struct Cache;
+        impl Cache {
+            /// Create a bounded LRU cache from an options table: `max_size` (required, ≥ 1) caps the entry count; `ttl` (optional, seconds, fractional allowed) sets a default per-entry expiry; `on_evict` (optional, `function(key, value)`) fires when the cache drops an entry itself — capacity eviction or TTL expiry — but not on `delete`, `clear`, or overwrite.
+            #[extern(constructor)] fn new(options: Unknown);
+            /// Look up `key`, returning the stored value or nil on a miss or expiry. A hit promotes the entry to most-recently-used and counts a hit; a miss or a freshly-expired entry counts a miss (an expired entry is also dropped, counting as an eviction). Key must be a string, number, or boolean.
+            fn get(self, key: Unknown) -> Unknown;
+            /// Store `value` under `key` as most-recently-used, evicting the least-recently-used entry when over `max_size`. `ttl` (seconds) overrides the cache default: omit it for the default, pass > 0 for a custom expiry, pass ≤ 0 to pin the entry so it never expires. Key must be a string, number, or boolean; `value` must not be nil.
+            fn set(self, key: Unknown, value: Unknown, ttl: Option<number>);
+            /// Remove `key`, returning true if it was present. Caller-driven, so it never fires `on_evict` nor counts as an eviction.
+            fn delete(self, key: Unknown) -> bool;
+            /// Remove every entry. Caller-driven: no `on_evict`, no eviction count; the cumulative statistics are preserved.
+            fn clear(self);
+            /// Number of live entries. Expired entries are purged first (each counts as an eviction and fires `on_evict`), so the count never includes stale data.
+            fn len(self) -> number;
+            /// Snapshot of the cumulative counters as a table with `hits`, `misses`, and `evictions`. Counts persist across `clear`.
+            fn stats(self) -> Unknown;
+        }
+    }
 }

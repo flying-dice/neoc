@@ -1,6 +1,8 @@
 // DYNAMIC.md §4.9: `loop { … }` lowers to `while true do … end`; `break` exits
 // it. The counter reaches 3 and breaks.
-ext fn println(n: number);
+extern {
+    fn println(n: number);
+}
 
 fn main() {
     let mut n = 0;

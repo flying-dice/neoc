@@ -3,9 +3,10 @@
 //! `emit_expr` returns a JavaScript expression string (block-like forms become
 //! IIFEs so they carry a value). Statement-context lowering pushes lines via the
 //! emitter's line buffer. Enum construction, `match`, and `?` consult the
-//! [`crate::EnumIndex`] to resolve variant paths; method calls dispatch through
-//! the runtime `__call` helper. The one form still needing the type checker is
-//! `+` on `string` (it lowers to `+` either way, but the checker rewrites it to
+//! [`crate::EnumIndex`] to resolve variant paths; a method call lowers to the
+//! native `recv.m(args)`, dispatching up the receiver's prototype chain
+//! (`lang/DYNAMIC.md` §4.7). The one form still needing the type checker is `+`
+//! on `string` (it lowers to `+` either way, but the checker rewrites it to
 //! [`ast::BinOp::Concat`] so addition and concatenation stay distinct upstream).
 
 use crate::Emitter;
@@ -18,10 +19,14 @@ pub(crate) enum PathKind {
     /// The path names an enum variant: `(enum name, variant name, shape)`.
     Variant(String, String, VariantShape),
     /// The path is an associated function on a method-bearing type —
-    /// `Type::fn`, where `Type` carries an `__m` slot. Emits `__m.Type.fn`,
-    /// keeping the qualifier so the call reads the type's method table instead
-    /// of dropping to a bare (unbound) name. Mirrors `Assoc` in the Lua backend.
+    /// `Type::fn`, where `Type` carries a prototype. Emits `Type$.fn`, keeping
+    /// the qualifier so the call reads the type's prototype instead of dropping
+    /// to a bare (unbound) name. Mirrors `Assoc` in the Lua backend.
     Assoc(String, String),
+    /// The path reads a member of an extern namespace — an imported `mod` or an
+    /// extern struct's static surface. Emits `ns.member` directly (the extern
+    /// value *is* the target value, `lang/EXTERN.md`).
+    Extern(String, String),
 }
 
 /// The runtime payload shape of an enum variant.
@@ -317,23 +322,7 @@ impl Emitter {
                 };
                 format!("({sym}{o})")
             }
-            ast::ExprKind::Call { callee, args } => {
-                if let ast::ExprKind::Path(segments) = &callee.kind {
-                    if let Some(PathKind::Variant(en, var, _)) = self.resolve_path(segments) {
-                        return self.emit_tuple_variant(&en, &var, args);
-                    }
-                    // A call to a single-segment tuple/newtype struct name
-                    // constructs a tagged object.
-                    if let [name] = segments.as_slice() {
-                        if self.is_tuple_struct(name) {
-                            return self.emit_tuple_struct_lit(name, args);
-                        }
-                    }
-                }
-                let f = self.emit_expr(callee);
-                let a = self.emit_args(args);
-                format!("{f}({a})")
-            }
+            ast::ExprKind::Call { callee, args } => self.emit_call(callee, args),
             ast::ExprKind::Field { base, field } => {
                 let b = self.emit_expr(base);
                 match field {
@@ -359,7 +348,16 @@ impl Emitter {
             ast::ExprKind::Closure { params, body } => {
                 let ps: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
                 let b = self.emit_expr(body);
-                format!("({}) => {b}", ps.join(", "))
+                // A `{`-prefixed body — a struct or enum-variant object literal —
+                // parses as a function block, not a returned object, after `=>`.
+                // Paren-wrap it so it stays an expression. A block-bodied closure
+                // lowers through `emit_block_like_value` to a `(`-prefixed IIFE,
+                // so this targets only the object-literal case.
+                if b.starts_with('{') {
+                    format!("({}) => ({b})", ps.join(", "))
+                } else {
+                    format!("({}) => {b}", ps.join(", "))
+                }
             }
             ast::ExprKind::MethodCall {
                 receiver,
@@ -367,14 +365,25 @@ impl Emitter {
                 method_span: _,
                 args,
             } => {
-                self.uses_methods = true;
                 let recv = self.emit_expr(receiver);
-                let a = self.emit_args(args);
-                if a.is_empty() {
-                    format!("__call({recv}, \"{method}\")")
-                } else {
-                    format!("__call({recv}, \"{method}\", {a})")
+                // `Eq` is the one derive whose method takes both operands
+                // explicitly — `S$.eq = function(a, b)`, no `this`
+                // (`lang/DYNAMIC.md` §6.2). The `==` rewrite (`crate::elaborate`)
+                // produces a `MethodCall { method: "eq", args: [rhs] }`; lower it
+                // so the receiver is passed as the first operand and resolves
+                // through the prototype chain: `recv.eq(recv, rhs)`. `this` binds
+                // to `recv` and is ignored by the comparison.
+                if method == "eq" && args.len() == 1 {
+                    let rhs = self.emit_expr(&args[0]);
+                    return format!("{recv}.eq({recv}, {rhs})");
                 }
+                let a = self.emit_args(args);
+                // A method call lowers to the native property call: `this` binds
+                // to the receiver and dispatch resolves up its prototype chain
+                // (`lang/DYNAMIC.md` §4.7). A foreign (`extern`) receiver
+                // dispatches by the same call, so neoc and host values are
+                // uniform — no registry, no dispatch helper.
+                format!("{recv}.{method}({a})")
             }
             ast::ExprKind::Match { scrutinee, arms } => self.emit_match_value(scrutinee, arms),
             ast::ExprKind::Try(inner) => self.emit_try(inner),
@@ -399,22 +408,73 @@ impl Emitter {
         }
     }
 
+    /// Lower a call. A path callee may be an enum-variant construction, an
+    /// `#[extern(constructor)]` (→ `new T(a)`), or a tuple/newtype struct
+    /// constructor; otherwise it is an ordinary call.
+    fn emit_call(&mut self, callee: &ast::Expr, args: &[ast::Expr]) -> String {
+        if let ast::ExprKind::Path(segments) = &callee.kind {
+            if let Some(PathKind::Variant(en, var, _)) = self.resolve_path(segments) {
+                return self.emit_tuple_variant(&en, &var, args);
+            }
+            // An `#[extern(constructor)]` call `T::new(a)` lowers to the
+            // target's constructor form, `new T(a)` (`lang/EXTERN.md`).
+            if let [ty, method] = segments.as_slice() {
+                if self.is_extern_constructor(ty, method) {
+                    let a = self.emit_args(args);
+                    let qualified = self.qualify_extern_value(ty);
+                    return format!("new {qualified}({a})");
+                }
+            }
+            // A call to a single-segment tuple/newtype struct name constructs a
+            // tagged object.
+            if let [name] = segments.as_slice() {
+                if self.is_tuple_struct(name) {
+                    return self.emit_tuple_struct_lit(name, args);
+                }
+                // A bare call to a free extern `fn` declared inside an extern
+                // `mod` qualifies through the `mod`'s import binding
+                // (`serve(opts)` → `Bun.serve(opts)`), so it resolves against the
+                // imported namespace rather than an unbound name (`lang/EXTERN.md`
+                // §Lowering). Covers both locally-declared and `use`-imported
+                // ambient/namespaced mod fns.
+                if let Some(qualified) = self.qualify_extern_fn(name) {
+                    let a = self.emit_args(args);
+                    return format!("{qualified}({a})");
+                }
+            }
+        }
+        let f = self.emit_expr(callee);
+        let a = self.emit_args(args);
+        format!("{f}({a})")
+    }
+
     fn emit_path(&mut self, segments: &[ast::Ident]) -> String {
         match self.resolve_path(segments) {
+            // A lone `self` reads as `this`: a method body's receiver is the
+            // implicit `this`, not a parameter (`lang/DYNAMIC.md` §3.3).
+            Some(PathKind::Value(name)) if name == "self" => "this".to_string(),
             Some(PathKind::Value(name)) => {
                 self.note_prelude(&name);
                 name
             }
-            // `Type::fn` reads the type's method table — keep the qualifier so
-            // the associated function resolves against `__m.Type`, not a bare
-            // name. The call site `Type::fn(args)` then composes through this.
+            // `Type::fn` reads the type's prototype — keep the qualifier so the
+            // associated function resolves against `Type$`, not a bare name. The
+            // call site `Type::fn(args)` then composes through this.
             Some(PathKind::Assoc(ty, name)) => {
-                self.uses_methods = true;
-                format!("__m.{ty}.{name}")
+                format!("{ty}$.{name}")
+            }
+            // `ns::member` on an extern namespace reads the target value
+            // directly (`lang/EXTERN.md` §Lowering). When `ns` is an extern
+            // struct inside a `mod`, qualify it through the `mod`'s import so the
+            // static surface resolves (`sqlite.Database.f`); a `mod` head or a
+            // top-level struct passes through unchanged.
+            Some(PathKind::Extern(ns, name)) => {
+                format!("{}.{name}", self.qualify_extern_value(&ns))
             }
             Some(PathKind::Variant(en, var, VariantShape::Unit)) => {
                 self.note_prelude(&en);
-                format!("{{ __enum: \"{en}\", __tag: \"{var}\" }}")
+                let proto = self.proto_link(&en);
+                format!("{{ __enum: \"{en}\", __tag: \"{var}\"{proto} }}")
             }
             // A tuple/struct variant in path position (no payload applied) is a
             // constructor function; the type checker should have rewritten it.
@@ -444,15 +504,29 @@ impl Emitter {
                 .variant_shape(en, var)
                 .map(|shape| PathKind::Variant(en.clone(), var.clone(), shape))
                 .or_else(|| {
+                    // An extern namespace head — an imported `mod` or extern
+                    // struct — keeps its qualifier: `ns.member` reads the target
+                    // value directly (`lang/EXTERN.md`).
+                    self.is_extern_namespace(en)
+                        .then(|| PathKind::Extern(en.clone(), var.clone()))
+                })
+                .or_else(|| {
                     // `Type::fn` on a method-bearing type is an associated
-                    // function living on `__m.Type`; keep the qualifier. A head
-                    // that is not a known method-bearing type (a module prefix)
-                    // still drops to its last segment, as before.
+                    // function living on the prototype `Type$`; keep the
+                    // qualifier. A head that is not a known method-bearing type (a
+                    // module prefix) still drops to its last segment, as before.
                     self.type_has_methods(en)
                         .then(|| PathKind::Assoc(en.clone(), var.clone()))
                 })
                 .or_else(|| Some(PathKind::Value(var.clone()))),
         }
+    }
+
+    /// Whether `name` heads an extern namespace: an imported `mod` or an extern
+    /// struct (whose static surface is read directly as `name.member`).
+    pub(crate) fn is_extern_namespace(&self, name: &str) -> bool {
+        self.extern_structs.contains(name)
+            || self.extern_imports.iter().any(|i| i.local_name == name)
     }
 
     /// The payload shape of `Enum::Variant`, or `None`.
@@ -502,16 +576,88 @@ impl Emitter {
         if let Some(PathKind::Variant(en, var, VariantShape::Named)) = self.resolve_path(path) {
             self.note_prelude(&en);
             let body = self.emit_field_inits(fields);
-            return format!("{{ __enum: \"{en}\", __tag: \"{var}\"{body} }}");
+            let proto = self.proto_link(&en);
+            return format!("{{ __enum: \"{en}\", __tag: \"{var}\"{body}{proto} }}");
         }
         let Some(name) = path.last() else {
             return "undefined".to_string();
         };
+        // An extern struct literal *is* the target object: a bare object
+        // literal, no `__struct` tag (`lang/EXTERN.md` §Lowering). So an option
+        // bag builds naturally and a function-typed field is a JS closure.
+        if self.is_extern_struct(name) {
+            let body = self.emit_extern_field_inits(fields);
+            return format!("{{ {body} }}");
+        }
         if let Some(base) = base {
             return self.emit_struct_update(name, fields, base);
         }
         let body = self.emit_field_inits(fields);
-        format!("{{ __struct: \"{name}\"{body} }}")
+        let proto = self.proto_link(name);
+        format!("{{ __struct: \"{name}\"{body}{proto} }}")
+    }
+
+    /// The `, __proto__: Type$` suffix linking a constructed value to its
+    /// prototype, or `""` for a data-only type with no prototype
+    /// (`lang/DYNAMIC.md` §3.1, §7.1).
+    fn proto_link(&self, name: &str) -> String {
+        if self.type_has_methods(name) {
+            format!(", __proto__: {name}$")
+        } else {
+            String::new()
+        }
+    }
+
+    /// Whether `name` is a struct declared in an `extern` block.
+    pub(crate) fn is_extern_struct(&self, name: &str) -> bool {
+        self.extern_structs.contains(name)
+    }
+
+    /// Whether `(ty, method)` is an `#[extern(constructor)]` — `ty::method(a)`
+    /// lowers to `new ty(a)`.
+    pub(crate) fn is_extern_constructor(&self, ty: &str, method: &str) -> bool {
+        self.extern_constructors
+            .contains(&(ty.to_string(), method.to_string()))
+    }
+
+    /// Qualify an extern struct's value reference through its enclosing `mod`'s
+    /// import binding (`Database` in `mod sqlite` → `sqlite.Database`), so the
+    /// reference resolves against the imported namespace rather than a bare
+    /// unbound name (`lang/EXTERN.md` §Lowering). A struct with no enclosing
+    /// `mod` (top-level / ambient) keeps its bare name.
+    pub(crate) fn qualify_extern_value(&self, ty: &str) -> String {
+        match self.extern_struct_ns.get(ty) {
+            Some(ns) => format!("{ns}.{ty}"),
+            None => ty.to_string(),
+        }
+    }
+
+    /// Qualify a free extern `fn`'s call through its enclosing `mod`'s import
+    /// binding (`serve` in `mod Bun` → `Bun.serve`), so the bare call resolves
+    /// against the imported namespace rather than an unbound name (`lang/EXTERN.md`
+    /// §Lowering). The `mod` binding is the JS global root for an ambient mod and
+    /// the `import * as` namespace for a non-ambient one, so the same `ns.fn`
+    /// qualification works for both. Returns `None` for a fn with no enclosing
+    /// `mod` (top-level), which keeps its bare name.
+    pub(crate) fn qualify_extern_fn(&self, name: &str) -> Option<String> {
+        self.extern_fn_ns.get(name).map(|ns| format!("{ns}.{name}"))
+    }
+
+    /// Lower extern struct-literal fields to `name: value` entries with no
+    /// leading separator (the object literal has no tag to follow), expanding
+    /// field shorthand (`{ x }` → `x: x`).
+    fn emit_extern_field_inits(&mut self, fields: &[ast::FieldInit]) -> String {
+        fields
+            .iter()
+            .map(|f| {
+                let value = match &f.value {
+                    Some(v) => self.emit_expr(v),
+                    None => f.name.clone(),
+                };
+                format!("{}: {value}", f.name)
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     /// Lower `S { f: e, .. base }` (functional update): spread the base's
@@ -525,7 +671,8 @@ impl Emitter {
     ) -> String {
         let base_js = self.emit_expr(base);
         let body = self.emit_field_inits(fields);
-        format!("{{ ...{base_js}, __struct: \"{name}\"{body} }}")
+        let proto = self.proto_link(name);
+        format!("{{ ...{base_js}, __struct: \"{name}\"{body}{proto} }}")
     }
 
     /// Lower struct-literal / struct-variant fields to `name: value` entries,
@@ -549,13 +696,15 @@ impl Emitter {
     fn emit_tuple_variant(&mut self, en: &str, var: &str, args: &[ast::Expr]) -> String {
         self.note_prelude(en);
         let payload = self.emit_positional(args);
-        format!("{{ __enum: \"{en}\", __tag: \"{var}\"{payload} }}")
+        let proto = self.proto_link(en);
+        format!("{{ __enum: \"{en}\", __tag: \"{var}\"{payload}{proto} }}")
     }
 
     /// Lower a tuple/newtype struct construction `N(a, …)` to its tagged object.
     fn emit_tuple_struct_lit(&mut self, name: &str, args: &[ast::Expr]) -> String {
         let payload = self.emit_positional(args);
-        format!("{{ __struct: \"{name}\"{payload} }}")
+        let proto = self.proto_link(name);
+        format!("{{ __struct: \"{name}\"{payload}{proto} }}")
     }
 
     /// Render positional payload args as `, _0: a, _1: b, …`, ready to append

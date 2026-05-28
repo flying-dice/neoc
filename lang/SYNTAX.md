@@ -134,19 +134,19 @@ A function. Inside an impl, the first parameter may be `self`, making it a metho
 
 There is one self form: `self`. neoc has no references, so there is no `&self` or `&mut self` — a method receives the value, and because the runtime's values are reference-shared, mutation through `self` is visible to the caller. This is the central simplification over Rust: no borrowing, no lifetimes.
 
-### 3.9 `ext`
+### 3.9 `extern`
 
 ```
-ExtBlock ::= "ext" "{" { ExtItem } "}"
-           | "ext" ExtItem
-ExtItem  ::= "fn" IDENT [ Generics ] "(" [ ParamList ] ")" [ "->" Type ] ";"
-           | "type" IDENT [ Generics ] ";"
-           | "const" IDENT ":" Type ";"
+ExternBlock ::= "extern" "{" { ExternItem } "}"
+ExternItem  ::= { Attribute } [ "pub" ] ( ExternMod | StructDecl | ExternImpl | ExternFn )
+ExternMod   ::= "mod" IDENT "{" { ExternItem } "}"
+ExternImpl  ::= "impl" [ Generics ] Type "{" { { Attribute } [ "pub" ] FnSig ";" } "}"
+ExternFn    ::= FnSig ";"
 ```
 
-The single seam to the embedding runtime. An `ext` item declares a binding the runtime provides: a function, an opaque type, or a constant. `ext` items have no bodies and produce no output — they exist so neoc can name-resolve and type-check calls into the host (`STATIC.md` §5, `DYNAMIC.md` §3.9).
+The single seam to the embedding runtime: an `extern { … }` block describes the surface of the external **target** (`EXTERN.md` is the authoritative reference). It is the only place declarations may appear without bodies. A `mod` is a target-module scope, a `struct` a nominal target handle (fields, no methods), an `impl` a bodyless inherent method block, an `fn` a bodyless function. The closed `#[extern(…)]` attribute (`ambient` / `path` / `name` / `constructor`) directs the lowering (`STATIC.md` §5, `DYNAMIC.md` §3.9, `EXTERN.md`).
 
-This is the only mechanism by which a non-neoc binding becomes visible to neoc. There is no other.
+This is the only mechanism by which a non-neoc binding becomes visible to neoc. There is no other. One target per compilation — there is no `extern "abi"` multi-target form.
 
 ## 4. Generics
 
@@ -401,12 +401,11 @@ ParamList   ::= "(" [ ( SelfParam | Param ) { "," Param } [ "," ] ] ")"
 SelfParam   ::= "self"
 Param       ::= IDENT ":" Type
 
-ExtBlock    ::= "ext" "{" { ExtItem } "}"
-              | "ext" ExtItem
-ExternBlock ::= "extern" STRING_LITERAL "{" { ExtItem } "}"
-ExtItem     ::= FnSig ";"
-              | "type" IDENT [ Generics ] ";"
-              | "const" IDENT ":" Type ";"
+ExternBlock ::= "extern" "{" { ExternItem } "}"
+ExternItem  ::= { Attribute } [ "pub" ] ( ExternMod | StructDecl | ExternImpl | ExternFn )
+ExternMod   ::= "mod" IDENT "{" { ExternItem } "}"
+ExternImpl  ::= "impl" [ Generics ] Type "{" { { Attribute } [ "pub" ] FnSig ";" } "}"
+ExternFn    ::= FnSig ";"
 
 (* generics *)
 Generics    ::= "<" GenericParam { "," GenericParam } [ "," ] ">"
@@ -524,7 +523,7 @@ AttrArg     ::= IDENT "=" Literal
 Notes on grammar-faithful additions beyond §1–§9:
 
 - `loop { … }` (`LoopExpr`), `while`, and `for … in` are expression and statement forms the tree-sitter grammar accepts; §6 documents `if` and `match` as the primary value-producing forms.
-- `extern "<host>" { … }` (`ExternBlock`) is a hosted variant of `ext` whose string literal names the host runtime (mirroring `extern "C"`); it reuses `ExtItem`.
+- `extern { … }` (`ExternBlock`) describes the external target's surface (`EXTERN.md`). There is no `extern "abi"` string — one target per compilation. `mod` is a keyword only as an `ExternItem`; elsewhere it is an ordinary identifier. The block changes the body-elision rule for its items (bodyless inside, bodies required outside).
 - `let mut x = …` is accepted; `mut` is a reserved keyword (`LEXICAL.md` §5).
 - A `PathPat` is two or more `::`-separated segments (a unit variant such as `Color::Red`); a single segment is a binding pattern that name resolution may reinterpret as a unit struct/variant — exactly Rust's `None` handling (`STATIC.md` §2).
 - `CondExpr` is the one place the expression grammar is restricted: a bare struct literal is excluded so `if Foo { … }` reads as `if` with a block, never as a struct literal. Parenthesize to use one (`(Foo { x: 1 }).x`).

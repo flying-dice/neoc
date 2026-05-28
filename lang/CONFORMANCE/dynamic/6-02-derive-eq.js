@@ -1,21 +1,19 @@
-const __m = {};
-const __call = (recv, name, ...args) => __m[recv.__struct ?? recv.__enum][name](recv, ...args);
 const __t = {};
 
-__m.Pair = {};
-__m.Pair.eq = function(a, b) {
+const Pair$ = {};
+Pair$.eq = function(a, b) {
   return a.__struct === b.__struct && a.a === b.a && a.b === b.b;
 };
 __t.Pair = ["Eq"];
 function main() {
-  let p = { __struct: "Pair", a: 1, b: 2 };
-  let q = { __struct: "Pair", a: 1, b: 2 };
-  let r = { __struct: "Pair", a: 9, b: 2 };
-  if (__call(p, "eq", q)) {
+  let p = { __struct: "Pair", a: 1, b: 2, __proto__: Pair$ };
+  let q = { __struct: "Pair", a: 1, b: 2, __proto__: Pair$ };
+  let r = { __struct: "Pair", a: 9, b: 2, __proto__: Pair$ };
+  if (p.eq(p, q)) {
     println("eq");
   }
   return (() => {
-    if ((!__call(p, "eq", r))) {
+    if ((!p.eq(p, r))) {
       println("ne");
     }
   })();

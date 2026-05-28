@@ -346,6 +346,15 @@ impl Emitter {
                             let a = self.emit_args(args);
                             return format!("{name}.new({a})");
                         }
+                        // A bare call to a free extern `fn` declared inside an
+                        // extern `mod` qualifies through the `mod`'s binding
+                        // (`serve(opts)` → `Bun.serve(opts)`), so it reads the
+                        // imported module table / global root rather than a nil
+                        // bare global (`lang/EXTERN.md` §Lowering).
+                        if let Some(qualified) = self.qualify_extern_fn(name) {
+                            let a = self.emit_args(args);
+                            return format!("{qualified}({a})");
+                        }
                     }
                 }
                 let f = self.emit_expr(callee);
@@ -421,7 +430,12 @@ impl Emitter {
             }
             // `Type::member` reads the type's table — keep the qualifier so the
             // associated function/const resolves against `Type`, not a bare name.
-            Some(PathKind::Assoc(ty, name)) => format!("{ty}.{name}"),
+            // An extern struct inside a `mod` qualifies through the `mod`'s
+            // `require` binding (`sqlite.Database.new`); a local impl type or a
+            // `mod` head passes through unchanged.
+            Some(PathKind::Assoc(ty, name)) => {
+                format!("{}.{name}", self.qualify_extern_value(&ty))
+            }
             Some(PathKind::Variant(en, var, VariantShape::Unit)) => {
                 self.note_prelude(&en);
                 self.variant_table(&en, format!("{{ __enum = \"{en}\", __tag = \"{var}\" }}"))
@@ -531,11 +545,43 @@ impl Emitter {
         let Some(name) = path.last() else {
             return "nil".to_string();
         };
+        // An extern struct literal *is* the target object: a bare table, no
+        // `__struct` tag and no `.new` constructor (`lang/EXTERN.md` §Lowering).
+        if self.is_extern_struct(name) {
+            let body = self.emit_field_inits(fields);
+            return format!("{{ {body} }}");
+        }
         if let Some(base) = base {
             return self.emit_struct_update(name, fields, base);
         }
         let body = self.emit_field_inits(fields);
         format!("{name}.new({{ {body} }})")
+    }
+
+    /// Whether `name` is a struct declared in an `extern` block.
+    pub(crate) fn is_extern_struct(&self, name: &str) -> bool {
+        self.extern_structs.contains(name)
+    }
+
+    /// Qualify an extern struct's value reference through its enclosing `mod`'s
+    /// `require` binding (`Database` in `mod sqlite` → `sqlite.Database`), so the
+    /// reference reads the imported module table rather than a nil bare global
+    /// (`lang/EXTERN.md` §Lowering). A struct with no enclosing `mod`
+    /// (top-level / ambient) keeps its bare name.
+    pub(crate) fn qualify_extern_value(&self, ty: &str) -> String {
+        match self.extern_struct_ns.get(ty) {
+            Some(ns) => format!("{ns}.{ty}"),
+            None => ty.to_string(),
+        }
+    }
+
+    /// Qualify a free extern `fn`'s call through its enclosing `mod`'s binding
+    /// (`serve` in `mod Bun` → `Bun.serve`), so the bare call reads the imported
+    /// module table / global root rather than a nil bare global (`lang/EXTERN.md`
+    /// §Lowering). Returns `None` for a fn with no enclosing `mod` (top-level),
+    /// which keeps its bare name.
+    pub(crate) fn qualify_extern_fn(&self, name: &str) -> Option<String> {
+        self.extern_fn_ns.get(name).map(|ns| format!("{ns}.{name}"))
     }
 
     /// Lower `S { f: e, .. base }` (functional update). The emitter has no field

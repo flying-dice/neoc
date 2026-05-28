@@ -2,7 +2,9 @@
 // `impl` methods attach to the type table; field access is `.f` and a method
 // call `p.method(...)` lowers to the Lua colon call `p:method(...)`, passing the
 // receiver as `self` via the metatable.
-ext fn println(n: number);
+extern {
+    fn println(n: number);
+}
 
 struct Point {
     x: number,

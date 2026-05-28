@@ -24,8 +24,7 @@ impl Adapter {
             "trait_declaration" => ast::ItemKind::Trait(self.walk_trait(decl)),
             "impl_block" => ast::ItemKind::Impl(self.walk_impl(decl)),
             "function_declaration" => ast::ItemKind::Fn(self.walk_fn(decl, Vec::new())),
-            "ext_block" => ast::ItemKind::Ext(self.walk_ext_items(decl)),
-            "extern_block" => self.walk_extern(decl),
+            "extern_block" => ast::ItemKind::Extern(self.walk_extern_block(decl)),
             other => {
                 self.error(decl, format!("unsupported item: {other}"));
                 return None;
@@ -270,46 +269,92 @@ impl Adapter {
         params
     }
 
-    /// Builds an `Extern { host, items }` from an `extern "<host>" { ... }`
-    /// block. The `host` field is the string-literal host; the items reuse the
-    /// same `ext_item` walker as un-hosted `ext`.
-    fn walk_extern(&mut self, node: Node) -> ast::ItemKind {
-        let host = self
-            .field(node, "host")
-            .map_or_else(String::new, |h| self.string_value(h));
-        let items = self.walk_ext_items(node);
-        ast::ItemKind::Extern { host, items }
+    /// Walks an `extern { ... }` block into an [`ast::ExternBlock`]
+    /// (`lang/EXTERN.md`). The block's direct `extern_item` children become the
+    /// block's items.
+    fn walk_extern_block(&mut self, node: Node) -> ast::ExternBlock {
+        ast::ExternBlock {
+            items: self.walk_extern_items(node),
+        }
     }
 
-    /// Walks the `ext_item` children of an `ext_block` or `extern_block`.
-    fn walk_ext_items(&mut self, node: Node) -> Vec<ast::ExtItem> {
+    /// Walks the `extern_item` children of an `extern_block` or `extern_mod`.
+    fn walk_extern_items(&mut self, node: Node) -> Vec<ast::ExternItem> {
         let mut out = Vec::new();
         let mut cursor = node.walk();
         for child in node.named_children(&mut cursor) {
-            if child.kind() != "ext_item" {
-                continue;
-            }
-            // An ext_item is one of: fn signature, `type` decl, `const` decl.
-            if child
-                .named_children(&mut child.walk())
-                .any(|c| c.kind() == "parameter_list")
-                || has_token(child, "fn")
-            {
-                out.push(ast::ExtItem::Fn(self.walk_fn_sig(child)));
-            } else if has_token(child, "type") {
-                out.push(ast::ExtItem::Type {
-                    name: self.name_field(child),
-                    generics: self.walk_generics(child),
-                });
-            } else if has_token(child, "const") {
-                let name = self.name_field(child);
-                let ty = self
-                    .field(child, "type")
-                    .map_or(ast::Type::Unit, |t| self.walk_type(t));
-                out.push(ast::ExtItem::Const { name, ty });
+            if child.kind() == "extern_item" {
+                if let Some(item) = self.walk_extern_item(child) {
+                    out.push(item);
+                }
             }
         }
         out
+    }
+
+    fn walk_extern_item(&mut self, node: Node) -> Option<ast::ExternItem> {
+        let attrs = self.walk_attributes(node);
+        let vis = if has_token(node, "pub") {
+            ast::Visibility::Public
+        } else {
+            ast::Visibility::Private
+        };
+        let decl = node
+            .named_children(&mut node.walk())
+            .find(|c| !matches!(c.kind(), "attribute" | "doc_comment"))?;
+        let kind = match decl.kind() {
+            "extern_mod" => ast::ExternItemKind::Mod(self.walk_extern_mod(decl)),
+            "struct_declaration" => ast::ExternItemKind::Struct(self.walk_struct(decl)),
+            "extern_impl" => ast::ExternItemKind::Impl(self.walk_extern_impl(decl)),
+            "extern_fn" => ast::ExternItemKind::Fn(self.walk_fn_sig(decl)),
+            other => {
+                self.error(decl, format!("unsupported extern item: {other}"));
+                return None;
+            }
+        };
+        Some(ast::ExternItem {
+            attrs,
+            vis,
+            kind,
+            span: crate::expr::span_of(node),
+        })
+    }
+
+    fn walk_extern_mod(&mut self, node: Node) -> ast::ExternMod {
+        ast::ExternMod {
+            name: self.name_field(node),
+            items: self.walk_extern_items(node),
+        }
+    }
+
+    /// Walks a bodyless `extern_impl` into an [`ast::ImplBlock`] whose methods
+    /// carry empty bodies (signatures only).
+    fn walk_extern_impl(&mut self, node: Node) -> ast::ImplBlock {
+        let generics = self.walk_generics(node);
+        let ty = self
+            .field(node, "type")
+            .map_or(ast::Type::Unit, |t| self.walk_type(t));
+        let mut items = Vec::new();
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            if child.kind() != "extern_method" {
+                continue;
+            }
+            let attrs = self.walk_attributes(child);
+            let sig = self.walk_fn_sig(child);
+            items.push(ast::FnDecl {
+                attrs,
+                sig,
+                body: ast::Block::default(),
+            });
+        }
+        ast::ImplBlock {
+            generics,
+            trait_: None,
+            ty,
+            items,
+            assoc_bindings: Vec::new(),
+        }
     }
 
     // ---- shared helpers ----------------------------------------------------

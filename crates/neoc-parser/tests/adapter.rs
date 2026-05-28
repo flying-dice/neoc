@@ -211,12 +211,21 @@ fn qualified_unit_variant_pattern_keeps_its_path() {
 }
 
 #[test]
-fn ext_and_use_and_derive_attribute() {
+fn extern_block_walks_fn_struct_impl_mod() {
     let m = module(
         "use math::vec::Vec3;\n\
          #[derive(Clone, Eq)]\n\
          struct P { x: number }\n\
-         ext fn print(message: string);",
+         extern {\n\
+             fn now() -> number;\n\
+             struct Response;\n\
+             struct Changes { changes: number }\n\
+             impl Changes { fn total(self) -> number; }\n\
+             #[extern(path = \"vnd:rusqlite\")]\n\
+             mod rusqlite {\n\
+                 fn open(path: string) -> Unknown;\n\
+             }\n\
+         }",
     );
     let ast::ItemKind::Use(u) = &m.items[0].kind else {
         panic!("expected use");
@@ -227,47 +236,69 @@ fn ext_and_use_and_derive_attribute() {
     assert_eq!(m.items[1].attrs[0].items[0].name, "derive");
     assert_eq!(m.items[1].attrs[0].items[0].args.len(), 2);
 
-    let ast::ItemKind::Ext(items) = &m.items[2].kind else {
-        panic!("expected ext");
+    let ast::ItemKind::Extern(block) = &m.items[2].kind else {
+        panic!("expected extern block");
     };
-    assert!(matches!(&items[0], ast::ExtItem::Fn(sig) if sig.name == "print"));
+    // bodyless fn
+    assert!(
+        matches!(&block.items[0].kind, ast::ExternItemKind::Fn(sig) if sig.name == "now" && sig.ret.is_some())
+    );
+    // opaque struct
+    assert!(matches!(
+        &block.items[1].kind,
+        ast::ExternItemKind::Struct(s) if s.name == "Response" && matches!(s.body, ast::StructBody::Unit)
+    ));
+    // struct with fields
+    assert!(matches!(
+        &block.items[2].kind,
+        ast::ExternItemKind::Struct(s) if s.name == "Changes" && matches!(s.body, ast::StructBody::Named(_))
+    ));
+    // bodyless impl: method body is empty
+    let ast::ExternItemKind::Impl(b) = &block.items[3].kind else {
+        panic!("expected extern impl");
+    };
+    assert_eq!(b.items.len(), 1);
+    assert_eq!(b.items[0].sig.name, "total");
+    assert!(b.items[0].body.stmts.is_empty() && b.items[0].body.value.is_none());
+    // mod carrying #[extern(path)]
+    let ast::ExternItemKind::Mod(md) = &block.items[4].kind else {
+        panic!("expected extern mod");
+    };
+    assert_eq!(md.name, "rusqlite");
+    let attr = ast::ExternAttr::parse(&block.items[4].attrs).expect("extern attr");
+    assert_eq!(attr.path.as_deref(), Some("vnd:rusqlite"));
+    assert!(matches!(&md.items[0].kind, ast::ExternItemKind::Fn(sig) if sig.name == "open"));
 }
 
 #[test]
-fn extern_block_with_named_link_attr() {
+fn extern_constructor_attr_and_vis_walk() {
     let m = module(
-        "#[link(name = \"base64\")]\n\
-         extern \"neoc\" {\n\
-             fn encode(input: string) -> string;\n\
-             const VERSION: string;\n\
+        "extern {\n\
+             pub struct Database;\n\
+             impl Database {\n\
+                 #[extern(constructor)] pub fn new(filename: string);\n\
+                 pub fn query(self, sql: string) -> Unknown;\n\
+             }\n\
          }",
     );
-    let item = &m.items[0];
-
-    // The key-value attr arg becomes AttrArg::Named { name: "name", value: Str }.
-    let arg = &item.attrs[0].items[0].args[0];
-    assert_eq!(
-        *arg,
-        ast::AttrArg::Named {
-            name: "name".into(),
-            value: Box::new(ast::AttrArg::Str("base64".into())),
-        }
-    );
-    // link_name() reads the key-value form.
-    assert_eq!(item.link_name(), Some("base64"));
-
-    let ast::ItemKind::Extern { host, items } = &item.kind else {
-        panic!("expected extern");
+    let ast::ItemKind::Extern(block) = &m.items[0].kind else {
+        panic!("expected extern block");
     };
-    assert_eq!(host, "neoc");
-    assert!(matches!(&items[0], ast::ExtItem::Fn(sig) if sig.name == "encode"));
-    assert!(matches!(&items[1], ast::ExtItem::Const { name, .. } if name == "VERSION"));
+    assert_eq!(block.items[0].vis, ast::Visibility::Public);
+    let ast::ExternItemKind::Impl(b) = &block.items[1].kind else {
+        panic!("expected impl");
+    };
+    let new = &b.items[0];
+    assert_eq!(new.sig.name, "new");
+    let attr = ast::ExternAttr::parse(&new.attrs).expect("extern attr");
+    assert!(attr.constructor);
 }
 
 #[test]
-fn positional_link_attr_reads_back() {
-    let m = module("#[link(\"color\")]\nextern \"node\" { fn f(x: number) -> number; }");
-    assert_eq!(m.items[0].link_name(), Some("color"));
+fn mod_is_an_identifier_outside_extern() {
+    // `mod` is only a keyword inside an extern block; elsewhere an ordinary name.
+    let m = module("fn main() { let mod_count = 1; }");
+    assert_eq!(m.items.len(), 1);
 }
 
 #[test]

@@ -1,16 +1,14 @@
-const __m = {};
-const __call = (recv, name, ...args) => __m[recv.__struct ?? recv.__enum][name](recv, ...args);
 const __t = {};
 
-__m.Dog = {};
+const Dog$ = {};
 __t.Dog = ["Describe", "Show"];
-__m.Dog.show = function(self) {
-  return self.name;
+Dog$.show = function() {
+  return this.name;
 }
 function main() {
-  let d = { __struct: "Dog", name: "Rex" };
-  println(__call(d, "describe"));
+  let d = { __struct: "Dog", name: "Rex", __proto__: Dog$ };
+  println(d.describe());
 }
-__m.Dog.describe = function(self) {
-  return __call(self, "show");
+Dog$.describe = function() {
+  return this.show();
 }

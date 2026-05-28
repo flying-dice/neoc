@@ -205,7 +205,7 @@ pub struct EmitResult {
 /// numbers back to neoc positions; the emitted Lua text is identical either way.
 #[must_use]
 pub fn emit(module: &ast::Module) -> EmitResult {
-    emit_inner(module, None, &[])
+    emit_inner(module, None, &[], &[])
 }
 
 /// Lower a module to Lua 5.1 source and build a [`LineMap`] from `source`.
@@ -216,27 +216,43 @@ pub fn emit(module: &ast::Module) -> EmitResult {
 /// differs.
 #[must_use]
 pub fn emit_with_source(module: &ast::Module, source: &str) -> EmitResult {
-    emit_inner(module, Some(source), &[])
+    emit_inner(module, Some(source), &[], &[])
 }
 
 /// Like [`emit_with_source`], but also given the `pub` enum declarations the
 /// module imports, so `match` and variant construction on an imported enum
-/// lower correctly. The imported enums are used only to resolve those forms;
-/// their definitions are emitted by the module that declares them.
+/// lower correctly, and the extern items a `use` brought in from another file,
+/// so an imported extern type reconstructs its native `require` and lowering in
+/// this consumer rather than importing from the defining file (`lang/EXTERN.md`
+/// §Lowering). Both kinds of import are used only to resolve those forms; their
+/// definitions are emitted by — or, for externs, *not* emitted by — the module
+/// that declares them.
 #[must_use]
 pub fn emit_with_imports(
     module: &ast::Module,
     source: &str,
     imported_enums: &[&ast::EnumDecl],
+    imported_externs: &[ast::ExternItem],
 ) -> EmitResult {
-    emit_inner(module, Some(source), imported_enums)
+    emit_inner(module, Some(source), imported_enums, imported_externs)
 }
 
 fn emit_inner(
     module: &ast::Module,
     source: Option<&str>,
     imported_enums: &[&ast::EnumDecl],
+    imported_externs: &[ast::ExternItem],
 ) -> EmitResult {
+    // A `use`d extern item lowers to its native `require` in *this* consumer, not
+    // an import from the defining file (which emits no runtime value for an
+    // extern). Merge the imported extern items into the same maps the module's own
+    // `extern` blocks fill (`lang/EXTERN.md` §Lowering).
+    let mut extern_structs = ast::extern_struct_names(module);
+    extern_structs.extend(ast::extern_struct_names_from_items(imported_externs));
+    let mut extern_struct_ns = ast::extern_struct_namespaces(module);
+    extern_struct_ns.extend(ast::extern_struct_namespaces_from_items(imported_externs));
+    let mut extern_fn_ns = ast::extern_fn_namespaces(module);
+    extern_fn_ns.extend(ast::extern_fn_namespaces_from_items(imported_externs));
     let mut e = Emitter {
         enums: EnumIndex::build(module, imported_enums),
         tuple_structs: TupleStructIndex::build(module),
@@ -244,6 +260,11 @@ fn emit_inner(
         line_index: source.map(LineIndex::build),
         forward_decls: forward_declared_fns(module),
         validation: validate::plan(module),
+        extern_structs,
+        extern_struct_ns,
+        extern_fn_ns,
+        imported_externs: imported_externs.to_vec(),
+        imported_extern_names: ast::extern_value_names_from_items(imported_externs),
         ..Emitter::default()
     };
     e.emit_module(module);
@@ -317,8 +338,27 @@ pub(crate) struct Emitter {
     break_flag_seq: usize,
     /// Counter feeding unique temporaries for the `?` operator (§4.10).
     try_seq: usize,
-    /// Native imports from module-bound `ext` blocks, sorted by specifier.
-    imports: Vec<(String, Vec<String>)>,
+    /// Target-module imports from `extern` blocks (`lang/EXTERN.md`). Each
+    /// non-ambient `mod` becomes a `require` preamble line; ambient mods carry a
+    /// global-root path and emit no `require`.
+    extern_imports: Vec<ast::ExternImport>,
+    /// Names declared as extern `struct`s. A struct literal of such a name
+    /// lowers to a bare target table (no `__struct` tag), and construction goes
+    /// through the target's own form — the extern value *is* the target value.
+    extern_structs: std::collections::HashSet<String>,
+    /// Maps an extern `struct` declared inside an extern `mod` to its enclosing
+    /// `mod`'s `require` binding. A reference to the struct's *value*
+    /// (constructor, associated call) qualifies through this binding
+    /// (`sqlite.Database.new(a)`) so it reads the imported module table, not a
+    /// nil bare global (`lang/EXTERN.md` §Lowering).
+    extern_struct_ns: std::collections::HashMap<String, String>,
+    /// Maps a free extern `fn` declared inside an extern `mod` to its enclosing
+    /// `mod`'s binding. A call to the fn qualifies through this binding
+    /// (`sqlite.open(a)`, `Bun.serve(a)`) so it reads the imported module table /
+    /// global root rather than a nil bare global (`lang/EXTERN.md` §Lowering). A
+    /// fn with no enclosing `mod` keeps its bare name. Populated from both the
+    /// module's own `extern` blocks and `use`-imported items.
+    extern_fn_ns: std::collections::HashMap<String, String>,
     /// Private free functions referenced before their definition. They are
     /// declared `local` up front and assigned in place, so a caller emitted
     /// earlier closes over the (later-assigned) local rather than a nil global.
@@ -332,6 +372,16 @@ pub(crate) struct Emitter {
     /// Runtime type-enforcement plan: the validators to emit at module top and
     /// the per-site checks at drift points (`DYNAMIC.md` §9, `STATIC.md` §10).
     validation: validate::Validation,
+    /// Extern items a `use` brought in from another file. Their `mod` imports are
+    /// merged into [`extern_imports`](Self::extern_imports) so the consumer emits
+    /// the same native `require` the defining module would, reconstructed from the
+    /// imported item's `#[extern(...)]` metadata (`lang/EXTERN.md` §Lowering).
+    imported_externs: Vec<ast::ExternItem>,
+    /// The names of the `use`-imported extern items (structs and fns). A `use` of
+    /// one of these emits **no** `require("<defining file>")`: the value is reached
+    /// through its native `require` and `mod`-qualified reference, never the
+    /// defining module's emitted output (which holds no runtime value for it).
+    imported_extern_names: std::collections::HashSet<String>,
 }
 
 /// A loop being emitted. When `break_flag` is set the loop uses the
@@ -411,13 +461,25 @@ impl Emitter {
             self.lines = out;
             self.prepend_origins(tracking, prelude_lines, preamble_origin);
         }
-        if !self.imports.is_empty() {
+        // Extern `mod` imports (`lang/EXTERN.md`): a non-ambient `mod` binds its
+        // handle with `require`; an ambient `mod`'s reference resolves against
+        // its global-root path, so it binds the local name to that chain.
+        let require_imports: Vec<&ast::ExternImport> = self
+            .extern_imports
+            .iter()
+            .filter(|i| !i.ambient || i.local_name != i.path)
+            .collect();
+        if !require_imports.is_empty() {
             let mut out = Vec::new();
-            for (n, (spec, names)) in self.imports.iter().enumerate() {
-                let handle = format!("_mod_{n}");
-                out.push(format!("local {handle} = require(\"{spec}\")"));
-                for name in names {
-                    out.push(format!("local {name} = {handle}.{name}"));
+            for imp in &require_imports {
+                if imp.ambient {
+                    // Ambient: the handle is a global member-access chain.
+                    out.push(format!("local {} = {}", imp.local_name, imp.path));
+                } else {
+                    out.push(format!(
+                        "local {} = require(\"{}\")",
+                        imp.local_name, imp.path
+                    ));
                 }
             }
             out.push(String::new());
@@ -457,7 +519,23 @@ impl Emitter {
     fn emit_module(&mut self, module: &ast::Module) {
         self.collect_method_enums(module);
         self.collect_assoc_types(module);
-        self.imports = ast::module_imports(module, ast::Target::Lua);
+        self.extern_imports = ast::extern_imports(module, ast::Target::Lua);
+        // A `use`d extern item emits its native `require` here, in the consumer,
+        // not an import from the defining file (`lang/EXTERN.md` §Lowering).
+        let imported = std::mem::take(&mut self.imported_externs);
+        self.extern_imports
+            .extend(ast::extern_imports_from_items(&imported, ast::Target::Lua));
+        // A `mod`'s neoc binding heads a `mod::item` path; keep its qualifier so
+        // the access reads the imported handle (`rusqlite.open`), not a bare
+        // global. Ambient mods are reached through their global-root chain.
+        for imp in &self.extern_imports {
+            self.assoc_types.insert(imp.local_name.clone());
+        }
+        // An extern struct's `T::assoc(a)` is a static/namespaced target call;
+        // keep the `T.` qualifier so it reads the target's own table.
+        for name in self.extern_structs.clone() {
+            self.assoc_types.insert(name);
+        }
         // Hoist the locals of forward-referenced private functions so a caller
         // emitted earlier captures the local, not a nil global.
         if !self.forward_decls.is_empty() {
@@ -571,13 +649,10 @@ impl Emitter {
                     self.emit_traits_tag(&e.name);
                 }
             }
-            // No inline Lua output: aliases erase; ext / extern externals are
-            // provided by the runtime (hosted blocks' imports, when present,
-            // emit in the preamble).
-            ast::ItemKind::TypeAlias(_)
-            | ast::ItemKind::Ext(_)
-            | ast::ItemKind::Extern { .. }
-            | ast::ItemKind::Trait(_) => {}
+            // No inline Lua output: aliases erase; an `extern` block describes
+            // the target surface — its `mod` imports emit in the preamble, its
+            // structs/fns/methods are the target's own values.
+            ast::ItemKind::TypeAlias(_) | ast::ItemKind::Extern(_) | ast::ItemKind::Trait(_) => {}
         }
     }
 
@@ -600,6 +675,14 @@ impl Emitter {
         let Some((last, prefix)) = u.path.split_last() else {
             return;
         };
+        // A `use`d extern item is reached through its *native* `require` (emitted
+        // in the preamble from the imported `#[extern]` metadata) and the
+        // `mod`-qualified value reference, not through the defining file's emitted
+        // module — an extern emits no runtime value there (`lang/EXTERN.md`
+        // §Lowering). So emit no `require("<defining file>")` for it.
+        if self.imported_extern_names.contains(last) {
+            return;
+        }
         let binding = u.alias.as_deref().unwrap_or(last);
         let module = prefix.join(".");
         self.line(format!("local {binding} = require(\"{module}\").{last}"));

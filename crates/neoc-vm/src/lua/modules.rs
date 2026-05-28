@@ -187,7 +187,7 @@ pub fn install(lua: &Lua) -> mlua::Result<()> {
 /// surface through the facade.
 ///
 /// Each entry is `(registry_key, header_text)` — for example
-/// `("lib:base64", "// @generated …\n#[link(name = \"lib:base64\")]\nextern \"neoc\" { … }\n")`.
+/// `("lib:base64", "// @generated …\nextern {\n    #[extern(path = \"lib:base64\")]\n    mod base64 { … }\n}\n")`.
 /// Only modules migrated to the facade appear here; the rest still register
 /// through a hand-written `module()` and ship a hand-written `.d.luau`.
 pub fn headers(lua: &Lua) -> mlua::Result<Vec<(String, String)>> {
@@ -257,10 +257,10 @@ mod tests {
     use super::*;
     use crate::lua::sandbox::make_engine;
 
-    /// Every facade-migrated module reports a `#[link(name = "<key>")]`-keyed
-    /// header. Guards the facade's `#[link]` attribute and the collector wiring;
-    /// the count tracks the modules migrated so far (the rest follow in later
-    /// batches).
+    /// Every facade-migrated module reports an `extern { … }` header keyed by a
+    /// `#[extern(path = "<key>")] mod <name>` declaration. Guards the facade's
+    /// extern block shape and the collector wiring; the count tracks the modules
+    /// migrated so far (the rest follow in later batches).
     #[test]
     fn headers_cover_migrated_modules() {
         let lua = make_engine().expect("engine");
@@ -318,9 +318,18 @@ mod tests {
         assert_eq!(keys.len(), 48, "expected 48 migrated modules, got {keys:?}");
 
         for (key, header) in &headers {
+            let name = key.split_once(':').map_or(key.as_str(), |(_, s)| s);
             assert!(
-                header.contains(&format!("#[link(name = \"{key}\")]")),
-                "{key} header missing #[link(name = …)]:\n{header}"
+                header.contains("extern {"),
+                "{key} header missing `extern {{` block:\n{header}"
+            );
+            assert!(
+                header.contains(&format!("#[extern(path = \"{key}\")]")),
+                "{key} header missing #[extern(path = …)]:\n{header}"
+            );
+            assert!(
+                header.contains(&format!("mod {name} {{")),
+                "{key} header missing `mod {name} {{`:\n{header}"
             );
         }
     }
@@ -391,19 +400,18 @@ mod tests {
     /// covered by that module's emitted header. This is the guard that turns a
     /// missing `record_fn` into a CI failure: register a free function with
     /// `set` but forget to record its signature and the key is present at
-    /// runtime yet absent from the `extern "neoc"` block, so this fails.
+    /// runtime yet absent from the `mod` block, so this fails.
     ///
     /// The check is one-directional (live keys ⊆ header surface): the header
     /// may carry extra entries the base table lacks — most notably
     /// `std:thread`'s `parent` / `shared`, injected only inside a spawned
     /// worker — and that is fine. The shape of the assertion per key:
     ///
-    /// - a function value must appear as a free `fn <key>(` in the
-    ///   `extern "neoc"` block;
+    /// - a function value must appear as a free `fn <key>(` in the `mod` block;
     /// - a table value (a constructor sub-table such as `chrono.Date`) must
     ///   appear as `struct <Key>;`;
-    /// - any other value (an injected const such as `json.null`) must appear
-    ///   as `const <key>:`.
+    /// - any other value (a former const such as `json.null`) must appear as a
+    ///   zero-argument accessor `fn <key>()`.
     #[test]
     fn header_surface_covers_runtime_table_keys() {
         let lua = make_engine().expect("engine");
@@ -419,24 +427,19 @@ mod tests {
         for ((hkey, header), (tkey, table)) in headers.iter().zip(tables.iter()) {
             assert_eq!(hkey, tkey, "header / table ordering drifted");
 
-            // The `extern "neoc"` block holds the free functions and consts;
-            // userdata / sub-table `struct`s precede it. Splitting lets a
-            // free-function assertion ignore a same-named method inside an
-            // `impl` block.
-            let extern_block = header
-                .split_once("extern \"neoc\" {")
-                .map(|(_, rest)| rest)
-                .unwrap_or(header);
-
             for pair in table.clone().pairs::<String, mlua::Value>() {
                 let (key, value) = pair.expect("module table pair");
 
                 match value {
                     mlua::Value::Function(_) => {
-                        let needle = format!("fn {key}(");
+                        // Free functions and former-const accessors sit directly
+                        // in the `mod` at one indent level (eight spaces); a
+                        // same-named method inside an `impl` is indented deeper
+                        // (twelve spaces), so the leading indent disambiguates.
+                        let needle = format!("        fn {key}(");
                         assert!(
-                            extern_block.contains(&needle),
-                            "{hkey}: function key {key:?} has no free `{needle}` in its header surface:\n{header}"
+                            header.contains(&needle),
+                            "{hkey}: function key {key:?} has no free `fn {key}(` in its header surface:\n{header}"
                         );
                     }
                     mlua::Value::Table(_) => {
@@ -447,10 +450,13 @@ mod tests {
                         );
                     }
                     _ => {
-                        let needle = format!("const {key}:");
+                        // A former module constant lowers to a zero-argument
+                        // accessor `fn <key>()` (the extern item set has no
+                        // `const`).
+                        let needle = format!("        fn {key}()");
                         assert!(
-                            extern_block.contains(&needle),
-                            "{hkey}: value key {key:?} has no `{needle}` in its header surface:\n{header}"
+                            header.contains(&needle),
+                            "{hkey}: value key {key:?} has no accessor `fn {key}()` in its header surface:\n{header}"
                         );
                     }
                 }

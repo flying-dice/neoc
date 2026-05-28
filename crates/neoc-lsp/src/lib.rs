@@ -408,6 +408,33 @@ impl Backend {
     fn source(&self, uri: &Url) -> Option<String> {
         self.documents.lock().ok()?.get(uri).cloned()
     }
+
+    /// Re-roots and re-diagnoses every indexed module under a changed
+    /// `neoc.toml`'s directory. The manifest is what `resolution_root` keys off,
+    /// so its create/edit/delete moves the cached resolution root of every
+    /// sibling module ([`WorkspaceIndex::reroot_under`]); without this, cached
+    /// goto/refs/rename stay stale until each file is re-edited.
+    async fn reindex_manifest_subtree(&self, manifest_uri: &Url) {
+        let Ok(manifest_path) = manifest_uri.to_file_path() else {
+            return;
+        };
+        let Some(dir) = manifest_path.parent() else {
+            return;
+        };
+        let affected = match self.index.lock() {
+            Ok(mut index) => index.reroot_under(dir),
+            Err(_) => return,
+        };
+        let jobs: Vec<(Url, Vec<Diagnostic>)> = {
+            let Ok(index) = self.index.lock() else {
+                return;
+            };
+            diagnose_many_in_project(&index, &affected)
+        };
+        for (uri, diags) in jobs {
+            self.client.publish_diagnostics(uri, diags, None).await;
+        }
+    }
 }
 
 #[tower_lsp::async_trait]
@@ -522,15 +549,25 @@ impl LanguageServer for Backend {
 
         // Watch `.neoc` files on disk so an edit made outside the editor (a
         // branch switch, a generated file) re-indexes without the file being
-        // opened. Dynamic registration — the client drives the watch.
+        // opened. Also watch `neoc.toml`: creating, editing, or deleting a
+        // manifest mid-session re-roots its sibling modules' `use` resolution,
+        // so cached goto/refs/rename must be recomputed (diagnostics already
+        // recompute the root per request). Dynamic registration — the client
+        // drives the watch.
         let registration = Registration {
             id: "neoc-watch-source".to_string(),
             method: "workspace/didChangeWatchedFiles".to_string(),
             register_options: serde_json::to_value(DidChangeWatchedFilesRegistrationOptions {
-                watchers: vec![FileSystemWatcher {
-                    glob_pattern: GlobPattern::String("**/*.neoc".to_string()),
-                    kind: None,
-                }],
+                watchers: vec![
+                    FileSystemWatcher {
+                        glob_pattern: GlobPattern::String("**/*.neoc".to_string()),
+                        kind: None,
+                    },
+                    FileSystemWatcher {
+                        glob_pattern: GlobPattern::String("**/neoc.toml".to_string()),
+                        kind: None,
+                    },
+                ],
             })
             .ok(),
         };
@@ -554,6 +591,23 @@ impl LanguageServer for Backend {
             .unwrap_or_default();
         for change in params.changes {
             if open.contains(&change.uri) {
+                continue;
+            }
+            // A `neoc.toml` create/edit/delete re-roots the modules under its
+            // directory: their cached resolution root (computed once per file via
+            // `resolution_root`/`discover_project`) is now stale. Re-summarise the
+            // affected subtree so cached goto/refs/rename pick up the new root,
+            // then re-diagnose those files. Diagnostics recompute the root per
+            // request, so they were already correct; this aligns the cache.
+            if change
+                .uri
+                .to_file_path()
+                .ok()
+                .as_deref()
+                .and_then(Path::file_name)
+                == Some(std::ffi::OsStr::new("neoc.toml"))
+            {
+                self.reindex_manifest_subtree(&change.uri).await;
                 continue;
             }
             if change.typ == FileChangeType::DELETED {
@@ -1140,6 +1194,152 @@ mod tests {
                 .is_none(),
             "a non-imported name has no cross-file definition"
         );
+    }
+
+    /// A unique on-disk temp directory, removed on drop. Per-file `use`
+    /// resolution reads `neoc.toml` from disk, so the monorepo tests need real
+    /// files. Mirrors the harness in `diagnostics.rs`.
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static N: AtomicU64 = AtomicU64::new(0);
+            let dir = std::env::temp_dir().join(format!(
+                "neoc_lsp_lib_{}_{}_{}",
+                tag,
+                std::process::id(),
+                N.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&dir).unwrap();
+            TempDir(dir)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+
+        fn write(&self, rel: &str, body: &str) -> Url {
+            let path = self.0.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, body).unwrap();
+            // Canonical to match the index's canonical keys (the temp dir can be a
+            // symlink, e.g. `/tmp` → `/private/tmp` on macOS).
+            let canonical = std::fs::canonicalize(&path).unwrap_or(path);
+            Url::from_file_path(canonical).unwrap()
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn monorepo_goto_references_rename_stay_within_a_package() {
+        // Two packages under one opened monorepo root, each with its own
+        // `neoc.toml`, a `pub fn` in `geom.neoc`, and a `main.neoc` importing it
+        // by the same `use geom::scale` path. Cross-file navigation must resolve
+        // each file against its own project and never bleed into the other.
+        const MANIFEST: &str = "[package]\nname = \"app\"\ntarget = \"lua\"\n";
+        let tmp = TempDir::new("nav");
+        tmp.write("a/neoc.toml", MANIFEST);
+        let a_geom = tmp.write(
+            "a/src/main/neoc/geom.neoc",
+            "pub fn scale(n: number) -> number { n }\n",
+        );
+        let a_main = tmp.write(
+            "a/src/main/neoc/main.neoc",
+            "use geom::scale;\nfn go() -> number { scale(2) }\n",
+        );
+        tmp.write("b/neoc.toml", MANIFEST);
+        let b_geom = tmp.write(
+            "b/src/main/neoc/geom.neoc",
+            "pub fn scale(n: number) -> number { n }\n",
+        );
+        let b_main = tmp.write(
+            "b/src/main/neoc/main.neoc",
+            "use geom::scale;\nfn go() -> number { scale(3) }\n",
+        );
+
+        let mut index = WorkspaceIndex::new(tmp.path());
+        for u in [&a_geom, &a_main, &b_geom, &b_main] {
+            let text = std::fs::read_to_string(u.to_file_path().unwrap()).unwrap();
+            index.set_document(u.clone(), 1, text);
+        }
+
+        // goto-definition: `scale` used in A's main resolves to A's geom, not B's.
+        assert_eq!(
+            index.imported_definition(&a_main, "scale").map(|d| &d.uri),
+            Some(&a_geom),
+            "A's main gotos A's geom"
+        );
+        assert_eq!(
+            index.imported_definition(&b_main, "scale").map(|d| &d.uri),
+            Some(&b_geom),
+            "B's main gotos B's geom"
+        );
+
+        // references: scoped to package A only.
+        let refs: Vec<Url> = project_references(&index, &a_main, "scale", true)
+            .into_iter()
+            .map(|(u, _)| u)
+            .collect();
+        assert!(
+            refs.iter().all(|u| *u == a_geom || *u == a_main),
+            "references stay within package A: {refs:?}"
+        );
+        assert!(
+            !refs.contains(&b_geom) && !refs.contains(&b_main),
+            "references must not cross into package B: {refs:?}"
+        );
+
+        // rename: edits land only in package A's files.
+        let edits = project_rename(&index, &a_main, "scale", "magnify");
+        let touched: Vec<&Url> = edits.keys().collect();
+        assert!(
+            touched.iter().all(|u| **u == a_geom || **u == a_main),
+            "rename edits stay within package A: {touched:?}"
+        );
+        assert!(
+            !edits.contains_key(&b_geom) && !edits.contains_key(&b_main),
+            "rename must not touch package B"
+        );
+        assert!(
+            edits.contains_key(&a_geom),
+            "the definition in A's geom is renamed"
+        );
+    }
+
+    #[test]
+    fn lone_file_navigation_resolves_via_fallback() {
+        // A no-manifest pair: goto and references resolve a sibling relative to
+        // the file's own directory — the fallback root, no regression.
+        let tmp = TempDir::new("loosenav");
+        let util = tmp.write("util.neoc", "pub fn add() -> number { 1 }\n");
+        let main = tmp.write("main.neoc", "use util::add;\nfn go() -> number { add() }\n");
+        let mut index = WorkspaceIndex::new(tmp.path());
+        index.set_document(
+            util.clone(),
+            1,
+            "pub fn add() -> number { 1 }\n".to_string(),
+        );
+        index.set_document(
+            main.clone(),
+            1,
+            "use util::add;\nfn go() -> number { add() }\n".to_string(),
+        );
+        assert_eq!(
+            index.imported_definition(&main, "add").map(|d| &d.uri),
+            Some(&util),
+            "fallback goto resolves the sibling"
+        );
+        let refs: Vec<Url> = project_references(&index, &main, "add", true)
+            .into_iter()
+            .map(|(u, _)| u)
+            .collect();
+        assert!(refs.contains(&util) && refs.contains(&main), "{refs:?}");
     }
 
     #[test]

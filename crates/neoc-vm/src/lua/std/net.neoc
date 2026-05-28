@@ -1,11 +1,13 @@
 // @generated from the std:net runtime module — do not edit.
-struct TcpListener;
-impl TcpListener {
-    /// Bind a TCP socket to `addr` (e.g. `"0.0.0.0:3000"`). Returns a listener handle on success.
-    fn bind(addr: string) -> Result<TcpListener, string>;
-    /// Return the local address the socket is bound to, as a string like `"127.0.0.1:8080"`.
-    fn addr() -> string;
-}
-#[link(name = "std:net")]
-extern "neoc" {
+extern {
+    #[extern(path = "std:net")]
+    mod net {
+        struct TcpListener;
+        impl TcpListener {
+            /// Bind a TCP socket to `addr` (e.g. `"0.0.0.0:3000"`). Returns a listener handle on success.
+            #[extern(constructor)] fn bind(addr: string);
+            /// Return the local address the socket is bound to, as a string like `"127.0.0.1:8080"`.
+            fn addr(self) -> string;
+        }
+    }
 }
