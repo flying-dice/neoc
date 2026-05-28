@@ -53,7 +53,7 @@ fn transpile_and_run(source: &str, entry: &str) -> Option<String> {
 #[test]
 fn fibonacci_runs() {
     let src = "\
-ext fn print(n: number);
+extern { fn print(n: number); }
 fn fib(n: number) -> number {
   if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
 }
@@ -70,7 +70,7 @@ fn main() {
 #[test]
 fn loops_and_accumulation_run() {
     let src = "\
-ext fn print(n: number);
+extern { fn print(n: number); }
 fn sum_to(n: number) -> number {
   let mut total = 0;
   for i in 1..n { total = total + i; }
@@ -92,7 +92,7 @@ fn string_concat_runs() {
     // `+` on strings must lower to Lua `..`, not `+`. The elaboration pass
     // rewrites the string-typed `Add` to `Concat`; the emitter picks `..`.
     let src = "\
-ext fn print(s: string);
+extern { fn print(s: string); }
 fn greet(name: string) -> string {
   \"hello, \" + name
 }
@@ -109,7 +109,7 @@ fn main() {
 #[test]
 fn match_over_enum_runs() {
     let src = "\
-ext fn print(s: string);
+extern { fn print(s: string); }
 enum Shape { Circle, Square, Triangle }
 fn name(s: Shape) -> string {
   match s { Shape::Circle => \"circle\", Shape::Square => \"square\", _ => \"other\" }
@@ -129,7 +129,7 @@ fn continue_and_break_run() {
     // `continue` skips i == 3; `break` exits at i == 7. The sum is
     // 0+1+2+4+5+6 = 18. Exercises the repeat/break restructuring under Lua 5.1.
     let src = "\
-ext fn print(n: number);
+extern { fn print(n: number); }
 fn main() {
   let mut acc = 0;
   for i in 0..10 {
@@ -149,7 +149,7 @@ fn main() {
 #[test]
 fn let_struct_destructure_runs() {
     let src = "\
-ext fn print(n: number);
+extern { fn print(n: number); }
 struct Point { x: number, y: number }
 fn main() {
   let p = Point { x: 3, y: 4 };
@@ -167,7 +167,7 @@ fn main() {
 fn functional_struct_update_runs() {
     // `..p` copies p's fields; the explicit `x: 9` overrides. y stays 2.
     let src = "\
-ext fn print(n: number);
+extern { fn print(n: number); }
 struct Point { x: number, y: number }
 fn main() {
   let p = Point { x: 1, y: 2 };
@@ -186,7 +186,7 @@ fn main() {
 fn enum_method_dispatch_runs() {
     // An `impl` method on an enum dispatches via the variant's metatable.
     let src = "\
-ext fn print(s: string);
+extern { fn print(s: string); }
 enum Dir { N, S, E, W }
 impl Dir {
   fn name(self) -> string {
@@ -209,7 +209,7 @@ fn newtype_construction_and_field_access_run() {
     // `Id(42)` constructs via `.new` (carries the tag/metatable); `.0` reads the
     // positional payload (`[1]`).
     let src = "\
-ext fn print(n: number);
+extern { fn print(n: number); }
 struct Id(number);
 fn main() {
   let id = Id(42);
@@ -228,7 +228,7 @@ fn derived_methods_callable_from_neoc() {
     // directly. The clone is a full value (carries the metatable), so methods
     // dispatch on it too — `q.eq(p)` exercises that.
     let src = "\
-ext fn print(b: bool);
+extern { fn print(b: bool); }
 #[derive(Clone, Eq)]
 struct Point { x: number, y: number }
 fn main() {

@@ -2,7 +2,9 @@
 // A trait-typed parameter accepts any implementor, and `shape.draw()`
 // dispatches via the value's own metatable — `Circle` and `Square` flow
 // through one `Drawable` slot and each resolves its own `draw`.
-ext fn println(s: string);
+extern {
+    fn println(s: string);
+}
 
 trait Drawable {
     fn draw(self) -> string;

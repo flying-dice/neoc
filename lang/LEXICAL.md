@@ -76,6 +76,8 @@ The following are reserved for future use and may not be used as identifiers, th
 async   await   crate   dyn     move    static  super   unsafe
 ```
 
+`class` is a **contextual** keyword: it is a keyword only as an `ext`/`extern` block item (`SYNTAX.md`, `ExtItem`), where `class IDENT ;` imports a foreign class. Everywhere else it is an ordinary identifier and is not reserved.
+
 `number`, `string`, and `bool` are **not** keywords; they are predeclared type names (`STATIC.md` §3.1) living in the type namespace, and may be shadowed only by a `type` alias or `struct`/`enum` of the same name (which is discouraged).
 
 ## 6. Literals

@@ -1,8 +1,10 @@
 // @generated from the lib:html runtime module — do not edit.
-#[link(name = "lib:html")]
-extern "neoc" {
-    /// Escape the five XML entities (`&`, `<`, `>`, `"`, `'`) in `input`.
-    fn escape(input: string, opts: LuaValue?) -> string;
-    /// Reverse HTML entity references (named and numeric) in `input`; unknown entities pass through unchanged.
-    fn unescape(input: string) -> string;
+extern {
+    #[extern(path = "lib:html")]
+    mod html {
+        /// Escape the five XML entities (`&`, `<`, `>`, `"`, `'`) in `input`.
+        fn escape(input: string, opts: Option<Unknown>) -> string;
+        /// Reverse HTML entity references (named and numeric) in `input`; unknown entities pass through unchanged.
+        fn unescape(input: string) -> string;
+    }
 }

@@ -2,7 +2,9 @@
 // (`Wrapper(42)`) routes through the generated `.new`, so the value carries its
 // `__struct` tag and metatable. A method then dispatches via `:`, and an
 // irrefutable `let` destructures the `[1]` payload. Both read 42 back out.
-ext fn println(n: number);
+extern {
+    fn println(n: number);
+}
 
 struct Wrapper(number);
 

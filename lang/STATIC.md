@@ -28,11 +28,13 @@ Scoping is lexical and block-structured:
 - Each `Block` (`SYNTAX.md` §6.1) opens a nested scope. A `let` binding is visible from the statement after it to the end of its block.
 - Inner bindings shadow outer bindings of the same name in the same namespace. Shadowing is allowed and is not a warning.
 
-Name resolution order for an unqualified name: innermost block scope outward to the module scope, then names brought in by `use`, then the prelude (`Ok`, `Err`, `Some`, `None`, `Result`, `Option`, and the predeclared type names `number`, `string`, `bool`), then `ext` declarations.
+Name resolution order for an unqualified name: innermost block scope outward to the module scope, then names brought in by `use`, then the prelude (`Ok`, `Err`, `Some`, `None`, `Result`, `Option`, and the predeclared type names `number`, `string`, `bool`), then `extern` declarations.
 
 A qualified path `a::b::c` resolves `a` as a module or type, then selects `b`, then `c` within it. `Type::method` names an associated function; `Enum::Variant` names a variant constructor.
 
 `pub` controls cross-module visibility only; within a module everything is visible. A `use` of a non-`pub` item from another module is a resolution error.
+
+A `use` names a module by its path and an item within it; the module path resolves to a single source file. The directory that path is resolved against — the source root of a project, or the importing file's own directory outside one — is defined in `PROJECT.md` §4. A `use` whose module path resolves to no file is a resolution error.
 
 ## 3. The type system
 
@@ -85,6 +87,14 @@ Field access `e.f` requires `e` to have a struct type declaring `f`:
 
 A newtype `struct N(τ)` has one positional field accessed as `.0`; its constructor `N` has type `fn(τ) -> N`. These field types are enforced at runtime wherever a value can drift from them — §10.
 
+A named field — a struct field or a named enum-variant field — may not begin with `__` (double underscore). Such names are reserved: a named field becomes a data key in the value's record, and the `__` prefix is held for the runtime's own structural keys, so a user field spelled that way would collide with them and silently corrupt the value. This restricts field identifiers only: type names, variant names, local bindings, and function parameters never form record keys and are unaffected, and positional (tuple) slots use single-underscore names the compiler assigns.
+
+```
+f begins with `__`
+─────────────────── (T-FIELD-RESERVED)
+struct/variant field f ill-formed
+```
+
 ### 3.4 Traits and trait bounds
 
 A trait names a set of method signatures. A type satisfies a trait when an `impl Trait for Type` provides every required method with matching signatures; a `#[derive(Trait)]` on the type is an implicit such impl. A trait bound `T: Trait` constrains a type parameter to types that satisfy `Trait`.
@@ -115,6 +125,28 @@ enum Option<T>    { Some(T), None }
 ```
 
 Their constructors `Ok`, `Err`, `Some`, `None` are in the value namespace unqualified. They are not primitive, but they are load-bearing: the `?` operator (§6) and `match` exhaustiveness (§7) both have rules that mention them by name.
+
+### 3.7 `Unknown` — the dynamic boundary type
+
+`Unknown` is the predeclared **dynamic** type: an honest "foreign value whose runtime type neoc cannot know", used at the host boundary (a JS/FFI value reaching neoc through an `extern` declaration or a binding wrapper). It is the one type that opts out of static structure checking, so a binding author can describe a foreign value's shape through ordinary neoc declarations and assert concrete types at the surface.
+
+`Unknown` is **bidirectionally assignable**: a value of any type τ is assignable to `Unknown`, and an `Unknown` is assignable to any type τ. Flowing a concrete value *into* `Unknown` loses nothing; flowing an `Unknown` *out* to a concrete type τ is a best-effort assertion — the binding author's promise that the foreign value really is a τ. (This is unlike the trait existential of §3.4, which is one-directional and type-erasing.) `Unknown` is erased at runtime: it has no representation of its own; it *is* the underlying host value.
+
+A value of type `Unknown` supports the operations a static type would gate, each yielding `Unknown`:
+
+```
+Γ ⊢ e : Unknown                       Γ ⊢ e : Unknown   Γ ⊢ eᵢ : τᵢ  (any τᵢ)
+──────────────────── (T-DYN-FIELD)    ──────────────────────────────────────── (T-DYN-METHOD)
+Γ ⊢ e.f : Unknown                     Γ ⊢ e.m(e₁, …, eₙ) : Unknown
+
+Γ ⊢ e : Unknown   Γ ⊢ i : τ  (any τ)  Γ ⊢ e : Unknown   Γ ⊢ eᵢ : τᵢ  (any τᵢ)
+───────────────────────────── (T-DYN-INDEX)   ──────────────────────────────── (T-DYN-CALL)
+Γ ⊢ e[i] : Unknown                     Γ ⊢ e(e₁, …, eₙ) : Unknown
+```
+
+Member assignment to an `Unknown` is likewise unrestricted: in `e.f = v` and `e[i] = v` where `e : Unknown`, the assigned value `v` may be of any type. No member of an `Unknown` is statically resolved (there is nothing to resolve to), so field/method/index access on it never reports a "no field"/"no method"/"not a struct" error.
+
+`Unknown` is **confined**: this permissiveness applies only where the `Unknown` type itself appears. A genuine mismatch on a concrete type elsewhere in the same program still reports normally — `Unknown` never widens unification for any other type.
 
 ## 4. Typing rules
 
@@ -169,7 +201,7 @@ A literal pattern checks against the scrutinee by equality and binds nothing. An
 
 ### 4.3 Declarations
 
-Each item form extends the environment with its name and type. A `fn` adds its name with its function type; a `struct`/`enum` adds its type and its constructors; an `impl` adds methods to an existing type; a `const`/`let` adds a binding; a `use` adds the imported name; an `ext` adds the declared binding (§5).
+Each item form extends the environment with its name and type. A `fn` adds its name with its function type; a `struct`/`enum` adds its type and its constructors; an `impl` adds methods to an existing type; a `const`/`let` adds a binding; a `use` adds the imported name; an `extern` block adds the declared bindings (§5).
 
 ```
 Γ ⊢ τ ok    Γ, params ⊢ body : τ_ret
@@ -179,22 +211,26 @@ Each item form extends the environment with its name and type. A `fn` adds its n
 
 The function body must have the declared return type. A function with no `-> τ` clause returns `()`, and its body must have type `()`.
 
-## 5. `ext` declarations
+## 5. `extern` declarations
 
-An `ext` item introduces a binding the runtime supplies, with no body:
+An `extern { … }` block introduces bindings the target supplies, with no bodies. It describes the target's surface — see `EXTERN.md` for the authoritative model (items, attributes, lowering, errors). The well-formedness rules:
 
 ```
 Γ ⊢ τᵢ ok   (for each i)   Γ ⊢ τ_ret ok
 ──────────────────────────────────────────────────────── (D-EXT-FN)
-Γ ⊢ ext fn f(p₁: τ₁, …) -> τ_ret ; ⇒ Γ, f : fn(τ₁, …) -> τ_ret
+Γ ⊢ extern { fn f(p₁: τ₁, …) -> τ_ret ; } ⇒ Γ, f : fn(τ₁, …) -> τ_ret
 
-──────────────────────────────────────── (D-EXT-TYPE)
-Γ ⊢ ext type T ; ⇒ Γ, T : opaque type
+──────────────────────────────────────── (D-EXT-STRUCT-OPAQUE)
+Γ ⊢ extern { struct T ; } ⇒ Γ, T : opaque type
+
+Γ ⊢ τᵢ ok   (for each field i)
+──────────────────────────────────────────────────────── (D-EXT-STRUCT-FIELDS)
+Γ ⊢ extern { struct T { f₁: τ₁, … } } ⇒ Γ, T : struct { f₁: τ₁, … }
 ```
 
-An `ext type` is opaque: neoc knows the name and can pass values of it around and store them, but cannot construct, destructure, or inspect them — only `ext fn`s that mention the type can produce or consume its values. An `ext const` adds a constant of the declared type.
+An opaque extern `struct T ;` (no readable fields) is a pure handle: neoc knows the name and can pass values of it around, but cannot inspect them — only extern `fn`s/methods mentioning the type produce or consume its values. An extern `struct` with fields exposes those as the target value's data/callback properties (a field read `x.f`, a struct literal `T { f: v }`). An extern `impl` adds methods/associated functions; an `#[extern(constructor)]` associated `fn` yields the enclosing type. A `mod` adds a target-module scope reached by its path.
 
-`ext` is the only construct that adds a binding without a corresponding definition in neoc source. Everything callable from neoc that is not defined in neoc has an `ext` declaration somewhere.
+`extern` is the only construct that adds a binding without a corresponding definition in neoc source. Everything callable from neoc that is not defined in neoc has an `extern` declaration somewhere.
 
 ## 6. The `?` operator and well-formedness of error propagation
 
@@ -246,7 +282,7 @@ The judgements, in the predicate style of `Γ ⊢ τ ok`:
 
 ### 10.1 Provenance
 
-A value is **vouched** when the type system alone guarantees its runtime shape matches its static type, and **unvouched** otherwise. Every value is born vouched — a literal, or a value built from vouched parts — or enters unvouched across the host boundary (`ext`, decode, entry). A check converts unvouched to vouched.
+A value is **vouched** when the type system alone guarantees its runtime shape matches its static type, and **unvouched** otherwise. Every value is born vouched — a literal, or a value built from vouched parts — or enters unvouched across the host boundary (`extern`, decode, entry). A check converts unvouched to vouched.
 
 Positions split into two kinds, and the analysis classifies them on different principles:
 
@@ -274,7 +310,7 @@ A construction literal validates each component against its declared field, slot
 Compound assignment `lhs op= v` is the `lhs = lhs op v` case of this rule.
 
 ```
-f : ext fn(…) -> τ ∈ Γ
+f : extern fn(…) -> τ ∈ Γ
 ─────────────────────────── (DRIFT-INGRESS)
 Γ ⊢ the result of f(…) drift against τ
 ```
@@ -306,7 +342,7 @@ A function is **host-reachable** iff it is `pub` (lowered to a binding shared wi
 ### 10.5 Depth and limits
 
 - **Deep.** A drift check recurses through the full declared shape — nested structs, list elements, `Option`/`Result` payloads, enum-variant fields — so divergence at any depth is caught.
-- **Opaque `ext type`** (§5) has no shape neoc can inspect; its validator is the identity — it returns the value unexamined (`DYNAMIC.md` §9.1) — and recursion stops at the opaque boundary.
+- **Opaque extern `struct`** (§5) has no shape neoc can inspect; its validator is the identity — it returns the value unexamined (`DYNAMIC.md` §9.1) — and recursion stops at the opaque boundary.
 - **`fn(…) -> _`** is checked as callable; a signature is not runtime-observable.
 - **Bare type parameter** with no concrete witness at the position is checked only to the depth its static type reveals; the deep check lands where the parameter is instantiated to a concrete type — itself a `DRIFT-CONSTRUCT` or `DRIFT-INGRESS` position.
 

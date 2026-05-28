@@ -50,6 +50,23 @@ A struct value is a Lua table tagged with its type name. The type's own table do
 
 Methods are not emitted here; they come from `impl` (§3.3).
 
+**JS.** A struct is the prototype analogue of the Lua model. The type's **prototype object** is the JS counterpart of the Lua method table; methods (§3.3) and derives (§6) land on it, and every constructed value links to it as its prototype. The constructor stamps the `__struct` tag and the prototype link:
+
+```
+⟦ struct S { f₁: τ₁, …, fₙ: τₙ } ⟧_js =
+  const S$ = {};                          // the prototype; methods land here (§3.3)
+
+⟦ S { f: v, … } ⟧ₑ_js =
+  { __struct: "S", f: ⟦v⟧, …, __proto__: S$ }
+```
+
+The construction uses an `__proto__` property in the object literal — a single literal, evaluated once, with no post-construction mutation. (`Object.create` / `Object.setPrototypeOf` are rejected: `__proto__` in a literal is the clearest, allocates one object, and is ES2015-standard.) `S$` is a module-level binding, so a value carries its prototype wherever it travels — including across an ES-module boundary (§3.7) — and a method call resolves natively against it (§4.7) with no registry.
+
+- **Unit struct** `struct S;` lowers to a single shared value `const S$ = {}` and a singleton `{ __struct: "S", __proto__: S$ }`; methods attach to `S$`.
+- **Newtype** `struct N(τ)` stores its payload at `_0`; `N(x)` constructs `{ __struct: "N", _0: ⟦x⟧, __proto__: N$ }` and `.0` reads `._0`.
+
+A struct with **no** methods and no derives needs no prototype: it stays a plain tagged object `{ __struct: "S", … }` with no `__proto__` link, exactly as today.
+
 ### 3.2 `enum`
 
 An enum value is a tagged table carrying its variant name and payload:
@@ -83,12 +100,23 @@ Every variant construction is then `setmetatable`d onto `E`, so a value finds it
 
 `impl` methods (§3.3) and derived methods (§6) attach to `E` as for a struct. The metatable changes nothing `match` or `?` rely on — they read `.__tag`/`.__enum`, which a metatable does not shadow. A plain enum with no methods keeps the bare tagged table (no metatable). The `Result`/`Option` prelude enums (§7) are always plain.
 
+**JS.** A method-bearing enum gets one prototype `E$` (shared by every variant), and each variant construction links to it — the same shape as a struct (§3.1):
+
+```
+⟦ enum E { … } with methods ⟧_js = const E$ = {};
+⟦ E::V ⟧ₑ_js          = { __enum: "E", __tag: "V", __proto__: E$ }
+⟦ E::V(a, b) ⟧ₑ_js    = { __enum: "E", __tag: "V", _0: ⟦a⟧, _1: ⟦b⟧, __proto__: E$ }
+⟦ E::V { x: a } ⟧ₑ_js = { __enum: "E", __tag: "V", x: ⟦a⟧, __proto__: E$ }
+```
+
+The prototype changes nothing `match` or `?` rely on — they read `.__tag`/`.__enum`, own properties never shadowed by the prototype. A plain enum with no methods keeps the bare tagged object (no `__proto__`). The `Result`/`Option` prelude enums (§7) are always plain.
+
 ### 3.2a The `__traits` tag
 
 Alongside `__struct`/`__enum`, a type that implements one or more traits carries `__traits`: the names of those traits, transitively closed over supertraits (a type implementing `Greet` where `trait Greet: Show` lists both). A `#[derive(T)]` counts as an `impl T`. The set is computed from the impls present in the lowered module, so a blanket impl (§3.5) that expanded to a concrete `impl` is included. Type-keyed and sorted, so the emission is deterministic.
 
 - **Lua** — `Type.__traits = { "A", "B" }` on the type's table. For a struct or method-bearing enum that table is the metatable, so `value.__traits` resolves through `__index`; for a unit struct the table *is* the value.
-- **JS** — a registry `const __t = {}` with one entry per type, `__t.Type = ["A", "B"]`, read as `__t[value.__struct ?? value.__enum]` — the same shape as the `__m` method registry (§4.7).
+- **JS** — a registry `const __t = {}` with one entry per type, `__t.Type = ["A", "B"]`, read as `__t[value.__struct ?? value.__enum]`. (Method dispatch is prototype-backed, not registry-backed (§3.3, §4.7); `__t` is an independent, inert trait-metadata table — the only registry the JS backend still emits, and only for a type that implements a trait.)
 
 A type implementing no trait carries no entry: a reader treats the absence (Lua `nil`, JS `undefined`) as the empty set. The tag is inert metadata — nothing in the current lowering reads it. It is the runtime identity a future trait-enforcement check keys on (the nominal assertion `value` *has* trait `T`).
 
@@ -103,9 +131,20 @@ Inherent and trait-impl methods attach to the target type's table as plain funct
 
 Because the constructor sets `S.__index = S` and `setmetatable`s each instance (§3.1), a value of type `S` finds `m` through its metatable. A method call `x.m(a)` lowers to the Lua colon call `x:m(a)`, which passes the receiver as `self` (§4.7) — dispatch happens at runtime via the metatable, so the emitter needs no type information at the call site. An associated function (no `self`) is still a plain entry on the table and is called as `S.f(a)`.
 
+**JS.** A method lands on the type's prototype `S$` (§3.1) as a `function` whose receiver is the implicit `this`, so the `self` parameter is **dropped**:
+
+```
+⟦ impl S { fn m(self, p) -> τ { body } } ⟧_js =
+  S$.m = function(p) { ⟦ body ⟧ₛ };       // `self` reads as `this`
+```
+
+Inside the body, the neoc `self` lowers to JS `this`. A method call `x.m(a)` lowers to the native `x.m(⟦a⟧)` (§4.7): `this` binds to `x` because the call is a property call. This is uniform with a method call on a foreign (`extern`) receiver, so neoc and host values dispatch identically — there is no method registry and no dispatch helper. A trait impl `impl Trait for S` augments the **same** prototype `S$` (its methods are indistinguishable from inherent ones at runtime). An associated function (no `self`) lands on the prototype as a plain `function` and is called as `S$.f(⟦a⟧)`.
+
+A neoc closure lowers to a JS **arrow** (§4.9), which captures `this` lexically — so a method body that creates a closure referring to `self` sees the enclosing `this` with no rebinding. neoc has no bare method-reference syntax (a method is always called `recv.m(args)`, never passed unapplied), so the classic "detached method loses `this`" hazard cannot arise.
+
 ### 3.4 `trait`
 
-A trait produces no standalone output. Its required methods are realised by each `impl Trait for Type`. A default-bodied trait method, when not overridden, is emitted onto the implementing type's table at the impl site, with `Self` replaced by the implementing type name.
+A trait produces no standalone output. Its required methods are realised by each `impl Trait for Type`. A default-bodied trait method, when not overridden, is emitted onto the implementing type's table (Lua) or prototype (JS, `Type$.method = function(…) { … }`) at the impl site, with `Self` replaced by the implementing type name. A blanket impl (§3.5) is expanded to a concrete `impl` for each implementing type before lowering, so its methods land on that type's table/prototype like any other impl — no runtime trait machinery is involved.
 
 ### 3.5 `const`
 
@@ -124,19 +163,61 @@ A trait produces no standalone output. Its required methods are realised by each
 ### 3.7 `use`
 
 ```
-⟦ use a::b::c ⟧       = local c = require("a.b").c
-⟦ use a::b::c as d ⟧  = local d = require("a.b").c
+⟦ use a::b::c ⟧       = local c = require("a.b").c        (Lua)
+⟦ use a::b::c as d ⟧  = local d = require("a.b").c        (Lua)
+⟦ use a::b::c ⟧       = import { c } from "./a/b.js";     (JS)
+⟦ use a::b::c as d ⟧  = import { c as d } from "./a/b.js"; (JS)
 ```
 
-The path up to the final segment is the module; the final segment is the item selected from it. `require` uses Lua's dotted module convention.
+The path up to the final segment is the module; the final segment is the item selected from it. Lua `require` uses the dotted module convention; JS lowers to a relative, `.js`-suffixed ESM `import`. A `use` of a type-only item (a data-only struct/enum or a `type` alias) — whose name is erased on JS — emits no JS import. A `use` of a method-bearing type emits **only** the plain `import`: dispatch needs no per-type wiring in the consumer, because the value carries its prototype across the boundary (§7.1). (This supersedes the registry model, where an importer additionally re-bound the imported type into its local method registry.)
 
 ### 3.8 `type` alias
 
 No output. Type aliases are erased; they exist only in `STATIC.md`.
 
-### 3.9 `ext`
+### 3.9 `extern`
 
-**No output.** An `ext fn`, `ext type`, or `ext const` produces no Lua. The named binding is expected to be present in the runtime's environment when the chunk executes. The compiler emits no shim, stub, or resolution code; resolution is the host's responsibility.
+An `extern { … }` block declares the target's surface (`EXTERN.md` is the authoritative lowering reference). The neoc value of an extern type **is** the target value — there is no wrapper. The block's own declarations (`struct`, `impl`, bodyless `fn`) emit no code; only a `mod` emits an import preamble, and references lower directly.
+
+**Top-level extern `fn` (host global).** A bodyless `fn` declared directly in the block produces no output; the binding is expected in the runtime's environment, and a call lowers to a bare call.
+
+**`mod` import.** A `mod`'s target path is its name (nested joined by `/`), or its `#[extern(path = "…")]`. On Lua it lowers to `require`; on JavaScript to a namespace import. A `mod::item` reference reads the imported handle. An `#[extern(ambient)]` `mod` emits **no** import — its path is a member-access chain rooted at the target global.
+
+```
+⟦ extern { #[extern(path="vnd:rusqlite")] mod m { fn open(…) -> τ; } } ⟧_lua
+  = local m = require("vnd:rusqlite")          -- preamble
+⟦ m::open(a…) ⟧ₑ_lua  = m.open(⟦a⟧…)
+
+⟦ extern { #[extern(path="node:fs")] mod m { … } } ⟧_js
+  = import * as m from "node:fs";              -- preamble
+⟦ m::f(a…) ⟧ₑ_js  = m.f(⟦a⟧…)
+
+⟦ #[extern(ambient, path="globalThis.crypto")] mod c { … } ⟧  = (no import)
+⟦ c::digest(a…) ⟧ₑ  = globalThis.crypto.digest(⟦a⟧…)
+```
+
+**Field, method, struct literal, constructor.** Directly to the target value:
+
+```
+⟦ x.f ⟧ₑ       = x.f                        (field read)
+⟦ x.f = v ⟧ₛ   = x.f = ⟦v⟧                  (field write)
+⟦ x.m(a…) ⟧ₑ_lua = x:m(⟦a⟧…)                (Lua colon call — UserData convention)
+⟦ x.m(a…) ⟧ₑ_js  = x.m(⟦a⟧…)                 (native property call; `this` binds to x)
+⟦ T { f: v } ⟧ₑ  = { f = ⟦v⟧ }   (Lua)   /   { f: ⟦v⟧ }   (JS)   — bare target object, no tag
+⟦ T::f(a…) ⟧ₑ    = T.f(⟦a⟧…)                (associated / static call, both targets)
+⟦ T::new(a…) ⟧ₑ  = T.new(⟦a⟧…)  (Lua)  /  new T(⟦a⟧…)  (JS)   — #[extern(constructor)]
+```
+
+An `#[extern(name = "…")]` overrides the target identifier of an `fn`/`struct`; the neoc-side name is unaffected.
+
+**Cross-file `use` of an extern item.** A `pub` extern item `use`d from another file lowers to its **native** import in the *consumer*, not a `require`/`import` of the defining file — an extern emits no runtime value there (§3.7 does not apply). The consumer reconstructs the native import and the construction/method/associated lowering above from the imported item's `#[extern(…)]` metadata, identical to how the defining module would. `EXTERN.md` §Cross-file `use` is the authoritative reference.
+
+```
+⟦ use db::T ⟧            where  #[extern(path="p")] mod m { struct T; … }
+  = local m = require("p")     -- preamble, in the consumer  (Lua)
+  = import * as m from "p";    -- preamble, in the consumer  (JS)
+  (no require/import of "db")
+```
 
 ## 4. Expressions
 
@@ -208,13 +289,16 @@ In statement position no IIFE is needed; in expression position the IIFE carries
 
 ```
 ⟦ e.f ⟧ₑ        = ⟦e⟧.f
-⟦ e.0 ⟧ₑ        = ⟦e⟧[1]                 (newtype field)
-⟦ e.m(a, …) ⟧ₑ  = ⟦e⟧:m(⟦a⟧, …)          (Lua colon call: receiver passed as self)
+⟦ e.0 ⟧ₑ        = ⟦e⟧[1]   (Lua)  /  ⟦e⟧._0  (JS)        (newtype field)
+⟦ e.m(a, …) ⟧ₑ_lua  = ⟦e⟧:m(⟦a⟧, …)      (Lua colon call: receiver passed as self)
+⟦ e.m(a, …) ⟧ₑ_js   = ⟦e⟧.m(⟦a⟧, …)       (native property call: receiver passed as this)
 ⟦ f(a, …) ⟧ₑ    = f(⟦a⟧, …)
-⟦ e[i] ⟧ₑ       = ⟦e⟧[⟦i⟧ + 1]            (lists are 1-indexed in Lua; neoc indexes from 0)
+⟦ e[i] ⟧ₑ       = ⟦e⟧[⟦i⟧ + 1]  (Lua)  /  ⟦e⟧[⟦i⟧]  (JS)   (Lua lists are 1-indexed; JS 0-indexed)
 ```
 
-Method dispatch goes through the receiver's metatable. The colon call `⟦e⟧:m(…)` looks `m` up on the value's metatable (set by its constructor, §3.1) and passes the receiver as the implicit `self`, so the call site needs no static knowledge of the receiver's type. List indexing adjusts neoc's 0-based index to Lua's 1-based tables.
+**Lua.** Method dispatch goes through the receiver's metatable. The colon call `⟦e⟧:m(…)` looks `m` up on the value's metatable (set by its constructor, §3.1) and passes the receiver as the implicit `self`, so the call site needs no static knowledge of the receiver's type. List indexing adjusts neoc's 0-based index to Lua's 1-based tables.
+
+**JS.** Method dispatch goes through the receiver's prototype (§3.1). The property call `⟦e⟧.m(…)` looks `m` up the prototype chain and binds the receiver as `this`, so — like Lua — the call site needs no static knowledge of the receiver's type. A foreign (`extern`) receiver resolves `m` on its own object exactly the same way, so neoc and host receivers are uniform and there is no compile-time dispatch decision and no `__call` helper. JS lists are 0-indexed, matching neoc, so no index adjustment is emitted.
 
 ### 4.8 Block expressions
 
@@ -270,21 +354,23 @@ A guard `if g` is appended to the arm's test with `and ⟦g⟧`, evaluated only 
 
 ## 6. Built-in attribute derives
 
+A derive attaches a method to the type's table (Lua) or prototype `S$` (JS), the same slot an `impl` method uses (§3.3). On JS the derived method is a `function` taking its receiver as `this` — except `Eq`, a two-argument comparison that takes both operands explicitly.
+
 ### 6.1 `#[derive(Clone)]`
 
-Emits `function S.clone(self)` returning a shallow copy carrying the same `__struct`/`__enum` tag.
+Emits a `clone` returning a shallow copy carrying the same `__struct`/`__enum` tag (Lua `function S.clone(self)`; JS `S$.clone = function() { … }`, copying from `this` and re-linking the prototype on the new object).
 
 ### 6.2 `#[derive(Eq)]`
 
-Emits `function S.eq(a, b)` comparing tag and every field structurally. The `==` operator on `Eq` types lowers to a call to this function rather than Lua `==` (§4.2).
+Emits an `eq(a, b)` comparing tag and every field structurally (Lua `function S.eq(a, b)`; JS `S$.eq = function(a, b) { … }` — both operands explicit, no `this`). The `==` operator on `Eq` types lowers to a call to this method rather than the target's native `==` (§4.2).
 
 ### 6.3 `#[derive(Debug)]`
 
-Emits `function S.debug(self)` producing a developer-facing string showing the type name and field values — the analogue of Rust's `{:?}`.
+Emits a `debug` (Lua `function S.debug(self)`; JS `S$.debug = function() { … }` over `this`) producing a developer-facing string showing the type name and field values — the analogue of Rust's `{:?}`.
 
 ### 6.4 `#[derive(Display)]`
 
-Emits `function S.display(self)` producing the user-facing string — the analogue of Rust's `{}`. Requires every field to itself satisfy `Display` (`STATIC.md` §9).
+Emits a `display` (Lua `function S.display(self)`; JS `S$.display = function() { … }` over `this`) producing the user-facing string — the analogue of Rust's `{}`. Requires every field to itself satisfy `Display` (`STATIC.md` §9).
 
 ### 6.5 `#[test]`
 
@@ -316,6 +402,31 @@ local Err  = function(e) return { __enum = "Result", __tag = "Err", e } end
 local Some = function(v) return { __enum = "Option", __tag = "Some", v } end
 local None = { __enum = "Option", __tag = "None" }
 ```
+
+### 7.1 JS runtime conventions
+
+The JS backend mirrors §7 with prototype-backed objects in place of metatables:
+
+- **Struct**: `{ __struct: "TypeName", <fields>, __proto__: TypeName$ }` when the type has methods or derives; a plain `{ __struct: "TypeName", <fields> }` otherwise. Newtype payload at `_0`.
+- **Enum**: `{ __enum: "TypeName", __tag: "VariantName", <payload>, __proto__: TypeName$ }` when method-bearing, else without `__proto__`. Tuple payload at `_0`, `_1`, …; struct payload by field name.
+- **Method dispatch**: `value.method(…)` (native property call), resolved through the value's prototype `TypeName$`. The method lives on the prototype as `TypeName$.method = function(…) { … }` with the receiver as `this`. There is no method registry and no dispatch helper; a foreign (`extern`) receiver dispatches by the same native property call.
+- **Indexing**: JS lists are 0-based, matching neoc; no adjustment.
+- **Trait metadata**: `__t` (§3.2a), inert; the only registry the JS backend emits.
+
+The Result/Option prelude enums are always plain (no prototype):
+
+```
+const Ok = (v) => ({ __enum: "Result", __tag: "Ok", _0: v });
+const Err = (e) => ({ __enum: "Result", __tag: "Err", _0: e });
+const Some = (v) => ({ __enum: "Option", __tag: "Some", _0: v });
+const None = { __enum: "Option", __tag: "None" };
+```
+
+A type's prototype `TypeName$` is a module-level binding. A value links to it at construction, so the value carries dispatch wherever it flows — including across an ES-module `use` boundary (§3.7): the importing module never needs the prototype in scope, because the link was made in the defining module. (Contrast the superseded per-module method registry, which an importer had to re-wire for each imported type.) A `pub` method-bearing type therefore need not export `TypeName$` for dispatch to work cross-module; see §7.2 for the one case — a cross-module trait impl — that does.
+
+### 7.2 Cross-module trait impls (JS)
+
+A value's prototype is fixed where it is constructed. So `impl Trait for Type` must be able to augment `Type$` even when the impl lives in a different module than `Type`. neoc's coherence rules (`STATIC.md`) require an impl to be in the same module as either the trait or the type; the common case — and the only one the conformance corpus and the `bun-http-sqlite` demo exercise — keeps the impl with the type, so `Type$` and every impl on it are emitted together and no cross-module augmentation is needed. When an impl is co-located with the *trait* instead (the type imported), the defining module must `export` `Type$` and the impl module must `import` it and augment it at module-evaluation time; ES-module evaluation order guarantees the augmentation runs before any value is dispatched, because importing a module evaluates it first. This general case is a follow-up; the minimum for the demo is the co-located form above.
 
 ## 8. Lua 5.1 deference
 
@@ -402,9 +513,9 @@ function __check_Address(v, path) … end   -- references __check_User likewise
 - **Enum** `E`: check `v.__enum == "E"`, then dispatch on `v.__tag` and validate that variant's payload — tuple slots at `v[1], v[2], …`, struct-variant fields by name. An unrecognised `__tag` is an error.
 - **`Option<τ>` / `Result<τ, ε>`**: the combinators above, composed with the payload validators.
 - **`fn(…) -> _`**: checked as callable (`type(v) == "function"`); a signature is not runtime-observable.
-- **Opaque `ext type`**: no inspectable shape — the validator is the identity (`STATIC.md` §10). Recursion stops at the opaque boundary.
+- **Opaque extern `struct`**: no inspectable shape — the validator is the identity (`STATIC.md` §10). Recursion stops at the opaque boundary.
 - **Bare type parameter** with no concrete witness at the position: validated only to the depth its static type reveals; the deep check lands where the parameter is instantiated (`STATIC.md` §10).
-- **`()`**: lowers to `nil` and is never observable as a neoc value (§8). It has no validator, and a position declared `-> ()` — including an `ext`/ingress result — emits no check.
+- **`()`**: lowers to `nil` and is never observable as a neoc value (§8). It has no validator, and a position declared `-> ()` — including an `extern`/ingress result — emits no check.
 
 ### 9.2 Structured errors
 
@@ -452,7 +563,7 @@ A newtype/tuple `N(e)` validates `e` against the wrapped type inside `N.new` (ex
 **Dynamic ingress** — a value crossing from untyped (host) into a typed position is validated at the boundary:
 
 ```
-⟦ f(a…) ⟧ₑ   where  ext fn f(…) -> τ   = ⟦check τ⟧(f(⟦a⟧…), "f()")
+⟦ f(a…) ⟧ₑ   where  extern fn f(…) -> τ   = ⟦check τ⟧(f(⟦a⟧…), "f()")
 ```
 
 The same wrap applies to a value produced by a host decode or coercion declared to yield `τ`, and to runtime-supplied entry arguments (validated against the entry's declared parameter types). The host produces the value; neoc validates it before any typed use.

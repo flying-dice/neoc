@@ -1,0 +1,32 @@
+// DYNAMIC.md §4.9 + §3.1: a closure whose body is a struct or enum-variant
+// object literal returns that value. In JS the body must paren-wrap so `=> { … }`
+// is read as a returned object, not a function block; in Lua a closure returning
+// a table literal is already unambiguous. The closures are bound, called, and
+// their fields read. Regression for the JS codegen bug in #68.
+extern {
+    fn println(n: number);
+}
+
+struct Point {
+    x: number,
+    y: number,
+}
+
+enum Shape {
+    Square {
+        side: number,
+    },
+}
+
+fn main() {
+    let mk = |n| Point { x: n, y: n };
+    let p = mk(7);
+    println(p.x);
+    println(p.y);
+
+    let sq = |n| Shape::Square { side: n };
+    let s = sq(5);
+    match s {
+        Shape::Square { side } => println(side),
+    }
+}

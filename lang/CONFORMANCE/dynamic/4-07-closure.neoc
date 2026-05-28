@@ -1,7 +1,9 @@
 // DYNAMIC.md §4.9: a closure `|n| n * 2` lowers to a Lua `function(n) return ...
 // end`. It is bound to a local, passed to `apply` as a `fn(number) -> number`
 // value, and called there. `apply(double, 21)` yields 42.
-ext fn println(n: number);
+extern {
+    fn println(n: number);
+}
 
 fn apply(f: fn(number) -> number, x: number) -> number {
     f(x)

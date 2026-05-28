@@ -1,20 +1,22 @@
 // @generated from the lib:diff runtime module — do not edit.
-#[link(name = "lib:diff")]
-extern "neoc" {
-    /// Line-level change list between `old` and `new`. Default algorithm is patience.
-    fn lines(old: string, new: string, opts: LuaValue?) -> Result<LuaValue, string>;
-    /// Word-level change list, tokenising on whitespace boundaries.
-    fn words(old: string, new: string, opts: LuaValue?) -> Result<LuaValue, string>;
-    /// Character-level change list, operating on Unicode codepoints.
-    fn chars(old: string, new: string, opts: LuaValue?) -> Result<LuaValue, string>;
-    /// Compute a unified diff. The result carries `.hunks` and a `:format()` method producing the unified diff string.
-    fn unified(old: string, new: string, opts: LuaValue?) -> Result<LuaValue, string>;
-    /// Parse a unified diff string back into the same structured result shape as `unified`.
-    fn parse_unified(patch: string) -> Result<LuaValue, string>;
-    /// Apply a unified patch string to `original`. Requires exact context match.
-    fn apply(original: string, patch: string) -> Result<string, string>;
-    /// Apply a structured change list directly, validating that the equal + delete lines reconstruct `original` first.
-    fn apply_changes(original: string, changes: LuaValue) -> Result<string, string>;
-    /// Edit-ratio similarity score in `[0.0, 1.0]`, computed from a character-level patience diff.
-    fn similarity(a: string, b: string) -> number;
+extern {
+    #[extern(path = "lib:diff")]
+    mod diff {
+        /// Line-level change list between `old` and `new`. Default algorithm is patience.
+        fn lines(old: string, new: string, opts: Option<Unknown>) -> Result<Unknown, string>;
+        /// Word-level change list, tokenising on whitespace boundaries.
+        fn words(old: string, new: string, opts: Option<Unknown>) -> Result<Unknown, string>;
+        /// Character-level change list, operating on Unicode codepoints.
+        fn chars(old: string, new: string, opts: Option<Unknown>) -> Result<Unknown, string>;
+        /// Compute a unified diff. The result carries `.hunks` and a `:format()` method producing the unified diff string.
+        fn unified(old: string, new: string, opts: Option<Unknown>) -> Result<Unknown, string>;
+        /// Parse a unified diff string back into the same structured result shape as `unified`.
+        fn parse_unified(patch: string) -> Result<Unknown, string>;
+        /// Apply a unified patch string to `original`. Requires exact context match.
+        fn apply(original: string, patch: string) -> Result<string, string>;
+        /// Apply a structured change list directly, validating that the equal + delete lines reconstruct `original` first.
+        fn apply_changes(original: string, changes: Unknown) -> Result<string, string>;
+        /// Edit-ratio similarity score in `[0.0, 1.0]`, computed from a character-level patience diff.
+        fn similarity(a: string, b: string) -> number;
+    }
 }

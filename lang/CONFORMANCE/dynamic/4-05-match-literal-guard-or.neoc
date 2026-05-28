@@ -3,7 +3,9 @@
 // (`x if x > 100`), and a wildcard catch-all. The guard is tested only after its
 // pattern binds, so it sees `x`. A number scrutinee requires a binding/wildcard
 // arm to be exhaustive (STATIC.md §7).
-ext fn println(s: string);
+extern {
+    fn println(s: string);
+}
 
 fn classify(n: number) -> string {
     match n {

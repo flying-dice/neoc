@@ -23,6 +23,26 @@ fn struct_reaches_canonical_form() {
 }
 
 #[test]
+fn extern_block_reaches_canonical_form() {
+    let messy = "extern{#[extern(path=\"vnd:rusqlite\")]mod rusqlite{fn open(p:string)->Unknown;}struct Changes{changes:number}impl Changes{fn total(self)->number;}}";
+    let out = format(messy).unwrap();
+    assert_eq!(
+        out,
+        "extern {\n    \
+         #[extern(path = \"vnd:rusqlite\")] mod rusqlite {\n        \
+         fn open(p: string) -> Unknown;\n    \
+         }\n    \
+         struct Changes {\n        \
+         changes: number,\n    \
+         }\n    \
+         impl Changes {\n        \
+         fn total(self) -> number;\n    \
+         }\n}\n"
+    );
+    assert_idempotent(messy);
+}
+
+#[test]
 fn unit_and_newtype_structs() {
     assert_eq!(format("struct Unit ;").unwrap(), "struct Unit;\n");
     assert_eq!(

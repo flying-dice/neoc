@@ -17,6 +17,10 @@ neoc-compiler.workspace = true
 neoc-fmt.workspace = true
 neoc-lsp.workspace = true
 
+# The SQL → neoc generator backing `neoc autosql`. A compiler-domain tool: it
+# emits portable `.neoc` source and couples to no runtime module.
+neoc-autosql.workspace = true
+
 # `mlua::Error` surfaces when a script fails; the bin maps it to a neoc-shaped
 # diagnostic. `miette` renders the runtime's `NeocError`. Both are the runtime's
 # public error types crossing into the bin.

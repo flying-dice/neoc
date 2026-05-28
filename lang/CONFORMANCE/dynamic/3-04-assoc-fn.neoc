@@ -3,7 +3,9 @@
 // metatable dispatch. The call keeps the `Type` qualifier rather than dropping
 // to a bare, unbound name. Pairs an associated constructor with an instance
 // method so both lowerings appear in one case.
-ext fn println(n: number);
+extern {
+    fn println(n: number);
+}
 
 struct Counter {
     value: number,

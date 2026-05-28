@@ -13,6 +13,24 @@ use neoc_codegen_lua as codegen_lua;
 use neoc_parser as parser;
 use neoc_types as types;
 
+mod project;
+pub use project::{Project, discover_project, resolution_root};
+
+/// A failure surfaced by the compiler's project/build orchestration, reported
+/// in neoc terms.
+///
+/// `#[non_exhaustive]`: new variants may be added without a breaking change.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum Error {
+    /// A `neoc.toml` manifest was found but could not be understood: it is not
+    /// valid TOML, omits `[package]`, `name`, or a recognised `target`, or
+    /// could not be read. The message is host-agnostic and ready to show a
+    /// neoc author.
+    #[error("{0}")]
+    Project(String),
+}
+
 /// A backend the compiler can lower to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Target {
@@ -49,7 +67,7 @@ impl std::str::FromStr for Target {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "lua" => Ok(Target::Lua),
-            "js" | "javascript" => Ok(Target::Js),
+            "js" => Ok(Target::Js),
             other => Err(format!("unknown target `{other}` (expected `lua` or `js`)")),
         }
     }
@@ -205,18 +223,14 @@ pub fn transpile(source: &str, target: Target) -> CompileOutput {
     diagnostics.extend(checked.diagnostics.iter().map(Diagnostic::typed_from));
 
     // Mark string-typed `+` as concatenation before emitting. Each backend
-    // interprets it: Lua picks `..`, JS keeps `+` (`lang/DYNAMIC.md` §4.2).
-    let elaborated = types::elaborate(&parsed.module);
+    // interprets the rewrite: Lua picks `..`, JS keeps `+` (`lang/DYNAMIC.md`
+    // §4.2).
+    let table = types::collect(&parsed.module);
+    let elaborated = types::elaborate_with_table(&parsed.module, &table);
     // A single-file `transpile` has no resolved module graph, so no cross-module
     // `use` can resolve to a binding or an imported enum — pass empty sets.
-    let (output, emit_messages, source_map) = emit(
-        target,
-        &elaborated,
-        source,
-        &std::collections::HashSet::new(),
-        &std::collections::HashSet::new(),
-        &[],
-    );
+    let inputs = EmitInputs::default();
+    let (output, emit_messages, source_map) = emit(target, &elaborated, source, &inputs);
     diagnostics.extend(emit_messages.into_iter().map(Diagnostic::emit));
 
     CompileOutput {
@@ -276,7 +290,9 @@ struct LoadedModule {
 ///
 /// Resolves the transitive `use` graph: a `use a::b::c;` names module `a::b`
 /// (the path up to the final segment) and item `c`. The module resolves to
-/// `<root>/a/b.neoc`, where `<root>` is the directory containing `entry`; a
+/// `<root>/a/b.neoc`, where `<root>` is the resolution anchor for `entry` (see
+/// [`resolution_root`]): a project's source root when `entry` lies in one, else
+/// the directory containing `entry`. A
 /// single-segment qualifier `use foo::bar;` resolves module `foo` to
 /// `<root>/foo.neoc`. Each reachable module is parsed and collected once
 /// (cycles are visited at most once), then every module's bodies are checked
@@ -290,8 +306,9 @@ struct LoadedModule {
 ///
 /// # Arguments
 ///
-/// * `entry` — the entry-point `.neoc` file. Its directory is the project root
-///   against which module paths resolve.
+/// * `entry` — the entry-point `.neoc` file. Module paths resolve against its
+///   resolution anchor ([`resolution_root`]): the source root when `entry` is
+///   in a project, else `entry`'s own directory.
 /// * `target` — the backend to lower every module to.
 ///
 /// # Errors
@@ -299,10 +316,7 @@ struct LoadedModule {
 /// Returns the underlying [`std::io::Error`] if `entry` (or any module reached
 /// from it) cannot be read.
 pub fn transpile_project(entry: &Path, target: Target) -> std::io::Result<ProjectOutput> {
-    let root = entry
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .to_path_buf();
+    let root = resolution_root(entry);
     let mut loaded: HashMap<PathBuf, LoadedModule> = HashMap::new();
     let mut order: Vec<PathBuf> = Vec::new();
     let mut diagnostics: Vec<ProjectDiagnostic> = Vec::new();
@@ -476,14 +490,19 @@ fn focus_diagnostics(
     // its bodies. `resolve_use` reports against the importing (focus) module,
     // so every diagnostic it pushes belongs to the focus.
     let mut table = types::collect(&me.module);
+    let mut imports = types::SymbolTable::new();
     let mut use_diags: Vec<ProjectDiagnostic> = Vec::new();
+    let mut dest = ImportDest {
+        table: &mut table,
+        imports: &mut imports,
+    };
     for item in &me.module.items {
         if let ast::ItemKind::Use(u) = &item.kind {
-            resolve_use(root, loaded, item, u, &mut table, &mut use_diags, focus);
+            resolve_use(root, loaded, item, u, &mut dest, &mut use_diags, focus);
         }
     }
     out.extend(use_diags.into_iter().map(|pd| pd.diagnostic));
-    table.import_referenced_types(universe);
+    table.import_referenced_types(&imports, universe);
     let checked = types::check_with_table(&me.module, &table);
     for d in &checked.diagnostics {
         out.push(Diagnostic::typed_from(d));
@@ -504,15 +523,22 @@ fn check_and_emit_module(
 ) -> (String, SourceMap) {
     let me = &loaded[path];
     let mut table = types::collect(&me.module);
+    let mut imports = types::SymbolTable::new();
+    let mut dest = ImportDest {
+        table: &mut table,
+        imports: &mut imports,
+    };
     for item in &me.module.items {
         if let ast::ItemKind::Use(u) = &item.kind {
-            resolve_use(root, loaded, item, u, &mut table, diagnostics, path);
+            resolve_use(root, loaded, item, u, &mut dest, diagnostics, path);
         }
     }
     // Bring in the shape of any type reached only through an imported
     // signature — e.g. accessing a field of a value returned by an imported
-    // function whose type the module never names in a `use`.
-    table.import_referenced_types(universe);
+    // function whose type the module never names in a `use`. Seeded only from
+    // the imported signatures so a type the module names directly stays
+    // unresolved unless its own `use` brings it in.
+    table.import_referenced_types(&imports, universe);
     let checked = types::check_with_table(&me.module, &table);
     for d in &checked.diagnostics {
         diagnostics.push(ProjectDiagnostic {
@@ -523,18 +549,16 @@ fn check_and_emit_module(
     // Elaborate against the same import-enriched table the checker used, so a
     // string `+` whose operand type resolves through a `use` import is rewritten
     // to concatenation rather than left as arithmetic.
+    let externs = imported_externs(root, loaded, &me.module);
     let elaborated = types::elaborate_with_table(&me.module, &table);
-    let imported_bindings = js_imported_bindings(root, loaded, &me.module);
-    let imported_method_types = js_imported_method_types(root, loaded, &me.module);
-    let imported_enums = imported_enums(root, loaded, &me.module);
-    let (output, emit_messages, source_map) = emit(
-        target,
-        &elaborated,
-        &me.source,
-        &imported_bindings,
-        &imported_method_types,
-        &imported_enums,
-    );
+    let inputs = EmitInputs {
+        bindings: js_imported_bindings(root, loaded, &me.module),
+        method_types: js_imported_method_types(root, loaded, &me.module),
+        enums: imported_enums(root, loaded, &me.module),
+        externs,
+        importer_dir: module_dir_segments(root, path),
+    };
+    let (output, emit_messages, source_map) = emit(target, &elaborated, &me.source, &inputs);
     for message in emit_messages {
         diagnostics.push(ProjectDiagnostic {
             path: path.to_path_buf(),
@@ -544,8 +568,22 @@ fn check_and_emit_module(
     (output, source_map)
 }
 
+/// The destination a [`resolve_use`] writes a resolved import into: the
+/// checker's full table and a record of only the `use`-brought symbols.
+///
+/// Each import is written to both. `table` is the checker's view (own
+/// declarations plus imports); `imports` holds *only* the imported symbols and
+/// seeds the transitive-shape pull in
+/// [`types::SymbolTable::import_referenced_types`], so only types reached
+/// *through* an import's signature are pulled — never a type the focus module
+/// names directly.
+struct ImportDest<'a> {
+    table: &'a mut types::SymbolTable,
+    imports: &'a mut types::SymbolTable,
+}
+
 /// Resolves one `use` declaration against the loaded module graph, importing
-/// the named `pub` item into `table` or pushing a diagnostic.
+/// the named `pub` item into `dest` or pushing a diagnostic.
 ///
 /// `item` is the `use` item (its span anchors the diagnostic); `from` is the
 /// importing module's path.
@@ -554,7 +592,7 @@ fn resolve_use(
     loaded: &HashMap<PathBuf, LoadedModule>,
     item: &ast::Item,
     u: &ast::UseDecl,
-    table: &mut types::SymbolTable,
+    dest: &mut ImportDest,
     diagnostics: &mut Vec<ProjectDiagnostic>,
     from: &Path,
 ) {
@@ -588,7 +626,8 @@ fn resolve_use(
         return;
     }
     let binding = u.alias.as_deref().unwrap_or(last);
-    table.import_from(&source.table, last, binding);
+    dest.table.import_from(&source.table, last, binding);
+    dest.imports.import_from(&source.table, last, binding);
 }
 
 /// Maps a `use` path to the source file of the module it names, relative to the
@@ -615,6 +654,32 @@ pub fn module_file(root: &Path, use_path: &[ast::Ident]) -> Option<PathBuf> {
     Some(p)
 }
 
+/// The directory of module `path`, as path segments relative to the project
+/// `root`. A root-level module yields an empty vector; `<root>/autosql/x.neoc`
+/// yields `["autosql"]`.
+///
+/// `path` is the module's canonical path and `root` the resolution anchor (not
+/// necessarily canonical), so `root` is canonicalised the same way before
+/// stripping. A `path` that does not lie under `root` (it should always, in a
+/// project) yields an empty vector — the root-level fallback, so an import never
+/// gains a spurious `../`.
+fn module_dir_segments(root: &Path, path: &Path) -> Vec<String> {
+    let canonical_root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let Ok(rel) = path.strip_prefix(&canonical_root) else {
+        return Vec::new();
+    };
+    match rel.parent() {
+        Some(dir) => dir
+            .components()
+            .filter_map(|c| match c {
+                std::path::Component::Normal(s) => s.to_str().map(str::to_string),
+                _ => None,
+            })
+            .collect(),
+        None => Vec::new(),
+    }
+}
+
 /// Canonicalises a path, falling back to the path itself when it does not yet
 /// exist on disk, so unresolved imports still get a stable map key.
 fn canonical_or(path: &Path) -> PathBuf {
@@ -631,21 +696,46 @@ fn canonical_or(path: &Path) -> PathBuf {
 /// `imported_bindings` are the module's `use`d names whose source module emits
 /// a runtime JS binding (see [`codegen_js::module_js_bindings`]); the JS backend
 /// filters its `import` emission against it so a type-only `use` produces no
-/// dangling import. `imported_method_types` is the subset of those whose source
-/// binding is a method-bearing type (see [`codegen_js::module_js_method_types`]);
-/// the JS backend wires each into the importing module's `__m` so methods
-/// dispatch across the `use` boundary (#66). The Lua backend ignores both.
+/// dangling import. `method_types` is the subset whose source binding is a
+/// method-bearing type (see [`codegen_js::module_js_method_types`]); for those
+/// the JS backend imports the prototype `Type$` (the type's JS runtime binding)
+/// rather than the erased bare name. Method dispatch itself is prototype-backed
+/// (`lang/DYNAMIC.md` §7.1), so no per-type wiring is needed. The Lua backend
+/// ignores both.
+/// The cross-module inputs a backend needs beyond the module itself, gathered
+/// by the project driver from the resolved `use` graph.
+///
+/// Each field is target-aware: the Lua backend reads `enums` and `externs`; the
+/// JS backend reads `bindings`, `method_types`, and `externs`. A field a target
+/// ignores is built anyway (cheap) and dropped at the seam.
+#[derive(Default)]
+struct EmitInputs<'a> {
+    /// `use`d names whose source module emits a runtime JS binding (JS only).
+    bindings: std::collections::HashSet<String>,
+    /// The subset of `bindings` that are method-bearing types (JS only); their
+    /// `use` imports the prototype `Type$`.
+    method_types: std::collections::HashSet<String>,
+    /// `pub` enum declarations brought in by `use` (Lua resolves variant forms).
+    enums: Vec<&'a ast::EnumDecl>,
+    /// Extern items brought in by `use`, for native-import reconstruction in the
+    /// consumer (both targets; `lang/EXTERN.md` §Lowering).
+    externs: Vec<ast::ExternItem>,
+    /// The importing module's directory as path segments relative to the source
+    /// root (JS only). Anchors each cross-module `import`'s relative specifier so
+    /// a module in a subdirectory imports a sibling as `./b.js`. Empty for a
+    /// root-level module and for single-file `transpile`.
+    importer_dir: Vec<String>,
+}
+
 fn emit(
     target: Target,
     module: &ast::Module,
     source: &str,
-    imported_bindings: &std::collections::HashSet<String>,
-    imported_method_types: &std::collections::HashSet<String>,
-    imported_enums: &[&ast::EnumDecl],
+    inputs: &EmitInputs,
 ) -> (String, Vec<String>, SourceMap) {
     match target {
         Target::Lua => {
-            let r = codegen_lua::emit_with_imports(module, source, imported_enums);
+            let r = codegen_lua::emit_with_imports(module, source, &inputs.enums, &inputs.externs);
             (
                 r.lua,
                 r.diagnostics.into_iter().map(|d| d.message).collect(),
@@ -653,7 +743,14 @@ fn emit(
             )
         }
         Target::Js => {
-            let r = codegen_js::emit(module, imported_bindings, imported_method_types);
+            let r = codegen_js::emit(
+                module,
+                &inputs.bindings,
+                &inputs.method_types,
+                &inputs.externs,
+                &inputs.enums,
+                &inputs.importer_dir,
+            );
             (
                 r.js,
                 r.diagnostics.into_iter().map(|d| d.message).collect(),
@@ -709,12 +806,12 @@ fn js_imported_bindings(
 /// source module, keyed per resolved import as `prefix::last`.
 ///
 /// A subset of [`js_imported_bindings`]: a `pub` struct/enum carrying an `impl`
-/// or `#[derive]` (see [`codegen_js::module_js_method_types`]). The JS emitter
-/// wires each such import into the importing module's `__m`, so methods dispatch
-/// on values that cross the `use` boundary — the per-module `__m` is otherwise
-/// empty for an imported type (#66). A plain `pub fn`/`pub const` import needs no
-/// wiring and is absent. Same per-resolved-import keying as [`js_imported_bindings`],
-/// rebuilt by the emitter from each `use`. Target-agnostic; the Lua backend ignores it.
+/// or `#[derive]` (see [`codegen_js::module_js_method_types`]). A method-bearing
+/// type's JS runtime binding is its prototype `Type$`, so the JS emitter imports
+/// `Type$` for each such `use`; dispatch needs no further wiring, since a value
+/// carries its prototype across the boundary (`lang/DYNAMIC.md` §7.1). Same
+/// per-resolved-import keying as [`js_imported_bindings`]. Target-agnostic; the
+/// Lua backend ignores it.
 fn js_imported_method_types(
     root: &Path,
     loaded: &HashMap<PathBuf, LoadedModule>,
@@ -768,6 +865,47 @@ fn type_universe(loaded: &HashMap<PathBuf, LoadedModule>) -> types::SymbolTable 
         }
     }
     universe
+}
+
+/// The extern items `module` imports through its `use` graph, each preserving
+/// its enclosing extern `mod` so the import path / `ambient` / `name` metadata
+/// survives.
+///
+/// For each `use a::b::X`, resolves module `a::b` and extracts the source
+/// module's extern items named `X` (or, for an extern `mod`, the descendant
+/// subtree reaching `X`). A `use`d extern item lowers to its **native** import
+/// in *this* consumer, not an import from the defining file's emitted module —
+/// an extern emits no runtime value there — so the consumer reconstructs the
+/// native import and lowering from this metadata (`lang/EXTERN.md` §Lowering).
+/// Names are gathered per source module so one `use` of an extern struct carries
+/// its `mod`'s path and its constructors together.
+fn imported_externs(
+    root: &Path,
+    loaded: &HashMap<PathBuf, LoadedModule>,
+    module: &ast::Module,
+) -> Vec<ast::ExternItem> {
+    // Group the imported item names by their resolved source file, so each
+    // source module is scanned once with the full set of names `use`d from it.
+    let mut by_source: HashMap<PathBuf, std::collections::HashSet<ast::Ident>> = HashMap::new();
+    for item in &module.items {
+        let ast::ItemKind::Use(u) = &item.kind else {
+            continue;
+        };
+        let Some((last, _)) = u.path.split_last() else {
+            continue;
+        };
+        let Some(dep) = module_file(root, &u.path).map(|p| canonical_or(&p)) else {
+            continue;
+        };
+        by_source.entry(dep).or_default().insert(last.clone());
+    }
+    let mut out = Vec::new();
+    for (dep, names) in &by_source {
+        if let Some(source) = loaded.get(dep) {
+            out.extend(ast::imported_extern_items(&source.module, names));
+        }
+    }
+    out
 }
 
 /// The `pub` enum declarations `module` imports, gathered through its `use`

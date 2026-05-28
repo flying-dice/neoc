@@ -1,8 +1,10 @@
 // @generated from the lib:args runtime module — do not edit.
-#[link(name = "lib:args")]
-extern "neoc" {
-    /// Parse `argv` against `config`, returning the parsed-flags table (or, on `--help`/`-h`, a `{ help = true, help_text = ... }` table).
-    fn parse(argv: LuaValue, config: LuaValue) -> Result<LuaValue, string>;
-    /// Render `config`'s help text without parsing any arguments.
-    fn help(config: LuaValue) -> Result<string, string>;
+extern {
+    #[extern(path = "lib:args")]
+    mod args {
+        /// Parse `argv` against `config`, returning the parsed-flags table (or, on `--help`/`-h`, a `{ help = true, help_text = ... }` table).
+        fn parse(argv: Unknown, config: Unknown) -> Result<Unknown, string>;
+        /// Render `config`'s help text without parsing any arguments.
+        fn help(config: Unknown) -> Result<string, string>;
+    }
 }

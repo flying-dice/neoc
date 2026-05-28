@@ -1,7 +1,9 @@
 // DYNAMIC.md §4.4: `S { f: e, .. base }` copies the remaining fields from base,
 // then overrides the listed ones. `Point { x: 9, ..p }` keeps y = 2 from p and
 // sets x = 9.
-ext fn println(n: number);
+extern {
+    fn println(n: number);
+}
 
 struct Point {
     x: number,

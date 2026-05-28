@@ -1,6 +1,8 @@
 // @generated from the lib:http runtime module — do not edit.
-#[link(name = "lib:http")]
-extern "neoc" {
-    /// Serve the files matching `glob_pattern` over HTTP/1.1; `opts.host` / `opts.port` set the bind address (default `0.0.0.0:8080`). Blocks until Ctrl-C.
-    fn serve_static(glob_pattern: string, opts: LuaValue?) -> ();
+extern {
+    #[extern(path = "lib:http")]
+    mod http {
+        /// Serve the files matching `glob_pattern` over HTTP/1.1; `opts.host` / `opts.port` set the bind address (default `0.0.0.0:8080`). Blocks until Ctrl-C.
+        fn serve_static(glob_pattern: string, opts: Option<Unknown>);
+    }
 }

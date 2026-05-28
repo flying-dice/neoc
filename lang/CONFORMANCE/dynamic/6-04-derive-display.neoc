@@ -2,7 +2,9 @@
 // the user-facing string — the field values joined with ", " and no type-name
 // decoration, the analogue of Rust's `{}`. The method is called as
 // `p.display()`.
-ext fn println(s: string);
+extern {
+    fn println(s: string);
+}
 
 #[derive(Display)]
 struct Point {

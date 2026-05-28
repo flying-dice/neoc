@@ -76,7 +76,7 @@ mod tests {
     fn parses_closures_try_and_paths() {
         assert_clean(
             "use math::vec::Vec3;\n\
-             ext fn to_number(s: string) -> Result<number, ParseError>;\n\
+             extern { fn to_number(s: string) -> Result<number, ParseError>; }\n\
              fn parse(s: string) -> Result<number, ParseError> {\n\
                let f = |x| x + 1;\n\
                let n = to_number(s)?;\n\

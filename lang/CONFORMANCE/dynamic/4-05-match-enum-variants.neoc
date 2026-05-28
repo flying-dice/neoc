@@ -2,7 +2,9 @@
 // pattern (`Move(dx, dy)` — payload at [1],[2]) and a struct-variant pattern
 // (`Box { w, h }` — payload by field name). The unit variant `Dot` is covered by
 // the wildcard arm. The scrutinee is evaluated once; arms are tested in order.
-ext fn println(n: number);
+extern {
+    fn println(n: number);
+}
 
 enum Shape {
     Dot,

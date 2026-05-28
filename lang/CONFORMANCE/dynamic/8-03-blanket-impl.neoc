@@ -2,7 +2,9 @@
 // gives every `Show` type a `Describe`. At codegen the blanket expands to a
 // concrete `impl Describe for Dog`, so `d.describe()` dispatches to a real
 // method that calls `d.show()`.
-ext fn println(s: string);
+extern {
+    fn println(s: string);
+}
 
 trait Show {
     fn show(self) -> string;

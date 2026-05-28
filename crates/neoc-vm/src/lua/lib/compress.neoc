@@ -1,8 +1,10 @@
 // @generated from the lib:compress runtime module — do not edit.
-#[link(name = "lib:compress")]
-extern "neoc" {
-    /// Compress `data` with `format` (`gzip`, `zlib`, `zstd`, or `brotli`); `opts.level` tunes the compression level.
-    fn encode(format: string, data: string, opts: LuaValue?) -> Result<string, string>;
-    /// Decompress `data` with `format`; `opts.max_size` caps the output size (default 256 MiB).
-    fn decode(format: string, data: string, opts: LuaValue?) -> Result<string, string>;
+extern {
+    #[extern(path = "lib:compress")]
+    mod compress {
+        /// Compress `data` with `format` (`gzip`, `zlib`, `zstd`, or `brotli`); `opts.level` tunes the compression level.
+        fn encode(format: string, data: string, opts: Option<Unknown>) -> Result<string, string>;
+        /// Decompress `data` with `format`; `opts.max_size` caps the output size (default 256 MiB).
+        fn decode(format: string, data: string, opts: Option<Unknown>) -> Result<string, string>;
+    }
 }

@@ -12,6 +12,7 @@ repository = "https://github.com/flying-dice/neoc"
 [workspace.dependencies]
 neoc-vm = { path = "crates/neoc-vm" }
 neoc-ast = { path = "crates/neoc-ast" }
+neoc-autosql = { path = "crates/neoc-autosql" }
 neoc-grammar = { path = "crates/neoc-grammar" }
 neoc-parser = { path = "crates/neoc-parser" }
 neoc-types = { path = "crates/neoc-types" }

@@ -1,28 +1,30 @@
 // @generated from the vnd:sqlx_mysql runtime module — do not edit.
-struct Database;
-impl Database {
-    /// Execute a SQL statement, binding trailing arguments to `?` placeholders; returns rows affected.
-    fn execute(sql: string, params: LuaValue) -> Result<number, string>;
-    /// Execute a SELECT and return all rows as a 1-indexed table of column-keyed row tables.
-    fn query(sql: string, params: LuaValue) -> Result<LuaValue, string>;
-    /// Execute a SELECT and return the first matching row, or nil when none matched.
-    fn query_one(sql: string, params: LuaValue) -> Result<LuaValue, string>;
-    /// Prepare a SQL statement for repeated execution, sharing this connection pool.
-    fn prepare(sql: string) -> Statement;
-    /// Close all connections in the pool; subsequent method calls on this handle error.
-    fn close() -> ();
-}
-struct Statement;
-impl Statement {
-    /// Execute the prepared statement with positional parameters; returns rows affected.
-    fn execute(params: LuaValue) -> Result<number, string>;
-    /// Execute the prepared SELECT and return all rows.
-    fn query(params: LuaValue) -> Result<LuaValue, string>;
-    /// Execute the prepared SELECT and return the first matching row, or nil when none matched.
-    fn query_one(params: LuaValue) -> Result<LuaValue, string>;
-}
-#[link(name = "vnd:sqlx_mysql")]
-extern "neoc" {
-    /// Open a MySQL connection pool. `url` is a standard MySQL URL: `mysql://user:pass@host:3306/dbname`.
-    fn open(url: string) -> Result<Database, string>;
+extern {
+    #[extern(path = "vnd:sqlx_mysql")]
+    mod sqlx_mysql {
+        struct Database;
+        impl Database {
+            /// Execute a SQL statement, binding trailing arguments to `?` placeholders; returns rows affected.
+            fn execute(self, sql: string, params: Unknown) -> Result<number, string>;
+            /// Execute a SELECT and return all rows as a 1-indexed table of column-keyed row tables.
+            fn query(self, sql: string, params: Unknown) -> Result<Unknown, string>;
+            /// Execute a SELECT and return the first matching row, or nil when none matched.
+            fn query_one(self, sql: string, params: Unknown) -> Result<Unknown, string>;
+            /// Prepare a SQL statement for repeated execution, sharing this connection pool.
+            fn prepare(self, sql: string) -> Statement;
+            /// Close all connections in the pool; subsequent method calls on this handle error.
+            fn close(self);
+        }
+        struct Statement;
+        impl Statement {
+            /// Execute the prepared statement with positional parameters; returns rows affected.
+            fn execute(self, params: Unknown) -> Result<number, string>;
+            /// Execute the prepared SELECT and return all rows.
+            fn query(self, params: Unknown) -> Result<Unknown, string>;
+            /// Execute the prepared SELECT and return the first matching row, or nil when none matched.
+            fn query_one(self, params: Unknown) -> Result<Unknown, string>;
+        }
+        /// Open a MySQL connection pool. `url` is a standard MySQL URL: `mysql://user:pass@host:3306/dbname`.
+        fn open(url: string) -> Result<Database, string>;
+    }
 }

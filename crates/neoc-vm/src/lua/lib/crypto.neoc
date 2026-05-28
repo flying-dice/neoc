@@ -1,16 +1,18 @@
 // @generated from the lib:crypto runtime module — do not edit.
-#[link(name = "lib:crypto")]
-extern "neoc" {
-    /// AEAD-encrypt `plaintext` under `algo`/`key`/`nonce`, binding optional `aad`. Returns ciphertext concatenated with the auth tag as raw bytes.
-    fn encrypt(algo: string, key: string, nonce: string, plaintext: string, aad: string?) -> Result<string, string>;
-    /// AEAD-decrypt `ciphertext` (with the trailing tag) under `algo`/`key`/`nonce`, requiring `aad` to match the value bound at encrypt time.
-    fn decrypt(algo: string, key: string, nonce: string, ciphertext: string, aad: string?) -> Result<string, string>;
-    /// Return the list of supported algorithm names in canonical order.
-    fn algorithms() -> LuaValue;
-    /// Return the required key length in bytes for `algo`.
-    fn key_size(algo: string) -> Result<number, string>;
-    /// Return the required nonce length in bytes for `algo`.
-    fn nonce_size(algo: string) -> Result<number, string>;
-    /// Return the auth-tag length appended to ciphertext, in bytes, for `algo`.
-    fn tag_size(algo: string) -> Result<number, string>;
+extern {
+    #[extern(path = "lib:crypto")]
+    mod crypto {
+        /// AEAD-encrypt `plaintext` under `algo`/`key`/`nonce`, binding optional `aad`. Returns ciphertext concatenated with the auth tag as raw bytes.
+        fn encrypt(algo: string, key: string, nonce: string, plaintext: string, aad: Option<string>) -> Result<string, string>;
+        /// AEAD-decrypt `ciphertext` (with the trailing tag) under `algo`/`key`/`nonce`, requiring `aad` to match the value bound at encrypt time.
+        fn decrypt(algo: string, key: string, nonce: string, ciphertext: string, aad: Option<string>) -> Result<string, string>;
+        /// Return the list of supported algorithm names in canonical order.
+        fn algorithms() -> Unknown;
+        /// Return the required key length in bytes for `algo`.
+        fn key_size(algo: string) -> Result<number, string>;
+        /// Return the required nonce length in bytes for `algo`.
+        fn nonce_size(algo: string) -> Result<number, string>;
+        /// Return the auth-tag length appended to ciphertext, in bytes, for `algo`.
+        fn tag_size(algo: string) -> Result<number, string>;
+    }
 }

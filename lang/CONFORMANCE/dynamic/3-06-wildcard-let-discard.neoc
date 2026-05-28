@@ -4,7 +4,9 @@
 // statement start parses as a JS block, a `SyntaxError`. The Point is built and
 // dropped; `println(0)` runs after it to show execution continues past the
 // discard.
-ext fn println(n: number);
+extern {
+    fn println(n: number);
+}
 
 struct Point {
     x: number,

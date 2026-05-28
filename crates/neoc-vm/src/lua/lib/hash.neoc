@@ -1,17 +1,19 @@
 // @generated from the lib:hash runtime module — do not edit.
-struct Hasher;
-impl Hasher {
-    /// Feed `data` into the running digest.
-    fn update(data: string) -> ();
-    /// Return the current digest as raw bytes; idempotent and does not consume the hasher.
-    fn digest() -> string;
-    /// Return the algorithm name this hasher was constructed with.
-    fn algorithm() -> string;
-}
-#[link(name = "lib:hash")]
-extern "neoc" {
-    /// One-shot hash of `data` under `algo`, returning the digest as raw bytes.
-    fn hash(algo: string, data: string) -> Result<string, string>;
-    /// The list of supported algorithm names.
-    fn algorithms() -> LuaValue;
+extern {
+    #[extern(path = "lib:hash")]
+    mod hash {
+        struct Hasher;
+        impl Hasher {
+            /// Feed `data` into the running digest.
+            fn update(self, data: string);
+            /// Return the current digest as raw bytes; idempotent and does not consume the hasher.
+            fn digest(self) -> string;
+            /// Return the algorithm name this hasher was constructed with.
+            fn algorithm(self) -> string;
+        }
+        /// One-shot hash of `data` under `algo`, returning the digest as raw bytes.
+        fn hash(algo: string, data: string) -> Result<string, string>;
+        /// The list of supported algorithm names.
+        fn algorithms() -> Unknown;
+    }
 }

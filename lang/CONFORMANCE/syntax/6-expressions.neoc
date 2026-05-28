@@ -1,5 +1,5 @@
 // SYNTAX.md §6: operators, calls, indexing, closures, if/match, ranges, try.
-ext fn parse(s: string) -> Result<number, string>;
+extern { fn parse(s: string) -> Result<number, string>; }
 
 fn run(s: string) -> Result<number, string> {
     let xs = [1, 2, 3];

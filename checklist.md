@@ -153,7 +153,7 @@ bug fix or a tooling-only change.
 - [ ] `cargo fmt --check`
 - [ ] `cargo check --target wasm32-unknown-unknown -p neoc-ast -p neoc-macros -p neoc-codegen-lua` (wasm leaf gate)
 - [ ] If the runtime was touched: `cargo run -p neoc -- run 'crates/neoc/tests/**/*.test.luau'`
-- [ ] Build the realistic corpus — `samples/openfeature/` — and confirm it still
+- [ ] Build the realistic demo — `packages/bun-http-sqlite/` — and confirm it still
   transpiles (and runs) cleanly; it catches integration regressions unit tests miss.
 
 ## 13. Desync sweep — confirm the chain is whole

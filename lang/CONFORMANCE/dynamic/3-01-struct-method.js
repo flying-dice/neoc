@@ -1,12 +1,9 @@
-const __m = {};
-const __call = (recv, name, ...args) => __m[recv.__struct ?? recv.__enum][name](recv, ...args);
-
-__m.Point = {};
-__m.Point.manhattan = function(self) {
-  return (self.x + self.y);
+const Point$ = {};
+Point$.manhattan = function() {
+  return (this.x + this.y);
 }
 function main() {
-  let p = { __struct: "Point", x: 3, y: 4 };
+  let p = { __struct: "Point", x: 3, y: 4, __proto__: Point$ };
   println(p.x);
-  println(__call(p, "manhattan"));
+  println(p.manhattan());
 }

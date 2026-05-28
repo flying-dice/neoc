@@ -1,0 +1,23 @@
+[package]
+name = "neoc-autosql"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# SQL parser. A pure-Rust parsing crate (no host-runtime I/O), the same
+# category as tree-sitter in neoc-parser — not a runtime dependency. autosql
+# emits portable `.neoc`; nothing here couples to a runtime target.
+sqlparser = "0.52"
+thiserror = "2"
+
+[dev-dependencies]
+# Round-trips the generated `.neoc` through the real compiler — proving the
+# emitted source type-checks and lowers to both Lua and JS. Dev-only: the
+# generator does not depend on the compiler.
+neoc-compiler.workspace = true
+
+[lints]
+workspace = true

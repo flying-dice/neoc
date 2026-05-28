@@ -1,15 +1,17 @@
 // @generated from the std:workers runtime module — do not edit.
-struct ShutdownSignal;
-impl ShutdownSignal {
-    /// Return `true` if the signal has already fired. Non-blocking.
-    fn is_fired() -> bool;
-    /// Yield the calling coroutine until the signal fires; returns immediately if already fired.
-    fn wait() -> ();
-}
-#[link(name = "std:workers")]
-extern "neoc" {
-    /// Return the process-global `ShutdownSignal`. Fires on Ctrl-C (SIGINT).
-    fn on_shutdown() -> ShutdownSignal;
-    /// Deprecated alias for `on_shutdown()`. Prefer `on_shutdown()` in new code.
-    fn shutdown_signal() -> ShutdownSignal;
+extern {
+    #[extern(path = "std:workers")]
+    mod workers {
+        struct ShutdownSignal;
+        impl ShutdownSignal {
+            /// Return `true` if the signal has already fired. Non-blocking.
+            fn is_fired(self) -> bool;
+            /// Yield the calling coroutine until the signal fires; returns immediately if already fired.
+            fn wait(self);
+        }
+        /// Return the process-global `ShutdownSignal`. Fires on Ctrl-C (SIGINT).
+        fn on_shutdown() -> ShutdownSignal;
+        /// Deprecated alias for `on_shutdown()`. Prefer `on_shutdown()` in new code.
+        fn shutdown_signal() -> ShutdownSignal;
+    }
 }

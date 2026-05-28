@@ -211,8 +211,9 @@ impl SymbolTable {
         found
     }
 
-    /// Pulls in the *structure* of every type this table's symbols reference but
-    /// does not yet define, drawing from `universe`, transitively.
+    /// Pulls in the *structure* of every type the `use`-imported symbols in
+    /// `imports` reference but this table does not yet define, drawing from
+    /// `universe`, transitively.
     ///
     /// A multi-file driver uses this after resolving a module's `use` imports.
     /// When module `c` imports a function `make` whose return type is a `struct`
@@ -220,6 +221,16 @@ impl SymbolTable {
     /// — field and method access on a `Config` value (`c.level`) needs the
     /// type's shape. The direct import brings in `make`'s signature; this brings
     /// in the shapes that signature (and theirs, recursively) refer to.
+    ///
+    /// The worklist is seeded **only from the imported signatures** in
+    /// `imports`, never from this table's own declarations. A type the focus
+    /// module names *directly* — a field type, a constructed value — is therefore
+    /// not satisfied here: it must be brought in by its own `use` or stay
+    /// unresolved, exactly as the single-file and build paths require. Only types
+    /// reached *transitively through* an imported signature are pulled. (The build
+    /// path's `universe` is already `use`-scoped, so seeding from own declarations
+    /// happened to be harmless there; an editor `universe` spans every workspace
+    /// module, where it would silently resolve un-`use`d names.)
     ///
     /// Only the type namespace and its methods are copied, not the visibility
     /// sets: a transitively-known type is resolvable, not re-exported. The
@@ -229,17 +240,20 @@ impl SymbolTable {
     ///
     /// # Arguments
     ///
+    /// * `imports` — a table holding only the symbols this module brought in via
+    ///   `use` (values, types, methods). Its signatures seed the worklist. The
+    ///   caller owns it; this method borrows it for the call.
     /// * `universe` — the aggregate of every module's `pub` type definitions and
     ///   their methods. The caller owns it; this table borrows it for the call.
-    pub fn import_referenced_types(&mut self, universe: &SymbolTable) {
+    pub fn import_referenced_types(&mut self, imports: &SymbolTable, universe: &SymbolTable) {
         let mut pending: Vec<String> = Vec::new();
-        for ty in self.values.values() {
+        for ty in imports.values.values() {
             collect_ty_names(ty, &mut pending);
         }
-        for def in self.types.values() {
+        for def in imports.types.values() {
             collect_typedef_names(def, &mut pending);
         }
-        for info in self.methods.values() {
+        for info in imports.methods.values() {
             collect_method_names(info, &mut pending);
         }
         while let Some(name) = pending.pop() {
@@ -342,7 +356,7 @@ fn collect_ty_names(ty: &Ty, out: &mut Vec<String>) {
                 collect_ty_names(a, out);
             }
         }
-        Ty::Number | Ty::Str | Ty::Bool | Ty::Unit | Ty::Param(_) | Ty::Unknown => {}
+        Ty::Number | Ty::Str | Ty::Bool | Ty::Unit | Ty::Param(_) | Ty::Unknown | Ty::Dynamic => {}
     }
 }
 

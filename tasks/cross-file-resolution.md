@@ -189,5 +189,5 @@ WorkspaceIndex
    machinery (the repo forbids speculative abstractions), so it waits for that
    consumer — most likely the Phase 5 work above.
 
-Benchmark corpus: `samples/openfeature/` (multi-file neoc) is the realistic
+Benchmark corpus: `packages/bun-http-sqlite/` (multi-file neoc) is the realistic
 target to measure index build + query latency against.

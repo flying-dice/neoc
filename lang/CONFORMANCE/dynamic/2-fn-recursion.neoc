@@ -1,7 +1,9 @@
 // DYNAMIC.md §2: a `fn` lowers to a Lua function; recursion resolves through
 // the module scope (items are visible regardless of order). `fib(10)` is the
 // 10th Fibonacci number: 0,1,1,2,3,5,8,13,21,34,55.
-ext fn println(n: number);
+extern {
+    fn println(n: number);
+}
 
 fn fib(n: number) -> number {
     if n < 2 {

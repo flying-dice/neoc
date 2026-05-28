@@ -132,44 +132,93 @@ fn derive_display_with_non_display_field_is_rejected() {
     );
 }
 
-// ---- link ------------------------------------------------------------------
+// ---- extern attributes (lang/EXTERN.md §Attributes, §Errors) ---------------
 
 #[test]
-fn link_name_kv_on_extern_is_clean() {
-    assert_clean("#[link(name = \"color\")] extern \"lua\" { fn paint(s: string); }");
-}
-
-#[test]
-fn link_positional_on_extern_is_clean() {
-    assert_clean("#[link(\"color\")] extern \"lua\" { fn paint(s: string); }");
-}
-
-#[test]
-fn link_on_ext_block_is_clean() {
-    assert_clean("#[link(name = \"m\")] ext { fn p(s: string); }");
-}
-
-#[test]
-fn link_on_fn_is_rejected() {
-    assert_diag(
-        "#[link(name = \"m\")] fn f() {}",
-        "`link` applies only to an extern block",
+fn extern_path_on_mod_is_clean() {
+    assert_clean(
+        "extern { #[extern(path = \"vnd:rusqlite\")] mod rusqlite { fn open(p: string) -> Unknown; } }",
     );
 }
 
 #[test]
-fn link_on_struct_is_rejected() {
-    assert_diag(
-        "#[link(\"m\")] struct S { x: number }",
-        "`link` applies only to an extern block",
+fn extern_ambient_on_mod_is_clean() {
+    assert_clean("extern { #[extern(ambient)] mod console { fn log(s: string); } }");
+}
+
+#[test]
+fn extern_name_on_fn_is_clean() {
+    assert_clean("extern { #[extern(name = \"readFile\")] fn read_file(p: string) -> string; }");
+}
+
+#[test]
+fn extern_constructor_on_impl_fn_is_clean() {
+    assert_clean(
+        "extern { struct Database; impl Database { #[extern(constructor)] fn new(p: string); } }",
     );
 }
 
 #[test]
-fn link_with_non_string_arg_is_rejected() {
+fn extern_path_on_fn_is_rejected() {
     assert_diag(
-        "#[link(42)] extern \"lua\" { fn p(s: string); }",
-        "`link` needs a string module name, e.g. `#[link(name = \"color\")]`",
+        "extern { #[extern(path = \"m\")] fn f() -> Unknown; }",
+        "`#[extern(path = \"…\")]` applies only to a `mod`",
+    );
+}
+
+#[test]
+fn extern_name_on_mod_is_rejected() {
+    assert_diag(
+        "extern { #[extern(name = \"m\")] mod fs { fn f() -> Unknown; } }",
+        "`#[extern(name = \"…\")]` applies to an `fn` or `struct`, not a `mod`",
+    );
+}
+
+#[test]
+fn extern_constructor_outside_impl_is_rejected() {
+    assert_diag(
+        "extern { #[extern(constructor)] fn f() -> Unknown; }",
+        "`#[extern(constructor)]` applies only to an `fn` inside an `impl`",
+    );
+}
+
+#[test]
+fn extern_constructor_with_return_type_is_rejected() {
+    assert_diag(
+        "extern { struct D; impl D { #[extern(constructor)] fn new() -> D; } }",
+        "a `#[extern(constructor)]` takes no return type — it constructs `Self`",
+    );
+}
+
+#[test]
+fn extern_constructor_with_name_is_rejected() {
+    assert_diag(
+        "extern { struct D; impl D { #[extern(constructor, name = \"mk\")] fn new(); } }",
+        "a constructor cannot also set `#[extern(name = \"…\")]`",
+    );
+}
+
+#[test]
+fn extern_unknown_param_is_rejected() {
+    assert_diag(
+        "extern { #[extern(bogus)] fn f() -> Unknown; }",
+        "unknown `#[extern]` parameter `bogus`",
+    );
+}
+
+#[test]
+fn extern_nested_ambient_is_rejected() {
+    assert_diag(
+        "extern { #[extern(ambient)] mod a { #[extern(ambient)] mod b { fn f() -> Unknown; } } }",
+        "`#[extern(ambient)]` is already in effect from an enclosing ambient `mod`",
+    );
+}
+
+#[test]
+fn extern_attr_outside_block_is_rejected() {
+    assert_diag(
+        "#[extern(ambient)] fn f() {}",
+        "`extern` attributes apply only to items inside an `extern` block",
     );
 }
 

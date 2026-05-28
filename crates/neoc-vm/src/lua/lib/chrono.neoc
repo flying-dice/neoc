@@ -1,159 +1,161 @@
 // @generated from the lib:chrono runtime module — do not edit.
-struct Date;
-impl Date {
-    /// Calendar year.
-    fn year() -> number;
-    /// Month of year (1-12).
-    fn month() -> number;
-    /// Day of month (1-31).
-    fn day() -> number;
-    /// Day of week, Monday = 1.
-    fn weekday() -> number;
-    /// Day of year (1-366).
-    fn ordinal() -> number;
-    /// Return a copy with the year replaced.
-    fn with_year(year: number) -> Result<Date, string>;
-    /// Return a copy with the month replaced.
-    fn with_month(month: number) -> Result<Date, string>;
-    /// Return a copy with the day replaced.
-    fn with_day(day: number) -> Result<Date, string>;
-    /// Combine with a `Time` into a `DateTime`.
-    fn at(time: Time) -> DateTime;
-    /// Add a day-resolution `Duration`.
-    fn add(duration: Duration) -> Result<Date, string>;
-    /// Subtract a day-resolution `Duration`.
-    fn sub(duration: Duration) -> Result<Date, string>;
-    /// Calendar span from this date until `other`.
-    fn diff(other: Date) -> Result<Duration, string>;
-    /// Format via a strftime pattern.
-    fn format(fmt: string) -> Result<string, string>;
-}
-struct Time;
-impl Time {
-    /// Hour of day (0-23).
-    fn hour() -> number;
-    /// Minute of hour (0-59).
-    fn minute() -> number;
-    /// Second of minute (0-59).
-    fn second() -> number;
-    /// Sub-second nanoseconds.
-    fn nanosecond() -> number;
-    /// Add a `Duration`.
-    fn add(duration: Duration) -> Result<Time, string>;
-    /// Subtract a `Duration`.
-    fn sub(duration: Duration) -> Result<Time, string>;
-    /// Span from this time until `other`.
-    fn diff(other: Time) -> Result<Duration, string>;
-    /// Format via a strftime pattern.
-    fn format(fmt: string) -> Result<string, string>;
-}
-struct DateTime;
-impl DateTime {
-    /// Calendar year.
-    fn year() -> number;
-    /// Month of year (1-12).
-    fn month() -> number;
-    /// Day of month (1-31).
-    fn day() -> number;
-    /// Hour of day (0-23).
-    fn hour() -> number;
-    /// Minute of hour (0-59).
-    fn minute() -> number;
-    /// Second of minute (0-59).
-    fn second() -> number;
-    /// Sub-second nanoseconds.
-    fn nanosecond() -> number;
-    /// The civil `Date` component.
-    fn date() -> Date;
-    /// The civil `Time` component.
-    fn time() -> Time;
-    /// Interpret this civil datetime in the named IANA zone.
-    fn in_zone(name: string) -> Result<ZonedDateTime, string>;
-    /// Add a `Duration`.
-    fn add(duration: Duration) -> Result<DateTime, string>;
-    /// Subtract a `Duration`.
-    fn sub(duration: Duration) -> Result<DateTime, string>;
-    /// Span from this datetime until `other`.
-    fn diff(other: DateTime) -> Result<Duration, string>;
-    /// Format via a strftime pattern.
-    fn format(fmt: string) -> Result<string, string>;
-}
-struct ZonedDateTime;
-impl ZonedDateTime {
-    /// Calendar year.
-    fn year() -> number;
-    /// Month of year (1-12).
-    fn month() -> number;
-    /// Day of month (1-31).
-    fn day() -> number;
-    /// Hour of day (0-23).
-    fn hour() -> number;
-    /// Minute of hour (0-59).
-    fn minute() -> number;
-    /// Second of minute (0-59).
-    fn second() -> number;
-    /// Sub-second nanoseconds.
-    fn nanosecond() -> number;
-    /// IANA zone name, if any.
-    fn timezone() -> string?;
-    /// UTC offset in seconds.
-    fn offset_seconds() -> number;
-    /// Seconds since the Unix epoch.
-    fn epoch_seconds() -> number;
-    /// The civil `Date` component.
-    fn date() -> Date;
-    /// The civil `Time` component.
-    fn time() -> Time;
-    /// The civil `DateTime` component.
-    fn datetime() -> DateTime;
-    /// Convert to the named IANA zone, preserving the instant.
-    fn in_zone(name: string) -> Result<ZonedDateTime, string>;
-    /// Add a `Duration`.
-    fn add(duration: Duration) -> Result<ZonedDateTime, string>;
-    /// Subtract a `Duration`.
-    fn sub(duration: Duration) -> Result<ZonedDateTime, string>;
-    /// Span from this instant until `other`.
-    fn diff(other: ZonedDateTime) -> Result<Duration, string>;
-    /// Format via a strftime pattern.
-    fn format(fmt: string) -> Result<string, string>;
-    /// RFC 3339 timestamp string.
-    fn to_rfc3339() -> string;
-}
-struct Duration;
-impl Duration {
-    /// Named years component.
-    fn years() -> number;
-    /// Named months component.
-    fn months() -> number;
-    /// Named weeks component.
-    fn weeks() -> number;
-    /// Named days component.
-    fn days() -> number;
-    /// Named hours component.
-    fn hours() -> number;
-    /// Named minutes component.
-    fn minutes() -> number;
-    /// Named seconds component.
-    fn seconds() -> number;
-    /// Named milliseconds component.
-    fn milliseconds() -> number;
-    /// Named microseconds component.
-    fn microseconds() -> number;
-    /// Named nanoseconds component.
-    fn nanoseconds() -> number;
-    /// Total span in seconds (calendar-agnostic units only).
-    fn total_seconds() -> Result<number, string>;
-    /// Return the sign-flipped span.
-    fn negate() -> Duration;
-    /// Return the absolute span.
-    fn abs() -> Duration;
-}
-#[link(name = "lib:chrono")]
-extern "neoc" {
-    /// Current wall-clock instant in the system's local timezone.
-    fn now() -> ZonedDateTime;
-    /// Current wall-clock instant in UTC.
-    fn utc_now() -> ZonedDateTime;
-    /// Recognise an ISO 8601 / RFC 9557 string and dispatch it to the matching `Date`, `Time`, `DateTime`, or `ZonedDateTime`.
-    fn parse(s: string) -> Result<LuaValue, string>;
+extern {
+    #[extern(path = "lib:chrono")]
+    mod chrono {
+        struct Date;
+        impl Date {
+            /// Calendar year.
+            fn year(self) -> number;
+            /// Month of year (1-12).
+            fn month(self) -> number;
+            /// Day of month (1-31).
+            fn day(self) -> number;
+            /// Day of week, Monday = 1.
+            fn weekday(self) -> number;
+            /// Day of year (1-366).
+            fn ordinal(self) -> number;
+            /// Return a copy with the year replaced.
+            fn with_year(self, year: number) -> Result<Date, string>;
+            /// Return a copy with the month replaced.
+            fn with_month(self, month: number) -> Result<Date, string>;
+            /// Return a copy with the day replaced.
+            fn with_day(self, day: number) -> Result<Date, string>;
+            /// Combine with a `Time` into a `DateTime`.
+            fn at(self, time: Time) -> DateTime;
+            /// Add a day-resolution `Duration`.
+            fn add(self, duration: Duration) -> Result<Date, string>;
+            /// Subtract a day-resolution `Duration`.
+            fn sub(self, duration: Duration) -> Result<Date, string>;
+            /// Calendar span from this date until `other`.
+            fn diff(self, other: Date) -> Result<Duration, string>;
+            /// Format via a strftime pattern.
+            fn format(self, fmt: string) -> Result<string, string>;
+        }
+        struct Time;
+        impl Time {
+            /// Hour of day (0-23).
+            fn hour(self) -> number;
+            /// Minute of hour (0-59).
+            fn minute(self) -> number;
+            /// Second of minute (0-59).
+            fn second(self) -> number;
+            /// Sub-second nanoseconds.
+            fn nanosecond(self) -> number;
+            /// Add a `Duration`.
+            fn add(self, duration: Duration) -> Result<Time, string>;
+            /// Subtract a `Duration`.
+            fn sub(self, duration: Duration) -> Result<Time, string>;
+            /// Span from this time until `other`.
+            fn diff(self, other: Time) -> Result<Duration, string>;
+            /// Format via a strftime pattern.
+            fn format(self, fmt: string) -> Result<string, string>;
+        }
+        struct DateTime;
+        impl DateTime {
+            /// Calendar year.
+            fn year(self) -> number;
+            /// Month of year (1-12).
+            fn month(self) -> number;
+            /// Day of month (1-31).
+            fn day(self) -> number;
+            /// Hour of day (0-23).
+            fn hour(self) -> number;
+            /// Minute of hour (0-59).
+            fn minute(self) -> number;
+            /// Second of minute (0-59).
+            fn second(self) -> number;
+            /// Sub-second nanoseconds.
+            fn nanosecond(self) -> number;
+            /// The civil `Date` component.
+            fn date(self) -> Date;
+            /// The civil `Time` component.
+            fn time(self) -> Time;
+            /// Interpret this civil datetime in the named IANA zone.
+            fn in_zone(self, name: string) -> Result<ZonedDateTime, string>;
+            /// Add a `Duration`.
+            fn add(self, duration: Duration) -> Result<DateTime, string>;
+            /// Subtract a `Duration`.
+            fn sub(self, duration: Duration) -> Result<DateTime, string>;
+            /// Span from this datetime until `other`.
+            fn diff(self, other: DateTime) -> Result<Duration, string>;
+            /// Format via a strftime pattern.
+            fn format(self, fmt: string) -> Result<string, string>;
+        }
+        struct ZonedDateTime;
+        impl ZonedDateTime {
+            /// Calendar year.
+            fn year(self) -> number;
+            /// Month of year (1-12).
+            fn month(self) -> number;
+            /// Day of month (1-31).
+            fn day(self) -> number;
+            /// Hour of day (0-23).
+            fn hour(self) -> number;
+            /// Minute of hour (0-59).
+            fn minute(self) -> number;
+            /// Second of minute (0-59).
+            fn second(self) -> number;
+            /// Sub-second nanoseconds.
+            fn nanosecond(self) -> number;
+            /// IANA zone name, if any.
+            fn timezone(self) -> Option<string>;
+            /// UTC offset in seconds.
+            fn offset_seconds(self) -> number;
+            /// Seconds since the Unix epoch.
+            fn epoch_seconds(self) -> number;
+            /// The civil `Date` component.
+            fn date(self) -> Date;
+            /// The civil `Time` component.
+            fn time(self) -> Time;
+            /// The civil `DateTime` component.
+            fn datetime(self) -> DateTime;
+            /// Convert to the named IANA zone, preserving the instant.
+            fn in_zone(self, name: string) -> Result<ZonedDateTime, string>;
+            /// Add a `Duration`.
+            fn add(self, duration: Duration) -> Result<ZonedDateTime, string>;
+            /// Subtract a `Duration`.
+            fn sub(self, duration: Duration) -> Result<ZonedDateTime, string>;
+            /// Span from this instant until `other`.
+            fn diff(self, other: ZonedDateTime) -> Result<Duration, string>;
+            /// Format via a strftime pattern.
+            fn format(self, fmt: string) -> Result<string, string>;
+            /// RFC 3339 timestamp string.
+            fn to_rfc3339(self) -> string;
+        }
+        struct Duration;
+        impl Duration {
+            /// Named years component.
+            fn years(self) -> number;
+            /// Named months component.
+            fn months(self) -> number;
+            /// Named weeks component.
+            fn weeks(self) -> number;
+            /// Named days component.
+            fn days(self) -> number;
+            /// Named hours component.
+            fn hours(self) -> number;
+            /// Named minutes component.
+            fn minutes(self) -> number;
+            /// Named seconds component.
+            fn seconds(self) -> number;
+            /// Named milliseconds component.
+            fn milliseconds(self) -> number;
+            /// Named microseconds component.
+            fn microseconds(self) -> number;
+            /// Named nanoseconds component.
+            fn nanoseconds(self) -> number;
+            /// Total span in seconds (calendar-agnostic units only).
+            fn total_seconds(self) -> Result<number, string>;
+            /// Return the sign-flipped span.
+            fn negate(self) -> Duration;
+            /// Return the absolute span.
+            fn abs(self) -> Duration;
+        }
+        /// Current wall-clock instant in the system's local timezone.
+        fn now() -> ZonedDateTime;
+        /// Current wall-clock instant in UTC.
+        fn utc_now() -> ZonedDateTime;
+        /// Recognise an ISO 8601 / RFC 9557 string and dispatch it to the matching `Date`, `Time`, `DateTime`, or `ZonedDateTime`.
+        fn parse(s: string) -> Result<Unknown, string>;
+    }
 }

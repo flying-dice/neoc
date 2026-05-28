@@ -2,7 +2,9 @@
 // on `None` it returns the carrier from the enclosing function; on `Some` it
 // yields the wrapped value. `incr(Some(41))` propagates `Some(42)`; `incr(None)`
 // short-circuits `None` out.
-ext fn println(n: number);
+extern {
+    fn println(n: number);
+}
 
 fn incr(o: Option<number>) -> Option<number> {
     let n = o?;

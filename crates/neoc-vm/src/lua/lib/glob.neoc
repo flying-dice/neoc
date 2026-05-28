@@ -1,24 +1,26 @@
 // @generated from the lib:glob runtime module — do not edit.
-struct Glob;
-impl Glob {
-    /// Test whether `path` matches this compiled pattern.
-    fn is_match(path: string) -> bool;
-    /// Walk the filesystem and return all paths matching this pattern, plus any per-entry walk errors.
-    fn scan(opts: LuaValue?) -> LuaValue;
-}
-struct GlobSet;
-impl GlobSet {
-    /// True if any pattern in the set matches `path`.
-    fn is_match(path: string) -> bool;
-    /// 1-based indices of every pattern in the set that matches `path`.
-    fn matches(path: string) -> LuaValue;
-    /// Number of patterns in the set.
-    fn len() -> number;
-}
-#[link(name = "lib:glob")]
-extern "neoc" {
-    /// Compile `pattern` and test whether `path` matches it.
-    fn is_match(pattern: string, path: string) -> Result<bool, string>;
-    /// Compile `pattern`, walk the filesystem, and return all matching paths plus any per-entry walk errors.
-    fn scan(pattern: string, opts: LuaValue?) -> Result<LuaValue, string>;
+extern {
+    #[extern(path = "lib:glob")]
+    mod glob {
+        struct Glob;
+        impl Glob {
+            /// Test whether `path` matches this compiled pattern.
+            fn is_match(self, path: string) -> bool;
+            /// Walk the filesystem and return all paths matching this pattern, plus any per-entry walk errors.
+            fn scan(self, opts: Option<Unknown>) -> Unknown;
+        }
+        struct GlobSet;
+        impl GlobSet {
+            /// True if any pattern in the set matches `path`.
+            fn is_match(self, path: string) -> bool;
+            /// 1-based indices of every pattern in the set that matches `path`.
+            fn matches(self, path: string) -> Unknown;
+            /// Number of patterns in the set.
+            fn len(self) -> number;
+        }
+        /// Compile `pattern` and test whether `path` matches it.
+        fn is_match(pattern: string, path: string) -> Result<bool, string>;
+        /// Compile `pattern`, walk the filesystem, and return all matching paths plus any per-entry walk errors.
+        fn scan(pattern: string, opts: Option<Unknown>) -> Result<Unknown, string>;
+    }
 }

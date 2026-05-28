@@ -1,14 +1,16 @@
 // @generated from the std:fs runtime module — do not edit.
-#[link(name = "std:fs")]
-extern "neoc" {
-    /// Create a single directory. Mirrors `std::fs::create_dir` — errors if the path already exists or the parent is missing.
-    fn create_dir(path: string) -> Result<bool, string>;
-    /// Create a directory and every missing ancestor. Mirrors `std::fs::create_dir_all`; succeeds if the directory already exists.
-    fn create_dir_all(path: string) -> Result<bool, string>;
-    /// Open a file given `{ path, mode }`. Mode `"r"` returns a reader handle; `"w"` / `"a"` return a writer handle.
-    fn open(opts: LuaValue) -> Result<LuaValue, string>;
-    /// Read the entire contents of `path` into a binary-safe string. Mirrors `std::fs::read`.
-    fn read(path: string) -> Result<string, string>;
-    /// Write `data` to `path`, replacing any existing content. Mirrors `std::fs::write`; binary-safe.
-    fn write(path: string, data: string) -> Result<bool, string>;
+extern {
+    #[extern(path = "std:fs")]
+    mod fs {
+        /// Create a single directory. Mirrors `std::fs::create_dir` — errors if the path already exists or the parent is missing.
+        fn create_dir(path: string) -> Result<bool, string>;
+        /// Create a directory and every missing ancestor. Mirrors `std::fs::create_dir_all`; succeeds if the directory already exists.
+        fn create_dir_all(path: string) -> Result<bool, string>;
+        /// Open a file given `{ path, mode }`. Mode `"r"` returns a reader handle; `"w"` / `"a"` return a writer handle.
+        fn open(opts: Unknown) -> Result<Unknown, string>;
+        /// Read the entire contents of `path` into a binary-safe string. Mirrors `std::fs::read`.
+        fn read(path: string) -> Result<string, string>;
+        /// Write `data` to `path`, replacing any existing content. Mirrors `std::fs::write`; binary-safe.
+        fn write(path: string, data: string) -> Result<bool, string>;
+    }
 }

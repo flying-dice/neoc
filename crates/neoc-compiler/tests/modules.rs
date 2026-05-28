@@ -118,6 +118,49 @@ fn two_file_project_emits_esm_import_and_export_for_js() {
 }
 
 #[test]
+fn subdirectory_module_imports_a_sibling_relative_to_itself_in_js() {
+    // Regression: a module inside a subdirectory importing a sibling in the SAME
+    // subdirectory must emit an ESM specifier relative to the *importer*
+    // (`./b.js`), not relative to the source root (`./sub/b.js`). The rooted form
+    // resolves to `sub/sub/b.js` from inside `sub/` and fails to load — the bug
+    // the convention-driven generators' `autosql/` output first exposed.
+    let dir = tempdir();
+    write(&dir, "sub/b.neoc", "pub fn b() -> number { 7 }\n");
+    write(
+        &dir,
+        "sub/a.neoc",
+        "use sub::b::b;\n\npub fn a() -> number { b() }\n",
+    );
+    let entry = write(
+        &dir,
+        "main.neoc",
+        "use sub::a::a;\n\nfn main() -> number { a() }\n",
+    );
+
+    let project = transpile_project(&entry, Target::Js).expect("read project");
+    assert!(
+        project.ok(),
+        "expected a clean project, got: {:#?}",
+        project.diagnostics
+    );
+
+    let a_js = project
+        .files
+        .iter()
+        .find(|(p, _)| p.file_stem().is_some_and(|s| s == "a"))
+        .map_or_else(|| panic!("sub/a output present"), |(_, src)| src.as_str());
+
+    assert!(
+        a_js.contains("import { b } from \"./b.js\";"),
+        "a subdirectory module should import its sibling relative to itself:\n{a_js}"
+    );
+    assert!(
+        !a_js.contains("./sub/b.js"),
+        "the import must not be rooted at the source root:\n{a_js}"
+    );
+}
+
+#[test]
 fn using_a_private_item_is_a_visibility_error() {
     let dir = tempdir();
     write(&dir, "util.neoc", "fn secret(x: number) -> number { x }\n");
@@ -257,7 +300,7 @@ fn non_fn_cross_module_export_loads_as_esm() {
          use lib::geom::ORIGIN_X;\n\
          use lib::geom::Point;\n\
          \n\
-         ext fn println(n: number);\n\
+         extern { fn println(n: number); }\n\
          \n\
          pub fn main() {\n\
          \x20   let p = Point { x: ORIGIN_X, y: 2 };\n\
@@ -347,12 +390,11 @@ fn non_fn_cross_module_export_loads_as_esm() {
 }
 
 /// A method called on a `use`-imported, method-bearing type dispatches across
-/// the module boundary (#66). The defining module registers the type's methods
-/// in *its* `__m`; the importer's own `__m` starts empty, so before the fix
-/// `__call` read `__m["Thing"]` as `undefined` and threw `TypeError` at runtime.
-/// The importer now wires the imported binding into its `__m` (`__m.Thing =
-/// Thing`) — the binding *is* the defining module's method table — so dispatch
-/// resolves. Asserted on the emitted source, then proven under `node` where present.
+/// the module boundary. Dispatch is prototype-backed: the value's `__proto__`
+/// link is made in the defining module (where its prototype `Thing$` lives), so
+/// it carries dispatch wherever it travels (`lang/DYNAMIC.md` §3.7, §7.1). The
+/// importer needs no per-type wiring — a plain `import` and a native `t.doubled()`
+/// call suffice. Asserted on the emitted source, then proven under `node` where present.
 #[test]
 fn method_on_use_imported_type_dispatches_across_modules() {
     let dir = tempdir();
@@ -377,7 +419,7 @@ fn method_on_use_imported_type_dispatches_across_modules() {
         "use lib::Thing;\n\
          use lib::make;\n\
          \n\
-         ext fn println(n: number);\n\
+         extern { fn println(n: number); }\n\
          \n\
          pub fn main() {\n\
          \x20   let t = make(21);\n\
@@ -399,20 +441,21 @@ fn method_on_use_imported_type_dispatches_across_modules() {
         .map(|(_, src)| src.as_str())
         .expect("main output present");
 
-    // The type binding is imported and wired into the importer's own method
-    // table under its runtime tag — the fix for #66.
+    // The method-bearing type's JS binding is its prototype `Thing$`; the `use`
+    // imports that. No per-type registry wiring — the value carries its
+    // prototype across the boundary.
     assert!(
-        main_js.contains("import { Thing } from \"./lib.js\";"),
-        "main should import the method-bearing type:\n{main_js}"
+        main_js.contains("import { Thing$ } from \"./lib.js\";"),
+        "main should import the method-bearing type's prototype:\n{main_js}"
     );
     assert!(
-        main_js.contains("__m.Thing = Thing;"),
-        "main should wire the imported type into its own `__m`:\n{main_js}"
+        !main_js.contains("__m") && !main_js.contains("__call"),
+        "main should emit no method registry — dispatch is prototype-backed:\n{main_js}"
     );
-    // The method call lowers to a tag-keyed dispatch, which the wiring resolves.
+    // The method call is a native property call resolving up the prototype chain.
     assert!(
-        main_js.contains("__call(t, \"doubled\")"),
-        "the method call should dispatch through `__call`:\n{main_js}"
+        main_js.contains("t.doubled()"),
+        "the method call should be a native property call:\n{main_js}"
     );
 
     if !node_present() {
@@ -420,8 +463,8 @@ fn method_on_use_imported_type_dispatches_across_modules() {
     }
 
     // Write the emitted modules to disk under their relative paths and run the
-    // entry as ESM. Pre-fix this throws `TypeError: Cannot read properties of
-    // undefined` from `__call`; post-fix it prints the method's result.
+    // entry as ESM. The prototype link, made in lib.js where Thing$ lives,
+    // carries dispatch across the boundary, so the method resolves and prints.
     let out = tempdir();
     let src_root = std::fs::canonicalize(&dir).expect("canonicalise source root");
     for (abs, contents) in &project.files {
@@ -483,7 +526,7 @@ fn binding_and_type_only_name_collision_loads_as_esm() {
         "use pal::Hue as PalHue;\n\
          use cfg::Hue as CfgHue;\n\
          \n\
-         ext fn println(n: number);\n\
+         extern { fn println(n: number); }\n\
          \n\
          pub fn main() {\n\
          \x20   let h = PalHue { r: CfgHue };\n\
@@ -750,6 +793,129 @@ fn an_unrelated_pub_type_is_not_silently_in_scope() {
     );
 }
 
+// ---- cross-file `use` of an extern item (`lang/EXTERN.md` §Lowering) --------
+
+/// A `pub` extern struct + `#[extern(constructor)]`/method declared in one file,
+/// `use`d and exercised in another. The defining file (`db.neoc`) emits no
+/// runtime value for the extern; the consumer (`app.neoc`) reconstructs the
+/// **native** import (`bun:sqlite`) and the construction/method lowering from the
+/// imported `#[extern(...)]` metadata, never importing `Database` from
+/// `./db.js` / `require("db")`.
+const DB_EXT: &str = "extern {\n  \
+    #[extern(path = \"bun:sqlite\")]\n  \
+    pub mod sqlite {\n    \
+    pub struct Database;\n    \
+    impl Database {\n      \
+    #[extern(constructor)] pub fn new(filename: string);\n      \
+    pub fn run(self, sql: string);\n    \
+    }\n  \
+    }\n}\n";
+
+const APP_USE_EXT: &str = "use db::Database;\n\n\
+    pub fn main() {\n  \
+    let d = Database::new(\":memory:\");\n  \
+    d.run(\"CREATE TABLE t (id)\");\n}\n";
+
+#[test]
+fn cross_file_use_of_extern_lowers_native_import_in_js_consumer() {
+    let dir = tempdir();
+    write(&dir, "db.neoc", DB_EXT);
+    let entry = write(&dir, "app.neoc", APP_USE_EXT);
+
+    let project = transpile_project(&entry, Target::Js).expect("read project");
+    assert!(project.ok(), "expected clean: {:#?}", project.diagnostics);
+
+    let app_js = project
+        .files
+        .iter()
+        .find(|(p, _)| p.file_stem().is_some_and(|s| s == "app"))
+        .map(|(_, c)| c.as_str())
+        .expect("app.js emitted");
+
+    // The consumer reconstructs the native import and the constructor form.
+    assert!(
+        app_js.contains("import * as sqlite from \"bun:sqlite\";"),
+        "consumer emits the native import:\n{app_js}"
+    );
+    assert!(
+        app_js.contains("new sqlite.Database(\":memory:\")"),
+        "constructor lowers to the target form, qualified through the mod:\n{app_js}"
+    );
+    assert!(
+        app_js.contains("d.run("),
+        "method call lowers native on the foreign receiver:\n{app_js}"
+    );
+    // No import of `Database` from the defining file — an extern emits no runtime
+    // value there.
+    assert!(
+        !app_js.contains("./db.js"),
+        "consumer must not import the extern from the defining file:\n{app_js}"
+    );
+}
+
+#[test]
+fn cross_file_use_of_extern_lowers_native_require_in_lua_consumer() {
+    let dir = tempdir();
+    write(&dir, "db.neoc", DB_EXT);
+    let entry = write(&dir, "app.neoc", APP_USE_EXT);
+
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
+    assert!(project.ok(), "expected clean: {:#?}", project.diagnostics);
+
+    let app_lua = project
+        .files
+        .iter()
+        .find(|(p, _)| p.file_stem().is_some_and(|s| s == "app"))
+        .map(|(_, c)| c.as_str())
+        .expect("app.lua emitted");
+
+    assert!(
+        app_lua.contains("require(\"bun:sqlite\")"),
+        "consumer emits the native require:\n{app_lua}"
+    );
+    assert!(
+        app_lua.contains("sqlite.Database.new(\":memory:\")"),
+        "constructor lowers to the target form, qualified through the mod:\n{app_lua}"
+    );
+    assert!(
+        app_lua.contains("d:run("),
+        "method call lowers to a colon call:\n{app_lua}"
+    );
+    assert!(
+        !app_lua.contains("require(\"db\")"),
+        "consumer must not require the extern from the defining file:\n{app_lua}"
+    );
+}
+
+#[test]
+fn cross_file_use_of_a_private_extern_is_a_visibility_error() {
+    // The extern struct is *not* `pub`: a cross-file `use` of it must fail with
+    // the same private-item diagnostic a plain non-`pub` item gets.
+    let dir = tempdir();
+    write(
+        &dir,
+        "db.neoc",
+        "extern {\n  #[extern(path = \"bun:sqlite\")]\n  pub mod sqlite {\n    \
+         struct Database;\n  }\n}\n",
+    );
+    let entry = write(
+        &dir,
+        "app.neoc",
+        "use db::Database;\npub fn main() { let _ = Database; }\n",
+    );
+
+    let project = transpile_project(&entry, Target::Js).expect("read project");
+    assert!(
+        project
+            .diagnostics
+            .iter()
+            .any(|d| d.diagnostic.stage == Stage::Type
+                && d.diagnostic.message.contains("`Database` is private")),
+        "a non-`pub` extern struct must report a private-item error:\n{:#?}",
+        project.diagnostics
+    );
+}
+
 // ---- in-memory project diagnostics (check_module_in_project, the LSP path) --
 
 mod project_check {
@@ -832,5 +998,126 @@ mod project_check {
         let (root, sources) = project(&[("a.neoc", "fn a() -> number { 1 }\n")]);
         let diags = check_module_in_project(&root, &sources, &root.join("missing.neoc"));
         assert!(diags.is_empty(), "{:?}", messages(&diags));
+    }
+
+    #[test]
+    fn a_directly_referenced_sibling_type_without_use_is_unresolved() {
+        // The editor path must match the single-file and build paths:
+        // constructing a sibling module's `pub struct` with no `use` is a
+        // resolution error, even though every workspace module is in the
+        // universe. The universe is for *transitive* shapes, not for satisfying
+        // a name the module references directly. Single-file `transpile` reports
+        // `unknown struct \`Database\`` for the same source; the editor must too.
+        let (root, sources) = project(&[
+            ("model.neoc", "pub struct Database {\n  path: string,\n}\n"),
+            (
+                "main.neoc",
+                "fn go() -> number {\n  let d = Database { path: \"x\" };\n  1\n}\n",
+            ),
+        ]);
+        let diags = check_module_in_project(&root, &sources, &root.join("main.neoc"));
+        assert!(
+            messages(&diags)
+                .iter()
+                .any(|m| m.contains("unknown struct `Database`")),
+            "a directly-referenced un-`use`d `Database` must stay unresolved: {:?}",
+            messages(&diags)
+        );
+    }
+
+    #[test]
+    fn a_directly_referenced_sibling_method_without_use_is_unresolved() {
+        // Same invariant for an associated-function call: `Database::open()` on
+        // a sibling's type the focus never `use`s must not silently resolve.
+        // Single-file `transpile` reports `unresolved path \`Database::open\``;
+        // the editor must match.
+        let (root, sources) = project(&[
+            (
+                "model.neoc",
+                "pub struct Database {\n  path: string,\n}\nimpl Database {\n  pub fn open() -> number { 1 }\n}\n",
+            ),
+            ("main.neoc", "fn go() -> number {\n  Database::open()\n}\n"),
+        ]);
+        let diags = check_module_in_project(&root, &sources, &root.join("main.neoc"));
+        assert!(
+            messages(&diags)
+                .iter()
+                .any(|m| m.contains("unresolved path `Database::open`")),
+            "a directly-referenced un-`use`d `Database::open` must stay unresolved: {:?}",
+            messages(&diags)
+        );
+    }
+
+    #[test]
+    fn a_cross_file_use_of_a_pub_extern_resolves_in_the_editor() {
+        // The editor path (`check_module_in_project`) must agree with the build:
+        // a `use`d `pub` extern struct + its constructor resolve, no error.
+        let (root, sources) = project(&[
+            (
+                "db.neoc",
+                "extern {\n  #[extern(path = \"bun:sqlite\")]\n  pub mod sqlite {\n    \
+                 pub struct Database;\n    impl Database {\n      \
+                 #[extern(constructor)] pub fn new(filename: string);\n    }\n  }\n}\n",
+            ),
+            (
+                "app.neoc",
+                "use db::Database;\npub fn main() {\n  \
+                 let d = Database::new(\":memory:\");\n  let _ = d;\n}\n",
+            ),
+        ]);
+        let diags = check_module_in_project(&root, &sources, &root.join("app.neoc"));
+        assert!(
+            diags.is_empty(),
+            "a `use`d `pub` extern must resolve in the editor: {:?}",
+            messages(&diags)
+        );
+    }
+
+    #[test]
+    fn a_cross_file_use_of_a_private_extern_is_a_visibility_error_in_the_editor() {
+        let (root, sources) = project(&[
+            (
+                "db.neoc",
+                "extern {\n  #[extern(path = \"bun:sqlite\")]\n  pub mod sqlite {\n    \
+                 struct Database;\n  }\n}\n",
+            ),
+            (
+                "app.neoc",
+                "use db::Database;\npub fn main() { let _ = Database; }\n",
+            ),
+        ]);
+        let diags = check_module_in_project(&root, &sources, &root.join("app.neoc"));
+        assert!(
+            messages(&diags)
+                .iter()
+                .any(|m| m.contains("`Database` is private")),
+            "a non-`pub` extern struct must be a private-item error in the editor: {:?}",
+            messages(&diags)
+        );
+    }
+
+    #[test]
+    fn a_transitively_imported_shape_still_resolves_in_the_editor() {
+        // The legitimate feature survives the fix: `main` imports only
+        // `factory::make`, whose return type `Config` it never names in a `use`.
+        // Field access on the returned value needs `Config`'s shape, pulled in
+        // transitively through the imported signature — so no diagnostic.
+        let (root, sources) = project(&[
+            ("types.neoc", "pub struct Config {\n  level: number,\n}\n"),
+            (
+                "factory.neoc",
+                "use types::Config;\n\npub fn make() -> Config {\n  Config { level: 1 }\n}\n",
+            ),
+            (
+                "main.neoc",
+                "use factory::make;\n\nfn go() -> number {\n  let c = make();\n  c.level\n}\n",
+            ),
+        ]);
+        let diags = check_module_in_project(&root, &sources, &root.join("main.neoc"));
+        assert!(
+            diags.is_empty(),
+            "transitive-shape access must keep resolving in the editor: {:?}",
+            messages(&diags)
+        );
     }
 }

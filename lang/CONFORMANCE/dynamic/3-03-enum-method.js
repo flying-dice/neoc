@@ -1,10 +1,7 @@
-const __m = {};
-const __call = (recv, name, ...args) => __m[recv.__struct ?? recv.__enum][name](recv, ...args);
-
-__m.Dir = {};
-__m.Dir.name = function(self) {
+const Dir$ = {};
+Dir$.name = function() {
   return (() => {
-    const __s1 = self;
+    const __s1 = this;
     if (__s1.__tag === "N") {
       return "north";
     }
@@ -20,6 +17,6 @@ __m.Dir.name = function(self) {
   })();
 }
 function main() {
-  let d = { __enum: "Dir", __tag: "E" };
-  println(__call(d, "name"));
+  let d = { __enum: "Dir", __tag: "E", __proto__: Dir$ };
+  println(d.name());
 }

@@ -1,24 +1,26 @@
 // @generated from the std:io runtime module — do not edit.
-struct ReaderHandle;
-impl ReaderHandle {
-    /// Read up to `n` bytes; returns `(nil, nil)` at EOF.
-    fn read(n: number) -> Result<string, string>;
-    /// Read one line, stripping the trailing newline; returns `(nil, nil)` at EOF.
-    fn read_line() -> Result<string, string>;
-    /// Read the entire remaining stream into a single string.
-    fn read_all() -> Result<string, string>;
-}
-struct WriterHandle;
-impl WriterHandle {
-    /// Write all bytes of `data` to the stream.
-    fn write(data: string) -> Result<bool, string>;
-    /// Flush any buffered bytes to the underlying sink.
-    fn flush() -> Result<bool, string>;
-}
-#[link(name = "std:io")]
-extern "neoc" {
-    /// Wrap a Lua string in a `ReaderHandle` so it can be passed to any reader consumer.
-    fn from_string(s: string) -> ReaderHandle;
-    /// Copy all remaining bytes from `reader` into `writer`, returning the total bytes copied.
-    fn copy(reader: ReaderHandle, writer: WriterHandle) -> Result<number, string>;
+extern {
+    #[extern(path = "std:io")]
+    mod io {
+        struct ReaderHandle;
+        impl ReaderHandle {
+            /// Read up to `n` bytes; returns `(nil, nil)` at EOF.
+            fn read(self, n: number) -> Result<string, string>;
+            /// Read one line, stripping the trailing newline; returns `(nil, nil)` at EOF.
+            fn read_line(self) -> Result<string, string>;
+            /// Read the entire remaining stream into a single string.
+            fn read_all(self) -> Result<string, string>;
+        }
+        struct WriterHandle;
+        impl WriterHandle {
+            /// Write all bytes of `data` to the stream.
+            fn write(self, data: string) -> Result<bool, string>;
+            /// Flush any buffered bytes to the underlying sink.
+            fn flush(self) -> Result<bool, string>;
+        }
+        /// Wrap a Lua string in a `ReaderHandle` so it can be passed to any reader consumer.
+        fn from_string(s: string) -> ReaderHandle;
+        /// Copy all remaining bytes from `reader` into `writer`, returning the total bytes copied.
+        fn copy(reader: ReaderHandle, writer: WriterHandle) -> Result<number, string>;
+    }
 }

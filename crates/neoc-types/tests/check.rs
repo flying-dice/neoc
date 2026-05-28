@@ -61,8 +61,23 @@ fn clean_if_expression() {
 }
 
 #[test]
-fn clean_ext_fn_call() {
-    assert_clean("ext fn now() -> number; fn t() -> number { now() }");
+fn clean_extern_fn_call() {
+    // lang/EXTERN.md: a bodyless extern `fn` resolves and type-checks a call
+    // into the target.
+    assert_clean("extern { fn now() -> number; } fn t() -> number { now() }");
+}
+
+#[test]
+fn clean_extern_struct_with_fields_and_methods() {
+    // lang/EXTERN.md §Items: an extern `struct` carries fields; its `impl`
+    // methods take `self`. A reference type-checks against the declared surface.
+    assert_clean(
+        "extern {\n\
+             struct Changes { changes: number }\n\
+             impl Changes { fn total(self) -> number; }\n\
+         }\n\
+         fn read(c: Changes) -> number { c.changes }",
+    );
 }
 
 #[test]
@@ -404,7 +419,7 @@ fn number_match_needs_catch_all() {
 #[test]
 fn clean_try_in_result_fn() {
     assert_clean(
-        "ext fn parse(s: string) -> Result<number, string>; \
+        "extern { fn parse(s: string) -> Result<number, string>; } \
          fn f(s: string) -> Result<number, string> { let n = parse(s)?; Ok(n) }",
     );
 }
@@ -412,7 +427,7 @@ fn clean_try_in_result_fn() {
 #[test]
 fn try_outside_result_fn() {
     let d = diags(
-        "ext fn parse(s: string) -> Result<number, string>; \
+        "extern { fn parse(s: string) -> Result<number, string>; } \
          fn f(s: string) -> number { parse(s)? }",
     );
     assert!(
@@ -425,7 +440,7 @@ fn try_outside_result_fn() {
 #[test]
 fn try_error_type_mismatch() {
     let d = diags(
-        "ext fn parse(s: string) -> Result<number, string>; \
+        "extern { fn parse(s: string) -> Result<number, string>; } \
          fn f(s: string) -> Result<number, bool> { let n = parse(s)?; Ok(n) }",
     );
     assert!(
@@ -719,4 +734,120 @@ fn unknown_name_diagnostic_spans_the_identifier() {
         .find(|d| d.message.contains("unknown name"))
         .expect("expected an `unknown name` diagnostic");
     assert_eq!(&src[d.start..d.end], "missing");
+}
+
+// ---- the dynamic boundary type `Unknown` (STATIC.md §3.7) -----------------
+
+#[test]
+fn unknown_wrapper_struct_typechecks() {
+    // The autots binding shape: a wrapper struct over a foreign value, with
+    // methods that poke at it and assert concrete return types.
+    assert_clean(
+        "struct User { inner: Unknown }
+         impl User {
+           fn name(self) -> string { self.inner.name }
+           fn set_name(self, value: string) { self.inner.name = value; }
+         }",
+    );
+}
+
+#[test]
+fn unknown_field_access_flows_to_string() {
+    // `Unknown` field access yields `Unknown`, which flows into the declared
+    // `string` return.
+    assert_clean("fn f(u: Unknown) -> string { u.field }");
+}
+
+#[test]
+fn unknown_method_call_accepts_any_args() {
+    assert_clean("fn f(u: Unknown) -> number { u.method(1, \"two\", true) }");
+}
+
+#[test]
+fn unknown_index_yields_unknown() {
+    assert_clean("fn f(u: Unknown) -> bool { u[0] }");
+}
+
+#[test]
+fn unknown_is_callable() {
+    assert_clean("fn f(u: Unknown) -> string { u(1, 2) }");
+}
+
+#[test]
+fn unknown_member_assignment_accepts_any_value() {
+    assert_clean(
+        "struct W { inner: Unknown }
+         impl W {
+           fn set_str(self) { self.inner.label = \"hi\"; }
+           fn set_num(self) { self.inner.count = 1; }
+           fn set_index(self) { self.inner[0] = true; }
+         }",
+    );
+}
+
+#[test]
+fn string_flows_into_unknown_return() {
+    // Any concrete type is assignable to `Unknown`.
+    assert_clean("fn f(s: string) -> Unknown { s }");
+}
+
+#[test]
+fn struct_flows_into_unknown_field() {
+    assert_clean(
+        "struct Point { x: number }
+         struct W { inner: Unknown }
+         impl W { fn store(self, p: Point) { self.inner.point = p; } }",
+    );
+}
+
+#[test]
+fn unknown_flows_into_struct_return() {
+    assert_clean(
+        "struct Point { x: number }
+         fn f(u: Unknown) -> Point { u.point }",
+    );
+}
+
+#[test]
+fn unknown_does_not_mask_unrelated_errors() {
+    // The dynamic type is permissive only where it appears; a genuine mismatch
+    // on a concrete type still fires.
+    let d = diags(
+        "struct Point { x: number }
+         fn f(u: Unknown, p: Point) -> number { p.x + p.y }",
+    );
+    assert!(
+        d.iter().any(|m| m.contains("has no field `y`")),
+        "expected a real field error, got: {d:?}"
+    );
+}
+
+// ---- reserved field names (STATIC.md §3.3, T-FIELD-RESERVED) ---------------
+
+#[test]
+fn reserved_struct_field_rejected() {
+    // A `__`-prefixed struct field collides with the runtime's reserved record
+    // keys, so it is ill-formed.
+    let d = diags("struct S { __proto__: number }");
+    assert_eq!(
+        d,
+        vec!["field name `__proto__` is reserved: field names may not begin with `__`".to_string()]
+    );
+}
+
+#[test]
+fn reserved_variant_field_rejected() {
+    // A named enum-variant field is also a record key, so the same rule applies.
+    let d = diags("enum E { V { __tag: number } }");
+    assert_eq!(
+        d,
+        vec!["field name `__tag` is reserved: field names may not begin with `__`".to_string()]
+    );
+}
+
+#[test]
+fn single_underscore_field_allowed() {
+    // The boundary is `__` (double underscore): a single-underscore or
+    // underscore-letter field is a normal data key and type-checks.
+    assert_clean("struct S { _0: number, _id: number }");
 }

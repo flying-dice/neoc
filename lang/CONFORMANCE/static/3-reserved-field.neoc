@@ -1,0 +1,8 @@
+// STATIC.md §3.3 (T-FIELD-RESERVED): a named field may not begin with `__`.
+struct S {
+    __proto__: number,
+}
+
+fn main() {
+    let s = S { __proto__: 5 };
+}

@@ -2,7 +2,9 @@
 // and every field structurally, and `==`/`!=` on an `Eq` type lower to that
 // function rather than Lua reference equality. Two equal-by-value `Pair`s
 // compare equal; an unequal one compares unequal.
-ext fn println(s: string);
+extern {
+    fn println(s: string);
+}
 
 #[derive(Eq)]
 struct Pair {

@@ -1,7 +1,9 @@
 // DYNAMIC.md §4.2: `+` on `string` operands lowers to Lua `..`, selected at
 // compile time from the operands' static type (never a runtime check). There is
 // no `..` concatenation operator in neoc — `+` carries both addition and concat.
-ext fn println(s: string);
+extern {
+    fn println(s: string);
+}
 
 fn greet(name: string) -> string {
     "hello, " + name + "!"

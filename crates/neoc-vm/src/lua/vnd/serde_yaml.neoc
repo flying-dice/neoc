@@ -1,12 +1,14 @@
 // @generated from the vnd:serde_yaml runtime module — do not edit.
-#[link(name = "vnd:serde_yaml")]
-extern "neoc" {
-    /// Read a reader handle to completion and parse it as YAML.
-    fn decode(reader: LuaValue) -> Result<LuaValue, string>;
-    /// Parse a YAML string into a Lua value.
-    fn decode_string(s: string) -> Result<LuaValue, string>;
-    /// Serialise a Lua value to a YAML string.
-    fn encode(value: LuaValue) -> Result<string, string>;
-    /// Serialise a Lua value to YAML and write it to a writer handle.
-    fn encode_to(value: LuaValue, writer: LuaValue) -> Result<bool, string>;
+extern {
+    #[extern(path = "vnd:serde_yaml")]
+    mod serde_yaml {
+        /// Read a reader handle to completion and parse it as YAML.
+        fn decode(reader: Unknown) -> Result<Unknown, string>;
+        /// Parse a YAML string into a Lua value.
+        fn decode_string(s: string) -> Result<Unknown, string>;
+        /// Serialise a Lua value to a YAML string.
+        fn encode(value: Unknown) -> Result<string, string>;
+        /// Serialise a Lua value to YAML and write it to a writer handle.
+        fn encode_to(value: Unknown, writer: Unknown) -> Result<bool, string>;
+    }
 }

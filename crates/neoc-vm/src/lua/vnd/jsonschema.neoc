@@ -1,20 +1,22 @@
 // @generated from the vnd:jsonschema runtime module — do not edit.
-struct Schema;
-impl Schema {
-    /// Fast validation gate: whether `value` conforms to the schema, short-circuiting on the first error.
-    fn is_valid(value: LuaValue) -> bool;
-    /// Full validation run, returning a `ValidationResult` exposing every error message.
-    fn validate(value: LuaValue) -> ValidationResult;
-}
-struct ValidationResult;
-impl ValidationResult {
-    /// Whether the validated value passed.
-    fn ok() -> bool;
-    /// All validation error messages as a 1-indexed table of strings; empty when ok.
-    fn errors() -> LuaValue;
-}
-#[link(name = "vnd:jsonschema")]
-extern "neoc" {
-    /// Parse and compile a JSON Schema string into a `Schema` validator.
-    fn compile(schema_json: string) -> Result<Schema, string>;
+extern {
+    #[extern(path = "vnd:jsonschema")]
+    mod jsonschema {
+        struct Schema;
+        impl Schema {
+            /// Fast validation gate: whether `value` conforms to the schema, short-circuiting on the first error.
+            fn is_valid(self, value: Unknown) -> bool;
+            /// Full validation run, returning a `ValidationResult` exposing every error message.
+            fn validate(self, value: Unknown) -> ValidationResult;
+        }
+        struct ValidationResult;
+        impl ValidationResult {
+            /// Whether the validated value passed.
+            fn ok(self) -> bool;
+            /// All validation error messages as a 1-indexed table of strings; empty when ok.
+            fn errors(self) -> Unknown;
+        }
+        /// Parse and compile a JSON Schema string into a `Schema` validator.
+        fn compile(schema_json: string) -> Result<Schema, string>;
+    }
 }

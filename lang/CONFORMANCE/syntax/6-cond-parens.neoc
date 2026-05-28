@@ -6,4 +6,4 @@ fn f() {
     if (Point { x: 1 }).x > 0 { go(); }
 }
 
-ext fn go();
+extern { fn go(); }
