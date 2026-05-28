@@ -1,4 +1,5 @@
 {
+  "outputStyle": "High Signal",
   "hooks": {
     "PreToolUse": [
       {
