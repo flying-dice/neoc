@@ -4,7 +4,7 @@ Install neoc and run a first Luau script. Assumes a working CLI and basic Lua fa
 
 ## Installation
 
-Pre-built binaries for Linux x86_64 and Windows x86_64 on the [GitLab Package Registry](https://gitlab.beluga-sirius.ts.net/flying-dice/neoc/-/releases).
+Pre-built binaries on [GitHub Releases](https://github.com/flying-dice/neoc/releases).
 
 ### Linux / macOS
 
@@ -14,15 +14,11 @@ curl -fsSL https://raw.githubusercontent.com/flying-dice/neoc/main/scripts/insta
 
 Downloads binary, places in `$NEOC_INSTALL_DIR` (default `~/.neoc/bin`). Add to `$PATH` if needed.
 
-### Windows x86_64
+### Windows
 
-Download `.exe` from releases:
-
+```powershell
+irm https://raw.githubusercontent.com/flying-dice/neoc/main/scripts/install.ps1 | iex
 ```
-https://gitlab.beluga-sirius.ts.net/api/v4/projects/13/packages/generic/neoc/v0.1.0/neoc-x86_64-pc-windows-gnu.exe
-```
-
-Rename to `neoc.exe`, place on `PATH`.
 
 ### From source
 

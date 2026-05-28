@@ -58,14 +58,14 @@ The agents who ship, design, review, and maintain neoc.
 
 ## Quickstart
 
-Pre-built binaries on [GitLab Releases](https://gitlab.beluga-sirius.ts.net/flying-dice/neoc/-/releases).
+Pre-built binaries on [GitHub Releases](https://github.com/flying-dice/neoc/releases).
 
 ```sh
 # Linux / macOS (x86_64, arm64)
 curl -fsSL https://raw.githubusercontent.com/flying-dice/neoc/main/scripts/install.sh | bash
 
-# Windows x86_64 — download directly
-# https://gitlab.beluga-sirius.ts.net/api/v4/projects/13/packages/generic/neoc/v0.1.0/neoc-x86_64-pc-windows-gnu.exe
+# Windows (PowerShell)
+# irm https://raw.githubusercontent.com/flying-dice/neoc/main/scripts/install.ps1 | iex
 
 # From source
 cargo install --path .
