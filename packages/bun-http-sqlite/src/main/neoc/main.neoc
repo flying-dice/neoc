@@ -1,10 +1,10 @@
 // Real multi-file: the bun:sqlite handle comes from the autots-generated
-// `autots/bun_sqlite` module (autots also emits `autots/globals` for the ambient
-// `Bun` surface — see the note on the extern block below), the typed
-// data-access layer from the autosql-generated `autosql/` modules — `ports`
+// `autots/types` module (autots emits one file holding every configured module
+// plus the ambient global surface — see the note on the extern block below), the
+// typed data-access layer from the autosql-generated `autosql/` modules — `ports`
 // holds the contract, `migrate` runs the DDL, and each query lives in its own
 // module.
-use autots::bun_sqlite::Database;
+use autots::types::Database;
 use autosql::ports::SqlValue;
 use autosql::ports::SqlExecutor;
 use autosql::migrate::migrate;
@@ -12,14 +12,14 @@ use autosql::list_notes::ListNotesRow;
 use autosql::list_notes::list_notes;
 use autosql::add_note::add_note;
 
-// `serve` comes from the generated `autots::globals`, which declares the full
+// `serve` comes from the generated `autots::types`, which declares the full
 // ambient `Bun` surface (`#[extern(ambient, path = "Bun")] mod Bun { serve, … }`).
 // A `use` of an in-mod free fn flattens it to the file level and the call
 // qualifies through its namespace at emit (`serve(opts)` → `Bun.serve(opts)`),
 // the same as an in-mod extern struct's constructor. `Response` is a DOM lib
 // type whose conditional declaration autots can't faithfully translate, and
 // `ServeOptions` is this app's own option bag — both stay hand-written.
-use autots::globals::serve;
+use autots::types::serve;
 
 extern {
     #[extern(ambient)]
