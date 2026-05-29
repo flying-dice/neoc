@@ -503,12 +503,11 @@ impl Object {
     // TODO: clean-code - 0.75 - DRY: set_inner/push_inner across Object+Array repeat the resolve+cast+error pattern; extract a `with_object_mut`/`with_array_mut` helper.
     fn set_inner(&self, key: String, v: JsonValue) -> mlua::Result<()> {
         with_resolved_mut(&self.root, &self.path, |resolved| {
-            let cur = resolved.ok_or_else(|| {
-                mlua::Error::external("json.object: parent path no longer valid")
-            })?;
-            let m = cur.as_object_mut().ok_or_else(|| {
-                mlua::Error::external("json.object: target is not an object")
-            })?;
+            let cur = resolved
+                .ok_or_else(|| mlua::Error::external("json.object: parent path no longer valid"))?;
+            let m = cur
+                .as_object_mut()
+                .ok_or_else(|| mlua::Error::external("json.object: target is not an object"))?;
             m.insert(key, v);
             Ok(())
         })

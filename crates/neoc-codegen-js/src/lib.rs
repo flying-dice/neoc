@@ -1343,7 +1343,11 @@ mod tests {
         };
         let out = emit_solo(&module);
         assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
-        assert!(out.js.contains("Point$.eq = function(a, b) {"), "{}", out.js);
+        assert!(
+            out.js.contains("Point$.eq = function(a, b) {"),
+            "{}",
+            out.js
+        );
         assert!(
             out.js
                 .contains("return a.__struct === b.__struct && a.x === b.x && a.y === b.y;"),
@@ -1367,7 +1371,11 @@ mod tests {
         };
         let out = emit_solo(&module);
         assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
-        assert!(out.js.contains("Point$.display = function() {"), "{}", out.js);
+        assert!(
+            out.js.contains("Point$.display = function() {"),
+            "{}",
+            out.js
+        );
         assert!(
             out.js
                 .contains("return String(this.x) + \", \" + String(this.y);"),
@@ -1409,14 +1417,22 @@ mod tests {
         };
         let out = emit_solo(&module);
         assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
-        assert!(out.js.contains("Shape$.eq = function(a, b) {"), "{}", out.js);
+        assert!(
+            out.js.contains("Shape$.eq = function(a, b) {"),
+            "{}",
+            out.js
+        );
         assert!(
             out.js
                 .contains("if (a.__enum !== b.__enum || a.__tag !== b.__tag) {"),
             "{}",
             out.js
         );
-        assert!(out.js.contains("if (a.__tag === \"Circle\") {"), "{}", out.js);
+        assert!(
+            out.js.contains("if (a.__tag === \"Circle\") {"),
+            "{}",
+            out.js
+        );
     }
 
     /// A `use a::b::c` of a name with a runtime binding lowers to a relative,
