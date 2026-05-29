@@ -115,7 +115,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// `try_func` would add a second span and double the prefix. Its signature is
 /// recorded for the header via [`crate::lua::facade::Module::record_fn`]. The
 /// `Database` and `Statement` userdata types keep their own `impl UserData`
-/// (methods, error prefixes, and the `sqlite.statement.*` op tags unchanged)
+/// (methods, error prefixes, and the `rusqlite.statement.*` op tags unchanged)
 /// and are recorded for the header via [`crate::lua::facade::Module::userdata`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "vnd:rusqlite")?;
@@ -204,12 +204,9 @@ fn open(lua: &Lua, path: String) -> mlua::Result<(Value, Value)> {
         | OpenFlags::SQLITE_OPEN_CREATE
         | OpenFlags::SQLITE_OPEN_NO_MUTEX
         | OpenFlags::SQLITE_OPEN_URI;
-    // TODO: clean-code - 0.6 - DEAD: ":memory:" branch is dead — open_with_flags(&path, ..) handles it identically
-    let conn = if path == ":memory:" {
-        rusqlite::Connection::open_with_flags(":memory:", flags)
-    } else {
-        rusqlite::Connection::open_with_flags(&path, flags)
-    };
+    // `:memory:` needs no special-casing — sqlite treats it identically whether
+    // the literal or a variable holding it is passed.
+    let conn = rusqlite::Connection::open_with_flags(&path, flags);
     match conn {
         Ok(c) => ok(
             lua,
@@ -278,13 +275,12 @@ pub struct Statement {
 
 impl UserData for Statement {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        // TODO: clean-code - 0.6 - NAMING: op tag "sqlite.statement.*" inconsistent with "rusqlite.*" used elsewhere in this module
         methods.add_method("execute", |lua, this, args: MultiValue| {
             let params: Vec<Value> = args.into_iter().collect();
             run_execute(
                 lua,
                 &this.conn,
-                "sqlite.statement.execute",
+                "rusqlite.statement.execute",
                 &this.sql,
                 params,
             )
@@ -292,7 +288,13 @@ impl UserData for Statement {
 
         methods.add_method("query", |lua, this, args: MultiValue| {
             let params: Vec<Value> = args.into_iter().collect();
-            run_query(lua, &this.conn, "sqlite.statement.query", &this.sql, params)
+            run_query(
+                lua,
+                &this.conn,
+                "rusqlite.statement.query",
+                &this.sql,
+                params,
+            )
         });
 
         methods.add_method("query_one", |lua, this, args: MultiValue| {
@@ -300,7 +302,7 @@ impl UserData for Statement {
             run_query_one(
                 lua,
                 &this.conn,
-                "sqlite.statement.query_one",
+                "rusqlite.statement.query_one",
                 &this.sql,
                 params,
             )
