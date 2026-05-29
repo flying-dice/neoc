@@ -56,9 +56,11 @@ CLAUDE.md forbids `unwrap()`/`expect()`/`panic!` outside the `neoc` bin and `#[c
 - [-] **T1** Survey false alarm: `validate.rs` is **not** untested — `tests/emit.rs` already has 5 exact-golden validator tests (pub/private params, enum dispatch+recurse, list/option/result combinators, imported/type-param skip, omitted). My first pass duplicated them with weaker substring asserts; **reverted**. Kept one genuinely additive case: nested `[[number]]` combinator composition. `e670929`
 - [x] **T2** `neoc-parser/src/expr.rs` `decode_escape` — inline tests for every escape, byte/unicode pass-through, unknown, non-escape. `fce16f9`
 - [x] **T3** `codegen-lua` emit value-position diagnostics — 7 tests (continue/break/return/loop/while/range/assign in value position) via hand-built AST. The genuinely-missing coverage; the `expr.rs` `error()` branches had none. `e670929`
-- [ ] **T4** `crates/neoc-codegen-js/tests/emit.rs` — parallel the lua emit suite (patterns, expr lowering, each derive). (high, medium-high)
-- [ ] **T5** `lang/CONFORMANCE` — add lexical/static error-case pairs. (medium)
-- [ ] **T6** `crates/neoc-wasm` — 0 tests; needs a wasm harness. (deferred — harness cost) `[>]`
+- [~] **T4** codegen-js had 19 inline tests but only `Debug` among the four derives. Added Clone/Eq/Display (struct) + Eq (enum). Did **not** blindly "parallel the lua suite" — JS has no runtime-validator layer, so most lua tests have no JS analog. `72b9574`
+- [-] **T5** False alarm. Static conformance has 40+ cases incl. extensive error paths (unknown-name, arity, nonexhaustive, supertrait-cycle…); syntax has `.reject`/`.reject.expected` pairs; **lexical is deferred by design** (`lexical/README.md`: no standalone tokeniser exists, and synthesising one would violate the hand-written-expected rule). No real gap.
+- [>] **T6** `crates/neoc-wasm` — 0 tests; needs a wasm-bindgen harness. Deferred — harness setup cost outweighs the 3-line entry point's risk this pass.
+
+**Theme 4 verdict:** the survey overstated test gaps 2:1 — T1 (validate.rs) and T5 (conformance) were false alarms (already covered / deferred-by-design). The genuine, landed wins: T2 (`decode_escape`), T3 (emit value-position diagnostics), T4 (JS Clone/Eq/Display derives).
 
 ## Theme 5 — Structural (larger, sequence late, keep tests green)
 
