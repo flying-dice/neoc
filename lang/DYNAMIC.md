@@ -388,8 +388,8 @@ The shapes the emitted Lua relies on. These are part of the spec: a passing `CON
 
 - **Struct**: `{ __struct = "TypeName", <fields> }`, with the type table as its metatable (`Type.__index = Type`) so methods resolve. Newtype field at `[1]`.
 - **Enum**: `{ __enum = "TypeName", __tag = "VariantName", <payload> }`. Tuple payload at `[1..]`, struct payload by field name.
-- **`Result<T, E>`**: the prelude enum, lowered per §3.2 — `Ok(v)` is `{ __enum = "Result", __tag = "Ok", v }`, `Err(e)` is `{ __enum = "Result", __tag = "Err", e }`.
-- **`Option<T>`**: `Some(v)` is `{ __enum = "Option", __tag = "Some", v }`, `None` is `{ __enum = "Option", __tag = "None" }`.
+- **`Result<T, E>`**: the prelude enum, lowered per §3.2 — method-bearing, so each constructor wraps the table with the `Result` metatable: `Ok(v)` is `setmetatable({ __enum = "Result", __tag = "Ok", v }, Result)`, `Err(e)` is `setmetatable({ __enum = "Result", __tag = "Err", e }, Result)`.
+- **`Option<T>`**: likewise method-bearing under the `Option` metatable — `Some(v)` is `setmetatable({ __enum = "Option", __tag = "Some", v }, Option)`, `None` is `setmetatable({ __enum = "Option", __tag = "None" }, Option)`.
 - **Method dispatch**: `value:method(…)` (Lua colon call), resolved through the value's metatable. The method lives on the type table as `Type.method(self, …)`.
 - **Indexing**: neoc is 0-based; lists lower to 1-based Lua tables with a `+ 1` adjustment at every index site.
 - **Tests**: `__tests` maps test names to zero-argument functions.
