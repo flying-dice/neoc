@@ -14,7 +14,7 @@ Status keys: `[ ]` open · `[x]` landed · `[~]` partial · `[-]` rejected (fals
 - **Safety** — 4 production panics removed from `neoc-vm` library code (`compile`, `task`, `args`); now return `Result`.
 - **Convention** — runtime error messages given the `module.function:` prefix (`time`, `json` ×7).
 - **Tests** — 3 *genuine* gaps closed: `decode_escape`, codegen-lua emit value-position diagnostics (7), codegen-js Clone/Eq/Display derives (4). +1 additive (nested-list validator).
-- **Structure** — `compile.rs` trailer detection SRP-split; `json.rs` Object/Array read methods de-duplicated. Both TODO-marked, both test-guarded.
+- **Structure** — `compile.rs` trailer detection SRP-split; `json.rs` Object/Array read methods de-duplicated; both god-files split into submodules — `lib:csv` → reader/writer, `vnd:hyper` → client/server. All behaviour-preserving and test-guarded.
 - **Docs** — `neoc-autosql` added to all three crate listings; `plan.md` bannered as bootstrap archive.
 
 **The headline finding: the survey cried wolf.** Verifying each claim against the tree turned up a high false-positive rate — and acting on them blindly would have *caused* damage:
@@ -25,7 +25,7 @@ Status keys: `[ ]` open · `[x]` landed · `[~]` partial · `[-]` rejected (fals
 
 The real defects were narrower and sharper than the survey's volume implied. Net: every change is evidenced, tested, and reversible.
 
-**Deferred to reviewed MRs (not autonomous):** C2/C3 god-file splits (`csv.rs` 1776 LOC, `hyper.rs` 1054 LOC) — large navigability-only diffs with delicate visibility surgery; C4 cross-crate `pat.rs` share — needs a design call on the home crate vs. the isolation rule. See Theme 5.
+**Deferred to a reviewed MR (not autonomous):** only C4 — the cross-crate `pat.rs` share between `codegen-lua` and `codegen-js`. It needs a design call on where the shared piece lives versus the crate-isolation rule, so it is flagged rather than forced. The csv and hyper god-files (C2/C3) are now split. See Theme 5.
 
 ---
 
@@ -89,11 +89,11 @@ CLAUDE.md forbids `unwrap()`/`expect()`/`panic!` outside the `neoc` bin and `#[c
 
 - [x] **C1** `lib/compile.rs` `detect_embedded_payload_from` → `read_trailer_bytes` + `extract_payload` (SRP TODO resolved). `3ff17e3`
 - [x] **C5** `lib/json.rs` Object/Array `get`/`len`/`to_table` byte-for-byte dup → shared `node_len`/`node_to_table` (DRY TODO resolved). `76622c6`
-- [>] **C2** `lib/csv.rs` (1776 LOC) — split reader/writer. Deferred: 550 LOC of inline tests + shared `ParseOpts`/helpers make this delicate visibility surgery; a large churn-only-for-navigability diff is better as a dedicated reviewed MR than a time-boxed autonomous shuffle. Genuine debt, sequenced out.
-- [>] **C3** `vnd/hyper.rs` (1054 LOC) — split client/server/types. Same reasoning as C2.
+- [x] **C2** `lib/csv.rs` (1776 LOC) → `csv/reader.rs` + `csv/writer.rs`; parent keeps shared opts, the public surface, and the 550-LOC integration tests. Pure move + `pub(super)`; 34 unit + 46 integration tests guard it. `f6ab442`
+- [x] **C3** `vnd/hyper.rs` (1054→664 LOC) → `hyper/client.rs` + `hyper/server.rs`; parent keeps the Request handler, the public surface, and the bench matrix (bench-only imports cfg-gated). 23 integration tests + normal/bench builds + clippy guard it. `e850f22`
 - [>] **C4** `codegen-lua/pat.rs` ≈ `codegen-js/pat.rs` — extract shared `Compiled`. Deferred: crate-isolation rule means the shared piece would need a home crate (`neoc-ast`?); not a clean autonomous call. Flagged for design review.
 
-**Theme 5 verdict:** the two *contained, TODO-marked* structural debts (C1 SRP, C5 DRY) are landed and test-guarded. The three *large* reorganizations (C2/C3 god-files, C4 cross-crate share) are real but are bigger-diff/navigability-or-design calls — deferred to reviewed MRs rather than rushed autonomously. Discipline over churn.
+**Theme 5 verdict:** C1 (SRP) and C5 (DRY) — contained, TODO-marked — landed. Both god-files (C2 csv, C3 hyper) split cleanly into submodules, behaviour-preserving and test-guarded; the key risk (visibility surgery, hyper's cfg-bench import coupling) was handled compile-driven. Only C4 stays deferred — it crosses the crate-isolation boundary and needs a design call, not an autonomous edit.
 
 ## Low-confidence / flag only
 
