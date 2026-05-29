@@ -17,12 +17,10 @@ A second pass: four agents (compiler-crate sweep, footgun/dead-code sweep, cross
 - [x] `task` spawn/defer/delay raised a bare `task:` prefix; `rusqlite` `Statement` used `sqlite.statement.*` while the module uses `rusqlite.*`. Both normalised; dead `:memory:` branch in `rusqlite.open` dropped. `04a8c1e`
 - [x] Misleading `jsonschema` `__tostring` comment (claimed it makes `if result then` work — userdata is always truthy). Corrected. `63dea2d`
 
-**Sweep 2 — verified but deferred (not clean autonomous calls):**
-- [>] `jsonschema.is_valid` silently returns `false` on a value that can't convert to JSON (hides bugs, inconsistent with `validate`). Fix changes the Lua-facing signature → wants a `runtime-design` review.
-- [>] `sqlx_postgres` bind (utf8→TEXT / non-utf8→BYTEA) and `decode_cell` unknown-type→TEXT fallback — silent type coercion. API/type-contract call → `runtime-design`.
-- [>] ~9 repeated `match result { Ok => ok, Err => from_err }` / borrow / opts-extract patterns (std/io, std/thread, vnd/hyper client, std/fs, vnd/sqlx_*) — behaviour-preserving DRY helper extractions. Best run through the `refactor` skill loop (highest-scored TODO first), not one giant commit.
-- [>] `collections` `arc()` accessors (Map/Counter/Mutex) confirmed dead (only `Listener::arc` is called) — but they're part of the deliberate Sendable `from_arc`/`arc` pair; tiny value, leave for the refactor loop.
-- [>] `codegen-lua` ↔ `codegen-js` share `EnumIndex`/`TupleStructIndex` — real duplication, but the shared home would cross the crate-isolation boundary (same class as C4). Design call.
+**Sweep 2 — deferred items, now decided + tracked (operator call, 2026-05-29):**
+- [>] `jsonschema.is_valid` + `sqlx_postgres` silent type coercion → **board issue [#76](https://gitlab.beluga-sirius.ts.net/flying-dice/neoc/-/issues/76)**; gated on a `runtime-design` review before any behaviour change.
+- [>] ~9 DRY `Ok→ok / Err→from_err` patterns + dead `collections::arc()` → **board issue [#77](https://gitlab.beluga-sirius.ts.net/flying-dice/neoc/-/issues/77)**; work via the `refactor` skill loop.
+- [x] `codegen-lua` ↔ `codegen-js` `EnumIndex`/`TupleStructIndex` (and `pat.rs`, C4) → **decided: accept the duplication, keep the backends independent** (isolation over DRY). Documented the intentional parallel on both `EnumIndex` structs. `bec824d`
 
 **Sweep 2 — compiler crates otherwise clean.** No library panics, no host-language leaks across `neoc-types`/`neoc-parser`/`neoc-codegen-*`/`neoc-compiler`/`neoc-ast`. The 65 `unwrap()`s in `neoc-fmt` are CST-field access guarded by the parser's prior validation (a documented contract, not stray panics) — flagged for a defensive helper, not a bug.
 
