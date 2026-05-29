@@ -80,8 +80,14 @@ fn parse_trailer(bytes: &[u8]) -> Result<Option<TrailerHeader>, u8> {
     if version != TRAILER_VERSION {
         return Err(version);
     }
-    let offset = u64::from_le_bytes(trailer[8..16].try_into().unwrap());
-    let length = u32::from_le_bytes(trailer[16..20].try_into().unwrap());
+    // `trailer` is exactly TRAILER_SIZE bytes here (the length check above plus
+    // the caller's tail slice), so these fixed-width reads cannot truncate.
+    let mut offset_bytes = [0u8; 8];
+    offset_bytes.copy_from_slice(&trailer[8..16]);
+    let mut length_bytes = [0u8; 4];
+    length_bytes.copy_from_slice(&trailer[16..20]);
+    let offset = u64::from_le_bytes(offset_bytes);
+    let length = u32::from_le_bytes(length_bytes);
     Ok(Some(TrailerHeader { offset, length }))
 }
 

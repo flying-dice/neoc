@@ -120,12 +120,12 @@ impl UserData for TaskHandle {
                 notified.await;
 
                 let guard = inner.outcome.lock();
-                outcome_to_multi(
-                    &lua,
-                    guard
-                        .as_ref()
-                        .expect("Notify fired but outcome is None — this is a bug"),
-                )
+                match guard.as_ref() {
+                    Some(outcome) => outcome_to_multi(&lua, outcome),
+                    None => Err(mlua::Error::external(
+                        "task.await: notified but no outcome was recorded",
+                    )),
+                }
             }
         });
     }
