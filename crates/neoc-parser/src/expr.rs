@@ -72,18 +72,12 @@ impl Adapter {
     }
 
     fn walk_let(&mut self, node: Node) -> ast::LetStmt {
-        let mutable = node.children(&mut node.walk()).any(|c| c.kind() == "mut");
         let pattern = self
             .field(node, "pattern")
             .map_or(ast::Pattern::Wildcard, |p| self.walk_pattern(p));
         let ty = self.field(node, "type").map(|t| self.walk_type(t));
         let value = self.field(node, "value").map(|v| self.walk_expr(v));
-        ast::LetStmt {
-            mutable,
-            pattern,
-            ty,
-            value,
-        }
+        ast::LetStmt { pattern, ty, value }
     }
 
     pub(crate) fn walk_expr(&mut self, node: Node) -> ast::Expr {

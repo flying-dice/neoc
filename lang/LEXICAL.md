@@ -64,8 +64,8 @@ The following are reserved and may not be used as identifiers:
 ```
 as      break   const   continue  else    enum    ext     fn
 for     if      impl    in        let     loop    match   mod
-mut     pub     return  self      Self    trait   type    use
-where   while
+pub     return  self    Self      trait   type    use     where
+while
 ```
 
 Boolean literals `true` and `false` (§6.4) are also reserved.
@@ -176,8 +176,8 @@ IDENT                       (* §4 — values, fields, type params, lifetimes(no
 
 (* keywords — §5, each its own terminal spelled as its source text *)
 "as" "break" "const" "continue" "else" "enum" "ext" "fn" "for" "if"
-"impl" "in" "let" "loop" "match" "mod" "mut" "pub" "return" "self"
-"Self" "trait" "type" "use" "where" "while"
+"impl" "in" "let" "loop" "match" "mod" "pub" "return" "self" "Self"
+"trait" "type" "use" "where" "while"
 
 (* punctuation and operators — §7, each its own terminal *)
 "+" "-" "*" "/" "%" "==" "!=" "<" ">" "<=" ">=" "&&" "||" "!"
