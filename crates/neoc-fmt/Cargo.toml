@@ -12,3 +12,14 @@ neoc-grammar.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+# Behavioural spec: Gherkin features in `tooling/fmt/` driven against `format`.
+# cucumber supplies its own runner (default libtest harness disabled below);
+# `futures::executor::block_on` drives it so this pure crate stays tokio-free.
+cucumber = "0.21.1"
+futures = "0.3"
+
+[[test]]
+name = "cucumber"
+harness = false

@@ -18,6 +18,17 @@ thiserror = "2"
 # emitted source type-checks and lowers to both Lua and JS. Dev-only: the
 # generator does not depend on the compiler.
 neoc-compiler.workspace = true
+# Behavioural spec: Gherkin features in `tooling/autosql/` driven against
+# `generate_project`. cucumber supplies its own runner (default libtest harness
+# disabled below); `futures::executor::block_on` drives it so this pure crate
+# stays tokio-free. `tempfile` writes a throwaway SQL project tree per scenario.
+cucumber = "0.21.1"
+futures = "0.3"
+tempfile = "3"
 
 [lints]
 workspace = true
+
+[[test]]
+name = "cucumber"
+harness = false
