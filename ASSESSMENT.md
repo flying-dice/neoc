@@ -24,35 +24,37 @@ Lesson logged: surveys propose, the tree decides.
 
 The repo has **two** doc surfaces the survey half-saw: root `*.md` + the `docs/src` VitePress site (`adrs/`, `rfcs/`, `vnd/`, `styleguide/`) + `tasks/`. Same topics restated across all three.
 
-- [ ] **D1** `neoc-autosql` missing from every crate table. Owner = `ARCHITECTURE.md` crate table; `README.md`, `CLAUDE.md` mirror. Add the row + structure line. (trivial)
-- [ ] **D2** Build/test commands restated in `CONTRIBUTING.md`, `CLAUDE.md`, `checklist.md`. SSOT = `CONTRIBUTING.md` Pre-MR checks; others link. (small)
-- [ ] **D3** Rust code-style duplicated between `STYLEGUIDE.md` and `CLAUDE.md §Compiler: code style`. SSOT = `STYLEGUIDE.md`; CLAUDE links. (small)
-- [ ] **D4** Module namespaces (`std:/lib:/vnd:`) stated in README, STYLEGUIDE, CLAUDE. SSOT = `STYLEGUIDE.md`; README/CLAUDE give one line + link. (small)
-- [ ] **D5** `docs/styleguide` vs root `STYLEGUIDE.md` — confirm overlap, collapse to one. (small)
-- [ ] **D6** `plan.md` is shipped bootstrap history; `checklist.md` is a live template. Label `plan.md` archive (or move `docs/archive/`); keep `checklist.md`. (small)
-- [ ] **D7** Host-leak golden rule: SSOT = `CLAUDE.md`; `checklist.md`/`ARCHITECTURE.md` link not restate. (trivial)
+- [x] **D1** `neoc-autosql` added to ARCHITECTURE.md (canonical table), README.md, CLAUDE.md. `a1332fd`
+- [-] **D2** Build/test commands in CONTRIBUTING/CLAUDE/checklist. Verified: CLAUDE.md is a deliberately self-contained agent brief; collapsing its command list to a link degrades that. By-design, not debt. Flagged, not changed.
+- [~] **D3** Survey conflated two scopes: `STYLEGUIDE.md §Rust` is *runtime module* style; `CLAUDE.md §Compiler` is *compiler crate* style — complementary, not duplicate. The real overlap is the naming table (walk_/emit_/lower_) in `ARCHITECTURE.md §Conventions` ↔ `CLAUDE.md`. Low-value to collapse (both are short, both self-contained). Flagged.
+- [-] **D4** Namespaces: `STYLEGUIDE.md` is SSOT; README is a one-liner, CLAUDE adds runtime-impl conventions. Not redundant restatement. No change.
+- [-] **D5** False premise: `STYLEGUIDE.md §Documentation` already links to `docs/styleguide/documentation-styleguide.md`. Already SSOT.
+- [x] **D6** `plan.md` bannered as archive (completed bootstrap, cites the gone `../bun-oas/`). `checklist.md` kept — live, self-contained. `12ac775`
+- [-] **D7** Host-leak rule: `checklist.md` restates the three cardinal rules at its head by design (operational checklist usability). Not debt.
+
+**Theme 1 verdict:** the one real defect was D1 (autosql absent everywhere) + D6 (stale plan). The survey's other "duplication" findings are mostly a self-contained agent brief (CLAUDE.md) and already-linked SSOTs — collapsing them trades usability for purity. The deeper `docs/src` VitePress surface (adrs/rfcs/guides/std/vnd) was not cross-audited against root docs this pass — logged for a dedicated round.
 
 ## Theme 2 — Library safety: no panics in library code (verified each)
 
 CLAUDE.md forbids `unwrap()`/`expect()`/`panic!` outside the `neoc` bin and `#[cfg(test)]`.
 
-- [ ] **S1** `crates/neoc-vm/src/lua/lib/compile.rs:83-84` — `try_into().unwrap()` on trailer slices. Use fixed-size array reads / return `Result`. (CRITICAL, trivial)
-- [ ] **S2** `crates/neoc-vm/src/lua/std/task.rs:127` — `.expect("Notify fired…")` in public async `await`. Return `Err`. (high, small)
-- [ ] **S3** `crates/neoc-vm/src/lua/lib/args.rs:212` — `unwrap()` after a count==1 guard. Restructure. (high, trivial)
-- [ ] **S4** `crates/neoc-vm/src/lua/lib/args.rs:433` — `.expect("clap matched subcommand absent from spec")`. Return `Err`. (medium, small)
-- [ ] **S5** Sweep remaining `unwrap()/expect()/panic!/todo!/unimplemented!` in `neoc-vm` non-test library code; fix or justify with comment. (medium)
+- [x] **S1** `compile.rs:83-84` — `try_into().unwrap()` → fixed-width `copy_from_slice`. `bb7c176`
+- [x] **S2** `task.rs:127` — `.expect()` in async `await` → `task.await` error. `bb7c176`
+- [x] **S3** `args.rs:212` — `unwrap()` after count guard → two-char match. `bb7c176`
+- [x] **S4** `args.rs:433` — `.expect()` → `args.parse` error. `bb7c176`
+- [-] **S5** Bulk sweep — the 1302 hits are ≈all `#[cfg(test)]` code (legitimate). The production panics were the targeted S1–S4. Rejected as a blanket task; revisit case-by-case if a specific module surfaces.
 
 ## Theme 3 — Error-message convention (`module.function:` prefix)
 
-- [ ] **E1** `std/task.rs:227-246` — `"{kind}: …"` → `"task.spawn: …"`. (small)
-- [ ] **E2** `std/time.rs:107,110` — add `time.<op>:` prefix. (small)
-- [ ] **E3** `vnd/hyper.rs:488` — double-wrapped message. (trivial)
-- [ ] **E4** `lib/json.rs:507-510` — `"object:"` → `"json.object:"`. (trivial)
+- [-] **E1** `std/task.rs` — false positive: `{kind}` is already `"task.spawn"`/`"task.defer"`/`"task.delay"`. Renders correctly.
+- [x] **E2** `std/time.rs:107,110` — bare → `time:` prefix. `9075397`
+- [-] **E3** `vnd/hyper.rs:488` — false positive: `from_err` already prefixes `hyper.serve:`. Not double-wrapped.
+- [x] **E4** `lib/json.rs` — `object:`/`array:` (7 sites) → `json.object:`/`json.array:`. `9075397`
 
 ## Theme 4 — Test backfill (highest-value gaps)
 
 - [ ] **T1** `crates/neoc-codegen-lua/src/validate.rs` (640 LOC, 0 inline tests) — the runtime type-check emitter. Add inline `mod tests`: primitives, struct composite, enum dispatch, Result/Option, nested `List<Struct>`, cross-module degrade. (CRITICAL, medium)
-- [ ] **T2** `crates/neoc-parser/src/expr.rs` `decode_escape` — add inline tests for every escape + unknown. (medium value, low effort — quick win)
+- [x] **T2** `neoc-parser/src/expr.rs` `decode_escape` — inline tests for every escape, byte/unicode pass-through, unknown, non-escape. `fce16f9`
 - [ ] **T3** `crates/neoc-codegen-lua` `expr.rs` error branches (≈11 `error()` calls) — assert diagnostics fire. (high, medium)
 - [ ] **T4** `crates/neoc-codegen-js/tests/emit.rs` — parallel the lua emit suite (patterns, expr lowering, each derive). (high, medium-high)
 - [ ] **T5** `lang/CONFORMANCE` — add lexical/static error-case pairs. (medium)
