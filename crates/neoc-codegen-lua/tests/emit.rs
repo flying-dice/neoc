@@ -656,6 +656,15 @@ fn validators_compose_list_option_and_result_combinators() {
 }
 
 #[test]
+fn validators_nest_list_combinators_for_a_list_of_lists() {
+    // A `[[number]]` field nests the list combinator: the outer call's element
+    // validator is itself a `__check_list` closure over the number checker, so
+    // composition recurses without inlining.
+    let out = lua_from_source("struct Grid { rows: [[number]] }");
+    assert!(out.contains("__check_list(v.rows, path .. \".rows\", function(v, p) return __check_list(v, p, __check_number) end)"));
+}
+
+#[test]
 fn validators_omitted_when_no_drift_point_exists() {
     // No struct, enum, or `pub fn` — nothing to enforce, so no preamble at all.
     let out = lua_from_source("fn helper(n: number) -> number { n }");
@@ -822,94 +831,118 @@ fn associated_fn_call_keeps_the_type_qualifier() {
     );
 }
 
-// ---- runtime type validators (validate.rs, DYNAMIC.md §9) -------------------
-// Drift points emit one shared validator per declared type. A `pub fn` param is
-// the untyped boundary (DRIFT-PARAM); each test references its type through one
-// so the validator and its entry check both emit.
+// ---- emit diagnostics for ill-formed value positions -----------------------
+// The type-checker rejects most of these first, but the emitter carries its own
+// defensive diagnostics for a node reaching codegen in value position. These
+// hand-build that node directly so the branch is exercised in isolation.
 
-#[test]
-fn struct_validator_checks_tag_then_each_field() {
-    let lua = lua_from_source("struct Point { x: number, y: number }\npub fn id(p: Point) -> Point { p }\n");
-    assert!(lua.contains("function __check_Point(v, path)"), "{lua}");
+/// A private `fn make()` whose block value is `expr`.
+fn fn_value_body(expr: ast::Expr) -> ast::Module {
+    ast::Module {
+        items: vec![ast::Item {
+            attrs: vec![],
+            vis: ast::Visibility::Private,
+            kind: ast::ItemKind::Fn(ast::FnDecl {
+                attrs: vec![],
+                sig: ast::FnSig {
+                    name: "make".into(),
+                    name_span: ast::Span::default(),
+                    generics: vec![],
+                    params: vec![],
+                    ret: None,
+                    where_clause: vec![],
+                },
+                body: ast::Block {
+                    stmts: vec![],
+                    value: Some(Box::new(expr)),
+                },
+            }),
+            span: ast::Span::default(),
+        }],
+    }
+}
+
+fn emit_diagnostics(module: &ast::Module) -> Vec<String> {
+    emit(module)
+        .diagnostics
+        .into_iter()
+        .map(|d| d.message)
+        .collect()
+}
+
+fn assert_value_position_diagnostic(expr: ast::ExprKind, expected: &str) {
+    let diags = emit_diagnostics(&fn_value_body(e(expr)));
     assert!(
-        lua.contains("v.__struct ~= \"Point\""),
-        "struct validator gates on the runtime tag\n{lua}"
-    );
-    assert!(lua.contains("__check_number(v.x, path .. \".x\")"), "{lua}");
-    assert!(lua.contains("__check_number(v.y, path .. \".y\")"), "{lua}");
-}
-
-#[test]
-fn pub_fn_param_validates_at_the_untyped_boundary() {
-    // DRIFT-PARAM: the host is the one caller the type system can't vouch for.
-    let lua = lua_from_source("struct Point { x: number }\npub fn id(p: Point) -> Point { p }\n");
-    assert!(
-        lua.contains("__check_Point(p, \"id.p\")"),
-        "pub fn entry validates the typed parameter, path-qualified by fn name\n{lua}"
+        diags.iter().any(|m| m == expected),
+        "expected emit diagnostic {expected:?}, got {diags:?}"
     );
 }
 
 #[test]
-fn private_fn_param_is_not_validated() {
-    // Only the `pub` boundary is untyped; a private fn's caller is type-checked.
-    let lua = lua_from_source("struct Point { x: number }\nfn id(p: Point) -> Point { p }\n");
-    assert!(
-        !lua.contains("__check_Point(p"),
-        "a private fn param needs no boundary check\n{lua}"
+fn continue_in_value_position_diagnoses() {
+    assert_value_position_diagnostic(
+        ast::ExprKind::Continue,
+        "control-flow expression used in value position",
     );
 }
 
 #[test]
-fn enum_validator_dispatches_on_the_variant_tag() {
-    let lua = lua_from_source(
-        "enum Shape { Circle(number), Square(number) }\npub fn id(s: Shape) -> Shape { s }\n",
-    );
-    assert!(lua.contains("function __check_Shape(v, path)"), "{lua}");
-    assert!(lua.contains("v.__enum ~= \"Shape\""), "{lua}");
-    assert!(lua.contains("local t = v.__tag"), "dispatches on the tag\n{lua}");
-    assert!(lua.contains("if t == \"Circle\" then"), "{lua}");
-    assert!(lua.contains("elseif t == \"Square\" then"), "{lua}");
-    assert!(lua.contains("__check_number(v[1]"), "validates the payload slot\n{lua}");
-}
-
-#[test]
-fn option_and_result_fields_use_their_combinators() {
-    let lua = lua_from_source(
-        "struct Holder { o: Option<number>, r: Result<number, string> }\npub fn id(h: Holder) -> Holder { h }\n",
-    );
-    assert!(lua.contains("__check_option(v.o"), "{lua}");
-    assert!(lua.contains("__check_result(v.r"), "{lua}");
-    assert!(lua.contains("local function __check_option"), "pulls the combinator into the preamble\n{lua}");
-    assert!(lua.contains("local function __check_result"), "{lua}");
-}
-
-#[test]
-fn list_field_uses_a_per_element_validator() {
-    let lua = lua_from_source("struct Bag { xs: [number] }\npub fn id(b: Bag) -> Bag { b }\n");
-    assert!(lua.contains("__check_list(v.xs"), "{lua}");
-    assert!(lua.contains("local function __check_list"), "{lua}");
-}
-
-#[test]
-fn nested_list_composes_element_validators() {
-    let lua = lua_from_source("struct Grid { rows: [[number]] }\npub fn id(g: Grid) -> Grid { g }\n");
-    // Outer list of inner lists of numbers — the inner validator is a closure.
-    assert!(lua.contains("__check_list(v.rows"), "{lua}");
-    assert!(
-        lua.contains("__check_list(v, p, __check_number)"),
-        "the inner list validator composes the number checker\n{lua}"
+fn break_in_value_position_diagnoses() {
+    assert_value_position_diagnostic(
+        ast::ExprKind::Break,
+        "control-flow expression used in value position",
     );
 }
 
 #[test]
-fn imported_field_type_degrades_to_no_check() {
-    // A field whose type is not declared in this module cannot reference a
-    // validator the other module owns — the deep check lands at its home
-    // construction site. Here the field is simply left unchecked.
-    let lua = lua_from_source("struct Wrapper { inner: Foreign }\npub fn id(w: Wrapper) -> Wrapper { w }\n");
-    assert!(lua.contains("function __check_Wrapper(v, path)"), "{lua}");
-    assert!(
-        !lua.contains("v.inner"),
-        "an imported field type emits no field check\n{lua}"
+fn return_in_value_position_diagnoses() {
+    assert_value_position_diagnostic(
+        ast::ExprKind::Return(None),
+        "control-flow expression used in value position",
+    );
+}
+
+#[test]
+fn loop_in_value_position_diagnoses() {
+    assert_value_position_diagnostic(
+        ast::ExprKind::Loop {
+            body: ast::Block::default(),
+        },
+        "loops do not produce a value",
+    );
+}
+
+#[test]
+fn while_in_value_position_diagnoses() {
+    assert_value_position_diagnostic(
+        ast::ExprKind::While {
+            cond: Box::new(e(ast::ExprKind::Path(vec!["x".into()]))),
+            body: ast::Block::default(),
+        },
+        "loops do not produce a value",
+    );
+}
+
+#[test]
+fn range_in_value_position_diagnoses() {
+    assert_value_position_diagnostic(
+        ast::ExprKind::Range {
+            start: Box::new(e(ast::ExprKind::Path(vec!["a".into()]))),
+            end: Box::new(e(ast::ExprKind::Path(vec!["b".into()]))),
+            inclusive: false,
+        },
+        "range expressions are only supported as a `for` iterable",
+    );
+}
+
+#[test]
+fn assignment_in_value_position_diagnoses() {
+    assert_value_position_diagnostic(
+        ast::ExprKind::Assign {
+            target: Box::new(e(ast::ExprKind::Path(vec!["x".into()]))),
+            op: ast::AssignOp::Assign,
+            value: Box::new(e(ast::ExprKind::Path(vec!["y".into()]))),
+        },
+        "assignment is a statement, not an expression value",
     );
 }
