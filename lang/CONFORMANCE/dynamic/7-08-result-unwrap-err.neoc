@@ -1,0 +1,9 @@
+// DYNAMIC.md §7: `Result::unwrap_err` yields the payload of `Err`.
+extern {
+    fn println(s: string);
+}
+
+fn main() {
+    let err: Result<number, string> = Err("boom");
+    println(err.unwrap_err());
+}

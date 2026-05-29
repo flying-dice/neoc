@@ -98,7 +98,7 @@ Every variant construction is then `setmetatable`d onto `E`, so a value finds it
 - **Tuple variant** `E::V(a, b)` → `setmetatable({ __enum = "E", __tag = "V", ⟦a⟧, ⟦b⟧ }, E)`
 - **Struct variant** `E::V { x: a }` → `setmetatable({ __enum = "E", __tag = "V", x = ⟦a⟧ }, E)`
 
-`impl` methods (§3.3) and derived methods (§6) attach to `E` as for a struct. The metatable changes nothing `match` or `?` rely on — they read `.__tag`/`.__enum`, which a metatable does not shadow. A plain enum with no methods keeps the bare tagged table (no metatable). The `Result`/`Option` prelude enums (§7) are always plain.
+`impl` methods (§3.3) and derived methods (§6) attach to `E` as for a struct. The metatable changes nothing `match` or `?` rely on — they read `.__tag`/`.__enum`, which a metatable does not shadow. A plain enum with no methods keeps the bare tagged table (no metatable). The `Result`/`Option` prelude enums are themselves method-bearing — they carry the inherent operations of §7 — and take this same metatable shape.
 
 **JS.** A method-bearing enum gets one prototype `E$` (shared by every variant), and each variant construction links to it — the same shape as a struct (§3.1):
 
@@ -109,7 +109,7 @@ Every variant construction is then `setmetatable`d onto `E`, so a value finds it
 ⟦ E::V { x: a } ⟧ₑ_js = { __enum: "E", __tag: "V", x: ⟦a⟧, __proto__: E$ }
 ```
 
-The prototype changes nothing `match` or `?` rely on — they read `.__tag`/`.__enum`, own properties never shadowed by the prototype. A plain enum with no methods keeps the bare tagged object (no `__proto__`). The `Result`/`Option` prelude enums (§7) are always plain.
+The prototype changes nothing `match` or `?` rely on — they read `.__tag`/`.__enum`, own properties never shadowed by the prototype. A plain enum with no methods keeps the bare tagged object (no `__proto__`). The `Result`/`Option` prelude enums are themselves method-bearing — they carry the inherent operations of §7.1 — and take this same prototype shape.
 
 ### 3.2a The `__traits` tag
 
@@ -388,20 +388,62 @@ The shapes the emitted Lua relies on. These are part of the spec: a passing `CON
 
 - **Struct**: `{ __struct = "TypeName", <fields> }`, with the type table as its metatable (`Type.__index = Type`) so methods resolve. Newtype field at `[1]`.
 - **Enum**: `{ __enum = "TypeName", __tag = "VariantName", <payload> }`. Tuple payload at `[1..]`, struct payload by field name.
-- **`Result<T, E>`**: the prelude enum, lowered per §3.2 — `Ok(v)` is `{ __enum = "Result", __tag = "Ok", v }`, `Err(e)` is `{ __enum = "Result", __tag = "Err", e }`.
-- **`Option<T>`**: `Some(v)` is `{ __enum = "Option", __tag = "Some", v }`, `None` is `{ __enum = "Option", __tag = "None" }`.
+- **`Result<T, E>`**: the prelude enum, lowered per §3.2 — method-bearing, so each constructor wraps the table with the `Result` metatable: `Ok(v)` is `setmetatable({ __enum = "Result", __tag = "Ok", v }, Result)`, `Err(e)` is `setmetatable({ __enum = "Result", __tag = "Err", e }, Result)`.
+- **`Option<T>`**: likewise method-bearing under the `Option` metatable — `Some(v)` is `setmetatable({ __enum = "Option", __tag = "Some", v }, Option)`, `None` is `setmetatable({ __enum = "Option", __tag = "None" }, Option)`.
 - **Method dispatch**: `value:method(…)` (Lua colon call), resolved through the value's metatable. The method lives on the type table as `Type.method(self, …)`.
 - **Indexing**: neoc is 0-based; lists lower to 1-based Lua tables with a `+ 1` adjustment at every index site.
 - **Tests**: `__tests` maps test names to zero-argument functions.
 
-The Result/Option prelude is emitted only when the module references them:
+The Result/Option prelude is emitted only when the module references them. The two enums are **method-bearing** (§3.2): each carries a shared metatable (`Option`/`Result`, with `__index` self-set), every constructor `setmetatable`s its value onto that table, and the inherent operations attach as `self`-first functions. `match` and `?` are unaffected — they read `__tag`/`__enum`/payload, none of which a metatable shadows.
 
 ```
-local Ok   = function(v) return { __enum = "Result", __tag = "Ok", v } end
-local Err  = function(e) return { __enum = "Result", __tag = "Err", e } end
-local Some = function(v) return { __enum = "Option", __tag = "Some", v } end
-local None = { __enum = "Option", __tag = "None" }
+local Option = {}
+Option.__index = Option
+local Result = {}
+Result.__index = Result
+local Ok   = function(v) return setmetatable({ __enum = "Result", __tag = "Ok", v }, Result) end
+local Err  = function(e) return setmetatable({ __enum = "Result", __tag = "Err", e }, Result) end
+local Some = function(v) return setmetatable({ __enum = "Option", __tag = "Some", v }, Option) end
+local None = setmetatable({ __enum = "Option", __tag = "None" }, Option)
+function Option.is_some(self) return self.__tag == "Some" end
+function Option.is_none(self) return self.__tag == "None" end
+function Option.unwrap(self)
+  if self.__tag == "Some" then return self[1] end
+  error("called unwrap on a None value", 0)
+end
+function Option.unwrap_or(self, default)
+  if self.__tag == "Some" then return self[1] else return default end
+end
+function Option.map(self, f)
+  if self.__tag == "Some" then return Some(f(self[1])) else return self end
+end
+function Option.ok_or(self, err)
+  if self.__tag == "Some" then return Ok(self[1]) else return Err(err) end
+end
+function Result.is_ok(self) return self.__tag == "Ok" end
+function Result.is_err(self) return self.__tag == "Err" end
+function Result.unwrap(self)
+  if self.__tag == "Ok" then return self[1] end
+  error("called unwrap on an Err value", 0)
+end
+function Result.unwrap_err(self)
+  if self.__tag == "Err" then return self[1] end
+  error("called unwrap_err on an Ok value", 0)
+end
+function Result.map(self, f)
+  if self.__tag == "Ok" then return Ok(f(self[1])) else return self end
+end
+function Result.map_err(self, f)
+  if self.__tag == "Err" then return Err(f(self[1])) else return self end
+end
 ```
+
+The inherent methods (snake_case, host-agnostic; typed in `STATIC.md` §3.6):
+
+- **`Option<T>`**: `is_some`, `is_none`, `unwrap`, `unwrap_or`, `map`, `ok_or`
+- **`Result<T, E>`**: `is_ok`, `is_err`, `unwrap`, `unwrap_err`, `map`, `map_err`
+
+`map`/`map_err`/`ok_or` carry a method-level generic (`map<U>`, `map_err<F>`, `ok_or<E>`) bound from the closure or argument at the call site. On the inert variant (`None.map`, `Err.map`, `Ok.map_err`) the value flows through unchanged. `unwrap`/`unwrap_err` abort with a neoc-shaped message — `called unwrap on a None value`, `called unwrap on an Err value`, `called unwrap_err on an Ok value` — carrying no host phrasing: Lua `error(msg, 0)` (level 0 suppresses the host `file:line:` prefix), JS `throw new Error(msg)`.
 
 ### 7.1 JS runtime conventions
 
@@ -413,13 +455,36 @@ The JS backend mirrors §7 with prototype-backed objects in place of metatables:
 - **Indexing**: JS lists are 0-based, matching neoc; no adjustment.
 - **Trait metadata**: `__t` (§3.2a), inert; the only registry the JS backend emits.
 
-The Result/Option prelude enums are always plain (no prototype):
+The Result/Option prelude enums are method-bearing (§3.2): each carries a shared prototype (`Option$`/`Result$`), every constructor links its value via `__proto__`, and the inherent operations attach to the prototype with the receiver as `this`. `match` and `?` read `__tag`/`__enum`/payload — own properties the prototype never shadows.
 
 ```
-const Ok = (v) => ({ __enum: "Result", __tag: "Ok", _0: v });
-const Err = (e) => ({ __enum: "Result", __tag: "Err", _0: e });
-const Some = (v) => ({ __enum: "Option", __tag: "Some", _0: v });
-const None = { __enum: "Option", __tag: "None" };
+const Option$ = {};
+const Result$ = {};
+const Ok = (v) => ({ __enum: "Result", __tag: "Ok", _0: v, __proto__: Result$ });
+const Err = (e) => ({ __enum: "Result", __tag: "Err", _0: e, __proto__: Result$ });
+const Some = (v) => ({ __enum: "Option", __tag: "Some", _0: v, __proto__: Option$ });
+const None = { __enum: "Option", __tag: "None", __proto__: Option$ };
+Option$.is_some = function() { return this.__tag === "Some"; };
+Option$.is_none = function() { return this.__tag === "None"; };
+Option$.unwrap = function() {
+  if (this.__tag === "Some") return this._0;
+  throw new Error("called unwrap on a None value");
+};
+Option$.unwrap_or = function(default_) { return this.__tag === "Some" ? this._0 : default_; };
+Option$.map = function(f) { return this.__tag === "Some" ? Some(f(this._0)) : this; };
+Option$.ok_or = function(err) { return this.__tag === "Some" ? Ok(this._0) : Err(err); };
+Result$.is_ok = function() { return this.__tag === "Ok"; };
+Result$.is_err = function() { return this.__tag === "Err"; };
+Result$.unwrap = function() {
+  if (this.__tag === "Ok") return this._0;
+  throw new Error("called unwrap on an Err value");
+};
+Result$.unwrap_err = function() {
+  if (this.__tag === "Err") return this._0;
+  throw new Error("called unwrap_err on an Ok value");
+};
+Result$.map = function(f) { return this.__tag === "Ok" ? Ok(f(this._0)) : this; };
+Result$.map_err = function(f) { return this.__tag === "Err" ? Err(f(this._0)) : this; };
 ```
 
 A type's prototype `TypeName$` is a module-level binding. A value links to it at construction, so the value carries dispatch wherever it flows — including across an ES-module `use` boundary (§3.7): the importing module never needs the prototype in scope, because the link was made in the defining module. (Contrast the superseded per-module method registry, which an importer had to re-wire for each imported type.) A `pub` method-bearing type therefore need not export `TypeName$` for dispatch to work cross-module; see §7.2 for the one case — a cross-module trait impl — that does.

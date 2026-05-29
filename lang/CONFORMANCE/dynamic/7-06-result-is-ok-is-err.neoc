@@ -1,0 +1,13 @@
+// DYNAMIC.md §7: `Result::is_ok`/`is_err` read the variant `__tag`.
+extern {
+    fn println(b: bool);
+}
+
+fn main() {
+    let ok: Result<number, string> = Ok(1);
+    let err: Result<number, string> = Err("bad");
+    println(ok.is_ok());
+    println(ok.is_err());
+    println(err.is_ok());
+    println(err.is_err());
+}

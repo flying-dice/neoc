@@ -397,11 +397,45 @@ pub(crate) struct LoopFrame {
     pub break_flag: Option<String>,
 }
 
-const RESULT_PRELUDE: &str = "\
-local Ok   = function(v) return { __enum = \"Result\", __tag = \"Ok\", v } end
-local Err  = function(e) return { __enum = \"Result\", __tag = \"Err\", e } end
-local Some = function(v) return { __enum = \"Option\", __tag = \"Some\", v } end
-local None = { __enum = \"Option\", __tag = \"None\" }";
+const RESULT_PRELUDE: &str = r#"local Option = {}
+Option.__index = Option
+local Result = {}
+Result.__index = Result
+local Ok   = function(v) return setmetatable({ __enum = "Result", __tag = "Ok", v }, Result) end
+local Err  = function(e) return setmetatable({ __enum = "Result", __tag = "Err", e }, Result) end
+local Some = function(v) return setmetatable({ __enum = "Option", __tag = "Some", v }, Option) end
+local None = setmetatable({ __enum = "Option", __tag = "None" }, Option)
+function Option.is_some(self) return self.__tag == "Some" end
+function Option.is_none(self) return self.__tag == "None" end
+function Option.unwrap(self)
+  if self.__tag == "Some" then return self[1] end
+  error("called unwrap on a None value", 0)
+end
+function Option.unwrap_or(self, default)
+  if self.__tag == "Some" then return self[1] else return default end
+end
+function Option.map(self, f)
+  if self.__tag == "Some" then return Some(f(self[1])) else return self end
+end
+function Option.ok_or(self, err)
+  if self.__tag == "Some" then return Ok(self[1]) else return Err(err) end
+end
+function Result.is_ok(self) return self.__tag == "Ok" end
+function Result.is_err(self) return self.__tag == "Err" end
+function Result.unwrap(self)
+  if self.__tag == "Ok" then return self[1] end
+  error("called unwrap on an Err value", 0)
+end
+function Result.unwrap_err(self)
+  if self.__tag == "Err" then return self[1] end
+  error("called unwrap_err on an Ok value", 0)
+end
+function Result.map(self, f)
+  if self.__tag == "Ok" then return Ok(f(self[1])) else return self end
+end
+function Result.map_err(self, f)
+  if self.__tag == "Err" then return Err(f(self[1])) else return self end
+end"#;
 
 impl Emitter {
     pub(crate) fn error(&mut self, message: impl Into<String>) {
@@ -559,8 +593,9 @@ impl Emitter {
     }
 
     /// Record every enum that needs a method table: one with a `#[derive(...)]`
-    /// or any `impl` block targeting it. Variant construction for these enums is
-    /// `setmetatable`d so `:method` dispatch resolves (§3.2).
+    /// or any `impl` block targeting it, plus the always method-bearing prelude
+    /// enums `Option`/`Result` (`DYNAMIC.md` §7). Variant construction for these
+    /// enums is `setmetatable`d so `:method` dispatch resolves (§3.2).
     fn collect_method_enums(&mut self, module: &ast::Module) {
         let enum_names: std::collections::HashSet<&str> = module
             .items
@@ -587,6 +622,13 @@ impl Emitter {
                 _ => {}
             }
         }
+        // The prelude enums are method-bearing (`DYNAMIC.md` §3.2, §7), so inline
+        // variant construction (`Option::Some(x)`, `Option::None`) must be
+        // `setmetatable`d onto the prelude's metatable to match the constructor
+        // functions. The predicate is consulted only at construction sites, which
+        // exist only when the prelude is emitted.
+        self.method_enums.insert("Option".to_string());
+        self.method_enums.insert("Result".to_string());
     }
 
     /// Record every type name whose `Type::member` access reads a table field:

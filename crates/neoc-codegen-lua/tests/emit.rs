@@ -716,12 +716,11 @@ fn golden_try_operator() {
            Ok(v)\n\
          }",
     );
-    let expected = "\
-local Ok   = function(v) return { __enum = \"Result\", __tag = \"Ok\", v } end
-local Err  = function(e) return { __enum = \"Result\", __tag = \"Err\", e } end
-local Some = function(v) return { __enum = \"Option\", __tag = \"Some\", v } end
-local None = { __enum = \"Option\", __tag = \"None\" }
-
+    // The `?` lowering is the subject here; the method-bearing Result/Option
+    // prelude is pinned exhaustively by the conformance suite
+    // (`CONFORMANCE/dynamic/4-08-try-*`), so assert the emitted `run` body rather
+    // than re-duplicating the prelude in this unit test.
+    let expected_body = "\
 local function run(r)
   local __try_0 = parse()
   if __try_0.__tag == \"Err\" or __try_0.__tag == \"None\" then return __try_0 end
@@ -729,7 +728,30 @@ local function run(r)
   return Ok(v)
 end
 ";
-    assert_eq!(out, expected);
+    assert!(
+        out.ends_with(expected_body),
+        "emitted `run` body mismatch:\n{out}"
+    );
+}
+
+#[test]
+fn prelude_unwrap_panics_are_neoc_shaped() {
+    // Acceptance (issue #79): `unwrap`/`unwrap_err` abort with a neoc-shaped
+    // message and no host phrasing — Lua `error(msg, 0)`, where level 0
+    // suppresses the host `file:line:` prefix (`DYNAMIC.md` §7).
+    let out = lua_from_source("fn run() -> number { Some(1).unwrap() }");
+    assert!(
+        out.contains("error(\"called unwrap on a None value\", 0)"),
+        "{out}"
+    );
+    assert!(
+        out.contains("error(\"called unwrap on an Err value\", 0)"),
+        "{out}"
+    );
+    assert!(
+        out.contains("error(\"called unwrap_err on an Ok value\", 0)"),
+        "{out}"
+    );
 }
 
 // ---- source map (#55 / #56) -------------------------------------------------

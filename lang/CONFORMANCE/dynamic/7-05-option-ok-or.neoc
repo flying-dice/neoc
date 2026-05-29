@@ -1,0 +1,12 @@
+// DYNAMIC.md §7: `Option::ok_or` turns `Some` into `Ok` and `None` into `Err`.
+// The method-level generic `E` follows the supplied error.
+extern {
+    fn println(b: bool);
+}
+
+fn main() {
+    let s = Some(5);
+    let n: Option<number> = Option::None;
+    println(s.ok_or("x").is_ok());
+    println(n.ok_or("x").is_err());
+}

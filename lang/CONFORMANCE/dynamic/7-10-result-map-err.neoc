@@ -1,0 +1,19 @@
+// DYNAMIC.md §7: `Result::map_err` applies the closure under `Err` and threads
+// `Ok` through unchanged. The method-level generic `F` follows the closure.
+extern {
+    fn println(s: string);
+}
+
+fn read_err(r: Result<number, string>) -> string {
+    match r {
+        Ok(_) => "ok",
+        Err(e) => e,
+    }
+}
+
+fn main() {
+    let ok: Result<number, string> = Ok(1);
+    let err: Result<number, string> = Err("x");
+    println(read_err(ok.map_err(|e| e)));
+    println(read_err(err.map_err(|e| e)));
+}

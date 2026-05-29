@@ -972,6 +972,15 @@ impl<'a> Checker<'a> {
                     Self::unify_param(p, a, subst);
                 }
             }
+            // Recurse through function types so a method-level generic in a
+            // closure's return position binds — `map<U>(f: fn(T) -> U)` reads `U`
+            // from the closure argument's inferred return type.
+            (Ty::Fn(pp, pr), Ty::Fn(ap, ar)) if pp.len() == ap.len() => {
+                for (p, a) in pp.iter().zip(ap) {
+                    Self::unify_param(p, a, subst);
+                }
+                Self::unify_param(pr, ar, subst);
+            }
             _ => {}
         }
     }
@@ -1077,15 +1086,27 @@ impl<'a> Checker<'a> {
             return Ty::Unknown;
         };
         // Project the method signature through the receiver's concrete type
-        // arguments, so `Box<number>::get(self) -> T` yields `number`, then
-        // check the call against the projected parameters.
-        let subst = self.nominal_subst(&recv);
-        let params: Vec<Ty> = m
+        // arguments, so `Box<number>::get(self) -> T` yields `number`.
+        let nominal = self.nominal_subst(&recv);
+        let mut params: Vec<Ty> = m
             .params
             .iter()
-            .map(|p| Self::subst_named(p, &subst))
+            .map(|p| Self::subst_named(p, &nominal))
             .collect();
-        let ret = Self::subst_named(&m.ret, &subst);
+        let mut ret = Self::subst_named(&m.ret, &nominal);
+        // A method-level generic (one not among the receiver's type arguments —
+        // `map`'s `U`, `map_err`'s `F`, `ok_or`'s `E`) survives nominal
+        // projection as a free `Ty::Param`. Bind it by unifying the projected
+        // parameters against the argument types, then apply to the parameters
+        // (so the call type-checks) and the return (so `opt.map(f)` yields
+        // `Option<U>` with `U` resolved, not the bare parameter).
+        let method_subst = Self::param_subst(&params, &arg_tys);
+        if !method_subst.is_empty() {
+            for p in &mut params {
+                *p = Self::subst_named(p, &method_subst);
+            }
+            ret = Self::subst_named(&ret, &method_subst);
+        }
         self.check_call_args(method, &params, &arg_tys, args, span);
         ret
     }
