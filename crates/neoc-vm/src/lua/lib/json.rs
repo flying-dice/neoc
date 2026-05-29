@@ -515,8 +515,30 @@ impl Object {
     }
 }
 
+/// The element count of whichever container resolves at `path` — an `Object`
+/// handle's path always lands on an object, an `Array`'s on an array, so one
+/// helper serves both. `0` for a scalar or a stale path.
+fn node_len(root: &Root, path: &[PathSeg]) -> i64 {
+    with_resolved(root, path, |r| match r {
+        Some(JsonValue::Object(m)) => m.len() as i64,
+        Some(JsonValue::Array(a)) => a.len() as i64,
+        _ => 0,
+    })
+}
+
+/// The node at `path` as a deep Lua value, or `nil` for a stale path. Shared by
+/// both handle types — the conversion is identical regardless of kind.
+fn node_to_table(lua: &Lua, root: &Root, path: &[PathSeg]) -> mlua::Result<Value> {
+    with_resolved(root, path, |r| match r {
+        Some(v) => json_value_to_lua(lua, v),
+        None => Ok(Value::Nil),
+    })
+}
+
 impl UserData for Object {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        // `get`/`len`/`to_table` are shared with `Array` (both are root+path):
+        // `get` delegates to `walk_get`, the other two to the `node_*` helpers.
         methods.add_method("get", |lua, this, args: MultiValue| {
             walk_get(lua, &this.root, &this.path, args)
         });
@@ -542,17 +564,9 @@ impl UserData for Object {
             })?;
             Ok(t)
         });
-        methods.add_method("len", |_, this, _: ()| {
-            Ok(with_resolved(&this.root, &this.path, |r| match r {
-                Some(JsonValue::Object(m)) => m.len() as i64,
-                _ => 0,
-            }))
-        });
+        methods.add_method("len", |_, this, _: ()| Ok(node_len(&this.root, &this.path)));
         methods.add_method("to_table", |lua, this, _: ()| {
-            with_resolved(&this.root, &this.path, |r| match r {
-                Some(v) => json_value_to_lua(lua, v),
-                None => Ok(Value::Nil),
-            })
+            node_to_table(lua, &this.root, &this.path)
         });
     }
 }
@@ -607,7 +621,7 @@ impl Array {
 
 impl UserData for Array {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        // TODO: clean-code - 0.65 - DRY: Array's `get`, `len`, `to_table` are byte-for-byte mirrors of Object's; share via a free helper keyed on Arc<Root>+path.
+        // `get`/`len`/`to_table` are the same as `Object`'s — see those helpers.
         methods.add_method("get", |lua, this, args: MultiValue| {
             walk_get(lua, &this.root, &this.path, args)
         });
@@ -620,17 +634,9 @@ impl UserData for Array {
         methods.add_method("push", |_, this, v: Value| {
             this.push_inner(lua_value_to_json_value(&v)?)
         });
-        methods.add_method("len", |_, this, _: ()| {
-            Ok(with_resolved(&this.root, &this.path, |r| match r {
-                Some(JsonValue::Array(a)) => a.len() as i64,
-                _ => 0,
-            }))
-        });
+        methods.add_method("len", |_, this, _: ()| Ok(node_len(&this.root, &this.path)));
         methods.add_method("to_table", |lua, this, _: ()| {
-            with_resolved(&this.root, &this.path, |r| match r {
-                Some(v) => json_value_to_lua(lua, v),
-                None => Ok(Value::Nil),
-            })
+            node_to_table(lua, &this.root, &this.path)
         });
     }
 }
