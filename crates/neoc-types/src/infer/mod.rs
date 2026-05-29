@@ -451,7 +451,7 @@ impl<'a> Checker<'a> {
                         self.scopes.bind("self", st.clone());
                     }
                 }
-                ast::Param::Named { name, ty, span } => {
+                ast::Param::Named { name, ty, span, .. } => {
                     let lowered = self.lower(ty);
                     let pty = match &self_target {
                         Some(st) => lowered.subst_self(st),
