@@ -150,7 +150,11 @@ fn autosql(dialect: Dialect, err: &mut impl Write) -> Result<i32> {
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
         }
-        fs::write(&dest, &file.contents).with_context(|| format!("writing {}", dest.display()))?;
+        // Emit canonical neoc: run the generated source through the same
+        // formatter `neoc fmt` uses, so output never drifts from the canonical
+        // style. Fall back to the raw text if formatting ever fails (cosmetic).
+        let contents = neoc_fmt::format(&file.contents).unwrap_or_else(|_| file.contents.clone());
+        fs::write(&dest, &contents).with_context(|| format!("writing {}", dest.display()))?;
         writeln!(err, "autosql: wrote {}", dest.display())?;
     }
     Ok(0)

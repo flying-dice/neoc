@@ -13,6 +13,7 @@ pub enum SqlValue {
 
 pub trait SqlExecutor {
     fn execute(self, sql: string, params: [SqlValue]) -> Result<number, string>;
+
     fn query(self, sql: string, params: [SqlValue]) -> Result<[[SqlValue]], string>;
 }
 
