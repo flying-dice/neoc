@@ -277,7 +277,7 @@ pages:
     PAGES_PREFIX: ""
     VITEPRESS_BASE: /flying-dice/neoc/
   pages:
-    path_prefix: "$PAGES_PREFIX"
+    path_prefix: "preview-test"
     expire_in: 1 week
   script:
     - cd docs
