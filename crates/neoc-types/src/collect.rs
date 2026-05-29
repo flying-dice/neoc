@@ -289,6 +289,66 @@ fn seed_prelude(table: &mut SymbolTable) {
         Ty::Fn(vec![t.clone()], Box::new(Ty::option(t.clone()))),
     );
     table.values.insert("None".to_string(), Ty::option(t));
+
+    // Inherent methods (`DYNAMIC.md` §7, `STATIC.md` §3.6). `self` is the
+    // receiver, excluded from `params`. `map`/`map_err`/`ok_or` introduce a
+    // method-level generic (`U`/`F`/`E`) not bound by the receiver; the call
+    // site binds it by unification (`infer/mod.rs`), so registration is a plain
+    // signature insert — the fresh parameter is just a `Ty::Param` surviving the
+    // receiver's nominal projection.
+    let param = |name: &str| Ty::Param(name.to_string());
+    let closure_ty = |arg: Ty, ret: Ty| Ty::Fn(vec![arg], Box::new(ret));
+    prelude_method(table, "Option", "is_some", vec![], Ty::Bool);
+    prelude_method(table, "Option", "is_none", vec![], Ty::Bool);
+    prelude_method(table, "Option", "unwrap", vec![], param("T"));
+    prelude_method(table, "Option", "unwrap_or", vec![param("T")], param("T"));
+    prelude_method(
+        table,
+        "Option",
+        "map",
+        vec![closure_ty(param("T"), param("U"))],
+        Ty::option(param("U")),
+    );
+    prelude_method(
+        table,
+        "Option",
+        "ok_or",
+        vec![param("E")],
+        Ty::result(param("T"), param("E")),
+    );
+    prelude_method(table, "Result", "is_ok", vec![], Ty::Bool);
+    prelude_method(table, "Result", "is_err", vec![], Ty::Bool);
+    prelude_method(table, "Result", "unwrap", vec![], param("T"));
+    prelude_method(table, "Result", "unwrap_err", vec![], param("E"));
+    prelude_method(
+        table,
+        "Result",
+        "map",
+        vec![closure_ty(param("T"), param("U"))],
+        Ty::result(param("U"), param("E")),
+    );
+    prelude_method(
+        table,
+        "Result",
+        "map_err",
+        vec![closure_ty(param("E"), param("F"))],
+        Ty::result(param("T"), param("F")),
+    );
+}
+
+/// Registers one prelude inherent method (`self`-receiver, excluded from
+/// `params`) on `ty`. A method-level generic in `params`/`ret` is an ordinary
+/// `Ty::Param`; the call site binds it by unification after the receiver's
+/// nominal arguments are projected.
+fn prelude_method(table: &mut SymbolTable, ty: &str, name: &str, params: Vec<Ty>, ret: Ty) {
+    table.methods.insert(
+        (ty.to_string(), name.to_string()),
+        MethodInfo {
+            params,
+            ret,
+            has_receiver: true,
+        },
+    );
 }
 
 /// Records the names a `pub` item exports into the table's visibility sets, so

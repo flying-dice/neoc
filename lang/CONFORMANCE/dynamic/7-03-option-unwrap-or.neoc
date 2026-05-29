@@ -1,0 +1,12 @@
+// DYNAMIC.md §7: `Option::unwrap_or` yields the payload of `Some`, else the
+// supplied default.
+extern {
+    fn println(n: number);
+}
+
+fn main() {
+    let s = Some(7);
+    let n: Option<number> = Option::None;
+    println(s.unwrap_or(0));
+    println(n.unwrap_or(99));
+}

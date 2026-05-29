@@ -1,0 +1,9 @@
+// DYNAMIC.md §7: `Option::unwrap` yields the payload of `Some`.
+extern {
+    fn println(n: number);
+}
+
+fn main() {
+    let s = Some(42);
+    println(s.unwrap());
+}

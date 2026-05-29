@@ -851,3 +851,63 @@ fn single_underscore_field_allowed() {
     // underscore-letter field is a normal data key and type-checks.
     assert_clean("struct S { _0: number, _id: number }");
 }
+
+// ---- inherent Option/Result methods (STATIC.md §3.6, issue #79) -------------
+
+#[test]
+fn clean_option_inherent_methods() {
+    // Each resolves on the concrete instantiation `Option<number>`.
+    assert_clean("fn f(o: Option<number>) -> bool { o.is_some() }");
+    assert_clean("fn f(o: Option<number>) -> bool { o.is_none() }");
+    assert_clean("fn f(o: Option<number>) -> number { o.unwrap() }");
+    assert_clean("fn f(o: Option<number>) -> number { o.unwrap_or(0) }");
+}
+
+#[test]
+fn clean_result_inherent_methods() {
+    assert_clean("fn f(r: Result<number, string>) -> bool { r.is_ok() }");
+    assert_clean("fn f(r: Result<number, string>) -> bool { r.is_err() }");
+    assert_clean("fn f(r: Result<number, string>) -> number { r.unwrap() }");
+    assert_clean("fn f(r: Result<number, string>) -> string { r.unwrap_err() }");
+}
+
+#[test]
+fn option_map_binds_method_generic() {
+    // `map<U>`'s `U` is a method-level generic bound at the call site, not from
+    // the receiver: `Option<number>::map(|n| n + 1) -> Option<number>`, so the
+    // chained `unwrap_or(0)` is a clean `number`.
+    assert_clean("fn f(o: Option<number>) -> number { o.map(|n| n + 1).unwrap_or(0) }");
+}
+
+#[test]
+fn option_ok_or_binds_error_generic() {
+    // `ok_or<E>` binds `E` from the supplied error, yielding `Result<number, string>`.
+    assert_clean("fn f(o: Option<number>) -> bool { o.ok_or(\"missing\").is_ok() }");
+}
+
+#[test]
+fn result_map_err_binds_method_generic() {
+    assert_clean("fn f(r: Result<number, string>) -> bool { r.map_err(|e| e).is_err() }");
+}
+
+#[test]
+fn option_method_not_on_result_rejected() {
+    // `unwrap_or` is an `Option` method; it must not resolve on `Result` — the
+    // signatures are registered per type, not shared.
+    let d = diags("fn f(r: Result<number, string>) -> number { r.unwrap_or(0) }");
+    assert!(
+        d.iter()
+            .any(|m| m == "type `Result` has no method `unwrap_or`"),
+        "{d:?}"
+    );
+}
+
+#[test]
+fn result_method_not_on_option_rejected() {
+    // `is_ok` is a `Result` method; it must not resolve on `Option`.
+    let d = diags("fn f(o: Option<number>) -> bool { o.is_ok() }");
+    assert!(
+        d.iter().any(|m| m == "type `Option` has no method `is_ok`"),
+        "{d:?}"
+    );
+}

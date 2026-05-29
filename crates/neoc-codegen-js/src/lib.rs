@@ -467,12 +467,35 @@ pub(crate) struct Emitter {
     importer_dir: Vec<String>,
 }
 
-/// The `Result`/`Option` prelude: variant constructors as plain tagged objects.
-const RESULT_PRELUDE: &str = "\
-const Ok = (v) => ({ __enum: \"Result\", __tag: \"Ok\", _0: v });
-const Err = (e) => ({ __enum: \"Result\", __tag: \"Err\", _0: e });
-const Some = (v) => ({ __enum: \"Option\", __tag: \"Some\", _0: v });
-const None = { __enum: \"Option\", __tag: \"None\" };";
+/// The `Result`/`Option` prelude: method-bearing variant constructors linked to
+/// the shared `Option$`/`Result$` prototypes (`lang/DYNAMIC.md` §7.1).
+const RESULT_PRELUDE: &str = r#"const Option$ = {};
+const Result$ = {};
+const Ok = (v) => ({ __enum: "Result", __tag: "Ok", _0: v, __proto__: Result$ });
+const Err = (e) => ({ __enum: "Result", __tag: "Err", _0: e, __proto__: Result$ });
+const Some = (v) => ({ __enum: "Option", __tag: "Some", _0: v, __proto__: Option$ });
+const None = { __enum: "Option", __tag: "None", __proto__: Option$ };
+Option$.is_some = function() { return this.__tag === "Some"; };
+Option$.is_none = function() { return this.__tag === "None"; };
+Option$.unwrap = function() {
+  if (this.__tag === "Some") return this._0;
+  throw new Error("called unwrap on a None value");
+};
+Option$.unwrap_or = function(default_) { return this.__tag === "Some" ? this._0 : default_; };
+Option$.map = function(f) { return this.__tag === "Some" ? Some(f(this._0)) : this; };
+Option$.ok_or = function(err) { return this.__tag === "Some" ? Ok(this._0) : Err(err); };
+Result$.is_ok = function() { return this.__tag === "Ok"; };
+Result$.is_err = function() { return this.__tag === "Err"; };
+Result$.unwrap = function() {
+  if (this.__tag === "Ok") return this._0;
+  throw new Error("called unwrap on an Err value");
+};
+Result$.unwrap_err = function() {
+  if (this.__tag === "Err") return this._0;
+  throw new Error("called unwrap_err on an Ok value");
+};
+Result$.map = function(f) { return this.__tag === "Ok" ? Ok(f(this._0)) : this; };
+Result$.map_err = function(f) { return this.__tag === "Err" ? Err(f(this._0)) : this; };"#;
 
 /// The trait registry: a table keyed by type name listing the traits each type
 /// implements (`__traits` runtime tag). Read as `__t[recv.__struct ?? recv.__enum]`.
@@ -558,9 +581,19 @@ impl Emitter {
     }
 
     /// Record every type that needs a prototype: a struct/enum with a
-    /// `#[derive(...)]` or any `impl` block targeting it.
+    /// `#[derive(...)]` or any `impl` block targeting it, plus the always
+    /// method-bearing prelude enums `Option`/`Result` (`DYNAMIC.md` §7.1).
     fn collect_method_types(&mut self, module: &ast::Module) {
         self.method_types = method_type_names(module);
+        // The prelude enums are method-bearing (`DYNAMIC.md` §3.2, §7.1): seed
+        // them so inline variant construction (`Option::Some(x)`, `Option::None`)
+        // links to the prelude's `Option$`/`Result$` prototype via `__proto__`,
+        // matching the constructor functions. The predicate is consulted only at
+        // construction/path sites that exist when the prelude is emitted; no
+        // stray `const Option$ = {}` is generated, since prototypes are emitted
+        // per module item and these are not items.
+        self.method_types.insert("Option".to_string());
+        self.method_types.insert("Result".to_string());
     }
 
     /// Whether `name` is a type with a prototype. Used to decide when to emit the
@@ -773,6 +806,15 @@ mod tests {
     /// for these single-module fixtures, which carry no cross-module `use`.
     fn emit_solo(module: &ast::Module) -> EmitResult {
         emit(module, &HashSet::new(), &HashSet::new(), &[], &[], &[])
+    }
+
+    #[test]
+    fn prelude_unwrap_panics_are_neoc_shaped() {
+        // Acceptance (issue #79): `unwrap`/`unwrap_err` throw a neoc-shaped
+        // message carrying no host phrasing (`DYNAMIC.md` §7.1).
+        assert!(RESULT_PRELUDE.contains(r#"throw new Error("called unwrap on a None value")"#));
+        assert!(RESULT_PRELUDE.contains(r#"throw new Error("called unwrap on an Err value")"#));
+        assert!(RESULT_PRELUDE.contains(r#"throw new Error("called unwrap_err on an Ok value")"#));
     }
 
     #[test]

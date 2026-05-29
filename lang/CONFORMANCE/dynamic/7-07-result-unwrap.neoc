@@ -1,0 +1,9 @@
+// DYNAMIC.md §7: `Result::unwrap` yields the payload of `Ok`.
+extern {
+    fn println(n: number);
+}
+
+fn main() {
+    let ok: Result<number, string> = Ok(33);
+    println(ok.unwrap());
+}

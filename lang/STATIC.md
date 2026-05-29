@@ -126,6 +126,28 @@ enum Option<T>    { Some(T), None }
 
 Their constructors `Ok`, `Err`, `Some`, `None` are in the value namespace unqualified. They are not primitive, but they are load-bearing: the `?` operator (§6) and `match` exhaustiveness (§7) both have rules that mention them by name.
 
+Both carry **inherent methods** (`self`-receiver, snake_case), resolved on the concrete instantiation like any nominal method (§4.1) — `Option<number>::is_some`, `Result<string, E>::map`, etc.:
+
+```
+Option<T>:
+  fn is_some(self) -> bool
+  fn is_none(self) -> bool
+  fn unwrap(self) -> T
+  fn unwrap_or(self, default: T) -> T
+  fn map<U>(self, f: fn(T) -> U) -> Option<U>
+  fn ok_or<E>(self, err: E) -> Result<T, E>
+
+Result<T, E>:
+  fn is_ok(self) -> bool
+  fn is_err(self) -> bool
+  fn unwrap(self) -> T
+  fn unwrap_err(self) -> E
+  fn map<U>(self, f: fn(T) -> U) -> Result<U, E>
+  fn map_err<F>(self, f: fn(E) -> F) -> Result<T, F>
+```
+
+`map`, `map_err`, and `ok_or` introduce a **method-level** type parameter (`U`, `F`, `E`) not bound by the receiver. The receiver's own arguments project as usual (`T`/`E` from the receiver type); the fresh parameter is left open and bound by unifying the declared parameter types against the argument types at the call site, so `map`'s `U` follows the closure's return type and `ok_or`'s `E` follows the supplied error. `unwrap`/`unwrap_err` are well-typed total projections statically (`-> T`/`-> E`); calling on the inert variant is a runtime abort (`DYNAMIC.md` §7), not a static error. Method-bearing dispatch is purely a runtime concern (`DYNAMIC.md` §3.2); it changes nothing about `?` (§6), `match` exhaustiveness (§7), derive, or equality.
+
 ### 3.7 `Unknown` — the dynamic boundary type
 
 `Unknown` is the predeclared **dynamic** type: an honest "foreign value whose runtime type neoc cannot know", used at the host boundary (a JS/FFI value reaching neoc through an `extern` declaration or a binding wrapper). It is the one type that opts out of static structure checking, so a binding author can describe a foreign value's shape through ordinary neoc declarations and assert concrete types at the surface.

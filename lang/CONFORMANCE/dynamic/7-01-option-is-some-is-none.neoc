@@ -1,0 +1,14 @@
+// DYNAMIC.md §7: `Option::is_some`/`is_none` read the variant `__tag`; the
+// metatable does not shadow it.
+extern {
+    fn println(b: bool);
+}
+
+fn main() {
+    let s = Some(1);
+    let n: Option<number> = Option::None;
+    println(s.is_some());
+    println(s.is_none());
+    println(n.is_some());
+    println(n.is_none());
+}
