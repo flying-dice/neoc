@@ -39,6 +39,7 @@ The two backends are the two halves of full-stack neoc: **Lua is the backend** a
 | `neoc-codegen-lua` | AST → Lua 5.1; one emit module per construct family | ast, macros |
 | `neoc-codegen-js` | AST → JavaScript (ES2022, ES modules); the browser/frontend target; mirrors `neoc-codegen-lua`'s structure | ast, macros |
 | `neoc-compiler` | the public lib API: `transpile` to any target; merges per-stage diagnostics | ast, parser, types, codegen-lua, codegen-js, macros |
+| `neoc-autosql` | SQL schema + query files → a type-safe `.neoc` data-access layer (sqlc-style); the `neoc autosql` backend. Emits portable `.neoc`, coupled to no runtime | (sqlparser) |
 | `neoc-fmt` | formatter | ast, parser |
 | `neoc-lsp` | language server | compiler, parser |
 | `neoc-wasm` | browser entry point | compiler |

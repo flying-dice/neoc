@@ -133,6 +133,7 @@ crates/neoc-macros     # built-in derives (Clone/Eq/Debug/Display)
 crates/neoc-codegen-lua # AST → Lua 5.1
 crates/neoc-codegen-js  # AST → JavaScript (ES2022)
 crates/neoc-compiler   # public lib API: transpile to any target (the runtime embeds this)
+crates/neoc-autosql    # SQL schema + queries → typed .neoc data layer (neoc autosql)
 crates/neoc-fmt        # formatter
 crates/neoc-lsp        # language server
 crates/neoc-wasm       # browser entry point
