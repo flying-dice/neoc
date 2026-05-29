@@ -41,6 +41,7 @@ fn function_with_let_and_return() {
                     args: vec![]
                 }],
             }),
+            optional: false,
             // Span compares always-equal, so a default is fine here.
             span: ast::Span::default(),
         }

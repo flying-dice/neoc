@@ -105,6 +105,9 @@ impl Adapter {
                     name,
                     name_span,
                     ty,
+                    // Always false until the grammar emits the `?` marker; the
+                    // grammar/parser stage wires this to the optional node (#78).
+                    optional: false,
                 });
             }
         }
@@ -261,7 +264,14 @@ impl Adapter {
                     let ty = self
                         .field(child, "type")
                         .map_or(ast::Type::Unit, |t| self.walk_type(t));
-                    params.push(ast::Param::Named { name, ty, span });
+                    // `optional` is always false until the grammar emits the `?`
+                    // marker; the grammar/parser stage wires it here (#78).
+                    params.push(ast::Param::Named {
+                        name,
+                        ty,
+                        optional: false,
+                        span,
+                    });
                 }
                 _ => {}
             }

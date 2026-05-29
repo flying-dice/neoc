@@ -813,6 +813,7 @@ mod tests {
                 params: vec![ast::Param::Named {
                     name: "o".to_string(),
                     ty: ast::Type::Unit,
+                    optional: false,
                     span: ast::Span::default(),
                 }],
                 ret: None,
@@ -890,6 +891,7 @@ mod tests {
             name: name.to_string(),
             name_span: ast::Span::default(),
             ty: ast::Type::Unit,
+            optional: false,
         }
     }
 
@@ -1138,6 +1140,7 @@ mod tests {
                 params: vec![ast::Param::Named {
                     name: "v".to_string(),
                     ty: ast::Type::Unit,
+                    optional: false,
                     span: ast::Span::default(),
                 }],
                 ret: None,
