@@ -125,8 +125,9 @@ test("classes become struct + impl with a #[extern(constructor)] new", () => {
 
   expect(out).toContain("struct Database;");
   expect(out).toContain("impl Database {");
-  // trailing optional ctor params dropped; all optional → keep first; no return type
-  expect(out).toContain("#[extern(constructor)] pub fn new(filename: string);");
+  // trailing optional ctor params dropped; all optional → keep first; no return type.
+  // the attribute breaks onto its own line above the fn (canonical neoc fmt).
+  expect(out).toMatch(/#\[extern\(constructor\)\]\n\s*pub fn new\(filename: string\);/);
   expect(out).toContain("fn run(self, sql: string) -> Changes;");
   expect(out).toContain("fn count(self) -> number;");
 
@@ -135,7 +136,7 @@ test("classes become struct + impl with a #[extern(constructor)] new", () => {
 
   // no-constructor class → 0-arg new
   expect(out).toContain("struct Ping;");
-  expect(out).toContain("#[extern(constructor)] pub fn new();");
+  expect(out).toMatch(/#\[extern\(constructor\)\]\n\s*pub fn new\(\);/);
 
   // no bodies, no shim
   expect(out).not.toContain("js_new");

@@ -244,7 +244,7 @@ function emitStruct(name: string, decl: ExportedDeclarations, structs: Set<strin
   if (ctorLine) implBody.push(ctorLine);
   implBody.push(...methods);
   if (implBody.length > 0) {
-    out.push(`impl ${name} {\n${implBody.map((m) => `    ${m}`).join("\n")}\n}`);
+    out.push(`impl ${name} {\n${implBody.map((m) => indent(m, "    ")).join("\n")}\n}`);
   }
   return out;
 }
@@ -322,7 +322,7 @@ function constructorLine(decl: ExportedDeclarations, structs: Set<string>): stri
   const ctor = Node.isClassDeclaration(decl) ? decl.getConstructors()[0] : undefined;
   const all = ctor?.getParameters() ?? [];
   const params = paramList(all, structs, /* keepFirstIfAllOptional */ true);
-  return `#[extern(constructor)] pub fn new(${params.join(", ")});`;
+  return `#[extern(constructor)]\npub fn new(${params.join(", ")});`;
 }
 
 /**

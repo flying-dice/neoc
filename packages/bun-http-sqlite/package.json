@@ -5,7 +5,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "gen:ts": "bun autots",
+    "gen:ts": "bun autots && cargo run -q -p neoc -- fmt 'src/main/neoc/autots/*.neoc'",
     "gen:sql": "cargo run -p neoc -- autosql",
     "prebuild": "bun run gen:ts && bun run gen:sql",
     "build": "cargo run -p neoc -- build",
