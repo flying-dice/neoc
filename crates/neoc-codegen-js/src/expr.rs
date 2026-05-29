@@ -98,8 +98,15 @@ impl Emitter {
     /// stays a diagnostic.
     fn emit_let_destructure(&mut self, pattern: &ast::Pattern, value: Option<&ast::Expr>) {
         if !self.is_irrefutable_let_pattern(pattern) {
+            let why = match pattern {
+                ast::Pattern::Literal(_) => "a literal pattern",
+                ast::Pattern::Path(_) => "an enum-variant pattern",
+                ast::Pattern::Or(_) => "an or-pattern",
+                // A variant-headed `Struct`/`Tuple`, or one with a refutable field.
+                _ => "this pattern",
+            };
             self.error(format!(
-                "refutable pattern in `let` is not supported: {pattern:?}"
+                "refutable pattern in `let` is not supported: {why} can fail to match; use `match` instead"
             ));
             return;
         }
