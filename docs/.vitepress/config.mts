@@ -210,6 +210,7 @@ export default defineConfig({
             { text: '0006 — Hidden async with sync-looking APIs', link: '/adrs/0006-hidden-async-with-sync-looking-apis' },
             { text: '0008 — lib:http static file server', link: '/adrs/0008-lib-http-static-file-server' },
             { text: '0009 — --eval / -e CLI flag', link: '/adrs/0009-eval-cli-flag' },
+            { text: '0010 — Independent codegen backends', link: '/adrs/0010-independent-codegen-backends' },
           ],
         },
         {

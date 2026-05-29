@@ -24,6 +24,7 @@ ADRs are *retrospective* (decisions in force). [RFCs](/rfcs/) are *forward-looki
 - [0007. `std:process` — env, args, child-process spawning](/adrs/0007-std-process-module)
 - [0008. `lib:http` — Static file server with directory index](/adrs/0008-lib-http-static-file-server)
 - [0009. `--eval` / `-e` CLI flag](/adrs/0009-eval-cli-flag)
+- [0010. Independent codegen backends — no shared crate](/adrs/0010-independent-codegen-backends)
 
 ## See also
 
