@@ -690,4 +690,39 @@ mod tests {
         assert!(result.contains("host=localhost"), "got: {result}");
         assert!(result.contains("port=5432"), "got: {result}");
     }
+
+    #[test]
+    fn stringify_scalars_and_rejects_non_scalar() {
+        let lua = engine();
+        // false / integer / number serialise as their literal form — never the
+        // Rust `Debug` rendering (`Boolean(false)`, `Integer(42)`, …) a
+        // catch-all `_ => format!("{v:?}")` arm would have leaked.
+        let s: String = lua
+            .load(r#"return ini.stringify({ s = { f = false, i = 42, n = 1.5 } })"#)
+            .eval()
+            .unwrap();
+        assert!(
+            s.contains("f=false") && s.contains("i=42") && s.contains("n=1.5"),
+            "got: {s}"
+        );
+        assert!(
+            !s.contains("Boolean") && !s.contains("Integer(") && !s.contains("Number("),
+            "Debug leak: {s}"
+        );
+
+        // A non-scalar value (table/function/userdata) has no INI form and is
+        // rejected, not silently serialised.
+        let e: String = lua
+            .load(
+                r#"local ok, err = pcall(function() return ini.stringify({ s = { bad = {} } }) end)
+                   assert(ok == false)
+                   return tostring(err)"#,
+            )
+            .eval()
+            .unwrap();
+        assert!(
+            e.contains("must be a string, number, or boolean"),
+            "got: {e}"
+        );
+    }
 }
