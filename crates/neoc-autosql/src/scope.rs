@@ -135,6 +135,7 @@ impl<'a> Scope<'a> {
     /// The lone table's name when the scope has exactly one source — lets a
     /// `SELECT` whose projection matches that table reuse its model struct.
     /// `None` for a multi-table scope.
+    // TODO: clean-code - 0.55 - DEAD: sole_table is computed and threaded through Inferred but query.rs:106 binds it to `_table` and never reads it; the model-struct reuse it promises is unimplemented — wire it up or drop it.
     pub fn sole_table(&self) -> Option<String> {
         match self.sources.as_slice() {
             [source] => Some(source.table.name.clone()),

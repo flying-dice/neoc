@@ -234,6 +234,7 @@ function emitModule(surface: Surface): string {
   // The struct names this module emits (interfaces + classes with usable names),
   // each with its generic arity. A type ref to one resolves to that struct
   // instantiated to its arity; everything else degrades to `Unknown`.
+  // TODO: clean-code - 0.6 - DRY: this struct-arity collection loop is duplicated verbatim in emitGlobalSurface (~L630, over `entries`); extract a `collectStructs(entries: Entry[]): Structs` helper.
   const structs: Structs = new Map();
   for (const [name, decl] of surface.entries) {
     if (!usableName(name) || structs.has(name)) continue;
@@ -577,6 +578,7 @@ function render(blocks: string[]): string {
  * A `declare global` binding wins over a top-level one of the same name.
  */
 function globalEntries(project: Project, wholeProgram = false): Entry[] {
+  // TODO: clean-code - 0.55 - COUPLING: this read-shaped collector, when wholeProgram is true, mutates the shared Project (addSourceFileAtPathIfExists) that generateProject already used for ambientModules — a hidden side effect + order-dependence (modules must be harvested before globals, else ambientModules sees stdlib/dep declare-module blocks). Lift the project-expansion out of the collector into its own step.
   if (wholeProgram) {
     const program = project.getProgram().compilerObject;
     for (const sf of program.getSourceFiles()) project.addSourceFileAtPathIfExists(sf.fileName);
@@ -716,6 +718,7 @@ function emitGlobalNamespaceVar(
   return `#[extern(ambient, path = ${q(name)})]\nmod ${modIdent(name)} {\n${body}\n}`;
 }
 
+// TODO: clean-code - 0.6 - NAMING: emitGlobalNamespace vs emitGlobalNamespaceVar differ only by a `Var` suffix and both emit a `mod`, but neither name conveys the input distinction (a TS `declare namespace` block vs a namespace-object value binding); rename to e.g. emitNamespaceDecl vs emitNamespaceObjectVar.
 /**
  * Emit a global *namespace* (`declare namespace Reflect { … }`) as an
  * `#[extern(ambient, path = "<Name>")] mod`. Its exported functions become

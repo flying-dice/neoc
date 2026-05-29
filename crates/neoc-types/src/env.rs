@@ -277,6 +277,7 @@ impl SymbolTable {
 
     /// Resolves a type name through alias chains to its underlying definition
     /// name. Returns the input unchanged if it is not an alias.
+    // TODO: clean-code - 0.55 - DEAD: resolve_alias (returns Ty) has zero callers repo-wide — only resolve_alias_ty is used; remove or document the intended consumer.
     #[must_use]
     pub fn resolve_alias(&self, name: &str) -> Ty {
         match self.types.get(name) {

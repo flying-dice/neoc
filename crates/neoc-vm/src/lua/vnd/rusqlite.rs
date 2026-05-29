@@ -438,6 +438,7 @@ fn run_query_one(
 // Lua ⇄ rusqlite type bridges
 // ---------------------------------------------------------------------------
 
+// TODO: clean-code - 0.6 - DRY: this split_sql_args is byte-identical to sqlx_mysql::split_sql_args and sqlx_postgres::split_args — three copies across the DB drivers; lift one shared MultiValue head-extractor (distinct from the within-file repetition flagged at L223).
 fn split_sql_args(mut args: MultiValue) -> Result<(String, Vec<Value>), String> {
     let head = args
         .pop_front()

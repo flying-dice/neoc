@@ -1,3 +1,4 @@
+// TODO: clean-code - 0.7 - DEAD: this whole module (scope, LuauLayer, CURRENT_RUN, RunBuffers, drain) has zero consumers — LuauLayer is never registered as a subscriber and lib:vcr does not use it (the doc itself says the "not yet wired" service layer will). Land it behind the feature that consumes it, or remove until then. dto::procedures (TracingEvent/TracingSpan) is dead with it.
 //! Per-run capture buckets + a `tracing_subscriber` Layer that funnels every
 //! event and span emitted at a `luau*` target into the active run's
 //! buffers. No transformation: clients receive tracing-shaped records.

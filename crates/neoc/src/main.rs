@@ -121,6 +121,7 @@ fn map_lua_lines_to_neoc(text: &str, chunk: &str, map: &SourceMap) -> String {
 }
 
 // TODO: clean-code - 0.55 - SRP: expand_args mixes glob detection, walking, and process::exit error handling
+// TODO: clean-code - 0.55 - DRY: expand_args (globset+walkdir, exits on no-match) and cli.rs::resolve (glob, warns-and-continues) are two glob expanders for the same job on two dep stacks; unify on one crate with a behaviour flag.
 fn expand_args(args: impl Iterator<Item = String>) -> Vec<String> {
     let mut paths = Vec::new();
     for arg in args {

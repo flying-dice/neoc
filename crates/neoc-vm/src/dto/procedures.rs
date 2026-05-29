@@ -1,5 +1,6 @@
 use serde_json::Value as Json;
 
+// TODO: clean-code - 0.6 - DEAD: TracingEvent/TracingSpan are produced only by the (unwired) lua::tracing_layer and read by nothing; remove with that module or land both behind their consumer.
 pub struct TracingEvent {
     pub level: String,
     pub target: String,
