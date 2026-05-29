@@ -50,6 +50,11 @@ use crate::expr::VariantShape;
 /// Enum declarations indexed for use-site resolution: `enum name → (variant
 /// name → payload shape)`. Built from the module's `enum` items and seeded
 /// with the `Result`/`Option` prelude.
+///
+/// Deliberately parallel to `neoc_codegen_lua`'s `EnumIndex` (and
+/// `TupleStructIndex`): the two backends are kept independent rather than
+/// sharing a crate, so each can diverge as its target needs without coupling
+/// the other through a shared dependency. Keep the two in sync by hand.
 #[derive(Default)]
 pub(crate) struct EnumIndex {
     enums: HashMap<String, HashMap<String, VariantShape>>,
