@@ -302,6 +302,11 @@ fn write_props(table: &Table, out: &mut String, spacing: bool) -> mlua::Result<(
         let key = k
             .to_str()
             .map_err(|e| mlua::Error::external(e.to_string()))?;
+        // A bare key (no delimiter) denotes a `true` flag; every other scalar is
+        // written `key<delim>value`. Non-scalar values (tables, functions,
+        // userdata, nil) have no INI representation and are rejected — never
+        // serialised through a host-language `Debug`, which would leak Rust
+        // syntax into the output.
         match &v {
             Value::Boolean(true) => {
                 out.push_str(&key);
@@ -316,12 +321,30 @@ fn write_props(table: &Table, out: &mut String, spacing: bool) -> mlua::Result<(
                 out.push_str(&val);
                 out.push('\n');
             }
-            // TODO: clean-code - 0.7 - KISS: fallback emits Rust Debug syntax into INI output — footgun; either error on non-string/bool or document type contract
-            _ => {
+            Value::Boolean(false) => {
                 out.push_str(&key);
                 out.push_str(delim);
-                out.push_str(&format!("{:?}", v));
+                out.push_str("false");
                 out.push('\n');
+            }
+            Value::Integer(i) => {
+                out.push_str(&key);
+                out.push_str(delim);
+                out.push_str(&i.to_string());
+                out.push('\n');
+            }
+            Value::Number(n) => {
+                out.push_str(&key);
+                out.push_str(delim);
+                out.push_str(&n.to_string());
+                out.push('\n');
+            }
+            other => {
+                return Err(mlua::Error::external(format!(
+                    "ini.stringify: value for key \"{key}\" must be a string, number, or \
+                     boolean, got {}",
+                    other.type_name()
+                )));
             }
         }
     }
