@@ -252,13 +252,13 @@ attach-release-assets:
 
 # ── pages ─────────────────────────────────────────────────────────────────────
 #
-# Builds the VitePress documentation site and publishes it via GitLab Pages.
-# Runs only on the default branch. The `public/` artifact is the GitLab Pages
-# contract — its root becomes the served site.
+# Builds the VitePress documentation site and publishes it to GitLab Pages.
 #
-# If GitLab Pages serves the site at a subpath (e.g. /neoc/) rather than the
-# domain root, set the VITEPRESS_BASE CI/CD variable in project settings:
-#   Settings → CI/CD → Variables → VITEPRESS_BASE = /neoc/
+# Deploys from ANY branch to the single Pages site at the root. Parallel /
+# per-branch deployments aren't honoured on this instance (it ignores
+# `path_prefix`), so there is one site and the most recent pipeline wins —
+# fine in practice, few branches are ever in flight at once. VITEPRESS_BASE is
+# the project's Pages root path; adjust it if that path changes.
 
 pages:
   stage: pages
@@ -278,4 +278,30 @@ pages:
     paths:
       - public
   rules:
+    - if: $CI_COMMIT_BRANCH
+
+# Posts the live docs URL into the branch's MR thread, so the GitLab → Slack
+# integration relays the link to Slack. Resolves the MR from the branch name
+# via glab. Needs PAGES_NOTIFY_TOKEN — a non-protected Project/Personal Access
+# Token with `api` scope (must be non-protected so it's exposed on feature
+# branches; RELEASE_PLZ_TOKEN is protected and won't be). Skipped (not failed)
+# when the token is absent, so Pages still deploys without it.
+#
+# A notification is a side-effect — `allow_failure: true` so a glab error (e.g.
+# the branch has no MR yet, the standard push-before-MR flow) never gates CI.
+pages:notify:
+  stage: pages
+  image: registry.gitlab.com/gitlab-org/cli:latest
+  before_script: []
+  needs: ["pages"]
+  allow_failure: true
+  variables:
+    GITLAB_HOST: "$CI_SERVER_HOST"
+    GITLAB_TOKEN: "$PAGES_NOTIFY_TOKEN"
+  script:
+    - |
+      glab mr note "$CI_COMMIT_REF_NAME" -m "📖 Docs deployed → ${CI_PAGES_URL}/ (${CI_COMMIT_SHORT_SHA})"
+  rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: never
+    - if: $CI_COMMIT_BRANCH && $PAGES_NOTIFY_TOKEN
