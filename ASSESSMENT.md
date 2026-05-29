@@ -64,10 +64,13 @@ CLAUDE.md forbids `unwrap()`/`expect()`/`panic!` outside the `neoc` bin and `#[c
 
 ## Theme 5 — Structural (larger, sequence late, keep tests green)
 
-- [ ] **C1** `lib/compile.rs` `detect_embedded_payload_from` — split open/seek/read/validate/extract (SRP TODO at :94). (medium)
-- [ ] **C2** `lib/csv.rs` (1776 LOC) — split reader/writer submodules. (medium)
-- [ ] **C3** `vnd/hyper.rs` (1054 LOC) — split client/server/types. (medium)
-- [ ] **C4** `codegen-lua/src/pat.rs` ≈ `codegen-js/src/pat.rs` — extract shared `Compiled` test-collection, keep target formatting split. (medium) `[>]` evaluate against crate-isolation rule first.
+- [x] **C1** `lib/compile.rs` `detect_embedded_payload_from` → `read_trailer_bytes` + `extract_payload` (SRP TODO resolved). `3ff17e3`
+- [x] **C5** `lib/json.rs` Object/Array `get`/`len`/`to_table` byte-for-byte dup → shared `node_len`/`node_to_table` (DRY TODO resolved). `76622c6`
+- [>] **C2** `lib/csv.rs` (1776 LOC) — split reader/writer. Deferred: 550 LOC of inline tests + shared `ParseOpts`/helpers make this delicate visibility surgery; a large churn-only-for-navigability diff is better as a dedicated reviewed MR than a time-boxed autonomous shuffle. Genuine debt, sequenced out.
+- [>] **C3** `vnd/hyper.rs` (1054 LOC) — split client/server/types. Same reasoning as C2.
+- [>] **C4** `codegen-lua/pat.rs` ≈ `codegen-js/pat.rs` — extract shared `Compiled`. Deferred: crate-isolation rule means the shared piece would need a home crate (`neoc-ast`?); not a clean autonomous call. Flagged for design review.
+
+**Theme 5 verdict:** the two *contained, TODO-marked* structural debts (C1 SRP, C5 DRY) are landed and test-guarded. The three *large* reorganizations (C2/C3 god-files, C4 cross-crate share) are real but are bigger-diff/navigability-or-design calls — deferred to reviewed MRs rather than rushed autonomously. Discipline over churn.
 
 ## Low-confidence / flag only
 
