@@ -104,10 +104,10 @@ fn borrow_pair<T: mlua::UserData + Copy + 'static>(
 ) -> mlua::Result<(T, T)> {
     let av = *a
         .borrow::<T>()
-        .map_err(|_| mlua::Error::external(format!("expected {type_label} on left")))?;
+        .map_err(|_| mlua::Error::external(format!("time: expected {type_label} on left")))?;
     let bv = *b
         .borrow::<T>()
-        .map_err(|_| mlua::Error::external(format!("expected {type_label} on right")))?;
+        .map_err(|_| mlua::Error::external(format!("time: expected {type_label} on right")))?;
     Ok((av, bv))
 }
 

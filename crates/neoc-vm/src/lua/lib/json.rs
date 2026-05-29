@@ -503,11 +503,12 @@ impl Object {
     // TODO: clean-code - 0.75 - DRY: set_inner/push_inner across Object+Array repeat the resolve+cast+error pattern; extract a `with_object_mut`/`with_array_mut` helper.
     fn set_inner(&self, key: String, v: JsonValue) -> mlua::Result<()> {
         with_resolved_mut(&self.root, &self.path, |resolved| {
-            let cur = resolved
-                .ok_or_else(|| mlua::Error::external("object: parent path no longer valid"))?;
-            let m = cur
-                .as_object_mut()
-                .ok_or_else(|| mlua::Error::external("object: target is not an object"))?;
+            let cur = resolved.ok_or_else(|| {
+                mlua::Error::external("json.object: parent path no longer valid")
+            })?;
+            let m = cur.as_object_mut().ok_or_else(|| {
+                mlua::Error::external("json.object: target is not an object")
+            })?;
             m.insert(key, v);
             Ok(())
         })
@@ -579,10 +580,10 @@ impl Array {
     fn set_inner(&self, idx: usize, v: JsonValue) -> mlua::Result<()> {
         with_resolved_mut(&self.root, &self.path, |resolved| {
             let cur = resolved
-                .ok_or_else(|| mlua::Error::external("array: parent path no longer valid"))?;
+                .ok_or_else(|| mlua::Error::external("json.array: parent path no longer valid"))?;
             let a = cur
                 .as_array_mut()
-                .ok_or_else(|| mlua::Error::external("array: target is not an array"))?;
+                .ok_or_else(|| mlua::Error::external("json.array: target is not an array"))?;
             if idx >= a.len() {
                 a.resize(idx + 1, JsonValue::Null);
             }
@@ -594,10 +595,10 @@ impl Array {
     fn push_inner(&self, v: JsonValue) -> mlua::Result<()> {
         with_resolved_mut(&self.root, &self.path, |resolved| {
             let cur = resolved
-                .ok_or_else(|| mlua::Error::external("array: parent path no longer valid"))?;
+                .ok_or_else(|| mlua::Error::external("json.array: parent path no longer valid"))?;
             let a = cur
                 .as_array_mut()
-                .ok_or_else(|| mlua::Error::external("array: target is not an array"))?;
+                .ok_or_else(|| mlua::Error::external("json.array: target is not an array"))?;
             a.push(v);
             Ok(())
         })
@@ -612,7 +613,7 @@ impl UserData for Array {
         });
         methods.add_method("set", |_, this, (i, v): (i64, Value)| {
             if i < 1 {
-                return Err(mlua::Error::external("array: index must be >= 1"));
+                return Err(mlua::Error::external("json.array: index must be >= 1"));
             }
             this.set_inner((i - 1) as usize, lua_value_to_json_value(&v)?)
         });
