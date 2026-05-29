@@ -821,3 +821,95 @@ fn associated_fn_call_keeps_the_type_qualifier() {
         "the bare `zero()` would reference an unbound global\n{lua}"
     );
 }
+
+// ---- runtime type validators (validate.rs, DYNAMIC.md §9) -------------------
+// Drift points emit one shared validator per declared type. A `pub fn` param is
+// the untyped boundary (DRIFT-PARAM); each test references its type through one
+// so the validator and its entry check both emit.
+
+#[test]
+fn struct_validator_checks_tag_then_each_field() {
+    let lua = lua_from_source("struct Point { x: number, y: number }\npub fn id(p: Point) -> Point { p }\n");
+    assert!(lua.contains("function __check_Point(v, path)"), "{lua}");
+    assert!(
+        lua.contains("v.__struct ~= \"Point\""),
+        "struct validator gates on the runtime tag\n{lua}"
+    );
+    assert!(lua.contains("__check_number(v.x, path .. \".x\")"), "{lua}");
+    assert!(lua.contains("__check_number(v.y, path .. \".y\")"), "{lua}");
+}
+
+#[test]
+fn pub_fn_param_validates_at_the_untyped_boundary() {
+    // DRIFT-PARAM: the host is the one caller the type system can't vouch for.
+    let lua = lua_from_source("struct Point { x: number }\npub fn id(p: Point) -> Point { p }\n");
+    assert!(
+        lua.contains("__check_Point(p, \"id.p\")"),
+        "pub fn entry validates the typed parameter, path-qualified by fn name\n{lua}"
+    );
+}
+
+#[test]
+fn private_fn_param_is_not_validated() {
+    // Only the `pub` boundary is untyped; a private fn's caller is type-checked.
+    let lua = lua_from_source("struct Point { x: number }\nfn id(p: Point) -> Point { p }\n");
+    assert!(
+        !lua.contains("__check_Point(p"),
+        "a private fn param needs no boundary check\n{lua}"
+    );
+}
+
+#[test]
+fn enum_validator_dispatches_on_the_variant_tag() {
+    let lua = lua_from_source(
+        "enum Shape { Circle(number), Square(number) }\npub fn id(s: Shape) -> Shape { s }\n",
+    );
+    assert!(lua.contains("function __check_Shape(v, path)"), "{lua}");
+    assert!(lua.contains("v.__enum ~= \"Shape\""), "{lua}");
+    assert!(lua.contains("local t = v.__tag"), "dispatches on the tag\n{lua}");
+    assert!(lua.contains("if t == \"Circle\" then"), "{lua}");
+    assert!(lua.contains("elseif t == \"Square\" then"), "{lua}");
+    assert!(lua.contains("__check_number(v[1]"), "validates the payload slot\n{lua}");
+}
+
+#[test]
+fn option_and_result_fields_use_their_combinators() {
+    let lua = lua_from_source(
+        "struct Holder { o: Option<number>, r: Result<number, string> }\npub fn id(h: Holder) -> Holder { h }\n",
+    );
+    assert!(lua.contains("__check_option(v.o"), "{lua}");
+    assert!(lua.contains("__check_result(v.r"), "{lua}");
+    assert!(lua.contains("local function __check_option"), "pulls the combinator into the preamble\n{lua}");
+    assert!(lua.contains("local function __check_result"), "{lua}");
+}
+
+#[test]
+fn list_field_uses_a_per_element_validator() {
+    let lua = lua_from_source("struct Bag { xs: [number] }\npub fn id(b: Bag) -> Bag { b }\n");
+    assert!(lua.contains("__check_list(v.xs"), "{lua}");
+    assert!(lua.contains("local function __check_list"), "{lua}");
+}
+
+#[test]
+fn nested_list_composes_element_validators() {
+    let lua = lua_from_source("struct Grid { rows: [[number]] }\npub fn id(g: Grid) -> Grid { g }\n");
+    // Outer list of inner lists of numbers — the inner validator is a closure.
+    assert!(lua.contains("__check_list(v.rows"), "{lua}");
+    assert!(
+        lua.contains("__check_list(v, p, __check_number)"),
+        "the inner list validator composes the number checker\n{lua}"
+    );
+}
+
+#[test]
+fn imported_field_type_degrades_to_no_check() {
+    // A field whose type is not declared in this module cannot reference a
+    // validator the other module owns — the deep check lands at its home
+    // construction site. Here the field is simply left unchecked.
+    let lua = lua_from_source("struct Wrapper { inner: Foreign }\npub fn id(w: Wrapper) -> Wrapper { w }\n");
+    assert!(lua.contains("function __check_Wrapper(v, path)"), "{lua}");
+    assert!(
+        !lua.contains("v.inner"),
+        "an imported field type emits no field check\n{lua}"
+    );
+}
