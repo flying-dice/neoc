@@ -252,24 +252,33 @@ attach-release-assets:
 
 # ── pages ─────────────────────────────────────────────────────────────────────
 #
-# Builds the VitePress documentation site and publishes it via GitLab Pages.
+# Builds the VitePress documentation site and publishes it via GitLab Pages,
+# using parallel deployments so every branch gets a live preview.
 #
-# Two deployments off the same build (GitLab Pages parallel deployments):
-#   - `pages`          — the default branch → served at the site root, permanent.
-#   - `pages:preview`  — every other branch → served under a `/<branch-slug>/`
-#                        path prefix, so each branch gets its own live preview
-#                        (replacing the external Cloudflare preview). Previews
-#                        auto-expire so they don't accumulate.
+# One `pages` job (the name GitLab recognises as a Pages deployment — a
+# custom-named job with only a `pages:` config block is NOT published) sets the
+# path prefix from a variable:
+#   - default branch → empty prefix → the *primary* deployment at the site root,
+#     permanent.
+#   - any other branch → `/<branch-slug>/` prefix → a *parallel* deployment that
+#     expires after a week (replacing the external Cloudflare preview).
+#     `expire_in` only ever deletes prefixed deployments, never the primary.
 #
-# The path prefix changes the served URL, so VitePress `base` must include it or
-# assets 404 — hence the per-job VITEPRESS_BASE. If the project's Pages root path
-# differs from `/flying-dice/neoc/`, adjust both VITEPRESS_BASE values to match.
+# The prefix changes the served URL, so VitePress `base` must include it or
+# assets 404 — hence VITEPRESS_BASE tracks the prefix. If the project's Pages
+# root path differs from `/flying-dice/neoc/`, adjust the VITEPRESS_BASE values.
 
-.docs_build: &docs_build
+pages:
   stage: pages
   image: oven/bun:latest
   before_script: []
   needs: []
+  variables:
+    PAGES_PREFIX: ""
+    VITEPRESS_BASE: /flying-dice/neoc/
+  pages:
+    path_prefix: "$PAGES_PREFIX"
+    expire_in: 1 week
   script:
     - cd docs
     - bun install --frozen-lockfile
@@ -280,28 +289,12 @@ attach-release-assets:
   artifacts:
     paths:
       - public
-
-pages:
-  <<: *docs_build
-  variables:
-    VITEPRESS_BASE: /flying-dice/neoc/
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-
-pages:preview:
-  <<: *docs_build
-  variables:
-    VITEPRESS_BASE: /flying-dice/neoc/$CI_COMMIT_REF_SLUG/
-  pages:
-    path_prefix: "$CI_COMMIT_REF_SLUG"
-    expire_in: 1 week
-  environment:
-    name: preview/$CI_COMMIT_REF_SLUG
-    url: $CI_PAGES_URL/$CI_COMMIT_REF_SLUG/
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: never
     - if: $CI_COMMIT_BRANCH
+      variables:
+        PAGES_PREFIX: "$CI_COMMIT_REF_SLUG"
+        VITEPRESS_BASE: /flying-dice/neoc/$CI_COMMIT_REF_SLUG/
 
 # Posts the preview URL into the branch's MR thread, so the GitLab → Slack
 # integration relays the link to Slack. Resolves the MR from the branch name
@@ -309,11 +302,11 @@ pages:preview:
 # Token with `api` scope (must be non-protected so it's exposed on feature
 # branches; RELEASE_PLZ_TOKEN is protected and won't be). The job is skipped
 # (not failed) when the token is absent, so Pages still deploys without it.
-pages:preview:notify:
+pages:notify:
   stage: pages
   image: registry.gitlab.com/gitlab-org/cli:latest
   before_script: []
-  needs: ["pages:preview"]
+  needs: ["pages"]
   variables:
     GITLAB_HOST: "$CI_SERVER_HOST"
     GITLAB_TOKEN: "$PAGES_NOTIFY_TOKEN"
