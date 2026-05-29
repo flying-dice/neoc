@@ -6,6 +6,29 @@ Status keys: `[ ]` open · `[x]` landed · `[~]` partial · `[-]` rejected (fals
 
 ---
 
+## Outcome — `refactor/debt-sweep`
+
+15 commits. Gate green: `cargo fmt --check`, `cargo clippy --workspace --all-targets` (zero warnings), `cargo test --workspace` (0 failed) — run against the recorded grammar submodule (`5891f9c`), not the leftover feature-branch the working tree had drifted onto.
+
+**Landed:**
+- **Safety** — 4 production panics removed from `neoc-vm` library code (`compile`, `task`, `args`); now return `Result`.
+- **Convention** — runtime error messages given the `module.function:` prefix (`time`, `json` ×7).
+- **Tests** — 3 *genuine* gaps closed: `decode_escape`, codegen-lua emit value-position diagnostics (7), codegen-js Clone/Eq/Display derives (4). +1 additive (nested-list validator).
+- **Structure** — `compile.rs` trailer detection SRP-split; `json.rs` Object/Array read methods de-duplicated. Both TODO-marked, both test-guarded.
+- **Docs** — `neoc-autosql` added to all three crate listings; `plan.md` bannered as bootstrap archive.
+
+**The headline finding: the survey cried wolf.** Verifying each claim against the tree turned up a high false-positive rate — and acting on them blindly would have *caused* damage:
+- "Delete the dead Bun/TS files" → would have broken CI (live VitePress docs) and the `autots` interop tool.
+- "validate.rs has 0 tests" → it had 5 exact-golden tests; my first pass duplicated them with weaker asserts (reverted).
+- "Add lexical conformance cases" → deferred by design, documented.
+- Several "duplication" docs findings → a deliberately self-contained agent brief + already-linked SSOTs.
+
+The real defects were narrower and sharper than the survey's volume implied. Net: every change is evidenced, tested, and reversible.
+
+**Deferred to reviewed MRs (not autonomous):** C2/C3 god-file splits (`csv.rs` 1776 LOC, `hyper.rs` 1054 LOC) — large navigability-only diffs with delicate visibility surgery; C4 cross-crate `pat.rs` share — needs a design call on the home crate vs. the isolation rule. See Theme 5.
+
+---
+
 ## Verified corrections to the raw survey
 
 The architecture survey flagged `tsconfig.json` / `package.json` / `bun.lock` as "dead TypeScript/Bun era — delete." **False.** The Bun/TS toolchain is live:
