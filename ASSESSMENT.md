@@ -53,9 +53,9 @@ CLAUDE.md forbids `unwrap()`/`expect()`/`panic!` outside the `neoc` bin and `#[c
 
 ## Theme 4 — Test backfill (highest-value gaps)
 
-- [ ] **T1** `crates/neoc-codegen-lua/src/validate.rs` (640 LOC, 0 inline tests) — the runtime type-check emitter. Add inline `mod tests`: primitives, struct composite, enum dispatch, Result/Option, nested `List<Struct>`, cross-module degrade. (CRITICAL, medium)
+- [-] **T1** Survey false alarm: `validate.rs` is **not** untested — `tests/emit.rs` already has 5 exact-golden validator tests (pub/private params, enum dispatch+recurse, list/option/result combinators, imported/type-param skip, omitted). My first pass duplicated them with weaker substring asserts; **reverted**. Kept one genuinely additive case: nested `[[number]]` combinator composition. `e670929`
 - [x] **T2** `neoc-parser/src/expr.rs` `decode_escape` — inline tests for every escape, byte/unicode pass-through, unknown, non-escape. `fce16f9`
-- [ ] **T3** `crates/neoc-codegen-lua` `expr.rs` error branches (≈11 `error()` calls) — assert diagnostics fire. (high, medium)
+- [x] **T3** `codegen-lua` emit value-position diagnostics — 7 tests (continue/break/return/loop/while/range/assign in value position) via hand-built AST. The genuinely-missing coverage; the `expr.rs` `error()` branches had none. `e670929`
 - [ ] **T4** `crates/neoc-codegen-js/tests/emit.rs` — parallel the lua emit suite (patterns, expr lowering, each derive). (high, medium-high)
 - [ ] **T5** `lang/CONFORMANCE` — add lexical/static error-case pairs. (medium)
 - [ ] **T6** `crates/neoc-wasm` — 0 tests; needs a wasm harness. (deferred — harness cost) `[>]`
