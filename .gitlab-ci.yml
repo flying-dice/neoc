@@ -302,11 +302,15 @@ pages:
 # Token with `api` scope (must be non-protected so it's exposed on feature
 # branches; RELEASE_PLZ_TOKEN is protected and won't be). The job is skipped
 # (not failed) when the token is absent, so Pages still deploys without it.
+#
+# A notification is a side-effect — `allow_failure: true` so a glab error (e.g.
+# the branch has no MR yet, the standard push-before-MR flow) never gates CI.
 pages:notify:
   stage: pages
   image: registry.gitlab.com/gitlab-org/cli:latest
   before_script: []
   needs: ["pages"]
+  allow_failure: true
   variables:
     GITLAB_HOST: "$CI_SERVER_HOST"
     GITLAB_TOKEN: "$PAGES_NOTIFY_TOKEN"
