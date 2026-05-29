@@ -504,18 +504,51 @@ impl Object {
     fn set_inner(&self, key: String, v: JsonValue) -> mlua::Result<()> {
         with_resolved_mut(&self.root, &self.path, |resolved| {
             let cur = resolved
-                .ok_or_else(|| mlua::Error::external("object: parent path no longer valid"))?;
+                .ok_or_else(|| mlua::Error::external("json.object: parent path no longer valid"))?;
             let m = cur
                 .as_object_mut()
-                .ok_or_else(|| mlua::Error::external("object: target is not an object"))?;
+                .ok_or_else(|| mlua::Error::external("json.object: target is not an object"))?;
             m.insert(key, v);
             Ok(())
         })
     }
 }
 
+/// Which container a handle expects to find at its path.
+enum NodeKind {
+    Object,
+    Array,
+}
+
+/// The element count of the container at `path`, but only when the live node
+/// still matches the handle's `kind`. Handles re-resolve on every access, so a
+/// child retyped under a live handle (e.g. `root:set("a", arr)` after
+/// `local h = root:get("a")` bound an object) lands on the *other* kind; `len`
+/// then reports `0`, not the new container's count — honouring each handle's
+/// contract (`Object:len` = key count, `Array:len` = element count) and
+/// agreeing with `keys`/`has`, which treat a kind-mismatched path as empty.
+/// `0` also for a scalar or a stale path.
+fn node_len(root: &Root, path: &[PathSeg], kind: NodeKind) -> i64 {
+    with_resolved(root, path, |r| match (kind, r) {
+        (NodeKind::Object, Some(JsonValue::Object(m))) => m.len() as i64,
+        (NodeKind::Array, Some(JsonValue::Array(a))) => a.len() as i64,
+        _ => 0,
+    })
+}
+
+/// The node at `path` as a deep Lua value, or `nil` for a stale path. Shared by
+/// both handle types — the conversion is identical regardless of kind.
+fn node_to_table(lua: &Lua, root: &Root, path: &[PathSeg]) -> mlua::Result<Value> {
+    with_resolved(root, path, |r| match r {
+        Some(v) => json_value_to_lua(lua, v),
+        None => Ok(Value::Nil),
+    })
+}
+
 impl UserData for Object {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        // `get`/`len`/`to_table` are shared with `Array` (both are root+path):
+        // `get` delegates to `walk_get`, the other two to the `node_*` helpers.
         methods.add_method("get", |lua, this, args: MultiValue| {
             walk_get(lua, &this.root, &this.path, args)
         });
@@ -542,16 +575,10 @@ impl UserData for Object {
             Ok(t)
         });
         methods.add_method("len", |_, this, _: ()| {
-            Ok(with_resolved(&this.root, &this.path, |r| match r {
-                Some(JsonValue::Object(m)) => m.len() as i64,
-                _ => 0,
-            }))
+            Ok(node_len(&this.root, &this.path, NodeKind::Object))
         });
         methods.add_method("to_table", |lua, this, _: ()| {
-            with_resolved(&this.root, &this.path, |r| match r {
-                Some(v) => json_value_to_lua(lua, v),
-                None => Ok(Value::Nil),
-            })
+            node_to_table(lua, &this.root, &this.path)
         });
     }
 }
@@ -579,10 +606,10 @@ impl Array {
     fn set_inner(&self, idx: usize, v: JsonValue) -> mlua::Result<()> {
         with_resolved_mut(&self.root, &self.path, |resolved| {
             let cur = resolved
-                .ok_or_else(|| mlua::Error::external("array: parent path no longer valid"))?;
+                .ok_or_else(|| mlua::Error::external("json.array: parent path no longer valid"))?;
             let a = cur
                 .as_array_mut()
-                .ok_or_else(|| mlua::Error::external("array: target is not an array"))?;
+                .ok_or_else(|| mlua::Error::external("json.array: target is not an array"))?;
             if idx >= a.len() {
                 a.resize(idx + 1, JsonValue::Null);
             }
@@ -594,10 +621,10 @@ impl Array {
     fn push_inner(&self, v: JsonValue) -> mlua::Result<()> {
         with_resolved_mut(&self.root, &self.path, |resolved| {
             let cur = resolved
-                .ok_or_else(|| mlua::Error::external("array: parent path no longer valid"))?;
+                .ok_or_else(|| mlua::Error::external("json.array: parent path no longer valid"))?;
             let a = cur
                 .as_array_mut()
-                .ok_or_else(|| mlua::Error::external("array: target is not an array"))?;
+                .ok_or_else(|| mlua::Error::external("json.array: target is not an array"))?;
             a.push(v);
             Ok(())
         })
@@ -606,13 +633,13 @@ impl Array {
 
 impl UserData for Array {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        // TODO: clean-code - 0.65 - DRY: Array's `get`, `len`, `to_table` are byte-for-byte mirrors of Object's; share via a free helper keyed on Arc<Root>+path.
+        // `get`/`len`/`to_table` are the same as `Object`'s — see those helpers.
         methods.add_method("get", |lua, this, args: MultiValue| {
             walk_get(lua, &this.root, &this.path, args)
         });
         methods.add_method("set", |_, this, (i, v): (i64, Value)| {
             if i < 1 {
-                return Err(mlua::Error::external("array: index must be >= 1"));
+                return Err(mlua::Error::external("json.array: index must be >= 1"));
             }
             this.set_inner((i - 1) as usize, lua_value_to_json_value(&v)?)
         });
@@ -620,16 +647,10 @@ impl UserData for Array {
             this.push_inner(lua_value_to_json_value(&v)?)
         });
         methods.add_method("len", |_, this, _: ()| {
-            Ok(with_resolved(&this.root, &this.path, |r| match r {
-                Some(JsonValue::Array(a)) => a.len() as i64,
-                _ => 0,
-            }))
+            Ok(node_len(&this.root, &this.path, NodeKind::Array))
         });
         methods.add_method("to_table", |lua, this, _: ()| {
-            with_resolved(&this.root, &this.path, |r| match r {
-                Some(v) => json_value_to_lua(lua, v),
-                None => Ok(Value::Nil),
-            })
+            node_to_table(lua, &this.root, &this.path)
         });
     }
 }
@@ -1037,4 +1058,110 @@ pub fn benches(c: &mut criterion::Criterion) {
     });
 
     g.finish();
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use mlua::{Lua, Table};
+
+    fn engine() -> Lua {
+        let lua = crate::lua::sandbox::make_engine().expect("engine");
+        let m: Table = lua.load(r#"return require("lib:json")"#).eval().unwrap();
+        lua.globals().set("json", m).unwrap();
+        lua
+    }
+
+    // A handle re-resolves its path on every access, so retyping a child under
+    // a live handle leaves that handle pointing at the *other* kind. `len`
+    // must then report 0 — the handle's kind no longer matches the node — not
+    // the new container's element count.
+    #[test]
+    fn len_zero_when_object_handle_path_retyped_to_array() {
+        let lua = engine();
+        let n: i64 = lua
+            .load(
+                r#"
+                local root = json.object()
+                root:set("a", json.object())   -- ["a"] is an object
+                local h = root:get("a")         -- Object handle bound to ["a"]
+                root:set("a", { 10, 20, 30 })   -- retype ["a"] to a 3-element array
+                return h:len()
+                "#,
+            )
+            .eval()
+            .unwrap();
+        assert_eq!(
+            n, 0,
+            "stale Object handle over an array must report 0, not the array length"
+        );
+    }
+
+    // Companion direction: an Array handle whose path is retyped to an object
+    // reports 0, not the object's key count.
+    #[test]
+    fn len_zero_when_array_handle_path_retyped_to_object() {
+        let lua = engine();
+        let n: i64 = lua
+            .load(
+                r#"
+                local root = json.object()
+                root:set("a", json.array())            -- ["a"] is an array
+                local h = root:get("a")                 -- Array handle bound to ["a"]
+                root:set("a", { x = 1, y = 2, z = 3 })  -- retype ["a"] to a 3-key object
+                return h:len()
+                "#,
+            )
+            .eval()
+            .unwrap();
+        assert_eq!(
+            n, 0,
+            "stale Array handle over an object must report 0, not the key count"
+        );
+    }
+
+    // `len`, `keys`, and `has` must agree on a stale Object handle: all treat a
+    // kind-mismatched path as empty.
+    #[test]
+    fn stale_object_handle_len_keys_has_agree() {
+        let lua = engine();
+        let (len, nkeys, has): (i64, i64, bool) = lua
+            .load(
+                r#"
+                local root = json.object()
+                root:set("a", json.object())
+                local h = root:get("a")
+                root:set("a", { 10, 20, 30 })
+                local k = h:keys()
+                return h:len(), #k, h:has("anything")
+                "#,
+            )
+            .eval()
+            .unwrap();
+        assert_eq!(len, 0, "len");
+        assert_eq!(nkeys, 0, "keys empty");
+        assert!(!has, "has false");
+    }
+
+    // Happy path: a handle whose kind matches its node reports the live count.
+    #[test]
+    fn len_reports_live_count_for_matching_kind() {
+        let lua = engine();
+        let (obj_len, arr_len): (i64, i64) = lua
+            .load(
+                r#"
+                local root = json.object()
+                root:set("o", { x = 1, y = 2 })
+                root:set("a", { 10, 20, 30, 40 })
+                return root:get("o"):len(), root:get("a"):len()
+                "#,
+            )
+            .eval()
+            .unwrap();
+        assert_eq!(obj_len, 2, "object key count");
+        assert_eq!(arr_len, 4, "array length");
+    }
 }

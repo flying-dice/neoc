@@ -162,6 +162,7 @@ neoc-macros                  # built-in derives (Clone/Eq/Debug/Display)
 neoc-codegen-lua             # AST → Lua 5.1; one emit module per construct family
 neoc-codegen-js              # AST → JavaScript (ES2022)
 neoc-compiler                # public lib API: transpile to any target; merges per-stage diagnostics
+neoc-autosql                 # SQL schema + queries → typed .neoc data layer (neoc autosql)
 neoc-fmt                     # formatter
 neoc-lsp                     # language server (diagnostics over stdio)
 neoc-wasm                    # browser entry point

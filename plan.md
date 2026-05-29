@@ -1,5 +1,11 @@
 # Plan — Populate `neoc` with the language assets
 
+> **Archive.** This is the completed bootstrap plan — it covered importing the
+> language assets, writing the reference manual, and standing up the workspace
+> skeleton. Every stage shipped; it references the long-gone `../bun-oas/`
+> predecessor repo and is kept only as history. **Not a live to-do list.**
+> Current work lives on the [GitLab board](https://gitlab.beluga-sirius.ts.net/flying-dice/neoc/-/boards/3).
+
 Scope: bring this repo from bootstrap to "ready for crate build-out" by importing every language-defining asset, writing a proper reference manual, and standing up a stub workspace skeleton CI passes against. The Rust impl is a separate plan that starts after this one finishes.
 
 **Posture toward `../bun-oas/`.** `bun-oas` is one input among several, not the spec. Take what's correct or canonical; fix or skip what isn't. The references for *how* to define a language are [The Rust Reference](https://doc.rust-lang.org/reference/) and the [Lua 5.4 Reference Manual](https://www.lua.org/manual/5.4/) — those define the bar. If a `bun-oas` artefact already meets that bar (e.g. `grammar.js` is a perfectly serviceable syntactic definition), use it as-is rather than re-deriving it. If an artefact is non-canonical (per-feature `.md` files that don't fit a layered reference manual, examples that violate the Rust-shaped design, grammar quirks), redo it the proper way.

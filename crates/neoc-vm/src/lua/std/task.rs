@@ -120,12 +120,12 @@ impl UserData for TaskHandle {
                 notified.await;
 
                 let guard = inner.outcome.lock();
-                outcome_to_multi(
-                    &lua,
-                    guard
-                        .as_ref()
-                        .expect("Notify fired but outcome is None — this is a bug"),
-                )
+                match guard.as_ref() {
+                    Some(outcome) => outcome_to_multi(&lua, outcome),
+                    None => Err(mlua::Error::external(
+                        "task.await: notified but no outcome was recorded",
+                    )),
+                }
             }
         });
     }
@@ -300,7 +300,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             let inner = Arc::new(TaskInner::new());
             let scheduler = lua
                 .app_data_ref::<Scheduler>()
-                .ok_or_else(|| mlua::Error::external("task: no Scheduler in app data"))?;
+                .ok_or_else(|| mlua::Error::external("task.spawn: no Scheduler in app data"))?;
 
             scheduler.track(&inner);
 
@@ -342,7 +342,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             let inner = Arc::new(TaskInner::new());
             let scheduler = lua
                 .app_data_ref::<Scheduler>()
-                .ok_or_else(|| mlua::Error::external("task: no Scheduler in app data"))?;
+                .ok_or_else(|| mlua::Error::external("task.defer: no Scheduler in app data"))?;
 
             scheduler.track(&inner);
 
@@ -398,7 +398,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             let inner = Arc::new(TaskInner::new());
             let scheduler = lua
                 .app_data_ref::<Scheduler>()
-                .ok_or_else(|| mlua::Error::external("task: no Scheduler in app data"))?;
+                .ok_or_else(|| mlua::Error::external("task.delay: no Scheduler in app data"))?;
 
             scheduler.track(&inner);
 

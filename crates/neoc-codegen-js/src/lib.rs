@@ -50,6 +50,11 @@ use crate::expr::VariantShape;
 /// Enum declarations indexed for use-site resolution: `enum name → (variant
 /// name → payload shape)`. Built from the module's `enum` items and seeded
 /// with the `Result`/`Option` prelude.
+///
+/// Deliberately parallel to `neoc_codegen_lua`'s `EnumIndex` (and
+/// `TupleStructIndex`): the two backends are kept independent rather than
+/// sharing a crate, so each can diverge as its target needs without coupling
+/// the other through a shared dependency. Keep the two in sync by hand.
 #[derive(Default)]
 pub(crate) struct EnumIndex {
     enums: HashMap<String, HashMap<String, VariantShape>>,
@@ -1299,6 +1304,139 @@ mod tests {
              \"y = \" + String(this.y) + \" }\";\n\
              };\n\
              __t.Point = [\"Debug\"];\n"
+        );
+    }
+
+    #[test]
+    fn derive_clone_struct() {
+        // #[derive(Clone)] struct Point { x, y } — a structural copy that
+        // re-links the prototype so methods still resolve on the clone.
+        let module = ast::Module {
+            items: vec![item(
+                ast::ItemKind::Struct(ast::StructDecl {
+                    name: "Point".to_string(),
+                    generics: Vec::new(),
+                    body: ast::StructBody::Named(vec![field("x"), field("y")]),
+                }),
+                vec![derive_attr("Clone")],
+            )],
+        };
+        let out = emit_solo(&module);
+        assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
+        assert!(out.js.contains("Point$.clone = function() {"), "{}", out.js);
+        assert!(
+            out.js.contains(
+                "return { __struct: \"Point\", x: this.x, y: this.y, __proto__: Point$ };"
+            ),
+            "{}",
+            out.js
+        );
+    }
+
+    #[test]
+    fn derive_eq_struct() {
+        // #[derive(Eq)] struct Point { x, y } — tag-then-field structural equality.
+        let module = ast::Module {
+            items: vec![item(
+                ast::ItemKind::Struct(ast::StructDecl {
+                    name: "Point".to_string(),
+                    generics: Vec::new(),
+                    body: ast::StructBody::Named(vec![field("x"), field("y")]),
+                }),
+                vec![derive_attr("Eq")],
+            )],
+        };
+        let out = emit_solo(&module);
+        assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
+        assert!(
+            out.js.contains("Point$.eq = function(a, b) {"),
+            "{}",
+            out.js
+        );
+        assert!(
+            out.js
+                .contains("return a.__struct === b.__struct && a.x === b.x && a.y === b.y;"),
+            "{}",
+            out.js
+        );
+    }
+
+    #[test]
+    fn derive_display_struct() {
+        // #[derive(Display)] struct Point { x, y } — values joined, no type decoration.
+        let module = ast::Module {
+            items: vec![item(
+                ast::ItemKind::Struct(ast::StructDecl {
+                    name: "Point".to_string(),
+                    generics: Vec::new(),
+                    body: ast::StructBody::Named(vec![field("x"), field("y")]),
+                }),
+                vec![derive_attr("Display")],
+            )],
+        };
+        let out = emit_solo(&module);
+        assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
+        assert!(
+            out.js.contains("Point$.display = function() {"),
+            "{}",
+            out.js
+        );
+        assert!(
+            out.js
+                .contains("return String(this.x) + \", \" + String(this.y);"),
+            "{}",
+            out.js
+        );
+    }
+
+    #[test]
+    fn derive_eq_enum_dispatches_on_tag() {
+        // An enum Eq guards on enum+tag, then compares the matching variant's data.
+        let module = ast::Module {
+            items: vec![item(
+                ast::ItemKind::Enum(ast::EnumDecl {
+                    name: "Shape".to_string(),
+                    generics: Vec::new(),
+                    variants: vec![
+                        ast::Variant {
+                            attrs: Vec::new(),
+                            name: "Circle".to_string(),
+                            name_span: ast::Span::default(),
+                            body: ast::VariantBody::Tuple(vec![ast::Type::Path(ast::TypePath {
+                                segments: vec![ast::TypeSegment {
+                                    name: "number".into(),
+                                    args: vec![],
+                                }],
+                            })]),
+                        },
+                        ast::Variant {
+                            attrs: Vec::new(),
+                            name: "Unit".to_string(),
+                            name_span: ast::Span::default(),
+                            body: ast::VariantBody::Unit,
+                        },
+                    ],
+                }),
+                vec![derive_attr("Eq")],
+            )],
+        };
+        let out = emit_solo(&module);
+        assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
+        assert!(
+            out.js.contains("Shape$.eq = function(a, b) {"),
+            "{}",
+            out.js
+        );
+        assert!(
+            out.js
+                .contains("if (a.__enum !== b.__enum || a.__tag !== b.__tag) {"),
+            "{}",
+            out.js
+        );
+        assert!(
+            out.js.contains("if (a.__tag === \"Circle\") {"),
+            "{}",
+            out.js
         );
     }
 

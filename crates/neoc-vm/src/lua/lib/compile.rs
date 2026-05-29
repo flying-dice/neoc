@@ -41,6 +41,7 @@ use crate::lua::sandbox::ok;
 pub const TRAILER_MAGIC: &[u8; 7] = b"NEOC_BL";
 pub const TRAILER_VERSION: u8 = 0x01;
 pub const TRAILER_SIZE: u64 = 20;
+const TRAILER_LEN: usize = TRAILER_SIZE as usize;
 
 // ---------------------------------------------------------------------------
 // Startup detection — called from main.rs on every launch.
@@ -56,6 +57,7 @@ pub enum TrailerError {
     },
 }
 
+#[derive(Clone, Copy)]
 struct TrailerHeader {
     offset: u64,
     length: u32,
@@ -80,46 +82,44 @@ fn parse_trailer(bytes: &[u8]) -> Result<Option<TrailerHeader>, u8> {
     if version != TRAILER_VERSION {
         return Err(version);
     }
-    let offset = u64::from_le_bytes(trailer[8..16].try_into().unwrap());
-    let length = u32::from_le_bytes(trailer[16..20].try_into().unwrap());
+    // `trailer` is exactly TRAILER_SIZE bytes here (the length check above plus
+    // the caller's tail slice), so these fixed-width reads cannot truncate.
+    let mut offset_bytes = [0u8; 8];
+    offset_bytes.copy_from_slice(&trailer[8..16]);
+    let mut length_bytes = [0u8; 4];
+    length_bytes.copy_from_slice(&trailer[16..20]);
+    let offset = u64::from_le_bytes(offset_bytes);
+    let length = u32::from_le_bytes(length_bytes);
     Ok(Some(TrailerHeader { offset, length }))
 }
 
-/// Core trailer-parsing logic, operating on an arbitrary path.
+/// Read the trailing [`TRAILER_SIZE`] bytes of an open file.
 ///
-/// Returns:
-/// - `Ok(Some(payload))` — valid trailer found; payload extracted.
-/// - `Ok(None)` — no NEOC_BL magic; this is a plain binary.
-/// - `Err(TrailerError)` — magic matched but the trailer is malformed.
-// TODO: clean-code - 0.7 - SRP: open+seek+read+validate magic/version+validate bounds+extract payload — split into read_trailer + extract_payload
-pub fn detect_embedded_payload_from(exe: &Path) -> Result<Option<Vec<u8>>, TrailerError> {
-    let mut f = match std::fs::File::open(exe) {
-        Ok(f) => f,
-        Err(_) => return Ok(None),
-    };
-
-    let file_len = match f.seek(SeekFrom::End(0)) {
-        Ok(n) => n,
-        Err(_) => return Ok(None),
-    };
+/// Returns the file length and those bytes, or `None` if the file is shorter
+/// than a trailer or any seek/read fails — all of which mean "no embedded
+/// payload", indistinguishable from a plain binary.
+fn read_trailer_bytes(f: &mut std::fs::File) -> Option<(u64, [u8; TRAILER_LEN])> {
+    let file_len = f.seek(SeekFrom::End(0)).ok()?;
     if file_len < TRAILER_SIZE {
-        return Ok(None);
+        return None;
     }
-    if f.seek(SeekFrom::End(-(TRAILER_SIZE as i64))).is_err() {
-        return Ok(None);
-    }
+    f.seek(SeekFrom::End(-(TRAILER_SIZE as i64))).ok()?;
+    let mut trailer = [0u8; TRAILER_LEN];
+    f.read_exact(&mut trailer).ok()?;
+    Some((file_len, trailer))
+}
 
-    let mut trailer = [0u8; TRAILER_SIZE as usize];
-    if f.read_exact(&mut trailer).is_err() {
-        return Ok(None);
-    }
-
-    let TrailerHeader { offset, length } = match parse_trailer(&trailer) {
-        Ok(Some(h)) => h,
-        Ok(None) => return Ok(None),
-        Err(v) => return Err(TrailerError::UnknownVersion(v)),
-    };
-
+/// Validate a parsed trailer's payload bounds against the file length, then read
+/// the payload out.
+///
+/// `Err(CorruptBounds)` when the recorded offset+length overruns the file; a
+/// seek/read failure past the bounds check is treated as "no payload" (`Ok(None)`).
+fn extract_payload(
+    f: &mut std::fs::File,
+    header: TrailerHeader,
+    file_len: u64,
+) -> Result<Option<Vec<u8>>, TrailerError> {
+    let TrailerHeader { offset, length } = header;
     // Checked arithmetic to avoid wrapping overflow on a malformed trailer.
     let end = (offset as u128) + (length as u128) + (TRAILER_SIZE as u128);
     if end > file_len as u128 {
@@ -129,7 +129,6 @@ pub fn detect_embedded_payload_from(exe: &Path) -> Result<Option<Vec<u8>>, Trail
             file_len,
         });
     }
-
     if f.seek(SeekFrom::Start(offset)).is_err() {
         return Ok(None);
     }
@@ -137,8 +136,32 @@ pub fn detect_embedded_payload_from(exe: &Path) -> Result<Option<Vec<u8>>, Trail
     if f.read_exact(&mut payload).is_err() {
         return Ok(None);
     }
-
     Ok(Some(payload))
+}
+
+/// Detect and read an embedded payload from the binary at `exe`.
+///
+/// Returns:
+/// - `Ok(Some(payload))` — valid trailer found; payload extracted.
+/// - `Ok(None)` — no NEOC_BL magic; this is a plain binary.
+/// - `Err(TrailerError)` — magic matched but the trailer is malformed.
+pub fn detect_embedded_payload_from(exe: &Path) -> Result<Option<Vec<u8>>, TrailerError> {
+    let mut f = match std::fs::File::open(exe) {
+        Ok(f) => f,
+        Err(_) => return Ok(None),
+    };
+
+    let Some((file_len, trailer)) = read_trailer_bytes(&mut f) else {
+        return Ok(None);
+    };
+
+    let header = match parse_trailer(&trailer) {
+        Ok(Some(h)) => h,
+        Ok(None) => return Ok(None),
+        Err(v) => return Err(TrailerError::UnknownVersion(v)),
+    };
+
+    extract_payload(&mut f, header, file_len)
 }
 
 // ---------------------------------------------------------------------------

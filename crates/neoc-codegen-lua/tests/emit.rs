@@ -656,6 +656,15 @@ fn validators_compose_list_option_and_result_combinators() {
 }
 
 #[test]
+fn validators_nest_list_combinators_for_a_list_of_lists() {
+    // A `[[number]]` field nests the list combinator: the outer call's element
+    // validator is itself a `__check_list` closure over the number checker, so
+    // composition recurses without inlining.
+    let out = lua_from_source("struct Grid { rows: [[number]] }");
+    assert!(out.contains("__check_list(v.rows, path .. \".rows\", function(v, p) return __check_list(v, p, __check_number) end)"));
+}
+
+#[test]
 fn validators_omitted_when_no_drift_point_exists() {
     // No struct, enum, or `pub fn` — nothing to enforce, so no preamble at all.
     let out = lua_from_source("fn helper(n: number) -> number { n }");
@@ -819,5 +828,121 @@ fn associated_fn_call_keeps_the_type_qualifier() {
     assert!(
         !lua.lines().any(|l| l.trim() == "return zero()"),
         "the bare `zero()` would reference an unbound global\n{lua}"
+    );
+}
+
+// ---- emit diagnostics for ill-formed value positions -----------------------
+// The type-checker rejects most of these first, but the emitter carries its own
+// defensive diagnostics for a node reaching codegen in value position. These
+// hand-build that node directly so the branch is exercised in isolation.
+
+/// A private `fn make()` whose block value is `expr`.
+fn fn_value_body(expr: ast::Expr) -> ast::Module {
+    ast::Module {
+        items: vec![ast::Item {
+            attrs: vec![],
+            vis: ast::Visibility::Private,
+            kind: ast::ItemKind::Fn(ast::FnDecl {
+                attrs: vec![],
+                sig: ast::FnSig {
+                    name: "make".into(),
+                    name_span: ast::Span::default(),
+                    generics: vec![],
+                    params: vec![],
+                    ret: None,
+                    where_clause: vec![],
+                },
+                body: ast::Block {
+                    stmts: vec![],
+                    value: Some(Box::new(expr)),
+                },
+            }),
+            span: ast::Span::default(),
+        }],
+    }
+}
+
+fn emit_diagnostics(module: &ast::Module) -> Vec<String> {
+    emit(module)
+        .diagnostics
+        .into_iter()
+        .map(|d| d.message)
+        .collect()
+}
+
+fn assert_value_position_diagnostic(expr: ast::ExprKind, expected: &str) {
+    let diags = emit_diagnostics(&fn_value_body(e(expr)));
+    assert!(
+        diags.iter().any(|m| m == expected),
+        "expected emit diagnostic {expected:?}, got {diags:?}"
+    );
+}
+
+#[test]
+fn continue_in_value_position_diagnoses() {
+    assert_value_position_diagnostic(
+        ast::ExprKind::Continue,
+        "control-flow expression used in value position",
+    );
+}
+
+#[test]
+fn break_in_value_position_diagnoses() {
+    assert_value_position_diagnostic(
+        ast::ExprKind::Break,
+        "control-flow expression used in value position",
+    );
+}
+
+#[test]
+fn return_in_value_position_diagnoses() {
+    assert_value_position_diagnostic(
+        ast::ExprKind::Return(None),
+        "control-flow expression used in value position",
+    );
+}
+
+#[test]
+fn loop_in_value_position_diagnoses() {
+    assert_value_position_diagnostic(
+        ast::ExprKind::Loop {
+            body: ast::Block::default(),
+        },
+        "loops do not produce a value",
+    );
+}
+
+#[test]
+fn while_in_value_position_diagnoses() {
+    assert_value_position_diagnostic(
+        ast::ExprKind::While {
+            cond: Box::new(e(ast::ExprKind::Path(vec!["x".into()]))),
+            body: ast::Block::default(),
+        },
+        "loops do not produce a value",
+    );
+}
+
+#[test]
+fn range_in_value_position_diagnoses() {
+    assert_value_position_diagnostic(
+        ast::ExprKind::Range {
+            start: Box::new(e(ast::ExprKind::Path(vec!["a".into()]))),
+            end: Box::new(e(ast::ExprKind::Path(vec!["b".into()]))),
+            inclusive: false,
+        },
+        "range expressions are only supported as a `for` iterable",
+    );
+}
+
+#[test]
+fn assignment_in_value_position_diagnoses() {
+    assert_value_position_diagnostic(
+        ast::ExprKind::Assign {
+            target: Box::new(e(ast::ExprKind::Path(vec!["x".into()]))),
+            op: ast::AssignOp::Assign,
+            value: Box::new(e(ast::ExprKind::Path(vec!["y".into()]))),
+        },
+        "assignment is a statement, not an expression value",
     );
 }

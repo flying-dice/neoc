@@ -209,14 +209,19 @@ fn read_flag_entry(
 
     let short = match body.get::<Option<String>>("short").map_err(stringify)? {
         None => None,
-        Some(s) if s.chars().count() == 1 => Some(s.chars().next().unwrap()),
         Some(s) => {
-            return Err(format!(
-                "{}: flag '--{}' short alias '{}' must be a single character",
-                err_ctx(ctx),
-                name,
-                s
-            ));
+            let mut chars = s.chars();
+            match (chars.next(), chars.next()) {
+                (Some(c), None) => Some(c),
+                _ => {
+                    return Err(format!(
+                        "{}: flag '--{}' short alias '{}' must be a single character",
+                        err_ctx(ctx),
+                        name,
+                        s
+                    ));
+                }
+            }
         }
     };
 
@@ -430,7 +435,11 @@ fn build_parsed_table(lua: &Lua, spec: &CommandSpec, matches: &ArgMatches) -> ml
             .subcommands
             .iter()
             .find(|s| s.name == sub_name)
-            .expect("clap matched subcommand absent from spec");
+            .ok_or_else(|| {
+                mlua::Error::external(format!(
+                    "args.parse: subcommand '{sub_name}' not found in spec"
+                ))
+            })?;
         let sub_table = build_parsed_table(lua, sub_spec, sub_matches)?;
         t.set("subcommand", sub_name.to_string())?;
         t.set(sub_name.to_string(), sub_table)?;

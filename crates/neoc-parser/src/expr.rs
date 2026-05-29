@@ -388,3 +388,36 @@ pub(crate) fn span_of(node: Node) -> ast::Span {
         end: node.end_byte(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::decode_escape;
+
+    #[test]
+    fn decodes_recognised_escapes() {
+        assert_eq!(decode_escape("\\n"), "\n");
+        assert_eq!(decode_escape("\\t"), "\t");
+        assert_eq!(decode_escape("\\r"), "\r");
+        assert_eq!(decode_escape("\\0"), "\0");
+        assert_eq!(decode_escape("\\\\"), "\\");
+        assert_eq!(decode_escape("\\\""), "\"");
+    }
+
+    #[test]
+    fn passes_through_byte_and_unicode_escapes_for_the_emitter() {
+        // `\xNN` and `\u{…}` are re-encoded downstream; decode leaves them intact.
+        assert_eq!(decode_escape("\\x41"), "\\x41");
+        assert_eq!(decode_escape("\\u{1F600}"), "\\u{1F600}");
+    }
+
+    #[test]
+    fn passes_through_unknown_escape_verbatim() {
+        assert_eq!(decode_escape("\\q"), "\\q");
+    }
+
+    #[test]
+    fn returns_input_unchanged_when_not_an_escape() {
+        assert_eq!(decode_escape("plain"), "plain");
+        assert_eq!(decode_escape(""), "");
+    }
+}
