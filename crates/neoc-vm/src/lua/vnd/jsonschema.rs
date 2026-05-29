@@ -103,8 +103,9 @@ impl UserData for JValidationResult {
             Ok(t)
         });
 
-        // TODO: clean-code - 0.7 - DEAD: misleading comment — ToString metamethod does not make `if result then` work (userdata is always truthy); comment describes behaviour the code does not provide.
-        // Convenience: same as :ok() but lets `if result then` work.
+        // `__tostring` for display only — `print(result)` and string coercion.
+        // It does not affect truthiness: a userdata is always truthy in Lua, so
+        // `if result then` is true even for an invalid result. Use `:ok()`.
         methods.add_meta_method(mlua::MetaMethod::ToString, |_, this, _: ()| {
             if this.valid {
                 Ok("ValidationResult(ok)".to_string())
