@@ -514,13 +514,24 @@ impl Object {
     }
 }
 
-/// The element count of whichever container resolves at `path` — an `Object`
-/// handle's path always lands on an object, an `Array`'s on an array, so one
-/// helper serves both. `0` for a scalar or a stale path.
-fn node_len(root: &Root, path: &[PathSeg]) -> i64 {
-    with_resolved(root, path, |r| match r {
-        Some(JsonValue::Object(m)) => m.len() as i64,
-        Some(JsonValue::Array(a)) => a.len() as i64,
+/// Which container a handle expects to find at its path.
+enum NodeKind {
+    Object,
+    Array,
+}
+
+/// The element count of the container at `path`, but only when the live node
+/// still matches the handle's `kind`. Handles re-resolve on every access, so a
+/// child retyped under a live handle (e.g. `root:set("a", arr)` after
+/// `local h = root:get("a")` bound an object) lands on the *other* kind; `len`
+/// then reports `0`, not the new container's count — honouring each handle's
+/// contract (`Object:len` = key count, `Array:len` = element count) and
+/// agreeing with `keys`/`has`, which treat a kind-mismatched path as empty.
+/// `0` also for a scalar or a stale path.
+fn node_len(root: &Root, path: &[PathSeg], kind: NodeKind) -> i64 {
+    with_resolved(root, path, |r| match (kind, r) {
+        (NodeKind::Object, Some(JsonValue::Object(m))) => m.len() as i64,
+        (NodeKind::Array, Some(JsonValue::Array(a))) => a.len() as i64,
         _ => 0,
     })
 }
@@ -563,7 +574,9 @@ impl UserData for Object {
             })?;
             Ok(t)
         });
-        methods.add_method("len", |_, this, _: ()| Ok(node_len(&this.root, &this.path)));
+        methods.add_method("len", |_, this, _: ()| {
+            Ok(node_len(&this.root, &this.path, NodeKind::Object))
+        });
         methods.add_method("to_table", |lua, this, _: ()| {
             node_to_table(lua, &this.root, &this.path)
         });
@@ -633,7 +646,9 @@ impl UserData for Array {
         methods.add_method("push", |_, this, v: Value| {
             this.push_inner(lua_value_to_json_value(&v)?)
         });
-        methods.add_method("len", |_, this, _: ()| Ok(node_len(&this.root, &this.path)));
+        methods.add_method("len", |_, this, _: ()| {
+            Ok(node_len(&this.root, &this.path, NodeKind::Array))
+        });
         methods.add_method("to_table", |lua, this, _: ()| {
             node_to_table(lua, &this.root, &this.path)
         });
@@ -1043,4 +1058,110 @@ pub fn benches(c: &mut criterion::Criterion) {
     });
 
     g.finish();
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use mlua::{Lua, Table};
+
+    fn engine() -> Lua {
+        let lua = crate::lua::sandbox::make_engine().expect("engine");
+        let m: Table = lua.load(r#"return require("lib:json")"#).eval().unwrap();
+        lua.globals().set("json", m).unwrap();
+        lua
+    }
+
+    // A handle re-resolves its path on every access, so retyping a child under
+    // a live handle leaves that handle pointing at the *other* kind. `len`
+    // must then report 0 — the handle's kind no longer matches the node — not
+    // the new container's element count.
+    #[test]
+    fn len_zero_when_object_handle_path_retyped_to_array() {
+        let lua = engine();
+        let n: i64 = lua
+            .load(
+                r#"
+                local root = json.object()
+                root:set("a", json.object())   -- ["a"] is an object
+                local h = root:get("a")         -- Object handle bound to ["a"]
+                root:set("a", { 10, 20, 30 })   -- retype ["a"] to a 3-element array
+                return h:len()
+                "#,
+            )
+            .eval()
+            .unwrap();
+        assert_eq!(
+            n, 0,
+            "stale Object handle over an array must report 0, not the array length"
+        );
+    }
+
+    // Companion direction: an Array handle whose path is retyped to an object
+    // reports 0, not the object's key count.
+    #[test]
+    fn len_zero_when_array_handle_path_retyped_to_object() {
+        let lua = engine();
+        let n: i64 = lua
+            .load(
+                r#"
+                local root = json.object()
+                root:set("a", json.array())            -- ["a"] is an array
+                local h = root:get("a")                 -- Array handle bound to ["a"]
+                root:set("a", { x = 1, y = 2, z = 3 })  -- retype ["a"] to a 3-key object
+                return h:len()
+                "#,
+            )
+            .eval()
+            .unwrap();
+        assert_eq!(
+            n, 0,
+            "stale Array handle over an object must report 0, not the key count"
+        );
+    }
+
+    // `len`, `keys`, and `has` must agree on a stale Object handle: all treat a
+    // kind-mismatched path as empty.
+    #[test]
+    fn stale_object_handle_len_keys_has_agree() {
+        let lua = engine();
+        let (len, nkeys, has): (i64, i64, bool) = lua
+            .load(
+                r#"
+                local root = json.object()
+                root:set("a", json.object())
+                local h = root:get("a")
+                root:set("a", { 10, 20, 30 })
+                local k = h:keys()
+                return h:len(), #k, h:has("anything")
+                "#,
+            )
+            .eval()
+            .unwrap();
+        assert_eq!(len, 0, "len");
+        assert_eq!(nkeys, 0, "keys empty");
+        assert!(!has, "has false");
+    }
+
+    // Happy path: a handle whose kind matches its node reports the live count.
+    #[test]
+    fn len_reports_live_count_for_matching_kind() {
+        let lua = engine();
+        let (obj_len, arr_len): (i64, i64) = lua
+            .load(
+                r#"
+                local root = json.object()
+                root:set("o", { x = 1, y = 2 })
+                root:set("a", { 10, 20, 30, 40 })
+                return root:get("o"):len(), root:get("a"):len()
+                "#,
+            )
+            .eval()
+            .unwrap();
+        assert_eq!(obj_len, 2, "object key count");
+        assert_eq!(arr_len, 4, "array length");
+    }
 }
