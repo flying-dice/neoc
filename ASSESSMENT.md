@@ -6,6 +6,28 @@ Status keys: `[ ]` open · `[x]` landed · `[~]` partial · `[-]` rejected (fals
 
 ---
 
+## Sweep 2 + local review
+
+A second pass: four agents (compiler-crate sweep, footgun/dead-code sweep, cross-cutting-consistency sweep, and a correctness review of this branch's own diff).
+
+**Local review verdict — branch is clean, no blockers.** One honest correction it caught: the json DRY commit (`76622c6`) said "behaviour unchanged", but the new shared `node_len` resolves *both* container kinds, so a stale handle to a node that was replaced in-place with a different kind now returns the live length instead of `0`. Strictly more correct (the old `0` was a footgun), untested path — but the commit message overstated. Noted here for accuracy.
+
+**Sweep 2 — landed (verified, low-risk):**
+- [x] `ini.stringify` emitted `format!("{:?}", v)` for non-scalars — Rust `Debug` syntax leaking into INI output (footgun **and** host-language-leak). Now serialises string/number/bool and errors cleanly on the rest. `d19da2a`
+- [x] `task` spawn/defer/delay raised a bare `task:` prefix; `rusqlite` `Statement` used `sqlite.statement.*` while the module uses `rusqlite.*`. Both normalised; dead `:memory:` branch in `rusqlite.open` dropped. `04a8c1e`
+- [x] Misleading `jsonschema` `__tostring` comment (claimed it makes `if result then` work — userdata is always truthy). Corrected. `63dea2d`
+
+**Sweep 2 — verified but deferred (not clean autonomous calls):**
+- [>] `jsonschema.is_valid` silently returns `false` on a value that can't convert to JSON (hides bugs, inconsistent with `validate`). Fix changes the Lua-facing signature → wants a `runtime-design` review.
+- [>] `sqlx_postgres` bind (utf8→TEXT / non-utf8→BYTEA) and `decode_cell` unknown-type→TEXT fallback — silent type coercion. API/type-contract call → `runtime-design`.
+- [>] ~9 repeated `match result { Ok => ok, Err => from_err }` / borrow / opts-extract patterns (std/io, std/thread, vnd/hyper client, std/fs, vnd/sqlx_*) — behaviour-preserving DRY helper extractions. Best run through the `refactor` skill loop (highest-scored TODO first), not one giant commit.
+- [>] `collections` `arc()` accessors (Map/Counter/Mutex) confirmed dead (only `Listener::arc` is called) — but they're part of the deliberate Sendable `from_arc`/`arc` pair; tiny value, leave for the refactor loop.
+- [>] `codegen-lua` ↔ `codegen-js` share `EnumIndex`/`TupleStructIndex` — real duplication, but the shared home would cross the crate-isolation boundary (same class as C4). Design call.
+
+**Sweep 2 — compiler crates otherwise clean.** No library panics, no host-language leaks across `neoc-types`/`neoc-parser`/`neoc-codegen-*`/`neoc-compiler`/`neoc-ast`. The 65 `unwrap()`s in `neoc-fmt` are CST-field access guarded by the parser's prior validation (a documented contract, not stray panics) — flagged for a defensive helper, not a bug.
+
+---
+
 ## Outcome — `refactor/debt-sweep`
 
 15 commits. Gate green: `cargo fmt --check`, `cargo clippy --workspace --all-targets` (zero warnings), `cargo test --workspace` (0 failed) — run against the recorded grammar submodule (`5891f9c`), not the leftover feature-branch the working tree had drifted onto.
