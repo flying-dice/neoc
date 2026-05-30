@@ -9,12 +9,12 @@ export type SqlExecutor = {
 import { Ok, Err, Some, None, Option$, Result$ } from "../neoc-lib";
 
 export const SqlValue = {
-  Int: (_0) => ({ __enum: "SqlValue", __tag: "Int", _0 }),
-  Real: (_0) => ({ __enum: "SqlValue", __tag: "Real", _0 }),
-  Text: (_0) => ({ __enum: "SqlValue", __tag: "Text", _0 }),
-  Bool: (_0) => ({ __enum: "SqlValue", __tag: "Bool", _0 }),
-  Null: { __enum: "SqlValue", __tag: "Null" },
-  match: (value, arms) => value.__tag === "Int" ? arms.Int(value._0) : value.__tag === "Real" ? arms.Real(value._0) : value.__tag === "Text" ? arms.Text(value._0) : value.__tag === "Bool" ? arms.Bool(value._0) : value.__tag === "Null" ? arms.Null() : undefined,
+  Int: (_0: number): SqlValue => ({ __enum: "SqlValue", __tag: "Int", _0 }),
+  Real: (_0: number): SqlValue => ({ __enum: "SqlValue", __tag: "Real", _0 }),
+  Text: (_0: string): SqlValue => ({ __enum: "SqlValue", __tag: "Text", _0 }),
+  Bool: (_0: boolean): SqlValue => ({ __enum: "SqlValue", __tag: "Bool", _0 }),
+  Null: { __enum: "SqlValue", __tag: "Null" } as SqlValue,
+  match: <R>(value: SqlValue, arms: { Int(_0: number): R; Real(_0: number): R; Text(_0: string): R; Bool(_0: boolean): R; Null(): R }): R => value.__tag === "Int" ? arms.Int(value._0) : value.__tag === "Real" ? arms.Real(value._0) : value.__tag === "Text" ? arms.Text(value._0) : value.__tag === "Bool" ? arms.Bool(value._0) : arms.Null(),
 };
 export function bind_opt_int(value: Option<number>): SqlValue {
   return (() => {
