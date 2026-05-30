@@ -30,6 +30,7 @@ struct Codegen {
     source: String,
     parse_diagnostics: Vec<String>,
     js: String,
+    dts: String,
     emit_diagnostics: Vec<String>,
 }
 
@@ -59,6 +60,7 @@ fn emit_javascript(world: &mut Codegen) {
         &[],
     );
     world.js = result.js;
+    world.dts = result.dts;
     world.emit_diagnostics = result.diagnostics.into_iter().map(|d| d.message).collect();
 }
 
@@ -77,6 +79,15 @@ fn js_does_not_contain(world: &mut Codegen, snippet: String) {
         !world.js.contains(&snippet),
         "expected the emitted JS to omit {snippet:?}\n  emitted JS:\n{}",
         world.js,
+    );
+}
+
+#[then(regex = r#"^the d\.ts contains "(.+)"$"#)]
+fn dts_contains(world: &mut Codegen, snippet: String) {
+    assert!(
+        world.dts.contains(&snippet),
+        "expected the emitted .d.ts to contain {snippet:?}\n  emitted .d.ts:\n{}",
+        world.dts,
     );
 }
 

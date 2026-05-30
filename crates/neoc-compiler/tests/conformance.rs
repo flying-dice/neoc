@@ -165,8 +165,17 @@ fn run_lua(neoc: &str, case: &str, _neoc_path: &Path) -> Result<String, Failed> 
 /// JS backend emits an ES module (`import`/`export`), so the program runs as one
 /// — written to a `.mjs` temp file, which `node` parses as ESM regardless of any
 /// surrounding `package.json`.
+///
+/// A module that references `Result`/`Option` `import`s the shared runtime from
+/// `./neoc-lib.js` (`tasks/ts-interop-inversion.md` stage 2), so the harness
+/// writes `neoc-lib.js` into the same temp directory beside the `.mjs` before
+/// running `node`, mirroring what the project build does at the source root. The
+/// content is identical across cases, so concurrent writes are idempotent.
 fn run_js(neoc: &str, case: &str, _neoc_path: &Path) -> Result<String, Failed> {
     let output = emit(neoc, Target::Js, case)?;
+    let lib_path = std::env::temp_dir().join("neoc-lib.js");
+    std::fs::write(&lib_path, neoc_codegen_js::neoc_lib_js())
+        .map_err(|e| Failed::from(format!("case `{case}`: write neoc-lib.js: {e}")))?;
     let harness =
         "globalThis.print = (x) => console.log(x);\nglobalThis.println = globalThis.print;\n";
     let program = format!("{harness}{output}\nmain();\n");

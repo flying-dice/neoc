@@ -38,6 +38,7 @@
 //!   returns bool), `debug` / `display` (return the golden strings).
 
 mod derive;
+mod dts;
 mod expr;
 mod pat;
 
@@ -45,6 +46,9 @@ use std::collections::{HashMap, HashSet};
 
 use neoc_ast as ast;
 
+pub use crate::dts::{
+    project_const, project_enum, project_fn, project_struct, project_type_alias, ts_type,
+};
 use crate::expr::VariantShape;
 
 /// Enum declarations indexed for use-site resolution: `enum name → (variant
@@ -165,7 +169,14 @@ pub struct Diagnostic {
 /// The result of emitting a module.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EmitResult {
+    /// The emitted ES2022 module source (`x.js`).
     pub js: String,
+    /// The module's TypeScript declaration sibling (`x.d.ts`): `export`
+    /// declarations for every `pub` fn/struct/enum/const/type alias, with
+    /// `import type` lines for cross-module `use`s and a `Result`/`Option` import
+    /// from the shared `neoc-lib` when the module references them. Empty when the
+    /// module exports nothing. The compiler driver writes it next to `x.js`.
+    pub dts: String,
     pub diagnostics: Vec<Diagnostic>,
 }
 
@@ -240,10 +251,201 @@ pub fn emit<S: std::hash::BuildHasher>(
     };
     e.emit_module(module);
     let diagnostics = std::mem::take(&mut e.diagnostics);
+    let uses_result = e.uses_result;
     EmitResult {
         js: e.finish(),
+        dts: module_dts(module, imported_bindings, importer_dir, uses_result),
         diagnostics,
     }
+}
+
+/// Project a module's `.d.ts` sibling: an `export` declaration per `pub` item,
+/// `import type` lines for the cross-module `use`s it references, and a
+/// `Result`/`Option` import from the shared `neoc-lib` when the module uses them.
+///
+/// `imported_bindings` and `importer_dir` mirror [`emit`]'s parameters: a `use`
+/// keyed in `imported_bindings` is a cross-module import, and `importer_dir`
+/// anchors the relative specifier (matching the runtime `import`). A `use` of a
+/// data-only type is absent from `imported_bindings` — but a `.d.ts` still needs
+/// its *type*, so this projects a `import type` for **every** cross-module `use`
+/// the module declares, resolving the specifier the same way the runtime import
+/// does. `uses_result` is the emitter's own determination that the module
+/// references `Result`/`Option`, so the projection imports their tagged types
+/// from `neoc-lib` rather than re-declaring them.
+fn module_dts<S: std::hash::BuildHasher>(
+    module: &ast::Module,
+    imported_bindings: &HashSet<String, S>,
+    importer_dir: &[String],
+    uses_result: bool,
+) -> String {
+    let mut imports: Vec<String> = Vec::new();
+    let mut decls: Vec<String> = Vec::new();
+    let mut needs_lib = uses_result;
+
+    for item in &module.items {
+        match &item.kind {
+            ast::ItemKind::Use(u) => {
+                if let Some(line) = dts_use_import(u, imported_bindings, importer_dir) {
+                    imports.push(line);
+                }
+            }
+            ast::ItemKind::Fn(f) if item.vis == ast::Visibility::Public => {
+                needs_lib |= sig_references_lib(&f.sig);
+                decls.push(dts::project_fn(&f.sig, true));
+            }
+            ast::ItemKind::Struct(s) if item.vis == ast::Visibility::Public => {
+                decls.push(dts::project_struct(s, true));
+            }
+            ast::ItemKind::Enum(en) if item.vis == ast::Visibility::Public => {
+                decls.push(dts::project_enum(en, true));
+            }
+            ast::ItemKind::Const(c) if item.vis == ast::Visibility::Public => {
+                decls.push(dts::project_const(c, true));
+            }
+            ast::ItemKind::TypeAlias(a) if item.vis == ast::Visibility::Public => {
+                decls.push(dts::project_type_alias(a, true));
+            }
+            _ => {}
+        }
+    }
+
+    if needs_lib {
+        let spec = relative_neoc_lib_specifier(importer_dir);
+        imports.insert(
+            0,
+            format!("import type {{ Result, Option }} from \"{spec}\";"),
+        );
+    }
+
+    if imports.is_empty() && decls.is_empty() {
+        return String::new();
+    }
+    let mut out = imports;
+    if !out.is_empty() && !decls.is_empty() {
+        out.push(String::new());
+    }
+    out.extend(decls);
+    let mut s = out.join("\n");
+    s.push('\n');
+    s
+}
+
+/// The `import type` line for a cross-module `use` in a `.d.ts`, or `None` when
+/// the `use` is local-only (a re-export of a name brought in elsewhere, with no
+/// `prefix` to resolve a module file from).
+fn dts_use_import<S: std::hash::BuildHasher>(
+    u: &ast::UseDecl,
+    imported_bindings: &HashSet<String, S>,
+    importer_dir: &[String],
+) -> Option<String> {
+    let (last, prefix) = u.path.split_last()?;
+    if prefix.is_empty() {
+        // A single-segment `use` names something in the current scope; there is
+        // no sibling module to resolve a type import from.
+        return None;
+    }
+    // The runtime `import` is keyed on `imported_bindings`; the `.d.ts` mirrors
+    // the same specifier resolution so the type import sits beside its runtime
+    // import. A name absent from `imported_bindings` is a data-only type — still
+    // imported here, since a `.d.ts` references the type even where JS erases it.
+    let _ = imported_bindings;
+    let target: Vec<&str> = prefix.iter().map(String::as_str).collect();
+    let spec = relative_module_specifier_dts(importer_dir, &target);
+    let named = match &u.alias {
+        Some(alias) => format!("{last} as {alias}"),
+        None => last.clone(),
+    };
+    Some(format!("import type {{ {named} }} from \"{spec}\";"))
+}
+
+/// Whether a signature references `Result` or `Option` anywhere in its parameter
+/// or return types — the trigger for importing their tagged types from
+/// `neoc-lib` in a projected `.d.ts`.
+fn sig_references_lib(sig: &ast::FnSig) -> bool {
+    let in_params = sig.params.iter().any(|p| match p {
+        ast::Param::Receiver => false,
+        ast::Param::Named { ty, .. } => type_references_lib(ty),
+    });
+    in_params || sig.ret.as_ref().is_some_and(type_references_lib)
+}
+
+/// Whether a type mentions `Result` or `Option` at any depth.
+fn type_references_lib(ty: &ast::Type) -> bool {
+    match ty {
+        ast::Type::Unit | ast::Type::SelfType => false,
+        ast::Type::List(inner) => type_references_lib(inner),
+        ast::Type::Fn { params, ret } => {
+            params.iter().any(type_references_lib)
+                || ret.as_deref().is_some_and(type_references_lib)
+        }
+        ast::Type::Path(p) => p.segments.iter().any(|seg| {
+            matches!(seg.name.as_str(), "Result" | "Option")
+                || seg.args.iter().any(type_references_lib)
+        }),
+    }
+}
+
+/// The relative specifier from `importer_dir` to the shared `neoc-lib`, with the
+/// extensionless form a `.d.ts` `import type` uses (TypeScript resolves it to
+/// `neoc-lib.d.ts`). `neoc-lib` sits at the project source root, so a root-level
+/// module imports `./neoc-lib` and a subdirectory module walks up with `../`.
+fn relative_neoc_lib_specifier(importer_dir: &[String]) -> String {
+    if importer_dir.is_empty() {
+        "./neoc-lib".to_string()
+    } else {
+        let ups = "../".repeat(importer_dir.len());
+        format!("{ups}neoc-lib")
+    }
+}
+
+/// The runtime (`.js`) specifier from `importer_dir` to the shared `neoc-lib.js`.
+/// The `.js`-suffixed analogue of [`relative_neoc_lib_specifier`], loaded
+/// natively by browsers and bundlers.
+fn relative_neoc_lib_js_specifier(importer_dir: &[String]) -> String {
+    format!("{}.js", relative_neoc_lib_specifier(importer_dir))
+}
+
+/// Like [`relative_module_specifier`] but for a `.d.ts` import: extensionless, so
+/// TypeScript resolves the sibling's `.d.ts`. Mirrors the runtime specifier's
+/// directory arithmetic exactly.
+fn relative_module_specifier_dts(importer_dir: &[String], target: &[&str]) -> String {
+    let js = relative_module_specifier(importer_dir, target);
+    js.strip_suffix(".js").unwrap_or(&js).to_string()
+}
+
+/// The TypeScript declaration names a module exports — the projectable `pub`
+/// items a cross-module `use` of this module could import a type for. The driver
+/// uses this to decide which `.d.ts` imports are resolvable, mirroring
+/// [`module_js_bindings`]'s role for the runtime imports. Unlike that set, a
+/// data-only `pub` struct/enum and a `pub type` alias are **included** — they
+/// have a TS type even though they emit no JS runtime binding.
+#[must_use]
+pub fn module_dts_exports(module: &ast::Module) -> HashSet<String> {
+    let mut out = HashSet::new();
+    for item in &module.items {
+        if item.vis != ast::Visibility::Public {
+            continue;
+        }
+        match &item.kind {
+            ast::ItemKind::Fn(f) => {
+                out.insert(f.sig.name.clone());
+            }
+            ast::ItemKind::Const(c) => {
+                out.insert(c.name.clone());
+            }
+            ast::ItemKind::Struct(s) => {
+                out.insert(s.name.clone());
+            }
+            ast::ItemKind::Enum(e) => {
+                out.insert(e.name.clone());
+            }
+            ast::ItemKind::TypeAlias(a) => {
+                out.insert(a.name.clone());
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 /// The names `module` emits a runtime JS binding for, reachable by a `use` in
@@ -467,9 +669,11 @@ pub(crate) struct Emitter {
     importer_dir: Vec<String>,
 }
 
-/// The `Result`/`Option` prelude: method-bearing variant constructors linked to
-/// the shared `Option$`/`Result$` prototypes (`lang/DYNAMIC.md` §7.1).
-const RESULT_PRELUDE: &str = r#"const Option$ = {};
+/// The body of the `Result`/`Option` runtime: method-bearing variant
+/// constructors linked to the shared `Option$`/`Result$` prototypes
+/// (`lang/DYNAMIC.md` §7.1). Shared by [`neoc_lib_js`] (which `export`s these
+/// names) so emitted modules `import` the runtime instead of inlining it.
+const NEOC_LIB_BODY: &str = r#"const Option$ = {};
 const Result$ = {};
 const Ok = (v) => ({ __enum: "Result", __tag: "Ok", _0: v, __proto__: Result$ });
 const Err = (e) => ({ __enum: "Result", __tag: "Err", _0: e, __proto__: Result$ });
@@ -496,6 +700,37 @@ Result$.unwrap_err = function() {
 };
 Result$.map = function(f) { return this.__tag === "Ok" ? Ok(f(this._0)) : this; };
 Result$.map_err = function(f) { return this.__tag === "Err" ? Err(f(this._0)) : this; };"#;
+
+/// The shared `Result`/`Option` runtime, `neoc-lib.js`. Emitted once per build
+/// at the project source root; every module that references `Result`/`Option`
+/// `import`s its constructors and prototypes from here instead of inlining them
+/// (`tasks/ts-interop-inversion.md` stage 2). The compiler driver writes the
+/// returned source to `neoc-lib.js`.
+#[must_use]
+pub fn neoc_lib_js() -> String {
+    format!("{NEOC_LIB_BODY}\n\nexport {{ Ok, Err, Some, None, Option$, Result$ }};\n")
+}
+
+/// The `.d.ts` for the shared `neoc-lib.js`: the tagged `Result`/`Option` types
+/// whose member shapes mirror the runtime values the constructors build
+/// (`lang/DYNAMIC.md` §7.1). A consumer's `.d.ts` imports `Result`/`Option` from
+/// here; the constructors and prototype helpers are declared so emitted JS that
+/// re-exports them stays typed. The driver writes this to `neoc-lib.d.ts`.
+#[must_use]
+pub fn neoc_lib_dts() -> String {
+    let mut s = String::new();
+    s.push_str("export type Result<T, E> =\n");
+    s.push_str("  | { __enum: \"Result\"; __tag: \"Ok\"; _0: T }\n");
+    s.push_str("  | { __enum: \"Result\"; __tag: \"Err\"; _0: E };\n");
+    s.push_str("export type Option<T> =\n");
+    s.push_str("  | { __enum: \"Option\"; __tag: \"Some\"; _0: T }\n");
+    s.push_str("  | { __enum: \"Option\"; __tag: \"None\" };\n");
+    s.push_str("export declare function Ok<T, E>(v: T): Result<T, E>;\n");
+    s.push_str("export declare function Err<T, E>(e: E): Result<T, E>;\n");
+    s.push_str("export declare function Some<T>(v: T): Option<T>;\n");
+    s.push_str("export declare const None: Option<never>;\n");
+    s
+}
 
 /// The trait registry: a table keyed by type name listing the traits each type
 /// implements (`__traits` runtime tag). Read as `__t[recv.__struct ?? recv.__enum]`.
@@ -552,7 +787,13 @@ impl Emitter {
             preamble.push(TRAITS_PRELUDE.to_string());
         }
         if self.uses_result {
-            preamble.push(RESULT_PRELUDE.to_string());
+            // The `Result`/`Option` runtime lives in the shared `neoc-lib.js`
+            // at the project source root; import its constructors and prototypes
+            // rather than inlining them (`tasks/ts-interop-inversion.md` stage 2).
+            let spec = relative_neoc_lib_js_specifier(&self.importer_dir);
+            preamble.push(format!(
+                "import {{ Ok, Err, Some, None, Option$, Result$ }} from \"{spec}\";"
+            ));
         }
         if !preamble.is_empty() {
             let mut out = preamble;
@@ -812,9 +1053,232 @@ mod tests {
     fn prelude_unwrap_panics_are_neoc_shaped() {
         // Acceptance (issue #79): `unwrap`/`unwrap_err` throw a neoc-shaped
         // message carrying no host phrasing (`DYNAMIC.md` §7.1).
-        assert!(RESULT_PRELUDE.contains(r#"throw new Error("called unwrap on a None value")"#));
-        assert!(RESULT_PRELUDE.contains(r#"throw new Error("called unwrap on an Err value")"#));
-        assert!(RESULT_PRELUDE.contains(r#"throw new Error("called unwrap_err on an Ok value")"#));
+        let lib = neoc_lib_js();
+        assert!(lib.contains(r#"throw new Error("called unwrap on a None value")"#));
+        assert!(lib.contains(r#"throw new Error("called unwrap on an Err value")"#));
+        assert!(lib.contains(r#"throw new Error("called unwrap_err on an Ok value")"#));
+    }
+
+    #[test]
+    fn uses_result_imports_from_neoc_lib_instead_of_inlining() {
+        // A module that references `Result` imports the runtime from the shared
+        // `neoc-lib.js` (stage 2) — no inlined prelude object literals remain.
+        let module = ast::Module {
+            items: vec![fn_item(
+                "ok_one",
+                e(ast::ExprKind::Call {
+                    callee: Box::new(e(ast::ExprKind::Path(vec!["Ok".to_string()]))),
+                    args: vec![int("1")],
+                }),
+            )],
+        };
+        let out = emit_solo(&module);
+        assert!(
+            out.js.contains(
+                "import { Ok, Err, Some, None, Option$, Result$ } from \"./neoc-lib.js\";"
+            ),
+            "{}",
+            out.js
+        );
+        assert!(
+            !out.js.contains(r#"__enum: "Result""#),
+            "the prelude must no longer inline:\n{}",
+            out.js
+        );
+    }
+
+    #[test]
+    fn neoc_lib_dts_declares_tagged_result_and_option() {
+        let dts = neoc_lib_dts();
+        assert!(dts.contains(
+            "export type Result<T, E> =\n  | { __enum: \"Result\"; __tag: \"Ok\"; _0: T }\n  | { __enum: \"Result\"; __tag: \"Err\"; _0: E };"
+        ), "{dts}");
+        assert!(dts.contains(
+            "export type Option<T> =\n  | { __enum: \"Option\"; __tag: \"Some\"; _0: T }\n  | { __enum: \"Option\"; __tag: \"None\" };"
+        ), "{dts}");
+        assert!(
+            dts.contains("export declare function Ok<T, E>(v: T): Result<T, E>;"),
+            "{dts}"
+        );
+    }
+
+    #[test]
+    fn module_dts_projects_a_result_returning_fn_with_lib_import() {
+        // pub fn find(id: number) -> Result<string, string> { ... }
+        let find = ast::Item {
+            attrs: Vec::new(),
+            vis: ast::Visibility::Public,
+            kind: ast::ItemKind::Fn(ast::FnDecl {
+                attrs: Vec::new(),
+                sig: ast::FnSig {
+                    name: "find".to_string(),
+                    name_span: ast::Span::default(),
+                    generics: Vec::new(),
+                    params: vec![ast::Param::Named {
+                        name: "id".to_string(),
+                        ty: ast::Type::Path(ast::TypePath {
+                            segments: vec![ast::TypeSegment {
+                                name: "number".to_string(),
+                                args: Vec::new(),
+                            }],
+                        }),
+                        optional: false,
+                        span: ast::Span::default(),
+                    }],
+                    ret: Some(ast::Type::Path(ast::TypePath {
+                        segments: vec![ast::TypeSegment {
+                            name: "Result".to_string(),
+                            args: vec![
+                                ast::Type::Path(ast::TypePath {
+                                    segments: vec![ast::TypeSegment {
+                                        name: "string".to_string(),
+                                        args: Vec::new(),
+                                    }],
+                                }),
+                                ast::Type::Path(ast::TypePath {
+                                    segments: vec![ast::TypeSegment {
+                                        name: "string".to_string(),
+                                        args: Vec::new(),
+                                    }],
+                                }),
+                            ],
+                        }],
+                    })),
+                    where_clause: Vec::new(),
+                },
+                body: ast::Block {
+                    stmts: Vec::new(),
+                    value: Some(Box::new(int("0"))),
+                },
+            }),
+            span: ast::Span::default(),
+        };
+        let module = ast::Module { items: vec![find] };
+        let out = emit_solo(&module);
+        assert_eq!(
+            out.dts,
+            "import type { Result, Option } from \"./neoc-lib\";\n\
+             \n\
+             export declare function find(id: number): Result<string, string>;\n"
+        );
+    }
+
+    #[test]
+    fn module_dts_projects_struct_and_enum() {
+        // pub struct Row { id: number }  pub enum E { A, B(number) }
+        let row = ast::Item {
+            attrs: Vec::new(),
+            vis: ast::Visibility::Public,
+            kind: ast::ItemKind::Struct(ast::StructDecl {
+                name: "Row".to_string(),
+                generics: Vec::new(),
+                body: ast::StructBody::Named(vec![ast::Field {
+                    attrs: Vec::new(),
+                    name: "id".to_string(),
+                    name_span: ast::Span::default(),
+                    ty: ast::Type::Path(ast::TypePath {
+                        segments: vec![ast::TypeSegment {
+                            name: "number".to_string(),
+                            args: Vec::new(),
+                        }],
+                    }),
+                    optional: false,
+                }]),
+            }),
+            span: ast::Span::default(),
+        };
+        let en = ast::Item {
+            attrs: Vec::new(),
+            vis: ast::Visibility::Public,
+            kind: ast::ItemKind::Enum(ast::EnumDecl {
+                name: "E".to_string(),
+                generics: Vec::new(),
+                variants: vec![
+                    ast::Variant {
+                        attrs: Vec::new(),
+                        name: "A".to_string(),
+                        name_span: ast::Span::default(),
+                        body: ast::VariantBody::Unit,
+                    },
+                    ast::Variant {
+                        attrs: Vec::new(),
+                        name: "B".to_string(),
+                        name_span: ast::Span::default(),
+                        body: ast::VariantBody::Tuple(vec![ast::Type::Path(ast::TypePath {
+                            segments: vec![ast::TypeSegment {
+                                name: "number".to_string(),
+                                args: Vec::new(),
+                            }],
+                        })]),
+                    },
+                ],
+            }),
+            span: ast::Span::default(),
+        };
+        let module = ast::Module {
+            items: vec![row, en],
+        };
+        let out = emit_solo(&module);
+        assert_eq!(
+            out.dts,
+            "export interface Row { id: number; }\n\
+             export type E = { __enum: \"E\"; __tag: \"A\" } | { __enum: \"E\"; __tag: \"B\"; _0: number };\n"
+        );
+    }
+
+    #[test]
+    fn module_dts_is_empty_for_a_module_with_no_pub_items() {
+        let module = ast::Module {
+            items: vec![fn_item("helper", int("1"))],
+        };
+        let out = emit_solo(&module);
+        assert!(
+            out.dts.is_empty(),
+            "private-only module has no .d.ts: {:?}",
+            out.dts
+        );
+    }
+
+    #[test]
+    fn module_dts_projects_a_cross_module_use_as_a_type_import() {
+        // use math::Vec2;   pub const ORIGIN: Vec2 = ...;
+        // From a subdirectory importer the type import resolves the sibling's
+        // `.d.ts` extensionlessly, anchored like the runtime `.js` import.
+        let use_item = ast::Item {
+            attrs: Vec::new(),
+            vis: ast::Visibility::Private,
+            kind: ast::ItemKind::Use(ast::UseDecl {
+                path: vec!["math".to_string(), "Vec2".to_string()],
+                alias: None,
+            }),
+            span: ast::Span::default(),
+        };
+        let konst = ast::Item {
+            attrs: Vec::new(),
+            vis: ast::Visibility::Public,
+            kind: ast::ItemKind::Const(ast::ConstDecl {
+                name: "ORIGIN".to_string(),
+                ty: ast::Type::Path(ast::TypePath {
+                    segments: vec![ast::TypeSegment {
+                        name: "Vec2".to_string(),
+                        args: Vec::new(),
+                    }],
+                }),
+                value: int("0"),
+            }),
+            span: ast::Span::default(),
+        };
+        let module = ast::Module {
+            items: vec![use_item, konst],
+        };
+        // Importer in `geo/`, target module `math` at the root → `../math`.
+        let dts = module_dts(&module, &HashSet::<String>::new(), &["geo".to_string()], false);
+        assert_eq!(
+            dts,
+            "import type { Vec2 } from \"../math\";\n\
+             \n\
+             export declare const ORIGIN: Vec2;\n"
+        );
     }
 
     #[test]
