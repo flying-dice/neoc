@@ -1,0 +1,12 @@
+function fib(n: number): number {
+  return (() => {
+    if ((n < 2)) {
+      return n;
+    } else {
+      return (fib((n - 1)) + fib((n - 2)));
+    }
+  })();
+}
+function main(): void {
+  println(fib(10));
+}

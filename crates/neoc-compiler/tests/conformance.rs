@@ -11,14 +11,18 @@
 //! diverged instead of one opaque blob. Two kinds of trial per target:
 //!
 //! - `<case>::<target>::source` — the live emit equals the committed, readable
-//!   `<case>.lua` / `<case>.js` checked into the corpus. This pins the
-//!   transformation itself (codegen changes show up as a diff) and needs no
-//!   toolchain, so it runs everywhere. Regenerate the files with
-//!   `neoc build lang/CONFORMANCE/dynamic/*.neoc --target <lua|js>`.
+//!   `<case>.lua` / `<case>.js` / `<case>.ts` / `<case>.luau` / `<case>.py`
+//!   checked into the corpus. This pins the transformation itself (codegen
+//!   changes show up as a diff) and needs no toolchain, so it runs everywhere.
+//!   Regenerate the files with
+//!   `neoc build lang/CONFORMANCE/dynamic/*.neoc --target <lua|js|ts|luau|py>`.
+//!   The five targets pin the runnable module text only; typings sidecars
+//!   (`.d.ts` / `.d.lua` / `.pyi`) are covered by the codegen crates' own tests.
 //! - `<case>::<target>` — transpile (or, for Rust, compile the `.rs` anchor),
 //!   run under the target's interpreter, and assert trailing-newline-trimmed
 //!   stdout equals the golden. Marked ignored when the toolchain (`node` /
-//!   `lua` / `rustc`) is absent, so the suite still passes without it.
+//!   `lua` / `rustc` / `bun` / `luau` / `python3` >= 3.10) is absent, so the
+//!   suite still passes without it.
 //!
 //! Two extra trials guard the corpus shape: it is non-empty, and every `.neoc`
 //! has a sibling `.rs`.
@@ -225,6 +229,114 @@ fn run_rust(_neoc: &str, case: &str, neoc_path: &Path) -> Result<String, Failed>
     }
 }
 
+/// luau: the self-typed Luau module is self-contained — inlined runtime and
+/// inline `Result`/`Option` type aliases, no `neoc-lib`. Alias `println` to the
+/// built-in `print`, append `main()`, and run under the `luau` CLI.
+fn run_luau(neoc: &str, case: &str, _neoc_path: &Path) -> Result<String, Failed> {
+    let output = emit(neoc, Target::Luau, case)?;
+    let program = format!("println = print\n{output}\nmain()\n");
+    run_program("luau", &program, "luau", case, "luau")
+}
+
+/// ts: the JS runtime body with neoc types woven on, run under `bun` — which
+/// resolves extensionless relative imports and strips types. A module that uses
+/// `Result`/`Option` `import`s the shared runtime from `./neoc-lib`, so the
+/// harness writes `neoc-lib.js` into the temp directory beside the `.ts` (as
+/// `run_js` does) before running. `print` / `println` route through
+/// `console.log`.
+fn run_ts(neoc: &str, case: &str, _neoc_path: &Path) -> Result<String, Failed> {
+    let output = emit(neoc, Target::Ts, case)?;
+    let lib_path = std::env::temp_dir().join("neoc-lib.js");
+    std::fs::write(&lib_path, neoc_codegen_js::neoc_lib_js())
+        .map_err(|e| Failed::from(format!("case `{case}`: write neoc-lib.js: {e}")))?;
+    let harness =
+        "globalThis.print = (x) => console.log(x);\nglobalThis.println = globalThis.print;\n";
+    let program = format!("{harness}{output}\nmain();\n");
+    run_program("bun", &program, "ts", case, "ts")
+}
+
+/// Find a Python interpreter that is at least 3.10 (needed for `match`/`case`),
+/// returning its command name; `None` when none is on PATH.
+fn python_3_10() -> Option<&'static str> {
+    [
+        "python3.14", "python3.13", "python3.12", "python3.11", "python3.10", "python3", "python",
+    ]
+    .into_iter()
+    .find(|cand| {
+        let Ok(out) = Command::new(cand)
+            .args([
+                "-c",
+                "import sys; print(sys.version_info[0], sys.version_info[1])",
+            ])
+            .output()
+        else {
+            return false;
+        };
+        if !out.status.success() {
+            return false;
+        }
+        let v = String::from_utf8_lossy(&out.stdout);
+        let mut it = v.split_whitespace();
+        matches!((it.next(), it.next()), (Some("3"), Some(min)) if min.parse::<u32>().is_ok_and(|m| m >= 10))
+    })
+}
+
+/// python: the module `import`s its runtime from `.neoc_lib`, so it must run as
+/// a package member. Build a unique temp package (`neoc_lib.py`, `__init__.py`,
+/// the module as `case.py`), inject `print`/`println` into `builtins` as a
+/// neoc-style formatter so the program's output calls resolve and a `bool`
+/// renders `true`/`false` (matching the target-independent `.stdout` golden, as
+/// Lua and JS do natively) rather than Python's `True`/`False`. Then import
+/// `main` and run it under a Python >= 3.10 interpreter.
+fn run_python(neoc: &str, case: &str, _neoc_path: &Path) -> Result<String, Failed> {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let python = python_3_10().expect("python >= 3.10 (trial ignored otherwise)");
+    let output = emit(neoc, Target::Python, case)?;
+
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("neoc_conf_py_{}_{n}", std::process::id()));
+    let pkg = dir.join("genpkg");
+    std::fs::create_dir_all(&pkg)
+        .map_err(|e| Failed::from(format!("case `{case}`: create temp package: {e}")))?;
+    let write = |path: PathBuf, body: &[u8]| -> Result<(), Failed> {
+        std::fs::write(&path, body)
+            .map_err(|e| Failed::from(format!("case `{case}`: write {}: {e}", path.display())))
+    };
+    write(pkg.join("__init__.py"), b"")?;
+    write(
+        pkg.join("neoc_lib.py"),
+        neoc_codegen_python::neoc_lib_py().as_bytes(),
+    )?;
+    write(pkg.join("case.py"), output.as_bytes())?;
+    let driver = "import builtins\n\
+         _real_print = print\n\
+         def _fmt(x):\n    \
+             return ('true' if x else 'false') if isinstance(x, bool) else str(x)\n\
+         def _neoc_print(x):\n    \
+             _real_print(_fmt(x))\n\
+         builtins.print = _neoc_print\n\
+         builtins.println = _neoc_print\n\
+         from genpkg.case import main\n\
+         main()\n";
+    write(dir.join("driver.py"), driver.as_bytes())?;
+
+    let result = Command::new(python)
+        .arg("driver.py")
+        .current_dir(&dir)
+        .output()
+        .map_err(|e| Failed::from(format!("case `{case}`: spawn `{python}` failed: {e}")));
+    let _ = std::fs::remove_dir_all(&dir);
+    let result = result?;
+    if result.status.success() {
+        Ok(String::from_utf8_lossy(&result.stdout).into_owned())
+    } else {
+        Err(Failed::from(format!(
+            "case `{case}`: {python} exited non-zero:\n{}\n--- emitted py ---\n{output}",
+            String::from_utf8_lossy(&result.stderr)
+        )))
+    }
+}
+
 /// The `lang/CONFORMANCE/dynamic/` directory, resolved from the crate manifest.
 fn corpus_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -247,11 +359,12 @@ fn cases(dir: &Path) -> Vec<PathBuf> {
 }
 
 /// Build the per-case × target trials plus the corpus-shape guards.
-fn collect_trials() -> Vec<Trial> {
-    let dir = corpus_dir();
-    let cases = cases(&dir);
-
-    let targets = [
+/// The conformance backends: the three original (`lua`, `js`, the `rust`
+/// anchor) plus the three interop-inversion targets (`ts`, `luau`, `python`).
+/// Each `::source` golden pin needs no toolchain; each run trial is ignored when
+/// its toolchain is absent.
+fn target_specs() -> [TargetSpec; 6] {
+    [
         TargetSpec {
             name: "lua",
             available: lua_binary().is_some(),
@@ -270,7 +383,32 @@ fn collect_trials() -> Vec<Trial> {
             run: run_rust,
             emit: None,
         },
-    ];
+        TargetSpec {
+            name: "ts",
+            available: binary_present("bun"),
+            run: run_ts,
+            emit: Some((Target::Ts, "ts")),
+        },
+        TargetSpec {
+            name: "luau",
+            available: binary_present("luau"),
+            run: run_luau,
+            emit: Some((Target::Luau, "luau")),
+        },
+        TargetSpec {
+            name: "python",
+            available: python_3_10().is_some(),
+            run: run_python,
+            emit: Some((Target::Python, "py")),
+        },
+    ]
+}
+
+fn collect_trials() -> Vec<Trial> {
+    let dir = corpus_dir();
+    let cases = cases(&dir);
+
+    let targets = target_specs();
 
     let mut trials = Vec::new();
 
