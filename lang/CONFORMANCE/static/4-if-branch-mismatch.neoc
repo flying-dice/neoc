@@ -1,0 +1,2 @@
+// STATIC.md §4.1: both branches of a value `if` must share a type.
+fn f(c: bool) -> number { if c { 1 } else { "x" } }
