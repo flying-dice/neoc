@@ -250,8 +250,10 @@ fn use_alias_rebinds_the_imported_name() {
 
 #[test]
 fn single_file_project_matches_single_file_transpile() {
-    // A no-`use` entry produces exactly the single-file `transpile` output, so
-    // the conformance corpus path is unchanged.
+    // A no-`use` entry produces the single-file `transpile` output, plus the
+    // project build's `sourceMappingURL` trailer (a project writes files to disk,
+    // so it gets a `.map` sidecar; single-file `transpile` returns bare source).
+    // Stripping the trailer, the module body is byte-identical to `transpile`.
     let dir = tempdir();
     let src = "fn main() -> number { 1 + 1 }\n";
     let entry = write(&dir, "solo.neoc", src);
@@ -259,7 +261,19 @@ fn single_file_project_matches_single_file_transpile() {
     let project = transpile_project(&entry, Target::Lua).expect("read project");
     assert!(project.ok());
     assert_eq!(project.files.len(), 1);
-    assert_eq!(project.files[0].1, transpile(src, Target::Lua).output);
+    let emitted = &project.files[0].1;
+    let trailer = "--# sourceMappingURL=solo.lua.map\n";
+    let body = emitted
+        .strip_suffix(trailer)
+        .expect("a sourceMappingURL trailer");
+    assert_eq!(body, transpile(src, Target::Lua).output);
+    // The map sidecar rides in `aux_files`.
+    assert!(
+        project
+            .aux_files
+            .iter()
+            .any(|(p, _)| p.to_string_lossy().ends_with("solo.lua.map"))
+    );
 }
 
 #[test]
@@ -435,8 +449,9 @@ fn ts_build_emits_typed_module_files_and_shared_neoc_lib() {
 }
 
 #[test]
-fn lua_build_emits_no_dts_or_neoc_lib() {
-    // The `.d.ts` surface is JS-target-only; a Lua build emits no sidecars.
+fn lua_build_emits_only_map_sidecars_no_dts_or_neoc_lib() {
+    // The `.d.ts`/`neoc-lib` surface is JS/TS-only; a Lua build's only aux files
+    // are the per-module Source Map v3 `.map` sidecars (Lua carries a map).
     let dir = tempdir();
     write(&dir, "y.neoc", "pub fn helper() -> number { 7 }\n");
     let entry = write(
@@ -447,8 +462,18 @@ fn lua_build_emits_no_dts_or_neoc_lib() {
     let project = transpile_project(&entry, Target::Lua).expect("read project");
     assert!(project.ok(), "{:#?}", project.diagnostics);
     assert!(
-        project.aux_files.is_empty(),
-        "Lua target emits no aux files, got: {:?}",
+        project
+            .aux_files
+            .iter()
+            .all(|(p, _)| p.to_string_lossy().ends_with(".lua.map")),
+        "Lua aux is only `.map` sidecars, got: {:?}",
+        project.aux_files
+    );
+    // Both modules carry a map.
+    assert_eq!(
+        project.aux_files.len(),
+        2,
+        "one `.map` per emitted module, got: {:?}",
         project.aux_files
     );
 }

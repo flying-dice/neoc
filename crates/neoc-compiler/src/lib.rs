@@ -196,6 +196,137 @@ impl SourceMap {
     pub fn neoc_line(&self, emitted_line: u32) -> Option<u32> {
         self.lua.neoc_line(emitted_line)
     }
+
+    /// Whether this map carries any line correspondence. An empty map (a target
+    /// with no source map yet, or a module emitted without source) serializes to
+    /// no `.map` sidecar.
+    ///
+    /// A non-empty map always maps emitted line 1, so probing it is a reliable
+    /// emptiness test that needs no further accessor on the backing representation.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.neoc_line(1).is_none()
+    }
+
+    /// Serializes this map to [Source Map v3] JSON for `file` (the emitted file's
+    /// bare name, e.g. `x.js`) over `source_name` (the neoc source path the
+    /// debugger resolves, relative to the `.map`'s location) carrying
+    /// `source_text` (the neoc source, inlined as `sourcesContent` so the map is
+    /// self-contained).
+    ///
+    /// The mapping is line-granular: every one-based emitted line `1..=lines`
+    /// (where `lines` is the emitted source's line count) gets a single segment
+    /// pointing at column 0 of its originating neoc line, column 0. That is
+    /// enough for a debugger to step from an emitted line to its neoc line.
+    ///
+    /// Returns `None` for an [empty][`Self::is_empty`] map, so a target without a
+    /// source map emits no sidecar.
+    ///
+    /// [Source Map v3]: https://sourcemaps.info/spec.html
+    #[must_use]
+    pub fn to_v3_json(
+        &self,
+        file: &str,
+        source_name: &str,
+        source_text: &str,
+        lines: u32,
+    ) -> Option<String> {
+        if self.is_empty() {
+            return None;
+        }
+        let mappings = json_string(&self.encode_mappings(lines));
+        Some(format!(
+            "{{\"version\":3,\"file\":{file},\"sources\":[{source}],\"sourcesContent\":[{content}],\"names\":[],\"mappings\":{mappings}}}",
+            file = json_string(file),
+            source = json_string(source_name),
+            content = json_string(source_text),
+        ))
+    }
+
+    /// Builds the VLQ `mappings` string: one segment per generated line, each a
+    /// four-field segment `[genCol=0, sourceIndex=0, srcLine, srcCol=0]`, with
+    /// every field but `srcLine` delta-coded against the previous segment. Lines
+    /// are separated by `;`; the generated column always resets to 0 per line, so
+    /// its delta is `-prevGenCol` each new line.
+    fn encode_mappings(&self, lines: u32) -> String {
+        let mut out = String::new();
+        // Running absolutes the v3 format deltas against. Generated column resets
+        // to 0 each line; source index, source line, source column persist.
+        let mut prev_src_line: i64 = 0;
+        let mut prev_src_col: i64 = 0;
+        for line in 1..=lines {
+            if line > 1 {
+                out.push(';');
+            }
+            // A line whose origin is unknown (precedes the first mapped entry)
+            // gets no segment — the debugger then has no mapping for it, which is
+            // correct: we cannot name a neoc line for it.
+            let Some(neoc) = self.neoc_line(line) else {
+                continue;
+            };
+            // neoc lines are one-based; source-map source lines are zero-based.
+            let src_line = i64::from(neoc) - 1;
+            // gen-col delta is 0 (always column 0, reset each line); source index
+            // delta is 0 (single source); src-col delta is 0.
+            vlq_encode(0, &mut out);
+            vlq_encode(0, &mut out);
+            vlq_encode(src_line - prev_src_line, &mut out);
+            vlq_encode(0 - prev_src_col, &mut out);
+            prev_src_line = src_line;
+            prev_src_col = 0;
+        }
+        out
+    }
+}
+
+/// The base64 alphabet Source Map v3 VLQ digits index into.
+const BASE64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/// Appends the base64-VLQ encoding of `value` to `out` (Source Map v3 §"VLQ").
+///
+/// The value is sign-encoded into the least-significant bit, then emitted as
+/// 5-bit groups little-endian, each group's 6th (continuation) bit set while
+/// more groups follow.
+fn vlq_encode(value: i64, out: &mut String) {
+    // Sign in bit 0, magnitude shifted up — the canonical VLQ sign encoding.
+    // `unsigned_abs` folds the magnitude into a `u64` so the 5-bit grouping below
+    // is a plain unsigned shift (no sign-cast on the digit index).
+    let mut v: u64 = (value.unsigned_abs() << 1) | u64::from(value < 0);
+    loop {
+        let mut digit = (v & 0b1_1111) as usize;
+        v >>= 5;
+        if v != 0 {
+            digit |= 0b10_0000; // continuation bit
+        }
+        out.push(BASE64[digit] as char);
+        if v == 0 {
+            break;
+        }
+    }
+}
+
+/// Renders `s` as a JSON string literal (quotes + minimal escaping), so neoc
+/// source inlined as `sourcesContent` stays valid JSON whatever it contains.
+fn json_string(s: &str) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => {
+                // A C0 control character with no shorthand escape: `\u00XX`.
+                let _ = write!(out, "\\u{:04x}", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 /// The result of compiling a module.
@@ -272,14 +403,23 @@ pub struct ProjectOutput {
     /// when `files` is (a project that reported a diagnostic emits nothing).
     pub source_maps: Vec<SourceMap>,
     /// Generated sidecar files that are **not** compiled modules and so have no
-    /// source map: on the JS target the per-module TypeScript declarations
-    /// (`x.d.ts`, beside each `x.js`), and on both the JS and TS targets the
-    /// shared `neoc-lib.js` + `neoc-lib.d.ts` prelude at the resolution root.
+    /// entry in `source_maps`. Three kinds:
+    ///
+    /// * **Source Map v3 `.map` files** — for every emitted module whose
+    ///   [`SourceMap`] is non-empty, an `x.<ext>.map` beside the module
+    ///   (`x.lua.map`, `x.js.map`), and the module's emitted source gains a
+    ///   trailing `sourceMappingURL` comment pointing at it (`--#` for Lua, `//#`
+    ///   for JS/TS). A target with no source map yet emits no `.map` and no
+    ///   trailer.
+    /// * On the JS target the per-module TypeScript declarations (`x.d.ts`,
+    ///   beside each `x.js`).
+    /// * On both the JS and TS targets the shared `neoc-lib.js` +
+    ///   `neoc-lib.d.ts` prelude at the resolution root.
+    ///
     /// Each entry pairs a destination path with its contents, and the path is
     /// already in its final form (extension included) — unlike `files`, it must
     /// **not** have the target extension re-applied. The `.ts` target's modules
-    /// are self-typed, so they land in `files`, not here; its only aux is the
-    /// shared `neoc-lib` pair. Empty for [`Target::Lua`] and when the project
+    /// are self-typed, so they land in `files`, not here. Empty when the project
     /// reported a diagnostic. Kept separate from `files` so the
     /// `files`↔`source_maps` positional contract stays intact.
     pub aux_files: Vec<(PathBuf, String)>,
@@ -398,7 +538,25 @@ pub fn transpile_project(entry: &Path, target: Target) -> std::io::Result<Projec
         let emitted =
             check_and_emit_module(&root, &loaded, &universe, path, target, &mut diagnostics);
         let src_path = &loaded[path].path;
-        files.push((src_path.with_extension(target.extension()), emitted.output));
+        let dest = src_path.with_extension(target.extension());
+        let mut output = emitted.output;
+        // A non-empty source map (Lua today) becomes a real `.map` sidecar beside
+        // the module, plus a `sourceMappingURL` trailer on the emitted source so a
+        // debugger finds it. The map and module are colocated in the out dir, so
+        // `sources` is the bare neoc filename and `file` the bare emitted name.
+        if let (Some(name), Some(neoc_name)) = (file_name(&dest), file_name(src_path))
+            && let Some(json) = emitted.source_map.to_v3_json(
+                &name,
+                &neoc_name,
+                &loaded[path].source,
+                line_count(&output),
+            )
+        {
+            let map_name = format!("{name}.map");
+            append_source_mapping_url(&mut output, target, &map_name);
+            aux_files.push((with_appended(src_path, ".map", target), json));
+        }
+        files.push((dest, output));
         source_maps.push(emitted.source_map);
         // JS target: a non-empty `.d.ts` sibling beside the module's `.js`.
         // `x.neoc` → `x.d.ts` (replacing the single trailing extension).
@@ -724,6 +882,50 @@ fn module_dir_segments(root: &Path, path: &Path) -> Vec<String> {
 /// exist on disk, so unresolved imports still get a stable map key.
 fn canonical_or(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// The final path component of `path` as a `String`, or `None` when the path has
+/// no file name (a root or `..`). Used to fill a source map's `file`/`sources`,
+/// which name the colocated emitted file and neoc source by bare name.
+fn file_name(path: &Path) -> Option<String> {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .map(str::to_string)
+}
+
+/// The number of one-based lines in `text`, counting a final line with no
+/// trailing newline. Empty text is one (empty) line. This is the count of
+/// generated lines the source map must cover.
+fn line_count(text: &str) -> u32 {
+    let lines = text.lines().count().max(1);
+    u32::try_from(lines).unwrap_or(u32::MAX)
+}
+
+/// The source-rooted destination for a module's `.map` sidecar: `src_path` with
+/// the target extension, then `.map` appended (`x.neoc` → `x.lua.map`). Returned
+/// in the same source-rooted form as the module's own destination so the `neoc`
+/// bin remaps it under the out dir exactly like the `.d.ts` sidecar.
+fn with_appended(src_path: &Path, suffix: &str, target: Target) -> PathBuf {
+    let mut s = src_path.with_extension(target.extension()).into_os_string();
+    s.push(suffix);
+    PathBuf::from(s)
+}
+
+/// Appends a `sourceMappingURL` trailer naming `map_name` to `output`, in the
+/// comment syntax of `target` — `//#` for JS/TS, `--#` for Lua. The trailer goes
+/// on its own final line so it is a comment whatever preceded it.
+fn append_source_mapping_url(output: &mut String, target: Target, map_name: &str) {
+    let marker = match target {
+        Target::Lua => "--#",
+        Target::Js | Target::Ts => "//#",
+    };
+    if !output.is_empty() && !output.ends_with('\n') {
+        output.push('\n');
+    }
+    output.push_str(marker);
+    output.push_str(" sourceMappingURL=");
+    output.push_str(map_name);
+    output.push('\n');
 }
 
 /// Dispatches emission to the backend for `target`, returning its source, any
