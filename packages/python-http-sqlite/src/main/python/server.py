@@ -26,14 +26,14 @@ from urllib.parse import unquote
 # output must be an importable package. `neoc build` emits only `.py`/`.pyi`, so
 # mark the directories as packages here (idempotent), then put `src/main` on the
 # path and import the `neoc` package so the relative imports resolve.
-_MAIN = Path(__file__).resolve().parent.parent
-for _pkg in (_MAIN / "neoc", _MAIN / "neoc" / "autosql"):
+_ROOT = Path(__file__).resolve().parents[3]
+for _pkg in (_ROOT / "out", _ROOT / "out" / "autosql"):
     (_pkg / "__init__.py").touch(exist_ok=True)
-sys.path.insert(0, str(_MAIN))
+sys.path.insert(0, str(_ROOT))
 
-from neoc.neoc_lib import Ok, Err  # noqa: E402
-from neoc.autosql.ports import Int, Real, Text, Bool, Null  # noqa: E402
-from neoc.main import init, list as list_notes, create  # noqa: E402
+from out.neoc_lib import Ok, Err  # noqa: E402
+from out.autosql.ports import Int, Real, Text, Bool, Null  # noqa: E402
+from out.main import init, list as list_notes, create  # noqa: E402
 
 PORT = 38573
 

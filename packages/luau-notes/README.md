@@ -25,9 +25,8 @@ port and drives.
    `list`, generic over `Store`. `create` carries the business rule (reject an
    empty body). No host concern; the port speaks only `string`/`number`, so the
    host never constructs a neoc value.
-2. **`neoc build`** transpiles the project (target `luau`) to
-   `src/main/neoc/main.luau` — a requireable module that ends with
-   `return { create = create, list = list }`.
+2. **`neoc build`** transpiles the project (target `luau`) to `out/main.luau` —
+   a requireable module that ends with `return { create = create, list = list }`.
 3. **`src/main/host/app.luau`** — the host. It implements `Store` as an in-memory
    Luau table (neoc's `store.add(b)` lowers to the colon call `store:add(b)`, so
    the methods take `self`), `require`s the controllers, drives a short sequence,
@@ -40,7 +39,7 @@ back** into the `Store` port the host implements. Same model as
 ## Run
 
 ```sh
-bun run build    # neoc build (emits src/main/neoc/main.luau)
+bun run build    # neoc build (emits out/main.luau)
 bun run start    # luau src/main/host/app.luau
 ```
 
