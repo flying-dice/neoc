@@ -38,6 +38,19 @@ pub struct Project {
 }
 
 impl Project {
+    /// The build-output directory for `target`: `<root>/src/auto/<target>`. The
+    /// generated `src/auto/` tree mirrors the hand-written `src/main/` tree, one
+    /// subdirectory per target (`src/auto/js`, `src/auto/lua`, …); each module
+    /// keeps its path under the source root (`src/main/neoc/a/b.neoc` →
+    /// `src/auto/<target>/a/b.<ext>`).
+    ///
+    /// `target` is taken as an argument rather than read from `self.target` so a
+    /// build that overrides the manifest target writes to the matching directory.
+    #[must_use]
+    pub fn output_dir(&self, target: Target) -> PathBuf {
+        self.root.join("src").join("auto").join(target.to_string())
+    }
+
     /// The SQL-input directory: `<root>/src/main/sql`. SQL-derived modules read
     /// from here and write into the source root.
     #[must_use]
@@ -263,6 +276,8 @@ mod tests {
         let root = tmp.path();
         assert_eq!(project.source_root, root.join("src/main/neoc"));
         assert_eq!(project.entry, root.join("src/main/neoc/main.neoc"));
+        assert_eq!(project.output_dir(Target::Lua), root.join("src/auto/lua"));
+        assert_eq!(project.output_dir(Target::Js), root.join("src/auto/js"));
         assert_eq!(project.sql_dir(), root.join("src/main/sql"));
     }
 

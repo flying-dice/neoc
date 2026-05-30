@@ -248,10 +248,10 @@ fn build(
 
 /// Builds the manifest-driven project discovered from the working directory:
 /// compiles from `src/main/neoc/main.neoc`, follows its `use` graph, and writes
-/// each module to `<root>/out/`, preserving its path under the source root
-/// (`src/main/neoc/a/b.neoc` → `out/a/b.<ext>`). An explicit `--target`
-/// overrides the manifest target; an explicit `--output` writes under that
-/// directory instead.
+/// each module to `src/auto/<target>/`, preserving its path under the source
+/// root (`src/main/neoc/a/b.neoc` → `src/auto/<target>/a/b.<ext>`). An explicit
+/// `--target` overrides the manifest target; an explicit `--output` writes under
+/// that directory instead.
 fn build_project(
     output: Option<&Path>,
     target: Option<Target>,
@@ -266,10 +266,10 @@ fn build_project(
         return Ok(1);
     };
     let target = target.unwrap_or(project.target);
-    // Output lands in `<root>/out/` by default, mirroring the module's path
-    // under the source root (`src/main/neoc/a/b.neoc` → `out/a/b.js`). `-o`
-    // overrides.
-    let out_dir = output.map_or_else(|| project.root.join("out"), Path::to_path_buf);
+    // Output lands in `src/auto/<target>/` by default (the generated tree
+    // mirroring `src/main/`), preserving the module's path under the source
+    // root (`src/main/neoc/a/b.neoc` → `src/auto/<target>/a/b.js`). `-o` overrides.
+    let out_dir = output.map_or_else(|| project.output_dir(target), Path::to_path_buf);
 
     let compiled = transpile_project(&project.entry, target)
         .with_context(|| format!("reading {}", project.entry.display()))?;
