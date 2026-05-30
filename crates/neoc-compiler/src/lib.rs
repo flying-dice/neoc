@@ -815,6 +815,9 @@ fn check_and_emit_module(
         enums: imported_enums(root, loaded, &me.module),
         externs,
         importer_dir: module_dir_segments(root, path),
+        // Every module a project build emits is a requireable library — the
+        // entry included, since a host consuming the build `require`s it.
+        as_module: true,
     };
     let emitted = emit(target, &elaborated, &me.source, &inputs);
     for message in &emitted.messages {
@@ -1034,6 +1037,11 @@ struct EmitInputs<'a> {
     /// a module in a subdirectory imports a sibling as `./b.js`. Empty for a
     /// root-level module and for single-file `transpile`.
     importer_dir: Vec<String>,
+    /// Whether the module is emitted as a requireable library (Lua/Luau only). A
+    /// project build sets `true` so each module ends with a `return { … }` export
+    /// table a consumer can `require`; single-file `transpile` leaves it `false`
+    /// so the chunk runs directly (`lang/DYNAMIC.md` §3.7).
+    as_module: bool,
 }
 
 /// One module's emit, normalised across backends: the target source, any
@@ -1057,7 +1065,13 @@ struct Emitted {
 fn emit(target: Target, module: &ast::Module, source: &str, inputs: &EmitInputs) -> Emitted {
     match target {
         Target::Lua => {
-            let r = codegen_lua::emit_with_imports(module, source, &inputs.enums, &inputs.externs);
+            let r = codegen_lua::emit_with_imports(
+                module,
+                source,
+                &inputs.enums,
+                &inputs.externs,
+                inputs.as_module,
+            );
             Emitted {
                 output: r.lua,
                 messages: r.diagnostics.into_iter().map(|d| d.message).collect(),
@@ -1109,7 +1123,13 @@ fn emit(target: Target, module: &ast::Module, source: &str, inputs: &EmitInputs)
             // A self-typed `.luau` is self-contained: it inlines the runtime and
             // its own `Result`/`Option` type aliases (no `neoc-lib`, no `.d.lua`
             // sidecar). No source map yet. Call shape mirrors the Lua arm.
-            let r = codegen_luau::emit(module, source, &inputs.enums, &inputs.externs);
+            let r = codegen_luau::emit(
+                module,
+                source,
+                &inputs.enums,
+                &inputs.externs,
+                inputs.as_module,
+            );
             Emitted {
                 output: r.luau,
                 messages: r.diagnostics.into_iter().map(|d| d.message).collect(),

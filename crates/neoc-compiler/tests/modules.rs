@@ -70,6 +70,24 @@ fn two_file_project_resolves_pub_item_and_emits_require() {
         main_lua.contains("add(2, 3)"),
         "main should call the imported function:\n{main_lua}"
     );
+
+    // The producer must be a requireable library: `pub fn add` is a `local` and
+    // the module closes with a `return { … }` export table carrying `add`, so the
+    // consumer's `require("util").add` resolves (`lang/DYNAMIC.md` §3.7).
+    let util_lua = project
+        .files
+        .iter()
+        .find(|(p, _)| p.file_stem().is_some_and(|s| s == "util"))
+        .map(|(_, src)| src.as_str())
+        .expect("util output present");
+    assert!(
+        util_lua.contains("local function add("),
+        "`pub fn add` should be a local in a library build:\n{util_lua}"
+    );
+    assert!(
+        util_lua.contains("add = add"),
+        "util should export `add` in its return table:\n{util_lua}"
+    );
 }
 
 #[test]
@@ -249,11 +267,14 @@ fn use_alias_rebinds_the_imported_name() {
 }
 
 #[test]
-fn single_file_project_matches_single_file_transpile() {
-    // A no-`use` entry produces the single-file `transpile` output, plus the
-    // project build's `sourceMappingURL` trailer (a project writes files to disk,
-    // so it gets a `.map` sidecar; single-file `transpile` returns bare source).
-    // Stripping the trailer, the module body is byte-identical to `transpile`.
+fn single_file_project_emits_a_requireable_library() {
+    // A project build emits every module as a requireable library, so the entry
+    // closes with a `return { … }` export table even with nothing `pub` (here,
+    // empty) — the one divergence from single-file `transpile`, which stays a
+    // directly-runnable script with no trailing return (`lang/DYNAMIC.md` §3.7).
+    // Past that line and the project's `sourceMappingURL` trailer (a project
+    // writes files to disk, so it gets a `.map` sidecar), the body is the
+    // single-file `transpile` output.
     let dir = tempdir();
     let src = "fn main() -> number { 1 + 1 }\n";
     let entry = write(&dir, "solo.neoc", src);
@@ -266,7 +287,10 @@ fn single_file_project_matches_single_file_transpile() {
     let body = emitted
         .strip_suffix(trailer)
         .expect("a sourceMappingURL trailer");
-    assert_eq!(body, transpile(src, Target::Lua).output);
+    // The script body matches single-file `transpile`; the library form adds the
+    // export table (no `pub` items here, so an empty one).
+    let expected = format!("{}return {{}}\n", transpile(src, Target::Lua).output);
+    assert_eq!(body, expected);
     // The map sidecar rides in `aux_files`.
     assert!(
         project

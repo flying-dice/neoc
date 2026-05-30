@@ -47,12 +47,20 @@ pub struct EmitResult {
 /// The runtime body is emitted by [`neoc_codegen_lua::emit_with_style`] under
 /// [`HeaderStyle::Luau`](neoc_codegen_lua::HeaderStyle::Luau); this function
 /// prepends the inline `type` declarations a self-typed `.luau` carries.
+///
+/// `as_module` is forwarded to the shared lowering: when `true` (a project
+/// build) the runtime body is a requireable library — `pub` runtime bindings
+/// become `local`s and the module ends with `return { name = name, … }` so a
+/// consumer's `require("mod").name` resolves; the export table is untyped `{ … }`,
+/// valid Luau. When `false` (single-file) the body is a directly runnable script
+/// (`lang/DYNAMIC.md` §3.7).
 #[must_use]
 pub fn emit(
     module: &ast::Module,
     source: &str,
     imported_enums: &[&ast::EnumDecl],
     imported_externs: &[ast::ExternItem],
+    as_module: bool,
 ) -> EmitResult {
     // The typed runtime body: the Lua backend's lowering, headers annotated.
     let lowered = emit_with_style(
@@ -61,6 +69,7 @@ pub fn emit(
         imported_enums,
         imported_externs,
         HeaderStyle::Luau,
+        as_module,
     );
     let body = lowered.lua;
 

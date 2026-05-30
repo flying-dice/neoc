@@ -12,7 +12,7 @@ fn emit_solo(src: &str) -> EmitResult {
         "source did not parse cleanly: {:?}",
         parsed.diagnostics
     );
-    emit(&parsed.module, src, &[], &[])
+    emit(&parsed.module, src, &[], &[], false)
 }
 
 #[test]
@@ -32,6 +32,27 @@ fn typed_fn_returning_result_carries_param_and_return_types() {
         out.luau
     );
     assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
+}
+
+#[test]
+fn library_build_closes_with_export_table_and_typed_local_fn() {
+    let parsed = neoc_parser::parse("pub fn greet(name: string) -> string {\n    name\n}\n");
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    // `as_module = true`: a requireable library. The `pub fn` keeps its typed
+    // header but is a `local`, and the module closes with an untyped export
+    // table a consumer's `require("mod").greet` resolves.
+    let out = emit(&parsed.module, "", &[], &[], true);
+    assert!(
+        out.luau
+            .contains("local function greet(name: string): string"),
+        "library pub fn should be a typed local:\n{}",
+        out.luau
+    );
+    assert!(
+        out.luau.trim_end().ends_with("return { greet = greet }"),
+        "library build must close with an export table:\n{}",
+        out.luau
+    );
 }
 
 #[test]

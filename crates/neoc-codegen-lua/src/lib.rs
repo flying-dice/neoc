@@ -256,7 +256,7 @@ pub struct EmitResult {
 /// numbers back to neoc positions; the emitted Lua text is identical either way.
 #[must_use]
 pub fn emit(module: &ast::Module) -> EmitResult {
-    emit_inner(module, None, &[], &[], HeaderStyle::Lua)
+    emit_inner(module, None, &[], &[], HeaderStyle::Lua, false)
 }
 
 /// Lower a module, choosing how declaration headers are rendered.
@@ -272,6 +272,15 @@ pub fn emit(module: &ast::Module) -> EmitResult {
 /// The whole expression/statement/`match`/`?` lowering is the same regardless of
 /// `style`; this crate stays the single owner of the runtime lowering for both
 /// the Lua and the Luau targets.
+///
+/// `as_module` selects whether the output is a requireable **library** or a
+/// directly-runnable script. When `true` — the case for every module a project
+/// build emits — each `pub` item that produces a runtime binding (a `pub fn`,
+/// `pub const`, `pub` struct, or method-bearing `pub` enum) is emitted as a
+/// `local` and the module closes with `return { name = name, … }`, so a
+/// consumer's `require("mod").name` resolves (`lang/DYNAMIC.md` §3.7). When
+/// `false` — a single-file build — `pub` items emit as globals and no trailing
+/// `return` is appended, so the chunk runs directly.
 #[must_use]
 pub fn emit_with_style(
     module: &ast::Module,
@@ -279,6 +288,7 @@ pub fn emit_with_style(
     imported_enums: &[&ast::EnumDecl],
     imported_externs: &[ast::ExternItem],
     style: HeaderStyle,
+    as_module: bool,
 ) -> EmitResult {
     emit_inner(
         module,
@@ -286,6 +296,7 @@ pub fn emit_with_style(
         imported_enums,
         imported_externs,
         style,
+        as_module,
     )
 }
 
@@ -297,7 +308,7 @@ pub fn emit_with_style(
 /// differs.
 #[must_use]
 pub fn emit_with_source(module: &ast::Module, source: &str) -> EmitResult {
-    emit_inner(module, Some(source), &[], &[], HeaderStyle::Lua)
+    emit_inner(module, Some(source), &[], &[], HeaderStyle::Lua, false)
 }
 
 /// Like [`emit_with_source`], but also given the `pub` enum declarations the
@@ -308,12 +319,18 @@ pub fn emit_with_source(module: &ast::Module, source: &str) -> EmitResult {
 /// §Lowering). Both kinds of import are used only to resolve those forms; their
 /// definitions are emitted by — or, for externs, *not* emitted by — the module
 /// that declares them.
+///
+/// `as_module` selects a requireable library (each `pub` runtime binding emitted
+/// as a `local` and a trailing `return { name = name, … }`) over a directly
+/// runnable script (globals, no trailing `return`). A project build passes
+/// `true`; single-file `transpile` passes `false` (`lang/DYNAMIC.md` §3.7).
 #[must_use]
 pub fn emit_with_imports(
     module: &ast::Module,
     source: &str,
     imported_enums: &[&ast::EnumDecl],
     imported_externs: &[ast::ExternItem],
+    as_module: bool,
 ) -> EmitResult {
     emit_inner(
         module,
@@ -321,6 +338,7 @@ pub fn emit_with_imports(
         imported_enums,
         imported_externs,
         HeaderStyle::Lua,
+        as_module,
     )
 }
 
@@ -330,6 +348,7 @@ fn emit_inner(
     imported_enums: &[&ast::EnumDecl],
     imported_externs: &[ast::ExternItem],
     style: HeaderStyle,
+    as_module: bool,
 ) -> EmitResult {
     // A `use`d extern item lowers to its native `require` in *this* consumer, not
     // an import from the defining file (which emits no runtime value for an
@@ -346,7 +365,7 @@ fn emit_inner(
         tuple_structs: TupleStructIndex::build(module),
         traits: ast::trait_index(module),
         line_index: source.map(LineIndex::build),
-        forward_decls: forward_declared_fns(module),
+        forward_decls: forward_declared_fns(module, as_module),
         validation: validate::plan(module),
         extern_structs,
         extern_struct_ns,
@@ -354,6 +373,7 @@ fn emit_inner(
         imported_externs: imported_externs.to_vec(),
         imported_extern_names: ast::extern_value_names_from_items(imported_externs),
         header_style: style,
+        as_module,
         ..Emitter::default()
     };
     e.emit_module(module);
@@ -548,6 +568,11 @@ pub(crate) struct Emitter {
     /// (typed). Set by [`emit_with_style`]; consulted only in [`Self::emit_fn`]
     /// and [`Self::emit_const`], so the runtime body is identical either way.
     header_style: HeaderStyle,
+    /// Whether this module is emitted as a requireable library (project build)
+    /// rather than a directly runnable script (single-file). When `true`, each
+    /// `pub` runtime binding is a `local` and the module ends with a
+    /// `return { name = name, … }` export table (`lang/DYNAMIC.md` §3.7).
+    as_module: bool,
 }
 
 /// A loop being emitted. When `break_flag` is set the loop uses the
@@ -599,6 +624,45 @@ function Result.map_err(self, f)
 end"#;
 
 impl Emitter {
+    /// The declaration keyword prefix for a top-level binding of visibility
+    /// `vis`. A private item is always `local`; a `pub` item is a global in the
+    /// single-file script form but a `local` in a library build (`as_module`),
+    /// where the export table re-surfaces it for `require` (`lang/DYNAMIC.md`
+    /// §3.7).
+    fn decl_prefix(&self, vis: ast::Visibility) -> &'static str {
+        if self.as_module || vis != ast::Visibility::Public {
+            "local "
+        } else {
+            ""
+        }
+    }
+
+    /// The `pub` items that produce a runtime binding, in source order: the names
+    /// the library export table (`return { name = name, … }`) carries. A `pub fn`,
+    /// `pub const`, any `pub` struct, and a method-bearing `pub` enum each emit a
+    /// runtime value a consumer's `require("mod").name` resolves. A plain `pub`
+    /// enum (no methods) emits no standalone value — its variants are inline
+    /// tagged tables resolved through the consumer's imported-enum index — so it
+    /// is not exported; type aliases, traits, and `extern` carry no value either.
+    fn exported_names(&self, module: &ast::Module) -> Vec<String> {
+        let mut names = Vec::new();
+        for item in &module.items {
+            if item.vis != ast::Visibility::Public {
+                continue;
+            }
+            match &item.kind {
+                ast::ItemKind::Fn(f) => names.push(f.sig.name.clone()),
+                ast::ItemKind::Const(c) => names.push(c.name.clone()),
+                ast::ItemKind::Struct(s) => names.push(s.name.clone()),
+                ast::ItemKind::Enum(e) if self.enum_has_methods(&e.name) => {
+                    names.push(e.name.clone());
+                }
+                _ => {}
+            }
+        }
+        names
+    }
+
     pub(crate) fn error(&mut self, message: impl Into<String>) {
         self.diagnostics.push(Diagnostic {
             message: message.into(),
@@ -754,6 +818,23 @@ impl Emitter {
         for item in &module.items {
             self.emit_item(item);
         }
+        // A library build closes with an export table so a consumer's
+        // `require("mod").name` resolves (`lang/DYNAMIC.md` §3.7). A single-file
+        // script omits it — the chunk runs directly, and a trailing `return`
+        // before an appended `main()` call would be a Lua syntax error.
+        if self.as_module {
+            let exports = self.exported_names(module);
+            if exports.is_empty() {
+                self.line("return {}");
+            } else {
+                let fields = exports
+                    .iter()
+                    .map(|n| format!("{n} = {n}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                self.line(format!("return {{ {fields} }}"));
+            }
+        }
     }
 
     /// Record every enum that needs a method table: one with a `#[derive(...)]`
@@ -901,11 +982,7 @@ impl Emitter {
 
     fn emit_const(&mut self, c: &ast::ConstDecl, vis: ast::Visibility) {
         let value = self.emit_expr(&c.value);
-        let kw = if vis == ast::Visibility::Public {
-            ""
-        } else {
-            "local "
-        };
+        let kw = self.decl_prefix(vis);
         // A typed `.luau` carries the declared type on the binding; plain Lua
         // elides it.
         let anno = if self.header_style == HeaderStyle::Luau {
@@ -917,11 +994,7 @@ impl Emitter {
     }
 
     fn emit_struct(&mut self, s: &ast::StructDecl, vis: ast::Visibility) {
-        let local = if vis == ast::Visibility::Public {
-            ""
-        } else {
-            "local "
-        };
+        let local = self.decl_prefix(vis);
         match &s.body {
             ast::StructBody::Unit => {
                 self.line(format!(
@@ -993,11 +1066,7 @@ impl Emitter {
     /// values resolve `:method` once they are `setmetatable`d at construction
     /// (§3.2).
     fn emit_enum_table(&mut self, name: &str, vis: ast::Visibility) {
-        let local = if vis == ast::Visibility::Public {
-            ""
-        } else {
-            "local "
-        };
+        let local = self.decl_prefix(vis);
         self.line(format!("{local}{name} = {{}}"));
         self.line(format!("{name}.__index = {name}"));
     }
@@ -1036,14 +1105,18 @@ impl Emitter {
                 .join(", ");
             (names, String::new())
         };
+        // In a module (library) build a `pub` free fn is a `local` like a private
+        // one — globals are reserved for the single-file script form. The export
+        // table (`emit_module`) re-surfaces it for `require`.
+        let module_local = self.as_module || vis != ast::Visibility::Public;
         let header = match target {
             Some(t) => format!("function {t}.{}({param_list}){ret}", f.sig.name),
-            None if vis == ast::Visibility::Public => {
+            None if !module_local => {
                 format!("function {}({param_list}){ret}", f.sig.name)
             }
-            // A forward-referenced private fn: assign the pre-declared `local`
-            // (hoisted in `emit_module`) instead of declaring it here, where a
-            // `local function` would be invisible to earlier callers.
+            // A forward-referenced fn: assign the pre-declared `local` (hoisted in
+            // `emit_module`) instead of declaring it here, where a `local function`
+            // would be invisible to earlier callers.
             None if self.forward_decls.contains(&f.sig.name) => {
                 format!("{} = function({param_list}){ret}", f.sig.name)
             }
@@ -1074,18 +1147,24 @@ fn has_derive(attrs: &[ast::Attribute]) -> bool {
         .any(|i| i.name == "derive")
 }
 
-/// The private free functions referenced by an item that precedes their
-/// definition. Those must be declared `local` up front (see [`Emitter`]'s
-/// `forward_decls`); a `local function` is only visible from its own line on, so
-/// an earlier caller would otherwise close over a nil global. Pub functions emit
-/// as globals (visible everywhere) and methods as table fields, so neither
-/// needs this.
-fn forward_declared_fns(module: &ast::Module) -> std::collections::HashSet<String> {
+/// The free functions referenced by an item that precedes their definition.
+/// Those must be declared `local` up front (see [`Emitter`]'s `forward_decls`);
+/// a `local function` is only visible from its own line on, so an earlier caller
+/// would otherwise close over a nil global.
+///
+/// In a single-file script (`as_module` false) `pub` functions emit as globals
+/// (visible everywhere), so only private fns need hoisting. In a library build
+/// (`as_module` true) every free fn is a `local`, so a forward-referenced `pub`
+/// fn needs hoisting too. Methods are table fields and never need this.
+fn forward_declared_fns(
+    module: &ast::Module,
+    as_module: bool,
+) -> std::collections::HashSet<String> {
     use std::collections::{HashMap, HashSet};
     let mut def_index: HashMap<&str, usize> = HashMap::new();
     for (i, item) in module.items.iter().enumerate() {
         if let ast::ItemKind::Fn(f) = &item.kind
-            && item.vis == ast::Visibility::Private
+            && (as_module || item.vis == ast::Visibility::Private)
         {
             def_index.entry(f.sig.name.as_str()).or_insert(i);
         }
@@ -1301,6 +1380,60 @@ mod dlua_tests {
             "expected empty .d.lua for a module with no pub items, got:\n{}",
             out.dlua
         );
+    }
+
+    #[test]
+    fn as_module_emits_local_pub_fn_and_export_table() {
+        let parsed = neoc_parser::parse("pub fn greet(name: string) -> string { name }");
+        assert!(parsed.ok(), "{:?}", parsed.diagnostics);
+        let out = emit_with_imports(&parsed.module, "", &[], &[], true).lua;
+        // The `pub fn` is a `local`, not a global — globals are the single-file
+        // script form (§3.7).
+        assert!(
+            out.contains("local function greet"),
+            "pub fn should be local in a library build:\n{out}"
+        );
+        assert!(
+            out.trim_end().ends_with("return { greet = greet }"),
+            "library build must close with an export table:\n{out}"
+        );
+    }
+
+    #[test]
+    fn single_file_keeps_globals_and_no_return_table() {
+        let parsed = neoc_parser::parse("pub fn greet(name: string) -> string { name }");
+        assert!(parsed.ok(), "{:?}", parsed.diagnostics);
+        let out = emit_with_imports(&parsed.module, "", &[], &[], false).lua;
+        assert!(
+            out.contains("function greet"),
+            "single-file pub fn stays a global:\n{out}"
+        );
+        assert!(
+            !out.contains("local function greet"),
+            "single-file pub fn must not be local:\n{out}"
+        );
+        assert!(
+            !out.contains("return {"),
+            "single-file build must not append an export table:\n{out}"
+        );
+    }
+
+    #[test]
+    fn as_module_exports_pub_const_struct_and_method_enum() {
+        let src = "\
+pub const MAX: number = 10;
+pub struct Point { x: number, y: number }
+pub enum Color { Red, Green }
+impl Color { fn name(self) -> string { \"c\" } }
+enum Hidden { A, B }
+fn helper() {}";
+        let parsed = neoc_parser::parse(src);
+        assert!(parsed.ok(), "{:?}", parsed.diagnostics);
+        let out = emit_with_imports(&parsed.module, "", &[], &[], true).lua;
+        let last = out.trim_end().lines().last().unwrap();
+        // Pub const, struct, and the method-bearing enum export; the private fn
+        // and the plain (no-method) enum do not.
+        assert_eq!(last, "return { MAX = MAX, Point = Point, Color = Color }");
     }
 
     #[test]

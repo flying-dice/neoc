@@ -577,6 +577,13 @@ pub fn transpile_entry_to_lua(
         return Ok(None);
     };
 
+    // A project build emits every module as a requireable library, closing with
+    // a `return { … }` export table (`lang/DYNAMIC.md` §3.7). `neoc run` executes
+    // the entry as a script, not a library: drop that trailing `return` so the
+    // appended `main()` call is reachable (a statement after `return` is a Lua
+    // syntax error). The lowered functions stay in scope as locals.
+    strip_export_return(&mut lua);
+
     // neoc is item-only at the top level (Rust-style), so a transpiled module
     // just defines functions. `fn main` is the entry point: if the program
     // defines one, invoke it so `neoc run app.neoc` actually runs the program —
@@ -635,6 +642,27 @@ pub fn transpile_source_to_lua(
 fn defines_main(lua: &str) -> bool {
     lua.lines()
         .any(|l| l.starts_with("local function main(") || l.starts_with("function main("))
+}
+
+/// Strip the library export table a project build appends to a module — the
+/// trailing top-level `return { … }` (`lang/DYNAMIC.md` §3.7) — so `neoc run` can
+/// run the entry as a script and append `main()`. A no-op when no such line is
+/// present (e.g. an inline `--eval` snippet, which is never a project build). The
+/// export `return` is emitted at column zero as the chunk's last non-empty line,
+/// so the match is anchored there.
+fn strip_export_return(lua: &mut String) {
+    let Some(last) = lua
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty() && !l.starts_with("--"))
+    else {
+        return;
+    };
+    if last.starts_with("return {")
+        && let Some(idx) = lua.rfind(last)
+    {
+        lua.truncate(idx);
+    }
 }
 
 /// Writes each project diagnostic to `err` as `<path>: <stage>: <message>` —

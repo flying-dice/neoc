@@ -47,7 +47,7 @@ fn emit_luau(world: &mut Codegen) {
         .collect();
     // A single-file emit resolves no cross-module graph: no imported enums or
     // extern items — exactly how `transpile` calls `emit` for a lone source.
-    let result = neoc_codegen_luau::emit(&parsed.module, &world.source, &[], &[]);
+    let result = neoc_codegen_luau::emit(&parsed.module, &world.source, &[], &[], false);
     world.luau = result.luau;
     world.emit_diagnostics = result.diagnostics.into_iter().map(|d| d.message).collect();
 }
