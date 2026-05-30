@@ -48,7 +48,8 @@ use neoc_ast as ast;
 
 use crate::dts::ts_generics;
 pub use crate::dts::{
-    project_const, project_enum, project_fn, project_struct, project_type_alias, ts_type,
+    project_const, project_enum, project_enum_namespace, project_fn, project_struct,
+    project_type_alias, ts_type,
 };
 use crate::expr::VariantShape;
 
@@ -365,7 +366,12 @@ fn module_dts<S: std::hash::BuildHasher>(
                 decls.push(dts::project_struct(s, true));
             }
             ast::ItemKind::Enum(en) if item.vis == ast::Visibility::Public => {
+                // The discriminated-union *type* plus the constructor-namespace
+                // *value* — a TS value+type merge, so host code reads `E` like an
+                // enum and builds/reads its variants through the namespace without
+                // touching the `__tag`/`_0` encoding (`lang/DYNAMIC.md` §3.2).
                 decls.push(dts::project_enum(en, true));
+                decls.push(dts::project_enum_namespace(en));
             }
             ast::ItemKind::Const(c) if item.vis == ast::Visibility::Public => {
                 decls.push(dts::project_const(c, true));
@@ -791,12 +797,33 @@ pub fn neoc_lib_js() -> String {
 #[must_use]
 pub fn neoc_lib_dts() -> String {
     let mut s = String::new();
+    // The methods `neoc_lib_js` installs on `Result$`/`Option$` are typed here so
+    // a TS consumer calls `r.is_ok()`, `r.unwrap()`, `r.map(f)` directly rather
+    // than falling back to `.__tag`/`._0` (`lang/DYNAMIC.md` §7.1). The tagged
+    // runtime shape is preserved: each union member is intersected with the
+    // method interface, so the discriminant stays readable too.
+    s.push_str("interface ResultMethods<T, E> {\n");
+    s.push_str("  is_ok(): boolean;\n");
+    s.push_str("  is_err(): boolean;\n");
+    s.push_str("  unwrap(): T;\n");
+    s.push_str("  unwrap_err(): E;\n");
+    s.push_str("  map<U>(f: (v: T) => U): Result<U, E>;\n");
+    s.push_str("  map_err<F>(f: (e: E) => F): Result<T, F>;\n");
+    s.push_str("}\n");
+    s.push_str("interface OptionMethods<T> {\n");
+    s.push_str("  is_some(): boolean;\n");
+    s.push_str("  is_none(): boolean;\n");
+    s.push_str("  unwrap(): T;\n");
+    s.push_str("  unwrap_or(default_: T): T;\n");
+    s.push_str("  map<U>(f: (v: T) => U): Option<U>;\n");
+    s.push_str("  ok_or<E>(err: E): Result<T, E>;\n");
+    s.push_str("}\n");
     s.push_str("export type Result<T, E> =\n");
-    s.push_str("  | { __enum: \"Result\"; __tag: \"Ok\"; _0: T }\n");
-    s.push_str("  | { __enum: \"Result\"; __tag: \"Err\"; _0: E };\n");
+    s.push_str("  | ({ __enum: \"Result\"; __tag: \"Ok\"; _0: T } & ResultMethods<T, E>)\n");
+    s.push_str("  | ({ __enum: \"Result\"; __tag: \"Err\"; _0: E } & ResultMethods<T, E>);\n");
     s.push_str("export type Option<T> =\n");
-    s.push_str("  | { __enum: \"Option\"; __tag: \"Some\"; _0: T }\n");
-    s.push_str("  | { __enum: \"Option\"; __tag: \"None\" };\n");
+    s.push_str("  | ({ __enum: \"Option\"; __tag: \"Some\"; _0: T } & OptionMethods<T>)\n");
+    s.push_str("  | ({ __enum: \"Option\"; __tag: \"None\" } & OptionMethods<T>);\n");
     s.push_str("export declare function Ok<T, E>(v: T): Result<T, E>;\n");
     s.push_str("export declare function Err<T, E>(e: E): Result<T, E>;\n");
     s.push_str("export declare function Some<T>(v: T): Option<T>;\n");
@@ -948,6 +975,13 @@ impl Emitter {
                 self.ensure_method_slot(&e.name, item.vis);
                 self.emit_derives(&item.attrs, neoc_ast_derive_target(item));
                 self.emit_traits_tag(&e.name);
+                // A `pub` enum also exports a constructor namespace so host code
+                // builds and reads its variants without hand-stamping the runtime
+                // shape (`lang/DYNAMIC.md` §3.2). Purely additive; internal
+                // `E::Variant`/`match` lowering is unchanged.
+                if item.vis == ast::Visibility::Public {
+                    self.emit_pub_enum_namespace(e);
+                }
             }
             // No JS output: aliases erase; an `extern` block describes the
             // target surface — its `mod` imports emit in the preamble, its
@@ -1198,16 +1232,46 @@ mod tests {
     #[test]
     fn neoc_lib_dts_declares_tagged_result_and_option() {
         let dts = neoc_lib_dts();
+        // The union keeps the tagged runtime shape, now intersected with the
+        // method interface so `r.is_ok()`/`r.unwrap()`/`r.map(f)` type-check.
         assert!(dts.contains(
-            "export type Result<T, E> =\n  | { __enum: \"Result\"; __tag: \"Ok\"; _0: T }\n  | { __enum: \"Result\"; __tag: \"Err\"; _0: E };"
+            "export type Result<T, E> =\n  | ({ __enum: \"Result\"; __tag: \"Ok\"; _0: T } & ResultMethods<T, E>)\n  | ({ __enum: \"Result\"; __tag: \"Err\"; _0: E } & ResultMethods<T, E>);"
         ), "{dts}");
         assert!(dts.contains(
-            "export type Option<T> =\n  | { __enum: \"Option\"; __tag: \"Some\"; _0: T }\n  | { __enum: \"Option\"; __tag: \"None\" };"
+            "export type Option<T> =\n  | ({ __enum: \"Option\"; __tag: \"Some\"; _0: T } & OptionMethods<T>)\n  | ({ __enum: \"Option\"; __tag: \"None\" } & OptionMethods<T>);"
         ), "{dts}");
         assert!(
             dts.contains("export declare function Ok<T, E>(v: T): Result<T, E>;"),
             "{dts}"
         );
+    }
+
+    /// The `Result`/`Option` method signatures are typed on the emitted
+    /// declaration so a TS host calls `r.is_ok()`, `r.unwrap()`, `r.map(f)`
+    /// directly — `map` carries a fresh `<U>` matching the runtime
+    /// (`lang/DYNAMIC.md` §7.1).
+    #[test]
+    fn neoc_lib_dts_types_result_and_option_methods() {
+        let dts = neoc_lib_dts();
+        for sig in [
+            "is_ok(): boolean;",
+            "is_err(): boolean;",
+            "unwrap(): T;",
+            "unwrap_err(): E;",
+            "map<U>(f: (v: T) => U): Result<U, E>;",
+            "map_err<F>(f: (e: E) => F): Result<T, F>;",
+        ] {
+            assert!(dts.contains(sig), "Result method `{sig}` missing:\n{dts}");
+        }
+        for sig in [
+            "is_some(): boolean;",
+            "is_none(): boolean;",
+            "unwrap_or(default_: T): T;",
+            "map<U>(f: (v: T) => U): Option<U>;",
+            "ok_or<E>(err: E): Result<T, E>;",
+        ] {
+            assert!(dts.contains(sig), "Option method `{sig}` missing:\n{dts}");
+        }
     }
 
     #[test]
@@ -1346,7 +1410,12 @@ mod tests {
         assert_eq!(
             out.dts,
             "export interface Row { id: number; }\n\
-             export type E = { __enum: \"E\"; __tag: \"A\" } | { __enum: \"E\"; __tag: \"B\"; _0: number };\n"
+             export type E = { __enum: \"E\"; __tag: \"A\" } | { __enum: \"E\"; __tag: \"B\"; _0: number };\n\
+             export declare const E: {\n  \
+             A: E;\n  \
+             B(_0: number): E;\n  \
+             match<R>(value: E, arms: { A(): R; B(_0: number): R }): R;\n\
+             };\n"
         );
     }
 
@@ -2074,6 +2143,138 @@ mod tests {
         assert!(
             out.js.contains("if (a.__tag === \"Circle\") {"),
             "{}",
+            out.js
+        );
+    }
+
+    /// A `pub enum` exports a constructor namespace so host code builds and reads
+    /// its variants without hand-stamping the `__enum`/`__tag`/`_0` runtime shape
+    /// (`lang/DYNAMIC.md` §3.2). The shapes match what `E::Variant` lowers to; a
+    /// `match(value, arms)` reader dispatches on the tag.
+    #[test]
+    fn pub_enum_exports_constructor_namespace() {
+        // pub enum SqlValue { Int(number), Text(string), Pair { a: number, b: number }, Null }
+        let en = ast::Item {
+            attrs: Vec::new(),
+            vis: ast::Visibility::Public,
+            kind: ast::ItemKind::Enum(ast::EnumDecl {
+                name: "SqlValue".to_string(),
+                generics: Vec::new(),
+                variants: vec![
+                    ast::Variant {
+                        attrs: Vec::new(),
+                        name: "Int".to_string(),
+                        name_span: ast::Span::default(),
+                        body: ast::VariantBody::Tuple(vec![ast::Type::Path(ast::TypePath {
+                            segments: vec![ast::TypeSegment {
+                                name: "number".to_string(),
+                                args: Vec::new(),
+                            }],
+                        })]),
+                    },
+                    ast::Variant {
+                        attrs: Vec::new(),
+                        name: "Text".to_string(),
+                        name_span: ast::Span::default(),
+                        body: ast::VariantBody::Tuple(vec![ast::Type::Path(ast::TypePath {
+                            segments: vec![ast::TypeSegment {
+                                name: "string".to_string(),
+                                args: Vec::new(),
+                            }],
+                        })]),
+                    },
+                    ast::Variant {
+                        attrs: Vec::new(),
+                        name: "Pair".to_string(),
+                        name_span: ast::Span::default(),
+                        body: ast::VariantBody::Named(vec![field("a"), field("b")]),
+                    },
+                    ast::Variant {
+                        attrs: Vec::new(),
+                        name: "Null".to_string(),
+                        name_span: ast::Span::default(),
+                        body: ast::VariantBody::Unit,
+                    },
+                ],
+            }),
+            span: ast::Span::default(),
+        };
+        let module = ast::Module { items: vec![en] };
+        let out = emit_solo(&module);
+        assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
+        assert_eq!(
+            out.js,
+            "export const SqlValue = {\n  \
+             Int: (_0) => ({ __enum: \"SqlValue\", __tag: \"Int\", _0 }),\n  \
+             Text: (_0) => ({ __enum: \"SqlValue\", __tag: \"Text\", _0 }),\n  \
+             Pair: ({ a, b }) => ({ __enum: \"SqlValue\", __tag: \"Pair\", a, b }),\n  \
+             Null: { __enum: \"SqlValue\", __tag: \"Null\" },\n  \
+             match: (value, arms) => value.__tag === \"Int\" ? arms.Int(value._0) : \
+             value.__tag === \"Text\" ? arms.Text(value._0) : \
+             value.__tag === \"Pair\" ? arms.Pair({ a: value.a, b: value.b }) : \
+             value.__tag === \"Null\" ? arms.Null() : undefined,\n\
+             };\n"
+        );
+    }
+
+    /// A non-`pub` enum emits no namespace — change is purely additive, internal
+    /// `E::Variant`/`match` lowering is untouched (`lang/DYNAMIC.md` §3.2).
+    #[test]
+    fn private_enum_emits_no_namespace() {
+        let en = item(
+            ast::ItemKind::Enum(ast::EnumDecl {
+                name: "Color".to_string(),
+                generics: Vec::new(),
+                variants: vec![ast::Variant {
+                    attrs: Vec::new(),
+                    name: "Red".to_string(),
+                    name_span: ast::Span::default(),
+                    body: ast::VariantBody::Unit,
+                }],
+            }),
+            Vec::new(),
+        );
+        let module = ast::Module { items: vec![en] };
+        let out = emit_solo(&module);
+        assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
+        assert_eq!(out.js, "");
+    }
+
+    /// A method-bearing `pub enum`'s namespace links each constructed value to
+    /// the enum's prototype `E$` via `__proto__`, matching `E::Variant`'s inline
+    /// lowering (`lang/DYNAMIC.md` §3.2, §7.1).
+    #[test]
+    fn pub_enum_namespace_links_prototype_when_method_bearing() {
+        // #[derive(Eq)] pub enum Flag { On, Off }
+        let mut en = item(
+            ast::ItemKind::Enum(ast::EnumDecl {
+                name: "Flag".to_string(),
+                generics: Vec::new(),
+                variants: vec![
+                    ast::Variant {
+                        attrs: Vec::new(),
+                        name: "On".to_string(),
+                        name_span: ast::Span::default(),
+                        body: ast::VariantBody::Unit,
+                    },
+                    ast::Variant {
+                        attrs: Vec::new(),
+                        name: "Off".to_string(),
+                        name_span: ast::Span::default(),
+                        body: ast::VariantBody::Unit,
+                    },
+                ],
+            }),
+            vec![derive_attr("Eq")],
+        );
+        en.vis = ast::Visibility::Public;
+        let module = ast::Module { items: vec![en] };
+        let out = emit_solo(&module);
+        assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
+        assert!(
+            out.js
+                .contains("On: { __enum: \"Flag\", __tag: \"On\", __proto__: Flag$ },"),
+            "namespace value must link the prototype:\n{}",
             out.js
         );
     }

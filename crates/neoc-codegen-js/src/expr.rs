@@ -9,6 +9,8 @@
 //! on `string` (it lowers to `+` either way, but the checker rewrites it to
 //! [`ast::BinOp::Concat`] so addition and concatenation stay distinct upstream).
 
+use std::fmt::Write as _;
+
 use crate::Emitter;
 use neoc_ast as ast;
 
@@ -698,6 +700,32 @@ impl Emitter {
         out
     }
 
+    /// Emit the exported constructor namespace for a `pub enum E` — an object
+    /// `export const E = { … }` whose keys are the variants, each producing the
+    /// exact runtime shape `E::Variant` already lowers to (`lang/DYNAMIC.md` §3.2,
+    /// §7.1), plus a `match(value, arms)` reader that dispatches on `__tag`. This
+    /// is the only place host code touches `__tag`/`_0`: it builds and reads
+    /// enums through the namespace, never by hand. Purely additive — internal
+    /// `E::Variant`/`match` lowering is unchanged. Emitted only for `pub` enums.
+    pub(crate) fn emit_pub_enum_namespace(&mut self, e: &ast::EnumDecl) {
+        let proto = self.proto_link(&e.name);
+        self.line(format!("export const {} = {{", e.name));
+        self.indented(|em| {
+            for v in &e.variants {
+                em.line(enum_namespace_entry(&e.name, v, &proto));
+            }
+            // The `match` reader: dispatch on the tag to the matching arm,
+            // passing the payload. Tuple → positional `_0`[,`_1`…]; struct → the
+            // field object; unit → no args. The `__tag`/`_0` access lives here so
+            // host code never writes it.
+            em.line(format!(
+                "match: (value, arms) => {},",
+                enum_namespace_match(e)
+            ));
+        });
+        self.line("};");
+    }
+
     /// Lower a tuple-variant construction `E::V(a, …)` to its tagged object,
     /// storing the payload under integer-keyed properties `_0`, `_1`, ….
     fn emit_tuple_variant(&mut self, en: &str, var: &str, args: &[ast::Expr]) -> String {
@@ -891,6 +919,77 @@ impl Emitter {
         self.indent = saved_indent;
         captured
     }
+}
+
+/// One entry of a `pub enum`'s constructor namespace, building the exact
+/// runtime shape `E::Variant` lowers to (`proto` is the `, __proto__: E$` suffix
+/// for a method-bearing enum, or empty). A unit variant is a value (object); a
+/// tuple variant is an arrow `(_0, _1) => ({ … })`; a struct variant is an arrow
+/// `({ x, y }) => ({ … })` spreading the named fields.
+fn enum_namespace_entry(enum_name: &str, v: &ast::Variant, proto: &str) -> String {
+    let head = format!("__enum: \"{enum_name}\", __tag: \"{}\"", v.name);
+    match &v.body {
+        ast::VariantBody::Unit => format!("{}: {{ {head}{proto} }},", v.name),
+        ast::VariantBody::Tuple(tys) => {
+            let params = (0..tys.len())
+                .map(|i| format!("_{i}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let payload = (0..tys.len()).fold(String::new(), |mut acc, i| {
+                let _ = write!(acc, ", _{i}");
+                acc
+            });
+            format!("{}: ({params}) => ({{ {head}{payload}{proto} }}),", v.name)
+        }
+        ast::VariantBody::Named(fields) => {
+            let names = fields
+                .iter()
+                .map(|f| f.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let payload = fields.iter().fold(String::new(), |mut acc, f| {
+                let _ = write!(acc, ", {}", f.name);
+                acc
+            });
+            format!(
+                "{}: ({{ {names} }}) => ({{ {head}{payload}{proto} }}),",
+                v.name
+            )
+        }
+    }
+}
+
+/// The body of a `pub enum`'s `match(value, arms)` reader: dispatch on
+/// `value.__tag` to `arms[tag]`, passing the variant's payload — tuple →
+/// positional `_0`[,`_1`…], struct → the field object, unit → no args. Built as
+/// a ternary chain over the variants so each variant passes exactly its payload.
+fn enum_namespace_match(e: &ast::EnumDecl) -> String {
+    let mut chain = String::new();
+    for v in &e.variants {
+        let call = match &v.body {
+            ast::VariantBody::Unit => format!("arms.{}()", v.name),
+            ast::VariantBody::Tuple(tys) => {
+                let args = (0..tys.len())
+                    .map(|i| format!("value._{i}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("arms.{}({args})", v.name)
+            }
+            ast::VariantBody::Named(fields) => {
+                let obj = fields
+                    .iter()
+                    .map(|f| format!("{}: value.{}", f.name, f.name))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("arms.{}({{ {obj} }})", v.name)
+            }
+        };
+        let _ = write!(chain, "value.__tag === \"{}\" ? {call} : ", v.name);
+    }
+    // Exhaustiveness is a static guarantee; an unmatched tag cannot occur, so the
+    // final fallthrough is `undefined`.
+    chain.push_str("undefined");
+    chain
 }
 
 fn bin_op(op: ast::BinOp) -> &'static str {

@@ -170,6 +170,86 @@ fn enum_variant_member(enum_name: &str, v: &ast::Variant) -> String {
     }
 }
 
+/// Project a `pub enum`'s constructor namespace to a TS `export declare const`,
+/// typing the runtime object the JS backend emits (`emit_pub_enum_namespace`).
+/// It merges with the same-named `export type E` union (a TS value+type merge,
+/// intended — it reads like an enum), so host code builds variants
+/// (`E.Variant(x)`) and reads them (`E.match(v, arms)`) without ever touching the
+/// `__tag`/`_0` runtime encoding (`lang/DYNAMIC.md` §3.2, §7.1):
+///
+/// * unit variant `V` → `V: E`
+/// * tuple variant `V(A, B)` → `V(_0: A, _1: B): E`
+/// * struct variant `V { x: T }` → `V(fields: { x: T }): E`
+/// * the `match` reader → `match<R>(value: E, arms: { V(…): R; … }): R`
+#[must_use]
+pub fn project_enum_namespace(e: &ast::EnumDecl) -> String {
+    let mut s = format!("export declare const {}: {{\n", e.name);
+    for v in &e.variants {
+        let _ = writeln!(s, "  {};", enum_namespace_member(&e.name, v));
+    }
+    let arms = e
+        .variants
+        .iter()
+        .map(enum_namespace_arm)
+        .collect::<Vec<_>>()
+        .join("; ");
+    let _ = writeln!(s, "  match<R>(value: {}, arms: {{ {arms} }}): R;", e.name);
+    s.push_str("};");
+    s
+}
+
+/// One constructor member of the namespace const's object type. A unit variant
+/// is a property of the enum type; tuple/struct variants are call signatures
+/// returning the enum type.
+fn enum_namespace_member(enum_name: &str, v: &ast::Variant) -> String {
+    match &v.body {
+        ast::VariantBody::Unit => format!("{}: {enum_name}", v.name),
+        ast::VariantBody::Tuple(tys) => {
+            let params = tys
+                .iter()
+                .enumerate()
+                .map(|(i, t)| format!("_{i}: {}", ts_type(t)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{}({params}): {enum_name}", v.name)
+        }
+        ast::VariantBody::Named(fields) => {
+            let obj = fields
+                .iter()
+                .map(|f| format!("{}: {}", f.name, ts_type(&f.ty)))
+                .collect::<Vec<_>>()
+                .join("; ");
+            format!("{}(fields: {{ {obj} }}): {enum_name}", v.name)
+        }
+    }
+}
+
+/// One arm signature in the `match` reader's `arms` object type. The arm receives
+/// the variant's payload (tuple → positional, struct → the field object, unit →
+/// none) and returns the shared result `R`.
+fn enum_namespace_arm(v: &ast::Variant) -> String {
+    match &v.body {
+        ast::VariantBody::Unit => format!("{}(): R", v.name),
+        ast::VariantBody::Tuple(tys) => {
+            let params = tys
+                .iter()
+                .enumerate()
+                .map(|(i, t)| format!("_{i}: {}", ts_type(t)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{}({params}): R", v.name)
+        }
+        ast::VariantBody::Named(fields) => {
+            let obj = fields
+                .iter()
+                .map(|f| format!("{}: {}", f.name, ts_type(&f.ty)))
+                .collect::<Vec<_>>()
+                .join("; ");
+            format!("{}(fields: {{ {obj} }}): R", v.name)
+        }
+    }
+}
+
 /// Project a function signature to a TS `export declare function` declaration.
 ///
 /// The `self` receiver (a method) is dropped — methods are not free exports;
@@ -344,6 +424,55 @@ mod tests {
              { __enum: \"E\"; __tag: \"A\" } | \
              { __enum: \"E\"; __tag: \"B\"; _0: number } | \
              { __enum: \"E\"; __tag: \"C\"; x: string };"
+        );
+    }
+
+    #[test]
+    fn enum_namespace_const_types_constructors_and_match() {
+        // pub enum SqlValue { Int(number), Text(string), Pair { a: number, b: number }, Null }
+        let e = ast::EnumDecl {
+            name: "SqlValue".to_string(),
+            generics: Vec::new(),
+            variants: vec![
+                ast::Variant {
+                    attrs: Vec::new(),
+                    name: "Int".to_string(),
+                    name_span: ast::Span::default(),
+                    body: ast::VariantBody::Tuple(vec![path("number")]),
+                },
+                ast::Variant {
+                    attrs: Vec::new(),
+                    name: "Text".to_string(),
+                    name_span: ast::Span::default(),
+                    body: ast::VariantBody::Tuple(vec![path("string")]),
+                },
+                ast::Variant {
+                    attrs: Vec::new(),
+                    name: "Pair".to_string(),
+                    name_span: ast::Span::default(),
+                    body: ast::VariantBody::Named(vec![
+                        field("a", path("number")),
+                        field("b", path("number")),
+                    ]),
+                },
+                ast::Variant {
+                    attrs: Vec::new(),
+                    name: "Null".to_string(),
+                    name_span: ast::Span::default(),
+                    body: ast::VariantBody::Unit,
+                },
+            ],
+        };
+        assert_eq!(
+            project_enum_namespace(&e),
+            "export declare const SqlValue: {\n  \
+             Int(_0: number): SqlValue;\n  \
+             Text(_0: string): SqlValue;\n  \
+             Pair(fields: { a: number; b: number }): SqlValue;\n  \
+             Null: SqlValue;\n  \
+             match<R>(value: SqlValue, arms: { Int(_0: number): R; Text(_0: string): R; \
+             Pair(fields: { a: number; b: number }): R; Null(): R }): R;\n\
+             };"
         );
     }
 
