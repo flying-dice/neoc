@@ -10,16 +10,8 @@
         "typescript": "^6",
       },
     },
-    "packages/bun-http-sqlite-js": {
-      "name": "@neoc-sh/demo-bun-http-sqlite-js",
-      "version": "0.1.0",
-    },
     "packages/bun-http-sqlite-ts": {
       "name": "@neoc-sh/demo-bun-http-sqlite-ts",
-      "version": "0.1.0",
-    },
-    "packages/lua-notes": {
-      "name": "@neoc-sh/demo-lua-notes",
       "version": "0.1.0",
     },
     "packages/luau-notes": {
@@ -32,11 +24,7 @@
     },
   },
   "packages": {
-    "@neoc-sh/demo-bun-http-sqlite-js": ["@neoc-sh/demo-bun-http-sqlite-js@workspace:packages/bun-http-sqlite-js"],
-
     "@neoc-sh/demo-bun-http-sqlite-ts": ["@neoc-sh/demo-bun-http-sqlite-ts@workspace:packages/bun-http-sqlite-ts"],
-
-    "@neoc-sh/demo-lua-notes": ["@neoc-sh/demo-lua-notes@workspace:packages/lua-notes"],
 
     "@neoc-sh/demo-luau-notes": ["@neoc-sh/demo-luau-notes@workspace:packages/luau-notes"],
 
