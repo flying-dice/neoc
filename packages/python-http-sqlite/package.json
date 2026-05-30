@@ -6,6 +6,6 @@
   "scripts": {
     "gen:sql": "cargo run -p neoc -- autosql",
     "build": "cargo run -p neoc -- build",
-    "start": "python3.14 src/main/python/server.py"
+    "start": "python3.14 src/main/py/server.py"
   }
 }

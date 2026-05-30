@@ -47,7 +47,7 @@ app, the same neoc (copied verbatim, target-agnostic), a different host.
    `Option` / `SqlValue` helpers. The emitted modules use relative imports
    (`from .autosql.ports import …`, `from ..neoc_lib import …`), so `src/auto/py/` is
    loaded as a package.
-4. **`src/main/python/server.py`** — the host. It implements `SqlExecutor` over
+4. **`src/main/py/server.py`** — the host. It implements `SqlExecutor` over
    stdlib `sqlite3` (reading/writing `SqlValue` through the emitted `@dataclass`
    variants `Int` / `Real` / `Text` / `Bool` / `Null` and a structural `match` —
    never a tag field), injects it into the controllers, runs `http.server` with a
@@ -68,7 +68,7 @@ statement). The scripts call `python3.14`; substitute any `python3 >= 3.10`.
 
 ```sh
 npm run build    # cargo run -p neoc -- build  (emits src/auto/py/ with .pyi)
-npm run start    # python3.14 src/main/python/server.py -> http://localhost:38573
+npm run start    # python3.14 src/main/py/server.py -> http://localhost:38573
 ```
 
 ```sh

@@ -5,6 +5,6 @@
   "private": true,
   "scripts": {
     "build": "cargo run -p neoc -- build",
-    "start": "luau src/main/host/app.luau"
+    "start": "luau src/main/luau/app.luau"
   }
 }
