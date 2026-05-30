@@ -709,19 +709,35 @@ impl Emitter {
     /// `E::Variant`/`match` lowering is unchanged. Emitted only for `pub` enums.
     pub(crate) fn emit_pub_enum_namespace(&mut self, e: &ast::EnumDecl) {
         let proto = self.proto_link(&e.name);
+        // Under `HeaderStyle::Ts` the namespace value carries inline type
+        // annotations (a `.ts` target ships no `.d.ts`, so the types live on the
+        // value object); under `HeaderStyle::Js` it stays untyped and the `.d.ts`
+        // (`dts::project_enum_namespace`) carries the types — byte-identical to
+        // the JS backend.
+        let typed = self.header_style == crate::HeaderStyle::Ts;
+        let self_ty = enum_self_type(e);
         self.line(format!("export const {} = {{", e.name));
         self.indented(|em| {
             for v in &e.variants {
-                em.line(enum_namespace_entry(&e.name, v, &proto));
+                let entry = if typed {
+                    enum_namespace_entry_ts(&e.name, &self_ty, v, &proto)
+                } else {
+                    enum_namespace_entry(&e.name, v, &proto)
+                };
+                em.line(entry);
             }
             // The `match` reader: dispatch on the tag to the matching arm,
             // passing the payload. Tuple → positional `_0`[,`_1`…]; struct → the
             // field object; unit → no args. The `__tag`/`_0` access lives here so
             // host code never writes it.
-            em.line(format!(
-                "match: (value, arms) => {},",
-                enum_namespace_match(e)
-            ));
+            if typed {
+                em.line(format!("match: {},", enum_namespace_match_ts(e)));
+            } else {
+                em.line(format!(
+                    "match: (value, arms) => {},",
+                    enum_namespace_match(e)
+                ));
+            }
         });
         self.line("};");
     }
@@ -955,6 +971,138 @@ fn enum_namespace_entry(enum_name: &str, v: &ast::Variant, proto: &str) -> Strin
                 "{}: ({{ {names} }}) => ({{ {head}{payload}{proto} }}),",
                 v.name
             )
+        }
+    }
+}
+
+/// The enum's TS self-type — its name plus generic params (`E` or `E<T, U>`) —
+/// used to type the namespace's constructors and `match` reader.
+fn enum_self_type(e: &ast::EnumDecl) -> String {
+    format!("{}{}", e.name, crate::dts::ts_generics(&e.generics))
+}
+
+/// The TS-typed counterpart of [`enum_namespace_entry`]: one namespace entry with
+/// inline type annotations, for `HeaderStyle::Ts` (the `.ts` target carries types
+/// on the value, since it ships no `.d.ts`). A unit variant is a value widened
+/// with an `as <Enum>` assertion (the bare object literal would widen `__tag` to
+/// `string` and fail `: <Enum>`); a tuple variant is a typed arrow
+/// `(_0: T, …): <Enum> => ({ … })`; a struct variant is `(fields: { x: T }):
+/// <Enum> => ({ …, ...fields })`. The runtime shape is identical to the JS form.
+fn enum_namespace_entry_ts(
+    enum_name: &str,
+    self_ty: &str,
+    v: &ast::Variant,
+    proto: &str,
+) -> String {
+    let head = format!("__enum: \"{enum_name}\", __tag: \"{}\"", v.name);
+    match &v.body {
+        ast::VariantBody::Unit => {
+            format!("{}: {{ {head}{proto} }} as {self_ty},", v.name)
+        }
+        ast::VariantBody::Tuple(tys) => {
+            let params = tys
+                .iter()
+                .enumerate()
+                .map(|(i, t)| format!("_{i}: {}", crate::dts::ts_type(t)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let payload = (0..tys.len()).fold(String::new(), |mut acc, i| {
+                let _ = write!(acc, ", _{i}");
+                acc
+            });
+            format!(
+                "{}: ({params}): {self_ty} => ({{ {head}{payload}{proto} }}),",
+                v.name
+            )
+        }
+        ast::VariantBody::Named(fields) => {
+            let obj = fields
+                .iter()
+                .map(|f| format!("{}: {}", f.name, crate::dts::ts_type(&f.ty)))
+                .collect::<Vec<_>>()
+                .join("; ");
+            format!(
+                "{}: (fields: {{ {obj} }}): {self_ty} => ({{ {head}, ...fields{proto} }}),",
+                v.name
+            )
+        }
+    }
+}
+
+/// The TS-typed counterpart of [`enum_namespace_match`]: a generic arrow
+/// `<R>(value: <Enum>, arms: { … }): R => …`. The ternary chain narrows on
+/// `value.__tag` (a discriminated union), so each `value._0` types correctly; the
+/// body ends with the **last variant as the bare `else`** — no `: undefined`
+/// fallback, which would widen the return to `R | undefined` and fail `: R`.
+fn enum_namespace_match_ts(e: &ast::EnumDecl) -> String {
+    let self_ty = enum_self_type(e);
+    let arms = e
+        .variants
+        .iter()
+        .map(enum_namespace_arm_ts)
+        .collect::<Vec<_>>()
+        .join("; ");
+    let mut chain = String::new();
+    let n = e.variants.len();
+    for (idx, v) in e.variants.iter().enumerate() {
+        let call = enum_namespace_arm_call(v);
+        if idx + 1 == n {
+            // Last variant is the bare `else` — exhaustiveness is static, so no
+            // `undefined` fallthrough is needed (and it would break `: R`).
+            chain.push_str(&call);
+        } else {
+            let _ = write!(chain, "value.__tag === \"{}\" ? {call} : ", v.name);
+        }
+    }
+    format!("<R>(value: {self_ty}, arms: {{ {arms} }}): R => {chain}")
+}
+
+/// One arm signature in the TS `match` reader's `arms` object type: the variant
+/// receives its payload (tuple → positional, struct → the field object, unit →
+/// none) and returns the shared result `R`.
+fn enum_namespace_arm_ts(v: &ast::Variant) -> String {
+    match &v.body {
+        ast::VariantBody::Unit => format!("{}(): R", v.name),
+        ast::VariantBody::Tuple(tys) => {
+            let params = tys
+                .iter()
+                .enumerate()
+                .map(|(i, t)| format!("_{i}: {}", crate::dts::ts_type(t)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{}({params}): R", v.name)
+        }
+        ast::VariantBody::Named(fields) => {
+            let obj = fields
+                .iter()
+                .map(|f| format!("{}: {}", f.name, crate::dts::ts_type(&f.ty)))
+                .collect::<Vec<_>>()
+                .join("; ");
+            format!("{}(fields: {{ {obj} }}): R", v.name)
+        }
+    }
+}
+
+/// The arm call for one variant in the `match` chain: `arms.V(value._0, …)` for a
+/// tuple, `arms.V({ x: value.x })` for a struct, `arms.V()` for a unit. Shared by
+/// the TS `match` body.
+fn enum_namespace_arm_call(v: &ast::Variant) -> String {
+    match &v.body {
+        ast::VariantBody::Unit => format!("arms.{}()", v.name),
+        ast::VariantBody::Tuple(tys) => {
+            let args = (0..tys.len())
+                .map(|i| format!("value._{i}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("arms.{}({args})", v.name)
+        }
+        ast::VariantBody::Named(fields) => {
+            let obj = fields
+                .iter()
+                .map(|f| format!("{}: value.{}", f.name, f.name))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("arms.{}({{ {obj} }})", v.name)
         }
     }
 }

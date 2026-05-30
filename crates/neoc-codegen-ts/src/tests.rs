@@ -85,6 +85,38 @@ fn exported_enum_becomes_discriminated_union() {
 }
 
 #[test]
+fn pub_enum_namespace_is_typed_under_strict() {
+    // A `.ts` ships no `.d.ts`, so the namespace value carries inline type
+    // annotations: typed constructor arrows, a unit value with an `as <Enum>`
+    // assertion, and a generic `match` whose last arm is the bare `else` (no
+    // `undefined` fallthrough). Mirrors the JS form but typed — passes
+    // `tsc --strict`.
+    let out = emit_solo(
+        "pub enum SqlValue { Int(number), Text(string), Pair { a: number, b: number }, Null }\n",
+    );
+    assert!(
+        out.ts.contains(
+            "export const SqlValue = {\n  \
+             Int: (_0: number): SqlValue => ({ __enum: \"SqlValue\", __tag: \"Int\", _0 }),\n  \
+             Text: (_0: string): SqlValue => ({ __enum: \"SqlValue\", __tag: \"Text\", _0 }),\n  \
+             Pair: (fields: { a: number; b: number }): SqlValue => \
+             ({ __enum: \"SqlValue\", __tag: \"Pair\", ...fields }),\n  \
+             Null: { __enum: \"SqlValue\", __tag: \"Null\" } as SqlValue,\n  \
+             match: <R>(value: SqlValue, arms: { Int(_0: number): R; Text(_0: string): R; \
+             Pair(fields: { a: number; b: number }): R; Null(): R }): R => \
+             value.__tag === \"Int\" ? arms.Int(value._0) : \
+             value.__tag === \"Text\" ? arms.Text(value._0) : \
+             value.__tag === \"Pair\" ? arms.Pair({ a: value.a, b: value.b }) : \
+             arms.Null(),\n\
+             };"
+        ),
+        "missing typed enum namespace:\n{}",
+        out.ts
+    );
+    assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
+}
+
+#[test]
 fn typed_const_carries_declared_type() {
     let out = emit_solo("pub const MAX: number = 10;\n");
     assert!(
