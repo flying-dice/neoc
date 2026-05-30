@@ -248,9 +248,10 @@ fn build(
 
 /// Builds the manifest-driven project discovered from the working directory:
 /// compiles from `src/main/neoc/main.neoc`, follows its `use` graph, and writes
-/// each module to `src/main/<target>/`, preserving its path under the source
-/// root. An explicit `--target` overrides the manifest target; an explicit
-/// `--output` overrides the project output directory.
+/// each module beside its source in `src/main/neoc/` (`main.neoc` → `main.js`),
+/// preserving its path under the source root — extensions disambiguate targets.
+/// An explicit `--target` overrides the manifest target; an explicit `--output`
+/// writes under that directory instead.
 fn build_project(
     output: Option<&Path>,
     target: Option<Target>,
@@ -265,7 +266,9 @@ fn build_project(
         return Ok(1);
     };
     let target = target.unwrap_or(project.target);
-    let out_dir = output.map_or_else(|| project.output_dir(target), Path::to_path_buf);
+    // Output lands beside the source by default — `src/main/neoc/main.neoc` →
+    // `src/main/neoc/main.js` (extensions disambiguate targets). `-o` overrides.
+    let out_dir = output.map_or_else(|| project.source_root.clone(), Path::to_path_buf);
 
     let compiled = transpile_project(&project.entry, target)
         .with_context(|| format!("reading {}", project.entry.display()))?;

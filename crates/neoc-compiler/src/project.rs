@@ -38,16 +38,6 @@ pub struct Project {
 }
 
 impl Project {
-    /// The build-output directory for `target`: `<root>/src/main/<target>`.
-    ///
-    /// `target` is taken as an argument rather than read from `self.target` so
-    /// a build that overrides the manifest target writes to the matching
-    /// output directory.
-    #[must_use]
-    pub fn output_dir(&self, target: Target) -> PathBuf {
-        self.root.join("src").join("main").join(target.to_string())
-    }
-
     /// The SQL-input directory: `<root>/src/main/sql`. SQL-derived modules read
     /// from here and write into the source root.
     #[must_use]
@@ -273,8 +263,6 @@ mod tests {
         let root = tmp.path();
         assert_eq!(project.source_root, root.join("src/main/neoc"));
         assert_eq!(project.entry, root.join("src/main/neoc/main.neoc"));
-        assert_eq!(project.output_dir(Target::Lua), root.join("src/main/lua"));
-        assert_eq!(project.output_dir(Target::Js), root.join("src/main/js"));
         assert_eq!(project.sql_dir(), root.join("src/main/sql"));
     }
 

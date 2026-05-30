@@ -31,14 +31,13 @@ A project uses a fixed directory layout under its root (the directory holding `n
 ```
 <root>/
   neoc.toml
-  src/main/neoc/      neoc source — hand-written and generated
+  src/main/neoc/      neoc source + build output, side by side
   src/main/sql/       SQL inputs for SQL-derived modules
-  src/main/<target>/  build output (src/main/js/ or src/main/lua/) — generated
 ```
 
-- `src/main/neoc/` is the **source root**. All module resolution anchors here (§4).
+- `src/main/neoc/` is the **source root**. All module resolution anchors here (§4), and emitted output lands here too — beside each source module.
 - `src/main/sql/` holds SQL inputs that generate neoc modules into `src/main/neoc/`.
-- `src/main/<target>/` holds emitted output, one file per source module, named for the target (`src/main/js/` when `target = "js"`, `src/main/lua/` when `target = "lua"`). This directory is generated; it is not source and should not be tracked in version control.
+- Build output is one file per source module, named by the target's extension and placed beside its source: `src/main/neoc/main.neoc` → `src/main/neoc/main.js` (`target = "js"`) or `main.lua` (`target = "lua"`). Extensions disambiguate, so distinct targets coexist. The output is generated, not source; whether to track it is the project's choice (an embeddable example may commit it; an application typically ignores it). An explicit output directory overrides this default.
 
 The entry module of a project is `src/main/neoc/main.neoc`.
 
@@ -72,7 +71,7 @@ Building a project with no explicit source path is manifest-driven:
 1. Discover the root (§3).
 2. Read `target` from the manifest (an explicit target override wins).
 3. Compile from the entry module `src/main/neoc/main.neoc`, following its transitive `use` graph (§4).
-4. Write each emitted module to `src/main/<target>/`, preserving the module's path under the source root (`src/main/neoc/a/b.neoc` → `src/main/<target>/a/b.<ext>`).
+4. Write each emitted module beside its source in `src/main/neoc/`, preserving the module's path under the source root (`src/main/neoc/a/b.neoc` → `src/main/neoc/a/b.<ext>`). An explicit output directory overrides this.
 
 A build given an explicit file path instead compiles that file as the entry, using single-file resolution when the file is not in a project (§3–§4). This is the form a lone file or a glob uses.
 
