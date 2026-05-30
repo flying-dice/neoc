@@ -5,4 +5,4 @@ import type { decode_number } from "./ports";
 import type { decode_string } from "./ports";
 
 export interface ListNotesRow { id: number; body: string; }
-export declare function list_notes<E>(db: E): Result<ListNotesRow[], string>;
+export declare function list_notes<E extends SqlExecutor>(db: E): Result<ListNotesRow[], string>;

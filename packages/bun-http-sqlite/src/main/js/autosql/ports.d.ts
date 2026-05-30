@@ -9,6 +9,10 @@ export declare const SqlValue: {
   Null: SqlValue;
   match<R>(value: SqlValue, arms: { Int(_0: number): R; Real(_0: number): R; Text(_0: string): R; Bool(_0: boolean): R; Null(): R }): R;
 };
+export type SqlExecutor = {
+  execute(sql: string, params: SqlValue[]): Result<number, string>;
+  query(sql: string, params: SqlValue[]): Result<SqlValue[][], string>;
+};
 export declare function bind_opt_int(value: Option<number>): SqlValue;
 export declare function bind_opt_real(value: Option<number>): SqlValue;
 export declare function bind_opt_text(value: Option<string>): SqlValue;

@@ -17,17 +17,11 @@
 import { Database, type SQLQueryBindings } from "bun:sqlite";
 import { Ok, Err } from "../js/neoc-lib.js";
 import { SqlValue } from "../js/autosql/ports.js";
-import type { SqlValue as SqlValueT } from "../js/autosql/ports";
-import type { Result } from "../js/neoc-lib";
+import type { SqlExecutor } from "../js/autosql/ports";
 import { init, list, create } from "../js/main.js";
 
-// The port contract neoc declares (its `SqlExecutor` trait), restated for the
-// host against neoc's emitted `SqlValue` / `Result` types. (neoc does not yet
-// project a trait to a `.d.ts` interface; once it does, import it directly.)
-interface SqlExecutor {
-  execute(sql: string, params: SqlValueT[]): Result<number, string>;
-  query(sql: string, params: SqlValueT[]): Result<SqlValueT[][], string>;
-}
+// The `SqlExecutor` port contract is neoc-authored — imported, not restated.
+// `SqlValue` carries both the type and the constructor namespace (the TS merge).
 
 // --- the adapter: implement the port over bun:sqlite ---
 
@@ -35,7 +29,7 @@ const database = new Database(":memory:");
 
 // SqlValue -> the JS value bun:sqlite binds. `SqlValue.match` does the read; the
 // tag never appears here.
-function toBound(v: SqlValueT): SQLQueryBindings {
+function toBound(v: SqlValue): SQLQueryBindings {
   return SqlValue.match<SQLQueryBindings>(v, {
     Int: (n) => n,
     Real: (n) => n,
@@ -46,7 +40,7 @@ function toBound(v: SqlValueT): SQLQueryBindings {
 }
 
 // A raw SQLite cell -> SqlValue, via the generated variant constructors.
-function toCell(value: unknown): SqlValueT {
+function toCell(value: unknown): SqlValue {
   if (typeof value === "number") return SqlValue.Real(value);
   if (typeof value === "bigint") return SqlValue.Real(Number(value));
   if (typeof value === "string") return SqlValue.Text(value);
