@@ -1,87 +1,34 @@
-// Ports & adapters: neoc owns the contracts, the host adapts.
+// The application, in pure neoc — the controllers.
 //
-// This app is written in neoc and declares the *ports* it depends on — a `db`
-// executor, an `http` server, and a couple of `text` helpers — as `ext` blocks
-// in neoc's own types (`Result`, `Option`, `SqlValue`, `fn`). The TypeScript
-// adapter at `../ts/adapter.ts` implements every port over `bun:sqlite` and
-// `Bun.serve`. neoc never sees a foreign shape: no host handle threaded through
-// the app, no `Unknown`, no reverse-engineered `types.neoc`. The projection
-// from neoc types to the adapter's TS types is total, so the boundary is
-// lossless and `match` round-trips.
-use autosql::ports::SqlValue;
+// This file is 100% neoc: business logic over the autosql DAO, generic over the
+// `SqlExecutor` *port*. There is no host concern here — no HTTP, no `bun:sqlite`,
+// no entry point, no `ext` adapter wiring. `neoc build` transpiles the project
+// rooted at this module to `main.js` + `main.d.ts` (plus the autosql modules and
+// the shared `neoc-lib.{js,d.ts}` carrying the `Result`/`Option`/`SqlValue`
+// helpers). The TypeScript host imports these typed controllers, *implements*
+// the `SqlExecutor` port over `bun:sqlite`, and dispatches HTTP routes to them.
 use autosql::ports::SqlExecutor;
 use autosql::migrate::migrate;
+use autosql::add_note::add_note;
 use autosql::list_notes::ListNotesRow;
 use autosql::list_notes::list_notes;
-use autosql::add_note::add_note;
 
-extern {
-    // The database port — the only contract that touches storage. The adapter
-    // binds `params` natively (no string interpolation) and tags result cells
-    // back into `SqlValue`.
-    #[extern(path = "../ts/adapter.ts")]
-    mod db {
-        fn execute(sql: string, params: [SqlValue]) -> Result<number, string>;
-        fn query(sql: string, params: [SqlValue]) -> Result<[[SqlValue]], string>;
-    }
-
-    // The HTTP port — serve a handler mapping a request path to a response body.
-    #[extern(path = "../ts/adapter.ts")]
-    mod http {
-        fn serve(port: number, handler: fn(string) -> string);
-    }
-
-    // Text helpers neoc has no native library for; the adapter supplies them.
-    #[extern(path = "../ts/adapter.ts")]
-    mod text {
-        fn strip_prefix(s: string, prefix: string) -> Option<string>;
-        fn from_number(n: number) -> string;
-    }
+// Create the schema. The host calls this once at startup.
+pub fn init<E: SqlExecutor>(db: E) -> Result<number, string> {
+    migrate(db)
 }
 
-// The executor the autosql DAO runs against: a zero-field marker that forwards
-// every call to the `db` port. The `bun:sqlite` `Database` lives entirely in
-// the adapter — this app holds no host handle.
-struct Db {}
-
-impl autosql::ports::SqlExecutor for Db {
-    fn execute(self, sql: string, params: [SqlValue]) -> Result<number, string> {
-        db::execute(sql, params)
-    }
-
-    fn query(self, sql: string, params: [SqlValue]) -> Result<[[SqlValue]], string> {
-        db::query(sql, params)
-    }
+// Every note, in id order.
+pub fn list<E: SqlExecutor>(db: E) -> Result<[ListNotesRow], string> {
+    list_notes(db)
 }
 
-fn render(notes: [ListNotesRow]) -> string {
-    let mut out = "";
-    for n in notes {
-        out = out + text::from_number(n.id) + ":" + n.body + " | ";
+// Add a note. The business rule lives here, in neoc: an empty body is rejected
+// before it ever reaches the database.
+pub fn create<E: SqlExecutor>(db: E, body: string) -> Result<number, string> {
+    if body == "" {
+        Err("body must not be empty")
+    } else {
+        add_note(db, body)
     }
-    out
-}
-
-// `GET /add/<text>` inserts a note; any other path lists every note. Both go
-// through the autosql-generated `add_note` / `list_notes`, which run against the
-// `Db` executor — and therefore the `db` port.
-fn handle(db: Db, path: string) -> string {
-    match text::strip_prefix(path, "/add/") {
-        Some(body) => match add_note(db, body) {
-            Ok(_) => "added: " + body,
-            Err(e) => "error: " + e,
-        },
-        None => match list_notes(db) {
-            Ok(notes) => render(notes),
-            Err(e) => "error: " + e,
-        },
-    }
-}
-
-pub fn main() {
-    let db = Db {};
-    migrate(db);
-    add_note(db, "hello");
-    add_note(db, "world");
-    http::serve(38573, |path| handle(db, path));
 }
