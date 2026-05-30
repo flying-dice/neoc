@@ -256,7 +256,6 @@ impl Emitter {
 
     fn finish(mut self) -> String {
         let mut preamble: Vec<String> = vec!["from __future__ import annotations".to_string()];
-        let mut needs_blank = false;
         if self.has_dataclass || self.uses_replace {
             let imp = if self.uses_replace && self.has_dataclass {
                 "from dataclasses import dataclass, replace"
@@ -266,7 +265,6 @@ impl Emitter {
                 "from dataclasses import dataclass"
             };
             preamble.push(imp.to_string());
-            needs_blank = true;
         }
         let mut typing: Vec<&str> = Vec::new();
         if self.uses_union {
@@ -283,13 +281,10 @@ impl Emitter {
         typing.dedup();
         if !typing.is_empty() {
             preamble.push(format!("from typing import {}", typing.join(", ")));
-            needs_blank = true;
         }
         if self.uses_result {
             preamble.push("from .neoc_lib import Result, Option, Ok, Err, Some, None_".to_string());
-            needs_blank = true;
         }
-        let _ = needs_blank;
 
         let mut out = preamble;
         out.push(String::new());
