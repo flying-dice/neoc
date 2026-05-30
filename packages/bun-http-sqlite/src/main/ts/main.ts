@@ -1,7 +1,7 @@
 // The application host, in TypeScript — the entry point and the driver.
 //
 // neoc owns the contracts (the controllers + the `SqlExecutor` port + the
-// `Result` / `Option` / `SqlValue` shapes), transpiled to `../../../out/*` with `.d.ts`
+// `Result` / `Option` / `SqlValue` shapes), transpiled to `../../auto/js/*` with `.d.ts`
 // typings. This host does the three things the model asks of it:
 //   1. implements the port neoc declares — the `SqlExecutor` adapter over
 //      `bun:sqlite` (the only code that touches a database);
@@ -15,10 +15,10 @@
 // constructors and `SqlValue.match`; the `Result` handling now lives in the
 // controllers, so the host only reads `HttpResponse.{status, body}`.
 import { Database, type SQLQueryBindings } from "bun:sqlite";
-import { Ok, Err } from "../../../out/neoc-lib.js";
-import { SqlValue } from "../../../out/autosql/ports.js";
-import type { SqlExecutor } from "../../../out/autosql/ports";
-import { init, list, create } from "../../../out/main.js";
+import { Ok, Err } from "../../auto/js/neoc-lib.js";
+import { SqlValue } from "../../auto/js/autosql/ports.js";
+import type { SqlExecutor } from "../../auto/js/autosql/ports";
+import { init, list, create } from "../../auto/js/main.js";
 
 // The `SqlExecutor` port contract is neoc-authored — imported, not restated.
 // `SqlValue` carries both the type and the constructor namespace (the TS merge).

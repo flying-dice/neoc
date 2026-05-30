@@ -41,11 +41,11 @@ app, the same neoc (copied verbatim, target-agnostic), a different host.
 2. **`src/main/neoc/autosql/`** — `neoc autosql` output from `src/main/sql/`: the
    `SqlValue` enum, the `SqlExecutor` trait (the port), and the `migrate` /
    `list_notes` / `add_note` DAO. Regenerate with `npm run gen:sql`.
-3. **`neoc build`** transpiles the project (rooted at `main.neoc`) to `out/`:
-   `out/main.py` + `out/main.pyi` (the controllers), the autosql modules under
-   `out/autosql/`, and the shared `neoc_lib.{py,pyi}` carrying the `Result` /
+3. **`neoc build`** transpiles the project (rooted at `main.neoc`) to `src/auto/py/`:
+   `src/auto/py/main.py` + `src/auto/py/main.pyi` (the controllers), the autosql modules under
+   `src/auto/py/autosql/`, and the shared `neoc_lib.{py,pyi}` carrying the `Result` /
    `Option` / `SqlValue` helpers. The emitted modules use relative imports
-   (`from .autosql.ports import …`, `from ..neoc_lib import …`), so `out/` is
+   (`from .autosql.ports import …`, `from ..neoc_lib import …`), so `src/auto/py/` is
    loaded as a package.
 4. **`src/main/python/server.py`** — the host. It implements `SqlExecutor` over
    stdlib `sqlite3` (reading/writing `SqlValue` through the emitted `@dataclass`
@@ -67,7 +67,7 @@ statement). The scripts call `python3.14`; substitute any `python3 >= 3.10`.
 ## Run
 
 ```sh
-npm run build    # cargo run -p neoc -- build  (emits out/ with .pyi)
+npm run build    # cargo run -p neoc -- build  (emits src/auto/py/ with .pyi)
 npm run start    # python3.14 src/main/python/server.py -> http://localhost:38573
 ```
 
