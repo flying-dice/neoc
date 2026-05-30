@@ -359,7 +359,12 @@ fn emit_inner(
     e.emit_module(module);
     let diagnostics = std::mem::take(&mut e.diagnostics);
     let mut result = e.finish_with_map(diagnostics);
-    result.dlua = module_dlua(module);
+    // The `.d.lua` sidecar is the Lua consumer's; the typed Luau consumer
+    // (`HeaderStyle::Luau`) supplies its own `type` declarations and discards
+    // this, so only project it for the Lua target.
+    if style == HeaderStyle::Lua {
+        result.dlua = module_dlua(module);
+    }
     result
 }
 

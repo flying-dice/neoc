@@ -312,9 +312,17 @@ pub fn emit_with_style<S: std::hash::BuildHasher>(
     e.emit_module(module);
     let diagnostics = std::mem::take(&mut e.diagnostics);
     let uses_result = e.uses_result;
+    // The `.d.ts` sidecar is the JS consumer's; the typed TS consumer
+    // (`HeaderStyle::Ts`) supplies its own declarations and discards this, so
+    // only project it for the JS target.
+    let dts = if style == HeaderStyle::Js {
+        module_dts(module, imported_bindings, importer_dir, uses_result)
+    } else {
+        String::new()
+    };
     EmitResult {
         js: e.finish(),
-        dts: module_dts(module, imported_bindings, importer_dir, uses_result),
+        dts,
         diagnostics,
     }
 }
@@ -793,6 +801,11 @@ pub fn neoc_lib_dts() -> String {
     s.push_str("export declare function Err<T, E>(e: E): Result<T, E>;\n");
     s.push_str("export declare function Some<T>(v: T): Option<T>;\n");
     s.push_str("export declare const None: Option<never>;\n");
+    // The runtime preamble also imports the prototype objects `Option$`/`Result$`
+    // (the method carriers a constructed value links to via `__proto__`); declare
+    // them so a `.ts` module importing the whole runtime line type-checks.
+    s.push_str("export declare const Option$: Record<string, Function>;\n");
+    s.push_str("export declare const Result$: Record<string, Function>;\n");
     s
 }
 
@@ -1195,6 +1208,22 @@ mod tests {
             dts.contains("export declare function Ok<T, E>(v: T): Result<T, E>;"),
             "{dts}"
         );
+    }
+
+    #[test]
+    fn neoc_lib_dts_declares_every_runtime_import_name() {
+        // The `.d.ts` must declare every name the emitted runtime preamble
+        // imports — `import { Ok, Err, Some, None, Option$, Result$ } from
+        // "./neoc-lib.js"` — or `tsc` (resolving `./neoc-lib` → `neoc-lib.d.ts`)
+        // errors TS2305 on the undeclared ones (`Option$`/`Result$`).
+        let dts = neoc_lib_dts();
+        for name in ["Ok", "Err", "Some", "None", "Option$", "Result$"] {
+            assert!(
+                dts.contains(&format!("export declare const {name}"))
+                    || dts.contains(&format!("export declare function {name}")),
+                "neoc-lib.d.ts must declare `{name}` (imported by the runtime preamble):\n{dts}"
+            );
+        }
     }
 
     #[test]
