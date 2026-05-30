@@ -343,6 +343,98 @@ fn js_build_emits_dts_siblings_and_shared_neoc_lib() {
 }
 
 #[test]
+fn ts_build_emits_typed_module_files_and_shared_neoc_lib() {
+    // A TS-target project emits a self-typed `.ts` *per module* in `files` (the
+    // module artifact, positionally aligned with `source_maps` like `.js`/
+    // `.lua` — not a sidecar). Its only aux is the shared `neoc-lib.js` +
+    // `neoc-lib.d.ts` prelude: a `.ts` `import "./neoc-lib"` resolves to
+    // `neoc-lib.d.ts` for types and `neoc-lib.js` at runtime.
+    let dir = tempdir();
+    write(&dir, "y.neoc", "pub fn helper() -> number { 7 }\n");
+    let entry = write(
+        &dir,
+        "x.neoc",
+        "use y::helper;\n\
+         \n\
+         pub struct Row { id: number, body: string }\n\
+         \n\
+         pub fn load(id: number) -> Result<Row, string> {\n\
+         \x20   Ok(Row { id: id + helper(), body: \"ok\" })\n\
+         }\n",
+    );
+
+    let project = transpile_project(&entry, Target::Ts).expect("read project");
+    assert!(
+        project.ok(),
+        "expected a clean project, got: {:#?}",
+        project.diagnostics
+    );
+
+    // The `.ts` modules are the artifacts: one per module in `files`, aligned
+    // with `source_maps`.
+    assert_eq!(project.files.len(), 2, "expected x.ts + y.ts");
+    assert_eq!(
+        project.files.len(),
+        project.source_maps.len(),
+        "files and source_maps must stay positionally aligned"
+    );
+    let module = |name: &str| {
+        project
+            .files
+            .iter()
+            .find(|(p, _)| p.file_name().is_some_and(|f| f == name))
+            .map_or_else(|| panic!("{name} not in files"), |(_, c)| c.as_str())
+    };
+
+    // x.ts is self-typed: the `pub struct` is an exported interface, the `pub
+    // fn` returning `Result` carries an inline signature, and `Result`/`Option`
+    // import from the shared `./neoc-lib`.
+    let x_ts = module("x.ts");
+    assert!(
+        x_ts.contains("export interface Row { id: number; body: string; }"),
+        "x.ts should project the `pub struct` to an interface:\n{x_ts}"
+    );
+    assert!(
+        x_ts.contains("export function load(id: number): Result<Row, string> {"),
+        "x.ts should carry the inline-typed `pub fn` returning Result:\n{x_ts}"
+    );
+    assert!(
+        x_ts.contains("import type { Result, Option } from \"./neoc-lib\";"),
+        "x.ts should import Result/Option from the shared neoc-lib:\n{x_ts}"
+    );
+    let y_ts = module("y.ts");
+    assert!(
+        y_ts.contains("export function helper(): number {"),
+        "y.ts should carry the inline-typed `pub fn`:\n{y_ts}"
+    );
+
+    // The only aux is the shared prelude pair, once, at the resolution root —
+    // no per-module sidecar, since the `.ts` modules are self-typed.
+    let aux = |name: &str| {
+        project
+            .aux_files
+            .iter()
+            .find(|(p, _)| p.file_name().is_some_and(|f| f == name))
+            .map_or_else(|| panic!("{name} not in aux_files"), |(_, c)| c.as_str())
+    };
+    assert!(
+        aux("neoc-lib.js").contains("export { Ok, Err, Some, None, Option$, Result$ };"),
+        "neoc-lib.js should export the Result/Option runtime"
+    );
+    assert!(
+        aux("neoc-lib.d.ts").contains("export declare function Ok"),
+        "neoc-lib.d.ts should declare the prelude types"
+    );
+    assert!(
+        project.aux_files.iter().all(|(p, _)| p
+            .file_name()
+            .is_some_and(|f| f == "neoc-lib.js" || f == "neoc-lib.d.ts")),
+        "TS aux is only the neoc-lib pair (no per-module sidecar), got: {:?}",
+        project.aux_files
+    );
+}
+
+#[test]
 fn lua_build_emits_no_dts_or_neoc_lib() {
     // The `.d.ts` surface is JS-target-only; a Lua build emits no sidecars.
     let dir = tempdir();

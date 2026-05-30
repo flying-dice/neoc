@@ -12,6 +12,7 @@ neoc-parser.workspace = true
 neoc-types.workspace = true
 neoc-codegen-lua.workspace = true
 neoc-codegen-js.workspace = true
+neoc-codegen-ts.workspace = true
 neoc-macros.workspace = true
 toml = "0.8"
 thiserror = "2"

@@ -100,9 +100,9 @@ The workspace splits responsibilities across crates; boundaries are enforced by
   **no host-language assumptions** — no `std::fs`, `std::net`, `std::process`,
   `tokio`, `mlua`, `hyper`, `sqlx`. The runtime host deps live in `neoc-vm`; I/O
   lives there, in the `neoc` bin, and (over stdio) in `neoc-lsp`.
-- The pure leaf crates (`neoc-ast`, `neoc-macros`, `neoc-codegen-lua`) compile
-  for `wasm32-unknown-unknown`; CI gates them with
-  `cargo check --target wasm32-unknown-unknown -p neoc-ast -p neoc-macros -p neoc-codegen-lua`.
+- The pure leaf crates (`neoc-ast`, `neoc-macros`, `neoc-codegen-lua`,
+  `neoc-codegen-ts`) compile for `wasm32-unknown-unknown`; CI gates them with
+  `cargo check --target wasm32-unknown-unknown -p neoc-ast -p neoc-macros -p neoc-codegen-lua -p neoc-codegen-ts`.
   The parser graph links the tree-sitter C runtime, which doesn't cross-compile
   to wasm32 yet — a tracked limitation, so the gate guards the leaf crates
   where host-dependency creep would start.
@@ -126,7 +126,7 @@ cargo run -p neoc -- run 'crates/neoc/tests/**/*.test.luau'  # Luau integration 
 cargo run -p neoc -- emit-headers --out crates/neoc-vm/src/lua  # regenerate ext headers
 cargo bench --bench lib                              # Criterion benchmarks (lib modules)
 cargo bench --bench vnd                              # Criterion benchmarks (vnd modules)
-cargo check --target wasm32-unknown-unknown -p neoc-ast -p neoc-macros -p neoc-codegen-lua  # wasm leaf gate
+cargo check --target wasm32-unknown-unknown -p neoc-ast -p neoc-macros -p neoc-codegen-lua -p neoc-codegen-ts  # wasm leaf gate
 cargo clippy --workspace --all-targets               # lint
 cargo fmt --check                                    # formatting check
 ```

@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use neoc_ast as ast;
 use neoc_codegen_js as codegen_js;
 use neoc_codegen_lua as codegen_lua;
+use neoc_codegen_ts as codegen_ts;
 use neoc_parser as parser;
 use neoc_types as types;
 
@@ -39,6 +40,8 @@ pub enum Target {
     Lua,
     /// JavaScript, ES2022 (`.js`).
     Js,
+    /// Typed TypeScript (`.ts`): the JS runtime body with neoc types woven on.
+    Ts,
 }
 
 impl Target {
@@ -48,6 +51,7 @@ impl Target {
         match self {
             Target::Lua => "lua",
             Target::Js => "js",
+            Target::Ts => "ts",
         }
     }
 }
@@ -57,6 +61,7 @@ impl std::fmt::Display for Target {
         f.write_str(match self {
             Target::Lua => "lua",
             Target::Js => "js",
+            Target::Ts => "ts",
         })
     }
 }
@@ -68,7 +73,10 @@ impl std::str::FromStr for Target {
         match s {
             "lua" => Ok(Target::Lua),
             "js" => Ok(Target::Js),
-            other => Err(format!("unknown target `{other}` (expected `lua` or `js`)")),
+            "ts" => Ok(Target::Ts),
+            other => Err(format!(
+                "unknown target `{other}` (expected `lua`, `js`, or `ts`)"
+            )),
         }
     }
 }
@@ -264,14 +272,16 @@ pub struct ProjectOutput {
     /// when `files` is (a project that reported a diagnostic emits nothing).
     pub source_maps: Vec<SourceMap>,
     /// Generated sidecar files that are **not** compiled modules and so have no
-    /// source map: the per-module TypeScript declarations (`x.d.ts`, beside each
-    /// `x.js`) and the shared `neoc-lib.js` + `neoc-lib.d.ts` prelude at the
-    /// resolution root. Each entry pairs a destination path with its contents,
-    /// and the path is already in its final form (extension included) — unlike
-    /// `files`, it must **not** have the target extension re-applied. JS target
-    /// only; empty for [`Target::Lua`] and when the project reported a
-    /// diagnostic. Kept separate from `files` so the `files`↔`source_maps`
-    /// positional contract stays intact.
+    /// source map: on the JS target the per-module TypeScript declarations
+    /// (`x.d.ts`, beside each `x.js`), and on both the JS and TS targets the
+    /// shared `neoc-lib.js` + `neoc-lib.d.ts` prelude at the resolution root.
+    /// Each entry pairs a destination path with its contents, and the path is
+    /// already in its final form (extension included) — unlike `files`, it must
+    /// **not** have the target extension re-applied. The `.ts` target's modules
+    /// are self-typed, so they land in `files`, not here; its only aux is the
+    /// shared `neoc-lib` pair. Empty for [`Target::Lua`] and when the project
+    /// reported a diagnostic. Kept separate from `files` so the
+    /// `files`↔`source_maps` positional contract stays intact.
     pub aux_files: Vec<(PathBuf, String)>,
     pub diagnostics: Vec<ProjectDiagnostic>,
 }
@@ -399,8 +409,10 @@ pub fn transpile_project(entry: &Path, target: Target) -> std::io::Result<Projec
 
     // Once per build, the shared prelude at the resolution root — the runtime
     // `Result`/`Option` module and its declarations the emitted modules import.
-    // JS target only; Lua inlines the prelude per module.
-    if target == Target::Js {
+    // JS and TS targets share it; Lua inlines the prelude per module. A `.ts`
+    // module's `import "./neoc-lib"` resolves to `neoc-lib.d.ts` for types and
+    // `neoc-lib.js` at runtime, so a typed-TS project type-checks and runs.
+    if matches!(target, Target::Js | Target::Ts) {
         aux_files.push((root.join("neoc-lib.js"), codegen_js::neoc_lib_js()));
         aux_files.push((root.join("neoc-lib.d.ts"), codegen_js::neoc_lib_dts()));
     }
@@ -792,6 +804,24 @@ fn emit(target: Target, module: &ast::Module, source: &str, inputs: &EmitInputs)
                 messages: r.diagnostics.into_iter().map(|d| d.message).collect(),
                 source_map: SourceMap::default(),
                 dts: r.dts,
+            }
+        }
+        Target::Ts => {
+            // A self-typed `.ts` is the module artifact, not a sidecar: it
+            // carries its own types inline (no `.d.ts`). No source map yet.
+            let r = codegen_ts::emit(
+                module,
+                &inputs.bindings,
+                &inputs.method_types,
+                &inputs.externs,
+                &inputs.enums,
+                &inputs.importer_dir,
+            );
+            Emitted {
+                output: r.ts,
+                messages: r.diagnostics.into_iter().map(|d| d.message).collect(),
+                source_map: SourceMap::default(),
+                dts: String::new(),
             }
         }
     }
