@@ -1,0 +1,22 @@
+// DYNAMIC.md §9.3: compound assignment desugars to `lvalue = lvalue <op> rhs`.
+// `+=`/`-=`/`*=` stay integral here; `/=` yields a fractional result and `%=`
+// the remainder. No case exercises any compound-assignment operator.
+extern {
+    fn println(n: number);
+}
+
+fn main() {
+    let mut a = 10;
+    a += 5;
+    a -= 3;
+    a *= 2;
+    println(a);
+
+    let mut b = 10;
+    b /= 4;
+    println(b);
+
+    let mut c = 17;
+    c %= 5;
+    println(c);
+}

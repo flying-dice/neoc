@@ -1,0 +1,20 @@
+// DYNAMIC.md §4.5 + §5: nested patterns — a variant pattern nested inside
+// another (`Some(Ok(n))`) lowers to a nested tag-test then bind, beyond the
+// flat one-level variant patterns the other §4.5 cases cover.
+extern {
+    fn println(n: number);
+}
+
+fn dig(o: Option<Result<number, string>>) -> number {
+    match o {
+        Some(Ok(n)) => n,
+        Some(Err(_)) => -1,
+        None => 0,
+    }
+}
+
+fn main() {
+    println(dig(Some(Ok(42))));
+    println(dig(Some(Err("boom"))));
+    println(dig(None));
+}

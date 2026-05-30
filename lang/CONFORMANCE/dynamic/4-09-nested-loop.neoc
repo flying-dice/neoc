@@ -1,0 +1,22 @@
+// DYNAMIC.md §4.9: `break` and `continue` act on the innermost loop only — an
+// inner `break` exits the inner loop while the outer continues, and `continue`
+// skips one inner iteration. No nested-loop case exists.
+extern {
+    fn println(n: number);
+}
+
+fn main() {
+    let mut acc = 0;
+    for i in 0..3 {
+        for j in 0..3 {
+            if j == 1 {
+                continue;
+            }
+            if j == 2 {
+                break;
+            }
+            acc = acc + i * 10 + j;
+        }
+    }
+    println(acc);
+}
