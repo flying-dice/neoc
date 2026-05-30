@@ -54,7 +54,7 @@ The real defects were narrower and sharper than the survey's volume implied. Net
 The architecture survey flagged `tsconfig.json` / `package.json` / `bun.lock` as "dead TypeScript/Bun era — delete." **False.** The Bun/TS toolchain is live:
 
 - `.gitlab-ci.yml` `pages` job: `cd docs && bun install --frozen-lockfile && bun run docs:build` — VitePress docs site, GitLab Pages.
-- `packages/autots` = `@neoc-sh/autots`, a maintained `ts-morph` tool generating `.neoc` ext headers from TS. Recent commit `b32ac79 feat(autots)`.
+- ~~`packages/autots` = `@neoc-sh/autots`, a `ts-morph` tool generating `.neoc` ext headers from TS.~~ **Retired** (ts-interop-inversion): neoc owns ports, the host adapts — nothing maps TS *into* neoc anymore.
 - `packages/bun-http-sqlite` = neoc sample project.
 
 Deleting those files breaks CI and the interop tool. **Rejected.** Only the *root* `tsconfig.json` (carries `jsx: react-jsx`, no JSX consumer) is plausibly vestigial — flagged low-confidence below, not auto-deleted.
@@ -117,5 +117,5 @@ CLAUDE.md forbids `unwrap()`/`expect()`/`panic!` outside the `neoc` bin and `#[c
 
 ## Low-confidence / flag only
 
-- [ ] **F1** Root `tsconfig.json` (`jsx: react-jsx`, no JSX consumer; `autots` and `docs` carry their own). Likely `bun init` leftover. Confirm nothing resolves it before removal. `[>]`
-- [ ] **F2** Naming collision: Rust `neoc-autosql` (SQL→neoc) vs TS `autots` (TS→neoc) vs CLI `neoc autosql`. Confusing trio. Doc the distinction. `[>]`
+- [ ] **F1** Root `tsconfig.json` (`jsx: react-jsx`, no JSX consumer; `docs` carries its own). Likely `bun init` leftover. Confirm nothing resolves it before removal. `[>]`
+- [x] **F2** Naming collision: Rust `neoc-autosql` (SQL→neoc) vs TS `autots` (TS→neoc) vs CLI `neoc autosql`. Resolved: `autots` retired (ts-interop-inversion), leaving `neoc-autosql` / `neoc autosql`.
