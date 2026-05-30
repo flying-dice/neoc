@@ -39,7 +39,7 @@ A notes HTTP server on **ports & adapters**, with the host driving:
    `SqlValue` enum, the `SqlExecutor` trait (the port), and the `migrate` /
    `list_notes` / `add_note` DAO. Regenerate with `bun run gen:sql`.
 3. **`neoc build`** transpiles the project (rooted at `main.neoc`) to
-   `src/main/js/`: `main.js` + `main.d.ts` (the controllers), the autosql
+   `src/main/neoc/`: `main.js` + `main.d.ts` (the controllers), the autosql
    modules, and the shared `neoc-lib.{js,d.ts}` carrying the `Result` / `Option`
    / `SqlValue` helpers.
 4. **`src/main/ts/main.ts`** — the host. It implements `SqlExecutor` over
@@ -56,7 +56,7 @@ into neoc — no `Unknown`, no generated `types.neoc`, no `autots` (retired — 
 ## Run
 
 ```sh
-bun run build    # gen:sql -> neoc build (emits src/main/js/ with .d.ts)
+bun run build    # gen:sql -> neoc build (emits src/main/neoc/ with .d.ts)
 bun run start    # bun src/main/ts/main.ts -> http://localhost:38573
 ```
 

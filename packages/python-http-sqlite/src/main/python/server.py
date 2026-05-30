@@ -1,8 +1,8 @@
 # The application host, in Python — the entry point and the driver.
 #
 # neoc owns the contracts (the controllers + the `SqlExecutor` port + the
-# `Result` / `Option` / `SqlValue` shapes), transpiled to `../py/*` with `.pyi`
-# stubs. This host does the three things the model asks of it:
+# `Result` / `Option` / `SqlValue` shapes), transpiled beside the source in
+# `../neoc/*` with `.pyi` stubs. This host does the three things the model asks:
 #   1. implements the port neoc declares — the `SqlExecutor` adapter over the
 #      stdlib `sqlite3` module (the only code that touches a database);
 #   2. owns HTTP — `http.server` and the request routing;
@@ -21,19 +21,19 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import unquote
 
-# The compiled neoc lands in ../py. Its modules use relative imports
-# (`from .autosql.ports import …`, `from ..neoc_lib import …`), so the output
-# must be an importable package. `neoc build` emits only `.py`/`.pyi`, so mark
-# the directories as packages here (idempotent), then put `src/main` on the
-# path and import the package so the relative imports resolve.
+# The compiled neoc lands beside the source in ../neoc. Its modules use relative
+# imports (`from .autosql.ports import …`, `from ..neoc_lib import …`), so the
+# output must be an importable package. `neoc build` emits only `.py`/`.pyi`, so
+# mark the directories as packages here (idempotent), then put `src/main` on the
+# path and import the `neoc` package so the relative imports resolve.
 _MAIN = Path(__file__).resolve().parent.parent
-for _pkg in (_MAIN / "py", _MAIN / "py" / "autosql"):
+for _pkg in (_MAIN / "neoc", _MAIN / "neoc" / "autosql"):
     (_pkg / "__init__.py").touch(exist_ok=True)
 sys.path.insert(0, str(_MAIN))
 
-from py.neoc_lib import Ok, Err  # noqa: E402
-from py.autosql.ports import Int, Real, Text, Bool, Null  # noqa: E402
-from py.main import init, list as list_notes, create  # noqa: E402
+from neoc.neoc_lib import Ok, Err  # noqa: E402
+from neoc.autosql.ports import Int, Real, Text, Bool, Null  # noqa: E402
+from neoc.main import init, list as list_notes, create  # noqa: E402
 
 PORT = 38573
 

@@ -26,7 +26,7 @@ port and drives.
    empty body). No host concern; the port speaks only `string`/`number`, so the
    host never constructs a neoc value.
 2. **`neoc build`** transpiles the project (target `luau`) to
-   `src/main/luau/main.luau` — a requireable module that ends with
+   `src/main/neoc/main.luau` — a requireable module that ends with
    `return { create = create, list = list }`.
 3. **`src/main/host/app.luau`** — the host. It implements `Store` as an in-memory
    Luau table (neoc's `store.add(b)` lowers to the colon call `store:add(b)`, so
@@ -40,7 +40,7 @@ back** into the `Store` port the host implements. Same model as
 ## Run
 
 ```sh
-bun run build    # neoc build (emits src/main/luau/main.luau)
+bun run build    # neoc build (emits src/main/neoc/main.luau)
 bun run start    # luau src/main/host/app.luau
 ```
 
