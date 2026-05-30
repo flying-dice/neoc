@@ -413,8 +413,14 @@ pub struct ProjectOutput {
     ///   trailer.
     /// * On the JS target the per-module TypeScript declarations (`x.d.ts`,
     ///   beside each `x.js`).
+    /// * On the Lua target the per-module `LuaLS` declarations (`x.d.lua`, beside
+    ///   each `x.lua`). A typings sidecar, not executable — it carries no
+    ///   `sourceMappingURL` trailer. So a Lua build emits, per module, both the
+    ///   `.lua.map` source map and the `.d.lua` typings as aux, while still
+    ///   emitting no runtime sidecar (the prelude is inlined per module).
     /// * On both the JS and TS targets the shared `neoc-lib.js` +
-    ///   `neoc-lib.d.ts` prelude at the resolution root.
+    ///   `neoc-lib.d.ts` prelude at the resolution root; on the Lua target the
+    ///   shared `neoc-lib.d.lua` typings (no runtime `neoc-lib.lua`).
     ///
     /// Each entry pairs a destination path with its contents, and the path is
     /// already in its final form (extension included) — unlike `files`, it must
@@ -563,6 +569,12 @@ pub fn transpile_project(entry: &Path, target: Target) -> std::io::Result<Projec
         if !emitted.dts.is_empty() {
             aux_files.push((src_path.with_extension("d.ts"), emitted.dts));
         }
+        // Lua target: a non-empty `.d.lua` LuaLS typings sibling beside the
+        // module's `.lua`. A typings sidecar, not executable — no
+        // `sourceMappingURL` trailer. `x.neoc` → `x.d.lua`.
+        if !emitted.dlua.is_empty() {
+            aux_files.push((src_path.with_extension("d.lua"), emitted.dlua));
+        }
     }
 
     // Once per build, the shared prelude at the resolution root — the runtime
@@ -573,6 +585,12 @@ pub fn transpile_project(entry: &Path, target: Target) -> std::io::Result<Projec
     if matches!(target, Target::Js | Target::Ts) {
         aux_files.push((root.join("neoc-lib.js"), codegen_js::neoc_lib_js()));
         aux_files.push((root.join("neoc-lib.d.ts"), codegen_js::neoc_lib_dts()));
+    }
+    // Lua target: the shared `Result`/`Option` LuaLS typings sidecar at the
+    // resolution root, mirroring `neoc-lib.d.ts`. Typings only — Lua inlines the
+    // runtime prelude per module, so there's no `neoc-lib.lua`.
+    if matches!(target, Target::Lua) {
+        aux_files.push((root.join("neoc-lib.d.lua"), codegen_lua::neoc_lib_dlua()));
     }
 
     if !diagnostics.is_empty() {
@@ -710,7 +728,7 @@ fn focus_diagnostics(
 /// Checks one resolved module's bodies (with its `use`-imported symbols in
 /// scope) and emits it to `target`, pushing any type/emit diagnostics onto
 /// `diagnostics`. Returns the [`Emitted`] result — the source, its [`SourceMap`],
-/// and the JS-target `.d.ts` sibling (empty for Lua).
+/// and the declaration sibling (`.d.ts` on JS, `.d.lua` on Lua).
 fn check_and_emit_module(
     root: &Path,
     loaded: &HashMap<PathBuf, LoadedModule>,
@@ -970,8 +988,8 @@ struct EmitInputs<'a> {
 }
 
 /// One module's emit, normalised across backends: the target source, any
-/// emit-stage messages, the source map (Lua only), and the TypeScript
-/// declaration sibling (JS only; empty otherwise).
+/// emit-stage messages, the source map (Lua only), and the declaration sibling
+/// (`.d.ts` on JS, `.d.lua` on Lua; empty otherwise).
 struct Emitted {
     output: String,
     messages: Vec<String>,
@@ -979,6 +997,9 @@ struct Emitted {
     /// The module's `.d.ts` text (JS target). Empty for Lua and for a module
     /// that exports nothing.
     dts: String,
+    /// The module's `.d.lua` `LuaLS` typings (Lua target). Empty for JS/TS and
+    /// for a module that exports nothing.
+    dlua: String,
 }
 
 fn emit(target: Target, module: &ast::Module, source: &str, inputs: &EmitInputs) -> Emitted {
@@ -990,6 +1011,7 @@ fn emit(target: Target, module: &ast::Module, source: &str, inputs: &EmitInputs)
                 messages: r.diagnostics.into_iter().map(|d| d.message).collect(),
                 source_map: SourceMap { lua: r.source_map },
                 dts: String::new(),
+                dlua: r.dlua,
             }
         }
         Target::Js => {
@@ -1006,6 +1028,7 @@ fn emit(target: Target, module: &ast::Module, source: &str, inputs: &EmitInputs)
                 messages: r.diagnostics.into_iter().map(|d| d.message).collect(),
                 source_map: SourceMap::default(),
                 dts: r.dts,
+                dlua: String::new(),
             }
         }
         Target::Ts => {
@@ -1024,6 +1047,7 @@ fn emit(target: Target, module: &ast::Module, source: &str, inputs: &EmitInputs)
                 messages: r.diagnostics.into_iter().map(|d| d.message).collect(),
                 source_map: SourceMap::default(),
                 dts: String::new(),
+                dlua: String::new(),
             }
         }
     }

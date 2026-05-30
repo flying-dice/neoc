@@ -449,31 +449,105 @@ fn ts_build_emits_typed_module_files_and_shared_neoc_lib() {
 }
 
 #[test]
-fn lua_build_emits_only_map_sidecars_no_dts_or_neoc_lib() {
-    // The `.d.ts`/`neoc-lib` surface is JS/TS-only; a Lua build's only aux files
-    // are the per-module Source Map v3 `.map` sidecars (Lua carries a map).
+fn lua_build_emits_map_and_dlua_aux_plus_shared_neoc_lib() {
+    // A Lua build emits, per module, the `.lua` (in `files`), its `.lua.map`
+    // source map, and the `.d.lua` LuaLS typings — and once at the resolution
+    // root the shared `neoc-lib.d.lua`. The `.d.lua` is a typings sidecar, not
+    // executable, so it carries no `sourceMappingURL` trailer and Lua still
+    // emits no runtime `neoc-lib.lua` (the prelude is inlined per module).
     let dir = tempdir();
     write(&dir, "y.neoc", "pub fn helper() -> number { 7 }\n");
     let entry = write(
         &dir,
         "x.neoc",
-        "use y::helper;\n\nfn main() -> number { helper() }\n",
+        "use y::helper;\n\
+         \n\
+         pub struct Row { id: number, body: string }\n\
+         \n\
+         pub fn load(id: number) -> Result<Row, string> {\n\
+         \x20   Ok(Row { id: id + helper(), body: \"ok\" })\n\
+         }\n",
     );
     let project = transpile_project(&entry, Target::Lua).expect("read project");
     assert!(project.ok(), "{:#?}", project.diagnostics);
+
+    // The compiled-module contract is untouched: one `.lua` per module, aligned
+    // with `source_maps`.
+    assert_eq!(project.files.len(), 2, "expected x.lua + y.lua");
+    assert_eq!(
+        project.files.len(),
+        project.source_maps.len(),
+        "files and source_maps must stay positionally aligned"
+    );
+    assert!(
+        project
+            .files
+            .iter()
+            .any(|(p, _)| p.file_name().is_some_and(|f| f == "x.lua")),
+        "x.lua should be in files, got: {:?}",
+        project.files
+    );
+
+    let aux = |name: &str| {
+        project
+            .aux_files
+            .iter()
+            .find(|(p, _)| p.file_name().is_some_and(|f| f == name))
+            .map_or_else(|| panic!("{name} not in aux_files"), |(_, c)| c.as_str())
+    };
+
+    // The per-module `.lua.map` source map still rides in aux.
+    aux("x.lua.map");
+
+    // The per-module `.d.lua` typings carry the projected `pub` declarations:
+    // the struct as a `---@class` with `---@field`s, the fn as a stubbed
+    // `function M.… end`.
+    let x_dlua = aux("x.d.lua");
+    assert!(
+        x_dlua.contains("---@class Row"),
+        "x.d.lua should project the `pub struct` as a class:\n{x_dlua}"
+    );
+    assert!(
+        x_dlua.contains("---@field"),
+        "x.d.lua should project the struct fields:\n{x_dlua}"
+    );
+    assert!(
+        x_dlua.contains("function M.") && x_dlua.contains("end"),
+        "x.d.lua should project the `pub fn` as a stub:\n{x_dlua}"
+    );
+    // A typings sidecar is not executable — no sourceMappingURL trailer.
+    assert!(
+        !x_dlua.contains("sourceMappingURL"),
+        "x.d.lua must not carry a sourceMappingURL trailer:\n{x_dlua}"
+    );
+
+    // The shared prelude typings are emitted once, at the resolution root.
+    aux("neoc-lib.d.lua");
+    let lib_at_root = project
+        .aux_files
+        .iter()
+        .filter(|(p, _)| p.file_name().is_some_and(|f| f == "neoc-lib.d.lua"))
+        .count();
+    assert_eq!(lib_at_root, 1, "neoc-lib.d.lua emitted exactly once");
+
+    // No runtime `neoc-lib.lua`: the Lua prelude is inlined per module.
     assert!(
         project
             .aux_files
             .iter()
-            .all(|(p, _)| p.to_string_lossy().ends_with(".lua.map")),
-        "Lua aux is only `.map` sidecars, got: {:?}",
+            .all(|(p, _)| p.file_name().is_none_or(|f| f != "neoc-lib.lua")),
+        "Lua must emit no runtime neoc-lib.lua, got: {:?}",
         project.aux_files
     );
-    // Both modules carry a map.
-    assert_eq!(
-        project.aux_files.len(),
-        2,
-        "one `.map` per emitted module, got: {:?}",
+
+    // Every aux file is one of the three Lua kinds: `.lua.map`, `.d.lua`, or the
+    // shared `neoc-lib.d.lua`. No JS/TS surface leaks in.
+    assert!(
+        project.aux_files.iter().all(|(p, _)| {
+            let s = p.to_string_lossy();
+            s.ends_with(".lua.map") || s.ends_with(".d.lua")
+        }),
+        "Lua aux is only `.lua.map` + `.d.lua`, got: {:?}",
         project.aux_files
     );
 }
