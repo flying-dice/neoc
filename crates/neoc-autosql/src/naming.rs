@@ -92,7 +92,6 @@ fn is_keyword(s: &str) -> bool {
             | "loop"
             | "match"
             | "mod"
-            | "mut"
             | "pub"
             | "return"
             | "self"
@@ -136,6 +135,11 @@ mod tests {
     fn sanitize_handles_keywords_digits_and_punctuation() {
         assert_eq!(sanitize_ident("type"), "type_", "neoc keyword");
         assert_eq!(sanitize_ident("match"), "match_", "neoc keyword");
+        assert_eq!(
+            sanitize_ident("mut"),
+            "mut",
+            "mut is an ordinary identifier again (#69)"
+        );
         assert_eq!(sanitize_ident("name"), "name", "ordinary name is untouched");
         assert_eq!(sanitize_ident("2fa"), "_2fa", "leading digit");
         assert_eq!(
