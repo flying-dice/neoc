@@ -5,6 +5,7 @@ import type { add_note } from "./autosql/add_note";
 import type { ListNotesRow } from "./autosql/list_notes";
 import type { list_notes } from "./autosql/list_notes";
 
+export interface HttpResponse { status: number; body: string; }
 export declare function init<E>(db: E): Result<number, string>;
-export declare function list<E>(db: E): Result<ListNotesRow[], string>;
-export declare function create<E>(db: E, body: string): Result<number, string>;
+export declare function list<E>(db: E): HttpResponse;
+export declare function create<E>(db: E, body: string): HttpResponse;

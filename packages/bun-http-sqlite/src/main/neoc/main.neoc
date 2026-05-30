@@ -1,34 +1,64 @@
 // The application, in pure neoc — the controllers.
 //
 // This file is 100% neoc: business logic over the autosql DAO, generic over the
-// `SqlExecutor` *port*. There is no host concern here — no HTTP, no `bun:sqlite`,
-// no entry point, no `ext` adapter wiring. `neoc build` transpiles the project
-// rooted at this module to `main.js` + `main.d.ts` (plus the autosql modules and
-// the shared `neoc-lib.{js,d.ts}` carrying the `Result`/`Option`/`SqlValue`
-// helpers). The TypeScript host imports these typed controllers, *implements*
-// the `SqlExecutor` port over `bun:sqlite`, and dispatches HTTP routes to them.
+// `SqlExecutor` *port*. There is no host concern here — no `bun:sqlite`, no
+// entry point, no `ext` adapter wiring, and no knowledge of any runtime's
+// `Response` type. The route controllers return an `HttpResponse` value (a
+// status + a ready-to-send body); the host's only job is to map that to its
+// runtime's response object. The CLI transpiles this to `main.js` + `main.d.ts`.
 use autosql::ports::SqlExecutor;
 use autosql::migrate::migrate;
 use autosql::add_note::add_note;
 use autosql::list_notes::ListNotesRow;
 use autosql::list_notes::list_notes;
 
+// The neoc-shaped HTTP response: a status code and the body to send. The host
+// maps this onto its runtime `Response` and decides nothing about content.
+pub struct HttpResponse {
+    status: number,
+    body: string,
+}
+
+// One rendered note line. `#[derive(Display)]` gives `display()` → "<id>, <body>"
+// — the neoc-native way to fold the numeric id into the string (there is no
+// implicit number-to-string; Display is the seam).
+#[derive(Display)]
+struct NoteLine {
+    id: number,
+    body: string,
+}
+
 // Create the schema. The host calls this once at startup.
 pub fn init<E: SqlExecutor>(db: E) -> Result<number, string> {
     migrate(db)
 }
 
-// Every note, in id order.
-pub fn list<E: SqlExecutor>(db: E) -> Result<[ListNotesRow], string> {
-    list_notes(db)
+fn render(notes: [ListNotesRow]) -> string {
+    let out = "";
+    for n in notes {
+        let line = NoteLine { id: n.id, body: n.body };
+        out = out + line.display() + " | ";
+    }
+    out
 }
 
-// Add a note. The business rule lives here, in neoc: an empty body is rejected
-// before it ever reaches the database.
-pub fn create<E: SqlExecutor>(db: E, body: string) -> Result<number, string> {
+// List every note. The Result → response mapping (and the status code) lives
+// here, in neoc — not in the host.
+pub fn list<E: SqlExecutor>(db: E) -> HttpResponse {
+    match list_notes(db) {
+        Ok(notes) => HttpResponse { status: 200, body: render(notes) },
+        Err(e) => HttpResponse { status: 500, body: "error: " + e },
+    }
+}
+
+// Add a note. The business rule — an empty body is a 400 — is a neoc decision.
+pub fn create<E: SqlExecutor>(db: E, body: string) -> HttpResponse {
     if body == "" {
-        Err("body must not be empty")
+        HttpResponse { status: 400, body: "body must not be empty" }
     } else {
-        add_note(db, body)
+        match add_note(db, body) {
+            Ok(_) => HttpResponse { status: 200, body: "added" },
+            Err(e) => HttpResponse { status: 500, body: "error: " + e },
+        }
     }
 }

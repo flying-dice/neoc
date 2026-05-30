@@ -5,20 +5,20 @@
 // typings. This host does the three things the model asks of it:
 //   1. implements the port neoc declares — the `SqlExecutor` adapter over
 //      `bun:sqlite` (the only code that touches a database);
-//   2. owns HTTP — `Bun.serve` and the `fetch` handler;
-//   3. dispatches each route to a neoc controller (`init` / `list` / `create`),
-//      imported from the transpiled neoc and typed via its `.d.ts`.
+//   2. owns HTTP — `Bun.serve` and the `routes` table;
+//   3. maps each controller's `HttpResponse` (status + body, both decided in
+//      neoc) onto a runtime `Response`. The controllers own *what* the response
+//      is; the host owns only *how* to express it.
 //
 // Note: the host never touches neoc's runtime encoding (`__enum` / `__tag` /
-// `_0`). It builds and reads `SqlValue` through the generated `SqlValue.*`
-// constructors and `SqlValue.match`, and reads a `Result` through its methods
-// (`is_ok` / `unwrap` / `unwrap_err`) — all from neoc's emitted `.d.ts`.
+// `_0`). It builds/reads `SqlValue` through the generated `SqlValue.*`
+// constructors and `SqlValue.match`; the `Result` handling now lives in the
+// controllers, so the host only reads `HttpResponse.{status, body}`.
 import { Database, type SQLQueryBindings } from "bun:sqlite";
 import { Ok, Err } from "../js/neoc-lib.js";
 import { SqlValue } from "../js/autosql/ports.js";
 import type { SqlValue as SqlValueT } from "../js/autosql/ports";
 import type { Result } from "../js/neoc-lib";
-import type { ListNotesRow } from "../js/autosql/list_notes";
 import { init, list, create } from "../js/main.js";
 
 // The port contract neoc declares (its `SqlExecutor` trait), restated for the
@@ -83,18 +83,16 @@ create(db, "world");
 Bun.serve({
   port: 38573,
   routes: {
-    // /add/<text> — insert a note. The `:text` param arrives URL-decoded.
+    // /add/<text> — insert a note. The `:text` param arrives URL-decoded. The
+    // controller decides the status + body; the host just maps it.
     "/add/:text": (req) => {
-      const added = create(db, req.params.text);
-      return new Response(added.is_ok() ? `added` : `error: ${added.unwrap_err()}`);
+      const r = create(db, req.params.text);
+      return new Response(r.body, { status: r.status });
     },
     // anything else — list every note.
     "/*": () => {
-      const notes = list(db);
-      if (notes.is_err()) return new Response(`error: ${notes.unwrap_err()}`);
-      const rows = notes.unwrap();
-      const body = rows.map((n: ListNotesRow) => `${n.id}:${n.body}`).join(" | ");
-      return new Response(rows.length ? `${body} | ` : body);
+      const r = list(db);
+      return new Response(r.body, { status: r.status });
     },
   },
 });
