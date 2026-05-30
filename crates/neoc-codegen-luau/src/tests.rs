@@ -27,7 +27,7 @@ fn typed_fn_returning_result_carries_param_and_return_types() {
     // A self-typed `.luau` declares the `Result`/`Option` types inline.
     assert!(
         out.luau
-            .contains("type Result<T, E> = { __enum: \"Result\", __tag: \"Ok\", [1]: T }"),
+            .contains("type Result<T, E> = { __enum: \"Result\", __tag: \"Ok\", [number]: T }"),
         "missing Result type alias:\n{}",
         out.luau
     );
@@ -51,7 +51,7 @@ fn exported_enum_becomes_union_matching_runtime_tags() {
     assert!(
         out.luau.contains(
             "type Shape = \
-             { __enum: \"Shape\", __tag: \"Circle\", [1]: number } | \
+             { __enum: \"Shape\", __tag: \"Circle\", [number]: number } | \
              { __enum: \"Shape\", __tag: \"Square\", side: number }"
         ),
         "missing enum union:\n{}",

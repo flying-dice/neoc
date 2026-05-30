@@ -86,8 +86,10 @@ pub(crate) fn luau_generics(generics: &[ast::GenericParam]) -> String {
 /// mirroring the emitted tagged table (`lang/DYNAMIC.md` §3.1).
 ///
 /// * Named struct `struct S { a: number }` → `type S = { __struct: "S", a: number }`.
-/// * Newtype/tuple `struct N(T)` → `type N = { __struct: "N", [1]: T }`, matching
-///   the runtime lowering that stores the payload at integer key `[1]`.
+/// * Newtype/tuple `struct N(T)` → `type N = { __struct: "N", [number]: T }`,
+///   matching the runtime lowering that stores the payload at integer key `[1]`.
+///   A `luau` indexer key must be a type, not a literal (`[1]` is a parse error),
+///   so the positional slot is spelled as a `[number]` indexer.
 /// * Unit struct `struct S;` → `type S = { __struct: "S" }`.
 ///
 /// The `__struct` runtime tag is carried as a string-literal field — the value's
@@ -102,7 +104,7 @@ pub fn project_struct(s: &ast::StructDecl, exported: bool) -> String {
     let body = match &s.body {
         ast::StructBody::Unit => format!("{{ __struct: \"{}\" }}", s.name),
         ast::StructBody::Tuple(t) => {
-            format!("{{ __struct: \"{}\", [1]: {} }}", s.name, luau_type(t))
+            format!("{{ __struct: \"{}\", [number]: {} }}", s.name, luau_type(t))
         }
         ast::StructBody::Named(fields) => {
             let mut b = format!("{{ __struct: \"{}\"", s.name);
@@ -120,7 +122,7 @@ pub fn project_struct(s: &ast::StructDecl, exported: bool) -> String {
 /// the runtime tagged tables the backend emits (`lang/DYNAMIC.md` §3.2):
 ///
 /// * Unit variant `V` → `{ __enum: "E", __tag: "V" }`
-/// * Tuple variant `V(A, B)` → `{ __enum: "E", __tag: "V", [1]: A, [2]: B }`
+/// * Tuple variant `V(A, B)` → `{ __enum: "E", __tag: "V", [number]: A | B }`
 /// * Struct variant `V { x: T }` → `{ __enum: "E", __tag: "V", x: T }`
 ///
 /// The union is `type E<…> = m1 | m2 | …`. Carrying `__enum`/`__tag` as
@@ -153,13 +155,18 @@ fn enum_variant_member(enum_name: &str, v: &ast::Variant) -> String {
     match &v.body {
         ast::VariantBody::Unit => format!("{head} }}"),
         ast::VariantBody::Tuple(tys) => {
-            let mut s = head;
-            for (i, t) in tys.iter().enumerate() {
-                // Tuple payload lives at integer keys `[1]`, `[2]`, … (§3.2).
-                let _ = write!(s, ", [{}]: {}", i + 1, luau_type(t));
+            // Tuple payload lives at integer keys `[1]`, `[2]`, … (§3.2). A `luau`
+            // table-type indexer key must be a type — `[1]` is a parse error — so
+            // the positional slots collapse to one `[number]` indexer whose value
+            // type is the union of the positional field types (deduplicated).
+            let mut union: Vec<String> = Vec::new();
+            for t in tys {
+                let ty = luau_type(t);
+                if !union.contains(&ty) {
+                    union.push(ty);
+                }
             }
-            s.push_str(" }");
-            s
+            format!("{head}, [number]: {} }}", union.join(" | "))
         }
         ast::VariantBody::Named(fields) => {
             let mut s = head;
@@ -281,7 +288,9 @@ mod tests {
     }
 
     #[test]
-    fn struct_newtype_payload_at_integer_one() {
+    fn struct_newtype_payload_at_number_indexer() {
+        // A `luau` indexer key must be a type, not a literal — the positional
+        // slot at runtime key `[1]` is projected as a `[number]` indexer.
         let s = ast::StructDecl {
             name: "N".to_string(),
             generics: Vec::new(),
@@ -289,7 +298,7 @@ mod tests {
         };
         assert_eq!(
             project_struct(&s, true),
-            "type N = { __struct: \"N\", [1]: number }"
+            "type N = { __struct: \"N\", [number]: number }"
         );
     }
 
@@ -334,8 +343,47 @@ mod tests {
             project_enum(&e, true),
             "type E = \
              { __enum: \"E\", __tag: \"A\" } | \
-             { __enum: \"E\", __tag: \"B\", [1]: number } | \
+             { __enum: \"E\", __tag: \"B\", [number]: number } | \
              { __enum: \"E\", __tag: \"C\", x: string }"
+        );
+    }
+
+    #[test]
+    fn enum_two_field_tuple_variant_unions_positional_types() {
+        // enum P { Pair(number, string) } — two positional slots collapse to one
+        // `[number]` indexer over the union of their types.
+        let e = ast::EnumDecl {
+            name: "P".to_string(),
+            generics: Vec::new(),
+            variants: vec![ast::Variant {
+                attrs: Vec::new(),
+                name: "Pair".to_string(),
+                name_span: ast::Span::default(),
+                body: ast::VariantBody::Tuple(vec![path("number"), path("string")]),
+            }],
+        };
+        assert_eq!(
+            project_enum(&e, true),
+            "type P = { __enum: \"P\", __tag: \"Pair\", [number]: number | string }"
+        );
+    }
+
+    #[test]
+    fn enum_two_field_tuple_variant_dedups_repeated_types() {
+        // Repeated positional types deduplicate to a single union member.
+        let e = ast::EnumDecl {
+            name: "P".to_string(),
+            generics: Vec::new(),
+            variants: vec![ast::Variant {
+                attrs: Vec::new(),
+                name: "Pair".to_string(),
+                name_span: ast::Span::default(),
+                body: ast::VariantBody::Tuple(vec![path("number"), path("number")]),
+            }],
+        };
+        assert_eq!(
+            project_enum(&e, true),
+            "type P = { __enum: \"P\", __tag: \"Pair\", [number]: number }"
         );
     }
 

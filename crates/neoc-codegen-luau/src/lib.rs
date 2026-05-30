@@ -144,12 +144,14 @@ fn emit_type_alias(a: &ast::TypeAlias, exported: bool) -> String {
 /// The `Result`/`Option` inline Luau type aliases, whose union member shapes
 /// mirror the runtime tagged tables the inlined prelude builds (`lang/DYNAMIC.md`
 /// §7): `Ok`/`Err`/`Some` carry their payload at integer key `[1]`, `None` is the
-/// bare tagged table. Prepended to a self-typed `.luau` that references them, so
-/// the file names `Result`/`Option` in its signatures and union members.
+/// bare tagged table. The positional slot is spelled as a `[number]` indexer
+/// because a `luau` table-type key must be a type, not a literal. Prepended to a
+/// self-typed `.luau` that references them, so the file names `Result`/`Option`
+/// in its signatures and union members.
 fn neoc_lib_types() -> String {
     [
-        "type Result<T, E> = { __enum: \"Result\", __tag: \"Ok\", [1]: T } | { __enum: \"Result\", __tag: \"Err\", [1]: E }",
-        "type Option<T> = { __enum: \"Option\", __tag: \"Some\", [1]: T } | { __enum: \"Option\", __tag: \"None\" }",
+        "type Result<T, E> = { __enum: \"Result\", __tag: \"Ok\", [number]: T } | { __enum: \"Result\", __tag: \"Err\", [number]: E }",
+        "type Option<T> = { __enum: \"Option\", __tag: \"Some\", [number]: T } | { __enum: \"Option\", __tag: \"None\" }",
     ]
     .join("\n")
 }

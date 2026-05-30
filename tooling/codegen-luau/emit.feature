@@ -19,7 +19,7 @@ Feature: Emitting Luau
       """
     When I emit Luau
     Then the Luau contains "function find(id: number): Result<string, string>"
-    And the Luau contains "type Result<T, E> = { __enum: "Result", __tag: "Ok", [1]: T } | { __enum: "Result", __tag: "Err", [1]: E }"
+    And the Luau contains "type Result<T, E> = { __enum: "Result", __tag: "Ok", [number]: T } | { __enum: "Result", __tag: "Err", [number]: E }"
     And the emit reports no problems
 
   Scenario: A struct projects to a type over a tagged table
@@ -36,7 +36,15 @@ Feature: Emitting Luau
       pub enum Shape { Circle(number), Square { side: number } }
       """
     When I emit Luau
-    Then the Luau contains "type Shape = { __enum: "Shape", __tag: "Circle", [1]: number } | { __enum: "Shape", __tag: "Square", side: number }"
+    Then the Luau contains "type Shape = { __enum: "Shape", __tag: "Circle", [number]: number } | { __enum: "Shape", __tag: "Square", side: number }"
+
+  Scenario: A multi-field tuple variant unions its positional types under one indexer
+    Given the source:
+      """
+      pub enum Move { Step(number, string) }
+      """
+    When I emit Luau
+    Then the Luau contains "type Move = { __enum: "Move", __tag: "Step", [number]: number | string }"
 
   Scenario: A use lowers to a require binding
     Given the source:
