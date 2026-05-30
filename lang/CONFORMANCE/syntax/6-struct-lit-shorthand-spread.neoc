@@ -1,0 +1,6 @@
+// SYNTAX.md §6: struct literal field shorthand and functional-update spread.
+struct Point { x: number, y: number }
+fn f(x: number, y: number, base: Point) -> Point {
+    let p = Point { x, y };
+    Point { x: 5, ..base }
+}

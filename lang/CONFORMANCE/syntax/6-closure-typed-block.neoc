@@ -1,0 +1,7 @@
+// SYNTAX.md §6: closures with typed parameters and a block body, and a
+// zero-parameter closure with an expression body.
+fn f() -> number {
+    let g = |x: number, y: number| { let s = x + y; s };
+    let h = || 0;
+    g(1, 2) + h()
+}
