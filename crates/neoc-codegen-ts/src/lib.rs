@@ -24,7 +24,8 @@ use std::collections::HashSet;
 
 use neoc_ast as ast;
 use neoc_codegen_js::{
-    Diagnostic, HeaderStyle, emit_with_style, project_enum, project_struct, project_type_alias,
+    Diagnostic, HeaderStyle, emit_with_style, project_enum, project_struct, project_trait,
+    project_type_alias,
 };
 
 /// The result of emitting a module to TypeScript.
@@ -126,6 +127,7 @@ fn emit_type_decls(module: &ast::Module) -> String {
             ast::ItemKind::Struct(s) => out.push(emit_struct(s, exported)),
             ast::ItemKind::Enum(e) => out.push(emit_enum(e, exported)),
             ast::ItemKind::TypeAlias(a) => out.push(emit_type_alias(a, exported)),
+            ast::ItemKind::Trait(t) => out.push(emit_trait(t, exported)),
             _ => {}
         }
     }
@@ -145,6 +147,11 @@ fn emit_enum(e: &ast::EnumDecl, exported: bool) -> String {
 /// Project a `type` alias to its TS `type` declaration.
 fn emit_type_alias(a: &ast::TypeAlias, exported: bool) -> String {
     project_type_alias(a, exported)
+}
+
+/// Project a `trait` to its structural TS `type` alias — the port contract.
+fn emit_trait(t: &ast::TraitDecl, exported: bool) -> String {
+    project_trait(t, exported)
 }
 
 /// Rewrite every *relative* ES-module specifier in the emitted body from its
@@ -213,7 +220,8 @@ fn item_references_lib(item: &ast::Item) -> bool {
         ast::ItemKind::Struct(s) => struct_references_lib(s),
         ast::ItemKind::Enum(e) => e.variants.iter().any(variant_references_lib),
         ast::ItemKind::Impl(b) => b.items.iter().any(|f| sig_references_lib(&f.sig)),
-        ast::ItemKind::Use(_) | ast::ItemKind::Extern(_) | ast::ItemKind::Trait(_) => false,
+        ast::ItemKind::Trait(t) => t.items.iter().any(|it| sig_references_lib(&it.sig)),
+        ast::ItemKind::Use(_) | ast::ItemKind::Extern(_) => false,
     }
 }
 

@@ -48,7 +48,7 @@ use neoc_ast as ast;
 
 use crate::dts::ts_generics;
 pub use crate::dts::{
-    project_const, project_enum, project_enum_namespace, project_fn, project_struct,
+    project_const, project_enum, project_enum_namespace, project_fn, project_struct, project_trait,
     project_type_alias, ts_type,
 };
 use crate::expr::VariantShape;
@@ -350,6 +350,11 @@ fn module_dts<S: std::hash::BuildHasher>(
     let mut imports: Vec<String> = Vec::new();
     let mut decls: Vec<String> = Vec::new();
     let mut needs_lib = uses_result;
+    // Type/trait names the projected `.d.ts` can resolve — every named type the
+    // module declares plus the final segment of each cross-module `use`. A
+    // function's generic bound (`<E: SqlExecutor>`) is carried as a TS `extends`
+    // only when its trait is here; an out-of-scope bound falls back to bare `<E>`.
+    let in_scope = dts_in_scope_names(module);
 
     for item in &module.items {
         match &item.kind {
@@ -360,7 +365,7 @@ fn module_dts<S: std::hash::BuildHasher>(
             }
             ast::ItemKind::Fn(f) if item.vis == ast::Visibility::Public => {
                 needs_lib |= sig_references_lib(&f.sig);
-                decls.push(dts::project_fn(&f.sig, true));
+                decls.push(dts::project_fn(&f.sig, true, &in_scope));
             }
             ast::ItemKind::Struct(s) if item.vis == ast::Visibility::Public => {
                 decls.push(dts::project_struct(s, true));
@@ -372,6 +377,13 @@ fn module_dts<S: std::hash::BuildHasher>(
                 // touching the `__tag`/`_0` encoding (`lang/DYNAMIC.md` §3.2).
                 decls.push(dts::project_enum(en, true));
                 decls.push(dts::project_enum_namespace(en));
+            }
+            ast::ItemKind::Trait(t) if item.vis == ast::Visibility::Public => {
+                // A `pub trait` projects to a structural `type` alias — the host's
+                // port contract. A method touching `Result`/`Option` drives the
+                // same `neoc-lib` import the fn/struct projectors do.
+                needs_lib |= t.items.iter().any(|it| sig_references_lib(&it.sig));
+                decls.push(dts::project_trait(t, true));
             }
             ast::ItemKind::Const(c) if item.vis == ast::Visibility::Public => {
                 decls.push(dts::project_const(c, true));
@@ -402,6 +414,37 @@ fn module_dts<S: std::hash::BuildHasher>(
     let mut s = out.join("\n");
     s.push('\n');
     s
+}
+
+/// The type/trait names a projected `.d.ts` can resolve: every named type the
+/// module declares (struct/enum/trait/type-alias) plus the final segment each
+/// cross-module `use` brings in. A function's generic bound is carried as a TS
+/// `extends` only when its trait name is in this set (see [`dts::project_fn`]).
+fn dts_in_scope_names(module: &ast::Module) -> HashSet<String> {
+    let mut names = HashSet::new();
+    for item in &module.items {
+        match &item.kind {
+            ast::ItemKind::Struct(s) => {
+                names.insert(s.name.clone());
+            }
+            ast::ItemKind::Enum(e) => {
+                names.insert(e.name.clone());
+            }
+            ast::ItemKind::Trait(t) => {
+                names.insert(t.name.clone());
+            }
+            ast::ItemKind::TypeAlias(a) => {
+                names.insert(a.name.clone());
+            }
+            ast::ItemKind::Use(u) => {
+                if let Some(last) = u.path.last() {
+                    names.insert(u.alias.clone().unwrap_or_else(|| last.clone()));
+                }
+            }
+            _ => {}
+        }
+    }
+    names
 }
 
 /// The `import type` line for a cross-module `use` in a `.d.ts`, or `None` when

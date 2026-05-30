@@ -12,6 +12,7 @@
 //! These functions are wasm-clean (the crate is in the leaf gate): pure string
 //! building over `&ast` nodes, no host facilities.
 
+use std::collections::HashSet;
 use std::fmt::Write as _;
 
 use neoc_ast as ast;
@@ -84,6 +85,38 @@ pub(crate) fn ts_generics(generics: &[ast::GenericParam]) -> String {
     let ps = generics
         .iter()
         .map(|g| g.name.clone())
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("<{ps}>")
+}
+
+/// Render a generic parameter list, carrying each bound as a TS `extends` clause
+/// (`<E: SqlExecutor>` → `<E extends SqlExecutor>`, `<E: A + B>` →
+/// `<E extends A & B>`). A bound is carried only when *every* trait it names is
+/// in `in_scope` — a projected/declared type the consumer's `.d.ts` can see;
+/// otherwise the whole parameter falls back to bare `<E>` rather than emitting a
+/// dangling name. Returns empty when there are no generics.
+pub(crate) fn ts_generics_bounded<S: std::hash::BuildHasher>(
+    generics: &[ast::GenericParam],
+    in_scope: &HashSet<String, S>,
+) -> String {
+    if generics.is_empty() {
+        return String::new();
+    }
+    let ps = generics
+        .iter()
+        .map(|g| {
+            let names: Vec<&str> = g
+                .bounds
+                .iter()
+                .filter_map(|b| b.segments.last().map(|s| s.name.as_str()))
+                .collect();
+            if !names.is_empty() && names.iter().all(|n| in_scope.contains(*n)) {
+                format!("{} extends {}", g.name, names.join(" & "))
+            } else {
+                g.name.clone()
+            }
+        })
         .collect::<Vec<_>>()
         .join(", ");
     format!("<{ps}>")
@@ -255,14 +288,24 @@ fn enum_namespace_arm(v: &ast::Variant) -> String {
 /// The `self` receiver (a method) is dropped — methods are not free exports;
 /// only free `pub fn`s reach this. Each named parameter keeps its name and
 /// projected type; the return type projects via [`ts_type`] (absent → `void`).
+///
+/// `in_scope` is the set of trait/type names the projected `.d.ts` can resolve.
+/// A generic bound (`<E: SqlExecutor>`) is carried as a TS `extends` clause when
+/// every trait it names is in scope, so the host's injected adapter is checked
+/// against the port at the call site; an out-of-scope bound falls back to a bare
+/// `<E>` rather than emitting a dangling name.
 #[must_use]
-pub fn project_fn(sig: &ast::FnSig, exported: bool) -> String {
+pub fn project_fn<S: std::hash::BuildHasher>(
+    sig: &ast::FnSig,
+    exported: bool,
+    in_scope: &HashSet<String, S>,
+) -> String {
     let kw = if exported {
         "export declare function "
     } else {
         "declare function "
     };
-    let g = ts_generics(&sig.generics);
+    let g = ts_generics_bounded(&sig.generics, in_scope);
     let params = sig
         .params
         .iter()
@@ -300,6 +343,60 @@ pub fn project_type_alias(a: &ast::TypeAlias, exported: bool) -> String {
     let kw = if exported { "export " } else { "" };
     let g = ts_generics(&a.generics);
     format!("{kw}type {}{g} = {};", a.name, ts_type(&a.value))
+}
+
+/// Project a `trait` declaration to a structural TS `type` alias — the host's
+/// port contract. A `type` (not an `interface`) keeps it non-reopenable and
+/// consistent with the `enum` union projection.
+///
+/// * Each method becomes an object member `name(params...): ret`; the `self`
+///   receiver is implicit and dropped, exactly as [`project_fn`] drops it.
+/// * Param and return types project through [`ts_type`], so a method touching
+///   `Result`/`Option` drives the same `neoc-lib` import the other projectors do.
+/// * Trait generics carry over (`pub trait Store<T>` → `export type Store<T>`).
+/// * Both required and default-bodied methods are listed — the contract is the
+///   full method set.
+/// * Associated types (`type Item;`) project as object members `Item: unknown`,
+///   the least-surprising shape (a member the implementor binds); the methods
+///   reference them by name as ordinary types.
+#[must_use]
+pub fn project_trait(t: &ast::TraitDecl, exported: bool) -> String {
+    let kw = if exported { "export " } else { "" };
+    let g = ts_generics(&t.generics);
+    let mut members: Vec<String> = Vec::new();
+    for assoc in &t.assoc_types {
+        members.push(format!("  {assoc}: unknown;"));
+    }
+    for it in &t.items {
+        members.push(format!("  {};", trait_method_member(&it.sig)));
+    }
+    if members.is_empty() {
+        return format!("{kw}type {}{g} = {{}};", t.name);
+    }
+    let body = members.join("\n");
+    format!("{kw}type {}{g} = {{\n{body}\n}};", t.name)
+}
+
+/// One method member of a trait's projected object type: `name(params...): ret`.
+/// The `self` receiver is dropped (implicit on the value); named params keep
+/// their name and projected type; the return projects via [`ts_type`].
+fn trait_method_member(sig: &ast::FnSig) -> String {
+    let params = sig
+        .params
+        .iter()
+        .filter_map(|p| match p {
+            ast::Param::Receiver => None,
+            ast::Param::Named {
+                name, ty, optional, ..
+            } => {
+                let q = if *optional { "?" } else { "" };
+                Some(format!("{name}{q}: {}", ts_type(ty)))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let ret = sig.ret.as_ref().map_or_else(|| "void".to_string(), ts_type);
+    format!("{}({params}): {ret}", sig.name)
 }
 
 #[cfg(test)]
@@ -493,7 +590,7 @@ mod tests {
             where_clause: Vec::new(),
         };
         assert_eq!(
-            project_fn(&sig, true),
+            project_fn(&sig, true, &HashSet::new()),
             "export declare function find(id: number): Result<string, string>;"
         );
     }
@@ -509,8 +606,173 @@ mod tests {
             where_clause: Vec::new(),
         };
         assert_eq!(
-            project_fn(&sig, true),
+            project_fn(&sig, true, &HashSet::new()),
             "export declare function tick(): void;"
+        );
+    }
+
+    fn receiver_method(
+        name: &str,
+        params: Vec<(&str, ast::Type)>,
+        ret: Option<ast::Type>,
+    ) -> ast::TraitItem {
+        let mut ps = vec![ast::Param::Receiver];
+        for (n, ty) in params {
+            ps.push(ast::Param::Named {
+                name: n.to_string(),
+                ty,
+                optional: false,
+                span: ast::Span::default(),
+            });
+        }
+        ast::TraitItem {
+            sig: ast::FnSig {
+                name: name.to_string(),
+                name_span: ast::Span::default(),
+                generics: Vec::new(),
+                params: ps,
+                ret,
+                where_clause: Vec::new(),
+            },
+            default: None,
+        }
+    }
+
+    #[test]
+    fn trait_projects_to_structural_type_alias() {
+        // pub trait SqlExecutor {
+        //   fn execute(self, sql: string, params: [SqlValue]) -> Result<number, string>;
+        //   fn query(self, sql: string, params: [SqlValue]) -> Result<[[SqlValue]], string>;
+        // }
+        let sql_value = path("SqlValue");
+        let t = ast::TraitDecl {
+            name: "SqlExecutor".to_string(),
+            generics: Vec::new(),
+            supertraits: Vec::new(),
+            assoc_types: Vec::new(),
+            items: vec![
+                receiver_method(
+                    "execute",
+                    vec![
+                        ("sql", path("string")),
+                        ("params", ast::Type::List(Box::new(sql_value.clone()))),
+                    ],
+                    Some(generic("Result", vec![path("number"), path("string")])),
+                ),
+                receiver_method(
+                    "query",
+                    vec![
+                        ("sql", path("string")),
+                        ("params", ast::Type::List(Box::new(sql_value.clone()))),
+                    ],
+                    Some(generic(
+                        "Result",
+                        vec![
+                            ast::Type::List(Box::new(ast::Type::List(Box::new(sql_value)))),
+                            path("string"),
+                        ],
+                    )),
+                ),
+            ],
+        };
+        assert_eq!(
+            project_trait(&t, true),
+            "export type SqlExecutor = {\n  \
+             execute(sql: string, params: SqlValue[]): Result<number, string>;\n  \
+             query(sql: string, params: SqlValue[]): Result<SqlValue[][], string>;\n\
+             };"
+        );
+    }
+
+    #[test]
+    fn trait_carries_generics_and_assoc_types() {
+        // pub trait Store<T> { type Item; fn get(self, k: string) -> T; }
+        let t = ast::TraitDecl {
+            name: "Store".to_string(),
+            generics: vec![ast::GenericParam {
+                name: "T".to_string(),
+                bounds: Vec::new(),
+            }],
+            supertraits: Vec::new(),
+            assoc_types: vec!["Item".to_string()],
+            items: vec![receiver_method(
+                "get",
+                vec![("k", path("string"))],
+                Some(path("T")),
+            )],
+        };
+        assert_eq!(
+            project_trait(&t, true),
+            "export type Store<T> = {\n  Item: unknown;\n  get(k: string): T;\n};"
+        );
+    }
+
+    #[test]
+    fn fn_bound_carries_as_extends_when_in_scope() {
+        // pub fn create<E: SqlExecutor>(db: E) -> number
+        let sig = ast::FnSig {
+            name: "create".to_string(),
+            name_span: ast::Span::default(),
+            generics: vec![ast::GenericParam {
+                name: "E".to_string(),
+                bounds: vec![ast::TypePath {
+                    segments: vec![ast::TypeSegment {
+                        name: "SqlExecutor".to_string(),
+                        args: Vec::new(),
+                    }],
+                }],
+            }],
+            params: vec![ast::Param::Named {
+                name: "db".to_string(),
+                ty: path("E"),
+                optional: false,
+                span: ast::Span::default(),
+            }],
+            ret: Some(path("number")),
+            where_clause: Vec::new(),
+        };
+        let in_scope: HashSet<String> = ["SqlExecutor".to_string()].into_iter().collect();
+        assert_eq!(
+            project_fn(&sig, true, &in_scope),
+            "export declare function create<E extends SqlExecutor>(db: E): number;"
+        );
+        // Out of scope → bare <E>, no dangling name.
+        assert_eq!(
+            project_fn(&sig, true, &HashSet::new()),
+            "export declare function create<E>(db: E): number;"
+        );
+    }
+
+    #[test]
+    fn fn_multiple_bounds_become_intersection() {
+        let sig = ast::FnSig {
+            name: "f".to_string(),
+            name_span: ast::Span::default(),
+            generics: vec![ast::GenericParam {
+                name: "E".to_string(),
+                bounds: vec![
+                    ast::TypePath {
+                        segments: vec![ast::TypeSegment {
+                            name: "A".to_string(),
+                            args: Vec::new(),
+                        }],
+                    },
+                    ast::TypePath {
+                        segments: vec![ast::TypeSegment {
+                            name: "B".to_string(),
+                            args: Vec::new(),
+                        }],
+                    },
+                ],
+            }],
+            params: Vec::new(),
+            ret: None,
+            where_clause: Vec::new(),
+        };
+        let in_scope: HashSet<String> = ["A".to_string(), "B".to_string()].into_iter().collect();
+        assert_eq!(
+            project_fn(&sig, true, &in_scope),
+            "export declare function f<E extends A & B>(): void;"
         );
     }
 

@@ -1,3 +1,9 @@
+type Show = {
+  show(): string;
+};
+type Describe = {
+  describe(): string;
+};
 interface Dog { name: string; }
 
 const __t = {};

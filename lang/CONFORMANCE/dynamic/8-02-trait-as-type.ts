@@ -1,3 +1,6 @@
+type Drawable = {
+  draw(): string;
+};
 interface Circle { r: number; }
 interface Square { side: number; }
 

@@ -1,3 +1,6 @@
+type Greet = {
+  greet(): string;
+};
 interface Dog { name: string; }
 
 const __t = {};
