@@ -1,7 +1,7 @@
 //! Project-manifest integration: a `neoc.toml` rooting a real
 //! `src/main/neoc/` tree is discovered, its `use` graph resolves against the
-//! source root, and `build` emits beside the source in `src/main/neoc/`,
-//! preserving paths (`lang/PROJECT.md` §3–§5).
+//! source root, and `build` emits to `<root>/out/` preserving paths
+//! (`lang/PROJECT.md` §3–§5).
 //!
 //! Everything runs in a tempdir; nothing is written into the repo tree.
 
@@ -76,10 +76,10 @@ fn build_discovers_root_resolves_sibling_and_preserves_paths() {
     // Both the entry and the resolved sibling are emitted.
     assert_eq!(compiled.files.len(), 2, "{:?}", compiled.files);
 
-    // Mirror what `neoc build` writes: each module beside its source — output
-    // lands in the source root by default, preserving its path under the root.
+    // Mirror what `neoc build` writes: each module under `<root>/out/`,
+    // preserving its path relative to the canonical source root.
     let source_root = fs::canonicalize(&project.source_root).unwrap();
-    let out_dir = source_root.clone();
+    let out_dir = project.root.join("out");
     for (src_dest, contents) in &compiled.files {
         let name = src_dest.with_extension(project.target.extension());
         let rel = name.strip_prefix(&source_root).expect("under source root");
@@ -90,9 +90,11 @@ fn build_discovers_root_resolves_sibling_and_preserves_paths() {
         fs::write(&dest, contents).unwrap();
     }
 
-    // Output landed in the source root, beside the .neoc, one file per module.
+    // Output landed in out/, one file per module, preserving names.
     assert!(out_dir.join("main.lua").is_file(), "main.lua missing");
     assert!(out_dir.join("greet.lua").is_file(), "greet.lua missing");
+    // The source tree stays clean — nothing emitted into src/main/neoc.
+    assert!(!project.source_root.join("main.lua").exists());
 }
 
 #[test]
