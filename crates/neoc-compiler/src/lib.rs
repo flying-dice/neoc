@@ -810,6 +810,7 @@ fn check_and_emit_module(
     let elaborated = types::elaborate_with_table(&me.module, &table);
     let inputs = EmitInputs {
         bindings: js_imported_bindings(root, loaded, &me.module),
+        py_bindings: py_imported_bindings(root, loaded, &me.module),
         method_types: js_imported_method_types(root, loaded, &me.module),
         enums: imported_enums(root, loaded, &me.module),
         externs,
@@ -1016,6 +1017,10 @@ fn append_source_mapping_url(output: &mut String, target: Target, map_name: &str
 struct EmitInputs<'a> {
     /// `use`d names whose source module emits a runtime JS binding (JS only).
     bindings: std::collections::HashSet<String>,
+    /// Resolved `use` paths whose source module emits a runtime Python
+    /// definition (Python only). A `use` absent here resolves to a trait or
+    /// alias — no Python symbol — so its import is dropped.
+    py_bindings: Vec<String>,
     /// The subset of `bindings` that are method-bearing types (JS only); their
     /// `use` imports the prototype `Type$`.
     method_types: std::collections::HashSet<String>,
@@ -1115,11 +1120,17 @@ fn emit(target: Target, module: &ast::Module, source: &str, inputs: &EmitInputs)
             }
         }
         Target::Python => {
-            // Python needs only the module + imported enums (no JS bindings,
-            // method types, externs, or importer dir). The `.py` is the module
-            // artifact; the `.pyi` rides in `Emitted::pyi` to the aux wiring. No
-            // source map yet.
-            let r = codegen_python::emit(module, &inputs.enums);
+            // Python needs the module, imported enums, and the importer dir
+            // (so a `use` resolves to a relative package import from a
+            // subpackage) — no JS bindings, method types, or externs. The `.py`
+            // is the module artifact; the `.pyi` rides in `Emitted::pyi` to the
+            // aux wiring. No source map yet.
+            let r = codegen_python::emit(
+                module,
+                &inputs.enums,
+                &inputs.importer_dir,
+                &inputs.py_bindings,
+            );
             Emitted {
                 output: r.py,
                 messages: r.diagnostics.into_iter().map(|d| d.message).collect(),
@@ -1169,6 +1180,38 @@ fn js_imported_bindings(
         };
         if codegen_js::module_js_bindings(&source.module).contains(last) {
             bindings.insert(u.path.join("::"));
+        }
+    }
+    bindings
+}
+
+/// The resolved `use` paths in `module` (`prefix::last`) that resolve to a
+/// runtime Python definition in their source module — a `fn`, `const`,
+/// `struct`, or `enum` (see [`codegen_python::module_py_bindings`]). A `use` of
+/// a `trait` or `type` alias is excluded: it emits no Python symbol, so an
+/// `import` for it would dangle. The Python emitter keeps only the imports
+/// present here. Target-agnostic; the other backends ignore the result.
+fn py_imported_bindings(
+    root: &Path,
+    loaded: &HashMap<PathBuf, LoadedModule>,
+    module: &ast::Module,
+) -> Vec<String> {
+    let mut bindings = Vec::new();
+    for item in &module.items {
+        let ast::ItemKind::Use(u) = &item.kind else {
+            continue;
+        };
+        let Some((last, _)) = u.path.split_last() else {
+            continue;
+        };
+        let Some(dep) = module_file(root, &u.path).map(|p| canonical_or(&p)) else {
+            continue;
+        };
+        let Some(source) = loaded.get(&dep) else {
+            continue;
+        };
+        if codegen_python::module_py_bindings(&source.module).contains(last) {
+            bindings.push(u.path.join("::"));
         }
     }
     bindings

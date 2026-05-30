@@ -188,6 +188,28 @@ impl Emitter {
             ast::ExprKind::Break => self.line("break"),
             ast::ExprKind::Continue => self.line("continue"),
             ast::ExprKind::Assign { target, op, value } => {
+                // A plain assignment to a list index past the end grows the
+                // list, matching neoc's list semantics (`out[next] = x` where
+                // `next == len(out)` appends — the way Lua tables and JS arrays
+                // behave). Python lists raise `IndexError` instead, so grow the
+                // list with placeholders up to the index before assigning. The
+                // index and value are bound to temporaries first so each is
+                // evaluated once even when the grow loop runs.
+                if let (ast::ExprKind::Index { base, index }, ast::AssignOp::Assign) =
+                    (&target.kind, op)
+                {
+                    let b = self.emit_expr(base);
+                    let idx = self.emit_expr(index);
+                    let v = self.emit_expr(value);
+                    let it = self.fresh_tmp("_idx");
+                    let vt = self.fresh_tmp("_val");
+                    self.line(format!("{it} = {idx}"));
+                    self.line(format!("{vt} = {v}"));
+                    self.line(format!("while len({b}) <= {it}:"));
+                    self.indented(|em| em.line(format!("{b}.append(None)")));
+                    self.line(format!("{b}[{it}] = {vt}"));
+                    return;
+                }
                 let t = self.emit_expr(target);
                 let v = self.emit_expr(value);
                 let sym = match op {

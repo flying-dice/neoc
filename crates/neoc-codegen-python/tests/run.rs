@@ -110,7 +110,7 @@ fn emitted_python_runs_under_python3() {
         "fixture should parse cleanly: {:?}",
         parsed.diagnostics
     );
-    let result = neoc_codegen_python::emit(&parsed.module, &[]);
+    let result = neoc_codegen_python::emit(&parsed.module, &[], &[], &[]);
     assert!(
         result.diagnostics.is_empty(),
         "emit should be clean: {:?}",

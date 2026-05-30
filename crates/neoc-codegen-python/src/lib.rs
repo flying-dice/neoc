@@ -125,16 +125,73 @@ impl EnumIndex {
     }
 }
 
+/// The `pub` names in `module` that emit a runtime Python definition — a `fn`,
+/// `const`, `struct`, or `enum` (data-only types still emit a `@dataclass`).
+/// A `trait` and a `type` alias produce no Python symbol, so a `use` of one
+/// must not emit a dangling `import`; this set tells the emitter which imports
+/// to keep. Target-agnostic; non-Python backends ignore it.
+#[must_use]
+pub fn module_py_bindings(module: &ast::Module) -> HashSet<String> {
+    let mut bindings = HashSet::new();
+    for item in &module.items {
+        if item.vis != ast::Visibility::Public {
+            continue;
+        }
+        match &item.kind {
+            ast::ItemKind::Fn(f) => {
+                bindings.insert(f.sig.name.clone());
+            }
+            ast::ItemKind::Const(c) => {
+                bindings.insert(c.name.clone());
+            }
+            ast::ItemKind::Struct(s) => {
+                bindings.insert(s.name.clone());
+            }
+            ast::ItemKind::Enum(e) => {
+                bindings.insert(e.name.clone());
+            }
+            _ => {}
+        }
+    }
+    bindings
+}
+
 /// Lower a module to idiomatic Python (3.10+) source plus its `.pyi` sibling.
 ///
 /// `imported_enums` carries the `pub` enums a cross-module `use` brought in, so
 /// variant construction and `match` on them resolve at use sites exactly like a
 /// local enum. Pass an empty slice for a single-file emit.
+///
+/// `imported_bindings` carries the resolved `use` paths (`a::b::c`) that resolve
+/// to a runtime Python definition (see [`module_py_bindings`]); a `use` whose
+/// path is absent resolves to a trait or alias and emits no import. Pass an
+/// empty slice for a single-file emit — it declares no `use`, so the set is
+/// never consulted.
+///
+/// `importer_dir` is this module's directory as root-relative path segments
+/// (`[]` for a top-level module, `["autosql"]` for `autosql/ports.neoc`), used
+/// to resolve a `use` to a relative package import. Pass an empty slice for a
+/// single-file emit.
 #[must_use]
-pub fn emit(module: &ast::Module, imported_enums: &[&ast::EnumDecl]) -> EmitResult {
+pub fn emit(
+    module: &ast::Module,
+    imported_enums: &[&ast::EnumDecl],
+    importer_dir: &[String],
+    imported_bindings: &[String],
+) -> EmitResult {
+    let imported_enum_variants = imported_enums
+        .iter()
+        .map(|e| {
+            let variants = e.variants.iter().map(|v| variant_class_name(&v.name));
+            (e.name.clone(), variants.collect())
+        })
+        .collect();
     let mut e = Emitter {
         enums: EnumIndex::build(module, imported_enums),
         method_types: method_type_names(module),
+        importer_dir: importer_dir.to_vec(),
+        imported_enum_variants,
+        imported_bindings: imported_bindings.iter().cloned().collect(),
         ..Emitter::default()
     };
     e.emit_module(module);
@@ -202,6 +259,21 @@ pub(crate) struct Emitter {
     public: Vec<String>,
     try_seq: usize,
     tmp_seq: usize,
+    /// This module's directory, as root-relative path segments (`[]` for a
+    /// top-level module, `["autosql"]` for `autosql/ports.neoc`). A `use`
+    /// resolves its target module relative to this, so the emitted relative
+    /// `from . import …` lands on the right file from a subpackage.
+    importer_dir: Vec<String>,
+    /// Variant class names per `pub` enum brought in by `use`
+    /// (`enum name → [variant class, …]`). A `use` of one of these enums also
+    /// imports its variant classes, since variant construction emits the bare
+    /// variant class (e.g. `Text(body)`), not a namespaced reference.
+    imported_enum_variants: HashMap<String, Vec<String>>,
+    /// Resolved `use` paths (`a::b::c`) that resolve to a runtime Python
+    /// definition. A `use` whose path is absent names a trait or alias (no
+    /// Python symbol), so its import is skipped to avoid a dangling reference.
+    /// Empty means "import every `use`" (a single-file emit declares no `use`).
+    imported_bindings: HashSet<String>,
 }
 
 impl Emitter {
@@ -283,7 +355,13 @@ impl Emitter {
             preamble.push(format!("from typing import {}", typing.join(", ")));
         }
         if self.uses_result {
-            preamble.push("from .neoc_lib import Result, Option, Ok, Err, Some, None_".to_string());
+            // `neoc_lib` sits at the output root, so a module nested in a
+            // subpackage reaches it through that many extra parent dots
+            // (`autosql/x.py` → `from ..neoc_lib import …`).
+            let dots = ".".repeat(1 + self.importer_dir.len());
+            preamble.push(format!(
+                "from {dots}neoc_lib import Result, Option, Ok, Err, Some, None_"
+            ));
         }
 
         let mut out = preamble;
@@ -512,13 +590,56 @@ impl Emitter {
             // A single-segment `use` names something already in scope.
             return;
         }
-        // `use a::b::c` → `from .b import c` (relative; the final path segment
-        // before the item is the module). An alias renames on import.
-        let module = prefix.last().map_or("", String::as_str);
-        match &u.alias {
-            Some(alias) => self.line(format!("from .{module} import {last} as {alias}")),
-            None => self.line(format!("from .{module} import {last}")),
+        // A `use` of a trait or `type` alias resolves to no Python symbol, so
+        // importing its name would dangle. The driver records which resolved
+        // `use` paths have a runtime definition; skip the rest. (A single-file
+        // emit declares no `use`, so this path is never reached there.)
+        if !self.imported_bindings.contains(&u.path.join("::")) {
+            return;
         }
+        // `use a::b::c` → a relative package import of `c` from the module
+        // `a/b`, resolved against *this* module's directory. The prefix is the
+        // target module's path segments (`a::b` → `a/b.py`); a leading-dot
+        // count of `1 + ups` walks up out of any shared subpackage so the
+        // import lands on the right file from a subdirectory.
+        let target: Vec<&str> = prefix.iter().map(String::as_str).collect();
+        let module = self.relative_module(&target);
+        match &u.alias {
+            Some(alias) => self.line(format!("from {module} import {last} as {alias}")),
+            None => self.line(format!("from {module} import {last}")),
+        }
+        // A `use` of a `pub` enum also imports its variant classes: variant
+        // construction emits the bare variant class (`SqlValue::Text(x)` →
+        // `Text(x)`), so each variant must be in scope, not just the union alias.
+        if let Some(variants) = self.imported_enum_variants.get(last.as_str()) {
+            let imports = variants
+                .iter()
+                .filter(|v| v.as_str() != last.as_str())
+                .cloned()
+                .collect::<Vec<_>>();
+            if !imports.is_empty() {
+                self.line(format!("from {module} import {}", imports.join(", ")));
+            }
+        }
+    }
+
+    /// The Python relative-import specifier for a target module given as
+    /// root-relative path segments (`["autosql", "ports"]`), resolved against
+    /// `self.importer_dir`. Mirrors the ESM relative-specifier logic: drop the
+    /// shared leading directories, then emit `1 + ups` leading dots followed by
+    /// the remaining segments joined with `.`.
+    fn relative_module(&self, target: &[&str]) -> String {
+        let importer = &self.importer_dir;
+        let mut shared = 0;
+        while shared < importer.len()
+            && shared + 1 < target.len()
+            && importer[shared] == target[shared]
+        {
+            shared += 1;
+        }
+        let ups = importer.len() - shared;
+        let dots = ".".repeat(1 + ups);
+        format!("{dots}{}", target[shared..].join("."))
     }
 
     /// Emit a free function or a method. `target` is `Some` only when called

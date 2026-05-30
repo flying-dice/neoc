@@ -12,7 +12,7 @@ fn emit_src(src: &str) -> EmitResult {
         "fixture should parse cleanly: {:?}",
         parsed.diagnostics
     );
-    emit(&parsed.module, &[])
+    emit(&parsed.module, &[], &[], &[])
 }
 
 #[test]
@@ -90,8 +90,43 @@ fn pyi_projects_the_typed_surface() {
 
 #[test]
 fn use_lowers_to_a_relative_import() {
-    let out = emit_src("use math::add;\npub fn f() -> number { add(1, 2) }");
+    // The driver records which resolved `use` paths bind a runtime symbol; the
+    // emitter imports those and drops the rest (traits, aliases). `add` is a fn,
+    // so its resolved path `math::add` is a binding.
+    let parsed = neoc_parser::parse("use math::add;\npub fn f() -> number { add(1, 2) }");
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    let out = emit(&parsed.module, &[], &[], &["math::add".to_string()]);
     assert!(out.py.contains("from .math import add"), "{}", out.py);
+}
+
+#[test]
+fn use_of_a_non_binding_emits_no_import() {
+    // A `use` whose resolved path is absent from the binding set names a trait
+    // or alias — no runtime Python symbol — so its import is dropped rather than
+    // left to dangle against a module that never defines it.
+    let parsed = neoc_parser::parse("use db::SqlExecutor;\npub fn f() -> number { 1 }");
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    let out = emit(&parsed.module, &[], &[], &[]);
+    assert!(
+        !out.py.contains("import SqlExecutor"),
+        "trait import should be dropped: {}",
+        out.py
+    );
+}
+
+#[test]
+fn use_resolves_relative_to_a_subpackage() {
+    // From a module in `autosql/`, a `use autosql::ports::SqlValue` resolves to
+    // a sibling — `from .ports import …` — not `from .autosql.ports`.
+    let parsed = neoc_parser::parse("use autosql::ports::SqlValue;\npub fn f() -> number { 1 }");
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    let out = emit(
+        &parsed.module,
+        &[],
+        &["autosql".to_string()],
+        &["autosql::ports::SqlValue".to_string()],
+    );
+    assert!(out.py.contains("from .ports import SqlValue"), "{}", out.py);
 }
 
 #[test]

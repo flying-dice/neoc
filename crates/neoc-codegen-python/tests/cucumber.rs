@@ -38,7 +38,19 @@ fn emit_python(world: &mut Codegen) {
         .iter()
         .map(|d| d.message.clone())
         .collect();
-    let result = neoc_codegen_python::emit(&parsed.module, &[]);
+    // Single-file oracle: no project graph to classify imports, so treat every
+    // `use` as a runtime binding (the path the driver records for a `fn`/type),
+    // exercising the import lowering without resolving the dependency.
+    let bindings: Vec<String> = parsed
+        .module
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            neoc_ast::ItemKind::Use(u) => Some(u.path.join("::")),
+            _ => None,
+        })
+        .collect();
+    let result = neoc_codegen_python::emit(&parsed.module, &[], &[], &bindings);
     world.py = result.py;
     world.pyi = result.pyi;
     world.emit_diagnostics = result.diagnostics.into_iter().map(|d| d.message).collect();
