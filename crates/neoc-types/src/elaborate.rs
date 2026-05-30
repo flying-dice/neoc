@@ -253,7 +253,6 @@ impl<'a> Elaborator<'a> {
         self.checker
             .bind_pattern(&l.pattern, &ty, crate::resolve::BindingKind::Let);
         ast::LetStmt {
-            mutable: l.mutable,
             pattern: l.pattern.clone(),
             ty: l.ty.clone(),
             value,

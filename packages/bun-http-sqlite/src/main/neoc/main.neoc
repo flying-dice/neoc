@@ -65,7 +65,7 @@ fn sql_literal(v: SqlValue) -> string {
 
 // Replace each `?` in `sql` with the SQL literal of the next param, in order.
 fn bind(sql: string, params: [SqlValue]) -> string {
-    let mut s: Unknown = sql;
+    let s: Unknown = sql;
     for p in params {
         let idx = s.indexOf("?");
         let head = s.slice(0, idx);
@@ -97,11 +97,11 @@ impl autosql::ports::SqlExecutor for BunSqlite {
 
     fn query(self, sql: string, params: [SqlValue]) -> Result<[[SqlValue]], string> {
         let raw = self.db.query(bind(sql, params)).values();
-        let mut out: [[SqlValue]] = [];
-        let mut ri = 0;
+        let out: [[SqlValue]] = [];
+        let ri = 0;
         for row in raw {
-            let mut cols: [SqlValue] = [];
-            let mut ci = 0;
+            let cols: [SqlValue] = [];
+            let ci = 0;
             for c in row {
                 cols[ci] = cell(c);
                 ci = ci + 1;
@@ -116,7 +116,7 @@ impl autosql::ports::SqlExecutor for BunSqlite {
 // --- the HTTP server, driven entirely through the typed DAO ---
 
 fn render(notes: [ListNotesRow]) -> string {
-    let mut out = "";
+    let out = "";
     for n in notes {
         out = out + num_str(n.id) + ":" + n.body + " | ";
     }

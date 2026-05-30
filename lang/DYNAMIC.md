@@ -156,7 +156,6 @@ A trait produces no standalone output. Its required methods are realised by each
 
 ```
 ⟦ let x = e ⟧ₛ        = local x = ⟦ e ⟧ₑ
-⟦ let mut x = e ⟧ₛ    = local x = ⟦ e ⟧ₑ      (mut is a static-only distinction; no runtime effect)
 ⟦ let p = e ⟧ₛ        = (destructuring; see §5)
 ```
 
