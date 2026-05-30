@@ -9,14 +9,18 @@ Cargo workspace holding two halves:
   everything scripts need is provided through explicit modules. The `neoc`
   binary is a thin shell over this library.
 - **Compiler** (`neoc-*` crates) — the Rust compiler for the **neoc** language.
-  `.neoc` → Lua 5.1 by default. (5.1 is the lowest common denominator; output
-  runs on Luau, Lua 5.4, LuaJIT, and the runtime above. A JavaScript (ES2022)
-  backend sits behind the same codegen seam, selected with `--target`.)
-  Lua and JS are the two halves of full-stack neoc: Lua is the backend and the
-  default LCD target; JS is the browser/frontend, emitting **ES modules**
-  (`use` → relative `import`, `pub` → `export`) that load natively in browsers
-  and bundlers. The library crate (`neoc-compiler`) is what the runtime embeds;
-  the grammar lives in the `neoc-grammar` submodule.
+  neoc emits the typed supersets only: `luau` (the default), `ts`, and `python`,
+  selected with `--target`. Plain Lua and JavaScript are **not** selectable
+  targets — `luau` downgrades to Lua 5.1 through the Luau toolchain and `ts`
+  downgrades to JavaScript (ES2022) through the TypeScript toolchain, so neoc
+  emits the typed superset and lets each toolchain produce the plain form. (The
+  `codegen-lua` and `codegen-js` crates stay: `luau` reuses `codegen-lua` and
+  `ts` reuses `codegen-js` behind the same codegen seam.) `luau` and `ts` are the
+  two halves of full-stack neoc: `luau` is the backend and the default LCD target;
+  `ts` is the browser/frontend, emitting **ES modules** (`use` → relative
+  `import`, `pub` → `export`) that load natively in browsers and bundlers. The
+  library crate (`neoc-compiler`) is what the runtime embeds; the grammar lives
+  in the `neoc-grammar` submodule.
 
 One binary, `neoc`, drives both: `run` / `emit-headers` (runtime) and `build` /
 `check` / `fmt` / `lsp` (compiler).
@@ -279,7 +283,7 @@ things stay exact and complete — **never** abbreviate or stylise these:
 | API names | Exact. `#[derive(Clone)]` stays `#[derive(Clone)]`. |
 | Type signatures | Exact. Never trim a type. |
 | Error / log messages | Quote verbatim. |
-| Commands | Exact: `neoc run`, `neoc build`, `neoc check`, `neoc lsp`, `cargo check --target wasm32-unknown-unknown`. (That `--target` is a Rust build target — *not* `neoc build --target`, which selects the output language: `lua` / `js`.) |
+| Commands | Exact: `neoc run`, `neoc build`, `neoc check`, `neoc lsp`, `cargo check --target wasm32-unknown-unknown`. (That `--target` is a Rust build target — *not* `neoc build --target`, which selects the output language: `luau` / `ts` / `py`.) |
 | File paths, env vars | Exact. |
 | Rustdoc (`///`) on public items | Full, normal English — see below. |
 | Legal, LICENSE, security notes | Complete and careful. |

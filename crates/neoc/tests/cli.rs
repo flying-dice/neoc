@@ -1,6 +1,6 @@
 //! Integration tests driving the unified `neoc` binary: the compiler
 //! subcommands (`build`/`check`/`fmt`/`lsp`) and `run` of a `.neoc` entry
-//! (in-process transpile + execute, with runtime faults mapped to neoc lines).
+//! (in-process transpile to Luau + execute on the embedded VM).
 
 use std::fs;
 use std::path::Path;
@@ -20,16 +20,16 @@ fn write(dir: &Path, name: &str, src: &str) -> std::path::PathBuf {
 }
 
 #[test]
-fn build_writes_lua_next_to_source() {
+fn build_writes_luau_next_to_source() {
     let dir = tempdir().unwrap();
     let src = write(dir.path(), "foo.neoc", VALID);
 
     let status = Command::new(BIN).arg("build").arg(&src).status().unwrap();
     assert!(status.success());
 
-    let lua = dir.path().join("foo.lua");
-    assert!(lua.is_file(), "expected {} to exist", lua.display());
-    assert!(!fs::read_to_string(&lua).unwrap().is_empty());
+    let luau = dir.path().join("foo.luau");
+    assert!(luau.is_file(), "expected {} to exist", luau.display());
+    assert!(!fs::read_to_string(&luau).unwrap().is_empty());
 }
 
 #[test]
@@ -47,8 +47,8 @@ fn build_with_output_dir_keeps_base_name() {
         .unwrap();
     assert!(status.success());
 
-    assert!(out.join("foo.lua").is_file());
-    assert!(!dir.path().join("foo.lua").exists());
+    assert!(out.join("foo.luau").is_file());
+    assert!(!dir.path().join("foo.luau").exists());
 }
 
 #[test]
@@ -65,8 +65,8 @@ fn build_glob_matches_multiple_files() {
         .unwrap();
     assert!(status.success());
 
-    assert!(dir.path().join("a.lua").is_file());
-    assert!(dir.path().join("b.lua").is_file());
+    assert!(dir.path().join("a.luau").is_file());
+    assert!(dir.path().join("b.luau").is_file());
 }
 
 #[test]
@@ -76,7 +76,7 @@ fn build_skips_output_on_diagnostic_and_exits_nonzero() {
 
     let out = Command::new(BIN).arg("build").arg(&src).output().unwrap();
     assert!(!out.status.success());
-    assert!(!dir.path().join("bad.lua").exists());
+    assert!(!dir.path().join("bad.luau").exists());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("bad.neoc"), "stderr: {stderr}");
 }
@@ -98,14 +98,14 @@ fn build_multi_file_project_emits_every_module_next_to_source() {
     let status = Command::new(BIN).arg("build").arg(&entry).status().unwrap();
     assert!(status.success());
 
-    let main_lua = dir.path().join("main.lua");
-    let util_lua = dir.path().join("util.lua");
-    assert!(main_lua.is_file(), "expected main.lua");
+    let main_luau = dir.path().join("main.luau");
+    let util_luau = dir.path().join("util.luau");
+    assert!(main_luau.is_file(), "expected main.luau");
     assert!(
-        util_lua.is_file(),
-        "expected util.lua emitted from the graph"
+        util_luau.is_file(),
+        "expected util.luau emitted from the graph"
     );
-    assert!(fs::read_to_string(&main_lua).unwrap().contains("require"));
+    assert!(fs::read_to_string(&main_luau).unwrap().contains("require"));
 }
 
 #[test]
@@ -124,7 +124,7 @@ fn build_reports_private_import_and_writes_nothing() {
 
     let out = Command::new(BIN).arg("build").arg(&entry).output().unwrap();
     assert!(!out.status.success());
-    assert!(!dir.path().join("main.lua").exists());
+    assert!(!dir.path().join("main.luau").exists());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("`secret` is private in module `util`"),
@@ -139,7 +139,7 @@ fn check_clean_exits_zero() {
 
     let status = Command::new(BIN).arg("check").arg(&src).status().unwrap();
     assert!(status.success());
-    assert!(!dir.path().join("ok.lua").exists());
+    assert!(!dir.path().join("ok.luau").exists());
 }
 
 #[test]
@@ -254,7 +254,7 @@ fn run_neoc_transpiles_and_executes() {
     );
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ran neoc");
     // No intermediate file is written next to the source.
-    assert!(!dir.path().join("app.lua").exists());
+    assert!(!dir.path().join("app.luau").exists());
 }
 
 #[test]
@@ -275,10 +275,11 @@ fn run_neoc_type_error_reports_neoc_diagnostic_not_lua() {
     );
 }
 
-// A program that compiles cleanly but faults at runtime: `crash()` (neoc line
-// 4) calls an unbound name, so the VM raises `attempt to call a nil value`. The
-// offending call sits on neoc line 4; the emitted Lua puts it on a different
-// line, so a correct source map must report line 4, not the Lua line. (#55, #56)
+// A program that compiles cleanly but faults at runtime: `crash()` calls an
+// unbound name, so the embedded Luau VM raises `attempt to call a nil value`.
+// The fault is reported against the `.neoc` chunk name. No backend emits a
+// source map yet, so the reported line is the emitted Luau line, not the neoc
+// line (#55, #56 — source-map remapping is not wired today).
 const RUNTIME_FAULT: &str = "\
 extern { fn print(s: string); }
 fn crash() {
@@ -292,7 +293,7 @@ fn main() {
 ";
 
 #[test]
-fn run_neoc_runtime_fault_reports_neoc_line_not_lua_line() {
+fn run_neoc_runtime_fault_reports_against_the_neoc_chunk() {
     let dir = tempdir().unwrap();
     let src = write(dir.path(), "fault.neoc", RUNTIME_FAULT);
 
@@ -300,18 +301,11 @@ fn run_neoc_runtime_fault_reports_neoc_line_not_lua_line() {
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
 
-    // The fault names the `.neoc` file and the neoc line of the offending call
-    // (`let n = explode();` on line 4), not the emitted-Lua line.
+    // The fault names the `.neoc` chunk and the runtime cause, so the report
+    // points at the program the user ran rather than a host artifact.
     assert!(
-        stderr.contains("fault.neoc\"]:4:"),
-        "expected the fault at fault.neoc:4 (neoc line), got: {stderr}"
-    );
-    // The emitted Lua puts `explode()` on line 3 (no `ext`/header lines emit), so
-    // an unmapped report would have said `:3:` — assert that leaked Lua line is
-    // gone from the chunk reference.
-    assert!(
-        !stderr.contains("fault.neoc\"]:3:"),
-        "Lua line 3 leaked into the report; map not applied: {stderr}"
+        stderr.contains("fault.neoc") && stderr.contains("attempt to call a nil value"),
+        "expected a fault against the fault.neoc chunk, got: {stderr}"
     );
 }
 

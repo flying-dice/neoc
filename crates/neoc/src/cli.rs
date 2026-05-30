@@ -30,8 +30,8 @@ pub enum Command {
         /// Write output under this directory instead of next to the source.
         #[arg(short, long, value_name = "DIR")]
         output: Option<PathBuf>,
-        /// Target language: `lua`, `js`, `ts`, `luau`, or `py`. Defaults to the
-        /// project's manifest target, or `lua` for a lone file.
+        /// Target language: `luau`, `ts`, or `py`. Defaults to the project's
+        /// manifest target, or `luau` for a lone file.
         #[arg(short, long)]
         target: Option<Target>,
     },
@@ -557,7 +557,7 @@ pub fn transpile_entry_to_lua(
     file: &Path,
     err: &mut impl Write,
 ) -> Result<Option<TranspiledEntry>> {
-    let project = transpile_project(file, Target::Lua)
+    let project = transpile_project(file, Target::Luau)
         .with_context(|| format!("reading {}", file.display()))?;
 
     if !project.diagnostics.is_empty() {
@@ -619,7 +619,7 @@ pub fn transpile_source_to_lua(
     source: &str,
     err: &mut impl Write,
 ) -> Result<Option<TranspiledEntry>> {
-    let compiled = transpile(source, Target::Lua);
+    let compiled = transpile(source, Target::Luau);
 
     if !compiled.diagnostics.is_empty() {
         report_eval(&compiled.diagnostics, err)?;
@@ -711,10 +711,10 @@ mod tests {
 
     #[test]
     fn out_path_replaces_extension_next_to_source() {
-        let got = out_path(Path::new("src/foo.neoc"), None, Target::Lua);
-        assert_eq!(got, PathBuf::from("src/foo.lua"));
-        let got = out_path(Path::new("src/foo.neoc"), None, Target::Js);
-        assert_eq!(got, PathBuf::from("src/foo.js"));
+        let got = out_path(Path::new("src/foo.neoc"), None, Target::Luau);
+        assert_eq!(got, PathBuf::from("src/foo.luau"));
+        let got = out_path(Path::new("src/foo.neoc"), None, Target::Ts);
+        assert_eq!(got, PathBuf::from("src/foo.ts"));
     }
 
     #[test]
@@ -722,42 +722,42 @@ mod tests {
         let got = out_path(
             Path::new("src/nested/foo.neoc"),
             Some(Path::new("out")),
-            Target::Lua,
+            Target::Luau,
         );
-        assert_eq!(got, PathBuf::from("out/foo.lua"));
+        assert_eq!(got, PathBuf::from("out/foo.luau"));
     }
 
     #[test]
     fn project_out_path_preserves_path_under_source_root() {
         let got = project_out_path(
-            Path::new("/proj/src/main/neoc/a/b.lua"),
+            Path::new("/proj/src/main/neoc/a/b.luau"),
             Path::new("/proj/src/main/neoc"),
-            Path::new("/proj/src/main/lua"),
-            Target::Lua,
+            Path::new("/proj/src/main/luau"),
+            Target::Luau,
         );
-        assert_eq!(got, PathBuf::from("/proj/src/main/lua/a/b.lua"));
+        assert_eq!(got, PathBuf::from("/proj/src/main/luau/a/b.luau"));
     }
 
     #[test]
     fn project_out_path_swaps_extension_for_target() {
         let got = project_out_path(
-            Path::new("/proj/src/main/neoc/main.lua"),
+            Path::new("/proj/src/main/neoc/main.ts"),
             Path::new("/proj/src/main/neoc"),
-            Path::new("/proj/src/main/js"),
-            Target::Js,
+            Path::new("/proj/src/main/ts"),
+            Target::Ts,
         );
-        assert_eq!(got, PathBuf::from("/proj/src/main/js/main.js"));
+        assert_eq!(got, PathBuf::from("/proj/src/main/ts/main.ts"));
     }
 
     #[test]
     fn project_out_path_outside_source_root_falls_back_to_file_name() {
         let got = project_out_path(
-            Path::new("/elsewhere/x.lua"),
+            Path::new("/elsewhere/x.luau"),
             Path::new("/proj/src/main/neoc"),
-            Path::new("/proj/src/main/lua"),
-            Target::Lua,
+            Path::new("/proj/src/main/luau"),
+            Target::Luau,
         );
-        assert_eq!(got, PathBuf::from("/proj/src/main/lua/x.lua"));
+        assert_eq!(got, PathBuf::from("/proj/src/main/luau/x.luau"));
     }
 
     #[test]

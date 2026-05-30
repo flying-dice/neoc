@@ -1,27 +1,29 @@
-//! End-to-end tests: transpile neoc → Lua, run the Lua, assert the output.
+//! End-to-end tests: transpile neoc → Luau, run the Luau, assert the output.
 //!
 //! This is the final stage. The per-stage tests (CST in neoc-grammar, AST in
-//! neoc-parser, emit in neoc-codegen-lua) already pin each boundary, so a
-//! failure here points at integration, not at a single stage hiding a bug.
+//! neoc-parser, emit in neoc-codegen-luau) already pin each boundary, so a
+//! failure here points at integration, not at a single stage hiding a bug. Luau
+//! is the typed superset neoc emits; it runs on the `luau` interpreter (which
+//! accepts the inline type annotations plain Lua would reject).
 //!
-//! Skipped automatically when no `lua` interpreter is on PATH.
+//! Skipped automatically when no `luau` interpreter is on PATH.
 
 use std::io::Write;
 use std::process::Command;
 
-/// Run Lua source, returning its stdout. `None` if no interpreter is present.
-fn run_lua(source: &str) -> Option<String> {
-    let lua = ["lua", "lua5.4", "lua5.3", "lua5.1", "luajit"]
-        .into_iter()
-        .find(|bin| Command::new(bin).arg("-v").output().is_ok())?;
+/// Run Luau source, returning its stdout. `None` if no interpreter is present.
+fn run_luau(source: &str) -> Option<String> {
+    if Command::new("luau").arg("--version").output().is_err() {
+        return None;
+    }
 
     let mut file = tempfile(source);
     let path = file.0.clone();
     file.1.flush().expect("flush temp file");
-    let output = Command::new(lua).arg(&path).output().expect("run lua");
+    let output = Command::new("luau").arg(&path).output().expect("run luau");
     assert!(
         output.status.success(),
-        "lua failed:\n{}\n--- source ---\n{source}",
+        "luau failed:\n{}\n--- source ---\n{source}",
         String::from_utf8_lossy(&output.stderr)
     );
     Some(String::from_utf8_lossy(&output.stdout).into_owned())
@@ -35,7 +37,7 @@ fn tempfile(contents: &str) -> (String, std::fs::File) {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     let mut path = std::env::temp_dir();
-    path.push(format!("neoc_e2e_{}_{n}.lua", std::process::id()));
+    path.push(format!("neoc_e2e_{}_{n}.luau", std::process::id()));
     let mut file = std::fs::File::create(&path).expect("create temp file");
     file.write_all(contents.as_bytes())
         .expect("write temp file");
@@ -44,10 +46,10 @@ fn tempfile(contents: &str) -> (String, std::fs::File) {
 
 /// Transpile, append a call to the entry function, run, and return stdout.
 fn transpile_and_run(source: &str, entry: &str) -> Option<String> {
-    let out = neoc_compiler::transpile(source, neoc_compiler::Target::Lua);
+    let out = neoc_compiler::transpile(source, neoc_compiler::Target::Luau);
     assert!(out.ok(), "unexpected diagnostics: {:#?}", out.diagnostics);
     let program = format!("{}\n{entry}()\n", out.output);
-    run_lua(&program)
+    run_luau(&program)
 }
 
 #[test]
@@ -61,7 +63,7 @@ fn main() {
   print(fib(10));
 }";
     let Some(stdout) = transpile_and_run(src, "main") else {
-        eprintln!("skipping: no lua interpreter on PATH");
+        eprintln!("skipping: no luau interpreter on PATH");
         return;
     };
     assert_eq!(stdout.trim(), "55");
@@ -80,7 +82,7 @@ fn main() {
   print(sum_to(11));
 }";
     let Some(stdout) = transpile_and_run(src, "main") else {
-        eprintln!("skipping: no lua interpreter on PATH");
+        eprintln!("skipping: no luau interpreter on PATH");
         return;
     };
     // 1 + 2 + ... + 10 = 55 (1..11 is exclusive of 11).
@@ -100,7 +102,7 @@ fn main() {
   print(greet(\"world\"));
 }";
     let Some(stdout) = transpile_and_run(src, "main") else {
-        eprintln!("skipping: no lua interpreter on PATH");
+        eprintln!("skipping: no luau interpreter on PATH");
         return;
     };
     assert_eq!(stdout.trim(), "hello, world");
@@ -118,7 +120,7 @@ fn main() {
   print(name(Shape::Square));
 }";
     let Some(stdout) = transpile_and_run(src, "main") else {
-        eprintln!("skipping: no lua interpreter on PATH");
+        eprintln!("skipping: no luau interpreter on PATH");
         return;
     };
     assert_eq!(stdout.trim(), "square");
@@ -140,7 +142,7 @@ fn main() {
   print(acc);
 }";
     let Some(stdout) = transpile_and_run(src, "main") else {
-        eprintln!("skipping: no lua interpreter on PATH");
+        eprintln!("skipping: no luau interpreter on PATH");
         return;
     };
     assert_eq!(stdout.trim(), "18");
@@ -157,7 +159,7 @@ fn main() {
   print(x + y);
 }";
     let Some(stdout) = transpile_and_run(src, "main") else {
-        eprintln!("skipping: no lua interpreter on PATH");
+        eprintln!("skipping: no luau interpreter on PATH");
         return;
     };
     assert_eq!(stdout.trim(), "7");
@@ -176,7 +178,7 @@ fn main() {
   print(q.y);
 }";
     let Some(stdout) = transpile_and_run(src, "main") else {
-        eprintln!("skipping: no lua interpreter on PATH");
+        eprintln!("skipping: no luau interpreter on PATH");
         return;
     };
     assert_eq!(stdout.trim(), "9\n2");
@@ -198,7 +200,7 @@ fn main() {
   print(d.name());
 }";
     let Some(stdout) = transpile_and_run(src, "main") else {
-        eprintln!("skipping: no lua interpreter on PATH");
+        eprintln!("skipping: no luau interpreter on PATH");
         return;
     };
     assert_eq!(stdout.trim(), "east");
@@ -216,7 +218,7 @@ fn main() {
   print(id.0);
 }";
     let Some(stdout) = transpile_and_run(src, "main") else {
-        eprintln!("skipping: no lua interpreter on PATH");
+        eprintln!("skipping: no luau interpreter on PATH");
         return;
     };
     assert_eq!(stdout.trim(), "42");
@@ -238,7 +240,7 @@ fn main() {
   print(q.eq(p));
 }";
     let Some(stdout) = transpile_and_run(src, "main") else {
-        eprintln!("skipping: no lua interpreter on PATH");
+        eprintln!("skipping: no luau interpreter on PATH");
         return;
     };
     assert_eq!(stdout.trim(), "true\ntrue");

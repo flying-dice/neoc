@@ -34,14 +34,14 @@ fn given_source(world: &mut Compiler, step: &Step) {
     docstring(step).trim().clone_into(&mut world.source);
 }
 
-#[when("I transpile to lua")]
-fn transpile_to_lua(world: &mut Compiler) {
-    world.output = Some(transpile(&world.source, Target::Lua));
+#[when("I transpile to luau")]
+fn transpile_to_luau(world: &mut Compiler) {
+    world.output = Some(transpile(&world.source, Target::Luau));
 }
 
-#[when("I transpile to js")]
-fn transpile_to_js(world: &mut Compiler) {
-    world.output = Some(transpile(&world.source, Target::Js));
+#[when("I transpile to ts")]
+fn transpile_to_ts(world: &mut Compiler) {
+    world.output = Some(transpile(&world.source, Target::Ts));
 }
 
 #[then("it succeeds")]

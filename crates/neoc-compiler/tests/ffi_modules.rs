@@ -21,7 +21,7 @@ fn main() { let _ = rusqlite::open(":memory:"); }
 
 #[test]
 fn lua_mod_imports_via_require_and_reads_member() {
-    let out = transpile(MOD_SOURCE, Target::Lua).output;
+    let out = transpile(MOD_SOURCE, Target::Luau).output;
     assert!(
         out.contains("local rusqlite = require(\"vnd:rusqlite\")"),
         "missing Lua require for the mod path:\n{out}"
@@ -34,7 +34,7 @@ fn lua_mod_imports_via_require_and_reads_member() {
 
 #[test]
 fn js_mod_imports_namespace_and_reads_member() {
-    let out = transpile(MOD_SOURCE, Target::Js).output;
+    let out = transpile(MOD_SOURCE, Target::Ts).output;
     assert!(
         out.contains("import * as rusqlite from \"vnd:rusqlite\";"),
         "missing JS namespace import for the mod path:\n{out}"
@@ -65,7 +65,7 @@ fn main() {
 
 #[test]
 fn js_extern_struct_literal_is_bare_object_and_constructor_uses_new() {
-    let out = transpile(STRUCT_SOURCE, Target::Js).output;
+    let out = transpile(STRUCT_SOURCE, Target::Ts).output;
     // Constructor → `new T(args)`.
     assert!(
         out.contains("new Database(\":memory:\")"),
@@ -92,7 +92,7 @@ fn js_extern_struct_literal_is_bare_object_and_constructor_uses_new() {
 
 #[test]
 fn lua_extern_struct_literal_is_bare_table_and_constructor_is_static() {
-    let out = transpile(STRUCT_SOURCE, Target::Lua).output;
+    let out = transpile(STRUCT_SOURCE, Target::Luau).output;
     // Lua has no `new` operator: a constructor is a static/namespaced call.
     assert!(
         out.contains("Database.new(\":memory:\")"),
@@ -137,7 +137,7 @@ fn main() {
 
 #[test]
 fn js_extern_struct_in_mod_constructs_through_namespace_import() {
-    let out = transpile(MOD_STRUCT_SOURCE, Target::Js).output;
+    let out = transpile(MOD_STRUCT_SOURCE, Target::Ts).output;
     // The constructor qualifies through the imported namespace; only `sqlite`
     // is bound, so a bare `new Database(...)` would not resolve.
     assert!(
@@ -166,7 +166,7 @@ fn js_extern_struct_in_mod_constructs_through_namespace_import() {
 
 #[test]
 fn lua_extern_struct_in_mod_constructs_through_require_binding() {
-    let out = transpile(MOD_STRUCT_SOURCE, Target::Lua).output;
+    let out = transpile(MOD_STRUCT_SOURCE, Target::Luau).output;
     // The constructor qualifies through the `require` binding; only `sqlite` is
     // bound, so a bare `Database.new(...)` would read a nil global.
     assert!(
@@ -190,7 +190,7 @@ fn lua_extern_struct_in_mod_constructs_through_require_binding() {
 
 #[test]
 fn mod_struct_block_checks_clean() {
-    for target in [Target::Js, Target::Lua] {
+    for target in [Target::Ts, Target::Luau] {
         let out = transpile(MOD_STRUCT_SOURCE, target);
         assert!(
             out.ok(),
@@ -202,7 +202,7 @@ fn mod_struct_block_checks_clean() {
 
 #[test]
 fn extern_block_checks_clean() {
-    for target in [Target::Js, Target::Lua] {
+    for target in [Target::Ts, Target::Luau] {
         let out = transpile(STRUCT_SOURCE, target);
         assert!(
             out.ok(),
@@ -222,7 +222,7 @@ extern {
 }
 fn main() { console::log("hi"); }
 "#;
-    for target in [Target::Js, Target::Lua] {
+    for target in [Target::Ts, Target::Luau] {
         let out = transpile(src, target).output;
         assert!(
             !out.contains("import") && !out.contains("require("),
@@ -240,7 +240,7 @@ fn top_level_extern_fn_is_a_bare_global() {
     // A top-level extern `fn` (not in a mod) is a host global: no import, bare
     // call.
     let src = "extern { fn print(s: string); }\nfn main() { print(\"hi\"); }\n";
-    for target in [Target::Js, Target::Lua] {
+    for target in [Target::Ts, Target::Luau] {
         let out = transpile(src, target).output;
         assert!(
             !out.contains("import") && !out.contains("require("),
@@ -271,7 +271,7 @@ fn main() { let _ = serve(0); }
 
 #[test]
 fn js_ambient_mod_fn_called_bare_qualifies_through_its_namespace() {
-    let out = transpile(MOD_FN_SOURCE, Target::Js).output;
+    let out = transpile(MOD_FN_SOURCE, Target::Ts).output;
     // No import for an ambient mod; the call qualifies through the global root.
     assert!(
         !out.contains("import"),
@@ -285,7 +285,7 @@ fn js_ambient_mod_fn_called_bare_qualifies_through_its_namespace() {
 
 #[test]
 fn lua_ambient_mod_fn_called_bare_qualifies_through_its_namespace() {
-    let out = transpile(MOD_FN_SOURCE, Target::Lua).output;
+    let out = transpile(MOD_FN_SOURCE, Target::Luau).output;
     assert!(
         !out.contains("require("),
         "ambient mod emits no require:\n{out}"
@@ -311,7 +311,7 @@ fn main() {
     let _ = res.json().rows;
 }
 "#;
-    let out = transpile(src, Target::Js).output;
+    let out = transpile(src, Target::Ts).output;
     assert!(
         out.contains("res.json()"),
         "method call on an `Unknown` receiver should be native:\n{out}"
@@ -342,7 +342,7 @@ fn main() {
     let _ = c.bump();
 }
 ";
-    let out = transpile(src, Target::Js).output;
+    let out = transpile(src, Target::Ts).output;
     assert!(
         out.contains("c.bump()") && !out.contains("__call") && !out.contains("__m"),
         "method call on a neoc struct should be native prototype dispatch:\n{out}"

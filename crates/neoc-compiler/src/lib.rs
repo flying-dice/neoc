@@ -9,7 +9,6 @@ use std::path::{Path, PathBuf};
 
 use neoc_ast as ast;
 use neoc_codegen_js as codegen_js;
-use neoc_codegen_lua as codegen_lua;
 use neoc_codegen_luau as codegen_luau;
 use neoc_codegen_python as codegen_python;
 use neoc_codegen_ts as codegen_ts;
@@ -35,19 +34,22 @@ pub enum Error {
 }
 
 /// A backend the compiler can lower to.
+///
+/// neoc emits the typed supersets and Python only: `luau` (which downgrades to
+/// Lua through the Luau toolchain) and `ts` (which downgrades to JavaScript
+/// through the TypeScript toolchain). Plain Lua and JavaScript are not
+/// selectable targets — obtain them by downgrading the typed superset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Target {
-    /// Lua 5.1 (`.lua`).
-    #[default]
-    Lua,
-    /// JavaScript, ES2022 (`.js`).
-    Js,
-    /// Typed TypeScript (`.ts`): the JS runtime body with neoc types woven on.
-    Ts,
     /// Self-typed Luau (`.luau`): the Lua runtime body with neoc types woven on,
     /// self-contained per module (inlined runtime + inline `Result`/`Option`
     /// type aliases) — no `neoc-lib`, no typings sidecar, no source map yet.
+    /// The default target; downgrade to Lua 5.1 with the Luau toolchain.
+    #[default]
     Luau,
+    /// Typed TypeScript (`.ts`): the JS runtime body with neoc types woven on.
+    /// Downgrade to JavaScript with the TypeScript toolchain.
+    Ts,
     /// Idiomatic Python 3.10+ (`.py`): the module artifact, with a typed `.pyi`
     /// sidecar and a shared `neoc_lib.{py,pyi}` runtime at the resolution root.
     /// No source map yet.
@@ -59,8 +61,6 @@ impl Target {
     #[must_use]
     pub fn extension(self) -> &'static str {
         match self {
-            Target::Lua => "lua",
-            Target::Js => "js",
             Target::Ts => "ts",
             Target::Luau => "luau",
             Target::Python => "py",
@@ -71,8 +71,6 @@ impl Target {
 impl std::fmt::Display for Target {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            Target::Lua => "lua",
-            Target::Js => "js",
             Target::Ts => "ts",
             Target::Luau => "luau",
             Target::Python => "py",
@@ -85,13 +83,24 @@ impl std::str::FromStr for Target {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "lua" => Ok(Target::Lua),
-            "js" => Ok(Target::Js),
             "ts" => Ok(Target::Ts),
             "luau" => Ok(Target::Luau),
             "py" | "python" => Ok(Target::Python),
+            // `lua` / `js` were dropped as selectable targets: emit the typed
+            // superset and downgrade through its own toolchain. Point the author
+            // at the right one rather than a bare "unknown".
+            "lua" => Err(
+                "unknown target `lua` — neoc emits `luau` (downgrade to Lua with the Luau \
+                 toolchain); targets are `luau`, `ts`, `py`"
+                    .to_string(),
+            ),
+            "js" => Err(
+                "unknown target `js` — neoc emits `ts` (downgrade to JavaScript with the \
+                 TypeScript toolchain); targets are `luau`, `ts`, `py`"
+                    .to_string(),
+            ),
             other => Err(format!(
-                "unknown target `{other}` (expected `lua`, `js`, `ts`, `luau`, or `py`)"
+                "unknown target `{other}` (expected `luau`, `ts`, or `py`)"
             )),
         }
     }
@@ -195,156 +204,30 @@ impl Diagnostic {
 
 /// A line-level map from emitted target source back to neoc source.
 ///
-/// Built only for [`Target::Lua`] today: [`neoc_codegen_lua::LineMap`] is the
-/// backing representation. Other targets leave it empty until their backends
-/// grow a source map (see #56). A runtime that surfaces target-line numbers in
-/// a fault translates them to neoc positions through [`SourceMap::neoc_line`].
+/// No target emits a map today: the only backend that built one was the
+/// now-removed direct Lua target. This is the inert core — an always-empty map —
+/// kept on the public API so a runtime can translate a fault's emitted line to a
+/// neoc position through [`SourceMap::neoc_line`] once a backend grows a real map
+/// (see #56). Until then every map is empty and every lookup returns `None`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct SourceMap {
-    lua: codegen_lua::LineMap,
-}
+pub struct SourceMap {}
 
 impl SourceMap {
-    /// Returns the originating neoc line for a one-based emitted line, using the
-    /// nearest preceding mapped entry on an exact miss. Returns `None` when the
-    /// map is empty (no source was supplied, or the target has no map yet).
+    /// Returns the originating neoc line for a one-based emitted line, or `None`
+    /// when no correspondence is known. Always `None` today, since no backend
+    /// builds a map yet.
     #[must_use]
-    pub fn neoc_line(&self, emitted_line: u32) -> Option<u32> {
-        self.lua.neoc_line(emitted_line)
+    pub fn neoc_line(&self, _emitted_line: u32) -> Option<u32> {
+        None
     }
 
-    /// Whether this map carries any line correspondence. An empty map (a target
-    /// with no source map yet, or a module emitted without source) serializes to
-    /// no `.map` sidecar.
-    ///
-    /// A non-empty map always maps emitted line 1, so probing it is a reliable
-    /// emptiness test that needs no further accessor on the backing representation.
+    /// Whether this map carries any line correspondence. Always `true` today
+    /// (every map is empty), so a caller surfacing a fault falls back to the
+    /// emitted line.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.neoc_line(1).is_none()
     }
-
-    /// Serializes this map to [Source Map v3] JSON for `file` (the emitted file's
-    /// bare name, e.g. `x.js`) over `source_name` (the neoc source path the
-    /// debugger resolves, relative to the `.map`'s location) carrying
-    /// `source_text` (the neoc source, inlined as `sourcesContent` so the map is
-    /// self-contained).
-    ///
-    /// The mapping is line-granular: every one-based emitted line `1..=lines`
-    /// (where `lines` is the emitted source's line count) gets a single segment
-    /// pointing at column 0 of its originating neoc line, column 0. That is
-    /// enough for a debugger to step from an emitted line to its neoc line.
-    ///
-    /// Returns `None` for an [empty][`Self::is_empty`] map, so a target without a
-    /// source map emits no sidecar.
-    ///
-    /// [Source Map v3]: https://sourcemaps.info/spec.html
-    #[must_use]
-    pub fn to_v3_json(
-        &self,
-        file: &str,
-        source_name: &str,
-        source_text: &str,
-        lines: u32,
-    ) -> Option<String> {
-        if self.is_empty() {
-            return None;
-        }
-        let mappings = json_string(&self.encode_mappings(lines));
-        Some(format!(
-            "{{\"version\":3,\"file\":{file},\"sources\":[{source}],\"sourcesContent\":[{content}],\"names\":[],\"mappings\":{mappings}}}",
-            file = json_string(file),
-            source = json_string(source_name),
-            content = json_string(source_text),
-        ))
-    }
-
-    /// Builds the VLQ `mappings` string: one segment per generated line, each a
-    /// four-field segment `[genCol, sourceIndex, srcLine, srcCol]`. Per Source
-    /// Map v3 all four fields are VLQ deltas against the previous segment; here
-    /// only the source-line delta varies. The other three are always `0`: the
-    /// generated column resets to `0` at each `;` (so its delta from the
-    /// line-start `0` is `0`), there is a single source (index delta `0`), and
-    /// the source column is always `0` (delta `0`). Lines are separated by `;`.
-    fn encode_mappings(&self, lines: u32) -> String {
-        let mut out = String::new();
-        // Running absolutes the v3 format deltas against. Generated column resets
-        // to 0 each line; source index, source line, source column persist.
-        let mut prev_src_line: i64 = 0;
-        let mut prev_src_col: i64 = 0;
-        for line in 1..=lines {
-            if line > 1 {
-                out.push(';');
-            }
-            // A line whose origin is unknown (precedes the first mapped entry)
-            // gets no segment — the debugger then has no mapping for it, which is
-            // correct: we cannot name a neoc line for it.
-            let Some(neoc) = self.neoc_line(line) else {
-                continue;
-            };
-            // neoc lines are one-based; source-map source lines are zero-based.
-            let src_line = i64::from(neoc) - 1;
-            // gen-col delta is 0 (always column 0, reset each line); source index
-            // delta is 0 (single source); src-col delta is 0.
-            vlq_encode(0, &mut out);
-            vlq_encode(0, &mut out);
-            vlq_encode(src_line - prev_src_line, &mut out);
-            vlq_encode(0 - prev_src_col, &mut out);
-            prev_src_line = src_line;
-            prev_src_col = 0;
-        }
-        out
-    }
-}
-
-/// The base64 alphabet Source Map v3 VLQ digits index into.
-const BASE64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-/// Appends the base64-VLQ encoding of `value` to `out` (Source Map v3 §"VLQ").
-///
-/// The value is sign-encoded into the least-significant bit, then emitted as
-/// 5-bit groups little-endian, each group's 6th (continuation) bit set while
-/// more groups follow.
-fn vlq_encode(value: i64, out: &mut String) {
-    // Sign in bit 0, magnitude shifted up — the canonical VLQ sign encoding.
-    // `unsigned_abs` folds the magnitude into a `u64` so the 5-bit grouping below
-    // is a plain unsigned shift (no sign-cast on the digit index).
-    let mut v: u64 = (value.unsigned_abs() << 1) | u64::from(value < 0);
-    loop {
-        let mut digit = (v & 0b1_1111) as usize;
-        v >>= 5;
-        if v != 0 {
-            digit |= 0b10_0000; // continuation bit
-        }
-        out.push(BASE64[digit] as char);
-        if v == 0 {
-            break;
-        }
-    }
-}
-
-/// Renders `s` as a JSON string literal (quotes + minimal escaping), so neoc
-/// source inlined as `sourcesContent` stays valid JSON whatever it contains.
-fn json_string(s: &str) -> String {
-    use std::fmt::Write as _;
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => {
-                // A C0 control character with no shorthand escape: `\u00XX`.
-                let _ = write!(out, "\\u{:04x}", c as u32);
-            }
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
 }
 
 /// The result of compiling a module.
@@ -353,8 +236,8 @@ pub struct CompileOutput {
     /// The emitted source for the chosen [`Target`].
     pub output: String,
     pub diagnostics: Vec<Diagnostic>,
-    /// The line map from emitted source back to neoc source. Empty for targets
-    /// without a source map yet (everything but Lua). `build`/`check` ignore it.
+    /// The line map from emitted source back to neoc source. Empty today (no
+    /// backend builds a map yet; see [`SourceMap`]). `build`/`check` ignore it.
     pub source_map: SourceMap,
 }
 
@@ -393,7 +276,8 @@ pub fn transpile(source: &str, target: Target) -> CompileOutput {
     CompileOutput {
         output: emitted.output,
         diagnostics,
-        source_map: emitted.source_map,
+        // No backend emits a source map yet; an empty map maps no lines.
+        source_map: SourceMap::default(),
     }
 }
 
@@ -421,34 +305,23 @@ pub struct ProjectOutput {
     /// when `files` is (a project that reported a diagnostic emits nothing).
     pub source_maps: Vec<SourceMap>,
     /// Generated sidecar files that are **not** compiled modules and so have no
-    /// entry in `source_maps`. Three kinds:
+    /// entry in `source_maps`. No backend emits a source map yet, so there are no
+    /// `.map` sidecars and no `sourceMappingURL` trailers. The kinds emitted:
     ///
-    /// * **Source Map v3 `.map` files** — for every emitted module whose
-    ///   [`SourceMap`] is non-empty, an `x.<ext>.map` beside the module
-    ///   (`x.lua.map`, `x.js.map`), and the module's emitted source gains a
-    ///   trailing `sourceMappingURL` comment pointing at it (`--#` for Lua, `//#`
-    ///   for JS/TS). A target with no source map yet emits no `.map` and no
-    ///   trailer.
-    /// * On the JS target the per-module TypeScript declarations (`x.d.ts`,
-    ///   beside each `x.js`).
-    /// * On the Lua target the per-module `LuaLS` declarations (`x.d.lua`, beside
-    ///   each `x.lua`). A typings sidecar, not executable — it carries no
-    ///   `sourceMappingURL` trailer. So a Lua build emits, per module, both the
-    ///   `.lua.map` source map and the `.d.lua` typings as aux, while still
-    ///   emitting no runtime sidecar (the prelude is inlined per module).
-    /// * On both the JS and TS targets the shared `neoc-lib.js` +
-    ///   `neoc-lib.d.ts` prelude at the resolution root; on the Lua target the
-    ///   shared `neoc-lib.d.lua` typings (no runtime `neoc-lib.lua`).
+    /// * On the TS target the shared `neoc-lib.js` + `neoc-lib.d.ts` prelude at
+    ///   the resolution root: a `.ts` `import "./neoc-lib"` resolves to the
+    ///   `.d.ts` for types and the `.js` at runtime.
     /// * On the Python target the per-module typed stub (`x.pyi`, beside each
     ///   `x.py`) plus, once at the resolution root, the shared runtime
     ///   `neoc_lib.py` and its stub `neoc_lib.pyi` (Python has no native
     ///   `Result`, so this prelude carries the runtime, not just typings).
+    /// * On the Luau target none — each module is self-contained.
     ///
     /// Each entry pairs a destination path with its contents, and the path is
     /// already in its final form (extension included) — unlike `files`, it must
-    /// **not** have the target extension re-applied. The `.ts` target's modules
-    /// are self-typed, so they land in `files`, not here. Empty when the project
-    /// reported a diagnostic. Kept separate from `files` so the
+    /// **not** have the target extension re-applied. The `.ts` and `.luau` target
+    /// modules are self-typed, so they land in `files`, not here. Empty when the
+    /// project reported a diagnostic. Kept separate from `files` so the
     /// `files`↔`source_maps` positional contract stays intact.
     pub aux_files: Vec<(PathBuf, String)>,
     pub diagnostics: Vec<ProjectDiagnostic>,
@@ -567,36 +440,10 @@ pub fn transpile_project(entry: &Path, target: Target) -> std::io::Result<Projec
             check_and_emit_module(&root, &loaded, &universe, path, target, &mut diagnostics);
         let src_path = &loaded[path].path;
         let dest = src_path.with_extension(target.extension());
-        let mut output = emitted.output;
-        // A non-empty source map (Lua today) becomes a real `.map` sidecar beside
-        // the module, plus a `sourceMappingURL` trailer on the emitted source so a
-        // debugger finds it. The map and module are colocated in the out dir, so
-        // `sources` is the bare neoc filename and `file` the bare emitted name.
-        if let (Some(name), Some(neoc_name)) = (file_name(&dest), file_name(src_path))
-            && let Some(json) = emitted.source_map.to_v3_json(
-                &name,
-                &neoc_name,
-                &loaded[path].source,
-                line_count(&output),
-            )
-        {
-            let map_name = format!("{name}.map");
-            append_source_mapping_url(&mut output, target, &map_name);
-            aux_files.push((with_appended(src_path, ".map", target), json));
-        }
-        files.push((dest, output));
-        source_maps.push(emitted.source_map);
-        // JS target: a non-empty `.d.ts` sibling beside the module's `.js`.
-        // `x.neoc` → `x.d.ts` (replacing the single trailing extension).
-        if !emitted.dts.is_empty() {
-            aux_files.push((src_path.with_extension("d.ts"), emitted.dts));
-        }
-        // Lua target: a non-empty `.d.lua` LuaLS typings sibling beside the
-        // module's `.lua`. A typings sidecar, not executable — no
-        // `sourceMappingURL` trailer. `x.neoc` → `x.d.lua`.
-        if !emitted.dlua.is_empty() {
-            aux_files.push((src_path.with_extension("d.lua"), emitted.dlua));
-        }
+        files.push((dest, emitted.output));
+        // No backend emits a source map yet, so each module's map is empty; the
+        // entry keeps the `files`↔`source_maps` positional contract intact.
+        source_maps.push(SourceMap::default());
         // Python target: a non-empty `.pyi` typed stub sibling beside the
         // module's `.py`. `x.neoc` → `x.pyi`.
         if !emitted.pyi.is_empty() {
@@ -623,22 +470,19 @@ pub fn transpile_project(entry: &Path, target: Target) -> std::io::Result<Projec
 /// The target's shared prelude files at the resolution `root`, emitted once per
 /// build.
 ///
-/// * **JS / TS** — the runtime `neoc-lib.js` + its `neoc-lib.d.ts` types. A
-///   `.ts` module's `import "./neoc-lib"` resolves to the `.d.ts` for types and
-///   the `.js` at runtime.
-/// * **Lua** — the `Result`/`Option` `LuaLS` typings `neoc-lib.d.lua` only; Lua
-///   inlines the runtime prelude per module, so there's no `neoc-lib.lua`.
+/// * **TS** — the runtime `neoc-lib.js` + its `neoc-lib.d.ts` types. A `.ts`
+///   module's `import "./neoc-lib"` resolves to the `.d.ts` for types and the
+///   `.js` at runtime.
 /// * **Python** — the runtime `neoc_lib.py` + its stub `neoc_lib.pyi`. Python
 ///   has no native `Result`, so this prelude carries the runtime, not just
 ///   typings.
 /// * **Luau** — none; each module is self-contained.
 fn root_prelude_aux(root: &Path, target: Target) -> Vec<(PathBuf, String)> {
     match target {
-        Target::Js | Target::Ts => vec![
+        Target::Ts => vec![
             (root.join("neoc-lib.js"), codegen_js::neoc_lib_js()),
             (root.join("neoc-lib.d.ts"), codegen_js::neoc_lib_dts()),
         ],
-        Target::Lua => vec![(root.join("neoc-lib.d.lua"), codegen_lua::neoc_lib_dlua())],
         Target::Python => vec![
             (root.join("neoc_lib.py"), codegen_python::neoc_lib_py()),
             (root.join("neoc_lib.pyi"), codegen_python::neoc_lib_pyi()),
@@ -768,8 +612,8 @@ fn focus_diagnostics(
 
 /// Checks one resolved module's bodies (with its `use`-imported symbols in
 /// scope) and emits it to `target`, pushing any type/emit diagnostics onto
-/// `diagnostics`. Returns the [`Emitted`] result — the source, its [`SourceMap`],
-/// and the declaration sibling (`.d.ts` on JS, `.d.lua` on Lua).
+/// `diagnostics`. Returns the [`Emitted`] result — the source and, on the Python
+/// target, the `.pyi` declaration sibling.
 fn check_and_emit_module(
     root: &Path,
     loaded: &HashMap<PathBuf, LoadedModule>,
@@ -947,97 +791,50 @@ fn canonical_or(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
-/// The final path component of `path` as a `String`, or `None` when the path has
-/// no file name (a root or `..`). Used to fill a source map's `file`/`sources`,
-/// which name the colocated emitted file and neoc source by bare name.
-fn file_name(path: &Path) -> Option<String> {
-    path.file_name()
-        .and_then(|n| n.to_str())
-        .map(str::to_string)
-}
-
-/// The number of one-based lines in `text`, counting a final line with no
-/// trailing newline. Empty text is one (empty) line. This is the count of
-/// generated lines the source map must cover.
-fn line_count(text: &str) -> u32 {
-    let lines = text.lines().count().max(1);
-    u32::try_from(lines).unwrap_or(u32::MAX)
-}
-
-/// The source-rooted destination for a module's `.map` sidecar: `src_path` with
-/// the target extension, then `.map` appended (`x.neoc` → `x.lua.map`). Returned
-/// in the same source-rooted form as the module's own destination so the `neoc`
-/// bin remaps it under the out dir exactly like the `.d.ts` sidecar.
-fn with_appended(src_path: &Path, suffix: &str, target: Target) -> PathBuf {
-    let mut s = src_path.with_extension(target.extension()).into_os_string();
-    s.push(suffix);
-    PathBuf::from(s)
-}
-
-/// Appends a `sourceMappingURL` trailer naming `map_name` to `output`, in the
-/// comment syntax of `target` — `//#` for JS/TS, `--#` for Lua. The trailer goes
-/// on its own final line so it is a comment whatever preceded it.
-fn append_source_mapping_url(output: &mut String, target: Target, map_name: &str) {
-    let marker = match target {
-        Target::Lua | Target::Luau => "--#",
-        Target::Js | Target::Ts => "//#",
-        // Python has no source map yet, so this is never reached for it; `#` is
-        // its comment marker should that change.
-        Target::Python => "#",
-    };
-    if !output.is_empty() && !output.ends_with('\n') {
-        output.push('\n');
-    }
-    output.push_str(marker);
-    output.push_str(" sourceMappingURL=");
-    output.push_str(map_name);
-    output.push('\n');
-}
-
 /// Dispatches emission to the backend for `target`, returning its source, any
 /// emit diagnostic messages, and a [`SourceMap`] back to neoc.
 ///
-/// `source` is the neoc text the module was parsed from; the Lua backend uses
-/// it to map emitted lines to neoc lines. The JS backend has no source map yet
-/// (#56), so it returns an empty [`SourceMap`].
+/// `source` is the neoc text the module was parsed from; the Luau backend uses
+/// it to track spans. No backend emits a source map yet (#56), so `emit` always
+/// reports an empty [`SourceMap`] through the driver.
 ///
-/// `imported_bindings` are the module's `use`d names whose source module emits
-/// a runtime JS binding (see [`codegen_js::module_js_bindings`]); the JS backend
-/// filters its `import` emission against it so a type-only `use` produces no
-/// dangling import. `method_types` is the subset whose source binding is a
-/// method-bearing type (see [`codegen_js::module_js_method_types`]); for those
-/// the JS backend imports the prototype `Type$` (the type's JS runtime binding)
-/// rather than the erased bare name. Method dispatch itself is prototype-backed
-/// (`lang/DYNAMIC.md` §7.1), so no per-type wiring is needed. The Lua backend
-/// ignores both.
+/// `bindings` are the module's `use`d names whose source module emits a runtime
+/// JS binding (see [`codegen_js::module_js_bindings`]); the TS backend (reusing
+/// the JS emit) filters its `import` emission against it so a type-only `use`
+/// produces no dangling import. `method_types` is the subset whose source
+/// binding is a method-bearing type (see [`codegen_js::module_js_method_types`]);
+/// for those the TS backend imports the prototype `Type$` rather than the erased
+/// bare name. Method dispatch itself is prototype-backed (`lang/DYNAMIC.md`
+/// §7.1), so no per-type wiring is needed. The Luau backend ignores both.
 /// The cross-module inputs a backend needs beyond the module itself, gathered
 /// by the project driver from the resolved `use` graph.
 ///
-/// Each field is target-aware: the Lua backend reads `enums` and `externs`; the
-/// JS backend reads `bindings`, `method_types`, and `externs`. A field a target
+/// Each field is target-aware: the Luau backend reads `enums` and `externs`; the
+/// TS backend reads `bindings`, `method_types`, and `externs`; the Python
+/// backend reads `enums`, `py_bindings`, and `importer_dir`. A field a target
 /// ignores is built anyway (cheap) and dropped at the seam.
 #[derive(Default)]
 struct EmitInputs<'a> {
-    /// `use`d names whose source module emits a runtime JS binding (JS only).
+    /// `use`d names whose source module emits a runtime JS binding (TS only).
     bindings: std::collections::HashSet<String>,
     /// Resolved `use` paths whose source module emits a runtime Python
     /// definition (Python only). A `use` absent here resolves to a trait or
     /// alias — no Python symbol — so its import is dropped.
     py_bindings: Vec<String>,
-    /// The subset of `bindings` that are method-bearing types (JS only); their
+    /// The subset of `bindings` that are method-bearing types (TS only); their
     /// `use` imports the prototype `Type$`.
     method_types: std::collections::HashSet<String>,
-    /// `pub` enum declarations brought in by `use` (Lua resolves variant forms).
+    /// `pub` enum declarations brought in by `use` (Luau resolves variant forms).
     enums: Vec<&'a ast::EnumDecl>,
     /// Extern items brought in by `use`, for native-import reconstruction in the
-    /// consumer (both targets; `lang/EXTERN.md` §Lowering).
+    /// consumer (Luau/TS; `lang/EXTERN.md` §Lowering).
     externs: Vec<ast::ExternItem>,
     /// The importing module's directory as path segments relative to the source
-    /// root (JS only). Anchors each cross-module `import`'s relative specifier so
-    /// a module in a subdirectory imports a sibling as `./b.js`. Empty for a
+    /// root (TS/Python). Anchors each cross-module `import`'s relative specifier
+    /// so a module in a subdirectory imports a sibling as `./b.js`. Empty for a
     /// root-level module and for single-file `transpile`.
     importer_dir: Vec<String>,
-    /// Whether the module is emitted as a requireable library (Lua/Luau only). A
+    /// Whether the module is emitted as a requireable library (Luau only). A
     /// project build sets `true` so each module ends with a `return { … }` export
     /// table a consumer can `require`; single-file `transpile` leaves it `false`
     /// so the chunk runs directly (`lang/DYNAMIC.md` §3.7).
@@ -1045,18 +842,12 @@ struct EmitInputs<'a> {
 }
 
 /// One module's emit, normalised across backends: the target source, any
-/// emit-stage messages, the source map (Lua only), and the declaration sibling
-/// (`.d.ts` on JS, `.d.lua` on Lua; empty otherwise).
+/// emit-stage messages, and the `.pyi` declaration sibling (Python only; empty
+/// otherwise). No backend emits a source map yet, so the driver attaches an
+/// empty [`SourceMap`] per module.
 struct Emitted {
     output: String,
     messages: Vec<String>,
-    source_map: SourceMap,
-    /// The module's `.d.ts` text (JS target). Empty for Lua and for a module
-    /// that exports nothing.
-    dts: String,
-    /// The module's `.d.lua` `LuaLS` typings (Lua target). Empty for JS/TS and
-    /// for a module that exports nothing.
-    dlua: String,
     /// The module's `.pyi` typed stub (Python target). Empty for the other
     /// targets and for a module that exports nothing.
     pyi: String,
@@ -1064,44 +855,10 @@ struct Emitted {
 
 fn emit(target: Target, module: &ast::Module, source: &str, inputs: &EmitInputs) -> Emitted {
     match target {
-        Target::Lua => {
-            let r = codegen_lua::emit_with_imports(
-                module,
-                source,
-                &inputs.enums,
-                &inputs.externs,
-                inputs.as_module,
-            );
-            Emitted {
-                output: r.lua,
-                messages: r.diagnostics.into_iter().map(|d| d.message).collect(),
-                source_map: SourceMap { lua: r.source_map },
-                dts: String::new(),
-                dlua: r.dlua,
-                pyi: String::new(),
-            }
-        }
-        Target::Js => {
-            let r = codegen_js::emit(
-                module,
-                &inputs.bindings,
-                &inputs.method_types,
-                &inputs.externs,
-                &inputs.enums,
-                &inputs.importer_dir,
-            );
-            Emitted {
-                output: r.js,
-                messages: r.diagnostics.into_iter().map(|d| d.message).collect(),
-                source_map: SourceMap::default(),
-                dts: r.dts,
-                dlua: String::new(),
-                pyi: String::new(),
-            }
-        }
         Target::Ts => {
             // A self-typed `.ts` is the module artifact, not a sidecar: it
-            // carries its own types inline (no `.d.ts`). No source map yet.
+            // carries its own types inline (no `.d.ts`). Reuses `codegen-js`'s
+            // emit through the TS seam. No source map yet.
             let r = codegen_ts::emit(
                 module,
                 &inputs.bindings,
@@ -1113,16 +870,14 @@ fn emit(target: Target, module: &ast::Module, source: &str, inputs: &EmitInputs)
             Emitted {
                 output: r.ts,
                 messages: r.diagnostics.into_iter().map(|d| d.message).collect(),
-                source_map: SourceMap::default(),
-                dts: String::new(),
-                dlua: String::new(),
                 pyi: String::new(),
             }
         }
         Target::Luau => {
             // A self-typed `.luau` is self-contained: it inlines the runtime and
             // its own `Result`/`Option` type aliases (no `neoc-lib`, no `.d.lua`
-            // sidecar). No source map yet. Call shape mirrors the Lua arm.
+            // sidecar). Reuses `codegen-lua`'s lowering through the Luau seam. No
+            // source map yet.
             let r = codegen_luau::emit(
                 module,
                 source,
@@ -1133,9 +888,6 @@ fn emit(target: Target, module: &ast::Module, source: &str, inputs: &EmitInputs)
             Emitted {
                 output: r.luau,
                 messages: r.diagnostics.into_iter().map(|d| d.message).collect(),
-                source_map: SourceMap::default(),
-                dts: String::new(),
-                dlua: String::new(),
                 pyi: String::new(),
             }
         }
@@ -1154,9 +906,6 @@ fn emit(target: Target, module: &ast::Module, source: &str, inputs: &EmitInputs)
             Emitted {
                 output: r.py,
                 messages: r.diagnostics.into_iter().map(|d| d.message).collect(),
-                source_map: SourceMap::default(),
-                dts: String::new(),
-                dlua: String::new(),
                 pyi: r.pyi,
             }
         }

@@ -11,18 +11,18 @@
 //! diverged instead of one opaque blob. Two kinds of trial per target:
 //!
 //! - `<case>::<target>::source` — the live emit equals the committed, readable
-//!   `<case>.lua` / `<case>.js` / `<case>.ts` / `<case>.luau` / `<case>.py`
-//!   checked into the corpus. This pins the transformation itself (codegen
-//!   changes show up as a diff) and needs no toolchain, so it runs everywhere.
-//!   Regenerate the files with
-//!   `neoc build lang/CONFORMANCE/dynamic/*.neoc --target <lua|js|ts|luau|py>`.
-//!   The five targets pin the runnable module text only; typings sidecars
-//!   (`.d.ts` / `.d.lua` / `.pyi`) are covered by the codegen crates' own tests.
+//!   `<case>.ts` / `<case>.luau` / `<case>.py` checked into the corpus. This
+//!   pins the transformation itself (codegen changes show up as a diff) and
+//!   needs no toolchain, so it runs everywhere. Regenerate the files with
+//!   `neoc build lang/CONFORMANCE/dynamic/*.neoc --target <ts|luau|py>`. The
+//!   three targets pin the runnable module text only; the `.pyi` typings sidecar
+//!   is covered by the codegen crates' own tests. (`lua`/`js` are not selectable
+//!   targets — `luau`/`ts` exercise the same lowering and downgrade to them.)
 //! - `<case>::<target>` — transpile (or, for Rust, compile the `.rs` anchor),
 //!   run under the target's interpreter, and assert trailing-newline-trimmed
-//!   stdout equals the golden. Marked ignored when the toolchain (`node` /
-//!   `lua` / `rustc` / `bun` / `luau` / `python3` >= 3.10) is absent, so the
-//!   suite still passes without it.
+//!   stdout equals the golden. Marked ignored when the toolchain (`bun` /
+//!   `rustc` / `luau` / `python3` >= 3.10) is absent, so the suite still passes
+//!   without it.
 //!
 //! Two extra trials guard the corpus shape: it is non-empty, and every `.neoc`
 //! has a sibling `.rs`.
@@ -37,7 +37,7 @@ use neoc_compiler::{Target, transpile};
 
 /// A conformance backend: how to turn a case into a runnable program and run it.
 struct TargetSpec {
-    /// Short name shown after `::` in the test id (`lua`, `js`, `rust`).
+    /// Short name shown after `::` in the test id (`luau`, `ts`, `rust`).
     name: &'static str,
     /// Whether the toolchain this target needs is present on PATH. When false,
     /// the target's run trials are marked ignored rather than failed.
@@ -46,7 +46,7 @@ struct TargetSpec {
     /// `neoc` is the `.neoc` source, `case` the file stem (for error messages).
     run: fn(neoc: &str, case: &str, neoc_path: &Path) -> Result<String, Failed>,
     /// The compiler [`Target`] and committed-output extension this backend emits
-    /// (e.g. `(Target::Lua, "lua")`). When set, a `<case>::<target>::source`
+    /// (e.g. `(Target::Luau, "luau")`). When set, a `<case>::<target>::source`
     /// trial pins the emitted code against the readable `<case>.<ext>` file
     /// checked into the corpus. `None` for the Rust anchor, whose `.rs` is
     /// hand-written rather than emitted. This check needs no toolchain.
@@ -80,13 +80,6 @@ fn check_source_golden(
             golden_path.display()
         )))
     }
-}
-
-/// The first Lua interpreter found on PATH, or `None` if none is present.
-fn lua_binary() -> Option<&'static str> {
-    ["lua", "lua5.4", "lua5.3", "lua5.1", "luajit"]
-        .into_iter()
-        .find(|bin| Command::new(bin).arg("-v").output().is_ok())
 }
 
 /// Whether the named binary answers `--version` (i.e. is on PATH).
@@ -155,35 +148,6 @@ fn run_program(
             String::from_utf8_lossy(&output.stderr)
         )))
     }
-}
-
-/// lua: alias `println` to the built-in `print`, then call `main()`.
-fn run_lua(neoc: &str, case: &str, _neoc_path: &Path) -> Result<String, Failed> {
-    let lua = lua_binary().expect("lua available (trial would be ignored otherwise)");
-    let output = emit(neoc, Target::Lua, case)?;
-    let program = format!("println = print\n{output}\nmain()\n");
-    run_program(lua, &program, "lua", case, "lua")
-}
-
-/// js: route `print` / `println` through `console.log`, then call `main()`. The
-/// JS backend emits an ES module (`import`/`export`), so the program runs as one
-/// — written to a `.mjs` temp file, which `node` parses as ESM regardless of any
-/// surrounding `package.json`.
-///
-/// A module that references `Result`/`Option` `import`s the shared runtime from
-/// `./neoc-lib.js` (`tasks/ts-interop-inversion.md` stage 2), so the harness
-/// writes `neoc-lib.js` into the same temp directory beside the `.mjs` before
-/// running `node`, mirroring what the project build does at the source root. The
-/// content is identical across cases, so concurrent writes are idempotent.
-fn run_js(neoc: &str, case: &str, _neoc_path: &Path) -> Result<String, Failed> {
-    let output = emit(neoc, Target::Js, case)?;
-    let lib_path = std::env::temp_dir().join("neoc-lib.js");
-    std::fs::write(&lib_path, neoc_codegen_js::neoc_lib_js())
-        .map_err(|e| Failed::from(format!("case `{case}`: write neoc-lib.js: {e}")))?;
-    let harness =
-        "globalThis.print = (x) => console.log(x);\nglobalThis.println = globalThis.print;\n";
-    let program = format!("{harness}{output}\nmain();\n");
-    run_program("node", &program, "mjs", case, "js")
 }
 
 /// rust: compile the case's `.rs` anchor with `rustc --edition 2021` and run it.
@@ -359,24 +323,12 @@ fn cases(dir: &Path) -> Vec<PathBuf> {
 }
 
 /// Build the per-case × target trials plus the corpus-shape guards.
-/// The conformance backends: the three original (`lua`, `js`, the `rust`
-/// anchor) plus the three interop-inversion targets (`ts`, `luau`, `python`).
-/// Each `::source` golden pin needs no toolchain; each run trial is ignored when
-/// its toolchain is absent.
-fn target_specs() -> [TargetSpec; 6] {
+/// The conformance backends: the `rust` anchor plus the three selectable targets
+/// (`ts`, `luau`, `python`). `lua`/`js` are not selectable — `luau`/`ts` exercise
+/// the same lowering and downgrade to them. Each `::source` golden pin needs no
+/// toolchain; each run trial is ignored when its toolchain is absent.
+fn target_specs() -> [TargetSpec; 4] {
     [
-        TargetSpec {
-            name: "lua",
-            available: lua_binary().is_some(),
-            run: run_lua,
-            emit: Some((Target::Lua, "lua")),
-        },
-        TargetSpec {
-            name: "js",
-            available: binary_present("node"),
-            run: run_js,
-            emit: Some((Target::Js, "js")),
-        },
         TargetSpec {
             name: "rust",
             available: binary_present("rustc"),
