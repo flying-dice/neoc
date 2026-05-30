@@ -9,8 +9,8 @@ A notes HTTP server on **ports & adapters**, with the host driving:
   route to a neoc controller.
 
 ```
-GET /add/<text>   → create(db, text)   (controller rejects an empty body)
-GET /<anything>   → list(db)
+/add/:text   → create(db, text)   (Bun routes; the controller rejects an empty body)
+/*           → list(db)
 ```
 
 ## The flow
@@ -21,7 +21,7 @@ GET /<anything>   → list(db)
   │  host  main.ts  (TypeScript) │ ───▶ │  neoc controllers  main.js   │
   │  • new Database(":memory:")  │      │  init / list / create        │
   │  • SqlExecutor over bun:sqlite      │  (generic over SqlExecutor)  │
-  │  • Bun.serve({ fetch })      │ ◀─── │  call db.execute / db.query  │
+  │  • Bun.serve({ routes })     │ ◀─── │  call db.execute / db.query  │
   └─────────────────────────────┘      └──────────────────────────────┘
         the executor it injected                 the autosql DAO
 ```
@@ -38,7 +38,8 @@ GET /<anything>   → list(db)
    / `SqlValue` helpers.
 4. **`src/main/ts/main.ts`** — the host. It implements `SqlExecutor` over
    `bun:sqlite` (typed against neoc's emitted `SqlValue` / `Result`), injects it
-   into the controllers, runs `Bun.serve`, and maps each route to a controller —
+   into the controllers, runs `Bun.serve` with a `routes` table (the `/add/:text`
+   param route + a `/*` catch-all), and maps each route to a controller —
    reading the returned `Result` with `neoc-lib`'s helpers and the `.d.ts` types.
 
 The direction is the point: the host **imports and calls** neoc; neoc **calls
@@ -57,5 +58,5 @@ bun run start    # bun src/main/ts/main.ts -> http://localhost:38573
 curl localhost:38573/notes          # 1:hello | 2:world |
 curl localhost:38573/add/from-host  # added
 curl localhost:38573/notes          # 1:hello | 2:world | 3:from-host |
-curl localhost:38573/add/           # error: body must not be empty  (neoc rule)
+curl localhost:38573/              # /* catch-all → lists too
 ```

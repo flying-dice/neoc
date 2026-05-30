@@ -82,17 +82,20 @@ create(db, "world");
 
 Bun.serve({
   port: 38573,
-  fetch(req: Request): Response {
-    const path = new URL(req.url).pathname;
-    if (path.startsWith("/add/")) {
-      const added = create(db, decodeURIComponent(path.slice("/add/".length)));
+  routes: {
+    // /add/<text> — insert a note. The `:text` param arrives URL-decoded.
+    "/add/:text": (req) => {
+      const added = create(db, req.params.text);
       return new Response(added.is_ok() ? `added` : `error: ${added.unwrap_err()}`);
-    }
-    const notes = list(db);
-    if (notes.is_err()) return new Response(`error: ${notes.unwrap_err()}`);
-    const rows = notes.unwrap();
-    const body = rows.map((n: ListNotesRow) => `${n.id}:${n.body}`).join(" | ");
-    return new Response(rows.length ? `${body} | ` : body);
+    },
+    // anything else — list every note.
+    "/*": () => {
+      const notes = list(db);
+      if (notes.is_err()) return new Response(`error: ${notes.unwrap_err()}`);
+      const rows = notes.unwrap();
+      const body = rows.map((n: ListNotesRow) => `${n.id}:${n.body}`).join(" | ");
+      return new Response(rows.length ? `${body} | ` : body);
+    },
   },
 });
 
