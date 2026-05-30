@@ -1,0 +1,11 @@
+{
+  "name": "@neoc-sh/demo-python-http-sqlite",
+  "version": "0.1.0",
+  "description": "neoc HTTP server backed by stdlib sqlite3 — ports & adapters: neoc owns the contracts, a Python adapter implements them.",
+  "private": true,
+  "scripts": {
+    "gen:sql": "cargo run -p neoc -- autosql",
+    "build": "cargo run -p neoc -- build",
+    "start": "python3.14 src/main/python/server.py"
+  }
+}
