@@ -2532,6 +2532,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "neoc-codegen-python"
+version = "0.0.0"
+dependencies = [
+ "cucumber",
+ "futures",
+ "neoc-ast",
+ "neoc-parser",
+]
+
+[[package]]
 name = "neoc-codegen-ts"
 version = "0.0.0"
 dependencies = [

@@ -21,6 +21,7 @@ neoc-codegen-lua = { path = "crates/neoc-codegen-lua" }
 neoc-codegen-luau = { path = "crates/neoc-codegen-luau" }
 neoc-codegen-js = { path = "crates/neoc-codegen-js" }
 neoc-codegen-ts = { path = "crates/neoc-codegen-ts" }
+neoc-codegen-python = { path = "crates/neoc-codegen-python" }
 neoc-compiler = { path = "crates/neoc-compiler" }
 neoc-fmt = { path = "crates/neoc-fmt" }
 neoc-lsp = { path = "crates/neoc-lsp" }

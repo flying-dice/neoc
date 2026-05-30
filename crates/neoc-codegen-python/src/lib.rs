@@ -1,0 +1,846 @@
+//! AST → idiomatic Python (3.10+) emitter (target #5: python).
+//!
+//! A from-scratch backend emitting **native Python constructs** — no invented
+//! runtime where Python has one of its own:
+//!
+//! - **struct** → a `@dataclass(frozen=True)` class. Fields are typed; a
+//!   newtype/tuple struct stores its payload positionally (`_0`, `_1`, …).
+//! - **enum** → one `@dataclass(frozen=True)` class per variant plus a union
+//!   alias `E = Union[A, B, …]`. Every value is a native dataclass instance, so
+//!   it is matched with Python's structural `match`/`case` class patterns —
+//!   `case B(v):`, `case C(x=x):`.
+//! - **`Result`/`Option`** → tagged dataclasses `Ok`/`Err`, `Some`/`None_` in a
+//!   shared `neoc_lib.py` (Python has no native `Result`), kept `match`-able and
+//!   carrying the inherent operations.
+//! - **`match`** → Python `match`/`case`: the whole reason for the Python idioms.
+//! - **methods** → methods on the dataclass; `self` stays `self`.
+//! - **`?`** → a hoisted guard returning the carrier from the enclosing function
+//!   on `Err`/`None_`, yielding the payload otherwise.
+//!
+//! `number` is a double, so it lowers to `float`; `string` → `str`; `()` →
+//! `None`; `[T]` → `list[T]`; `fn(A) -> B` → `Callable[[A], B]`. A sibling `.pyi`
+//! ([`pyi::module_pyi`]) carries the typed surface.
+//!
+//! Pure string building over `&ast` nodes; no host facilities, wasm-clean.
+
+mod derive;
+mod expr;
+mod pat;
+mod pyi;
+
+use std::collections::{HashMap, HashSet};
+
+use neoc_ast as ast;
+
+pub use crate::pyi::{module_pyi, py_type, variant_class_name};
+
+/// A problem found while emitting.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Diagnostic {
+    pub message: String,
+}
+
+/// The result of emitting a module to Python.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmitResult {
+    /// The emitted Python 3.10+ module source (`x.py`).
+    pub py: String,
+    /// The module's typed stub sibling (`x.pyi`): a `@dataclass` header per
+    /// `struct`/enum variant, a `def … -> R: ...` per `pub` fn, and a typed name
+    /// per `pub const`. Empty when the module declares no surface.
+    pub pyi: String,
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+/// The runtime payload shape of an enum variant.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum VariantShape {
+    Unit,
+    Tuple,
+    Named,
+}
+
+/// Enum declarations indexed for use-site resolution: `enum name → (variant
+/// name → shape)`. Seeded with the `Result`/`Option` prelude so `Ok`/`Some`/…
+/// resolve unqualified.
+#[derive(Default)]
+pub(crate) struct EnumIndex {
+    enums: HashMap<String, HashMap<String, VariantShape>>,
+}
+
+impl EnumIndex {
+    fn build(module: &ast::Module, imported: &[&ast::EnumDecl]) -> Self {
+        let mut enums: HashMap<String, HashMap<String, VariantShape>> = HashMap::new();
+        enums.insert(
+            "Result".to_string(),
+            [
+                ("Ok".to_string(), VariantShape::Tuple),
+                ("Err".to_string(), VariantShape::Tuple),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        enums.insert(
+            "Option".to_string(),
+            [
+                ("Some".to_string(), VariantShape::Tuple),
+                ("None".to_string(), VariantShape::Unit),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        let local = module.items.iter().filter_map(|item| match &item.kind {
+            ast::ItemKind::Enum(e) => Some(e),
+            _ => None,
+        });
+        for e in local.chain(imported.iter().copied()) {
+            let variants = e
+                .variants
+                .iter()
+                .map(|v| {
+                    let shape = match v.body {
+                        ast::VariantBody::Unit => VariantShape::Unit,
+                        ast::VariantBody::Tuple(_) => VariantShape::Tuple,
+                        ast::VariantBody::Named(_) => VariantShape::Named,
+                    };
+                    (v.name.clone(), shape)
+                })
+                .collect();
+            enums.entry(e.name.clone()).or_insert(variants);
+        }
+        Self { enums }
+    }
+
+    fn unqualified_variant(&self, name: &str) -> Option<(String, VariantShape)> {
+        ["Result", "Option"].into_iter().find_map(|en| {
+            self.enums
+                .get(en)
+                .and_then(|m| m.get(name))
+                .map(|shape| (en.to_string(), *shape))
+        })
+    }
+
+    fn variant_shape(&self, enum_name: &str, variant: &str) -> Option<VariantShape> {
+        self.enums.get(enum_name)?.get(variant).copied()
+    }
+}
+
+/// Lower a module to idiomatic Python (3.10+) source plus its `.pyi` sibling.
+///
+/// `imported_enums` carries the `pub` enums a cross-module `use` brought in, so
+/// variant construction and `match` on them resolve at use sites exactly like a
+/// local enum. Pass an empty slice for a single-file emit.
+#[must_use]
+pub fn emit(module: &ast::Module, imported_enums: &[&ast::EnumDecl]) -> EmitResult {
+    let mut e = Emitter {
+        enums: EnumIndex::build(module, imported_enums),
+        method_types: method_type_names(module),
+        ..Emitter::default()
+    };
+    e.emit_module(module);
+    let diagnostics = std::mem::take(&mut e.diagnostics);
+    EmitResult {
+        py: e.finish(),
+        pyi: pyi::module_pyi(module),
+        diagnostics,
+    }
+}
+
+/// The shared `Result`/`Option` runtime, `neoc_lib.py`. Emitted once per build;
+/// every module that references `Result`/`Option` imports its constructors from
+/// here. Python has no native `Result`, so these tagged dataclasses are the
+/// justified exception to "native constructs only" — and they stay `match`-able
+/// (a `case Ok(v):` works because each is a real dataclass). The driver writes
+/// the returned source to `neoc_lib.py`.
+#[must_use]
+pub fn neoc_lib_py() -> String {
+    NEOC_LIB_PY.to_string()
+}
+
+/// The `.pyi` for the shared `neoc_lib.py`: the typed `Result`/`Option` surface
+/// a consumer's stub imports. The driver writes this to `neoc_lib.pyi`.
+#[must_use]
+pub fn neoc_lib_pyi() -> String {
+    NEOC_LIB_PYI.to_string()
+}
+
+/// Accumulates emitted Python and diagnostics, line by line at the current
+/// indentation (Python is whitespace-significant, so the indent is the syntax).
+// The several bool fields are independent emit-state flags (each gates one
+// preamble import or feature); a flags struct would only obscure them.
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Default)]
+pub(crate) struct Emitter {
+    lines: Vec<String>,
+    indent: usize,
+    diagnostics: Vec<Diagnostic>,
+    uses_result: bool,
+    /// Whether `Callable` was referenced in an emitted annotation.
+    uses_callable: bool,
+    /// Whether the module declares any struct/enum (so `@dataclass` is imported).
+    has_dataclass: bool,
+    /// Whether the module declares any enum (so `Union` is imported for aliases).
+    uses_union: bool,
+    /// Whether any declared type carries generic parameters (so `Generic`,
+    /// `TypeVar`, and the `TypeVar` declarations land in the preamble).
+    uses_generic: bool,
+    /// The distinct generic-parameter names declared across the module, each
+    /// emitted as a module-level `TypeVar`.
+    type_vars: Vec<String>,
+    enums: EnumIndex,
+    /// Struct/enum names carrying methods (an `impl` or a `#[derive]`). Only
+    /// consulted to pick the right `.pyi` shape; the `.py` always emits a class.
+    method_types: HashSet<String>,
+    /// `impl` methods collected up-front, keyed by their target type name, so a
+    /// type's methods fold into its `@dataclass` body when it is emitted (an
+    /// `impl` reached at emit time produces no standalone output).
+    pending_methods: Vec<(String, ast::FnDecl)>,
+    /// Whether a struct functional-update used `dataclasses.replace` (so it is
+    /// imported in the preamble).
+    uses_replace: bool,
+    /// The public surface, accumulated for `__all__`.
+    public: Vec<String>,
+    try_seq: usize,
+    tmp_seq: usize,
+}
+
+impl Emitter {
+    pub(crate) fn error(&mut self, message: impl Into<String>) {
+        self.diagnostics.push(Diagnostic {
+            message: message.into(),
+        });
+    }
+
+    /// Push `text` at the current indentation. Multi-line text is re-indented
+    /// line by line so nested output stays aligned.
+    pub(crate) fn line(&mut self, text: impl AsRef<str>) {
+        let pad = "    ".repeat(self.indent);
+        for l in text.as_ref().split('\n') {
+            if l.is_empty() {
+                self.lines.push(String::new());
+            } else {
+                self.lines.push(format!("{pad}{l}"));
+            }
+        }
+    }
+
+    pub(crate) fn indented<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.indent += 1;
+        let r = f(self);
+        self.indent -= 1;
+        r
+    }
+
+    /// Run `f`, capturing the lines it emits into a separate buffer (used to
+    /// build nested suites). Indentation resets to zero inside.
+    pub(crate) fn render<F: FnOnce(&mut Self)>(&mut self, f: F) -> Vec<String> {
+        let saved_lines = std::mem::take(&mut self.lines);
+        let saved_indent = std::mem::replace(&mut self.indent, 0);
+        f(self);
+        let captured = std::mem::replace(&mut self.lines, saved_lines);
+        self.indent = saved_indent;
+        captured
+    }
+
+    /// A fresh unique temporary name with the given prefix.
+    pub(crate) fn fresh_tmp(&mut self, prefix: &str) -> String {
+        self.tmp_seq += 1;
+        format!("{prefix}{}", self.tmp_seq)
+    }
+
+    /// The number of lines emitted so far in the current buffer — used to tell
+    /// whether a suite emitted any statements (so an empty one gets `pass`).
+    pub(crate) fn lines_len(&self) -> usize {
+        self.lines.len()
+    }
+
+    fn finish(mut self) -> String {
+        let mut preamble: Vec<String> = vec!["from __future__ import annotations".to_string()];
+        let mut needs_blank = false;
+        if self.has_dataclass || self.uses_replace {
+            let imp = if self.uses_replace && self.has_dataclass {
+                "from dataclasses import dataclass, replace"
+            } else if self.uses_replace {
+                "from dataclasses import replace"
+            } else {
+                "from dataclasses import dataclass"
+            };
+            preamble.push(imp.to_string());
+            needs_blank = true;
+        }
+        let mut typing: Vec<&str> = Vec::new();
+        if self.uses_union {
+            typing.push("Union");
+        }
+        if self.uses_callable {
+            typing.push("Callable");
+        }
+        if self.uses_generic {
+            typing.push("Generic");
+            typing.push("TypeVar");
+        }
+        typing.sort_unstable();
+        typing.dedup();
+        if !typing.is_empty() {
+            preamble.push(format!("from typing import {}", typing.join(", ")));
+            needs_blank = true;
+        }
+        if self.uses_result {
+            preamble.push("from .neoc_lib import Result, Option, Ok, Err, Some, None_".to_string());
+            needs_blank = true;
+        }
+        let _ = needs_blank;
+
+        let mut out = preamble;
+        out.push(String::new());
+        // Module-level `TypeVar` declarations for every generic parameter.
+        if !self.type_vars.is_empty() {
+            for tv in &self.type_vars {
+                out.push(format!("{tv} = TypeVar(\"{tv}\")"));
+            }
+            out.push(String::new());
+        }
+        out.append(&mut self.lines);
+
+        if !self.public.is_empty() {
+            out.push(String::new());
+            let names: Vec<String> = self.public.iter().map(|n| format!("\"{n}\"")).collect();
+            out.push(format!("__all__ = [{}]", names.join(", ")));
+        }
+
+        let mut s = out.join("\n");
+        if !s.is_empty() {
+            s.push('\n');
+        }
+        s
+    }
+
+    fn emit_module(&mut self, module: &ast::Module) {
+        // Pre-scan determines the import preamble.
+        self.has_dataclass = module
+            .items
+            .iter()
+            .any(|i| matches!(i.kind, ast::ItemKind::Struct(_) | ast::ItemKind::Enum(_)));
+        self.uses_union = module
+            .items
+            .iter()
+            .any(|i| matches!(i.kind, ast::ItemKind::Enum(_)));
+        if pyi::references_lib(module) {
+            self.uses_result = true;
+        }
+        // Distinct generic-parameter names → module-level `TypeVar`s.
+        for item in &module.items {
+            let generics = match &item.kind {
+                ast::ItemKind::Struct(s) => &s.generics,
+                ast::ItemKind::Enum(e) => &e.generics,
+                _ => continue,
+            };
+            for g in generics {
+                self.uses_generic = true;
+                if !self.type_vars.contains(&g.name) {
+                    self.type_vars.push(g.name.clone());
+                }
+            }
+        }
+        // Collect `impl` methods up-front, keyed by target type, so they fold
+        // into the type's `@dataclass` body regardless of source order.
+        for item in &module.items {
+            if let ast::ItemKind::Impl(b) = &item.kind
+                && let ast::Type::Path(p) = &b.ty
+                && let Some(seg) = p.segments.last()
+            {
+                for f in &b.items {
+                    self.pending_methods.push((seg.name.clone(), f.clone()));
+                }
+            }
+        }
+        for item in &module.items {
+            self.emit_item(item);
+        }
+    }
+
+    fn emit_item(&mut self, item: &ast::Item) {
+        match &item.kind {
+            ast::ItemKind::Fn(f) => self.emit_fn(None, f, item.vis),
+            ast::ItemKind::Struct(s) => self.emit_struct(item, s),
+            ast::ItemKind::Enum(e) => self.emit_enum(item, e),
+            ast::ItemKind::Const(c) => self.emit_const(c, item.vis),
+            ast::ItemKind::Impl(b) => self.emit_impl(b),
+            ast::ItemKind::Use(u) => self.emit_use(u),
+            // Aliases erase; traits produce no standalone output; an `extern`
+            // block describes the target surface (its references lower directly).
+            ast::ItemKind::TypeAlias(_) | ast::ItemKind::Extern(_) | ast::ItemKind::Trait(_) => {}
+        }
+    }
+
+    fn record_public(&mut self, vis: ast::Visibility, name: &str) {
+        if vis == ast::Visibility::Public {
+            self.public.push(name.to_string());
+        }
+    }
+
+    /// Emit a `struct` as a `@dataclass(frozen=True)` class. Named fields are
+    /// typed attributes; a newtype/tuple struct stores its payload as `_0`,
+    /// `_1`, …. Inherent and trait methods (from `impl`, §3.3) and derives
+    /// (§6) land in the class body — collected so the class is emitted whole.
+    fn emit_struct(&mut self, item: &ast::Item, s: &ast::StructDecl) {
+        self.record_public(item.vis, &s.name);
+        self.line("@dataclass(frozen=True)");
+        self.line(class_header(&s.name, &s.generics));
+        let mut wrote = false;
+        self.indented(|e| {
+            match &s.body {
+                ast::StructBody::Unit => {}
+                ast::StructBody::Tuple(t) => {
+                    e.line(format!("_0: {}", py_type(t)));
+                    wrote = true;
+                }
+                ast::StructBody::Named(fields) => {
+                    for f in fields {
+                        e.line(format!("{}: {}", f.name, py_type(&f.ty)));
+                        wrote = true;
+                    }
+                }
+            }
+            // Methods + derives in the same class body.
+            wrote |= e.emit_type_members(&item.attrs, DeriveTarget::Struct(s), &s.name);
+            if !wrote {
+                e.line("pass");
+            }
+        });
+        self.line("");
+    }
+
+    /// Emit an `enum` as one `@dataclass(frozen=True)` class per variant plus the
+    /// union alias `E = Union[A, B, …]`. Methods and derives land on **every**
+    /// variant class, so any value matched out of the union carries the
+    /// behaviour and the structural `match` works against the variant classes.
+    fn emit_enum(&mut self, item: &ast::Item, en: &ast::EnumDecl) {
+        self.record_public(item.vis, &en.name);
+        let mut variant_classes: Vec<String> = Vec::new();
+        for v in &en.variants {
+            let cls = variant_class_name(&v.name);
+            variant_classes.push(cls.clone());
+            self.line("@dataclass(frozen=True)");
+            self.line(format!("class {cls}:"));
+            let mut wrote = false;
+            self.indented(|e| {
+                match &v.body {
+                    ast::VariantBody::Unit => {}
+                    ast::VariantBody::Tuple(tys) => {
+                        for (i, t) in tys.iter().enumerate() {
+                            e.line(format!("_{i}: {}", py_type(t)));
+                            wrote = true;
+                        }
+                    }
+                    ast::VariantBody::Named(fields) => {
+                        for f in fields {
+                            e.line(format!("{}: {}", f.name, py_type(&f.ty)));
+                            wrote = true;
+                        }
+                    }
+                }
+                wrote |= e.emit_type_members(&item.attrs, DeriveTarget::Enum(en), &cls);
+                if !wrote {
+                    e.line("pass");
+                }
+            });
+            self.line("");
+        }
+        self.line(format!(
+            "{} = Union[{}]",
+            en.name,
+            variant_classes.join(", ")
+        ));
+        self.line("");
+    }
+
+    /// Emit a type's methods (from any matching `impl`) and derives into the
+    /// current class body. Methods are filled in `emit_impl` deferral — but a
+    /// dataclass body is closed by the time `impl` is reached, so instead this
+    /// pulls the impl methods that target `type_name` from the module. Returns
+    /// whether anything was written.
+    ///
+    /// Derives are emitted against `self_class` — the variant class name for an
+    /// enum (each variant gets the derived method) or the struct name.
+    fn emit_type_members(
+        &mut self,
+        attrs: &[ast::Attribute],
+        target: DeriveTarget<'_>,
+        self_class: &str,
+    ) -> bool {
+        let mut wrote = false;
+        // Inherent / trait methods targeting this type.
+        let type_name = match target {
+            DeriveTarget::Struct(s) => s.name.clone(),
+            DeriveTarget::Enum(e) => e.name.clone(),
+        };
+        let methods: Vec<ast::FnDecl> = self
+            .pending_methods
+            .iter()
+            .filter(|(ty, _)| *ty == type_name)
+            .map(|(_, decl)| decl.clone())
+            .collect();
+        for decl in &methods {
+            self.emit_method(decl);
+            wrote = true;
+        }
+        // Derives.
+        for name in ast::derive_names(attrs) {
+            self.emit_derive(&name, target, self_class);
+            wrote = true;
+        }
+        wrote
+    }
+
+    /// An `impl` produces no standalone output: its methods are collected
+    /// up-front (`emit_module`) and folded into the target type's `@dataclass`
+    /// body when the type is emitted (`lang/DYNAMIC.md` §3.3). An associated
+    /// function (no `self`) becomes a `@staticmethod` in that body.
+    fn emit_impl(&mut self, b: &ast::ImplBlock) {
+        if !matches!(&b.ty, ast::Type::Path(_)) {
+            self.error("impl target must be a named type");
+        }
+    }
+
+    fn emit_const(&mut self, c: &ast::ConstDecl, vis: ast::Visibility) {
+        self.record_public(vis, &c.name);
+        let value = self.emit_expr(&c.value);
+        self.line(format!("{}: {} = {value}", c.name, py_type(&c.ty)));
+    }
+
+    fn emit_use(&mut self, u: &ast::UseDecl) {
+        let Some((last, prefix)) = u.path.split_last() else {
+            return;
+        };
+        if prefix.is_empty() {
+            // A single-segment `use` names something already in scope.
+            return;
+        }
+        // `use a::b::c` → `from .b import c` (relative; the final path segment
+        // before the item is the module). An alias renames on import.
+        let module = prefix.last().map_or("", String::as_str);
+        match &u.alias {
+            Some(alias) => self.line(format!("from .{module} import {last} as {alias}")),
+            None => self.line(format!("from .{module} import {last}")),
+        }
+    }
+
+    /// Emit a free function or a method. `target` is `Some` only when called
+    /// from the method path; the receiver is kept as `self`. A `pub` free fn is
+    /// recorded for `__all__`.
+    fn emit_fn(&mut self, target: Option<&str>, f: &ast::FnDecl, vis: ast::Visibility) {
+        if target.is_none() {
+            self.record_public(vis, &f.sig.name);
+        }
+        let header = self.fn_header(&f.sig, target.is_some());
+        self.line(header);
+        self.indented(|e| e.emit_block_as_body(&f.body));
+        self.line("");
+    }
+
+    /// Emit an `impl` method into the current (class) body.
+    fn emit_method(&mut self, f: &ast::FnDecl) {
+        let is_method = f
+            .sig
+            .params
+            .iter()
+            .any(|p| matches!(p, ast::Param::Receiver));
+        if !is_method {
+            self.line("@staticmethod");
+        }
+        let header = self.fn_header(&f.sig, is_method);
+        self.line(header);
+        self.indented(|e| e.emit_block_as_body(&f.body));
+    }
+
+    /// Build a `def name(params) -> R:` header. `in_class` keeps a `self`
+    /// receiver verbatim; a free function drops nothing.
+    fn fn_header(&mut self, sig: &ast::FnSig, in_class: bool) -> String {
+        let mut params: Vec<String> = Vec::new();
+        for p in &sig.params {
+            match p {
+                ast::Param::Receiver => params.push("self".to_string()),
+                ast::Param::Named { name, ty, .. } => {
+                    self.note_type(ty);
+                    params.push(format!("{name}: {}", py_type(ty)));
+                }
+            }
+        }
+        let _ = in_class;
+        if let Some(ret) = &sig.ret {
+            self.note_type(ret);
+        }
+        let ret = sig.ret.as_ref().map_or_else(|| "None".to_string(), py_type);
+        format!("def {}({}) -> {}:", sig.name, params.join(", "), ret)
+    }
+
+    /// Track that a type annotation references `Callable`/`Result`/`Option`, so
+    /// the corresponding import lands in the preamble.
+    pub(crate) fn note_type(&mut self, ty: &ast::Type) {
+        match ty {
+            ast::Type::Fn { params, ret } => {
+                self.uses_callable = true;
+                for t in params {
+                    self.note_type(t);
+                }
+                if let Some(r) = ret {
+                    self.note_type(r);
+                }
+            }
+            ast::Type::List(inner) => self.note_type(inner),
+            ast::Type::Path(p) => {
+                for seg in &p.segments {
+                    if matches!(seg.name.as_str(), "Result" | "Option") {
+                        self.uses_result = true;
+                    }
+                    for t in &seg.args {
+                        self.note_type(t);
+                    }
+                }
+            }
+            ast::Type::Unit | ast::Type::SelfType => {}
+        }
+    }
+
+    pub(crate) fn note_prelude(&mut self, name: &str) {
+        if matches!(name, "Ok" | "Err" | "Some" | "None" | "Result" | "Option") {
+            self.uses_result = true;
+        }
+    }
+}
+
+/// What a derive is applied to.
+#[derive(Clone, Copy)]
+pub(crate) enum DeriveTarget<'a> {
+    Struct(&'a ast::StructDecl),
+    Enum(&'a ast::EnumDecl),
+}
+
+/// A class header `class Name:` / `class Name(Generic[T]):`.
+fn class_header(name: &str, generics: &[ast::GenericParam]) -> String {
+    if generics.is_empty() {
+        format!("class {name}:")
+    } else {
+        let ps: Vec<String> = generics.iter().map(|g| g.name.clone()).collect();
+        format!("class {name}(Generic[{}]):", ps.join(", "))
+    }
+}
+
+/// The struct/enum names carrying methods — an `impl` block or a `#[derive]`.
+fn method_type_names(module: &ast::Module) -> HashSet<String> {
+    let type_names: HashSet<&str> = module
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            ast::ItemKind::Struct(s) => Some(s.name.as_str()),
+            ast::ItemKind::Enum(e) => Some(e.name.as_str()),
+            _ => None,
+        })
+        .collect();
+    let mut out = HashSet::new();
+    for item in &module.items {
+        match &item.kind {
+            ast::ItemKind::Struct(s) if has_derive(&item.attrs) => {
+                out.insert(s.name.clone());
+            }
+            ast::ItemKind::Enum(e) if has_derive(&item.attrs) => {
+                out.insert(e.name.clone());
+            }
+            ast::ItemKind::Impl(b) => {
+                if let ast::Type::Path(p) = &b.ty
+                    && let Some(seg) = p.segments.last()
+                    && type_names.contains(seg.name.as_str())
+                {
+                    out.insert(seg.name.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+fn has_derive(attrs: &[ast::Attribute]) -> bool {
+    attrs
+        .iter()
+        .flat_map(|a| &a.items)
+        .any(|i| i.name == "derive")
+}
+
+/// The `neoc_lib.py` body: tagged `Result`/`Option` dataclasses (Python has no
+/// native `Result`) with the inherent operations of `lang/DYNAMIC.md` §7,
+/// kept `match`-able. `None` is emitted as `None_` to avoid colliding with the
+/// Python literal.
+const NEOC_LIB_PY: &str = r#"from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Callable, Generic, TypeVar, Union
+
+T = TypeVar("T")
+E = TypeVar("E")
+U = TypeVar("U")
+F = TypeVar("F")
+
+
+@dataclass(frozen=True)
+class Ok(Generic[T]):
+    _0: T
+
+    def is_ok(self) -> bool:
+        return True
+
+    def is_err(self) -> bool:
+        return False
+
+    def unwrap(self) -> T:
+        return self._0
+
+    def unwrap_err(self) -> object:
+        raise Exception("called unwrap_err on an Ok value")
+
+    def map(self, f: Callable[[T], U]) -> "Result[U, object]":
+        return Ok(f(self._0))
+
+    def map_err(self, f: Callable[[object], F]) -> "Result[T, F]":
+        return self
+
+
+@dataclass(frozen=True)
+class Err(Generic[E]):
+    _0: E
+
+    def is_ok(self) -> bool:
+        return False
+
+    def is_err(self) -> bool:
+        return True
+
+    def unwrap(self) -> object:
+        raise Exception("called unwrap on an Err value")
+
+    def unwrap_err(self) -> E:
+        return self._0
+
+    def map(self, f: Callable[[object], U]) -> "Result[U, E]":
+        return self
+
+    def map_err(self, f: Callable[[E], F]) -> "Result[object, F]":
+        return Err(f(self._0))
+
+
+Result = Union[Ok, Err]
+
+
+@dataclass(frozen=True)
+class Some(Generic[T]):
+    _0: T
+
+    def is_some(self) -> bool:
+        return True
+
+    def is_none(self) -> bool:
+        return False
+
+    def unwrap(self) -> T:
+        return self._0
+
+    def unwrap_or(self, default: T) -> T:
+        return self._0
+
+    def map(self, f: Callable[[T], U]) -> "Option[U]":
+        return Some(f(self._0))
+
+    def ok_or(self, err: E) -> "Result[T, E]":
+        return Ok(self._0)
+
+
+@dataclass(frozen=True)
+class None_:
+    def is_some(self) -> bool:
+        return False
+
+    def is_none(self) -> bool:
+        return True
+
+    def unwrap(self) -> object:
+        raise Exception("called unwrap on a None value")
+
+    def unwrap_or(self, default: T) -> T:
+        return default
+
+    def map(self, f: Callable[[object], U]) -> "Option[U]":
+        return self
+
+    def ok_or(self, err: E) -> "Result[object, E]":
+        return Err(err)
+
+
+Option = Union[Some, None_]
+
+
+__all__ = ["Ok", "Err", "Result", "Some", "None_", "Option"]
+"#;
+
+/// The `neoc_lib.pyi`: the typed `Result`/`Option` surface a consumer's stub
+/// imports.
+const NEOC_LIB_PYI: &str = r#"from dataclasses import dataclass
+from typing import Callable, Generic, TypeVar, Union
+
+T = TypeVar("T")
+E = TypeVar("E")
+U = TypeVar("U")
+F = TypeVar("F")
+
+
+@dataclass(frozen=True)
+class Ok(Generic[T]):
+    _0: T
+    def is_ok(self) -> bool: ...
+    def is_err(self) -> bool: ...
+    def unwrap(self) -> T: ...
+    def unwrap_err(self) -> object: ...
+    def map(self, f: Callable[[T], U]) -> Result[U, object]: ...
+    def map_err(self, f: Callable[[object], F]) -> Result[T, F]: ...
+
+
+@dataclass(frozen=True)
+class Err(Generic[E]):
+    _0: E
+    def is_ok(self) -> bool: ...
+    def is_err(self) -> bool: ...
+    def unwrap(self) -> object: ...
+    def unwrap_err(self) -> E: ...
+    def map(self, f: Callable[[object], U]) -> Result[U, E]: ...
+    def map_err(self, f: Callable[[E], F]) -> Result[object, F]: ...
+
+
+Result = Union[Ok, Err]
+
+
+@dataclass(frozen=True)
+class Some(Generic[T]):
+    _0: T
+    def is_some(self) -> bool: ...
+    def is_none(self) -> bool: ...
+    def unwrap(self) -> T: ...
+    def unwrap_or(self, default: T) -> T: ...
+    def map(self, f: Callable[[T], U]) -> Option[U]: ...
+    def ok_or(self, err: E) -> Result[T, E]: ...
+
+
+@dataclass(frozen=True)
+class None_:
+    def is_some(self) -> bool: ...
+    def is_none(self) -> bool: ...
+    def unwrap(self) -> object: ...
+    def unwrap_or(self, default: T) -> T: ...
+    def map(self, f: Callable[[object], U]) -> Option[U]: ...
+    def ok_or(self, err: E) -> Result[object, E]: ...
+
+
+Option = Union[Some, None_]
+"#;
+
+#[cfg(test)]
+mod tests;
