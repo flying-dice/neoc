@@ -299,6 +299,14 @@ impl Emitter {
             ast::ExprKind::Unit => "None".to_string(),
             ast::ExprKind::Path(segments) => self.emit_path(segments),
             ast::ExprKind::Binary { op, lhs, rhs } => {
+                // `&&`/`||` short-circuit: the rhs is evaluated only when the lhs
+                // does not already decide the result. A rhs that hoists (a
+                // `match`/`?`/block emitting statements before its value) must not
+                // run those statements unconditionally, or the effect fires even
+                // when short-circuited — so guard the hoist behind the lhs.
+                if matches!(op, ast::BinOp::And | ast::BinOp::Or) && self.expr_hoists(rhs) {
+                    return self.emit_short_circuit(*op, lhs, rhs);
+                }
                 let l = self.emit_expr(lhs);
                 let r = self.emit_expr(rhs);
                 format!("({l} {} {r})", bin_op(*op))
@@ -441,6 +449,44 @@ impl Emitter {
     fn hoist_match(&mut self, scrutinee: &ast::Expr, arms: &[ast::MatchArm]) -> String {
         let tmp = self.fresh_tmp("_m");
         self.emit_match_stmt(scrutinee, arms, Some(&tmp));
+        tmp
+    }
+
+    /// Whether emitting `e` for its value would hoist statements into the current
+    /// suite (a `match`/`?`/block, or anything containing a `?`). Such a value
+    /// cannot sit inline on the rhs of a short-circuiting `&&`/`||` without its
+    /// hoisted statements running unconditionally. Detected by emitting into a
+    /// throwaway buffer and checking whether any line was produced.
+    fn expr_hoists(&mut self, e: &ast::Expr) -> bool {
+        let saved_seq = (self.try_seq, self.tmp_seq);
+        let lines = self.render(|em| {
+            let _ = em.emit_expr(e);
+        });
+        // Restore the temp counters: the throwaway emit must not perturb the
+        // names the real emit will choose.
+        self.try_seq = saved_seq.0;
+        self.tmp_seq = saved_seq.1;
+        !lines.is_empty()
+    }
+
+    /// Lower a short-circuiting `&&`/`||` whose rhs hoists. Seed a temp from the
+    /// lhs, then guard the rhs (its hoisted statements and the temp's
+    /// reassignment) so it runs only when the lhs has not already decided the
+    /// result — matching the Lua/JS short-circuit semantics.
+    fn emit_short_circuit(&mut self, op: ast::BinOp, lhs: &ast::Expr, rhs: &ast::Expr) -> String {
+        let l = self.emit_expr(lhs);
+        let tmp = self.fresh_tmp("_sc");
+        self.line(format!("{tmp} = {l}"));
+        // `||` evaluates the rhs only when the lhs is falsey; `&&` only when truthy.
+        let guard = match op {
+            ast::BinOp::Or => format!("if not {tmp}:"),
+            _ => format!("if {tmp}:"),
+        };
+        self.line(guard);
+        self.indented(|em| {
+            let r = em.emit_expr(rhs);
+            em.line(format!("{tmp} = {r}"));
+        });
         tmp
     }
 

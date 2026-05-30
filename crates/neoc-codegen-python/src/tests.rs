@@ -134,3 +134,41 @@ fn struct_update_uses_dataclasses_replace() {
         out.py
     );
 }
+
+#[test]
+fn or_short_circuits_a_hoisting_rhs_match() {
+    // `cond || (match …)`: the match hoists statements before its value. Those
+    // must NOT run when `cond` is true — so the match lands inside an
+    // `if not _sc:` guard, never unconditionally in the function body.
+    let src = "pub fn f(cond: bool, o: Option<number>) -> bool {\n  cond || (match o {\n    Some(x) => true,\n    None => false,\n  })\n}";
+    let out = emit_src(src);
+    // Seed from the lhs, then guard the hoisted rhs behind the lhs being falsey.
+    assert!(out.py.contains("_sc1 = cond"), "{}", out.py);
+    assert!(out.py.contains("if not _sc1:"), "{}", out.py);
+    // The `match` is emitted inside the guard (8-space indent: fn body + guard),
+    // never at the unconditional 4-space function-body level.
+    assert!(out.py.contains("        match o:"), "{}", out.py);
+    assert!(
+        !out.py.contains("\n    match o:"),
+        "the match must be guarded, not unconditional:\n{}",
+        out.py
+    );
+    assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
+}
+
+#[test]
+fn and_short_circuits_a_hoisting_rhs_match() {
+    // `cond && (match …)`: the match runs only when `cond` is true — inside an
+    // `if _sc:` guard, never unconditionally.
+    let src = "pub fn g(cond: bool, o: Option<number>) -> bool {\n  cond && (match o {\n    Some(x) => true,\n    None => false,\n  })\n}";
+    let out = emit_src(src);
+    assert!(out.py.contains("_sc1 = cond"), "{}", out.py);
+    assert!(out.py.contains("if _sc1:"), "{}", out.py);
+    assert!(out.py.contains("        match o:"), "{}", out.py);
+    assert!(
+        !out.py.contains("\n    match o:"),
+        "the match must be guarded, not unconditional:\n{}",
+        out.py
+    );
+    assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
+}
