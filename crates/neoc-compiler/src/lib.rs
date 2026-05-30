@@ -260,10 +260,12 @@ impl SourceMap {
     }
 
     /// Builds the VLQ `mappings` string: one segment per generated line, each a
-    /// four-field segment `[genCol=0, sourceIndex=0, srcLine, srcCol=0]`, with
-    /// every field but `srcLine` delta-coded against the previous segment. Lines
-    /// are separated by `;`; the generated column always resets to 0 per line, so
-    /// its delta is `-prevGenCol` each new line.
+    /// four-field segment `[genCol, sourceIndex, srcLine, srcCol]`. Per Source
+    /// Map v3 all four fields are VLQ deltas against the previous segment; here
+    /// only the source-line delta varies. The other three are always `0`: the
+    /// generated column resets to `0` at each `;` (so its delta from the
+    /// line-start `0` is `0`), there is a single source (index delta `0`), and
+    /// the source column is always `0` (delta `0`). Lines are separated by `;`.
     fn encode_mappings(&self, lines: u32) -> String {
         let mut out = String::new();
         // Running absolutes the v3 format deltas against. Generated column resets
