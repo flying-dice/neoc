@@ -506,6 +506,82 @@ fn luau_build_emits_self_typed_module_files_with_no_aux() {
 }
 
 #[test]
+fn python_build_emits_pyi_siblings_and_shared_neoc_lib() {
+    // A Python-target project emits the module artifact `x.py` in `files` and,
+    // in `aux_files`, a typed stub `x.pyi` beside it plus — once at the
+    // resolution root — the shared runtime `neoc_lib.py` and its stub
+    // `neoc_lib.pyi`. (Python has no native `Result`, so the prelude carries the
+    // runtime, not just typings.) These ride in `aux_files`, not `files`, so the
+    // `files`↔`source_maps` positional contract is unaffected. No source map yet.
+    let dir = tempdir();
+    let entry = write(
+        &dir,
+        "x.neoc",
+        "pub struct Row { id: number, body: string }\n\
+         \n\
+         pub fn load(id: number) -> Result<Row, string> {\n\
+         \x20   Ok(Row { id: id, body: \"ok\" })\n\
+         }\n",
+    );
+
+    let project = transpile_project(&entry, Target::Python).expect("read project");
+    assert!(
+        project.ok(),
+        "expected a clean project, got: {:#?}",
+        project.diagnostics
+    );
+
+    // The module artifact is `x.py`, aligned with `source_maps`.
+    assert_eq!(project.files.len(), 1, "expected x.py");
+    assert_eq!(
+        project.files.len(),
+        project.source_maps.len(),
+        "files and source_maps must stay positionally aligned"
+    );
+    let (path, _) = &project.files[0];
+    assert!(
+        path.file_name().is_some_and(|f| f == "x.py"),
+        "expected x.py, got {path:?}"
+    );
+    // No source map yet for Python.
+    assert!(
+        project.source_maps[0].is_empty(),
+        "Python has no source map yet"
+    );
+
+    let aux = |name: &str| {
+        project
+            .aux_files
+            .iter()
+            .find(|(p, _)| p.file_name().is_some_and(|f| f == name))
+            .map_or_else(|| panic!("{name} not in aux_files"), |(_, c)| c.as_str())
+    };
+
+    // The per-module `.pyi` typed stub sits beside `x.py`.
+    let x_pyi = aux("x.pyi");
+    assert!(
+        x_pyi.contains("class Row"),
+        "x.pyi should project the `pub struct`:\n{x_pyi}"
+    );
+
+    // The shared runtime prelude pair is emitted once, at the resolution root.
+    assert!(
+        aux("neoc_lib.py").contains("class Ok"),
+        "neoc_lib.py should carry the Result/Option runtime"
+    );
+    assert!(
+        aux("neoc_lib.pyi").contains("class Ok"),
+        "neoc_lib.pyi should declare the prelude types"
+    );
+    let lib_at_root = project
+        .aux_files
+        .iter()
+        .filter(|(p, _)| p.file_name().is_some_and(|f| f == "neoc_lib.py"))
+        .count();
+    assert_eq!(lib_at_root, 1, "neoc_lib.py emitted exactly once");
+}
+
+#[test]
 fn lua_build_emits_map_and_dlua_aux_plus_shared_neoc_lib() {
     // A Lua build emits, per module, the `.lua` (in `files`), its `.lua.map`
     // source map, and the `.d.lua` LuaLS typings — and once at the resolution

@@ -2563,6 +2563,7 @@ dependencies = [
  "neoc-codegen-js",
  "neoc-codegen-lua",
  "neoc-codegen-luau",
+ "neoc-codegen-python",
  "neoc-codegen-ts",
  "neoc-grammar",
  "neoc-macros",

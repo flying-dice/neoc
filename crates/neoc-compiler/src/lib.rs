@@ -11,6 +11,7 @@ use neoc_ast as ast;
 use neoc_codegen_js as codegen_js;
 use neoc_codegen_lua as codegen_lua;
 use neoc_codegen_luau as codegen_luau;
+use neoc_codegen_python as codegen_python;
 use neoc_codegen_ts as codegen_ts;
 use neoc_parser as parser;
 use neoc_types as types;
@@ -47,6 +48,10 @@ pub enum Target {
     /// self-contained per module (inlined runtime + inline `Result`/`Option`
     /// type aliases) — no `neoc-lib`, no typings sidecar, no source map yet.
     Luau,
+    /// Idiomatic Python 3.10+ (`.py`): the module artifact, with a typed `.pyi`
+    /// sidecar and a shared `neoc_lib.{py,pyi}` runtime at the resolution root.
+    /// No source map yet.
+    Python,
 }
 
 impl Target {
@@ -58,6 +63,7 @@ impl Target {
             Target::Js => "js",
             Target::Ts => "ts",
             Target::Luau => "luau",
+            Target::Python => "py",
         }
     }
 }
@@ -69,6 +75,7 @@ impl std::fmt::Display for Target {
             Target::Js => "js",
             Target::Ts => "ts",
             Target::Luau => "luau",
+            Target::Python => "py",
         })
     }
 }
@@ -82,8 +89,9 @@ impl std::str::FromStr for Target {
             "js" => Ok(Target::Js),
             "ts" => Ok(Target::Ts),
             "luau" => Ok(Target::Luau),
+            "py" | "python" => Ok(Target::Python),
             other => Err(format!(
-                "unknown target `{other}` (expected `lua`, `js`, `ts`, or `luau`)"
+                "unknown target `{other}` (expected `lua`, `js`, `ts`, `luau`, or `py`)"
             )),
         }
     }
@@ -429,6 +437,10 @@ pub struct ProjectOutput {
     /// * On both the JS and TS targets the shared `neoc-lib.js` +
     ///   `neoc-lib.d.ts` prelude at the resolution root; on the Lua target the
     ///   shared `neoc-lib.d.lua` typings (no runtime `neoc-lib.lua`).
+    /// * On the Python target the per-module typed stub (`x.pyi`, beside each
+    ///   `x.py`) plus, once at the resolution root, the shared runtime
+    ///   `neoc_lib.py` and its stub `neoc_lib.pyi` (Python has no native
+    ///   `Result`, so this prelude carries the runtime, not just typings).
     ///
     /// Each entry pairs a destination path with its contents, and the path is
     /// already in its final form (extension included) — unlike `files`, it must
@@ -583,23 +595,15 @@ pub fn transpile_project(entry: &Path, target: Target) -> std::io::Result<Projec
         if !emitted.dlua.is_empty() {
             aux_files.push((src_path.with_extension("d.lua"), emitted.dlua));
         }
+        // Python target: a non-empty `.pyi` typed stub sibling beside the
+        // module's `.py`. `x.neoc` → `x.pyi`.
+        if !emitted.pyi.is_empty() {
+            aux_files.push((src_path.with_extension("pyi"), emitted.pyi));
+        }
     }
 
-    // Once per build, the shared prelude at the resolution root — the runtime
-    // `Result`/`Option` module and its declarations the emitted modules import.
-    // JS and TS targets share it; Lua inlines the prelude per module. A `.ts`
-    // module's `import "./neoc-lib"` resolves to `neoc-lib.d.ts` for types and
-    // `neoc-lib.js` at runtime, so a typed-TS project type-checks and runs.
-    if matches!(target, Target::Js | Target::Ts) {
-        aux_files.push((root.join("neoc-lib.js"), codegen_js::neoc_lib_js()));
-        aux_files.push((root.join("neoc-lib.d.ts"), codegen_js::neoc_lib_dts()));
-    }
-    // Lua target: the shared `Result`/`Option` LuaLS typings sidecar at the
-    // resolution root, mirroring `neoc-lib.d.ts`. Typings only — Lua inlines the
-    // runtime prelude per module, so there's no `neoc-lib.lua`.
-    if matches!(target, Target::Lua) {
-        aux_files.push((root.join("neoc-lib.d.lua"), codegen_lua::neoc_lib_dlua()));
-    }
+    // Once per build, the target's shared prelude at the resolution root.
+    aux_files.extend(root_prelude_aux(&root, target));
 
     if !diagnostics.is_empty() {
         files.clear();
@@ -612,6 +616,33 @@ pub fn transpile_project(entry: &Path, target: Target) -> std::io::Result<Projec
         aux_files,
         diagnostics,
     })
+}
+
+/// The target's shared prelude files at the resolution `root`, emitted once per
+/// build.
+///
+/// * **JS / TS** — the runtime `neoc-lib.js` + its `neoc-lib.d.ts` types. A
+///   `.ts` module's `import "./neoc-lib"` resolves to the `.d.ts` for types and
+///   the `.js` at runtime.
+/// * **Lua** — the `Result`/`Option` `LuaLS` typings `neoc-lib.d.lua` only; Lua
+///   inlines the runtime prelude per module, so there's no `neoc-lib.lua`.
+/// * **Python** — the runtime `neoc_lib.py` + its stub `neoc_lib.pyi`. Python
+///   has no native `Result`, so this prelude carries the runtime, not just
+///   typings.
+/// * **Luau** — none; each module is self-contained.
+fn root_prelude_aux(root: &Path, target: Target) -> Vec<(PathBuf, String)> {
+    match target {
+        Target::Js | Target::Ts => vec![
+            (root.join("neoc-lib.js"), codegen_js::neoc_lib_js()),
+            (root.join("neoc-lib.d.ts"), codegen_js::neoc_lib_dts()),
+        ],
+        Target::Lua => vec![(root.join("neoc-lib.d.lua"), codegen_lua::neoc_lib_dlua())],
+        Target::Python => vec![
+            (root.join("neoc_lib.py"), codegen_python::neoc_lib_py()),
+            (root.join("neoc_lib.pyi"), codegen_python::neoc_lib_pyi()),
+        ],
+        Target::Luau => Vec::new(),
+    }
 }
 
 /// Diagnoses one module against an in-memory project, for the editor.
@@ -944,6 +975,9 @@ fn append_source_mapping_url(output: &mut String, target: Target, map_name: &str
     let marker = match target {
         Target::Lua | Target::Luau => "--#",
         Target::Js | Target::Ts => "//#",
+        // Python has no source map yet, so this is never reached for it; `#` is
+        // its comment marker should that change.
+        Target::Python => "#",
     };
     if !output.is_empty() && !output.ends_with('\n') {
         output.push('\n');
@@ -1008,6 +1042,9 @@ struct Emitted {
     /// The module's `.d.lua` `LuaLS` typings (Lua target). Empty for JS/TS and
     /// for a module that exports nothing.
     dlua: String,
+    /// The module's `.pyi` typed stub (Python target). Empty for the other
+    /// targets and for a module that exports nothing.
+    pyi: String,
 }
 
 fn emit(target: Target, module: &ast::Module, source: &str, inputs: &EmitInputs) -> Emitted {
@@ -1020,6 +1057,7 @@ fn emit(target: Target, module: &ast::Module, source: &str, inputs: &EmitInputs)
                 source_map: SourceMap { lua: r.source_map },
                 dts: String::new(),
                 dlua: r.dlua,
+                pyi: String::new(),
             }
         }
         Target::Js => {
@@ -1037,6 +1075,7 @@ fn emit(target: Target, module: &ast::Module, source: &str, inputs: &EmitInputs)
                 source_map: SourceMap::default(),
                 dts: r.dts,
                 dlua: String::new(),
+                pyi: String::new(),
             }
         }
         Target::Ts => {
@@ -1056,6 +1095,7 @@ fn emit(target: Target, module: &ast::Module, source: &str, inputs: &EmitInputs)
                 source_map: SourceMap::default(),
                 dts: String::new(),
                 dlua: String::new(),
+                pyi: String::new(),
             }
         }
         Target::Luau => {
@@ -1069,6 +1109,22 @@ fn emit(target: Target, module: &ast::Module, source: &str, inputs: &EmitInputs)
                 source_map: SourceMap::default(),
                 dts: String::new(),
                 dlua: String::new(),
+                pyi: String::new(),
+            }
+        }
+        Target::Python => {
+            // Python needs only the module + imported enums (no JS bindings,
+            // method types, externs, or importer dir). The `.py` is the module
+            // artifact; the `.pyi` rides in `Emitted::pyi` to the aux wiring. No
+            // source map yet.
+            let r = codegen_python::emit(module, &inputs.enums);
+            Emitted {
+                output: r.py,
+                messages: r.diagnostics.into_iter().map(|d| d.message).collect(),
+                source_map: SourceMap::default(),
+                dts: String::new(),
+                dlua: String::new(),
+                pyi: r.pyi,
             }
         }
     }

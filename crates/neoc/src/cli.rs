@@ -30,7 +30,7 @@ pub enum Command {
         /// Write output under this directory instead of next to the source.
         #[arg(short, long, value_name = "DIR")]
         output: Option<PathBuf>,
-        /// Target language: `lua`, `js`, `ts`, or `luau`. Defaults to the
+        /// Target language: `lua`, `js`, `ts`, `luau`, or `py`. Defaults to the
         /// project's manifest target, or `lua` for a lone file.
         #[arg(short, long)]
         target: Option<Target>,

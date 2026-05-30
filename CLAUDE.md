@@ -101,9 +101,9 @@ The workspace splits responsibilities across crates; boundaries are enforced by
   `tokio`, `mlua`, `hyper`, `sqlx`. The runtime host deps live in `neoc-vm`; I/O
   lives there, in the `neoc` bin, and (over stdio) in `neoc-lsp`.
 - The pure leaf crates (`neoc-ast`, `neoc-macros`, `neoc-codegen-lua`,
-  `neoc-codegen-luau`, `neoc-codegen-ts`) compile for `wasm32-unknown-unknown`;
-  CI gates them with
-  `cargo check --target wasm32-unknown-unknown -p neoc-ast -p neoc-macros -p neoc-codegen-lua -p neoc-codegen-luau -p neoc-codegen-ts`.
+  `neoc-codegen-luau`, `neoc-codegen-ts`, `neoc-codegen-python`) compile for
+  `wasm32-unknown-unknown`; CI gates them with
+  `cargo check --target wasm32-unknown-unknown -p neoc-ast -p neoc-macros -p neoc-codegen-lua -p neoc-codegen-luau -p neoc-codegen-ts -p neoc-codegen-python`.
   The parser graph links the tree-sitter C runtime, which doesn't cross-compile
   to wasm32 yet — a tracked limitation, so the gate guards the leaf crates
   where host-dependency creep would start.
@@ -127,7 +127,7 @@ cargo run -p neoc -- run 'crates/neoc/tests/**/*.test.luau'  # Luau integration 
 cargo run -p neoc -- emit-headers --out crates/neoc-vm/src/lua  # regenerate ext headers
 cargo bench --bench lib                              # Criterion benchmarks (lib modules)
 cargo bench --bench vnd                              # Criterion benchmarks (vnd modules)
-cargo check --target wasm32-unknown-unknown -p neoc-ast -p neoc-macros -p neoc-codegen-lua -p neoc-codegen-luau -p neoc-codegen-ts  # wasm leaf gate
+cargo check --target wasm32-unknown-unknown -p neoc-ast -p neoc-macros -p neoc-codegen-lua -p neoc-codegen-luau -p neoc-codegen-ts -p neoc-codegen-python  # wasm leaf gate
 cargo clippy --workspace --all-targets               # lint
 cargo fmt --check                                    # formatting check
 ```
@@ -163,6 +163,8 @@ neoc-macros                  # built-in derives (Clone/Eq/Debug/Display)
 neoc-codegen-lua             # AST → Lua 5.1; one emit module per construct family
 neoc-codegen-luau            # AST → self-typed Luau (inlined runtime, inline types)
 neoc-codegen-js              # AST → JavaScript (ES2022)
+neoc-codegen-ts              # AST → self-typed TypeScript (inline neoc types)
+neoc-codegen-python          # AST → idiomatic Python 3.10+ (.py + .pyi sidecar)
 neoc-compiler                # public lib API: transpile to any target; merges per-stage diagnostics
 neoc-autosql                 # SQL schema + queries → typed .neoc data layer (neoc autosql)
 neoc-fmt                     # formatter
