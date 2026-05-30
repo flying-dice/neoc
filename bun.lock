@@ -10,13 +10,37 @@
         "typescript": "^6",
       },
     },
-    "packages/bun-http-sqlite": {
-      "name": "@neoc-sh/demo-bun-http-sqlite",
+    "packages/bun-http-sqlite-js": {
+      "name": "@neoc-sh/demo-bun-http-sqlite-js",
+      "version": "0.1.0",
+    },
+    "packages/bun-http-sqlite-ts": {
+      "name": "@neoc-sh/demo-bun-http-sqlite-ts",
+      "version": "0.1.0",
+    },
+    "packages/lua-notes": {
+      "name": "@neoc-sh/demo-lua-notes",
+      "version": "0.1.0",
+    },
+    "packages/luau-notes": {
+      "name": "@neoc-sh/demo-luau-notes",
+      "version": "0.1.0",
+    },
+    "packages/python-http-sqlite": {
+      "name": "@neoc-sh/demo-python-http-sqlite",
       "version": "0.1.0",
     },
   },
   "packages": {
-    "@neoc-sh/demo-bun-http-sqlite": ["@neoc-sh/demo-bun-http-sqlite@workspace:packages/bun-http-sqlite"],
+    "@neoc-sh/demo-bun-http-sqlite-js": ["@neoc-sh/demo-bun-http-sqlite-js@workspace:packages/bun-http-sqlite-js"],
+
+    "@neoc-sh/demo-bun-http-sqlite-ts": ["@neoc-sh/demo-bun-http-sqlite-ts@workspace:packages/bun-http-sqlite-ts"],
+
+    "@neoc-sh/demo-lua-notes": ["@neoc-sh/demo-lua-notes@workspace:packages/lua-notes"],
+
+    "@neoc-sh/demo-luau-notes": ["@neoc-sh/demo-luau-notes@workspace:packages/luau-notes"],
+
+    "@neoc-sh/demo-python-http-sqlite": ["@neoc-sh/demo-python-http-sqlite@workspace:packages/python-http-sqlite"],
 
     "@types/bun": ["@types/bun@1.3.14", "", { "dependencies": { "bun-types": "1.3.14" } }, "sha512-h1hFqFVcvAvD9j9K7ZW7vd82aSA+rTdznZa+5bwvCwqSB1jmmfLcbIWhOLx1/+boy/xmjgCs/OMUL8hRJSmnPw=="],
 

@@ -1,4 +1,4 @@
-# bun-http-sqlite
+# bun-http-sqlite-js
 
 A notes HTTP server on **ports & adapters**, with the host driving:
 

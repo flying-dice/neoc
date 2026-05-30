@@ -1,5 +1,5 @@
 {
-  "name": "@neoc-sh/demo-bun-http-sqlite",
+  "name": "@neoc-sh/demo-bun-http-sqlite-js",
   "version": "0.1.0",
   "description": "neoc HTTP server backed by bun:sqlite — ports & adapters: neoc owns the contracts, a TypeScript adapter implements them.",
   "type": "module",
