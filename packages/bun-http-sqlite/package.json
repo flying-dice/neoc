@@ -1,17 +1,13 @@
 {
   "name": "@neoc-sh/demo-bun-http-sqlite",
   "version": "0.1.0",
-  "description": "neoc HTTP server backed by bun:sqlite — uses autots-generated extern headers (no runtime shim).",
+  "description": "neoc HTTP server backed by bun:sqlite — ports & adapters: neoc owns the contracts, a TypeScript adapter implements them.",
   "type": "module",
   "private": true,
   "scripts": {
-    "gen:ts": "bun autots && cargo run -q -p neoc -- fmt 'src/main/neoc/autots/*.neoc'",
     "gen:sql": "cargo run -p neoc -- autosql",
-    "prebuild": "bun run gen:ts && bun run gen:sql",
+    "prebuild": "bun run gen:sql",
     "build": "cargo run -p neoc -- build",
     "start": "bun src/main/ts/main.ts"
-  },
-  "dependencies": {
-    "@neoc-sh/autots": "workspace:*"
   }
 }

@@ -1,9 +1,3 @@
 [package]
 name = "demo-bun-http-sqlite"
 target = "js"
-
-[autots]
-modules = [
-  { module = "bun:sqlite", types = "@types/bun" },
-  { module = "bun:test", types = "@types/bun" },
-]

@@ -5,9 +5,10 @@ type checker, and how references to it lower to target code. This is the only
 place declarations may appear without bodies; everywhere else, every `fn`,
 method, and constructor has an implementation.
 
-The generator [`autots`](../packages/autots) emits `extern` blocks from a
-TypeScript surface. The language rules here are host-agnostic; the *contents* of
-any given block belong to whichever runtime is bound.
+An `extern` block is authored directly — a *port* the host runtime implements —
+or emitted by a generator from a foreign surface. The language rules here are
+host-agnostic; the *contents* of any given block belong to whichever runtime is
+bound.
 
 ---
 
@@ -243,10 +244,10 @@ privileged status.
 
 ---
 
-## Appendix: generator degradation policy (`autots`)
+## Appendix: generator degradation policy
 
-This is **generator policy**, not language semantics: how `autots` maps
-TypeScript features neoc's extern model lacks. The governing principle —
+This is **generator policy**, not language semantics: how a generator maps
+source-language features neoc's extern model lacks. The governing principle —
 **at the foreign boundary, degrade toward the bare target value; never emit a
 neoc *tagged* representation (`Option`, `enum`) into a foreign call**, because
 the backend passes arguments verbatim and a tag would leak into the call.

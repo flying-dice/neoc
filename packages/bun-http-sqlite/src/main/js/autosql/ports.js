@@ -1,7 +1,4 @@
-const Ok = (v) => ({ __enum: "Result", __tag: "Ok", _0: v });
-const Err = (e) => ({ __enum: "Result", __tag: "Err", _0: e });
-const Some = (v) => ({ __enum: "Option", __tag: "Some", _0: v });
-const None = { __enum: "Option", __tag: "None" };
+import { Ok, Err, Some, None, Option$, Result$ } from "../neoc-lib.js";
 
 export function bind_opt_int(value) {
   return (() => {
