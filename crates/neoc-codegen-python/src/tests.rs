@@ -136,6 +136,45 @@ fn struct_update_uses_dataclasses_replace() {
 }
 
 #[test]
+fn tail_if_without_else_emits_no_return() {
+    // A function-body tail that is a unit-valued `if`-without-`else` lowers to a
+    // bare `if` statement — there is no value temp, so no `return _ifN` is
+    // emitted (that name would be unbound). Regression for the dangling
+    // `return _if1` the run-oracle caught on `6-02-derive-eq`.
+    let src =
+        "extern { fn use_it(x: number); }\npub fn f(c: bool) {\n  if c {\n    use_it(1);\n  }\n}";
+    let out = emit_src(src);
+    assert!(out.py.contains("def f(c: bool) -> None:"), "{}", out.py);
+    assert!(out.py.contains("if c:"), "{}", out.py);
+    assert!(
+        !out.py.contains("return _if"),
+        "a tail if-without-else must not return an unbound hoist temp:\n{}",
+        out.py
+    );
+    assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
+}
+
+#[test]
+fn tail_if_else_with_values_still_returns() {
+    // A value-valued tail `if`/`else` (both arms a value) DOES produce a value —
+    // it must still be returned. Here it collapses to a conditional expression.
+    let src = "pub fn pick(c: bool) -> number {\n  if c { 1 } else { 2 }\n}";
+    let out = emit_src(src);
+    assert!(out.py.contains("return (1 if c else 2)"), "{}", out.py);
+    assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
+}
+
+#[test]
+fn tail_match_for_value_still_returns() {
+    // A tail `match` used for its value hoists to a bound temp and is returned.
+    let src = "pub fn area(o: Option<number>) -> number {\n  match o {\n    Some(x) => x,\n    None => 0,\n  }\n}";
+    let out = emit_src(src);
+    assert!(out.py.contains("match o:"), "{}", out.py);
+    assert!(out.py.contains("return _m1"), "{}", out.py);
+    assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
+}
+
+#[test]
 fn or_short_circuits_a_hoisting_rhs_match() {
     // `cond || (match …)`: the match hoists statements before its value. Those
     // must NOT run when `cond` is true — so the match lands inside an

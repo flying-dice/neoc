@@ -28,15 +28,27 @@ pub(crate) enum PathKind {
 
 impl Emitter {
     /// Emit a block as a function/suite body: statements, then `return <value>`
-    /// when the block has a trailing value. An empty body becomes `pass`.
+    /// when the block has a trailing **value**. An empty body becomes `pass`.
+    ///
+    /// A tail expression that lowers to a *statement* with no bound value — a
+    /// unit-valued `if`-without-`else`, a `while`/`for`/`loop`, an assignment, a
+    /// bare statement-block — is emitted for effect with no `return`: there is no
+    /// temp to return (a statement-position `if` produces none), so `return _ifN`
+    /// would reference an unbound name. Only a value-producing tail (a `match`, a
+    /// value `if`/`else`, a call, an arithmetic expr — all of which hoist to a
+    /// bound temp) gets `return`.
     pub(crate) fn emit_block_as_body(&mut self, block: &ast::Block) {
         let start = self.line_count();
         for stmt in &block.stmts {
             self.emit_stmt(stmt);
         }
         if let Some(value) = &block.value {
-            let v = self.emit_expr(value);
-            self.line(format!("return {v}"));
+            if tail_is_statement(value) {
+                self.emit_expr_stmt(value);
+            } else {
+                let v = self.emit_expr(value);
+                self.line(format!("return {v}"));
+            }
         } else if self.line_count() == start {
             self.line("pass");
         }
@@ -715,6 +727,26 @@ impl Emitter {
             .as_ref()
             .map_or_else(|| "None".to_string(), crate::py_type);
         format!("def {}({}) -> {}:", sig.name, params.join(", "), ret)
+    }
+}
+
+/// Whether a block-tail expression lowers to a pure statement with no bound
+/// value — so it must be emitted for effect, never `return`ed. These are the
+/// unit-valued statement forms: an `if` with no `else` (no value, no
+/// hoist-temp), the loops, assignment, and the bare control-flow forms. A bare
+/// block defers to its own tail. Everything else produces a value temp.
+fn tail_is_statement(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::If { else_, .. } => else_.is_none(),
+        ast::ExprKind::While { .. }
+        | ast::ExprKind::For { .. }
+        | ast::ExprKind::Loop { .. }
+        | ast::ExprKind::Assign { .. }
+        | ast::ExprKind::Return(_)
+        | ast::ExprKind::Break
+        | ast::ExprKind::Continue => true,
+        ast::ExprKind::Block(b) => b.value.as_deref().is_some_and(tail_is_statement),
+        _ => false,
     }
 }
 
