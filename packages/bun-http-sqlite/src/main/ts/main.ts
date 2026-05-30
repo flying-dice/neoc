@@ -8,10 +8,16 @@
 //   2. owns HTTP — `Bun.serve` and the `fetch` handler;
 //   3. dispatches each route to a neoc controller (`init` / `list` / `create`),
 //      imported from the transpiled neoc and typed via its `.d.ts`.
-import { Database } from "bun:sqlite";
+//
+// Note: the host never touches neoc's runtime encoding (`__enum` / `__tag` /
+// `_0`). It builds and reads `SqlValue` through the generated `SqlValue.*`
+// constructors and `SqlValue.match`, and reads a `Result` through its methods
+// (`is_ok` / `unwrap` / `unwrap_err`) — all from neoc's emitted `.d.ts`.
+import { Database, type SQLQueryBindings } from "bun:sqlite";
 import { Ok, Err } from "../js/neoc-lib.js";
+import { SqlValue } from "../js/autosql/ports.js";
+import type { SqlValue as SqlValueT } from "../js/autosql/ports";
 import type { Result } from "../js/neoc-lib";
-import type { SqlValue } from "../js/autosql/ports";
 import type { ListNotesRow } from "../js/autosql/list_notes";
 import { init, list, create } from "../js/main.js";
 
@@ -19,42 +25,39 @@ import { init, list, create } from "../js/main.js";
 // host against neoc's emitted `SqlValue` / `Result` types. (neoc does not yet
 // project a trait to a `.d.ts` interface; once it does, import it directly.)
 interface SqlExecutor {
-  execute(sql: string, params: SqlValue[]): Result<number, string>;
-  query(sql: string, params: SqlValue[]): Result<SqlValue[][], string>;
+  execute(sql: string, params: SqlValueT[]): Result<number, string>;
+  query(sql: string, params: SqlValueT[]): Result<SqlValueT[][], string>;
 }
 
 // --- the adapter: implement the port over bun:sqlite ---
 
 const database = new Database(":memory:");
 
-// SqlValue (a neoc enum) -> the JS value bun:sqlite binds. The runtime shape is
-// the tagged object neoc emits, e.g. `{ __enum: "SqlValue", __tag: "Int", _0: 1 }`.
-function toBound(v: SqlValue): number | string | null {
-  switch (v.__tag) {
-    case "Int":
-    case "Real":
-    case "Text":
-      return v._0;
-    case "Bool":
-      return v._0 ? 1 : 0;
-    case "Null":
-      return null;
-  }
+// SqlValue -> the JS value bun:sqlite binds. `SqlValue.match` does the read; the
+// tag never appears here.
+function toBound(v: SqlValueT): SQLQueryBindings {
+  return SqlValue.match<SQLQueryBindings>(v, {
+    Int: (n) => n,
+    Real: (n) => n,
+    Text: (s) => s,
+    Bool: (b) => (b ? 1 : 0),
+    Null: () => null,
+  });
 }
 
-// A raw SQLite cell -> SqlValue, so the result is `match`-able back in neoc.
-function toCell(value: unknown): SqlValue {
-  if (typeof value === "number") return { __enum: "SqlValue", __tag: "Real", _0: value };
-  if (typeof value === "bigint") return { __enum: "SqlValue", __tag: "Real", _0: Number(value) };
-  if (typeof value === "string") return { __enum: "SqlValue", __tag: "Text", _0: value };
-  if (typeof value === "boolean") return { __enum: "SqlValue", __tag: "Bool", _0: value };
-  return { __enum: "SqlValue", __tag: "Null" };
+// A raw SQLite cell -> SqlValue, via the generated variant constructors.
+function toCell(value: unknown): SqlValueT {
+  if (typeof value === "number") return SqlValue.Real(value);
+  if (typeof value === "bigint") return SqlValue.Real(Number(value));
+  if (typeof value === "string") return SqlValue.Text(value);
+  if (typeof value === "boolean") return SqlValue.Bool(value);
+  return SqlValue.Null;
 }
 
 const db: SqlExecutor = {
   execute(sql, params) {
     try {
-      return Ok(database.run(sql, ...params.map(toBound)).changes);
+      return Ok(database.run(sql, params.map(toBound)).changes);
     } catch (e) {
       return Err(String(e));
     }
@@ -83,12 +86,13 @@ Bun.serve({
     const path = new URL(req.url).pathname;
     if (path.startsWith("/add/")) {
       const added = create(db, decodeURIComponent(path.slice("/add/".length)));
-      return new Response(added.__tag === "Ok" ? `added` : `error: ${added._0}`);
+      return new Response(added.is_ok() ? `added` : `error: ${added.unwrap_err()}`);
     }
     const notes = list(db);
-    if (notes.__tag === "Err") return new Response(`error: ${notes._0}`);
-    const body = notes._0.map((n: ListNotesRow) => `${n.id}:${n.body}`).join(" | ");
-    return new Response(notes._0.length ? `${body} | ` : body);
+    if (notes.is_err()) return new Response(`error: ${notes.unwrap_err()}`);
+    const rows = notes.unwrap();
+    const body = rows.map((n: ListNotesRow) => `${n.id}:${n.body}`).join(" | ");
+    return new Response(rows.length ? `${body} | ` : body);
   },
 });
 

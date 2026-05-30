@@ -1,5 +1,13 @@
 import { Ok, Err, Some, None, Option$, Result$ } from "../neoc-lib.js";
 
+export const SqlValue = {
+  Int: (_0) => ({ __enum: "SqlValue", __tag: "Int", _0 }),
+  Real: (_0) => ({ __enum: "SqlValue", __tag: "Real", _0 }),
+  Text: (_0) => ({ __enum: "SqlValue", __tag: "Text", _0 }),
+  Bool: (_0) => ({ __enum: "SqlValue", __tag: "Bool", _0 }),
+  Null: { __enum: "SqlValue", __tag: "Null" },
+  match: (value, arms) => value.__tag === "Int" ? arms.Int(value._0) : value.__tag === "Real" ? arms.Real(value._0) : value.__tag === "Text" ? arms.Text(value._0) : value.__tag === "Bool" ? arms.Bool(value._0) : value.__tag === "Null" ? arms.Null() : undefined,
+};
 export function bind_opt_int(value) {
   return (() => {
     const __s1 = value;
