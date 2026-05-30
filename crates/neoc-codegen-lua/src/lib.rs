@@ -12,6 +12,7 @@
 //! from the module's `enum` declarations (plus the `Result`/`Option` prelude)
 //! to tell an enum variant apart from an ordinary value or call.
 
+mod dlua;
 mod expr;
 mod pat;
 mod validate;
@@ -21,6 +22,10 @@ use std::collections::{HashMap, HashSet};
 use neoc_ast as ast;
 
 use crate::expr::VariantShape;
+
+pub use crate::dlua::{
+    lua_type, project_const, project_enum, project_fn, project_struct, project_type_alias,
+};
 
 /// Enum declarations indexed for use-site resolution: `enum name → (variant
 /// name → payload shape)`. Built from the module's `enum` items and seeded
@@ -202,6 +207,12 @@ pub struct EmitResult {
     /// module was emitted through [`emit_with_source`], which supplies the
     /// source text needed to translate byte spans to line numbers.
     pub source_map: LineMap,
+    /// The module's `LuaLS` definition-file sidecar (`.d.lua`): a `---@class` per
+    /// `pub` struct, a class-union per `pub` enum, an annotated stub per `pub fn`,
+    /// and a `---@type` field per `pub const` — describing the actual emitted Lua
+    /// values so a Lua-LSP user types neoc output. Empty when nothing is `pub`.
+    /// The driver writes this to the sibling `x.d.lua`.
+    pub dlua: String,
 }
 
 /// Lower a module to Lua 5.1 source, with no source map.
@@ -274,7 +285,75 @@ fn emit_inner(
     };
     e.emit_module(module);
     let diagnostics = std::mem::take(&mut e.diagnostics);
-    e.finish_with_map(diagnostics)
+    let mut result = e.finish_with_map(diagnostics);
+    result.dlua = module_dlua(module);
+    result
+}
+
+/// Project a module's `.d.lua` sibling: a `LuaLS` declaration per `pub` item —
+/// `---@class` for a struct, a class-union for an enum, an annotated
+/// `function M.f(…) end` stub for a free function, and a `---@type` field for a
+/// const. The declarations describe the actual emitted Lua values
+/// (`lang/DYNAMIC.md` §3.1, §3.2), so a Lua-LSP user narrows on `__tag`/`__struct`
+/// and calls neoc output type-safely.
+///
+/// The sidecar opens with `local M = {}` and closes with `return M`, the module
+/// table the annotated function stubs and const fields hang off — the shape a
+/// `LuaLS` consumer `require`s. Empty when the module exposes nothing `pub`.
+fn module_dlua(module: &ast::Module) -> String {
+    let mut decls: Vec<String> = Vec::new();
+    for item in &module.items {
+        if item.vis != ast::Visibility::Public {
+            continue;
+        }
+        match &item.kind {
+            ast::ItemKind::Fn(f) => decls.push(dlua::project_fn(&f.sig, true)),
+            ast::ItemKind::Struct(s) => decls.push(dlua::project_struct(s, true)),
+            ast::ItemKind::Enum(e) => decls.push(dlua::project_enum(e, true)),
+            ast::ItemKind::Const(c) => decls.push(dlua::project_const(c, true)),
+            ast::ItemKind::TypeAlias(a) => decls.push(dlua::project_type_alias(a, true)),
+            _ => {}
+        }
+    }
+    if decls.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("local M = {}\n\n");
+    out.push_str(&decls.join("\n\n"));
+    out.push_str("\n\nreturn M\n");
+    out
+}
+
+/// The `.d.lua` for the shared `Result`/`Option` runtime: the tagged class-unions
+/// whose field shapes mirror the runtime values the prelude builds
+/// (`lang/DYNAMIC.md` §7). A consumer's `.d.lua` references `Result`/`Option`;
+/// this declares them so emitted Lua that returns them stays typed.
+///
+/// Pure typings layered on top — this does **not** alter the inlined Lua runtime
+/// (`RESULT_PRELUDE`). The driver writes the returned text to `neoc-lib.d.lua`.
+#[must_use]
+pub fn neoc_lib_dlua() -> String {
+    let mut s = String::new();
+    // Result<T, E>: Ok and Err carry their payload at integer key `[1]` (§7).
+    s.push_str("---@class Result.Ok<T>\n");
+    s.push_str("---@field __enum \"Result\"\n");
+    s.push_str("---@field __tag \"Ok\"\n");
+    s.push_str("---@field [1] T\n");
+    s.push_str("---@class Result.Err<E>\n");
+    s.push_str("---@field __enum \"Result\"\n");
+    s.push_str("---@field __tag \"Err\"\n");
+    s.push_str("---@field [1] E\n");
+    s.push_str("---@alias Result<T, E> Result.Ok<T> | Result.Err<E>\n");
+    // Option<T>: Some carries its payload at `[1]`; None is the bare tagged table.
+    s.push_str("---@class Option.Some<T>\n");
+    s.push_str("---@field __enum \"Option\"\n");
+    s.push_str("---@field __tag \"Some\"\n");
+    s.push_str("---@field [1] T\n");
+    s.push_str("---@class Option.None\n");
+    s.push_str("---@field __enum \"Option\"\n");
+    s.push_str("---@field __tag \"None\"\n");
+    s.push_str("---@alias Option<T> Option.Some<T> | Option.None\n");
+    s
 }
 
 /// A precomputed index of line-start byte offsets, for turning a byte offset
@@ -542,6 +621,9 @@ impl Emitter {
             lua: s,
             diagnostics,
             source_map,
+            // The `.d.lua` sidecar is filled by the `emit_inner` caller, which
+            // holds the module; the finisher only assembles the `.lua` text.
+            dlua: String::new(),
         }
     }
 
@@ -1051,5 +1133,89 @@ fn expr_refs<'a>(expr: &'a ast::Expr, used: &mut std::collections::HashSet<&'a s
             }
         }
         Int(_) | Float(_) | Str(_) | Bool(_) | Unit | Break | Continue => {}
+    }
+}
+
+#[cfg(test)]
+mod dlua_tests {
+    use super::*;
+
+    fn emit_src(src: &str) -> EmitResult {
+        let parsed = neoc_parser::parse(src);
+        assert!(
+            parsed.ok(),
+            "source did not parse: {:?}",
+            parsed.diagnostics
+        );
+        emit(&parsed.module)
+    }
+
+    #[test]
+    fn module_dlua_projects_pub_struct_as_class() {
+        let out = emit_src("pub struct Point { x: number, y: number }");
+        assert!(
+            out.dlua.contains("---@class Point"),
+            "missing class header:\n{}",
+            out.dlua
+        );
+        assert!(out.dlua.contains("---@field x number"), "{}", out.dlua);
+        assert!(out.dlua.contains("---@field y number"), "{}", out.dlua);
+        assert!(out.dlua.starts_with("local M = {}"), "{}", out.dlua);
+        assert!(out.dlua.trim_end().ends_with("return M"), "{}", out.dlua);
+    }
+
+    #[test]
+    fn module_dlua_projects_pub_enum_as_class_union() {
+        let out = emit_src("pub enum Shape { Circle(number), Square { side: number } }");
+        assert!(out.dlua.contains("---@class Shape.Circle"), "{}", out.dlua);
+        assert!(
+            out.dlua.contains("---@field __tag \"Circle\""),
+            "{}",
+            out.dlua
+        );
+        assert!(out.dlua.contains("---@field [1] number"), "{}", out.dlua);
+        assert!(
+            out.dlua
+                .contains("---@alias Shape Shape.Circle | Shape.Square"),
+            "{}",
+            out.dlua
+        );
+    }
+
+    #[test]
+    fn module_dlua_projects_pub_fn_stub() {
+        let out = emit_src("pub fn add(a: number, b: number) -> number { a }");
+        assert!(out.dlua.contains("---@param a number"), "{}", out.dlua);
+        assert!(out.dlua.contains("---@return number"), "{}", out.dlua);
+        assert!(
+            out.dlua.contains("function M.add(a, b) end"),
+            "{}",
+            out.dlua
+        );
+    }
+
+    #[test]
+    fn module_dlua_omits_private_items() {
+        let out = emit_src("struct Hidden { a: number }\nfn secret() {}");
+        assert!(
+            out.dlua.is_empty(),
+            "expected empty .d.lua for a module with no pub items, got:\n{}",
+            out.dlua
+        );
+    }
+
+    #[test]
+    fn neoc_lib_dlua_declares_tagged_result_and_option() {
+        let d = neoc_lib_dlua();
+        assert!(
+            d.contains("---@alias Result<T, E> Result.Ok<T> | Result.Err<E>"),
+            "{d}"
+        );
+        assert!(
+            d.contains("---@alias Option<T> Option.Some<T> | Option.None"),
+            "{d}"
+        );
+        assert!(d.contains("---@field __tag \"Ok\""), "{d}");
+        assert!(d.contains("---@field [1] T"), "{d}");
     }
 }

@@ -27,6 +27,7 @@ use cucumber::{World, gherkin::Step, given, then, when};
 struct Codegen {
     source: String,
     lua: Option<String>,
+    dlua: String,
     diagnostics: Vec<String>,
 }
 
@@ -49,6 +50,7 @@ fn emit_lua(world: &mut Codegen) {
     let result = neoc_codegen_lua::emit(&parsed.module);
     world.diagnostics = result.diagnostics.into_iter().map(|d| d.message).collect();
     world.lua = Some(result.lua);
+    world.dlua = result.dlua;
 }
 
 #[then(regex = r#"^the Lua contains "([^"]*)"$"#)]
@@ -70,6 +72,28 @@ fn assert_contains(world: &Codegen, snippet: &str) {
     assert!(
         lua.contains(snippet),
         "emitted Lua is missing the expected snippet\n  expected substring: {snippet:?}\n  actual Lua:\n{lua}",
+    );
+}
+
+#[then(regex = r#"^the d\.lua contains "([^"]*)"$"#)]
+fn dlua_contains(world: &mut Codegen, snippet: String) {
+    assert_dlua_contains(world, &snippet);
+}
+
+/// Docstring variant of `the d.lua contains`, for `LuaLS` annotations that carry a
+/// `"` (a `---@field __tag "Ok"` literal) — the inline `"…"` form stops at the
+/// first inner quote, so a `"""` block holds the literal `.d.lua` substring.
+#[then("the d.lua contains:")]
+fn dlua_contains_docstring(world: &mut Codegen, step: &Step) {
+    let snippet = docstring(step).trim().to_string();
+    assert_dlua_contains(world, &snippet);
+}
+
+fn assert_dlua_contains(world: &Codegen, snippet: &str) {
+    assert!(
+        world.dlua.contains(snippet),
+        "emitted .d.lua is missing the expected snippet\n  expected substring: {snippet:?}\n  actual .d.lua:\n{}",
+        world.dlua,
     );
 }
 
