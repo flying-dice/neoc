@@ -230,13 +230,13 @@ pub fn transpile(source: &str, target: Target) -> CompileOutput {
     // A single-file `transpile` has no resolved module graph, so no cross-module
     // `use` can resolve to a binding or an imported enum — pass empty sets.
     let inputs = EmitInputs::default();
-    let (output, emit_messages, source_map) = emit(target, &elaborated, source, &inputs);
-    diagnostics.extend(emit_messages.into_iter().map(Diagnostic::emit));
+    let emitted = emit(target, &elaborated, source, &inputs);
+    diagnostics.extend(emitted.messages.into_iter().map(Diagnostic::emit));
 
     CompileOutput {
-        output,
+        output: emitted.output,
         diagnostics,
-        source_map,
+        source_map: emitted.source_map,
     }
 }
 
@@ -263,6 +263,16 @@ pub struct ProjectOutput {
     /// uses the entry's map to rewrite runtime faults to neoc positions. Empty
     /// when `files` is (a project that reported a diagnostic emits nothing).
     pub source_maps: Vec<SourceMap>,
+    /// Generated sidecar files that are **not** compiled modules and so have no
+    /// source map: the per-module TypeScript declarations (`x.d.ts`, beside each
+    /// `x.js`) and the shared `neoc-lib.js` + `neoc-lib.d.ts` prelude at the
+    /// resolution root. Each entry pairs a destination path with its contents,
+    /// and the path is already in its final form (extension included) — unlike
+    /// `files`, it must **not** have the target extension re-applied. JS target
+    /// only; empty for [`Target::Lua`] and when the project reported a
+    /// diagnostic. Kept separate from `files` so the `files`↔`source_maps`
+    /// positional contract stays intact.
+    pub aux_files: Vec<(PathBuf, String)>,
     pub diagnostics: Vec<ProjectDiagnostic>,
 }
 
@@ -373,20 +383,37 @@ pub fn transpile_project(entry: &Path, target: Target) -> std::io::Result<Projec
     let universe = type_universe(&loaded);
     let mut files = Vec::new();
     let mut source_maps = Vec::new();
+    let mut aux_files = Vec::new();
     for path in &order {
-        let (output, source_map) =
+        let emitted =
             check_and_emit_module(&root, &loaded, &universe, path, target, &mut diagnostics);
-        files.push((loaded[path].path.with_extension(target.extension()), output));
-        source_maps.push(source_map);
+        let src_path = &loaded[path].path;
+        files.push((src_path.with_extension(target.extension()), emitted.output));
+        source_maps.push(emitted.source_map);
+        // JS target: a non-empty `.d.ts` sibling beside the module's `.js`.
+        // `x.neoc` → `x.d.ts` (replacing the single trailing extension).
+        if !emitted.dts.is_empty() {
+            aux_files.push((src_path.with_extension("d.ts"), emitted.dts));
+        }
+    }
+
+    // Once per build, the shared prelude at the resolution root — the runtime
+    // `Result`/`Option` module and its declarations the emitted modules import.
+    // JS target only; Lua inlines the prelude per module.
+    if target == Target::Js {
+        aux_files.push((root.join("neoc-lib.js"), codegen_js::neoc_lib_js()));
+        aux_files.push((root.join("neoc-lib.d.ts"), codegen_js::neoc_lib_dts()));
     }
 
     if !diagnostics.is_empty() {
         files.clear();
         source_maps.clear();
+        aux_files.clear();
     }
     Ok(ProjectOutput {
         files,
         source_maps,
+        aux_files,
         diagnostics,
     })
 }
@@ -512,7 +539,8 @@ fn focus_diagnostics(
 
 /// Checks one resolved module's bodies (with its `use`-imported symbols in
 /// scope) and emits it to `target`, pushing any type/emit diagnostics onto
-/// `diagnostics`. Returns the emitted source and its [`SourceMap`].
+/// `diagnostics`. Returns the [`Emitted`] result — the source, its [`SourceMap`],
+/// and the JS-target `.d.ts` sibling (empty for Lua).
 fn check_and_emit_module(
     root: &Path,
     loaded: &HashMap<PathBuf, LoadedModule>,
@@ -520,7 +548,7 @@ fn check_and_emit_module(
     path: &Path,
     target: Target,
     diagnostics: &mut Vec<ProjectDiagnostic>,
-) -> (String, SourceMap) {
+) -> Emitted {
     let me = &loaded[path];
     let mut table = types::collect(&me.module);
     let mut imports = types::SymbolTable::new();
@@ -558,14 +586,14 @@ fn check_and_emit_module(
         externs,
         importer_dir: module_dir_segments(root, path),
     };
-    let (output, emit_messages, source_map) = emit(target, &elaborated, &me.source, &inputs);
-    for message in emit_messages {
+    let emitted = emit(target, &elaborated, &me.source, &inputs);
+    for message in &emitted.messages {
         diagnostics.push(ProjectDiagnostic {
             path: path.to_path_buf(),
-            diagnostic: Diagnostic::emit(message),
+            diagnostic: Diagnostic::emit(message.clone()),
         });
     }
-    (output, source_map)
+    emitted
 }
 
 /// The destination a [`resolve_use`] writes a resolved import into: the
@@ -727,20 +755,28 @@ struct EmitInputs<'a> {
     importer_dir: Vec<String>,
 }
 
-fn emit(
-    target: Target,
-    module: &ast::Module,
-    source: &str,
-    inputs: &EmitInputs,
-) -> (String, Vec<String>, SourceMap) {
+/// One module's emit, normalised across backends: the target source, any
+/// emit-stage messages, the source map (Lua only), and the TypeScript
+/// declaration sibling (JS only; empty otherwise).
+struct Emitted {
+    output: String,
+    messages: Vec<String>,
+    source_map: SourceMap,
+    /// The module's `.d.ts` text (JS target). Empty for Lua and for a module
+    /// that exports nothing.
+    dts: String,
+}
+
+fn emit(target: Target, module: &ast::Module, source: &str, inputs: &EmitInputs) -> Emitted {
     match target {
         Target::Lua => {
             let r = codegen_lua::emit_with_imports(module, source, &inputs.enums, &inputs.externs);
-            (
-                r.lua,
-                r.diagnostics.into_iter().map(|d| d.message).collect(),
-                SourceMap { lua: r.source_map },
-            )
+            Emitted {
+                output: r.lua,
+                messages: r.diagnostics.into_iter().map(|d| d.message).collect(),
+                source_map: SourceMap { lua: r.source_map },
+                dts: String::new(),
+            }
         }
         Target::Js => {
             let r = codegen_js::emit(
@@ -751,11 +787,12 @@ fn emit(
                 &inputs.enums,
                 &inputs.importer_dir,
             );
-            (
-                r.js,
-                r.diagnostics.into_iter().map(|d| d.message).collect(),
-                SourceMap::default(),
-            )
+            Emitted {
+                output: r.js,
+                messages: r.diagnostics.into_iter().map(|d| d.message).collect(),
+                source_map: SourceMap::default(),
+                dts: r.dts,
+            }
         }
     }
 }

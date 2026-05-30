@@ -282,16 +282,30 @@ fn build_project(
     let mut written: Vec<PathBuf> = Vec::new();
     for (src_dest, contents) in compiled.files {
         let dest = project_out_path(&src_dest, &source_root, &out_dir, target);
-        if written.contains(&dest) {
-            continue;
-        }
-        if let Some(parent) = dest.parent() {
-            fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
-        }
-        fs::write(&dest, contents).with_context(|| format!("writing {}", dest.display()))?;
-        written.push(dest);
+        write_output(&dest, &contents, &mut written)?;
+    }
+    // Sidecar files (`.d.ts`, shared `neoc-lib`) keep their own extension —
+    // map them under `out_dir` without swapping the target extension.
+    for (src_dest, contents) in compiled.aux_files {
+        let dest = aux_out_path(&src_dest, &source_root, &out_dir);
+        write_output(&dest, &contents, &mut written)?;
     }
     Ok(0)
+}
+
+/// Writes `contents` to `dest`, creating parent directories, unless `dest` was
+/// already written this build (a module reachable from several entries is
+/// emitted once). Records every path it writes.
+fn write_output(dest: &Path, contents: &str, written: &mut Vec<PathBuf>) -> Result<()> {
+    if written.contains(&dest.to_path_buf()) {
+        return Ok(());
+    }
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+    }
+    fs::write(dest, contents).with_context(|| format!("writing {}", dest.display()))?;
+    written.push(dest.to_path_buf());
+    Ok(())
 }
 
 /// Builds each explicit path/glob as its own entry, using single-file
@@ -322,16 +336,13 @@ fn build_paths(
 
         for (src_dest, contents) in project.files {
             let dest = out_path(&src_dest, output, target);
-            // A module reachable from several entries is emitted once.
-            if written.contains(&dest) {
-                continue;
-            }
-            if let Some(parent) = dest.parent() {
-                fs::create_dir_all(parent)
-                    .with_context(|| format!("creating {}", parent.display()))?;
-            }
-            fs::write(&dest, contents).with_context(|| format!("writing {}", dest.display()))?;
-            written.push(dest);
+            write_output(&dest, &contents, &mut written)?;
+        }
+        // Sidecar files keep their own extension: alongside the source, or under
+        // `output` by file name.
+        for (src_dest, contents) in project.aux_files {
+            let dest = aux_out_path_loose(&src_dest, output);
+            write_output(&dest, &contents, &mut written)?;
         }
     }
 
@@ -490,6 +501,28 @@ fn project_out_path(source: &Path, source_root: &Path, out_dir: &Path, target: T
         .strip_prefix(source_root)
         .unwrap_or_else(|_| Path::new(name.file_name().unwrap_or(name.as_os_str())));
     out_dir.join(rel)
+}
+
+/// The destination for a project sidecar file (`.d.ts`, shared `neoc-lib`):
+/// under `out_dir`, preserving the path relative to `source_root`, with the
+/// sidecar's own extension left intact (unlike [`project_out_path`], which
+/// swaps in the target extension). A sidecar outside `source_root` falls back to
+/// its file name under `out_dir`.
+fn aux_out_path(source: &Path, source_root: &Path, out_dir: &Path) -> PathBuf {
+    let rel = source
+        .strip_prefix(source_root)
+        .unwrap_or_else(|_| Path::new(source.file_name().unwrap_or(source.as_os_str())));
+    out_dir.join(rel)
+}
+
+/// The destination for a sidecar file in the lone-file / glob build form:
+/// alongside the source keeping its own extension, or under `output` by file
+/// name. The sidecar form of [`out_path`] with no extension swap.
+fn aux_out_path_loose(source: &Path, output: Option<&Path>) -> PathBuf {
+    match output {
+        Some(dir) => dir.join(source.file_name().unwrap_or(source.as_os_str())),
+        None => source.to_path_buf(),
+    }
 }
 
 /// A transpiled `.neoc` entry ready to run: the emitted Lua and the line map

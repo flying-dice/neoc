@@ -1272,7 +1272,12 @@ mod tests {
             items: vec![use_item, konst],
         };
         // Importer in `geo/`, target module `math` at the root → `../math`.
-        let dts = module_dts(&module, &HashSet::<String>::new(), &["geo".to_string()], false);
+        let dts = module_dts(
+            &module,
+            &HashSet::<String>::new(),
+            &["geo".to_string()],
+            false,
+        );
         assert_eq!(
             dts,
             "import type { Vec2 } from \"../math\";\n\

@@ -262,6 +262,105 @@ fn single_file_project_matches_single_file_transpile() {
     assert_eq!(project.files[0].1, transpile(src, Target::Lua).output);
 }
 
+#[test]
+fn js_build_emits_dts_siblings_and_shared_neoc_lib() {
+    // A JS-target project emits a `.d.ts` beside every `.js` (projecting each
+    // module's `pub` exports) and, once at the resolution root, the shared
+    // `neoc-lib.js` + `neoc-lib.d.ts` prelude. These ride in `aux_files`, not
+    // `files`, so the `files`↔`source_maps` positional contract is unaffected.
+    let dir = tempdir();
+    write(&dir, "y.neoc", "pub fn helper() -> number { 7 }\n");
+    let entry = write(
+        &dir,
+        "x.neoc",
+        "use y::helper;\n\
+         \n\
+         pub struct Row { id: number, body: string }\n\
+         \n\
+         pub fn load(id: number) -> Result<Row, string> {\n\
+         \x20   Ok(Row { id: id + helper(), body: \"ok\" })\n\
+         }\n",
+    );
+
+    let project = transpile_project(&entry, Target::Js).expect("read project");
+    assert!(
+        project.ok(),
+        "expected a clean project, got: {:#?}",
+        project.diagnostics
+    );
+
+    // The compiled-module contract is untouched: one `.js` per module, one map each.
+    assert_eq!(project.files.len(), 2, "expected x.js + y.js");
+    assert_eq!(
+        project.files.len(),
+        project.source_maps.len(),
+        "files and source_maps must stay positionally aligned"
+    );
+
+    let aux = |name: &str| {
+        project
+            .aux_files
+            .iter()
+            .find(|(p, _)| p.file_name().is_some_and(|f| f == name))
+            .map_or_else(|| panic!("{name} not in aux_files"), |(_, c)| c.as_str())
+    };
+
+    // Per-module `.d.ts` siblings carry the projected `pub` declarations.
+    let x_dts = aux("x.d.ts");
+    assert!(
+        x_dts.contains("export interface Row { id: number; body: string; }"),
+        "x.d.ts should project the `pub struct`:\n{x_dts}"
+    );
+    assert!(
+        x_dts.contains("export declare function load(id: number): Result<Row, string>;"),
+        "x.d.ts should project the `pub fn` returning Result:\n{x_dts}"
+    );
+    assert!(
+        x_dts.contains("import type { Result, Option } from \"./neoc-lib\";"),
+        "x.d.ts should import Result/Option from the shared neoc-lib:\n{x_dts}"
+    );
+    let y_dts = aux("y.d.ts");
+    assert!(
+        y_dts.contains("export declare function helper(): number;"),
+        "y.d.ts should project its `pub fn`:\n{y_dts}"
+    );
+
+    // The shared prelude is emitted once, at the resolution root.
+    assert!(
+        aux("neoc-lib.js").contains("export { Ok, Err, Some, None, Option$, Result$ };"),
+        "neoc-lib.js should export the Result/Option runtime"
+    );
+    assert!(
+        aux("neoc-lib.d.ts").contains("export declare function Ok"),
+        "neoc-lib.d.ts should declare the prelude types"
+    );
+    let lib_at_root = project
+        .aux_files
+        .iter()
+        .filter(|(p, _)| p.file_name().is_some_and(|f| f == "neoc-lib.js"))
+        .count();
+    assert_eq!(lib_at_root, 1, "neoc-lib.js emitted exactly once");
+}
+
+#[test]
+fn lua_build_emits_no_dts_or_neoc_lib() {
+    // The `.d.ts` surface is JS-target-only; a Lua build emits no sidecars.
+    let dir = tempdir();
+    write(&dir, "y.neoc", "pub fn helper() -> number { 7 }\n");
+    let entry = write(
+        &dir,
+        "x.neoc",
+        "use y::helper;\n\nfn main() -> number { helper() }\n",
+    );
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
+    assert!(project.ok(), "{:#?}", project.diagnostics);
+    assert!(
+        project.aux_files.is_empty(),
+        "Lua target emits no aux files, got: {:?}",
+        project.aux_files
+    );
+}
+
 /// Whether `node` is on PATH, so the ESM run trial can drive it. When absent
 /// the trial skips the run and asserts only the emitted import shape.
 fn node_present() -> bool {
