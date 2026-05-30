@@ -14,6 +14,7 @@
 
 mod dlua;
 mod expr;
+mod luau;
 mod pat;
 mod validate;
 
@@ -26,6 +27,40 @@ use crate::expr::VariantShape;
 pub use crate::dlua::{
     lua_type, project_const, project_enum, project_fn, project_struct, project_type_alias,
 };
+/// The Luau inline-type projector, re-exported for the typed-Luau backend
+/// (`neoc-codegen-luau`). These project a neoc `type`/`struct`/`enum`/alias to
+/// **native inline Luau type syntax** — distinct from the `LuaLS` `---@` dialect
+/// the `.d.lua` sidecar uses (see [`dlua`]). The typed consumer builds a
+/// self-typed `.luau` from these plus the typed runtime body this crate emits
+/// under [`HeaderStyle::Luau`].
+pub use crate::luau::{
+    luau_type, project_enum as project_luau_enum, project_struct as project_luau_struct,
+    project_type_alias as project_luau_type_alias,
+};
+
+/// How declaration *headers* are rendered — the one axis on which the typed Luau
+/// backend (`neoc-codegen-luau`) diverges from plain Lua 5.1.
+///
+/// The runtime lowering — every expression, statement, `match`, `?`, struct and
+/// enum value — is identical between the two targets; a typed `.luau` *is* the
+/// Lua runtime with Luau type annotations woven onto its declarations. So the
+/// emitter shares its whole body machinery and varies only here: under
+/// [`HeaderStyle::Luau`] a function's header carries parameter and return types
+/// (`function f(a: number): R`) and a `const` carries its declared type; under
+/// [`HeaderStyle::Lua`] (the default) headers are untyped, byte-for-byte the Lua
+/// backend's output.
+///
+/// `neoc-codegen-luau` selects [`HeaderStyle::Luau`] via [`emit_with_style`] and
+/// supplies the data-type `type` declarations (struct/enum/alias) itself; this
+/// crate stays the single owner of the runtime lowering.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum HeaderStyle {
+    /// Untyped Lua 5.1 headers (`function f(a)`). The Lua backend's output.
+    #[default]
+    Lua,
+    /// Luau-typed headers (`function f(a: number): R`).
+    Luau,
+}
 
 /// Enum declarations indexed for use-site resolution: `enum name → (variant
 /// name → payload shape)`. Built from the module's `enum` items and seeded
@@ -221,7 +256,37 @@ pub struct EmitResult {
 /// numbers back to neoc positions; the emitted Lua text is identical either way.
 #[must_use]
 pub fn emit(module: &ast::Module) -> EmitResult {
-    emit_inner(module, None, &[], &[])
+    emit_inner(module, None, &[], &[], HeaderStyle::Lua)
+}
+
+/// Lower a module, choosing how declaration headers are rendered.
+///
+/// Identical to [`emit_with_imports`] but for the `style` parameter. Under
+/// [`HeaderStyle::Lua`] the output is byte-for-byte the Lua backend's; under
+/// [`HeaderStyle::Luau`] function and `const` headers carry Luau types
+/// (`function f(a: number): R`, `const MAX: number = …` shaped as a typed
+/// binding), so the emitted `lua` field is a typed Luau runtime body — the shared
+/// core `neoc-codegen-luau` wraps into a self-typed `.luau` (it supplies the
+/// `type` struct/enum/alias declarations itself).
+///
+/// The whole expression/statement/`match`/`?` lowering is the same regardless of
+/// `style`; this crate stays the single owner of the runtime lowering for both
+/// the Lua and the Luau targets.
+#[must_use]
+pub fn emit_with_style(
+    module: &ast::Module,
+    source: &str,
+    imported_enums: &[&ast::EnumDecl],
+    imported_externs: &[ast::ExternItem],
+    style: HeaderStyle,
+) -> EmitResult {
+    emit_inner(
+        module,
+        Some(source),
+        imported_enums,
+        imported_externs,
+        style,
+    )
 }
 
 /// Lower a module to Lua 5.1 source and build a [`LineMap`] from `source`.
@@ -232,7 +297,7 @@ pub fn emit(module: &ast::Module) -> EmitResult {
 /// differs.
 #[must_use]
 pub fn emit_with_source(module: &ast::Module, source: &str) -> EmitResult {
-    emit_inner(module, Some(source), &[], &[])
+    emit_inner(module, Some(source), &[], &[], HeaderStyle::Lua)
 }
 
 /// Like [`emit_with_source`], but also given the `pub` enum declarations the
@@ -250,7 +315,13 @@ pub fn emit_with_imports(
     imported_enums: &[&ast::EnumDecl],
     imported_externs: &[ast::ExternItem],
 ) -> EmitResult {
-    emit_inner(module, Some(source), imported_enums, imported_externs)
+    emit_inner(
+        module,
+        Some(source),
+        imported_enums,
+        imported_externs,
+        HeaderStyle::Lua,
+    )
 }
 
 fn emit_inner(
@@ -258,6 +329,7 @@ fn emit_inner(
     source: Option<&str>,
     imported_enums: &[&ast::EnumDecl],
     imported_externs: &[ast::ExternItem],
+    style: HeaderStyle,
 ) -> EmitResult {
     // A `use`d extern item lowers to its native `require` in *this* consumer, not
     // an import from the defining file (which emits no runtime value for an
@@ -281,6 +353,7 @@ fn emit_inner(
         extern_fn_ns,
         imported_externs: imported_externs.to_vec(),
         imported_extern_names: ast::extern_value_names_from_items(imported_externs),
+        header_style: style,
         ..Emitter::default()
     };
     e.emit_module(module);
@@ -466,6 +539,10 @@ pub(crate) struct Emitter {
     /// through its native `require` and `mod`-qualified reference, never the
     /// defining module's emitted output (which holds no runtime value for it).
     imported_extern_names: std::collections::HashSet<String>,
+    /// How declaration headers are rendered — Lua (untyped, the default) or Luau
+    /// (typed). Set by [`emit_with_style`]; consulted only in [`Self::emit_fn`]
+    /// and [`Self::emit_const`], so the runtime body is identical either way.
+    header_style: HeaderStyle,
 }
 
 /// A loop being emitted. When `break_flag` is set the loop uses the
@@ -824,7 +901,14 @@ impl Emitter {
         } else {
             "local "
         };
-        self.line(format!("{kw}{} = {value}", c.name));
+        // A typed `.luau` carries the declared type on the binding; plain Lua
+        // elides it.
+        let anno = if self.header_style == HeaderStyle::Luau {
+            format!(": {}", luau::luau_type(&c.ty))
+        } else {
+            String::new()
+        };
+        self.line(format!("{kw}{}{anno} = {value}", c.name));
     }
 
     fn emit_struct(&mut self, s: &ast::StructDecl, vis: ast::Visibility) {
@@ -929,26 +1013,36 @@ impl Emitter {
     /// Emit a function. `target` is the type name when this is a method or
     /// associated function inside an impl.
     fn emit_fn(&mut self, target: Option<&str>, f: &ast::FnDecl, vis: ast::Visibility) {
-        let mut params = Vec::new();
-        for p in &f.sig.params {
-            match p {
-                ast::Param::Receiver => params.push("self".to_string()),
-                ast::Param::Named { name, .. } => params.push(name.clone()),
-            }
-        }
-        let param_list = params.join(", ");
+        // The typed `.luau` header weaves parameter and return types; plain Lua
+        // emits bare parameter names and no return annotation. The runtime body
+        // below is identical either way.
+        let (param_list, ret) = if self.header_style == HeaderStyle::Luau {
+            luau::typed_params_and_ret(&f.sig)
+        } else {
+            let names = f
+                .sig
+                .params
+                .iter()
+                .map(|p| match p {
+                    ast::Param::Receiver => "self".to_string(),
+                    ast::Param::Named { name, .. } => name.clone(),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            (names, String::new())
+        };
         let header = match target {
-            Some(t) => format!("function {t}.{}({param_list})", f.sig.name),
+            Some(t) => format!("function {t}.{}({param_list}){ret}", f.sig.name),
             None if vis == ast::Visibility::Public => {
-                format!("function {}({param_list})", f.sig.name)
+                format!("function {}({param_list}){ret}", f.sig.name)
             }
             // A forward-referenced private fn: assign the pre-declared `local`
             // (hoisted in `emit_module`) instead of declaring it here, where a
             // `local function` would be invisible to earlier callers.
             None if self.forward_decls.contains(&f.sig.name) => {
-                format!("{} = function({param_list})", f.sig.name)
+                format!("{} = function({param_list}){ret}", f.sig.name)
             }
-            None => format!("local function {}({param_list})", f.sig.name),
+            None => format!("local function {}({param_list}){ret}", f.sig.name),
         };
         self.line(header);
         self.indented(|e| {

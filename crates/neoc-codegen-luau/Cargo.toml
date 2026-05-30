@@ -1,0 +1,31 @@
+[package]
+name = "neoc-codegen-luau"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+neoc-ast.workspace = true
+# The Luau backend is the typed consumer of the Lua backend's shared lowering
+# core: it emits the same Lua 5.1 runtime body (via `emit_with_style`) and the
+# same neoc→Luau inline-type projection (`luau_type`/`project_luau_*`), then
+# weaves the inline `type` declarations a self-typed `.luau` carries.
+neoc-codegen-lua.workspace = true
+
+[dev-dependencies]
+neoc-parser.workspace = true
+# Behavioural spec: Gherkin features in `tooling/codegen-luau/` driven against
+# `emit`. cucumber supplies its own runner (default libtest harness disabled
+# below); `futures::executor::block_on` drives it so this pure leaf crate stays
+# tokio-free, mirroring `neoc-codegen-lua`'s harness.
+cucumber = "0.21.1"
+futures = "0.3"
+
+[lints]
+workspace = true
+
+[[test]]
+name = "cucumber"
+harness = false
