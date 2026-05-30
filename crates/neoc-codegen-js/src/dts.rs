@@ -77,7 +77,7 @@ fn ts_path(p: &ast::TypePath) -> String {
 }
 
 /// Render a generic parameter list (`<T, U>`), or empty when there are none.
-fn ts_generics(generics: &[ast::GenericParam]) -> String {
+pub(crate) fn ts_generics(generics: &[ast::GenericParam]) -> String {
     if generics.is_empty() {
         return String::new();
     }

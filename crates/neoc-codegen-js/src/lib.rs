@@ -46,10 +46,35 @@ use std::collections::{HashMap, HashSet};
 
 use neoc_ast as ast;
 
+use crate::dts::ts_generics;
 pub use crate::dts::{
     project_const, project_enum, project_fn, project_struct, project_type_alias, ts_type,
 };
 use crate::expr::VariantShape;
+
+/// How declaration *headers* are rendered — the one axis on which the typed
+/// TypeScript backend (`neoc-codegen-ts`) diverges from plain JavaScript.
+///
+/// The runtime lowering — every expression, statement, `match`, `?`, struct and
+/// enum value — is identical between the two targets; a typed `.ts` *is* the JS
+/// runtime with TypeScript type annotations woven onto its declarations. So the
+/// emitter shares its whole body machinery and varies only here: under
+/// [`HeaderStyle::Ts`] a free function's header carries parameter and return
+/// types and generics (`function f<T>(a: T): R {`) and a `const` carries its
+/// declared type (`const MAX: number = …`); under [`HeaderStyle::Js`] (the
+/// default) headers are untyped, byte-for-byte the JavaScript backend's output.
+///
+/// `neoc-codegen-ts` selects [`HeaderStyle::Ts`] via [`emit_with_style`] and
+/// supplies the data-type declarations (`interface`/union/alias) itself; this
+/// crate stays the single owner of the runtime lowering.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum HeaderStyle {
+    /// Untyped JavaScript headers (`function f(a) {`). The JS backend's output.
+    #[default]
+    Js,
+    /// TypeScript-typed headers (`function f<T>(a: T): R {`).
+    Ts,
+}
 
 /// Enum declarations indexed for use-site resolution: `enum name → (variant
 /// name → payload shape)`. Built from the module's `enum` items and seeded
@@ -222,6 +247,40 @@ pub fn emit<S: std::hash::BuildHasher>(
     imported_enums: &[&ast::EnumDecl],
     importer_dir: &[String],
 ) -> EmitResult {
+    emit_with_style(
+        module,
+        imported_bindings,
+        imported_method_types,
+        imported_externs,
+        imported_enums,
+        importer_dir,
+        HeaderStyle::Js,
+    )
+}
+
+/// Lower a module, choosing how declaration headers are rendered.
+///
+/// Identical to [`emit`] but for the `style` parameter. Under
+/// [`HeaderStyle::Js`] the output is byte-for-byte [`emit`]'s; under
+/// [`HeaderStyle::Ts`] free-function and `const` headers carry TypeScript types
+/// (`function f<T>(a: T): R {`, `const MAX: number = …`), so the emitted `js`
+/// field is a typed JavaScript runtime body — the shared core
+/// `neoc-codegen-ts` wraps into a self-typed `.ts` (it supplies the
+/// data-type `interface`/union/alias declarations itself).
+///
+/// The whole expression/statement/`match`/`?` lowering is the same regardless of
+/// `style`; this crate stays the single owner of the runtime lowering for both
+/// the JavaScript and the TypeScript targets.
+#[must_use]
+pub fn emit_with_style<S: std::hash::BuildHasher>(
+    module: &ast::Module,
+    imported_bindings: &HashSet<String, S>,
+    imported_method_types: &HashSet<String, S>,
+    imported_externs: &[ast::ExternItem],
+    imported_enums: &[&ast::EnumDecl],
+    importer_dir: &[String],
+    style: HeaderStyle,
+) -> EmitResult {
     // A `use`d extern item lowers to its native import in *this* consumer, not an
     // import from the defining file's emitted module — the defining file emits no
     // runtime value for an extern (`lang/EXTERN.md` §Lowering). Merge the imported
@@ -247,6 +306,7 @@ pub fn emit<S: std::hash::BuildHasher>(
         extern_fn_ns,
         imported_externs: imported_externs.to_vec(),
         importer_dir: importer_dir.to_vec(),
+        header_style: style,
         ..Emitter::default()
     };
     e.emit_module(module);
@@ -667,6 +727,10 @@ pub(crate) struct Emitter {
     /// sibling as `./b.js`, not `./a/b.js`. Empty for single-file `transpile`,
     /// where no cross-module `use` resolves anyway.
     importer_dir: Vec<String>,
+    /// How declaration headers are rendered — JS (untyped, the default) or TS
+    /// (typed). Set by [`emit_with_style`]; consulted only in [`Self::emit_fn`]
+    /// and [`Self::emit_const`], so the runtime body is identical either way.
+    header_style: HeaderStyle,
 }
 
 /// The body of the `Result`/`Option` runtime: method-bearing variant
@@ -958,7 +1022,13 @@ impl Emitter {
     fn emit_const(&mut self, c: &ast::ConstDecl, vis: ast::Visibility) {
         let value = self.emit_expr(&c.value);
         let kw = export_kw(vis);
-        self.line(format!("{kw}const {} = {value};", c.name));
+        // A typed `.ts` carries the declared type; plain JS elides it.
+        let anno = if self.header_style == HeaderStyle::Ts {
+            format!(": {}", ts_type(&c.ty))
+        } else {
+            String::new()
+        };
+        self.line(format!("{kw}const {}{anno} = {value};", c.name));
     }
 
     fn emit_impl(&mut self, b: &ast::ImplBlock) {
@@ -983,21 +1053,46 @@ impl Emitter {
     /// `pub` one becomes an exported declaration; impl methods live on the
     /// prototype and are reached through the value, never exported by keyword.
     fn emit_fn(&mut self, target: Option<&str>, f: &ast::FnDecl, vis: ast::Visibility) {
+        let typed = self.header_style == HeaderStyle::Ts;
         let mut params = Vec::new();
         for p in &f.sig.params {
             match p {
                 // The receiver is the implicit `this`; drop it from the JS
                 // parameter list.
                 ast::Param::Receiver => {}
-                ast::Param::Named { name, .. } => params.push(name.clone()),
+                ast::Param::Named { name, ty, .. } => {
+                    if typed {
+                        params.push(format!("{name}: {}", ts_type(ty)));
+                    } else {
+                        params.push(name.clone());
+                    }
+                }
             }
         }
         let param_list = params.join(", ");
         if let Some(t) = target {
+            // A method lands on the type's prototype object; its function
+            // expression stays untyped even under TS (it typechecks loosely
+            // against `Type$: {}`), so the runtime body is identical.
             self.line(format!("{t}$.{} = function({param_list}) {{", f.sig.name));
         } else {
             let kw = export_kw(vis);
-            self.line(format!("{kw}function {}({param_list}) {{", f.sig.name));
+            // A typed `.ts` free function carries generics and a return type.
+            let (g, ret) = if typed {
+                let g = ts_generics(&f.sig.generics);
+                let r = f
+                    .sig
+                    .ret
+                    .as_ref()
+                    .map_or_else(|| "void".to_string(), ts_type);
+                (g, format!(": {r}"))
+            } else {
+                (String::new(), String::new())
+            };
+            self.line(format!(
+                "{kw}function {}{g}({param_list}){ret} {{",
+                f.sig.name
+            ));
         }
         self.indented(|e| e.emit_block_as_body(&f.body));
         self.line("}");
