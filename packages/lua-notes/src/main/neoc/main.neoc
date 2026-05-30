@@ -1,0 +1,39 @@
+// The application, in pure neoc — the controllers.
+//
+// Raw Luau (the `luau` CLI) has no HTTP or database, so this is the same
+// ports-and-adapters model as the http-sqlite examples with a runtime-
+// appropriate port: an in-memory `Store`. neoc owns the controllers and the
+// `Store` port; the Luau host implements the port (a table) and drives. The
+// port speaks only primitives (string / number), so the host never constructs
+// a neoc value. `neoc build` transpiles this to `src/main/luau/main.luau`, a
+// requireable module.
+
+// The storage port — the host implements it over whatever it likes (here a
+// Luau table). Primitives only, by design.
+pub trait Store {
+    fn add(self, body: string) -> number;
+    fn count(self) -> number;
+    fn at(self, index: number) -> string;
+}
+
+// Add a note. The empty-body rule is a neoc decision.
+pub fn create<S: Store>(store: S, body: string) -> string {
+    if body == "" {
+        "error: body must not be empty"
+    } else {
+        let id = store.add(body);
+        "added: " + body
+    }
+}
+
+// Render every note, joined.
+pub fn list<S: Store>(store: S) -> string {
+    let out = "";
+    let i = 0;
+    let n = store.count();
+    while i < n {
+        out = out + store.at(i) + " | ";
+        i = i + 1;
+    }
+    out
+}

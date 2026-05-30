@@ -1,0 +1,10 @@
+{
+  "name": "@neoc-sh/demo-lua-notes",
+  "version": "0.1.0",
+  "description": "neoc notes app on plain Lua 5.1 — ports & adapters: neoc owns the controllers + an in-memory Store port, a plain Lua host implements it. Showcases the emitted .d.lua LuaLS typings.",
+  "private": true,
+  "scripts": {
+    "build": "cargo run -p neoc -- build",
+    "start": "lua src/main/lua/app.lua"
+  }
+}
