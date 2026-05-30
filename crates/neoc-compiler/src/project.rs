@@ -122,7 +122,7 @@ fn load_project(root: &Path, manifest_path: &Path) -> Result<Project, Error> {
 
     let target: Target = manifest.package.target.parse().map_err(|_| {
         Error::Project(format!(
-            "`{MANIFEST}` has an unknown target `{}` (expected `lua`, `js`, or `ts`)",
+            "`{MANIFEST}` has an unknown target `{}` (expected `lua`, `js`, `ts`, or `luau`)",
             manifest.package.target
         ))
     })?;

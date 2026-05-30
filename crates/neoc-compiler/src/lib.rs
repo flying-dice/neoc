@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use neoc_ast as ast;
 use neoc_codegen_js as codegen_js;
 use neoc_codegen_lua as codegen_lua;
+use neoc_codegen_luau as codegen_luau;
 use neoc_codegen_ts as codegen_ts;
 use neoc_parser as parser;
 use neoc_types as types;
@@ -42,6 +43,10 @@ pub enum Target {
     Js,
     /// Typed TypeScript (`.ts`): the JS runtime body with neoc types woven on.
     Ts,
+    /// Self-typed Luau (`.luau`): the Lua runtime body with neoc types woven on,
+    /// self-contained per module (inlined runtime + inline `Result`/`Option`
+    /// type aliases) — no `neoc-lib`, no typings sidecar, no source map yet.
+    Luau,
 }
 
 impl Target {
@@ -52,6 +57,7 @@ impl Target {
             Target::Lua => "lua",
             Target::Js => "js",
             Target::Ts => "ts",
+            Target::Luau => "luau",
         }
     }
 }
@@ -62,6 +68,7 @@ impl std::fmt::Display for Target {
             Target::Lua => "lua",
             Target::Js => "js",
             Target::Ts => "ts",
+            Target::Luau => "luau",
         })
     }
 }
@@ -74,8 +81,9 @@ impl std::str::FromStr for Target {
             "lua" => Ok(Target::Lua),
             "js" => Ok(Target::Js),
             "ts" => Ok(Target::Ts),
+            "luau" => Ok(Target::Luau),
             other => Err(format!(
-                "unknown target `{other}` (expected `lua`, `js`, or `ts`)"
+                "unknown target `{other}` (expected `lua`, `js`, `ts`, or `luau`)"
             )),
         }
     }
@@ -934,7 +942,7 @@ fn with_appended(src_path: &Path, suffix: &str, target: Target) -> PathBuf {
 /// on its own final line so it is a comment whatever preceded it.
 fn append_source_mapping_url(output: &mut String, target: Target, map_name: &str) {
     let marker = match target {
-        Target::Lua => "--#",
+        Target::Lua | Target::Luau => "--#",
         Target::Js | Target::Ts => "//#",
     };
     if !output.is_empty() && !output.ends_with('\n') {
@@ -1044,6 +1052,19 @@ fn emit(target: Target, module: &ast::Module, source: &str, inputs: &EmitInputs)
             );
             Emitted {
                 output: r.ts,
+                messages: r.diagnostics.into_iter().map(|d| d.message).collect(),
+                source_map: SourceMap::default(),
+                dts: String::new(),
+                dlua: String::new(),
+            }
+        }
+        Target::Luau => {
+            // A self-typed `.luau` is self-contained: it inlines the runtime and
+            // its own `Result`/`Option` type aliases (no `neoc-lib`, no `.d.lua`
+            // sidecar). No source map yet. Call shape mirrors the Lua arm.
+            let r = codegen_luau::emit(module, source, &inputs.enums, &inputs.externs);
+            Emitted {
+                output: r.luau,
                 messages: r.diagnostics.into_iter().map(|d| d.message).collect(),
                 source_map: SourceMap::default(),
                 dts: String::new(),

@@ -449,6 +449,63 @@ fn ts_build_emits_typed_module_files_and_shared_neoc_lib() {
 }
 
 #[test]
+fn luau_build_emits_self_typed_module_files_with_no_aux() {
+    // A Luau-target project emits a self-typed `.luau` *per module* in `files`
+    // (the artifact, positionally aligned with `source_maps`). Each module is
+    // self-contained: it inlines the runtime and its own `Result`/`Option` type
+    // aliases, so there are **no** aux files — no `neoc-lib`, no `.d.lua`, no
+    // `.map`. The source map is empty (none yet for Luau).
+    let dir = tempdir();
+    let entry = write(
+        &dir,
+        "x.neoc",
+        "pub struct Row { id: number, body: string }\n\
+         \n\
+         pub fn load(id: number) -> Result<Row, string> {\n\
+         \x20   Ok(Row { id: id, body: \"ok\" })\n\
+         }\n",
+    );
+
+    let project = transpile_project(&entry, Target::Luau).expect("read project");
+    assert!(
+        project.ok(),
+        "expected a clean project, got: {:#?}",
+        project.diagnostics
+    );
+
+    // The `.luau` module is the artifact, aligned with `source_maps`.
+    assert_eq!(project.files.len(), 1, "expected x.luau");
+    assert_eq!(
+        project.files.len(),
+        project.source_maps.len(),
+        "files and source_maps must stay positionally aligned"
+    );
+    let (path, x_luau) = &project.files[0];
+    assert!(
+        path.file_name().is_some_and(|f| f == "x.luau"),
+        "expected x.luau, got {path:?}"
+    );
+
+    // x.luau is self-typed: the `pub struct` is an inline `type`, the `pub fn`
+    // returning `Result` carries an inline-typed signature.
+    assert!(
+        x_luau.contains("type Row = {"),
+        "x.luau should carry the inline `type` for the `pub struct`:\n{x_luau}"
+    );
+    assert!(
+        x_luau.contains("): Result<"),
+        "x.luau should carry the inline-typed `pub fn` returning Result:\n{x_luau}"
+    );
+
+    // Self-contained: no aux files at all.
+    assert!(
+        project.aux_files.is_empty(),
+        "Luau emits no aux (self-contained), got: {:?}",
+        project.aux_files
+    );
+}
+
+#[test]
 fn lua_build_emits_map_and_dlua_aux_plus_shared_neoc_lib() {
     // A Lua build emits, per module, the `.lua` (in `files`), its `.lua.map`
     // source map, and the `.d.lua` LuaLS typings — and once at the resolution
