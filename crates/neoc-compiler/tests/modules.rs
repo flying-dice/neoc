@@ -220,8 +220,30 @@ fn unresolved_module_path_is_an_error() {
         project
             .diagnostics
             .iter()
-            .any(|d| d.diagnostic.message == "unresolved module `missing`"),
+            .any(|d| d.diagnostic.message
+                == "unresolved module `missing` (no file at `missing.neoc`)"),
         "expected an unresolved-module diagnostic, got: {:#?}",
+        project.diagnostics
+    );
+}
+
+#[test]
+fn unresolved_nested_module_names_the_expected_file() {
+    // A nested module path points the author at the source-root-relative file —
+    // `autosql::ports` → `autosql/ports.neoc` — so the fixed layout is
+    // discoverable from the diagnostic alone.
+    let dir = tempdir();
+    let entry = write(
+        &dir,
+        "main.neoc",
+        "use autosql::ports::SqlExecutor;\n\nfn main() -> number { 1 }\n",
+    );
+
+    let project = transpile_project(&entry, Target::Luau).expect("read project");
+    assert!(
+        project.diagnostics.iter().any(|d| d.diagnostic.message
+            == "unresolved module `autosql::ports` (no file at `autosql/ports.neoc`)"),
+        "expected the nested module's file path in the diagnostic, got: {:#?}",
         project.diagnostics
     );
 }

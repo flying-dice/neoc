@@ -714,12 +714,19 @@ fn resolve_use(
             diagnostic: Diagnostic::typed(message, item.span.start, item.span.end),
         });
     };
+    // Name the file the module would resolve to (relative to the source root)
+    // so the author sees *where* it is expected, not just that it is missing —
+    // the source root is fixed by the layout, so this is the actionable hint.
+    let unresolved = || match expected_module_file(&u.path) {
+        Some(rel) => format!("unresolved module `{module_path}` (no file at `{rel}`)"),
+        None => format!("unresolved module `{module_path}`"),
+    };
     let Some(dep_path) = module_file(root, &u.path).map(|p| canonical_or(&p)) else {
-        push(diagnostics, format!("unresolved module `{module_path}`"));
+        push(diagnostics, unresolved());
         return;
     };
     let Some(source) = loaded.get(&dep_path) else {
-        push(diagnostics, format!("unresolved module `{module_path}`"));
+        push(diagnostics, unresolved());
         return;
     };
     let public = source.table.value_is_public(last) || source.table.type_is_public(last);
@@ -757,6 +764,20 @@ pub fn module_file(root: &Path, use_path: &[ast::Ident]) -> Option<PathBuf> {
     }
     p.push(format!("{file}.neoc"));
     Some(p)
+}
+
+/// The source-root-relative file a `use` path's module resolves to, rendered
+/// with `/` separators for a stable, host-agnostic diagnostic (`a::b::Item` →
+/// `a/b.neoc`, `foo::Item` → `foo.neoc`). Used to tell an author *where* a
+/// missing module's file is expected, since the source root is fixed by the
+/// project layout. Returns `None` for a single-segment path (no module
+/// qualifier, so nothing resolves to a file).
+fn expected_module_file(use_path: &[ast::Ident]) -> Option<String> {
+    let (_, prefix) = use_path.split_last()?;
+    let (file, dirs) = prefix.split_last()?;
+    let mut segments: Vec<String> = dirs.to_vec();
+    segments.push(format!("{file}.neoc"));
+    Some(segments.join("/"))
 }
 
 /// The directory of module `path`, as path segments relative to the project
