@@ -104,7 +104,9 @@ wasm:
 # `tsc` would also see the conformance `.ts` snippets (runtime samples, not
 # meant to type-check). Runs on the bun image; `bun install` provides
 # `@types/bun` for the host adapter, and pyright runs from the package dir so
-# its `pyrightconfig.json` (pythonVersion + auto path) applies.
+# its `pyrightconfig.json` (pythonVersion + auto path) applies. `typescript` and
+# `pyright` are pinned in `package.json` and resolved from the frozen lockfile,
+# so a new upstream release can't silently drift the gate.
 typecheck:
   stage: test
   needs: [lint]
