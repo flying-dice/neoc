@@ -20,6 +20,7 @@ import sqlite3
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from typing import Any
 from urllib.parse import unquote
 
 # The compiled neoc lands in ../../auto/py. Its modules use relative imports
@@ -32,9 +33,17 @@ for _pkg in (_AUTO / "py", _AUTO / "py" / "autosql"):
     (_pkg / "__init__.py").touch(exist_ok=True)
 sys.path.insert(0, str(_AUTO))
 
-from py.neoc_lib import Ok, Err  # noqa: E402
-from py.autosql.ports import Int, Real, Text, Bool, Null  # noqa: E402
-from py.main import init, list as list_notes, create  # noqa: E402
+from py.neoc_lib import Ok, Err, Result  # noqa: E402
+from py.autosql.ports import (  # noqa: E402
+    Int,
+    Real,
+    Text,
+    Bool,
+    Null,
+    SqlValue,
+    SqlExecutor,
+)
+from py.main import init, list_ as list_notes, create  # noqa: E402
 
 PORT = 38573
 
@@ -42,7 +51,7 @@ PORT = 38573
 # --- the adapter: implement the `SqlExecutor` port over sqlite3 ---
 
 
-def to_bound(v):
+def to_bound(v: SqlValue) -> Any:
     """A `SqlValue` -> the Python value sqlite3 binds. Structural `match` on the
     emitted variant dataclasses; no tag field is ever read."""
     match v:
@@ -57,7 +66,7 @@ def to_bound(v):
     raise TypeError(f"unbindable SqlValue: {v!r}")
 
 
-def to_cell(value):
+def to_cell(value: Any) -> SqlValue:
     """A raw sqlite3 cell -> `SqlValue`, via the emitted variant constructors.
     sqlite3 returns int/float for numbers, str for text, None for NULL; tag each
     back into the dataclass variant the neoc decoders expect."""
@@ -70,15 +79,17 @@ def to_cell(value):
     return Null()
 
 
-class SqliteExecutor:
+class SqliteExecutor(SqlExecutor):
     """The `SqlExecutor` port, implemented over an in-memory sqlite3 connection.
     `execute` returns `Ok(changes)` / `Err(msg)`; `query` returns
-    `Ok([[SqlValue]])` / `Err(msg)` — the neoc `Result` the controllers `?` on."""
+    `Ok([[SqlValue]])` / `Err(msg)` — the neoc `Result` the controllers `?` on.
+    Annotated against the generated `SqlExecutor` Protocol so the port contract
+    is checked at the boundary."""
 
-    def __init__(self, connection):
+    def __init__(self, connection: sqlite3.Connection) -> None:
         self._db = connection
 
-    def execute(self, sql, params):
+    def execute(self, sql: str, params: list[SqlValue]) -> Result[float, str]:
         try:
             cur = self._db.execute(sql, [to_bound(p) for p in params])
             self._db.commit()
@@ -86,10 +97,12 @@ class SqliteExecutor:
         except Exception as e:  # noqa: BLE001 — any DB error becomes a neoc Err
             return Err(str(e))
 
-    def query(self, sql, params):
+    def query(self, sql: str, params: list[SqlValue]) -> Result[list[list[SqlValue]], str]:
         try:
             cur = self._db.execute(sql, [to_bound(p) for p in params])
-            rows = [[to_cell(cell) for cell in row] for row in cur.fetchall()]
+            rows: list[list[SqlValue]] = [
+                [to_cell(cell) for cell in row] for row in cur.fetchall()
+            ]
             return Ok(rows)
         except Exception as e:  # noqa: BLE001 — any DB error becomes a neoc Err
             return Err(str(e))
@@ -121,7 +134,7 @@ def make_handler(db):
             else:
                 self._send(list_notes(db))
 
-        def log_message(self, *_args):
+        def log_message(self, format: str, *args: Any) -> None:
             pass  # quiet; the demo prints its own startup line
 
     return Handler

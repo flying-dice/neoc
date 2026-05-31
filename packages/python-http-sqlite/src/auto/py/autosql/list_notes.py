@@ -2,6 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from ..neoc_lib import Result, Option, Ok, Err, Some, None_
 
+from .ports import SqlExecutor
 from .ports import SqlValue
 from .ports import Int, Real, Text, Bool, Null
 from .ports import decode_number
@@ -11,7 +12,7 @@ class ListNotesRow:
     id: float
     body: str
 
-def list_notes(db: E) -> Result[list[ListNotesRow], str]:
+def list_notes(db: SqlExecutor) -> Result[list[ListNotesRow], str]:
     params: list[SqlValue] = []
     _try0 = db.query("SELECT id, body FROM notes ORDER BY id", params)
     if isinstance(_try0, (Err, None_)):
@@ -27,7 +28,7 @@ def list_notes(db: E) -> Result[list[ListNotesRow], str]:
         _idx1 = next
         _val2 = decoded
         while len(out) <= _idx1:
-            out.append(None)
+            out.append(_val2)
         out[_idx1] = _val2
         next = (next + 1)
     return Ok(out)

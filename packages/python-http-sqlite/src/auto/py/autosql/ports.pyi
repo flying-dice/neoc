@@ -1,6 +1,6 @@
 from dataclasses import dataclass
-from .neoc_lib import Result, Option, Ok, Err, Some, None_
-from typing import Union
+from ..neoc_lib import Result, Option, Ok, Err, Some, None_
+from typing import Protocol, Union
 
 @dataclass(frozen=True)
 class Int:
@@ -18,6 +18,10 @@ class Bool:
 class Null:
     ...
 SqlValue = Union[Int, Real, Text, Bool, Null]
+
+class SqlExecutor(Protocol):
+    def execute(self, sql: str, params: list[SqlValue]) -> Result[float, str]: ...
+    def query(self, sql: str, params: list[SqlValue]) -> Result[list[list[SqlValue]], str]: ...
 
 def bind_opt_int(value: Option[float]) -> SqlValue: ...
 def bind_opt_real(value: Option[float]) -> SqlValue: ...

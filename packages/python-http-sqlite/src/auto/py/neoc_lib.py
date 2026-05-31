@@ -3,10 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Generic, TypeVar, Union
 
-T = TypeVar("T")
-E = TypeVar("E")
+# `T`/`E` are covariant: a frozen carrier is read-only, so `Ok[None_]` is an
+# `Ok[Option[T]]` — the widening every `Ok(None)` / `Ok(Some(x))` arm relies on.
+T = TypeVar("T", covariant=True)
+E = TypeVar("E", covariant=True)
 U = TypeVar("U")
 F = TypeVar("F")
+G = TypeVar("G")
 
 
 @dataclass(frozen=True)
@@ -55,7 +58,7 @@ class Err(Generic[E]):
         return Err(f(self._0))
 
 
-Result = Union[Ok, Err]
+Result = Union[Ok[T], Err[E]]
 
 
 @dataclass(frozen=True)
@@ -71,13 +74,13 @@ class Some(Generic[T]):
     def unwrap(self) -> T:
         return self._0
 
-    def unwrap_or(self, default: T) -> T:
+    def unwrap_or(self, default: object) -> T:
         return self._0
 
     def map(self, f: Callable[[T], U]) -> "Option[U]":
         return Some(f(self._0))
 
-    def ok_or(self, err: E) -> "Result[T, E]":
+    def ok_or(self, err: G) -> "Result[T, G]":
         return Ok(self._0)
 
 
@@ -92,17 +95,17 @@ class None_:
     def unwrap(self) -> object:
         raise Exception("called unwrap on a None value")
 
-    def unwrap_or(self, default: T) -> T:
+    def unwrap_or(self, default: U) -> U:
         return default
 
     def map(self, f: Callable[[object], U]) -> "Option[U]":
         return self
 
-    def ok_or(self, err: E) -> "Result[object, E]":
+    def ok_or(self, err: G) -> "Result[object, G]":
         return Err(err)
 
 
-Option = Union[Some, None_]
+Option = Union[Some[T], None_]
 
 
 __all__ = ["Ok", "Err", "Result", "Some", "None_", "Option"]

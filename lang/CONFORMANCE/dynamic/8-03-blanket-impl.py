@@ -1,5 +1,14 @@
 from __future__ import annotations
 from dataclasses import dataclass
+from typing import Protocol
+
+class Show(Protocol):
+    def show(self) -> str:
+        ...
+
+class Describe(Protocol):
+    def describe(self) -> str:
+        ...
 
 @dataclass(frozen=True)
 class Dog:

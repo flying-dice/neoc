@@ -1,4 +1,6 @@
 from dataclasses import dataclass
-from .neoc_lib import Result, Option, Ok, Err, Some, None_
+from ..neoc_lib import Result, Option, Ok, Err, Some, None_
+from .ports import SqlExecutor
+from .ports import SqlValue
 
-def add_note(db: E, body: str) -> Result[float, str]: ...
+def add_note(db: SqlExecutor, body: str) -> Result[float, str]: ...

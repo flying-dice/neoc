@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Union
+from typing import Protocol, Union
 from ..neoc_lib import Result, Option, Ok, Err, Some, None_
 
 @dataclass(frozen=True)
@@ -24,6 +24,12 @@ class Null:
     pass
 
 SqlValue = Union[Int, Real, Text, Bool, Null]
+
+class SqlExecutor(Protocol):
+    def execute(self, sql: str, params: list[SqlValue]) -> Result[float, str]:
+        ...
+    def query(self, sql: str, params: list[SqlValue]) -> Result[list[list[SqlValue]], str]:
+        ...
 
 def bind_opt_int(value: Option[float]) -> SqlValue:
     match value:
@@ -112,4 +118,4 @@ def decode_opt_bool(value: SqlValue, label: str) -> Result[Option[bool], str]:
     return _m10
 
 
-__all__ = ["SqlValue", "bind_opt_int", "bind_opt_real", "bind_opt_text", "bind_opt_bool", "decode_number", "decode_opt_number", "decode_string", "decode_opt_string", "decode_bool", "decode_opt_bool"]
+__all__ = ["SqlValue", "SqlExecutor", "bind_opt_int", "bind_opt_real", "bind_opt_text", "bind_opt_bool", "decode_number", "decode_opt_number", "decode_string", "decode_opt_string", "decode_bool", "decode_opt_bool"]

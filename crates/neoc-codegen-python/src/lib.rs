@@ -32,7 +32,7 @@ use std::collections::{HashMap, HashSet};
 
 use neoc_ast as ast;
 
-pub use crate::pyi::{module_pyi, py_type, variant_class_name};
+pub use crate::pyi::{module_pyi, py_ident, py_type, variant_class_name};
 
 /// A problem found while emitting.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -126,10 +126,10 @@ impl EnumIndex {
 }
 
 /// The `pub` names in `module` that emit a runtime Python definition — a `fn`,
-/// `const`, `struct`, or `enum` (data-only types still emit a `@dataclass`).
-/// A `trait` and a `type` alias produce no Python symbol, so a `use` of one
-/// must not emit a dangling `import`; this set tells the emitter which imports
-/// to keep. Target-agnostic; non-Python backends ignore it.
+/// `const`, `struct`, `enum` (data-only types still emit a `@dataclass`), or
+/// `trait` (a `Protocol`). A `type` alias produces no Python symbol, so a `use`
+/// of one must not emit a dangling `import`; this set tells the emitter which
+/// imports to keep. Target-agnostic; non-Python backends ignore it.
 #[must_use]
 pub fn module_py_bindings(module: &ast::Module) -> HashSet<String> {
     let mut bindings = HashSet::new();
@@ -149,6 +149,9 @@ pub fn module_py_bindings(module: &ast::Module) -> HashSet<String> {
             }
             ast::ItemKind::Enum(e) => {
                 bindings.insert(e.name.clone());
+            }
+            ast::ItemKind::Trait(t) => {
+                bindings.insert(t.name.clone());
             }
             _ => {}
         }
@@ -192,13 +195,15 @@ pub fn emit(
         importer_dir: importer_dir.to_vec(),
         imported_enum_variants,
         imported_bindings: imported_bindings.iter().cloned().collect(),
+        escaped_values: escaped_value_names(module),
         ..Emitter::default()
     };
     e.emit_module(module);
     let diagnostics = std::mem::take(&mut e.diagnostics);
+    let pyi = pyi::module_pyi(module, importer_dir, &e.imported_bindings);
     EmitResult {
         py: e.finish(),
-        pyi: pyi::module_pyi(module),
+        pyi,
         diagnostics,
     }
 }
@@ -241,6 +246,11 @@ pub(crate) struct Emitter {
     /// Whether any declared type carries generic parameters (so `Generic`,
     /// `TypeVar`, and the `TypeVar` declarations land in the preamble).
     uses_generic: bool,
+    /// Whether a generic `fn` needs `TypeVar` imported without any `Generic`
+    /// use (a free/`impl` fn declares type params but no class carries them).
+    needs_typevar: bool,
+    /// Whether the module declares a `trait` (emitted as a `Protocol`).
+    uses_protocol: bool,
     /// The distinct generic-parameter names declared across the module, each
     /// emitted as a module-level `TypeVar`.
     type_vars: Vec<String>,
@@ -274,6 +284,14 @@ pub(crate) struct Emitter {
     /// Python symbol), so its import is skipped to avoid a dangling reference.
     /// Empty means "import every `use`" (a single-file emit declares no `use`).
     imported_bindings: HashSet<String>,
+    /// Module-level value names whose spelling collides with a Python
+    /// builtin/keyword and so were escaped at their definition or import
+    /// (`list` → `list_`). A bare value-path reference to one of these emits the
+    /// escaped form so the call site names the real binding. A **local** of the
+    /// same spelling is never in this set — locals are not escaped, so they emit
+    /// verbatim. Single-sourced through [`py_ident`]: a name is recorded only
+    /// when `py_ident(name) != name`.
+    escaped_values: HashSet<String>,
 }
 
 impl Emitter {
@@ -349,6 +367,12 @@ impl Emitter {
             typing.push("Generic");
             typing.push("TypeVar");
         }
+        if self.needs_typevar {
+            typing.push("TypeVar");
+        }
+        if self.uses_protocol {
+            typing.push("Protocol");
+        }
         typing.sort_unstable();
         typing.dedup();
         if !typing.is_empty() {
@@ -401,18 +425,21 @@ impl Emitter {
         if pyi::references_lib(module) {
             self.uses_result = true;
         }
-        // Distinct generic-parameter names → module-level `TypeVar`s.
+        // Distinct generic-parameter names → module-level `TypeVar`s. A
+        // type's own generics carry `Generic[...]` on its class; a generic `fn`
+        // (`init<E>(db: E)`) only needs the `TypeVar` so its annotations name a
+        // declared symbol.
         for item in &module.items {
-            let generics = match &item.kind {
-                ast::ItemKind::Struct(s) => &s.generics,
-                ast::ItemKind::Enum(e) => &e.generics,
-                _ => continue,
-            };
-            for g in generics {
-                self.uses_generic = true;
-                if !self.type_vars.contains(&g.name) {
-                    self.type_vars.push(g.name.clone());
+            match &item.kind {
+                ast::ItemKind::Struct(s) => self.note_generics(&s.generics, true),
+                ast::ItemKind::Enum(e) => self.note_generics(&e.generics, true),
+                ast::ItemKind::Fn(f) => self.note_generics(&f.sig.generics, false),
+                ast::ItemKind::Impl(b) => {
+                    for f in &b.items {
+                        self.note_generics(&f.sig.generics, false);
+                    }
                 }
+                _ => {}
             }
         }
         // Collect `impl` methods up-front, keyed by target type, so they fold
@@ -440,15 +467,18 @@ impl Emitter {
             ast::ItemKind::Const(c) => self.emit_const(c, item.vis),
             ast::ItemKind::Impl(b) => self.emit_impl(b),
             ast::ItemKind::Use(u) => self.emit_use(u),
-            // Aliases erase; traits produce no standalone output; an `extern`
-            // block describes the target surface (its references lower directly).
-            ast::ItemKind::TypeAlias(_) | ast::ItemKind::Extern(_) | ast::ItemKind::Trait(_) => {}
+            ast::ItemKind::Trait(t) => self.emit_trait(item, t),
+            // Aliases erase; an `extern` block describes the target surface (its
+            // references lower directly).
+            ast::ItemKind::TypeAlias(_) | ast::ItemKind::Extern(_) => {}
         }
     }
 
     fn record_public(&mut self, vis: ast::Visibility, name: &str) {
         if vis == ast::Visibility::Public {
-            self.public.push(name.to_string());
+            // `__all__` lists the emitted binding name (escaped if it collides
+            // with a Python builtin/keyword).
+            self.public.push(py_ident(name));
         }
     }
 
@@ -522,7 +552,7 @@ impl Emitter {
         }
         self.line(format!(
             "{} = Union[{}]",
-            en.name,
+            py_ident(&en.name),
             variant_classes.join(", ")
         ));
         self.line("");
@@ -604,9 +634,13 @@ impl Emitter {
         // import lands on the right file from a subdirectory.
         let target: Vec<&str> = prefix.iter().map(String::as_str).collect();
         let module = self.relative_module(&target);
+        let import_name = py_ident(last);
         match &u.alias {
-            Some(alias) => self.line(format!("from {module} import {last} as {alias}")),
-            None => self.line(format!("from {module} import {last}")),
+            Some(alias) => self.line(format!(
+                "from {module} import {import_name} as {}",
+                py_ident(alias)
+            )),
+            None => self.line(format!("from {module} import {import_name}")),
         }
         // A `use` of a `pub` enum also imports its variant classes: variant
         // construction emits the bare variant class (`SqlValue::Text(x)` →
@@ -642,6 +676,28 @@ impl Emitter {
         format!("{dots}{}", target[shared..].join("."))
     }
 
+    /// Emit a `trait` as a `Protocol` — the structural contract a host's `ext`
+    /// implementor satisfies. A generic parameter bounded by the trait projects
+    /// to this `Protocol`, so a method call through the bound type-checks. Bodies
+    /// are `...`; the runtime behaviour lives in the host implementation.
+    fn emit_trait(&mut self, item: &ast::Item, t: &ast::TraitDecl) {
+        self.record_public(item.vis, &t.name);
+        self.uses_protocol = true;
+        self.line(format!("class {}(Protocol):", py_ident(&t.name)));
+        self.indented(|e| {
+            if t.items.is_empty() {
+                e.line("...");
+                return;
+            }
+            for ti in &t.items {
+                let header = e.fn_header(&ti.sig, true);
+                e.line(header);
+                e.indented(|e| e.line("..."));
+            }
+        });
+        self.line("");
+    }
+
     /// Emit a free function or a method. `target` is `Some` only when called
     /// from the method path; the receiver is kept as `self`. A `pub` free fn is
     /// recorded for `__all__`.
@@ -673,22 +729,32 @@ impl Emitter {
     /// Build a `def name(params) -> R:` header. `in_class` keeps a `self`
     /// receiver verbatim; a free function drops nothing.
     fn fn_header(&mut self, sig: &ast::FnSig, in_class: bool) -> String {
+        let bounds = pyi::single_bound_generics(sig);
         let mut params: Vec<String> = Vec::new();
         for p in &sig.params {
             match p {
                 ast::Param::Receiver => params.push("self".to_string()),
                 ast::Param::Named { name, ty, .. } => {
                     self.note_type(ty);
-                    params.push(format!("{name}: {}", py_type(ty)));
+                    params.push(format!("{name}: {}", pyi::py_type_bound(ty, &bounds)));
                 }
             }
         }
-        let _ = in_class;
         if let Some(ret) = &sig.ret {
             self.note_type(ret);
         }
-        let ret = sig.ret.as_ref().map_or_else(|| "None".to_string(), py_type);
-        format!("def {}({}) -> {}:", sig.name, params.join(", "), ret)
+        let ret = sig
+            .ret
+            .as_ref()
+            .map_or_else(|| "None".to_string(), |t| pyi::py_type_bound(t, &bounds));
+        // A free `fn`'s name is a module binding (escaped on a reserved
+        // collision); a method name is an attribute and never collides.
+        let name = if in_class {
+            sig.name.clone()
+        } else {
+            py_ident(&sig.name)
+        };
+        format!("def {name}({}) -> {}:", params.join(", "), ret)
     }
 
     /// Track that a type annotation references `Callable`/`Result`/`Option`, so
@@ -719,6 +785,31 @@ impl Emitter {
         }
     }
 
+    /// Register each generic parameter as a module-level `TypeVar`. `on_class`
+    /// is set when the params decorate a type (a `struct`/`enum`), which also
+    /// emits `Generic[...]` on the class header; a generic `fn`'s params only
+    /// need the `TypeVar` so its `name: T` annotations resolve.
+    fn note_generics(&mut self, generics: &[ast::GenericParam], on_class: bool) {
+        for g in generics {
+            // A `fn`'s single-bound param projects to its bound's `Protocol`, so
+            // it needs no `TypeVar`. A type's params always sit in `Generic[...]`.
+            let single_bound =
+                !on_class && matches!(g.bounds.as_slice(), [b] if b.segments.last().is_some());
+            if single_bound {
+                continue;
+            }
+            if on_class {
+                self.uses_generic = true;
+            } else if !self.uses_generic {
+                // `TypeVar` still has to be imported even with no `Generic` use.
+                self.needs_typevar = true;
+            }
+            if !self.type_vars.contains(&g.name) {
+                self.type_vars.push(g.name.clone());
+            }
+        }
+    }
+
     pub(crate) fn note_prelude(&mut self, name: &str) {
         if matches!(name, "Ok" | "Err" | "Some" | "None" | "Result" | "Option") {
             self.uses_result = true;
@@ -735,6 +826,7 @@ pub(crate) enum DeriveTarget<'a> {
 
 /// A class header `class Name:` / `class Name(Generic[T]):`.
 fn class_header(name: &str, generics: &[ast::GenericParam]) -> String {
+    let name = py_ident(name);
     if generics.is_empty() {
         format!("class {name}:")
     } else {
@@ -777,6 +869,42 @@ fn method_type_names(module: &ast::Module) -> HashSet<String> {
     out
 }
 
+/// The module-level value names that were escaped at their definition or
+/// import because their spelling collides with a Python builtin/keyword — the
+/// free `fn`s, `const`s, and `use`-imported names a bare value path may
+/// reference. A name is included only when [`py_ident`] would rewrite it, so
+/// the reserved-word rule stays single-sourced. Locals are deliberately absent:
+/// they are never escaped, so a local spelled like a reserved word still emits
+/// verbatim at its reference.
+fn escaped_value_names(module: &ast::Module) -> HashSet<String> {
+    let mut out = HashSet::new();
+    let mut record = |name: &str| {
+        if py_ident(name) != name {
+            out.insert(name.to_string());
+        }
+    };
+    for item in &module.items {
+        match &item.kind {
+            ast::ItemKind::Fn(f) => record(&f.sig.name),
+            ast::ItemKind::Const(c) => record(&c.name),
+            ast::ItemKind::Use(u) => {
+                // The name a `use` binds locally is its alias, or the path's
+                // final segment. That is the spelling a reference uses, so it is
+                // the spelling that gets escaped (the import was emitted escaped).
+                let bound = u
+                    .alias
+                    .as_deref()
+                    .or_else(|| u.path.last().map(String::as_str));
+                if let Some(name) = bound {
+                    record(name);
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 fn has_derive(attrs: &[ast::Attribute]) -> bool {
     attrs
         .iter()
@@ -793,10 +921,13 @@ const NEOC_LIB_PY: &str = r#"from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Generic, TypeVar, Union
 
-T = TypeVar("T")
-E = TypeVar("E")
+# `T`/`E` are covariant: a frozen carrier is read-only, so `Ok[None_]` is an
+# `Ok[Option[T]]` — the widening every `Ok(None)` / `Ok(Some(x))` arm relies on.
+T = TypeVar("T", covariant=True)
+E = TypeVar("E", covariant=True)
 U = TypeVar("U")
 F = TypeVar("F")
+G = TypeVar("G")
 
 
 @dataclass(frozen=True)
@@ -845,7 +976,7 @@ class Err(Generic[E]):
         return Err(f(self._0))
 
 
-Result = Union[Ok, Err]
+Result = Union[Ok[T], Err[E]]
 
 
 @dataclass(frozen=True)
@@ -861,13 +992,13 @@ class Some(Generic[T]):
     def unwrap(self) -> T:
         return self._0
 
-    def unwrap_or(self, default: T) -> T:
+    def unwrap_or(self, default: object) -> T:
         return self._0
 
     def map(self, f: Callable[[T], U]) -> "Option[U]":
         return Some(f(self._0))
 
-    def ok_or(self, err: E) -> "Result[T, E]":
+    def ok_or(self, err: G) -> "Result[T, G]":
         return Ok(self._0)
 
 
@@ -882,17 +1013,17 @@ class None_:
     def unwrap(self) -> object:
         raise Exception("called unwrap on a None value")
 
-    def unwrap_or(self, default: T) -> T:
+    def unwrap_or(self, default: U) -> U:
         return default
 
     def map(self, f: Callable[[object], U]) -> "Option[U]":
         return self
 
-    def ok_or(self, err: E) -> "Result[object, E]":
+    def ok_or(self, err: G) -> "Result[object, G]":
         return Err(err)
 
 
-Option = Union[Some, None_]
+Option = Union[Some[T], None_]
 
 
 __all__ = ["Ok", "Err", "Result", "Some", "None_", "Option"]
@@ -903,10 +1034,11 @@ __all__ = ["Ok", "Err", "Result", "Some", "None_", "Option"]
 const NEOC_LIB_PYI: &str = r#"from dataclasses import dataclass
 from typing import Callable, Generic, TypeVar, Union
 
-T = TypeVar("T")
-E = TypeVar("E")
+T = TypeVar("T", covariant=True)
+E = TypeVar("E", covariant=True)
 U = TypeVar("U")
 F = TypeVar("F")
+G = TypeVar("G")
 
 
 @dataclass(frozen=True)
@@ -931,7 +1063,7 @@ class Err(Generic[E]):
     def map_err(self, f: Callable[[E], F]) -> Result[object, F]: ...
 
 
-Result = Union[Ok, Err]
+Result = Union[Ok[T], Err[E]]
 
 
 @dataclass(frozen=True)
@@ -940,9 +1072,9 @@ class Some(Generic[T]):
     def is_some(self) -> bool: ...
     def is_none(self) -> bool: ...
     def unwrap(self) -> T: ...
-    def unwrap_or(self, default: T) -> T: ...
+    def unwrap_or(self, default: object) -> T: ...
     def map(self, f: Callable[[T], U]) -> Option[U]: ...
-    def ok_or(self, err: E) -> Result[T, E]: ...
+    def ok_or(self, err: G) -> Result[T, G]: ...
 
 
 @dataclass(frozen=True)
@@ -950,12 +1082,12 @@ class None_:
     def is_some(self) -> bool: ...
     def is_none(self) -> bool: ...
     def unwrap(self) -> object: ...
-    def unwrap_or(self, default: T) -> T: ...
+    def unwrap_or(self, default: U) -> U: ...
     def map(self, f: Callable[[object], U]) -> Option[U]: ...
-    def ok_or(self, err: E) -> Result[object, E]: ...
+    def ok_or(self, err: G) -> Result[object, G]: ...
 
 
-Option = Union[Some, None_]
+Option = Union[Some[T], None_]
 "#;
 
 #[cfg(test)]

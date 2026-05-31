@@ -130,6 +130,60 @@ fn use_resolves_relative_to_a_subpackage() {
 }
 
 #[test]
+fn same_module_reserved_name_call_references_the_escaped_def() {
+    // A top-level `fn list` is defined escaped (`def list_`), so a call site in
+    // the same module must reference `list_`, not the Python builtin `list`.
+    let out =
+        emit_src("pub fn list(n: number) -> number { n + 1 }\npub fn run() -> number { list(41) }");
+    assert!(
+        out.py.contains("def list_(n: float) -> float:"),
+        "{}",
+        out.py
+    );
+    assert!(out.py.contains("return list_(41)"), "{}", out.py);
+    assert!(
+        !out.py.contains("return list(41)"),
+        "the call must name the escaped def, not the builtin:\n{}",
+        out.py
+    );
+    assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
+}
+
+#[test]
+fn cross_module_reserved_name_call_references_the_escaped_import() {
+    // `use other::list;` imports `list_`; a call must reference `list_` so it
+    // binds the import, not the builtin. Regression for the call-site gap that
+    // left `list(41)` referencing the wrong/undefined symbol.
+    let parsed = neoc_parser::parse("use other::list;\npub fn run() -> number { list(41) }");
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    let out = emit(&parsed.module, &[], &[], &["other::list".to_string()]);
+    assert!(out.py.contains("from .other import list_"), "{}", out.py);
+    assert!(out.py.contains("return list_(41)"), "{}", out.py);
+    assert!(
+        !out.py.contains("return list(41)"),
+        "the call must name the escaped import, not the builtin:\n{}",
+        out.py
+    );
+    assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
+}
+
+#[test]
+fn local_spelled_like_a_reserved_word_is_emitted_verbatim() {
+    // A **local** binding is never escaped (only module-level/imported names
+    // are). A local spelled `list` shadows nothing at module scope, so both its
+    // binding and its reference emit verbatim — `list`, not `list_`.
+    let out = emit_src("pub fn run() -> number { let list = 41; list + 1 }");
+    assert!(out.py.contains("list = 41"), "{}", out.py);
+    assert!(out.py.contains("(list + 1)"), "{}", out.py);
+    assert!(
+        !out.py.contains("list_"),
+        "a local must not be escaped:\n{}",
+        out.py
+    );
+    assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
+}
+
+#[test]
 fn neoc_lib_unwrap_messages_are_neoc_shaped() {
     let lib = neoc_lib_py();
     assert!(lib.contains("called unwrap on a None value"), "{lib}");
@@ -245,4 +299,57 @@ fn and_short_circuits_a_hoisting_rhs_match() {
         out.py
     );
     assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
+}
+
+#[test]
+fn generic_fn_param_declares_a_module_typevar() {
+    // `fn init<E: SqlExecutor>(db: E)` uses `E` in its signature; `E` must be a
+    // declared `TypeVar` or pyright sees an undefined name.
+    let src = "extern { fn run(db: number); }\npub fn init<E>(db: E) { run(1) }";
+    let out = emit_src(src);
+    assert!(out.py.contains("E = TypeVar(\"E\")"), "{}", out.py);
+    assert!(out.py.contains("def init(db: E)"), "{}", out.py);
+    assert!(out.pyi.contains("E = TypeVar(\"E\")"), "{}", out.pyi);
+    assert!(out.pyi.contains("def init(db: E)"), "{}", out.pyi);
+}
+
+#[test]
+fn result_alias_is_generic_so_signatures_may_subscript_it() {
+    // `Result = Union[Ok[T], Err[E]]` (generic alias) lets `Result[U, object]`
+    // re-subscript without pyright's "already specialized".
+    assert!(
+        crate::neoc_lib_py().contains("Result = Union[Ok[T], Err[E]]"),
+        "{}",
+        crate::neoc_lib_py()
+    );
+    assert!(
+        crate::neoc_lib_py().contains("Option = Union[Some[T], None_]"),
+        "{}",
+        crate::neoc_lib_py()
+    );
+    assert!(
+        crate::neoc_lib_pyi().contains("Result = Union[Ok[T], Err[E]]"),
+        "{}",
+        crate::neoc_lib_pyi()
+    );
+}
+
+#[test]
+fn trait_lowers_to_a_protocol_and_bounds_substitute() {
+    // A `trait` is a `Protocol`; a `fn` param bounded by it projects to the
+    // protocol (no `TypeVar`), so a method call through the bound type-checks.
+    let src = "pub trait Db {\n  fn run(self, sql: string) -> number;\n}\npub fn go<D: Db>(db: D) -> number { db.run(\"x\") }";
+    let out = emit_src(src);
+    assert!(out.py.contains("class Db(Protocol):"), "{}", out.py);
+    assert!(out.py.contains("Protocol"), "py import:\n{}", out.py);
+    assert!(out.py.contains("def go(db: Db) -> float:"), "{}", out.py);
+    assert!(!out.py.contains("def go(db: D)"), "{}", out.py);
+    assert!(out.pyi.contains("class Db(Protocol):"), "{}", out.pyi);
+    assert!(
+        out.pyi.contains("def go(db: Db) -> float: ..."),
+        "{}",
+        out.pyi
+    );
+    // The single-bound param must not leak a `TypeVar` declaration.
+    assert!(!out.py.contains("D = TypeVar(\"D\")"), "{}", out.py);
 }

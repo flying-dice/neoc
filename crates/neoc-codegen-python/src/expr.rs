@@ -205,8 +205,13 @@ impl Emitter {
                     let vt = self.fresh_tmp("_val");
                     self.line(format!("{it} = {idx}"));
                     self.line(format!("{vt} = {v}"));
+                    // Grow with the value being assigned rather than `None`: the
+                    // dominant case is an append (`it == len`), where the loop
+                    // runs once and the trailing `[it] = vt` is a no-op. Padding
+                    // with `vt` keeps the list's element type (a `None`
+                    // placeholder would violate a typed `list[T]` annotation).
                     self.line(format!("while len({b}) <= {it}:"));
-                    self.indented(|em| em.line(format!("{b}.append(None)")));
+                    self.indented(|em| em.line(format!("{b}.append({vt})")));
                     self.line(format!("{b}[{it}] = {vt}"));
                     return;
                 }
@@ -586,6 +591,13 @@ impl Emitter {
                 // singleton; a bare `Ok`/`Some` etc. resolves to its class.
                 if name == "None" {
                     return "None_()".to_string();
+                }
+                // A reference to a module-level/imported value whose name was
+                // escaped at its definition (`list` → `list_`) emits the escaped
+                // form, so the call site names the real binding. A local of the
+                // same spelling is absent from the set and emits verbatim.
+                if self.escaped_values.contains(&name) {
+                    return crate::py_ident(&name);
                 }
                 name
             }

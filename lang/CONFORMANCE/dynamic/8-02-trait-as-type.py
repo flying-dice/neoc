@@ -1,5 +1,10 @@
 from __future__ import annotations
 from dataclasses import dataclass
+from typing import Protocol
+
+class Drawable(Protocol):
+    def draw(self) -> str:
+        ...
 
 @dataclass(frozen=True)
 class Circle:
