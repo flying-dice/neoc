@@ -311,12 +311,7 @@ pub fn project_fn<S: std::hash::BuildHasher>(
         .iter()
         .filter_map(|p| match p {
             ast::Param::Receiver => None,
-            ast::Param::Named {
-                name, ty, optional, ..
-            } => {
-                let q = if *optional { "?" } else { "" };
-                Some(format!("{name}{q}: {}", ts_type(ty)))
-            }
+            ast::Param::Named { name, ty, .. } => Some(format!("{name}: {}", ts_type(ty))),
         })
         .collect::<Vec<_>>()
         .join(", ");
@@ -386,12 +381,7 @@ fn trait_method_member(sig: &ast::FnSig) -> String {
         .iter()
         .filter_map(|p| match p {
             ast::Param::Receiver => None,
-            ast::Param::Named {
-                name, ty, optional, ..
-            } => {
-                let q = if *optional { "?" } else { "" };
-                Some(format!("{name}{q}: {}", ts_type(ty)))
-            }
+            ast::Param::Named { name, ty, .. } => Some(format!("{name}: {}", ts_type(ty))),
         })
         .collect::<Vec<_>>()
         .join(", ");
@@ -427,7 +417,6 @@ mod tests {
             name: name.to_string(),
             name_span: ast::Span::default(),
             ty,
-            optional: false,
         }
     }
 
@@ -583,7 +572,6 @@ mod tests {
             params: vec![ast::Param::Named {
                 name: "id".to_string(),
                 ty: path("number"),
-                optional: false,
                 span: ast::Span::default(),
             }],
             ret: Some(generic("Result", vec![path("string"), path("string")])),
@@ -621,7 +609,6 @@ mod tests {
             ps.push(ast::Param::Named {
                 name: n.to_string(),
                 ty,
-                optional: false,
                 span: ast::Span::default(),
             });
         }
@@ -725,7 +712,6 @@ mod tests {
             params: vec![ast::Param::Named {
                 name: "db".to_string(),
                 ty: path("E"),
-                optional: false,
                 span: ast::Span::default(),
             }],
             ret: Some(path("number")),

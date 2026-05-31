@@ -352,7 +352,6 @@ mod tests {
             name: name.to_string(),
             name_span: ast::Span::default(),
             ty: ast::Type::Unit,
-            optional: false,
         }
     }
 

@@ -259,7 +259,6 @@ mod tests {
             name: name.to_string(),
             name_span: ast::Span::default(),
             ty,
-            optional: false,
         }
     }
 
@@ -387,7 +386,6 @@ mod tests {
             params: vec![ast::Param::Named {
                 name: "id".to_string(),
                 ty: path("number"),
-                optional: false,
                 span: ast::Span::default(),
             }],
             ret: Some(generic("Result", vec![path("string"), path("string")])),
