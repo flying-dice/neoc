@@ -293,6 +293,205 @@ fn use_alias_rebinds_the_imported_name() {
 }
 
 #[test]
+fn conflicting_same_name_use_is_a_name_conflict() {
+    // Two `use`s binding the same final segment from different modules collide
+    // on a single in-scope name (`#61`). The checker should reject the second
+    // `use` so the diagnostic cites the conflicting import, not the downstream
+    // codegen failure (the emitted ESM would carry `import { X }` twice).
+    let dir = tempdir();
+    write(&dir, "a.neoc", "pub fn X(n: number) -> number { n + 1 }\n");
+    write(&dir, "b.neoc", "pub fn X(n: number) -> number { n + 2 }\n");
+    let entry = write(
+        &dir,
+        "main.neoc",
+        "use a::X;\nuse b::X;\n\nfn main() -> number { X(1) }\n",
+    );
+
+    let project = transpile_project(&entry, Target::Luau).expect("read project");
+    assert!(
+        project
+            .diagnostics
+            .iter()
+            .any(|d| d.diagnostic.stage == Stage::Type
+                && d.diagnostic.message == "`X` is already imported"),
+        "expected a name-conflict diagnostic on the second `use`, got: {:#?}",
+        project.diagnostics
+    );
+    // All-or-nothing: a project with a diagnostic emits no files.
+    assert!(project.files.is_empty());
+}
+
+#[test]
+fn aliased_use_avoids_conflicting_same_name_import() {
+    // The escape hatch from the name conflict above: `as` rebinds the second
+    // import so it no longer collides with the first.
+    let dir = tempdir();
+    write(&dir, "a.neoc", "pub fn X(n: number) -> number { n + 1 }\n");
+    write(&dir, "b.neoc", "pub fn X(n: number) -> number { n + 2 }\n");
+    let entry = write(
+        &dir,
+        "main.neoc",
+        "use a::X;\nuse b::X as Y;\n\nfn main() -> number { X(1) + Y(2) }\n",
+    );
+
+    let project = transpile_project(&entry, Target::Luau).expect("read project");
+    assert!(
+        project.ok(),
+        "aliased same-name imports should type-check, got: {:#?}",
+        project.diagnostics
+    );
+}
+
+#[test]
+fn type_only_and_value_use_with_same_name_coexist() {
+    // The conflict guard gates per namespace, so a type-only import and a value
+    // import that share a final segment do NOT collide — they land in different
+    // namespaces. `pal::Hue` is a data-only struct (type namespace, type-erased
+    // in the emitted ESM); `cfg::Hue` is a `const` (value namespace). Unaliased,
+    // both bind `Hue`, but the struct-literal `Hue { .. }` reads the type and
+    // `r: Hue` reads the value — the #58 coexistence, without aliases. An earlier
+    // guard ORed both namespaces and wrongly rejected this with `Hue is already
+    // imported` plus a cascading `unknown name Hue`.
+    let dir = tempdir();
+    write(&dir, "pal.neoc", "pub struct Hue {\n    r: number,\n}\n");
+    write(&dir, "cfg.neoc", "pub const Hue: number = 7;\n");
+    let entry = write(
+        &dir,
+        "main.neoc",
+        "use pal::Hue;\n\
+         use cfg::Hue;\n\
+         \n\
+         extern { fn println(n: number); }\n\
+         \n\
+         pub fn main() {\n\
+         \x20   let h = Hue { r: Hue };\n\
+         \x20   println(h.r);\n\
+         }\n",
+    );
+
+    let project = transpile_project(&entry, Target::Ts).expect("read project");
+    assert!(
+        project.ok(),
+        "type-only + value share of a name should type-check, got: {:#?}",
+        project.diagnostics
+    );
+
+    let main_ts = project
+        .files
+        .iter()
+        .find(|(p, _)| p.file_stem().is_some_and(|s| s == "main"))
+        .map(|(_, src)| src.as_str())
+        .expect("main output present");
+    // Only the value binding is imported; the type-only `pal::Hue` is erased.
+    assert!(
+        main_ts.contains("import { Hue } from \"./cfg\";"),
+        "main should import the value binding `Hue` from cfg:\n{main_ts}"
+    );
+    assert!(
+        !main_ts.contains("from \"./pal\""),
+        "main must NOT import the type-only `Hue` from pal:\n{main_ts}"
+    );
+
+    if !bun_present() {
+        return;
+    }
+    // Write the emitted modules to disk and run the entry under `bun` (which
+    // strips TS types and resolves extensionless imports). A runner supplies the
+    // `println` host global, imports `main`, and calls it; loading without a
+    // link error proves the type-only `Hue` is not a dangling import.
+    let out = tempdir();
+    let src_root = std::fs::canonicalize(&dir).expect("canonicalise source root");
+    for (abs, contents) in &project.files {
+        let rel = abs.strip_prefix(&src_root).expect("file under source root");
+        let dest = out.join(rel);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).expect("create out dir");
+        }
+        std::fs::write(&dest, contents).expect("write emitted module");
+    }
+    let runner = out.join("run.ts");
+    std::fs::write(
+        &runner,
+        "globalThis.println = (x) => console.log(x);\n\
+         import { main } from \"./main\";\n\
+         main();\n",
+    )
+    .expect("write runner");
+    let output = Command::new("bun")
+        .arg(&runner)
+        .output()
+        .expect("spawn bun");
+    assert!(
+        output.status.success(),
+        "bun failed to run the emitted ESM:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "7",
+        "main should print Hue (the cfg const) = 7"
+    );
+}
+
+#[test]
+fn conflicting_same_name_type_use_is_a_name_conflict() {
+    // The type-namespace analogue of the value conflict above: two `use`s
+    // binding the same struct name from different modules collide in the type
+    // namespace. On `main` this was silent last-wins (the second `T` shadowed
+    // the first, surfacing later as a spurious field error); the guard now
+    // cites the conflicting `use`.
+    let dir = tempdir();
+    write(&dir, "a.neoc", "pub struct T {\n    n: number,\n}\n");
+    write(&dir, "b.neoc", "pub struct T {\n    m: number,\n}\n");
+    let entry = write(
+        &dir,
+        "main.neoc",
+        "use a::T;\nuse b::T;\n\nfn main() -> number { let t = T { n: 1 }; t.n }\n",
+    );
+
+    let project = transpile_project(&entry, Target::Luau).expect("read project");
+    assert!(
+        project
+            .diagnostics
+            .iter()
+            .any(|d| d.diagnostic.stage == Stage::Type
+                && d.diagnostic.message == "`T` is already imported"),
+        "expected a name-conflict diagnostic on the second `use`, got: {:#?}",
+        project.diagnostics
+    );
+    assert!(project.files.is_empty());
+}
+
+#[test]
+fn distinct_aliases_to_the_same_name_conflict() {
+    // Aliases are not a blanket escape: the *binding* is what must be unique, so
+    // two different imports aliased to the same name still collide. This pins
+    // the nuance that `as` sidesteps a conflict only when it rebinds to a
+    // distinct name (cf. `aliased_use_avoids_conflicting_same_name_import`).
+    let dir = tempdir();
+    write(&dir, "a.neoc", "pub fn X(n: number) -> number { n + 1 }\n");
+    write(&dir, "b.neoc", "pub fn Y(n: number) -> number { n + 2 }\n");
+    let entry = write(
+        &dir,
+        "main.neoc",
+        "use a::X as Z;\nuse b::Y as Z;\n\nfn main() -> number { Z(1) }\n",
+    );
+
+    let project = transpile_project(&entry, Target::Luau).expect("read project");
+    assert!(
+        project
+            .diagnostics
+            .iter()
+            .any(|d| d.diagnostic.stage == Stage::Type
+                && d.diagnostic.message == "`Z` is already imported"),
+        "expected a name-conflict diagnostic on the colliding alias, got: {:#?}",
+        project.diagnostics
+    );
+    assert!(project.files.is_empty());
+}
+
+#[test]
 fn single_file_project_emits_a_requireable_library() {
     // A project build emits every module as a requireable library, so the entry
     // closes with a `return { … }` export table even with nothing `pub` (here,

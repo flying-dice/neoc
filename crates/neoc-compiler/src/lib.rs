@@ -714,6 +714,7 @@ fn resolve_use(
             diagnostic: Diagnostic::typed(message, item.span.start, item.span.end),
         });
     };
+    let binding = u.alias.as_deref().unwrap_or(last);
     // Name the file the module would resolve to (relative to the source root)
     // so the author sees *where* it is expected, not just that it is missing —
     // the source root is fixed by the layout, so this is the actionable hint.
@@ -737,7 +738,28 @@ fn resolve_use(
         );
         return;
     }
-    let binding = u.alias.as_deref().unwrap_or(last);
+    // A second `use` whose binding collides with an earlier `use` *in the same
+    // namespace* silently overwrites a name in scope, so reject it here — the
+    // diagnostic then cites the colliding `use` rather than the downstream
+    // surface. Gate per namespace, mirroring the namespaces `import_from` will
+    // actually write: a value collision breaks the emitted ESM (`import { X };
+    // import { X }` → `SyntaxError: Identifier 'X' has already been declared`);
+    // a type collision shadows last-wins in the checker. A type-only import (a
+    // data-only struct, type-erased in the emitted output) and a value import
+    // that share a final segment land in different namespaces and legitimately
+    // coexist (#58), so checking *both* namespaces against either binding would
+    // over-reject.
+    // Aliases sidestep the check — `binding` is the alias, not the final
+    // segment. The earlier `use` keeps its binding; the conflicting one is not
+    // re-imported, so downstream resolution stays deterministic.
+    let imports_value = source.table.values.contains_key(last);
+    let imports_type = source.table.types.contains_key(last);
+    if (imports_value && dest.imports.values.contains_key(binding))
+        || (imports_type && dest.imports.types.contains_key(binding))
+    {
+        push(diagnostics, format!("`{binding}` is already imported"));
+        return;
+    }
     dest.table.import_from(&source.table, last, binding);
     dest.imports.import_from(&source.table, last, binding);
 }
