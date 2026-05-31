@@ -615,10 +615,6 @@ pub struct Field {
     /// Byte span of the field name at its declaration, for member resolution.
     pub name_span: Span,
     pub ty: Type,
-    /// Whether the field is declared optional (`name?: T`). Valid only inside
-    /// `ext` declarations; records omittability, not an `Option<T>` type.
-    /// See #78.
-    pub optional: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -703,10 +699,6 @@ pub enum Param {
     Named {
         name: Ident,
         ty: Type,
-        /// Whether the parameter is declared optional (`name?: T`). Valid only
-        /// inside `ext` declarations; records omittability, not an `Option<T>`
-        /// type — the foreign value carries no tag. See #78.
-        optional: bool,
         /// The span of the parameter name — its binding site, for scope-aware
         /// resolution (`tasks/scope-aware-resolution.md`).
         span: Span,
@@ -1380,7 +1372,6 @@ mod tests {
                                                         args: Vec::new(),
                                                     }],
                                                 }),
-                                                optional: false,
                                                 span: Span::default(),
                                             }],
                                             ret: None,
@@ -1480,7 +1471,6 @@ mod tests {
                     params: vec![Param::Named {
                         name: "o".to_string(),
                         ty: Type::Unit,
-                        optional: false,
                         span: Span::default(),
                     }],
                     ret: None,
@@ -1546,7 +1536,6 @@ mod tests {
                 params: vec![Param::Named {
                     name: "p".to_string(),
                     ty: Type::Unit,
-                    optional: false,
                     span: Span::default(),
                 }],
                 ret: None,
