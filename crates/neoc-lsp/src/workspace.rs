@@ -1,5 +1,5 @@
 //! Project-wide index for cross-file features — Phase 2 of the cross-file
-//! resolution plan (`tasks/cross-file-resolution.md`).
+//! resolution plan.
 //!
 //! Single-file handlers (references, rename, workspace symbols, goto) stop at
 //! the file boundary. This index is the foundation that lets them reach across

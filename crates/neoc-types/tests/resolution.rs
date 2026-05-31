@@ -1,6 +1,6 @@
 //! Scope-aware resolution (`STATIC.md` §2): a use resolves to the *binding* it
 //! refers to, respecting lexical scope and shadowing — the basis for
-//! scope-precise references/rename/goto (`tasks/scope-aware-resolution.md`).
+//! scope-precise references/rename/goto.
 
 use neoc_types::{BindingKind, Resolved, resolution};
 

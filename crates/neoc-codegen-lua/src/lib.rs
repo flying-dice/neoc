@@ -510,7 +510,7 @@ pub(crate) struct Emitter {
     method_enums: std::collections::HashSet<String>,
     /// Per-type trait set (transitively closed over supertraits) for the
     /// `__traits` runtime tag — `Type.__traits = { … }` on the type table
-    /// (`DYNAMIC.md`). Inert until the runtime trait-enforcement work (#54).
+    /// (`DYNAMIC.md`). Inert until the runtime trait-enforcement work (#75).
     traits: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
     /// The enclosing-loop stack. Each frame records whether the loop body was
     /// restructured for `continue` (the repeat/break idiom) and, if so, the name
@@ -1045,7 +1045,7 @@ impl Emitter {
     /// every trait it implements (its supertraits included). On the type table —
     /// the metatable for tuple/named structs and method-bearing enums, and the
     /// value itself for a unit struct — so `value.__traits` resolves for any
-    /// instance. Skipped for a type implementing no trait. Inert until #54.
+    /// instance. Skipped for a type implementing no trait. Inert until #75.
     fn emit_traits_tag(&mut self, name: &str) {
         let Some(traits) = self.traits.get(name) else {
             return;

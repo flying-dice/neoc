@@ -1,7 +1,7 @@
 //! neoc → TypeScript projector. Pure functions mapping a neoc AST type, `FnSig`,
 //! `struct`, `enum`, or `const` to TypeScript declaration text.
 //!
-//! The projection is **total and lossless** (`tasks/ts-interop-inversion.md`):
+//! The projection is **total and lossless**:
 //! every neoc type has an exact TS form, so a TS consumer of emitted neoc JS
 //! calls it type-safely. The composite shapes — `enum`, `Result`, `Option` —
 //! mirror the *runtime lowering* the JS backend emits (`lang/DYNAMIC.md` §3.2,
@@ -19,7 +19,7 @@ use neoc_ast as ast;
 
 /// Project a neoc [`ast::Type`] to its TypeScript form.
 ///
-/// The leaf mappings (`tasks/ts-interop-inversion.md` projection table):
+/// The leaf mappings (projection table):
 /// `number`/`string`/`bool` → `number`/`string`/`boolean`; `()` → `void`;
 /// `[T]` → `T[]`; `fn(A) -> B` → `(a0: A) => B`; a generic / user type keeps its
 /// name with TS type arguments. `Self` projects to `this` is *not* meaningful in

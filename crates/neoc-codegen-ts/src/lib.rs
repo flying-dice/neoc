@@ -1,7 +1,7 @@
 //! AST → typed TypeScript (`.ts`) emitter.
 //!
 //! A typed `.ts` is the JavaScript runtime with TypeScript type annotations
-//! woven onto its declarations (`tasks/ts-interop-inversion.md`). This crate is
+//! woven onto its declarations. This crate is
 //! the *typed consumer* of [`neoc_codegen_js`]'s shared lowering core: the whole
 //! expression/statement/`match`/`?`/struct/enum/`Result`/`Option` lowering is
 //! emitted by that crate via [`neoc_codegen_js::emit_with_style`] under
@@ -43,7 +43,7 @@ pub struct EmitResult {
 /// `imported_bindings` / `imported_method_types` key which cross-module `use`s
 /// carry a runtime binding, `imported_externs` / `imported_enums` merge a
 /// `use`d module's extern items and enums, and `importer_dir` anchors relative
-/// import specifiers (`tasks/ts-interop-inversion.md`).
+/// import specifiers.
 ///
 /// The runtime body is emitted by [`neoc_codegen_js::emit_with_style`] under
 /// [`HeaderStyle::Ts`](neoc_codegen_js::HeaderStyle::Ts); this function prepends

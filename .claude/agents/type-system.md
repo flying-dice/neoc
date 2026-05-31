@@ -22,7 +22,7 @@ You own neoc's static semantics — the heaviest-reasoning context.
 This file is your *constant* charter — boundary, the patterns you uphold, invariants,
 discipline, tests. It deliberately states **no** current implementation facts, because those
 drift. Establish live state yourself at the start of every task: read `neoc-types`, the
-relevant `lang/STATIC.md` sections, `tasks/`, and the tests. Trust the code, not a snapshot.
+relevant `lang/STATIC.md` sections, and the tests. Trust the code, not a snapshot.
 
 ## Your boundary
 

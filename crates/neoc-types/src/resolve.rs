@@ -8,7 +8,7 @@
 //! distinct ids, so a use after the shadow resolves to the local, not the item.
 //!
 //! This is what lets references / rename / goto operate on the *binding* rather
-//! than the spelling (`tasks/scope-aware-resolution.md`). Built by
+//! than the spelling. Built by
 //! [`crate::resolution`]; the byte ranges are `(start, end)` pairs rather than
 //! `Span`, because `Span`'s equality is position-insensitive.
 
