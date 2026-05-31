@@ -13,12 +13,12 @@ A project is rooted at a directory containing a **manifest** named `neoc.toml`. 
 ```toml
 [package]
 name = "my-app"
-target = "js"
+target = "ts"
 ```
 
 - `[package]` — required table.
   - `name` — required string. The project's name.
-  - `target` — required string, one of `"lua"` or `"js"`. The default build target (see `DYNAMIC.md` for what each target emits). A build may override it.
+  - `target` — required string, one of `"luau"`, `"ts"`, or `"py"`. The default build target (see `DYNAMIC.md` for what each target emits). A build may override it.
 
 Unknown keys are ignored, so the schema may grow without breaking older manifests. A manifest that is not valid TOML, or that omits `[package]`, `name`, or a recognised `target`, is a project error reported in neoc terms.
 
@@ -31,14 +31,14 @@ A project uses a fixed directory layout under its root (the directory holding `n
 ```
 <root>/
   neoc.toml
-  src/main/neoc/      neoc source — hand-written and generated
+  src/main/neoc/      neoc source
   src/main/sql/       SQL inputs for SQL-derived modules
-  src/main/<target>/  build output (src/main/js/ or src/main/lua/) — generated
+  src/auto/<target>/  build output (src/auto/ts/, src/auto/luau/) — generated
 ```
 
 - `src/main/neoc/` is the **source root**. All module resolution anchors here (§4).
 - `src/main/sql/` holds SQL inputs that generate neoc modules into `src/main/neoc/`.
-- `src/main/<target>/` holds emitted output, one file per source module, named for the target (`src/main/js/` when `target = "js"`, `src/main/lua/` when `target = "lua"`). This directory is generated; it is not source and should not be tracked in version control.
+- `src/auto/<target>/` holds the build output: the generated `src/auto/` tree mirrors the hand-written `src/main/` tree, one subdirectory per target (`src/auto/ts/` when `target = "ts"`, `src/auto/luau/` when `target = "luau"`), each module keeping its path under the source root (`src/main/neoc/a/b.neoc` → `src/auto/<target>/a/b.<ext>`). The output is generated, not source; whether to track it is the project's choice (an embeddable example may commit it; an application typically ignores it). An explicit output directory overrides this default.
 
 The entry module of a project is `src/main/neoc/main.neoc`.
 
@@ -72,7 +72,7 @@ Building a project with no explicit source path is manifest-driven:
 1. Discover the root (§3).
 2. Read `target` from the manifest (an explicit target override wins).
 3. Compile from the entry module `src/main/neoc/main.neoc`, following its transitive `use` graph (§4).
-4. Write each emitted module to `src/main/<target>/`, preserving the module's path under the source root (`src/main/neoc/a/b.neoc` → `src/main/<target>/a/b.<ext>`).
+4. Write each emitted module to `src/auto/<target>/`, preserving the module's path under the source root (`src/main/neoc/a/b.neoc` → `src/auto/<target>/a/b.<ext>`). An explicit output directory overrides this.
 
 A build given an explicit file path instead compiles that file as the entry, using single-file resolution when the file is not in a project (§3–§4). This is the form a lone file or a glob uses.
 

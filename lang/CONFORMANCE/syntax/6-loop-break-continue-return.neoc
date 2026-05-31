@@ -1,0 +1,10 @@
+// SYNTAX.md §6: `loop`, `break`, `continue`, and `return` statements.
+fn f(n: number) -> number {
+    let i = 0;
+    loop {
+        if i > n { break }
+        if i == 3 { i += 1; continue }
+        i += 1;
+    }
+    return i;
+}

@@ -9,7 +9,9 @@ use std::path::{Path, PathBuf};
 
 use neoc_ast as ast;
 use neoc_codegen_js as codegen_js;
-use neoc_codegen_lua as codegen_lua;
+use neoc_codegen_luau as codegen_luau;
+use neoc_codegen_python as codegen_python;
+use neoc_codegen_ts as codegen_ts;
 use neoc_parser as parser;
 use neoc_types as types;
 
@@ -32,13 +34,26 @@ pub enum Error {
 }
 
 /// A backend the compiler can lower to.
+///
+/// neoc emits the typed supersets and Python only: `luau` (which downgrades to
+/// Lua through the Luau toolchain) and `ts` (which downgrades to JavaScript
+/// through the TypeScript toolchain). Plain Lua and JavaScript are not
+/// selectable targets — obtain them by downgrading the typed superset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Target {
-    /// Lua 5.1 (`.lua`).
+    /// Self-typed Luau (`.luau`): the Lua runtime body with neoc types woven on,
+    /// self-contained per module (inlined runtime + inline `Result`/`Option`
+    /// type aliases) — no `neoc-lib`, no typings sidecar, no source map yet.
+    /// The default target; downgrade to Lua 5.1 with the Luau toolchain.
     #[default]
-    Lua,
-    /// JavaScript, ES2022 (`.js`).
-    Js,
+    Luau,
+    /// Typed TypeScript (`.ts`): the JS runtime body with neoc types woven on.
+    /// Downgrade to JavaScript with the TypeScript toolchain.
+    Ts,
+    /// Idiomatic Python 3.10+ (`.py`): the module artifact, with a typed `.pyi`
+    /// sidecar and a shared `neoc_lib.{py,pyi}` runtime at the resolution root.
+    /// No source map yet.
+    Python,
 }
 
 impl Target {
@@ -46,8 +61,9 @@ impl Target {
     #[must_use]
     pub fn extension(self) -> &'static str {
         match self {
-            Target::Lua => "lua",
-            Target::Js => "js",
+            Target::Ts => "ts",
+            Target::Luau => "luau",
+            Target::Python => "py",
         }
     }
 }
@@ -55,8 +71,9 @@ impl Target {
 impl std::fmt::Display for Target {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            Target::Lua => "lua",
-            Target::Js => "js",
+            Target::Ts => "ts",
+            Target::Luau => "luau",
+            Target::Python => "py",
         })
     }
 }
@@ -66,9 +83,25 @@ impl std::str::FromStr for Target {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "lua" => Ok(Target::Lua),
-            "js" => Ok(Target::Js),
-            other => Err(format!("unknown target `{other}` (expected `lua` or `js`)")),
+            "ts" => Ok(Target::Ts),
+            "luau" => Ok(Target::Luau),
+            "py" | "python" => Ok(Target::Python),
+            // `lua` / `js` were dropped as selectable targets: emit the typed
+            // superset and downgrade through its own toolchain. Point the author
+            // at the right one rather than a bare "unknown".
+            "lua" => Err(
+                "unknown target `lua` — neoc emits `luau` (downgrade to Lua with the Luau \
+                 toolchain); targets are `luau`, `ts`, `py`"
+                    .to_string(),
+            ),
+            "js" => Err(
+                "unknown target `js` — neoc emits `ts` (downgrade to JavaScript with the \
+                 TypeScript toolchain); targets are `luau`, `ts`, `py`"
+                    .to_string(),
+            ),
+            other => Err(format!(
+                "unknown target `{other}` (expected `luau`, `ts`, or `py`)"
+            )),
         }
     }
 }
@@ -171,22 +204,29 @@ impl Diagnostic {
 
 /// A line-level map from emitted target source back to neoc source.
 ///
-/// Built only for [`Target::Lua`] today: [`neoc_codegen_lua::LineMap`] is the
-/// backing representation. Other targets leave it empty until their backends
-/// grow a source map (see #56). A runtime that surfaces target-line numbers in
-/// a fault translates them to neoc positions through [`SourceMap::neoc_line`].
+/// No target emits a map today: the only backend that built one was the
+/// now-removed direct Lua target. This is the inert core — an always-empty map —
+/// kept on the public API so a runtime can translate a fault's emitted line to a
+/// neoc position through [`SourceMap::neoc_line`] once a backend grows a real map
+/// (see #56). Until then every map is empty and every lookup returns `None`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct SourceMap {
-    lua: codegen_lua::LineMap,
-}
+pub struct SourceMap {}
 
 impl SourceMap {
-    /// Returns the originating neoc line for a one-based emitted line, using the
-    /// nearest preceding mapped entry on an exact miss. Returns `None` when the
-    /// map is empty (no source was supplied, or the target has no map yet).
+    /// Returns the originating neoc line for a one-based emitted line, or `None`
+    /// when no correspondence is known. Always `None` today, since no backend
+    /// builds a map yet.
     #[must_use]
-    pub fn neoc_line(&self, emitted_line: u32) -> Option<u32> {
-        self.lua.neoc_line(emitted_line)
+    pub fn neoc_line(&self, _emitted_line: u32) -> Option<u32> {
+        None
+    }
+
+    /// Whether this map carries any line correspondence. Always `true` today
+    /// (every map is empty), so a caller surfacing a fault falls back to the
+    /// emitted line.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.neoc_line(1).is_none()
     }
 }
 
@@ -196,8 +236,8 @@ pub struct CompileOutput {
     /// The emitted source for the chosen [`Target`].
     pub output: String,
     pub diagnostics: Vec<Diagnostic>,
-    /// The line map from emitted source back to neoc source. Empty for targets
-    /// without a source map yet (everything but Lua). `build`/`check` ignore it.
+    /// The line map from emitted source back to neoc source. Empty today (no
+    /// backend builds a map yet; see [`SourceMap`]). `build`/`check` ignore it.
     pub source_map: SourceMap,
 }
 
@@ -230,13 +270,14 @@ pub fn transpile(source: &str, target: Target) -> CompileOutput {
     // A single-file `transpile` has no resolved module graph, so no cross-module
     // `use` can resolve to a binding or an imported enum — pass empty sets.
     let inputs = EmitInputs::default();
-    let (output, emit_messages, source_map) = emit(target, &elaborated, source, &inputs);
-    diagnostics.extend(emit_messages.into_iter().map(Diagnostic::emit));
+    let emitted = emit(target, &elaborated, source, &inputs);
+    diagnostics.extend(emitted.messages.into_iter().map(Diagnostic::emit));
 
     CompileOutput {
-        output,
+        output: emitted.output,
         diagnostics,
-        source_map,
+        // No backend emits a source map yet; an empty map maps no lines.
+        source_map: SourceMap::default(),
     }
 }
 
@@ -263,6 +304,26 @@ pub struct ProjectOutput {
     /// uses the entry's map to rewrite runtime faults to neoc positions. Empty
     /// when `files` is (a project that reported a diagnostic emits nothing).
     pub source_maps: Vec<SourceMap>,
+    /// Generated sidecar files that are **not** compiled modules and so have no
+    /// entry in `source_maps`. No backend emits a source map yet, so there are no
+    /// `.map` sidecars and no `sourceMappingURL` trailers. The kinds emitted:
+    ///
+    /// * On the TS target the shared `neoc-lib.js` + `neoc-lib.d.ts` prelude at
+    ///   the resolution root: a `.ts` `import "./neoc-lib"` resolves to the
+    ///   `.d.ts` for types and the `.js` at runtime.
+    /// * On the Python target the per-module typed stub (`x.pyi`, beside each
+    ///   `x.py`) plus, once at the resolution root, the shared runtime
+    ///   `neoc_lib.py` and its stub `neoc_lib.pyi` (Python has no native
+    ///   `Result`, so this prelude carries the runtime, not just typings).
+    /// * On the Luau target none — each module is self-contained.
+    ///
+    /// Each entry pairs a destination path with its contents, and the path is
+    /// already in its final form (extension included) — unlike `files`, it must
+    /// **not** have the target extension re-applied. The `.ts` and `.luau` target
+    /// modules are self-typed, so they land in `files`, not here. Empty when the
+    /// project reported a diagnostic. Kept separate from `files` so the
+    /// `files`↔`source_maps` positional contract stays intact.
+    pub aux_files: Vec<(PathBuf, String)>,
     pub diagnostics: Vec<ProjectDiagnostic>,
 }
 
@@ -373,22 +434,61 @@ pub fn transpile_project(entry: &Path, target: Target) -> std::io::Result<Projec
     let universe = type_universe(&loaded);
     let mut files = Vec::new();
     let mut source_maps = Vec::new();
+    let mut aux_files = Vec::new();
     for path in &order {
-        let (output, source_map) =
+        let emitted =
             check_and_emit_module(&root, &loaded, &universe, path, target, &mut diagnostics);
-        files.push((loaded[path].path.with_extension(target.extension()), output));
-        source_maps.push(source_map);
+        let src_path = &loaded[path].path;
+        let dest = src_path.with_extension(target.extension());
+        files.push((dest, emitted.output));
+        // No backend emits a source map yet, so each module's map is empty; the
+        // entry keeps the `files`↔`source_maps` positional contract intact.
+        source_maps.push(SourceMap::default());
+        // Python target: a non-empty `.pyi` typed stub sibling beside the
+        // module's `.py`. `x.neoc` → `x.pyi`.
+        if !emitted.pyi.is_empty() {
+            aux_files.push((src_path.with_extension("pyi"), emitted.pyi));
+        }
     }
+
+    // Once per build, the target's shared prelude at the resolution root.
+    aux_files.extend(root_prelude_aux(&root, target));
 
     if !diagnostics.is_empty() {
         files.clear();
         source_maps.clear();
+        aux_files.clear();
     }
     Ok(ProjectOutput {
         files,
         source_maps,
+        aux_files,
         diagnostics,
     })
+}
+
+/// The target's shared prelude files at the resolution `root`, emitted once per
+/// build.
+///
+/// * **TS** — the runtime `neoc-lib.js` + its `neoc-lib.d.ts` types. A `.ts`
+///   module's `import "./neoc-lib"` resolves to the `.d.ts` for types and the
+///   `.js` at runtime.
+/// * **Python** — the runtime `neoc_lib.py` + its stub `neoc_lib.pyi`. Python
+///   has no native `Result`, so this prelude carries the runtime, not just
+///   typings.
+/// * **Luau** — none; each module is self-contained.
+fn root_prelude_aux(root: &Path, target: Target) -> Vec<(PathBuf, String)> {
+    match target {
+        Target::Ts => vec![
+            (root.join("neoc-lib.js"), codegen_js::neoc_lib_js()),
+            (root.join("neoc-lib.d.ts"), codegen_js::neoc_lib_dts()),
+        ],
+        Target::Python => vec![
+            (root.join("neoc_lib.py"), codegen_python::neoc_lib_py()),
+            (root.join("neoc_lib.pyi"), codegen_python::neoc_lib_pyi()),
+        ],
+        Target::Luau => Vec::new(),
+    }
 }
 
 /// Diagnoses one module against an in-memory project, for the editor.
@@ -512,7 +612,8 @@ fn focus_diagnostics(
 
 /// Checks one resolved module's bodies (with its `use`-imported symbols in
 /// scope) and emits it to `target`, pushing any type/emit diagnostics onto
-/// `diagnostics`. Returns the emitted source and its [`SourceMap`].
+/// `diagnostics`. Returns the [`Emitted`] result — the source and, on the Python
+/// target, the `.pyi` declaration sibling.
 fn check_and_emit_module(
     root: &Path,
     loaded: &HashMap<PathBuf, LoadedModule>,
@@ -520,7 +621,7 @@ fn check_and_emit_module(
     path: &Path,
     target: Target,
     diagnostics: &mut Vec<ProjectDiagnostic>,
-) -> (String, SourceMap) {
+) -> Emitted {
     let me = &loaded[path];
     let mut table = types::collect(&me.module);
     let mut imports = types::SymbolTable::new();
@@ -553,19 +654,23 @@ fn check_and_emit_module(
     let elaborated = types::elaborate_with_table(&me.module, &table);
     let inputs = EmitInputs {
         bindings: js_imported_bindings(root, loaded, &me.module),
+        py_bindings: py_imported_bindings(root, loaded, &me.module),
         method_types: js_imported_method_types(root, loaded, &me.module),
         enums: imported_enums(root, loaded, &me.module),
         externs,
         importer_dir: module_dir_segments(root, path),
+        // Every module a project build emits is a requireable library — the
+        // entry included, since a host consuming the build `require`s it.
+        as_module: true,
     };
-    let (output, emit_messages, source_map) = emit(target, &elaborated, &me.source, &inputs);
-    for message in emit_messages {
+    let emitted = emit(target, &elaborated, &me.source, &inputs);
+    for message in &emitted.messages {
         diagnostics.push(ProjectDiagnostic {
             path: path.to_path_buf(),
-            diagnostic: Diagnostic::emit(message),
+            diagnostic: Diagnostic::emit(message.clone()),
         });
     }
-    (output, source_map)
+    emitted
 }
 
 /// The destination a [`resolve_use`] writes a resolved import into: the
@@ -609,12 +714,19 @@ fn resolve_use(
             diagnostic: Diagnostic::typed(message, item.span.start, item.span.end),
         });
     };
+    // Name the file the module would resolve to (relative to the source root)
+    // so the author sees *where* it is expected, not just that it is missing —
+    // the source root is fixed by the layout, so this is the actionable hint.
+    let unresolved = || match expected_module_file(&u.path) {
+        Some(rel) => format!("unresolved module `{module_path}` (no file at `{rel}`)"),
+        None => format!("unresolved module `{module_path}`"),
+    };
     let Some(dep_path) = module_file(root, &u.path).map(|p| canonical_or(&p)) else {
-        push(diagnostics, format!("unresolved module `{module_path}`"));
+        push(diagnostics, unresolved());
         return;
     };
     let Some(source) = loaded.get(&dep_path) else {
-        push(diagnostics, format!("unresolved module `{module_path}`"));
+        push(diagnostics, unresolved());
         return;
     };
     let public = source.table.value_is_public(last) || source.table.type_is_public(last);
@@ -654,6 +766,20 @@ pub fn module_file(root: &Path, use_path: &[ast::Ident]) -> Option<PathBuf> {
     Some(p)
 }
 
+/// The source-root-relative file a `use` path's module resolves to, rendered
+/// with `/` separators for a stable, host-agnostic diagnostic (`a::b::Item` →
+/// `a/b.neoc`, `foo::Item` → `foo.neoc`). Used to tell an author *where* a
+/// missing module's file is expected, since the source root is fixed by the
+/// project layout. Returns `None` for a single-segment path (no module
+/// qualifier, so nothing resolves to a file).
+fn expected_module_file(use_path: &[ast::Ident]) -> Option<String> {
+    let (_, prefix) = use_path.split_last()?;
+    let (file, dirs) = prefix.split_last()?;
+    let mut segments: Vec<String> = dirs.to_vec();
+    segments.push(format!("{file}.neoc"));
+    Some(segments.join("/"))
+}
+
 /// The directory of module `path`, as path segments relative to the project
 /// `root`. A root-level module yields an empty vector; `<root>/autosql/x.neoc`
 /// yields `["autosql"]`.
@@ -689,61 +815,72 @@ fn canonical_or(path: &Path) -> PathBuf {
 /// Dispatches emission to the backend for `target`, returning its source, any
 /// emit diagnostic messages, and a [`SourceMap`] back to neoc.
 ///
-/// `source` is the neoc text the module was parsed from; the Lua backend uses
-/// it to map emitted lines to neoc lines. The JS backend has no source map yet
-/// (#56), so it returns an empty [`SourceMap`].
+/// `source` is the neoc text the module was parsed from; the Luau backend uses
+/// it to track spans. No backend emits a source map yet (#56), so `emit` always
+/// reports an empty [`SourceMap`] through the driver.
 ///
-/// `imported_bindings` are the module's `use`d names whose source module emits
-/// a runtime JS binding (see [`codegen_js::module_js_bindings`]); the JS backend
-/// filters its `import` emission against it so a type-only `use` produces no
-/// dangling import. `method_types` is the subset whose source binding is a
-/// method-bearing type (see [`codegen_js::module_js_method_types`]); for those
-/// the JS backend imports the prototype `Type$` (the type's JS runtime binding)
-/// rather than the erased bare name. Method dispatch itself is prototype-backed
-/// (`lang/DYNAMIC.md` §7.1), so no per-type wiring is needed. The Lua backend
-/// ignores both.
+/// `bindings` are the module's `use`d names whose source module emits a runtime
+/// JS binding (see [`codegen_js::module_js_bindings`]); the TS backend (reusing
+/// the JS emit) filters its `import` emission against it so a type-only `use`
+/// produces no dangling import. `method_types` is the subset whose source
+/// binding is a method-bearing type (see [`codegen_js::module_js_method_types`]);
+/// for those the TS backend imports the prototype `Type$` rather than the erased
+/// bare name. Method dispatch itself is prototype-backed (`lang/DYNAMIC.md`
+/// §7.1), so no per-type wiring is needed. The Luau backend ignores both.
 /// The cross-module inputs a backend needs beyond the module itself, gathered
 /// by the project driver from the resolved `use` graph.
 ///
-/// Each field is target-aware: the Lua backend reads `enums` and `externs`; the
-/// JS backend reads `bindings`, `method_types`, and `externs`. A field a target
+/// Each field is target-aware: the Luau backend reads `enums` and `externs`; the
+/// TS backend reads `bindings`, `method_types`, and `externs`; the Python
+/// backend reads `enums`, `py_bindings`, and `importer_dir`. A field a target
 /// ignores is built anyway (cheap) and dropped at the seam.
 #[derive(Default)]
 struct EmitInputs<'a> {
-    /// `use`d names whose source module emits a runtime JS binding (JS only).
+    /// `use`d names whose source module emits a runtime JS binding (TS only).
     bindings: std::collections::HashSet<String>,
-    /// The subset of `bindings` that are method-bearing types (JS only); their
+    /// Resolved `use` paths whose source module emits a runtime Python
+    /// definition (Python only). A `use` absent here resolves to a trait or
+    /// alias — no Python symbol — so its import is dropped.
+    py_bindings: Vec<String>,
+    /// The subset of `bindings` that are method-bearing types (TS only); their
     /// `use` imports the prototype `Type$`.
     method_types: std::collections::HashSet<String>,
-    /// `pub` enum declarations brought in by `use` (Lua resolves variant forms).
+    /// `pub` enum declarations brought in by `use` (Luau resolves variant forms).
     enums: Vec<&'a ast::EnumDecl>,
     /// Extern items brought in by `use`, for native-import reconstruction in the
-    /// consumer (both targets; `lang/EXTERN.md` §Lowering).
+    /// consumer (Luau/TS; `lang/EXTERN.md` §Lowering).
     externs: Vec<ast::ExternItem>,
     /// The importing module's directory as path segments relative to the source
-    /// root (JS only). Anchors each cross-module `import`'s relative specifier so
-    /// a module in a subdirectory imports a sibling as `./b.js`. Empty for a
+    /// root (TS/Python). Anchors each cross-module `import`'s relative specifier
+    /// so a module in a subdirectory imports a sibling as `./b.js`. Empty for a
     /// root-level module and for single-file `transpile`.
     importer_dir: Vec<String>,
+    /// Whether the module is emitted as a requireable library (Luau only). A
+    /// project build sets `true` so each module ends with a `return { … }` export
+    /// table a consumer can `require`; single-file `transpile` leaves it `false`
+    /// so the chunk runs directly (`lang/DYNAMIC.md` §3.7).
+    as_module: bool,
 }
 
-fn emit(
-    target: Target,
-    module: &ast::Module,
-    source: &str,
-    inputs: &EmitInputs,
-) -> (String, Vec<String>, SourceMap) {
+/// One module's emit, normalised across backends: the target source, any
+/// emit-stage messages, and the `.pyi` declaration sibling (Python only; empty
+/// otherwise). No backend emits a source map yet, so the driver attaches an
+/// empty [`SourceMap`] per module.
+struct Emitted {
+    output: String,
+    messages: Vec<String>,
+    /// The module's `.pyi` typed stub (Python target). Empty for the other
+    /// targets and for a module that exports nothing.
+    pyi: String,
+}
+
+fn emit(target: Target, module: &ast::Module, source: &str, inputs: &EmitInputs) -> Emitted {
     match target {
-        Target::Lua => {
-            let r = codegen_lua::emit_with_imports(module, source, &inputs.enums, &inputs.externs);
-            (
-                r.lua,
-                r.diagnostics.into_iter().map(|d| d.message).collect(),
-                SourceMap { lua: r.source_map },
-            )
-        }
-        Target::Js => {
-            let r = codegen_js::emit(
+        Target::Ts => {
+            // A self-typed `.ts` is the module artifact, not a sidecar: it
+            // carries its own types inline (no `.d.ts`). Reuses `codegen-js`'s
+            // emit through the TS seam. No source map yet.
+            let r = codegen_ts::emit(
                 module,
                 &inputs.bindings,
                 &inputs.method_types,
@@ -751,11 +888,47 @@ fn emit(
                 &inputs.enums,
                 &inputs.importer_dir,
             );
-            (
-                r.js,
-                r.diagnostics.into_iter().map(|d| d.message).collect(),
-                SourceMap::default(),
-            )
+            Emitted {
+                output: r.ts,
+                messages: r.diagnostics.into_iter().map(|d| d.message).collect(),
+                pyi: String::new(),
+            }
+        }
+        Target::Luau => {
+            // A self-typed `.luau` is self-contained: it inlines the runtime and
+            // its own `Result`/`Option` type aliases (no `neoc-lib`, no `.d.lua`
+            // sidecar). Reuses `codegen-lua`'s lowering through the Luau seam. No
+            // source map yet.
+            let r = codegen_luau::emit(
+                module,
+                source,
+                &inputs.enums,
+                &inputs.externs,
+                inputs.as_module,
+            );
+            Emitted {
+                output: r.luau,
+                messages: r.diagnostics.into_iter().map(|d| d.message).collect(),
+                pyi: String::new(),
+            }
+        }
+        Target::Python => {
+            // Python needs the module, imported enums, and the importer dir
+            // (so a `use` resolves to a relative package import from a
+            // subpackage) — no JS bindings, method types, or externs. The `.py`
+            // is the module artifact; the `.pyi` rides in `Emitted::pyi` to the
+            // aux wiring. No source map yet.
+            let r = codegen_python::emit(
+                module,
+                &inputs.enums,
+                &inputs.importer_dir,
+                &inputs.py_bindings,
+            );
+            Emitted {
+                output: r.py,
+                messages: r.diagnostics.into_iter().map(|d| d.message).collect(),
+                pyi: r.pyi,
+            }
         }
     }
 }
@@ -797,6 +970,38 @@ fn js_imported_bindings(
         };
         if codegen_js::module_js_bindings(&source.module).contains(last) {
             bindings.insert(u.path.join("::"));
+        }
+    }
+    bindings
+}
+
+/// The resolved `use` paths in `module` (`prefix::last`) that resolve to a
+/// runtime Python definition in their source module — a `fn`, `const`,
+/// `struct`, or `enum` (see [`codegen_python::module_py_bindings`]). A `use` of
+/// a `trait` or `type` alias is excluded: it emits no Python symbol, so an
+/// `import` for it would dangle. The Python emitter keeps only the imports
+/// present here. Target-agnostic; the other backends ignore the result.
+fn py_imported_bindings(
+    root: &Path,
+    loaded: &HashMap<PathBuf, LoadedModule>,
+    module: &ast::Module,
+) -> Vec<String> {
+    let mut bindings = Vec::new();
+    for item in &module.items {
+        let ast::ItemKind::Use(u) = &item.kind else {
+            continue;
+        };
+        let Some((last, _)) = u.path.split_last() else {
+            continue;
+        };
+        let Some(dep) = module_file(root, &u.path).map(|p| canonical_or(&p)) else {
+            continue;
+        };
+        let Some(source) = loaded.get(&dep) else {
+            continue;
+        };
+        if codegen_python::module_py_bindings(&source.module).contains(last) {
+            bindings.push(u.path.join("::"));
         }
     }
     bindings

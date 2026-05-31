@@ -11,7 +11,10 @@ neoc-ast.workspace = true
 neoc-parser.workspace = true
 neoc-types.workspace = true
 neoc-codegen-lua.workspace = true
+neoc-codegen-luau.workspace = true
 neoc-codegen-js.workspace = true
+neoc-codegen-ts.workspace = true
+neoc-codegen-python.workspace = true
 neoc-macros.workspace = true
 toml = "0.8"
 thiserror = "2"
@@ -23,6 +26,10 @@ workspace = true
 [dev-dependencies]
 libtest-mimic = "0.8"
 neoc-grammar.workspace = true
+# The dynamic conformance JS run harness writes the shared `neoc-lib.js` runtime
+# beside the emitted module (Result/Option import their runtime from it). Named
+# directly here rather than re-exported through the compiler's public API.
+neoc-codegen-js.workspace = true
 tree-sitter.workspace = true
 # Behavioural spec: Gherkin features in `tooling/compiler/` driven against the
 # public `transpile` seam. cucumber supplies its own runner (default libtest

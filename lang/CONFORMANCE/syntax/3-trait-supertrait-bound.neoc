@@ -1,0 +1,6 @@
+// SYNTAX.md §3: a trait declaration with a supertrait bound list (`: Show + Eq`).
+trait Show { fn show(self) -> string; }
+trait Eq { fn eq(self, o: Self) -> bool; }
+trait Greet: Show + Eq {
+    fn hi(self) -> string;
+}

@@ -1,6 +1,6 @@
 //! Project-manifest integration: a `neoc.toml` rooting a real
 //! `src/main/neoc/` tree is discovered, its `use` graph resolves against the
-//! source root, and `build` emits to `src/main/<target>/` preserving paths
+//! source root, and `build` emits to `src/auto/<target>/` preserving paths
 //! (`lang/PROJECT.md` §3–§5).
 //!
 //! Everything runs in a tempdir; nothing is written into the repo tree.
@@ -36,12 +36,12 @@ impl Drop for TempDir {
     }
 }
 
-/// Lays out a minimal Lua project: a manifest, an entry that `use`s a sibling,
+/// Lays out a minimal Luau project: a manifest, an entry that `use`s a sibling,
 /// and the sibling itself. Returns the project root.
 fn scaffold(root: &Path) {
     fs::write(
         root.join("neoc.toml"),
-        "[package]\nname = \"demo\"\ntarget = \"lua\"\n",
+        "[package]\nname = \"demo\"\ntarget = \"luau\"\n",
     )
     .unwrap();
     let src = root.join("src").join("main").join("neoc");
@@ -62,7 +62,7 @@ fn build_discovers_root_resolves_sibling_and_preserves_paths() {
 
     let project = discover_project(root).unwrap().expect("found project");
     assert_eq!(project.name, "demo");
-    assert_eq!(project.target, Target::Lua);
+    assert_eq!(project.target, Target::Luau);
 
     // The entry resolves its `use greet::hello` against the source root.
     assert_eq!(resolution_root(&project.entry), project.source_root);
@@ -76,7 +76,7 @@ fn build_discovers_root_resolves_sibling_and_preserves_paths() {
     // Both the entry and the resolved sibling are emitted.
     assert_eq!(compiled.files.len(), 2, "{:?}", compiled.files);
 
-    // Mirror what `neoc build` writes: each module under the output dir,
+    // Mirror what `neoc build` writes: each module under `src/auto/<target>/`,
     // preserving its path relative to the canonical source root.
     let source_root = fs::canonicalize(&project.source_root).unwrap();
     let out_dir = project.output_dir(project.target);
@@ -90,11 +90,11 @@ fn build_discovers_root_resolves_sibling_and_preserves_paths() {
         fs::write(&dest, contents).unwrap();
     }
 
-    // Output landed in src/main/lua/, one file per module, preserving names.
-    assert!(out_dir.join("main.lua").is_file(), "main.lua missing");
-    assert!(out_dir.join("greet.lua").is_file(), "greet.lua missing");
-    // Nothing leaked into the source root.
-    assert!(!project.source_root.join("main.lua").exists());
+    // Output landed in src/auto/<target>/, one file per module, preserving names.
+    assert!(out_dir.join("main.luau").is_file(), "main.luau missing");
+    assert!(out_dir.join("greet.luau").is_file(), "greet.luau missing");
+    // The source tree stays clean — nothing emitted into src/main/neoc.
+    assert!(!project.source_root.join("main.luau").exists());
 }
 
 #[test]
@@ -103,7 +103,7 @@ fn nested_module_path_is_preserved_into_output() {
     let root = tmp.path();
     fs::write(
         root.join("neoc.toml"),
-        "[package]\nname = \"demo\"\ntarget = \"lua\"\n",
+        "[package]\nname = \"demo\"\ntarget = \"luau\"\n",
     )
     .unwrap();
     let src = root.join("src").join("main").join("neoc");
@@ -135,6 +135,6 @@ fn nested_module_path_is_preserved_into_output() {
                 .to_path_buf()
         })
         .collect();
-    assert!(rels.contains(&PathBuf::from("main.lua")), "{rels:?}");
-    assert!(rels.contains(&PathBuf::from("a/b.lua")), "{rels:?}");
+    assert!(rels.contains(&PathBuf::from("main.luau")), "{rels:?}");
+    assert!(rels.contains(&PathBuf::from("a/b.luau")), "{rels:?}");
 }

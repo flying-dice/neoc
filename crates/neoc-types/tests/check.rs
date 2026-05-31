@@ -740,7 +740,7 @@ fn unknown_name_diagnostic_spans_the_identifier() {
 
 #[test]
 fn unknown_wrapper_struct_typechecks() {
-    // The autots binding shape: a wrapper struct over a foreign value, with
+    // A wrapper struct over a foreign value (the `Unknown` boundary), with
     // methods that poke at it and assert concrete return types.
     assert_clean(
         "struct User { inner: Unknown }

@@ -94,7 +94,28 @@ wasm:
         - target/
   script:
     - rustup target add wasm32-unknown-unknown
-    - cargo check --target wasm32-unknown-unknown -p neoc-ast -p neoc-macros -p neoc-codegen-lua
+    - cargo check --target wasm32-unknown-unknown -p neoc-ast -p neoc-macros -p neoc-codegen-lua -p neoc-codegen-luau -p neoc-codegen-ts -p neoc-codegen-python
+
+# ── typecheck ─────────────────────────────────────────────────────────────────
+#
+# Guards the headline of the self-typed targets: the emitted TypeScript must be
+# `tsc --strict`-clean and the emitted Python pyright-clean (#81). Scoped to the
+# example packages — the root `tsconfig.json` has no `exclude`, so a whole-repo
+# `tsc` would also see the conformance `.ts` snippets (runtime samples, not
+# meant to type-check). Runs on the bun image; `bun install` provides
+# `@types/bun` for the host adapter, and pyright runs from the package dir so
+# its `pyrightconfig.json` (pythonVersion + auto path) applies. `typescript` and
+# `pyright` are pinned in `package.json` and resolved from the frozen lockfile,
+# so a new upstream release can't silently drift the gate.
+typecheck:
+  stage: test
+  needs: [lint]
+  image: oven/bun:latest
+  before_script: []
+  script:
+    - bun install --frozen-lockfile
+    - bunx tsc --noEmit -p packages/bun-http-sqlite-ts/tsconfig.json
+    - cd packages/python-http-sqlite && bunx pyright src
 
 # ── build ─────────────────────────────────────────────────────────────────────
 #

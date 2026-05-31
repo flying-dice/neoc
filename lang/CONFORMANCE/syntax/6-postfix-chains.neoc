@@ -1,0 +1,9 @@
+// SYNTAX.md §6: postfix field access, tuple-index access, and indexing chains.
+struct UserId(number);
+struct Wrap { inner: UserId }
+extern { fn mk() -> Wrap; }
+fn f(xs: [number]) -> number {
+    let w = mk();
+    let id = w.inner.0;
+    xs[0] + id
+}

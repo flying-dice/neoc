@@ -1,0 +1,3 @@
+[package]
+name = "demo-luau-notes"
+target = "luau"

@@ -1,0 +1,6 @@
+// LEXICAL.md §5 / SYNTAX.md §6: a float literal needs a digit after the `.`;
+// `1.` is malformed.
+fn f() -> number {
+    let x = 1.;
+    x
+}

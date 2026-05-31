@@ -1,0 +1,10 @@
+{
+  "name": "@neoc-sh/demo-luau-notes",
+  "version": "0.1.0",
+  "description": "neoc notes app on raw Luau — ports & adapters: neoc owns the controllers + an in-memory Store port, a Luau host implements it.",
+  "private": true,
+  "scripts": {
+    "build": "cargo run -p neoc -- build",
+    "start": "luau src/main/luau/app.luau"
+  }
+}

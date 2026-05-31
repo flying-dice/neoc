@@ -84,7 +84,7 @@ Feature: Emitting JavaScript
     When I emit JavaScript
     Then the JS contains "{ __struct: "Point", x: 1, y: 2 }"
 
-  Scenario: Ok lowers to a tagged Result object via the prelude
+  Scenario: Ok is imported from the shared neoc-lib runtime
     Given the source:
       """
       fn ok_one() -> Result<number, string> {
@@ -92,8 +92,9 @@ Feature: Emitting JavaScript
       }
       """
     When I emit JavaScript
-    Then the JS contains "__enum: "Result", __tag: "Ok""
+    Then the JS contains "import { Ok, Err, Some, None, Option$, Result$ } from "./neoc-lib.js";"
     And the JS contains "return Ok(1);"
+    And the JS does not contain "__enum: "Result", __tag: "Ok""
     And the emit reports no problems
 
   Scenario: The try operator hoists an early-return guard
@@ -167,3 +168,45 @@ Feature: Emitting JavaScript
     When I emit JavaScript
     Then the JS contains "import * as fs from "fs";"
     And the JS contains "fs.read("config")"
+
+  Scenario: A pub struct projects to an exported interface in the .d.ts
+    Given the source:
+      """
+      pub struct Row {
+          id: number,
+          body: string,
+      }
+      """
+    When I emit JavaScript
+    Then the d.ts contains "export interface Row { id: number; body: string; }"
+
+  Scenario: A pub enum projects to a discriminated union matching the runtime tags
+    Given the source:
+      """
+      pub enum Shape {
+          Dot,
+          Circle(number),
+          Rect { w: number, h: number },
+      }
+      """
+    When I emit JavaScript
+    Then the d.ts contains "export type Shape = { __enum: "Shape"; __tag: "Dot" } | { __enum: "Shape"; __tag: "Circle"; _0: number } | { __enum: "Shape"; __tag: "Rect"; w: number; h: number };"
+
+  Scenario: A pub fn returning Result projects an export declaration and imports Result
+    Given the source:
+      """
+      pub fn find(id: number) -> Result<string, string> {
+          Err("missing")
+      }
+      """
+    When I emit JavaScript
+    Then the d.ts contains "import type { Result, Option } from "./neoc-lib";"
+    And the d.ts contains "export declare function find(id: number): Result<string, string>;"
+
+  Scenario: A pub const projects an exported declare const with its type
+    Given the source:
+      """
+      pub const MAX: number = 99;
+      """
+    When I emit JavaScript
+    Then the d.ts contains "export declare const MAX: number;"

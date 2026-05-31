@@ -30,8 +30,8 @@ pub enum Command {
         /// Write output under this directory instead of next to the source.
         #[arg(short, long, value_name = "DIR")]
         output: Option<PathBuf>,
-        /// Target language: `lua` or `js`. Defaults to the project's manifest
-        /// target, or `lua` for a lone file.
+        /// Target language: `luau`, `ts`, or `py`. Defaults to the project's
+        /// manifest target, or `luau` for a lone file.
         #[arg(short, long)]
         target: Option<Target>,
     },
@@ -248,9 +248,10 @@ fn build(
 
 /// Builds the manifest-driven project discovered from the working directory:
 /// compiles from `src/main/neoc/main.neoc`, follows its `use` graph, and writes
-/// each module to `src/main/<target>/`, preserving its path under the source
-/// root. An explicit `--target` overrides the manifest target; an explicit
-/// `--output` overrides the project output directory.
+/// each module to `src/auto/<target>/`, preserving its path under the source
+/// root (`src/main/neoc/a/b.neoc` → `src/auto/<target>/a/b.<ext>`). An explicit
+/// `--target` overrides the manifest target; an explicit `--output` writes under
+/// that directory instead.
 fn build_project(
     output: Option<&Path>,
     target: Option<Target>,
@@ -265,6 +266,9 @@ fn build_project(
         return Ok(1);
     };
     let target = target.unwrap_or(project.target);
+    // Output lands in `src/auto/<target>/` by default (the generated tree
+    // mirroring `src/main/`), preserving the module's path under the source
+    // root (`src/main/neoc/a/b.neoc` → `src/auto/<target>/a/b.js`). `-o` overrides.
     let out_dir = output.map_or_else(|| project.output_dir(target), Path::to_path_buf);
 
     let compiled = transpile_project(&project.entry, target)
@@ -282,16 +286,30 @@ fn build_project(
     let mut written: Vec<PathBuf> = Vec::new();
     for (src_dest, contents) in compiled.files {
         let dest = project_out_path(&src_dest, &source_root, &out_dir, target);
-        if written.contains(&dest) {
-            continue;
-        }
-        if let Some(parent) = dest.parent() {
-            fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
-        }
-        fs::write(&dest, contents).with_context(|| format!("writing {}", dest.display()))?;
-        written.push(dest);
+        write_output(&dest, &contents, &mut written)?;
+    }
+    // Sidecar files (`.d.ts`, shared `neoc-lib`) keep their own extension —
+    // map them under `out_dir` without swapping the target extension.
+    for (src_dest, contents) in compiled.aux_files {
+        let dest = aux_out_path(&src_dest, &source_root, &out_dir);
+        write_output(&dest, &contents, &mut written)?;
     }
     Ok(0)
+}
+
+/// Writes `contents` to `dest`, creating parent directories, unless `dest` was
+/// already written this build (a module reachable from several entries is
+/// emitted once). Records every path it writes.
+fn write_output(dest: &Path, contents: &str, written: &mut Vec<PathBuf>) -> Result<()> {
+    if written.contains(&dest.to_path_buf()) {
+        return Ok(());
+    }
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+    }
+    fs::write(dest, contents).with_context(|| format!("writing {}", dest.display()))?;
+    written.push(dest.to_path_buf());
+    Ok(())
 }
 
 /// Builds each explicit path/glob as its own entry, using single-file
@@ -322,16 +340,13 @@ fn build_paths(
 
         for (src_dest, contents) in project.files {
             let dest = out_path(&src_dest, output, target);
-            // A module reachable from several entries is emitted once.
-            if written.contains(&dest) {
-                continue;
-            }
-            if let Some(parent) = dest.parent() {
-                fs::create_dir_all(parent)
-                    .with_context(|| format!("creating {}", parent.display()))?;
-            }
-            fs::write(&dest, contents).with_context(|| format!("writing {}", dest.display()))?;
-            written.push(dest);
+            write_output(&dest, &contents, &mut written)?;
+        }
+        // Sidecar files keep their own extension: alongside the source, or under
+        // `output` by file name.
+        for (src_dest, contents) in project.aux_files {
+            let dest = aux_out_path_loose(&src_dest, output);
+            write_output(&dest, &contents, &mut written)?;
         }
     }
 
@@ -492,6 +507,28 @@ fn project_out_path(source: &Path, source_root: &Path, out_dir: &Path, target: T
     out_dir.join(rel)
 }
 
+/// The destination for a project sidecar file (`.d.ts`, shared `neoc-lib`):
+/// under `out_dir`, preserving the path relative to `source_root`, with the
+/// sidecar's own extension left intact (unlike [`project_out_path`], which
+/// swaps in the target extension). A sidecar outside `source_root` falls back to
+/// its file name under `out_dir`.
+fn aux_out_path(source: &Path, source_root: &Path, out_dir: &Path) -> PathBuf {
+    let rel = source
+        .strip_prefix(source_root)
+        .unwrap_or_else(|_| Path::new(source.file_name().unwrap_or(source.as_os_str())));
+    out_dir.join(rel)
+}
+
+/// The destination for a sidecar file in the lone-file / glob build form:
+/// alongside the source keeping its own extension, or under `output` by file
+/// name. The sidecar form of [`out_path`] with no extension swap.
+fn aux_out_path_loose(source: &Path, output: Option<&Path>) -> PathBuf {
+    match output {
+        Some(dir) => dir.join(source.file_name().unwrap_or(source.as_os_str())),
+        None => source.to_path_buf(),
+    }
+}
+
 /// A transpiled `.neoc` entry ready to run: the emitted Lua and the line map
 /// back to the neoc source, so `neoc run` can rewrite a runtime fault's Lua
 /// line numbers to neoc positions.
@@ -520,7 +557,7 @@ pub fn transpile_entry_to_lua(
     file: &Path,
     err: &mut impl Write,
 ) -> Result<Option<TranspiledEntry>> {
-    let project = transpile_project(file, Target::Lua)
+    let project = transpile_project(file, Target::Luau)
         .with_context(|| format!("reading {}", file.display()))?;
 
     if !project.diagnostics.is_empty() {
@@ -543,6 +580,13 @@ pub fn transpile_entry_to_lua(
     let (Some((_, mut lua)), Some(source_map)) = (files.next(), maps.next()) else {
         return Ok(None);
     };
+
+    // A project build emits every module as a requireable library, closing with
+    // a `return { … }` export table (`lang/DYNAMIC.md` §3.7). `neoc run` executes
+    // the entry as a script, not a library: drop that trailing `return` so the
+    // appended `main()` call is reachable (a statement after `return` is a Lua
+    // syntax error). The lowered functions stay in scope as locals.
+    strip_export_return(&mut lua);
 
     // neoc is item-only at the top level (Rust-style), so a transpiled module
     // just defines functions. `fn main` is the entry point: if the program
@@ -575,7 +619,7 @@ pub fn transpile_source_to_lua(
     source: &str,
     err: &mut impl Write,
 ) -> Result<Option<TranspiledEntry>> {
-    let compiled = transpile(source, Target::Lua);
+    let compiled = transpile(source, Target::Luau);
 
     if !compiled.diagnostics.is_empty() {
         report_eval(&compiled.diagnostics, err)?;
@@ -602,6 +646,27 @@ pub fn transpile_source_to_lua(
 fn defines_main(lua: &str) -> bool {
     lua.lines()
         .any(|l| l.starts_with("local function main(") || l.starts_with("function main("))
+}
+
+/// Strip the library export table a project build appends to a module — the
+/// trailing top-level `return { … }` (`lang/DYNAMIC.md` §3.7) — so `neoc run` can
+/// run the entry as a script and append `main()`. A no-op when no such line is
+/// present (e.g. an inline `--eval` snippet, which is never a project build). The
+/// export `return` is emitted at column zero as the chunk's last non-empty line,
+/// so the match is anchored there.
+fn strip_export_return(lua: &mut String) {
+    let Some(last) = lua
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty() && !l.starts_with("--"))
+    else {
+        return;
+    };
+    if last.starts_with("return {")
+        && let Some(idx) = lua.rfind(last)
+    {
+        lua.truncate(idx);
+    }
 }
 
 /// Writes each project diagnostic to `err` as `<path>: <stage>: <message>` —
@@ -646,10 +711,10 @@ mod tests {
 
     #[test]
     fn out_path_replaces_extension_next_to_source() {
-        let got = out_path(Path::new("src/foo.neoc"), None, Target::Lua);
-        assert_eq!(got, PathBuf::from("src/foo.lua"));
-        let got = out_path(Path::new("src/foo.neoc"), None, Target::Js);
-        assert_eq!(got, PathBuf::from("src/foo.js"));
+        let got = out_path(Path::new("src/foo.neoc"), None, Target::Luau);
+        assert_eq!(got, PathBuf::from("src/foo.luau"));
+        let got = out_path(Path::new("src/foo.neoc"), None, Target::Ts);
+        assert_eq!(got, PathBuf::from("src/foo.ts"));
     }
 
     #[test]
@@ -657,42 +722,42 @@ mod tests {
         let got = out_path(
             Path::new("src/nested/foo.neoc"),
             Some(Path::new("out")),
-            Target::Lua,
+            Target::Luau,
         );
-        assert_eq!(got, PathBuf::from("out/foo.lua"));
+        assert_eq!(got, PathBuf::from("out/foo.luau"));
     }
 
     #[test]
     fn project_out_path_preserves_path_under_source_root() {
         let got = project_out_path(
-            Path::new("/proj/src/main/neoc/a/b.lua"),
+            Path::new("/proj/src/main/neoc/a/b.luau"),
             Path::new("/proj/src/main/neoc"),
-            Path::new("/proj/src/main/lua"),
-            Target::Lua,
+            Path::new("/proj/src/main/luau"),
+            Target::Luau,
         );
-        assert_eq!(got, PathBuf::from("/proj/src/main/lua/a/b.lua"));
+        assert_eq!(got, PathBuf::from("/proj/src/main/luau/a/b.luau"));
     }
 
     #[test]
     fn project_out_path_swaps_extension_for_target() {
         let got = project_out_path(
-            Path::new("/proj/src/main/neoc/main.lua"),
+            Path::new("/proj/src/main/neoc/main.ts"),
             Path::new("/proj/src/main/neoc"),
-            Path::new("/proj/src/main/js"),
-            Target::Js,
+            Path::new("/proj/src/main/ts"),
+            Target::Ts,
         );
-        assert_eq!(got, PathBuf::from("/proj/src/main/js/main.js"));
+        assert_eq!(got, PathBuf::from("/proj/src/main/ts/main.ts"));
     }
 
     #[test]
     fn project_out_path_outside_source_root_falls_back_to_file_name() {
         let got = project_out_path(
-            Path::new("/elsewhere/x.lua"),
+            Path::new("/elsewhere/x.luau"),
             Path::new("/proj/src/main/neoc"),
-            Path::new("/proj/src/main/lua"),
-            Target::Lua,
+            Path::new("/proj/src/main/luau"),
+            Target::Luau,
         );
-        assert_eq!(got, PathBuf::from("/proj/src/main/lua/x.lua"));
+        assert_eq!(got, PathBuf::from("/proj/src/main/luau/x.luau"));
     }
 
     #[test]

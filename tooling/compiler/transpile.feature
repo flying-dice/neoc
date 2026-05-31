@@ -1,54 +1,55 @@
 Feature: Transpiling
 
-  The compiler lowers neoc source to a chosen backend — Lua 5.1 by default, or
-  JavaScript (ES2022) — through the single `transpile` seam. A well-formed
-  module compiles with no diagnostics. The two backends share a front end but
-  diverge at the seam: Lua emits `local function`, picks `..` for string
-  concatenation, and erases nothing; JS emits `function` / `export function` and
-  keeps `+`.
+  The compiler lowers neoc source to a chosen backend — self-typed Luau by
+  default, or typed TypeScript — through the single `transpile` seam. A
+  well-formed module compiles with no diagnostics. The two backends share a
+  front end but diverge at the seam: Luau emits `local function`, picks `..` for
+  string concatenation, and erases nothing; TS emits `function` / `export
+  function` and keeps `+`. (Plain Lua and JavaScript are not selectable targets —
+  downgrade the typed superset through its own toolchain.)
 
-  Scenario: A function transpiles to Lua
+  Scenario: A function transpiles to Luau
     Given the source:
       """
       fn add(a: number, b: number) -> number {
           a + b
       }
       """
-    When I transpile to lua
+    When I transpile to luau
     Then it succeeds
     Then the output is:
       """
-      local function add(a, b)
+      local function add(a: number, b: number): number
         return (a + b)
       end
       """
 
-  Scenario: The same function transpiles to JavaScript
+  Scenario: The same function transpiles to TypeScript
     Given the source:
       """
       fn add(a: number, b: number) -> number {
           a + b
       }
       """
-    When I transpile to js
+    When I transpile to ts
     Then it succeeds
     Then the output is:
       """
-      function add(a, b) {
+      function add(a: number, b: number): number {
         return (a + b);
       }
       """
 
-  Scenario: A pub function is host-reachable, so Lua validates its parameters
+  Scenario: A pub function is host-reachable, so Luau validates its parameters
     Given the source:
       """
       pub fn add(a: number, b: number) -> number {
           a + b
       }
       """
-    When I transpile to lua
+    When I transpile to luau
     Then it succeeds
-    Then the output contains "function add(a, b)"
+    Then the output contains "function add(a: number, b: number): number"
     Then the output contains:
       """
       __check_number(a, "add.a")
@@ -58,16 +59,16 @@ Feature: Transpiling
       __check_number(b, "add.b")
       """
 
-  Scenario: A pub function exports in JavaScript
+  Scenario: A pub function exports in TypeScript
     Given the source:
       """
       pub fn add(a: number, b: number) -> number {
           a + b
       }
       """
-    When I transpile to js
+    When I transpile to ts
     Then it succeeds
-    Then the output contains "export function add(a, b)"
+    Then the output contains "export function add(a: number, b: number): number"
 
   Scenario: String + lowers to concatenation differently per target
     Given the source:
@@ -76,7 +77,7 @@ Feature: Transpiling
           "hi " + name
       }
       """
-    When I transpile to lua
+    When I transpile to luau
     Then it succeeds
     Then the output contains:
       """
@@ -87,51 +88,51 @@ Feature: Transpiling
       ("hi " + name)
       """
 
-  Scenario: JavaScript keeps + for string concatenation
+  Scenario: TypeScript keeps + for string concatenation
     Given the source:
       """
       fn greet(name: string) -> string {
           "hi " + name
       }
       """
-    When I transpile to js
+    When I transpile to ts
     Then it succeeds
     Then the output contains:
       """
       ("hi " + name)
       """
 
-  Scenario: A constant lowers to a local binding in Lua
+  Scenario: A constant lowers to a local binding in Luau
     Given the source:
       """
       const MAX: number = 10;
       """
-    When I transpile to lua
+    When I transpile to luau
     Then it succeeds
     Then the output is:
       """
-      local MAX = 10
+      local MAX: number = 10
       """
 
-  Scenario: A constant lowers to a const binding in JavaScript
+  Scenario: A constant lowers to a const binding in TypeScript
     Given the source:
       """
       const MAX: number = 10;
       """
-    When I transpile to js
+    When I transpile to ts
     Then it succeeds
     Then the output is:
       """
-      const MAX = 10;
+      const MAX: number = 10;
       """
 
-  Scenario: A struct emits constructors and validators in Lua
+  Scenario: A struct emits constructors and validators in Luau
     Given the source:
       """
       struct Point { x: number, y: number }
       fn fst(p: Point) -> number { p.x }
       """
-    When I transpile to lua
+    When I transpile to luau
     Then it succeeds
     Then the output contains "function Point.new(fields)"
     Then the output contains:
@@ -139,22 +140,22 @@ Feature: Transpiling
       fields.__struct = "Point"
       """
 
-  Scenario: A data-only struct erases in JavaScript, leaving only the function
+  Scenario: A data-only struct erases in TypeScript, leaving only the function
     Given the source:
       """
       struct Point { x: number, y: number }
       fn fst(p: Point) -> number { p.x }
       """
-    When I transpile to js
+    When I transpile to ts
     Then it succeeds
-    Then the output contains "function fst(p)"
-    Then the output does not contain "Point"
+    Then the output contains "function fst(p: Point)"
+    Then the output does not contain "Point.new"
 
   Scenario: An empty module transpiles to empty output
     Given the source:
       """
 
       """
-    When I transpile to lua
+    When I transpile to luau
     Then it succeeds
     Then the output is empty

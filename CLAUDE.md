@@ -9,14 +9,18 @@ Cargo workspace holding two halves:
   everything scripts need is provided through explicit modules. The `neoc`
   binary is a thin shell over this library.
 - **Compiler** (`neoc-*` crates) — the Rust compiler for the **neoc** language.
-  `.neoc` → Lua 5.1 by default. (5.1 is the lowest common denominator; output
-  runs on Luau, Lua 5.4, LuaJIT, and the runtime above. A JavaScript (ES2022)
-  backend sits behind the same codegen seam, selected with `--target`.)
-  Lua and JS are the two halves of full-stack neoc: Lua is the backend and the
-  default LCD target; JS is the browser/frontend, emitting **ES modules**
-  (`use` → relative `import`, `pub` → `export`) that load natively in browsers
-  and bundlers. The library crate (`neoc-compiler`) is what the runtime embeds;
-  the grammar lives in the `neoc-grammar` submodule.
+  neoc emits the typed supersets only: `luau` (the default), `ts`, and `python`,
+  selected with `--target`. Plain Lua and JavaScript are **not** selectable
+  targets — `luau` downgrades to Lua 5.1 through the Luau toolchain and `ts`
+  downgrades to JavaScript (ES2022) through the TypeScript toolchain, so neoc
+  emits the typed superset and lets each toolchain produce the plain form. (The
+  `codegen-lua` and `codegen-js` crates stay: `luau` reuses `codegen-lua` and
+  `ts` reuses `codegen-js` behind the same codegen seam.) `luau` and `ts` are the
+  two halves of full-stack neoc: `luau` is the backend and the default LCD target;
+  `ts` is the browser/frontend, emitting **ES modules** (`use` → relative
+  `import`, `pub` → `export`) that load natively in browsers and bundlers. The
+  library crate (`neoc-compiler`) is what the runtime embeds; the grammar lives
+  in the `neoc-grammar` submodule.
 
 One binary, `neoc`, drives both: `run` / `emit-headers` (runtime) and `build` /
 `check` / `fmt` / `lsp` (compiler).
@@ -100,9 +104,10 @@ The workspace splits responsibilities across crates; boundaries are enforced by
   **no host-language assumptions** — no `std::fs`, `std::net`, `std::process`,
   `tokio`, `mlua`, `hyper`, `sqlx`. The runtime host deps live in `neoc-vm`; I/O
   lives there, in the `neoc` bin, and (over stdio) in `neoc-lsp`.
-- The pure leaf crates (`neoc-ast`, `neoc-macros`, `neoc-codegen-lua`) compile
-  for `wasm32-unknown-unknown`; CI gates them with
-  `cargo check --target wasm32-unknown-unknown -p neoc-ast -p neoc-macros -p neoc-codegen-lua`.
+- The pure leaf crates (`neoc-ast`, `neoc-macros`, `neoc-codegen-lua`,
+  `neoc-codegen-luau`, `neoc-codegen-ts`, `neoc-codegen-python`) compile for
+  `wasm32-unknown-unknown`; CI gates them with
+  `cargo check --target wasm32-unknown-unknown -p neoc-ast -p neoc-macros -p neoc-codegen-lua -p neoc-codegen-luau -p neoc-codegen-ts -p neoc-codegen-python`.
   The parser graph links the tree-sitter C runtime, which doesn't cross-compile
   to wasm32 yet — a tracked limitation, so the gate guards the leaf crates
   where host-dependency creep would start.
@@ -126,7 +131,7 @@ cargo run -p neoc -- run 'crates/neoc/tests/**/*.test.luau'  # Luau integration 
 cargo run -p neoc -- emit-headers --out crates/neoc-vm/src/lua  # regenerate ext headers
 cargo bench --bench lib                              # Criterion benchmarks (lib modules)
 cargo bench --bench vnd                              # Criterion benchmarks (vnd modules)
-cargo check --target wasm32-unknown-unknown -p neoc-ast -p neoc-macros -p neoc-codegen-lua  # wasm leaf gate
+cargo check --target wasm32-unknown-unknown -p neoc-ast -p neoc-macros -p neoc-codegen-lua -p neoc-codegen-luau -p neoc-codegen-ts -p neoc-codegen-python  # wasm leaf gate
 cargo clippy --workspace --all-targets               # lint
 cargo fmt --check                                    # formatting check
 ```
@@ -160,7 +165,10 @@ neoc-parser                  # CST → AST adapter; parse diagnostics
 neoc-types                   # declaration collection, inference, well-formedness, elaborate
 neoc-macros                  # built-in derives (Clone/Eq/Debug/Display)
 neoc-codegen-lua             # AST → Lua 5.1; one emit module per construct family
+neoc-codegen-luau            # AST → self-typed Luau (inlined runtime, inline types)
 neoc-codegen-js              # AST → JavaScript (ES2022)
+neoc-codegen-ts              # AST → self-typed TypeScript (inline neoc types)
+neoc-codegen-python          # AST → idiomatic Python 3.10+ (.py + .pyi sidecar)
 neoc-compiler                # public lib API: transpile to any target; merges per-stage diagnostics
 neoc-autosql                 # SQL schema + queries → typed .neoc data layer (neoc autosql)
 neoc-fmt                     # formatter
@@ -275,7 +283,7 @@ things stay exact and complete — **never** abbreviate or stylise these:
 | API names | Exact. `#[derive(Clone)]` stays `#[derive(Clone)]`. |
 | Type signatures | Exact. Never trim a type. |
 | Error / log messages | Quote verbatim. |
-| Commands | Exact: `neoc run`, `neoc build`, `neoc check`, `neoc lsp`, `cargo check --target wasm32-unknown-unknown`. (That `--target` is a Rust build target — *not* `neoc build --target`, which selects the output language: `lua` / `js`.) |
+| Commands | Exact: `neoc run`, `neoc build`, `neoc check`, `neoc lsp`, `cargo check --target wasm32-unknown-unknown`. (That `--target` is a Rust build target — *not* `neoc build --target`, which selects the output language: `luau` / `ts` / `py`.) |
 | File paths, env vars | Exact. |
 | Rustdoc (`///`) on public items | Full, normal English — see below. |
 | Legal, LICENSE, security notes | Complete and careful. |

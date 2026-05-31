@@ -4,6 +4,8 @@ Defines what every meaningful neoc program *does* when executed, expressed as a 
 
 This file is a **lowering table**: one entry per neoc construct, giving the Lua 5.1 source it produces. Once a program is lowered, its runtime behaviour is whatever Lua 5.1 would do with that source — see the Lua 5.1 Reference Manual for the underlying semantics.
 
+> **Note on targets.** Plain `lua` and `js` are not selectable build targets. neoc emits the typed supersets — `luau` and `ts` (and `python`) — which carry exactly the lowering described here plus inline neoc types, and downgrade to Lua 5.1 and JavaScript respectively through their own toolchains. The Lua 5.1 lowering below is the *internal base* the `luau` target emits over; read it as the meaning each construct carries, independent of which selectable target produces it.
+
 Notation: lowering brackets `⟦ ⟧` as defined in `NOTATION.md`. Metavariables in Lua snippets are `⟪ ⟫`. Statement-context lowerings are subscripted `⟦ e ⟧ₛ`; expression-context `⟦ e ⟧ₑ`.
 
 ---

@@ -1,0 +1,6 @@
+// SYNTAX.md §5: neoc has no reference types; a `&self` reference receiver is a
+// syntax error.
+struct Point { x: number }
+impl Point {
+    fn get(&self) -> number { self.x }
+}

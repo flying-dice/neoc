@@ -1,0 +1,7 @@
+// SYNTAX.md §6: plain assignment and the compound-assignment operators.
+fn f() -> number {
+    let x = 10;
+    x = 1;
+    x += 2; x -= 1; x *= 4; x /= 2; x %= 3;
+    x
+}

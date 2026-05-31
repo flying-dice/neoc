@@ -12,7 +12,9 @@
 //! from the module's `enum` declarations (plus the `Result`/`Option` prelude)
 //! to tell an enum variant apart from an ordinary value or call.
 
+mod dlua;
 mod expr;
+mod luau;
 mod pat;
 mod validate;
 
@@ -21,6 +23,44 @@ use std::collections::{HashMap, HashSet};
 use neoc_ast as ast;
 
 use crate::expr::VariantShape;
+
+pub use crate::dlua::{
+    lua_type, project_const, project_enum, project_fn, project_struct, project_type_alias,
+};
+/// The Luau inline-type projector, re-exported for the typed-Luau backend
+/// (`neoc-codegen-luau`). These project a neoc `type`/`struct`/`enum`/alias to
+/// **native inline Luau type syntax** — distinct from the `LuaLS` `---@` dialect
+/// the `.d.lua` sidecar uses (see [`dlua`]). The typed consumer builds a
+/// self-typed `.luau` from these plus the typed runtime body this crate emits
+/// under [`HeaderStyle::Luau`].
+pub use crate::luau::{
+    luau_type, project_enum as project_luau_enum, project_struct as project_luau_struct,
+    project_type_alias as project_luau_type_alias,
+};
+
+/// How declaration *headers* are rendered — the one axis on which the typed Luau
+/// backend (`neoc-codegen-luau`) diverges from plain Lua 5.1.
+///
+/// The runtime lowering — every expression, statement, `match`, `?`, struct and
+/// enum value — is identical between the two targets; a typed `.luau` *is* the
+/// Lua runtime with Luau type annotations woven onto its declarations. So the
+/// emitter shares its whole body machinery and varies only here: under
+/// [`HeaderStyle::Luau`] a function's header carries parameter and return types
+/// (`function f(a: number): R`) and a `const` carries its declared type; under
+/// [`HeaderStyle::Lua`] (the default) headers are untyped, byte-for-byte the Lua
+/// backend's output.
+///
+/// `neoc-codegen-luau` selects [`HeaderStyle::Luau`] via [`emit_with_style`] and
+/// supplies the data-type `type` declarations (struct/enum/alias) itself; this
+/// crate stays the single owner of the runtime lowering.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum HeaderStyle {
+    /// Untyped Lua 5.1 headers (`function f(a)`). The Lua backend's output.
+    #[default]
+    Lua,
+    /// Luau-typed headers (`function f(a: number): R`).
+    Luau,
+}
 
 /// Enum declarations indexed for use-site resolution: `enum name → (variant
 /// name → payload shape)`. Built from the module's `enum` items and seeded
@@ -202,6 +242,12 @@ pub struct EmitResult {
     /// module was emitted through [`emit_with_source`], which supplies the
     /// source text needed to translate byte spans to line numbers.
     pub source_map: LineMap,
+    /// The module's `LuaLS` definition-file sidecar (`.d.lua`): a `---@class` per
+    /// `pub` struct, a class-union per `pub` enum, an annotated stub per `pub fn`,
+    /// and a `---@type` field per `pub const` — describing the actual emitted Lua
+    /// values so a Lua-LSP user types neoc output. Empty when nothing is `pub`.
+    /// The driver writes this to the sibling `x.d.lua`.
+    pub dlua: String,
 }
 
 /// Lower a module to Lua 5.1 source, with no source map.
@@ -210,7 +256,48 @@ pub struct EmitResult {
 /// numbers back to neoc positions; the emitted Lua text is identical either way.
 #[must_use]
 pub fn emit(module: &ast::Module) -> EmitResult {
-    emit_inner(module, None, &[], &[])
+    emit_inner(module, None, &[], &[], HeaderStyle::Lua, false)
+}
+
+/// Lower a module, choosing how declaration headers are rendered.
+///
+/// Identical to [`emit_with_imports`] but for the `style` parameter. Under
+/// [`HeaderStyle::Lua`] the output is byte-for-byte the Lua backend's; under
+/// [`HeaderStyle::Luau`] function and `const` headers carry Luau types
+/// (`function f(a: number): R`, `const MAX: number = …` shaped as a typed
+/// binding), so the emitted `lua` field is a typed Luau runtime body — the shared
+/// core `neoc-codegen-luau` wraps into a self-typed `.luau` (it supplies the
+/// `type` struct/enum/alias declarations itself).
+///
+/// The whole expression/statement/`match`/`?` lowering is the same regardless of
+/// `style`; this crate stays the single owner of the runtime lowering for both
+/// the Lua and the Luau targets.
+///
+/// `as_module` selects whether the output is a requireable **library** or a
+/// directly-runnable script. When `true` — the case for every module a project
+/// build emits — each `pub` item that produces a runtime binding (a `pub fn`,
+/// `pub const`, `pub` struct, or method-bearing `pub` enum) is emitted as a
+/// `local` and the module closes with `return { name = name, … }`, so a
+/// consumer's `require("mod").name` resolves (`lang/DYNAMIC.md` §3.7). When
+/// `false` — a single-file build — `pub` items emit as globals and no trailing
+/// `return` is appended, so the chunk runs directly.
+#[must_use]
+pub fn emit_with_style(
+    module: &ast::Module,
+    source: &str,
+    imported_enums: &[&ast::EnumDecl],
+    imported_externs: &[ast::ExternItem],
+    style: HeaderStyle,
+    as_module: bool,
+) -> EmitResult {
+    emit_inner(
+        module,
+        Some(source),
+        imported_enums,
+        imported_externs,
+        style,
+        as_module,
+    )
 }
 
 /// Lower a module to Lua 5.1 source and build a [`LineMap`] from `source`.
@@ -221,7 +308,7 @@ pub fn emit(module: &ast::Module) -> EmitResult {
 /// differs.
 #[must_use]
 pub fn emit_with_source(module: &ast::Module, source: &str) -> EmitResult {
-    emit_inner(module, Some(source), &[], &[])
+    emit_inner(module, Some(source), &[], &[], HeaderStyle::Lua, false)
 }
 
 /// Like [`emit_with_source`], but also given the `pub` enum declarations the
@@ -232,14 +319,27 @@ pub fn emit_with_source(module: &ast::Module, source: &str) -> EmitResult {
 /// §Lowering). Both kinds of import are used only to resolve those forms; their
 /// definitions are emitted by — or, for externs, *not* emitted by — the module
 /// that declares them.
+///
+/// `as_module` selects a requireable library (each `pub` runtime binding emitted
+/// as a `local` and a trailing `return { name = name, … }`) over a directly
+/// runnable script (globals, no trailing `return`). A project build passes
+/// `true`; single-file `transpile` passes `false` (`lang/DYNAMIC.md` §3.7).
 #[must_use]
 pub fn emit_with_imports(
     module: &ast::Module,
     source: &str,
     imported_enums: &[&ast::EnumDecl],
     imported_externs: &[ast::ExternItem],
+    as_module: bool,
 ) -> EmitResult {
-    emit_inner(module, Some(source), imported_enums, imported_externs)
+    emit_inner(
+        module,
+        Some(source),
+        imported_enums,
+        imported_externs,
+        HeaderStyle::Lua,
+        as_module,
+    )
 }
 
 fn emit_inner(
@@ -247,6 +347,8 @@ fn emit_inner(
     source: Option<&str>,
     imported_enums: &[&ast::EnumDecl],
     imported_externs: &[ast::ExternItem],
+    style: HeaderStyle,
+    as_module: bool,
 ) -> EmitResult {
     // A `use`d extern item lowers to its native `require` in *this* consumer, not
     // an import from the defining file (which emits no runtime value for an
@@ -263,18 +365,93 @@ fn emit_inner(
         tuple_structs: TupleStructIndex::build(module),
         traits: ast::trait_index(module),
         line_index: source.map(LineIndex::build),
-        forward_decls: forward_declared_fns(module),
+        forward_decls: forward_declared_fns(module, as_module),
         validation: validate::plan(module),
         extern_structs,
         extern_struct_ns,
         extern_fn_ns,
         imported_externs: imported_externs.to_vec(),
         imported_extern_names: ast::extern_value_names_from_items(imported_externs),
+        header_style: style,
+        as_module,
         ..Emitter::default()
     };
     e.emit_module(module);
     let diagnostics = std::mem::take(&mut e.diagnostics);
-    e.finish_with_map(diagnostics)
+    let mut result = e.finish_with_map(diagnostics);
+    // The `.d.lua` sidecar is the Lua consumer's; the typed Luau consumer
+    // (`HeaderStyle::Luau`) supplies its own `type` declarations and discards
+    // this, so only project it for the Lua target.
+    if style == HeaderStyle::Lua {
+        result.dlua = module_dlua(module);
+    }
+    result
+}
+
+/// Project a module's `.d.lua` sibling: a `LuaLS` declaration per `pub` item —
+/// `---@class` for a struct, a class-union for an enum, an annotated
+/// `function M.f(…) end` stub for a free function, and a `---@type` field for a
+/// const. The declarations describe the actual emitted Lua values
+/// (`lang/DYNAMIC.md` §3.1, §3.2), so a Lua-LSP user narrows on `__tag`/`__struct`
+/// and calls neoc output type-safely.
+///
+/// The sidecar opens with `local M = {}` and closes with `return M`, the module
+/// table the annotated function stubs and const fields hang off — the shape a
+/// `LuaLS` consumer `require`s. Empty when the module exposes nothing `pub`.
+fn module_dlua(module: &ast::Module) -> String {
+    let mut decls: Vec<String> = Vec::new();
+    for item in &module.items {
+        if item.vis != ast::Visibility::Public {
+            continue;
+        }
+        match &item.kind {
+            ast::ItemKind::Fn(f) => decls.push(dlua::project_fn(&f.sig, true)),
+            ast::ItemKind::Struct(s) => decls.push(dlua::project_struct(s, true)),
+            ast::ItemKind::Enum(e) => decls.push(dlua::project_enum(e, true)),
+            ast::ItemKind::Const(c) => decls.push(dlua::project_const(c, true)),
+            ast::ItemKind::TypeAlias(a) => decls.push(dlua::project_type_alias(a, true)),
+            _ => {}
+        }
+    }
+    if decls.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("local M = {}\n\n");
+    out.push_str(&decls.join("\n\n"));
+    out.push_str("\n\nreturn M\n");
+    out
+}
+
+/// The `.d.lua` for the shared `Result`/`Option` runtime: the tagged class-unions
+/// whose field shapes mirror the runtime values the prelude builds
+/// (`lang/DYNAMIC.md` §7). A consumer's `.d.lua` references `Result`/`Option`;
+/// this declares them so emitted Lua that returns them stays typed.
+///
+/// Pure typings layered on top — this does **not** alter the inlined Lua runtime
+/// (`RESULT_PRELUDE`). The driver writes the returned text to `neoc-lib.d.lua`.
+#[must_use]
+pub fn neoc_lib_dlua() -> String {
+    let mut s = String::new();
+    // Result<T, E>: Ok and Err carry their payload at integer key `[1]` (§7).
+    s.push_str("---@class Result.Ok<T>\n");
+    s.push_str("---@field __enum \"Result\"\n");
+    s.push_str("---@field __tag \"Ok\"\n");
+    s.push_str("---@field [1] T\n");
+    s.push_str("---@class Result.Err<E>\n");
+    s.push_str("---@field __enum \"Result\"\n");
+    s.push_str("---@field __tag \"Err\"\n");
+    s.push_str("---@field [1] E\n");
+    s.push_str("---@alias Result<T, E> Result.Ok<T> | Result.Err<E>\n");
+    // Option<T>: Some carries its payload at `[1]`; None is the bare tagged table.
+    s.push_str("---@class Option.Some<T>\n");
+    s.push_str("---@field __enum \"Option\"\n");
+    s.push_str("---@field __tag \"Some\"\n");
+    s.push_str("---@field [1] T\n");
+    s.push_str("---@class Option.None\n");
+    s.push_str("---@field __enum \"Option\"\n");
+    s.push_str("---@field __tag \"None\"\n");
+    s.push_str("---@alias Option<T> Option.Some<T> | Option.None\n");
+    s
 }
 
 /// A precomputed index of line-start byte offsets, for turning a byte offset
@@ -387,6 +564,15 @@ pub(crate) struct Emitter {
     /// through its native `require` and `mod`-qualified reference, never the
     /// defining module's emitted output (which holds no runtime value for it).
     imported_extern_names: std::collections::HashSet<String>,
+    /// How declaration headers are rendered — Lua (untyped, the default) or Luau
+    /// (typed). Set by [`emit_with_style`]; consulted only in [`Self::emit_fn`]
+    /// and [`Self::emit_const`], so the runtime body is identical either way.
+    header_style: HeaderStyle,
+    /// Whether this module is emitted as a requireable library (project build)
+    /// rather than a directly runnable script (single-file). When `true`, each
+    /// `pub` runtime binding is a `local` and the module ends with a
+    /// `return { name = name, … }` export table (`lang/DYNAMIC.md` §3.7).
+    as_module: bool,
 }
 
 /// A loop being emitted. When `break_flag` is set the loop uses the
@@ -438,6 +624,45 @@ function Result.map_err(self, f)
 end"#;
 
 impl Emitter {
+    /// The declaration keyword prefix for a top-level binding of visibility
+    /// `vis`. A private item is always `local`; a `pub` item is a global in the
+    /// single-file script form but a `local` in a library build (`as_module`),
+    /// where the export table re-surfaces it for `require` (`lang/DYNAMIC.md`
+    /// §3.7).
+    fn decl_prefix(&self, vis: ast::Visibility) -> &'static str {
+        if self.as_module || vis != ast::Visibility::Public {
+            "local "
+        } else {
+            ""
+        }
+    }
+
+    /// The `pub` items that produce a runtime binding, in source order: the names
+    /// the library export table (`return { name = name, … }`) carries. A `pub fn`,
+    /// `pub const`, any `pub` struct, and a method-bearing `pub` enum each emit a
+    /// runtime value a consumer's `require("mod").name` resolves. A plain `pub`
+    /// enum (no methods) emits no standalone value — its variants are inline
+    /// tagged tables resolved through the consumer's imported-enum index — so it
+    /// is not exported; type aliases, traits, and `extern` carry no value either.
+    fn exported_names(&self, module: &ast::Module) -> Vec<String> {
+        let mut names = Vec::new();
+        for item in &module.items {
+            if item.vis != ast::Visibility::Public {
+                continue;
+            }
+            match &item.kind {
+                ast::ItemKind::Fn(f) => names.push(f.sig.name.clone()),
+                ast::ItemKind::Const(c) => names.push(c.name.clone()),
+                ast::ItemKind::Struct(s) => names.push(s.name.clone()),
+                ast::ItemKind::Enum(e) if self.enum_has_methods(&e.name) => {
+                    names.push(e.name.clone());
+                }
+                _ => {}
+            }
+        }
+        names
+    }
+
     pub(crate) fn error(&mut self, message: impl Into<String>) {
         self.diagnostics.push(Diagnostic {
             message: message.into(),
@@ -542,6 +767,9 @@ impl Emitter {
             lua: s,
             diagnostics,
             source_map,
+            // The `.d.lua` sidecar is filled by the `emit_inner` caller, which
+            // holds the module; the finisher only assembles the `.lua` text.
+            dlua: String::new(),
         }
     }
 
@@ -589,6 +817,23 @@ impl Emitter {
         }
         for item in &module.items {
             self.emit_item(item);
+        }
+        // A library build closes with an export table so a consumer's
+        // `require("mod").name` resolves (`lang/DYNAMIC.md` §3.7). A single-file
+        // script omits it — the chunk runs directly, and a trailing `return`
+        // before an appended `main()` call would be a Lua syntax error.
+        if self.as_module {
+            let exports = self.exported_names(module);
+            if exports.is_empty() {
+                self.line("return {}");
+            } else {
+                let fields = exports
+                    .iter()
+                    .map(|n| format!("{n} = {n}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                self.line(format!("return {{ {fields} }}"));
+            }
         }
     }
 
@@ -737,20 +982,19 @@ impl Emitter {
 
     fn emit_const(&mut self, c: &ast::ConstDecl, vis: ast::Visibility) {
         let value = self.emit_expr(&c.value);
-        let kw = if vis == ast::Visibility::Public {
-            ""
+        let kw = self.decl_prefix(vis);
+        // A typed `.luau` carries the declared type on the binding; plain Lua
+        // elides it.
+        let anno = if self.header_style == HeaderStyle::Luau {
+            format!(": {}", luau::luau_type(&c.ty))
         } else {
-            "local "
+            String::new()
         };
-        self.line(format!("{kw}{} = {value}", c.name));
+        self.line(format!("{kw}{}{anno} = {value}", c.name));
     }
 
     fn emit_struct(&mut self, s: &ast::StructDecl, vis: ast::Visibility) {
-        let local = if vis == ast::Visibility::Public {
-            ""
-        } else {
-            "local "
-        };
+        let local = self.decl_prefix(vis);
         match &s.body {
             ast::StructBody::Unit => {
                 self.line(format!(
@@ -822,11 +1066,7 @@ impl Emitter {
     /// values resolve `:method` once they are `setmetatable`d at construction
     /// (§3.2).
     fn emit_enum_table(&mut self, name: &str, vis: ast::Visibility) {
-        let local = if vis == ast::Visibility::Public {
-            ""
-        } else {
-            "local "
-        };
+        let local = self.decl_prefix(vis);
         self.line(format!("{local}{name} = {{}}"));
         self.line(format!("{name}.__index = {name}"));
     }
@@ -847,26 +1087,40 @@ impl Emitter {
     /// Emit a function. `target` is the type name when this is a method or
     /// associated function inside an impl.
     fn emit_fn(&mut self, target: Option<&str>, f: &ast::FnDecl, vis: ast::Visibility) {
-        let mut params = Vec::new();
-        for p in &f.sig.params {
-            match p {
-                ast::Param::Receiver => params.push("self".to_string()),
-                ast::Param::Named { name, .. } => params.push(name.clone()),
-            }
-        }
-        let param_list = params.join(", ");
+        // The typed `.luau` header weaves parameter and return types; plain Lua
+        // emits bare parameter names and no return annotation. The runtime body
+        // below is identical either way.
+        let (param_list, ret) = if self.header_style == HeaderStyle::Luau {
+            luau::typed_params_and_ret(&f.sig)
+        } else {
+            let names = f
+                .sig
+                .params
+                .iter()
+                .map(|p| match p {
+                    ast::Param::Receiver => "self".to_string(),
+                    ast::Param::Named { name, .. } => name.clone(),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            (names, String::new())
+        };
+        // In a module (library) build a `pub` free fn is a `local` like a private
+        // one — globals are reserved for the single-file script form. The export
+        // table (`emit_module`) re-surfaces it for `require`.
+        let module_local = self.as_module || vis != ast::Visibility::Public;
         let header = match target {
-            Some(t) => format!("function {t}.{}({param_list})", f.sig.name),
-            None if vis == ast::Visibility::Public => {
-                format!("function {}({param_list})", f.sig.name)
+            Some(t) => format!("function {t}.{}({param_list}){ret}", f.sig.name),
+            None if !module_local => {
+                format!("function {}({param_list}){ret}", f.sig.name)
             }
-            // A forward-referenced private fn: assign the pre-declared `local`
-            // (hoisted in `emit_module`) instead of declaring it here, where a
-            // `local function` would be invisible to earlier callers.
+            // A forward-referenced fn: assign the pre-declared `local` (hoisted in
+            // `emit_module`) instead of declaring it here, where a `local function`
+            // would be invisible to earlier callers.
             None if self.forward_decls.contains(&f.sig.name) => {
-                format!("{} = function({param_list})", f.sig.name)
+                format!("{} = function({param_list}){ret}", f.sig.name)
             }
-            None => format!("local function {}({param_list})", f.sig.name),
+            None => format!("local function {}({param_list}){ret}", f.sig.name),
         };
         self.line(header);
         self.indented(|e| {
@@ -893,18 +1147,24 @@ fn has_derive(attrs: &[ast::Attribute]) -> bool {
         .any(|i| i.name == "derive")
 }
 
-/// The private free functions referenced by an item that precedes their
-/// definition. Those must be declared `local` up front (see [`Emitter`]'s
-/// `forward_decls`); a `local function` is only visible from its own line on, so
-/// an earlier caller would otherwise close over a nil global. Pub functions emit
-/// as globals (visible everywhere) and methods as table fields, so neither
-/// needs this.
-fn forward_declared_fns(module: &ast::Module) -> std::collections::HashSet<String> {
+/// The free functions referenced by an item that precedes their definition.
+/// Those must be declared `local` up front (see [`Emitter`]'s `forward_decls`);
+/// a `local function` is only visible from its own line on, so an earlier caller
+/// would otherwise close over a nil global.
+///
+/// In a single-file script (`as_module` false) `pub` functions emit as globals
+/// (visible everywhere), so only private fns need hoisting. In a library build
+/// (`as_module` true) every free fn is a `local`, so a forward-referenced `pub`
+/// fn needs hoisting too. Methods are table fields and never need this.
+fn forward_declared_fns(
+    module: &ast::Module,
+    as_module: bool,
+) -> std::collections::HashSet<String> {
     use std::collections::{HashMap, HashSet};
     let mut def_index: HashMap<&str, usize> = HashMap::new();
     for (i, item) in module.items.iter().enumerate() {
         if let ast::ItemKind::Fn(f) = &item.kind
-            && item.vis == ast::Visibility::Private
+            && (as_module || item.vis == ast::Visibility::Private)
         {
             def_index.entry(f.sig.name.as_str()).or_insert(i);
         }
@@ -1051,5 +1311,143 @@ fn expr_refs<'a>(expr: &'a ast::Expr, used: &mut std::collections::HashSet<&'a s
             }
         }
         Int(_) | Float(_) | Str(_) | Bool(_) | Unit | Break | Continue => {}
+    }
+}
+
+#[cfg(test)]
+mod dlua_tests {
+    use super::*;
+
+    fn emit_src(src: &str) -> EmitResult {
+        let parsed = neoc_parser::parse(src);
+        assert!(
+            parsed.ok(),
+            "source did not parse: {:?}",
+            parsed.diagnostics
+        );
+        emit(&parsed.module)
+    }
+
+    #[test]
+    fn module_dlua_projects_pub_struct_as_class() {
+        let out = emit_src("pub struct Point { x: number, y: number }");
+        assert!(
+            out.dlua.contains("---@class Point"),
+            "missing class header:\n{}",
+            out.dlua
+        );
+        assert!(out.dlua.contains("---@field x number"), "{}", out.dlua);
+        assert!(out.dlua.contains("---@field y number"), "{}", out.dlua);
+        assert!(out.dlua.starts_with("local M = {}"), "{}", out.dlua);
+        assert!(out.dlua.trim_end().ends_with("return M"), "{}", out.dlua);
+    }
+
+    #[test]
+    fn module_dlua_projects_pub_enum_as_class_union() {
+        let out = emit_src("pub enum Shape { Circle(number), Square { side: number } }");
+        assert!(out.dlua.contains("---@class Shape.Circle"), "{}", out.dlua);
+        assert!(
+            out.dlua.contains("---@field __tag \"Circle\""),
+            "{}",
+            out.dlua
+        );
+        assert!(out.dlua.contains("---@field [1] number"), "{}", out.dlua);
+        assert!(
+            out.dlua
+                .contains("---@alias Shape Shape.Circle | Shape.Square"),
+            "{}",
+            out.dlua
+        );
+    }
+
+    #[test]
+    fn module_dlua_projects_pub_fn_stub() {
+        let out = emit_src("pub fn add(a: number, b: number) -> number { a }");
+        assert!(out.dlua.contains("---@param a number"), "{}", out.dlua);
+        assert!(out.dlua.contains("---@return number"), "{}", out.dlua);
+        assert!(
+            out.dlua.contains("function M.add(a, b) end"),
+            "{}",
+            out.dlua
+        );
+    }
+
+    #[test]
+    fn module_dlua_omits_private_items() {
+        let out = emit_src("struct Hidden { a: number }\nfn secret() {}");
+        assert!(
+            out.dlua.is_empty(),
+            "expected empty .d.lua for a module with no pub items, got:\n{}",
+            out.dlua
+        );
+    }
+
+    #[test]
+    fn as_module_emits_local_pub_fn_and_export_table() {
+        let parsed = neoc_parser::parse("pub fn greet(name: string) -> string { name }");
+        assert!(parsed.ok(), "{:?}", parsed.diagnostics);
+        let out = emit_with_imports(&parsed.module, "", &[], &[], true).lua;
+        // The `pub fn` is a `local`, not a global — globals are the single-file
+        // script form (§3.7).
+        assert!(
+            out.contains("local function greet"),
+            "pub fn should be local in a library build:\n{out}"
+        );
+        assert!(
+            out.trim_end().ends_with("return { greet = greet }"),
+            "library build must close with an export table:\n{out}"
+        );
+    }
+
+    #[test]
+    fn single_file_keeps_globals_and_no_return_table() {
+        let parsed = neoc_parser::parse("pub fn greet(name: string) -> string { name }");
+        assert!(parsed.ok(), "{:?}", parsed.diagnostics);
+        let out = emit_with_imports(&parsed.module, "", &[], &[], false).lua;
+        assert!(
+            out.contains("function greet"),
+            "single-file pub fn stays a global:\n{out}"
+        );
+        assert!(
+            !out.contains("local function greet"),
+            "single-file pub fn must not be local:\n{out}"
+        );
+        assert!(
+            !out.contains("return {"),
+            "single-file build must not append an export table:\n{out}"
+        );
+    }
+
+    #[test]
+    fn as_module_exports_pub_const_struct_and_method_enum() {
+        let src = "\
+pub const MAX: number = 10;
+pub struct Point { x: number, y: number }
+pub enum Color { Red, Green }
+impl Color { fn name(self) -> string { \"c\" } }
+enum Hidden { A, B }
+fn helper() {}";
+        let parsed = neoc_parser::parse(src);
+        assert!(parsed.ok(), "{:?}", parsed.diagnostics);
+        let out = emit_with_imports(&parsed.module, "", &[], &[], true).lua;
+        let last = out.trim_end().lines().last().unwrap();
+        // Pub const, struct, and the method-bearing enum export; the private fn
+        // and the plain (no-method) enum do not.
+        assert_eq!(last, "return { MAX = MAX, Point = Point, Color = Color }");
+    }
+
+    #[test]
+    fn neoc_lib_dlua_declares_tagged_result_and_option() {
+        let d = neoc_lib_dlua();
+        assert!(
+            d.contains("---@alias Result<T, E> Result.Ok<T> | Result.Err<E>"),
+            "{d}"
+        );
+        assert!(
+            d.contains("---@alias Option<T> Option.Some<T> | Option.None"),
+            "{d}"
+        );
+        assert!(d.contains("---@field __tag \"Ok\""), "{d}");
+        assert!(d.contains("---@field [1] T"), "{d}");
     }
 }

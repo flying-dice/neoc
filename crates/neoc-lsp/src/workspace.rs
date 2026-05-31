@@ -670,7 +670,7 @@ mod tests {
         }
     }
 
-    const MANIFEST: &str = "[package]\nname = \"app\"\ntarget = \"lua\"\n";
+    const MANIFEST: &str = "[package]\nname = \"app\"\ntarget = \"luau\"\n";
 
     #[test]
     fn dependents_closure_is_transitive() {

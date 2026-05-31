@@ -38,14 +38,17 @@ pub struct Project {
 }
 
 impl Project {
-    /// The build-output directory for `target`: `<root>/src/main/<target>`.
+    /// The build-output directory for `target`: `<root>/src/auto/<target>`. The
+    /// generated `src/auto/` tree mirrors the hand-written `src/main/` tree, one
+    /// subdirectory per target (`src/auto/luau`, `src/auto/ts`, …); each module
+    /// keeps its path under the source root (`src/main/neoc/a/b.neoc` →
+    /// `src/auto/<target>/a/b.<ext>`).
     ///
-    /// `target` is taken as an argument rather than read from `self.target` so
-    /// a build that overrides the manifest target writes to the matching
-    /// output directory.
+    /// `target` is taken as an argument rather than read from `self.target` so a
+    /// build that overrides the manifest target writes to the matching directory.
     #[must_use]
     pub fn output_dir(&self, target: Target) -> PathBuf {
-        self.root.join("src").join("main").join(target.to_string())
+        self.root.join("src").join("auto").join(target.to_string())
     }
 
     /// The SQL-input directory: `<root>/src/main/sql`. SQL-derived modules read
@@ -85,7 +88,8 @@ struct Package {
 ///
 /// Returns [`Error::Project`] only when a manifest *is* found but is malformed:
 /// not valid TOML, missing `[package]`, missing `name`, or carrying a `target`
-/// that is neither `"lua"` nor `"js"`. A missing manifest is not an error.
+/// that is not one of `"luau"`, `"ts"`, or `"py"`. A missing manifest is not an
+/// error.
 pub fn discover_project(start: &Path) -> Result<Option<Project>, Error> {
     let mut dir: &Path = if start.is_dir() {
         start
@@ -122,7 +126,7 @@ fn load_project(root: &Path, manifest_path: &Path) -> Result<Project, Error> {
 
     let target: Target = manifest.package.target.parse().map_err(|_| {
         Error::Project(format!(
-            "`{MANIFEST}` has an unknown target `{}` (expected `lua` or `js`)",
+            "`{MANIFEST}` has an unknown target `{}` (expected `luau`, `ts`, or `py`)",
             manifest.package.target
         ))
     })?;
@@ -196,7 +200,7 @@ mod tests {
     fn walk_up_finds_root_from_nested_file() {
         let tmp = TempDir::new("walk-up");
         let root = tmp.path();
-        write_manifest(root, "[package]\nname = \"app\"\ntarget = \"js\"\n");
+        write_manifest(root, "[package]\nname = \"app\"\ntarget = \"ts\"\n");
         let nested = root.join("src").join("main").join("neoc").join("a");
         fs::create_dir_all(&nested).unwrap();
         let file = nested.join("b.neoc");
@@ -205,7 +209,7 @@ mod tests {
         let project = discover_project(&file).unwrap().expect("found project");
         assert_eq!(project.root, root);
         assert_eq!(project.name, "app");
-        assert_eq!(project.target, Target::Js);
+        assert_eq!(project.target, Target::Ts);
     }
 
     #[test]
@@ -268,20 +272,20 @@ mod tests {
     #[test]
     fn layout_derivation() {
         let tmp = TempDir::new("layout");
-        write_manifest(tmp.path(), "[package]\nname = \"app\"\ntarget = \"lua\"\n");
+        write_manifest(tmp.path(), "[package]\nname = \"app\"\ntarget = \"luau\"\n");
         let project = discover_project(tmp.path()).unwrap().unwrap();
         let root = tmp.path();
         assert_eq!(project.source_root, root.join("src/main/neoc"));
         assert_eq!(project.entry, root.join("src/main/neoc/main.neoc"));
-        assert_eq!(project.output_dir(Target::Lua), root.join("src/main/lua"));
-        assert_eq!(project.output_dir(Target::Js), root.join("src/main/js"));
+        assert_eq!(project.output_dir(Target::Luau), root.join("src/auto/luau"));
+        assert_eq!(project.output_dir(Target::Ts), root.join("src/auto/ts"));
         assert_eq!(project.sql_dir(), root.join("src/main/sql"));
     }
 
     #[test]
     fn resolution_root_in_project_is_source_root() {
         let tmp = TempDir::new("res-in");
-        write_manifest(tmp.path(), "[package]\nname = \"app\"\ntarget = \"lua\"\n");
+        write_manifest(tmp.path(), "[package]\nname = \"app\"\ntarget = \"luau\"\n");
         let src = tmp.path().join("src/main/neoc");
         fs::create_dir_all(&src).unwrap();
         let entry = src.join("main.neoc");
@@ -304,10 +308,10 @@ mod tests {
         let tmp = TempDir::new("unknown-keys");
         write_manifest(
             tmp.path(),
-            "[package]\nname = \"app\"\ntarget = \"js\"\nversion = \"1.0\"\n[extra]\nfoo = 1\n",
+            "[package]\nname = \"app\"\ntarget = \"ts\"\nversion = \"1.0\"\n[extra]\nfoo = 1\n",
         );
         let project = discover_project(tmp.path()).unwrap().unwrap();
         assert_eq!(project.name, "app");
-        assert_eq!(project.target, Target::Js);
+        assert_eq!(project.target, Target::Ts);
     }
 }
