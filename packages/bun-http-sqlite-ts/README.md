@@ -55,8 +55,7 @@ types — no `.d.ts` sidecars.
 
 The direction is the point: the host **imports and calls** neoc; neoc **calls
 back** into the port the host implements. nothing reverse-engineers a host type
-into neoc — no `Unknown`, no generated `types.neoc`, no `autots` (retired — see
-`tasks/ts-interop-inversion.md`).
+into neoc — no `Unknown`, no generated `types.neoc`, no `autots` (retired).
 
 ## Run
 

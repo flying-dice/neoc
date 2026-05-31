@@ -24,7 +24,7 @@ between contexts; you do **not** reimplement a specialist's internals.
 
 This file is your *constant* charter — boundary, the doctrine you hold, invariants, discipline,
 tests. It states **no** current implementation facts, because those drift. Establish live state
-yourself: read `neoc-compiler`, the touched crates, `lang/`, `tasks/`, and the conformance suite
+yourself: read `neoc-compiler`, the touched crates, `lang/`, and the conformance suite
 at the start of every task. Trust the code, not a snapshot.
 
 ## Your boundary

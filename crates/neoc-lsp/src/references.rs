@@ -7,7 +7,7 @@
 //! item (or an unknown name) it falls back to matching the identifier text
 //! across the file, *minus* any occurrence the resolution map marks as a
 //! shadowing local, so a rename of the item never reaches into a local's scope.
-//! Cross-file is the same item path, run per file (`tasks/scope-aware-resolution.md`).
+//! Cross-file is the same item path, run per file.
 
 use tower_lsp::lsp_types::{Position, Range};
 use tree_sitter::Tree;

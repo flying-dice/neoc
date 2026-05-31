@@ -41,7 +41,6 @@ mod signature_help;
 mod symbols;
 // Phase 2 of cross-file resolution: the index is built and unit-tested in
 // isolation here; the live handlers read it from Phase 3 on
-// (see tasks/cross-file-resolution.md).
 mod workspace;
 
 // Public handler facade. The pure feature functions the IDE-UX spec
@@ -327,7 +326,6 @@ struct Backend {
     /// goto/references/rename across modules). Maintained from the document
     /// lifecycle; rooted from `initialize` so its `use`-path resolution matches
     /// the compiler's. Behind an `Arc` so background discovery can share it.
-    /// See `tasks/cross-file-resolution.md`.
     index: Arc<Mutex<WorkspaceIndex>>,
 }
 

@@ -851,7 +851,7 @@ pub(crate) struct Emitter {
     uses_traits: bool,
     /// Per-type trait set (transitively closed over supertraits) for the
     /// `__t` trait registry — `__t.Type = [ … ]` keyed by type name
-    /// (`DYNAMIC.md`). Inert until the runtime trait-enforcement work (#54).
+    /// (`DYNAMIC.md`). Inert until the runtime trait-enforcement work (#75).
     traits: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
     /// Counter feeding unique temporaries for the `?` operator.
     try_seq: usize,
@@ -985,9 +985,8 @@ Result$.map_err = function(f) { return this.__tag === "Err" ? Err(f(this._0)) : 
 
 /// The shared `Result`/`Option` runtime, `neoc-lib.js`. Emitted once per build
 /// at the project source root; every module that references `Result`/`Option`
-/// `import`s its constructors and prototypes from here instead of inlining them
-/// (`tasks/ts-interop-inversion.md` stage 2). The compiler driver writes the
-/// returned source to `neoc-lib.js`.
+/// `import`s its constructors and prototypes from here instead of inlining
+/// them. The compiler driver writes the returned source to `neoc-lib.js`.
 #[must_use]
 pub fn neoc_lib_js() -> String {
     format!("{NEOC_LIB_BODY}\n\nexport {{ Ok, Err, Some, None, Option$, Result$ }};\n")
@@ -1103,7 +1102,7 @@ impl Emitter {
         if self.uses_result {
             // The `Result`/`Option` runtime lives in the shared `neoc-lib.js`
             // at the project source root; import its constructors and prototypes
-            // rather than inlining them (`tasks/ts-interop-inversion.md` stage 2).
+            // rather than inlining them.
             let spec = relative_neoc_lib_js_specifier(&self.importer_dir);
             preamble.push(format!(
                 "import {{ Ok, Err, Some, None, Option$, Result$ }} from \"{spec}\";"
@@ -1238,7 +1237,7 @@ impl Emitter {
     /// Emit the `__t.Type = [ … ]` trait-registry entry for a type, listing
     /// every trait it implements (its supertraits included). Keyed by type name,
     /// so `__t[value.__struct ?? value.__enum]` resolves for any instance.
-    /// Skipped for a type implementing no trait. Inert until #54.
+    /// Skipped for a type implementing no trait. Inert until #75.
     fn emit_traits_tag(&mut self, name: &str) {
         let Some(traits) = self.traits.get(name) else {
             return;

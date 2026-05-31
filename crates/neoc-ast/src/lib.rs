@@ -700,7 +700,7 @@ pub enum Param {
         name: Ident,
         ty: Type,
         /// The span of the parameter name — its binding site, for scope-aware
-        /// resolution (`tasks/scope-aware-resolution.md`).
+        /// resolution.
         span: Span,
     },
 }
@@ -746,7 +746,7 @@ pub fn derive_names(attrs: &[Attribute]) -> Vec<String> {
 /// The supertrait closure is within this module: the `trait A: B` declarations
 /// it can see. When `A` is implemented here but declared in another module
 /// (with its `: B`), only `A` is recorded — closing that gap needs the
-/// project-wide trait graph, which the runtime trait-enforcement work (#54)
+/// project-wide trait graph, which the runtime trait-enforcement work (#75)
 /// must supply at its check site rather than relying on this per-module tag.
 #[must_use]
 pub fn trait_index(
@@ -1067,7 +1067,7 @@ pub enum Pattern {
     /// A lone identifier. The adapter leaves it as a binding; name resolution
     /// reinterprets it as a unit struct/variant pattern when it resolves to
     /// one (as Rust does). `span` is the binding site, for scope-aware
-    /// resolution (`tasks/scope-aware-resolution.md`).
+    /// resolution.
     Binding {
         name: Ident,
         span: Span,

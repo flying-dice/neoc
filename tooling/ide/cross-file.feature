@@ -1,8 +1,8 @@
 Feature: Cross-file navigation and edits
   Goto-definition, find-all-references, and rename reach across the project,
-  scoped by visibility through the cross-file index
-  (tasks/cross-file-resolution.md). A `pub` declaration is reachable from the
-  modules that import it; the edit set never spreads to a module that does not.
+  scoped by visibility through the cross-file index. A `pub` declaration is
+  reachable from the modules that import it; the edit set never spreads to a
+  module that does not.
 
   Scenario: Goto-definition follows a `use` into the defining module
     Given the file "util.neoc":

@@ -473,7 +473,7 @@ fn normalize_variant_fields(fields: &mut VariantFields, table: &SymbolTable) {
 /// param/pattern binding), unique within a [`Scopes`]. Two bindings of the same
 /// name — a shadow, or siblings in different scopes — have distinct ids, which
 /// is what lets scope-aware resolution tell a use of one from a use of the
-/// other (`tasks/scope-aware-resolution.md`).
+/// other.
 pub type BindingId = u32;
 
 /// The lexical scope stack for value bindings (`let`, params, closure params,

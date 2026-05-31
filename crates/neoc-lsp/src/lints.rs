@@ -142,8 +142,7 @@ impl Lint for UnusedImport {
 /// `neoc_types::resolution` whether the binding has any use, so a shadowed-then-
 /// unused binding is caught precisely. A `_`-prefixed name opts out (the
 /// convention for a deliberately-unused binding). Scoped to `let` for now;
-/// unused parameters and shadowing wait on the RFC
-/// (`tasks/scope-aware-resolution.md`).
+/// unused parameters and shadowing wait on the RFC.
 struct UnusedLet;
 
 impl Lint for UnusedLet {

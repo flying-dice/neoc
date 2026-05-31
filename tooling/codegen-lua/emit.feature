@@ -118,7 +118,7 @@ Feature: Emitting Lua
     Then the Lua contains "function Counter.bump(self)"
     And emitting reports no diagnostics
 
-  # A LuaLS `.d.lua` sidecar (`tasks/ts-interop-inversion.md`, target #3) declares
+  # A LuaLS `.d.lua` sidecar declares
   # the module's `pub` surface in native LuaLS annotations — `---@class`,
   # `---@field`, `---@alias`, `---@param`, `---@return` — describing the actual
   # emitted Lua tables so a luau-lsp / lua-language-server consumer narrows on the
