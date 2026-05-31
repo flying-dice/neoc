@@ -2077,7 +2077,6 @@ mod tests {
     fn wildcard_discard(value: ast::Expr) -> ast::Stmt {
         ast::Stmt::new(
             ast::StmtKind::Let(ast::LetStmt {
-                mutable: false,
                 pattern: ast::Pattern::Wildcard,
                 ty: None,
                 value: Some(value),
@@ -2146,7 +2145,6 @@ mod tests {
         // }
         let struct_closure = ast::Stmt::new(
             ast::StmtKind::Let(ast::LetStmt {
-                mutable: false,
                 pattern: ast::Pattern::Binding {
                     name: "mk".to_string(),
                     span: ast::Span::default(),
@@ -2178,7 +2176,6 @@ mod tests {
         );
         let enum_closure = ast::Stmt::new(
             ast::StmtKind::Let(ast::LetStmt {
-                mutable: false,
                 pattern: ast::Pattern::Binding {
                     name: "sq".to_string(),
                     span: ast::Span::default(),

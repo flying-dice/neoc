@@ -318,7 +318,7 @@ end
 fn golden_while_and_for() {
     let out = lua_from_source(
         "fn run(n: number) {\n\
-           let mut i = 0;\n\
+           let i = 0;\n\
            while i < n { i = i; }\n\
            for k in 0..n { step(k); }\n\
          }",

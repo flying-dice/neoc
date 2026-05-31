@@ -355,7 +355,7 @@ g internal-only (not host-reachable)        e : τ a call argument, callee inter
 
 - **`STABLE-PARAM`** — an internal-only function is called only from neoc with statically-typed arguments, so its parameters are vouched without a check.
 - **`STABLE-ARG`** — an internal neoc→neoc call passes already-vouched values; the callee re-checks at its own entry only if it is itself host-reachable (`DRIFT-PARAM`). Checking at both the call site and the entry would be redundant.
-- **`STABLE-READ`** — reading an immutable binding cannot reintroduce drift; it was vouched when introduced and cannot have changed.
+- **`STABLE-READ`** — reading an immutable binding cannot reintroduce drift; it was vouched when introduced and cannot have changed. The immutable bindings are `const` and parameters never reassigned in scope; a `let` is reassignable, so a read through it does not qualify.
 
 ### 10.4 Host-reachability
 

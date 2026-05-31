@@ -873,9 +873,6 @@ impl<'a> Printer<'a> {
 
     fn let_statement(&mut self, node: Node) {
         self.push("let ");
-        if node.children(&mut node.walk()).any(|c| c.kind() == "mut") {
-            self.push("mut ");
-        }
         self.pattern(node.child_by_field_name("pattern").unwrap());
         if let Some(ty) = node.child_by_field_name("type") {
             self.push(": ");

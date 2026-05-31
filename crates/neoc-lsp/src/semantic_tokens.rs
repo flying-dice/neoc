@@ -43,7 +43,7 @@ const COMMENT: u32 = 9;
 /// neoc keywords, recognised among the grammar's anonymous tokens.
 const KEYWORDS: &[&str] = &[
     "fn", "let", "const", "struct", "enum", "trait", "impl", "type", "use", "match", "if", "else",
-    "for", "while", "loop", "break", "continue", "return", "self", "ext", "pub", "mut", "as", "in",
+    "for", "while", "loop", "break", "continue", "return", "self", "ext", "pub", "as", "in",
     "where",
 ];
 

@@ -74,7 +74,7 @@ fn loops_and_accumulation_run() {
     let src = "\
 extern { fn print(n: number); }
 fn sum_to(n: number) -> number {
-  let mut total = 0;
+  let total = 0;
   for i in 1..n { total = total + i; }
   total
 }
@@ -133,7 +133,7 @@ fn continue_and_break_run() {
     let src = "\
 extern { fn print(n: number); }
 fn main() {
-  let mut acc = 0;
+  let acc = 0;
   for i in 0..10 {
     if i == 3 { continue }
     if i == 7 { break }

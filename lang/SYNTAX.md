@@ -508,7 +508,7 @@ Stmt        ::= LetStmt
               | Item
               | BlockStmt
               | ExprStmt
-LetStmt     ::= "let" [ "mut" ] Pattern [ ":" Type ] [ "=" Expr ] ";"
+LetStmt     ::= "let" Pattern [ ":" Type ] [ "=" Expr ] ";"
 BlockStmt   ::= ( IfExpr | MatchExpr | WhileExpr | ForExpr | LoopExpr | Block ) [ ";" ]
 ExprStmt    ::= Expr ";"
 
@@ -524,6 +524,5 @@ Notes on grammar-faithful additions beyond §1–§9:
 
 - `loop { … }` (`LoopExpr`), `while`, and `for … in` are expression and statement forms the tree-sitter grammar accepts; §6 documents `if` and `match` as the primary value-producing forms.
 - `extern { … }` (`ExternBlock`) describes the external target's surface (`EXTERN.md`). There is no `extern "abi"` string — one target per compilation. `mod` is a keyword only as an `ExternItem`; elsewhere it is an ordinary identifier. The block changes the body-elision rule for its items (bodyless inside, bodies required outside).
-- `let mut x = …` is accepted; `mut` is a reserved keyword (`LEXICAL.md` §5).
 - A `PathPat` is two or more `::`-separated segments (a unit variant such as `Color::Red`); a single segment is a binding pattern that name resolution may reinterpret as a unit struct/variant — exactly Rust's `None` handling (`STATIC.md` §2).
 - `CondExpr` is the one place the expression grammar is restricted: a bare struct literal is excluded so `if Foo { … }` reads as `if` with a block, never as a struct literal. Parenthesize to use one (`(Foo { x: 1 }).x`).

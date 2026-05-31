@@ -1061,7 +1061,6 @@ pub enum StmtKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LetStmt {
-    pub mutable: bool,
     pub pattern: Pattern,
     pub ty: Option<Type>,
     pub value: Option<Expr>,
