@@ -1,7 +1,7 @@
-// SYNTAX.md §6: `let` with type annotation, `let mut`, and a deferred-init
-// `let` with no initializer.
+// SYNTAX.md §6: `let` with a type annotation and a deferred-init `let` with no
+// initializer.
 fn f() -> number {
-    let mut total: number = 0;
+    let total: number = 0;
     let n;
     n = 5;
     total += n;

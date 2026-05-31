@@ -1,6 +1,6 @@
 // SYNTAX.md §6: `loop`, `break`, `continue`, and `return` statements.
 fn f(n: number) -> number {
-    let mut i = 0;
+    let i = 0;
     loop {
         if i > n { break }
         if i == 3 { i += 1; continue }

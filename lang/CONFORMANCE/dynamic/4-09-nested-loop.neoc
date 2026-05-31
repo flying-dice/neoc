@@ -6,7 +6,7 @@ extern {
 }
 
 fn main() {
-    let mut acc = 0;
+    let acc = 0;
     for i in 0..3 {
         for j in 0..3 {
             if j == 1 {
