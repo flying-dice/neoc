@@ -13,9 +13,7 @@ function classify(n: number): string {
         return "huge";
       }
     }
-    if (true) {
-      return "other";
-    }
+    return "other";
   })();
 }
 function main(): void {

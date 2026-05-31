@@ -8,15 +8,13 @@ function read_err(r: Result<number, string>): string {
     if (__s1.__tag === "Ok") {
       return "ok";
     }
-    if (__s1.__tag === "Err") {
-      const e = __s1._0;
-      return e;
-    }
+    const e = __s1._0;
+    return e;
   })();
 }
 function main(): void {
-  let ok = Ok(1);
-  let err = Err("x");
+  let ok: Result<number, string> = Ok(1);
+  let err: Result<number, string> = Err("x");
   println(read_err(ok.map_err((e) => e)));
   println(read_err(err.map_err((e) => e)));
 }

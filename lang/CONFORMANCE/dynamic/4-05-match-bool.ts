@@ -4,9 +4,7 @@ function yes_no(b: boolean): string {
     if (__s1 === true) {
       return "yes";
     }
-    if (__s1 === false) {
-      return "no";
-    }
+    return "no";
   })();
 }
 function main(): void {

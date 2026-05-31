@@ -1,7 +1,7 @@
-type Dir = { __enum: "Dir"; __tag: "N" } | { __enum: "Dir"; __tag: "S" } | { __enum: "Dir"; __tag: "E" } | { __enum: "Dir"; __tag: "W" };
+type Dir = ({ __enum: "Dir"; __tag: "N" } | { __enum: "Dir"; __tag: "S" } | { __enum: "Dir"; __tag: "E" } | { __enum: "Dir"; __tag: "W" }) & { name(): string; };
 
-const Dir$ = {};
-Dir$.name = function() {
+const Dir$: Record<string, Function> = {};
+Dir$.name = function(this: Dir) {
   return (() => {
     const __s1 = this;
     if (__s1.__tag === "N") {
@@ -13,12 +13,10 @@ Dir$.name = function() {
     if (__s1.__tag === "E") {
       return "east";
     }
-    if (__s1.__tag === "W") {
-      return "west";
-    }
+    return "west";
   })();
 }
 function main(): void {
-  let d = { __enum: "Dir", __tag: "E", __proto__: Dir$ };
+  let d = { __enum: "Dir", __tag: "E", __proto__: Dir$ } as unknown as Dir;
   println(d.name());
 }

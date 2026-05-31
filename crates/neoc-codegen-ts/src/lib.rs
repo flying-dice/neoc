@@ -25,7 +25,7 @@ use std::collections::HashSet;
 use neoc_ast as ast;
 use neoc_codegen_js::{
     Diagnostic, HeaderStyle, emit_with_style, project_enum, project_struct, project_trait,
-    project_type_alias,
+    project_type_alias, ts_type,
 };
 
 /// The result of emitting a module to TypeScript.
@@ -124,8 +124,8 @@ fn emit_type_decls(module: &ast::Module) -> String {
     for item in &module.items {
         let exported = item.vis == ast::Visibility::Public;
         match &item.kind {
-            ast::ItemKind::Struct(s) => out.push(emit_struct(s, exported)),
-            ast::ItemKind::Enum(e) => out.push(emit_enum(e, exported)),
+            ast::ItemKind::Struct(s) => out.push(emit_struct(s, &item.attrs, module, exported)),
+            ast::ItemKind::Enum(e) => out.push(emit_enum(e, &item.attrs, module, exported)),
             ast::ItemKind::TypeAlias(a) => out.push(emit_type_alias(a, exported)),
             ast::ItemKind::Trait(t) => out.push(emit_trait(t, exported)),
             _ => {}
@@ -134,14 +134,128 @@ fn emit_type_decls(module: &ast::Module) -> String {
     out.join("\n")
 }
 
-/// Project a `struct` to its TS `interface` declaration.
-fn emit_struct(s: &ast::StructDecl, exported: bool) -> String {
-    project_struct(s, exported)
+/// Project a `struct` to its TS `interface`, folding in every method a
+/// constructed value can dispatch — those its `#[derive(...)]`s install on the
+/// prototype and those its inherent `impl` blocks define. The JS backend casts a
+/// method-bearing struct value `as <Type>`, so the interface must carry those
+/// members for a `x.display()` / `x.manhattan()` call to type-check. A struct
+/// with no methods projects to the bare field interface, unchanged.
+fn emit_struct(
+    s: &ast::StructDecl,
+    attrs: &[ast::Attribute],
+    module: &ast::Module,
+    exported: bool,
+) -> String {
+    let base = project_struct(s, exported);
+    let mut members = derive_method_members(&s.name, &ast::derive_names(attrs));
+    members.extend(inherent_method_members(&s.name, module));
+    if members.is_empty() {
+        return base;
+    }
+    // `project_struct` emits `… interface S { f: T; }`; splice the method members
+    // in before the closing brace, after the trailing space the projector leaves.
+    match base.strip_suffix('}') {
+        Some(head) => format!("{head}{} }}", members.join(" ")),
+        None => base,
+    }
 }
 
-/// Project an `enum` to its TS discriminated-union `type` declaration.
-fn emit_enum(e: &ast::EnumDecl, exported: bool) -> String {
-    project_enum(e, exported)
+/// The interface members a struct's inherent `impl` methods contribute: each
+/// method with a `self` receiver becomes `name(params): ret`, so a `x.method()`
+/// call on a constructed value type-checks. Associated functions (no receiver)
+/// are reached through the type's namespace, not a value, so they are not
+/// members. A trait impl's methods are covered by their derive/own contract.
+fn inherent_method_members(name: &str, module: &ast::Module) -> Vec<String> {
+    let mut members = Vec::new();
+    for item in &module.items {
+        let ast::ItemKind::Impl(b) = &item.kind else {
+            continue;
+        };
+        let ast::Type::Path(p) = &b.ty else { continue };
+        if p.segments.last().map(|s| s.name.as_str()) != Some(name) {
+            continue;
+        }
+        for f in &b.items {
+            let has_receiver = f
+                .sig
+                .params
+                .iter()
+                .any(|p| matches!(p, ast::Param::Receiver));
+            if has_receiver {
+                members.push(format!("{};", method_member(&f.sig)));
+            }
+        }
+    }
+    members
+}
+
+/// One method member of a struct interface: `name(params): ret`, the `self`
+/// receiver dropped (implicit on the value), each named param projected via
+/// [`ts_type`], the return projected (absent → `void`).
+fn method_member(sig: &ast::FnSig) -> String {
+    let params = sig
+        .params
+        .iter()
+        .filter_map(|p| match p {
+            ast::Param::Receiver => None,
+            ast::Param::Named { name, ty, .. } => Some(format!("{name}: {}", ts_type(ty))),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let ret = sig.ret.as_ref().map_or_else(|| "void".to_string(), ts_type);
+    format!("{}({params}): {ret}", sig.name)
+}
+
+/// The interface members a struct's derives contribute: each derivable trait maps
+/// to the method the JS backend attaches to the prototype (`lang/DYNAMIC.md`
+/// §6–§7). Signatures mirror the emitted runtime: `clone(): S`, `eq(a: S, b: S):
+/// boolean` (the two-operand comparison), `debug(): string`, `display(): string`.
+fn derive_method_members(name: &str, derives: &[String]) -> Vec<String> {
+    derives
+        .iter()
+        .filter_map(|d| match d.as_str() {
+            "Clone" => Some(format!("clone(): {name};")),
+            "Eq" => Some(format!("eq(a: {name}, b: {name}): boolean;")),
+            "Debug" => Some("debug(): string;".to_string()),
+            "Display" => Some("display(): string;".to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Project an `enum` to its TS discriminated-union `type` declaration, folding in
+/// every method a constructed value can dispatch — those its `#[derive(...)]`s
+/// install on the prototype and those its inherent `impl` blocks define. The JS
+/// backend casts a method-bearing variant value `as <Enum>`, so each union member
+/// must carry those members for a `value.opposite()` / `value.display()` call to
+/// type-check. This mirrors the struct interface gaining method members and the
+/// way `neoc-lib.d.ts` intersects each `Result`/`Option` union member with its
+/// `ResultMethods`/`OptionMethods` interface. An enum with no methods projects to
+/// the bare discriminated union, unchanged.
+fn emit_enum(
+    e: &ast::EnumDecl,
+    attrs: &[ast::Attribute],
+    module: &ast::Module,
+    exported: bool,
+) -> String {
+    let base = project_enum(e, exported);
+    let mut members = derive_method_members(&e.name, &ast::derive_names(attrs));
+    members.extend(inherent_method_members(&e.name, module));
+    if members.is_empty() {
+        return base;
+    }
+    // `project_enum` emits `… type E<…> = m1 | m2 | …;`. Intersect a methods
+    // object literal onto the whole union (`(m1 | m2 | …) & { … }`) so every
+    // member carries the methods, matching the `neoc-lib.d.ts` pattern while
+    // keeping the variant shapes readable.
+    let methods = members.join(" ");
+    match base.split_once(" = ") {
+        Some((head, rhs)) => {
+            let rhs = rhs.strip_suffix(';').unwrap_or(rhs);
+            format!("{head} = ({rhs}) & {{ {methods} }};")
+        }
+        None => base,
+    }
 }
 
 /// Project a `type` alias to its TS `type` declaration.

@@ -13,7 +13,7 @@ function parse(ok: boolean): Result<number, string> {
 }
 function doubled(ok: boolean): Result<number, string> {
   const __try_0 = parse(ok);
-  if (__try_0.__tag === "Err" || __try_0.__tag === "None") return __try_0;
+  if (__try_0.__tag !== "Ok") return __try_0 as unknown as Result<number, string>;
   let n = __try_0._0;
   return Ok((n + n));
 }
@@ -24,10 +24,8 @@ function show(r: Result<number, string>): string {
       const n = __s1._0;
       return "ok";
     }
-    if (__s1.__tag === "Err") {
-      const e = __s1._0;
-      return e;
-    }
+    const e = __s1._0;
+    return e;
   })();
 }
 function main(): void {

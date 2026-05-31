@@ -4,19 +4,19 @@ type Show = {
 type Describe = {
   describe(): string;
 };
-interface Dog { name: string; }
+interface Dog { name: string; show(): string; describe(): string; }
 
-const __t = {};
+const __t: Record<string, string[]> = {};
 
-const Dog$ = {};
+const Dog$: Record<string, Function> = {};
 __t.Dog = ["Describe", "Show"];
-Dog$.show = function() {
+Dog$.show = function(this: Dog) {
   return this.name;
 }
 function main(): void {
-  let d = { __struct: "Dog", name: "Rex", __proto__: Dog$ };
+  let d = { __struct: "Dog", name: "Rex", __proto__: Dog$ } as unknown as Dog;
   println(d.describe());
 }
-Dog$.describe = function() {
+Dog$.describe = function(this: Dog) {
   return this.show();
 }

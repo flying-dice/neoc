@@ -81,13 +81,25 @@ impl Emitter {
                 }
             }
             // A simple binding maps straight to a `let`.
-            ast::Pattern::Binding { name, .. } => match &l.value {
-                Some(v) => {
-                    let value = self.emit_expr(v);
-                    self.line(format!("let {name} = {value};"));
+            ast::Pattern::Binding { name, .. } => {
+                // Under TS a declared `let` type is carried so an empty-array /
+                // empty-collection initialiser does not trip `noImplicitAny`
+                // (`let params: SqlValue[] = []`); plain JS elides the annotation,
+                // staying byte-identical.
+                let anno = match (&l.ty, self.header_style) {
+                    (Some(ty), crate::HeaderStyle::Ts) => {
+                        format!(": {}", crate::dts::ts_type(ty))
+                    }
+                    _ => String::new(),
+                };
+                match &l.value {
+                    Some(v) => {
+                        let value = self.emit_expr(v);
+                        self.line(format!("let {name}{anno} = {value};"));
+                    }
+                    None => self.line(format!("let {name}{anno};")),
                 }
-                None => self.line(format!("let {name};")),
-            },
+            }
             // Everything else is an irrefutable destructure (or a diagnostic).
             _ => self.emit_let_destructure(&l.pattern, l.value.as_ref()),
         }
@@ -344,7 +356,15 @@ impl Emitter {
             ast::ExprKind::Index { base, index } => {
                 let b = self.emit_expr(base);
                 let i = self.emit_expr(index);
-                format!("{b}[{i}]")
+                // In neoc a list index yields the element type directly. Under TS
+                // with `noUncheckedIndexedAccess` an index access widens to `T |
+                // undefined`, so a non-null assertion restores the neoc-checked
+                // element type; plain JS emits the bare access, byte-identical.
+                if self.header_style == crate::HeaderStyle::Ts {
+                    format!("{b}[{i}]!")
+                } else {
+                    format!("{b}[{i}]")
+                }
             }
             ast::ExprKind::StructLit { path, fields, base } => {
                 self.emit_struct_lit(path, fields, base.as_deref())
@@ -483,7 +503,8 @@ impl Emitter {
             Some(PathKind::Variant(en, var, VariantShape::Unit)) => {
                 self.note_prelude(&en);
                 let proto = self.proto_link(&en);
-                format!("{{ __enum: \"{en}\", __tag: \"{var}\"{proto} }}")
+                let cast = self.ts_enum_cast(&en);
+                format!("{{ __enum: \"{en}\", __tag: \"{var}\"{proto} }}{cast}")
             }
             // A tuple/struct variant in path position (no payload applied) is a
             // constructor function; the type checker should have rewritten it.
@@ -586,7 +607,8 @@ impl Emitter {
             self.note_prelude(&en);
             let body = self.emit_field_inits(fields);
             let proto = self.proto_link(&en);
-            return format!("{{ __enum: \"{en}\", __tag: \"{var}\"{body}{proto} }}");
+            let cast = self.ts_enum_cast(&en);
+            return format!("{{ __enum: \"{en}\", __tag: \"{var}\"{body}{proto} }}{cast}");
         }
         let Some(name) = path.last() else {
             return "undefined".to_string();
@@ -603,7 +625,8 @@ impl Emitter {
         }
         let body = self.emit_field_inits(fields);
         let proto = self.proto_link(name);
-        format!("{{ __struct: \"{name}\"{body}{proto} }}")
+        let cast = self.ts_struct_cast(name);
+        format!("{{ __struct: \"{name}\"{body}{proto} }}{cast}")
     }
 
     /// The `, __proto__: Type$` suffix linking a constructed value to its
@@ -612,6 +635,37 @@ impl Emitter {
     fn proto_link(&self, name: &str) -> String {
         if self.type_has_methods(name) {
             format!(", __proto__: {name}$")
+        } else {
+            String::new()
+        }
+    }
+
+    /// The ` as unknown as <Type>` suffix widening a method-bearing struct value
+    /// to its interface under TS, so a later `x.method()` resolves (TS does not
+    /// track `__proto__` dispatch, and the raw literal carries `__struct`/
+    /// `__proto__` the interface omits, so a direct cast is rejected — `unknown`
+    /// bridges it). Empty for plain JS and for a data-only struct, which
+    /// type-checks via contextual typing.
+    fn ts_struct_cast(&self, name: &str) -> String {
+        if self.header_style == crate::HeaderStyle::Ts && self.ts_struct_method_types.contains(name)
+        {
+            format!(" as unknown as {name}")
+        } else {
+            String::new()
+        }
+    }
+
+    /// The ` as unknown as <Enum>` suffix widening a method-bearing enum variant
+    /// to its union type under TS, so a later `value.method()` resolves against
+    /// the union's method members (`neoc-codegen-ts`'s `emit_enum` folds those
+    /// members in, mirroring the struct interface). The raw literal carries
+    /// `__enum`/`__proto__` the union member omits, so `unknown` bridges it, as
+    /// for structs. Empty for plain JS, for a data-only enum, and for the prelude
+    /// carriers `Option`/`Result` (whose constructor functions already type the
+    /// value).
+    fn ts_enum_cast(&self, name: &str) -> String {
+        if self.header_style == crate::HeaderStyle::Ts && self.ts_enum_method_types.contains(name) {
+            format!(" as unknown as {name}")
         } else {
             String::new()
         }
@@ -681,7 +735,8 @@ impl Emitter {
         let base_js = self.emit_expr(base);
         let body = self.emit_field_inits(fields);
         let proto = self.proto_link(name);
-        format!("{{ ...{base_js}, __struct: \"{name}\"{body}{proto} }}")
+        let cast = self.ts_struct_cast(name);
+        format!("{{ ...{base_js}, __struct: \"{name}\"{body}{proto} }}{cast}")
     }
 
     /// Lower struct-literal / struct-variant fields to `name: value` entries,
@@ -748,14 +803,16 @@ impl Emitter {
         self.note_prelude(en);
         let payload = self.emit_positional(args);
         let proto = self.proto_link(en);
-        format!("{{ __enum: \"{en}\", __tag: \"{var}\"{payload}{proto} }}")
+        let cast = self.ts_enum_cast(en);
+        format!("{{ __enum: \"{en}\", __tag: \"{var}\"{payload}{proto} }}{cast}")
     }
 
     /// Lower a tuple/newtype struct construction `N(a, …)` to its tagged object.
     fn emit_tuple_struct_lit(&mut self, name: &str, args: &[ast::Expr]) -> String {
         let payload = self.emit_positional(args);
         let proto = self.proto_link(name);
-        format!("{{ __struct: \"{name}\"{payload}{proto} }}")
+        let cast = self.ts_struct_cast(name);
+        format!("{{ __struct: \"{name}\"{payload}{proto} }}{cast}")
     }
 
     /// Render positional payload args as `, _0: a, _1: b, …`, ready to append
@@ -803,11 +860,35 @@ impl Emitter {
         let tmp = self.fresh_tmp("__s");
         let body = self.render(|em| {
             em.line(format!("const {tmp} = {scrut};"));
-            for arm in arms {
-                em.emit_match_arm(arm, &tmp, true);
+            let last = arms.len().saturating_sub(1);
+            for (i, arm) in arms.iter().enumerate() {
+                // In value position a `match` is exhaustive (`STATIC.md` §7), so
+                // the final unguarded arm is the definite result. Under TS it is
+                // emitted as an unconditional `return …` so control-flow analysis
+                // sees the IIFE always returns — a trailing guarded `if` would
+                // leave a fallthrough path and widen the return to `T | undefined`
+                // (TS2322). Plain JS keeps the guarded form, byte-identical.
+                let unconditional =
+                    em.header_style == crate::HeaderStyle::Ts && i == last && arm.guard.is_none();
+                if unconditional {
+                    em.emit_match_arm_unconditional(arm, &tmp);
+                } else {
+                    em.emit_match_arm(arm, &tmp, true);
+                }
             }
         });
         Self::wrap_iife(body)
+    }
+
+    /// Emit a `match` arm's bindings and body without the gating `if` — for the
+    /// final exhaustive arm in value position under TS (see [`emit_match_value`]).
+    /// The pattern's bindings still apply; only the tag test is dropped.
+    fn emit_match_arm_unconditional(&mut self, arm: &ast::MatchArm, subject: &str) {
+        let compiled = self.compile_pattern(&arm.pattern, subject);
+        for bind in &compiled.binds {
+            self.line(bind);
+        }
+        self.emit_arm_body(&arm.body, true);
     }
 
     /// Lower a `match` in statement position: the scrutinee bound once, arm
@@ -868,10 +949,37 @@ impl Emitter {
         let tmp = format!("__try_{}", self.try_seq);
         self.try_seq += 1;
         self.line(format!("const {tmp} = {value};"));
-        self.line(format!(
-            "if ({tmp}.__tag === \"Err\" || {tmp}.__tag === \"None\") return {tmp};"
-        ));
+        let guard = self.try_guard(&tmp);
+        self.line(guard);
         format!("{tmp}._0")
+    }
+
+    /// The short-circuit guard line for `?` over temp `tmp`.
+    ///
+    /// Plain JS tests both carrier tags (`"Err" || "None"`) exactly as the spec
+    /// lowering describes (`lang/DYNAMIC.md` §4.10) — a value carries one tag, so
+    /// only the matching test fires. Under TS that dual test trips `tsc`: the
+    /// non-carrier tag has no overlap with the scrutinee's discriminated union
+    /// (TS2367). So TS tests the enclosing carrier's single *success* tag, negated
+    /// (`!== "Ok"` for `Result`, `!== "Some"` for `Option`), which narrows
+    /// cleanly: the value site sees the success arm (so `_0` types). The early
+    /// `return` is cast to the enclosing return type — the short-circuited value
+    /// is a valid carrier, but its phantom success type parameter may differ from
+    /// this function's, which would otherwise block assignment (TS2322).
+    fn try_guard(&self, tmp: &str) -> String {
+        if let (crate::HeaderStyle::Ts, Some(carrier)) = (self.header_style, &self.try_carrier) {
+            // `as unknown as` (not a direct `as`): the short-circuited value's
+            // success type parameter can differ enough from this function's that
+            // TS deems the carriers non-overlapping (TS2352) on a direct cast. The
+            // value is a valid carrier at runtime — only its phantom success arm
+            // differs — so the double cast is sound.
+            format!(
+                "if ({tmp}.__tag !== \"{}\") return {tmp} as unknown as {};",
+                carrier.success_tag, carrier.ret_ts
+            )
+        } else {
+            format!("if ({tmp}.__tag === \"Err\" || {tmp}.__tag === \"None\") return {tmp};")
+        }
     }
 
     /// Emit an `if` whose branches `return` their value (for IIFE bodies).
@@ -995,9 +1103,28 @@ fn enum_namespace_entry_ts(
     proto: &str,
 ) -> String {
     let head = format!("__enum: \"{enum_name}\", __tag: \"{}\"", v.name);
+    // A method-bearing enum (proto present) has its union members intersected
+    // with a methods object in `neoc-codegen-ts`'s `emit_enum`, and the runtime
+    // literal carries the `__proto__` link those members omit. So the constructed
+    // value is bridged `as unknown as <Enum>` (as the inline `E::V` sites are):
+    // the unit value swaps its `as <Enum>` for `as unknown as <Enum>`, and each
+    // arrow casts its body the same way (the bare `: <Enum>` return annotation
+    // would reject the excess `__proto__`). A data-only enum (no proto) keeps the
+    // direct `as <Enum>` / `: <Enum>` form — its literal is assignable to the bare
+    // union member — so its output is unchanged.
+    let unit_cast = if proto.is_empty() {
+        format!("as {self_ty}")
+    } else {
+        format!("as unknown as {self_ty}")
+    };
+    let body_cast = if proto.is_empty() {
+        String::new()
+    } else {
+        format!(" as unknown as {self_ty}")
+    };
     match &v.body {
         ast::VariantBody::Unit => {
-            format!("{}: {{ {head}{proto} }} as {self_ty},", v.name)
+            format!("{}: {{ {head}{proto} }} {unit_cast},", v.name)
         }
         ast::VariantBody::Tuple(tys) => {
             let params = tys
@@ -1011,7 +1138,7 @@ fn enum_namespace_entry_ts(
                 acc
             });
             format!(
-                "{}: ({params}): {self_ty} => ({{ {head}{payload}{proto} }}),",
+                "{}: ({params}): {self_ty} => ({{ {head}{payload}{proto} }}{body_cast}),",
                 v.name
             )
         }
@@ -1022,7 +1149,7 @@ fn enum_namespace_entry_ts(
                 .collect::<Vec<_>>()
                 .join("; ");
             format!(
-                "{}: (fields: {{ {obj} }}): {self_ty} => ({{ {head}, ...fields{proto} }}),",
+                "{}: (fields: {{ {obj} }}): {self_ty} => ({{ {head}, ...fields{proto} }}{body_cast}),",
                 v.name
             )
         }

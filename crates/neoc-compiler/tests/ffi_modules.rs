@@ -347,9 +347,19 @@ fn main() {
         out.contains("c.bump()") && !out.contains("__call") && !out.contains("__m"),
         "method call on a neoc struct should be native prototype dispatch:\n{out}"
     );
+    // The TS target types the prototype `Record<string, Function>` and the
+    // method's implicit `this`, so the body type-checks against the interface
+    // (the runtime lowering is identical to JS — see the codegen-js JS goldens).
     assert!(
-        out.contains("const Counter$ = {};") && out.contains("Counter$.bump = function() {"),
-        "the struct should get a prototype with its method:\n{out}"
+        out.contains("const Counter$: Record<string, Function> = {};")
+            && out.contains("Counter$.bump = function(this: Counter) {"),
+        "the struct should get a typed prototype with its method:\n{out}"
+    );
+    // The inherent method is carried on the struct interface so `c.bump()`
+    // type-checks on the widened value.
+    assert!(
+        out.contains("interface Counter { n: number; bump(): number; }"),
+        "the interface should carry the inherent method:\n{out}"
     );
     assert!(
         out.contains("__proto__: Counter$"),

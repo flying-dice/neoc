@@ -13,9 +13,7 @@ function area(s: Shape): number {
       const h = __s1.h;
       return (w * h);
     }
-    if (true) {
-      return 0;
-    }
+    return 0;
   })();
 }
 function main(): void {

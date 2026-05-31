@@ -46,7 +46,7 @@ use std::collections::{HashMap, HashSet};
 
 use neoc_ast as ast;
 
-use crate::dts::ts_generics;
+use crate::dts::ts_generics_bounded;
 pub use crate::dts::{
     project_const, project_enum, project_enum_namespace, project_fn, project_struct, project_trait,
     project_type_alias, ts_type,
@@ -447,6 +447,129 @@ fn dts_in_scope_names(module: &ast::Module) -> HashSet<String> {
     names
 }
 
+/// Every type name referenced in a *type position* across a module — fn
+/// signatures (params, returns, generic bounds), `struct` fields, `enum` variant
+/// payloads, `let` annotations, `const` types, `type` aliases, `trait`/`impl`
+/// method signatures. Used under [`HeaderStyle::Ts`] to decide which type-only
+/// `use`s need an `import type`: only a name appearing here is referenced in an
+/// annotation; one used solely to construct a value is erased and needs none.
+fn module_referenced_type_names(module: &ast::Module) -> HashSet<String> {
+    let mut names = HashSet::new();
+    for item in &module.items {
+        match &item.kind {
+            ast::ItemKind::Fn(f) => collect_sig_type_names(&f.sig, &mut names),
+            ast::ItemKind::Const(c) => collect_type_names(&c.ty, &mut names),
+            ast::ItemKind::TypeAlias(a) => collect_type_names(&a.value, &mut names),
+            ast::ItemKind::Struct(s) => match &s.body {
+                ast::StructBody::Unit => {}
+                ast::StructBody::Tuple(t) => collect_type_names(t, &mut names),
+                ast::StructBody::Named(fields) => {
+                    for fld in fields {
+                        collect_type_names(&fld.ty, &mut names);
+                    }
+                }
+            },
+            ast::ItemKind::Enum(e) => {
+                for v in &e.variants {
+                    match &v.body {
+                        ast::VariantBody::Unit => {}
+                        ast::VariantBody::Tuple(tys) => {
+                            for t in tys {
+                                collect_type_names(t, &mut names);
+                            }
+                        }
+                        ast::VariantBody::Named(fields) => {
+                            for fld in fields {
+                                collect_type_names(&fld.ty, &mut names);
+                            }
+                        }
+                    }
+                }
+            }
+            ast::ItemKind::Trait(t) => {
+                for it in &t.items {
+                    collect_sig_type_names(&it.sig, &mut names);
+                }
+            }
+            ast::ItemKind::Impl(b) => {
+                collect_type_names(&b.ty, &mut names);
+                for f in &b.items {
+                    collect_sig_type_names(&f.sig, &mut names);
+                }
+            }
+            ast::ItemKind::Use(_) | ast::ItemKind::Extern(_) => {}
+        }
+        // A function body's `let` annotations are type positions too.
+        if let ast::ItemKind::Fn(f) = &item.kind {
+            collect_block_let_type_names(&f.body, &mut names);
+        }
+        if let ast::ItemKind::Impl(b) = &item.kind {
+            for f in &b.items {
+                collect_block_let_type_names(&f.body, &mut names);
+            }
+        }
+    }
+    names
+}
+
+/// Collect type names from a function signature: each named parameter, the
+/// return type, and every generic bound (`<E: SqlExecutor>` references
+/// `SqlExecutor`).
+fn collect_sig_type_names(sig: &ast::FnSig, names: &mut HashSet<String>) {
+    for p in &sig.params {
+        if let ast::Param::Named { ty, .. } = p {
+            collect_type_names(ty, names);
+        }
+    }
+    if let Some(ret) = &sig.ret {
+        collect_type_names(ret, names);
+    }
+    for g in &sig.generics {
+        for b in &g.bounds {
+            if let Some(seg) = b.segments.last() {
+                names.insert(seg.name.clone());
+            }
+        }
+    }
+}
+
+/// Collect type names from every `let` annotation in a block, recursing into
+/// nested blocks and the block's trailing value.
+fn collect_block_let_type_names(block: &ast::Block, names: &mut HashSet<String>) {
+    for stmt in &block.stmts {
+        if let ast::StmtKind::Let(l) = &stmt.kind {
+            if let Some(ty) = &l.ty {
+                collect_type_names(ty, names);
+            }
+        }
+    }
+}
+
+/// Collect every named type referenced by a type, at any depth (list element, fn
+/// param/return, generic argument, path segment).
+fn collect_type_names(ty: &ast::Type, names: &mut HashSet<String>) {
+    match ty {
+        ast::Type::Unit | ast::Type::SelfType => {}
+        ast::Type::List(inner) => collect_type_names(inner, names),
+        ast::Type::Fn { params, ret } => {
+            for p in params {
+                collect_type_names(p, names);
+            }
+            if let Some(r) = ret {
+                collect_type_names(r, names);
+            }
+        }
+        ast::Type::Path(p) => {
+            for seg in &p.segments {
+                names.insert(seg.name.clone());
+                for arg in &seg.args {
+                    collect_type_names(arg, names);
+                }
+            }
+        }
+    }
+}
+
 /// The `import type` line for a cross-module `use` in a `.d.ts`, or `None` when
 /// the `use` is local-only (a re-export of a name brought in elsewhere, with no
 /// `prefix` to resolve a module file from).
@@ -788,6 +911,44 @@ pub(crate) struct Emitter {
     /// (typed). Set by [`emit_with_style`]; consulted only in [`Self::emit_fn`]
     /// and [`Self::emit_const`], so the runtime body is identical either way.
     header_style: HeaderStyle,
+    /// The enclosing function's `?` carrier: its short-circuit *success* tag
+    /// (`"Ok"` for `Result`, `"Some"` for `Option`) and the TS form of its full
+    /// return type. `e?` returns the carrier from the enclosing function
+    /// (`lang/DYNAMIC.md` §4.10, `STATIC.md` §6), so the carrier is exactly the
+    /// enclosing return type. Under [`HeaderStyle::Ts`] the `?` guard tests the
+    /// success tag (negated) — which TS narrows cleanly — and casts the early
+    /// return to the return type, since the short-circuited value's success type
+    /// parameter may differ from this function's (only the error/none arm escapes,
+    /// but its phantom success param still blocks assignment). The JS lowering
+    /// tests both tags untyped, as the spec describes. `None` outside a
+    /// carrier-returning fn.
+    try_carrier: Option<TryCarrier>,
+    /// The struct names that carry methods or derives, for which a constructed
+    /// value is widened `as <Type>` under [`HeaderStyle::Ts`] so a later
+    /// `x.display()` resolves (TS does not track `__proto__` dispatch). Built
+    /// alongside [`Self::method_types`].
+    ts_struct_method_types: HashSet<String>,
+    /// The *user* enum names that carry methods or derives, for which a
+    /// constructed variant is widened `as unknown as <Enum>` under
+    /// [`HeaderStyle::Ts`] so a later `value.method()` resolves against the union
+    /// type's method members (TS does not track `__proto__` dispatch). The prelude
+    /// carriers `Option`/`Result` are excluded — their constructor functions and
+    /// `neoc-lib` union already carry typed methods. Built alongside
+    /// [`Self::method_types`].
+    ts_enum_method_types: HashSet<String>,
+    /// The trait/type names a TS generic bound can resolve in the emitted `.ts`:
+    /// every named type the module declares plus the final segment of each
+    /// cross-module `use`. A function header's bound (`<E extends SqlExecutor>`)
+    /// is carried only when its trait is here; an out-of-scope bound stays bare.
+    ts_bound_names: HashSet<String>,
+    /// Every type name the module references in a *type position* — a fn
+    /// parameter/return, a `struct` field, an `enum` variant payload, a `let`
+    /// annotation, a generic bound, a `type` alias, a `trait`/`impl` signature.
+    /// A type-only `use` (a name with no runtime binding) emits an `import type`
+    /// under [`HeaderStyle::Ts`] only when its name is here — so an imported type
+    /// used solely to *construct* a value (its name erased) gets no spurious
+    /// import. Empty under [`HeaderStyle::Js`], where types are erased entirely.
+    ts_referenced_type_names: HashSet<String>,
 }
 
 /// The body of the `Result`/`Option` runtime: method-bearing variant
@@ -931,7 +1092,13 @@ impl Emitter {
             }
         }
         if self.uses_traits {
-            preamble.push(TRAITS_PRELUDE.to_string());
+            // Under TS the registry is typed so each `__t.Type = [ … ]` entry is
+            // legal; plain JS keeps the bare `{}`, byte-identical.
+            if self.header_style == HeaderStyle::Ts {
+                preamble.push("const __t: Record<string, string[]> = {};".to_string());
+            } else {
+                preamble.push(TRAITS_PRELUDE.to_string());
+            }
         }
         if self.uses_result {
             // The `Result`/`Option` runtime lives in the shared `neoc-lib.js`
@@ -957,6 +1124,14 @@ impl Emitter {
 
     fn emit_module(&mut self, module: &ast::Module) {
         self.collect_method_types(module);
+        // The trait/type names a TS generic bound can resolve — the same set the
+        // `.d.ts` projector uses to decide whether to carry a bound as `extends`.
+        self.ts_bound_names = dts_in_scope_names(module);
+        // The type names referenced in type position, gating which type-only
+        // `use`s emit an `import type` under TS. Only needed for the TS target.
+        if self.header_style == HeaderStyle::Ts {
+            self.ts_referenced_type_names = module_referenced_type_names(module);
+        }
         self.extern_imports = ast::extern_imports(module, ast::Target::Js);
         // A `use`d extern item emits its native import here, in the consumer, not
         // an import from the defining file (`lang/EXTERN.md` §Lowering).
@@ -973,6 +1148,33 @@ impl Emitter {
     /// method-bearing prelude enums `Option`/`Result` (`DYNAMIC.md` §7.1).
     fn collect_method_types(&mut self, module: &ast::Module) {
         self.method_types = method_type_names(module);
+        // A method-bearing *struct* value is widened `as <Type>` under TS so
+        // method dispatch resolves against the interface; enums keep their union
+        // type (their methods come from the prelude or are not value-cast).
+        self.ts_struct_method_types = module
+            .items
+            .iter()
+            .filter_map(|item| match &item.kind {
+                ast::ItemKind::Struct(s) if self.method_types.contains(s.name.as_str()) => {
+                    Some(s.name.clone())
+                }
+                _ => None,
+            })
+            .collect();
+        // A method-bearing *enum* variant is likewise widened `as unknown as
+        // <Enum>` under TS so the call site resolves against the union type's
+        // method members (`emit_enum` folds those members into the union, the
+        // analogue of the struct interface gaining method members).
+        self.ts_enum_method_types = module
+            .items
+            .iter()
+            .filter_map(|item| match &item.kind {
+                ast::ItemKind::Enum(e) if self.method_types.contains(e.name.as_str()) => {
+                    Some(e.name.clone())
+                }
+                _ => None,
+            })
+            .collect();
         // The prelude enums are method-bearing (`DYNAMIC.md` §3.2, §7.1): seed
         // them so inline variant construction (`Option::Some(x)`, `Option::None`)
         // links to the prelude's `Option$`/`Result$` prototype via `__proto__`,
@@ -1061,7 +1263,15 @@ impl Emitter {
     fn ensure_method_slot(&mut self, name: &str, vis: ast::Visibility) {
         if self.type_has_methods(name) {
             let kw = export_kw(vis);
-            self.line(format!("{kw}const {name}$ = {{}};"));
+            // Under TS the prototype is typed `Record<string, Function>` so each
+            // `Name$.method = function … ` assignment is legal; plain JS elides
+            // the annotation, staying byte-identical.
+            let anno = if self.header_style == HeaderStyle::Ts {
+                ": Record<string, Function>"
+            } else {
+                ""
+            };
+            self.line(format!("{kw}const {name}${anno} = {{}};"));
         }
     }
 
@@ -1076,21 +1286,38 @@ impl Emitter {
         let Some((last, prefix)) = u.path.split_last() else {
             return;
         };
-        // A type-only item — a data-only struct/enum or a `pub type` alias —
-        // emits no binding in its source module, so importing its name would
-        // dangle against an empty export. Such names are erased in JS
-        // (constructions lower to inline objects), so emit no import. The keep
-        // decision is keyed per resolved import (`prefix::last`), rebuilt here to
-        // match the driver's key, so a name shared by two source modules — one a
-        // binding, one type-only — is decided per source.
-        if !self.imported_bindings.contains(&u.path.join("::")) {
-            return;
-        }
         // The target module file (`a/b.neoc` → segments `["a", "b"]`), made
         // relative to *this* module's directory so the ESM specifier resolves
         // correctly from a subdirectory.
         let target_segments: Vec<&str> = prefix.iter().map(String::as_str).collect();
         let module = relative_module_specifier(&self.importer_dir, &target_segments);
+        // A type-only item — a data-only struct/enum or a `pub type` alias —
+        // emits no runtime binding in its source module, so importing its name
+        // as a value would dangle against an empty export. In plain JS such names
+        // are erased (constructions lower to inline objects), so emit no import.
+        // In a self-typed `.ts` the name still appears in type position
+        // (`notes: ListNotesRow[]`, `cols: SqlValue[]`), so emit an `import type`
+        // — erased at runtime, present for `tsc` — but only when the name is in
+        // fact referenced in a type annotation here: a type used solely to
+        // *construct* a value has its name erased and needs no import, and an
+        // extern type's value comes from its native import, never the defining
+        // neoc module. A single-segment `use` has no sibling module to resolve.
+        // The keep decision is keyed per resolved import (`prefix::last`).
+        if !self.imported_bindings.contains(&u.path.join("::")) {
+            let local = u.alias.clone().unwrap_or_else(|| last.clone());
+            if self.header_style == HeaderStyle::Ts
+                && !prefix.is_empty()
+                && self.ts_referenced_type_names.contains(&local)
+                && !self.extern_structs.contains(last)
+            {
+                let named = match &u.alias {
+                    Some(alias) => format!("{last} as {alias}"),
+                    None => last.clone(),
+                };
+                self.line(format!("import type {{ {named} }} from \"{module}\";"));
+            }
+            return;
+        }
         // A method-bearing type's JS runtime binding is its prototype `Type$`
         // (the bare type name is erased), so a `use` of one imports `Type$`;
         // the consumer's constructions and associated-function calls reference
@@ -1145,6 +1372,19 @@ impl Emitter {
     fn emit_fn(&mut self, target: Option<&str>, f: &ast::FnDecl, vis: ast::Visibility) {
         let typed = self.header_style == HeaderStyle::Ts;
         let mut params = Vec::new();
+        let has_receiver = f
+            .sig
+            .params
+            .iter()
+            .any(|p| matches!(p, ast::Param::Receiver));
+        // Under TS a method's implicit `this` is typed to the impl target so a
+        // `this.field` access in the body resolves against the type's interface
+        // (`lang/DYNAMIC.md` §3.3). Emitted as the leading `this:` pseudo-param,
+        // which carries no runtime argument. Only for a method (a `self`
+        // receiver); an associated function (no receiver) takes no `this`.
+        if let (true, Some(t)) = (typed && has_receiver, target) {
+            params.push(format!("this: {t}"));
+        }
         for p in &f.sig.params {
             match p {
                 // The receiver is the implicit `this`; drop it from the JS
@@ -1161,15 +1401,16 @@ impl Emitter {
         }
         let param_list = params.join(", ");
         if let Some(t) = target {
-            // A method lands on the type's prototype object; its function
-            // expression stays untyped even under TS (it typechecks loosely
-            // against `Type$: {}`), so the runtime body is identical.
+            // A method lands on the type's prototype object. Under TS its `this`
+            // is typed (above) so the body type-checks against the type's
+            // interface; the runtime body is identical to plain JS.
             self.line(format!("{t}$.{} = function({param_list}) {{", f.sig.name));
         } else {
             let kw = export_kw(vis);
-            // A typed `.ts` free function carries generics and a return type.
+            // A typed `.ts` free function carries generics (with bounds) and a
+            // return type.
             let (g, ret) = if typed {
-                let g = ts_generics(&f.sig.generics);
+                let g = ts_generics_bounded(&f.sig.generics, &self.ts_in_scope_bounds());
                 let r = f
                     .sig
                     .ret
@@ -1184,9 +1425,59 @@ impl Emitter {
                 f.sig.name
             ));
         }
+        // The enclosing carrier for any `?` in the body is this function's return
+        // type (`lang/DYNAMIC.md` §4.10). Saved and restored so nested functions
+        // narrow to their own carrier. Only tracked under TS (the JS guard is
+        // untyped and needs no carrier).
+        let saved = self.try_carrier.take();
+        self.try_carrier = if typed {
+            f.sig.ret.as_ref().and_then(try_carrier_of)
+        } else {
+            None
+        };
         self.indented(|e| e.emit_block_as_body(&f.body));
+        self.try_carrier = saved;
         self.line("}");
     }
+
+    /// The trait/type names a TS generic bound (`<E extends SqlExecutor>`) can
+    /// resolve in the emitted `.ts`: every named type this module declares, plus
+    /// the final segment of each cross-module `use` (a `use`d trait is a port
+    /// contract imported as a TS type). A bound naming only these is carried; an
+    /// out-of-scope bound falls back to a bare `<E>`.
+    fn ts_in_scope_bounds(&self) -> HashSet<String> {
+        self.ts_bound_names.clone()
+    }
+}
+
+/// The `?` carrier of an enclosing function's return type: its *success* tag and
+/// the TS form of the full return type, used to narrow and cast the short-circuit
+/// guard under [`HeaderStyle::Ts`].
+#[derive(Clone)]
+pub(crate) struct TryCarrier {
+    /// The success tag — `"Ok"` for `Result`, `"Some"` for `Option`. The guard
+    /// short-circuits on `__tag !== success`.
+    success_tag: &'static str,
+    /// The TS form of the enclosing return type, the early return is cast to.
+    ret_ts: String,
+}
+
+/// The `?` carrier of a return type — `Result`/`Option` carry one, anything else
+/// `None`. `e?` returns the carrier from the enclosing function, so its carrier is
+/// the return type (`lang/DYNAMIC.md` §4.10, `STATIC.md` §6).
+fn try_carrier_of(ret: &ast::Type) -> Option<TryCarrier> {
+    let ast::Type::Path(p) = ret else {
+        return None;
+    };
+    let success_tag = match p.segments.last()?.name.as_str() {
+        "Result" => "Ok",
+        "Option" => "Some",
+        _ => return None,
+    };
+    Some(TryCarrier {
+        success_tag,
+        ret_ts: ts_type(ret),
+    })
 }
 
 /// The leading keyword for a module-level binding: `"export "` for a `pub` item,
@@ -1232,6 +1523,89 @@ mod tests {
     /// for these single-module fixtures, which carry no cross-module `use`.
     fn emit_solo(module: &ast::Module) -> EmitResult {
         emit(module, &HashSet::new(), &HashSet::new(), &[], &[], &[])
+    }
+
+    /// Parse and emit a source under plain `HeaderStyle::Js`.
+    fn emit_js(src: &str) -> EmitResult {
+        let parsed = neoc_parser::parse(src);
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        emit_solo(&parsed.module)
+    }
+
+    #[test]
+    fn js_try_keeps_the_dual_tag_guard_untyped() {
+        // The TS-only narrowing (single success tag + cast) must not leak into the
+        // JS backend: it tests both carrier tags, no `as` cast, byte-identical to
+        // the spec lowering (`lang/DYNAMIC.md` §4.10).
+        let out = emit_js(
+            "pub fn run() -> Result<number, string> {\n\
+             \x20   let x = find()?;\n\
+             \x20   Ok(x)\n\
+             }\n",
+        );
+        assert!(
+            out.js.contains(
+                "if (__try_0.__tag === \"Err\" || __try_0.__tag === \"None\") return __try_0;"
+            ),
+            "JS try guard changed:\n{}",
+            out.js
+        );
+        assert!(
+            !out.js.contains(" as "),
+            "JS must carry no cast:\n{}",
+            out.js
+        );
+    }
+
+    #[test]
+    fn js_list_index_carries_no_non_null_assertion() {
+        let out = emit_js("pub fn first(xs: [number]) -> number { xs[0] }\n");
+        assert!(
+            out.js.contains("return xs[0];"),
+            "JS index changed:\n{}",
+            out.js
+        );
+        assert!(
+            !out.js.contains("xs[0]!"),
+            "JS must carry no `!`:\n{}",
+            out.js
+        );
+    }
+
+    #[test]
+    fn js_match_last_arm_stays_guarded() {
+        // The TS unconditional-last-arm rewrite must not leak into JS: every arm
+        // keeps its `if` test (the spec lowering).
+        let out = emit_js(
+            "pub enum E { A, B }\n\
+             pub fn pick(e: E) -> number { match e { E::A => 1, E::B => 2 } }\n",
+        );
+        assert!(
+            out.js.contains("__s1.__tag === \"B\""),
+            "JS last arm lost its guard:\n{}",
+            out.js
+        );
+    }
+
+    #[test]
+    fn js_derived_method_stays_untyped() {
+        // No `this:` param, no `Record<string, Function>` annotation, no value
+        // cast — the JS prototype lowering is byte-identical.
+        let out = emit_js(
+            "#[derive(Display)]\n\
+             struct P { x: number }\n\
+             pub fn r() -> string { let p = P { x: 1 }; p.display() }\n",
+        );
+        assert!(
+            out.js.contains("const P$ = {};") && out.js.contains("P$.display = function() {"),
+            "JS derive changed:\n{}",
+            out.js
+        );
+        assert!(
+            !out.js.contains("Record<string, Function>") && !out.js.contains("as unknown as"),
+            "JS carries TS-only annotations:\n{}",
+            out.js
+        );
     }
 
     #[test]

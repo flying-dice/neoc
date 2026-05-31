@@ -9,10 +9,8 @@ function describe(r: Result<number, string>): string {
       const n = __s1._0;
       return "ok";
     }
-    if (__s1.__tag === "Err") {
-      const e = __s1._0;
-      return e;
-    }
+    const e = __s1._0;
+    return e;
   })();
 }
 function main(): void {

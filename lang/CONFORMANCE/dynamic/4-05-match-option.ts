@@ -9,9 +9,7 @@ function describe(o: Option<number>): string {
       const n = __s1._0;
       return "some";
     }
-    if (__s1.__tag === "None") {
-      return "none";
-    }
+    return "none";
   })();
 }
 function main(): void {

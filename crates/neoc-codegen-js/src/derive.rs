@@ -94,11 +94,24 @@ impl Emitter {
         }
     }
 
+    /// The `this`-typed parameter list for a derived method (`clone`/`debug`/
+    /// `display`) under TS, so a `this.field` access in the body resolves against
+    /// the type's interface/union. Empty under plain JS, keeping it byte-identical.
+    /// `Eq` is excluded — it takes both operands explicitly and is handled apart.
+    fn this_param(&self, ty: &str) -> String {
+        if self.header_style == crate::HeaderStyle::Ts {
+            format!("this: {ty}")
+        } else {
+            String::new()
+        }
+    }
+
     // ---- Clone -------------------------------------------------------------
 
     fn derive_clone(&mut self, target: DeriveTarget<'_>) {
-        let ty = Self::type_name(target);
-        self.line(format!("{ty}$.clone = function() {{"));
+        let ty = Self::type_name(target).to_string();
+        let this = self.this_param(&ty);
+        self.line(format!("{ty}$.clone = function({this}) {{"));
         self.indented(|e| match target {
             DeriveTarget::Struct(s) => e.clone_struct_body(&s.name, &s.body),
             DeriveTarget::Enum(en) => e.clone_enum_body(&en.name, &en.variants),
@@ -176,8 +189,9 @@ impl Emitter {
     // ---- Debug -------------------------------------------------------------
 
     fn derive_debug(&mut self, target: DeriveTarget<'_>) {
-        let ty = Self::type_name(target);
-        self.line(format!("{ty}$.debug = function() {{"));
+        let ty = Self::type_name(target).to_string();
+        let this = self.this_param(&ty);
+        self.line(format!("{ty}$.debug = function({this}) {{"));
         self.indented(|e| match target {
             DeriveTarget::Struct(s) => {
                 let r = debug_render(&s.name, &struct_keys(&s.body), "this");
@@ -200,8 +214,9 @@ impl Emitter {
     // ---- Display -----------------------------------------------------------
 
     fn derive_display(&mut self, target: DeriveTarget<'_>) {
-        let ty = Self::type_name(target);
-        self.line(format!("{ty}$.display = function() {{"));
+        let ty = Self::type_name(target).to_string();
+        let this = self.this_param(&ty);
+        self.line(format!("{ty}$.display = function({this}) {{"));
         self.indented(|e| match target {
             DeriveTarget::Struct(s) => {
                 let r = display_render(&s.name, &struct_keys(&s.body), "this");

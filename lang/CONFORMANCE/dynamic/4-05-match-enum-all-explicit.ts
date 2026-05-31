@@ -11,10 +11,8 @@ function describe(s: Shape): string {
       const b = __s1._1;
       return "move";
     }
-    if (__s1.__tag === "Circle") {
-      const radius = __s1.radius;
-      return "circle";
-    }
+    const radius = __s1.radius;
+    return "circle";
   })();
 }
 function main(): void {

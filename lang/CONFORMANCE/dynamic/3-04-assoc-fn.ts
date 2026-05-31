@@ -1,10 +1,10 @@
-interface Counter { value: number; }
+interface Counter { value: number; bump(): number; }
 
-const Counter$ = {};
+const Counter$: Record<string, Function> = {};
 Counter$.start = function(v: number) {
-  return { __struct: "Counter", value: v, __proto__: Counter$ };
+  return { __struct: "Counter", value: v, __proto__: Counter$ } as unknown as Counter;
 }
-Counter$.bump = function() {
+Counter$.bump = function(this: Counter) {
   return (this.value + 1);
 }
 function main(): void {

@@ -4,7 +4,7 @@ import { Ok, Err, Some, None, Option$, Result$ } from "./neoc-lib";
 
 function incr(o: Option<number>): Option<number> {
   const __try_0 = o;
-  if (__try_0.__tag === "Err" || __try_0.__tag === "None") return __try_0;
+  if (__try_0.__tag !== "Some") return __try_0 as unknown as Option<number>;
   let n = __try_0._0;
   return Some((n + 1));
 }
@@ -15,9 +15,7 @@ function unwrap_or(o: Option<number>): number {
       const n = __s1._0;
       return n;
     }
-    if (__s1.__tag === "None") {
-      return 0;
-    }
+    return 0;
   })();
 }
 function main(): void {

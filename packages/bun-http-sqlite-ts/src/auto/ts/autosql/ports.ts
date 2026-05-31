@@ -23,9 +23,7 @@ export function bind_opt_int(value: Option<number>): SqlValue {
       const inner = __s1._0;
       return { __enum: "SqlValue", __tag: "Int", _0: inner };
     }
-    if (__s1.__tag === "None") {
-      return { __enum: "SqlValue", __tag: "Null" };
-    }
+    return { __enum: "SqlValue", __tag: "Null" };
   })();
 }
 export function bind_opt_real(value: Option<number>): SqlValue {
@@ -35,9 +33,7 @@ export function bind_opt_real(value: Option<number>): SqlValue {
       const inner = __s2._0;
       return { __enum: "SqlValue", __tag: "Real", _0: inner };
     }
-    if (__s2.__tag === "None") {
-      return { __enum: "SqlValue", __tag: "Null" };
-    }
+    return { __enum: "SqlValue", __tag: "Null" };
   })();
 }
 export function bind_opt_text(value: Option<string>): SqlValue {
@@ -47,9 +43,7 @@ export function bind_opt_text(value: Option<string>): SqlValue {
       const inner = __s3._0;
       return { __enum: "SqlValue", __tag: "Text", _0: inner };
     }
-    if (__s3.__tag === "None") {
-      return { __enum: "SqlValue", __tag: "Null" };
-    }
+    return { __enum: "SqlValue", __tag: "Null" };
   })();
 }
 export function bind_opt_bool(value: Option<boolean>): SqlValue {
@@ -59,9 +53,7 @@ export function bind_opt_bool(value: Option<boolean>): SqlValue {
       const inner = __s4._0;
       return { __enum: "SqlValue", __tag: "Bool", _0: inner };
     }
-    if (__s4.__tag === "None") {
-      return { __enum: "SqlValue", __tag: "Null" };
-    }
+    return { __enum: "SqlValue", __tag: "Null" };
   })();
 }
 export function decode_number(value: SqlValue, label: string): Result<number, string> {
@@ -71,9 +63,7 @@ export function decode_number(value: SqlValue, label: string): Result<number, st
       const inner = __s5._0;
       return Ok(inner);
     }
-    if (true) {
-      return Err(label);
-    }
+    return Err(label);
   })();
 }
 export function decode_opt_number(value: SqlValue, label: string): Result<Option<number>, string> {
@@ -86,9 +76,7 @@ export function decode_opt_number(value: SqlValue, label: string): Result<Option
       const inner = __s6._0;
       return Ok(Some(inner));
     }
-    if (true) {
-      return Err(label);
-    }
+    return Err(label);
   })();
 }
 export function decode_string(value: SqlValue, label: string): Result<string, string> {
@@ -98,9 +86,7 @@ export function decode_string(value: SqlValue, label: string): Result<string, st
       const inner = __s7._0;
       return Ok(inner);
     }
-    if (true) {
-      return Err(label);
-    }
+    return Err(label);
   })();
 }
 export function decode_opt_string(value: SqlValue, label: string): Result<Option<string>, string> {
@@ -113,9 +99,7 @@ export function decode_opt_string(value: SqlValue, label: string): Result<Option
       const inner = __s8._0;
       return Ok(Some(inner));
     }
-    if (true) {
-      return Err(label);
-    }
+    return Err(label);
   })();
 }
 export function decode_bool(value: SqlValue, label: string): Result<boolean, string> {
@@ -125,9 +109,7 @@ export function decode_bool(value: SqlValue, label: string): Result<boolean, str
       const inner = __s9._0;
       return Ok(inner);
     }
-    if (true) {
-      return Err(label);
-    }
+    return Err(label);
   })();
 }
 export function decode_opt_bool(value: SqlValue, label: string): Result<Option<boolean>, string> {
@@ -140,8 +122,6 @@ export function decode_opt_bool(value: SqlValue, label: string): Result<Option<b
       const inner = __s10._0;
       return Ok(Some(inner));
     }
-    if (true) {
-      return Err(label);
-    }
+    return Err(label);
   })();
 }

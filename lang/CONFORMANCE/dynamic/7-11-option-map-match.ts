@@ -8,8 +8,6 @@ function main(): void {
       const v = __s1._0;
       return println(v);
     }
-    if (__s1.__tag === "None") {
-      return println(0);
-    }
+    return println(0);
   })();
 }
