@@ -125,6 +125,19 @@ fn make_mutex(_: &Lua, _: ()) -> mlua::Result<Mutex> {
     Ok(Mutex::from_arc(Arc::new(SharedMutex::default())))
 }
 
+/// A shared-state newtype is a thin `Arc<Shared*>` wrapper, rebuilt from a raw
+/// `Arc` when it crosses a worker boundary. Generates the one accessor every
+/// such type needs — `from_arc` — shared by `Map`, `Counter`, and `Mutex`.
+macro_rules! arc_newtype {
+    ($ty:ident, $shared:ty) => {
+        impl $ty {
+            pub fn from_arc(arc: Arc<$shared>) -> Self {
+                Self(arc)
+            }
+        }
+    };
+}
+
 // ---------------------------------------------------------------------------
 // SharedMap
 // ---------------------------------------------------------------------------
@@ -137,16 +150,7 @@ pub struct SharedMap {
 #[derive(Clone)]
 pub struct Map(Arc<SharedMap>);
 
-// TODO: clean-code - 0.65 - DRY: identical from_arc/arc impl block triplicated across Map/Counter/Mutex
-impl Map {
-    pub fn from_arc(arc: Arc<SharedMap>) -> Self {
-        Self(arc)
-    }
-    // TODO: clean-code - 0.6 - DEAD: pub arc() accessor has no external callers (only hyper.rs uses .arc() on its own type)
-    pub fn arc(&self) -> Arc<SharedMap> {
-        self.0.clone()
-    }
-}
+arc_newtype!(Map, SharedMap);
 
 impl crate::lua::std::thread::Sendable for Map {
     fn as_shared(&self) -> Arc<dyn std::any::Any + Send + Sync> {
@@ -214,15 +218,7 @@ pub struct SharedCounter {
 #[derive(Clone)]
 pub struct Counter(Arc<SharedCounter>);
 
-impl Counter {
-    pub fn from_arc(arc: Arc<SharedCounter>) -> Self {
-        Self(arc)
-    }
-    // TODO: clean-code - 0.6 - DEAD: pub arc() accessor has no external callers
-    pub fn arc(&self) -> Arc<SharedCounter> {
-        self.0.clone()
-    }
-}
+arc_newtype!(Counter, SharedCounter);
 
 fn i64_to_lua(v: i64) -> Value {
     // mlua::Integer is i32 under luau — same overflow handling as the DB modules.
@@ -288,15 +284,7 @@ pub struct SharedMutex {
 #[derive(Clone)]
 pub struct Mutex(Arc<SharedMutex>);
 
-impl Mutex {
-    pub fn from_arc(arc: Arc<SharedMutex>) -> Self {
-        Self(arc)
-    }
-    // TODO: clean-code - 0.6 - DEAD: pub arc() accessor has no external callers
-    pub fn arc(&self) -> Arc<SharedMutex> {
-        self.0.clone()
-    }
-}
+arc_newtype!(Mutex, SharedMutex);
 
 impl UserData for Mutex {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {

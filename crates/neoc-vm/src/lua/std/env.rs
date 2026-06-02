@@ -5,6 +5,12 @@ use mlua::{Lua, Table, Value};
 use crate::lua::facade::Module;
 use crate::lua::sandbox::{err, from_err, ok};
 
+/// Return a filesystem path to Lua as a lossy UTF-8 string under the
+/// `(value, nil)` convention. Shared by `home_dir` / `current_dir`.
+fn ok_path(lua: &Lua, p: &std::path::Path) -> mlua::Result<(Value, Value)> {
+    ok(lua, p.to_string_lossy().as_ref())
+}
+
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
     Ok(declare(lua)?.into_table())
 }
@@ -60,13 +66,12 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "Dynamic-library filename suffix for the target (e.g. `\".so\"`, `\".dylib\"`).",
     );
 
-    // TODO: clean-code - 0.55 - DRY: home_dir/current_dir repeat PathBuf -> ok(lua, lossy) pattern; extract helper
     m.set(
         "home_dir",
         lua.create_function(|lua, ()| {
             #[allow(deprecated)]
             match std::env::home_dir() {
-                Some(p) => ok(lua, p.to_string_lossy().as_ref()),
+                Some(p) => ok_path(lua, &p),
                 None => err(lua, "env.home_dir: home directory not found"),
             }
         })?,
@@ -92,7 +97,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     m.set(
         "current_dir",
         lua.create_function(|lua, ()| match std::env::current_dir() {
-            Ok(p) => ok(lua, p.to_string_lossy().as_ref()),
+            Ok(p) => ok_path(lua, &p),
             Err(e) => from_err(lua, "env.current_dir", e),
         })?,
     )?;
@@ -136,25 +141,19 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "Return every environment variable as a `{ [string]: string }` table, skipping non-Unicode entries.",
     );
 
-    // TODO: clean-code - 0.65 - KISS: nested match on _NEOC_ARGS Value variants is dense; flatten via early return
-    // TODO: clean-code - 0.6 - DRY: identical "_NEOC_ARGS: expected array of strings" literal duplicated on two arms
     m.set(
         "args",
         lua.create_function(|lua, ()| {
-            let globals = lua.globals();
-            match globals.get::<Value>("_NEOC_ARGS") {
-                Ok(Value::Nil) => Ok(Vec::<String>::new()),
-                Ok(Value::Table(tbl)) => tbl
-                    .sequence_values::<String>()
-                    .collect::<mlua::Result<Vec<String>>>()
-                    .map_err(|_| {
-                        mlua::Error::runtime("env.args: _NEOC_ARGS: expected array of strings")
-                    }),
-                Ok(_) => Err(mlua::Error::runtime(
-                    "env.args: _NEOC_ARGS: expected array of strings",
-                )),
-                Err(_) => Ok(Vec::new()),
-            }
+            const ERR: &str = "env.args: _NEOC_ARGS: expected array of strings";
+            let tbl = match lua.globals().get::<Value>("_NEOC_ARGS") {
+                // Unset, nil, or unreadable → no args.
+                Err(_) | Ok(Value::Nil) => return Ok(Vec::<String>::new()),
+                Ok(Value::Table(tbl)) => tbl,
+                Ok(_) => return Err(mlua::Error::runtime(ERR)),
+            };
+            tbl.sequence_values::<String>()
+                .collect::<mlua::Result<Vec<String>>>()
+                .map_err(|_| mlua::Error::runtime(ERR))
         })?,
     )?;
     m.record_fn(

@@ -67,10 +67,10 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     Ok(m)
 }
 
-// TODO: clean-code - 0.55 - DRY: error prefix "bind {addr}" duplicates the "TcpListener.bind" context added later by from_err
 fn bind(addr: &str) -> Result<TcpListener, String> {
+    // `from_err` adds the `TcpListener.bind` context; here just name the address.
     let std_listener =
-        std::net::TcpListener::bind(addr).map_err(|e| format!("bind {addr}: {e}"))?;
+        std::net::TcpListener::bind(addr).map_err(|e| format!("{addr}: {e}"))?;
     std_listener
         .set_nonblocking(true)
         .map_err(|e| format!("nonblocking: {e}"))?;
