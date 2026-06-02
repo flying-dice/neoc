@@ -67,21 +67,13 @@ impl ServerHandle {
     /// Spawn the accept loop on the current tokio runtime. Called once
     /// from `serve`; not exposed to Lua because the only way to obtain a
     /// `ServerHandle` is via `serve`, which always starts it.
-    // TODO: clean-code - 0.6 - KISS: replace-with-Closed-then-restore-on-Listening dance is harder than peeking; check state first, only consume on Idle.
     fn start(&self, lua: &Lua) -> mlua::Result<()> {
         let mut state = self.inner.state.lock();
-        let (listener, addr) = match std::mem::replace(&mut *state, ServerState::Closed) {
-            ServerState::Idle { listener, addr } => (listener, addr),
-            ServerState::Listening {
-                addr,
-                shutdown,
-                done,
-            } => {
-                *state = ServerState::Listening {
-                    addr,
-                    shutdown,
-                    done,
-                };
+        // Only `Idle` is startable. Peek first so the non-startable states are
+        // left untouched — no consume-then-restore dance.
+        match &*state {
+            ServerState::Idle { .. } => {}
+            ServerState::Listening { .. } => {
                 return Err(mlua::Error::external(
                     "hyper.serve: server already listening",
                 ));
@@ -89,6 +81,12 @@ impl ServerHandle {
             ServerState::Closed => {
                 return Err(mlua::Error::external("hyper.serve: server is closed"));
             }
+        }
+        // Proven `Idle` above — now consume it.
+        let ServerState::Idle { listener, addr } =
+            std::mem::replace(&mut *state, ServerState::Closed)
+        else {
+            unreachable!("state was checked to be Idle");
         };
 
         let handle = Handle::try_current()

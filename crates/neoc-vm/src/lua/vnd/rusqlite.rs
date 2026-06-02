@@ -220,29 +220,16 @@ fn open(lua: &Lua, path: String) -> mlua::Result<(Value, Value)> {
 
 impl UserData for Database {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        // TODO: clean-code - 0.75 - DRY: split_sql_args + dispatch repeated 3x across Database methods and mirrored 3x on Statement
         methods.add_method("execute", |lua, this, args: MultiValue| {
-            let (sql, params) = match split_sql_args(args) {
-                Ok(v) => v,
-                Err(e) => return from_err(lua, "rusqlite.execute", e),
-            };
-            run_execute(lua, &this.conn, "rusqlite.execute", &sql, params)
+            db_dispatch(lua, &this.conn, "rusqlite.execute", args, run_execute)
         });
 
         methods.add_method("query", |lua, this, args: MultiValue| {
-            let (sql, params) = match split_sql_args(args) {
-                Ok(v) => v,
-                Err(e) => return from_err(lua, "rusqlite.query", e),
-            };
-            run_query(lua, &this.conn, "rusqlite.query", &sql, params)
+            db_dispatch(lua, &this.conn, "rusqlite.query", args, run_query)
         });
 
         methods.add_method("query_one", |lua, this, args: MultiValue| {
-            let (sql, params) = match split_sql_args(args) {
-                Ok(v) => v,
-                Err(e) => return from_err(lua, "rusqlite.query_one", e),
-            };
-            run_query_one(lua, &this.conn, "rusqlite.query_one", &sql, params)
+            db_dispatch(lua, &this.conn, "rusqlite.query_one", args, run_query_one)
         });
 
         methods.add_method("prepare", |_, this, sql: String| {
@@ -322,6 +309,26 @@ fn conn_mut(handle: &Arc<LocalConn>) -> Result<&mut rusqlite::Connection, &'stat
     // SAFETY: see LocalConn impl.
     let slot = unsafe { handle.get_mut() };
     slot.as_mut().ok_or("database is closed")
+}
+
+/// A `run_*` helper: prepare + run the SQL, shaping the result for its op.
+type RunFn = fn(&Lua, &Arc<LocalConn>, &'static str, &str, Vec<Value>) -> mlua::Result<(Value, Value)>;
+
+/// Split a `db:execute`/`query`/`query_one` call's args into SQL + params and
+/// dispatch to the matching `run_*` helper. The three `Database` methods differ
+/// only by op name and which helper shapes the result.
+fn db_dispatch(
+    lua: &Lua,
+    conn: &Arc<LocalConn>,
+    op: &'static str,
+    args: MultiValue,
+    run: RunFn,
+) -> mlua::Result<(Value, Value)> {
+    let (sql, params) = match split_sql_args(args) {
+        Ok(v) => v,
+        Err(e) => return from_err(lua, op, e),
+    };
+    run(lua, conn, op, &sql, params)
 }
 
 fn to_sql_refs(lua_params: &[LuaToSql]) -> Vec<&dyn ToSql> {

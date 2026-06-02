@@ -58,11 +58,9 @@ fn lua_value_to_jv(value: &Value) -> mlua::Result<JV> {
 impl UserData for JSchema {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("is_valid", |_, this, value: Value| {
-            // TODO: clean-code - 0.6 - KISS: silently returns false on conversion error, hiding bugs; inconsistent with validate which surfaces the error.
-            let jv = match lua_value_to_jv(&value) {
-                Ok(v) => v,
-                Err(_) => return Ok(false),
-            };
+            // Surface a conversion failure rather than masquerading it as
+            // "invalid" — a non-encodable input is a caller bug, not a schema miss.
+            let jv = lua_value_to_jv(&value)?;
             Ok(this.inner.is_valid(&jv))
         });
 

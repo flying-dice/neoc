@@ -54,12 +54,15 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     Ok(m)
 }
 
-// TODO: clean-code - 0.7 - DRY: reader-handle borrow + error mirrors encode_to's writer-handle pattern
+/// Borrow `ud` as handle type `T`, or return the standard "expected a `<kind>`
+/// handle" error shared by `decode` and `encode_to`.
+fn borrow_handle<T: 'static>(ud: &AnyUserData, kind: &str) -> Result<mlua::UserDataRef<T>, String> {
+    ud.borrow::<T>()
+        .map_err(|_| format!("expected a {kind} handle"))
+}
+
 fn decode(lua: &Lua, ud: AnyUserData) -> Result<Value, String> {
-    let rh = match ud.borrow::<ReaderHandle>() {
-        Ok(h) => h,
-        Err(_) => return Err("expected a reader handle".to_string()),
-    };
+    let rh = borrow_handle::<ReaderHandle>(&ud, "reader")?;
     let mut locked = rh.inner.lock();
     let result = serde_yaml::from_reader::<_, serde_json::Value>(&mut **locked);
     drop(locked);
@@ -90,10 +93,7 @@ fn encode(_: &Lua, v: Value) -> Result<String, String> {
 }
 
 fn encode_to(_: &Lua, (v, ud): (Value, AnyUserData)) -> Result<bool, String> {
-    let wh = match ud.borrow::<WriterHandle>() {
-        Ok(h) => h,
-        Err(_) => return Err("expected a writer handle".to_string()),
-    };
+    let wh = borrow_handle::<WriterHandle>(&ud, "writer")?;
     let json = lua_to_json_value(&v).map_err(|e| e.to_string())?;
     let mut locked = wh.0.lock();
     let result = serde_yaml::to_writer(&mut **locked, &json);

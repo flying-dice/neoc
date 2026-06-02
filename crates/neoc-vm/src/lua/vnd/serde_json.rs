@@ -25,26 +25,30 @@ use crate::lua::std::io::{ReaderHandle, WriterHandle};
 // bytes, so this module owns the conversion both ways.
 // ---------------------------------------------------------------------------
 
+/// Convert a JSON number to the `lib:json` int/float shape: prefer an exact
+/// `i64`, fall back to `u64` (anything past `i64::MAX` widens to float), then
+/// `f64`; a number that fits none collapses to null.
+fn jv_number_to_json(n: &serde_json::Number) -> JsonValue {
+    if let Some(i) = n.as_i64() {
+        JsonValue::Int(i)
+    } else if let Some(u) = n.as_u64() {
+        if u <= i64::MAX as u64 {
+            JsonValue::Int(u as i64)
+        } else {
+            JsonValue::Float(u as f64)
+        }
+    } else if let Some(f) = n.as_f64() {
+        JsonValue::Float(f)
+    } else {
+        JsonValue::Null
+    }
+}
+
 fn jv_to_json_value(jv: serde_json::Value) -> JsonValue {
     match jv {
         serde_json::Value::Null => JsonValue::Null,
         serde_json::Value::Bool(b) => JsonValue::Bool(b),
-        // TODO: clean-code - 0.55 - KISS: Number conversion cascade is dense; extract jv_number_to_json with named branches
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                JsonValue::Int(i)
-            } else if let Some(u) = n.as_u64() {
-                if u <= i64::MAX as u64 {
-                    JsonValue::Int(u as i64)
-                } else {
-                    JsonValue::Float(u as f64)
-                }
-            } else if let Some(f) = n.as_f64() {
-                JsonValue::Float(f)
-            } else {
-                JsonValue::Null
-            }
-        }
+        serde_json::Value::Number(n) => jv_number_to_json(&n),
         serde_json::Value::String(s) => JsonValue::String(s),
         serde_json::Value::Array(a) => {
             JsonValue::Array(a.into_iter().map(jv_to_json_value).collect())
@@ -135,20 +139,15 @@ fn from_str(lua: &Lua, s: mlua::String) -> Result<Value, String> {
     parse_to_handle(lua, &s.as_bytes()).map_err(|e| e.to_string())
 }
 
-// TODO: clean-code - 0.75 - KISS: nested match pyramid + manual drops; flatten with ? and a scoped block
 fn from_reader(lua: &Lua, ud: AnyUserData) -> Result<Value, String> {
-    let rh = match ud.borrow::<ReaderHandle>() {
-        Ok(h) => h,
-        Err(_) => return Err("expected a reader handle — accepted: Reader".to_string()),
+    let jv = {
+        let rh = ud
+            .borrow::<ReaderHandle>()
+            .map_err(|_| "expected a reader handle — accepted: Reader".to_string())?;
+        let mut locked = rh.inner.lock();
+        serde_json::from_reader::<_, serde_json::Value>(&mut **locked).map_err(|e| e.to_string())?
     };
-    let mut locked = rh.inner.lock();
-    let result = serde_json::from_reader::<_, serde_json::Value>(&mut **locked);
-    drop(locked);
-    drop(rh);
-    match result {
-        Ok(jv) => wrap_root(lua, jv_to_json_value(jv)).map_err(|e| e.to_string()),
-        Err(e) => Err(e.to_string()),
-    }
+    wrap_root(lua, jv_to_json_value(jv)).map_err(|e| e.to_string())
 }
 
 fn serialize_with(

@@ -237,7 +237,20 @@ impl UserData for Statement {
 // shared execution helpers
 // ---------------------------------------------------------------------------
 
-// TODO: clean-code - 0.7 - DRY: run_execute/run_query/run_query_one share the same closed-check + build_query + error-mapping prologue — collapse into a single helper that yields a ready Query
+/// Reject a closed pool and bind `params` into a ready query. Shared prologue
+/// for the three `run_*` helpers; errors stringify so each maps them under its
+/// own `op`.
+fn prepare_query<'q>(
+    pool: &MySqlPool,
+    sql: &'q str,
+    params: Vec<Value>,
+) -> Result<Query<'q, MySql, MySqlArguments>, String> {
+    if pool.is_closed() {
+        return Err("database is closed".to_string());
+    }
+    build_query(sql, params)
+}
+
 async fn run_execute(
     lua: &Lua,
     pool: &MySqlPool,
@@ -245,10 +258,7 @@ async fn run_execute(
     sql: &str,
     params: Vec<Value>,
 ) -> mlua::Result<(Value, Value)> {
-    if pool.is_closed() {
-        return from_err(lua, op, "database is closed");
-    }
-    let q = match build_query(sql, params) {
+    let q = match prepare_query(pool, sql, params) {
         Ok(q) => q,
         Err(e) => return from_err(lua, op, e),
     };
@@ -265,10 +275,7 @@ async fn run_query(
     sql: &str,
     params: Vec<Value>,
 ) -> mlua::Result<(Value, Value)> {
-    if pool.is_closed() {
-        return from_err(lua, op, "database is closed");
-    }
-    let q = match build_query(sql, params) {
+    let q = match prepare_query(pool, sql, params) {
         Ok(q) => q,
         Err(e) => return from_err(lua, op, e),
     };
@@ -291,10 +298,7 @@ async fn run_query_one(
     sql: &str,
     params: Vec<Value>,
 ) -> mlua::Result<(Value, Value)> {
-    if pool.is_closed() {
-        return from_err(lua, op, "database is closed");
-    }
-    let q = match build_query(sql, params) {
+    let q = match prepare_query(pool, sql, params) {
         Ok(q) => q,
         Err(e) => return from_err(lua, op, e),
     };
@@ -395,7 +399,6 @@ fn classify(type_name: &str) -> Kind {
     Kind::Text
 }
 
-// TODO: clean-code - 0.6 - SRP: row_to_table mixes column iteration, null detection, kind dispatch, six decode arms and Lua value construction — split decode-per-kind into its own helper
 fn row_to_table(lua: &Lua, row: &MySqlRow) -> mlua::Result<Table> {
     let cols = row.columns();
     let t = lua.create_table_with_capacity(0, cols.len())?;
@@ -408,36 +411,38 @@ fn row_to_table(lua: &Lua, row: &MySqlRow) -> mlua::Result<Table> {
         } else {
             classify(raw.type_info().name())
         };
-        let val = match kind {
-            Kind::Nil => Value::Nil,
-            Kind::Bool => {
-                let v: bool =
-                    <bool as Decode<MySql>>::decode(raw).map_err(mlua::Error::external)?;
-                Value::Boolean(v)
-            }
-            Kind::Integer => {
-                let v: i64 = <i64 as Decode<MySql>>::decode(raw).map_err(mlua::Error::external)?;
-                match i32::try_from(v) {
-                    Ok(i) => Value::Integer(i),
-                    Err(_) => Value::Number(v as f64),
-                }
-            }
-            Kind::Real => {
-                let v: f64 = <f64 as Decode<MySql>>::decode(raw).map_err(mlua::Error::external)?;
-                Value::Number(v)
-            }
-            Kind::Blob => {
-                let v: &[u8] =
-                    <&[u8] as Decode<MySql>>::decode(raw).map_err(mlua::Error::external)?;
-                Value::String(lua.create_string(v)?)
-            }
-            Kind::Text => {
-                let v: &str =
-                    <&str as Decode<MySql>>::decode(raw).map_err(mlua::Error::external)?;
-                Value::String(lua.create_string(v)?)
-            }
-        };
-        t.set(col.name(), val)?;
+        t.set(col.name(), decode_cell(lua, kind, raw)?)?;
     }
     Ok(t)
+}
+
+/// Decode one cell's raw value into a Lua value per its classified `kind`.
+fn decode_cell(lua: &Lua, kind: Kind, raw: MySqlValueRef) -> mlua::Result<Value> {
+    let val = match kind {
+        Kind::Nil => Value::Nil,
+        Kind::Bool => {
+            let v: bool = <bool as Decode<MySql>>::decode(raw).map_err(mlua::Error::external)?;
+            Value::Boolean(v)
+        }
+        Kind::Integer => {
+            let v: i64 = <i64 as Decode<MySql>>::decode(raw).map_err(mlua::Error::external)?;
+            match i32::try_from(v) {
+                Ok(i) => Value::Integer(i),
+                Err(_) => Value::Number(v as f64),
+            }
+        }
+        Kind::Real => {
+            let v: f64 = <f64 as Decode<MySql>>::decode(raw).map_err(mlua::Error::external)?;
+            Value::Number(v)
+        }
+        Kind::Blob => {
+            let v: &[u8] = <&[u8] as Decode<MySql>>::decode(raw).map_err(mlua::Error::external)?;
+            Value::String(lua.create_string(v)?)
+        }
+        Kind::Text => {
+            let v: &str = <&str as Decode<MySql>>::decode(raw).map_err(mlua::Error::external)?;
+            Value::String(lua.create_string(v)?)
+        }
+    };
+    Ok(val)
 }
