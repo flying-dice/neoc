@@ -312,7 +312,8 @@ fn conn_mut(handle: &Arc<LocalConn>) -> Result<&mut rusqlite::Connection, &'stat
 }
 
 /// A `run_*` helper: prepare + run the SQL, shaping the result for its op.
-type RunFn = fn(&Lua, &Arc<LocalConn>, &'static str, &str, Vec<Value>) -> mlua::Result<(Value, Value)>;
+type RunFn =
+    fn(&Lua, &Arc<LocalConn>, &'static str, &str, Vec<Value>) -> mlua::Result<(Value, Value)>;
 
 /// Split a `db:execute`/`query`/`query_one` call's args into SQL + params and
 /// dispatch to the matching `run_*` helper. The three `Database` methods differ

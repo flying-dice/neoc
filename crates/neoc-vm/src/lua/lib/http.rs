@@ -185,8 +185,16 @@ async fn handle_connection(
         Ok(v) => v,
         Err(RequestError::MalformedPercentEncoding) => {
             let r = Response::text(400, "Bad Request");
-            write_response(&mut writer, r.status, r.reason, r.mime, r.modified, &r.body, true)
-                .await?;
+            write_response(
+                &mut writer,
+                r.status,
+                r.reason,
+                r.mime,
+                r.modified,
+                &r.body,
+                true,
+            )
+            .await?;
             return Ok(());
         }
         Err(e) => return Err(e),

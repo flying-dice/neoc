@@ -309,7 +309,10 @@ async fn run(paths: &[String], user_args: &[String]) {
         if total_failed == 0 {
             println!("{}", green(&format!("{total_passed} passed")));
         } else {
-            println!("{}", red(&format!("{total_passed} passed, {total_failed} failed")));
+            println!(
+                "{}",
+                red(&format!("{total_passed} passed, {total_failed} failed"))
+            );
             process::exit(1);
         }
     } else if total_failed > 0 {

@@ -136,7 +136,13 @@ pub fn summary(lua: &Lua) -> mlua::Result<(u32, u32)> {
 /// Register a dot-syntax matcher that captures the expect-ed value directly.
 /// `mlua::Value` is a cheap, `Send`-able registry handle, so each matcher closure
 /// just clones it — no shared slot to stash and re-read.
-fn register_matcher<A, F>(lua: &Lua, m: &Table, name: &str, actual: Value, body: F) -> mlua::Result<()>
+fn register_matcher<A, F>(
+    lua: &Lua,
+    m: &Table,
+    name: &str,
+    actual: Value,
+    body: F,
+) -> mlua::Result<()>
 where
     A: mlua::FromLuaMulti + 'static,
     F: Fn(Value, A) -> mlua::Result<()> + mlua::MaybeSend + 'static,
@@ -200,8 +206,12 @@ fn make_matcher(lua: &Lua, value: Value) -> mlua::Result<Table> {
     })?;
 
     // toContain(item) — substring for strings, value search for tables
-    register_matcher(lua, &m, "toContain", value.clone(), |actual, item: Value| {
-        match (&actual, &item) {
+    register_matcher(
+        lua,
+        &m,
+        "toContain",
+        value.clone(),
+        |actual, item: Value| match (&actual, &item) {
             (Value::String(s), Value::String(sub)) => {
                 let haystack = s.as_bytes();
                 let needle = sub.as_bytes();
@@ -235,8 +245,8 @@ fn make_matcher(lua: &Lua, value: Value) -> mlua::Result<Table> {
             _ => Err(mlua::Error::RuntimeError(
                 "toContain requires a string or table value".into(),
             )),
-        }
-    })?;
+        },
+    )?;
 
     // toThrow() — value must be a callable that raises an error
     register_matcher(lua, &m, "toThrow", value, |actual, _: ()| match actual {
