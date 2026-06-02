@@ -193,32 +193,20 @@ fn write_trailer(f: &mut impl Write, payload: &[u8], stub_len: u64) -> std::io::
 ///    the runtime, so `current_exe()` is always the correct stub).
 /// 3. Copies stub → output, appends payload + 20-byte trailer.
 /// 4. Sets executable permission on Unix.
-// TODO: clean-code - 0.75 - SRP: read source + resolve stub + strip prior trailer + assemble + write + chmod — extract strip_existing_trailer and set_executable
 fn bundle_impl(entrypoint: &Path, output: &Path) -> Result<(), String> {
-    // Read source.
     let source = std::fs::read(entrypoint)
         .map_err(|e| format!("compile.bundle: cannot read {}: {e}", entrypoint.display()))?;
 
     // Resolve stub — the running neoc binary.
     let stub_path = std::env::current_exe()
         .map_err(|e| format!("compile.bundle: cannot resolve current executable: {e}"))?;
-
     let mut stub_bytes = std::fs::read(&stub_path).map_err(|e| {
         format!(
             "compile.bundle: cannot read stub {}: {e}",
             stub_path.display()
         )
     })?;
-
-    // Strip any previously embedded payload so that re-bundling a bundled binary
-    // does not inflate the output by the prior payload + trailer on each pass.
-    if let Ok(Some(TrailerHeader { offset, .. })) = parse_trailer(&stub_bytes) {
-        let t = stub_bytes.len() - TRAILER_SIZE as usize;
-        if (offset as usize) < t {
-            stub_bytes.truncate(offset as usize);
-        }
-    }
-
+    strip_existing_trailer(&mut stub_bytes);
     let stub_len = stub_bytes.len() as u64;
 
     // Build full output in memory (atomic write — no half-written file on error).
@@ -226,22 +214,37 @@ fn bundle_impl(entrypoint: &Path, output: &Path) -> Result<(), String> {
     write_trailer(&mut out_bytes, &source, stub_len)
         .map_err(|e| format!("compile.bundle: trailer write failed: {e}"))?;
 
-    // Write output.
     std::fs::write(output, &out_bytes)
         .map_err(|e| format!("compile.bundle: cannot write {}: {e}", output.display()))?;
 
-    // Make executable on Unix.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(output)
-            .map_err(|e| format!("compile.bundle: cannot read permissions: {e}"))?
-            .permissions();
-        perms.set_mode(perms.mode() | 0o111);
-        std::fs::set_permissions(output, perms)
-            .map_err(|e| format!("compile.bundle: cannot set executable bit: {e}"))?;
-    }
+    set_executable(output)
+}
 
+/// Strip a previously embedded payload from `bytes` so that re-bundling an
+/// already-bundled binary doesn't stack payload + trailer on every pass.
+fn strip_existing_trailer(bytes: &mut Vec<u8>) {
+    if let Ok(Some(TrailerHeader { offset, .. })) = parse_trailer(bytes) {
+        let trailer_start = bytes.len() - TRAILER_SIZE as usize;
+        if (offset as usize) < trailer_start {
+            bytes.truncate(offset as usize);
+        }
+    }
+}
+
+/// Sets the executable bit on `output`. Unix-only; a no-op elsewhere.
+#[cfg(unix)]
+fn set_executable(output: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = std::fs::metadata(output)
+        .map_err(|e| format!("compile.bundle: cannot read permissions: {e}"))?
+        .permissions();
+    perms.set_mode(perms.mode() | 0o111);
+    std::fs::set_permissions(output, perms)
+        .map_err(|e| format!("compile.bundle: cannot set executable bit: {e}"))
+}
+
+#[cfg(not(unix))]
+fn set_executable(_output: &Path) -> Result<(), String> {
     Ok(())
 }
 

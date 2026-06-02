@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use globset::GlobSetBuilder;
-use mlua::{Lua, Table};
+use mlua::{FromLua, Lua, Table};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use walkdir::WalkDir;
@@ -48,19 +48,19 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     Ok(m)
 }
 
+/// Read an optional typed field from the optional `opts` table. A missing
+/// table, missing key, wrong type, or explicit nil all collapse to `None`.
+fn opt_field<T: FromLua>(opts: &Option<Table>, key: &str) -> Option<T> {
+    opts.as_ref()
+        .and_then(|o| o.get::<Option<T>>(key).ok().flatten())
+}
+
 async fn serve_static(
     _lua: Lua,
     (glob_pattern, opts): (String, Option<Table>),
 ) -> mlua::Result<()> {
-    // TODO: clean-code - 0.6 - KISS: chained as_ref().and_then().ok().flatten() opts extraction is hard to read; extract helper.
-    let port: u16 = opts
-        .as_ref()
-        .and_then(|o| o.get::<Option<u16>>("port").ok().flatten())
-        .unwrap_or(8080);
-    let host: String = opts
-        .as_ref()
-        .and_then(|o| o.get::<Option<String>>("host").ok().flatten())
-        .unwrap_or_else(|| "0.0.0.0".to_string());
+    let port: u16 = opt_field(&opts, "port").unwrap_or(8080);
+    let host: String = opt_field(&opts, "host").unwrap_or_else(|| "0.0.0.0".to_string());
 
     let files = resolve_glob(&glob_pattern)
         .map_err(|e| mlua::Error::external(format!("http.serve_static: {e}")))?;
@@ -108,159 +108,175 @@ async fn serve_loop(listener: TcpListener, files: Arc<FileMap>, index: Arc<Strin
     }
 }
 
-// TODO: clean-code - 0.75 - SRP: handle_connection performs routing, path validation, file lookup, response composition, and error mapping; split into parse → route → respond.
-// TODO: clean-code - 0.6 - DRY: 5 near-identical write_response calls for plain-text error statuses (400/403/404/405); extract write_error(writer, status, reason).
-// TODO: clean-code - 0.55 - COUPLING: Box<dyn Error> return type forces downcast for MalformedPercentEncoding; use a typed enum.
+/// A fully-decided HTTP response: routing produces one of these, then
+/// `handle_connection` writes it (suppressing the body for `HEAD`).
+struct Response {
+    status: u16,
+    reason: &'static str,
+    mime: &'static str,
+    modified: Option<SystemTime>,
+    body: Vec<u8>,
+}
+
+impl Response {
+    /// A plain-text status response (`400`/`403`/`404`/`405`) whose body is the
+    /// reason phrase.
+    fn text(status: u16, reason: &'static str) -> Self {
+        Response {
+            status,
+            reason,
+            mime: "text/plain",
+            modified: None,
+            body: reason.as_bytes().to_vec(),
+        }
+    }
+}
+
+/// Maps a parsed request to the response it earns: `405` for a non-`GET`/`HEAD`
+/// method, the index page for `/`, `403` for a traversal attempt, then the
+/// served file or `404`. Only disk I/O can fail, so other arms are infallible.
+async fn route(
+    method: &str,
+    path: &str,
+    files: &FileMap,
+    index: &str,
+) -> Result<Response, RequestError> {
+    if method != "GET" && method != "HEAD" {
+        return Ok(Response::text(405, "Method Not Allowed"));
+    }
+    if path == "/" {
+        return Ok(Response {
+            status: 200,
+            reason: "OK",
+            mime: "text/html; charset=utf-8",
+            modified: None,
+            body: index.as_bytes().to_vec(),
+        });
+    }
+    let rel = path.trim_start_matches('/');
+    if rel.contains("..") {
+        return Ok(Response::text(403, "Forbidden"));
+    }
+    match files.get(rel) {
+        Some(f) => Ok(Response {
+            status: 200,
+            reason: "OK",
+            mime: f.mime,
+            modified: Some(f.modified),
+            body: tokio::fs::read(&f.abs_path).await?,
+        }),
+        None => Ok(Response::text(404, "Not Found")),
+    }
+}
+
 async fn handle_connection(
     stream: tokio::net::TcpStream,
     files: &FileMap,
     index: &str,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(), RequestError> {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
 
+    // parse — read the request line + headers, mapping a bad percent-escape to 400.
     let head = tokio::time::timeout(HEADER_TIMEOUT, read_request_head(&mut reader))
         .await
-        .map_err(|_| -> Box<dyn std::error::Error + Send + Sync> {
-            "header read timeout".into()
-        })?;
+        .map_err(|_| RequestError::Malformed("header read timeout"))?;
     let (method, path) = match head {
         Ok(v) => v,
-        Err(e) if e.downcast_ref::<MalformedPercentEncoding>().is_some() => {
-            write_response(
-                &mut writer,
-                400,
-                "Bad Request",
-                "text/plain",
-                None,
-                b"Bad Request",
-                true,
-            )
-            .await?;
+        Err(RequestError::MalformedPercentEncoding) => {
+            let r = Response::text(400, "Bad Request");
+            write_response(&mut writer, r.status, r.reason, r.mime, r.modified, &r.body, true)
+                .await?;
             return Ok(());
         }
         Err(e) => return Err(e),
     };
 
-    if method != "GET" && method != "HEAD" {
-        write_response(
-            &mut writer,
-            405,
-            "Method Not Allowed",
-            "text/plain",
-            None,
-            b"Method Not Allowed",
-            true,
-        )
-        .await?;
-        return Ok(());
-    }
-
+    // route → respond.
+    let r = route(&method, &path, files, index).await?;
     let send_body = method != "HEAD";
-
-    if path == "/" {
-        write_response(
-            &mut writer,
-            200,
-            "OK",
-            "text/html; charset=utf-8",
-            None,
-            index.as_bytes(),
-            send_body,
-        )
-        .await?;
-    } else {
-        let rel = path.trim_start_matches('/');
-        if rel.contains("..") {
-            write_response(
-                &mut writer,
-                403,
-                "Forbidden",
-                "text/plain",
-                None,
-                b"Forbidden",
-                send_body,
-            )
-            .await?;
-            return Ok(());
-        }
-        match files.get(rel) {
-            Some(f) => {
-                let data = tokio::fs::read(&f.abs_path).await?;
-                write_response(
-                    &mut writer,
-                    200,
-                    "OK",
-                    f.mime,
-                    Some(f.modified),
-                    &data,
-                    send_body,
-                )
-                .await?;
-            }
-            None => {
-                write_response(
-                    &mut writer,
-                    404,
-                    "Not Found",
-                    "text/plain",
-                    None,
-                    b"Not Found",
-                    send_body,
-                )
-                .await?;
-            }
-        }
-    }
+    write_response(
+        &mut writer,
+        r.status,
+        r.reason,
+        r.mime,
+        r.modified,
+        &r.body,
+        send_body,
+    )
+    .await?;
     Ok(())
+}
+
+/// Read one line bounded to `MAX_HEADER_LINE + 1` bytes. An over-long line is
+/// returned without a trailing `\n`, so callers detect truncation by checking
+/// `ends_with('\n')`.
+async fn read_bounded_line(
+    reader: &mut BufReader<tokio::net::tcp::OwnedReadHalf>,
+) -> std::io::Result<String> {
+    let mut line = String::new();
+    let mut limited = (&mut *reader).take(MAX_HEADER_LINE + 1);
+    limited.read_line(&mut line).await?;
+    Ok(line)
 }
 
 async fn read_request_head(
     reader: &mut BufReader<tokio::net::tcp::OwnedReadHalf>,
-) -> Result<(String, String), Box<dyn std::error::Error + Send + Sync>> {
-    // TODO: clean-code - 0.6 - DRY: limited-take + read_line + length-check block is duplicated for request line and header lines; extract read_bounded_line helper.
-    let mut request_line = String::new();
-    {
-        let mut limited = (&mut *reader).take(MAX_HEADER_LINE + 1);
-        limited.read_line(&mut request_line).await?;
-    }
+) -> Result<(String, String), RequestError> {
+    let request_line = read_bounded_line(reader).await?;
     if !request_line.ends_with('\n') {
-        return Err("request line too long".into());
+        return Err(RequestError::Malformed("request line too long"));
     }
     let (method, path) = parse_request_line(&request_line)?;
 
     let mut header_count = 0usize;
     loop {
-        let mut header_line = String::new();
-        {
-            let mut limited = (&mut *reader).take(MAX_HEADER_LINE + 1);
-            limited.read_line(&mut header_line).await?;
-        }
+        let header_line = read_bounded_line(reader).await?;
         if header_line == "\r\n" || header_line.is_empty() {
             break;
         }
         if !header_line.ends_with('\n') {
-            return Err("header line too long".into());
+            return Err(RequestError::Malformed("header line too long"));
         }
         header_count += 1;
         if header_count > MAX_HEADERS {
-            return Err("too many headers".into());
+            return Err(RequestError::Malformed("too many headers"));
         }
     }
 
     Ok((method, path))
 }
 
+/// Why parsing or serving a request failed. `handle_connection` answers a
+/// `MalformedPercentEncoding` with `400`; everything else drops the connection
+/// (logged at debug). A typed enum so the caller matches instead of downcasting.
 #[derive(Debug)]
-struct MalformedPercentEncoding;
+enum RequestError {
+    /// A `%`-escape in the request path was malformed.
+    MalformedPercentEncoding,
+    /// A size bound was exceeded or the request line was unparseable.
+    Malformed(&'static str),
+    /// The socket read or response write failed.
+    Io(std::io::Error),
+}
 
-impl std::fmt::Display for MalformedPercentEncoding {
+impl std::fmt::Display for RequestError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("malformed percent-encoding")
+        match self {
+            RequestError::MalformedPercentEncoding => f.write_str("malformed percent-encoding"),
+            RequestError::Malformed(msg) => f.write_str(msg),
+            RequestError::Io(e) => write!(f, "{e}"),
+        }
     }
 }
 
-impl std::error::Error for MalformedPercentEncoding {}
+impl std::error::Error for RequestError {}
+
+impl From<std::io::Error> for RequestError {
+    fn from(e: std::io::Error) -> Self {
+        RequestError::Io(e)
+    }
+}
 
 fn hex_nibble(b: u8) -> Option<u8> {
     match b {
@@ -271,7 +287,7 @@ fn hex_nibble(b: u8) -> Option<u8> {
     }
 }
 
-fn percent_decode(s: &str) -> Result<String, MalformedPercentEncoding> {
+fn percent_decode(s: &str) -> Result<String, RequestError> {
     let bytes = s.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut i = 0;
@@ -282,10 +298,10 @@ fn percent_decode(s: &str) -> Result<String, MalformedPercentEncoding> {
             continue;
         }
         if i + 2 >= bytes.len() {
-            return Err(MalformedPercentEncoding);
+            return Err(RequestError::MalformedPercentEncoding);
         }
-        let hi = hex_nibble(bytes[i + 1]).ok_or(MalformedPercentEncoding)?;
-        let lo = hex_nibble(bytes[i + 2]).ok_or(MalformedPercentEncoding)?;
+        let hi = hex_nibble(bytes[i + 1]).ok_or(RequestError::MalformedPercentEncoding)?;
+        let lo = hex_nibble(bytes[i + 2]).ok_or(RequestError::MalformedPercentEncoding)?;
         let byte = (hi << 4) | lo;
         if byte == b'/' {
             // %2F/%2f: keep encoded to block encoded-slash path traversal.
@@ -295,15 +311,19 @@ fn percent_decode(s: &str) -> Result<String, MalformedPercentEncoding> {
         }
         i += 3;
     }
-    String::from_utf8(out).map_err(|_| MalformedPercentEncoding)
+    String::from_utf8(out).map_err(|_| RequestError::MalformedPercentEncoding)
 }
 
-fn parse_request_line(
-    line: &str,
-) -> Result<(String, String), Box<dyn std::error::Error + Send + Sync>> {
+fn parse_request_line(line: &str) -> Result<(String, String), RequestError> {
     let mut parts = line.split_whitespace();
-    let method = parts.next().ok_or("empty request line")?.to_uppercase();
-    let raw_path = parts.next().ok_or("missing path")?.to_string();
+    let method = parts
+        .next()
+        .ok_or(RequestError::Malformed("empty request line"))?
+        .to_uppercase();
+    let raw_path = parts
+        .next()
+        .ok_or(RequestError::Malformed("missing path"))?
+        .to_string();
     let path_without_qs = raw_path.split('?').next().unwrap_or("/");
     let path = percent_decode(path_without_qs)?;
     Ok((method, path))
@@ -433,34 +453,36 @@ fn html_escape(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
-// TODO: clean-code - 0.65 - SRP: build_index mixes sorting, escaping, row formatting, and embeds a 20+ line CSS literal; split row rendering from page chrome.
 fn build_index(files: &FileMap, glob_pattern: &str) -> String {
     let mut entries: Vec<(&str, &StaticFile)> =
         files.iter().map(|(k, v)| (k.as_str(), v)).collect();
     entries.sort_by_key(|(rel, _)| *rel);
 
-    let glob_escaped = html_escape(glob_pattern);
-    let rows: String = entries
-        .iter()
-        .map(|(rel, f)| {
-            let rel_escaped = html_escape(rel);
-            let size = human_size(f.size);
-            let mtime = fmt_http_date(f.modified);
-            let is_image = f.mime.starts_with("image/");
-            let preview = if is_image {
-                format!(
-                    r#"<img src="/{rel_escaped}" loading="lazy" alt="" style="max-height:64px;max-width:128px;vertical-align:middle;margin-right:8px">"#
-                )
-            } else {
-                String::new()
-            };
-            format!(
-                r#"<tr><td>{preview}<a href="/{rel_escaped}">{rel_escaped}</a></td><td>{size}</td><td>{mtime}</td></tr>"#
-            )
-        })
-        .collect();
+    let rows: String = entries.iter().map(|(rel, f)| render_row(rel, f)).collect();
+    render_index_page(&html_escape(glob_pattern), entries.len(), &rows)
+}
 
-    let count = entries.len();
+/// Render one file's table row: an inline thumbnail for images, then a link to
+/// the file, its human-readable size, and its modified time.
+fn render_row(rel: &str, f: &StaticFile) -> String {
+    let rel_escaped = html_escape(rel);
+    let size = human_size(f.size);
+    let mtime = fmt_http_date(f.modified);
+    let preview = if f.mime.starts_with("image/") {
+        format!(
+            r#"<img src="/{rel_escaped}" loading="lazy" alt="" style="max-height:64px;max-width:128px;vertical-align:middle;margin-right:8px">"#
+        )
+    } else {
+        String::new()
+    };
+    format!(
+        r#"<tr><td>{preview}<a href="/{rel_escaped}">{rel_escaped}</a></td><td>{size}</td><td>{mtime}</td></tr>"#
+    )
+}
+
+/// Wrap the rendered `rows` in the directory-listing page chrome — document
+/// head, inline stylesheet, heading, and table shell.
+fn render_index_page(glob_escaped: &str, count: usize, rows: &str) -> String {
     format!(
         r#"<!DOCTYPE html>
 <html lang="en">
@@ -770,11 +792,9 @@ mod tests {
     #[test]
     fn parse_request_line_malformed_percent_is_err() {
         let result = parse_request_line("GET /%GG HTTP/1.1\r\n");
-        assert!(
-            result
-                .unwrap_err()
-                .downcast_ref::<MalformedPercentEncoding>()
-                .is_some()
-        );
+        assert!(matches!(
+            result.unwrap_err(),
+            RequestError::MalformedPercentEncoding
+        ));
     }
 }

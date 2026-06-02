@@ -12,7 +12,6 @@ use mlua::{Lua, Table, Value};
 use crate::lua::facade::Module;
 
 const STATE_KEY: &str = "_NEOC_TEST";
-const CTR_KEY: &str = "_NEOC_EXPECT_CTR";
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
     Ok(declare(lua)?.into_table())
@@ -28,20 +27,27 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// apply. The matcher methods live on a plain returned table, not a userdata
 /// type. The free functions' signatures are recorded for the header via
 /// [`crate::lua::facade::Module::record_fn`].
-// TODO: clean-code - 0.6 - SRP: declare() does state init, describe/test/it/expect registration, and println formatting — split into init_state, register_suite_fns, register_expect.
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:test")?;
+    init_state(lua)?;
+    register_suite_fns(lua, &mut m)?;
+    register_expect(lua, &mut m)?;
+    Ok(m)
+}
 
+/// Seed the suite state (`passed`/`failed`/`current_suite`) in the registry.
+fn init_state(lua: &Lua) -> mlua::Result<()> {
     let state = lua.create_table()?;
     state.set("passed", 0_u32)?;
     state.set("failed", 0_u32)?;
     state.set("current_suite", Value::Nil)?;
     lua.set_named_registry_value(STATE_KEY, state)?;
+    Ok(())
+}
 
-    let ctr = lua.create_table()?;
-    ctr.set("n", 0_u64)?;
-    lua.set_named_registry_value(CTR_KEY, ctr)?;
-
+/// Register `describe` plus the `test` / `it` aliases — the suite-structure and
+/// test-case entry points, all async so bodies may call yielding functions.
+fn register_suite_fns(lua: &Lua, m: &mut Module<'_>) -> mlua::Result<()> {
     // describe(name, fn) — async so test bodies can call yielding functions
     m.set(
         "describe",
@@ -99,8 +105,11 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "()",
         "Alias for `test`. Prefer this inside a `describe` block for BDD-style readability.",
     );
+    Ok(())
+}
 
-    // expect(value) -> matcher table with standalone (dot-syntax) methods
+/// Register `expect(value)`, which wraps a value in the dot-syntax matcher table.
+fn register_expect(lua: &Lua, m: &mut Module<'_>) -> mlua::Result<()> {
     m.set(
         "expect",
         lua.create_function(|lua, value: Value| make_matcher(lua, value))?,
@@ -111,8 +120,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "LuaValue",
         "Wrap `value` in a matcher table exposing dot-syntax assertions (`toBe`, `toBeNil`, `toBeTruthy`, `toBeFalsy`, `toContain`, `toThrow`).",
     );
-
-    Ok(m)
+    Ok(())
 }
 
 /// Called by `main` after the script finishes to get (passed, failed) counts.
@@ -125,37 +133,25 @@ pub fn summary(lua: &Lua) -> mlua::Result<(u32, u32)> {
 // Matcher construction
 // ---------------------------------------------------------------------------
 
-// TODO: clean-code - 0.6 - KISS: stashing each expect value under a counter-keyed registry slot is over-engineered — mlua values can be cloned and captured directly in the matcher closure.
-fn next_key(lua: &Lua) -> mlua::Result<String> {
-    let ctr: Table = lua.named_registry_value(CTR_KEY)?;
-    let n: u64 = ctr.get("n")?;
-    ctr.set("n", n + 1)?;
-    Ok(format!("_ev{n}"))
-}
-
-fn register_matcher<A, F>(lua: &Lua, m: &Table, name: &str, key: &str, body: F) -> mlua::Result<()>
+/// Register a dot-syntax matcher that captures the expect-ed value directly.
+/// `mlua::Value` is a cheap, `Send`-able registry handle, so each matcher closure
+/// just clones it — no shared slot to stash and re-read.
+fn register_matcher<A, F>(lua: &Lua, m: &Table, name: &str, actual: Value, body: F) -> mlua::Result<()>
 where
     A: mlua::FromLuaMulti + 'static,
     F: Fn(Value, A) -> mlua::Result<()> + mlua::MaybeSend + 'static,
 {
-    let k = key.to_owned();
     m.set(
         name,
-        lua.create_function(move |lua, args: A| {
-            let actual: Value = lua.named_registry_value(&k)?;
-            body(actual, args)
-        })?,
+        lua.create_function(move |_, args: A| body(actual.clone(), args))?,
     )
 }
 
 fn make_matcher(lua: &Lua, value: Value) -> mlua::Result<Table> {
-    let key = next_key(lua)?;
-    lua.set_named_registry_value(&key, value)?;
-
     let m = lua.create_table()?;
 
     // toBe(expected) — strict equality
-    register_matcher(lua, &m, "toBe", &key, |actual, expected: Value| {
+    register_matcher(lua, &m, "toBe", value.clone(), |actual, expected: Value| {
         if actual == expected {
             Ok(())
         } else {
@@ -168,7 +164,7 @@ fn make_matcher(lua: &Lua, value: Value) -> mlua::Result<Table> {
     })?;
 
     // toBeNil()
-    register_matcher(lua, &m, "toBeNil", &key, |actual, _: ()| {
+    register_matcher(lua, &m, "toBeNil", value.clone(), |actual, _: ()| {
         if matches!(actual, Value::Nil) {
             Ok(())
         } else {
@@ -180,7 +176,7 @@ fn make_matcher(lua: &Lua, value: Value) -> mlua::Result<Table> {
     })?;
 
     // toBeTruthy()
-    register_matcher(lua, &m, "toBeTruthy", &key, |actual, _: ()| {
+    register_matcher(lua, &m, "toBeTruthy", value.clone(), |actual, _: ()| {
         if !is_falsy(&actual) {
             Ok(())
         } else {
@@ -192,7 +188,7 @@ fn make_matcher(lua: &Lua, value: Value) -> mlua::Result<Table> {
     })?;
 
     // toBeFalsy()
-    register_matcher(lua, &m, "toBeFalsy", &key, |actual, _: ()| {
+    register_matcher(lua, &m, "toBeFalsy", value.clone(), |actual, _: ()| {
         if is_falsy(&actual) {
             Ok(())
         } else {
@@ -204,7 +200,7 @@ fn make_matcher(lua: &Lua, value: Value) -> mlua::Result<Table> {
     })?;
 
     // toContain(item) — substring for strings, value search for tables
-    register_matcher(lua, &m, "toContain", &key, |actual, item: Value| {
+    register_matcher(lua, &m, "toContain", value.clone(), |actual, item: Value| {
         match (&actual, &item) {
             (Value::String(s), Value::String(sub)) => {
                 let haystack = s.as_bytes();
@@ -243,7 +239,7 @@ fn make_matcher(lua: &Lua, value: Value) -> mlua::Result<Table> {
     })?;
 
     // toThrow() — value must be a callable that raises an error
-    register_matcher(lua, &m, "toThrow", &key, |actual, _: ()| match actual {
+    register_matcher(lua, &m, "toThrow", value, |actual, _: ()| match actual {
         Value::Function(f) => match f.call::<Value>(()) {
             Err(_) => Ok(()),
             Ok(_) => Err(mlua::Error::RuntimeError(

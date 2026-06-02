@@ -93,7 +93,12 @@ struct Entry {
     result: Vec<Json>,
 }
 
+// A tape serialises as just its `entries` map (the cassette-file shape replay
+// reads back); `registered` is in-memory duplicate-key tracking only.
+#[derive(Serialize)]
+#[serde(transparent)]
 struct Tape {
+    #[serde(skip)]
     registered: BTreeSet<String>,
     entries: BTreeMap<String, Entry>,
 }
@@ -107,27 +112,30 @@ impl Tape {
     }
 }
 
-// TODO: clean-code - 0.55 - KISS: hand-rolled Serialize replicates serde(skip) on `registered`
-impl serde::Serialize for Tape {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        self.entries.serialize(s)
-    }
-}
-
 // ---------------------------------------------------------------------------
 // off (pass-through)
 // ---------------------------------------------------------------------------
 
-// TODO: clean-code - 0.7 - DRY: no-op `dump` entry duplicated across passthrough/recording/replay; factor a shared cassette-table builder
+/// Assemble a cassette table from a `wrap` implementation. Every mode exposes
+/// the same surface — `wrap(target, key, fn)` plus a no-op `dump` — and differs
+/// only in what `wrap` does per call.
+fn build_cassette(lua: &Lua, wrap: mlua::Function) -> mlua::Result<Table> {
+    let t = lua.create_table()?;
+    t.set("wrap", wrap)?;
+    set_noop_dump(lua, &t)?;
+    Ok(t)
+}
+
+/// The error every mode raises when the same `wrap` key is registered twice.
+fn dup_key_err(key: &str) -> mlua::Error {
+    mlua::Error::runtime(format!("vcr: duplicate key \"{key}\""))
+}
+
 #[instrument(name = "vcr.off", target = "luau::lib::vcr", skip_all)]
 fn passthrough(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
-    t.set(
-        "wrap",
-        lua.create_function(|_, (_, _key, f): (mlua::Value, String, mlua::Function)| Ok(f))?,
-    )?;
-    t.set("dump", lua.create_function(|_, _: mlua::Value| Ok(()))?)?;
-    Ok(t)
+    let wrap =
+        lua.create_function(|_, (_, _key, f): (mlua::Value, String, mlua::Function)| Ok(f))?;
+    build_cassette(lua, wrap)
 }
 
 // ---------------------------------------------------------------------------
@@ -141,6 +149,34 @@ fn flush(tape: &Tape, path: &str) -> mlua::Result<()> {
     Ok(())
 }
 
+/// Run the wrapped function once and record the interaction: capture `args` and
+/// the result as JSON, store them in the tape under `key`, then flush to `path`.
+/// Returns the function's own result unchanged so the caller is transparent.
+fn record_call(
+    lua: &Lua,
+    reg_key: &mlua::RegistryKey,
+    tape: &Arc<Mutex<Tape>>,
+    path: &str,
+    key: &str,
+    args: MultiValue,
+) -> mlua::Result<MultiValue> {
+    let json_args = args.iter().map(to_json).collect();
+    let f: mlua::Function = lua.registry_value(reg_key)?;
+    let result: MultiValue = f.call(args)?;
+    let json_result = result.iter().map(to_json).collect();
+
+    let mut locked = tape.lock();
+    locked.record(
+        key.to_owned(),
+        Entry {
+            args: json_args,
+            result: json_result,
+        },
+    );
+    flush(&locked, path)?;
+    Ok(result)
+}
+
 #[instrument(name = "vcr.record", target = "luau::lib::vcr", skip_all)]
 fn recording(lua: &Lua, path: String) -> mlua::Result<Table> {
     let tape: Arc<Mutex<Tape>> = Arc::new(Mutex::new(Tape {
@@ -149,54 +185,31 @@ fn recording(lua: &Lua, path: String) -> mlua::Result<Table> {
     }));
     flush(&tape.lock(), &path)?;
 
-    let t = lua.create_table()?;
-
-    {
+    let wrap = {
         let tape = tape.clone();
         let path = path.clone();
-        t.set(
-            "wrap",
-            lua.create_function(
-                move |lua, (_, key, f): (mlua::Value, String, mlua::Function)| {
-                    if !tape.lock().register(&key) {
-                        return Err(mlua::Error::runtime(format!(
-                            "vcr: duplicate key \"{key}\""
-                        )));
-                    }
-                    let reg_key = lua.create_registry_value(f)?;
-                    let tape = tape.clone();
-                    let path = path.clone();
-                    // TODO: clean-code - 0.65 - SRP: wrap closure conflates call dispatch, JSON conversion, in-memory record, and disk flush
-                    lua.create_function(move |lua, args: MultiValue| {
-                        let json_args = args.iter().map(to_json).collect();
-                        let f: mlua::Function = lua.registry_value(&reg_key)?;
-                        let result: MultiValue = f.call(args)?;
-                        let json_result = result.iter().map(to_json).collect();
-                        let mut locked = tape.lock();
-                        locked.record(
-                            key.clone(),
-                            Entry {
-                                args: json_args,
-                                result: json_result,
-                            },
-                        );
-                        flush(&locked, &path)?;
-                        Ok(result)
-                    })
-                },
-            )?,
-        )?;
-    }
+        lua.create_function(
+            move |lua, (_, key, f): (mlua::Value, String, mlua::Function)| {
+                if !tape.lock().register(&key) {
+                    return Err(dup_key_err(&key));
+                }
+                let reg_key = lua.create_registry_value(f)?;
+                let tape = tape.clone();
+                let path = path.clone();
+                lua.create_function(move |lua, args: MultiValue| {
+                    record_call(lua, &reg_key, &tape, &path, &key, args)
+                })
+            },
+        )?
+    };
 
-    t.set("dump", lua.create_function(|_, _: mlua::Value| Ok(()))?)?;
-    Ok(t)
+    build_cassette(lua, wrap)
 }
 
 // ---------------------------------------------------------------------------
 // replay
 // ---------------------------------------------------------------------------
 
-// TODO: clean-code - 0.6 - DRY: replay mirrors recording's table+wrap+duplicate-key+dump scaffolding; extract a common cassette builder
 #[instrument(name = "vcr.replay", target = "luau::lib::vcr", skip_all)]
 fn replay(lua: &Lua, path: &str) -> mlua::Result<Table> {
     let content = std::fs::read_to_string(path).map_err(mlua::Error::external)?;
@@ -205,45 +218,41 @@ fn replay(lua: &Lua, path: &str) -> mlua::Result<Table> {
     let cassette = Arc::new(cassette);
     let registered: Arc<Mutex<BTreeSet<String>>> = Arc::new(Mutex::new(BTreeSet::new()));
 
-    let t = lua.create_table()?;
-
-    {
-        let cassette = cassette.clone();
-        t.set(
-            "wrap",
-            lua.create_function(
-                move |lua, (_, key, _f): (mlua::Value, String, mlua::Function)| {
-                    if !registered.lock().insert(key.clone()) {
-                        return Err(mlua::Error::runtime(format!(
-                            "vcr: duplicate key \"{key}\""
-                        )));
-                    }
-                    let entry = cassette.get(&key).cloned().ok_or_else(|| {
-                        mlua::Error::runtime(format!("vcr: no cassette entry for key \"{key}\""))
-                    })?;
-                    lua.create_function(move |lua, _args: MultiValue| {
-                        let values = entry
-                            .result
-                            .iter()
-                            .map(|j| match j {
-                                Json::Null => Ok(mlua::Value::Nil),
-                                _ => lua.to_value(j),
-                            })
-                            .collect::<mlua::Result<Vec<_>>>()?;
-                        Ok(mlua::MultiValue::from_iter(values))
+    let wrap = lua.create_function(
+        move |lua, (_, key, _f): (mlua::Value, String, mlua::Function)| {
+            if !registered.lock().insert(key.clone()) {
+                return Err(dup_key_err(&key));
+            }
+            let entry = cassette.get(&key).cloned().ok_or_else(|| {
+                mlua::Error::runtime(format!("vcr: no cassette entry for key \"{key}\""))
+            })?;
+            lua.create_function(move |lua, _args: MultiValue| {
+                let values = entry
+                    .result
+                    .iter()
+                    .map(|j| match j {
+                        Json::Null => Ok(mlua::Value::Nil),
+                        _ => lua.to_value(j),
                     })
-                },
-            )?,
-        )?;
-    }
+                    .collect::<mlua::Result<Vec<_>>>()?;
+                Ok(mlua::MultiValue::from_iter(values))
+            })
+        },
+    )?;
 
-    t.set("dump", lua.create_function(|_, _: mlua::Value| Ok(()))?)?;
-    Ok(t)
+    build_cassette(lua, wrap)
 }
 
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
+
+/// Register the no-op `dump` entry every cassette table exposes. All three
+/// modes (pass-through, record, replay) flush eagerly, so `dump` has nothing to
+/// do — it exists only so callers can call it unconditionally.
+fn set_noop_dump(lua: &Lua, t: &Table) -> mlua::Result<()> {
+    t.set("dump", lua.create_function(|_, _: mlua::Value| Ok(()))?)
+}
 
 fn to_json(v: &mlua::Value) -> Json {
     serde_json::to_value(v).unwrap_or_else(|_| Json::String(format!("<{}>", v.type_name())))

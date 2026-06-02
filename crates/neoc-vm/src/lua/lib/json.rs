@@ -275,16 +275,15 @@ const NULL_REGISTRY_KEY: &str = "__lib_json_null_singleton";
 /// Returns the per-engine `JsonNull` singleton, creating + caching it
 /// on first call.
 fn null_handle(lua: &Lua) -> mlua::Result<Value> {
-    // TODO: clean-code - 0.55 - KISS: registry miss returns Nil, not Err — fold the `Ok && !Nil` chain into a single match on the loaded Value.
-    if let Ok(existing) = lua.named_registry_value::<Value>(NULL_REGISTRY_KEY)
-        && !matches!(existing, Value::Nil)
-    {
-        return Ok(existing);
+    // A registry miss loads as `Nil`; anything else is the cached singleton.
+    match lua.named_registry_value::<Value>(NULL_REGISTRY_KEY)? {
+        Value::Nil => {
+            let v = Value::UserData(lua.create_userdata(JsonNull)?);
+            lua.set_named_registry_value(NULL_REGISTRY_KEY, v.clone())?;
+            Ok(v)
+        }
+        existing => Ok(existing),
     }
-    let ud = lua.create_userdata(JsonNull)?;
-    let v = Value::UserData(ud);
-    lua.set_named_registry_value(NULL_REGISTRY_KEY, v.clone())?;
-    Ok(v)
 }
 
 // ---------------------------------------------------------------------------
@@ -393,30 +392,61 @@ fn with_resolved_mut<T>(
     f(walk_mut(&mut guard, path))
 }
 
-// TODO: clean-code - 0.6 - DRY: walk and walk_mut differ only by &/&mut; either accept that as a macro or use a single generic over a Get/GetMut trait.
-fn walk<'a>(root: &'a JsonValue, path: &[PathSeg]) -> Option<&'a JsonValue> {
-    let mut cur = root;
-    for seg in path {
-        cur = match (cur, seg) {
-            (JsonValue::Object(m), PathSeg::Key(k)) => m.get(k.as_str())?,
-            (JsonValue::Array(a), PathSeg::Index(i)) => a.get(*i)?,
-            _ => return None,
-        };
-    }
-    Some(cur)
+/// Resolve `path` to a live, mutable object map and run `f` on it. Surfaces the
+/// shared `json.object` "parent path no longer valid" / "target is not an
+/// object" errors so the mutating methods don't each repeat them.
+fn with_object_mut<R>(
+    root: &Root,
+    path: &[PathSeg],
+    f: impl FnOnce(&mut BTreeMap<String, JsonValue>) -> R,
+) -> mlua::Result<R> {
+    with_resolved_mut(root, path, |resolved| {
+        let cur = resolved
+            .ok_or_else(|| mlua::Error::external("json.object: parent path no longer valid"))?;
+        let m = cur
+            .as_object_mut()
+            .ok_or_else(|| mlua::Error::external("json.object: target is not an object"))?;
+        Ok(f(m))
+    })
 }
 
-fn walk_mut<'a>(root: &'a mut JsonValue, path: &[PathSeg]) -> Option<&'a mut JsonValue> {
-    let mut cur = root;
-    for seg in path {
-        cur = match (cur, seg) {
-            (JsonValue::Object(m), PathSeg::Key(k)) => m.get_mut(k.as_str())?,
-            (JsonValue::Array(a), PathSeg::Index(i)) => a.get_mut(*i)?,
-            _ => return None,
-        };
-    }
-    Some(cur)
+/// Array counterpart to [`with_object_mut`], with the `json.array` messages.
+fn with_array_mut<R>(
+    root: &Root,
+    path: &[PathSeg],
+    f: impl FnOnce(&mut Vec<JsonValue>) -> R,
+) -> mlua::Result<R> {
+    with_resolved_mut(root, path, |resolved| {
+        let cur = resolved
+            .ok_or_else(|| mlua::Error::external("json.array: parent path no longer valid"))?;
+        let a = cur
+            .as_array_mut()
+            .ok_or_else(|| mlua::Error::external("json.array: target is not an array"))?;
+        Ok(f(a))
+    })
 }
+
+/// Walk `path` from `root` to the addressed node, or `None` if any segment is
+/// missing or hits a kind mismatch. `walk` / `walk_mut` are generated from one
+/// body — they differ only in shared vs. exclusive borrow and `get`/`get_mut`.
+macro_rules! walk_fn {
+    ($name:ident, $get:ident $(, $m:tt)?) => {
+        fn $name<'a>(root: &'a $($m)? JsonValue, path: &[PathSeg]) -> Option<&'a $($m)? JsonValue> {
+            let mut cur = root;
+            for seg in path {
+                cur = match (cur, seg) {
+                    (JsonValue::Object(m), PathSeg::Key(k)) => m.$get(k.as_str())?,
+                    (JsonValue::Array(a), PathSeg::Index(i)) => a.$get(*i)?,
+                    _ => return None,
+                };
+            }
+            Some(cur)
+        }
+    };
+}
+
+walk_fn!(walk, get);
+walk_fn!(walk_mut, get_mut, mut);
 
 // ---------------------------------------------------------------------------
 // Handle inner — shared between Object and Array
@@ -500,16 +530,9 @@ pub struct Object {
 }
 
 impl Object {
-    // TODO: clean-code - 0.75 - DRY: set_inner/push_inner across Object+Array repeat the resolve+cast+error pattern; extract a `with_object_mut`/`with_array_mut` helper.
     fn set_inner(&self, key: String, v: JsonValue) -> mlua::Result<()> {
-        with_resolved_mut(&self.root, &self.path, |resolved| {
-            let cur = resolved
-                .ok_or_else(|| mlua::Error::external("json.object: parent path no longer valid"))?;
-            let m = cur
-                .as_object_mut()
-                .ok_or_else(|| mlua::Error::external("json.object: target is not an object"))?;
+        with_object_mut(&self.root, &self.path, |m| {
             m.insert(key, v);
-            Ok(())
         })
     }
 }
@@ -604,29 +627,17 @@ pub struct Array {
 
 impl Array {
     fn set_inner(&self, idx: usize, v: JsonValue) -> mlua::Result<()> {
-        with_resolved_mut(&self.root, &self.path, |resolved| {
-            let cur = resolved
-                .ok_or_else(|| mlua::Error::external("json.array: parent path no longer valid"))?;
-            let a = cur
-                .as_array_mut()
-                .ok_or_else(|| mlua::Error::external("json.array: target is not an array"))?;
+        with_array_mut(&self.root, &self.path, |a| {
             if idx >= a.len() {
                 a.resize(idx + 1, JsonValue::Null);
             }
             a[idx] = v;
-            Ok(())
         })
     }
 
     fn push_inner(&self, v: JsonValue) -> mlua::Result<()> {
-        with_resolved_mut(&self.root, &self.path, |resolved| {
-            let cur = resolved
-                .ok_or_else(|| mlua::Error::external("json.array: parent path no longer valid"))?;
-            let a = cur
-                .as_array_mut()
-                .ok_or_else(|| mlua::Error::external("json.array: target is not an array"))?;
+        with_array_mut(&self.root, &self.path, |a| {
             a.push(v);
-            Ok(())
         })
     }
 }
@@ -745,40 +756,45 @@ pub fn lua_value_to_json_value(v: &Value) -> mlua::Result<JsonValue> {
     }
 }
 
-// TODO: clean-code - 0.55 - KISS: array detection iterates pairs once then iterates again to build; collect once and decide, or rely on raw_len+all_int check without the double walk.
 fn table_to_json_value(t: &Table) -> mlua::Result<JsonValue> {
-    // Detect array form: keys are exactly 1..=N and there are N entries.
-    // Anything else (string keys, gaps, 0 / negative indices) → object.
     let len = t.raw_len();
-    let mut total: usize = 0;
+    // Walk the table once; this feeds both the array/object decision and the build.
+    let entries: Vec<(Value, Value)> = t
+        .clone()
+        .pairs::<Value, Value>()
+        .collect::<mlua::Result<_>>()?;
+
+    // Array form: keys are exactly 1..=N with no gaps. Anything else (string
+    // keys, gaps, 0 / negative indices) → object.
     let mut all_int = true;
     let mut max_int: i64 = 0;
-    for pair in t.clone().pairs::<Value, Value>() {
-        let (k, _) = pair?;
-        total += 1;
+    for (k, _) in &entries {
         match k {
-            Value::Integer(i) if i >= 1 => {
-                if i as i64 > max_int {
-                    max_int = i as i64;
-                }
-            }
+            Value::Integer(i) if *i >= 1 => max_int = max_int.max(*i as i64),
             _ => all_int = false,
         }
     }
-
+    let total = entries.len();
     let is_array = total > 0 && all_int && total == len && total == max_int as usize;
 
     if is_array {
-        let mut arr = Vec::with_capacity(len);
-        for i in 1..=len {
-            let v: Value = t.raw_get(i)?;
+        // Keys are exactly 1..=N; sort by key to restore positional order.
+        let mut indexed: Vec<(i64, Value)> = entries
+            .into_iter()
+            .filter_map(|(k, v)| match k {
+                Value::Integer(i) => Some((i as i64, v)),
+                _ => None,
+            })
+            .collect();
+        indexed.sort_unstable_by_key(|(i, _)| *i);
+        let mut arr = Vec::with_capacity(total);
+        for (_, v) in indexed {
             arr.push(lua_value_to_json_value(&v)?);
         }
         Ok(JsonValue::Array(arr))
     } else {
         let mut map = BTreeMap::new();
-        for pair in t.clone().pairs::<Value, Value>() {
-            let (k, v) = pair?;
+        for (k, v) in entries {
             let key = match k {
                 Value::String(s) => s.to_str()?.to_owned(),
                 Value::Integer(i) => i.to_string(),

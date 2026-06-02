@@ -97,6 +97,20 @@ fn unescape(s: &str) -> String {
     s.replace(COLON_ESCAPE, ":")
 }
 
+/// Borrow an `mlua::String` as an owned UTF-8 `String`, mapping the (rare)
+/// non-UTF-8 error into an mlua error. Shared by every INI key/value read.
+fn str_of(s: &mlua::String) -> mlua::Result<String> {
+    s.to_str()
+        .map(|s| s.to_owned())
+        .map_err(|e| mlua::Error::external(e.to_string()))
+}
+
+/// Lowercase `s` when `lower` is set, else return it unchanged. Applied to every
+/// section and key name under the `lowercase_keys` option.
+fn case_fold(s: String, lower: bool) -> String {
+    if lower { s.to_lowercase() } else { s }
+}
+
 // ---------------------------------------------------------------------------
 // Lua entry points
 // ---------------------------------------------------------------------------
@@ -135,15 +149,12 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     Ok(m)
 }
 
-// TODO: clean-code - 0.7 - SRP: parse mixes validation, preprocess orchestration, ini load, and Lua table assembly — split assembly into a helper
 #[instrument(name = "ini.parse", target = "luau::lib::ini", skip_all)]
 fn parse(
     lua: &Lua,
     (text, opts_table): (mlua::String, Option<Table>),
 ) -> mlua::Result<(Value, Value)> {
-    let raw = text
-        .to_str()
-        .map_err(|e| mlua::Error::external(e.to_string()))?;
+    let raw = str_of(&text)?;
 
     if raw.bytes().any(|b| b <= 0x08) {
         return err(lua, "ini.parse: input contains control bytes");
@@ -161,26 +172,28 @@ fn parse(
         Err(e) => return from_err(lua, "ini.parse", e),
     };
 
+    ok(lua, assemble_table(lua, &conf, &opts)?)
+}
+
+/// Build the Lua result table from a parsed INI document: one nested table per
+/// section (the empty-string section holds section-less keys), with
+/// `lowercase_keys` applied to section and property names.
+fn assemble_table(lua: &Lua, conf: &Ini, opts: &ParseOpts) -> mlua::Result<Table> {
     let result = lua.create_table()?;
     for (section, properties) in conf.iter() {
         if section.is_none() && properties.is_empty() {
             continue;
         }
 
-        // TODO: clean-code - 0.6 - DRY: `if opts.lowercase_keys { x.to_lowercase() } else { x }` repeated for section and key — extract a `case_fold` helper
         let section_key = match section {
-            Some(s) => {
-                let s = unescape(s);
-                if opts.lowercase_keys {
-                    s.to_lowercase()
-                } else {
-                    s
-                }
-            }
+            Some(s) => case_fold(unescape(s), opts.lowercase_keys),
             None => String::new(),
         };
 
-        // TODO: clean-code - 0.55 - KISS: rust-ini already merges duplicate sections — this lookup-or-create branch is rarely exercised; either drop or document why
+        // Reuse an existing section table when two source sections fold to the
+        // same key. rust-ini merges sections sharing a raw name, but
+        // `lowercase_keys` can still collide distinct names (`[Foo]` + `[FOO]`
+        // → `foo`), so the entries below must accumulate, not overwrite.
         let section_table: Table = match result.get::<Option<Table>>(&*section_key)? {
             Some(t) => t,
             None => {
@@ -191,12 +204,7 @@ fn parse(
         };
 
         for (key, value) in properties.iter() {
-            let key = unescape(key);
-            let lua_key = if opts.lowercase_keys {
-                key.to_lowercase()
-            } else {
-                key
-            };
+            let lua_key = case_fold(unescape(key), opts.lowercase_keys);
 
             if value == BARE_SENTINEL {
                 section_table.set(lua_key.as_str(), true)?;
@@ -206,8 +214,7 @@ fn parse(
             }
         }
     }
-
-    ok(lua, result)
+    Ok(result)
 }
 
 fn read_char_list(tbl: &Table, key: &str) -> mlua::Result<Option<Vec<char>>> {
@@ -217,9 +224,7 @@ fn read_char_list(tbl: &Table, key: &str) -> mlua::Result<Option<Vec<char>>> {
     let mut chars = Vec::new();
     for pair in list.pairs::<i64, mlua::String>() {
         let (_, v) = pair?;
-        let s = v
-            .to_str()
-            .map_err(|e| mlua::Error::external(e.to_string()))?;
+        let s = str_of(&v)?;
         if let Some(c) = s.chars().next() {
             chars.push(c);
         }
@@ -274,10 +279,7 @@ fn stringify(
 
     for pair in config.pairs::<mlua::String, Table>() {
         let (k, section_table) = pair?;
-        // TODO: clean-code - 0.65 - DRY: `to_str().map_err(|e| mlua::Error::external(e.to_string()))` repeated 4x — extract a helper
-        let section_name = k
-            .to_str()
-            .map_err(|e| mlua::Error::external(e.to_string()))?;
+        let section_name = str_of(&k)?;
         if section_name.is_empty() {
             continue;
         }
@@ -299,9 +301,7 @@ fn write_props(table: &Table, out: &mut String, spacing: bool) -> mlua::Result<(
     let delim = if spacing { " = " } else { "=" };
     for pair in table.pairs::<mlua::String, Value>() {
         let (k, v) = pair?;
-        let key = k
-            .to_str()
-            .map_err(|e| mlua::Error::external(e.to_string()))?;
+        let key = str_of(&k)?;
         // A bare key (no delimiter) denotes a `true` flag; every other scalar is
         // written `key<delim>value`. Non-scalar values (tables, functions,
         // userdata, nil) have no INI representation and are rejected — never
@@ -315,9 +315,7 @@ fn write_props(table: &Table, out: &mut String, spacing: bool) -> mlua::Result<(
             Value::String(s) => {
                 out.push_str(&key);
                 out.push_str(delim);
-                let val = s
-                    .to_str()
-                    .map_err(|e| mlua::Error::external(e.to_string()))?;
+                let val = str_of(s)?;
                 out.push_str(&val);
                 out.push('\n');
             }
