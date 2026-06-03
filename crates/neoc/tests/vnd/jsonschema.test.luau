@@ -55,6 +55,12 @@ describe("jsonschema", function()
         test("rejects extra fields under additionalProperties:false", function()
             expect(s:is_valid({ name = "a", username = "u", email = "e", extra = 1 })).toBe(false)
         end)
+
+        test("raises on a non-encodable value", function()
+            -- A function has no JSON encoding: `is_valid` surfaces the
+            -- conversion error (raises) rather than masquerading it as `false`.
+            expect(function() s:is_valid(function() end) end).toThrow()
+        end)
     end)
 
     -- validate (full result) --------------------------------------------------
