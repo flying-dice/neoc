@@ -39,7 +39,9 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use mlua::{AnyUserData, IntoLua, Lua, LuaSerdeExt, Table, UserData, UserDataMethods, Value};
+use mlua::{
+    AnyUserData, FromLua, IntoLua, Lua, LuaSerdeExt, Table, UserData, UserDataMethods, Value,
+};
 use tokio::sync::{Mutex, mpsc};
 use tracing::instrument;
 
@@ -305,30 +307,48 @@ fn reconstruct_shared(lua: &Lua, entries: &[SharedEntry]) -> mlua::Result<Table>
 // Spawn
 // ---------------------------------------------------------------------------
 
-#[instrument(name = "thread.spawn", target = "luau::lib::thread", skip_all)]
-// TODO: clean-code - 0.7 - DRY: four near-identical `match … from_err(lua, "thread.spawn", e)` blocks — collapse via `?`-style helper or local macro
-fn spawn(lua: &Lua, opts: Table) -> mlua::Result<(Value, Value)> {
-    let (source, default_name) = match read_source(&opts) {
-        Ok(s) => s,
-        Err(e) => return from_err(lua, "thread.spawn", e),
-    };
+/// The validated inputs `spawn` needs once option parsing succeeds.
+struct SpawnConfig {
+    source: String,
+    name: String,
+    args: serde_json::Value,
+    shared: Vec<SharedEntry>,
+    runtime: tokio::runtime::Handle,
+}
+
+/// Parse and validate every `spawn` option, failing fast with a stringified
+/// error the caller maps under `thread.spawn`.
+fn prepare_spawn(opts: &Table) -> Result<SpawnConfig, String> {
+    let (source, default_name) = read_source(opts)?;
     let name = opts
         .get::<Option<String>>("name")
         .ok()
         .flatten()
         .unwrap_or(default_name);
-    let args = match read_args(&opts) {
-        Ok(a) => a,
-        Err(e) => return from_err(lua, "thread.spawn", e),
-    };
-    let shared = match read_shared(&opts) {
-        Ok(s) => s,
-        Err(e) => return from_err(lua, "thread.spawn", e),
-    };
+    let args = read_args(opts)?;
+    let shared = read_shared(opts)?;
+    let runtime = tokio::runtime::Handle::try_current()
+        .map_err(|_| "no tokio runtime in scope".to_string())?;
+    Ok(SpawnConfig {
+        source,
+        name,
+        args,
+        shared,
+        runtime,
+    })
+}
 
-    let runtime = match tokio::runtime::Handle::try_current() {
-        Ok(r) => r,
-        Err(_) => return from_err(lua, "thread.spawn", "no tokio runtime in scope"),
+#[instrument(name = "thread.spawn", target = "luau::lib::thread", skip_all)]
+fn spawn(lua: &Lua, opts: Table) -> mlua::Result<(Value, Value)> {
+    let SpawnConfig {
+        source,
+        name,
+        args,
+        shared,
+        runtime,
+    } = match prepare_spawn(&opts) {
+        Ok(c) => c,
+        Err(e) => return from_err(lua, "thread.spawn", e),
     };
 
     // Two unbounded mpscs: parent→worker and worker→parent. The worker's
@@ -356,21 +376,20 @@ fn spawn(lua: &Lua, opts: Table) -> mlua::Result<(Value, Value)> {
     )
 }
 
+/// Read an optional typed field from the spawn `opts` table, stringifying any
+/// conversion error. Shared by the `read_*` option readers.
+fn opt<T: FromLua>(opts: &Table, key: &str) -> Result<Option<T>, String> {
+    opts.get::<Option<T>>(key).map_err(|e| e.to_string())
+}
+
 /// Returns `(source, default_name)`. The default name is the file path when
 /// `file` is used so stack traces and `set_name` output point at it; for
 /// inline `source` it falls back to a generic label.
-// TODO: clean-code - 0.6 - DRY: `read_source`, `read_args`, `read_shared` each repeat `.map_err(|e| e.to_string())` on `opts.get` — push the string-conversion into a single `opt<T>` helper
 fn read_source(opts: &Table) -> Result<(String, String), String> {
-    if let Some(s) = opts
-        .get::<Option<String>>("source")
-        .map_err(|e| e.to_string())?
-    {
+    if let Some(s) = opt::<String>(opts, "source")? {
         return Ok((s, "thread:worker".to_string()));
     }
-    if let Some(path) = opts
-        .get::<Option<String>>("file")
-        .map_err(|e| e.to_string())?
-    {
+    if let Some(path) = opt::<String>(opts, "file")? {
         let source = std::fs::read_to_string(&path).map_err(|e| format!("read {path}: {e}"))?;
         return Ok((source, path));
     }
@@ -381,10 +400,7 @@ fn read_source(opts: &Table) -> Result<(String, String), String> {
 /// arrives in the worker as the first vararg, matching Node's `workerData`
 /// convention. Pass a table for "named" args.
 fn read_args(opts: &Table) -> Result<serde_json::Value, String> {
-    match opts
-        .get::<Option<Value>>("args")
-        .map_err(|e| e.to_string())?
-    {
+    match opt::<Value>(opts, "args")? {
         Some(v) => serde_json::to_value(&v)
             .map_err(mlua::Error::external)
             .map_err(|e| e.to_string()),
@@ -395,10 +411,9 @@ fn read_args(opts: &Table) -> Result<serde_json::Value, String> {
 /// Read the optional `shared = {…}` table from spawn options.
 /// Validates that every value is a Sendable userdata at spawn time.
 fn read_shared(opts: &Table) -> Result<Vec<SharedEntry>, String> {
-    match opts.get::<Option<Table>>("shared") {
-        Ok(Some(t)) => extract_shared(&t).map_err(|e| e.to_string()),
-        Ok(None) => Ok(Vec::new()),
-        Err(e) => Err(e.to_string()),
+    match opt::<Table>(opts, "shared")? {
+        Some(t) => extract_shared(&t).map_err(|e| e.to_string()),
+        None => Ok(Vec::new()),
     }
 }
 

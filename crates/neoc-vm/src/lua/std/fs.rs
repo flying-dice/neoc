@@ -6,7 +6,7 @@
 
 use std::io::{BufReader, BufWriter};
 
-use mlua::{Lua, Table, Value};
+use mlua::{IntoLua, Lua, Table, Value};
 use tracing::instrument;
 
 use crate::lua::facade::Module;
@@ -93,30 +93,49 @@ fn create_dir_all(lua: &Lua, path: String) -> mlua::Result<(Value, Value)> {
     }
 }
 
-// TODO: clean-code - 0.65 - DRY: three open-arms repeat the Ok→handle / Err→from_err shape; collapse to one match producing a Result<Handle> then a single ok/from_err tail
+/// The handle `open` hands back: a reader for `"r"`, a writer for `"w"`/`"a"`.
+/// One type so the three open arms share a single `ok` / `from_err` tail.
+enum OpenHandle {
+    Reader(ReaderHandle),
+    Writer(WriterHandle),
+}
+
+impl OpenHandle {
+    fn reader(f: std::fs::File) -> Self {
+        OpenHandle::Reader(ReaderHandle::new(BufReader::new(f)))
+    }
+    fn writer(f: std::fs::File) -> Self {
+        OpenHandle::Writer(WriterHandle::new(BufWriter::new(f)))
+    }
+}
+
+impl IntoLua for OpenHandle {
+    fn into_lua(self, lua: &Lua) -> mlua::Result<Value> {
+        match self {
+            OpenHandle::Reader(r) => r.into_lua(lua),
+            OpenHandle::Writer(w) => w.into_lua(lua),
+        }
+    }
+}
+
 #[instrument(name = "fs.open", target = "luau::lib::fs", skip_all)]
 fn open(lua: &Lua, opts: Table) -> mlua::Result<(Value, Value)> {
+    const ERR_CTX: &str = "fs.open";
     let path: String = opts.get("path")?;
     let mode: String = opts.get("mode")?;
-    match mode.as_str() {
-        "r" => match std::fs::File::open(&path) {
-            Ok(f) => ok(lua, ReaderHandle::new(BufReader::new(f))),
-            Err(e) => from_err(lua, "fs.open", e),
-        },
-        "w" => match std::fs::File::create(&path) {
-            Ok(f) => ok(lua, WriterHandle::new(BufWriter::new(f))),
-            Err(e) => from_err(lua, "fs.open", e),
-        },
-        "a" => match std::fs::OpenOptions::new()
+    let opened = match mode.as_str() {
+        "r" => std::fs::File::open(&path).map(OpenHandle::reader),
+        "w" => std::fs::File::create(&path).map(OpenHandle::writer),
+        "a" => std::fs::OpenOptions::new()
             .append(true)
             .create(true)
             .open(&path)
-        {
-            Ok(f) => ok(lua, WriterHandle::new(BufWriter::new(f))),
-            Err(e) => from_err(lua, "fs.open", e),
-        },
-        // TODO: clean-code - 0.55 - DRY: "fs.open" literal repeated 4× in this function and also as instrument name — extract const ERR_CTX: &str = "fs.open"
-        other => from_err(lua, "fs.open", format!("unknown mode \"{other}\"")),
+            .map(OpenHandle::writer),
+        other => return from_err(lua, ERR_CTX, format!("unknown mode \"{other}\"")),
+    };
+    match opened {
+        Ok(h) => ok(lua, h),
+        Err(e) => from_err(lua, ERR_CTX, e),
     }
 }
 

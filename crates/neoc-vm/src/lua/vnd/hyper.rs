@@ -276,6 +276,16 @@ impl UserData for Request {
     }
 }
 
+/// Convert a request/response `HeaderMap` into the `Vec<(name, value)>` shape
+/// the Lua surface uses; a non-ASCII header value degrades to an empty string.
+/// Shared by the server's `invoke_lua_handler` and the client's `collect_resp`.
+pub(super) fn collect_headers(headers: &hyper::HeaderMap) -> Vec<(String, String)> {
+    headers
+        .iter()
+        .map(|(k, v)| (k.as_str().to_owned(), v.to_str().unwrap_or("").to_owned()))
+        .collect()
+}
+
 async fn invoke_lua_handler(
     lua: &Lua,
     handler_key: &RegistryKey,
@@ -283,11 +293,7 @@ async fn invoke_lua_handler(
     path: String,
     req: HyperRequest<Incoming>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    let req_headers: Vec<(String, String)> = req
-        .headers()
-        .iter()
-        .map(|(k, v)| (k.as_str().to_owned(), v.to_str().unwrap_or("").to_owned()))
-        .collect();
+    let req_headers = collect_headers(req.headers());
     let body = match req.into_body().collect().await {
         Ok(c) => c.to_bytes().to_vec(),
         Err(_) => return Ok(error_response(500, "body read failed")),

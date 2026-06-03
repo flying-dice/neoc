@@ -74,47 +74,60 @@ impl WriterHandle {
     pub fn new<W: Write + Send + 'static>(w: W) -> Self {
         Self(Arc::new(Mutex::new(Box::new(w))))
     }
+
+    /// Write all of `bytes` to the underlying sink, holding the lock for the
+    /// call. Lets callers persist without reaching into the inner handle.
+    pub fn write_all(&self, bytes: &[u8]) -> std::io::Result<()> {
+        self.0.lock().write_all(bytes)
+    }
+}
+
+/// Map an `io::Result` to the `(value, nil)` / `(nil, err)` convention shared by
+/// every reader/writer method: `on_ok` builds the success value, errors are
+/// stringified under `op`.
+fn io_result<T>(
+    lua: &Lua,
+    op: &str,
+    result: std::io::Result<T>,
+    on_ok: impl FnOnce(&Lua, T) -> mlua::Result<(Value, Value)>,
+) -> mlua::Result<(Value, Value)> {
+    match result {
+        Ok(v) => on_ok(lua, v),
+        Err(e) => from_err(lua, op, e),
+    }
 }
 
 impl UserData for ReaderHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        // TODO: clean-code - 0.7 - DRY: repeated `match result { Ok => ok, Err => from_err("io.X", e) }` across all 5 methods + copy — extract a small helper or macro.
         methods.add_method("read", |lua, this, n: usize| {
             let mut buf = vec![0u8; n];
             let result = this.inner.lock().read(&mut buf);
-            match result {
-                Ok(0) => ok(lua, Value::Nil),
-                Ok(k) => ok(lua, lua.create_string(&buf[..k])?),
-                Err(e) => from_err(lua, "io.read", e),
-            }
+            io_result(lua, "io.read", result, |lua, k| match k {
+                0 => ok(lua, Value::Nil),
+                k => ok(lua, lua.create_string(&buf[..k])?),
+            })
         });
 
         methods.add_method("read_line", |lua, this, _: ()| {
             let mut line = String::new();
             let result = this.inner.lock().read_line(&mut line);
-            match result {
-                Ok(0) => ok(lua, Value::Nil),
-                Ok(_) => {
-                    // TODO: clean-code - 0.55 - KISS: two sequential `ends_with`+`pop` blocks to strip CRLF — `trim_end_matches(['\r','\n'])` or `str::strip_suffix` chain is clearer.
-                    if line.ends_with('\n') {
-                        line.pop();
-                    }
-                    if line.ends_with('\r') {
-                        line.pop();
-                    }
-                    ok(lua, lua.create_string(line.as_bytes())?)
+            io_result(lua, "io.read_line", result, |lua, n| {
+                if n == 0 {
+                    return ok(lua, Value::Nil);
                 }
-                Err(e) => from_err(lua, "io.read_line", e),
-            }
+                // Strip a trailing newline, then an optional preceding CR.
+                let trimmed = line.strip_suffix('\n').unwrap_or(&line);
+                let trimmed = trimmed.strip_suffix('\r').unwrap_or(trimmed);
+                ok(lua, lua.create_string(trimmed.as_bytes())?)
+            })
         });
 
         methods.add_method("read_all", |lua, this, _: ()| {
             let mut buf = Vec::new();
             let result = this.inner.lock().read_to_end(&mut buf);
-            match result {
-                Ok(_) => ok(lua, lua.create_string(&buf)?),
-                Err(e) => from_err(lua, "io.read_all", e),
-            }
+            io_result(lua, "io.read_all", result, |lua, _| {
+                ok(lua, lua.create_string(&buf)?)
+            })
         });
     }
 }
@@ -123,18 +136,12 @@ impl UserData for WriterHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("write", |lua, this, data: mlua::String| {
             let result = this.0.lock().write_all(&data.as_bytes());
-            match result {
-                Ok(()) => ok(lua, true),
-                Err(e) => from_err(lua, "io.write", e),
-            }
+            io_result(lua, "io.write", result, |lua, ()| ok(lua, true))
         });
 
         methods.add_method("flush", |lua, this, _: ()| {
             let result = this.0.lock().flush();
-            match result {
-                Ok(()) => ok(lua, true),
-                Err(e) => from_err(lua, "io.flush", e),
-            }
+            io_result(lua, "io.flush", result, |lua, ()| ok(lua, true))
         });
     }
 }
@@ -223,30 +230,40 @@ fn from_string(_: &Lua, s: mlua::String) -> mlua::Result<ReaderHandle> {
     )))
 }
 
+/// Borrow `ud` as handle type `T`, or short-circuit with `io.copy`'s
+/// `(nil, err)` tuple describing the bad argument — the caller returns the
+/// `Err` payload verbatim.
+fn borrow_or_err<T: 'static>(
+    lua: &Lua,
+    ud: &AnyUserData,
+    msg: &str,
+) -> Result<mlua::UserDataRef<T>, mlua::Result<(Value, Value)>> {
+    ud.borrow::<T>().map_err(|_| from_err(lua, "io.copy", msg))
+}
+
 #[instrument(name = "io.copy", target = "luau::lib::io", skip_all)]
 fn copy(
     lua: &Lua,
     (reader_ud, writer_ud): (AnyUserData, AnyUserData),
 ) -> mlua::Result<(Value, Value)> {
-    // TODO: clean-code - 0.6 - DRY: two near-identical `match userdata.borrow() { Ok => h, Err => from_err }` blocks — extract a typed helper `borrow_or_err(lua, ud, "io.copy", "...")`.
-    let rh = match reader_ud.borrow::<ReaderHandle>() {
+    let rh = match borrow_or_err::<ReaderHandle>(
+        lua,
+        &reader_ud,
+        "first argument is not a reader handle",
+    ) {
         Ok(h) => h,
-        Err(_) => return from_err(lua, "io.copy", "first argument is not a reader handle"),
+        Err(e) => return e,
     };
-    let wh = match writer_ud.borrow::<WriterHandle>() {
+    let wh = match borrow_or_err::<WriterHandle>(
+        lua,
+        &writer_ud,
+        "second argument is not a writer handle",
+    ) {
         Ok(h) => h,
-        Err(_) => return from_err(lua, "io.copy", "second argument is not a writer handle"),
+        Err(e) => return e,
     };
     let mut r = rh.inner.lock();
     let mut w = wh.0.lock();
     let result = std::io::copy(&mut *r, &mut *w);
-    // TODO: clean-code - 0.6 - KISS: explicit `drop` chain on guards/refs that go out of scope at function end — redundant; scope handles release.
-    drop(r);
-    drop(w);
-    drop(rh);
-    drop(wh);
-    match result {
-        Ok(n) => ok(lua, n as i64),
-        Err(e) => from_err(lua, "io.copy", e),
-    }
+    io_result(lua, "io.copy", result, |lua, n| ok(lua, n as i64))
 }

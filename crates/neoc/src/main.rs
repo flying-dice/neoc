@@ -120,40 +120,45 @@ fn map_lua_lines_to_neoc(text: &str, chunk: &str, map: &SourceMap) -> String {
     out
 }
 
-// TODO: clean-code - 0.55 - SRP: expand_args mixes glob detection, walking, and process::exit error handling
+/// Expand one glob pattern to the matching file paths, walking from its leading
+/// literal prefix so unrelated trees aren't scanned. Returns an error string
+/// (bad pattern, walk failure, or no matches) rather than exiting — the caller
+/// owns the `process::exit` policy.
+fn glob_expand(pattern: &str) -> Result<Vec<String>, String> {
+    let matcher = globset::Glob::new(pattern)
+        .map_err(|e| format!("invalid pattern {pattern}: {e}"))?
+        .compile_matcher();
+
+    let base = Path::new(pattern)
+        .ancestors()
+        .find(|p| !p.to_string_lossy().contains(['*', '?', '[']))
+        .and_then(|p| if p == Path::new("") { None } else { Some(p) })
+        .unwrap_or(Path::new("."));
+
+    let mut paths = Vec::new();
+    for entry in walkdir::WalkDir::new(base).sort_by_file_name() {
+        let entry = entry.map_err(|e| e.to_string())?;
+        if entry.file_type().is_file() && matcher.is_match(entry.path()) {
+            paths.push(entry.path().to_string_lossy().into_owned());
+        }
+    }
+    if paths.is_empty() {
+        return Err(format!("no matches for pattern: {pattern}"));
+    }
+    Ok(paths)
+}
+
 // TODO: clean-code - 0.55 - DRY: expand_args (globset+walkdir, exits on no-match) and cli.rs::resolve (glob, warns-and-continues) are two glob expanders for the same job on two dep stacks; unify on one crate with a behaviour flag.
 fn expand_args(args: impl Iterator<Item = String>) -> Vec<String> {
     let mut paths = Vec::new();
     for arg in args {
         if arg.contains('*') || arg.contains('?') || arg.contains('[') {
-            let matcher = globset::Glob::new(&arg)
-                .unwrap_or_else(|e| {
-                    eprintln!("error: invalid pattern {arg}: {e}");
-                    process::exit(1);
-                })
-                .compile_matcher();
-
-            // Walk from the leading literal prefix so we don't scan unrelated trees.
-            let base = Path::new(&arg)
-                .ancestors()
-                .find(|p| !p.to_string_lossy().contains(['*', '?', '[']))
-                .and_then(|p| if p == Path::new("") { None } else { Some(p) })
-                .unwrap_or(Path::new("."));
-
-            let mut matched = false;
-            for entry in walkdir::WalkDir::new(base).sort_by_file_name() {
-                let entry = entry.unwrap_or_else(|e| {
+            match glob_expand(&arg) {
+                Ok(matched) => paths.extend(matched),
+                Err(e) => {
                     eprintln!("error: {e}");
                     process::exit(1);
-                });
-                if entry.file_type().is_file() && matcher.is_match(entry.path()) {
-                    paths.push(entry.path().to_string_lossy().into_owned());
-                    matched = true;
                 }
-            }
-            if !matched {
-                eprintln!("error: no matches for pattern: {arg}");
-                process::exit(1);
             }
         } else {
             paths.push(arg);
@@ -185,6 +190,43 @@ fn install_shutdown_handler() {
         }
         ShutdownSignal::current().fire();
     });
+}
+
+/// Builds the sandboxed Luau engine, binding `user_args` as the `_NEOC_ARGS`
+/// global when any were supplied. Exits the process on engine-init failure.
+fn engine_with_args(user_args: &[String]) -> mlua::Lua {
+    let engine = lua::sandbox::make_engine().unwrap_or_else(|e| {
+        report_error(NeocError::EngineInit(e.to_string()));
+    });
+    if !user_args.is_empty() {
+        let tbl = engine.create_table().unwrap();
+        for (i, arg) in user_args.iter().enumerate() {
+            tbl.set(i + 1, arg.as_str()).unwrap();
+        }
+        engine.globals().set("_NEOC_ARGS", tbl).unwrap();
+    }
+    engine
+}
+
+/// Drains any tasks spawned via `std:task` that outlive the main script. Exits
+/// with code 1 if any of them errored.
+async fn drain_scheduler(engine: &mlua::Lua) {
+    if let Some(scheduler) = engine.app_data_ref::<lua::std::task::Scheduler>() {
+        scheduler.wait_all().await;
+        if scheduler.had_task_errors() {
+            process::exit(1);
+        }
+    }
+}
+
+/// Wrap `s` in the ANSI green SGR codes used for passing test output.
+fn green(s: &str) -> String {
+    format!("\x1b[32m{s}\x1b[0m")
+}
+
+/// Wrap `s` in the ANSI red SGR codes used for failing test output.
+fn red(s: &str) -> String {
+    format!("\x1b[31m{s}\x1b[0m")
 }
 
 async fn run(paths: &[String], user_args: &[String]) {
@@ -220,18 +262,7 @@ async fn run(paths: &[String], user_args: &[String]) {
             (source, None)
         };
 
-        // TODO: clean-code - 0.75 - DRY: engine-init + _NEOC_ARGS binding + scheduler drain duplicated in main() embedded-payload path
-        let engine = lua::sandbox::make_engine().unwrap_or_else(|e| {
-            report_error(NeocError::EngineInit(e.to_string()));
-        });
-
-        if !user_args.is_empty() {
-            let tbl = engine.create_table().unwrap();
-            for (i, arg) in user_args.iter().enumerate() {
-                tbl.set(i + 1, arg.as_str()).unwrap();
-            }
-            engine.globals().set("_NEOC_ARGS", tbl).unwrap();
-        }
+        let engine = engine_with_args(user_args);
 
         if let Err(e) = engine
             .load(&source)
@@ -242,15 +273,8 @@ async fn run(paths: &[String], user_args: &[String]) {
             report_script_error_mapped(e, &source, path, source_map.as_ref());
         }
 
-        // Drain any tasks spawned by std:task that outlive the main script.
-        if let Some(scheduler) = engine.app_data_ref::<lua::std::task::Scheduler>() {
-            scheduler.wait_all().await;
-            if scheduler.had_task_errors() {
-                process::exit(1);
-            }
-        }
+        drain_scheduler(&engine).await;
 
-        // TODO: clean-code - 0.6 - DRY: ANSI escape sequences \x1b[32m / \x1b[31m duplicated across pass/fail prints — extract green()/red() helpers
         let is_test = path.ends_with(".test.luau") || path.ends_with(".spec.luau");
         if is_test {
             match lua::lib::test::summary(&engine) {
@@ -259,16 +283,16 @@ async fn run(paths: &[String], user_args: &[String]) {
                     total_failed += failed;
                     if multi {
                         if failed == 0 {
-                            println!("\x1b[32m✓\x1b[0m {path} ({passed} passed)");
+                            println!("{} {path} ({passed} passed)", green("✓"));
                         } else {
-                            println!("\x1b[31m✗\x1b[0m {path} ({passed} passed, {failed} failed)");
+                            println!("{} {path} ({passed} passed, {failed} failed)", red("✗"));
                         }
                     } else {
                         println!();
                         if failed == 0 {
-                            println!("\x1b[32m{passed} passed\x1b[0m");
+                            println!("{}", green(&format!("{passed} passed")));
                         } else {
-                            println!("\x1b[31m{passed} passed, {failed} failed\x1b[0m");
+                            println!("{}", red(&format!("{passed} passed, {failed} failed")));
                         }
                     }
                 }
@@ -283,9 +307,12 @@ async fn run(paths: &[String], user_args: &[String]) {
     if multi && (total_passed > 0 || total_failed > 0) {
         println!();
         if total_failed == 0 {
-            println!("\x1b[32m{total_passed} passed\x1b[0m");
+            println!("{}", green(&format!("{total_passed} passed")));
         } else {
-            println!("\x1b[31m{total_passed} passed, {total_failed} failed\x1b[0m");
+            println!(
+                "{}",
+                red(&format!("{total_passed} passed, {total_failed} failed"))
+            );
             process::exit(1);
         }
     } else if total_failed > 0 {
@@ -315,28 +342,13 @@ async fn run_eval(source: &str, as_lua: bool, user_args: &[String]) {
         }
     };
 
-    let engine = lua::sandbox::make_engine().unwrap_or_else(|e| {
-        report_error(NeocError::EngineInit(e.to_string()));
-    });
-
-    if !user_args.is_empty() {
-        let tbl = engine.create_table().unwrap();
-        for (i, arg) in user_args.iter().enumerate() {
-            tbl.set(i + 1, arg.as_str()).unwrap();
-        }
-        engine.globals().set("_NEOC_ARGS", tbl).unwrap();
-    }
+    let engine = engine_with_args(user_args);
 
     if let Err(e) = engine.load(&script).set_name("<eval>").exec_async().await {
         report_script_error_mapped(e, &script, "<eval>", source_map.as_ref());
     }
 
-    if let Some(scheduler) = engine.app_data_ref::<lua::std::task::Scheduler>() {
-        scheduler.wait_all().await;
-        if scheduler.had_task_errors() {
-            process::exit(1);
-        }
-    }
+    drain_scheduler(&engine).await;
 }
 
 /// Check for an embedded payload in the current executable. If found, run it
@@ -399,28 +411,13 @@ async fn run_embedded(payload: &[u8]) {
 
     let user_args: Vec<String> = env::args().skip(1).collect();
 
-    let engine = lua::sandbox::make_engine().unwrap_or_else(|e| {
-        report_error(NeocError::EngineInit(e.to_string()));
-    });
-
-    if !user_args.is_empty() {
-        let tbl = engine.create_table().unwrap();
-        for (i, arg) in user_args.iter().enumerate() {
-            tbl.set(i + 1, arg.as_str()).unwrap();
-        }
-        engine.globals().set("_NEOC_ARGS", tbl).unwrap();
-    }
+    let engine = engine_with_args(&user_args);
 
     if let Err(e) = engine.load(payload).exec_async().await {
         report_error(NeocError::Runtime(e.to_string()));
     }
 
-    if let Some(scheduler) = engine.app_data_ref::<lua::std::task::Scheduler>() {
-        scheduler.wait_all().await;
-        if scheduler.had_task_errors() {
-            process::exit(1);
-        }
-    }
+    drain_scheduler(&engine).await;
 }
 
 /// Dispatches a compiler subcommand and exits with its process code.

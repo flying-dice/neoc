@@ -16,12 +16,6 @@ unsafe extern "C" {
 /// `parser.set_language(&neoc_grammar::LANGUAGE.into())`.
 pub const LANGUAGE: LanguageFn = unsafe { LanguageFn::from_raw(tree_sitter_neoc) };
 
-// TODO: clean-code - 0.55 - DEAD: NODE_TYPES has zero consumers repo-wide and the doc below is false — neoc-ast does not depend on this crate; remove the const and fix the doc, or wire up the grammar/AST sync it claims.
-/// The grammar's `node-types.json`, generated alongside `parser.c` in the
-/// `tree-sitter-neoc` submodule. The AST crate consumes this to keep its node
-/// kinds in sync with the grammar.
-pub const NODE_TYPES: &str = include_str!("../tree-sitter-neoc/src/node-types.json");
-
 #[cfg(test)]
 mod tests {
     use tree_sitter::Parser;

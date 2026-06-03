@@ -96,12 +96,7 @@ fn encode_to(_: &Lua, (v, ud): (Value, AnyUserData)) -> Result<bool, String> {
         Err(_) => return Err("expected a writer handle".to_string()),
     };
     let s = to_toml_string(&v, false)?;
-    // TODO: clean-code - 0.55 - COUPLING: reaches into WriterHandle.0 internals instead of a method
-    let mut locked = wh.0.lock();
-    let result = std::io::Write::write_all(&mut **locked, s.as_bytes());
-    drop(locked);
-    drop(wh);
-    match result {
+    match wh.write_all(s.as_bytes()) {
         Ok(()) => Ok(true),
         Err(e) => Err(e.to_string()),
     }

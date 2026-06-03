@@ -269,49 +269,64 @@ fn row_to_table(lua: &Lua, row: &PgRow) -> mlua::Result<Table> {
     Ok(t)
 }
 
-// TODO: clean-code - 0.55 - SRP: decode_cell dispatches types AND silently treats every unknown type as TEXT — split known-type table from text fallback
 fn decode_cell(lua: &Lua, row: &PgRow, idx: usize, type_name: &str) -> mlua::Result<Value> {
-    // Postgres is strict about type widths — INT4 must decode through i32,
-    // not i64, and likewise FLOAT4 through f32. Mismatches raise a runtime
-    // decoding error rather than coercing.
-    match type_name {
+    match decode_known(lua, row, idx, type_name)? {
+        Some(v) => Ok(v),
+        None => decode_text(lua, row, idx),
+    }
+}
+
+/// Decode a column whose Postgres type maps to a fixed Lua scalar. Returns
+/// `None` for any type not in this table — the caller falls back to a text
+/// decode. Postgres is strict about widths (INT4 via i32, FLOAT4 via f32, …);
+/// a mismatch raises a decode error rather than coercing.
+fn decode_known(
+    lua: &Lua,
+    row: &PgRow,
+    idx: usize,
+    type_name: &str,
+) -> mlua::Result<Option<Value>> {
+    let v = match type_name {
         "BOOL" => {
-            let v: bool = row.try_get(idx).map_err(mlua::Error::external)?;
-            Ok(Value::Boolean(v))
+            let b: bool = row.try_get(idx).map_err(mlua::Error::external)?;
+            Value::Boolean(b)
         }
         "INT2" => {
-            let v: i16 = row.try_get(idx).map_err(mlua::Error::external)?;
-            Ok(Value::Integer(v as i32))
+            let n: i16 = row.try_get(idx).map_err(mlua::Error::external)?;
+            Value::Integer(n as i32)
         }
         "INT4" => {
-            let v: i32 = row.try_get(idx).map_err(mlua::Error::external)?;
-            Ok(Value::Integer(v))
+            let n: i32 = row.try_get(idx).map_err(mlua::Error::external)?;
+            Value::Integer(n)
         }
         "INT8" => {
-            let v: i64 = row.try_get(idx).map_err(mlua::Error::external)?;
-            Ok(match i32::try_from(v) {
+            let n: i64 = row.try_get(idx).map_err(mlua::Error::external)?;
+            match i32::try_from(n) {
                 Ok(i) => Value::Integer(i),
-                Err(_) => Value::Number(v as f64),
-            })
+                Err(_) => Value::Number(n as f64),
+            }
         }
         "FLOAT4" => {
-            let v: f32 = row.try_get(idx).map_err(mlua::Error::external)?;
-            Ok(Value::Number(v as f64))
+            let f: f32 = row.try_get(idx).map_err(mlua::Error::external)?;
+            Value::Number(f as f64)
         }
         "FLOAT8" => {
-            let v: f64 = row.try_get(idx).map_err(mlua::Error::external)?;
-            Ok(Value::Number(v))
+            let f: f64 = row.try_get(idx).map_err(mlua::Error::external)?;
+            Value::Number(f)
         }
         "BYTEA" => {
-            let v: Vec<u8> = row.try_get(idx).map_err(mlua::Error::external)?;
-            Ok(Value::String(lua.create_string(&v)?))
+            let b: Vec<u8> = row.try_get(idx).map_err(mlua::Error::external)?;
+            Value::String(lua.create_string(&b)?)
         }
-        // TEXT family + JSON/JSONB/UUID + temporal types fall through to a
-        // text decode. NUMERIC requires the `bigdecimal`/`rust_decimal`
-        // sqlx feature and is not handled here.
-        _ => {
-            let v: String = row.try_get(idx).map_err(mlua::Error::external)?;
-            Ok(Value::String(lua.create_string(&v)?))
-        }
-    }
+        _ => return Ok(None),
+    };
+    Ok(Some(v))
+}
+
+/// Text fallback for any type `decode_known` doesn't recognise: the TEXT family
+/// plus JSON/JSONB/UUID and temporal types decode through `String`. NUMERIC
+/// needs the `bigdecimal`/`rust_decimal` sqlx feature and is not handled.
+fn decode_text(lua: &Lua, row: &PgRow, idx: usize) -> mlua::Result<Value> {
+    let v: String = row.try_get(idx).map_err(mlua::Error::external)?;
+    Ok(Value::String(lua.create_string(&v)?))
 }
