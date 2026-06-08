@@ -463,6 +463,17 @@ impl<'a> Printer<'a> {
     }
 
     fn trait_item(&mut self, node: Node) {
+        // A trait item is either a method signature or an associated type
+        // (`type Item;`). The associated-type branch carries no hoisted `name`
+        // field, so it must be detected before `function_signature`, whose
+        // `name` unwrap would otherwise panic.
+        if let Some(assoc) = node
+            .named_children(&mut node.walk())
+            .find(|c| c.kind() == "associated_type")
+        {
+            self.associated_type(assoc);
+            return;
+        }
         self.function_signature(node);
         if let Some(body) = node.child_by_field_name("body") {
             self.push(" ");
@@ -470,6 +481,13 @@ impl<'a> Printer<'a> {
         } else {
             self.push(";");
         }
+    }
+
+    /// `type Item;` — an associated type declared in a trait.
+    fn associated_type(&mut self, node: Node) {
+        self.push("type ");
+        self.push(self.text(node.child_by_field_name("name").unwrap()));
+        self.push(";");
     }
 
     fn impl_block(&mut self, node: Node) {
@@ -497,6 +515,7 @@ impl<'a> Printer<'a> {
                     self.write_indent();
                 }
                 "function_declaration" => self.function_declaration(child),
+                "associated_type_binding" => self.associated_type_binding(child),
                 k if Self::is_comment(k) => {
                     self.comment(child);
                     self.newline();
@@ -505,6 +524,15 @@ impl<'a> Printer<'a> {
                 _ => {}
             }
         }
+    }
+
+    /// `type Item = number;` — an associated type bound in an impl.
+    fn associated_type_binding(&mut self, node: Node) {
+        self.push("type ");
+        self.push(self.text(node.child_by_field_name("name").unwrap()));
+        self.push(" = ");
+        self.ty(node.child_by_field_name("value").unwrap());
+        self.push(";");
     }
 
     /// Formats an `extern { … }` block (`lang/EXTERN.md`): a region of bodyless
@@ -729,7 +757,14 @@ impl<'a> Printer<'a> {
     fn ty(&mut self, node: Node) {
         match node.kind() {
             "unit_type" => self.push("()"),
-            "self_type" => self.push("Self"),
+            "self_type" => {
+                self.push("Self");
+                // `Self::Item` — preserve the optional associated-type projection.
+                if let Some(assoc) = node.child_by_field_name("assoc") {
+                    self.push("::");
+                    self.push(self.text(assoc));
+                }
+            }
             "list_type" => {
                 self.push("[");
                 self.ty(node.named_child(0).unwrap());
