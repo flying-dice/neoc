@@ -40,7 +40,7 @@ use crate::lua::{lib, std as stdmod, vnd};
 
 /// Upper bound on the namespace catalogue we'll dump into a `require` error.
 /// Keeps small namespaces actionable without paging the user when the catalogue
-/// grows. Bumped past the largest current namespace (`lib:*`, 21) so adding a
+/// grows. Bumped past the largest current namespace (`lib:*`, 22) so adding a
 /// module doesn't silently suppress the list.
 const MAX_AVAILABLE_LIST: usize = 30;
 
@@ -83,6 +83,7 @@ pub fn install(lua: &Lua) -> mlua::Result<()> {
     modules.insert("std:workers".into(), stdmod::workers::module(lua)?);
 
     // lib:* — blessed gap-fillers and our own custom modules.
+    modules.insert("lib:archive".into(), lib::archive::module(lua)?);
     modules.insert("lib:args".into(), lib::args::module(lua)?);
     modules.insert("lib:base64".into(), lib::base64::module(lua)?);
     modules.insert("lib:cache".into(), lib::cache::module(lua)?);
@@ -208,6 +209,7 @@ pub fn headers(lua: &Lua) -> mlua::Result<Vec<(String, String)>> {
     push(stdmod::time::declare(lua))?;
     push(stdmod::workers::declare(lua))?;
 
+    push(lib::archive::declare(lua))?;
     push(lib::args::declare(lua))?;
     push(lib::base64::declare(lua))?;
     push(lib::cache::declare(lua))?;
@@ -267,6 +269,7 @@ mod tests {
         let headers = super::headers(&lua).expect("headers");
 
         let keys: Vec<&str> = headers.iter().map(|(k, _)| k.as_str()).collect();
+        assert!(keys.contains(&"lib:archive"));
         assert!(keys.contains(&"lib:args"));
         assert!(keys.contains(&"lib:base64"));
         assert!(keys.contains(&"lib:cache"));
@@ -315,7 +318,7 @@ mod tests {
         assert!(keys.contains(&"vnd:sqlx_postgres"));
         assert!(keys.contains(&"vnd:testcontainers_modules"));
         assert!(keys.contains(&"vnd:toml"));
-        assert_eq!(keys.len(), 48, "expected 48 migrated modules, got {keys:?}");
+        assert_eq!(keys.len(), 49, "expected 49 migrated modules, got {keys:?}");
 
         for (key, header) in &headers {
             let name = key.split_once(':').map_or(key.as_str(), |(_, s)| s);
@@ -354,6 +357,7 @@ mod tests {
             "std:thread" => stdmod::thread::module(lua),
             "std:time" => stdmod::time::module(lua),
             "std:workers" => stdmod::workers::module(lua),
+            "lib:archive" => lib::archive::module(lua),
             "lib:args" => lib::args::module(lua),
             "lib:base64" => lib::base64::module(lua),
             "lib:cache" => lib::cache::module(lua),

@@ -75,6 +75,15 @@ spki = { version = "0.7", features = ["pem", "std"] }
 flate2 = "1"
 zstd = "0.13"
 brotli = "7"
+# Archive handling backing `lib:archive` (#11). `tar` is the de-facto Rust tar
+# crate (same author as flate2); it operates on any `Read`/`Write`, so the
+# gzip/zstd layer is composed from the flate2/zstd crates already above —
+# `lib:archive` integrates compression internally rather than depending on
+# `lib:compress` at the Rust level. `zip` reads/writes zip; `default-features
+# = false` drops the optional codecs (bzip2, zstd-in-zip, AES) we don't expose,
+# leaving DEFLATE (the universal zip method) via the in-tree flate2.
+tar = "0.4"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 # CSPRNG (OsRng) backing `lib:random`. `rand` 0.8 is already in the dep tree
 # transitively; pinning here keeps the build stable. Default features pull in
 # `getrandom` + `std_rng`, which is all we need.
