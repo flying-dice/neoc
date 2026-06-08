@@ -81,7 +81,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     .func(
         "is_numeric",
         &[("s", "string")],
-        "True when `s` is non-empty and every codepoint is in a Number category — Nd, Nl, or No (the Python `str.isnumeric` analogue). The empty string is false.",
+        "True when `s` is non-empty and every codepoint is in a Number category — Nd, Nl, or No (narrower than Python `str.isnumeric`, which also counts Numeric_Type codepoints outside those categories such as the CJK numeral 一, U+4E00, category Lo). The empty string is false.",
         |_, s: String| Ok(!s.is_empty() && s.chars().all(char::is_numeric)),
     )?
     .func(
