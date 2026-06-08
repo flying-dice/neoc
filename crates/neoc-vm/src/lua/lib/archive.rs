@@ -334,6 +334,9 @@ fn check_link_target(link_rel: &Path, target: &str) -> Result<(), String> {
 struct LimitReader<R> {
     inner: R,
     remaining: usize,
+    /// The configured ceiling, retained so the overrun error cites the limit
+    /// actually in force rather than the default (`remaining` is spent to 0).
+    limit: usize,
 }
 
 impl<R: Read> LimitReader<R> {
@@ -341,6 +344,7 @@ impl<R: Read> LimitReader<R> {
         Self {
             inner,
             remaining: limit,
+            limit,
         }
     }
 }
@@ -353,7 +357,8 @@ impl<R: Read> Read for LimitReader<R> {
             return match self.inner.read(&mut probe)? {
                 0 => Ok(0),
                 _ => Err(io::Error::other(format!(
-                    "decompressed output exceeds max_output_size ({DEFAULT_MAX_OUTPUT} byte default unless overridden)"
+                    "decompressed output exceeds max_output_size ({} bytes)",
+                    self.limit
                 ))),
             };
         }
@@ -1251,5 +1256,64 @@ mod tests {
         assert!(comp_from_magic(&zst) == Comp::Zstd);
         let raw = build_tar(&sources, Comp::None).unwrap();
         assert!(comp_from_magic(&raw) == Comp::None);
+    }
+
+    // --- link confinement through extraction (closes the symlink/hardlink branch) ---
+
+    /// A raw single-entry tar whose only member is a link of `ty`, named `name`
+    /// and pointing at `target`. Drives a crafted escaping link through real
+    /// extraction rather than testing `check_link_target` in isolation.
+    fn tar_with_link(name: &str, target: &str, ty: tar::EntryType) -> Vec<u8> {
+        let mut builder = tar::Builder::new(Vec::new());
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(ty);
+        header.set_size(0);
+        header.set_mode(0o777);
+        builder
+            .append_link(&mut header, name, target)
+            .expect("craft link entry");
+        builder.into_inner().expect("finish tar")
+    }
+
+    #[test]
+    fn extraction_rejects_escaping_symlink_entry() {
+        // Confinement must fire through tar_extract_all — before a byte is
+        // written — not only in the isolated check_link_target unit.
+        let bytes = tar_with_link("link", "../../etc/passwd", tar::EntryType::symlink());
+        let err = tar_extract_all(&bytes, Path::new("dest"), None, DEFAULT_MAX_OUTPUT)
+            .expect_err("escaping symlink must be rejected");
+        assert!(
+            err.contains("escapes the destination"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn extraction_rejects_escaping_hardlink_entry() {
+        // Same gate covers the is_hard_link() half of the branch.
+        let bytes = tar_with_link("link", "../../etc/passwd", tar::EntryType::hard_link());
+        let err = tar_extract_all(&bytes, Path::new("dest"), None, DEFAULT_MAX_OUTPUT)
+            .expect_err("escaping hardlink must be rejected");
+        assert!(
+            err.contains("escapes the destination"),
+            "unexpected error: {err}"
+        );
+    }
+
+    // --- decompression-bomb cap ---
+
+    #[test]
+    fn limit_reader_error_cites_configured_cap() {
+        // Overrun message reports the limit in force, not the 256 MiB default.
+        let data = [0u8; 64];
+        let mut reader = LimitReader::new(&data[..], 8);
+        let mut sink = Vec::new();
+        let err = reader
+            .read_to_end(&mut sink)
+            .expect_err("reading past the cap must error");
+        assert!(
+            err.to_string().contains("8 bytes"),
+            "unexpected error: {err}"
+        );
     }
 }
