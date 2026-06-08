@@ -136,6 +136,36 @@ impl Dir {
 }
 
 #[test]
+fn associated_types_in_trait_and_impl() {
+    // Regression (#82): a trait's `type Item;`, an impl's `type Item = number;`,
+    // and a `Self::Item` projection must all survive formatting. Before the fix
+    // the first panicked, the second was silently dropped, and the third lost
+    // its `::Item`.
+    let messy = "\
+trait Container{type Item;fn first(self)->Self::Item;}
+impl Container for Bag{type Item=number;fn first(self)->Self::Item{self.v}}
+";
+    let out = format(messy).unwrap();
+    let expected = "\
+trait Container {
+    type Item;
+
+    fn first(self) -> Self::Item;
+}
+
+impl Container for Bag {
+    type Item = number;
+
+    fn first(self) -> Self::Item {
+        self.v
+    }
+}
+";
+    assert_eq!(out, expected);
+    assert_idempotent(messy);
+}
+
+#[test]
 fn fn_with_leading_and_trailing_comments() {
     let messy = "\
 // leads the function
