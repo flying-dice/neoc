@@ -154,6 +154,27 @@ tempfile = "3"
 # capacity-bounded recency map; per-entry TTL is layered on top in the module.
 # Its only dependency is `hashbrown`, already in the tree transitively.
 lru = "0.12"
+# Unicode correctness primitives backing `lib:unicode` (#25). The three the
+# issue names are unicode-rs crates already in the tree transitively, so this
+# only promotes them to direct deps:
+#   unicode-normalization — NFC/NFD/NFKC/NFKD via the `UnicodeNormalization`
+#                           trait (`normalize`).
+#   unicode-segmentation  — extended grapheme-cluster iteration, UAX #29
+#                           (`graphemes`, `grapheme_count`).
+#   unicode-properties    — `General_Category` lookup (`category`);
+#                           `default-features = false` drops the emoji tables
+#                           we don't surface.
+# East-Asian display width (`width`) reuses the `unicode-width` dep already in
+# the tree (it backs lib:text). Case-folding (`fold`, `caseless_eq`) is the gap
+# the named three leave — they normalise and segment but none fold. `caseless`
+# is the fourth unicode-rs sibling and the de-facto Rust crate for UAX #44
+# default case folding + canonical caseless matching (Python `str.casefold`,
+# Go `cases.Fold` parity); its only dependency is `unicode-normalization`
+# above. Not on the blessed list — flagged for sign-off on #25.
+unicode-normalization = "0.1"
+unicode-segmentation = "1"
+unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] }
+caseless = "0.2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }

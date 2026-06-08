@@ -110,6 +110,7 @@ pub fn install(lua: &Lua) -> mlua::Result<()> {
     modules.insert("lib:tempfile".into(), lib::tempfile::module(lua)?);
     modules.insert("lib:test".into(), lib::test::module(lua)?);
     modules.insert("lib:text".into(), lib::text::module(lua)?);
+    modules.insert("lib:unicode".into(), lib::unicode::module(lua)?);
     modules.insert("lib:url".into(), lib::url::module(lua)?);
     modules.insert("lib:vcr".into(), lib::vcr::module(lua)?);
 
@@ -235,6 +236,7 @@ pub fn headers(lua: &Lua) -> mlua::Result<Vec<(String, String)>> {
     push(lib::tempfile::declare(lua))?;
     push(lib::test::declare(lua))?;
     push(lib::text::declare(lua))?;
+    push(lib::unicode::declare(lua))?;
     push(lib::url::declare(lua))?;
     push(lib::vcr::declare(lua))?;
 
@@ -294,6 +296,7 @@ mod tests {
         assert!(keys.contains(&"lib:tempfile"));
         assert!(keys.contains(&"lib:test"));
         assert!(keys.contains(&"lib:text"));
+        assert!(keys.contains(&"lib:unicode"));
         assert!(keys.contains(&"lib:url"));
         assert!(keys.contains(&"lib:vcr"));
         assert!(keys.contains(&"std:collections"));
@@ -315,7 +318,7 @@ mod tests {
         assert!(keys.contains(&"vnd:sqlx_postgres"));
         assert!(keys.contains(&"vnd:testcontainers_modules"));
         assert!(keys.contains(&"vnd:toml"));
-        assert_eq!(keys.len(), 48, "expected 48 migrated modules, got {keys:?}");
+        assert_eq!(keys.len(), 49, "expected 49 migrated modules, got {keys:?}");
 
         for (key, header) in &headers {
             let name = key.split_once(':').map_or(key.as_str(), |(_, s)| s);
@@ -381,6 +384,7 @@ mod tests {
             "lib:tempfile" => lib::tempfile::module(lua),
             "lib:test" => lib::test::module(lua),
             "lib:text" => lib::text::module(lua),
+            "lib:unicode" => lib::unicode::module(lua),
             "lib:url" => lib::url::module(lua),
             "lib:vcr" => lib::vcr::module(lua),
             "vnd:hyper" => vnd::hyper::module(lua),
