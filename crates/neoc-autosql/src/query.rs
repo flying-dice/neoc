@@ -8,7 +8,12 @@
 //! expression typing), and record an [`AnalyzedQuery`] the emitter turns into a
 //! typed neoc function.
 
-use sqlparser::ast::{AssignmentTarget, Expr, FromTable, SelectItem, SetExpr, Statement};
+use std::ops::ControlFlow;
+
+use sqlparser::ast::{
+    AssignmentTarget, Expr, FromTable, JoinConstraint, JoinOperator, SelectItem, SetExpr,
+    Statement, TableWithJoins, visit_expressions,
+};
 
 use crate::catalog::{Catalog, Table, last_ident};
 use crate::expr;
@@ -110,6 +115,19 @@ impl AnalyzedQuery {
                 reason: "a SELECT must project at least one column".to_string(),
             });
         }
+        // Every bind placeholder must have produced exactly one parameter. A
+        // mismatch means a placeholder slipped through a clause we don't bind
+        // from (so the generated function would be short a value), or an INSERT
+        // lists more columns than its VALUES supplies — both bind the wrong
+        // count at runtime, so fail loudly here instead.
+        let placeholders = placeholder_count(&statement);
+        if params.len() != placeholders {
+            return Err(Error::PlaceholderMismatch {
+                name: name.to_string(),
+                placeholders,
+                params: params.len(),
+            });
+        }
         dedup_names(params.iter_mut().map(|p| &mut p.name));
         Ok(AnalyzedQuery {
             name: name.to_string(),
@@ -194,7 +212,11 @@ fn infer_select(
     let scope = Scope::build(name, &select.from, catalog)?;
     let result = project(name, &scope, &select.projection)?;
 
+    // Collect in textual placeholder order: JOIN … ON predicates precede the
+    // WHERE, which precedes HAVING, then LIMIT/OFFSET — the order the driver
+    // binds `?`/`$n` positionally.
     let mut params = Vec::new();
+    join_params(name, &select.from, &scope, &mut params)?;
     if let Some(where_clause) = &select.selection {
         expr::params(name, where_clause, &scope, &mut params)?;
     }
@@ -343,6 +365,67 @@ fn number_param(name: &str) -> Param {
 /// Whether an optional expression is a bind placeholder.
 fn is_placeholder_expr(expr: Option<&Expr>) -> bool {
     expr.is_some_and(expr::is_placeholder)
+}
+
+/// Collects parameters from each `JOIN … ON` predicate, walked in `FROM`-clause
+/// order so a placeholder in a join condition binds in its textual position
+/// (ahead of the `WHERE`). `USING`/`NATURAL`/cross joins carry no predicate.
+fn join_params(
+    name: &str,
+    from: &[TableWithJoins],
+    scope: &Scope,
+    out: &mut Vec<Param>,
+) -> Result<(), Error> {
+    for table in from {
+        for join in &table.joins {
+            if let Some(on) = join_on(&join.join_operator) {
+                expr::params(name, on, scope, out)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The `ON` predicate of a join, if it has one. `USING`, `NATURAL`, and the
+/// predicate-less cross joins return `None`.
+fn join_on(op: &JoinOperator) -> Option<&Expr> {
+    let constraint = match op {
+        JoinOperator::Inner(c)
+        | JoinOperator::LeftOuter(c)
+        | JoinOperator::RightOuter(c)
+        | JoinOperator::FullOuter(c)
+        | JoinOperator::LeftSemi(c)
+        | JoinOperator::RightSemi(c)
+        | JoinOperator::LeftAnti(c)
+        | JoinOperator::RightAnti(c)
+        | JoinOperator::AsOf { constraint: c, .. } => c,
+        JoinOperator::CrossJoin | JoinOperator::CrossApply | JoinOperator::OuterApply => {
+            return None;
+        }
+    };
+    match constraint {
+        JoinConstraint::On(expr) => Some(expr),
+        JoinConstraint::Using(_) | JoinConstraint::Natural | JoinConstraint::None => None,
+    }
+}
+
+/// Counts every bind placeholder (`?`, `$n`, …) across the whole parsed
+/// statement — all clauses, subqueries included. The yardstick the inferred
+/// parameter count must match.
+///
+/// Uses `sqlparser`'s derived expression visitor rather than a hand-rolled
+/// walk: completeness is the whole point of the guard, so leaning on the
+/// parser's own exhaustive traversal keeps the count correct as the AST grows,
+/// instead of risking a missed variant that would silently undercount.
+fn placeholder_count(statement: &Statement) -> usize {
+    let mut count = 0;
+    let _: ControlFlow<()> = visit_expressions(statement, |expr| {
+        if expr::is_placeholder(expr) {
+            count += 1;
+        }
+        ControlFlow::Continue(())
+    });
+    count
 }
 
 /// Renames duplicate identifiers to `name`, `name_2`, `name_3`, … so a
@@ -500,5 +583,68 @@ mod tests {
         let err = AnalyzedQuery::analyze("bad", "SELECT FROM users;", &catalog(), Dialect::Sqlite);
         // Either a SQL parse error or the empty-projection guard — both are errors.
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn join_on_placeholder_binds_before_where() {
+        // A placeholder in a JOIN … ON predicate is collected, and in textual
+        // order: the ON parameter precedes the WHERE parameter.
+        let q = one(
+            "filtered_join",
+            "SELECT users.name FROM users \
+             JOIN posts ON posts.user_id = users.id AND posts.title = ? \
+             WHERE users.id = ?;",
+        );
+        assert_eq!(q.params.len(), 2);
+        assert_eq!(q.params[0].name, "title", "JOIN ON param comes first");
+        assert_eq!(q.params[1].name, "id", "WHERE param follows");
+    }
+
+    #[test]
+    fn insert_column_count_beyond_placeholders_is_an_error() {
+        // Two columns, one VALUES placeholder: the old code emitted two params
+        // for one `?`. Now it is a clear error.
+        let err = AnalyzedQuery::analyze(
+            "short_insert",
+            "INSERT INTO users (name, email) VALUES (?);",
+            &catalog(),
+            Dialect::Sqlite,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::PlaceholderMismatch {
+                    placeholders: 1,
+                    params: 2,
+                    ..
+                }
+            ),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn placeholder_in_projection_is_rejected_not_dropped() {
+        // A placeholder in the SELECT list is bound from nowhere; rather than
+        // silently generate a parameter-short function, generation fails.
+        let err = AnalyzedQuery::analyze(
+            "bumped",
+            "SELECT id + ? AS bumped FROM users WHERE id = ?;",
+            &catalog(),
+            Dialect::Sqlite,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::PlaceholderMismatch {
+                    placeholders: 2,
+                    params: 1,
+                    ..
+                }
+            ),
+            "got {err:?}"
+        );
     }
 }

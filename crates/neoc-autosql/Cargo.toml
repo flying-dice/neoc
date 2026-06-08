@@ -9,8 +9,10 @@ repository.workspace = true
 [dependencies]
 # SQL parser. A pure-Rust parsing crate (no host-runtime I/O), the same
 # category as tree-sitter in neoc-parser — not a runtime dependency. autosql
-# emits portable `.neoc`; nothing here couples to a runtime target.
-sqlparser = "0.52"
+# emits portable `.neoc`; nothing here couples to a runtime target. The
+# `visitor` feature gives us a whole-statement expression walk, used to count
+# bind placeholders across every clause.
+sqlparser = { version = "0.52", features = ["visitor"] }
 thiserror = "2"
 
 [dev-dependencies]

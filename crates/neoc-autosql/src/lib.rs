@@ -167,6 +167,23 @@ pub enum Error {
     /// declare.
     #[error("{0}")]
     Resolve(String),
+    /// A query's inferred parameters do not match the bind placeholders in its
+    /// SQL: a placeholder sits in a clause autosql cannot bind from, or an
+    /// `INSERT`'s column list and its `VALUES` placeholders disagree. Binding it
+    /// would pass the wrong number of values at runtime, so generation fails.
+    #[error(
+        "query `{name}`: SQL has {placeholders} bind placeholder(s) but \
+         {params} parameter(s) were inferred — every placeholder must be \
+         bindable, and an INSERT's columns must match its VALUES"
+    )]
+    PlaceholderMismatch {
+        /// The annotated query name.
+        name: String,
+        /// Bind placeholders counted across the parsed statement.
+        placeholders: usize,
+        /// Parameters autosql inferred from the clauses it binds.
+        params: usize,
+    },
 }
 
 /// Generates the `autosql/` neoc data-access layer from a set of `migrations`
