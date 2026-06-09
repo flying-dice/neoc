@@ -11,7 +11,7 @@ Temp files,tempfile,fs.mkdtemp,Deno.makeTempFile,node:fs,os.CreateTemp,—,Files
 TTY/terminal,tty+termios+curses,node:tty+readline,Deno.stdin.isTerminal,node:tty,—,—,java.io.Console,Console,IO.tty?+Readline,posix_isatty,—,—
 Filesystem watch,—,fs.watch,Deno.watchFs,fs.watch,—,—,WatchService,FileSystemWatcher,—,inotify,—,—
 Regex,re,RegExp,RegExp,RegExp,regexp,—,java.util.regex,System.Text.RegularExpressions,Regexp,preg_*,string.match,—
-Unicode normalize,unicodedata,String.normalize,String.normalize,String.normalize,—,—,java.text.Normalizer,System.Text,String.unicode_normalize,intl,—,—
+Unicode normalize,unicodedata,String.normalize,String.normalize,String.normalize,—,—,java.text.Normalizer,System.Text,String.unicode_normalize,intl,—,lib:unicode
 String format,f-strings+%,template lit,template lit,template lit,fmt,std::fmt,String.format,String.Format,sprintf+format,sprintf,string.format,string.format
 Templating,string.Template,—,—,—,text/template+html/template,—,—,Razor,ERB,—,—,—
 JSON,json,JSON,JSON,JSON,encoding/json,—,—,System.Text.Json,json,json_encode,—,lib:json+vnd:serde_json
