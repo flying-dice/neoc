@@ -231,6 +231,30 @@ impl LineMap {
         let idx = self.entries.partition_point(|(lua, _)| *lua <= lua_line);
         (idx > 0).then(|| self.entries[idx - 1].1)
     }
+
+    /// Whether the map records no line correspondence — the case for a module
+    /// lowered without source text (plain [`emit`]). An empty map returns `None`
+    /// for every line.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// The same map after `prepended_lines` lines are prepended to the emitted
+    /// output: every emitted-line key shifts down by that count, the neoc origins
+    /// unchanged. A backend that wraps this crate's lowering under a preamble — the
+    /// Luau target prepends its inline `type` declarations — shifts the body's map
+    /// onto the assembled module so a fault still resolves to the right neoc line.
+    #[must_use]
+    pub fn shifted_by(&self, prepended_lines: u32) -> Self {
+        Self {
+            entries: self
+                .entries
+                .iter()
+                .map(|&(lua, neoc)| (lua.saturating_add(prepended_lines), neoc))
+                .collect(),
+        }
+    }
 }
 
 /// The result of emitting a module.

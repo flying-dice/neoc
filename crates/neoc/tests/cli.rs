@@ -277,9 +277,9 @@ fn run_neoc_type_error_reports_neoc_diagnostic_not_lua() {
 
 // A program that compiles cleanly but faults at runtime: `crash()` calls an
 // unbound name, so the embedded Luau VM raises `attempt to call a nil value`.
-// The fault is reported against the `.neoc` chunk name. No backend emits a
-// source map yet, so the reported line is the emitted Luau line, not the neoc
-// line (#55, #56 — source-map remapping is not wired today).
+// The fault is reported against the `.neoc` chunk name, and the source map (#56)
+// rewrites the emitted-Luau line back to the neoc line — `explode()` sits on neoc
+// line 4, so the fault must read `fault.neoc:4`, not the emitted-Luau line.
 const RUNTIME_FAULT: &str = "\
 extern { fn print(s: string); }
 fn crash() {
@@ -293,7 +293,7 @@ fn main() {
 ";
 
 #[test]
-fn run_neoc_runtime_fault_reports_against_the_neoc_chunk() {
+fn run_neoc_runtime_fault_reports_against_the_neoc_position() {
     let dir = tempdir().unwrap();
     let src = write(dir.path(), "fault.neoc", RUNTIME_FAULT);
 
@@ -306,6 +306,13 @@ fn run_neoc_runtime_fault_reports_against_the_neoc_chunk() {
     assert!(
         stderr.contains("fault.neoc") && stderr.contains("attempt to call a nil value"),
         "expected a fault against the fault.neoc chunk, got: {stderr}"
+    );
+    // The source map remaps the emitted-Luau line to the neoc line: the failing
+    // `explode()` call is on neoc line 4, so the fault reports `:4`, not the
+    // (different) line the call lowered to in the emitted Luau.
+    assert!(
+        stderr.contains("fault.neoc\"]:4:"),
+        "expected the fault remapped to neoc line 4, got: {stderr}"
     );
 }
 

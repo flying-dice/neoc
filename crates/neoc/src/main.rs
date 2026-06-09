@@ -498,6 +498,75 @@ mod tests {
     use std::sync::atomic::{AtomicU16, Ordering};
     use std::time::{Duration, Instant};
 
+    // ---- source map: `neoc run` runtime-fault line rewriting ----------------
+    //
+    // `map_lua_lines_to_neoc` is the consumer side of the #56 source map: it
+    // rewrites every `[string "<chunk>"]:<luaLine>` reference in a Luau runtime
+    // fault to its originating neoc line. The map's own tests cover lookup
+    // (`SourceMap::neoc_line`); these pin the two consumer behaviours those
+    // don't reach — the string rewrite itself (chunk-selective), and the
+    // unmapped-line fallback that leaves a line verbatim.
+    use neoc_compiler::{SourceMap, Target, transpile};
+
+    #[test]
+    fn map_lua_lines_rewrites_matching_chunk_frames_to_neoc_lines() {
+        // A `struct` forces the Luau backend to prepend an inline `type`
+        // preamble, shifting the body down — so an emitted line's number differs
+        // from its neoc origin, which is what makes the rewrite observable.
+        let src = "struct Point { x: number }\npub fn read(p: Point) -> number {\n  p.x\n}\n";
+        let out = transpile(src, Target::Luau);
+        assert!(out.diagnostics.is_empty(), "{:#?}", out.diagnostics);
+        let map = out.source_map;
+        assert!(!map.is_empty(), "a Luau transpile must carry a map");
+
+        // First emitted line whose origin differs from its own number — the
+        // preamble shift guarantees one exists.
+        let (lua_line, neoc_line) = (1..=200)
+            .find_map(|l| map.neoc_line(l).filter(|n| *n != l).map(|n| (l, n)))
+            .expect("a shifted, mapped emitted line");
+
+        let chunk = "app.neoc";
+        let err = format!(
+            "runtime error: [string \"{chunk}\"]:{lua_line}: boom\n\
+             stack traceback:\n\
+             \t[string \"{chunk}\"]:{lua_line}: in function 'read'\n\
+             \t[C]: in ?\n\
+             \t[string \"other.luau\"]:{lua_line}: in main chunk"
+        );
+        let got = super::map_lua_lines_to_neoc(&err, chunk, &map);
+
+        // Every matching-chunk frame now carries the neoc line; the emitted line
+        // is gone.
+        assert!(
+            got.contains(&format!("[string \"{chunk}\"]:{neoc_line}:")),
+            "matching frames should carry neoc line {neoc_line}:\n{got}"
+        );
+        assert!(
+            !got.contains(&format!("[string \"{chunk}\"]:{lua_line}:")),
+            "emitted line {lua_line} should be rewritten away:\n{got}"
+        );
+        // A `[C]` frame and a different chunk are left untouched.
+        assert!(got.contains("[C]: in ?"), "[C] frame untouched:\n{got}");
+        assert!(
+            got.contains(&format!("[string \"other.luau\"]:{lua_line}:")),
+            "a non-matching chunk must not be rewritten:\n{got}"
+        );
+    }
+
+    #[test]
+    fn map_lua_lines_leaves_unmapped_lines_verbatim() {
+        // An empty map — a non-Luau target, or a module lowered without source —
+        // knows no correspondence, so every line must survive verbatim: not
+        // dropped, not zeroed. This is the `None` fallback arm of the rewrite.
+        let chunk = "app.neoc";
+        let err = format!(
+            "runtime error: [string \"{chunk}\"]:5: boom\n\
+             stack traceback:\n\t[string \"{chunk}\"]:5: in main chunk"
+        );
+        let got = super::map_lua_lines_to_neoc(&err, chunk, &SourceMap::default());
+        assert_eq!(got, err, "an empty map passes every line through unchanged");
+    }
+
     static PORT_CTR: AtomicU16 = AtomicU16::new(29000);
 
     fn next_port() -> u16 {

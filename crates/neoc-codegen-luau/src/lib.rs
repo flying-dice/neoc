@@ -24,7 +24,7 @@
 
 use neoc_ast as ast;
 use neoc_codegen_lua::{
-    Diagnostic, HeaderStyle, emit_with_style, project_luau_enum, project_luau_struct,
+    Diagnostic, HeaderStyle, LineMap, emit_with_style, project_luau_enum, project_luau_struct,
     project_luau_type_alias,
 };
 
@@ -34,6 +34,11 @@ pub struct EmitResult {
     /// The emitted, self-typed Luau module source (`x.luau`).
     pub luau: String,
     pub diagnostics: Vec<Diagnostic>,
+    /// Maps emitted Luau lines back to neoc source. The shared lowering builds the
+    /// map for the runtime body; this backend offsets it past the inline `type`
+    /// preamble it prepends, so the lines line up with the assembled `.luau` and a
+    /// runtime fault resolves to its neoc position.
+    pub source_map: LineMap,
 }
 
 /// Lower a module to typed Luau (`.luau`) source.
@@ -89,17 +94,25 @@ pub fn emit(
     // tagged tables), so the projector supplies them here.
     let decls = emit_type_decls(module);
 
-    let luau = assemble(lib.as_deref(), &decls, &body);
+    let (luau, body_start_line) = assemble(lib.as_deref(), &decls, &body);
     EmitResult {
         luau,
         diagnostics: lowered.diagnostics,
+        // The lowering's map is relative to the body; the assembled module places
+        // the body `body_start_line` lines down, past the inline `type` preamble.
+        source_map: lowered.source_map.shifted_by(body_start_line),
     }
 }
 
 /// Stitch the `Result`/`Option` type aliases, the type declarations, and the
 /// typed runtime body into one module, blank-line separated, each section elided
 /// when empty. A trailing newline is kept iff there is any content.
-fn assemble(lib: Option<&str>, decls: &str, body: &str) -> String {
+///
+/// Returns the assembled source and the zero-based line the body starts on (the
+/// height of the preamble), so the caller can shift the body's source map onto
+/// the assembled module. The body is the last section, so a fault in it resolves
+/// to the right neoc line once the map is shifted by this much.
+fn assemble(lib: Option<&str>, decls: &str, body: &str) -> (String, u32) {
     let mut sections: Vec<&str> = Vec::new();
     if let Some(l) = lib {
         sections.push(l);
@@ -107,16 +120,30 @@ fn assemble(lib: Option<&str>, decls: &str, body: &str) -> String {
     if !decls.is_empty() {
         sections.push(decls);
     }
+
+    // The body is appended below the preamble and a blank-line separator, so it
+    // starts as many lines down as there are newlines in the joined preamble plus
+    // that separator (`+ 2`). Zero with no preamble, or no body to shift.
+    let preamble = sections.join("\n\n");
     let body = body.trim_end_matches('\n');
+    let body_start_line = if preamble.is_empty() || body.is_empty() {
+        0
+    } else {
+        u32::try_from(preamble.matches('\n').count() + 2).unwrap_or(u32::MAX)
+    };
+
+    // Stitch as before — empty sections elided, blank-line separated, one trailing
+    // newline iff there is any content — so the emitted text is byte-for-byte
+    // unchanged; `body_start_line` rides alongside it.
     if !body.is_empty() {
         sections.push(body);
     }
     if sections.is_empty() {
-        return String::new();
+        return (String::new(), 0);
     }
     let mut s = sections.join("\n\n");
     s.push('\n');
-    s
+    (s, body_start_line)
 }
 
 /// The inline `type` declarations for a module's `struct`/`enum`/`type` items,
