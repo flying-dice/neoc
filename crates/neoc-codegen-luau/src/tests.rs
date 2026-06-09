@@ -116,3 +116,40 @@ fn list_and_fn_types_use_luau_surface_syntax() {
         out.luau
     );
 }
+
+#[test]
+fn source_map_offsets_body_past_the_inline_type_preamble() {
+    // A `struct` makes the backend prepend an inline `type` plus its runtime
+    // checks before the lowered body, so a body line lands well below the neoc
+    // line it came from. The map must offset past that preamble: the `crash()`
+    // body line — neoc line 3 — maps back to 3, not the shifted emitted line.
+    let src = "struct Point { x: number }\nfn boom() -> number {\n    crash()\n}\n";
+    let out = emit_solo(src);
+    assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
+    assert!(
+        !out.source_map.is_empty(),
+        "a Luau emit from source must carry a map:\n{}",
+        out.luau
+    );
+
+    let emitted_line = u32::try_from(
+        out.luau
+            .lines()
+            .position(|l| l.contains("crash()"))
+            .expect("crash() in emitted Luau"),
+    )
+    .unwrap()
+        + 1;
+    assert!(
+        emitted_line > 3,
+        "the inline `type` preamble should push the body past neoc line 3, \
+         emitted at {emitted_line}:\n{}",
+        out.luau
+    );
+    assert_eq!(
+        out.source_map.neoc_line(emitted_line),
+        Some(3),
+        "emitted line {emitted_line} should map back to neoc line 3:\n{}",
+        out.luau
+    );
+}

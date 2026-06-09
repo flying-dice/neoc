@@ -610,7 +610,7 @@ fn luau_build_emits_self_typed_module_files_with_no_aux() {
     // (the artifact, positionally aligned with `source_maps`). Each module is
     // self-contained: it inlines the runtime and its own `Result`/`Option` type
     // aliases, so there are **no** aux files — no `neoc-lib`, no `.d.lua`, no
-    // `.map`. The source map is empty (none yet for Luau).
+    // `.map`. The source map is real (#56): Luau records it during emit.
     let dir = tempdir();
     let entry = write(
         &dir,
@@ -635,6 +635,12 @@ fn luau_build_emits_self_typed_module_files_with_no_aux() {
         project.files.len(),
         project.source_maps.len(),
         "files and source_maps must stay positionally aligned"
+    );
+    // Unlike the other targets, Luau records a real map (#56), so `neoc run` can
+    // rewrite a runtime fault to its neoc position.
+    assert!(
+        !project.source_maps[0].is_empty(),
+        "Luau records a source map"
     );
     let (path, x_luau) = &project.files[0];
     assert!(

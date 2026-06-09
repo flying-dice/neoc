@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use neoc_ast as ast;
 use neoc_codegen_js as codegen_js;
+use neoc_codegen_lua::LineMap;
 use neoc_codegen_luau as codegen_luau;
 use neoc_codegen_python as codegen_python;
 use neoc_codegen_ts as codegen_ts;
@@ -204,29 +205,30 @@ impl Diagnostic {
 
 /// A line-level map from emitted target source back to neoc source.
 ///
-/// No target emits a map today: the only backend that built one was the
-/// now-removed direct Lua target. This is the inert core — an always-empty map —
-/// kept on the public API so a runtime can translate a fault's emitted line to a
-/// neoc position through [`SourceMap::neoc_line`] once a backend grows a real map
-/// (see #56). Until then every map is empty and every lookup returns `None`.
+/// Wraps the Luau backend's [`LineMap`]: the Luau target records, per module, the
+/// neoc line each emitted line came from, so a runtime can translate a fault's
+/// emitted line to a neoc position through [`SourceMap::neoc_line`] — the path
+/// `neoc run` takes to report a fault at its `.neoc` line. The other targets
+/// (JS/TS, Python) don't build a map yet (#56): their maps are empty and every
+/// lookup returns `None`, so a caller surfacing a fault falls back to the emitted
+/// line.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct SourceMap {}
+pub struct SourceMap(LineMap);
 
 impl SourceMap {
     /// Returns the originating neoc line for a one-based emitted line, or `None`
-    /// when no correspondence is known. Always `None` today, since no backend
-    /// builds a map yet.
+    /// when no correspondence is known — an unmapped line, or a target that emits
+    /// no map. Falls back to the nearest preceding mapped line on an exact miss.
     #[must_use]
-    pub fn neoc_line(&self, _emitted_line: u32) -> Option<u32> {
-        None
+    pub fn neoc_line(&self, emitted_line: u32) -> Option<u32> {
+        self.0.neoc_line(emitted_line)
     }
 
-    /// Whether this map carries any line correspondence. Always `true` today
-    /// (every map is empty), so a caller surfacing a fault falls back to the
-    /// emitted line.
+    /// Whether this map carries no line correspondence — a target that emits no
+    /// map (JS/TS, Python), or a module lowered without source text.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.neoc_line(1).is_none()
+        self.0.is_empty()
     }
 }
 
@@ -236,8 +238,9 @@ pub struct CompileOutput {
     /// The emitted source for the chosen [`Target`].
     pub output: String,
     pub diagnostics: Vec<Diagnostic>,
-    /// The line map from emitted source back to neoc source. Empty today (no
-    /// backend builds a map yet; see [`SourceMap`]). `build`/`check` ignore it.
+    /// The line map from emitted source back to neoc source. Non-empty for the
+    /// Luau target, which records it during emit (#56); empty for the others.
+    /// `build`/`check` ignore it; `neoc run` uses it to rewrite runtime faults.
     pub source_map: SourceMap,
 }
 
@@ -276,8 +279,7 @@ pub fn transpile(source: &str, target: Target) -> CompileOutput {
     CompileOutput {
         output: emitted.output,
         diagnostics,
-        // No backend emits a source map yet; an empty map maps no lines.
-        source_map: SourceMap::default(),
+        source_map: emitted.source_map,
     }
 }
 
@@ -305,8 +307,9 @@ pub struct ProjectOutput {
     /// when `files` is (a project that reported a diagnostic emits nothing).
     pub source_maps: Vec<SourceMap>,
     /// Generated sidecar files that are **not** compiled modules and so have no
-    /// entry in `source_maps`. No backend emits a source map yet, so there are no
-    /// `.map` sidecars and no `sourceMappingURL` trailers. The kinds emitted:
+    /// entry in `source_maps`. Source maps ride in-band on `source_maps`, not as
+    /// files, so there are no `.map` sidecars and no `sourceMappingURL` trailers.
+    /// The kinds emitted:
     ///
     /// * On the TS target the shared `neoc-lib.js` + `neoc-lib.d.ts` prelude at
     ///   the resolution root: a `.ts` `import "./neoc-lib"` resolves to the
@@ -441,9 +444,9 @@ pub fn transpile_project(entry: &Path, target: Target) -> std::io::Result<Projec
         let src_path = &loaded[path].path;
         let dest = src_path.with_extension(target.extension());
         files.push((dest, emitted.output));
-        // No backend emits a source map yet, so each module's map is empty; the
-        // entry keeps the `files`↔`source_maps` positional contract intact.
-        source_maps.push(SourceMap::default());
+        // Positionally aligned with `files`: the Luau target carries a real map
+        // (#56), the others an empty one.
+        source_maps.push(emitted.source_map);
         // Python target: a non-empty `.pyi` typed stub sibling beside the
         // module's `.py`. `x.neoc` → `x.pyi`.
         if !emitted.pyi.is_empty() {
@@ -838,8 +841,8 @@ fn canonical_or(path: &Path) -> PathBuf {
 /// emit diagnostic messages, and a [`SourceMap`] back to neoc.
 ///
 /// `source` is the neoc text the module was parsed from; the Luau backend uses
-/// it to track spans. No backend emits a source map yet (#56), so `emit` always
-/// reports an empty [`SourceMap`] through the driver.
+/// it to track spans and returns a real [`SourceMap`] (#56). The JS/TS and Python
+/// backends don't map yet, so they report an empty map through the driver.
 ///
 /// `bindings` are the module's `use`d names whose source module emits a runtime
 /// JS binding (see [`codegen_js::module_js_bindings`]); the TS backend (reusing
@@ -885,15 +888,17 @@ struct EmitInputs<'a> {
 }
 
 /// One module's emit, normalised across backends: the target source, any
-/// emit-stage messages, and the `.pyi` declaration sibling (Python only; empty
-/// otherwise). No backend emits a source map yet, so the driver attaches an
-/// empty [`SourceMap`] per module.
+/// emit-stage messages, the `.pyi` declaration sibling (Python only; empty
+/// otherwise), and the line map back to neoc.
 struct Emitted {
     output: String,
     messages: Vec<String>,
     /// The module's `.pyi` typed stub (Python target). Empty for the other
     /// targets and for a module that exports nothing.
     pyi: String,
+    /// The line map from emitted source back to neoc. Real for the Luau target
+    /// (#56); empty for the others, which don't map yet.
+    source_map: SourceMap,
 }
 
 fn emit(target: Target, module: &ast::Module, source: &str, inputs: &EmitInputs) -> Emitted {
@@ -914,13 +919,14 @@ fn emit(target: Target, module: &ast::Module, source: &str, inputs: &EmitInputs)
                 output: r.ts,
                 messages: r.diagnostics.into_iter().map(|d| d.message).collect(),
                 pyi: String::new(),
+                source_map: SourceMap::default(),
             }
         }
         Target::Luau => {
             // A self-typed `.luau` is self-contained: it inlines the runtime and
             // its own `Result`/`Option` type aliases (no `neoc-lib`, no `.d.lua`
-            // sidecar). Reuses `codegen-lua`'s lowering through the Luau seam. No
-            // source map yet.
+            // sidecar). Reuses `codegen-lua`'s lowering through the Luau seam,
+            // which tracks neoc spans into a real source map (#56).
             let r = codegen_luau::emit(
                 module,
                 source,
@@ -932,6 +938,7 @@ fn emit(target: Target, module: &ast::Module, source: &str, inputs: &EmitInputs)
                 output: r.luau,
                 messages: r.diagnostics.into_iter().map(|d| d.message).collect(),
                 pyi: String::new(),
+                source_map: SourceMap(r.source_map),
             }
         }
         Target::Python => {
@@ -950,6 +957,7 @@ fn emit(target: Target, module: &ast::Module, source: &str, inputs: &EmitInputs)
                 output: r.py,
                 messages: r.diagnostics.into_iter().map(|d| d.message).collect(),
                 pyi: r.pyi,
+                source_map: SourceMap::default(),
             }
         }
     }
