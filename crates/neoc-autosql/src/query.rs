@@ -11,8 +11,8 @@
 use std::ops::ControlFlow;
 
 use sqlparser::ast::{
-    AssignmentTarget, Expr, FromTable, JoinConstraint, JoinOperator, SelectItem, SetExpr,
-    Statement, TableWithJoins, visit_expressions,
+    AssignmentTarget, Expr, FromTable, Insert, JoinConstraint, JoinOperator, Query, Select,
+    SelectItem, SetExpr, Statement, TableWithJoins, visit_expressions,
 };
 
 use crate::catalog::{Catalog, Table, last_ident};
@@ -54,7 +54,8 @@ pub(crate) struct ResultCol {
 /// One bound parameter, in placeholder order.
 #[derive(Debug, Clone)]
 pub(crate) struct Param {
-    /// The neoc function-parameter name (derived from the column it binds).
+    /// The neoc function-parameter name — the column the placeholder is bound
+    /// against, or a generic `param` when the bind site carries no column name.
     pub name: String,
     /// The neoc-facing type.
     pub ty: ColType,
@@ -211,36 +212,45 @@ fn infer_select(
     };
     let scope = Scope::build(name, &select.from, catalog)?;
     let result = project(name, &scope, &select.projection)?;
-
-    // Collect in textual placeholder order: JOIN … ON predicates precede the
-    // WHERE, which precedes HAVING, then LIMIT/OFFSET — the order the driver
-    // binds `?`/`$n` positionally.
     let mut params = Vec::new();
-    join_params(name, &select.from, &scope, &mut params)?;
-    if let Some(where_clause) = &select.selection {
-        expr::params(name, where_clause, &scope, &mut params)?;
-    }
-    if let Some(having) = &select.having {
-        expr::params(name, having, &scope, &mut params)?;
-    }
-    if is_placeholder_expr(query.limit.as_ref()) {
-        params.push(number_param("limit"));
-    }
-    if let Some(offset) = &query.offset {
-        if expr::is_placeholder(&offset.value) {
-            params.push(number_param("offset"));
-        }
-    }
+    select_filter_params(name, query, select, &scope, &mut params)?;
     Ok((params, result, scope.sole_table()))
 }
 
-/// Infers an `INSERT`'s parameters from its column list (the `VALUES`
-/// placeholders are assumed to match it positionally) and any `RETURNING`.
-fn infer_insert(
+/// Collects bind parameters from a `SELECT`'s filter clauses — `JOIN … ON`,
+/// `WHERE`, `HAVING`, then `LIMIT`/`OFFSET` — in textual placeholder order, the
+/// order the driver binds `?`/`$n` positionally. The projection is not a source
+/// here: a standalone `SELECT` rejects a projection placeholder, and an
+/// `INSERT … SELECT` collects its value binds separately (ahead of these).
+fn select_filter_params(
     name: &str,
-    insert: &sqlparser::ast::Insert,
-    catalog: &Catalog,
-) -> Result<Inferred, Error> {
+    query: &Query,
+    select: &Select,
+    scope: &Scope,
+    out: &mut Vec<Param>,
+) -> Result<(), Error> {
+    join_params(name, &select.from, scope, out)?;
+    if let Some(where_clause) = &select.selection {
+        expr::params(name, where_clause, scope, out)?;
+    }
+    if let Some(having) = &select.having {
+        expr::params(name, having, scope, out)?;
+    }
+    if is_placeholder_expr(query.limit.as_ref()) {
+        out.push(number_param("limit"));
+    }
+    if let Some(offset) = &query.offset {
+        if expr::is_placeholder(&offset.value) {
+            out.push(number_param("offset"));
+        }
+    }
+    Ok(())
+}
+
+/// Infers an `INSERT`'s parameters and any `RETURNING` row. `INSERT … VALUES`
+/// binds positionally against the column list; `INSERT … SELECT` binds through
+/// the SELECT's placeholders instead (see [`infer_insert_select`]).
+fn infer_insert(name: &str, insert: &Insert, catalog: &Catalog) -> Result<Inferred, Error> {
     let table_name = last_ident(&insert.table_name);
     let table = catalog
         .table(&table_name)
@@ -252,6 +262,16 @@ fn infer_insert(
                 .to_string(),
         });
     }
+    // A query source other than `VALUES` (a SELECT — or an unsupported set
+    // operation) supplies its values through the query's bind sites, not the
+    // column list. Deriving them from the columns misnames a filter `?` (e.g. a
+    // `WHERE`) after the column it does not bind.
+    if let Some(source) = &insert.source {
+        if !matches!(source.body.as_ref(), SetExpr::Values(_)) {
+            return infer_insert_select(name, insert, source, table, catalog);
+        }
+    }
+    // `INSERT … VALUES`: the placeholders match the column list positionally.
     let params = insert
         .columns
         .iter()
@@ -260,6 +280,110 @@ fn infer_insert(
     let scope = Scope::single(table);
     let result = returning_columns(name, &scope, insert.returning.as_deref())?;
     Ok((params, result, Some(table.name.clone())))
+}
+
+/// Infers the parameters of an `INSERT … SELECT` from the SELECT's bind sites,
+/// in textual order:
+///
+/// 1. A placeholder in a projection slot is a *value* bind — it supplies the
+///    target column at the same position. It is typed from that column (a bare
+///    `?` carries no type of its own) but named generically: the bind is the
+///    SELECT placeholder, not the destination column.
+/// 2. A placeholder in `WHERE`/`JOIN … ON`/`HAVING`/`LIMIT`/`OFFSET` is a filter
+///    bind, named and typed from its own clause exactly as a standalone SELECT.
+///
+/// A non-placeholder projection item (a copied column or expression) binds
+/// nothing. `RETURNING` still describes the INSERT target table.
+fn infer_insert_select(
+    name: &str,
+    insert: &Insert,
+    source: &Query,
+    table: &Table,
+    catalog: &Catalog,
+) -> Result<Inferred, Error> {
+    let SetExpr::Select(select) = source.body.as_ref() else {
+        return Err(Error::Unsupported {
+            name: name.to_string(),
+            reason: "only a plain SELECT may feed an INSERT (no set operations or CTEs)"
+                .to_string(),
+        });
+    };
+
+    check_projection_against_columns(name, select, insert)?;
+
+    let mut params = Vec::new();
+    // 1. Projection value binds, typed from the target column they feed.
+    for (item, col) in select.projection.iter().zip(&insert.columns) {
+        if projection_is_placeholder(item) {
+            let target = param_for(name, table, &col.value)?;
+            params.push(Param {
+                name: "param".to_string(),
+                ty: target.ty,
+                nullable: target.nullable,
+            });
+        }
+    }
+    // 2. Filter binds, resolved against the SELECT's own FROM scope. A FROM-less
+    //    SELECT (`SELECT ?, ?`) has none.
+    if !select.from.is_empty() {
+        let scope = Scope::build(name, &select.from, catalog)?;
+        select_filter_params(name, source, select, &scope, &mut params)?;
+    }
+
+    let scope = Scope::single(table);
+    let result = returning_columns(name, &scope, insert.returning.as_deref())?;
+    Ok((params, result, Some(table.name.clone())))
+}
+
+/// Guards an `INSERT … SELECT`'s projection so projection value binds line up
+/// with the target columns. A `*` expands to an unknown arity, so it may not sit
+/// alongside a projection bind; an explicit projection must match the column
+/// list one-for-one. Filter binds (`WHERE`/…) are unaffected — they bind no
+/// column position.
+fn check_projection_against_columns(
+    name: &str,
+    select: &Select,
+    insert: &Insert,
+) -> Result<(), Error> {
+    if select.projection.iter().any(is_wildcard) {
+        if select.projection.iter().any(projection_is_placeholder) {
+            return Err(Error::Unsupported {
+                name: name.to_string(),
+                reason: "INSERT … SELECT cannot mix `*` with a bind placeholder in its projection"
+                    .to_string(),
+            });
+        }
+    } else if select.projection.len() != insert.columns.len() {
+        return Err(Error::Unsupported {
+            name: name.to_string(),
+            reason: format!(
+                "INSERT lists {} column(s) but its SELECT projects {}",
+                insert.columns.len(),
+                select.projection.len()
+            ),
+        });
+    }
+    Ok(())
+}
+
+/// Whether a projection item is a bare bind placeholder (`?`) or an aliased one
+/// (`? AS x`) — a value bind in an `INSERT … SELECT`. A placeholder nested in a
+/// larger expression (`? + 1`) is not one: it falls through to the
+/// whole-statement count guard as an unbindable placeholder.
+fn projection_is_placeholder(item: &SelectItem) -> bool {
+    matches!(
+        item,
+        SelectItem::UnnamedExpr(e) | SelectItem::ExprWithAlias { expr: e, .. }
+            if expr::is_placeholder(e)
+    )
+}
+
+/// Whether a projection item is a `*` or `table.*` wildcard.
+fn is_wildcard(item: &SelectItem) -> bool {
+    matches!(
+        item,
+        SelectItem::Wildcard(_) | SelectItem::QualifiedWildcard(..)
+    )
 }
 
 /// Turns a projection (a `SELECT` list or a `RETURNING` list) into result
@@ -646,5 +770,107 @@ mod tests {
             ),
             "got {err:?}"
         );
+    }
+
+    #[test]
+    fn insert_select_params_derive_from_select_not_target_columns() {
+        // The values come from the SELECT, so each `?` is a SELECT bind — named
+        // for the bind site (a generic `param`), not the destination column.
+        // Old behaviour named them after `user_id`/`title`.
+        let q = one(
+            "copy_post",
+            "INSERT INTO posts (user_id, title) SELECT ?, ?;",
+        );
+        assert_eq!(q.kind, Kind::Exec);
+        assert_eq!(q.params.len(), 2);
+        assert_eq!(
+            q.params[0].name, "param",
+            "named for the bind site, not user_id"
+        );
+        assert_eq!(q.params[1].name, "param_2", "deduped, not title");
+        // Type still follows the column the value lands in — a bare `?` has none.
+        assert_eq!(q.params[0].ty.prim, Prim::Number, "user_id is INTEGER");
+        assert_eq!(q.params[1].ty.prim, Prim::String, "title is TEXT");
+    }
+
+    #[test]
+    fn insert_select_filter_bind_names_its_own_column_not_the_target() {
+        // The misleading case the column-derived path got wrong: a projection
+        // `?` (feeding `title`) then a WHERE `?` (filtering `users.name`). The
+        // second bind is `name` — its own clause — not the target column `title`.
+        let q = one(
+            "copy_named",
+            "INSERT INTO posts (user_id, title) \
+             SELECT id, ? FROM users WHERE name = ?;",
+        );
+        assert_eq!(q.params.len(), 2);
+        assert_eq!(
+            q.params[0].name, "param",
+            "projection bind, textually first"
+        );
+        assert_eq!(
+            q.params[1].name, "name",
+            "WHERE bind names its own column, not the target `title`"
+        );
+        assert_eq!(q.params[1].ty.prim, Prim::String);
+    }
+
+    #[test]
+    fn insert_select_with_only_filter_binds() {
+        // No projection placeholder — a straight copy filtered by a WHERE bind.
+        // The column-derived path rejected this (2 columns, 1 placeholder); the
+        // SELECT-derived path infers the single WHERE param.
+        let q = one(
+            "copy_filtered",
+            "INSERT INTO posts (user_id, title) \
+             SELECT id, name FROM users WHERE id = ?;",
+        );
+        assert_eq!(q.params.len(), 1);
+        assert_eq!(q.params[0].name, "id");
+        assert_eq!(q.params[0].ty.prim, Prim::Number);
+    }
+
+    #[test]
+    fn insert_select_projection_arity_must_match_columns() {
+        // Two target columns, one projected value: the INSERT is malformed and
+        // would bind the wrong arity — reject it before emitting.
+        let err = AnalyzedQuery::analyze(
+            "lopsided",
+            "INSERT INTO posts (user_id, title) SELECT ?;",
+            &catalog(),
+            Dialect::Sqlite,
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::Unsupported { .. }), "got {err:?}");
+    }
+
+    #[test]
+    fn insert_select_set_operation_is_unsupported() {
+        // A set-operation source is not a plain SELECT: reject it loudly rather
+        // than fall back to the column-derived (mislabelled) param path.
+        let err = AnalyzedQuery::analyze(
+            "unioned",
+            "INSERT INTO posts (user_id, title) \
+             SELECT ?, ? UNION SELECT user_id, title FROM posts;",
+            &catalog(),
+            Dialect::Sqlite,
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::Unsupported { .. }), "got {err:?}");
+    }
+
+    #[test]
+    fn insert_select_wildcard_mixed_with_bind_is_unsupported() {
+        // `*` expands to an unknown arity, so it cannot sit beside a projection
+        // bind — the column positions no longer line up. Reject it rather than
+        // emit a param against a column position we cannot pin down.
+        let err = AnalyzedQuery::analyze(
+            "star_mixed",
+            "INSERT INTO posts (user_id, title) SELECT *, ? FROM users;",
+            &catalog(),
+            Dialect::Sqlite,
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::Unsupported { .. }), "got {err:?}");
     }
 }
