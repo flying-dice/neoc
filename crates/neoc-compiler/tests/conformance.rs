@@ -248,10 +248,11 @@ fn python_3_10() -> Option<&'static str> {
 /// python: the module `import`s its runtime from `.neoc_lib`, so it must run as
 /// a package member. Build a unique temp package (`neoc_lib.py`, `__init__.py`,
 /// the module as `case.py`), inject `print`/`println` into `builtins` as a
-/// neoc-style formatter so the program's output calls resolve and a `bool`
-/// renders `true`/`false` (matching the target-independent `.stdout` golden, as
-/// Lua and JS do natively) rather than Python's `True`/`False`. Then import
-/// `main` and run it under a Python >= 3.10 interpreter.
+/// neoc-style formatter so the program's output calls resolve, a `bool` renders
+/// `true`/`false` rather than Python's `True`/`False`, and an integer-valued
+/// `float` renders `3` not `3.0` — both matching the target-independent
+/// `.stdout` golden, as Lua and JS do natively. Then import `main` and run it
+/// under a Python >= 3.10 interpreter.
 fn run_python(neoc: &str, case: &str, _neoc_path: &Path) -> Result<String, Failed> {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let python = python_3_10().expect("python >= 3.10 (trial ignored otherwise)");
@@ -275,7 +276,9 @@ fn run_python(neoc: &str, case: &str, _neoc_path: &Path) -> Result<String, Faile
     let driver = "import builtins\n\
          _real_print = print\n\
          def _fmt(x):\n    \
-             return ('true' if x else 'false') if isinstance(x, bool) else str(x)\n\
+             if isinstance(x, bool): return 'true' if x else 'false'\n    \
+             if isinstance(x, float) and x.is_integer(): return str(int(x))\n    \
+             return str(x)\n\
          def _neoc_print(x):\n    \
              _real_print(_fmt(x))\n\
          builtins.print = _neoc_print\n\
