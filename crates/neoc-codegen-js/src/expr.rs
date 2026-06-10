@@ -629,6 +629,23 @@ impl Emitter {
         format!("{{ __struct: \"{name}\"{body}{proto} }}{cast}")
     }
 
+    /// Emit the shared singleton binding for a unit struct `struct S;` — the JS
+    /// analogue of the Lua `local S = { __struct = "S" }` (`lang/DYNAMIC.md`
+    /// §3.1). Unlike a named struct, a unit struct has no `S { … }` call site to
+    /// construct at; its value *is* the type, so the binding is emitted once at
+    /// the declaration and every `S` in value position reads it. A method-bearing
+    /// unit links to its prototype `S$` and widens to its interface under TS,
+    /// exactly as a constructed value does; a data-only unit is a plain tagged
+    /// object.
+    pub(crate) fn emit_unit_struct_binding(&mut self, name: &str, vis: ast::Visibility) {
+        let kw = crate::export_kw(vis);
+        let proto = self.proto_link(name);
+        let cast = self.ts_struct_cast(name);
+        self.line(format!(
+            "{kw}const {name} = {{ __struct: \"{name}\"{proto} }}{cast};"
+        ));
+    }
+
     /// The `, __proto__: Type$` suffix linking a constructed value to its
     /// prototype, or `""` for a data-only type with no prototype
     /// (`lang/DYNAMIC.md` §3.1, §7.1).

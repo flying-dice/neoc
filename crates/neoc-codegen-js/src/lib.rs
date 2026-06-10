@@ -1209,6 +1209,13 @@ impl Emitter {
             ast::ItemKind::Fn(f) => self.emit_fn(None, f, item.vis),
             ast::ItemKind::Struct(s) => {
                 self.ensure_method_slot(&s.name, item.vis);
+                // A unit struct `struct S;` has no constructor call site (§4.4):
+                // its value is the single shared `S` itself. Bind it once here,
+                // after `S$` exists, so a bare `S` in value position reads a real
+                // object instead of dangling (`lang/DYNAMIC.md` §3.1).
+                if matches!(s.body, ast::StructBody::Unit) {
+                    self.emit_unit_struct_binding(&s.name, item.vis);
+                }
                 self.emit_derives(&item.attrs, neoc_ast_derive_target(item));
                 self.emit_traits_tag(&s.name);
             }

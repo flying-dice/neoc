@@ -196,6 +196,7 @@ pub fn emit(
         imported_enum_variants,
         imported_bindings: imported_bindings.iter().cloned().collect(),
         escaped_values: escaped_value_names(module),
+        unit_structs: unit_struct_names(module),
         ..Emitter::default()
     };
     e.emit_module(module);
@@ -292,6 +293,12 @@ pub(crate) struct Emitter {
     /// verbatim. Single-sourced through [`py_ident`]: a name is recorded only
     /// when `py_ident(name) != name`.
     escaped_values: HashSet<String>,
+    /// Struct names with a unit body (`struct S;`). A bare `S` in value position
+    /// constructs its singleton instance `S()` — the Python analogue of the
+    /// Lua/JS shared tagged value (`lang/DYNAMIC.md` §3.1) — mirroring a unit
+    /// enum variant's `V()`. A named/tuple struct is absent: it constructs from a
+    /// literal or call, not a bare path.
+    unit_structs: HashSet<String>,
 }
 
 impl Emitter {
@@ -867,6 +874,21 @@ fn method_type_names(module: &ast::Module) -> HashSet<String> {
         }
     }
     out
+}
+
+/// Struct names with a unit body (`struct S;`), seeding
+/// [`Emitter::is_unit_struct`] so a bare `S` lowers to a construction `S()`.
+fn unit_struct_names(module: &ast::Module) -> HashSet<String> {
+    module
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            ast::ItemKind::Struct(s) if matches!(s.body, ast::StructBody::Unit) => {
+                Some(s.name.clone())
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 /// The module-level value names that were escaped at their definition or

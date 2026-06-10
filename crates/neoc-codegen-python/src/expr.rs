@@ -592,6 +592,13 @@ impl Emitter {
                 if name == "None" {
                     return "None_()".to_string();
                 }
+                // A bare unit struct `S` is a construction, not a class
+                // reference: it builds the singleton instance `S()`, the analogue
+                // of a unit enum variant's `V()` (`lang/DYNAMIC.md` §3.1). The
+                // field-less frozen dataclass makes every construction equal.
+                if self.is_unit_struct(&name) {
+                    return format!("{}()", crate::py_ident(&name));
+                }
                 // A reference to a module-level/imported value whose name was
                 // escaped at its definition (`list` → `list_`) emits the escaped
                 // form, so the call site names the real binding. A local of the
@@ -641,6 +648,12 @@ impl Emitter {
 
     pub(crate) fn type_has_methods(&self, name: &str) -> bool {
         self.method_types.contains(name)
+    }
+
+    /// Whether `name` is a unit struct (`struct S;`), so a bare `S` in value
+    /// position constructs its singleton instance `S()` (`lang/DYNAMIC.md` §3.1).
+    pub(crate) fn is_unit_struct(&self, name: &str) -> bool {
+        self.unit_structs.contains(name)
     }
 
     pub(crate) fn variant_shape(
