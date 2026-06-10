@@ -68,6 +68,19 @@ impl Emitter {
         }
     }
 
+    /// Emit a hoisted closure's body as the suite of its `def`. A block lowers
+    /// like any function body (statements, then `return` the trailing value); any
+    /// other value expression — the `match`/`if`/`?` that hoisted us here — binds
+    /// its result and returns it.
+    fn emit_closure_body(&mut self, body: &ast::Expr) {
+        if let ast::ExprKind::Block(b) = &body.kind {
+            self.emit_block_as_body(b);
+        } else {
+            let v = self.emit_expr(body);
+            self.line(format!("return {v}"));
+        }
+    }
+
     fn line_count(&self) -> usize {
         self.lines_len()
     }
@@ -390,8 +403,21 @@ impl Emitter {
             ast::ExprKind::Match { scrutinee, arms } => self.hoist_match(scrutinee, arms),
             ast::ExprKind::Closure { params, body } => {
                 let ps: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
-                let b = self.emit_expr(body);
-                format!("(lambda {}: {b})", ps.join(", "))
+                // Python's `lambda` holds a single expression. A closure whose
+                // body needs statements — a block, `match`, or `?` — hoists to a
+                // nested `def` so those statements run per call with the
+                // parameters in scope. Lowering the body inline (as the `lambda`
+                // arm does) would hoist them into the *enclosing* suite, run once
+                // at closure creation with the parameters unbound (§4.9).
+                if self.expr_hoists(body) {
+                    let name = self.fresh_tmp("_closure");
+                    self.line(format!("def {name}({}):", ps.join(", ")));
+                    self.indented(|em| em.emit_closure_body(body));
+                    name
+                } else {
+                    let b = self.emit_expr(body);
+                    format!("(lambda {}: {b})", ps.join(", "))
+                }
             }
             ast::ExprKind::MethodCall {
                 receiver,
