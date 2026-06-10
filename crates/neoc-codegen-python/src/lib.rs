@@ -266,6 +266,8 @@ pub(crate) struct Emitter {
     /// Whether a struct functional-update used `dataclasses.replace` (so it is
     /// imported in the preamble).
     uses_replace: bool,
+    /// Whether any `#[test]` fn registered on `__tests` (gates its decl, §6.5).
+    uses_tests: bool,
     /// The public surface, accumulated for `__all__`.
     public: Vec<String>,
     try_seq: usize,
@@ -397,6 +399,12 @@ impl Emitter {
 
         let mut out = preamble;
         out.push(String::new());
+        // The module `__tests` table a `#[test]` fn registers on (§6.5), ahead of
+        // the registrations the test fns emit inline.
+        if self.uses_tests {
+            out.push("__tests = {}".to_string());
+            out.push(String::new());
+        }
         // Module-level `TypeVar` declarations for every generic parameter.
         if !self.type_vars.is_empty() {
             for tv in &self.type_vars {
@@ -468,7 +476,18 @@ impl Emitter {
 
     fn emit_item(&mut self, item: &ast::Item) {
         match &item.kind {
-            ast::ItemKind::Fn(f) => self.emit_fn(None, f, item.vis),
+            ast::ItemKind::Fn(f) => {
+                self.emit_fn(None, f, item.vis);
+                // §6.5: a `#[test]` fn additionally registers on `__tests`.
+                if ast::is_test(&item.attrs) {
+                    self.uses_tests = true;
+                    self.line(format!(
+                        "__tests[\"{}\"] = {}",
+                        f.sig.name,
+                        py_ident(&f.sig.name)
+                    ));
+                }
+            }
             ast::ItemKind::Struct(s) => self.emit_struct(item, s),
             ast::ItemKind::Enum(e) => self.emit_enum(item, e),
             ast::ItemKind::Const(c) => self.emit_const(c, item.vis),

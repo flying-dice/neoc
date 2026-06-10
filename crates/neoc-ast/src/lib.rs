@@ -736,6 +736,16 @@ pub fn derive_names(attrs: &[Attribute]) -> Vec<String> {
     names
 }
 
+/// Whether `attrs` carries a `#[test]` attribute (`lang/DYNAMIC.md` §6.5). Such a
+/// function lowers normally and additionally registers itself on the module-level
+/// `__tests` table the runtime walks (§7).
+#[must_use]
+pub fn is_test(attrs: &[Attribute]) -> bool {
+    attrs
+        .iter()
+        .any(|attr| attr.items.iter().any(|item| item.name == "test"))
+}
+
 /// Maps each `struct`/`enum` to the set of traits it implements, transitively
 /// closed over supertraits — the `__traits` runtime tag (`DYNAMIC.md`). A trait
 /// impl (`impl Trait for Type`) and a `#[derive(Trait)]` both count; `trait A:
