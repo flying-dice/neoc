@@ -849,6 +849,8 @@ pub(crate) struct Emitter {
     method_types: HashSet<String>,
     /// Whether any `__t` trait-registry entry was emitted (gates its prelude).
     uses_traits: bool,
+    /// Whether any `#[test]` fn registered on `__tests` (gates its prelude, §6.5).
+    uses_tests: bool,
     /// Per-type trait set (transitively closed over supertraits) for the
     /// `__t` trait registry — `__t.Type = [ … ]` keyed by type name
     /// (`DYNAMIC.md`). Inert until the runtime trait-enforcement work (#75).
@@ -1099,6 +1101,16 @@ impl Emitter {
                 preamble.push(TRAITS_PRELUDE.to_string());
             }
         }
+        if self.uses_tests {
+            // The module `__tests` table a `#[test]` fn registers on (§6.5). Typed
+            // under TS so each `__tests.fn = fn` entry is legal; plain JS keeps the
+            // bare `{}`, byte-identical.
+            if self.header_style == HeaderStyle::Ts {
+                preamble.push("const __tests: Record<string, () => void> = {};".to_string());
+            } else {
+                preamble.push("const __tests = {};".to_string());
+            }
+        }
         if self.uses_result {
             // The `Result`/`Option` runtime lives in the shared `neoc-lib.js`
             // at the project source root; import its constructors and prototypes
@@ -1206,9 +1218,23 @@ impl Emitter {
 
     fn emit_item(&mut self, item: &ast::Item) {
         match &item.kind {
-            ast::ItemKind::Fn(f) => self.emit_fn(None, f, item.vis),
+            ast::ItemKind::Fn(f) => {
+                self.emit_fn(None, f, item.vis);
+                // §6.5: a `#[test]` fn additionally registers on `__tests`.
+                if ast::is_test(&item.attrs) {
+                    self.uses_tests = true;
+                    self.line(format!("__tests.{0} = {0};", f.sig.name));
+                }
+            }
             ast::ItemKind::Struct(s) => {
                 self.ensure_method_slot(&s.name, item.vis);
+                // A unit struct `struct S;` has no constructor call site (§4.4):
+                // its value is the single shared `S` itself. Bind it once here,
+                // after `S$` exists, so a bare `S` in value position reads a real
+                // object instead of dangling (`lang/DYNAMIC.md` §3.1).
+                if matches!(s.body, ast::StructBody::Unit) {
+                    self.emit_unit_struct_binding(&s.name, item.vis);
+                }
                 self.emit_derives(&item.attrs, neoc_ast_derive_target(item));
                 self.emit_traits_tag(&s.name);
             }

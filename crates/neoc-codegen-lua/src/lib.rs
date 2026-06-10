@@ -522,6 +522,8 @@ pub(crate) struct Emitter {
     indent: usize,
     diagnostics: Vec<Diagnostic>,
     uses_result: bool,
+    /// Whether any `#[test]` fn registered on `__tests` (gates its decl, §6.5).
+    uses_tests: bool,
     /// Enum declarations, used to resolve enum-variant paths and to tell a
     /// variant constructor apart from an ordinary call.
     enums: EnumIndex,
@@ -742,6 +744,14 @@ impl Emitter {
         // recorded body origin, or 1 when the body produced none.
         let preamble_origin = self.line_origins.first().copied().unwrap_or(1);
 
+        // The module `__tests` table a `#[test]` fn registers on (§6.5), declared
+        // ahead of its registrations and of any prelude/imports prepended below.
+        if self.uses_tests {
+            let mut out = vec!["local __tests = {}".to_string(), String::new()];
+            out.append(&mut self.lines);
+            self.lines = out;
+            self.prepend_origins(tracking, 2, preamble_origin);
+        }
         if self.uses_result {
             let prelude_lines = RESULT_PRELUDE.split('\n').count() + 1;
             let mut out = vec![RESULT_PRELUDE.to_string(), String::new()];
@@ -945,7 +955,15 @@ impl Emitter {
 
     fn emit_item_kind(&mut self, item: &ast::Item) {
         match &item.kind {
-            ast::ItemKind::Fn(f) => self.emit_fn(None, f, item.vis),
+            ast::ItemKind::Fn(f) => {
+                self.emit_fn(None, f, item.vis);
+                // §6.5: a `#[test]` fn additionally registers on `__tests`; the
+                // table itself is declared in the preamble (`finish_with_map`).
+                if ast::is_test(&item.attrs) {
+                    self.uses_tests = true;
+                    self.line(format!("__tests[\"{0}\"] = {0}", f.sig.name));
+                }
+            }
             ast::ItemKind::Struct(s) => {
                 self.emit_struct(s, item.vis);
                 self.emit_derives(&item.attrs, neoc_macros::DeriveTarget::Struct(s));

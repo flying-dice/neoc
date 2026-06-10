@@ -1,0 +1,32 @@
+// DYNAMIC.md §3.1: a unit struct `struct S;` is a single shared tagged value —
+// `local S = { __struct = "S" }` (Lua), the singleton `{ __struct: "S",
+// __proto__: S$ }` (JS), `S()` (Python). A bare `S` in value position *is* that
+// value, not a type reference; `impl` methods (§3.3) attach to it and dispatch
+// through its own tag/prototype. Two units sharing a method name prove dispatch
+// is per-type: `Sun` shines "day", `Moon` "night".
+extern {
+    fn println(s: string);
+}
+
+struct Sun;
+
+struct Moon;
+
+impl Sun {
+    fn shine(self) -> string {
+        "day"
+    }
+}
+
+impl Moon {
+    fn shine(self) -> string {
+        "night"
+    }
+}
+
+fn main() {
+    let a = Sun;
+    let b = Moon;
+    println(a.shine());
+    println(b.shine());
+}

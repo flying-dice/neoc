@@ -1,0 +1,29 @@
+// DYNAMIC.md §8: a generic function with a trait bound (`T: Doubler`). The bound
+// is a compile-time obligation the checker discharges against `impl Doubler for
+// Num`; at runtime it is erased — `x.double()` lowers to the same dynamic method
+// lookup as any call. Instantiated at `Num`, so `double` returns `21 + 21`.
+extern {
+    fn println(n: number);
+}
+
+trait Doubler {
+    fn double(self) -> number;
+}
+
+struct Num {
+    v: number,
+}
+
+impl Doubler for Num {
+    fn double(self) -> number {
+        self.v + self.v
+    }
+}
+
+fn twice<T: Doubler>(x: T) -> number {
+    x.double()
+}
+
+fn main() {
+    println(twice(Num { v: 21 }));
+}

@@ -1,0 +1,15 @@
+// DYNAMIC.md §2: a `pub` item lowers to a global (`function f`); a private item
+// lowers to a `local`. Both are callable identically in-module — the difference
+// is host visibility, observable in the emitted source.
+extern {
+    fn println(n: number);
+}
+
+pub fn add(a: number, b: number) -> number {
+    a + b
+}
+
+fn main() {
+    println(add(2, 3));
+    println(add(10, 20));
+}

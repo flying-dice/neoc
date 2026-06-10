@@ -1,0 +1,14 @@
+// DYNAMIC.md §4.9: `for x in a..=b { … }` lowers to a numeric `for x = a, b` —
+// the inclusive `..=` omits the `- 1` of the half-open `..`. `1..=5` visits
+// 1,2,3,4,5, summing to 15.
+extern {
+    fn println(n: number);
+}
+
+fn main() {
+    let sum = 0;
+    for i in 1..=5 {
+        sum = sum + i;
+    }
+    println(sum);
+}

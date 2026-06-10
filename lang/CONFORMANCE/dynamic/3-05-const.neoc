@@ -1,0 +1,12 @@
+// DYNAMIC.md §3.5: `const C: τ = e` lowers to `local C = e` (a `pub const` to a
+// global). The constant is an ordinary module-scope binding.
+extern {
+    fn println(n: number);
+}
+
+const LIMIT: number = 10;
+
+fn main() {
+    println(LIMIT);
+    println(LIMIT + 5);
+}

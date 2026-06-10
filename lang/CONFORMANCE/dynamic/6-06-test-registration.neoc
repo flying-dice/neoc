@@ -1,0 +1,30 @@
+// DYNAMIC.md §6.5: a `#[test]` fn lowers normally AND registers itself on the
+// module-level `__tests` table the runtime walks (§7) — `__tests["name"] = name`.
+// No prior case exercised it; no backend emitted the registration.
+//
+// `main` calls nothing on purpose: the two `#[test]` fns run only because they
+// registered on `__tests` and the conformance runtime (§7) walks it in sorted
+// name order and invokes each — so the stdout below is produced by the
+// registration itself, not by `main`. Delete or mis-key either `__tests[...]`
+// line in a golden and that test stops running: stdout diverges, the run-trial
+// fails. The ordinary `fn main` gets no entry — registration is gated on the
+// attribute.
+//
+// The Rust anchor has no runtime `__tests` (Rust `#[test]` is compile-time, no
+// runtime-observable effect), so it omits the attribute and calls both fns from
+// `main` directly to reproduce the same stdout, as the derive cases do.
+extern {
+    fn println(s: string);
+}
+
+#[test]
+fn checks_alpha() {
+    println("alpha-ran");
+}
+
+#[test]
+fn checks_beta() {
+    println("beta-ran");
+}
+
+fn main() {}

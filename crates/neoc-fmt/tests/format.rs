@@ -166,6 +166,26 @@ impl Container for Bag {
 }
 
 #[test]
+fn supertrait_bounds_survive_formatting() {
+    // Regression: `neoc fmt` dropped a trait's supertrait bound — `trait B: A`
+    // round-tripped to `trait B` because `trait_declaration` ignored the parsed
+    // `supertraits` field. Same dropped-parsed-field class as the #82
+    // associated-type bug (which got `associated_types_in_trait_and_impl`); this
+    // fix had only the corpus no-op gate, lost the moment 8-04 is renamed.
+    let single = "trait Greet:Show{fn hi(self)->string;}";
+    assert_eq!(
+        format(single).unwrap(),
+        "trait Greet: Show {\n    fn hi(self) -> string;\n}\n"
+    );
+    assert_idempotent(single);
+
+    // Generic trait, multiple bounds: order and `+` join preserved.
+    let multi = "trait B<T>:A+C{}";
+    assert_eq!(format(multi).unwrap(), "trait B<T>: A + C {}\n");
+    assert_idempotent(multi);
+}
+
+#[test]
 fn fn_with_leading_and_trailing_comments() {
     let messy = "\
 // leads the function

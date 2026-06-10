@@ -193,12 +193,37 @@ fn run_rust(_neoc: &str, case: &str, neoc_path: &Path) -> Result<String, Failed>
     }
 }
 
+/// Epilogue run after `main()` so a `#[test]`-bearing case's run-trial actually
+/// exercises §6.5 registration. The conformance run stands in for the §7 runtime:
+/// it walks the module's `__tests` table in sorted-name order and invokes each
+/// registered fn. Such a case's `main` therefore calls nothing itself — the walk
+/// runs the tests — so dropping or mis-keying a registration changes observable
+/// stdout and fails the trial, which the emit golden alone cannot catch. Guarded
+/// on `__tests` existing, so it is a no-op for every case that emits no test
+/// table (all but `6-06`). The Rust anchor has no runtime `__tests`; its `.rs`
+/// calls the tests from `main` directly to reproduce the same stdout.
+const TESTS_WALK_LUAU: &str = r"if __tests then
+  local __names = {}
+  for __k in pairs(__tests) do __names[#__names + 1] = __k end
+  table.sort(__names)
+  for _, __k in ipairs(__names) do __tests[__k]() end
+end
+";
+
+/// JS/TS form of [`TESTS_WALK_LUAU`]. `typeof` keeps it a safe no-op when the
+/// module declared no `__tests`.
+const TESTS_WALK_TS: &str = r"if (typeof __tests !== 'undefined') {
+  for (const __k of Object.keys(__tests).sort()) __tests[__k]();
+}
+";
+
 /// luau: the self-typed Luau module is self-contained — inlined runtime and
 /// inline `Result`/`Option` type aliases, no `neoc-lib`. Alias `println` to the
-/// built-in `print`, append `main()`, and run under the `luau` CLI.
+/// built-in `print`, append `main()` then the `#[test]` walk, and run under the
+/// `luau` CLI.
 fn run_luau(neoc: &str, case: &str, _neoc_path: &Path) -> Result<String, Failed> {
     let output = emit(neoc, Target::Luau, case)?;
-    let program = format!("println = print\n{output}\nmain()\n");
+    let program = format!("println = print\n{output}\nmain()\n{TESTS_WALK_LUAU}");
     run_program("luau", &program, "luau", case, "luau")
 }
 
@@ -207,7 +232,8 @@ fn run_luau(neoc: &str, case: &str, _neoc_path: &Path) -> Result<String, Failed>
 /// `Result`/`Option` `import`s the shared runtime from `./neoc-lib`, so the
 /// harness writes `neoc-lib.js` into the temp directory beside the `.ts` (as
 /// `run_js` does) before running. `print` / `println` route through
-/// `console.log`.
+/// `console.log`. After `main();` comes the `#[test]` walk (see
+/// [`TESTS_WALK_LUAU`]).
 fn run_ts(neoc: &str, case: &str, _neoc_path: &Path) -> Result<String, Failed> {
     let output = emit(neoc, Target::Ts, case)?;
     let lib_path = std::env::temp_dir().join("neoc-lib.js");
@@ -215,7 +241,7 @@ fn run_ts(neoc: &str, case: &str, _neoc_path: &Path) -> Result<String, Failed> {
         .map_err(|e| Failed::from(format!("case `{case}`: write neoc-lib.js: {e}")))?;
     let harness =
         "globalThis.print = (x) => console.log(x);\nglobalThis.println = globalThis.print;\n";
-    let program = format!("{harness}{output}\nmain();\n");
+    let program = format!("{harness}{output}\nmain();\n{TESTS_WALK_TS}");
     run_program("bun", &program, "ts", case, "ts")
 }
 
@@ -248,10 +274,12 @@ fn python_3_10() -> Option<&'static str> {
 /// python: the module `import`s its runtime from `.neoc_lib`, so it must run as
 /// a package member. Build a unique temp package (`neoc_lib.py`, `__init__.py`,
 /// the module as `case.py`), inject `print`/`println` into `builtins` as a
-/// neoc-style formatter so the program's output calls resolve and a `bool`
-/// renders `true`/`false` (matching the target-independent `.stdout` golden, as
-/// Lua and JS do natively) rather than Python's `True`/`False`. Then import
-/// `main` and run it under a Python >= 3.10 interpreter.
+/// neoc-style formatter so the program's output calls resolve, a `bool` renders
+/// `true`/`false` rather than Python's `True`/`False`, and an integer-valued
+/// `float` renders `3` not `3.0` — both matching the target-independent
+/// `.stdout` golden, as Lua and JS do natively. Then import the case, run
+/// `main()` followed by the `#[test]` walk (see [`TESTS_WALK_LUAU`]), under a
+/// Python >= 3.10 interpreter.
 fn run_python(neoc: &str, case: &str, _neoc_path: &Path) -> Result<String, Failed> {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let python = python_3_10().expect("python >= 3.10 (trial ignored otherwise)");
@@ -272,16 +300,25 @@ fn run_python(neoc: &str, case: &str, _neoc_path: &Path) -> Result<String, Faile
         neoc_codegen_python::neoc_lib_py().as_bytes(),
     )?;
     write(pkg.join("case.py"), output.as_bytes())?;
-    let driver = "import builtins\n\
-         _real_print = print\n\
-         def _fmt(x):\n    \
-             return ('true' if x else 'false') if isinstance(x, bool) else str(x)\n\
-         def _neoc_print(x):\n    \
-             _real_print(_fmt(x))\n\
-         builtins.print = _neoc_print\n\
-         builtins.println = _neoc_print\n\
-         from genpkg.case import main\n\
-         main()\n";
+    let driver = r#"import builtins
+_real_print = print
+def _fmt(x):
+    if isinstance(x, bool): return 'true' if x else 'false'
+    if isinstance(x, float) and x.is_integer(): return str(int(x))
+    return str(x)
+def _neoc_print(x):
+    _real_print(_fmt(x))
+builtins.print = _neoc_print
+builtins.println = _neoc_print
+import genpkg.case as case
+case.main()
+# §6.5/§7: walk the module's __tests registry in sorted-name order and run each,
+# so a dropped or mis-keyed registration changes stdout and fails the trial.
+__tests = getattr(case, "__tests", None)
+if __tests is not None:
+    for __k in sorted(__tests):
+        __tests[__k]()
+"#;
     write(dir.join("driver.py"), driver.as_bytes())?;
 
     let result = Command::new(python)

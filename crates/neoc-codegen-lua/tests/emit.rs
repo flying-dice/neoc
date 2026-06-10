@@ -946,14 +946,17 @@ fn while_in_value_position_diagnoses() {
 }
 
 #[test]
-fn range_in_value_position_diagnoses() {
-    assert_value_position_diagnostic(
-        ast::ExprKind::Range {
-            start: Box::new(e(ast::ExprKind::Path(vec!["a".into()]))),
-            end: Box::new(e(ast::ExprKind::Path(vec!["b".into()]))),
-            inclusive: false,
-        },
-        "range expressions are only supported as a `for` iterable",
+fn range_in_value_position_emits_its_list() {
+    // A range outside a `for` head is a value: the list of its numbers (§4.3).
+    // `lua` asserts the emit raises no diagnostic; the body builds the table.
+    let out = lua(&fn_value_body(e(ast::ExprKind::Range {
+        start: Box::new(e(ast::ExprKind::Path(vec!["a".into()]))),
+        end: Box::new(e(ast::ExprKind::Path(vec!["b".into()]))),
+        inclusive: false,
+    })));
+    assert!(
+        out.contains("for __i = a, (b) - 1 do __r[#__r + 1] = __i"),
+        "{out}"
     );
 }
 

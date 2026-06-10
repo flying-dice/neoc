@@ -196,6 +196,7 @@ pub fn emit(
         imported_enum_variants,
         imported_bindings: imported_bindings.iter().cloned().collect(),
         escaped_values: escaped_value_names(module),
+        unit_structs: unit_struct_names(module),
         ..Emitter::default()
     };
     e.emit_module(module);
@@ -265,6 +266,8 @@ pub(crate) struct Emitter {
     /// Whether a struct functional-update used `dataclasses.replace` (so it is
     /// imported in the preamble).
     uses_replace: bool,
+    /// Whether any `#[test]` fn registered on `__tests` (gates its decl, §6.5).
+    uses_tests: bool,
     /// The public surface, accumulated for `__all__`.
     public: Vec<String>,
     try_seq: usize,
@@ -292,6 +295,12 @@ pub(crate) struct Emitter {
     /// verbatim. Single-sourced through [`py_ident`]: a name is recorded only
     /// when `py_ident(name) != name`.
     escaped_values: HashSet<String>,
+    /// Struct names with a unit body (`struct S;`). A bare `S` in value position
+    /// constructs its singleton instance `S()` — the Python analogue of the
+    /// Lua/JS shared tagged value (`lang/DYNAMIC.md` §3.1) — mirroring a unit
+    /// enum variant's `V()`. A named/tuple struct is absent: it constructs from a
+    /// literal or call, not a bare path.
+    unit_structs: HashSet<String>,
 }
 
 impl Emitter {
@@ -390,6 +399,12 @@ impl Emitter {
 
         let mut out = preamble;
         out.push(String::new());
+        // The module `__tests` table a `#[test]` fn registers on (§6.5), ahead of
+        // the registrations the test fns emit inline.
+        if self.uses_tests {
+            out.push("__tests = {}".to_string());
+            out.push(String::new());
+        }
         // Module-level `TypeVar` declarations for every generic parameter.
         if !self.type_vars.is_empty() {
             for tv in &self.type_vars {
@@ -461,7 +476,18 @@ impl Emitter {
 
     fn emit_item(&mut self, item: &ast::Item) {
         match &item.kind {
-            ast::ItemKind::Fn(f) => self.emit_fn(None, f, item.vis),
+            ast::ItemKind::Fn(f) => {
+                self.emit_fn(None, f, item.vis);
+                // §6.5: a `#[test]` fn additionally registers on `__tests`.
+                if ast::is_test(&item.attrs) {
+                    self.uses_tests = true;
+                    self.line(format!(
+                        "__tests[\"{}\"] = {}",
+                        f.sig.name,
+                        py_ident(&f.sig.name)
+                    ));
+                }
+            }
             ast::ItemKind::Struct(s) => self.emit_struct(item, s),
             ast::ItemKind::Enum(e) => self.emit_enum(item, e),
             ast::ItemKind::Const(c) => self.emit_const(c, item.vis),
@@ -867,6 +893,21 @@ fn method_type_names(module: &ast::Module) -> HashSet<String> {
         }
     }
     out
+}
+
+/// Struct names with a unit body (`struct S;`), seeding
+/// [`Emitter::is_unit_struct`] so a bare `S` lowers to a construction `S()`.
+fn unit_struct_names(module: &ast::Module) -> HashSet<String> {
+    module
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            ast::ItemKind::Struct(s) if matches!(s.body, ast::StructBody::Unit) => {
+                Some(s.name.clone())
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 /// The module-level value names that were escaped at their definition or

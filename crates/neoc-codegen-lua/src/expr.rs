@@ -287,6 +287,19 @@ impl Emitter {
         self.line("end");
     }
 
+    /// Lower a range used as a value (outside a `for` head) to its list of
+    /// numbers (§4.3). Lua has no comprehension, so build the table in an IIFE.
+    /// The `for` head lowers to numeric bounds with no allocation (see
+    /// `emit_for`); the inclusive/exclusive split mirrors it.
+    fn emit_range_value(&mut self, start: &ast::Expr, end: &ast::Expr, inclusive: bool) -> String {
+        let lo = self.emit_expr(start);
+        let hi = self.emit_expr(end);
+        let hi = if inclusive { hi } else { format!("({hi}) - 1") };
+        format!(
+            "(function() local __r = {{}} for __i = {lo}, {hi} do __r[#__r + 1] = __i end return __r end)()"
+        )
+    }
+
     fn emit_if_stmt(&mut self, e: &ast::Expr) {
         let ast::ExprKind::If { cond, then, else_ } = &e.kind else {
             return;
@@ -408,10 +421,11 @@ impl Emitter {
             }
             ast::ExprKind::Match { scrutinee, arms } => self.emit_match_value(scrutinee, arms),
             ast::ExprKind::Try(inner) => self.emit_try(inner),
-            ast::ExprKind::Range { .. } => {
-                self.error("range expressions are only supported as a `for` iterable");
-                "nil".to_string()
-            }
+            ast::ExprKind::Range {
+                start,
+                end,
+                inclusive,
+            } => self.emit_range_value(start, end, *inclusive),
             ast::ExprKind::Assign { .. } => {
                 self.error("assignment is a statement, not an expression value");
                 "nil".to_string()

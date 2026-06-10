@@ -265,6 +265,19 @@ impl Emitter {
         self.line("}");
     }
 
+    /// Lower a range used as a value (outside a `for` head) to its array of
+    /// numbers (§4.3): an arrow IIFE that binds the bounds once. The `for` head
+    /// lowers to a numeric loop with no allocation (see `emit_for`); the
+    /// comparison mirrors it.
+    fn emit_range_value(&mut self, start: &ast::Expr, end: &ast::Expr, inclusive: bool) -> String {
+        let lo = self.emit_expr(start);
+        let hi = self.emit_expr(end);
+        let cmp = if inclusive { "<=" } else { "<" };
+        format!(
+            "((s, e) => {{ const r = []; for (let i = s; i {cmp} e; i++) r.push(i); return r; }})({lo}, {hi})"
+        )
+    }
+
     fn emit_if_stmt(&mut self, e: &ast::Expr) {
         let ast::ExprKind::If { cond, then, else_ } = &e.kind else {
             return;
@@ -416,10 +429,11 @@ impl Emitter {
             }
             ast::ExprKind::Match { scrutinee, arms } => self.emit_match_value(scrutinee, arms),
             ast::ExprKind::Try(inner) => self.emit_try(inner),
-            ast::ExprKind::Range { .. } => {
-                self.error("range expressions are only supported as a `for` iterable");
-                "undefined".to_string()
-            }
+            ast::ExprKind::Range {
+                start,
+                end,
+                inclusive,
+            } => self.emit_range_value(start, end, *inclusive),
             ast::ExprKind::Assign { .. } => {
                 self.error("assignment is a statement, not an expression value");
                 "undefined".to_string()
@@ -627,6 +641,23 @@ impl Emitter {
         let proto = self.proto_link(name);
         let cast = self.ts_struct_cast(name);
         format!("{{ __struct: \"{name}\"{body}{proto} }}{cast}")
+    }
+
+    /// Emit the shared singleton binding for a unit struct `struct S;` — the JS
+    /// analogue of the Lua `local S = { __struct = "S" }` (`lang/DYNAMIC.md`
+    /// §3.1). Unlike a named struct, a unit struct has no `S { … }` call site to
+    /// construct at; its value *is* the type, so the binding is emitted once at
+    /// the declaration and every `S` in value position reads it. A method-bearing
+    /// unit links to its prototype `S$` and widens to its interface under TS,
+    /// exactly as a constructed value does; a data-only unit is a plain tagged
+    /// object.
+    pub(crate) fn emit_unit_struct_binding(&mut self, name: &str, vis: ast::Visibility) {
+        let kw = crate::export_kw(vis);
+        let proto = self.proto_link(name);
+        let cast = self.ts_struct_cast(name);
+        self.line(format!(
+            "{kw}const {name} = {{ __struct: \"{name}\"{proto} }}{cast};"
+        ));
     }
 
     /// The `, __proto__: Type$` suffix linking a constructed value to its

@@ -458,6 +458,10 @@ impl<'a> Printer<'a> {
         if let Some(generics) = node.child_by_field_name("generics") {
             self.generic_params(generics);
         }
+        if let Some(supertraits) = node.child_by_field_name("supertraits") {
+            self.push(": ");
+            self.bounds(supertraits);
+        }
         self.push(" ");
         self.braced_items(node, "trait_item", Printer::trait_item);
     }

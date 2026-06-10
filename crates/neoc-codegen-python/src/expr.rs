@@ -68,6 +68,19 @@ impl Emitter {
         }
     }
 
+    /// Emit a hoisted closure's body as the suite of its `def`. A block lowers
+    /// like any function body (statements, then `return` the trailing value); any
+    /// other value expression — the `match`/`if`/`?` that hoisted us here — binds
+    /// its result and returns it.
+    fn emit_closure_body(&mut self, body: &ast::Expr) {
+        if let ast::ExprKind::Block(b) = &body.kind {
+            self.emit_block_as_body(b);
+        } else {
+            let v = self.emit_expr(body);
+            self.line(format!("return {v}"));
+        }
+    }
+
     fn line_count(&self) -> usize {
         self.lines_len()
     }
@@ -261,6 +274,16 @@ impl Emitter {
         self.indented(|em| em.emit_block_stmts(body));
     }
 
+    /// Lower a range used as a value (outside a `for` head) to its list of
+    /// numbers (§4.3). `range` is half-open, so an inclusive range adds 1 to the
+    /// bound — mirroring `emit_for`.
+    fn emit_range_value(&mut self, start: &ast::Expr, end: &ast::Expr, inclusive: bool) -> String {
+        let lo = self.emit_expr(start);
+        let hi = self.emit_expr(end);
+        let hi = if inclusive { format!("{hi} + 1") } else { hi };
+        format!("list(range({lo}, {hi}))")
+    }
+
     /// Emit an `if` as a statement. When `assign` is `Some(name)`, each branch's
     /// trailing value is assigned to `name` (the hoist for a value-position
     /// `if`); otherwise branches run for effect.
@@ -390,8 +413,21 @@ impl Emitter {
             ast::ExprKind::Match { scrutinee, arms } => self.hoist_match(scrutinee, arms),
             ast::ExprKind::Closure { params, body } => {
                 let ps: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
-                let b = self.emit_expr(body);
-                format!("(lambda {}: {b})", ps.join(", "))
+                // Python's `lambda` holds a single expression. A closure whose
+                // body needs statements — a block, `match`, or `?` — hoists to a
+                // nested `def` so those statements run per call with the
+                // parameters in scope. Lowering the body inline (as the `lambda`
+                // arm does) would hoist them into the *enclosing* suite, run once
+                // at closure creation with the parameters unbound (§4.9).
+                if self.expr_hoists(body) {
+                    let name = self.fresh_tmp("_closure");
+                    self.line(format!("def {name}({}):", ps.join(", ")));
+                    self.indented(|em| em.emit_closure_body(body));
+                    name
+                } else {
+                    let b = self.emit_expr(body);
+                    format!("(lambda {}: {b})", ps.join(", "))
+                }
             }
             ast::ExprKind::MethodCall {
                 receiver,
@@ -411,10 +447,11 @@ impl Emitter {
                 format!("{recv}.{method}({a})")
             }
             ast::ExprKind::Try(inner) => self.emit_try(inner),
-            ast::ExprKind::Range { .. } => {
-                self.error("range expressions are only supported as a `for` iterable");
-                "None".to_string()
-            }
+            ast::ExprKind::Range {
+                start,
+                end,
+                inclusive,
+            } => self.emit_range_value(start, end, *inclusive),
             ast::ExprKind::Assign { .. } => {
                 self.error("assignment is a statement, not an expression value");
                 "None".to_string()
@@ -592,6 +629,13 @@ impl Emitter {
                 if name == "None" {
                     return "None_()".to_string();
                 }
+                // A bare unit struct `S` is a construction, not a class
+                // reference: it builds the singleton instance `S()`, the analogue
+                // of a unit enum variant's `V()` (`lang/DYNAMIC.md` §3.1). The
+                // field-less frozen dataclass makes every construction equal.
+                if self.is_unit_struct(&name) {
+                    return format!("{}()", crate::py_ident(&name));
+                }
                 // A reference to a module-level/imported value whose name was
                 // escaped at its definition (`list` → `list_`) emits the escaped
                 // form, so the call site names the real binding. A local of the
@@ -641,6 +685,12 @@ impl Emitter {
 
     pub(crate) fn type_has_methods(&self, name: &str) -> bool {
         self.method_types.contains(name)
+    }
+
+    /// Whether `name` is a unit struct (`struct S;`), so a bare `S` in value
+    /// position constructs its singleton instance `S()` (`lang/DYNAMIC.md` §3.1).
+    pub(crate) fn is_unit_struct(&self, name: &str) -> bool {
+        self.unit_structs.contains(name)
     }
 
     pub(crate) fn variant_shape(
