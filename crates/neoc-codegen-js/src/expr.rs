@@ -195,7 +195,7 @@ impl Emitter {
             ast::ExprKind::Break => self.line("break;"),
             ast::ExprKind::Continue => self.line("continue;"),
             ast::ExprKind::Assign { target, op, value } => {
-                let t = self.emit_expr(target);
+                let t = self.emit_assign_target(target, *op);
                 let v = self.emit_expr(value);
                 let sym = match op {
                     ast::AssignOp::Assign => "=",
@@ -333,6 +333,25 @@ impl Emitter {
         } else {
             self.line("}");
         }
+    }
+
+    /// Emit an assignment target (l-value). Identical to [`emit_expr`] except a
+    /// list-index target under a *pure* write (`=`) drops the TS non-null
+    /// assertion the read position carries: the element is stored, not read, so
+    /// the `noUncheckedIndexedAccess` guard (`xs[i]!`) is dead on the l-value —
+    /// `xs[i] = v`. A *compound* write (`+=` etc.) first reads the element
+    /// (`e[i] += v` ⇒ `e[i] = e[i] + v`, `lang/DYNAMIC.md` §9.3), so its target
+    /// keeps the assertion via `emit_expr` — `xs[i]! += v` — without which the
+    /// read widens to `T | undefined` and fails `tsc`. A read nested in the base
+    /// (`m[i][j] = v`) also still asserts through `emit_expr`, so only the
+    /// written outermost index of a pure write drops the `!`.
+    fn emit_assign_target(&mut self, target: &ast::Expr, op: ast::AssignOp) -> String {
+        if let (ast::AssignOp::Assign, ast::ExprKind::Index { base, index }) = (op, &target.kind) {
+            let b = self.emit_expr(base);
+            let i = self.emit_expr(index);
+            return format!("{b}[{i}]");
+        }
+        self.emit_expr(target)
     }
 
     /// Emit a JavaScript expression for `e`. Block-like forms become IIFEs.

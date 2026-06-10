@@ -1,0 +1,22 @@
+// DYNAMIC.md §4.4: a list literal `[e₁, …]` lowers to the backend's native
+// sequence — Lua `{ … }` (1-based), JS/Python `[ … ]` (0-based). No case ever
+// constructed an `ExprKind::List`; range-as-value (4-03) only materialised one
+// from a range. The elements are arbitrary expressions, evaluated left to
+// right at construction; reading them back by index proves order is preserved.
+extern {
+    fn println(n: number);
+}
+
+fn main() {
+    let xs = [10, 20, 30];
+    println(xs[0]);
+    println(xs[1]);
+    println(xs[2]);
+
+    // Element expressions, not just literals: each is evaluated once, in order.
+    let base = 5;
+    let ys = [base, base + 1, base * 2];
+    println(ys[0]);
+    println(ys[1]);
+    println(ys[2]);
+}

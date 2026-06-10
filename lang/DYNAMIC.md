@@ -246,7 +246,7 @@ Number, string, and bool literals lower to their Lua spelling (`STRING_LITERAL` 
 
 `a..b` and `a..=b` lower to a small range value the prelude understands; in a `for` head (§4.9) they lower directly to numeric `for` bounds without allocating.
 
-### 4.4 Struct and enum construction
+### 4.4 Struct, enum, and list construction
 
 ```
 ⟦ S { f: e, … } ⟧ₑ      = S.new({ f = ⟦e⟧, … })
@@ -255,9 +255,12 @@ Number, string, and bool literals lower to their Lua spelling (`STRING_LITERAL` 
 ⟦ E::V ⟧ₑ               = { __enum = "E", __tag = "V" }
 ⟦ E::V(a, …) ⟧ₑ         = { __enum = "E", __tag = "V", ⟦a⟧, … }
 ⟦ E::V { x: a, … } ⟧ₑ   = { __enum = "E", __tag = "V", x = ⟦a⟧, … }
+⟦ [e₁, …] ⟧ₑ            = { ⟦e₁⟧, … }     (a sequence: a 1-based Lua table; JS / Python a 0-based array — §4.7, §7)
 ```
 
 Prelude constructors `Ok`/`Err`/`Some`/`None` follow §7. Each component is validated against its declared field, slot, or element type at construction — a drift point (§9.3).
+
+A list literal `[e₁, …]` builds a sequence value, evaluating its elements left to right. The backends differ only in base offset — a Lua table is 1-based, a JS array and a Python list 0-based — which surfaces at indexing (§4.7), not construction. Each `eᵢ` is validated against the list's element type `[τ]` at construction, a drift point (§9.3); reads (§4.7) and element writes `e[i] = v` (§7) then operate through the same offset convention.
 
 ### 4.5 `match`
 

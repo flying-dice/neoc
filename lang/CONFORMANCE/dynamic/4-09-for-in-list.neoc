@@ -1,0 +1,25 @@
+// DYNAMIC.md §4.9: a `for` over a list value walks its elements in order. The
+// iterator is an `ExprKind::List` value, not a range head — Lua lowers to
+// `ipairs`, JS to `for…of`, Python to a bare `for…in`, none of which allocate
+// the numeric-range path (4-09-for-range). The body accumulates so the golden
+// pins both that every element is visited and that order is preserved.
+extern {
+    fn println(n: number);
+}
+
+fn main() {
+    let xs = [2, 4, 6, 8];
+    let sum = 0;
+    for x in xs {
+        sum = sum + x;
+    }
+    println(sum);
+
+    // Order-sensitive fold: each element shifts the accumulator left, so a
+    // reordered walk would diverge from the golden.
+    let acc = 0;
+    for x in xs {
+        acc = acc * 10 + x;
+    }
+    println(acc);
+}
