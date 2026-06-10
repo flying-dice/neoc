@@ -195,7 +195,7 @@ impl Emitter {
             ast::ExprKind::Break => self.line("break;"),
             ast::ExprKind::Continue => self.line("continue;"),
             ast::ExprKind::Assign { target, op, value } => {
-                let t = self.emit_expr(target);
+                let t = self.emit_assign_target(target);
                 let v = self.emit_expr(value);
                 let sym = match op {
                     ast::AssignOp::Assign => "=",
@@ -333,6 +333,21 @@ impl Emitter {
         } else {
             self.line("}");
         }
+    }
+
+    /// Emit an assignment target (l-value). Identical to [`emit_expr`] except a
+    /// list-index target omits the TS non-null assertion: `xs[i]!` is a valid
+    /// r-value but not a valid assignment target — `xs[i]! = v` is a TS error —
+    /// and the bare `xs[i]` l-value needs no `noUncheckedIndexedAccess` guard. A
+    /// read nested in the base (`m[i][j] = v`) still asserts through `emit_expr`,
+    /// so only the outermost index — the one being written — drops the `!`.
+    fn emit_assign_target(&mut self, target: &ast::Expr) -> String {
+        if let ast::ExprKind::Index { base, index } = &target.kind {
+            let b = self.emit_expr(base);
+            let i = self.emit_expr(index);
+            return format!("{b}[{i}]");
+        }
+        self.emit_expr(target)
     }
 
     /// Emit a JavaScript expression for `e`. Block-like forms become IIFEs.
