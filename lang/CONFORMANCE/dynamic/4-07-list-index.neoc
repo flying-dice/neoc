@@ -1,0 +1,18 @@
+// DYNAMIC.md §4.7: list indexing `e[i]` reads the element at a 0-based offset.
+// Lua adjusts to its 1-based tables (`e[(i) + 1]`); JS and Python index
+// natively. The index is an arbitrary `number` expression — a literal, a
+// binding, or a computation — resolved at runtime, so the emitter needs no
+// static knowledge of the offset. No prior case exercised an `ExprKind::Index`.
+extern {
+    fn println(n: number);
+}
+
+fn main() {
+    let xs = [5, 6, 7, 8];
+    println(xs[0]);
+    println(xs[3]);
+
+    let i = 1;
+    println(xs[i]);
+    println(xs[i + 1]);
+}
