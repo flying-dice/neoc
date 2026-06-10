@@ -1,0 +1,12 @@
+// DYNAMIC.md §4.2: `==`/`!=` on `string` lower to Lua `==`/`~=` — Lua strings are
+// interned, so equality is value equality. The result is `bool`.
+extern {
+    fn println(b: bool);
+}
+
+fn main() {
+    println("abc" == "abc");
+    println("abc" == "abd");
+    println("abc" != "xyz");
+    println("" == "");
+}
