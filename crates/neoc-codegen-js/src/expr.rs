@@ -265,6 +265,19 @@ impl Emitter {
         self.line("}");
     }
 
+    /// Lower a range used as a value (outside a `for` head) to its array of
+    /// numbers (§4.3): an arrow IIFE that binds the bounds once. The `for` head
+    /// lowers to a numeric loop with no allocation (see `emit_for`); the
+    /// comparison mirrors it.
+    fn emit_range_value(&mut self, start: &ast::Expr, end: &ast::Expr, inclusive: bool) -> String {
+        let lo = self.emit_expr(start);
+        let hi = self.emit_expr(end);
+        let cmp = if inclusive { "<=" } else { "<" };
+        format!(
+            "((s, e) => {{ const r = []; for (let i = s; i {cmp} e; i++) r.push(i); return r; }})({lo}, {hi})"
+        )
+    }
+
     fn emit_if_stmt(&mut self, e: &ast::Expr) {
         let ast::ExprKind::If { cond, then, else_ } = &e.kind else {
             return;
@@ -416,10 +429,11 @@ impl Emitter {
             }
             ast::ExprKind::Match { scrutinee, arms } => self.emit_match_value(scrutinee, arms),
             ast::ExprKind::Try(inner) => self.emit_try(inner),
-            ast::ExprKind::Range { .. } => {
-                self.error("range expressions are only supported as a `for` iterable");
-                "undefined".to_string()
-            }
+            ast::ExprKind::Range {
+                start,
+                end,
+                inclusive,
+            } => self.emit_range_value(start, end, *inclusive),
             ast::ExprKind::Assign { .. } => {
                 self.error("assignment is a statement, not an expression value");
                 "undefined".to_string()

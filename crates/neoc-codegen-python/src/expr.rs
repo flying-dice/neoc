@@ -274,6 +274,16 @@ impl Emitter {
         self.indented(|em| em.emit_block_stmts(body));
     }
 
+    /// Lower a range used as a value (outside a `for` head) to its list of
+    /// numbers (§4.3). `range` is half-open, so an inclusive range adds 1 to the
+    /// bound — mirroring `emit_for`.
+    fn emit_range_value(&mut self, start: &ast::Expr, end: &ast::Expr, inclusive: bool) -> String {
+        let lo = self.emit_expr(start);
+        let hi = self.emit_expr(end);
+        let hi = if inclusive { format!("{hi} + 1") } else { hi };
+        format!("list(range({lo}, {hi}))")
+    }
+
     /// Emit an `if` as a statement. When `assign` is `Some(name)`, each branch's
     /// trailing value is assigned to `name` (the hoist for a value-position
     /// `if`); otherwise branches run for effect.
@@ -437,10 +447,11 @@ impl Emitter {
                 format!("{recv}.{method}({a})")
             }
             ast::ExprKind::Try(inner) => self.emit_try(inner),
-            ast::ExprKind::Range { .. } => {
-                self.error("range expressions are only supported as a `for` iterable");
-                "None".to_string()
-            }
+            ast::ExprKind::Range {
+                start,
+                end,
+                inclusive,
+            } => self.emit_range_value(start, end, *inclusive),
             ast::ExprKind::Assign { .. } => {
                 self.error("assignment is a statement, not an expression value");
                 "None".to_string()
