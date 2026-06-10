@@ -9,6 +9,4 @@ local function checks_beta()
 end
 __tests["checks_beta"] = checks_beta
 local function main()
-  checks_alpha()
-  checks_beta()
 end

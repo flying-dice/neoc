@@ -1,13 +1,18 @@
 // DYNAMIC.md §6.5: a `#[test]` fn lowers normally AND registers itself on the
 // module-level `__tests` table the runtime walks (§7) — `__tests["name"] = name`.
-// No prior case exercised it; no backend emitted the registration. Two `#[test]`
-// fns pin that `__tests` is declared once and accrues one entry per test, keyed
-// by name; `main`, an ordinary `fn`, gets no entry — registration is gated on the
-// attribute. main calls both tests so the run trial observes their bodies execute
-// after the registration statements run at load; the emit golden pins the
-// `__tests` table and its entries. The Rust anchor omits `#[test]` (it has no
-// runtime-observable effect in a plain binary) and mirrors only the stdout, as
-// the derive cases do.
+// No prior case exercised it; no backend emitted the registration.
+//
+// `main` calls nothing on purpose: the two `#[test]` fns run only because they
+// registered on `__tests` and the conformance runtime (§7) walks it in sorted
+// name order and invokes each — so the stdout below is produced by the
+// registration itself, not by `main`. Delete or mis-key either `__tests[...]`
+// line in a golden and that test stops running: stdout diverges, the run-trial
+// fails. The ordinary `fn main` gets no entry — registration is gated on the
+// attribute.
+//
+// The Rust anchor has no runtime `__tests` (Rust `#[test]` is compile-time, no
+// runtime-observable effect), so it omits the attribute and calls both fns from
+// `main` directly to reproduce the same stdout, as the derive cases do.
 extern {
     fn println(s: string);
 }
@@ -22,7 +27,4 @@ fn checks_beta() {
     println("beta-ran");
 }
 
-fn main() {
-    checks_alpha();
-    checks_beta();
-}
+fn main() {}

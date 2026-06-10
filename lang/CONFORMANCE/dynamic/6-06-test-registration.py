@@ -11,6 +11,5 @@ def checks_beta() -> None:
 
 __tests["checks_beta"] = checks_beta
 def main() -> None:
-    checks_alpha()
-    checks_beta()
+    pass
 

@@ -9,6 +9,4 @@ function checks_beta(): void {
 }
 __tests.checks_beta = checks_beta;
 function main(): void {
-  checks_alpha();
-  checks_beta();
 }
