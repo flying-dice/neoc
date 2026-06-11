@@ -182,7 +182,11 @@ fn inherent_method_members(name: &str, module: &ast::Module) -> Vec<String> {
                 .iter()
                 .any(|p| matches!(p, ast::Param::Receiver));
             if has_receiver {
-                members.push(format!("{};", method_member(&f.sig)));
+                // A trait impl binds the trait's associated types; project them
+                // so a `-> Self::Item` member renders as the bound type, not a
+                // dangling associated name (`STATIC.md` §3.4).
+                let sig = f.sig.project_assoc(&b.assoc_bindings);
+                members.push(format!("{};", method_member(&sig)));
             }
         }
     }

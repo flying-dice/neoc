@@ -77,6 +77,17 @@ fn ts_path(p: &ast::TypePath) -> String {
     }
 }
 
+/// The neoc type whose TS projection is `unknown` — the erased form of an
+/// associated type at an abstract `trait`, which has no binding to project.
+fn ts_unknown() -> ast::Type {
+    ast::Type::Path(ast::TypePath {
+        segments: vec![ast::TypeSegment {
+            name: "unknown".to_string(),
+            args: Vec::new(),
+        }],
+    })
+}
+
 /// Render a generic parameter list (`<T, U>`), or empty when there are none.
 pub(crate) fn ts_generics(generics: &[ast::GenericParam]) -> String {
     if generics.is_empty() {
@@ -352,8 +363,9 @@ pub fn project_type_alias(a: &ast::TypeAlias, exported: bool) -> String {
 /// * Both required and default-bodied methods are listed — the contract is the
 ///   full method set.
 /// * Associated types (`type Item;`) project as object members `Item: unknown`,
-///   the least-surprising shape (a member the implementor binds); the methods
-///   reference them by name as ordinary types.
+///   the least-surprising shape (a member the implementor binds); a method that
+///   returns or takes one erases it to `unknown` — the abstract trait has no
+///   binding to project, so the associated name is dropped (`STATIC.md` §3.4).
 #[must_use]
 pub fn project_trait(t: &ast::TraitDecl, exported: bool) -> String {
     let kw = if exported { "export " } else { "" };
@@ -362,8 +374,12 @@ pub fn project_trait(t: &ast::TraitDecl, exported: bool) -> String {
     for assoc in &t.assoc_types {
         members.push(format!("  {assoc}: unknown;"));
     }
+    let unknown = ts_unknown();
     for it in &t.items {
-        members.push(format!("  {};", trait_method_member(&it.sig)));
+        members.push(format!(
+            "  {};",
+            trait_method_member(&it.sig.erase_assoc(&unknown))
+        ));
     }
     if members.is_empty() {
         return format!("{kw}type {}{g} = {{}};", t.name);
@@ -691,6 +707,36 @@ mod tests {
         assert_eq!(
             project_trait(&t, true),
             "export type Store<T> = {\n  Item: unknown;\n  get(k: string): T;\n};"
+        );
+    }
+
+    #[test]
+    fn trait_method_erases_associated_return_to_unknown() {
+        // trait Container { type Item; fn peek(self) -> Self::Item; }
+        // The abstract trait has no binding for `Item`, so the projection erases
+        // to `unknown` rather than emitting a dangling `Item` ref. (STATIC.md §3.4)
+        let self_item = ast::Type::Path(ast::TypePath {
+            segments: vec![
+                ast::TypeSegment {
+                    name: "Self".to_string(),
+                    args: Vec::new(),
+                },
+                ast::TypeSegment {
+                    name: "Item".to_string(),
+                    args: Vec::new(),
+                },
+            ],
+        });
+        let t = ast::TraitDecl {
+            name: "Container".to_string(),
+            generics: Vec::new(),
+            supertraits: Vec::new(),
+            assoc_types: vec!["Item".to_string()],
+            items: vec![receiver_method("peek", Vec::new(), Some(self_item))],
+        };
+        assert_eq!(
+            project_trait(&t, true),
+            "export type Container = {\n  Item: unknown;\n  peek(): unknown;\n};"
         );
     }
 

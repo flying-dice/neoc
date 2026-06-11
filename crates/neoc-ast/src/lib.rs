@@ -755,6 +755,59 @@ impl FnSig {
         }
         generics
     }
+
+    /// This signature with every associated-type projection in a parameter or
+    /// return type replaced by its concrete binding (see [`Type::project_assoc`]).
+    /// Applied at `impl`-method emit. (`STATIC.md` §3.4)
+    #[must_use]
+    pub fn project_assoc(&self, bindings: &[(Ident, Type)]) -> FnSig {
+        self.map_types(&|t| t.project_assoc(bindings))
+    }
+
+    /// This signature with every associated-type projection erased to `top` (see
+    /// [`Type::erase_assoc`]). Applied at the abstract `trait` declaration.
+    /// (`STATIC.md` §3.4)
+    #[must_use]
+    pub fn erase_assoc(&self, top: &Type) -> FnSig {
+        self.map_types(&|t| t.erase_assoc(top))
+    }
+
+    /// Whether any parameter or return type mentions a `Self::Name` projection.
+    #[must_use]
+    pub fn mentions_assoc(&self) -> bool {
+        self.ret.as_ref().is_some_and(Type::mentions_assoc)
+            || self.params.iter().any(|p| match p {
+                Param::Receiver => false,
+                Param::Named { ty, .. } => ty.mentions_assoc(),
+            })
+    }
+
+    /// This signature with `f` applied to every parameter and return type.
+    fn map_types(&self, f: &impl Fn(&Type) -> Type) -> FnSig {
+        let mut sig = self.clone();
+        for p in &mut sig.params {
+            if let Param::Named { ty, .. } = p {
+                *ty = f(ty);
+            }
+        }
+        if let Some(ret) = &mut sig.ret {
+            *ret = f(ret);
+        }
+        sig
+    }
+}
+
+impl FnDecl {
+    /// This declaration with associated-type projections in its signature
+    /// replaced by their concrete bindings (see [`FnSig::project_assoc`]). The
+    /// body is untouched — only the typed surface erases. (`STATIC.md` §3.4)
+    #[must_use]
+    pub fn project_assoc(&self, bindings: &[(Ident, Type)]) -> FnDecl {
+        FnDecl {
+            sig: self.sig.project_assoc(bindings),
+            ..self.clone()
+        }
+    }
 }
 
 /// The trait names listed by every `#[derive(...)]` in `attrs`, in source order.
@@ -887,6 +940,97 @@ pub struct TypePath {
 pub struct TypeSegment {
     pub name: Ident,
     pub args: Vec<Type>,
+}
+
+impl Type {
+    /// The associated-type name when this type is a `Self::Name` projection.
+    ///
+    /// An associated type is spelled only through the `Self::` qualifier in a
+    /// signature (see [`TraitDecl::assoc_types`]): a two-segment path led by a
+    /// bare `Self`. A lone `Self` is [`Type::SelfType`], not this; a module path
+    /// (`mod::Name`) leads with the module, never `Self`. (`STATIC.md` §3.4)
+    #[must_use]
+    pub fn assoc_projection(&self) -> Option<&str> {
+        if let Type::Path(p) = self
+            && let [head, tail] = p.segments.as_slice()
+            && head.name == "Self"
+            && head.args.is_empty()
+            && tail.args.is_empty()
+        {
+            Some(tail.name.as_str())
+        } else {
+            None
+        }
+    }
+
+    /// Rewrite every `Self::Name` projection through `replace`: a `Some(ty)`
+    /// substitutes it, a `None` leaves it untouched. Recurses through lists,
+    /// function types, and generic arguments. Pure — returns a fresh tree.
+    fn rewrite_assoc(&self, replace: &impl Fn(&str) -> Option<Type>) -> Type {
+        if let Some(name) = self.assoc_projection()
+            && let Some(ty) = replace(name)
+        {
+            return ty;
+        }
+        match self {
+            Type::List(inner) => Type::List(Box::new(inner.rewrite_assoc(replace))),
+            Type::Fn { params, ret } => Type::Fn {
+                params: params.iter().map(|p| p.rewrite_assoc(replace)).collect(),
+                ret: ret.as_ref().map(|r| Box::new(r.rewrite_assoc(replace))),
+            },
+            Type::Path(p) => Type::Path(TypePath {
+                segments: p
+                    .segments
+                    .iter()
+                    .map(|s| TypeSegment {
+                        name: s.name.clone(),
+                        args: s.args.iter().map(|a| a.rewrite_assoc(replace)).collect(),
+                    })
+                    .collect(),
+            }),
+            Type::Unit | Type::SelfType => self.clone(),
+        }
+    }
+
+    /// Replace every `Self::Name` projection with its concrete binding from an
+    /// `impl`'s [`ImplBlock::assoc_bindings`]. A projection naming no binding is
+    /// left as-is. Used at `impl`-method emit so `-> Self::Item` renders as the
+    /// bound type, not a dangling associated name. (`STATIC.md` §3.4)
+    #[must_use]
+    pub fn project_assoc(&self, bindings: &[(Ident, Type)]) -> Type {
+        self.rewrite_assoc(&|name| {
+            bindings
+                .iter()
+                .find(|(n, _)| n == name)
+                .map(|(_, ty)| ty.clone())
+        })
+    }
+
+    /// Replace every `Self::Name` projection with `top` — the target's top type
+    /// (`unknown` / `Any`). Used at the abstract `trait` declaration, where an
+    /// associated type has no binding and so erases. (`STATIC.md` §3.4)
+    #[must_use]
+    pub fn erase_assoc(&self, top: &Type) -> Type {
+        self.rewrite_assoc(&|_| Some(top.clone()))
+    }
+
+    /// Whether this type mentions a `Self::Name` projection anywhere.
+    #[must_use]
+    pub fn mentions_assoc(&self) -> bool {
+        self.assoc_projection().is_some()
+            || match self {
+                Type::List(inner) => inner.mentions_assoc(),
+                Type::Fn { params, ret } => {
+                    params.iter().any(Type::mentions_assoc)
+                        || ret.as_deref().is_some_and(Type::mentions_assoc)
+                }
+                Type::Path(p) => p
+                    .segments
+                    .iter()
+                    .any(|s| s.args.iter().any(Type::mentions_assoc)),
+                Type::Unit | Type::SelfType => false,
+            }
+    }
 }
 
 // ---- expressions -----------------------------------------------------------
@@ -1253,6 +1397,66 @@ mod tests {
             mixed.effective_generics()[0].bounds,
             vec![bound("Doubler"), bound("Tripler")]
         );
+    }
+
+    #[test]
+    fn assoc_projection_matches_only_self_qualified_paths() {
+        let seg = |n: &str| TypeSegment {
+            name: n.to_string(),
+            args: Vec::new(),
+        };
+        let path = |segs: Vec<TypeSegment>| Type::Path(TypePath { segments: segs });
+
+        // `Self::Item` — the sole spelling of an associated type — is recognised.
+        assert_eq!(
+            path(vec![seg("Self"), seg("Item")]).assoc_projection(),
+            Some("Item")
+        );
+        // A lone `Self`, a bare name, and a module-qualified path are not.
+        assert_eq!(Type::SelfType.assoc_projection(), None);
+        assert_eq!(path(vec![seg("Item")]).assoc_projection(), None);
+        assert_eq!(
+            path(vec![seg("mods"), seg("Item")]).assoc_projection(),
+            None
+        );
+    }
+
+    #[test]
+    fn project_assoc_substitutes_bindings_erase_replaces_with_top() {
+        let seg = |n: &str| TypeSegment {
+            name: n.to_string(),
+            args: Vec::new(),
+        };
+        let path = |segs: Vec<TypeSegment>| Type::Path(TypePath { segments: segs });
+        let number = || path(vec![seg("number")]);
+        let item = || path(vec![seg("Self"), seg("Item")]);
+
+        // Impl projection: `Self::Item` → its binding; nested through a list.
+        let bindings = vec![("Item".to_string(), number())];
+        assert_eq!(item().project_assoc(&bindings), number());
+        assert_eq!(
+            Type::List(Box::new(item())).project_assoc(&bindings),
+            Type::List(Box::new(number()))
+        );
+        // An unbound projection (no binding) is left untouched.
+        assert_eq!(item().project_assoc(&[]), item());
+
+        // Trait erasure: `Self::Item` → the top type, others unchanged.
+        let top = path(vec![seg("unknown")]);
+        assert_eq!(item().erase_assoc(&top), top);
+        assert_eq!(number().erase_assoc(&top), number());
+
+        // `mentions_assoc` sees nested projections through a return list.
+        let sig = FnSig {
+            name: "peek".to_string(),
+            name_span: Span::default(),
+            generics: Vec::new(),
+            params: vec![Param::Receiver],
+            ret: Some(Type::List(Box::new(item()))),
+            where_clause: Vec::new(),
+        };
+        assert!(sig.mentions_assoc());
+        assert!(!sig.project_assoc(&bindings).mentions_assoc());
     }
 
     #[test]

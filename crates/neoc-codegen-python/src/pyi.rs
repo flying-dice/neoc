@@ -39,6 +39,17 @@ pub fn py_type(ty: &ast::Type) -> String {
     }
 }
 
+/// The neoc type whose Python projection is `Any` — the erased form of an
+/// associated type at an abstract `trait`, which has no binding to project.
+pub(crate) fn py_any() -> ast::Type {
+    ast::Type::Path(ast::TypePath {
+        segments: vec![ast::TypeSegment {
+            name: "Any".to_string(),
+            args: Vec::new(),
+        }],
+    })
+}
+
 /// A function's generic parameters that carry exactly one trait bound, mapped
 /// from the parameter name to that bound's name. Such a parameter projects to
 /// the bound's Python `Protocol` (e.g. `E: SqlExecutor` → `SqlExecutor`),
@@ -202,6 +213,7 @@ pub fn module_pyi<S: std::hash::BuildHasher>(
     let mut needs_lib = false;
     let mut needs_self = false;
     let mut needs_protocol = false;
+    let mut needs_any = false;
     let mut body: Vec<String> = Vec::new();
     // Distinct generic-parameter names across the module's types and `fn`s, each
     // declared as a module-level `TypeVar` so annotations naming them resolve.
@@ -245,6 +257,9 @@ pub fn module_pyi<S: std::hash::BuildHasher>(
                 if t.items.iter().any(|i| sig_refs_callable(&i.sig)) {
                     typing.push("Callable");
                 }
+                // An abstract trait method returning/taking `Self::Item` erases
+                // it to `Any` on the Protocol surface (`STATIC.md` §3.4).
+                needs_any |= t.items.iter().any(|i| i.sig.mentions_assoc());
                 body.extend(trait_pyi(t));
                 body.push(String::new());
             }
@@ -272,6 +287,9 @@ pub fn module_pyi<S: std::hash::BuildHasher>(
     }
     if needs_protocol {
         typing.push("Protocol");
+    }
+    if needs_any {
+        typing.push("Any");
     }
     typing.sort_unstable();
     typing.dedup();
@@ -359,8 +377,12 @@ fn trait_pyi(t: &ast::TraitDecl) -> Vec<String> {
         out.push("    ...".to_string());
         return out;
     }
+    let any = py_any();
     for item in &t.items {
-        out.push(format!("    {}", project_method(&item.sig)));
+        out.push(format!(
+            "    {}",
+            project_method(&item.sig.erase_assoc(&any))
+        ));
     }
     out
 }
@@ -600,7 +622,9 @@ fn method_index(module: &ast::Module) -> std::collections::HashMap<String, Vec<a
             let entry = out.entry(seg.name.clone()).or_default();
             for f in &b.items {
                 if has_receiver(&f.sig) {
-                    entry.push(f.sig.clone());
+                    // Project the impl's associated-type bindings so a
+                    // `-> Self::Item` stub renders as the bound type (STATIC.md §3.4).
+                    entry.push(f.sig.project_assoc(&b.assoc_bindings));
                 }
             }
         }
@@ -736,6 +760,49 @@ mod tests {
         assert_eq!(
             single_bound_generics(&sig).get("A"),
             Some(&"Doubler".to_string())
+        );
+    }
+
+    #[test]
+    fn trait_pyi_erases_associated_return_to_any() {
+        // trait Container { type Item; fn peek(self) -> Self::Item; }
+        // The abstract Protocol has no binding for `Item`, so it erases to `Any`
+        // rather than a dangling `Item` annotation. (STATIC.md §3.4)
+        let self_item = ast::Type::Path(ast::TypePath {
+            segments: vec![
+                ast::TypeSegment {
+                    name: "Self".to_string(),
+                    args: Vec::new(),
+                },
+                ast::TypeSegment {
+                    name: "Item".to_string(),
+                    args: Vec::new(),
+                },
+            ],
+        });
+        let t = ast::TraitDecl {
+            name: "Container".to_string(),
+            generics: Vec::new(),
+            supertraits: Vec::new(),
+            assoc_types: vec!["Item".to_string()],
+            items: vec![ast::TraitItem {
+                sig: ast::FnSig {
+                    name: "peek".to_string(),
+                    name_span: ast::Span::default(),
+                    generics: Vec::new(),
+                    params: vec![ast::Param::Receiver],
+                    ret: Some(self_item),
+                    where_clause: Vec::new(),
+                },
+                default: None,
+            }],
+        };
+        assert_eq!(
+            trait_pyi(&t),
+            vec![
+                "class Container(Protocol):".to_string(),
+                "    def peek(self) -> Any: ...".to_string(),
+            ]
         );
     }
 }
