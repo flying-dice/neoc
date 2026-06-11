@@ -1435,7 +1435,8 @@ impl Emitter {
             // A typed `.ts` free function carries generics (with bounds) and a
             // return type.
             let (g, ret) = if typed {
-                let g = ts_generics_bounded(&f.sig.generics, &self.ts_in_scope_bounds());
+                let g =
+                    ts_generics_bounded(&f.sig.effective_generics(), &self.ts_in_scope_bounds());
                 let r = f
                     .sig
                     .ret

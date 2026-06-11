@@ -47,7 +47,7 @@ pub fn py_type(ty: &ast::Type) -> String {
 #[must_use]
 pub fn single_bound_generics(sig: &ast::FnSig) -> std::collections::HashMap<String, String> {
     let mut out = std::collections::HashMap::new();
-    for g in &sig.generics {
+    for g in &sig.effective_generics() {
         if let [bound] = g.bounds.as_slice()
             && let Some(seg) = bound.segments.last()
         {
@@ -381,7 +381,7 @@ fn collect_type_vars(module: &ast::Module) -> Vec<String> {
     // A `fn`'s single-bound params project to their bound's `Protocol`, not a
     // `TypeVar`; only the remaining params need a `TypeVar` declaration.
     let push_fn = |sig: &ast::FnSig, out: &mut Vec<String>| {
-        for g in &sig.generics {
+        for g in &sig.effective_generics() {
             let single_bound = matches!(g.bounds.as_slice(), [b] if b.segments.last().is_some());
             if !single_bound && !out.contains(&g.name) {
                 out.push(g.name.clone());

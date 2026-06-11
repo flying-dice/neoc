@@ -717,6 +717,27 @@ pub struct WherePredicate {
     pub bounds: Vec<TypePath>,
 }
 
+impl FnSig {
+    /// The generic parameters with every `where` predicate folded into the
+    /// matching parameter's bounds. `where T: Bound` is equivalent to an inline
+    /// `<T: Bound>` — the checker already unifies the two
+    /// (`neoc-types::collect::param_bounds`), but codegen reads bounds off the
+    /// generic params, so a `where`-form bound must be folded here to reach the
+    /// emitted type surface (TS `extends`, Python `Protocol`). A predicate
+    /// naming no declared parameter is dropped, as the checker does.
+    /// (`STATIC.md` §3.4)
+    #[must_use]
+    pub fn effective_generics(&self) -> Vec<GenericParam> {
+        let mut generics = self.generics.clone();
+        for pred in &self.where_clause {
+            if let Some(g) = generics.iter_mut().find(|g| g.name == pred.ty) {
+                g.bounds.extend(pred.bounds.iter().cloned());
+            }
+        }
+        generics
+    }
+}
+
 /// The trait names listed by every `#[derive(...)]` in `attrs`, in source order.
 #[must_use]
 pub fn derive_names(attrs: &[Attribute]) -> Vec<String> {

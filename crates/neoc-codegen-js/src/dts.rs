@@ -305,7 +305,7 @@ pub fn project_fn<S: std::hash::BuildHasher>(
     } else {
         "declare function "
     };
-    let g = ts_generics_bounded(&sig.generics, in_scope);
+    let g = ts_generics_bounded(&sig.effective_generics(), in_scope);
     let params = sig
         .params
         .iter()
