@@ -38,11 +38,13 @@ use strsim::levenshtein;
 
 use crate::lua::{lib, std as stdmod, vnd};
 
-/// Upper bound on the namespace catalogue we'll dump into a `require` error.
-/// Keeps small namespaces actionable without paging the user when the catalogue
-/// grows. Bumped past the largest current namespace (`lib:*`, 22) so adding a
-/// module doesn't silently suppress the list.
-const MAX_AVAILABLE_LIST: usize = 30;
+/// Soft cap on how many namespace members a `require` error inlines before it
+/// truncates with a `(+N more)` tail. Unlike a hard threshold it degrades
+/// gracefully — crossing it shortens the list, never suppresses it — so the
+/// value need not track namespace growth: adding a module can never silently
+/// drop the catalogue. Sized to inline today's largest namespace (`lib:*`, 31)
+/// in full; only a pathologically large namespace truncates.
+const MAX_AVAILABLE_LIST: usize = 50;
 
 fn find_closest<'a>(requested: &str, candidates: &[&'a str], threshold: usize) -> Option<&'a str> {
     candidates
@@ -66,6 +68,17 @@ fn find_by_suffix<'a>(name: &str, candidates: &[&'a str]) -> Option<&'a str> {
         .filter(|c| c.ends_with(&suffix))
         .min_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)))
         .copied()
+}
+
+/// Joins a namespace's members for a `require` error, inlining at most `cap`
+/// names and summarising any remainder as `(+N more)`. Bounds the message
+/// length without ever collapsing to an empty list — a named namespace always
+/// yields at least its first `cap` members.
+fn truncate_list(members: &[&str], cap: usize) -> String {
+    match members.split_at(members.len().min(cap)) {
+        (shown, []) => shown.join(", "),
+        (shown, rest) => format!("{} (+{} more)", shown.join(", "), rest.len()),
+    }
 }
 
 pub fn install(lua: &Lua) -> mlua::Result<()> {
@@ -156,7 +169,7 @@ pub fn install(lua: &Lua) -> mlua::Result<()> {
 
             // Namespace catalogue: when the user named a namespace, list its
             // members. When they didn't and we have no suggestion to offer,
-            // fall back to the three namespace prefixes — dumping all 25
+            // fall back to the three namespace prefixes — dumping all 50
             // modules helps nobody.
             let available = match ns {
                 Some(ns) => {
@@ -167,8 +180,7 @@ pub fn install(lua: &Lua) -> mlua::Result<()> {
                         .copied()
                         .collect();
                     members.sort_unstable();
-                    (!members.is_empty() && members.len() <= MAX_AVAILABLE_LIST)
-                        .then(|| members.join(", "))
+                    (!members.is_empty()).then(|| truncate_list(&members, MAX_AVAILABLE_LIST))
                 }
                 None if suggestion.is_none() => {
                     Some("std:<name>, lib:<name>, vnd:<name>".to_string())
@@ -321,7 +333,7 @@ mod tests {
         assert!(keys.contains(&"vnd:sqlx_postgres"));
         assert!(keys.contains(&"vnd:testcontainers_modules"));
         assert!(keys.contains(&"vnd:toml"));
-        assert_eq!(keys.len(), 49, "expected 49 migrated modules, got {keys:?}");
+        assert_eq!(keys.len(), 50, "expected 50 migrated modules, got {keys:?}");
 
         for (key, header) in &headers {
             let name = key.split_once(':').map_or(key.as_str(), |(_, s)| s);
@@ -527,6 +539,18 @@ mod tests {
     fn find_by_suffix_no_match_returns_none() {
         let candidates = ["lib:json", "std:fs"];
         assert_eq!(find_by_suffix("nope", &candidates), None);
+    }
+
+    #[test]
+    fn truncate_list_inlines_when_within_cap() {
+        let members = ["lib:a", "lib:b", "lib:c"];
+        assert_eq!(truncate_list(&members, 3), "lib:a, lib:b, lib:c");
+    }
+
+    #[test]
+    fn truncate_list_summarises_overflow_without_dropping_to_empty() {
+        let members = ["lib:a", "lib:b", "lib:c", "lib:d"];
+        assert_eq!(truncate_list(&members, 2), "lib:a, lib:b (+2 more)");
     }
 
     #[test]
