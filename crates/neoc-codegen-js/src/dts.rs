@@ -79,7 +79,7 @@ fn ts_path(p: &ast::TypePath) -> String {
 
 /// The neoc type whose TS projection is `unknown` — the erased form of an
 /// associated type at an abstract `trait`, which has no binding to project.
-fn ts_unknown() -> ast::Type {
+pub(crate) fn ts_unknown() -> ast::Type {
     ast::Type::Path(ast::TypePath {
         segments: vec![ast::TypeSegment {
             name: "unknown".to_string(),
