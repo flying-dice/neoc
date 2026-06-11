@@ -734,6 +734,25 @@ impl FnSig {
                 g.bounds.extend(pred.bounds.iter().cloned());
             }
         }
+        // Bounds resolve as a set (`STATIC.md` §3.4: a parameter's methods are
+        // the union of its bounds), so an inline `<A: Doubler>` and a redundant
+        // `where A: Doubler` name one bound, not two. The checker tolerates the
+        // duplicate — method resolution is set-like — but the emitted surface
+        // counts elements: a dup emits TS `extends Doubler & Doubler` and slips
+        // the single-bound Python projector (keyed on exactly one bound),
+        // dropping the `Protocol`. Dedup the folded view so every backend reads
+        // the set. (refs #84)
+        for g in &mut generics {
+            let mut seen: Vec<TypePath> = Vec::new();
+            g.bounds.retain(|b| {
+                if seen.contains(b) {
+                    false
+                } else {
+                    seen.push(b.clone());
+                    true
+                }
+            });
+        }
         generics
     }
 }
@@ -1180,6 +1199,60 @@ mod tests {
         let lhs = Expr::new(ExprKind::Int("1".into()), a);
         let rhs = Expr::new(ExprKind::Int("1".into()), b);
         assert_eq!(lhs, rhs);
+    }
+
+    #[test]
+    fn effective_generics_dedups_redundant_inline_and_where_bound() {
+        let bound = |n: &str| TypePath {
+            segments: vec![TypeSegment {
+                name: n.to_string(),
+                args: Vec::new(),
+            }],
+        };
+        let sig = |generics, where_clause| FnSig {
+            name: "combine".to_string(),
+            name_span: Span::default(),
+            generics,
+            params: Vec::new(),
+            ret: None,
+            where_clause,
+        };
+
+        // `<A: Doubler>(a: A) where A: Doubler` — the checker accepts the
+        // redundant bound, but bounds are a set: the folded view is one
+        // `Doubler`, not two. A dup would emit TS `extends Doubler & Doubler`
+        // and slip the single-bound Python projector. (refs #84)
+        let redundant = sig(
+            vec![GenericParam {
+                name: "A".to_string(),
+                bounds: vec![bound("Doubler")],
+            }],
+            vec![WherePredicate {
+                ty: "A".to_string(),
+                bounds: vec![bound("Doubler")],
+            }],
+        );
+        assert_eq!(
+            redundant.effective_generics()[0].bounds,
+            vec![bound("Doubler")]
+        );
+
+        // Dedup removes only repeats: a distinct bound survives, first-seen
+        // order preserved even when the duplicate is non-consecutive.
+        let mixed = sig(
+            vec![GenericParam {
+                name: "A".to_string(),
+                bounds: vec![bound("Doubler")],
+            }],
+            vec![WherePredicate {
+                ty: "A".to_string(),
+                bounds: vec![bound("Tripler"), bound("Doubler")],
+            }],
+        );
+        assert_eq!(
+            mixed.effective_generics()[0].bounds,
+            vec![bound("Doubler"), bound("Tripler")]
+        );
     }
 
     #[test]

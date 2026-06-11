@@ -763,6 +763,42 @@ mod tests {
     }
 
     #[test]
+    fn redundant_inline_and_where_bound_collapses_to_one_extends() {
+        // `<A: Doubler>(a: A) where A: Doubler` — the redundant bound folds to a
+        // set, so the `extends` surface is `Doubler`, not `Doubler & Doubler`
+        // (refs #84).
+        let doubler = ast::TypePath {
+            segments: vec![ast::TypeSegment {
+                name: "Doubler".to_string(),
+                args: Vec::new(),
+            }],
+        };
+        let sig = ast::FnSig {
+            name: "combine".to_string(),
+            name_span: ast::Span::default(),
+            generics: vec![ast::GenericParam {
+                name: "A".to_string(),
+                bounds: vec![doubler.clone()],
+            }],
+            params: vec![ast::Param::Named {
+                name: "a".to_string(),
+                ty: path("A"),
+                span: ast::Span::default(),
+            }],
+            ret: Some(path("number")),
+            where_clause: vec![ast::WherePredicate {
+                ty: "A".to_string(),
+                bounds: vec![doubler],
+            }],
+        };
+        let in_scope: HashSet<String> = ["Doubler".to_string()].into_iter().collect();
+        assert_eq!(
+            project_fn(&sig, true, &in_scope),
+            "export declare function combine<A extends Doubler>(a: A): number;"
+        );
+    }
+
+    #[test]
     fn const_declaration_elides_value() {
         let c = ast::ConstDecl {
             name: "MAX".to_string(),
