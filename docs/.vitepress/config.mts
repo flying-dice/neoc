@@ -95,6 +95,7 @@ export default defineConfig({
         {
           text: 'Reference',
           items: [
+            { text: 'archive', link: '/lib/reference/archive' },
             { text: 'base64', link: '/lib/reference/base64' },
             { text: 'hex', link: '/lib/reference/hex' },
             { text: 'hmac', link: '/lib/reference/hmac' },
