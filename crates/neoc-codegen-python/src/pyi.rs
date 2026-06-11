@@ -47,7 +47,7 @@ pub fn py_type(ty: &ast::Type) -> String {
 #[must_use]
 pub fn single_bound_generics(sig: &ast::FnSig) -> std::collections::HashMap<String, String> {
     let mut out = std::collections::HashMap::new();
-    for g in &sig.generics {
+    for g in &sig.effective_generics() {
         if let [bound] = g.bounds.as_slice()
             && let Some(seg) = bound.segments.last()
         {
@@ -381,7 +381,7 @@ fn collect_type_vars(module: &ast::Module) -> Vec<String> {
     // A `fn`'s single-bound params project to their bound's `Protocol`, not a
     // `TypeVar`; only the remaining params need a `TypeVar` declaration.
     let push_fn = |sig: &ast::FnSig, out: &mut Vec<String>| {
-        for g in &sig.generics {
+        for g in &sig.effective_generics() {
             let single_bound = matches!(g.bounds.as_slice(), [b] if b.segments.last().is_some());
             if !single_bound && !out.contains(&g.name) {
                 out.push(g.name.clone());
@@ -699,5 +699,43 @@ fn type_refs_callable(ty: &ast::Type) -> bool {
             .iter()
             .any(|s| s.args.iter().any(type_refs_callable)),
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redundant_inline_and_where_bound_keeps_single_protocol() {
+        // `<A: Doubler>(a: A) where A: Doubler` — the duplicate bound folds to a
+        // set, so the single-bound projector still maps `A → Doubler` and emits
+        // the `Protocol`. A surviving `[Doubler, Doubler]` would miss the
+        // exactly-one-bound gate and degrade `A` to an unconstrained `TypeVar`
+        // (refs #84).
+        let doubler = ast::TypePath {
+            segments: vec![ast::TypeSegment {
+                name: "Doubler".to_string(),
+                args: Vec::new(),
+            }],
+        };
+        let sig = ast::FnSig {
+            name: "combine".to_string(),
+            name_span: ast::Span::default(),
+            generics: vec![ast::GenericParam {
+                name: "A".to_string(),
+                bounds: vec![doubler.clone()],
+            }],
+            params: Vec::new(),
+            ret: None,
+            where_clause: vec![ast::WherePredicate {
+                ty: "A".to_string(),
+                bounds: vec![doubler],
+            }],
+        };
+        assert_eq!(
+            single_bound_generics(&sig).get("A"),
+            Some(&"Doubler".to_string())
+        );
     }
 }

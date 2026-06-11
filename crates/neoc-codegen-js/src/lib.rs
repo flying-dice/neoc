@@ -514,7 +514,10 @@ fn module_referenced_type_names(module: &ast::Module) -> HashSet<String> {
 
 /// Collect type names from a function signature: each named parameter, the
 /// return type, and every generic bound (`<E: SqlExecutor>` references
-/// `SqlExecutor`).
+/// `SqlExecutor`). Bounds are read off [`ast::FnSig::effective_generics`] — the
+/// same folded view the `extends` surface emits — so a trait named only in a
+/// `where` predicate is collected and gets its `import type`, not dropped
+/// (refs #84).
 fn collect_sig_type_names(sig: &ast::FnSig, names: &mut HashSet<String>) {
     for p in &sig.params {
         if let ast::Param::Named { ty, .. } = p {
@@ -524,7 +527,7 @@ fn collect_sig_type_names(sig: &ast::FnSig, names: &mut HashSet<String>) {
     if let Some(ret) = &sig.ret {
         collect_type_names(ret, names);
     }
-    for g in &sig.generics {
+    for g in &sig.effective_generics() {
         for b in &g.bounds {
             if let Some(seg) = b.segments.last() {
                 names.insert(seg.name.clone());
@@ -1435,7 +1438,8 @@ impl Emitter {
             // A typed `.ts` free function carries generics (with bounds) and a
             // return type.
             let (g, ret) = if typed {
-                let g = ts_generics_bounded(&f.sig.generics, &self.ts_in_scope_bounds());
+                let g =
+                    ts_generics_bounded(&f.sig.effective_generics(), &self.ts_in_scope_bounds());
                 let r = f
                     .sig
                     .ret
@@ -1916,6 +1920,22 @@ mod tests {
             "import type { Vec2 } from \"../math\";\n\
              \n\
              export declare const ORIGIN: Vec2;\n"
+        );
+    }
+
+    #[test]
+    fn where_only_bound_is_collected_for_import_type() {
+        // A trait named solely in a `where` predicate still reaches the TS
+        // `extends` surface (via `effective_generics`), so the runtime-`.ts`
+        // import gate must collect it too — otherwise `<X extends Doubler>`
+        // emits with no `import type { Doubler }` and `tsc` fails TS2304 on a
+        // cross-module bound (refs #84).
+        let parsed =
+            neoc_parser::parse("fn combine<X>(x: X) -> number where X: Doubler { x.double() }\n");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        assert!(
+            module_referenced_type_names(&parsed.module).contains("Doubler"),
+            "where-only bound dropped from the import gate",
         );
     }
 

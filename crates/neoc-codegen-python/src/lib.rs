@@ -448,10 +448,10 @@ impl Emitter {
             match &item.kind {
                 ast::ItemKind::Struct(s) => self.note_generics(&s.generics, true),
                 ast::ItemKind::Enum(e) => self.note_generics(&e.generics, true),
-                ast::ItemKind::Fn(f) => self.note_generics(&f.sig.generics, false),
+                ast::ItemKind::Fn(f) => self.note_generics(&f.sig.effective_generics(), false),
                 ast::ItemKind::Impl(b) => {
                     for f in &b.items {
-                        self.note_generics(&f.sig.generics, false);
+                        self.note_generics(&f.sig.effective_generics(), false);
                     }
                 }
                 _ => {}
