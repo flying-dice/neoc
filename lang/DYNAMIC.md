@@ -349,12 +349,15 @@ _              test: true                          bind: —
 x              test: true                          bind: local x = __s
 42 / "s" / true test: __s == 42                    bind: —
 S { f: p }     test: __s.__struct == "S" and <test p over __s.f>   bind: <p over __s.f>
+S { f: p, .. } test: as S { f: p }; the .. rest adds no test       bind: <p over __s.f>; the .. binds nothing
 E::V           test: __s.__tag == "V"                bind: —
 E::V(p₁, …)    test: __s.__tag == "V" and <tests>    bind: <pᵢ over __s[i]>
 p₁ | p₂        test: <test p₁> or <test p₂>        bind: shared names
 ```
 
 A guard `if g` is appended to the arm's test with `and ⟦g⟧`, evaluated only after the pattern test passes so guard code sees the pattern's bindings.
+
+A struct pattern may end in a `..` rest (`S { f: p, .. }`), matching every field the pattern does not name. The rest lowers to nothing — no test, no binding — so such a pattern tests and binds exactly its named fields, just as `S { f: p }` does (`SYNTAX.md` §7 gives the grammar).
 
 ## 6. Built-in attribute derives
 
