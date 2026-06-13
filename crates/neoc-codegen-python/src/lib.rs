@@ -252,6 +252,9 @@ pub(crate) struct Emitter {
     needs_typevar: bool,
     /// Whether the module declares a `trait` (emitted as a `Protocol`).
     uses_protocol: bool,
+    /// Whether an associated type erased to `Any` in a `Protocol` surface (an
+    /// abstract trait method returning/taking `Self::Item`), so `Any` imports.
+    uses_any: bool,
     /// The distinct generic-parameter names declared across the module, each
     /// emitted as a module-level `TypeVar`.
     type_vars: Vec<String>,
@@ -382,6 +385,9 @@ impl Emitter {
         if self.uses_protocol {
             typing.push("Protocol");
         }
+        if self.uses_any {
+            typing.push("Any");
+        }
         typing.sort_unstable();
         typing.dedup();
         if !typing.is_empty() {
@@ -465,7 +471,11 @@ impl Emitter {
                 && let Some(seg) = p.segments.last()
             {
                 for f in &b.items {
-                    self.pending_methods.push((seg.name.clone(), f.clone()));
+                    // A trait impl binds the trait's associated types; project
+                    // them so a `-> Self::Item` method renders as the bound type
+                    // in the `@dataclass` body (`STATIC.md` §3.4).
+                    self.pending_methods
+                        .push((seg.name.clone(), f.project_assoc(&b.assoc_bindings)));
                 }
             }
         }
@@ -709,6 +719,13 @@ impl Emitter {
     fn emit_trait(&mut self, item: &ast::Item, t: &ast::TraitDecl) {
         self.record_public(item.vis, &t.name);
         self.uses_protocol = true;
+        // An abstract trait has no binding for its associated types, so a method
+        // returning/taking `Self::Item` erases it to `Any` on the Protocol
+        // surface (`STATIC.md` §3.4); flag the `Any` import when that happens.
+        if t.items.iter().any(|ti| ti.sig.mentions_assoc()) {
+            self.uses_any = true;
+        }
+        let any = pyi::py_any();
         self.line(format!("class {}(Protocol):", py_ident(&t.name)));
         self.indented(|e| {
             if t.items.is_empty() {
@@ -716,7 +733,7 @@ impl Emitter {
                 return;
             }
             for ti in &t.items {
-                let header = e.fn_header(&ti.sig, true);
+                let header = e.fn_header(&ti.sig.erase_assoc(&any), true);
                 e.line(header);
                 e.indented(|e| e.line("..."));
             }

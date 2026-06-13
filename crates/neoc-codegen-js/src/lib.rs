@@ -487,14 +487,21 @@ fn module_referenced_type_names(module: &ast::Module) -> HashSet<String> {
                 }
             }
             ast::ItemKind::Trait(t) => {
+                // Trait sigs reach a typed surface only erased (`dts::project_trait`),
+                // so collect the erased form — raw `Self::Item` would contribute the
+                // phantom names `Self`/`Item`, never anything emitted (refs #84).
                 for it in &t.items {
-                    collect_sig_type_names(&it.sig, &mut names);
+                    collect_sig_type_names(&it.sig.erase_assoc(&dts::ts_unknown()), &mut names);
                 }
             }
             ast::ItemKind::Impl(b) => {
                 collect_type_names(&b.ty, &mut names);
+                // Mirror `emit_impl`: the emitted sig is the *projected* one, so a
+                // `type Item = Thing` binding must surface `Thing` here — the raw
+                // sig carries only the phantom `Self::Item` and the gate would drop
+                // the `import type` a cross-module binding needs (refs #84).
                 for f in &b.items {
-                    collect_sig_type_names(&f.sig, &mut names);
+                    collect_sig_type_names(&f.sig.project_assoc(&b.assoc_bindings), &mut names);
                 }
             }
             ast::ItemKind::Use(_) | ast::ItemKind::Extern(_) => {}
@@ -1385,7 +1392,11 @@ impl Emitter {
             return;
         };
         for f in &b.items {
-            self.emit_fn(Some(&target), f, ast::Visibility::Public);
+            // A trait impl binds the trait's associated types; project them into
+            // each method signature so a `Self::Item` annotation renders as the
+            // bound type rather than a dangling name (`STATIC.md` §3.4).
+            let f = f.project_assoc(&b.assoc_bindings);
+            self.emit_fn(Some(&target), &f, ast::Visibility::Public);
         }
     }
 
@@ -1937,6 +1948,35 @@ mod tests {
             module_referenced_type_names(&parsed.module).contains("Doubler"),
             "where-only bound dropped from the import gate",
         );
+    }
+
+    #[test]
+    fn impl_assoc_binding_is_collected_for_import_type() {
+        // `type Item = Thing` with `Thing` `use`d from a sibling module: the
+        // emitted impl sig is the *projected* one (`peek(): Thing`, see
+        // `emit_impl`), so the import gate must collect the projected sig too —
+        // raw collection sees only the phantom `Self`/`Item`, drops the
+        // `import type { Thing }`, and `tsc` fails TS2304 one module over.
+        // Single-module conformance cannot reach this; pinned here (refs #84).
+        let parsed = neoc_parser::parse(
+            "use a::Thing;\n\
+             use a::make;\n\
+             trait Container { type Item; fn peek(self) -> Self::Item; }\n\
+             struct Bin { n: number }\n\
+             impl Container for Bin { type Item = Thing; fn peek(self) -> Self::Item { make() } }\n",
+        );
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let names = module_referenced_type_names(&parsed.module);
+        assert!(
+            names.contains("Thing"),
+            "projected assoc binding dropped from the import gate",
+        );
+        for phantom in ["Self", "Item"] {
+            assert!(
+                !names.contains(phantom),
+                "phantom `{phantom}` leaked into the import gate from a raw assoc sig",
+            );
+        }
     }
 
     #[test]

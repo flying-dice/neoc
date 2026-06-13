@@ -1122,7 +1122,11 @@ impl Emitter {
             return;
         };
         for f in &b.items {
-            self.emit_fn(Some(&target), f, ast::Visibility::Public);
+            // A trait impl binds the trait's associated types; project them into
+            // each method signature so a `Self::Item` return renders as the bound
+            // type rather than a dangling Luau type name (`STATIC.md` §3.4).
+            let f = f.project_assoc(&b.assoc_bindings);
+            self.emit_fn(Some(&target), &f, ast::Visibility::Public);
         }
     }
 
