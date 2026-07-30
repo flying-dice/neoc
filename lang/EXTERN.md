@@ -54,11 +54,13 @@ A bodyless function. Ordinary signature rules (typed params, optional return,
 generics).
 
 ```
-pub fn read_file(path: string) -> Promise<string>;
+pub fn read_file(path: string) -> string;
 ```
 
-`async fn` is sugar for a function returning `Promise<T>`. `Promise` is a
-prelude nominal type, not a builtin.
+`async fn` is sugar for a function returning `Promise<T>`. `Promise` is neither
+a builtin nor implicit — there is no `extern` prelude to supply it (§Prelude),
+so an author declares it like any other handle (§`struct`). *(Not built: the
+first extern implementation targets the synchronous subset — §Lowering.)*
 
 ### `struct`
 
@@ -109,7 +111,7 @@ path unless overridden.
 ```
 mod fs {
     mod promises {
-        pub fn read_file(path: string) -> Promise<string>;
+        pub fn read_file(path: string) -> string;
     }
 }
 ```
