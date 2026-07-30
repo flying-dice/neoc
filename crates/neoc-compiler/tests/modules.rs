@@ -253,6 +253,48 @@ fn aliased_use_avoids_conflicting_same_name_import() {
 }
 
 #[test]
+fn type_only_and_value_use_with_same_name_coexist() {
+    // The conflict guard gates *per namespace*, so a type-only import and a
+    // value import that share a final segment do NOT collide — they land in
+    // different namespaces. `pal::Hue` is a data-only struct (type namespace);
+    // `cfg::Hue` is a `const` (value namespace). Unaliased, both bind `Hue`, but
+    // the struct-literal `Hue { .. }` reads the type and `r: Hue` reads the
+    // value — the #58 coexistence, without aliases. An earlier guard ORed both
+    // namespaces and wrongly rejected this with `Hue is already imported` plus a
+    // cascading `unknown name Hue`.
+    //
+    // Cross-namespace is the discriminating input: every other retained conflict
+    // test pairs two bindings in the *same* namespace, so a union gate and a
+    // per-namespace gate agree on all of them. Without this case the whole
+    // compiler suite passes against the union-gate regression.
+    //
+    // Resolution only. The luau backend still emits a `local` for the erased
+    // type-only import, shadowing the value binding (#91), so the emitted output
+    // is not asserted here — that is a codegen defect, not a resolution one.
+    let dir = tempdir();
+    write(&dir, "pal.neoc", "pub struct Hue {\n    r: number,\n}\n");
+    write(&dir, "cfg.neoc", "pub const Hue: number = 7;\n");
+    let entry = write(
+        &dir,
+        "main.neoc",
+        "use pal::Hue;\n\
+         use cfg::Hue;\n\
+         \n\
+         pub fn main() -> number {\n\
+         \x20   let h = Hue { r: Hue };\n\
+         \x20   h.r\n\
+         }\n",
+    );
+
+    let project = transpile_project(&entry, Target::Luau).expect("read project");
+    assert!(
+        project.ok(),
+        "type-only + value share of a name should type-check, got: {:#?}",
+        project.diagnostics
+    );
+}
+
+#[test]
 fn conflicting_same_name_type_use_is_a_name_conflict() {
     // The type-namespace analogue of the value conflict above: two `use`s
     // binding the same struct name from different modules collide in the type
