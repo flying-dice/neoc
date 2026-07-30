@@ -15,7 +15,7 @@ Anything outside `lang/` — the Rust crates, the CLI, the LSP, the WASM build �
 | `STATIC.md` | Name resolution, scoping, type system, well-formedness rules. Defines which valid programs are *meaningful*. |
 | `DYNAMIC.md` | The lowering table from neoc constructs to Lua 5.1. Defines what each meaningful program *does* when executed. |
 | `PROJECT.md` | The project model: the `neoc.toml` manifest, the on-disk layout, root discovery, module-resolution anchoring, and where build output lands. |
-| `CONFORMANCE/` | Executable test pairs — `.neoc` source plus expected `.lua` (or expected stdout). The contract every implementation must pass. |
+| `CONFORMANCE/` | Executable test pairs — `.neoc` source plus expected `.luau` (or expected stdout). The contract every implementation must pass. |
 
 ## Reading order
 

@@ -66,10 +66,9 @@ pub enum HeaderStyle {
 /// name → payload shape)`. Built from the module's `enum` items and seeded
 /// with the `Result`/`Option` prelude.
 ///
-/// Deliberately parallel to `neoc_codegen_js`'s `EnumIndex` (and
-/// `TupleStructIndex`): the two backends are kept independent rather than
-/// sharing a crate, so each can diverge as its target needs without coupling
-/// the other through a shared dependency. Keep the two in sync by hand.
+/// Kept crate-local (with `TupleStructIndex`) rather than lifted into a shared
+/// crate, so the backend can diverge as its target needs without coupling any
+/// future backend through a shared dependency.
 #[derive(Default)]
 pub(crate) struct EnumIndex {
     enums: HashMap<String, HashMap<String, VariantShape>>,

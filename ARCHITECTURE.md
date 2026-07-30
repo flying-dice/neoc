@@ -18,14 +18,14 @@ typed AST
    │  elaborate                    crates/neoc-types  (string `+` → Concat)
    ▼
 elaborated AST
-   │  emit (+ derives)             crates/neoc-codegen-{lua,js}, crates/neoc-macros
+   │  emit (+ derives)             crates/neoc-codegen-{lua,luau}, crates/neoc-macros
    ▼
-Lua 5.1 / JavaScript (ES2022) source
+Luau source (a self-typed superset of Lua 5.1)
 ```
 
-`crates/neoc-compiler` orchestrates the run (`transpile(src, target) -> CompileOutput`) and is the stable seam an embedding runtime depends on; the target selects the codegen backend (`lua` / `js`). Each stage is single-purpose and reads its predecessor's output without mutating it.
+`crates/neoc-compiler` orchestrates the run (`transpile(src, target) -> CompileOutput`) and is the stable seam an embedding runtime depends on. `luau` is the only target; `neoc-codegen-luau` emits over the Lua 5.1 base `neoc-codegen-lua` defines. Each stage is single-purpose and reads its predecessor's output without mutating it.
 
-The two backends are the two halves of full-stack neoc: **Lua is the backend** and the default, lowest-common-denominator target; **JS is the browser/frontend**. The JS backend emits **ES modules** (`use` → relative `import`, `pub` → `export`), so output loads natively in browsers and bundlers without a CommonJS shim.
+Each emitted `.luau` module is self-contained — no runtime library, no sidecar files — and the Luau toolchain downgrades it to plain Lua 5.1.
 
 ## Crates
 
@@ -37,8 +37,8 @@ The two backends are the two halves of full-stack neoc: **Lua is the backend** a
 | `neoc-types` | declaration collection, inference, well-formedness checks, `elaborate` | ast |
 | `neoc-macros` | built-in derives (Clone/Eq/Debug/Display), structural over the AST | ast |
 | `neoc-codegen-lua` | AST → Lua 5.1; one emit module per construct family | ast, macros |
-| `neoc-codegen-js` | AST → JavaScript (ES2022, ES modules); the browser/frontend target; mirrors `neoc-codegen-lua`'s structure | ast, macros |
-| `neoc-compiler` | the public lib API: `transpile` to any target; merges per-stage diagnostics | ast, parser, types, codegen-lua, codegen-js, macros |
+| `neoc-codegen-luau` | AST → self-typed Luau (inline neoc types); the only selectable target; emits over `neoc-codegen-lua`'s base | ast, macros, codegen-lua |
+| `neoc-compiler` | the public lib API: `transpile` to Luau; merges per-stage diagnostics | ast, parser, types, codegen-lua, codegen-luau, macros |
 | `neoc-autosql` | SQL schema + query files → a type-safe `.neoc` data-access layer (sqlc-style); the `neoc autosql` backend. Emits portable `.neoc`, coupled to no runtime | (sqlparser) |
 | `neoc-fmt` | formatter | ast, parser |
 | `neoc-lsp` | language server | compiler, parser |
@@ -70,5 +70,5 @@ Each construct family lives in its own module in each crate (`parser/{item,ty,ex
 
 ## Boundaries (enforced)
 - The compiler crates carry no host-language assumptions: no `tokio`, `mlua`, `hyper`, no filesystem in the library path. I/O lives in the `neoc` bin and (over stdio) `neoc-lsp`.
-- The pure leaf crates (`neoc-ast`, `neoc-macros`, `neoc-codegen-lua`) build for `wasm32-unknown-unknown`; CI checks them. The parser graph links the tree-sitter C runtime, which doesn't cross-compile to wasm32 yet — a tracked limitation.
+- The pure leaf crates (`neoc-ast`, `neoc-macros`, `neoc-codegen-lua`, `neoc-codegen-luau`) build for `wasm32-unknown-unknown`; CI checks them. The parser graph links the tree-sitter C runtime, which doesn't cross-compile to wasm32 yet — a tracked limitation.
 - No host-language detail (Rust types, `tree-sitter`, crate names) appears in a user-facing diagnostic or in `lang/`. See `CLAUDE.md`'s golden rule.

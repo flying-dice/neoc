@@ -30,8 +30,8 @@ pub enum Command {
         /// Write output under this directory instead of next to the source.
         #[arg(short, long, value_name = "DIR")]
         output: Option<PathBuf>,
-        /// Target language: `luau`, `ts`, or `py`. Defaults to the project's
-        /// manifest target, or `luau` for a lone file.
+        /// Target language: `luau`. Defaults to the project's manifest target,
+        /// or `luau` for a lone file.
         #[arg(short, long)]
         target: Option<Target>,
     },
@@ -268,7 +268,8 @@ fn build_project(
     let target = target.unwrap_or(project.target);
     // Output lands in `src/auto/<target>/` by default (the generated tree
     // mirroring `src/main/`), preserving the module's path under the source
-    // root (`src/main/neoc/a/b.neoc` → `src/auto/<target>/a/b.js`). `-o` overrides.
+    // root (`src/main/neoc/a/b.neoc` → `src/auto/<target>/a/b.luau`). `-o`
+    // overrides.
     let out_dir = output.map_or_else(|| project.output_dir(target), Path::to_path_buf);
 
     let compiled = transpile_project(&project.entry, target)
@@ -286,12 +287,6 @@ fn build_project(
     let mut written: Vec<PathBuf> = Vec::new();
     for (src_dest, contents) in compiled.files {
         let dest = project_out_path(&src_dest, &source_root, &out_dir, target);
-        write_output(&dest, &contents, &mut written)?;
-    }
-    // Sidecar files (`.d.ts`, shared `neoc-lib`) keep their own extension —
-    // map them under `out_dir` without swapping the target extension.
-    for (src_dest, contents) in compiled.aux_files {
-        let dest = aux_out_path(&src_dest, &source_root, &out_dir);
         write_output(&dest, &contents, &mut written)?;
     }
     Ok(0)
@@ -340,12 +335,6 @@ fn build_paths(
 
         for (src_dest, contents) in project.files {
             let dest = out_path(&src_dest, output, target);
-            write_output(&dest, &contents, &mut written)?;
-        }
-        // Sidecar files keep their own extension: alongside the source, or under
-        // `output` by file name.
-        for (src_dest, contents) in project.aux_files {
-            let dest = aux_out_path_loose(&src_dest, output);
             write_output(&dest, &contents, &mut written)?;
         }
     }
@@ -505,28 +494,6 @@ fn project_out_path(source: &Path, source_root: &Path, out_dir: &Path, target: T
         .strip_prefix(source_root)
         .unwrap_or_else(|_| Path::new(name.file_name().unwrap_or(name.as_os_str())));
     out_dir.join(rel)
-}
-
-/// The destination for a project sidecar file (`.d.ts`, shared `neoc-lib`):
-/// under `out_dir`, preserving the path relative to `source_root`, with the
-/// sidecar's own extension left intact (unlike [`project_out_path`], which
-/// swaps in the target extension). A sidecar outside `source_root` falls back to
-/// its file name under `out_dir`.
-fn aux_out_path(source: &Path, source_root: &Path, out_dir: &Path) -> PathBuf {
-    let rel = source
-        .strip_prefix(source_root)
-        .unwrap_or_else(|_| Path::new(source.file_name().unwrap_or(source.as_os_str())));
-    out_dir.join(rel)
-}
-
-/// The destination for a sidecar file in the lone-file / glob build form:
-/// alongside the source keeping its own extension, or under `output` by file
-/// name. The sidecar form of [`out_path`] with no extension swap.
-fn aux_out_path_loose(source: &Path, output: Option<&Path>) -> PathBuf {
-    match output {
-        Some(dir) => dir.join(source.file_name().unwrap_or(source.as_os_str())),
-        None => source.to_path_buf(),
-    }
 }
 
 /// A transpiled `.neoc` entry ready to run: the emitted Lua and the line map
@@ -713,8 +680,6 @@ mod tests {
     fn out_path_replaces_extension_next_to_source() {
         let got = out_path(Path::new("src/foo.neoc"), None, Target::Luau);
         assert_eq!(got, PathBuf::from("src/foo.luau"));
-        let got = out_path(Path::new("src/foo.neoc"), None, Target::Ts);
-        assert_eq!(got, PathBuf::from("src/foo.ts"));
     }
 
     #[test]
@@ -741,12 +706,12 @@ mod tests {
     #[test]
     fn project_out_path_swaps_extension_for_target() {
         let got = project_out_path(
-            Path::new("/proj/src/main/neoc/main.ts"),
+            Path::new("/proj/src/main/neoc/main.neoc"),
             Path::new("/proj/src/main/neoc"),
-            Path::new("/proj/src/main/ts"),
-            Target::Ts,
+            Path::new("/proj/src/auto/luau"),
+            Target::Luau,
         );
-        assert_eq!(got, PathBuf::from("/proj/src/main/ts/main.ts"));
+        assert_eq!(got, PathBuf::from("/proj/src/auto/luau/main.luau"));
     }
 
     #[test]

@@ -2,11 +2,5 @@
   "name": "neoc",
   "type": "module",
   "private": true,
-  "workspaces": ["packages/*"],
-  "devDependencies": {
-    "@types/bun": "latest",
-    "bun-types": "latest",
-    "pyright": "1.1.410",
-    "typescript": "^6"
-  }
+  "workspaces": ["packages/*"]
 }

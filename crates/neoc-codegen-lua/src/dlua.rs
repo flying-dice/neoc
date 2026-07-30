@@ -101,8 +101,8 @@ fn lua_generics(generics: &[ast::GenericParam]) -> String {
 /// Every class carries the `__struct` runtime tag as a string-literal field — the
 /// value's runtime identity (`match`/`Eq`/`Debug` read it), so the `.d.lua`
 /// describes the actual table. A non-`pub` struct still projects (its annotations
-/// are local-scoped by the consumer); `exported` is accepted for API symmetry with
-/// the JS projector and to leave room for future visibility shaping.
+/// are local-scoped by the consumer); `exported` is accepted to leave room for
+/// future visibility shaping.
 #[must_use]
 pub fn project_struct(s: &ast::StructDecl, exported: bool) -> String {
     let _ = exported;

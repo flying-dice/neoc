@@ -555,8 +555,8 @@ mod tests {
 
     #[test]
     fn map_lua_lines_leaves_unmapped_lines_verbatim() {
-        // An empty map — a non-Luau target, or a module lowered without source —
-        // knows no correspondence, so every line must survive verbatim: not
+        // An empty map — a module lowered without source text — knows no
+        // correspondence, so every line must survive verbatim: not
         // dropped, not zeroed. This is the `None` fallback arm of the rewrite.
         let chunk = "app.neoc";
         let err = format!(

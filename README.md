@@ -16,7 +16,7 @@ This monorepo ships a single `neoc` binary that does both jobs:
 |---|---|
 | `neoc run <script>` | run a Luau script in the sandboxed runtime |
 | `neoc emit-headers --out <dir>` | emit `ext` headers describing the runtime surface |
-| `neoc build <src>` | compile `.neoc` → Lua 5.1 (or JS via `--target`) |
+| `neoc build <src>` | compile `.neoc` → Luau |
 | `neoc check <src>` | parse + type-check, no output |
 | `neoc fmt <src>` | format `.neoc` source |
 | `neoc lsp` | language server over stdio |
@@ -109,16 +109,13 @@ neoc run one.luau two.luau             # several in sequence
 ## Compiling neoc
 
 ```sh
-neoc build main.neoc                   # → Lua 5.1 (default target)
-neoc build main.neoc --target js       # → JavaScript (ES2022), ES modules
+neoc build main.neoc                   # → Luau (the only target)
 neoc check main.neoc                   # parse + type-check only
 neoc fmt main.neoc                     # canonical formatting
 neoc lsp                               # language server (stdio)
 ```
 
-`.neoc` compiles to Lua 5.1 by default — the lowest common denominator, so the output runs unchanged on Luau, Lua 5.4, LuaJIT, and this runtime. The codegen layer is decoupled from the language surface, so a JavaScript (ES2022) backend ships alongside it, selected with `--target`.
-
-The two targets are the two halves of full-stack neoc: **Lua is the backend** (the default, LCD target above); **JS is the browser/frontend**. The JS backend emits **ES modules** — a `use` becomes a relative `import`, a `pub` item an `export` — so output loads natively in evergreen browsers and bundlers (Vite, esbuild) with no Node or CommonJS shim.
+`.neoc` compiles to Luau — a self-typed superset of Lua 5.1, which the Luau toolchain downgrades to plain Lua 5.1, so the lowering also runs unchanged on Lua 5.4, LuaJIT, and this runtime. Each emitted `.luau` module is self-contained: no runtime library, no sidecar files.
 
 ## Workspace layout
 
@@ -131,8 +128,8 @@ crates/neoc-parser     # CST → AST adapter
 crates/neoc-types      # name resolution, inference, well-formedness
 crates/neoc-macros     # built-in derives (Clone/Eq/Debug/Display)
 crates/neoc-codegen-lua # AST → Lua 5.1
-crates/neoc-codegen-js  # AST → JavaScript (ES2022)
-crates/neoc-compiler   # public lib API: transpile to any target (the runtime embeds this)
+crates/neoc-codegen-luau # AST → self-typed Luau
+crates/neoc-compiler   # public lib API: transpile to Luau (the runtime embeds this)
 crates/neoc-autosql    # SQL schema + queries → typed .neoc data layer (neoc autosql)
 crates/neoc-fmt        # formatter
 crates/neoc-lsp        # language server

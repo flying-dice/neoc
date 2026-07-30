@@ -358,8 +358,8 @@ fn collect_extern_structs(items: &[ExternItem], names: &mut std::collections::Ha
 /// `impl` in `module`'s `extern` blocks.
 ///
 /// A call `T::new(args)` to such a pair lowers to the target's constructor form
-/// (`new T(args)` on JavaScript) rather than a static call. The `type` is the
-/// impl's target name; the `method` is the constructor `fn`'s name.
+/// rather than a static call. The `type` is the impl's target name; the `method`
+/// is the constructor `fn`'s name.
 #[must_use]
 pub fn extern_constructors(module: &Module) -> std::collections::HashSet<(Ident, Ident)> {
     let mut out = std::collections::HashSet::new();
@@ -723,8 +723,8 @@ impl FnSig {
     /// `<T: Bound>` — the checker already unifies the two
     /// (`neoc-types::collect::param_bounds`), but codegen reads bounds off the
     /// generic params, so a `where`-form bound must be folded here to reach the
-    /// emitted type surface (TS `extends`, Python `Protocol`). A predicate
-    /// naming no declared parameter is dropped, as the checker does.
+    /// emitted type surface. A predicate naming no declared parameter is
+    /// dropped, as the checker does.
     /// (`STATIC.md` §3.4)
     #[must_use]
     pub fn effective_generics(&self) -> Vec<GenericParam> {
@@ -738,10 +738,8 @@ impl FnSig {
         // the union of its bounds), so an inline `<A: Doubler>` and a redundant
         // `where A: Doubler` name one bound, not two. The checker tolerates the
         // duplicate — method resolution is set-like — but the emitted surface
-        // counts elements: a dup emits TS `extends Doubler & Doubler` and slips
-        // the single-bound Python projector (keyed on exactly one bound),
-        // dropping the `Protocol`. Dedup the folded view so every backend reads
-        // the set. (refs #84)
+        // counts elements: a dup would project the same bound twice. Dedup the
+        // folded view so every backend reads the set. (refs #84)
         for g in &mut generics {
             let mut seen: Vec<TypePath> = Vec::new();
             g.bounds.retain(|b| {
@@ -1364,8 +1362,7 @@ mod tests {
 
         // `<A: Doubler>(a: A) where A: Doubler` — the checker accepts the
         // redundant bound, but bounds are a set: the folded view is one
-        // `Doubler`, not two. A dup would emit TS `extends Doubler & Doubler`
-        // and slip the single-bound Python projector. (refs #84)
+        // `Doubler`, not two. A dup would project the bound twice. (refs #84)
         let redundant = sig(
             vec![GenericParam {
                 name: "A".to_string(),

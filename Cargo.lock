@@ -2529,16 +2529,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "neoc-codegen-js"
-version = "0.0.0"
-dependencies = [
- "cucumber",
- "futures",
- "neoc-ast",
- "neoc-parser",
-]
-
-[[package]]
 name = "neoc-codegen-lua"
 version = "0.0.0"
 dependencies = [
@@ -2561,27 +2551,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "neoc-codegen-python"
-version = "0.0.0"
-dependencies = [
- "cucumber",
- "futures",
- "neoc-ast",
- "neoc-parser",
-]
-
-[[package]]
-name = "neoc-codegen-ts"
-version = "0.0.0"
-dependencies = [
- "cucumber",
- "futures",
- "neoc-ast",
- "neoc-codegen-js",
- "neoc-parser",
-]
-
-[[package]]
 name = "neoc-compiler"
 version = "0.0.0"
 dependencies = [
@@ -2589,11 +2558,8 @@ dependencies = [
  "futures",
  "libtest-mimic",
  "neoc-ast",
- "neoc-codegen-js",
  "neoc-codegen-lua",
  "neoc-codegen-luau",
- "neoc-codegen-python",
- "neoc-codegen-ts",
  "neoc-grammar",
  "neoc-macros",
  "neoc-parser",

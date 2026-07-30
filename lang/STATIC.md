@@ -150,7 +150,7 @@ Result<T, E>:
 
 ### 3.7 `Unknown` — the dynamic boundary type
 
-`Unknown` is the predeclared **dynamic** type: an honest "foreign value whose runtime type neoc cannot know", used at the host boundary (a JS/FFI value reaching neoc through an `extern` declaration or a binding wrapper). It is the one type that opts out of static structure checking, so a binding author can describe a foreign value's shape through ordinary neoc declarations and assert concrete types at the surface.
+`Unknown` is the predeclared **dynamic** type: an honest "foreign value whose runtime type neoc cannot know", used at the host boundary (a host/FFI value reaching neoc through an `extern` declaration or a binding wrapper). It is the one type that opts out of static structure checking, so a binding author can describe a foreign value's shape through ordinary neoc declarations and assert concrete types at the surface.
 
 `Unknown` is **bidirectionally assignable**: a value of any type τ is assignable to `Unknown`, and an `Unknown` is assignable to any type τ. Flowing a concrete value *into* `Unknown` loses nothing; flowing an `Unknown` *out* to a concrete type τ is a best-effort assertion — the binding author's promise that the foreign value really is a τ. (This is unlike the trait existential of §3.4, which is one-directional and type-erasing.) `Unknown` is erased at runtime: it has no representation of its own; it *is* the underlying host value.
 
