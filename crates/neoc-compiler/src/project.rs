@@ -123,12 +123,15 @@ fn load_project(root: &Path, manifest_path: &Path) -> Result<Project, Error> {
         // parse error at line N, column M"); `.message()` drops the location.
         .map_err(|e| Error::Project(format!("invalid `{MANIFEST}`: {e}")))?;
 
-    let target: Target = manifest.package.target.parse().map_err(|_| {
-        Error::Project(format!(
-            "`{MANIFEST}` has an unknown target `{}` (expected `luau`)",
-            manifest.package.target
-        ))
-    })?;
+    // `Target::from_str` already names the offending value and, for a target
+    // this release removed, the migration to `luau`. Prefix rather than replace
+    // it, so a manifest written against the old API keeps the pointer and still
+    // learns *where* the bad value lives.
+    let target: Target = manifest
+        .package
+        .target
+        .parse()
+        .map_err(|e| Error::Project(format!("`{MANIFEST}` has an {e}")))?;
 
     let source_root = root.join("src").join("main").join("neoc");
     let entry = source_root.join("main.neoc");
@@ -235,6 +238,28 @@ mod tests {
         assert!(msg.contains("wasm"), "{msg}");
         // No host parser jargon leaks.
         assert!(!msg.contains("toml::"), "{msg}");
+    }
+
+    #[test]
+    fn a_manifest_on_a_removed_target_names_the_migration() {
+        // The upgrade path for a project built against the old API: `ts` and
+        // `py` were selectable before the luau-only core (#89), so the manifest
+        // that carries one must learn where to go, not just that it is wrong.
+        for target in ["ts", "py"] {
+            let tmp = TempDir::new(&format!("removed-target-{target}"));
+            write_manifest(
+                tmp.path(),
+                &format!("[package]\nname = \"x\"\ntarget = \"{target}\"\n"),
+            );
+            let err = discover_project(tmp.path()).unwrap_err();
+            #[allow(irrefutable_let_patterns)]
+            let Error::Project(msg) = err else {
+                panic!("expected Error::Project");
+            };
+            assert!(msg.contains(MANIFEST), "should locate the value: {msg}");
+            assert!(msg.contains(target), "should name the value: {msg}");
+            assert!(msg.contains("luau"), "should name the migration: {msg}");
+        }
     }
 
     #[test]

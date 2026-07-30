@@ -70,14 +70,26 @@ impl std::str::FromStr for Target {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "luau" => Ok(Target::Luau),
-            // `lua` is not selectable: emit the typed superset and downgrade
-            // through the Luau toolchain. Point the author at it rather than a
-            // bare "unknown".
+            // Rejected-but-plausible names carry a pointer rather than a bare
+            // "unknown". `lua` was never selectable — emit the typed superset
+            // and downgrade through the Luau toolchain. `ts`/`js`/`py`/`python`
+            // *were* selectable and were removed with the ts and python
+            // backends (#89); a manifest or `--target` written against the old
+            // API hits this arm, so name the migration here and not only in the
+            // changelog.
             "lua" => Err(
                 "unknown target `lua` — neoc emits `luau` (downgrade to Lua with the Luau \
                  toolchain); the only target is `luau`"
                     .to_string(),
             ),
+            "ts" | "js" => Err(format!(
+                "unknown target `{s}` — neoc no longer emits TypeScript or JavaScript; migrate \
+                 to `luau`, the only target"
+            )),
+            "py" | "python" => Err(format!(
+                "unknown target `{s}` — neoc no longer emits Python; migrate to `luau`, the only \
+                 target"
+            )),
             other => Err(format!("unknown target `{other}` (expected `luau`)")),
         }
     }
@@ -659,11 +671,10 @@ fn resolve_use(
     // surface. Gate per namespace, mirroring the namespaces `import_from` will
     // actually write: a value collision would bind one name twice in the emitted
     // module; a type collision shadows last-wins in the checker. A type-only
-    // import (a data-only struct, type-erased in the emitted output) and a value
-    // import
-    // that share a final segment land in different namespaces and legitimately
-    // coexist (#58), so checking *both* namespaces against either binding would
-    // over-reject.
+    // import (a data-only struct, type-erased in the emitted output) and a
+    // value import that share a final segment land in different namespaces and
+    // legitimately coexist (#58), so checking *both* namespaces against either
+    // binding would over-reject.
     // Aliases sidestep the check — `binding` is the alias, not the final
     // segment. The earlier `use` keeps its binding; the conflicting one is not
     // re-imported, so downstream resolution stays deterministic.
@@ -875,4 +886,46 @@ fn imported_enums<'a>(
         }
     }
     enums
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn target_err(s: &str) -> String {
+        s.parse::<Target>().expect_err("expected a rejection")
+    }
+
+    #[test]
+    fn luau_is_the_only_accepted_target() {
+        assert_eq!("luau".parse::<Target>(), Ok(Target::Luau));
+        assert_eq!(Target::Luau.to_string(), "luau");
+        assert_eq!(Target::Luau.extension(), "luau");
+    }
+
+    #[test]
+    fn removed_and_unselectable_targets_point_at_luau() {
+        // Every name a user plausibly types — the two targets this release
+        // removed, their downgrade aliases, and the never-selectable `lua` —
+        // names both the offending value and the migration. A bare "unknown"
+        // here would leave an author with a `target = "ts"` manifest guessing.
+        for name in ["ts", "js", "py", "python", "lua"] {
+            let msg = target_err(name);
+            // Backticked, so `lua` is not satisfied by the `luau` it points at.
+            assert!(
+                msg.contains(&format!("`{name}`")),
+                "should name the input: {msg}"
+            );
+            assert!(msg.contains("`luau`"), "should point at `luau`: {msg}");
+        }
+    }
+
+    #[test]
+    fn an_unrelated_target_is_rejected_without_a_migration_claim() {
+        // The generic arm: no pointer to invent, so it states the expectation
+        // and nothing more.
+        let msg = target_err("wasm");
+        assert!(msg.contains("wasm"), "{msg}");
+        assert!(msg.contains("expected `luau`"), "{msg}");
+    }
 }
