@@ -73,3 +73,16 @@ Feature: Extern struct names
     When I collect extern struct names
     Then the struct names include "Foreign"
     And the struct names exclude "Local"
+
+  @chaos
+  Scenario: A malformed extern item makes the source refuse to parse cleanly
+    Given the source:
+      """
+      extern {
+          struct Database
+          impl Database {
+              #[extern(constructor)] fn new(filename: string);
+          }
+      }
+      """
+    Then the source did not parse cleanly

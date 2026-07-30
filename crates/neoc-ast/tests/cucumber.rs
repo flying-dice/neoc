@@ -3,10 +3,10 @@
 //! The Gherkin features in `tooling/ast/` are the behavioural contract for the
 //! AST's query functions over `extern` / `ext` blocks — the seam every backend
 //! reads to wire a target's surface (`lang/EXTERN.md`). The step definitions
-//! drive the real query functions (`extern_imports`, `extern_struct_names`,
-//! `extern_constructors`) against a `Module` built by `neoc_parser::parse`, so
-//! the features *are* the spec — mirroring `crates/neoc-fmt/tests/cucumber.rs`
-//! and `lang/CONFORMANCE/`.
+//! drive the real query functions (`extern_imports`, `extern_struct_names`)
+//! against a `Module` built by `neoc_parser::parse`, so the features *are* the
+//! spec — mirroring `crates/neoc-fmt/tests/cucumber.rs` and
+//! `lang/CONFORMANCE/`.
 //!
 //! Scenarios tagged `@pending` describe behaviour that is specified but not yet
 //! implemented (or whose outcome the harness cannot verify against today's
@@ -21,19 +21,17 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use cucumber::{World, gherkin::Step, given, then, when};
-use neoc_ast::{Ident, Module, Target, extern_constructors, extern_imports, extern_struct_names};
+use neoc_ast::{Ident, Module, extern_imports, extern_struct_names};
 
 /// State threaded through one scenario: the parsed module under test and the
 /// outcome of the last query — the extern-mod imports, the extern struct names,
-/// the constructor `(type, method)` pairs, and whether the source parsed
-/// cleanly.
+/// and whether the source parsed cleanly.
 #[derive(Debug, Default, World)]
 struct Ast {
     module: Module,
     parsed_clean: bool,
     imports: Vec<(String, String, bool)>,
     struct_names: HashSet<Ident>,
-    constructors: HashSet<(Ident, Ident)>,
 }
 
 #[given("the source:")]
@@ -44,10 +42,9 @@ fn given_source(world: &mut Ast, step: &Step) {
     world.module = result.module;
 }
 
-#[when(regex = r"^I collect extern imports for target (lua|js)$")]
-fn collect_extern_imports(world: &mut Ast, target: String) {
-    let target = parse_target(&target);
-    world.imports = extern_imports(&world.module, target)
+#[when("I collect extern imports")]
+fn collect_extern_imports(world: &mut Ast) {
+    world.imports = extern_imports(&world.module)
         .into_iter()
         .map(|import| (import.local_name, import.path, import.ambient))
         .collect();
@@ -56,11 +53,6 @@ fn collect_extern_imports(world: &mut Ast, target: String) {
 #[when("I collect extern struct names")]
 fn collect_extern_struct_names(world: &mut Ast) {
     world.struct_names = extern_struct_names(&world.module);
-}
-
-#[when("I collect extern constructors")]
-fn collect_extern_constructors(world: &mut Ast) {
-    world.constructors = extern_constructors(&world.module);
 }
 
 #[then(regex = r#"^the imports include "([^"]+)"$"#)]
@@ -131,24 +123,6 @@ fn struct_names_exclude(world: &mut Ast, name: String) {
     );
 }
 
-#[then(regex = r#"^the constructors include "([^"]+)::([^"]+)"$"#)]
-fn constructors_include(world: &mut Ast, ty: String, method: String) {
-    assert!(
-        world.constructors.contains(&(ty.clone(), method.clone())),
-        "expected constructor {ty}::{method}; got {:?}",
-        world.constructors,
-    );
-}
-
-#[then(regex = r#"^the constructors exclude "([^"]+)::([^"]+)"$"#)]
-fn constructors_exclude(world: &mut Ast, ty: String, method: String) {
-    assert!(
-        !world.constructors.contains(&(ty.clone(), method.clone())),
-        "expected no constructor {ty}::{method}; got {:?}",
-        world.constructors,
-    );
-}
-
 #[then("the source parsed cleanly")]
 fn parsed_cleanly(world: &mut Ast) {
     assert!(
@@ -163,15 +137,6 @@ fn parsed_with_errors(world: &mut Ast) {
         !world.parsed_clean,
         "expected the source to carry parse diagnostics",
     );
-}
-
-/// The backend target named in a step, panicking on an unknown name.
-fn parse_target(name: &str) -> Target {
-    match name {
-        "lua" => Target::Lua,
-        "js" => Target::Js,
-        other => panic!("unknown target {other:?}"),
-    }
 }
 
 /// The docstring attached to a step, panicking with the step text if absent.

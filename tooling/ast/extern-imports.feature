@@ -17,7 +17,7 @@ Feature: Extern imports
           }
       }
       """
-    When I collect extern imports for target lua
+    When I collect extern imports
     Then the imports include "console"
     And the import "console" has path "console"
 
@@ -31,7 +31,7 @@ Feature: Extern imports
           }
       }
       """
-    When I collect extern imports for target lua
+    When I collect extern imports
     Then the imports include "rusqlite"
     And the import "rusqlite" has path "vnd:rusqlite"
 
@@ -45,7 +45,7 @@ Feature: Extern imports
           }
       }
       """
-    When I collect extern imports for target js
+    When I collect extern imports
     Then the imports include "crypto"
     And the import "crypto" is ambient
     And the import "crypto" has path "globalThis.crypto"
@@ -64,7 +64,7 @@ Feature: Extern imports
           }
       }
       """
-    When I collect extern imports for target lua
+    When I collect extern imports
     Then the imports include "rusqlite"
     And the imports include "files"
     And the import "files" has path "fs"
@@ -75,7 +75,7 @@ Feature: Extern imports
       """
       fn main() {}
       """
-    When I collect extern imports for target lua
+    When I collect extern imports
     Then there are no imports
 
   @chaos
@@ -86,7 +86,7 @@ Feature: Extern imports
           struct Response;
       }
       """
-    When I collect extern imports for target lua
+    When I collect extern imports
     Then there are no imports
     And the imports exclude "Response"
 
@@ -98,7 +98,7 @@ Feature: Extern imports
           fn now() -> number;
       }
       """
-    When I collect extern imports for target js
+    When I collect extern imports
     Then there are no imports
     And the imports exclude "now"
 
@@ -115,26 +115,6 @@ Feature: Extern imports
           }
       }
       """
-    When I collect extern imports for target lua
+    When I collect extern imports
     Then the imports include "rusqlite"
     And the imports exclude "statement"
-
-  @chaos @pending
-  Scenario: Imports vary by target
-    # `extern_imports` accepts a `Target` for parity with the other backend
-    # queries, but the computed imports are target-agnostic — the same `mod`
-    # surfaces identically for lua and js. There is no lua-only import that an
-    # equivalent js compilation omits. Pending until per-target import
-    # specialisation exists (`lang/EXTERN.md` §Lowering notes the parameter is
-    # accepted but does not yet vary the result).
-    Given the source:
-      """
-      extern {
-          #[extern(path = "vnd:rusqlite")]
-          mod rusqlite {
-              fn open(path: string) -> Unknown;
-          }
-      }
-      """
-    When I collect extern imports for target js
-    Then there are no imports
