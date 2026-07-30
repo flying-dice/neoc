@@ -133,8 +133,9 @@ macros) are errors. The sole attribute is `#[extern(…)]`; params:
   neoc-side name is unaffected. `fn`/`struct` only; not on constructors.
 - **`constructor`** — marks an `fn` in an `impl` as a constructor; lowers to the
   target's constructor form. No explicit return type (it is the enclosing
-  `Self`). Incompatible with `name`. Multiple constructors per `impl` are
-  overloads on the target.
+  `Self`). Incompatible with `name`. An `impl` may declare several, each under
+  its own name (`new`, `from_pem`, …) — the target has no overload resolution to
+  disambiguate one name.
 
 Params combine in one `#[extern(…)]` (`#[extern(ambient, path = "globalThis.crypto.subtle")]`).
 Multiple `#[extern(…)]` on one item is an error.
@@ -159,7 +160,10 @@ extern type **is** the target value — there is no wrapper indirection.
   function, no marshalling.
 - **Method call** `x.m(args)` → target method call on the handle.
 - **Associated call** `T::f(args)` → static/namespaced target call.
-- **Constructor** `T::new(args)` → the target's constructor form (`new T(args)`).
+- **Constructor** `T::new(args)` → the target's constructor form. Luau has no
+  `new` operator, so a constructor is the plain associated call `T.new(args)`
+  (`DYNAMIC.md` §3.9) — it differs from an ordinary associated call only in that
+  the checker types its return as the enclosing `Self`.
 - **Async** — `async fn` / `Promise<T>` → an asynchronous target call; `.await`
   → the target's await form. *(Async is a prerequisite language feature; the
   first extern implementation targets the synchronous subset.)*
@@ -176,13 +180,13 @@ A `use`d extern item lowers to its **native** import in the *consumer*, not an
 import from the defining file. An extern emits no runtime value in its defining
 module, so there is nothing there to import; the consumer reconstructs the native
 import from the item's `#[extern(…)]` metadata, identically to how the defining
-module would. For `use db::Database` where `Database` is `#[extern(path =
-"bun:sqlite")]`:
+module would. For `use db::Database` where `Database` is declared in a
+`#[extern(path = "bun:sqlite")] mod sqlite`:
 
 - the consumer emits the same native import the defining module would (the
-  `bun:sqlite` import), and `Database::new(…)` lowers to its constructor form in
-  the consumer (`new sqlite.Database(…)`), with no reference to the defining
-  file;
+  `bun:sqlite` require), and `Database::new(…)` lowers to its constructor form in
+  the consumer, qualified through that `mod`'s binding
+  (`sqlite.Database.new(…)`), with no reference to the defining file;
 - `#[extern(ambient)]` (no import; global root) and `#[extern(name = "…")]` are
   honoured in the consumer too.
 
@@ -225,10 +229,10 @@ Hard errors, each with a corrective suggestion:
 ## Non-goals
 
 - Structural typing / shape declarations — structs are nominal.
-- Function overloading outside constructors — overloaded non-constructors take
-  distinct neoc names.
-- Union types and variadic params as language features — see the degradation
-  policy below for how a generator maps them.
+- Function overloading — overloaded host functions take distinct neoc names.
+- Union types and variadic params as language features. At the foreign boundary
+  a heterogeneous union is `Unknown`; a variadic host function is declared with
+  the arity a call site needs, since neoc has no spread emission.
 - Trait impls on extern types — inherent impls only.
 - User-defined attributes — reserved for future proc-macro support.
 - Multi-target dispatch (`extern "abi"`) — one target per compilation.
@@ -237,33 +241,28 @@ Hard errors, each with a corrective suggestion:
 
 ## Prelude
 
-The compiler ships a prelude `extern` block of standard target types —
-`Promise<T>`, `Array<T>`, `Object`, `Function`, `Error`, `Bytes` — plus the
-`Unknown` primitive. Implicitly included; written in this same syntax with no
-privileged status.
+A prelude `extern` block would declare the host's standard types implicitly,
+written in this same syntax with no privileged status. Not built: the compiler
+ships no `extern` prelude, and its only implicit names are the `Result`/`Option`
+language prelude (`DYNAMIC.md` §7) and the `Unknown` primitive. Naming the host's
+types is an author's job until then, and the set is the host's — the earlier
+JavaScript list (`Promise<T>`, `Array<T>`, `Object`, `Function`, `Error`) named
+no type Luau has.
 
 ---
 
-## Appendix: generator degradation policy
+## Appendix: authoring at the foreign boundary
 
-This is **generator policy**, not language semantics: how a generator maps
-source-language features neoc's extern model lacks. The governing principle —
-**at the foreign boundary, degrade toward the bare target value; never emit a
-neoc *tagged* representation (`Option`, `enum`) into a foreign call**, because
-the backend passes arguments verbatim and a tag would leak into the call.
+The governing principle when a host surface has no faithful neoc form —
+**degrade toward the bare target value; never put a neoc *tagged* representation
+(`Option`, `enum`) into a foreign call**, because the backend passes arguments
+verbatim and a tag would leak into the call.
 
-| TypeScript | neoc | rationale |
+| host surface | neoc | rationale |
 | --- | --- | --- |
-| optional param `f(a?)` | drop trailing optionals (keep the first if all optional) | `Option<T>` leaks its tag and doesn't recover omission (`None` ≠ absent) |
-| optional field `{ x?: T }` | its non-null base `T` (`Unknown` if none) | a foreign field read is not a neoc `Option` |
-| variadic `f(...xs: T[])` | drop (for now) | a slice `[T]` mis-shapes the call (`f([a,b])` vs `f(a,b)`); needs spread emission |
-| overloads `f(string):X; f(number):Y` | one signature, divergent params → `Unknown`; distinct neoc names only when **return types** differ | real overload resolution would grow a candidate-set/ranking subsystem at call + construct sites |
-| heterogeneous union `string \| number` | `Unknown` | a real union type would need sum types neoc deliberately lacks |
-| string-literal union `"a" \| "b"` | `string` | the value *is* a string at runtime; a generated `enum` would leak its tag |
-| `any` / `unknown` / `Object` / no faithful form | `Unknown` | the dynamic boundary primitive |
-
-Two faithful forms are deferred behind one small codegen feature each, neither
-built yet: variadic `[T]` (needs **spread emission** at `ext` call sites) and
-string-literal `enum` (needs **string-valued enum lowering**, unit-variant → its
-string).
-```
+| an omittable trailing argument | drop it, or declare the arity the call site needs | `Option<T>` leaks its tag and doesn't recover omission (`None` ≠ absent) |
+| a field that may be absent | its base type `T` (`Unknown` if none) | a foreign field read is not a neoc `Option` |
+| a variadic function | declare the arity a call site needs | a list `[T]` mis-shapes the call (`f({a,b})` vs `f(a,b)`); a faithful form needs **spread emission** at `ext` call sites, not built |
+| a value of several unrelated types | `Unknown` | a real union type would need sum types neoc deliberately lacks |
+| a value restricted to fixed strings | `string` | the value *is* a string at runtime; an `enum` would leak its tag. A faithful form needs **string-valued enum lowering** (unit-variant → its string), not built |
+| a dynamic value with no faithful form | `Unknown` | the dynamic boundary primitive |
