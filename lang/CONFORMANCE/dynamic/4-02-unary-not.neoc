@@ -1,6 +1,6 @@
-// DYNAMIC.md §4.2: unary `!e` lowers to logical negation (`not` in Lua, `!` in
-// JS) on a non-literal operand, and double-applies. The compound boolean case
-// never exercises `!` in isolation.
+// DYNAMIC.md §4.2: unary `!e` lowers to logical negation (`not` in Lua) on a
+// non-literal operand, and double-applies. The compound boolean case never
+// exercises `!` in isolation.
 extern {
     fn println(b: bool);
 }

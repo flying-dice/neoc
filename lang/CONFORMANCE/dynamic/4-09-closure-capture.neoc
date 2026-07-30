@@ -1,6 +1,6 @@
 // DYNAMIC.md §4.9: a closure captures its enclosing environment — a returned
-// closure reads the captured binding (a Lua upvalue / JS lexical arrow). The
-// existing closure case passes a closure as an argument; this returns one.
+// closure reads the captured binding as a Lua upvalue. The existing closure
+// case passes a closure as an argument; this returns one.
 extern {
     fn println(n: number);
 }

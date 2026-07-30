@@ -1,8 +1,8 @@
 // DYNAMIC.md §3.6 + §5: a wildcard `let _ = e` discards e's value but still
-// runs e for effect. When e is a struct literal — a `{`-prefixed value — the
-// discard must stay an expression, not a statement: a bare `{ … };` at
-// statement start parses as a JS block, a `SyntaxError`. The Point is built and
-// dropped; `println(0)` runs after it to show execution continues past the
+// runs e for effect. When e is a struct literal the discard keeps its binding
+// — `local _ = Point.new({ … })` in the golden — because a bare table literal
+// is not a statement in Lua; the constructor still runs, so the Point is built
+// and dropped. `println(0)` runs after it to show execution continues past the
 // discard.
 extern {
     fn println(n: number);
