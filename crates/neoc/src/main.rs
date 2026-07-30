@@ -132,7 +132,7 @@ fn glob_expand(pattern: &str) -> Result<Vec<String>, String> {
     let base = Path::new(pattern)
         .ancestors()
         .find(|p| !p.to_string_lossy().contains(['*', '?', '[']))
-        .and_then(|p| if p == Path::new("") { None } else { Some(p) })
+        .filter(|&p| p != Path::new(""))
         .unwrap_or(Path::new("."));
 
     let mut paths = Vec::new();
