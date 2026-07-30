@@ -245,7 +245,18 @@ mod tests {
         // The upgrade path for a project built against the old API: `ts` and
         // `py` were selectable before the luau-only core (#89), so the manifest
         // that carries one must learn where to go, not just that it is wrong.
-        for target in ["ts", "py"] {
+        //
+        // Both halves are asserted: the prefix this file adds, and the clause
+        // it must *not* discard. Replacing `from_str`'s message with a bare
+        // "unknown target" keeps the prefix and the bare name `luau`, so only
+        // the migration clause tells the two apart.
+        for (target, clause) in [
+            (
+                "ts",
+                "no longer emits TypeScript or JavaScript; migrate to `luau`",
+            ),
+            ("py", "no longer emits Python; migrate to `luau`"),
+        ] {
             let tmp = TempDir::new(&format!("removed-target-{target}"));
             write_manifest(
                 tmp.path(),
@@ -256,9 +267,15 @@ mod tests {
             let Error::Project(msg) = err else {
                 panic!("expected Error::Project");
             };
-            assert!(msg.contains(MANIFEST), "should locate the value: {msg}");
-            assert!(msg.contains(target), "should name the value: {msg}");
-            assert!(msg.contains("luau"), "should name the migration: {msg}");
+            assert!(
+                msg.starts_with(&format!("`{MANIFEST}` has an unknown target")),
+                "should locate the value: {msg}"
+            );
+            assert!(
+                msg.contains(&format!("`{target}`")),
+                "should name the value: {msg}"
+            );
+            assert!(msg.contains(clause), "should keep the migration: {msg}");
         }
     }
 

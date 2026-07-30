@@ -906,26 +906,47 @@ mod tests {
     #[test]
     fn removed_and_unselectable_targets_point_at_luau() {
         // Every name a user plausibly types — the two targets this release
-        // removed, their downgrade aliases, and the never-selectable `lua` —
-        // names both the offending value and the migration. A bare "unknown"
-        // here would leave an author with a `target = "ts"` manifest guessing.
-        for name in ["ts", "js", "py", "python", "lua"] {
-            let msg = target_err(name);
-            // Backticked, so `lua` is not satisfied by the `luau` it points at.
-            assert!(
-                msg.contains(&format!("`{name}`")),
-                "should name the input: {msg}"
-            );
-            assert!(msg.contains("`luau`"), "should point at `luau`: {msg}");
+        // removed, their aliases, and the never-selectable `lua` — names both
+        // the offending value and where to go. A bare "unknown" here would
+        // leave an author with a `target = "ts"` manifest guessing.
+        //
+        // One row per arm, each asserted against *its own* clause. A uniform
+        // assertion would not discriminate: the generic arm's
+        // `(expected `luau`)` already backticks the input and names `luau`, so
+        // it satisfies both halves of the pointer without pointing anywhere.
+        for (names, clause) in [
+            (
+                &["ts", "js"][..],
+                "no longer emits TypeScript or JavaScript; migrate to `luau`",
+            ),
+            (
+                &["py", "python"][..],
+                "no longer emits Python; migrate to `luau`",
+            ),
+            (&["lua"][..], "downgrade to Lua with the Luau toolchain"),
+        ] {
+            for name in names {
+                let msg = target_err(name);
+                // Backticked, so `lua` is not satisfied by the `luau` it points
+                // at.
+                assert!(
+                    msg.contains(&format!("`{name}`")),
+                    "should name the input: {msg}"
+                );
+                assert!(msg.contains(clause), "should carry its own pointer: {msg}");
+            }
         }
     }
 
     #[test]
     fn an_unrelated_target_is_rejected_without_a_migration_claim() {
         // The generic arm: no pointer to invent, so it states the expectation
-        // and nothing more.
+        // and nothing more. The absence is the assertion — a migration clause
+        // here would promise `wasm` a path that does not exist.
         let msg = target_err("wasm");
-        assert!(msg.contains("wasm"), "{msg}");
+        assert!(msg.contains("`wasm`"), "{msg}");
         assert!(msg.contains("expected `luau`"), "{msg}");
+        assert!(!msg.contains("migrate"), "invents a migration: {msg}");
+        assert!(!msg.contains("no longer emits"), "invents a removal: {msg}");
     }
 }
