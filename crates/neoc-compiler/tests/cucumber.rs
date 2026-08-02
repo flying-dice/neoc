@@ -39,11 +39,6 @@ fn transpile_to_luau(world: &mut Compiler) {
     world.output = Some(transpile(&world.source, Target::Luau));
 }
 
-#[when("I transpile to ts")]
-fn transpile_to_ts(world: &mut Compiler) {
-    world.output = Some(transpile(&world.source, Target::Ts));
-}
-
 #[then("it succeeds")]
 fn it_succeeds(world: &mut Compiler) {
     let out = output(world);
@@ -122,7 +117,7 @@ fn output_does_not_contain(world: &mut Compiler, snippet: String) {
 }
 
 /// Docstring form of `the output does not contain`, for a snippet that holds a
-/// `"` (e.g. asserting Lua's `..` chosen over a `"…" + …` JS-style concat).
+/// `"` (e.g. asserting Lua's `..` chosen over a `"…" + …` concat).
 #[then("the output does not contain:")]
 fn output_does_not_contain_docstring(world: &mut Compiler, step: &Step) {
     let snippet = docstring(step).trim();

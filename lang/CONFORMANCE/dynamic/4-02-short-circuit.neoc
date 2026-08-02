@@ -1,7 +1,7 @@
 // DYNAMIC.md §4.2: `&&` / `||` short-circuit — the right operand is not
 // evaluated once the left already decides the result. They lower to Lua
-// `and`/`or` and JS `&&`/`||`, both lazy. A side-effecting rhs (a `println`)
-// reveals which operands actually run.
+// `and`/`or`, which are lazy in the same way. A side-effecting rhs (a
+// `println`) reveals which operands actually run.
 extern {
     fn println(s: string);
 }

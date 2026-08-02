@@ -13,12 +13,12 @@ A project is rooted at a directory containing a **manifest** named `neoc.toml`. 
 ```toml
 [package]
 name = "my-app"
-target = "ts"
+target = "luau"
 ```
 
 - `[package]` — required table.
   - `name` — required string. The project's name.
-  - `target` — required string, one of `"luau"`, `"ts"`, or `"py"`. The default build target (see `DYNAMIC.md` for what each target emits). A build may override it.
+  - `target` — required string, `"luau"` (the only target). The default build target (see `DYNAMIC.md` for what it emits). A build may override it.
 
 Unknown keys are ignored, so the schema may grow without breaking older manifests. A manifest that is not valid TOML, or that omits `[package]`, `name`, or a recognised `target`, is a project error reported in neoc terms.
 
@@ -33,12 +33,12 @@ A project uses a fixed directory layout under its root (the directory holding `n
   neoc.toml
   src/main/neoc/      neoc source
   src/main/sql/       SQL inputs for SQL-derived modules
-  src/auto/<target>/  build output (src/auto/ts/, src/auto/luau/) — generated
+  src/auto/<target>/  build output (src/auto/luau/) — generated
 ```
 
 - `src/main/neoc/` is the **source root**. All module resolution anchors here (§4).
 - `src/main/sql/` holds SQL inputs that generate neoc modules into `src/main/neoc/`.
-- `src/auto/<target>/` holds the build output: the generated `src/auto/` tree mirrors the hand-written `src/main/` tree, one subdirectory per target (`src/auto/ts/` when `target = "ts"`, `src/auto/luau/` when `target = "luau"`), each module keeping its path under the source root (`src/main/neoc/a/b.neoc` → `src/auto/<target>/a/b.<ext>`). The output is generated, not source; whether to track it is the project's choice (an embeddable example may commit it; an application typically ignores it). An explicit output directory overrides this default.
+- `src/auto/<target>/` holds the build output: the generated `src/auto/` tree mirrors the hand-written `src/main/` tree under a subdirectory named for the target (`src/auto/luau/` when `target = "luau"`), each module keeping its path under the source root (`src/main/neoc/a/b.neoc` → `src/auto/<target>/a/b.<ext>`). The output is generated, not source; whether to track it is the project's choice (an embeddable example may commit it; an application typically ignores it). An explicit output directory overrides this default.
 
 The entry module of a project is `src/main/neoc/main.neoc`.
 

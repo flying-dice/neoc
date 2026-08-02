@@ -1,12 +1,10 @@
 # luau-notes
 
-A notes app on **raw Luau** (the `luau` CLI), same **ports & adapters** model as
-the http-sqlite examples — fitted to the runtime.
+A notes app on **raw Luau** (the `luau` CLI), built on **ports & adapters**.
 
 Raw Luau has no HTTP server and no database, so this is a console app and the
-storage port is an **in-memory `Store`** instead of SQL over HTTP. The shape is
-identical: neoc owns the controllers + the port; the Luau host implements the
-port and drives.
+storage port is an **in-memory `Store`**: neoc owns the controllers + the port;
+the Luau host implements the port and drives.
 
 ## How it's wired
 
@@ -33,8 +31,7 @@ port and drives.
    and `print`s the results.
 
 The direction is the point: the host **requires and calls** neoc; neoc **calls
-back** into the `Store` port the host implements. Same model as
-`bun-http-sqlite` / `python-http-sqlite`, on a runtime with no I/O.
+back** into the `Store` port the host implements — on a runtime with no I/O.
 
 ## Run
 

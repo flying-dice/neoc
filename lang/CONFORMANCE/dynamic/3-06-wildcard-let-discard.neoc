@@ -1,9 +1,9 @@
 // DYNAMIC.md §3.6 + §5: a wildcard `let _ = e` discards e's value but still
-// runs e for effect. When e is a struct literal — a `{`-prefixed value — the
-// discard must stay an expression, not a statement: a bare `{ … };` at
-// statement start parses as a JS block, a `SyntaxError`. The Point is built and
-// dropped; `println(0)` runs after it to show execution continues past the
-// discard.
+// runs e for effect. Here e is a struct literal: `Point.new` executes in full
+// — field checks and the metatable attach in the golden — with its result
+// bound to `_` and never read. `println(0)` printing `0` afterwards shows
+// execution continues past the discard: the discard runs e, it does not
+// skip it.
 extern {
     fn println(n: number);
 }

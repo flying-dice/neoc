@@ -66,10 +66,9 @@ pub enum HeaderStyle {
 /// name → payload shape)`. Built from the module's `enum` items and seeded
 /// with the `Result`/`Option` prelude.
 ///
-/// Deliberately parallel to `neoc_codegen_js`'s `EnumIndex` (and
-/// `TupleStructIndex`): the two backends are kept independent rather than
-/// sharing a crate, so each can diverge as its target needs without coupling
-/// the other through a shared dependency. Keep the two in sync by hand.
+/// Kept crate-local (with `TupleStructIndex`) rather than lifted into a shared
+/// crate, so the backend can diverge as its target needs without coupling any
+/// future backend through a shared dependency.
 #[derive(Default)]
 pub(crate) struct EnumIndex {
     enums: HashMap<String, HashMap<String, VariantShape>>,
@@ -820,12 +819,12 @@ impl Emitter {
     fn emit_module(&mut self, module: &ast::Module) {
         self.collect_method_enums(module);
         self.collect_assoc_types(module);
-        self.extern_imports = ast::extern_imports(module, ast::Target::Lua);
+        self.extern_imports = ast::extern_imports(module);
         // A `use`d extern item emits its native `require` here, in the consumer,
         // not an import from the defining file (`lang/EXTERN.md` §Lowering).
         let imported = std::mem::take(&mut self.imported_externs);
         self.extern_imports
-            .extend(ast::extern_imports_from_items(&imported, ast::Target::Lua));
+            .extend(ast::extern_imports_from_items(&imported));
         // A `mod`'s neoc binding heads a `mod::item` path; keep its qualifier so
         // the access reads the imported handle (`rusqlite.open`), not a bare
         // global. Ambient mods are reached through their global-root chain.

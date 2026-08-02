@@ -34,11 +34,8 @@ pub enum NeocError {
 pub fn extract_require_error(error: &mlua::Error, source: &str, path: &str) -> Option<NeocError> {
     let msg = format!("{error}");
 
-    let inner = if let Some(idx) = msg.find("require: unknown module") {
-        &msg[idx..]
-    } else {
-        return None;
-    };
+    let idx = msg.find("require: unknown module")?;
+    let inner = &msg[idx..];
 
     let (suggestion, available) = parse_require_message(inner);
 

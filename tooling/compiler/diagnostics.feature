@@ -51,13 +51,3 @@ Feature: Diagnostics
     When I transpile to luau
     Then it fails
     Then a type diagnostic reports "type `number` has no method `frobnicate`"
-
-  @chaos
-  Scenario: A parse error reports against any target
-    Given the source:
-      """
-      fn add(a: number) -> number { a +
-      """
-    When I transpile to ts
-    Then it fails
-    Then a parse diagnostic reports "syntax error"

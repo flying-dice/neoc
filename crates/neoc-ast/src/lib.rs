@@ -50,14 +50,6 @@ pub struct Item {
     pub span: Span,
 }
 
-/// A backend target. One target is chosen per compilation; `extern` blocks
-/// describe that target's surface (`lang/EXTERN.md`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Target {
-    Lua,
-    Js,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Visibility {
     Private,
@@ -142,22 +134,21 @@ pub struct ExternImport {
     pub ambient: bool,
 }
 
-/// The top-level extern `mod` imports a `target` backend must wire, computed
-/// from the `extern` blocks in `module` (`lang/EXTERN.md` §Lowering).
+/// The top-level extern `mod` imports the backend must wire, computed from the
+/// `extern` blocks in `module` (`lang/EXTERN.md` §Lowering).
 ///
 /// One entry per top-level `mod` declared directly under an `extern` block. Its
 /// `path` is the `mod`'s `#[extern(path = "...")]`, or its name when none is
 /// set; `ambient` mods carry their global-root path and emit no import. Entries
 /// preserve declaration order. Nested mods append to the path with `/` but are
 /// not surfaced as separate imports — they are reached through the top-level
-/// binding. `target` is accepted for parity with the other backend queries; the
-/// computed imports are target-agnostic, so it does not yet vary the result.
+/// binding.
 #[must_use]
-pub fn extern_imports(module: &Module, target: Target) -> Vec<ExternImport> {
+pub fn extern_imports(module: &Module) -> Vec<ExternImport> {
     let mut out = Vec::new();
     for item in &module.items {
         if let ItemKind::Extern(block) = &item.kind {
-            out.extend(extern_imports_from_items(&block.items, target));
+            out.extend(extern_imports_from_items(&block.items));
         }
     }
     out
@@ -174,7 +165,7 @@ pub fn extern_imports(module: &Module, target: Target) -> Vec<ExternImport> {
 /// top-level `mod`s among `items` produce imports; nested mods are reached
 /// through the top-level binding.
 #[must_use]
-pub fn extern_imports_from_items(items: &[ExternItem], _target: Target) -> Vec<ExternImport> {
+pub fn extern_imports_from_items(items: &[ExternItem]) -> Vec<ExternImport> {
     let mut out = Vec::new();
     for ext in items {
         let ExternItemKind::Mod(m) = &ext.kind else {
@@ -349,58 +340,6 @@ fn collect_extern_structs(items: &[ExternItem], names: &mut std::collections::Ha
                 names.insert(s.name.clone());
             }
             ExternItemKind::Mod(m) => collect_extern_structs(&m.items, names),
-            _ => {}
-        }
-    }
-}
-
-/// The `(type, method)` pairs marked `#[extern(constructor)]` across every
-/// `impl` in `module`'s `extern` blocks.
-///
-/// A call `T::new(args)` to such a pair lowers to the target's constructor form
-/// (`new T(args)` on JavaScript) rather than a static call. The `type` is the
-/// impl's target name; the `method` is the constructor `fn`'s name.
-#[must_use]
-pub fn extern_constructors(module: &Module) -> std::collections::HashSet<(Ident, Ident)> {
-    let mut out = std::collections::HashSet::new();
-    for item in &module.items {
-        if let ItemKind::Extern(block) = &item.kind {
-            collect_extern_constructors(&block.items, &mut out);
-        }
-    }
-    out
-}
-
-/// The `(type, method)` constructor pairs among `items`, the item-list form of
-/// [`extern_constructors`]. A backend feeds it `use`-imported extern items so an
-/// imported `T::new(args)` lowers to the target's constructor form.
-#[must_use]
-pub fn extern_constructors_from_items(
-    items: &[ExternItem],
-) -> std::collections::HashSet<(Ident, Ident)> {
-    let mut out = std::collections::HashSet::new();
-    collect_extern_constructors(items, &mut out);
-    out
-}
-
-fn collect_extern_constructors(
-    items: &[ExternItem],
-    out: &mut std::collections::HashSet<(Ident, Ident)>,
-) {
-    for ext in items {
-        match &ext.kind {
-            ExternItemKind::Impl(b) => {
-                let Type::Path(p) = &b.ty else { continue };
-                let Some(ty) = p.segments.last().map(|s| s.name.clone()) else {
-                    continue;
-                };
-                for m in &b.items {
-                    if ExternAttr::parse(&m.attrs).is_some_and(|a| a.constructor) {
-                        out.insert((ty.clone(), m.sig.name.clone()));
-                    }
-                }
-            }
-            ExternItemKind::Mod(m) => collect_extern_constructors(&m.items, out),
             _ => {}
         }
     }
@@ -718,44 +657,6 @@ pub struct WherePredicate {
 }
 
 impl FnSig {
-    /// The generic parameters with every `where` predicate folded into the
-    /// matching parameter's bounds. `where T: Bound` is equivalent to an inline
-    /// `<T: Bound>` — the checker already unifies the two
-    /// (`neoc-types::collect::param_bounds`), but codegen reads bounds off the
-    /// generic params, so a `where`-form bound must be folded here to reach the
-    /// emitted type surface (TS `extends`, Python `Protocol`). A predicate
-    /// naming no declared parameter is dropped, as the checker does.
-    /// (`STATIC.md` §3.4)
-    #[must_use]
-    pub fn effective_generics(&self) -> Vec<GenericParam> {
-        let mut generics = self.generics.clone();
-        for pred in &self.where_clause {
-            if let Some(g) = generics.iter_mut().find(|g| g.name == pred.ty) {
-                g.bounds.extend(pred.bounds.iter().cloned());
-            }
-        }
-        // Bounds resolve as a set (`STATIC.md` §3.4: a parameter's methods are
-        // the union of its bounds), so an inline `<A: Doubler>` and a redundant
-        // `where A: Doubler` name one bound, not two. The checker tolerates the
-        // duplicate — method resolution is set-like — but the emitted surface
-        // counts elements: a dup emits TS `extends Doubler & Doubler` and slips
-        // the single-bound Python projector (keyed on exactly one bound),
-        // dropping the `Protocol`. Dedup the folded view so every backend reads
-        // the set. (refs #84)
-        for g in &mut generics {
-            let mut seen: Vec<TypePath> = Vec::new();
-            g.bounds.retain(|b| {
-                if seen.contains(b) {
-                    false
-                } else {
-                    seen.push(b.clone());
-                    true
-                }
-            });
-        }
-        generics
-    }
-
     /// This signature with every associated-type projection in a parameter or
     /// return type replaced by its concrete binding (see [`Type::project_assoc`]).
     /// Applied at `impl`-method emit. (`STATIC.md` §3.4)
@@ -1346,60 +1247,6 @@ mod tests {
     }
 
     #[test]
-    fn effective_generics_dedups_redundant_inline_and_where_bound() {
-        let bound = |n: &str| TypePath {
-            segments: vec![TypeSegment {
-                name: n.to_string(),
-                args: Vec::new(),
-            }],
-        };
-        let sig = |generics, where_clause| FnSig {
-            name: "combine".to_string(),
-            name_span: Span::default(),
-            generics,
-            params: Vec::new(),
-            ret: None,
-            where_clause,
-        };
-
-        // `<A: Doubler>(a: A) where A: Doubler` — the checker accepts the
-        // redundant bound, but bounds are a set: the folded view is one
-        // `Doubler`, not two. A dup would emit TS `extends Doubler & Doubler`
-        // and slip the single-bound Python projector. (refs #84)
-        let redundant = sig(
-            vec![GenericParam {
-                name: "A".to_string(),
-                bounds: vec![bound("Doubler")],
-            }],
-            vec![WherePredicate {
-                ty: "A".to_string(),
-                bounds: vec![bound("Doubler")],
-            }],
-        );
-        assert_eq!(
-            redundant.effective_generics()[0].bounds,
-            vec![bound("Doubler")]
-        );
-
-        // Dedup removes only repeats: a distinct bound survives, first-seen
-        // order preserved even when the duplicate is non-consecutive.
-        let mixed = sig(
-            vec![GenericParam {
-                name: "A".to_string(),
-                bounds: vec![bound("Doubler")],
-            }],
-            vec![WherePredicate {
-                ty: "A".to_string(),
-                bounds: vec![bound("Tripler"), bound("Doubler")],
-            }],
-        );
-        assert_eq!(
-            mixed.effective_generics()[0].bounds,
-            vec![bound("Doubler"), bound("Tripler")]
-        );
-    }
-
-    #[test]
     fn assoc_projection_matches_only_self_qualified_paths() {
         let seg = |n: &str| TypeSegment {
             name: n.to_string(),
@@ -1608,7 +1455,7 @@ mod tests {
                 span: Span::default(),
             }],
         };
-        let imports = extern_imports(&module, Target::Lua);
+        let imports = extern_imports(&module);
         assert_eq!(
             imports,
             vec![
@@ -1632,7 +1479,7 @@ mod tests {
     }
 
     #[test]
-    fn extern_struct_names_and_constructors_are_collected() {
+    fn extern_struct_names_are_collected() {
         // extern {
         //   struct Database;
         //   impl Database { #[extern(constructor)] fn new(p: string); fn q(self); }
@@ -1708,10 +1555,9 @@ mod tests {
                 span: Span::default(),
             }],
         };
-        assert!(extern_struct_names(&module).contains("Database"));
-        let ctors = extern_constructors(&module);
-        assert!(ctors.contains(&("Database".to_string(), "new".to_string())));
-        assert_eq!(ctors.len(), 1);
+        let names = extern_struct_names(&module);
+        assert!(names.contains("Database"));
+        assert_eq!(names.len(), 1, "the `impl` is not a struct of its own");
     }
 
     #[test]
@@ -1905,18 +1751,15 @@ mod tests {
         let kept = imported_extern_items(&module, &names);
 
         // The native import survives (path metadata carried via the kept `mod`).
-        let imports = extern_imports_from_items(&kept, Target::Js);
+        let imports = extern_imports_from_items(&kept);
         assert_eq!(imports.len(), 1);
         assert_eq!(imports[0].path, "bun:sqlite");
         assert_eq!(imports[0].local_name, "sqlite");
 
-        // The struct and its constructor carry; the un-named sibling `Other`
-        // does not.
+        // The struct carries; the un-named sibling `Other` does not.
         let structs = extern_struct_names_from_items(&kept);
         assert!(structs.contains("Database"));
         assert!(!structs.contains("Other"));
-        let ctors = extern_constructors_from_items(&kept);
-        assert!(ctors.contains(&("Database".to_string(), "new".to_string())));
         let ns = extern_struct_namespaces_from_items(&kept);
         assert_eq!(ns.get("Database"), Some(&"sqlite".to_string()));
     }

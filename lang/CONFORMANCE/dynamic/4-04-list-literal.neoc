@@ -1,8 +1,8 @@
-// DYNAMIC.md §4.4: a list literal `[e₁, …]` lowers to the backend's native
-// sequence — Lua `{ … }` (1-based), JS/Python `[ … ]` (0-based). No case ever
-// constructed an `ExprKind::List`; range-as-value (4-03) only materialised one
-// from a range. The elements are arbitrary expressions, evaluated left to
-// right at construction; reading them back by index proves order is preserved.
+// DYNAMIC.md §4.4: a list literal `[e₁, …]` lowers to the host's native
+// sequence — a 1-based Lua table `{ … }`. No case ever constructed an
+// `ExprKind::List`; range-as-value (4-03) only materialised one from a range.
+// The elements are arbitrary expressions, evaluated left to right at
+// construction; reading them back by index proves order is preserved.
 extern {
     fn println(n: number);
 }

@@ -1,11 +1,11 @@
 // DYNAMIC.md §4.7 / §7: assigning to a list element `e[i] = v` writes through
-// the index in place. The target is an l-value, so under TS it drops the
-// non-null assertion the read position carries (`xs[i] = v`): the slot is
-// written, not read, so the `noUncheckedIndexedAccess` guard is dead weight on
-// it. Lua adjusts the offset by one; Python grows the list when the
-// index is the next slot. A variable index exercises the runtime-resolved
-// write. The list starts `[1, 2, 3]` and ends `[10, 20, 30]`, so the golden
-// proves the writes landed, not that construction alone produced the values.
+// the index in place. The target is an l-value only — no read is materialised,
+// so the offset expression is emitted once, in store position
+// (`xs[(0) + 1] = 10`), unlike the compound form which emits it on both sides
+// (see 4-07-list-compound-assign). Lua adjusts the offset by one. A variable
+// index exercises the runtime-resolved write. The list starts `[1, 2, 3]` and
+// ends `[10, 20, 30]`, so the golden proves the writes landed, not that
+// construction alone produced the values.
 extern {
     fn println(n: number);
 }

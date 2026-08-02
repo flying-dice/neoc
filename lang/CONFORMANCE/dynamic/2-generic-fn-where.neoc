@@ -3,9 +3,10 @@
 // parameter's methods against the union of its inline and `where` bounds, so
 // the two forms are equivalent — the checker discharges `A`/`B` against
 // `impl Doubler for Num` either way. Codegen folds each `where` predicate into
-// its parameter's bound before emit, so the TS `extends` / Python `Protocol`
-// surface matches the inline form; at runtime the bound is erased and `double`
-// is the same dynamic lookup. 21+21 + 5+5 = 52.
+// its parameter's bound before emit, but the emitted signature carries no
+// bound at all (`local function combine(a: A, b: B): number`) — the fold is a
+// checker-side equivalence with no surface, and `double` is the same dynamic
+// `a:double()` lookup either way. 21+21 + 5+5 = 52.
 extern {
     fn println(n: number);
 }

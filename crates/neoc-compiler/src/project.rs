@@ -40,8 +40,8 @@ pub struct Project {
 impl Project {
     /// The build-output directory for `target`: `<root>/src/auto/<target>`. The
     /// generated `src/auto/` tree mirrors the hand-written `src/main/` tree, one
-    /// subdirectory per target (`src/auto/luau`, `src/auto/ts`, …); each module
-    /// keeps its path under the source root (`src/main/neoc/a/b.neoc` →
+    /// subdirectory per target (`src/auto/luau`); each module keeps its path
+    /// under the source root (`src/main/neoc/a/b.neoc` →
     /// `src/auto/<target>/a/b.<ext>`).
     ///
     /// `target` is taken as an argument rather than read from `self.target` so a
@@ -88,8 +88,7 @@ struct Package {
 ///
 /// Returns [`Error::Project`] only when a manifest *is* found but is malformed:
 /// not valid TOML, missing `[package]`, missing `name`, or carrying a `target`
-/// that is not one of `"luau"`, `"ts"`, or `"py"`. A missing manifest is not an
-/// error.
+/// that is not `"luau"`. A missing manifest is not an error.
 pub fn discover_project(start: &Path) -> Result<Option<Project>, Error> {
     let mut dir: &Path = if start.is_dir() {
         start
@@ -124,12 +123,15 @@ fn load_project(root: &Path, manifest_path: &Path) -> Result<Project, Error> {
         // parse error at line N, column M"); `.message()` drops the location.
         .map_err(|e| Error::Project(format!("invalid `{MANIFEST}`: {e}")))?;
 
-    let target: Target = manifest.package.target.parse().map_err(|_| {
-        Error::Project(format!(
-            "`{MANIFEST}` has an unknown target `{}` (expected `luau`, `ts`, or `py`)",
-            manifest.package.target
-        ))
-    })?;
+    // `Target::from_str` already names the offending value and, for a target
+    // this release removed, the migration to `luau`. Prefix rather than replace
+    // it, so a manifest written against the old API keeps the pointer and still
+    // learns *where* the bad value lives.
+    let target: Target = manifest
+        .package
+        .target
+        .parse()
+        .map_err(|e| Error::Project(format!("`{MANIFEST}` has an {e}")))?;
 
     let source_root = root.join("src").join("main").join("neoc");
     let entry = source_root.join("main.neoc");
@@ -200,7 +202,7 @@ mod tests {
     fn walk_up_finds_root_from_nested_file() {
         let tmp = TempDir::new("walk-up");
         let root = tmp.path();
-        write_manifest(root, "[package]\nname = \"app\"\ntarget = \"ts\"\n");
+        write_manifest(root, "[package]\nname = \"app\"\ntarget = \"luau\"\n");
         let nested = root.join("src").join("main").join("neoc").join("a");
         fs::create_dir_all(&nested).unwrap();
         let file = nested.join("b.neoc");
@@ -209,7 +211,7 @@ mod tests {
         let project = discover_project(&file).unwrap().expect("found project");
         assert_eq!(project.root, root);
         assert_eq!(project.name, "app");
-        assert_eq!(project.target, Target::Ts);
+        assert_eq!(project.target, Target::Luau);
     }
 
     #[test]
@@ -236,6 +238,45 @@ mod tests {
         assert!(msg.contains("wasm"), "{msg}");
         // No host parser jargon leaks.
         assert!(!msg.contains("toml::"), "{msg}");
+    }
+
+    #[test]
+    fn a_manifest_on_a_removed_target_names_the_migration() {
+        // The upgrade path for a project built against the old API: `ts` and
+        // `py` were selectable before the luau-only core (#89), so the manifest
+        // that carries one must learn where to go, not just that it is wrong.
+        //
+        // Both halves are asserted: the prefix this file adds, and the clause
+        // it must *not* discard. Replacing `from_str`'s message with a bare
+        // "unknown target" keeps the prefix and the bare name `luau`, so only
+        // the migration clause tells the two apart.
+        for (target, clause) in [
+            (
+                "ts",
+                "no longer emits TypeScript or JavaScript; migrate to `luau`",
+            ),
+            ("py", "no longer emits Python; migrate to `luau`"),
+        ] {
+            let tmp = TempDir::new(&format!("removed-target-{target}"));
+            write_manifest(
+                tmp.path(),
+                &format!("[package]\nname = \"x\"\ntarget = \"{target}\"\n"),
+            );
+            let err = discover_project(tmp.path()).unwrap_err();
+            #[allow(irrefutable_let_patterns)]
+            let Error::Project(msg) = err else {
+                panic!("expected Error::Project");
+            };
+            assert!(
+                msg.starts_with(&format!("`{MANIFEST}` has an unknown target")),
+                "should locate the value: {msg}"
+            );
+            assert!(
+                msg.contains(&format!("`{target}`")),
+                "should name the value: {msg}"
+            );
+            assert!(msg.contains(clause), "should keep the migration: {msg}");
+        }
     }
 
     #[test]
@@ -278,7 +319,6 @@ mod tests {
         assert_eq!(project.source_root, root.join("src/main/neoc"));
         assert_eq!(project.entry, root.join("src/main/neoc/main.neoc"));
         assert_eq!(project.output_dir(Target::Luau), root.join("src/auto/luau"));
-        assert_eq!(project.output_dir(Target::Ts), root.join("src/auto/ts"));
         assert_eq!(project.sql_dir(), root.join("src/main/sql"));
     }
 
@@ -308,10 +348,10 @@ mod tests {
         let tmp = TempDir::new("unknown-keys");
         write_manifest(
             tmp.path(),
-            "[package]\nname = \"app\"\ntarget = \"ts\"\nversion = \"1.0\"\n[extra]\nfoo = 1\n",
+            "[package]\nname = \"app\"\ntarget = \"luau\"\nversion = \"1.0\"\n[extra]\nfoo = 1\n",
         );
         let project = discover_project(tmp.path()).unwrap().unwrap();
         assert_eq!(project.name, "app");
-        assert_eq!(project.target, Target::Ts);
+        assert_eq!(project.target, Target::Luau);
     }
 }

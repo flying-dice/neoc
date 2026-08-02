@@ -24,7 +24,3 @@ packages/*/dist
 
 # Test scratch
 .tmp/
-
-# Python bytecode cache (example packages run under python)
-**/__pycache__/
-*.pyc
