@@ -46,7 +46,7 @@ use tokio::sync::{Mutex, mpsc};
 use tracing::instrument;
 
 use crate::lua::facade::Module;
-use crate::lua::sandbox::{from_err, make_engine, ok};
+use crate::lua::sandbox::{from_err, load_source, make_engine, ok};
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
     Ok(declare(lua)?.into_table())
@@ -442,8 +442,7 @@ async fn run_worker(
     }
 
     let arg_value = lua.to_value(&args)?;
-    let result: Value = lua
-        .load(&source)
+    let result: Value = load_source(&lua, &source)
         .set_name(&name)
         .call_async(arg_value)
         .await?;
@@ -920,5 +919,48 @@ mod tests {
                 "child and parent worker both modify the same counter"
             );
         });
+    }
+
+    /// Spawn `opts` (a Lua table expression over the `bytecode` and `path`
+    /// globals) and assert the worker refused to load its chunk.
+    fn assert_spawn_rejects_bytecode(opts: &str) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("worker.lua");
+            let bytecode = lua::sandbox::ascii_bytecode();
+            std::fs::write(&path, &bytecode).unwrap();
+
+            let e = lua::sandbox::make_engine().expect("engine");
+            e.globals().set("bytecode", bytecode).unwrap();
+            e.globals().set("path", path.to_str().unwrap()).unwrap();
+
+            let (returned, err): (bool, String) = e
+                .load(format!(
+                    r#"
+                    local thread = require("std:thread")
+                    local w = assert(thread.spawn({opts}))
+                    local v, err = w:await()
+                    return v ~= nil, tostring(err)
+                "#
+                ))
+                .eval_async()
+                .await
+                .expect("spawn");
+            assert!(!returned, "{opts}: bytecode must not execute");
+            assert!(err.contains("binary"), "{opts}: got {err}");
+        });
+    }
+
+    /// Spawn rejects LuaJIT bytecode passed inline as `source`.
+    #[test]
+    fn spawn_source_rejects_bytecode() {
+        assert_spawn_rejects_bytecode("{ source = bytecode }");
+    }
+
+    /// Spawn rejects a `file` whose contents are LuaJIT bytecode.
+    #[test]
+    fn spawn_file_rejects_bytecode() {
+        assert_spawn_rejects_bytecode("{ file = path }");
     }
 }

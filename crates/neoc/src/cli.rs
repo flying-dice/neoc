@@ -524,7 +524,7 @@ pub fn transpile_entry_to_lua(
     file: &Path,
     err: &mut impl Write,
 ) -> Result<Option<TranspiledEntry>> {
-    let project = transpile_project(file, Target::Luau)
+    let project = transpile_project(file, Target::Lua)
         .with_context(|| format!("reading {}", file.display()))?;
 
     if !project.diagnostics.is_empty() {
@@ -586,7 +586,7 @@ pub fn transpile_source_to_lua(
     source: &str,
     err: &mut impl Write,
 ) -> Result<Option<TranspiledEntry>> {
-    let compiled = transpile(source, Target::Luau);
+    let compiled = transpile(source, Target::Lua);
 
     if !compiled.diagnostics.is_empty() {
         report_eval(&compiled.diagnostics, err)?;

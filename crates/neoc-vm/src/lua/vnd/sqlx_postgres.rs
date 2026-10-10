@@ -32,7 +32,7 @@ use sqlx::{Column, Row, TypeInfo, ValueRef};
 use tracing::instrument;
 
 use crate::lua::facade::Module;
-use crate::lua::sandbox::{from_err, ok};
+use crate::lua::sandbox::{from_err, i64_to_lua, ok};
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
     Ok(declare(lua)?.into_table())
@@ -238,7 +238,7 @@ fn bind_param<'q>(
     Ok(match v {
         Value::Nil => q.bind(Option::<i64>::None),
         Value::Boolean(b) => q.bind(b),
-        Value::Integer(i) => q.bind(i as i64),
+        Value::Integer(i) => q.bind(i),
         Value::Number(f) => q.bind(f),
         // TODO: clean-code - 0.6 - KISS: implicit utf8→text / non-utf8→bytea fallback hides bind type from caller; consider explicit bytes type
         Value::String(s) => {
@@ -293,18 +293,15 @@ fn decode_known(
         }
         "INT2" => {
             let n: i16 = row.try_get(idx).map_err(mlua::Error::external)?;
-            Value::Integer(n as i32)
+            i64_to_lua(i64::from(n))
         }
         "INT4" => {
             let n: i32 = row.try_get(idx).map_err(mlua::Error::external)?;
-            Value::Integer(n)
+            i64_to_lua(i64::from(n))
         }
         "INT8" => {
             let n: i64 = row.try_get(idx).map_err(mlua::Error::external)?;
-            match i32::try_from(n) {
-                Ok(i) => Value::Integer(i),
-                Err(_) => Value::Number(n as f64),
-            }
+            i64_to_lua(n)
         }
         "FLOAT4" => {
             let f: f32 = row.try_get(idx).map_err(mlua::Error::external)?;

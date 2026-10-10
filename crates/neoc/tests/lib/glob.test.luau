@@ -6,17 +6,18 @@ local expect   = _t.expect
 local glob = require("lib:glob")
 local fs   = require("std:fs")
 local env  = require("std:env")
+local random = require("lib:random")
 
 -- Build a fresh, uniquely-named tempdir for each scan-style test so they
 -- don't bleed into each other. std:fs has no remove API, so leakage to
 -- /tmp is accepted — matches other tests in this suite (csv, compile).
 local _counter = 0
 local function fresh_tempdir(label)
-    _counter += 1
+    _counter = _counter + 1
     local path = string.format(
-        "%s/neoc-glob-%d-%d-%s",
+        "%s/neoc-glob-%s-%d-%s",
         env.temp_dir(),
-        os.time(),
+        random.uuid_v4(),
         _counter,
         label
     )

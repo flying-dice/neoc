@@ -36,7 +36,7 @@ use tracing::instrument;
 use tracing::log::LevelFilter;
 
 use crate::lua::facade::Module;
-use crate::lua::sandbox::{from_err, ok};
+use crate::lua::sandbox::{from_err, i64_to_lua, ok};
 
 /// sqlx caches prepared statements per connection up to this many entries.
 /// Default is 100; we bump it to cover apps that issue more distinct SQL
@@ -347,7 +347,7 @@ fn bind_param<'q>(
     Ok(match v {
         Value::Nil => q.bind(Option::<i64>::None),
         Value::Boolean(b) => q.bind(b),
-        Value::Integer(i) => q.bind(i as i64),
+        Value::Integer(i) => q.bind(i),
         Value::Number(f) => q.bind(f),
         Value::String(s) => {
             let bytes = s.as_bytes();
@@ -426,10 +426,7 @@ fn decode_cell(lua: &Lua, kind: Kind, raw: MySqlValueRef) -> mlua::Result<Value>
         }
         Kind::Integer => {
             let v: i64 = <i64 as Decode<MySql>>::decode(raw).map_err(mlua::Error::external)?;
-            match i32::try_from(v) {
-                Ok(i) => Value::Integer(i),
-                Err(_) => Value::Number(v as f64),
-            }
+            i64_to_lua(v)
         }
         Kind::Real => {
             let v: f64 = <f64 as Decode<MySql>>::decode(raw).map_err(mlua::Error::external)?;

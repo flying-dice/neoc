@@ -449,19 +449,20 @@ mod tests {
     #[test]
     fn drop_unlinks_temp_file() {
         let lua = engine();
-        let p: String = lua
-            .load(
-                r#"
+        lua.load(
+            r#"
                 do
                     local f = assert(tempfile.tempfile())
                     captured_path = f:path()
                 end
-                collectgarbage("collect")
-                return captured_path
             "#,
-            )
-            .eval()
-            .unwrap();
+        )
+        .exec()
+        .unwrap();
+        // Collect outside the chunk: the dropped userdata is no longer reachable
+        // from a live stack frame, so the collector can run its destructor.
+        lua.gc_collect().unwrap();
+        let p: String = lua.load("return captured_path").eval().unwrap();
         assert!(
             !Path::new(&p).exists(),
             "expected temp file at {p:?} to be unlinked after GC"
@@ -471,19 +472,20 @@ mod tests {
     #[test]
     fn drop_unlinks_temp_dir_recursively() {
         let lua = engine();
-        let p: String = lua
-            .load(
-                r#"
+        lua.load(
+            r#"
                 do
                     local d = assert(tempfile.tempdir())
                     captured_path = d:path()
                 end
-                collectgarbage("collect")
-                return captured_path
             "#,
-            )
-            .eval()
-            .unwrap();
+        )
+        .exec()
+        .unwrap();
+        // Collect outside the chunk: the dropped userdata is no longer reachable
+        // from a live stack frame, so the collector can run its destructor.
+        lua.gc_collect().unwrap();
+        let p: String = lua.load("return captured_path").eval().unwrap();
         assert!(
             !Path::new(&p).exists(),
             "expected temp dir at {p:?} to be removed after GC"
@@ -493,19 +495,20 @@ mod tests {
     #[test]
     fn keep_persists_file_past_drop() {
         let lua = engine();
-        let p: String = lua
-            .load(
-                r#"
+        lua.load(
+            r#"
                 do
                     local f = assert(tempfile.tempfile())
                     kept_path = assert(f:keep())
                 end
-                collectgarbage("collect")
-                return kept_path
             "#,
-            )
-            .eval()
-            .unwrap();
+        )
+        .exec()
+        .unwrap();
+        // Collect outside the chunk: the dropped userdata is no longer reachable
+        // from a live stack frame, so the collector can run its destructor.
+        lua.gc_collect().unwrap();
+        let p: String = lua.load("return kept_path").eval().unwrap();
         assert!(
             Path::new(&p).exists(),
             "expected kept file at {p:?} to survive drop"
@@ -516,19 +519,20 @@ mod tests {
     #[test]
     fn keep_persists_dir_past_drop() {
         let lua = engine();
-        let p: String = lua
-            .load(
-                r#"
+        lua.load(
+            r#"
                 do
                     local d = assert(tempfile.tempdir())
                     kept_path = assert(d:keep())
                 end
-                collectgarbage("collect")
-                return kept_path
             "#,
-            )
-            .eval()
-            .unwrap();
+        )
+        .exec()
+        .unwrap();
+        // Collect outside the chunk: the dropped userdata is no longer reachable
+        // from a live stack frame, so the collector can run its destructor.
+        lua.gc_collect().unwrap();
+        let p: String = lua.load("return kept_path").eval().unwrap();
         assert!(
             Path::new(&p).is_dir(),
             "expected kept dir at {p:?} to survive drop"

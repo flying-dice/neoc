@@ -276,7 +276,7 @@ fn run_neoc_type_error_reports_neoc_diagnostic_not_lua() {
 }
 
 // A program that compiles cleanly but faults at runtime: `crash()` calls an
-// unbound name, so the embedded Luau VM raises `attempt to call a nil value`.
+// unbound name, so the embedded LuaJIT VM raises `attempt to call global 'explode' (a nil value)`.
 // The fault is reported against the `.neoc` chunk name, and the source map (#56)
 // rewrites the emitted-Luau line back to the neoc line — `explode()` sits on neoc
 // line 4, so the fault must read `fault.neoc:4`, not the emitted-Luau line.
@@ -304,7 +304,8 @@ fn run_neoc_runtime_fault_reports_against_the_neoc_position() {
     // The fault names the `.neoc` chunk and the runtime cause, so the report
     // points at the program the user ran rather than a host artifact.
     assert!(
-        stderr.contains("fault.neoc") && stderr.contains("attempt to call a nil value"),
+        stderr.contains("fault.neoc")
+            && stderr.contains("attempt to call global 'explode' (a nil value)"),
         "expected a fault against the fault.neoc chunk, got: {stderr}"
     );
     // The source map remaps the emitted-Luau line to the neoc line: the failing
@@ -423,4 +424,24 @@ fn run_neoc_multi_module_is_rejected_with_pointer_to_build() {
         stderr.contains("imports other modules") && stderr.contains("neoc build"),
         "expected a multi-module rejection pointing at `neoc build`, got: {stderr}"
     );
+}
+
+// LuaJIT bytecode is unverified — a crafted chunk escapes the sandbox — so
+// `neoc run` loads `.lua` files as text only. The fixture is a stripped dump of
+// `return 7`: a `\x1bLJ` header the text loader must refuse.
+#[test]
+fn run_lua_file_rejects_bytecode() {
+    let dir = tempdir().unwrap();
+    let lua = mlua::Lua::new();
+    let dump: mlua::String = lua
+        .load("return string.dump(function() return 7 end, true)")
+        .eval()
+        .unwrap();
+    let path = dir.path().join("payload.lua");
+    fs::write(&path, dump.as_bytes()).unwrap();
+
+    let out = Command::new(BIN).arg("run").arg(&path).output().unwrap();
+    assert!(!out.status.success(), "bytecode must not run");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("binary"), "got: {stderr}");
 }

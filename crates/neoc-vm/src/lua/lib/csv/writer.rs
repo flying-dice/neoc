@@ -111,7 +111,7 @@ fn detect_shape(t: &Table, prefix: &str) -> Result<Shape, String> {
         match k {
             Value::Integer(i) if i >= 1 => {
                 int_count += 1;
-                let i64v = i as i64;
+                let i64v = i;
                 if i64v > max_int {
                     max_int = i64v;
                 }

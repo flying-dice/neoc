@@ -71,6 +71,7 @@ use mlua::{
 use parking_lot::RwLock;
 
 use crate::lua::facade::Module;
+use crate::lua::sandbox::i64_to_lua;
 
 // ---------------------------------------------------------------------------
 // JsonValue — pure-std representation
@@ -677,10 +678,7 @@ fn json_scalar_to_lua(lua: &Lua, v: &JsonValue) -> mlua::Result<Option<Value>> {
     match v {
         JsonValue::Null => Ok(Some(null_handle(lua)?)),
         JsonValue::Bool(b) => Ok(Some(Value::Boolean(*b))),
-        JsonValue::Int(i) => Ok(Some(match i32::try_from(*i) {
-            Ok(i32v) => Value::Integer(i32v),
-            Err(_) => Value::Number(*i as f64),
-        })),
+        JsonValue::Int(i) => Ok(Some(i64_to_lua(*i))),
         JsonValue::Float(f) => Ok(Some(Value::Number(*f))),
         JsonValue::String(s) => Ok(Some(Value::String(lua.create_string(s)?))),
         JsonValue::Object(_) | JsonValue::Array(_) => Ok(None),
@@ -719,7 +717,7 @@ pub fn lua_value_to_json_value(v: &Value) -> mlua::Result<JsonValue> {
     match v {
         Value::Nil => Ok(JsonValue::Null),
         Value::Boolean(b) => Ok(JsonValue::Bool(*b)),
-        Value::Integer(i) => Ok(JsonValue::Int(*i as i64)),
+        Value::Integer(i) => Ok(JsonValue::Int(*i)),
         Value::Number(n) => {
             // Whole-number-fits-in-i64 → keep as Int so re-encode preserves
             // integer literal form. Otherwise Float.
@@ -770,7 +768,7 @@ fn table_to_json_value(t: &Table) -> mlua::Result<JsonValue> {
     let mut max_int: i64 = 0;
     for (k, _) in &entries {
         match k {
-            Value::Integer(i) if *i >= 1 => max_int = max_int.max(*i as i64),
+            Value::Integer(i) if *i >= 1 => max_int = max_int.max(*i),
             _ => all_int = false,
         }
     }
@@ -782,7 +780,7 @@ fn table_to_json_value(t: &Table) -> mlua::Result<JsonValue> {
         let mut indexed: Vec<(i64, Value)> = entries
             .into_iter()
             .filter_map(|(k, v)| match k {
-                Value::Integer(i) => Some((i as i64, v)),
+                Value::Integer(i) => Some((i, v)),
                 _ => None,
             })
             .collect();

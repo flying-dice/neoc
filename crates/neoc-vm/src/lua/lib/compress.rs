@@ -109,7 +109,7 @@ fn extract_integer_opt(
     let v: Value = t.get(key).map_err(|e| format!("{prefix}: {e}"))?;
     match v {
         Value::Nil => Ok(None),
-        Value::Integer(i) => Ok(Some(i as i64)),
+        Value::Integer(i) => Ok(Some(i)),
         Value::Number(f) => {
             if !f.is_finite() || f.fract() != 0.0 {
                 Err(format!("{prefix}: {key} must be an integer"))

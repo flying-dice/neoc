@@ -264,8 +264,7 @@ async fn run(paths: &[String], user_args: &[String]) {
 
         let engine = engine_with_args(user_args);
 
-        if let Err(e) = engine
-            .load(&source)
+        if let Err(e) = lua::sandbox::load_source(&engine, &source)
             .set_name(path.as_str())
             .exec_async()
             .await
@@ -344,7 +343,11 @@ async fn run_eval(source: &str, as_lua: bool, user_args: &[String]) {
 
     let engine = engine_with_args(user_args);
 
-    if let Err(e) = engine.load(&script).set_name("<eval>").exec_async().await {
+    if let Err(e) = lua::sandbox::load_source(&engine, &script)
+        .set_name("<eval>")
+        .exec_async()
+        .await
+    {
         report_script_error_mapped(e, &script, "<eval>", source_map.as_ref());
     }
 
@@ -413,7 +416,10 @@ async fn run_embedded(payload: &[u8]) {
 
     let engine = engine_with_args(&user_args);
 
-    if let Err(e) = engine.load(payload).exec_async().await {
+    if let Err(e) = lua::sandbox::load_source(&engine, payload)
+        .exec_async()
+        .await
+    {
         report_error(NeocError::Runtime(e.to_string()));
     }
 

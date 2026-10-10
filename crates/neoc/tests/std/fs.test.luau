@@ -4,6 +4,7 @@ local test     = _t.test
 local expect   = _t.expect
 
 local fs = require("std:fs")
+local random = require("lib:random")
 
 fs.create_dir_all(".tmp")
 
@@ -13,7 +14,7 @@ describe("fs", function()
 
     describe("create_dir", function()
         test("creates a directory that does not exist", function()
-            local name = ".tmp/fs_create_dir_" .. tostring(os.clock())
+            local name = ".tmp/fs_create_dir_" .. random.uuid_v4()
             local ok, err = fs.create_dir(name)
             expect(err).toBeNil()
             expect(ok).toBe(true)

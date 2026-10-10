@@ -73,7 +73,7 @@ use rusqlite::types::{ToSql, ToSqlOutput, Value as SqlValue, ValueRef};
 use tracing::instrument;
 
 use crate::lua::facade::Module;
-use crate::lua::sandbox::{from_err, ok};
+use crate::lua::sandbox::{from_err, i64_to_lua, ok};
 
 /// Lockless wrapper around a rusqlite connection. See module docs for the
 /// safety invariant.
@@ -478,7 +478,7 @@ impl ToSql for LuaToSql {
             } else {
                 0
             }))),
-            Value::Integer(i) => Ok(ToSqlOutput::Owned(SqlValue::Integer(*i as i64))),
+            Value::Integer(i) => Ok(ToSqlOutput::Owned(SqlValue::Integer(*i))),
             Value::Number(f) => Ok(ToSqlOutput::Owned(SqlValue::Real(*f))),
             Value::String(s) => {
                 let bytes = s.as_bytes();
@@ -512,14 +512,7 @@ fn row_to_lua_table(lua: &Lua, row: Vec<(String, SqlValue)>) -> mlua::Result<Tab
     for (name, v) in row {
         let val = match v {
             SqlValue::Null => Value::Nil,
-            SqlValue::Integer(i) => {
-                // mlua::Integer is i32 under luau — fall back to a float
-                // for values that don't fit so callers don't lose data.
-                match i32::try_from(i) {
-                    Ok(n) => Value::Integer(n),
-                    Err(_) => Value::Number(i as f64),
-                }
-            }
+            SqlValue::Integer(i) => i64_to_lua(i),
             SqlValue::Real(f) => Value::Number(f),
             SqlValue::Text(s) => Value::String(lua.create_string(&s)?),
             SqlValue::Blob(b) => Value::String(lua.create_string(&b)?),

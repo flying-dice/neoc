@@ -11,7 +11,7 @@ describe("compress", function()
     -- round-trip per format ---------------------------------------------------
 
     describe("round-trip", function()
-        for _, fmt in { "gzip", "zlib", "zstd", "brotli" } do
+        for _, fmt in ipairs({ "gzip", "zlib", "zstd", "brotli" }) do
             test(fmt .. " round-trips", function()
                 local original = "hello world"
                 local compressed, enc_err = compress.encode(fmt, original)
@@ -37,7 +37,7 @@ describe("compress", function()
         end)
 
         test("empty round-trip", function()
-            for _, fmt in { "gzip", "zlib", "zstd", "brotli" } do
+            for _, fmt in ipairs({ "gzip", "zlib", "zstd", "brotli" }) do
                 local compressed, enc_err = compress.encode(fmt, "")
                 expect(enc_err).toBeNil()
                 local decompressed, dec_err = compress.decode(fmt, compressed)
@@ -51,7 +51,7 @@ describe("compress", function()
 
     describe("encode", function()
         test("empty string produces output", function()
-            for _, fmt in { "gzip", "zlib", "zstd", "brotli" } do
+            for _, fmt in ipairs({ "gzip", "zlib", "zstd", "brotli" }) do
                 local result, err = compress.encode(fmt, "")
                 expect(err).toBeNil()
                 expect(#result > 0).toBeTruthy()
@@ -119,7 +119,7 @@ describe("compress", function()
 
     describe("decode", function()
         test("empty string returns (nil, err)", function()
-            for _, fmt in { "gzip", "zlib", "zstd", "brotli" } do
+            for _, fmt in ipairs({ "gzip", "zlib", "zstd", "brotli" }) do
                 local val, err = compress.decode(fmt, "")
                 expect(val).toBeNil()
                 expect(err).toContain("compress.decode:")
@@ -127,7 +127,7 @@ describe("compress", function()
         end)
 
         test("corrupt data returns (nil, err)", function()
-            for _, fmt in { "gzip", "zlib", "zstd", "brotli" } do
+            for _, fmt in ipairs({ "gzip", "zlib", "zstd", "brotli" }) do
                 local val, err = compress.decode(fmt, "not compressed data")
                 expect(val).toBeNil()
                 expect(err).toContain("compress.decode:")

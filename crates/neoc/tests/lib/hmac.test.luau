@@ -6,7 +6,7 @@ local expect   = _t.expect
 local hmac = require("lib:hmac")
 
 -- Convert raw bytes to lowercase hex for readable assertions.
-local function to_hex(bytes: string): string
+local function to_hex(bytes)
     local parts = {}
     for i = 1, #bytes do
         parts[i] = string.format("%02x", string.byte(bytes, i))

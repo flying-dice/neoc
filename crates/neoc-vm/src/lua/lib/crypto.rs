@@ -553,7 +553,7 @@ mod tests {
                 local key = ("k"):rep(32)
                 local nonce = ("n"):rep(12)
                 local ct = crypto.encrypt("chacha20_poly1305", key, nonce, "msg")
-                local tampered = string.char(bit32.bxor(string.byte(ct, 1), 1)) .. string.sub(ct, 2)
+                local tampered = string.char(bit.bxor(string.byte(ct, 1), 1)) .. string.sub(ct, 2)
                 return crypto.decrypt("chacha20_poly1305", key, nonce, tampered)
                 "#,
             )

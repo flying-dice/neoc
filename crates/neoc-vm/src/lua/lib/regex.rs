@@ -877,7 +877,7 @@ mod tests {
                 r#"
                 local p = regex.Pattern.new("\\d+")
                 local n = 0
-                for _ in ipairs(p:find_all("1 22 333")) do n += 1 end
+                for _ in ipairs(p:find_all("1 22 333")) do n = n + 1 end
                 if p:is_match("nope") then return -1 end
                 return n
             "#,

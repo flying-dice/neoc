@@ -28,6 +28,7 @@ use mlua::{Function, Lua, LuaSerdeExt, MultiValue, Table, UserData, UserDataMeth
 use parking_lot::RwLock;
 
 use crate::lua::facade::Module;
+use crate::lua::sandbox::i64_to_lua;
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
     Ok(declare(lua)?.into_table())
@@ -219,14 +220,6 @@ pub struct SharedCounter {
 pub struct Counter(Arc<SharedCounter>);
 
 arc_newtype!(Counter, SharedCounter);
-
-fn i64_to_lua(v: i64) -> Value {
-    // mlua::Integer is i32 under luau — same overflow handling as the DB modules.
-    match i32::try_from(v) {
-        Ok(i) => Value::Integer(i),
-        Err(_) => Value::Number(v as f64),
-    }
-}
 
 // `Counter` implements `Sendable` so it can be passed to spawned workers
 // via `thread.spawn({ shared = { c = counter } })`.  The shared state is

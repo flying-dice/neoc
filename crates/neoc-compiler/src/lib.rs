@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use neoc_ast as ast;
+use neoc_codegen_lua as codegen_lua;
 use neoc_codegen_lua::LineMap;
 use neoc_codegen_luau as codegen_luau;
 use neoc_parser as parser;
@@ -33,9 +34,11 @@ pub enum Error {
 
 /// A backend the compiler can lower to.
 ///
-/// neoc emits one target, `luau` — the typed superset that downgrades to Lua
-/// through the Luau toolchain. Plain Lua is not a selectable target; obtain it
-/// by downgrading the typed superset.
+/// `luau` is the only target selectable by name (`--target`, manifest) — the
+/// typed superset that downgrades to Lua through the Luau toolchain. `Lua` is
+/// internal: `neoc run` emits it for the embedded `LuaJIT` runtime, and
+/// `"lua".parse()` rejects it, so `Display` → `FromStr` deliberately does not
+/// round-trip for that variant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Target {
     /// Self-typed Luau (`.luau`): the Lua runtime body with neoc types woven on,
@@ -44,6 +47,9 @@ pub enum Target {
     /// with the Luau toolchain.
     #[default]
     Luau,
+    /// Plain Lua 5.1 (`.lua`) — what the embedded `LuaJIT` runtime executes.
+    /// Used by `neoc run`; not selectable by name.
+    Lua,
 }
 
 impl Target {
@@ -52,6 +58,7 @@ impl Target {
     pub fn extension(self) -> &'static str {
         match self {
             Target::Luau => "luau",
+            Target::Lua => "lua",
         }
     }
 }
@@ -60,6 +67,7 @@ impl std::fmt::Display for Target {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Target::Luau => "luau",
+            Target::Lua => "lua",
         })
     }
 }
@@ -766,6 +774,20 @@ struct Emitted {
 /// it to track spans and returns a real [`SourceMap`] (#56).
 fn emit(target: Target, module: &ast::Module, source: &str, inputs: &EmitInputs) -> Emitted {
     match target {
+        Target::Lua => {
+            let r = codegen_lua::emit_with_imports(
+                module,
+                source,
+                &inputs.enums,
+                &inputs.externs,
+                inputs.as_module,
+            );
+            Emitted {
+                output: r.lua,
+                messages: r.diagnostics.into_iter().map(|d| d.message).collect(),
+                source_map: SourceMap(r.source_map),
+            }
+        }
         Target::Luau => {
             // A self-typed `.luau` is self-contained: it inlines the runtime and
             // its own `Result`/`Option` type aliases (no sidecar). Reuses
@@ -901,6 +923,14 @@ mod tests {
         assert_eq!("luau".parse::<Target>(), Ok(Target::Luau));
         assert_eq!(Target::Luau.to_string(), "luau");
         assert_eq!(Target::Luau.extension(), "luau");
+    }
+
+    #[test]
+    fn lua_target_is_internal_and_does_not_round_trip_by_name() {
+        assert_eq!(Target::Lua.to_string(), "lua");
+        assert_eq!(Target::Lua.extension(), "lua");
+        // Not selectable: its own name parses to a rejection, not `Target::Lua`.
+        assert!(Target::Lua.to_string().parse::<Target>().is_err());
     }
 
     #[test]
