@@ -13,6 +13,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use neoc_compiler::{Stage, Target, transpile, transpile_project};
 
+mod common;
+
 /// The checked-in `tests/fixtures/modules/` directory.
 fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -267,9 +269,10 @@ fn type_only_and_value_use_with_same_name_coexist() {
     // per-namespace gate agree on all of them. Without this case the whole
     // compiler suite passes against the union-gate regression.
     //
-    // Resolution only. The Lua backend still emits a `local` for the erased
-    // type-only import, shadowing the value binding (#91), so the emitted output
-    // is not asserted here — that is a codegen defect, not a resolution one.
+    // The struct constructor is still a runtime table (`Hue { .. }` lowers to
+    // `Hue.new`), so the type-only import is not erased: it binds a distinct
+    // mangled local and the value import keeps the plain name (#91). Run the
+    // emitted modules in-process on LuaJIT: `main` must read `cfg`'s `7`.
     let dir = tempdir();
     write(&dir, "pal.neoc", "pub struct Hue {\n    r: number,\n}\n");
     write(&dir, "cfg.neoc", "pub const Hue: number = 7;\n");
@@ -291,6 +294,52 @@ fn type_only_and_value_use_with_same_name_coexist() {
         "type-only + value share of a name should type-check, got: {:#?}",
         project.diagnostics
     );
+
+    let lua_of = |stem: &str| {
+        project
+            .files
+            .iter()
+            .find(|(p, _)| p.file_stem().is_some_and(|s| s == stem))
+            .map_or_else(|| panic!("{stem} output present"), |(_, src)| src.as_str())
+    };
+    let main_lua = lua_of("main");
+    assert!(
+        main_lua.contains("local __type_Hue = require(\"pal\").Hue"),
+        "type-only import binds a distinct local:\n{main_lua}"
+    );
+    assert!(
+        main_lua.contains("local Hue = require(\"cfg\").Hue"),
+        "value import keeps the plain name:\n{main_lua}"
+    );
+    assert_eq!(
+        main_lua.matches("local Hue =").count(),
+        1,
+        "exactly one `local Hue`:\n{main_lua}"
+    );
+    assert!(
+        main_lua.contains("__type_Hue.new({ r = Hue })"),
+        "literal constructs through the type binding, field reads the value:\n{main_lua}"
+    );
+
+    // Run the emitted modules under a `require` shim over their chunks.
+    let program = format!(
+        "local __chunks = {{\n\
+         pal = function(...)\n{}\nend,\n\
+         cfg = function(...)\n{}\nend,\n\
+         main = function(...)\n{}\nend,\n}}\n\
+         local __loaded = {{}}\n\
+         function require(name)\n\
+           if __loaded[name] == nil then __loaded[name] = __chunks[name]() end\n\
+           return __loaded[name]\n\
+         end\n\
+         print(require(\"main\").main())\n",
+        lua_of("pal"),
+        lua_of("cfg"),
+        main_lua
+    );
+    let stdout = common::run_lua(&program)
+        .unwrap_or_else(|e| panic!("lua failed:\n{e}\n--- program ---\n{program}"));
+    assert_eq!(stdout.trim(), "7");
 }
 
 #[test]

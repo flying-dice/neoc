@@ -576,7 +576,8 @@ impl Emitter {
             return self.emit_struct_update(name, fields, base);
         }
         let body = self.emit_field_inits(fields);
-        format!("{name}.new({{ {body} }})")
+        let local = self.type_local(name);
+        format!("{local}.new({{ {body} }})")
     }
 
     /// Whether `name` is a struct declared in an `extern` block.
@@ -592,8 +593,14 @@ impl Emitter {
     pub(crate) fn qualify_extern_value(&self, ty: &str) -> String {
         match self.extern_struct_ns.get(ty) {
             Some(ns) => format!("{ns}.{ty}"),
-            None => ty.to_string(),
+            None => self.type_local(ty).to_string(),
         }
+    }
+
+    /// The local holding `ty`'s runtime table: the mangled binding of a
+    /// type-only import that shares its name with a value import, else `ty`.
+    fn type_local<'a>(&'a self, ty: &'a str) -> &'a str {
+        self.type_renames.get(ty).map_or(ty, String::as_str)
     }
 
     /// Qualify a free extern `fn`'s call through its enclosing `mod`'s binding
@@ -629,7 +636,7 @@ impl Emitter {
         }
         body.push("return __b".to_string());
         let copy = Self::wrap_iife(body);
-        format!("{name}.new({copy})")
+        format!("{}.new({copy})", self.type_local(name))
     }
 
     /// Lower struct-literal / struct-variant fields to `name = value` entries,

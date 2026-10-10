@@ -563,6 +563,7 @@ fn check_and_emit_module(
     let inputs = EmitInputs {
         enums: imported_enums(root, loaded, &me.module),
         externs,
+        type_only_uses: type_only_uses(root, loaded, &me.module),
         // Every module a project build emits is a requireable library — the
         // entry included, since a host consuming the build `require`s it.
         as_module: true,
@@ -720,6 +721,10 @@ struct EmitInputs<'a> {
     /// Extern items brought in by `use`, for native-import reconstruction in the
     /// consumer (`lang/EXTERN.md` §Lowering).
     externs: Vec<ast::ExternItem>,
+    /// `::`-joined paths of type-namespace-only `use`s whose binding another
+    /// `use` also takes (a value import). The backend binds these to a distinct
+    /// local so the constructor and the value coexist at runtime (#91).
+    type_only_uses: Vec<String>,
     /// Whether the module is emitted as a requireable library. A project build
     /// sets `true` so each module ends with a `return { … }` export table a
     /// consumer can `require`; single-file `transpile` leaves it `false` so the
@@ -749,6 +754,7 @@ fn emit(target: Target, module: &ast::Module, source: &str, inputs: &EmitInputs)
                 source,
                 &inputs.enums,
                 &inputs.externs,
+                &inputs.type_only_uses,
                 inputs.as_module,
             );
             Emitted {
@@ -828,6 +834,51 @@ fn imported_externs(
         }
     }
     out
+}
+
+/// The `use`s of `module` that import a type-namespace-only item under a
+/// binding another `use` in the module also takes — necessarily a value import,
+/// since the per-namespace conflict guard rejects any same-namespace pair. Keyed
+/// by the `::`-joined path. The type is erased from the checker's value
+/// namespace, but its constructor is still a runtime table the module needs
+/// (`S { .. }` lowers to `S.new`), so the backend gives it a distinct local
+/// rather than letting the value binding shadow it (#91).
+fn type_only_uses(
+    root: &Path,
+    loaded: &HashMap<PathBuf, LoadedModule>,
+    module: &ast::Module,
+) -> Vec<String> {
+    let uses: Vec<&ast::UseDecl> = module
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            ast::ItemKind::Use(u) => Some(u),
+            _ => None,
+        })
+        .collect();
+    let binding_of = |u: &ast::UseDecl| u.alias.clone().or_else(|| u.path.last().cloned());
+    uses.iter()
+        .filter(|u| {
+            let Some(last) = u.path.last() else {
+                return false;
+            };
+            let Some(source) = module_file(root, &u.path)
+                .map(|p| canonical_or(&p))
+                .and_then(|dep| loaded.get(&dep))
+            else {
+                return false;
+            };
+            let type_only =
+                source.table.types.contains_key(last) && !source.table.values.contains_key(last);
+            type_only
+                && uses
+                    .iter()
+                    .filter(|other| binding_of(other) == binding_of(u))
+                    .count()
+                    > 1
+        })
+        .map(|u| u.path.join("::"))
+        .collect()
 }
 
 /// The `pub` enum declarations `module` imports, gathered through its `use`

@@ -217,7 +217,7 @@ pub struct EmitResult {
 /// numbers back to neoc positions; the emitted Lua text is identical either way.
 #[must_use]
 pub fn emit(module: &ast::Module) -> EmitResult {
-    emit_inner(module, None, &[], &[], false)
+    emit_inner(module, None, &[], &[], &[], false)
 }
 
 /// Lower a module to Lua 5.1 source and build a [`LineMap`] from `source`.
@@ -228,7 +228,7 @@ pub fn emit(module: &ast::Module) -> EmitResult {
 /// differs.
 #[must_use]
 pub fn emit_with_source(module: &ast::Module, source: &str) -> EmitResult {
-    emit_inner(module, Some(source), &[], &[], false)
+    emit_inner(module, Some(source), &[], &[], &[], false)
 }
 
 /// Like [`emit_with_source`], but also given the `pub` enum declarations the
@@ -240,6 +240,12 @@ pub fn emit_with_source(module: &ast::Module, source: &str) -> EmitResult {
 /// definitions are emitted by — or, for externs, *not* emitted by — the module
 /// that declares them.
 ///
+/// `type_only_uses` names (as `::`-joined `use` paths) the imports that bring in a
+/// type-namespace-only item whose binding another `use` in the module also
+/// takes. The struct constructor is still a runtime value, so each such import
+/// binds a distinct mangled local and struct-literal / associated-path references
+/// read it, leaving the value binding the plain name (`lang/STATIC.md` §1).
+///
 /// `as_module` selects a requireable library (each `pub` runtime binding emitted
 /// as a `local` and a trailing `return { name = name, … }`) over a directly
 /// runnable script (globals, no trailing `return`). A project build passes
@@ -250,6 +256,7 @@ pub fn emit_with_imports(
     source: &str,
     imported_enums: &[&ast::EnumDecl],
     imported_externs: &[ast::ExternItem],
+    type_only_uses: &[String],
     as_module: bool,
 ) -> EmitResult {
     emit_inner(
@@ -257,6 +264,7 @@ pub fn emit_with_imports(
         Some(source),
         imported_enums,
         imported_externs,
+        type_only_uses,
         as_module,
     )
 }
@@ -266,6 +274,7 @@ fn emit_inner(
     source: Option<&str>,
     imported_enums: &[&ast::EnumDecl],
     imported_externs: &[ast::ExternItem],
+    type_only_uses: &[String],
     as_module: bool,
 ) -> EmitResult {
     // A `use`d extern item lowers to its native `require` in *this* consumer, not
@@ -291,11 +300,35 @@ fn emit_inner(
         imported_externs: imported_externs.to_vec(),
         imported_extern_names: ast::extern_value_names_from_items(imported_externs),
         as_module,
+        type_renames: type_only_renames(module, type_only_uses),
+        type_only_uses: type_only_uses.iter().cloned().collect(),
         ..Emitter::default()
     };
     e.emit_module(module);
     let diagnostics = std::mem::take(&mut e.diagnostics);
     e.finish_with_map(diagnostics)
+}
+
+/// The local a type-only import binds when its name collides with a value
+/// import: the binding mangled so the value keeps the plain name.
+fn type_only_local(binding: &str) -> String {
+    format!("__type_{binding}")
+}
+
+/// Binding → mangled local, for each `use` in `type_only_uses`.
+fn type_only_renames(module: &ast::Module, type_only_uses: &[String]) -> HashMap<String, String> {
+    module
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            ast::ItemKind::Use(u) if type_only_uses.contains(&u.path.join("::")) => {
+                let last = u.path.last()?;
+                let binding = u.alias.as_deref().unwrap_or(last);
+                Some((binding.to_string(), type_only_local(binding)))
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 /// A precomputed index of line-start byte offsets, for turning a byte offset
@@ -410,6 +443,13 @@ pub(crate) struct Emitter {
     /// through its native `require` and `mod`-qualified reference, never the
     /// defining module's emitted output (which holds no runtime value for it).
     imported_extern_names: std::collections::HashSet<String>,
+    /// Type-only imports sharing their binding with a value import, binding →
+    /// mangled local. Constructor references (`S { .. }`, `S::member`) read the
+    /// mangled local; the plain name stays the value binding.
+    type_renames: HashMap<String, String>,
+    /// The `::`-joined paths of those type-only imports, to pick them out in
+    /// [`emit_use`](Self::emit_use).
+    type_only_uses: HashSet<String>,
     /// Whether this module is emitted as a requireable library (project build)
     /// rather than a directly runnable script (single-file). When `true`, each
     /// `pub` runtime binding is a `local` and the module ends with a
@@ -831,6 +871,12 @@ impl Emitter {
             return;
         }
         let binding = u.alias.as_deref().unwrap_or(last);
+        let mangled = type_only_local(binding);
+        let binding = if self.type_only_uses.contains(&u.path.join("::")) {
+            mangled.as_str()
+        } else {
+            binding
+        };
         let module = prefix.join(".");
         self.line(format!("local {binding} = require(\"{module}\").{last}"));
     }
@@ -1166,7 +1212,7 @@ mod module_tests {
     fn as_module_emits_local_pub_fn_and_export_table() {
         let parsed = neoc_parser::parse("pub fn greet(name: string) -> string { name }");
         assert!(parsed.ok(), "{:?}", parsed.diagnostics);
-        let out = emit_with_imports(&parsed.module, "", &[], &[], true).lua;
+        let out = emit_with_imports(&parsed.module, "", &[], &[], &[], true).lua;
         // The `pub fn` is a `local`, not a global — globals are the single-file
         // script form (§3.7).
         assert!(
@@ -1183,7 +1229,7 @@ mod module_tests {
     fn single_file_keeps_globals_and_no_return_table() {
         let parsed = neoc_parser::parse("pub fn greet(name: string) -> string { name }");
         assert!(parsed.ok(), "{:?}", parsed.diagnostics);
-        let out = emit_with_imports(&parsed.module, "", &[], &[], false).lua;
+        let out = emit_with_imports(&parsed.module, "", &[], &[], &[], false).lua;
         assert!(
             out.contains("function greet"),
             "single-file pub fn stays a global:\n{out}"
@@ -1209,7 +1255,7 @@ enum Hidden { A, B }
 fn helper() {}";
         let parsed = neoc_parser::parse(src);
         assert!(parsed.ok(), "{:?}", parsed.diagnostics);
-        let out = emit_with_imports(&parsed.module, "", &[], &[], true).lua;
+        let out = emit_with_imports(&parsed.module, "", &[], &[], &[], true).lua;
         let last = out.trim_end().lines().last().unwrap();
         // Pub const, struct, and the method-bearing enum export; the private fn
         // and the plain (no-method) enum do not.
