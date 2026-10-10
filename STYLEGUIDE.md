@@ -142,7 +142,7 @@ Helper only when 3+ call sites exist.
 
 ---
 
-## Luau
+## Lua
 
 ### Imports
 
@@ -159,7 +159,7 @@ Grouped by namespace, alphabetical. Local name matches module name.
 
 ### Test file structure
 
-`crates/neoc/tests/<module>.test.luau`:
+`crates/neoc/tests/<module>.test.lua`:
 
 ```lua
 local _t       = require("lib:test")

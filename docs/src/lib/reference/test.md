@@ -2,13 +2,13 @@
 
 **Experimental**
 
-Luau test runner. Registers test cases, runs them, reports pass/fail with assertion details.
+Lua test runner. Registers test cases, runs them, reports pass/fail with assertion details.
 
 | Property | Value |
 |---|---|
 | Namespace | `lib` |
 | Source | [`src/lua/lib/test.rs`](https://github.com/flying-dice/neoc/blob/main/src/lua/lib/test.rs) |
-| Tests | [`tests/lib/test.test.luau`](https://github.com/flying-dice/neoc/blob/main/tests/lib/test.test.luau) |
+| Tests | [`tests/lib/test.test.lua`](https://github.com/flying-dice/neoc/blob/main/tests/lib/test.test.lua) |
 | Stability | Experimental |
 
 ## Syntax

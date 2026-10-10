@@ -12,7 +12,7 @@ Of the structured languages with a current ecosystem, Rust has the most expressi
 
 ## Why Lua 5.1
 
-It is the lowest common denominator. The same emitted output runs on Luau (the embedded `neoc` runtime), on stock Lua 5.1 through 5.4, and on LuaJIT. One target, many runtimes.
+It is the lowest common denominator. The same emitted output runs on LuaJIT (the embedded `neoc` runtime) and on stock Lua 5.1. One target, many runtimes.
 
 ## Why a separate spec
 

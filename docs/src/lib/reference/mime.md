@@ -8,7 +8,7 @@ Maps between file extensions, filenames, and MIME type strings. Wraps [`mime_gue
 |---|---|
 | Namespace | `lib` |
 | Source | [`src/lua/lib/mime.rs`](https://github.com/flying-dice/neoc/blob/main/src/lua/lib/mime.rs) |
-| Tests | [`tests/lib/mime.test.luau`](https://github.com/flying-dice/neoc/blob/main/tests/lib/mime.test.luau) |
+| Tests | [`tests/lib/mime.test.lua`](https://github.com/flying-dice/neoc/blob/main/tests/lib/mime.test.lua) |
 | Stability | Stable |
 
 ## Syntax
@@ -100,7 +100,7 @@ local result3, err3 = mime.detect("Makefile")       -- nil, err
 
 ## Acceptance
 
-Exercised by [`tests/lib/mime.test.luau`](https://github.com/flying-dice/neoc/blob/main/tests/lib/mime.test.luau):
+Exercised by [`tests/lib/mime.test.lua`](https://github.com/flying-dice/neoc/blob/main/tests/lib/mime.test.lua):
 
 1. Dot-prefixed and bare extensions equivalent.
 2. Unknown extension → `(nil, err)`.

@@ -191,12 +191,12 @@ Removed entirely:
 
 ### Single-script invocations
 
-`neoc script.luau` without `thread.spawn` → works unchanged. No import, no ceremony, no cost.
+`neoc script.lua` without `thread.spawn` → works unchanged. No import, no ceremony, no cost.
 
 ## Drawbacks
 
 - **Breaking change.** All scripts using `workers.shared` must rewrite to spawn-time handoff. Migration plan stages across multiple PRs — `main` stays green.
-- **Discoverability.** `Concurrent*` or `std:sync` → naming convention IS documentation. Sendable model requires docs or spawn-time error to learn boundary. Mitigation: clear errors + `.d.luau` type stubs.
+- **Discoverability.** `Concurrent*` or `std:sync` → naming convention IS documentation. Sendable model requires docs or spawn-time error to learn boundary. Mitigation: clear errors + `.d.lua` type stubs.
 - **No static checking.** Swift enforces `Sendable` at compile time; we enforce at spawn time (runtime check). Error is immediate and clear but not caught before execution. Inherent to dynamic typing — acceptable tradeoff.
 
 ## Alternatives
@@ -253,4 +253,4 @@ Each step lands as own PR. `main` stays green throughout.
 
 6. **`workers.shared` and friends deleted.** All registry machinery removed. `workers.on_shutdown` + `shutdown_signal` alias survive.
 
-7. **Single-script unaffected.** `neoc script.luau` without `thread.spawn` works unchanged.
+7. **Single-script unaffected.** `neoc script.lua` without `thread.spawn` works unchanged.

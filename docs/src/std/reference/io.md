@@ -8,7 +8,7 @@ Standard input/output handles — `print`, `println`, `eprintln`.
 |---|---|
 | Namespace | `std` |
 | Source | [`src/lua/std/io.rs`](https://github.com/flying-dice/neoc/blob/main/src/lua/std/io.rs) |
-| Tests | [`tests/std/io.test.luau`](https://github.com/flying-dice/neoc/blob/main/tests/std/io.test.luau) |
+| Tests | [`tests/std/io.test.lua`](https://github.com/flying-dice/neoc/blob/main/tests/std/io.test.lua) |
 | Stability | Experimental |
 | Mirror | [`std::io`](https://doc.rust-lang.org/std/io/) |
 

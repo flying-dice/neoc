@@ -57,7 +57,7 @@ You can't dispatch these yourself — surface the owner so the main conversation
 |---|---|
 | tree-sitter, CST→AST, parse errors, error recovery | `syntax-frontend` |
 | inference, unification, traits, bounds, exhaustiveness, name resolution, lints/analysis | `type-system` |
-| AST→Lua/Luau, source maps, derives, lowering | `codegen-backends` |
+| AST→Lua, source maps, derives, lowering | `codegen-backends` |
 | hover/goto/completion/rename, formatting | `developer-tooling` |
 | public API, diagnostics model, AST shape, query spine, wasm | you |
 

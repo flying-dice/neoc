@@ -1,5 +1,5 @@
 ---
-status: Accepted
+status: Superseded
 date: 2026-05-03
 ---
 
@@ -9,7 +9,7 @@ Date: 2026-05-03
 
 ## Status
 
-Accepted
+Superseded by [ADR 0011](/adrs/0011-use-luajit-as-the-embedded-runtime)
 
 ## Context
 

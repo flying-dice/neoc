@@ -15,7 +15,7 @@ ADRs are *retrospective* (decisions in force). [RFCs](/rfcs/) are *forward-looki
 
 ## Index
 
-- [0001. Use Luau as the embedded scripting language](/adrs/0001-use-luau-as-the-embedded-language)
+- [0001. Use Luau as the embedded scripting language](/adrs/0001-use-luau-as-the-embedded-language) — superseded by 0011
 - [0002. Strip unsafe Lua standard library](/adrs/0002-strip-unsafe-lua-stdlib)
 - [0003. Three-namespace module structure (`std`, `lib`, `vnd`)](/adrs/0003-three-namespace-module-structure)
 - [0004. `vnd:*` names match upstream crate names verbatim](/adrs/0004-vnd-module-names-match-upstream)
@@ -25,6 +25,7 @@ ADRs are *retrospective* (decisions in force). [RFCs](/rfcs/) are *forward-looki
 - [0008. `lib:http` — Static file server with directory index](/adrs/0008-lib-http-static-file-server)
 - [0009. `--eval` / `-e` CLI flag](/adrs/0009-eval-cli-flag)
 - [0010. Independent codegen backends — no shared crate](/adrs/0010-independent-codegen-backends)
+- [0011. Use LuaJIT as the embedded runtime and sole compile target](/adrs/0011-use-luajit-as-the-embedded-runtime)
 
 ## See also
 

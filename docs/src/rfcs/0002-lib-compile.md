@@ -8,11 +8,11 @@ implemented-in: issues/17-lib-compile
 
 ## Summary
 
-`lib:compile` exposes `bundle(opts)` to Luau scripts — packages a source file into a self-contained executable. Appends source as payload to running `neoc` binary + 20-byte trailer. On launch, binary detects trailer → reads embedded source → executes directly. No runtime install required on target.
+`lib:compile` exposes `bundle(opts)` to Lua scripts — packages a source file into a self-contained executable. Appends source as payload to running `neoc` binary + 20-byte trailer. On launch, binary detects trailer → reads embedded source → executes directly. No runtime install required on target.
 
 ## Motivation
 
-LLM agents and automation produce artefacts needing distribution without requiring recipients to install `neoc`. Single `compile.bundle()` call in `build.luau` = entire distribution story.
+LLM agents and automation produce artefacts needing distribution without requiring recipients to install `neoc`. Single `compile.bundle()` call in `build.lua` = entire distribution story.
 
 Validated in spike for [flying-dice/neoc#17](https://gitlab.beluga-sirius.ts.net/flying-dice/neoc/-/issues/17). Prior-art survey compared Go/Rust/Zig embedding against Node.js SEA, Bun `bun build --compile`, Deno `deno compile`:
 
@@ -24,14 +24,14 @@ Append-to-stub = correct v1: no build-time embedding, works with any runtime-sup
 
 ## Detailed design
 
-### Luau API
+### Lua API
 
 ```lua
 local compile = require("lib:compile")
 
--- Bundle main.luau into a self-contained executable.
+-- Bundle main.lua into a self-contained executable.
 local ok, err = compile.bundle({
-    entrypoint = "main.luau",  -- required: path to the Luau source file
+    entrypoint = "main.lua",  -- required: path to the Lua source file
     output     = "my-app",     -- required: output path for the bundled binary
 })
 
@@ -63,7 +63,7 @@ Startup: seek `EOF − 20`, read trailer candidate. Magic match + recognised ver
 
 Version `0x01` only defined version. Unrecognised version = hard error (future `neoc` with incompatible trailer).
 
-Payload cap: 4 GiB (u32 length). Not a practical constraint for Luau.
+Payload cap: 4 GiB (u32 length). Not a practical constraint for Lua.
 
 ### Bundle process
 
@@ -77,7 +77,7 @@ Payload cap: 4 GiB (u32 length). Not a practical constraint for Luau.
 
 ### Payload: raw source (v1)
 
-v1 embeds raw Luau source. Bytecode pre-compilation would skip compiler at launch but requires `luau_compile` bindings + added complexity. Deferred.
+v1 embeds raw Lua source. Bytecode pre-compilation would skip compiler at launch but requires LuaJIT bytecode dump bindings + added complexity. Deferred.
 
 ### Cross-compilation (v1)
 
@@ -124,7 +124,7 @@ None. v1 API settled; implementation merged in `!3`.
 - `src/lua/lib/mod.rs` — `pub mod compile` added alphabetically
 - `src/lua/modules.rs` — `lib:compile` registered
 - `src/main.rs` — startup: `detect_embedded_payload_from(current_exe)` → `Some(source)` → execute + exit; else normal CLI
-- `tests/lib/compile.test.luau` — integration test scaffold
+- `tests/lib/compile.test.lua` — integration test scaffold
 - `Cargo.toml` — `tempfile` added for unit test helpers
 
 Go/no-go: **Go**. POC validated append-to-stub end-to-end. Estimate 2–4 days; landed within window.

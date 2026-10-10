@@ -52,7 +52,7 @@ Cross-platform scripts need platform detection, env-var access, path resolution.
 ```
 src/lua/std/env.rs        -- module implementation
 src/lua/std/mod.rs        -- registration (alphabetical insert)
-tests/std/env.test.luau   -- Luau integration tests
+tests/std/env.test.lua   -- Lua integration tests
 ```
 
 ### Lua surface
@@ -261,7 +261,7 @@ pub fn module(lua: &Lua) -> Result<Table> {
 ### Type definition stub
 
 ```lua
--- types/std/env.d.luau
+-- types/std/env.d.lua
 declare env: {
     os:         string,
     arch:       string,
@@ -310,7 +310,7 @@ Rejected. #7 = process lifecycle (`exit`, `abort`, `spawn`, `id`). Conflates two
 
 ### Mutable table (Node/Bun `process.env.KEY = val`)
 
-Rejected. Luau `__newindex` doesn't hook cleanly into Rust. Functional API explicit, consistent with `(value, err)`. Magic table mutation = footgun (principle 2).
+Rejected. Lua `__newindex` doesn't hook cleanly into Rust. Functional API explicit, consistent with `(value, err)`. Magic table mutation = footgun (principle 2).
 
 ### Include `set_var` / `remove_var`
 
@@ -332,8 +332,8 @@ Rejected. Requires `sysinfo` crate — outside `std:*` rules. Belongs in `lib:sy
 - **Helpers:** `ok`/`from_err` in `src/lua/helpers.rs`.
 - **`args()` wiring:** `src/main.rs` sets `_NEOC_ARGS` global at startup. Absent → empty table. Wrong type → `error()`.
 - **`home_dir`:** `#[allow(deprecated)]` at call site.
-- **Tests:** `tests/std/env.test.luau` — all surface functions. Platform assertions conditional on `env.os`. `current_dir` error tests match prefix only.
-- **`.d.luau`:** `types/std/env.d.luau` — required per M1 DoD.
+- **Tests:** `tests/std/env.test.lua` — all surface functions. Platform assertions conditional on `env.os`. `current_dir` error tests match prefix only.
+- **`.d.lua`:** `types/std/env.d.lua` — required per M1 DoD.
 - **Bench:** Criterion, gated behind `bench` feature.
 - **Sequencing:** No upstream dep. Not blocked by #7. Boundary clean.
 - **Impact on #7:** Original #7 placed `process.env`, `process.args`, `process.cwd` under `std:process`. With `std:env` owning read access, #7 narrows to lifecycle + spawn-scoped env mutation.

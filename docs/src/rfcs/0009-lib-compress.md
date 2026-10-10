@@ -8,7 +8,7 @@ implemented-in:
 
 ## Summary
 
-`lib:compress` exposes `encode(format, data[, opts])` and `decode(format, data[, opts])` to Luau scripts — unified compression/decompression for gzip, zlib, zstd, and brotli. Format is a string parameter, not per-format functions. Returns `(result, nil)` on success, `(nil, error)` on failure per tuple-error convention.
+`lib:compress` exposes `encode(format, data[, opts])` and `decode(format, data[, opts])` to Lua scripts — unified compression/decompression for gzip, zlib, zstd, and brotli. Format is a string parameter, not per-format functions. Returns `(result, nil)` on success, `(nil, error)` on failure per tuple-error convention.
 
 ## Motivation
 
@@ -25,7 +25,7 @@ Concrete scenarios:
 
 ## Detailed design
 
-### Luau API
+### Lua API
 
 ```lua
 local compress = require("lib:compress")
@@ -75,7 +75,7 @@ Out-of-range level → `(nil, "compress.encode: level out of range for {format}:
 
 Non-number `level` (e.g. `{ level = "fast" }`) → `(nil, "compress.encode: invalid level type")`.
 
-Non-integer numeric `level` (e.g. `{ level = 6.7 }`) → `(nil, "compress.encode: level must be an integer")`. Rationale: Luau numbers are f64; dynamic computations like `base + offset` can silently produce non-whole values. Silent `as i32` truncation hides arithmetic bugs and disagrees with Node `zlib` / Python `gzip` precedent (both reject). Fail loud.
+Non-integer numeric `level` (e.g. `{ level = 6.7 }`) → `(nil, "compress.encode: level must be an integer")`. Rationale: Lua numbers are f64; dynamic computations like `base + offset` can silently produce non-whole values. Silent `as i32` truncation hides arithmetic bugs and disagrees with Node `zlib` / Python `gzip` precedent (both reject). Fail loud.
 
 **`compress.decode(format, data[, opts]) → (string, nil) | (nil, string)`**
 
@@ -120,7 +120,7 @@ Error cases:
 
 ### Binary data convention
 
-Input and output are `mlua::String` (Luau strings are byte sequences). Matches `lib:base64`, `std:fs`, and all other binary I/O in the runtime. No special buffer type.
+Input and output are `mlua::String` (Lua strings are byte sequences). Matches `lib:base64`, `std:fs`, and all other binary I/O in the runtime. No special buffer type.
 
 ### Backing crates
 
@@ -195,7 +195,7 @@ fn extract_integer_opt(opts: Option<&Table>, key: &str, prefix: &str) -> mlua::R
 
 ### Streaming internals
 
-The Luau API is buffer-in/buffer-out but the Rust implementation uses streaming I/O internally:
+The Lua API is buffer-in/buffer-out but the Rust implementation uses streaming I/O internally:
 
 ```rust
 fn encode_gzip(lua: &Lua, data: &[u8], level: Option<i32>) -> mlua::Result<(Value, Value)> {
@@ -207,7 +207,7 @@ fn encode_gzip(lua: &Lua, data: &[u8], level: Option<i32>) -> mlua::Result<(Valu
 }
 ```
 
-This avoids requiring the entire output to be pre-allocated. For v1, input is still fully in memory (Luau strings are contiguous). A future streaming API (`compress.encoder("gzip", opts)` returning a stream handle) can be added alongside without breaking `encode`/`decode`.
+This avoids requiring the entire output to be pre-allocated. For v1, input is still fully in memory (Lua strings are contiguous). A future streaming API (`compress.encoder("gzip", opts)` returning a stream handle) can be added alongside without breaking `encode`/`decode`.
 
 ### Format validation
 
@@ -216,7 +216,7 @@ Format strings are case-sensitive, lowercase only. `"GZIP"` → error. Rationale
 ## Drawbacks
 
 - **Three new crate dependencies.** `flate2` pulls `miniz_oxide` (pure Rust, small). `zstd` pulls `zstd-sys` (vendored C, ~200 KB compressed source). `brotli` is pure Rust. Total binary size increase estimated 200–400 KB stripped. Acceptable for table-stakes functionality.
-- **No streaming Luau API.** Scripts processing very large compressed data (>100 MB) will hold both input and output in memory simultaneously. Acknowledged limitation for v1 — streaming API deferred.
+- **No streaming Lua API.** Scripts processing very large compressed data (>100 MB) will hold both input and output in memory simultaneously. Acknowledged limitation for v1 — streaming API deferred.
 - **`zstd-sys` vendored C build.** Adds ~5s to clean build. Consistent with existing `rusqlite` bundled approach. Cross-compilation works via `cc` crate.
 
 ## Alternatives
@@ -247,6 +247,6 @@ Format strings are case-sensitive, lowercase only. `"GZIP"` → error. Rationale
 - `src/lua/lib/mod.rs` — `pub mod compress` added alphabetically
 - `src/lua/modules.rs` — `lib:compress` registered
 - `Cargo.toml` — add `flate2`, `zstd`, `brotli`
-- `tests/lib/compress.test.luau` — integration tests: round-trip each format, level option, error cases, cross-format incompatibility
+- `tests/lib/compress.test.lua` — integration tests: round-trip each format, level option, error cases, cross-format incompatibility
 - `benches/lib/compress.rs` — Criterion benchmarks: three-tier (library / into_out_lua / through_lua) for encode + decode per format at default and max levels
-- `.d.luau` type stub for `lib:compress`
+- `.d.lua` type stub for `lib:compress`

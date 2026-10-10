@@ -13,7 +13,7 @@ Accepted
 
 ## Context
 
-Lua/Luau ships with OS surface: `io.open`, `os.execute`, `package.loadlib`, `debug`. Embedding without stripping inherits whatever scripts choose to do. neoc runs user scripts in a controlled environment — capabilities must be explicitly granted. Default: deny.
+LuaJIT ships with OS surface: `io.open`, `os.execute`, `package.loadlib`, `debug`. Embedding without stripping inherits whatever scripts choose to do. neoc runs user scripts in a controlled environment — capabilities must be explicitly granted. Default: deny.
 
 ## Decision
 
@@ -22,10 +22,11 @@ Unsafe standard library stripped at engine construction:
 - `io.*` → reintroduced via `std:fs` and `std:io`
 - `os.*` → via `std:thread`, `std:net`, worker model
 - `package.*` → `require` replaced (see [ADR 0003](/adrs/0003-three-namespace-module-structure))
-- `debug.*` → unavailable (unsafe in multi-tenant runtime)
-- `loadfile`, `dofile` → replaced by argument-driven model
+- `debug.*`, `ffi.*`, `jit.*` → unavailable (never loaded)
+- `load`, `loadstring`, `loadfile`, `dofile`, `string.dump` → removed; replaced by argument-driven model
+- `getfenv`, `setfenv`, `newproxy`, `module`, `collectgarbage`, `gcinfo` → removed
 
-Remaining surface (`string`, `table`, `math`, `coroutine`, `bit32`, `utf8`, `print` family) unchanged.
+Remaining surface (`string`, `table`, `math`, `coroutine`, `bit`, `print` family) unchanged.
 
 Capabilities reintroduced through `std:*`, `lib:*`, `vnd:*` modules. Scripts cannot reach unregistered capabilities.
 

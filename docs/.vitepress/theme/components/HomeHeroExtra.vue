@@ -21,7 +21,7 @@ const installCommand = computed(() => installCommands[platform.value])
 
 const exampleSources: Record<Example, { file: string; source: string }> = {
   fetch: {
-    file: 'fetch.luau',
+    file: 'fetch.lua',
     source: `-- Pull from the endpoint, print the response body.
 local hyper = require("vnd:hyper")
 
@@ -29,7 +29,7 @@ local resp = hyper.get("http://localhost:3000/")
 print(resp.body)`,
   },
   server: {
-    file: 'server.luau',
+    file: 'server.lua',
     source: `-- A JSON endpoint, one worker per core, sharing the listener and a counter.
 local thread      = require("std:thread")
 local TcpListener = require("std:net").TcpListener
@@ -55,7 +55,7 @@ for _ = 1, thread.available_parallelism() do
             end)
         ]],
         -- ...or load the worker from a file:
-        --   path = "worker.luau",
+        --   path = "worker.lua",
         shared = { listener = listener, hits = hits },
     })
 end
@@ -63,7 +63,7 @@ end
 workers.on_shutdown():wait()`,
   },
   test: {
-    file: 'users.test.luau',
+    file: 'users.test.lua',
     source: `-- Spin up Postgres in a container, run a real test, stop it.
 local sqlx = require("vnd:sqlx_postgres")
 local tc   = require("vnd:testcontainers_modules")
@@ -165,7 +165,7 @@ function copy(which: 'install' | 'script', text: string) {
           :class="['hhx-tab', { active: example === 'test' }]"
           @click="example = 'test'"
         >test</button>
-        <span class="hhx-tab-shell">Luau</span>
+        <span class="hhx-tab-shell">LuaJIT</span>
       </div>
 
       <div class="hhx-script">
@@ -210,7 +210,7 @@ function copy(which: 'install' | 'script', text: string) {
             end)
         ]]</span>,
 <span class="hhx-com">        -- ...or load the worker from a file:
-        --   path = "worker.luau",</span>
+        --   path = "worker.lua",</span>
         shared = { listener = listener, hits = hits },
     })
 <span class="hhx-kw">end</span>

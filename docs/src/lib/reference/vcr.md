@@ -8,7 +8,7 @@ Records and replays HTTP request/response fixtures for deterministic tests again
 |---|---|
 | Namespace | `lib` |
 | Source | [`src/lua/lib/vcr.rs`](https://github.com/flying-dice/neoc/blob/main/src/lua/lib/vcr.rs) |
-| Tests | [`tests/lib/vcr.test.luau`](https://github.com/flying-dice/neoc/blob/main/tests/lib/vcr.test.luau) |
+| Tests | [`tests/lib/vcr.test.lua`](https://github.com/flying-dice/neoc/blob/main/tests/lib/vcr.test.lua) |
 | Stability | Experimental |
 
 ## Syntax

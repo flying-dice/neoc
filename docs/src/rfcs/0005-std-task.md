@@ -404,8 +404,8 @@ impl UserData for TaskHandle {
 
 #### Deliverables
 
-- [ ] Type definition stub (`.d.luau`) at `types/std/task.d.luau`.
-- [ ] Spec at `tests/std/task.spec.luau` using `lib:test`, committed before implementation PR (see [RFC 0000](0000-spec-driven-development.md)).
+- [ ] Type definition stub (`.d.lua`) at `types/std/task.d.lua`.
+- [ ] Spec at `tests/std/task.spec.lua` using `lib:test`, committed before implementation PR (see [RFC 0000](0000-spec-driven-development.md)).
 - [ ] Full test suite covering test matrix in issue #2.
 
 ## Drawbacks
@@ -419,7 +419,7 @@ impl UserData for TaskHandle {
 
 ### Do nothing / raw coroutines
 
-`coroutine.create` + `coroutine.resume` available today. Forces manual scheduling, manual error handling, OS-clock polling for timers. Wrong default for Luau developers. Rejected.
+`coroutine.create` + `coroutine.resume` available today. Forces manual scheduling, manual error handling, OS-clock polling for timers. Wrong default for Lua developers. Rejected.
 
 ### `task.wait` as blocking (busy-wait)
 
@@ -469,4 +469,4 @@ Put `task.spawn` et al. on `std:thread` module. Rejected — concerns are distin
 - `task.wait` requires calling coroutine running inside scheduler; from main thread → immediate error (spec must cover).
 - tokio timer integration in `task.delay`/`task.wait` — same pattern as TCP accept loop in `std:net`: spawn `tokio::task` that fires wakeup into scheduler queue. No new tokio primitives.
 - Depends on tokio runtime being available (engine already requires it — see `sandbox.rs` `make_engine`).
-- `.d.luau` type stub at `types/std/task.d.luau` alongside other module stubs.
+- `.d.lua` type stub at `types/std/task.d.lua` alongside other module stubs.

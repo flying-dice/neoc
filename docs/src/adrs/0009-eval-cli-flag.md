@@ -13,7 +13,7 @@ Proposed
 
 ## Context
 
-neoc supports script files (`neoc script.luau`). Question: add `--eval`/`-e` for inline script strings?
+neoc supports script files (`neoc script.lua`). Question: add `--eval`/`-e` for inline script strings?
 
 Motivation: "sole LLM tool" premise. If module coverage is sufficient, `neoc -e '...'` replaces bash, Python, Node, curl, jq as a single tool call. LLM constructs script, sends it, parses stdout.
 
@@ -32,10 +32,10 @@ Universal convergence: `python -c`, `node -e`, `ruby -e`, `deno eval`, `bun -e`,
 
 ## Decision
 
-`neoc -e 'script'` / `neoc --eval 'script'` — executes complete Luau program, exits.
+`neoc -e 'script'` / `neoc --eval 'script'` — executes complete Lua program, exits.
 
 Contract:
-1. **Invocation.** Full Luau program as string argument.
+1. **Invocation.** Full Lua program as string argument.
 2. **Output.** Only explicit `print()` writes stdout. No decoration.
 3. **Errors.** Unhandled errors → stderr + non-zero exit.
 4. **stdin.** Not available v1.

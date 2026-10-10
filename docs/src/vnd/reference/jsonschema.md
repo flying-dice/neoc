@@ -8,7 +8,7 @@ JSON Schema validation via [`jsonschema`](https://crates.io/crates/jsonschema).
 |---|---|
 | Namespace | `vnd` |
 | Source | [`src/lua/vnd/jsonschema.rs`](https://github.com/flying-dice/neoc/blob/main/src/lua/vnd/jsonschema.rs) |
-| Tests | [`tests/vnd/jsonschema.test.luau`](https://github.com/flying-dice/neoc/blob/main/tests/vnd/jsonschema.test.luau) |
+| Tests | [`tests/vnd/jsonschema.test.lua`](https://github.com/flying-dice/neoc/blob/main/tests/vnd/jsonschema.test.lua) |
 | Stability | Experimental |
 | Mirror | [`jsonschema`](https://docs.rs/jsonschema/) |
 

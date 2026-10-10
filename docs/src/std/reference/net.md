@@ -8,7 +8,7 @@ TCP listeners and connected sockets. Mirrors Rust's networking primitives.
 |---|---|
 | Namespace | `std` |
 | Source | [`src/lua/std/net.rs`](https://github.com/flying-dice/neoc/blob/main/src/lua/std/net.rs) |
-| Tests | [`tests/std/net.test.luau`](https://github.com/flying-dice/neoc/blob/main/tests/std/net.test.luau) |
+| Tests | [`tests/std/net.test.lua`](https://github.com/flying-dice/neoc/blob/main/tests/std/net.test.lua) |
 | Stability | Experimental |
 | Mirror | [`std::net`](https://doc.rust-lang.org/std/net/) |
 
