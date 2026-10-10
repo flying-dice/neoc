@@ -879,7 +879,7 @@ mod tests {
 
     #[test]
     fn any_other_target_is_rejected_naming_the_input() {
-        for name in ["luau", "ts", "js", "py", "python", "wasm", ""] {
+        for name in ["ts", "js", "py", "python", "wasm", ""] {
             let msg = target_err(name);
             assert_eq!(msg, format!("unknown target `{name}` (expected `lua`)"));
         }

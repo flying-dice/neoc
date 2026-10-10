@@ -261,7 +261,7 @@ pub fn module(lua: &Lua) -> Result<Table> {
 ### Type definition stub
 
 ```lua
--- types/std/env.d.luau
+-- std:env type stub
 declare env: {
     os:         string,
     arch:       string,
@@ -333,7 +333,7 @@ Rejected. Requires `sysinfo` crate — outside `std:*` rules. Belongs in `lib:sy
 - **`args()` wiring:** `src/main.rs` sets `_NEOC_ARGS` global at startup. Absent → empty table. Wrong type → `error()`.
 - **`home_dir`:** `#[allow(deprecated)]` at call site.
 - **Tests:** `tests/std/env.test.lua` — all surface functions. Platform assertions conditional on `env.os`. `current_dir` error tests match prefix only.
-- **`.d.luau`:** `types/std/env.d.luau` — required per M1 DoD.
+- **Type stub:** `std:env` type definition — required per M1 DoD.
 - **Bench:** Criterion, gated behind `bench` feature.
 - **Sequencing:** No upstream dep. Not blocked by #7. Boundary clean.
 - **Impact on #7:** Original #7 placed `process.env`, `process.args`, `process.cwd` under `std:process`. With `std:env` owning read access, #7 narrows to lifecycle + spawn-scoped env mutation.

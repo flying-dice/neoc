@@ -246,7 +246,7 @@ Symmetry holds because `strsim::levenshtein` implements the standard metric.
 10. Module docstring documents the codepoint-vs-display-width split ✅
 11. Backed by `heck`, `strsim`, `unicode-width`, `deunicode` ✅
 12. `(nil, error)` tuple on invalid input where applicable; case conversions are infallible ✅
-13. Spec, Lua integration tests, Rust unit tests, and `.d.luau` type stub ✅
+13. Spec, Lua integration tests, Rust unit tests, and type stub ✅
 
 ## Out of scope
 
