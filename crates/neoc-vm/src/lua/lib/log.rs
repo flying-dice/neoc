@@ -289,7 +289,7 @@ fn value_to_json(lua: &Lua, v: Value, depth: u8, seen: &mut HashSet<usize>) -> m
     match v {
         Value::Nil => Ok(Json::Null),
         Value::Boolean(b) => Ok(Json::Bool(b)),
-        Value::Integer(i) => Ok(Json::Number((i as i64).into())),
+        Value::Integer(i) => Ok(Json::Number(i.into())),
         Value::Number(n) => Ok(Number::from_f64(n).map(Json::Number).unwrap_or(Json::Null)),
         Value::String(s) => Ok(Json::String(s.to_str()?.to_owned())),
         Value::Function(_) => Ok(Json::String("<function>".into())),

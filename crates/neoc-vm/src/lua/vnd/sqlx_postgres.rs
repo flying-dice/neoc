@@ -238,7 +238,7 @@ fn bind_param<'q>(
     Ok(match v {
         Value::Nil => q.bind(Option::<i64>::None),
         Value::Boolean(b) => q.bind(b),
-        Value::Integer(i) => q.bind(i as i64),
+        Value::Integer(i) => q.bind(i),
         Value::Number(f) => q.bind(f),
         // TODO: clean-code - 0.6 - KISS: implicit utf8→text / non-utf8→bytea fallback hides bind type from caller; consider explicit bytes type
         Value::String(s) => {

@@ -347,7 +347,7 @@ fn bind_param<'q>(
     Ok(match v {
         Value::Nil => q.bind(Option::<i64>::None),
         Value::Boolean(b) => q.bind(b),
-        Value::Integer(i) => q.bind(i as i64),
+        Value::Integer(i) => q.bind(i),
         Value::Number(f) => q.bind(f),
         Value::String(s) => {
             let bytes = s.as_bytes();

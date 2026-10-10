@@ -717,7 +717,7 @@ pub fn lua_value_to_json_value(v: &Value) -> mlua::Result<JsonValue> {
     match v {
         Value::Nil => Ok(JsonValue::Null),
         Value::Boolean(b) => Ok(JsonValue::Bool(*b)),
-        Value::Integer(i) => Ok(JsonValue::Int(*i as i64)),
+        Value::Integer(i) => Ok(JsonValue::Int(*i)),
         Value::Number(n) => {
             // Whole-number-fits-in-i64 → keep as Int so re-encode preserves
             // integer literal form. Otherwise Float.
@@ -768,7 +768,7 @@ fn table_to_json_value(t: &Table) -> mlua::Result<JsonValue> {
     let mut max_int: i64 = 0;
     for (k, _) in &entries {
         match k {
-            Value::Integer(i) if *i >= 1 => max_int = max_int.max(*i as i64),
+            Value::Integer(i) if *i >= 1 => max_int = max_int.max(*i),
             _ => all_int = false,
         }
     }
@@ -780,7 +780,7 @@ fn table_to_json_value(t: &Table) -> mlua::Result<JsonValue> {
         let mut indexed: Vec<(i64, Value)> = entries
             .into_iter()
             .filter_map(|(k, v)| match k {
-                Value::Integer(i) => Some((i as i64, v)),
+                Value::Integer(i) => Some((i, v)),
                 _ => None,
             })
             .collect();

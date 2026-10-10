@@ -45,7 +45,7 @@ pub enum Target {
     /// with the Luau toolchain.
     #[default]
     Luau,
-    /// Plain Lua 5.1 (`.lua`) — what the embedded LuaJIT runtime executes.
+    /// Plain Lua 5.1 (`.lua`) — what the embedded `LuaJIT` runtime executes.
     /// Used by `neoc run`; not selectable by name.
     Lua,
 }

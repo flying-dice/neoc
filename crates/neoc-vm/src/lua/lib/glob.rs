@@ -508,7 +508,7 @@ fn expect_bool(v: Value) -> Result<bool, String> {
 fn expect_integer(v: Value) -> Result<i64, String> {
     match v {
         // Whole-valued numbers surface as `Integer` under LuaJIT.
-        Value::Integer(i) => Ok(i as i64),
+        Value::Integer(i) => Ok(i),
         Value::Number(f) if f.is_finite() && f.fract() == 0.0 => Ok(f as i64),
         Value::Number(_) => Err("must be an integer".to_owned()),
         other => Err(format!("must be a number, got {}", other.type_name())),

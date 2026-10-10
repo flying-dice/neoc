@@ -478,7 +478,7 @@ impl ToSql for LuaToSql {
             } else {
                 0
             }))),
-            Value::Integer(i) => Ok(ToSqlOutput::Owned(SqlValue::Integer(*i as i64))),
+            Value::Integer(i) => Ok(ToSqlOutput::Owned(SqlValue::Integer(*i))),
             Value::Number(f) => Ok(ToSqlOutput::Owned(SqlValue::Real(*f))),
             Value::String(s) => {
                 let bytes = s.as_bytes();
