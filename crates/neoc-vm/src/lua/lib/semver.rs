@@ -5,7 +5,7 @@
 //! `format` convenience functions. Backed by the `semver` crate, which
 //! implements **Cargo-compatible range syntax** (`^`, `~`, `>=`, `<`, `=`,
 //! comma-AND). npm extensions (`||`, hyphen ranges, x-ranges) are out of
-//! scope — see the module docs in `semver.d.lua` for the matrix.
+//! scope.
 
 use std::cmp::Ordering;
 use std::sync::OnceLock;

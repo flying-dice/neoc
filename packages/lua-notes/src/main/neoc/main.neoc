@@ -5,7 +5,7 @@
 // appropriate port: an in-memory `Store`. neoc owns the controllers and the
 // `Store` port; the Lua host implements the port (a table) and drives. The
 // port speaks only primitives (string / number), so the host never constructs
-// a neoc value. `neoc build` transpiles this to `src/main/lua/main.lua`, a
+// a neoc value. `neoc build` transpiles this to `src/auto/lua/main.lua`, a
 // requireable module.
 
 // The storage port — the host implements it over whatever it likes (here a

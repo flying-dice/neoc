@@ -6,8 +6,7 @@
 //!
 //! Algorithm names match Python's `hashlib` snake_case:
 //! `sha256`, `sha384`, `sha512`, `sha3_256`, `sha3_512`, `blake3`, `xxh3`,
-//! `xxh64`, `md5`, `sha1`. The latter two are present for interop only;
-//! see d.lua for the deprecation note.
+//! `xxh64`, `md5`, `sha1`. The latter two are present for interop only.
 //!
 //! ## Digest semantics
 //!
@@ -38,7 +37,7 @@ use xxhash_rust::xxh64::Xxh64;
 use crate::lua::facade::Module;
 use crate::lua::sandbox::{err, ok};
 
-/// Canonical algorithm list. Order is the d.lua / docs order — cryptographic
+/// Canonical algorithm list. Order: cryptographic
 /// first, non-cryptographic next, deprecated last. Used by `algorithms()` and
 /// by tests that iterate every backend.
 const ALGOS: &[&str] = &[

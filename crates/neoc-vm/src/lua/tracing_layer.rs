@@ -93,7 +93,13 @@ struct SpanState {
     fields: Map<String, Json>,
 }
 
-/// `tracing_subscriber::Layer` that captures `lua*`-targeted events and
+/// True for the `lua` target and its `lua::` children — not `luajit`, `lua_*`
+/// or other crates that merely share the prefix.
+fn is_lua_target(target: &str) -> bool {
+    target == "lua" || target.starts_with("lua::")
+}
+
+/// `tracing_subscriber::Layer` that captures `lua`/`lua::*`-targeted events and
 /// spans into the active `CURRENT_RUN` buffers.
 pub struct LuaLayer;
 
@@ -101,9 +107,8 @@ impl<S> Layer<S> for LuaLayer
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
-    // TODO: clean-code - 0.55 - DRY: `target().starts_with("lua")` guard repeated in all four hooks — extract `is_lua_target()` helper
     fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
-        if !attrs.metadata().target().starts_with("lua") {
+        if !is_lua_target(attrs.metadata().target()) {
             return;
         }
         let Some(span) = ctx.span(id) else { return };
@@ -122,7 +127,7 @@ where
 
     fn on_record(&self, id: &Id, values: &Record<'_>, ctx: Context<'_, S>) {
         let Some(span) = ctx.span(id) else { return };
-        if !span.metadata().target().starts_with("lua") {
+        if !is_lua_target(span.metadata().target()) {
             return;
         }
         let mut visitor = JsonVisitor::default();
@@ -135,7 +140,7 @@ where
     }
 
     fn on_event(&self, event: &Event<'_>, ctx: Context<'_, S>) {
-        if !event.metadata().target().starts_with("lua") {
+        if !is_lua_target(event.metadata().target()) {
             return;
         }
         let _ = CURRENT_RUN.try_with(|run| {
@@ -154,7 +159,7 @@ where
 
     fn on_close(&self, id: Id, ctx: Context<'_, S>) {
         let Some(span) = ctx.span(&id) else { return };
-        if !span.metadata().target().starts_with("lua") {
+        if !is_lua_target(span.metadata().target()) {
             return;
         }
         let _ = CURRENT_RUN.try_with(|run| {
@@ -203,5 +208,25 @@ impl Visit for JsonVisitor {
     fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
         self.0
             .insert(field.name().into(), Json::String(format!("{value:?}")));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_lua_target;
+
+    #[test]
+    fn lua_target_and_children_are_captured() {
+        assert!(is_lua_target("lua"));
+        assert!(is_lua_target("lua::assert"));
+        assert!(is_lua_target("lua::lib::archive"));
+    }
+
+    #[test]
+    fn prefix_sharing_targets_are_ignored() {
+        assert!(!is_lua_target("luau"));
+        assert!(!is_lua_target("luajit::trace"));
+        assert!(!is_lua_target("lua_bridge"));
+        assert!(!is_lua_target("mlua"));
     }
 }

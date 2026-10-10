@@ -791,7 +791,7 @@ mod tests {
     #[test]
     fn replace_uses_capture_references() {
         // `$1` / `${name}` per the regex crate's replacement grammar — matches
-        // PCRE/Rust convention; documented on the d.lua side.
+        // PCRE/Rust convention.
         let lua = engine();
         let (positional, named): (String, String) = lua
             .load(
@@ -912,7 +912,7 @@ mod tests {
     /// `Pattern:find` is infallible — the regex is already compiled, so a
     /// no-match cannot raise. Return shape must be a bare `Match?`, not the
     /// `(Match?, string?)` tuple the flat `regex.find` uses. Lock the
-    /// observable return arity so the d.lua signature stays accurate.
+    /// observable return arity so the `regex.neoc` signature stays accurate.
     #[test]
     fn pattern_find_returns_single_value() {
         let lua = engine();

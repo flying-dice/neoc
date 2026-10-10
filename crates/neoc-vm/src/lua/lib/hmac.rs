@@ -48,7 +48,7 @@ type HmacSha256 = hmac::Hmac<Sha256>;
 type HmacSha384 = hmac::Hmac<Sha384>;
 type HmacSha512 = hmac::Hmac<Sha512>;
 
-/// Canonical algorithm list — the d.lua / docs order. Used by `algorithms()`
+/// Canonical algorithm list — the `docs/src/lib/reference/hmac.md` order. Used by `algorithms()`
 /// and by tests that iterate every backend.
 const ALGOS: &[&str] = &["sha256", "sha384", "sha512"];
 

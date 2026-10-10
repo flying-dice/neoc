@@ -5,8 +5,7 @@
 //! - `args.help(config) -> (string, err)`
 //!
 //! Behaviour follows clap defaults — booleans are presence-only, error wording
-//! is clap's, help formatting tracks clap's renderer version. Config shape is
-//! documented in `args.d.lua`.
+//! is clap's, help formatting tracks clap's renderer version.
 
 use clap::{Arg, ArgAction, ArgMatches, Command, error::ErrorKind, value_parser};
 use mlua::{Lua, Table, Value};
