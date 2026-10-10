@@ -105,16 +105,22 @@ pub fn from_err<E: ::std::fmt::Display>(
     err(lua, format!("{prefix}: {e}"))
 }
 
-/// Stripped LuaJIT bytecode for `return 7` — every byte ASCII, so it survives
-/// the `String` conversion script-facing loaders apply. The escape-vector
-/// fixture for the text-only loader tests.
+/// Stripped LuaJIT bytecode for `return 7` — no debug info or chunk name, so
+/// every byte is ASCII and it survives the `String` conversion script-facing
+/// loaders apply. The escape-vector fixture for the text-only loader tests.
+///
+/// `string.dump(f, true)` in an unsandboxed state: `Function::dump(true)` does
+/// not strip under `LuaJIT`.
 #[cfg(test)]
 pub(crate) fn ascii_bytecode() -> String {
-    let dump = Lua::new()
-        .load("return 7")
-        .into_function()
-        .expect("compile")
-        .dump(true);
+    let lua = Lua::new();
+    let dump: mlua::String = lua
+        .load("return string.dump(function() return 7 end, true)")
+        .eval()
+        .expect("dump");
+    let dump = dump.as_bytes().to_vec();
+    // Header: `\x1bLJ`, version, flags; `BCDUMP_F_STRIP` = 0x02.
+    assert_eq!(dump[4] & 0x02, 0x02, "dump must be stripped");
     String::from_utf8(dump).expect("stripped dump of `return 7` is ASCII")
 }
 

@@ -432,13 +432,13 @@ fn run_neoc_multi_module_is_rejected_with_pointer_to_build() {
 #[test]
 fn run_lua_file_rejects_bytecode() {
     let dir = tempdir().unwrap();
-    let dump = mlua::Lua::new()
-        .load("return 7")
-        .into_function()
-        .unwrap()
-        .dump(true);
+    let lua = mlua::Lua::new();
+    let dump: mlua::String = lua
+        .load("return string.dump(function() return 7 end, true)")
+        .eval()
+        .unwrap();
     let path = dir.path().join("payload.lua");
-    fs::write(&path, dump).unwrap();
+    fs::write(&path, dump.as_bytes()).unwrap();
 
     let out = Command::new(BIN).arg("run").arg(&path).output().unwrap();
     assert!(!out.status.success(), "bytecode must not run");
