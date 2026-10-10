@@ -1,7 +1,7 @@
 //! `lib:compile` — programmatic build API for single-file executables.
 //!
-//! Exposes `bundle(opts)` to Luau scripts, allowing a `build.luau` to package
-//! a Luau source file into a standalone executable. Modelled after
+//! Exposes `bundle(opts)` to Lua scripts, allowing a `build.lua` to package
+//! a Lua source file into a standalone executable. Modelled after
 //! [Bun.build](https://bun.sh/docs/bundler) — programmatic-first, no CLI.
 //!
 //! ## Usage
@@ -10,7 +10,7 @@
 //! local compile = require("lib:compile")
 //!
 //! local ok, err = compile.bundle({
-//!     entrypoint = "main.luau",
+//!     entrypoint = "main.lua",
 //!     output     = "my-app",
 //! })
 //! ```
@@ -165,7 +165,7 @@ pub fn detect_embedded_payload_from(exe: &Path) -> Result<Option<Vec<u8>>, Trail
 }
 
 // ---------------------------------------------------------------------------
-// Bundling — the core operation exposed to Luau.
+// Bundling — the core operation exposed to Lua.
 // ---------------------------------------------------------------------------
 
 /// Append `payload` + trailer to a writer. `stub_len` is the byte length of
@@ -186,7 +186,7 @@ fn write_trailer(f: &mut impl Write, payload: &[u8], stub_len: u64) -> std::io::
     Ok(())
 }
 
-/// Bundle a Luau source file into a self-contained executable.
+/// Bundle a Lua source file into a self-contained executable.
 ///
 /// 1. Reads the source from `entrypoint`.
 /// 2. Uses the current `neoc` binary as the stub (this function runs *inside*
@@ -249,7 +249,7 @@ fn set_executable(_output: &Path) -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------
-// Luau module surface
+// Lua module surface
 // ---------------------------------------------------------------------------
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
@@ -271,16 +271,16 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "bundle",
         &[("opts", "LuaValue")],
         "Result<bool, string>",
-        "Bundle a Luau source file into a self-contained executable. `opts` requires `entrypoint` and `output` string fields.",
+        "Bundle a Lua source file into a self-contained executable. `opts` requires `entrypoint` and `output` string fields.",
     );
 
     Ok(m)
 }
 
-/// `compile.bundle({ entrypoint = "main.luau", output = "my-app" })`
+/// `compile.bundle({ entrypoint = "main.lua", output = "my-app" })`
 ///
 /// Returns `(true, nil)` on success, `(nil, err)` on failure.
-#[instrument(name = "compile.bundle", target = "luau::lib::compile", skip_all)]
+#[instrument(name = "compile.bundle", target = "lua::lib::compile", skip_all)]
 fn bundle(lua: &Lua, opts: Table) -> mlua::Result<(Value, Value)> {
     let entrypoint: String = opts.get::<String>("entrypoint").map_err(|_| {
         mlua::Error::external("compile.bundle: opts.entrypoint is required (string)")
@@ -515,7 +515,7 @@ mod tests {
         assert_eq!(detected, payload_b.as_slice());
     }
 
-    // --- Luau API ---
+    // --- Lua API ---
 
     fn engine() -> Lua {
         let lua = crate::lua::sandbox::make_engine().expect("engine");
@@ -528,7 +528,7 @@ mod tests {
     fn bundle_missing_entrypoint_returns_err() {
         let lua = engine();
         let (val, err): (Option<bool>, Option<String>) = lua
-            .load(r#"return compile.bundle({ entrypoint = "/nonexistent.luau", output = "/tmp/nope" })"#)
+            .load(r#"return compile.bundle({ entrypoint = "/nonexistent.lua", output = "/tmp/nope" })"#)
             .eval()
             .unwrap();
         assert!(val.is_none());
@@ -549,7 +549,7 @@ mod tests {
     fn bundle_requires_output_field() {
         let lua = engine();
         let result: mlua::Result<(Value, Value)> = lua
-            .load(r#"return compile.bundle({ entrypoint = "main.luau" })"#)
+            .load(r#"return compile.bundle({ entrypoint = "main.lua" })"#)
             .eval();
         assert!(result.is_err());
     }

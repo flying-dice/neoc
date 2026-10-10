@@ -421,7 +421,7 @@ impl UserData for DateHandle {
             }
         });
 
-        // Named `diff` rather than `until` because `until` is a Luau keyword
+        // Named `diff` rather than `until` because `until` is a Lua keyword
         // (the `repeat … until` loop) and rejected as a method name.
         methods.add_method("diff", |lua, this, other: AnyUserData| {
             let o = match other.borrow::<DateHandle>() {
@@ -465,7 +465,7 @@ impl UserData for DateHandle {
     }
 }
 
-#[instrument(name = "chrono.Date.new", target = "luau::lib::chrono", skip_all)]
+#[instrument(name = "chrono.Date.new", target = "lua::lib::chrono", skip_all)]
 fn date_new(lua: &Lua, (y, m, d): (i64, i64, i64)) -> mlua::Result<(Value, Value)> {
     let y = match clamp_i16(y, "chrono.Date.new") {
         Ok(v) => v,
@@ -485,7 +485,7 @@ fn date_new(lua: &Lua, (y, m, d): (i64, i64, i64)) -> mlua::Result<(Value, Value
     }
 }
 
-#[instrument(name = "chrono.Date.parse", target = "luau::lib::chrono", skip_all)]
+#[instrument(name = "chrono.Date.parse", target = "lua::lib::chrono", skip_all)]
 fn date_parse_ctor(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
     match Date::from_str(&s) {
         Ok(d) => ok(lua, DateHandle(d)),
@@ -544,7 +544,7 @@ impl UserData for TimeHandle {
     }
 }
 
-#[instrument(name = "chrono.Time.new", target = "luau::lib::chrono", skip_all)]
+#[instrument(name = "chrono.Time.new", target = "lua::lib::chrono", skip_all)]
 fn time_new(
     lua: &Lua,
     (h, m, s, ns): (i64, i64, i64, Option<i64>),
@@ -574,7 +574,7 @@ fn time_new(
     }
 }
 
-#[instrument(name = "chrono.Time.parse", target = "luau::lib::chrono", skip_all)]
+#[instrument(name = "chrono.Time.parse", target = "lua::lib::chrono", skip_all)]
 fn time_parse_ctor(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
     match Time::from_str(&s) {
         Ok(t) => ok(lua, TimeHandle(t)),
@@ -678,7 +678,7 @@ impl UserData for DateTimeHandle {
     }
 }
 
-#[instrument(name = "chrono.DateTime.new", target = "luau::lib::chrono", skip_all)]
+#[instrument(name = "chrono.DateTime.new", target = "lua::lib::chrono", skip_all)]
 fn datetime_new(
     lua: &Lua,
     args: (i64, i64, i64, i64, i64, i64, Option<i64>),
@@ -721,7 +721,7 @@ fn datetime_new(
     }
 }
 
-#[instrument(name = "chrono.DateTime.parse", target = "luau::lib::chrono", skip_all)]
+#[instrument(name = "chrono.DateTime.parse", target = "lua::lib::chrono", skip_all)]
 fn datetime_parse_ctor(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
     match DateTime::from_str(&s) {
         Ok(dt) => ok(lua, DateTimeHandle(dt)),
@@ -858,7 +858,7 @@ impl UserData for ZonedDateTimeHandle {
 
 #[instrument(
     name = "chrono.ZonedDateTime.parse",
-    target = "luau::lib::chrono",
+    target = "lua::lib::chrono",
     skip_all
 )]
 fn zdt_parse_ctor(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
@@ -924,7 +924,7 @@ impl UserData for DurationHandle {
     }
 }
 
-#[instrument(name = "chrono.Duration.of", target = "luau::lib::chrono", skip_all)]
+#[instrument(name = "chrono.Duration.of", target = "lua::lib::chrono", skip_all)]
 fn duration_of(lua: &Lua, t: Table) -> mlua::Result<(Value, Value)> {
     let mut span = Span::new();
     macro_rules! apply {
@@ -950,7 +950,7 @@ fn duration_of(lua: &Lua, t: Table) -> mlua::Result<(Value, Value)> {
     ok(lua, DurationHandle(span))
 }
 
-#[instrument(name = "chrono.Duration.parse", target = "luau::lib::chrono", skip_all)]
+#[instrument(name = "chrono.Duration.parse", target = "lua::lib::chrono", skip_all)]
 fn duration_parse_ctor(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
     match Span::from_str(&s) {
         Ok(sp) => ok(lua, DurationHandle(sp)),
@@ -962,12 +962,12 @@ fn duration_parse_ctor(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
 // Flat helpers
 // ---------------------------------------------------------------------------
 
-#[instrument(name = "chrono.now", target = "luau::lib::chrono", skip_all)]
+#[instrument(name = "chrono.now", target = "lua::lib::chrono", skip_all)]
 fn flat_now(_: &Lua, _: ()) -> mlua::Result<ZonedDateTimeHandle> {
     Ok(ZonedDateTimeHandle(Zoned::now()))
 }
 
-#[instrument(name = "chrono.utc_now", target = "luau::lib::chrono", skip_all)]
+#[instrument(name = "chrono.utc_now", target = "lua::lib::chrono", skip_all)]
 fn flat_utc_now(_: &Lua, _: ()) -> mlua::Result<ZonedDateTimeHandle> {
     Ok(ZonedDateTimeHandle(
         Timestamp::now().to_zoned(TimeZone::UTC),
@@ -980,7 +980,7 @@ fn flat_utc_now(_: &Lua, _: ()) -> mlua::Result<ZonedDateTimeHandle> {
 // trying it before `Date` would swallow date-only input into a fake DateTime
 // with `00:00:00`. We use the string's structural markers (`T`, `:`, `[`) to
 // route to the right narrower parser.
-#[instrument(name = "chrono.parse", target = "luau::lib::chrono", skip_all)]
+#[instrument(name = "chrono.parse", target = "lua::lib::chrono", skip_all)]
 fn flat_parse(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
     let has_datetime_shape = s.contains('T') || s.contains(' ');
     if has_datetime_shape {

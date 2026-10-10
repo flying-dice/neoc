@@ -151,32 +151,32 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 // Case conversion — heck does the word-boundary detection and acronym handling.
 // ---------------------------------------------------------------------------
 
-#[instrument(name = "text.to_camel_case", target = "luau::lib::text", skip_all)]
+#[instrument(name = "text.to_camel_case", target = "lua::lib::text", skip_all)]
 fn to_camel_case(_: &Lua, s: mlua::String) -> mlua::Result<String> {
     Ok(s.to_str()?.to_lower_camel_case())
 }
 
-#[instrument(name = "text.to_snake_case", target = "luau::lib::text", skip_all)]
+#[instrument(name = "text.to_snake_case", target = "lua::lib::text", skip_all)]
 fn to_snake_case(_: &Lua, s: mlua::String) -> mlua::Result<String> {
     Ok(s.to_str()?.to_snake_case())
 }
 
-#[instrument(name = "text.to_kebab_case", target = "luau::lib::text", skip_all)]
+#[instrument(name = "text.to_kebab_case", target = "lua::lib::text", skip_all)]
 fn to_kebab_case(_: &Lua, s: mlua::String) -> mlua::Result<String> {
     Ok(s.to_str()?.to_kebab_case())
 }
 
-#[instrument(name = "text.to_pascal_case", target = "luau::lib::text", skip_all)]
+#[instrument(name = "text.to_pascal_case", target = "lua::lib::text", skip_all)]
 fn to_pascal_case(_: &Lua, s: mlua::String) -> mlua::Result<String> {
     Ok(s.to_str()?.to_upper_camel_case())
 }
 
-#[instrument(name = "text.to_title_case", target = "luau::lib::text", skip_all)]
+#[instrument(name = "text.to_title_case", target = "lua::lib::text", skip_all)]
 fn to_title_case(_: &Lua, s: mlua::String) -> mlua::Result<String> {
     Ok(s.to_str()?.to_title_case())
 }
 
-#[instrument(name = "text.to_constant_case", target = "luau::lib::text", skip_all)]
+#[instrument(name = "text.to_constant_case", target = "lua::lib::text", skip_all)]
 fn to_constant_case(_: &Lua, s: mlua::String) -> mlua::Result<String> {
     Ok(s.to_str()?.to_shouty_snake_case())
 }
@@ -223,7 +223,7 @@ fn parse_wrap_opts(opts: Option<&Table>) -> Result<WrapOpts, String> {
     Ok(out)
 }
 
-#[instrument(name = "text.word_wrap", target = "luau::lib::text", skip_all)]
+#[instrument(name = "text.word_wrap", target = "lua::lib::text", skip_all)]
 fn word_wrap(
     lua: &Lua,
     (text, width, opts): (mlua::String, i64, Option<Table>),
@@ -330,7 +330,7 @@ fn chunk_by_width(s: &str, width: usize) -> (Vec<String>, String, usize) {
 // levenshtein / closest
 // ---------------------------------------------------------------------------
 
-#[instrument(name = "text.levenshtein", target = "luau::lib::text", skip_all)]
+#[instrument(name = "text.levenshtein", target = "lua::lib::text", skip_all)]
 fn levenshtein(_: &Lua, (a, b): (mlua::String, mlua::String)) -> mlua::Result<i64> {
     let a = a.to_str()?;
     let b = b.to_str()?;
@@ -352,7 +352,7 @@ fn parse_closest_limit(opts: Option<&Table>) -> Result<Option<usize>, String> {
     }
 }
 
-#[instrument(name = "text.closest", target = "luau::lib::text", skip_all)]
+#[instrument(name = "text.closest", target = "lua::lib::text", skip_all)]
 fn closest(
     lua: &Lua,
     (input, candidates, opts): (mlua::String, Table, Option<Table>),
@@ -434,7 +434,7 @@ fn parse_truncate_boundary(opts: Option<&Table>) -> Result<Boundary, String> {
     }
 }
 
-#[instrument(name = "text.truncate", target = "luau::lib::text", skip_all)]
+#[instrument(name = "text.truncate", target = "lua::lib::text", skip_all)]
 fn truncate(
     lua: &Lua,
     (text, max_len, opts): (mlua::String, i64, Option<Table>),
@@ -516,7 +516,7 @@ enum PadSide {
     Center,
 }
 
-#[instrument(name = "text.pad_left", target = "luau::lib::text", skip_all)]
+#[instrument(name = "text.pad_left", target = "lua::lib::text", skip_all)]
 fn pad_left(
     lua: &Lua,
     (text, width, fill): (mlua::String, i64, Option<mlua::String>),
@@ -524,7 +524,7 @@ fn pad_left(
     pad_text(lua, "text.pad_left", text, width, fill, PadSide::Left)
 }
 
-#[instrument(name = "text.pad_right", target = "luau::lib::text", skip_all)]
+#[instrument(name = "text.pad_right", target = "lua::lib::text", skip_all)]
 fn pad_right(
     lua: &Lua,
     (text, width, fill): (mlua::String, i64, Option<mlua::String>),
@@ -532,7 +532,7 @@ fn pad_right(
     pad_text(lua, "text.pad_right", text, width, fill, PadSide::Right)
 }
 
-#[instrument(name = "text.center", target = "luau::lib::text", skip_all)]
+#[instrument(name = "text.center", target = "lua::lib::text", skip_all)]
 fn center(
     lua: &Lua,
     (text, width, fill): (mlua::String, i64, Option<mlua::String>),
@@ -598,7 +598,7 @@ fn pad_text(
 // slugify — strip diacritics (URL-safe default), lowercase, hyphens.
 // ---------------------------------------------------------------------------
 
-#[instrument(name = "text.slugify", target = "luau::lib::text", skip_all)]
+#[instrument(name = "text.slugify", target = "lua::lib::text", skip_all)]
 fn slugify(_: &Lua, text: mlua::String) -> mlua::Result<String> {
     let s_ref = text.to_str()?;
     Ok(slugify_str(&s_ref))

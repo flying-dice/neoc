@@ -64,7 +64,7 @@ const CANONICAL_NAN_BITS: u64 = 0x7ff8_0000_0000_0000;
 enum CacheKey {
     Str(Vec<u8>),
     /// `f64::to_bits`, normalised so `0.0`/`-0.0` and the various NaNs each map
-    /// to one key. Luau has no integer subtype, so `1` and `1.0` are the same
+    /// to one key. Lua has no integer subtype, so `1` and `1.0` are the same
     /// number and land on the same bits.
     Num(u64),
     Bool(bool),
@@ -590,7 +590,7 @@ mod tests {
     #[test]
     fn ttl_entry_expires_lazily() {
         // A 1ms ttl is past after a 20ms sleep: the next get is a miss and an
-        // eviction. Timing lives in Rust because Luau has no synchronous sleep.
+        // eviction. Timing lives in Rust because Lua has no synchronous sleep.
         let lua = engine();
         lua.load(
             r#"

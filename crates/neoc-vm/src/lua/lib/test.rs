@@ -1,4 +1,4 @@
-//! Bun-style test runner exposed to Luau as `lib.test`.
+//! Bun-style test runner exposed to Lua as `lib.test`.
 //!
 //! Dot-syntax is used for matcher chains (no `self`), matching Bun/Jest:
 //!   expect(result).toBe("aGk=")

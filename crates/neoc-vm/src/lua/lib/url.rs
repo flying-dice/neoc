@@ -233,7 +233,7 @@ impl UserData for UrlHandle {
         // Validate range and integer-ness here rather than leaning on mlua's
         // `FromLua<u16>` coercion. That coercion raises a raw type-conversion
         // error, which would breach the documented `(Url?, string?)` contract
-        // in `url.d.luau` — every other `with_*` honours it, so this one must
+        // in `url.d.lua` — every other `with_*` honours it, so this one must
         // too. Floats with a fractional part are rejected for the same
         // reason: `with_port(8080.5)` silently truncating to 8080 is a
         // footgun, not a feature.
@@ -320,7 +320,7 @@ impl UserData for UrlHandle {
 // Parse / resolve
 // ---------------------------------------------------------------------------
 
-#[instrument(name = "url.Url.parse", target = "luau::lib::url", skip_all)]
+#[instrument(name = "url.Url.parse", target = "lua::lib::url", skip_all)]
 fn url_parse_method(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
     match Url::parse(&s) {
         Ok(u) => ok(lua, UrlHandle(u)),
@@ -328,7 +328,7 @@ fn url_parse_method(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
     }
 }
 
-#[instrument(name = "url.parse", target = "luau::lib::url", skip_all)]
+#[instrument(name = "url.parse", target = "lua::lib::url", skip_all)]
 fn flat_parse(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
     match Url::parse(&s) {
         Ok(u) => ok(lua, UrlHandle(u)),
@@ -336,7 +336,7 @@ fn flat_parse(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
     }
 }
 
-#[instrument(name = "url.resolve", target = "luau::lib::url", skip_all)]
+#[instrument(name = "url.resolve", target = "lua::lib::url", skip_all)]
 fn flat_resolve(lua: &Lua, (base, reference): (Value, String)) -> mlua::Result<(Value, Value)> {
     let base_url = match coerce_to_url(base, "url.resolve") {
         Ok(u) => u,
@@ -376,7 +376,7 @@ fn coerce_to_url(v: Value, prefix: &str) -> Result<Url, String> {
 // Percent encode / decode
 // ---------------------------------------------------------------------------
 
-#[instrument(name = "url.encode", target = "luau::lib::url", skip_all)]
+#[instrument(name = "url.encode", target = "lua::lib::url", skip_all)]
 fn flat_encode(lua: &Lua, (input, set): (String, Option<String>)) -> mlua::Result<(Value, Value)> {
     let set_name = set.as_deref().unwrap_or("component");
     match set_for(set_name) {
@@ -390,7 +390,7 @@ fn flat_encode(lua: &Lua, (input, set): (String, Option<String>)) -> mlua::Resul
     }
 }
 
-#[instrument(name = "url.decode", target = "luau::lib::url", skip_all)]
+#[instrument(name = "url.decode", target = "lua::lib::url", skip_all)]
 fn flat_decode(lua: &Lua, input: String) -> mlua::Result<(Value, Value)> {
     match percent_decode_str(&input).decode_utf8() {
         Ok(cow) => ok(lua, cow.into_owned()),
@@ -402,7 +402,7 @@ fn flat_decode(lua: &Lua, input: String) -> mlua::Result<(Value, Value)> {
 // Query string round-trip
 // ---------------------------------------------------------------------------
 
-#[instrument(name = "url.encode_query", target = "luau::lib::url", skip_all)]
+#[instrument(name = "url.encode_query", target = "lua::lib::url", skip_all)]
 fn flat_encode_query(lua: &Lua, pairs: Table) -> mlua::Result<(Value, Value)> {
     let mut ser = url::form_urlencoded::Serializer::new(String::new());
     let len = pairs.raw_len();
@@ -424,7 +424,7 @@ fn flat_encode_query(lua: &Lua, pairs: Table) -> mlua::Result<(Value, Value)> {
     ok(lua, ser.finish())
 }
 
-#[instrument(name = "url.decode_query", target = "luau::lib::url", skip_all)]
+#[instrument(name = "url.decode_query", target = "lua::lib::url", skip_all)]
 fn flat_decode_query(lua: &Lua, input: String) -> mlua::Result<Table> {
     let t = lua.create_table()?;
     for (i, (k, v)) in url::form_urlencoded::parse(input.as_bytes()).enumerate() {

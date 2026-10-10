@@ -98,7 +98,7 @@ fn find_require_span(source: &str, traceback: &str) -> miette::SourceSpan {
 }
 
 fn extract_line_number(traceback: &str) -> Option<usize> {
-    // Anchor on the mlua/Luau chunk marker `]:LINE:`. The chunk name is
+    // Anchor on the mlua/Lua chunk marker `]:LINE:`. The chunk name is
     // wrapped in `[string "..."]`, so `]:` reliably terminates it.
     let after = traceback.split("]:").nth(1)?;
     let line_str = after.split(':').next()?;
@@ -111,7 +111,7 @@ mod tests {
 
     #[test]
     fn extract_line_number_parses_mlua_traceback() {
-        let tb = r#"runtime error: [string "test.luau"]:3: require: unknown module"#;
+        let tb = r#"runtime error: [string "test.lua"]:3: require: unknown module"#;
         assert_eq!(extract_line_number(tb), Some(3));
     }
 
@@ -128,7 +128,7 @@ mod tests {
 
     #[test]
     fn extract_line_number_handles_chunk_with_numeric_name() {
-        let tb = r#"[string "8080.luau"]:42: boom"#;
+        let tb = r#"[string "8080.lua"]:42: boom"#;
         assert_eq!(extract_line_number(tb), Some(42));
     }
 
@@ -150,7 +150,7 @@ mod tests {
     #[test]
     fn find_require_span_lf_source_points_at_require_call() {
         let src = "local x = 1\nrequire(\"lib:jsn\")\nprint(x)\n";
-        let tb = r#"[string "t.luau"]:2: require: unknown"#;
+        let tb = r#"[string "t.lua"]:2: require: unknown"#;
         let span: miette::SourceSpan = find_require_span(src, tb);
         let start = span.offset();
         let len = span.len();
@@ -161,7 +161,7 @@ mod tests {
     #[test]
     fn find_require_span_crlf_source_accounts_for_carriage_return() {
         let src = "local x = 1\r\nrequire(\"lib:jsn\")\r\nprint(x)\r\n";
-        let tb = r#"[string "t.luau"]:2: require: unknown"#;
+        let tb = r#"[string "t.lua"]:2: require: unknown"#;
         let span: miette::SourceSpan = find_require_span(src, tb);
         let start = span.offset();
         let len = span.len();
@@ -188,7 +188,7 @@ mod tests {
             r#"require: unknown module "lib:jsn" — did you mean "lib:json"? available: lib:json"#;
         let err = mlua::Error::external(raw);
         let src = "require(\"lib:jsn\")\n";
-        let neoc = extract_require_error(&err, src, "t.luau").expect("should classify");
+        let neoc = extract_require_error(&err, src, "t.lua").expect("should classify");
         let NeocError::ModuleNotFound {
             message,
             suggestion,

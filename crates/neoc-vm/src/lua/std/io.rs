@@ -158,7 +158,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 ///
 /// Both module functions are set verbatim with
 /// [`crate::lua::facade::Module::set`]: each already carries its own
-/// `#[instrument(name = "io.<fn>", target = "luau::lib::io")]` attribute, so
+/// `#[instrument(name = "io.<fn>", target = "lua::lib::io")]` attribute, so
 /// routing through the facade would add a second span. `from_string` returns a
 /// `ReaderHandle` userdata and `copy` borrows two handles and bakes its own
 /// argument-type error messages, so neither fits a regular facade return type.
@@ -223,7 +223,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     Ok(m)
 }
 
-#[instrument(name = "io.from_string", target = "luau::lib::io", skip_all)]
+#[instrument(name = "io.from_string", target = "lua::lib::io", skip_all)]
 fn from_string(_: &Lua, s: mlua::String) -> mlua::Result<ReaderHandle> {
     Ok(ReaderHandle::new(std::io::Cursor::new(
         s.as_bytes().to_vec(),
@@ -241,7 +241,7 @@ fn borrow_or_err<T: 'static>(
     ud.borrow::<T>().map_err(|_| from_err(lua, "io.copy", msg))
 }
 
-#[instrument(name = "io.copy", target = "luau::lib::io", skip_all)]
+#[instrument(name = "io.copy", target = "lua::lib::io", skip_all)]
 fn copy(
     lua: &Lua,
     (reader_ud, writer_ud): (AnyUserData, AnyUserData),

@@ -43,7 +43,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// each carries its own `#[instrument]` span; the fallible ones build their
 /// `(value, error)` returns directly through `err` / `from_err` / `ok` with a
 /// baked `"csv.<fn>: "` prefix, and `rows` returns a bare iterator `Function`
-/// that raises `mlua::Error` (the Luau iterator protocol cannot carry a
+/// that raises `mlua::Error` (the Lua iterator protocol cannot carry a
 /// `(nil, err)` tuple) — none fit the facade's `func` / `try_func` model. The
 /// `CsvReader` / `CsvWriter` userdata keep their own `impl UserData` and are
 /// recorded here for the header via [`crate::lua::facade::Module::userdata`].
@@ -63,7 +63,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "rows",
         &[("data", "string"), ("opts", "LuaValue?")],
         "LuaValue",
-        "Return a Luau iterator over rows in an in-memory CSV string. Iterator errors raise.",
+        "Return a Lua iterator over rows in an in-memory CSV string. Iterator errors raise.",
     );
 
     m.set("reader", lua.create_function(reader_fn)?)?;
@@ -101,7 +101,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             "rows",
             &[],
             "LuaValue",
-            "Return a Luau iterator yielding the next row on each call, `nil` at EOF. Iterator errors raise.",
+            "Return a Lua iterator yielding the next row on each call, `nil` at EOF. Iterator errors raise.",
         );
     });
 
@@ -300,7 +300,7 @@ fn parse_types_map(t: &Table, prefix: &str) -> Result<HashMap<String, ColumnType
 // Top-level functions
 // ---------------------------------------------------------------------------
 
-#[instrument(name = "csv.parse", target = "luau::lib::csv", skip_all)]
+#[instrument(name = "csv.parse", target = "lua::lib::csv", skip_all)]
 fn parse_fn(
     lua: &Lua,
     (data, opts): (mlua::String, Option<Table>),
@@ -364,7 +364,7 @@ fn parse_fn(
     ok(lua, out)
 }
 
-#[instrument(name = "csv.rows", target = "luau::lib::csv", skip_all)]
+#[instrument(name = "csv.rows", target = "lua::lib::csv", skip_all)]
 fn rows_fn(lua: &Lua, (data, opts): (mlua::String, Option<Table>)) -> mlua::Result<Function> {
     let parse_opts = parse_parse_opts(opts.as_ref(), "csv.rows").map_err(mlua::Error::external)?;
     let bytes = data.as_bytes().to_vec();
@@ -375,7 +375,7 @@ fn rows_fn(lua: &Lua, (data, opts): (mlua::String, Option<Table>)) -> mlua::Resu
     create_rows_iter(lua, state, "csv.rows")
 }
 
-#[instrument(name = "csv.reader", target = "luau::lib::csv", skip_all)]
+#[instrument(name = "csv.reader", target = "lua::lib::csv", skip_all)]
 fn reader_fn(
     lua: &Lua,
     (handle_val, opts): (Value, Option<Table>),
@@ -412,7 +412,7 @@ fn reader_fn(
     ok(lua, CsvReader { state })
 }
 
-#[instrument(name = "csv.stringify", target = "luau::lib::csv", skip_all)]
+#[instrument(name = "csv.stringify", target = "lua::lib::csv", skip_all)]
 fn stringify_fn(lua: &Lua, (records, opts): (Table, Table)) -> mlua::Result<(Value, Value)> {
     let prefix = "csv.stringify";
     let write_opts = match parse_write_opts(&opts, prefix) {
@@ -448,7 +448,7 @@ fn stringify_fn(lua: &Lua, (records, opts): (Table, Table)) -> mlua::Result<(Val
     }
 }
 
-#[instrument(name = "csv.writer", target = "luau::lib::csv", skip_all)]
+#[instrument(name = "csv.writer", target = "lua::lib::csv", skip_all)]
 fn writer_fn(lua: &Lua, opts: Table) -> mlua::Result<(Value, Value)> {
     let prefix = "csv.writer";
     let write_opts = match parse_write_opts(&opts, prefix) {

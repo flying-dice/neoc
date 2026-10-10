@@ -35,7 +35,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// Declares the `lib:http` surface through the facade. `serve_static` is an
 /// infallible (from Lua's view) async function that blocks until the server
 /// stops; it raises on a hard failure (glob resolution, bind). The registered
-/// async Lua surface and the `luau::lib::http` span (`http.serve_static`) are
+/// async Lua surface and the `lua::lib::http` span (`http.serve_static`) are
 /// byte-identical to the hand-written registration this replaces.
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:http")?;

@@ -131,7 +131,7 @@ fn dup_key_err(key: &str) -> mlua::Error {
     mlua::Error::runtime(format!("vcr: duplicate key \"{key}\""))
 }
 
-#[instrument(name = "vcr.off", target = "luau::lib::vcr", skip_all)]
+#[instrument(name = "vcr.off", target = "lua::lib::vcr", skip_all)]
 fn passthrough(lua: &Lua) -> mlua::Result<Table> {
     let wrap =
         lua.create_function(|_, (_, _key, f): (mlua::Value, String, mlua::Function)| Ok(f))?;
@@ -142,7 +142,7 @@ fn passthrough(lua: &Lua) -> mlua::Result<Table> {
 // record
 // ---------------------------------------------------------------------------
 
-#[instrument(name = "vcr.flush", target = "luau::lib::vcr", skip_all)]
+#[instrument(name = "vcr.flush", target = "lua::lib::vcr", skip_all)]
 fn flush(tape: &Tape, path: &str) -> mlua::Result<()> {
     let json = serde_json::to_string_pretty(tape).map_err(mlua::Error::external)?;
     std::fs::write(path, json).map_err(mlua::Error::external)?;
@@ -177,7 +177,7 @@ fn record_call(
     Ok(result)
 }
 
-#[instrument(name = "vcr.record", target = "luau::lib::vcr", skip_all)]
+#[instrument(name = "vcr.record", target = "lua::lib::vcr", skip_all)]
 fn recording(lua: &Lua, path: String) -> mlua::Result<Table> {
     let tape: Arc<Mutex<Tape>> = Arc::new(Mutex::new(Tape {
         registered: BTreeSet::new(),
@@ -210,7 +210,7 @@ fn recording(lua: &Lua, path: String) -> mlua::Result<Table> {
 // replay
 // ---------------------------------------------------------------------------
 
-#[instrument(name = "vcr.replay", target = "luau::lib::vcr", skip_all)]
+#[instrument(name = "vcr.replay", target = "lua::lib::vcr", skip_all)]
 fn replay(lua: &Lua, path: &str) -> mlua::Result<Table> {
     let content = std::fs::read_to_string(path).map_err(mlua::Error::external)?;
     let cassette: BTreeMap<String, Entry> =

@@ -21,7 +21,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 ///
 /// Every function is set verbatim with [`crate::lua::facade::Module::set`]:
 /// each already carries its own `#[instrument(name = "fs.<fn>", target =
-/// "luau::lib::fs")]` attribute, so routing through the facade's `try_func`
+/// "lua::lib::fs")]` attribute, so routing through the facade's `try_func`
 /// would add a second span and break byte-identical tracing. `open` returns a
 /// `ReaderHandle` or `WriterHandle` whose type depends on the mode, so it has
 /// no single facade return type. Each function is recorded for the header via
@@ -74,7 +74,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
 /// Creates a single directory. Mirrors `std::fs::create_dir` — errors if the
 /// path already exists or the parent does not exist.
-#[instrument(name = "fs.create_dir", target = "luau::lib::fs", skip_all)]
+#[instrument(name = "fs.create_dir", target = "lua::lib::fs", skip_all)]
 fn create_dir(lua: &Lua, path: String) -> mlua::Result<(Value, Value)> {
     match std::fs::create_dir(&path) {
         Ok(()) => ok(lua, true),
@@ -85,7 +85,7 @@ fn create_dir(lua: &Lua, path: String) -> mlua::Result<(Value, Value)> {
 /// Creates a directory and all missing parent directories. Mirrors
 /// `std::fs::create_dir_all` — recursive creation. Returns `(true, nil)` on
 /// success or if the directory already exists; `(nil, err)` otherwise.
-#[instrument(name = "fs.create_dir_all", target = "luau::lib::fs", skip_all)]
+#[instrument(name = "fs.create_dir_all", target = "lua::lib::fs", skip_all)]
 fn create_dir_all(lua: &Lua, path: String) -> mlua::Result<(Value, Value)> {
     match std::fs::create_dir_all(&path) {
         Ok(()) => ok(lua, true),
@@ -118,7 +118,7 @@ impl IntoLua for OpenHandle {
     }
 }
 
-#[instrument(name = "fs.open", target = "luau::lib::fs", skip_all)]
+#[instrument(name = "fs.open", target = "lua::lib::fs", skip_all)]
 fn open(lua: &Lua, opts: Table) -> mlua::Result<(Value, Value)> {
     const ERR_CTX: &str = "fs.open";
     let path: String = opts.get("path")?;
@@ -139,7 +139,7 @@ fn open(lua: &Lua, opts: Table) -> mlua::Result<(Value, Value)> {
     }
 }
 
-#[instrument(name = "fs.read", target = "luau::lib::fs", skip_all)]
+#[instrument(name = "fs.read", target = "lua::lib::fs", skip_all)]
 fn read(lua: &Lua, path: String) -> mlua::Result<(Value, Value)> {
     match std::fs::read(&path) {
         Ok(bytes) => ok(lua, lua.create_string(&bytes)?),
@@ -147,7 +147,7 @@ fn read(lua: &Lua, path: String) -> mlua::Result<(Value, Value)> {
     }
 }
 
-#[instrument(name = "fs.write", target = "luau::lib::fs", skip_all)]
+#[instrument(name = "fs.write", target = "lua::lib::fs", skip_all)]
 fn write(lua: &Lua, (path, data): (String, mlua::String)) -> mlua::Result<(Value, Value)> {
     match std::fs::write(&path, data.as_bytes()) {
         Ok(()) => ok(lua, true),

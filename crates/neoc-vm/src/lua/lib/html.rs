@@ -15,7 +15,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 
 /// Declares the `lib:html` surface through the facade. Both functions are
 /// infallible string transforms; the registered Lua surface and the
-/// `luau::lib::html` spans are byte-identical to the hand-written registration
+/// `lua::lib::html` spans are byte-identical to the hand-written registration
 /// this replaces.
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:html")?;

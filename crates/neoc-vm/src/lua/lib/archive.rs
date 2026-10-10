@@ -912,7 +912,7 @@ fn write_link(_target: &Path, _link: &str, _symlink: bool) -> Result<(), String>
 
 #[instrument(
     name = "archive.tar_create_bytes",
-    target = "luau::lib::archive",
+    target = "lua::lib::archive",
     skip_all
 )]
 fn tar_create_bytes(
@@ -942,7 +942,7 @@ fn tar_create_bytes(
     }
 }
 
-#[instrument(name = "archive.tar_create", target = "luau::lib::archive", skip_all)]
+#[instrument(name = "archive.tar_create", target = "lua::lib::archive", skip_all)]
 fn tar_create(
     lua: &Lua,
     (path, entries, opts): (String, Table, Option<Table>),
@@ -974,7 +974,7 @@ fn tar_create(
     }
 }
 
-#[instrument(name = "archive.tar_extract", target = "luau::lib::archive", skip_all)]
+#[instrument(name = "archive.tar_extract", target = "lua::lib::archive", skip_all)]
 fn tar_extract(
     lua: &Lua,
     (source, dest, opts): (mlua::String, String, Option<Table>),
@@ -1000,7 +1000,7 @@ fn tar_extract(
 
 #[instrument(
     name = "archive.tar_extract_bytes",
-    target = "luau::lib::archive",
+    target = "lua::lib::archive",
     skip_all
 )]
 fn tar_extract_bytes(
@@ -1018,7 +1018,7 @@ fn tar_extract_bytes(
     }
 }
 
-#[instrument(name = "archive.tar_list", target = "luau::lib::archive", skip_all)]
+#[instrument(name = "archive.tar_list", target = "lua::lib::archive", skip_all)]
 fn tar_list(lua: &Lua, source: mlua::String) -> mlua::Result<(Value, Value)> {
     let prefix = "archive.tar_list";
     let bytes = match resolve_source(&source) {
@@ -1033,7 +1033,7 @@ fn tar_list(lua: &Lua, source: mlua::String) -> mlua::Result<(Value, Value)> {
 
 #[instrument(
     name = "archive.tar_list_bytes",
-    target = "luau::lib::archive",
+    target = "lua::lib::archive",
     skip_all
 )]
 fn tar_list_bytes(lua: &Lua, bytes: mlua::String) -> mlua::Result<(Value, Value)> {
@@ -1046,7 +1046,7 @@ fn tar_list_bytes(lua: &Lua, bytes: mlua::String) -> mlua::Result<(Value, Value)
 
 #[instrument(
     name = "archive.zip_create_bytes",
-    target = "luau::lib::archive",
+    target = "lua::lib::archive",
     skip_all
 )]
 fn zip_create_bytes(lua: &Lua, entries: Table) -> mlua::Result<(Value, Value)> {
@@ -1057,7 +1057,7 @@ fn zip_create_bytes(lua: &Lua, entries: Table) -> mlua::Result<(Value, Value)> {
     }
 }
 
-#[instrument(name = "archive.zip_create", target = "luau::lib::archive", skip_all)]
+#[instrument(name = "archive.zip_create", target = "lua::lib::archive", skip_all)]
 fn zip_create(
     lua: &Lua,
     (path, entries, opts): (String, Table, Option<Table>),
@@ -1077,7 +1077,7 @@ fn zip_create(
     }
 }
 
-#[instrument(name = "archive.zip_extract", target = "luau::lib::archive", skip_all)]
+#[instrument(name = "archive.zip_extract", target = "lua::lib::archive", skip_all)]
 fn zip_extract(
     lua: &Lua,
     (source, dest, opts): (mlua::String, String, Option<Table>),
@@ -1103,7 +1103,7 @@ fn zip_extract(
 
 #[instrument(
     name = "archive.zip_extract_bytes",
-    target = "luau::lib::archive",
+    target = "lua::lib::archive",
     skip_all
 )]
 fn zip_extract_bytes(
@@ -1121,7 +1121,7 @@ fn zip_extract_bytes(
     }
 }
 
-#[instrument(name = "archive.zip_list", target = "luau::lib::archive", skip_all)]
+#[instrument(name = "archive.zip_list", target = "lua::lib::archive", skip_all)]
 fn zip_list(lua: &Lua, source: mlua::String) -> mlua::Result<(Value, Value)> {
     let prefix = "archive.zip_list";
     let bytes = match resolve_source(&source) {
@@ -1136,7 +1136,7 @@ fn zip_list(lua: &Lua, source: mlua::String) -> mlua::Result<(Value, Value)> {
 
 #[instrument(
     name = "archive.zip_list_bytes",
-    target = "luau::lib::archive",
+    target = "lua::lib::archive",
     skip_all
 )]
 fn zip_list_bytes(lua: &Lua, bytes: mlua::String) -> mlua::Result<(Value, Value)> {

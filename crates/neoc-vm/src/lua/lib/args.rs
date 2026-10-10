@@ -6,7 +6,7 @@
 //!
 //! Behaviour follows clap defaults — booleans are presence-only, error wording
 //! is clap's, help formatting tracks clap's renderer version. Config shape is
-//! documented in `args.d.luau`.
+//! documented in `args.d.lua`.
 
 use clap::{Arg, ArgAction, ArgMatches, Command, error::ErrorKind, value_parser};
 use mlua::{Lua, Table, Value};
@@ -70,7 +70,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// Declares the `lib:args` surface through the facade. Both functions are
 /// fallible: `parse` returns the parsed-config table, `help` the rendered help
 /// text. The `(value, error)` shape, the `args.parse` / `args.help` error
-/// prefixes, and the `luau::lib::args` spans are byte-identical to the
+/// prefixes, and the `lua::lib::args` spans are byte-identical to the
 /// hand-written registration this replaces.
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:args")?;

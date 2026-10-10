@@ -7,7 +7,7 @@
 //!
 //! ## Why instance-based, not global `set_level()` / `set_format()`
 //!
-//! `std:task` (#6) runs concurrent Luau tasks on a tokio runtime. A
+//! `std:task` (#6) runs concurrent Lua tasks on a tokio runtime. A
 //! `log.set_level()` API would race between tasks — one task lowering the
 //! level mid-flight would change another task's behaviour without warning.
 //! `slog` solved the same problem when Go moved off the old `log` package:
@@ -48,7 +48,7 @@
 //! ## Backing on `tracing`
 //!
 //! Each call also emits a `tracing::event!` at `target =
-//! "luau::lib::log"`, so the existing `LuauLayer` captures it when a
+//! "lua::lib::log"`, so the existing `LuaLayer` captures it when a
 //! script runs inside `lua::scope` (used for VCR/recording). The stderr
 //! write happens unconditionally — it does not depend on a subscriber
 //! being installed.
@@ -453,30 +453,30 @@ fn civil_from_unix(secs: i64) -> (i32, u32, u32, u32, u32, u32) {
 }
 
 // ---------------------------------------------------------------------------
-// Tracing emit — for VCR capture via the existing LuauLayer.
+// Tracing emit — for VCR capture via the existing LuaLayer.
 // ---------------------------------------------------------------------------
 
 fn emit_tracing(lvl: LogLevel, msg: &str, fields: &Map<String, Json>) {
-    // The Luau layer reads `tracing::Event`s via a `Visit` impl that
+    // The Lua layer reads `tracing::Event`s via a `Visit` impl that
     // captures any field. We pack the merged map into a single
     // serialised JSON string so the capture is lossless without needing
     // dynamic structured fields (which `tracing::event!` cannot accept).
     let fields_json = serde_json::to_string(&Json::Object(fields.clone())).unwrap_or_default();
     match lvl {
         LogLevel::Trace => {
-            tracing::trace!(target: "luau::lib::log", message = %msg, fields = %fields_json)
+            tracing::trace!(target: "lua::lib::log", message = %msg, fields = %fields_json)
         }
         LogLevel::Debug => {
-            tracing::debug!(target: "luau::lib::log", message = %msg, fields = %fields_json)
+            tracing::debug!(target: "lua::lib::log", message = %msg, fields = %fields_json)
         }
         LogLevel::Info => {
-            tracing::info!(target: "luau::lib::log", message = %msg, fields = %fields_json)
+            tracing::info!(target: "lua::lib::log", message = %msg, fields = %fields_json)
         }
         LogLevel::Warn => {
-            tracing::warn!(target: "luau::lib::log", message = %msg, fields = %fields_json)
+            tracing::warn!(target: "lua::lib::log", message = %msg, fields = %fields_json)
         }
         LogLevel::Error => {
-            tracing::error!(target: "luau::lib::log", message = %msg, fields = %fields_json)
+            tracing::error!(target: "lua::lib::log", message = %msg, fields = %fields_json)
         }
         LogLevel::Off => {}
     }

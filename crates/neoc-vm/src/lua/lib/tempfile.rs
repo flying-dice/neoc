@@ -265,7 +265,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
 #[instrument(
     name = "tempfile.TempFile.new",
-    target = "luau::lib::tempfile",
+    target = "lua::lib::tempfile",
     skip_all
 )]
 fn tempfile_new(lua: &Lua, opts: Option<Table>) -> mlua::Result<(Value, Value)> {
@@ -281,11 +281,7 @@ fn tempfile_new(lua: &Lua, opts: Option<Table>) -> mlua::Result<(Value, Value)> 
     }
 }
 
-#[instrument(
-    name = "tempfile.TempDir.new",
-    target = "luau::lib::tempfile",
-    skip_all
-)]
+#[instrument(name = "tempfile.TempDir.new", target = "lua::lib::tempfile", skip_all)]
 fn tempdir_new(lua: &Lua, opts: Option<Table>) -> mlua::Result<(Value, Value)> {
     let o = Options::from_table(opts)?;
     let builder = o.builder();
@@ -299,12 +295,12 @@ fn tempdir_new(lua: &Lua, opts: Option<Table>) -> mlua::Result<(Value, Value)> {
     }
 }
 
-#[instrument(name = "tempfile.tempfile", target = "luau::lib::tempfile", skip_all)]
+#[instrument(name = "tempfile.tempfile", target = "lua::lib::tempfile", skip_all)]
 fn flat_tempfile(lua: &Lua, opts: Option<Table>) -> mlua::Result<(Value, Value)> {
     tempfile_new(lua, opts)
 }
 
-#[instrument(name = "tempfile.tempdir", target = "luau::lib::tempfile", skip_all)]
+#[instrument(name = "tempfile.tempdir", target = "lua::lib::tempfile", skip_all)]
 fn flat_tempdir(lua: &Lua, opts: Option<Table>) -> mlua::Result<(Value, Value)> {
     tempdir_new(lua, opts)
 }

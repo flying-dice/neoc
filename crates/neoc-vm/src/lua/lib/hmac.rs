@@ -48,7 +48,7 @@ type HmacSha256 = hmac::Hmac<Sha256>;
 type HmacSha384 = hmac::Hmac<Sha384>;
 type HmacSha512 = hmac::Hmac<Sha512>;
 
-/// Canonical algorithm list — the d.luau / docs order. Used by `algorithms()`
+/// Canonical algorithm list — the d.lua / docs order. Used by `algorithms()`
 /// and by tests that iterate every backend.
 const ALGOS: &[&str] = &["sha256", "sha384", "sha512"];
 
@@ -240,7 +240,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     Ok(m)
 }
 
-#[instrument(name = "hmac.Hmac.new", target = "luau::lib::hmac", skip_all)]
+#[instrument(name = "hmac.Hmac.new", target = "lua::lib::hmac", skip_all)]
 fn hmac_new(lua: &Lua, (algo, key): (String, mlua::String)) -> mlua::Result<(Value, Value)> {
     match State::new(&algo, &key.as_bytes()) {
         Ok(state) => ok(lua, Hmac { state }),
@@ -248,7 +248,7 @@ fn hmac_new(lua: &Lua, (algo, key): (String, mlua::String)) -> mlua::Result<(Val
     }
 }
 
-#[instrument(name = "hmac.hmac", target = "luau::lib::hmac", skip_all)]
+#[instrument(name = "hmac.hmac", target = "lua::lib::hmac", skip_all)]
 fn hmac_one_shot(
     lua: &Lua,
     (algo, key, data): (String, mlua::String, mlua::String),

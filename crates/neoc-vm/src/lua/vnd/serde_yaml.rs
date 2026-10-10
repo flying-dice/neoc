@@ -23,7 +23,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// Declares the `vnd:serde_yaml` surface through the facade. Every function is
 /// fallible; the `(value, error)` shape, the `serde_yaml.<fn>` error prefixes,
 /// the exact error suffixes (handle, parse, serialize, and I/O failures), and
-/// the `luau::lib::serde_yaml` spans are byte-identical to the hand-written
+/// the `lua::lib::serde_yaml` spans are byte-identical to the hand-written
 /// registration this replaces.
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "vnd:serde_yaml")?;

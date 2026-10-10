@@ -51,7 +51,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 ///
 /// `open` is set verbatim with [`crate::lua::facade::Module::set`] rather than
 /// `try_async_func` because the hand-written async function carries its own
-/// `#[instrument(name = "sqlx_mysql.open", target = "luau::lib::sqlx_mysql")]`
+/// `#[instrument(name = "sqlx_mysql.open", target = "lua::lib::sqlx_mysql")]`
 /// attribute and bakes the `sqlx_mysql.open` error prefix into its pre-built
 /// `(Value, Value)` return — routing through the facade would add a second span
 /// and double the prefix. Its signature is recorded for the header via
@@ -135,7 +135,7 @@ pub struct Database {
     pool: Arc<MySqlPool>,
 }
 
-#[instrument(name = "sqlx_mysql.open", target = "luau::lib::sqlx_mysql", skip_all)]
+#[instrument(name = "sqlx_mysql.open", target = "lua::lib::sqlx_mysql", skip_all)]
 async fn open(lua: Lua, url: String) -> mlua::Result<(Value, Value)> {
     let opts = match MySqlConnectOptions::from_str(&url) {
         Ok(o) => o,

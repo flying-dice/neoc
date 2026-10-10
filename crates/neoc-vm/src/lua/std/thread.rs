@@ -55,7 +55,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// Declares the `std:thread` surface through the facade.
 ///
 /// `spawn` is set verbatim with [`crate::lua::facade::Module::set`]: it carries
-/// its own `#[instrument(name = "thread.spawn", target = "luau::lib::thread")]`
+/// its own `#[instrument(name = "thread.spawn", target = "lua::lib::thread")]`
 /// attribute and returns a `WorkerHandle` on success, so routing through the
 /// facade would add a second span. `available_parallelism` carried no span and
 /// returns the core count directly. `parent` / `shared` are dynamically
@@ -338,7 +338,7 @@ fn prepare_spawn(opts: &Table) -> Result<SpawnConfig, String> {
     })
 }
 
-#[instrument(name = "thread.spawn", target = "luau::lib::thread", skip_all)]
+#[instrument(name = "thread.spawn", target = "lua::lib::thread", skip_all)]
 fn spawn(lua: &Lua, opts: Table) -> mlua::Result<(Value, Value)> {
     let SpawnConfig {
         source,
@@ -878,7 +878,7 @@ mod tests {
             let e = lua::sandbox::make_engine().expect("engine");
 
             // The inner worker source is a separate string to avoid
-            // nested [[ ]] delimiters, which Luau doesn't support.
+            // nested [[ ]] delimiters, which Lua doesn't support.
             let result: i64 = e
                 .load(
                     r#"

@@ -1,12 +1,12 @@
-// TODO: clean-code - 0.7 - DEAD: this whole module (scope, LuauLayer, CURRENT_RUN, RunBuffers, drain) has zero consumers — LuauLayer is never registered as a subscriber and lib:vcr does not use it (the doc itself says the "not yet wired" service layer will). Land it behind the feature that consumes it, or remove until then. dto::procedures (TracingEvent/TracingSpan) is dead with it.
+// TODO: clean-code - 0.7 - DEAD: this whole module (scope, LuaLayer, CURRENT_RUN, RunBuffers, drain) has zero consumers — LuaLayer is never registered as a subscriber and lib:vcr does not use it (the doc itself says the "not yet wired" service layer will). Land it behind the feature that consumes it, or remove until then. dto::procedures (TracingEvent/TracingSpan) is dead with it.
 //! Per-run capture buckets + a `tracing_subscriber` Layer that funnels every
-//! event and span emitted at a `luau*` target into the active run's
+//! event and span emitted at a `lua*` target into the active run's
 //! buffers. No transformation: clients receive tracing-shaped records.
 //!
-//! - `tracing::info!(target: "luau", ...)` → `TracingEvent` in `events`
-//! - `tracing::event!(target: "luau::assert", ...)` → `TracingEvent` (clients
+//! - `tracing::info!(target: "lua", ...)` → `TracingEvent` in `events`
+//! - `tracing::event!(target: "lua::assert", ...)` → `TracingEvent` (clients
 //!   filter by target)
-//! - `tracing::info_span!(target: "luau::lib::*", ...)` → `TracingSpan` in
+//! - `tracing::info_span!(target: "lua::lib::*", ...)` → `TracingSpan` in
 //!   `spans` when the span closes
 //!
 //! Run scoping uses a tokio task-local so concurrent runs each maintain
@@ -64,14 +64,14 @@ impl RunBuffers {
 }
 
 task_local! {
-    /// The active run's buffers. `LuauLayer` writes here on every
-    /// `luau*`-targeted event / span. Reading is via `try_with` so that
+    /// The active run's buffers. `LuaLayer` writes here on every
+    /// `lua*`-targeted event / span. Reading is via `try_with` so that
     /// non-run code paths (e.g. tests, the actix-web server itself) emit
     /// tracing without touching this and without panicking.
     pub static CURRENT_RUN: Arc<RunBuffers>;
 }
 
-/// Wrap a future so every `luau*` `tracing` event / span emitted within is
+/// Wrap a future so every `lua*` `tracing` event / span emitted within is
 /// captured. Returns the future's output plus the captured events / spans.
 pub async fn scope<F, T>(future: F) -> (T, Vec<TracingEvent>, Vec<TracingSpan>)
 where
@@ -93,17 +93,17 @@ struct SpanState {
     fields: Map<String, Json>,
 }
 
-/// `tracing_subscriber::Layer` that captures `luau*`-targeted events and
+/// `tracing_subscriber::Layer` that captures `lua*`-targeted events and
 /// spans into the active `CURRENT_RUN` buffers.
-pub struct LuauLayer;
+pub struct LuaLayer;
 
-impl<S> Layer<S> for LuauLayer
+impl<S> Layer<S> for LuaLayer
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
-    // TODO: clean-code - 0.55 - DRY: `target().starts_with("luau")` guard repeated in all four hooks — extract `is_luau_target()` helper
+    // TODO: clean-code - 0.55 - DRY: `target().starts_with("lua")` guard repeated in all four hooks — extract `is_lua_target()` helper
     fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
-        if !attrs.metadata().target().starts_with("luau") {
+        if !attrs.metadata().target().starts_with("lua") {
             return;
         }
         let Some(span) = ctx.span(id) else { return };
@@ -122,7 +122,7 @@ where
 
     fn on_record(&self, id: &Id, values: &Record<'_>, ctx: Context<'_, S>) {
         let Some(span) = ctx.span(id) else { return };
-        if !span.metadata().target().starts_with("luau") {
+        if !span.metadata().target().starts_with("lua") {
             return;
         }
         let mut visitor = JsonVisitor::default();
@@ -135,7 +135,7 @@ where
     }
 
     fn on_event(&self, event: &Event<'_>, ctx: Context<'_, S>) {
-        if !event.metadata().target().starts_with("luau") {
+        if !event.metadata().target().starts_with("lua") {
             return;
         }
         let _ = CURRENT_RUN.try_with(|run| {
@@ -154,7 +154,7 @@ where
 
     fn on_close(&self, id: Id, ctx: Context<'_, S>) {
         let Some(span) = ctx.span(&id) else { return };
-        if !span.metadata().target().starts_with("luau") {
+        if !span.metadata().target().starts_with("lua") {
             return;
         }
         let _ = CURRENT_RUN.try_with(|run| {

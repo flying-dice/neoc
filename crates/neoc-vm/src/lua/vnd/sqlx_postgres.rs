@@ -42,7 +42,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 ///
 /// `open` is set verbatim with [`crate::lua::facade::Module::set`] rather than
 /// `try_async_func` because the hand-written async function carries its own
-/// `#[instrument(name = "sqlx_postgres.open", target = "luau::lib::sqlx_postgres")]`
+/// `#[instrument(name = "sqlx_postgres.open", target = "lua::lib::sqlx_postgres")]`
 /// attribute and bakes the `sqlx_postgres.open` error prefix into its pre-built
 /// `(Value, Value)` return — routing through the facade would add a second span
 /// and double the prefix. Its signature is recorded for the header via
@@ -101,7 +101,7 @@ pub struct Database {
 
 #[instrument(
     name = "sqlx_postgres.open",
-    target = "luau::lib::sqlx_postgres",
+    target = "lua::lib::sqlx_postgres",
     skip_all
 )]
 async fn open(lua: Lua, url: String) -> mlua::Result<(Value, Value)> {
