@@ -4,7 +4,7 @@ Mechanical walkthrough — order, file locations, pre-MR checks. Points to [STYL
 
 ## Before you start
 
-- Rust toolchain (stable, `cargo` on `PATH`).
+- `rustup` + `cargo` on `PATH`. Toolchain pinned in [rust-toolchain.toml](rust-toolchain.toml) — rustup auto-installs it; don't use `+stable`.
 - Read [Design principles](README.md#design-principles) — non-negotiable.
 - Read [STYLEGUIDE.md](STYLEGUIDE.md) — binding rules.
 

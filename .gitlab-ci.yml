@@ -5,8 +5,8 @@ stages:
   - release
   - pages
 
-# Exact toolchain pin — must match rust-toolchain.toml. Bump both in one MR and
-# fix any new lint fallout there (#98).
+# Exact toolchain pin — 3 sites, bump all in one MR: rust-toolchain.toml,
+# this image, Dockerfile builder FROM. Fix any new lint fallout there (#98).
 image: rust:1.98.0-bookworm
 
 default:

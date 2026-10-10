@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
+# Toolchain pin — must match rust-toolchain.toml + .gitlab-ci.yml image (#98).
 FROM rust:1.98.0-bookworm AS builder
 WORKDIR /src
 
