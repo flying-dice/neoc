@@ -11,16 +11,15 @@
 //! diverged instead of one opaque blob. Two kinds of trial per target:
 //!
 //! - `<case>::<target>::source` — the live emit equals the committed, readable
-//!   `<case>.luau` checked into the corpus. This pins the transformation itself
+//!   `<case>.lua` checked into the corpus. This pins the transformation itself
 //!   (codegen changes show up as a diff) and needs no toolchain, so it runs
-//!   everywhere. Regenerate the files with
-//!   `neoc build lang/CONFORMANCE/dynamic/*.neoc --target luau`. (`lua` is not a
-//!   selectable target — `luau` exercises the same lowering and downgrades to
-//!   it.)
+//!   everywhere. Regenerate the files by running this suite with
+//!   `NEOC_BLESS=1`, which rewrites each golden from the live emit.
 //! - `<case>::<target>` — transpile (or, for Rust, compile the `.rs` anchor),
-//!   run under the target's interpreter, and assert trailing-newline-trimmed
-//!   stdout equals the golden. Marked ignored when the toolchain (`rustc` /
-//!   `luau`) is absent, so the suite still passes without it.
+//!   run, and assert trailing-newline-trimmed stdout equals the golden. Lua
+//!   runs in-process on `LuaJIT` (`tests/common`), so it always runs. Only the
+//!   Rust anchor depends on a toolchain (`rustc`); it is marked ignored when
+//!   `rustc` is absent.
 //!
 //! Two extra trials guard the corpus shape: it is non-empty, and every `.neoc`
 //! has a sibling `.rs`.
@@ -33,18 +32,20 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use libtest_mimic::{Arguments, Failed, Trial};
 use neoc_compiler::{Target, transpile};
 
+mod common;
+
 /// A conformance backend: how to turn a case into a runnable program and run it.
 struct TargetSpec {
-    /// Short name shown after `::` in the test id (`luau`, `rust`).
+    /// Short name shown after `::` in the test id (`lua`, `rust`).
     name: &'static str,
-    /// Whether the toolchain this target needs is present on PATH. When false,
-    /// the target's run trials are marked ignored rather than failed.
+    /// Whether the toolchain this target needs is present. When false, the
+    /// target's run trials are marked ignored rather than failed.
     available: bool,
     /// Produce the program text and run it under the toolchain, returning stdout.
     /// `neoc` is the `.neoc` source, `case` the file stem (for error messages).
     run: fn(neoc: &str, case: &str, neoc_path: &Path) -> Result<String, Failed>,
     /// The compiler [`Target`] and committed-output extension this backend emits
-    /// (e.g. `(Target::Luau, "luau")`). When set, a `<case>::<target>::source`
+    /// (e.g. `(Target::Lua, "lua")`). When set, a `<case>::<target>::source`
     /// trial pins the emitted code against the readable `<case>.<ext>` file
     /// checked into the corpus. `None` for the Rust anchor, whose `.rs` is
     /// hand-written rather than emitted. This check needs no toolchain.
@@ -62,6 +63,14 @@ fn check_source_golden(
 ) -> Result<(), Failed> {
     let emitted = emit(neoc, target, case)?;
     let golden_path = neoc_path.with_extension(ext);
+    if std::env::var_os("NEOC_BLESS").is_some() {
+        return std::fs::write(&golden_path, &emitted).map_err(|e| {
+            Failed::from(format!(
+                "case `{case}`: write {}: {e}",
+                golden_path.display()
+            ))
+        });
+    }
     let committed = std::fs::read_to_string(&golden_path).map_err(|e| {
         Failed::from(format!(
             "case `{case}`: read {}: {e}",
@@ -73,7 +82,7 @@ fn check_source_golden(
     } else {
         Err(Failed::from(format!(
             "case `{case}`: emitted .{ext} differs from the committed golden {} — \
-             regenerate with `neoc build lang/CONFORMANCE/dynamic/*.neoc --target {target}`\n\
+             regenerate with `NEOC_BLESS=1 cargo test -p neoc-compiler --test conformance` ({target})\n\
              --- emitted ---\n{emitted}",
             golden_path.display()
         )))
@@ -119,31 +128,6 @@ fn emit(neoc: &str, target: Target, case: &str) -> Result<String, Failed> {
         Err(Failed::from(format!(
             "case `{case}`: unexpected diagnostics: {:#?}",
             out.diagnostics
-        )))
-    }
-}
-
-/// Run `program` (written to a temp `ext` file) under `cmd`, returning stdout.
-/// Fails the trial with stderr and the emitted source on a non-zero exit.
-fn run_program(
-    cmd: &str,
-    program: &str,
-    ext: &str,
-    case: &str,
-    kind: &str,
-) -> Result<String, Failed> {
-    let path = tempfile(program, ext);
-    let output = Command::new(cmd)
-        .arg(&path)
-        .output()
-        .map_err(|e| Failed::from(format!("case `{case}`: spawn `{cmd}` failed: {e}")))?;
-    let _ = std::fs::remove_file(&path);
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-    } else {
-        Err(Failed::from(format!(
-            "case `{case}`: {cmd} exited non-zero:\n{}\n--- emitted {kind} ---\n{program}",
-            String::from_utf8_lossy(&output.stderr)
         )))
     }
 }
@@ -200,7 +184,7 @@ fn run_rust(_neoc: &str, case: &str, neoc_path: &Path) -> Result<String, Failed>
 /// on `__tests` existing, so it is a no-op for every case that emits no test
 /// table (all but `6-06`). The Rust anchor has no runtime `__tests`; its `.rs`
 /// calls the tests from `main` directly to reproduce the same stdout.
-const TESTS_WALK_LUAU: &str = r"if __tests then
+const TESTS_WALK_LUA: &str = r"if __tests then
   local __names = {}
   for __k in pairs(__tests) do __names[#__names + 1] = __k end
   table.sort(__names)
@@ -208,14 +192,17 @@ const TESTS_WALK_LUAU: &str = r"if __tests then
 end
 ";
 
-/// luau: the self-typed Luau module is self-contained — inlined runtime and
-/// inline `Result`/`Option` type aliases, no `neoc-lib`. Alias `println` to the
-/// built-in `print`, append `main()` then the `#[test]` walk, and run under the
-/// `luau` CLI.
-fn run_luau(neoc: &str, case: &str, _neoc_path: &Path) -> Result<String, Failed> {
-    let output = emit(neoc, Target::Luau, case)?;
-    let program = format!("println = print\n{output}\nmain()\n{TESTS_WALK_LUAU}");
-    run_program("luau", &program, "luau", case, "luau")
+/// lua: the emitted module is self-contained — inlined runtime, no `neoc-lib`.
+/// Alias `println` to the built-in `print`, append `main()` then the `#[test]`
+/// walk, and run in-process on `LuaJIT`.
+fn run_lua(neoc: &str, case: &str, _neoc_path: &Path) -> Result<String, Failed> {
+    let output = emit(neoc, Target::Lua, case)?;
+    let program = format!("println = print\n{output}\nmain()\n{TESTS_WALK_LUA}");
+    common::run_lua(&program).map_err(|e| {
+        Failed::from(format!(
+            "case `{case}`: lua failed:\n{e}\n--- emitted lua ---\n{program}"
+        ))
+    })
 }
 
 /// The `lang/CONFORMANCE/dynamic/` directory, resolved from the crate manifest.
@@ -240,10 +227,9 @@ fn cases(dir: &Path) -> Vec<PathBuf> {
 }
 
 /// Build the per-case × target trials plus the corpus-shape guards.
-/// The conformance backends: the `rust` anchor plus the sole selectable target,
-/// `luau`. `lua` is not selectable — `luau` exercises the same lowering and
-/// downgrades to it. Each `::source` golden pin needs no toolchain; each run
-/// trial is ignored when its toolchain is absent.
+/// The conformance backends: the `rust` anchor plus the sole target, `lua`. Each
+/// `::source` golden pin needs no toolchain; the `lua` run trial executes
+/// in-process, and the `rust` run trial is ignored when `rustc` is absent.
 fn target_specs() -> [TargetSpec; 2] {
     [
         TargetSpec {
@@ -253,10 +239,10 @@ fn target_specs() -> [TargetSpec; 2] {
             emit: None,
         },
         TargetSpec {
-            name: "luau",
-            available: binary_present("luau"),
-            run: run_luau,
-            emit: Some((Target::Luau, "luau")),
+            name: "lua",
+            available: true,
+            run: run_lua,
+            emit: Some((Target::Lua, "lua")),
         },
     ]
 }
@@ -307,7 +293,7 @@ fn collect_trials() -> Vec<Trial> {
 
         for target in &targets {
             // Source golden: the live emit equals the committed readable output
-            // file. Needs only the compiler, so it runs even without `luau`.
+            // file. Needs only the compiler, so it runs without any interpreter.
             if let Some((emit_target, ext)) = target.emit {
                 let neoc_path = neoc.clone();
                 let case = case.clone();

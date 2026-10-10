@@ -1,6 +1,6 @@
 //! Integration tests driving the unified `neoc` binary: the compiler
 //! subcommands (`build`/`check`/`fmt`/`lsp`) and `run` of a `.neoc` entry
-//! (in-process transpile to Luau + execute on the embedded VM).
+//! (in-process transpile to Lua + execute on the embedded VM).
 
 use std::fs;
 use std::path::Path;
@@ -20,16 +20,16 @@ fn write(dir: &Path, name: &str, src: &str) -> std::path::PathBuf {
 }
 
 #[test]
-fn build_writes_luau_next_to_source() {
+fn build_writes_lua_next_to_source() {
     let dir = tempdir().unwrap();
     let src = write(dir.path(), "foo.neoc", VALID);
 
     let status = Command::new(BIN).arg("build").arg(&src).status().unwrap();
     assert!(status.success());
 
-    let luau = dir.path().join("foo.luau");
-    assert!(luau.is_file(), "expected {} to exist", luau.display());
-    assert!(!fs::read_to_string(&luau).unwrap().is_empty());
+    let lua = dir.path().join("foo.lua");
+    assert!(lua.is_file(), "expected {} to exist", lua.display());
+    assert!(!fs::read_to_string(&lua).unwrap().is_empty());
 }
 
 #[test]
@@ -47,8 +47,8 @@ fn build_with_output_dir_keeps_base_name() {
         .unwrap();
     assert!(status.success());
 
-    assert!(out.join("foo.luau").is_file());
-    assert!(!dir.path().join("foo.luau").exists());
+    assert!(out.join("foo.lua").is_file());
+    assert!(!dir.path().join("foo.lua").exists());
 }
 
 #[test]
@@ -65,8 +65,8 @@ fn build_glob_matches_multiple_files() {
         .unwrap();
     assert!(status.success());
 
-    assert!(dir.path().join("a.luau").is_file());
-    assert!(dir.path().join("b.luau").is_file());
+    assert!(dir.path().join("a.lua").is_file());
+    assert!(dir.path().join("b.lua").is_file());
 }
 
 #[test]
@@ -76,7 +76,7 @@ fn build_skips_output_on_diagnostic_and_exits_nonzero() {
 
     let out = Command::new(BIN).arg("build").arg(&src).output().unwrap();
     assert!(!out.status.success());
-    assert!(!dir.path().join("bad.luau").exists());
+    assert!(!dir.path().join("bad.lua").exists());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("bad.neoc"), "stderr: {stderr}");
 }
@@ -98,14 +98,14 @@ fn build_multi_file_project_emits_every_module_next_to_source() {
     let status = Command::new(BIN).arg("build").arg(&entry).status().unwrap();
     assert!(status.success());
 
-    let main_luau = dir.path().join("main.luau");
-    let util_luau = dir.path().join("util.luau");
-    assert!(main_luau.is_file(), "expected main.luau");
+    let main_lua = dir.path().join("main.lua");
+    let util_lua = dir.path().join("util.lua");
+    assert!(main_lua.is_file(), "expected main.lua");
     assert!(
-        util_luau.is_file(),
-        "expected util.luau emitted from the graph"
+        util_lua.is_file(),
+        "expected util.lua emitted from the graph"
     );
-    assert!(fs::read_to_string(&main_luau).unwrap().contains("require"));
+    assert!(fs::read_to_string(&main_lua).unwrap().contains("require"));
 }
 
 #[test]
@@ -124,7 +124,7 @@ fn build_reports_private_import_and_writes_nothing() {
 
     let out = Command::new(BIN).arg("build").arg(&entry).output().unwrap();
     assert!(!out.status.success());
-    assert!(!dir.path().join("main.luau").exists());
+    assert!(!dir.path().join("main.lua").exists());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("`secret` is private in module `util`"),
@@ -139,7 +139,7 @@ fn check_clean_exits_zero() {
 
     let status = Command::new(BIN).arg("check").arg(&src).status().unwrap();
     assert!(status.success());
-    assert!(!dir.path().join("ok.luau").exists());
+    assert!(!dir.path().join("ok.lua").exists());
 }
 
 #[test]
@@ -254,7 +254,7 @@ fn run_neoc_transpiles_and_executes() {
     );
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ran neoc");
     // No intermediate file is written next to the source.
-    assert!(!dir.path().join("app.luau").exists());
+    assert!(!dir.path().join("app.lua").exists());
 }
 
 #[test]
@@ -278,8 +278,8 @@ fn run_neoc_type_error_reports_neoc_diagnostic_not_lua() {
 // A program that compiles cleanly but faults at runtime: `crash()` calls an
 // unbound name, so the embedded LuaJIT VM raises `attempt to call global 'explode' (a nil value)`.
 // The fault is reported against the `.neoc` chunk name, and the source map (#56)
-// rewrites the emitted-Luau line back to the neoc line — `explode()` sits on neoc
-// line 4, so the fault must read `fault.neoc:4`, not the emitted-Luau line.
+// rewrites the emitted-Lua line back to the neoc line — `explode()` sits on neoc
+// line 4, so the fault must read `fault.neoc:4`, not the emitted-Lua line.
 const RUNTIME_FAULT: &str = "\
 extern { fn print(s: string); }
 fn crash() {
@@ -308,9 +308,9 @@ fn run_neoc_runtime_fault_reports_against_the_neoc_position() {
             && stderr.contains("attempt to call global 'explode' (a nil value)"),
         "expected a fault against the fault.neoc chunk, got: {stderr}"
     );
-    // The source map remaps the emitted-Luau line to the neoc line: the failing
+    // The source map remaps the emitted-Lua line to the neoc line: the failing
     // `explode()` call is on neoc line 4, so the fault reports `:4`, not the
-    // (different) line the call lowered to in the emitted Luau.
+    // (different) line the call lowered to in the emitted Lua.
     assert!(
         stderr.contains("fault.neoc\"]:4:"),
         "expected the fault remapped to neoc line 4, got: {stderr}"
@@ -354,8 +354,8 @@ fn run_eval_type_error_reports_eval_chunk() {
 
 #[test]
 fn run_eval_lua_runs_source_verbatim() {
-    // `--lua` treats the snippet as raw Lua/Luau: loaded into the engine with no
-    // neoc compilation, so `print` (a Luau global) works directly.
+    // `--lua` treats the snippet as raw Lua: loaded into the engine with no
+    // neoc compilation, so `print` (a Lua global) works directly.
     let out = Command::new(BIN)
         .arg("run")
         .arg("--lua")
@@ -393,7 +393,7 @@ fn run_eval_conflicts_with_paths() {
         .arg("run")
         .arg("-e")
         .arg("fn main() {}")
-        .arg("script.luau")
+        .arg("script.lua")
         .output()
         .unwrap();
     assert!(!out.status.success());

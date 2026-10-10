@@ -60,9 +60,9 @@ test:
   script:
     - cargo build
     # Full workspace suite: runtime lib/bin tests plus the compiler's
-    # integration tests (conformance.rs/_static/_syntax, cli.rs, LSP). The
-    # conformance exec arms self-skip when luau/rustc are absent on the runner
-    # via a binary_present gate, so no toolchain installs are needed.
+    # integration tests (conformance.rs/_static/_syntax, cli.rs, LSP). The Lua
+    # conformance run trials execute in-process on LuaJIT, so they always run;
+    # only the Rust anchor trials are ignored when rustc is absent.
     - cargo test --workspace
     # Docker-dependent tests (sqlx_mysql, sqlx_postgres, testcontainers_modules)
     # require a live Docker daemon and are excluded from the runner.
@@ -96,7 +96,7 @@ wasm:
         - target/
   script:
     - rustup target add wasm32-unknown-unknown
-    - cargo check --target wasm32-unknown-unknown -p neoc-ast -p neoc-macros -p neoc-codegen-lua -p neoc-codegen-luau
+    - cargo check --target wasm32-unknown-unknown -p neoc-ast -p neoc-macros -p neoc-codegen-lua
 
 # ── build ─────────────────────────────────────────────────────────────────────
 #

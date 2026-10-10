@@ -11,7 +11,6 @@ neoc-ast.workspace = true
 neoc-parser.workspace = true
 neoc-types.workspace = true
 neoc-codegen-lua.workspace = true
-neoc-codegen-luau.workspace = true
 neoc-macros.workspace = true
 toml = "0.8"
 thiserror = "2"
@@ -22,6 +21,12 @@ workspace = true
 
 [dev-dependencies]
 libtest-mimic = "0.8"
+# In-process `LuaJIT` runner for the end-to-end and conformance run trials
+# (`tests/common`): the runtime's own sandboxed engine, so emitted Lua is executed
+# under the environment `neoc run` gives it, never skipped for a missing
+# interpreter. No cycle: `neoc-vm` does not depend on this crate.
+mlua = { version = "0.10", features = ["luajit", "vendored"] }
+neoc-vm.workspace = true
 neoc-grammar.workspace = true
 tree-sitter.workspace = true
 # Behavioural spec: Gherkin features in `tooling/compiler/` driven against the

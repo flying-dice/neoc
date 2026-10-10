@@ -6,8 +6,7 @@
 //! [`transpile_project`] against both a checked-in two-file fixture and
 //! temp-directory projects built per case.
 //!
-//! neoc emits one target, `luau` (downgrades to Lua through the Luau
-//! toolchain), so these tests assert against it.
+//! neoc emits one target, `lua`, so these tests assert against it.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -46,7 +45,7 @@ fn write(dir: &Path, name: &str, contents: &str) -> PathBuf {
 fn two_file_project_resolves_pub_item_and_emits_require() {
     let dir = fixtures();
     let entry = dir.join("main.neoc");
-    let project = transpile_project(&entry, Target::Luau).expect("read project");
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
 
     assert!(
         project.ok(),
@@ -54,41 +53,41 @@ fn two_file_project_resolves_pub_item_and_emits_require() {
         project.diagnostics
     );
 
-    // Both modules are emitted, each to its own `.luau` destination.
+    // Both modules are emitted, each to its own `.lua` destination.
     assert_eq!(project.files.len(), 2, "expected main + util outputs");
-    let main_luau = project
+    let main_lua = project
         .files
         .iter()
         .find(|(p, _)| p.file_stem().is_some_and(|s| s == "main"))
         .map(|(_, src)| src.as_str())
         .expect("main output present");
 
-    // `use util::add;` lowers to a Luau module import bringing `add` into scope.
+    // `use util::add;` lowers to a Lua module import bringing `add` into scope.
     assert!(
-        main_luau.contains("require(\"util\")") && main_luau.contains("add"),
-        "main should import `add` via require:\n{main_luau}"
+        main_lua.contains("require(\"util\")") && main_lua.contains("add"),
+        "main should import `add` via require:\n{main_lua}"
     );
     assert!(
-        main_luau.contains("add(2, 3)"),
-        "main should call the imported function:\n{main_luau}"
+        main_lua.contains("add(2, 3)"),
+        "main should call the imported function:\n{main_lua}"
     );
 
     // The producer must be a requireable library: `pub fn add` is a `local` and
     // the module closes with a `return { … }` export table carrying `add`, so the
     // consumer's `require("util").add` resolves (`lang/DYNAMIC.md` §3.7).
-    let util_luau = project
+    let util_lua = project
         .files
         .iter()
         .find(|(p, _)| p.file_stem().is_some_and(|s| s == "util"))
         .map(|(_, src)| src.as_str())
         .expect("util output present");
     assert!(
-        util_luau.contains("local function add("),
-        "`pub fn add` should be a local in a library build:\n{util_luau}"
+        util_lua.contains("local function add("),
+        "`pub fn add` should be a local in a library build:\n{util_lua}"
     );
     assert!(
-        util_luau.contains("add = add"),
-        "util should export `add` in its return table:\n{util_luau}"
+        util_lua.contains("add = add"),
+        "util should export `add` in its return table:\n{util_lua}"
     );
 }
 
@@ -102,7 +101,7 @@ fn using_a_private_item_is_a_visibility_error() {
         "use util::secret;\n\nfn main() -> number { secret(1) }\n",
     );
 
-    let project = transpile_project(&entry, Target::Luau).expect("read project");
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
     assert!(
         project
             .diagnostics
@@ -125,7 +124,7 @@ fn unresolved_module_path_is_an_error() {
         "use missing::thing;\n\nfn main() -> number { thing(1) }\n",
     );
 
-    let project = transpile_project(&entry, Target::Luau).expect("read project");
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
     assert!(
         project
             .diagnostics
@@ -149,7 +148,7 @@ fn unresolved_nested_module_names_the_expected_file() {
         "use autosql::ports::SqlExecutor;\n\nfn main() -> number { 1 }\n",
     );
 
-    let project = transpile_project(&entry, Target::Luau).expect("read project");
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
     assert!(
         project.diagnostics.iter().any(|d| d.diagnostic.message
             == "unresolved module `autosql::ports` (no file at `autosql/ports.neoc`)"),
@@ -172,7 +171,7 @@ fn nested_module_path_resolves_under_a_subdirectory() {
         "use math::vec::dot;\n\nfn main() -> number { dot(2, 4) }\n",
     );
 
-    let project = transpile_project(&entry, Target::Luau).expect("read project");
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
     assert!(
         project.ok(),
         "expected `math::vec::dot` to resolve, got: {:#?}",
@@ -194,7 +193,7 @@ fn use_alias_rebinds_the_imported_name() {
         "use util::add as plus;\n\nfn main() -> number { plus(1, 2) }\n",
     );
 
-    let project = transpile_project(&entry, Target::Luau).expect("read project");
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
     assert!(
         project.ok(),
         "alias import should type-check, got: {:#?}",
@@ -217,7 +216,7 @@ fn conflicting_same_name_use_is_a_name_conflict() {
         "use a::X;\nuse b::X;\n\nfn main() -> number { X(1) }\n",
     );
 
-    let project = transpile_project(&entry, Target::Luau).expect("read project");
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
     assert!(
         project
             .diagnostics
@@ -244,7 +243,7 @@ fn aliased_use_avoids_conflicting_same_name_import() {
         "use a::X;\nuse b::X as Y;\n\nfn main() -> number { X(1) + Y(2) }\n",
     );
 
-    let project = transpile_project(&entry, Target::Luau).expect("read project");
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
     assert!(
         project.ok(),
         "aliased same-name imports should type-check, got: {:#?}",
@@ -268,7 +267,7 @@ fn type_only_and_value_use_with_same_name_coexist() {
     // per-namespace gate agree on all of them. Without this case the whole
     // compiler suite passes against the union-gate regression.
     //
-    // Resolution only. The luau backend still emits a `local` for the erased
+    // Resolution only. The Lua backend still emits a `local` for the erased
     // type-only import, shadowing the value binding (#91), so the emitted output
     // is not asserted here — that is a codegen defect, not a resolution one.
     let dir = tempdir();
@@ -286,7 +285,7 @@ fn type_only_and_value_use_with_same_name_coexist() {
          }\n",
     );
 
-    let project = transpile_project(&entry, Target::Luau).expect("read project");
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
     assert!(
         project.ok(),
         "type-only + value share of a name should type-check, got: {:#?}",
@@ -310,7 +309,7 @@ fn conflicting_same_name_type_use_is_a_name_conflict() {
         "use a::T;\nuse b::T;\n\nfn main() -> number { let t = T { n: 1 }; t.n }\n",
     );
 
-    let project = transpile_project(&entry, Target::Luau).expect("read project");
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
     assert!(
         project
             .diagnostics
@@ -338,7 +337,7 @@ fn distinct_aliases_to_the_same_name_conflict() {
         "use a::X as Z;\nuse b::Y as Z;\n\nfn main() -> number { Z(1) }\n",
     );
 
-    let project = transpile_project(&entry, Target::Luau).expect("read project");
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
     assert!(
         project
             .diagnostics
@@ -363,23 +362,22 @@ fn single_file_project_emits_a_requireable_library() {
     let src = "fn main() -> number { 1 + 1 }\n";
     let entry = write(&dir, "solo.neoc", src);
 
-    let project = transpile_project(&entry, Target::Luau).expect("read project");
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
     assert!(project.ok());
     assert_eq!(project.files.len(), 1);
     let emitted = &project.files[0].1;
     // The script body matches single-file `transpile`; the library form adds the
     // export table (no `pub` items here, so an empty one).
-    let expected = format!("{}return {{}}\n", transpile(src, Target::Luau).output);
+    let expected = format!("{}return {{}}\n", transpile(src, Target::Lua).output);
     assert_eq!(emitted, &expected);
 }
 
 #[test]
-fn luau_build_emits_self_typed_module_files() {
-    // A Luau-target project emits a self-typed `.luau` *per module* in `files`
-    // (the artifact, positionally aligned with `source_maps`). Each module is
-    // self-contained: it inlines the runtime and its own `Result`/`Option` type
-    // aliases, so a build writes no sidecar of any kind. The source map is real
-    // (#56): Luau records it during emit.
+fn lua_build_emits_module_files() {
+    // A project emits a `.lua` *per module* in `files` (the artifact,
+    // positionally aligned with `source_maps`). Each module is self-contained: it
+    // inlines the runtime, so a build writes no sidecar of any kind. The source
+    // map is real (#56): the emitter records it during emit.
     let dir = tempdir();
     let entry = write(
         &dir,
@@ -391,41 +389,40 @@ fn luau_build_emits_self_typed_module_files() {
          }\n",
     );
 
-    let project = transpile_project(&entry, Target::Luau).expect("read project");
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
     assert!(
         project.ok(),
         "expected a clean project, got: {:#?}",
         project.diagnostics
     );
 
-    // The `.luau` module is the artifact, aligned with `source_maps`.
-    assert_eq!(project.files.len(), 1, "expected x.luau");
+    // The `.lua` module is the artifact, aligned with `source_maps`.
+    assert_eq!(project.files.len(), 1, "expected x.lua");
     assert_eq!(
         project.files.len(),
         project.source_maps.len(),
         "files and source_maps must stay positionally aligned"
     );
-    // Luau records a real map (#56), so `neoc run` can rewrite a runtime fault
+    // The emitter records a real map (#56), so `neoc run` can rewrite a runtime fault
     // to its neoc position.
     assert!(
         !project.source_maps[0].is_empty(),
-        "Luau records a source map"
+        "the emitter records a source map"
     );
-    let (path, x_luau) = &project.files[0];
+    let (path, x_lua) = &project.files[0];
     assert!(
-        path.file_name().is_some_and(|f| f == "x.luau"),
-        "expected x.luau, got {path:?}"
+        path.file_name().is_some_and(|f| f == "x.lua"),
+        "expected x.lua, got {path:?}"
     );
 
-    // x.luau is self-typed: the `pub struct` is an inline `type`, the `pub fn`
-    // returning `Result` carries an inline-typed signature.
+    // x.lua is untyped Lua: the `pub fn` header carries parameter names only.
     assert!(
-        x_luau.contains("type Row = {"),
-        "x.luau should carry the inline `type` for the `pub struct`:\n{x_luau}"
+        x_lua.contains("function load(id)"),
+        "x.lua should carry the plain `pub fn` header:\n{x_lua}"
     );
     assert!(
-        x_luau.contains("): Result<"),
-        "x.luau should carry the inline-typed `pub fn` returning Result:\n{x_luau}"
+        !x_lua.contains("type Row"),
+        "x.lua must not carry type declarations:\n{x_lua}"
     );
 }
 
@@ -445,14 +442,14 @@ fn cross_module_enum_match_and_construction_lower_correctly() {
         "main.neoc",
         "use palette::Color;\n\nfn name(c: Color) -> string {\n  match c {\n    Color::Red => \"red\",\n    Color::Green => \"green\",\n  }\n}\n\nfn main() -> string {\n  let c = Color::Green;\n  name(c)\n}\n",
     );
-    let project = transpile_project(&entry, Target::Luau).expect("read project");
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
     assert!(
         project.ok(),
         "expected a clean project, got: {:#?}",
         project.diagnostics
     );
 
-    let main_luau = project
+    let main_lua = project
         .files
         .iter()
         .find(|(p, _)| p.file_stem().is_some_and(|s| s == "main"))
@@ -460,12 +457,12 @@ fn cross_module_enum_match_and_construction_lower_correctly() {
         .expect("main output present");
 
     assert!(
-        main_luau.contains("tag == \"Red\"") && main_luau.contains("tag == \"Green\""),
-        "match on an imported enum should test the variant tag:\n{main_luau}"
+        main_lua.contains("tag == \"Red\"") && main_lua.contains("tag == \"Green\""),
+        "match on an imported enum should test the variant tag:\n{main_lua}"
     );
     assert!(
-        main_luau.contains("__tag = \"Green\""),
-        "constructing an imported variant should build the tagged table:\n{main_luau}"
+        main_lua.contains("__tag = \"Green\""),
+        "constructing an imported variant should build the tagged table:\n{main_lua}"
     );
 }
 
@@ -485,14 +482,14 @@ fn cross_module_associated_fn_call_keeps_the_type_qualifier() {
         "main.neoc",
         "use counter::Counter;\n\nfn main() -> Counter {\n  Counter::zero()\n}\n",
     );
-    let project = transpile_project(&entry, Target::Luau).expect("read project");
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
     assert!(
         project.ok(),
         "expected a clean project, got: {:#?}",
         project.diagnostics
     );
 
-    let main_luau = project
+    let main_lua = project
         .files
         .iter()
         .find(|(p, _)| p.file_stem().is_some_and(|s| s == "main"))
@@ -500,12 +497,12 @@ fn cross_module_associated_fn_call_keeps_the_type_qualifier() {
         .expect("main output present");
 
     assert!(
-        main_luau.contains("Counter.zero()"),
-        "an imported associated call should keep the `Counter.` qualifier:\n{main_luau}"
+        main_lua.contains("Counter.zero()"),
+        "an imported associated call should keep the `Counter.` qualifier:\n{main_lua}"
     );
     assert!(
-        !main_luau.lines().any(|l| l.trim() == "return zero()"),
-        "a bare `zero()` would reference an unbound global:\n{main_luau}"
+        !main_lua.lines().any(|l| l.trim() == "return zero()"),
+        "a bare `zero()` would reference an unbound global:\n{main_lua}"
     );
 }
 
@@ -527,14 +524,14 @@ fn cross_module_string_plus_lowers_to_concatenation() {
         "main.neoc",
         "use greet::hello;\n\nfn main() -> string {\n  hello() + \" world\"\n}\n",
     );
-    let project = transpile_project(&entry, Target::Luau).expect("read project");
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
     assert!(
         project.ok(),
         "expected a clean project, got: {:#?}",
         project.diagnostics
     );
 
-    let main_luau = project
+    let main_lua = project
         .files
         .iter()
         .find(|(p, _)| p.file_stem().is_some_and(|s| s == "main"))
@@ -542,12 +539,12 @@ fn cross_module_string_plus_lowers_to_concatenation() {
         .expect("main output present");
 
     assert!(
-        main_luau.contains(".."),
-        "a string `+` across modules should lower to Lua `..`:\n{main_luau}"
+        main_lua.contains(".."),
+        "a string `+` across modules should lower to Lua `..`:\n{main_lua}"
     );
     assert!(
-        !main_luau.contains("hello() +"),
-        "the `+` must not stay arithmetic for a string concatenation:\n{main_luau}"
+        !main_lua.contains("hello() +"),
+        "the `+` must not stay arithmetic for a string concatenation:\n{main_lua}"
     );
 }
 
@@ -573,22 +570,22 @@ fn field_access_on_a_transitively_imported_type_resolves() {
         "main.neoc",
         "use factory::make;\n\nfn main() -> number {\n  let c = make();\n  c.level\n}\n",
     );
-    let project = transpile_project(&entry, Target::Luau).expect("read project");
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
     assert!(
         project.ok(),
         "field access on a transitively-imported type should resolve, got: {:#?}",
         project.diagnostics
     );
 
-    let main_luau = project
+    let main_lua = project
         .files
         .iter()
         .find(|(p, _)| p.file_stem().is_some_and(|s| s == "main"))
         .map(|(_, src)| src.as_str())
         .expect("main output present");
     assert!(
-        main_luau.contains("c.level"),
-        "the field access should lower to a Lua field read:\n{main_luau}"
+        main_lua.contains("c.level"),
+        "the field access should lower to a Lua field read:\n{main_lua}"
     );
 }
 
@@ -609,7 +606,7 @@ fn an_unrelated_pub_type_is_not_silently_in_scope() {
         "main.neoc",
         "use util::noop;\n\nfn main() -> number {\n  let h = Hidden { v: 1 };\n  noop()\n}\n",
     );
-    let project = transpile_project(&entry, Target::Luau).expect("read project");
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
     assert!(
         !project.ok(),
         "constructing an unimported `Hidden` should not type-check:\n{:#?}",
@@ -641,36 +638,36 @@ const APP_USE_EXT: &str = "use db::Database;\n\n\
     d.run(\"CREATE TABLE t (id)\");\n}\n";
 
 #[test]
-fn cross_file_use_of_extern_lowers_native_require_in_luau_consumer() {
+fn cross_file_use_of_extern_lowers_native_require_in_lua_consumer() {
     let dir = tempdir();
     write(&dir, "db.neoc", DB_EXT);
     let entry = write(&dir, "app.neoc", APP_USE_EXT);
 
-    let project = transpile_project(&entry, Target::Luau).expect("read project");
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
     assert!(project.ok(), "expected clean: {:#?}", project.diagnostics);
 
-    let app_luau = project
+    let app_lua = project
         .files
         .iter()
         .find(|(p, _)| p.file_stem().is_some_and(|s| s == "app"))
         .map(|(_, c)| c.as_str())
-        .expect("app.luau emitted");
+        .expect("app.lua emitted");
 
     assert!(
-        app_luau.contains("require(\"bun:sqlite\")"),
-        "consumer emits the native require:\n{app_luau}"
+        app_lua.contains("require(\"bun:sqlite\")"),
+        "consumer emits the native require:\n{app_lua}"
     );
     assert!(
-        app_luau.contains("sqlite.Database.new(\":memory:\")"),
-        "constructor lowers to the target form, qualified through the mod:\n{app_luau}"
+        app_lua.contains("sqlite.Database.new(\":memory:\")"),
+        "constructor lowers to the target form, qualified through the mod:\n{app_lua}"
     );
     assert!(
-        app_luau.contains("d:run("),
-        "method call lowers to a colon call:\n{app_luau}"
+        app_lua.contains("d:run("),
+        "method call lowers to a colon call:\n{app_lua}"
     );
     assert!(
-        !app_luau.contains("require(\"db\")"),
-        "consumer must not require the extern from the defining file:\n{app_luau}"
+        !app_lua.contains("require(\"db\")"),
+        "consumer must not require the extern from the defining file:\n{app_lua}"
     );
 }
 
@@ -691,7 +688,7 @@ fn cross_file_use_of_a_private_extern_is_a_visibility_error() {
         "use db::Database;\npub fn main() { let _ = Database; }\n",
     );
 
-    let project = transpile_project(&entry, Target::Luau).expect("read project");
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
     assert!(
         project
             .diagnostics

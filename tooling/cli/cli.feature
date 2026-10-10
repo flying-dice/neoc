@@ -1,7 +1,7 @@
 Feature: CLI
 
   The `neoc` binary drives both halves of the toolchain. `check` parses and
-  type-checks without emitting; `build` transpiles a `.neoc` entry to Luau (the
+  type-checks without emitting; `build` transpiles a `.neoc` entry to Lua (the
   default target) next to the source; `run --eval` transpiles and executes an
   inline snippet
   in-process. Diagnostics speak neoc — `<path>: <stage>: <message>`, where the
@@ -30,9 +30,9 @@ Feature: CLI
       """
     When I run "neoc check ok.neoc"
     Then it exits successfully
-    And no file "ok.luau" exists
+    And no file "ok.lua" exists
 
-  Scenario: build transpiles a clean program to Luau next to the source
+  Scenario: build transpiles a clean program to Lua next to the source
     Given a file "foo.neoc" with:
       """
       extern { fn println(n: number); }
@@ -42,7 +42,7 @@ Feature: CLI
       """
     When I run "neoc build foo.neoc"
     Then it exits successfully
-    And a non-empty file "foo.luau" exists
+    And a non-empty file "foo.lua" exists
 
   Scenario: run --eval executes an inline snippet
     When I run "neoc run -e fn main() -> number { 1 + 2 }"
@@ -72,14 +72,14 @@ Feature: CLI
     And stderr contains "broken.neoc"
 
   @chaos
-  Scenario: build skips emitting Luau when the program has a diagnostic
+  Scenario: build skips emitting Lua when the program has a diagnostic
     Given a file "bad.neoc" with:
       """
       fn main( {
       """
     When I run "neoc build bad.neoc"
     Then it exits with an error
-    And no file "bad.luau" exists
+    And no file "bad.lua" exists
 
   @chaos
   Scenario: a glob that matches nothing is reported, not silently ignored

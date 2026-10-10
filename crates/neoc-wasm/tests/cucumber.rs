@@ -2,7 +2,7 @@
 //!
 //! The Gherkin features in `tooling/wasm/` document the *contract* for the
 //! in-page transpiler: a wasm-bindgen wrapper over `neoc-compiler` that takes
-//! `.neoc` source text and a target (`lua` / `js`) and returns the emitted
+//! `.neoc` source text and a target (`lua`) and returns the emitted
 //! output, for transpilation inside a browser page. Mirrors
 //! `crates/neoc-lsp/tests/cucumber.rs` and `crates/neoc-fmt/tests/cucumber.rs`:
 //! the spec lives at the repo top, executed by a crate test.

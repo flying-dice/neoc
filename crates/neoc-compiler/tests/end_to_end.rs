@@ -1,55 +1,30 @@
-//! End-to-end tests: transpile neoc → Luau, run the Luau, assert the output.
+//! End-to-end tests: transpile neoc → Lua, run the Lua, assert the output.
 //!
 //! This is the final stage. The per-stage tests (CST in neoc-grammar, AST in
-//! neoc-parser, emit in neoc-codegen-luau) already pin each boundary, so a
-//! failure here points at integration, not at a single stage hiding a bug. Luau
-//! is the typed superset neoc emits; it runs on the `luau` interpreter (which
-//! accepts the inline type annotations plain Lua would reject).
-//!
-//! Skipped automatically when no `luau` interpreter is on PATH.
+//! neoc-parser, emit in neoc-codegen-lua) already pin each boundary, so a
+//! failure here points at integration, not at a single stage hiding a bug. The
+//! emitted Lua runs in-process on `LuaJIT` (`tests/common`).
 
-use std::io::Write;
-use std::process::Command;
-
-/// Run Luau source, returning its stdout. `None` if no interpreter is present.
-fn run_luau(source: &str) -> Option<String> {
-    if Command::new("luau").arg("--version").output().is_err() {
-        return None;
-    }
-
-    let mut file = tempfile(source);
-    let path = file.0.clone();
-    file.1.flush().expect("flush temp file");
-    let output = Command::new("luau").arg(&path).output().expect("run luau");
-    assert!(
-        output.status.success(),
-        "luau failed:\n{}\n--- source ---\n{source}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    Some(String::from_utf8_lossy(&output.stdout).into_owned())
-}
-
-/// Write `contents` to a uniquely named temp file; return its path and handle.
-/// The name combines the pid with a process-wide atomic counter so parallel
-/// tests never collide (a timestamp alone can, under a coarse clock).
-fn tempfile(contents: &str) -> (String, std::fs::File) {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let mut path = std::env::temp_dir();
-    path.push(format!("neoc_e2e_{}_{n}.luau", std::process::id()));
-    let mut file = std::fs::File::create(&path).expect("create temp file");
-    file.write_all(contents.as_bytes())
-        .expect("write temp file");
-    (path.to_string_lossy().into_owned(), file)
-}
+mod common;
 
 /// Transpile, append a call to the entry function, run, and return stdout.
-fn transpile_and_run(source: &str, entry: &str) -> Option<String> {
-    let out = neoc_compiler::transpile(source, neoc_compiler::Target::Luau);
+fn transpile_and_run(source: &str, entry: &str) -> String {
+    let out = neoc_compiler::transpile(source, neoc_compiler::Target::Lua);
     assert!(out.ok(), "unexpected diagnostics: {:#?}", out.diagnostics);
     let program = format!("{}\n{entry}()\n", out.output);
-    run_luau(&program)
+    common::run_lua(&program)
+        .unwrap_or_else(|e| panic!("lua failed:\n{e}\n--- source ---\n{program}"))
+}
+
+/// The harness must give emitted Lua the runtime's environment, not a full stdlib:
+/// a lowering that leans on a global `neoc run` strips has to fail here too.
+#[test]
+fn harness_runs_in_the_runtime_sandbox() {
+    let probe = "print(load == nil, loadstring == nil, setfenv == nil, getfenv == nil, \
+                 collectgarbage == nil, string.dump == nil, os == nil, io == nil, \
+                 package == nil, jit == nil, debug == nil)\n";
+    let stdout = common::run_lua(probe).expect("probe runs");
+    assert_eq!(stdout.trim(), ["true"; 11].join("\t"));
 }
 
 #[test]
@@ -62,10 +37,7 @@ fn fib(n: number) -> number {
 fn main() {
   print(fib(10));
 }";
-    let Some(stdout) = transpile_and_run(src, "main") else {
-        eprintln!("skipping: no luau interpreter on PATH");
-        return;
-    };
+    let stdout = transpile_and_run(src, "main");
     assert_eq!(stdout.trim(), "55");
 }
 
@@ -81,10 +53,7 @@ fn sum_to(n: number) -> number {
 fn main() {
   print(sum_to(11));
 }";
-    let Some(stdout) = transpile_and_run(src, "main") else {
-        eprintln!("skipping: no luau interpreter on PATH");
-        return;
-    };
+    let stdout = transpile_and_run(src, "main");
     // 1 + 2 + ... + 10 = 55 (1..11 is exclusive of 11).
     assert_eq!(stdout.trim(), "55");
 }
@@ -101,10 +70,7 @@ fn greet(name: string) -> string {
 fn main() {
   print(greet(\"world\"));
 }";
-    let Some(stdout) = transpile_and_run(src, "main") else {
-        eprintln!("skipping: no luau interpreter on PATH");
-        return;
-    };
+    let stdout = transpile_and_run(src, "main");
     assert_eq!(stdout.trim(), "hello, world");
 }
 
@@ -119,10 +85,7 @@ fn name(s: Shape) -> string {
 fn main() {
   print(name(Shape::Square));
 }";
-    let Some(stdout) = transpile_and_run(src, "main") else {
-        eprintln!("skipping: no luau interpreter on PATH");
-        return;
-    };
+    let stdout = transpile_and_run(src, "main");
     assert_eq!(stdout.trim(), "square");
 }
 
@@ -141,10 +104,7 @@ fn main() {
   }
   print(acc);
 }";
-    let Some(stdout) = transpile_and_run(src, "main") else {
-        eprintln!("skipping: no luau interpreter on PATH");
-        return;
-    };
+    let stdout = transpile_and_run(src, "main");
     assert_eq!(stdout.trim(), "18");
 }
 
@@ -158,10 +118,7 @@ fn main() {
   let Point { x, y } = p;
   print(x + y);
 }";
-    let Some(stdout) = transpile_and_run(src, "main") else {
-        eprintln!("skipping: no luau interpreter on PATH");
-        return;
-    };
+    let stdout = transpile_and_run(src, "main");
     assert_eq!(stdout.trim(), "7");
 }
 
@@ -177,10 +134,7 @@ fn main() {
   print(q.x);
   print(q.y);
 }";
-    let Some(stdout) = transpile_and_run(src, "main") else {
-        eprintln!("skipping: no luau interpreter on PATH");
-        return;
-    };
+    let stdout = transpile_and_run(src, "main");
     assert_eq!(stdout.trim(), "9\n2");
 }
 
@@ -199,10 +153,7 @@ fn main() {
   let d = Dir::E;
   print(d.name());
 }";
-    let Some(stdout) = transpile_and_run(src, "main") else {
-        eprintln!("skipping: no luau interpreter on PATH");
-        return;
-    };
+    let stdout = transpile_and_run(src, "main");
     assert_eq!(stdout.trim(), "east");
 }
 
@@ -217,10 +168,7 @@ fn main() {
   let id = Id(42);
   print(id.0);
 }";
-    let Some(stdout) = transpile_and_run(src, "main") else {
-        eprintln!("skipping: no luau interpreter on PATH");
-        return;
-    };
+    let stdout = transpile_and_run(src, "main");
     assert_eq!(stdout.trim(), "42");
 }
 
@@ -239,9 +187,6 @@ fn main() {
   print(p.eq(q));
   print(q.eq(p));
 }";
-    let Some(stdout) = transpile_and_run(src, "main") else {
-        eprintln!("skipping: no luau interpreter on PATH");
-        return;
-    };
+    let stdout = transpile_and_run(src, "main");
     assert_eq!(stdout.trim(), "true\ntrue");
 }
