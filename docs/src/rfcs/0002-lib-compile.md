@@ -98,7 +98,7 @@ Bundled binaries inherit stub's code signature. On macOS:
 ## Drawbacks
 
 - **No cross-compilation.** Workaround: build on target platform or in CI.
-- **Raw source readable** in output binary. Bytecode = follow-on.
+- **Raw source readable** in output binary. Bytecode not an option (sandbox escape).
 - **Stub growth = output growth.** Keep stripped release < 15 MB.
 - **`current_exe()` requirement.** Must run from `neoc` process.
 - **macOS quarantine.** Ad-hoc signed downloads quarantined. Notarization deferred.
@@ -108,7 +108,7 @@ Bundled binaries inherit stub's code signature. On macOS:
 | Alternative | Verdict |
 |---|---|
 | `neoc compile` CLI subcommand | Rejected — programmatic API correct contract (Bun precedent) |
-| Bytecode pre-compilation (v1) | Deferred — unnecessary complexity for small automation scripts |
+| Bytecode pre-compilation | Rejected — unverified LuaJIT bytecode escapes the sandbox |
 | `include_bytes!()` at build time | N/A — entry script user-supplied at runtime |
 | Cross-compilation via `cargo-zigbuild` | Deferred — requires pre-published stubs |
 | Cosmopolitan APE | Experimental Rust integration. Parked. |
