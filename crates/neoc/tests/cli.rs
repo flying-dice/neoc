@@ -276,7 +276,7 @@ fn run_neoc_type_error_reports_neoc_diagnostic_not_lua() {
 }
 
 // A program that compiles cleanly but faults at runtime: `crash()` calls an
-// unbound name, so the embedded Luau VM raises `attempt to call a nil value`.
+// unbound name, so the embedded LuaJIT VM raises `attempt to call global 'explode' (a nil value)`.
 // The fault is reported against the `.neoc` chunk name, and the source map (#56)
 // rewrites the emitted-Luau line back to the neoc line — `explode()` sits on neoc
 // line 4, so the fault must read `fault.neoc:4`, not the emitted-Luau line.
@@ -304,7 +304,8 @@ fn run_neoc_runtime_fault_reports_against_the_neoc_position() {
     // The fault names the `.neoc` chunk and the runtime cause, so the report
     // points at the program the user ran rather than a host artifact.
     assert!(
-        stderr.contains("fault.neoc") && stderr.contains("attempt to call a nil value"),
+        stderr.contains("fault.neoc")
+            && stderr.contains("attempt to call global 'explode' (a nil value)"),
         "expected a fault against the fault.neoc chunk, got: {stderr}"
     );
     // The source map remaps the emitted-Luau line to the neoc line: the failing
