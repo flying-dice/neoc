@@ -1,8 +1,11 @@
 [workspace]
 changelog_update = true
+# Scope releases to the `neoc` binary crate only; every other workspace crate
+# is internal. (`[[package]]` has no `path` field — scoping is by opt-in.)
+release = false
 
 [[package]]
 name = "neoc"
-path = "crates/neoc"
+release = true
 git_only = true
 publish = false
