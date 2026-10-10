@@ -9,11 +9,9 @@ Cargo workspace holding two halves:
   everything scripts need is provided through explicit modules. The `neoc`
   binary is a thin shell over this library.
 - **Compiler** (`neoc-*` crates) — the Rust compiler for the **neoc** language.
-  neoc emits one typed superset: `luau`, selected with `--target luau`. Plain Lua
-  is **not** a selectable target — `luau` downgrades to Lua 5.1 through the Luau
-  toolchain, so neoc emits the typed superset and lets the toolchain produce the
-  plain form. (The `codegen-lua` crate stays: `luau` reuses it behind the codegen
-  seam.) A `.luau` module is self-contained — no sidecars, no runtime library.
+  neoc emits one target: `lua` (Lua 5.1 / LuaJIT, `.lua`), the default and only
+  value of `--target`. A `.lua` module is self-contained — no sidecars, no
+  runtime library.
   The library crate (`neoc-compiler`) is what the runtime embeds; the grammar
   lives in the `neoc-grammar` submodule.
 
@@ -75,7 +73,7 @@ The language is defined in `lang/` and the spec wins over the impl:
 | `lang/SYNTAX.md` | EBNF grammar |
 | `lang/STATIC.md` | name resolution, types, well-formedness (incl. `ext` forms) |
 | `lang/DYNAMIC.md` | lowering table — neoc construct → emitted Lua 5.1 |
-| `lang/CONFORMANCE/` | executable `.neoc` + expected `.luau` pairs |
+| `lang/CONFORMANCE/` | executable `.neoc` + expected `.lua` pairs |
 
 Every compiler crate's tests cite a spec section. Behaviour not in the spec is
 undefined and may not be relied on by the conformance suite. When impl and spec
@@ -99,9 +97,9 @@ The workspace splits responsibilities across crates; boundaries are enforced by
   **no host-language assumptions** — no `std::fs`, `std::net`, `std::process`,
   `tokio`, `mlua`, `hyper`, `sqlx`. The runtime host deps live in `neoc-vm`; I/O
   lives there, in the `neoc` bin, and (over stdio) in `neoc-lsp`.
-- The pure leaf crates (`neoc-ast`, `neoc-macros`, `neoc-codegen-lua`,
-  `neoc-codegen-luau`) compile for `wasm32-unknown-unknown`; CI gates them with
-  `cargo check --target wasm32-unknown-unknown -p neoc-ast -p neoc-macros -p neoc-codegen-lua -p neoc-codegen-luau`.
+- The pure leaf crates (`neoc-ast`, `neoc-macros`, `neoc-codegen-lua`) compile
+  for `wasm32-unknown-unknown`; CI gates them with
+  `cargo check --target wasm32-unknown-unknown -p neoc-ast -p neoc-macros -p neoc-codegen-lua`.
   The parser graph links the tree-sitter C runtime, which doesn't cross-compile
   to wasm32 yet — a tracked limitation, so the gate guards the leaf crates
   where host-dependency creep would start.
@@ -125,7 +123,7 @@ cargo run -p neoc -- run 'crates/neoc/tests/**/*.test.luau'  # Luau integration 
 cargo run -p neoc -- emit-headers --out crates/neoc-vm/src/lua  # regenerate ext headers
 cargo bench --bench lib                              # Criterion benchmarks (lib modules)
 cargo bench --bench vnd                              # Criterion benchmarks (vnd modules)
-cargo check --target wasm32-unknown-unknown -p neoc-ast -p neoc-macros -p neoc-codegen-lua -p neoc-codegen-luau  # wasm leaf gate
+cargo check --target wasm32-unknown-unknown -p neoc-ast -p neoc-macros -p neoc-codegen-lua  # wasm leaf gate
 cargo clippy --workspace --all-targets               # lint
 cargo fmt --check                                    # formatting check
 ```
@@ -159,8 +157,7 @@ neoc-parser                  # CST → AST adapter; parse diagnostics
 neoc-types                   # declaration collection, inference, well-formedness, elaborate
 neoc-macros                  # built-in derives (Clone/Eq/Debug/Display)
 neoc-codegen-lua             # AST → Lua 5.1; one emit module per construct family
-neoc-codegen-luau            # AST → self-typed Luau (inlined runtime, inline types)
-neoc-compiler                # public lib API: transpile to Luau; merges per-stage diagnostics
+neoc-compiler                # public lib API: transpile to Lua; merges per-stage diagnostics
 neoc-autosql                 # SQL schema + queries → typed .neoc data layer (neoc autosql)
 neoc-fmt                     # formatter
 neoc-lsp                     # language server (diagnostics over stdio)
@@ -274,7 +271,7 @@ things stay exact and complete — **never** abbreviate or stylise these:
 | API names | Exact. `#[derive(Clone)]` stays `#[derive(Clone)]`. |
 | Type signatures | Exact. Never trim a type. |
 | Error / log messages | Quote verbatim. |
-| Commands | Exact: `neoc run`, `neoc build`, `neoc check`, `neoc lsp`, `cargo check --target wasm32-unknown-unknown`. (That `--target` is a Rust build target — *not* `neoc build --target`, which selects the output language: `luau`.) |
+| Commands | Exact: `neoc run`, `neoc build`, `neoc check`, `neoc lsp`, `cargo check --target wasm32-unknown-unknown`. (That `--target` is a Rust build target — *not* `neoc build --target`, which selects the output language: `lua`.) |
 | File paths, env vars | Exact. |
 | Rustdoc (`///`) on public items | Full, normal English — see below. |
 | Legal, LICENSE, security notes | Complete and careful. |

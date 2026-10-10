@@ -16,6 +16,17 @@ fn transpile_and_run(source: &str, entry: &str) -> String {
         .unwrap_or_else(|e| panic!("lua failed:\n{e}\n--- source ---\n{program}"))
 }
 
+/// The harness must give emitted Lua the runtime's environment, not a full stdlib:
+/// a lowering that leans on a global `neoc run` strips has to fail here too.
+#[test]
+fn harness_runs_in_the_runtime_sandbox() {
+    let probe = "print(load == nil, loadstring == nil, setfenv == nil, getfenv == nil, \
+                 collectgarbage == nil, string.dump == nil, os == nil, io == nil, \
+                 package == nil, jit == nil, debug == nil)\n";
+    let stdout = common::run_lua(probe).expect("probe runs");
+    assert_eq!(stdout.trim(), ["true"; 11].join("\t"));
+}
+
 #[test]
 fn fibonacci_runs() {
     let src = "\

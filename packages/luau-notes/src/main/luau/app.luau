@@ -5,7 +5,7 @@
 -- neoc owns the controllers + the `Store` port; this host implements the port
 -- (an in-memory table) and drives, then prints. It imports the controllers from
 -- the transpiled neoc library.
-local app = require("../../auto/luau/main")
+local app = require("../../auto/lua/main")
 
 -- The `Store` port, implemented over an in-memory table. neoc's `store.add(b)`
 -- lowers to `store:add(b)` (colon → implicit self), so the methods take self.

@@ -3,7 +3,7 @@ local function __type_error(path, expected, got)
   error(path .. ": expected " .. expected .. ", got " .. actual)
 end
 local function __check_string(v, path) if type(v) ~= "string" then __type_error(path, "string", v) end return v end
-local function create(store: S, body: string): string
+local function create(store, body)
   __check_string(body, "create.body")
   return (function()
     if (body == "") then
@@ -14,7 +14,7 @@ local function create(store: S, body: string): string
     end
   end)()
 end
-local function list(store: S): string
+local function list(store)
   local out = ""
   local i = 0
   local n = store:count()
