@@ -1,6 +1,6 @@
 //! Engine factory + (value, err) helpers shared by every lib module.
 
-use mlua::{IntoLua, Lua, StdLib, Value};
+use mlua::{AsChunk, Chunk, ChunkMode, IntoLua, Lua, StdLib, Value};
 
 use crate::lua::modules;
 
@@ -8,9 +8,9 @@ use crate::lua::modules;
 ///
 /// Each is a sandbox hazard: runtime code loading (`load`, `loadstring`,
 /// `dofile`, `loadfile`, `string.dump`), environment/identity tampering
-/// (`getfenv`, `setfenv`, `newproxy`, `module`), and GC control
-/// (`collectgarbage`). Paths are dotted; the last segment is the key removed
-/// from its parent table.
+/// (`getfenv`, `setfenv`, `newproxy`, `module`), and GC control and
+/// introspection (`collectgarbage`, `gcinfo`). Paths are dotted; the last
+/// segment is the key removed from its parent table.
 const STRIPPED_GLOBALS: &[&str] = &[
     "load",
     "loadstring",
@@ -21,6 +21,7 @@ const STRIPPED_GLOBALS: &[&str] = &[
     "newproxy",
     "module",
     "collectgarbage",
+    "gcinfo",
     "string.dump",
     // Not loaded by StdLib selection, but `luaopen_base` and the LuaJIT
     // runtime may register them regardless — remove any that leak.
@@ -49,6 +50,16 @@ pub fn make_engine() -> mlua::Result<Lua> {
     lua.set_app_data(crate::lua::std::task::Scheduler::new());
     modules::install(&lua)?;
     Ok(lua)
+}
+
+/// Load script source as a text-only chunk.
+///
+/// LuaJIT bytecode is unverified — a crafted `\x1bLJ` chunk corrupts memory
+/// and escapes the sandbox — so every entry point that runs script-supplied
+/// source goes through here and refuses binary chunks.
+#[track_caller]
+pub fn load_source<'a>(lua: &Lua, source: impl AsChunk<'a>) -> Chunk<'a> {
+    lua.load(source).set_mode(ChunkMode::Text)
 }
 
 fn strip_unsafe_globals(lua: &Lua) -> mlua::Result<()> {
@@ -94,53 +105,109 @@ pub fn from_err<E: ::std::fmt::Display>(
     err(lua, format!("{prefix}: {e}"))
 }
 
+/// Stripped LuaJIT bytecode for `return 7` — every byte ASCII, so it survives
+/// the `String` conversion script-facing loaders apply. The escape-vector
+/// fixture for the text-only loader tests.
+#[cfg(test)]
+pub(crate) fn ascii_bytecode() -> String {
+    let dump = Lua::new()
+        .load("return 7")
+        .into_function()
+        .expect("compile")
+        .dump(true);
+    String::from_utf8(dump).expect("stripped dump of `return 7` is ASCII")
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
+
+    const TWO_53: i64 = 1 << 53;
 
     fn engine() -> Lua {
         make_engine().expect("engine")
     }
 
-    /// `type(<path>)` evaluated inside the sandbox.
-    fn type_of(lua: &Lua, path: &str) -> String {
-        lua.load(format!("return type({path})"))
-            .eval()
-            .unwrap_or_else(|e| panic!("type({path}): {e}"))
+    /// `name -> type(value)` for every key of the table at `path`.
+    fn surface(lua: &Lua, path: &str) -> BTreeMap<String, String> {
+        lua.load(format!(
+            "local t = {{}} for k, v in pairs({path}) do t[k] = type(v) end return t"
+        ))
+        .eval()
+        .unwrap_or_else(|e| panic!("surface({path}): {e}"))
+    }
+
+    fn expected(entries: &[(&str, &str)]) -> BTreeMap<String, String> {
+        entries
+            .iter()
+            .map(|(k, t)| ((*k).to_string(), (*t).to_string()))
+            .collect()
+    }
+
+    // Allowlists, not denylists: a global or string function a LuaJIT/mlua
+    // bump adds fails here until someone decides whether it is safe.
+    #[test]
+    fn given_fresh_engine_when_enumerating_globals_then_exactly_the_allowlist_remains() {
+        let lua = engine();
+        assert_eq!(
+            surface(&lua, "_G"),
+            expected(&[
+                // Libraries.
+                ("_G", "table"),
+                ("bit", "table"),
+                ("coroutine", "table"),
+                ("math", "table"),
+                ("string", "table"),
+                ("table", "table"),
+                // Base functions kept after stripping.
+                ("assert", "function"),
+                ("error", "function"),
+                ("getmetatable", "function"),
+                ("ipairs", "function"),
+                ("next", "function"),
+                ("pairs", "function"),
+                ("pcall", "function"),
+                ("print", "function"),
+                ("rawequal", "function"),
+                ("rawget", "function"),
+                ("rawset", "function"),
+                ("select", "function"),
+                ("setmetatable", "function"),
+                ("tonumber", "function"),
+                ("tostring", "function"),
+                ("type", "function"),
+                ("unpack", "function"),
+                ("xpcall", "function"),
+                ("_VERSION", "string"),
+                // The custom module resolver.
+                ("require", "function"),
+            ])
+        );
     }
 
     #[test]
-    fn given_fresh_engine_when_probing_unsafe_globals_then_each_is_nil() {
+    fn given_fresh_engine_when_enumerating_string_library_then_exactly_the_allowlist_remains() {
         let lua = engine();
-        for path in STRIPPED_GLOBALS {
-            assert_eq!(type_of(&lua, path), "nil", "{path} must be stripped");
-        }
-    }
-
-    #[test]
-    fn given_fresh_engine_when_probing_hazard_libraries_then_each_is_absent() {
-        let lua = engine();
-        for lib in ["io", "os", "package", "jit", "ffi", "debug"] {
-            assert_eq!(type_of(&lua, lib), "nil", "{lib} must not be reachable");
-        }
-    }
-
-    #[test]
-    fn given_fresh_engine_when_probing_kept_libraries_then_each_is_a_table() {
-        let lua = engine();
-        for lib in ["coroutine", "table", "string", "math", "bit"] {
-            assert_eq!(type_of(&lua, lib), "table", "{lib} must stay available");
-        }
-        for f in [
-            "pairs",
-            "ipairs",
-            "pcall",
-            "tostring",
-            "setmetatable",
-            "select",
-        ] {
-            assert_eq!(type_of(&lua, f), "function", "{f} must stay available");
-        }
+        assert_eq!(
+            surface(&lua, "string"),
+            expected(&[
+                ("byte", "function"),
+                ("char", "function"),
+                ("find", "function"),
+                ("format", "function"),
+                ("gmatch", "function"),
+                ("gsub", "function"),
+                ("len", "function"),
+                ("lower", "function"),
+                ("match", "function"),
+                ("rep", "function"),
+                ("reverse", "function"),
+                ("sub", "function"),
+                ("upper", "function"),
+            ])
+        );
     }
 
     #[test]
@@ -169,6 +236,49 @@ mod tests {
         let lua = engine();
         let res = lua.load(r#"return load("return 1")"#).eval::<Value>();
         assert!(res.is_err(), "load must be unreachable");
+    }
+
+    #[test]
+    fn given_bytecode_when_loaded_as_source_then_rejected() {
+        let lua = engine();
+        let source = ascii_bytecode();
+        assert!(
+            source.starts_with("\x1bLJ"),
+            "fixture must be LuaJIT bytecode"
+        );
+        let err = load_source(&lua, &source)
+            .eval::<Value>()
+            .expect_err("bytecode must not load")
+            .to_string();
+        assert!(err.contains("binary"), "got: {err}");
+    }
+
+    #[test]
+    fn given_text_when_loaded_as_source_then_runs() {
+        let lua = engine();
+        let n: i64 = load_source(&lua, "return 7").eval().unwrap();
+        assert_eq!(n, 7);
+    }
+
+    #[test]
+    fn given_integers_up_to_2_pow_53_when_converted_then_exact() {
+        for v in [0, 1, -1, -42, TWO_53, -TWO_53, i64::MIN] {
+            let Value::Number(n) = i64_to_lua(v) else {
+                panic!("{v}: expected a number");
+            };
+            assert_eq!(n as i64, v, "{v} must round-trip");
+        }
+    }
+
+    #[test]
+    fn given_integers_beyond_2_pow_53_when_converted_then_rounded_to_nearest_double() {
+        for (v, want) in [
+            (TWO_53 + 1, TWO_53 as f64),
+            (-(TWO_53 + 1), -(TWO_53 as f64)),
+            (i64::MAX, 9_223_372_036_854_775_808.0),
+        ] {
+            assert_eq!(i64_to_lua(v), Value::Number(want), "{v}");
+        }
     }
 
     #[test]

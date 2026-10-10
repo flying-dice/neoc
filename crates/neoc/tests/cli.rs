@@ -425,3 +425,23 @@ fn run_neoc_multi_module_is_rejected_with_pointer_to_build() {
         "expected a multi-module rejection pointing at `neoc build`, got: {stderr}"
     );
 }
+
+// LuaJIT bytecode is unverified — a crafted chunk escapes the sandbox — so
+// `neoc run` loads `.lua` files as text only. The fixture is a stripped dump of
+// `return 7`: a `\x1bLJ` header the text loader must refuse.
+#[test]
+fn run_lua_file_rejects_bytecode() {
+    let dir = tempdir().unwrap();
+    let dump = mlua::Lua::new()
+        .load("return 7")
+        .into_function()
+        .unwrap()
+        .dump(true);
+    let path = dir.path().join("payload.lua");
+    fs::write(&path, dump).unwrap();
+
+    let out = Command::new(BIN).arg("run").arg(&path).output().unwrap();
+    assert!(!out.status.success(), "bytecode must not run");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("binary"), "got: {stderr}");
+}
