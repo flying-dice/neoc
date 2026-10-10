@@ -245,6 +245,11 @@ impl Checker<'_> {
         let Ty::Named { name, .. } = ty else {
             return true;
         };
+        // The prelude `Option`/`Result` are stored as enums but carry no derived
+        // methods; they are taken to satisfy the trait (as documented above).
+        if matches!(name.as_str(), "Option" | "Result") {
+            return true;
+        }
         match self.table().types.get(name) {
             Some(TypeDef::Struct(_) | TypeDef::Enum(_)) => self
                 .table()

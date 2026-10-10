@@ -125,6 +125,13 @@ fn derive_eq_with_eq_field_is_clean() {
 }
 
 #[test]
+fn derive_eq_with_prelude_and_list_fields_is_clean() {
+    assert_clean(
+        "#[derive(Eq)] struct Bag { o: Option<number>, r: Result<number, string>, xs: [number] }",
+    );
+}
+
+#[test]
 fn derive_display_with_non_display_field_is_rejected() {
     assert_diag(
         "struct Inner { x: number } #[derive(Display)] struct Outer { i: Inner }",

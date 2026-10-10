@@ -1,0 +1,9 @@
+WithInner { i = Inner { v = 1 } }
+WithOption { o = Some(1) }
+WithOption { o = None }
+WithList { xs = [1, 2] }
+WithList { xs = [] }
+WithShape { s = Boxed(Inner { v = 2 }) }
+WithShape { s = Dot }
+Boxed(Inner { v = 2 })
+All { i = Inner { v = 1 }, o = Some(3), xs = [4], s = Dot }

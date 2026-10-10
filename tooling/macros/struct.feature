@@ -96,3 +96,25 @@ Feature: Deriving on a struct
     When I derive clone
     Then deriving is rejected
     And the rejection message is "unknown derive `clone`; the derivable traits are Clone, Eq, Debug, Display"
+
+  Scenario: Eq and Debug send aggregate fields through the structural helpers
+    Given the struct:
+      """
+      struct Outer { n: number, i: Inner, o: Option<number>, xs: [number] }
+      """
+    When I derive Eq
+    Then it emits the line "  return a.__struct == b.__struct and a.n == b.n and __eq(a.i, b.i) and __eq(a.o, b.o) and __eq(a.xs, b.xs)"
+    And the derive uses the helper "Eq"
+    When I derive Debug
+    Then the derive contains "tostring(self.n)"
+    And the derive contains "__debug(self.i)"
+    And the derive contains "__debug(self.xs)"
+    And the derive uses the helper "Debug"
+
+  Scenario: Scalar-only derives use no helper
+    Given the struct:
+      """
+      struct Point { x: number, y: number }
+      """
+    When I derive Eq
+    Then the derive uses no helper

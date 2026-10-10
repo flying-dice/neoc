@@ -1,0 +1,61 @@
+// DYNAMIC.md §6.1: derived `clone` is a shallow copy that re-sets the
+// metatable, so a cloned value keeps its methods (struct and enum alike) and
+// aggregate fields are carried over intact. Covers each field kind — a nested
+// struct, `Option<number>`, `[number]` and an enum payload — plus a clone of a
+// method-bearing enum, on which a method call must still dispatch.
+extern {
+    fn println(n: number);
+}
+
+#[derive(Clone)]
+struct Inner {
+    v: number,
+}
+
+impl Inner {
+    fn double(self) -> number {
+        self.v * 2
+    }
+}
+
+#[derive(Clone)]
+enum Shape {
+    Dot,
+    Boxed(Inner),
+}
+
+impl Shape {
+    fn weight(self) -> number {
+        match self {
+            Shape::Dot => 0,
+            Shape::Boxed(i) => i.v,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct Outer {
+    i: Inner,
+    o: Option<number>,
+    xs: [number],
+    s: Shape,
+}
+
+fn main() {
+    let a = Outer { i: Inner { v: 4 }, o: Some(5), xs: [6, 7], s: Shape::Boxed(Inner { v: 8 }) };
+    let b = a.clone();
+    println(b.i.double());
+    println(b.o.unwrap());
+    println(b.xs[1]);
+    println(b.s.weight());
+    let d = Shape::Dot.clone();
+    println(d.weight());
+    let e = Shape::Boxed(Inner { v: 9 }).clone();
+    println(e.weight());
+    let n: Option<number> = None;
+    let c = Outer { i: Inner { v: 1 }, o: n, xs: [], s: Shape::Dot };
+    let c2 = c.clone();
+    if c2.o.is_none() {
+        println(1);
+    }
+}

@@ -2,10 +2,10 @@ local Signal = {}
 Signal.__index = Signal
 function Signal.clone(self)
   if self.__tag == "Pulse" then
-    return { __enum = "Signal", __tag = "Pulse", self[1] }
+    return setmetatable({ __enum = "Signal", __tag = "Pulse", self[1] }, Signal)
   end
   if self.__tag == "Idle" then
-    return { __enum = "Signal", __tag = "Idle" }
+    return setmetatable({ __enum = "Signal", __tag = "Idle" }, Signal)
   end
 end
 function Signal.eq(a, b)

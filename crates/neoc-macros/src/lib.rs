@@ -10,14 +10,15 @@
 //! payload at `[1..]`, struct payload by field name); methods are plain
 //! functions on the type's table taking the receiver first.
 //!
-//! # Limitations
+//! # Aggregate fields
 //!
-//! `Eq` compares each field with Lua's `==`. For nested derived types this is
-//! reference identity, not structural equality — two distinct tables holding
-//! equal fields compare unequal. Structural recursion into nested derived types
-//! is deferred to a later version. `Display` assumes every field already
-//! satisfies `Display`; that obligation is checked by the type checker, not
-//! here.
+//! A `number`/`string`/`bool` field is compared with `==` and rendered with
+//! `tostring`. Any other field — a nested `struct`/`enum`, `Option<T>`, `[T]` —
+//! goes through the module-local `__eq` / `__debug` helpers ([`Helper`]), which
+//! dispatch on the value's shape and recurse. The caller splices a helper into
+//! the module once, only when a derive reports using it. `Display` assumes
+//! every field already satisfies `Display`; that obligation is checked by the
+//! type checker, not here.
 
 use neoc_ast as ast;
 
@@ -44,11 +45,101 @@ impl<'a> DeriveTarget<'a> {
     }
 }
 
+/// A module-local Lua helper a derive may call. Emitted once per module, ahead
+/// of the types, and only when some derive reports using it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Helper {
+    /// `__eq(a, b)` — structural equality over any value (`DYNAMIC.md` §6.2).
+    Eq,
+    /// `__debug(v)` — `{:?}`-style rendering of any value (`DYNAMIC.md` §6.3).
+    Debug,
+}
+
+impl Helper {
+    /// The Lua source of the helper, no leading indentation.
+    #[must_use]
+    pub fn source(self) -> &'static str {
+        match self {
+            Helper::Eq => EQ_HELPER,
+            Helper::Debug => DEBUG_HELPER,
+        }
+    }
+}
+
+/// Structural equality. Scalars by `==`; a value whose metatable carries `eq`
+/// (a derived or hand-written `Eq` type) by that method; any other table
+/// (`Option`/`Result`, a list) key by key, which covers tag-then-payload.
+const EQ_HELPER: &str = r#"local function __eq(a, b)
+  if a == b then return true end
+  if type(a) ~= "table" or type(b) ~= "table" then return false end
+  local mt = getmetatable(a)
+  if mt and mt.eq then return mt.eq(a, b) end
+  for k, v in pairs(a) do
+    if not __eq(v, b[k]) then return false end
+  end
+  for k in pairs(b) do
+    if a[k] == nil then return false end
+  end
+  return true
+end"#;
+
+/// `{:?}` rendering. Scalars by `tostring`; a value whose metatable carries
+/// `debug` by that method; a tagged payload (`Option`/`Result`) as `Tag(…)`;
+/// a list as `[…]`.
+const DEBUG_HELPER: &str = r#"local function __debug(v)
+  if type(v) ~= "table" then return tostring(v) end
+  local mt = getmetatable(v)
+  if mt and mt.debug then return mt.debug(v) end
+  if v.__struct then return v.__struct end
+  local parts = {}
+  for i = 1, #v do parts[i] = __debug(v[i]) end
+  if v.__tag == nil then return "[" .. table.concat(parts, ", ") .. "]" end
+  if #parts == 0 then return v.__tag end
+  return v.__tag .. "(" .. table.concat(parts, ", ") .. ")"
+end"#;
+
+/// The output of one derive: the method's Lua and the helpers it calls.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Derived {
+    /// The function definition, line by line.
+    pub lines: Vec<String>,
+    /// Helpers the lines call; empty when every field is a scalar.
+    pub helpers: Vec<Helper>,
+}
+
+impl Derived {
+    fn plain(lines: Vec<String>) -> Self {
+        Self {
+            lines,
+            helpers: Vec::new(),
+        }
+    }
+
+    fn with_helper(lines: Vec<String>, helper: Helper) -> Self {
+        let uses = lines.iter().any(|l| l.contains(helper.call()));
+        Self {
+            lines,
+            helpers: if uses { vec![helper] } else { Vec::new() },
+        }
+    }
+}
+
+impl Helper {
+    /// The call prefix a derive emits to reach the helper.
+    fn call(self) -> &'static str {
+        match self {
+            Helper::Eq => "__eq(",
+            Helper::Debug => "__debug(",
+        }
+    }
+}
+
 /// Emit the Lua 5.1 lines implementing `derive_name` for `target`.
 ///
 /// The returned lines are the body of a function definition (and the `end`
 /// that closes it) with no leading indentation; the emitter indents them and
-/// splices them in after the type's constructor.
+/// splices them in after the type's constructor. [`Derived::helpers`] names
+/// the module-local helpers those lines call.
 ///
 /// # Arguments
 ///
@@ -60,12 +151,12 @@ impl<'a> DeriveTarget<'a> {
 ///
 /// Returns an error message when `derive_name` is not one of the four built-in
 /// derives. The message names the unknown derive and lists the supported ones.
-pub fn derive(derive_name: &str, target: DeriveTarget) -> Result<Vec<String>, String> {
+pub fn derive(derive_name: &str, target: DeriveTarget) -> Result<Derived, String> {
     match derive_name {
-        "Clone" => Ok(derive_clone(target)),
-        "Eq" => Ok(derive_eq(target)),
-        "Debug" => Ok(derive_debug(target)),
-        "Display" => Ok(derive_display(target)),
+        "Clone" => Ok(Derived::plain(derive_clone(target))),
+        "Eq" => Ok(Derived::with_helper(derive_eq(target), Helper::Eq)),
+        "Debug" => Ok(Derived::with_helper(derive_debug(target), Helper::Debug)),
+        "Display" => Ok(Derived::plain(derive_display(target))),
         other => Err(format!(
             "unknown derive `{other}`; the derivable traits are Clone, Eq, Debug, Display"
         )),
@@ -77,8 +168,11 @@ pub fn derive(derive_name: &str, target: DeriveTarget) -> Result<Vec<String>, St
 fn struct_keys(body: &ast::StructBody) -> Vec<DataKey<'_>> {
     match body {
         ast::StructBody::Unit => Vec::new(),
-        ast::StructBody::Tuple(_) => vec![DataKey::Index(1)],
-        ast::StructBody::Named(fields) => fields.iter().map(|f| DataKey::Named(&f.name)).collect(),
+        ast::StructBody::Tuple(ty) => vec![DataKey::Index(1, ty)],
+        ast::StructBody::Named(fields) => fields
+            .iter()
+            .map(|f| DataKey::Named(&f.name, &f.ty))
+            .collect(),
     }
 }
 
@@ -86,26 +180,67 @@ fn struct_keys(body: &ast::StructBody) -> Vec<DataKey<'_>> {
 fn variant_keys(body: &ast::VariantBody) -> Vec<DataKey<'_>> {
     match body {
         ast::VariantBody::Unit => Vec::new(),
-        ast::VariantBody::Tuple(tys) => (1..=tys.len()).map(DataKey::Index).collect(),
-        ast::VariantBody::Named(fields) => fields.iter().map(|f| DataKey::Named(&f.name)).collect(),
+        ast::VariantBody::Tuple(tys) => tys
+            .iter()
+            .enumerate()
+            .map(|(i, ty)| DataKey::Index(i + 1, ty))
+            .collect(),
+        ast::VariantBody::Named(fields) => fields
+            .iter()
+            .map(|f| DataKey::Named(&f.name, &f.ty))
+            .collect(),
     }
 }
 
-/// A single data slot in a Lua value: either a named field or a positional
-/// index (newtype / tuple payload).
+/// A single data slot in a Lua value — a named field or a positional index
+/// (newtype / tuple payload) — with its declared type.
 #[derive(Clone, Copy)]
 enum DataKey<'a> {
-    Named(&'a str),
-    Index(usize),
+    Named(&'a str, &'a ast::Type),
+    Index(usize, &'a ast::Type),
 }
 
 impl DataKey<'_> {
+    /// Whether the slot holds a `number`/`string`/`bool` (or unit), which
+    /// Lua's `==` and `tostring` already handle; anything else is an aggregate
+    /// needing the structural helpers.
+    fn is_scalar(self) -> bool {
+        let (DataKey::Named(_, ty) | DataKey::Index(_, ty)) = self;
+        match ty {
+            ast::Type::Unit => true,
+            ast::Type::Path(p) => matches!(
+                p.segments.as_slice(),
+                [seg] if seg.args.is_empty()
+                    && matches!(seg.name.as_str(), "number" | "string" | "bool")
+            ),
+            _ => false,
+        }
+    }
+
+    /// Lua expression asserting slot equality between receivers `a` and `b`.
+    fn eq_expr(self, a: &str, b: &str) -> String {
+        if self.is_scalar() {
+            format!("{} == {}", self.access(a), self.access(b))
+        } else {
+            format!("__eq({}, {})", self.access(a), self.access(b))
+        }
+    }
+
+    /// Lua expression rendering the slot read from `recv` for Debug output.
+    fn debug_expr(self, recv: &str) -> String {
+        if self.is_scalar() {
+            format!("tostring({})", self.access(recv))
+        } else {
+            format!("__debug({})", self.access(recv))
+        }
+    }
+
     /// Lua field-access suffix for the key on receiver `recv`, e.g. `recv.x`
     /// or `recv[1]`.
     fn access(self, recv: &str) -> String {
         match self {
-            DataKey::Named(name) => format!("{recv}.{name}"),
-            DataKey::Index(i) => format!("{recv}[{i}]"),
+            DataKey::Named(name, _) => format!("{recv}.{name}"),
+            DataKey::Index(i, _) => format!("{recv}[{i}]"),
         }
     }
 
@@ -113,8 +248,8 @@ impl DataKey<'_> {
     /// e.g. `x = self.x` or `self[1]`.
     fn copy_entry(self, recv: &str) -> String {
         match self {
-            DataKey::Named(name) => format!("{name} = {recv}.{name}"),
-            DataKey::Index(i) => format!("{recv}[{i}]"),
+            DataKey::Named(name, _) => format!("{name} = {recv}.{name}"),
+            DataKey::Index(i, _) => format!("{recv}[{i}]"),
         }
     }
 
@@ -122,8 +257,8 @@ impl DataKey<'_> {
     /// positional slot.
     fn label(self) -> String {
         match self {
-            DataKey::Named(name) => name.to_string(),
-            DataKey::Index(i) => format!("_{i}"),
+            DataKey::Named(name, _) => name.to_string(),
+            DataKey::Index(i, _) => format!("_{i}"),
         }
     }
 }
@@ -165,7 +300,12 @@ fn clone_enum_body(name: &str, variants: &[ast::Variant]) -> Vec<String> {
                 .map(|k| k.copy_entry("self")),
         );
         out.push(format!("  if self.__tag == \"{}\" then", v.name));
-        out.push(format!("    return {{ {} }}", entries.join(", ")));
+        // Re-attach the enum's metatable (as the struct path does) so the clone
+        // keeps its methods and `__traits`.
+        out.push(format!(
+            "    return setmetatable({{ {} }}, {name})",
+            entries.join(", ")
+        ));
         out.push("  end".to_string());
     }
     out
@@ -186,9 +326,7 @@ fn derive_eq(target: DeriveTarget) -> Vec<String> {
 
 fn eq_struct_body(body: &ast::StructBody) -> Vec<String> {
     let mut conds = vec!["a.__struct == b.__struct".to_string()];
-    for k in struct_keys(body) {
-        conds.push(format!("{} == {}", k.access("a"), k.access("b")));
-    }
+    conds.extend(struct_keys(body).into_iter().map(|k| k.eq_expr("a", "b")));
     vec![format!("  return {}", conds.join(" and "))]
 }
 
@@ -201,10 +339,7 @@ fn eq_enum_body(variants: &[ast::Variant]) -> Vec<String> {
         if keys.is_empty() {
             continue;
         }
-        let conds: Vec<String> = keys
-            .iter()
-            .map(|k| format!("{} == {}", k.access("a"), k.access("b")))
-            .collect();
+        let conds: Vec<String> = keys.iter().map(|k| k.eq_expr("a", "b")).collect();
         out.push(format!("  if a.__tag == \"{}\" then", v.name));
         out.push(format!("    return {}", conds.join(" and ")));
         out.push("  end".to_string());
@@ -250,13 +385,13 @@ fn debug_enum_body(variants: &[ast::Variant]) -> Vec<String> {
 /// the given data keys read from `recv`.
 ///
 /// Empty keys yield the bare label (`"Red"`). Named keys yield
-/// `Name { f = <f>, … }`; positional keys yield `Name(<0>, <1>)`. Each value is
-/// rendered with `tostring`.
+/// `Name { f = <f>, … }`; positional keys yield `Name(<0>, <1>)`. A scalar value
+/// is rendered with `tostring`, an aggregate with `__debug`.
 fn debug_render(name: &str, keys: &[DataKey], recv: &str) -> String {
     if keys.is_empty() {
         return lua_str(name);
     }
-    let positional = matches!(keys.first(), Some(DataKey::Index(_)));
+    let positional = matches!(keys.first(), Some(DataKey::Index(..)));
     let mut parts: Vec<String> = Vec::new();
     if positional {
         parts.push(lua_str(&format!("{name}(")));
@@ -264,7 +399,7 @@ fn debug_render(name: &str, keys: &[DataKey], recv: &str) -> String {
             if i > 0 {
                 parts.push(lua_str(", "));
             }
-            parts.push(format!("tostring({})", k.access(recv)));
+            parts.push(k.debug_expr(recv));
         }
         parts.push(lua_str(")"));
     } else {
@@ -274,7 +409,7 @@ fn debug_render(name: &str, keys: &[DataKey], recv: &str) -> String {
                 parts.push(lua_str(", "));
             }
             parts.push(lua_str(&format!("{} = ", k.label())));
-            parts.push(format!("tostring({})", k.access(recv)));
+            parts.push(k.debug_expr(recv));
         }
         parts.push(lua_str(" }"));
     }
@@ -351,8 +486,25 @@ mod tests {
             attrs: Vec::new(),
             name: name.to_string(),
             name_span: ast::Span::default(),
-            ty: ast::Type::Unit,
+            ty: scalar("number"),
         }
+    }
+
+    fn scalar(name: &str) -> ast::Type {
+        named(name, Vec::new())
+    }
+
+    fn named(name: &str, args: Vec<ast::Type>) -> ast::Type {
+        ast::Type::Path(ast::TypePath {
+            segments: vec![ast::TypeSegment {
+                name: name.to_string(),
+                args,
+            }],
+        })
+    }
+
+    fn typed_field(name: &str, ty: ast::Type) -> ast::Field {
+        ast::Field { ty, ..field(name) }
     }
 
     fn variant(name: &str, body: ast::VariantBody) -> ast::Variant {
@@ -378,7 +530,7 @@ mod tests {
         ast::StructDecl {
             name: "Meters".to_string(),
             generics: Vec::new(),
-            body: ast::StructBody::Tuple(ast::Type::Unit),
+            body: ast::StructBody::Tuple(scalar("number")),
         }
     }
 
@@ -391,11 +543,68 @@ mod tests {
                 variant("Dot", ast::VariantBody::Unit),
                 variant(
                     "Pair",
-                    ast::VariantBody::Tuple(vec![ast::Type::Unit, ast::Type::Unit]),
+                    ast::VariantBody::Tuple(vec![scalar("number"), scalar("number")]),
                 ),
                 variant("Named", ast::VariantBody::Named(vec![field("label")])),
             ],
         }
+    }
+
+    /// `struct Outer { n: number, i: Inner, o: Option<number>, xs: [number] }`
+    fn outer() -> ast::StructDecl {
+        ast::StructDecl {
+            name: "Outer".to_string(),
+            generics: Vec::new(),
+            body: ast::StructBody::Named(vec![
+                field("n"),
+                typed_field("i", scalar("Inner")),
+                typed_field("o", named("Option", vec![scalar("number")])),
+                typed_field("xs", ast::Type::List(Box::new(scalar("number")))),
+            ]),
+        }
+    }
+
+    #[test]
+    fn scalar_derives_use_no_helper() {
+        let p = point();
+        for name in ["Eq", "Debug"] {
+            assert!(
+                derive(name, DeriveTarget::Struct(&p))
+                    .unwrap()
+                    .helpers
+                    .is_empty()
+            );
+        }
+    }
+
+    #[test]
+    fn eq_aggregate_fields_recurse() {
+        let o = outer();
+        let d = derive("Eq", DeriveTarget::Struct(&o)).unwrap();
+        assert_eq!(
+            d.lines,
+            vec![
+                "function Outer.eq(a, b)",
+                "  return a.__struct == b.__struct and a.n == b.n and __eq(a.i, b.i) and __eq(a.o, b.o) and __eq(a.xs, b.xs)",
+                "end",
+            ]
+        );
+        assert_eq!(d.helpers, vec![Helper::Eq]);
+    }
+
+    #[test]
+    fn debug_aggregate_fields_recurse() {
+        let o = outer();
+        let d = derive("Debug", DeriveTarget::Struct(&o)).unwrap();
+        assert_eq!(
+            d.lines,
+            vec![
+                "function Outer.debug(self)",
+                "  return \"Outer { \" .. \"n = \" .. tostring(self.n) .. \", \" .. \"i = \" .. __debug(self.i) .. \", \" .. \"o = \" .. __debug(self.o) .. \", \" .. \"xs = \" .. __debug(self.xs) .. \" }\"",
+                "end",
+            ]
+        );
+        assert_eq!(d.helpers, vec![Helper::Debug]);
     }
 
     #[test]
@@ -411,7 +620,7 @@ mod tests {
     #[test]
     fn clone_named_struct() {
         let p = point();
-        let lua = derive("Clone", DeriveTarget::Struct(&p)).unwrap();
+        let lua = derive("Clone", DeriveTarget::Struct(&p)).unwrap().lines;
         assert_eq!(
             lua,
             vec![
@@ -425,7 +634,7 @@ mod tests {
     #[test]
     fn clone_newtype_struct() {
         let m = meters();
-        let lua = derive("Clone", DeriveTarget::Struct(&m)).unwrap();
+        let lua = derive("Clone", DeriveTarget::Struct(&m)).unwrap().lines;
         assert_eq!(
             lua,
             vec![
@@ -439,19 +648,19 @@ mod tests {
     #[test]
     fn clone_enum() {
         let s = shape();
-        let lua = derive("Clone", DeriveTarget::Enum(&s)).unwrap();
+        let lua = derive("Clone", DeriveTarget::Enum(&s)).unwrap().lines;
         assert_eq!(
             lua,
             vec![
                 "function Shape.clone(self)",
                 "  if self.__tag == \"Dot\" then",
-                "    return { __enum = \"Shape\", __tag = \"Dot\" }",
+                "    return setmetatable({ __enum = \"Shape\", __tag = \"Dot\" }, Shape)",
                 "  end",
                 "  if self.__tag == \"Pair\" then",
-                "    return { __enum = \"Shape\", __tag = \"Pair\", self[1], self[2] }",
+                "    return setmetatable({ __enum = \"Shape\", __tag = \"Pair\", self[1], self[2] }, Shape)",
                 "  end",
                 "  if self.__tag == \"Named\" then",
-                "    return { __enum = \"Shape\", __tag = \"Named\", label = self.label }",
+                "    return setmetatable({ __enum = \"Shape\", __tag = \"Named\", label = self.label }, Shape)",
                 "  end",
                 "end",
             ]
@@ -461,7 +670,7 @@ mod tests {
     #[test]
     fn eq_named_struct() {
         let p = point();
-        let lua = derive("Eq", DeriveTarget::Struct(&p)).unwrap();
+        let lua = derive("Eq", DeriveTarget::Struct(&p)).unwrap().lines;
         assert_eq!(
             lua,
             vec![
@@ -475,7 +684,7 @@ mod tests {
     #[test]
     fn eq_newtype_struct() {
         let m = meters();
-        let lua = derive("Eq", DeriveTarget::Struct(&m)).unwrap();
+        let lua = derive("Eq", DeriveTarget::Struct(&m)).unwrap().lines;
         assert_eq!(
             lua,
             vec![
@@ -489,7 +698,7 @@ mod tests {
     #[test]
     fn eq_enum() {
         let s = shape();
-        let lua = derive("Eq", DeriveTarget::Enum(&s)).unwrap();
+        let lua = derive("Eq", DeriveTarget::Enum(&s)).unwrap().lines;
         assert_eq!(
             lua,
             vec![
@@ -512,7 +721,7 @@ mod tests {
     #[test]
     fn debug_named_struct() {
         let p = point();
-        let lua = derive("Debug", DeriveTarget::Struct(&p)).unwrap();
+        let lua = derive("Debug", DeriveTarget::Struct(&p)).unwrap().lines;
         assert_eq!(
             lua,
             vec![
@@ -526,7 +735,7 @@ mod tests {
     #[test]
     fn debug_newtype_struct() {
         let m = meters();
-        let lua = derive("Debug", DeriveTarget::Struct(&m)).unwrap();
+        let lua = derive("Debug", DeriveTarget::Struct(&m)).unwrap().lines;
         assert_eq!(
             lua,
             vec![
@@ -540,7 +749,7 @@ mod tests {
     #[test]
     fn debug_enum() {
         let s = shape();
-        let lua = derive("Debug", DeriveTarget::Enum(&s)).unwrap();
+        let lua = derive("Debug", DeriveTarget::Enum(&s)).unwrap().lines;
         assert_eq!(
             lua,
             vec![
@@ -562,7 +771,7 @@ mod tests {
     #[test]
     fn display_named_struct() {
         let p = point();
-        let lua = derive("Display", DeriveTarget::Struct(&p)).unwrap();
+        let lua = derive("Display", DeriveTarget::Struct(&p)).unwrap().lines;
         assert_eq!(
             lua,
             vec![
@@ -576,7 +785,7 @@ mod tests {
     #[test]
     fn display_enum() {
         let s = shape();
-        let lua = derive("Display", DeriveTarget::Enum(&s)).unwrap();
+        let lua = derive("Display", DeriveTarget::Enum(&s)).unwrap().lines;
         assert_eq!(
             lua,
             vec![

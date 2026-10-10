@@ -1,0 +1,68 @@
+// DYNAMIC.md §6.2: derived `eq` compares tag and every field structurally, so
+// an aggregate field is compared by value, never by table identity. Covers each
+// field kind — a nested struct (recursive `eq`), an `Option<number>` and an
+// enum payload (tag, then payload), a `[number]` (element-wise) — with the
+// unhappy paths: unequal nested value, `None` vs `Some`, differing variant
+// tags, differing list length, empty list vs non-empty.
+extern {
+    fn println(s: string);
+}
+
+#[derive(Eq)]
+struct Inner {
+    v: number,
+}
+
+#[derive(Eq)]
+enum Shape {
+    Dot,
+    Boxed(Inner),
+}
+
+#[derive(Eq)]
+struct Outer {
+    i: Inner,
+    o: Option<number>,
+    xs: [number],
+    s: Shape,
+}
+
+fn make(v: number, o: Option<number>, xs: [number], s: Shape) -> Outer {
+    Outer { i: Inner { v: v }, o: o, xs: xs, s: s }
+}
+
+fn main() {
+    let base = make(1, Some(1), [1, 2], Shape::Boxed(Inner { v: 2 }));
+    let same = make(1, Some(1), [1, 2], Shape::Boxed(Inner { v: 2 }));
+    if base == same {
+        println("equal");
+    }
+    if base != make(9, Some(1), [1, 2], Shape::Boxed(Inner { v: 2 })) {
+        println("nested-ne");
+    }
+    if base != make(1, None, [1, 2], Shape::Boxed(Inner { v: 2 })) {
+        println("some-vs-none-ne");
+    }
+    if base != make(1, Some(7), [1, 2], Shape::Boxed(Inner { v: 2 })) {
+        println("option-payload-ne");
+    }
+    if base != make(1, Some(1), [1, 3], Shape::Boxed(Inner { v: 2 })) {
+        println("element-ne");
+    }
+    if base != make(1, Some(1), [1], Shape::Boxed(Inner { v: 2 })) {
+        println("length-ne");
+    }
+    if base != make(1, Some(1), [], Shape::Boxed(Inner { v: 2 })) {
+        println("empty-vs-nonempty-ne");
+    }
+    if base != make(1, Some(1), [1, 2], Shape::Dot) {
+        println("tag-ne");
+    }
+    if base != make(1, Some(1), [1, 2], Shape::Boxed(Inner { v: 3 })) {
+        println("enum-payload-ne");
+    }
+    let none = make(1, None, [], Shape::Dot);
+    if none == make(1, None, [], Shape::Dot) {
+        println("none-empty-equal");
+    }
+}

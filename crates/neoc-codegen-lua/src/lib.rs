@@ -418,6 +418,9 @@ pub(crate) struct Emitter {
     indent: usize,
     diagnostics: Vec<Diagnostic>,
     uses_result: bool,
+    /// Module-local helpers the derives call; spliced ahead of the body, once
+    /// each, in a fixed order.
+    derive_helpers: std::collections::BTreeSet<neoc_macros::Helper>,
     /// Whether any `#[test]` fn registered on `__tests` (gates its decl, §6.5).
     uses_tests: bool,
     /// Enum declarations, used to resolve enum-variant paths and to tell a
@@ -640,6 +643,19 @@ impl Emitter {
         // recorded body origin, or 1 when the body produced none.
         let preamble_origin = self.line_origins.first().copied().unwrap_or(1);
 
+        // Derive helpers (`__eq`, `__debug`) sit lowest: declared before any
+        // type whose derived methods call them.
+        if !self.derive_helpers.is_empty() {
+            let mut out: Vec<String> = Vec::new();
+            for h in &self.derive_helpers {
+                out.extend(h.source().split('\n').map(str::to_string));
+                out.push(String::new());
+            }
+            let added = out.len();
+            out.append(&mut self.lines);
+            self.lines = out;
+            self.prepend_origins(tracking, added, preamble_origin);
+        }
         // The module `__tests` table a `#[test]` fn registers on (§6.5), declared
         // ahead of its registrations and of any prelude/imports prepended below.
         if self.uses_tests {
@@ -888,8 +904,9 @@ impl Emitter {
     fn emit_derives(&mut self, attrs: &[ast::Attribute], target: neoc_macros::DeriveTarget) {
         for name in ast::derive_names(attrs) {
             match neoc_macros::derive(&name, target) {
-                Ok(lines) => {
-                    for l in lines {
+                Ok(derived) => {
+                    self.derive_helpers.extend(derived.helpers);
+                    for l in derived.lines {
                         self.line(l);
                     }
                 }
