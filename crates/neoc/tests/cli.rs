@@ -445,3 +445,29 @@ fn run_lua_file_rejects_bytecode() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("binary"), "got: {stderr}");
 }
+
+const FAILING_TEST: &str = "local _t = require(\"lib:test\")\n_t.test(\"fails\", function()\n  _t.expect(1).toBe(2)\nend)\n";
+
+#[test]
+fn run_test_lua_with_failing_expect_reports_and_exits_nonzero() {
+    for name in ["foo.test.lua", "foo.spec.lua"] {
+        let dir = tempdir().unwrap();
+        let path = write(dir.path(), name, FAILING_TEST);
+
+        let out = Command::new(BIN).arg("run").arg(&path).output().unwrap();
+        assert_eq!(out.status.code(), Some(1), "{name} must exit 1");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("0 passed, 1 failed"), "{name}: {stdout}");
+    }
+}
+
+#[test]
+fn run_non_test_suffix_is_not_summarised() {
+    let dir = tempdir().unwrap();
+    let path = write(dir.path(), "foo.test.txt", FAILING_TEST);
+
+    let out = Command::new(BIN).arg("run").arg(&path).output().unwrap();
+    assert!(out.status.success(), "`.test.txt` must not be summarised");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(!stdout.contains("failed"), "got: {stdout}");
+}

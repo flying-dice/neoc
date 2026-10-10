@@ -1,6 +1,6 @@
-//! Embedded Luau sandbox.
+//! Embedded Lua sandbox.
 //!
-//! This module is intentionally framework-free: it spawns Luau engines,
+//! This module is intentionally framework-free: it spawns Lua engines,
 //! registers the namespaced module surface (`std:*` / `lib:*` / `vnd:*`),
 //! and exposes opaque resource handles. The submodules mirror the
 //! namespaces 1:1 (`crate::lua::std::collections` → `std:collections`,
@@ -14,4 +14,4 @@ pub mod std;
 pub mod tracing_layer;
 pub mod vnd;
 
-pub use tracing_layer::{CURRENT_RUN, LuauLayer, RunBuffers, scope};
+pub use tracing_layer::{CURRENT_RUN, LuaLayer, RunBuffers, scope};

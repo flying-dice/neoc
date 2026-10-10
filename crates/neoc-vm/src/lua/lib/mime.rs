@@ -36,7 +36,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// `#[instrument]` span and `mime.to_extension` error prefix, and recorded for
 /// the header with [`crate::lua::facade::Module::record_fn`]. All three keep
 /// their `(value, error)` shape, `mime.<fn>` error prefix, exact error
-/// suffixes, and `luau::lib::mime` span byte-identical to the hand-written
+/// suffixes, and `lua::lib::mime` span byte-identical to the hand-written
 /// registration this replaces.
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:mime")?;
@@ -71,7 +71,7 @@ fn from_extension(_: &Lua, ext: String) -> Result<String, String> {
     }
 }
 
-#[instrument(name = "mime.to_extension", target = "luau::lib::mime", skip_all)]
+#[instrument(name = "mime.to_extension", target = "lua::lib::mime", skip_all)]
 fn to_extension(
     lua: &Lua,
     (mime_type, user_prefs): (String, Option<Table>),

@@ -6,7 +6,7 @@ WORKDIR /src
 
 # The whole workspace is needed: the `neoc` bin pulls neoc-vm + the neoc-*
 # compiler libs, and neoc-grammar's build.rs cc-compiles the tree-sitter-neoc
-# submodule's parser.c. `.dockerignore` keeps target/, .git, and the luau
+# submodule's parser.c. `.dockerignore` keeps target/, .git, and the script
 # tests out of the context. BuildKit cache mounts give dep + incremental
 # caching without the brittle per-crate stub trick (target/ is a cache mount,
 # so the binary is copied out before the RUN ends).

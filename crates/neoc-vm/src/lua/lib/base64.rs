@@ -27,7 +27,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// `base64.decode*` channel prefix — and recorded for the header with
 /// [`crate::lua::facade::Module::record_fn`]. The `(value, error)` shape, the
 /// `base64.decode*` error prefix, the raise on `create_string`, and the
-/// `luau::lib::base64` span are byte-identical to the hand-written registration
+/// `lua::lib::base64` span are byte-identical to the hand-written registration
 /// this replaces.
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:base64")?;
@@ -107,28 +107,24 @@ fn decode_with(
     }
 }
 
-#[instrument(name = "base64.decode", target = "luau::lib::base64", skip_all)]
+#[instrument(name = "base64.decode", target = "lua::lib::base64", skip_all)]
 fn decode(lua: &Lua, input: mlua::String) -> mlua::Result<(Value, Value)> {
     decode_with(lua, &STANDARD, "base64.decode", input)
 }
 
-#[instrument(name = "base64.decode_no_pad", target = "luau::lib::base64", skip_all)]
+#[instrument(name = "base64.decode_no_pad", target = "lua::lib::base64", skip_all)]
 fn decode_no_pad(lua: &Lua, input: mlua::String) -> mlua::Result<(Value, Value)> {
     decode_with(lua, &STANDARD_NO_PAD, "base64.decode_no_pad", input)
 }
 
-#[instrument(
-    name = "base64.decode_url_safe",
-    target = "luau::lib::base64",
-    skip_all
-)]
+#[instrument(name = "base64.decode_url_safe", target = "lua::lib::base64", skip_all)]
 fn decode_url_safe(lua: &Lua, input: mlua::String) -> mlua::Result<(Value, Value)> {
     decode_with(lua, &URL_SAFE, "base64.decode_url_safe", input)
 }
 
 #[instrument(
     name = "base64.decode_url_safe_no_pad",
-    target = "luau::lib::base64",
+    target = "lua::lib::base64",
     skip_all
 )]
 fn decode_url_safe_no_pad(lua: &Lua, input: mlua::String) -> mlua::Result<(Value, Value)> {

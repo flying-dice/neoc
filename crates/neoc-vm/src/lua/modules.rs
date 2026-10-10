@@ -203,7 +203,7 @@ pub fn install(lua: &Lua) -> mlua::Result<()> {
 /// Each entry is `(registry_key, header_text)` — for example
 /// `("lib:base64", "// @generated …\nextern {\n    #[extern(path = \"lib:base64\")]\n    mod base64 { … }\n}\n")`.
 /// Only modules migrated to the facade appear here; the rest still register
-/// through a hand-written `module()` and ship a hand-written `.d.luau`.
+/// through a hand-written `module()` and a hand-written `.neoc` header.
 pub fn headers(lua: &Lua) -> mlua::Result<Vec<(String, String)>> {
     let mut out = Vec::new();
     let mut push = |m: mlua::Result<crate::lua::facade::Module<'_>>| -> mlua::Result<()> {

@@ -2,7 +2,7 @@
 extern {
     #[extern(path = "lib:compile")]
     mod compile {
-        /// Bundle a Luau source file into a self-contained executable. `opts` requires `entrypoint` and `output` string fields.
+        /// Bundle a Lua source file into a self-contained executable. `opts` requires `entrypoint` and `output` string fields.
         fn bundle(opts: Unknown) -> Result<bool, string>;
     }
 }

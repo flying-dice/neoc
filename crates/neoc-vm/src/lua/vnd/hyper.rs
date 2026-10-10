@@ -318,7 +318,7 @@ async fn invoke_lua_handler(
                 .unwrap_or_else(|_| error_response(500, "build failed")))
         }
         Err(e) => {
-            tracing::error!(target: "luau::lib::hyper", "handler error: {e}");
+            tracing::error!(target: "lua::lib::hyper", "handler error: {e}");
             Ok(error_response(500, "handler error"))
         }
     }

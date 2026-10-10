@@ -12,12 +12,12 @@ use tracing::instrument;
 
 use crate::lua::sandbox::{from_err, ok};
 
-#[instrument(name = "hyper.get", target = "luau::lib::hyper", skip_all)]
+#[instrument(name = "hyper.get", target = "lua::lib::hyper", skip_all)]
 pub(super) async fn get(lua: Lua, url: String) -> mlua::Result<(Value, Value)> {
     perform(&lua, "hyper.get", "GET".into(), url, None, Vec::new()).await
 }
 
-#[instrument(name = "hyper.post", target = "luau::lib::hyper", skip_all)]
+#[instrument(name = "hyper.post", target = "lua::lib::hyper", skip_all)]
 pub(super) async fn post(lua: Lua, opts: Table) -> mlua::Result<(Value, Value)> {
     let (url, body, headers) = match extract_opts(&opts) {
         Ok(parts) => parts,
@@ -26,7 +26,7 @@ pub(super) async fn post(lua: Lua, opts: Table) -> mlua::Result<(Value, Value)> 
     perform(&lua, "hyper.post", "POST".into(), url, body, headers).await
 }
 
-#[instrument(name = "hyper.request", target = "luau::lib::hyper", skip_all)]
+#[instrument(name = "hyper.request", target = "lua::lib::hyper", skip_all)]
 pub(super) async fn request(lua: Lua, opts: Table) -> mlua::Result<(Value, Value)> {
     let method: String = match opts.get("method") {
         Ok(v) => v,

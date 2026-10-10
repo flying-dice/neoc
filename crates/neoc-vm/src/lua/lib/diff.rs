@@ -180,7 +180,7 @@ fn parse_label(
 // Change-list functions
 // ---------------------------------------------------------------------------
 
-#[instrument(name = "diff.lines", target = "luau::lib::diff", skip_all)]
+#[instrument(name = "diff.lines", target = "lua::lib::diff", skip_all)]
 fn lines(
     lua: &Lua,
     args: (mlua::String, mlua::String, Option<Table>),
@@ -188,7 +188,7 @@ fn lines(
     change_list(lua, Mode::Lines, args, "diff.lines")
 }
 
-#[instrument(name = "diff.words", target = "luau::lib::diff", skip_all)]
+#[instrument(name = "diff.words", target = "lua::lib::diff", skip_all)]
 fn words(
     lua: &Lua,
     args: (mlua::String, mlua::String, Option<Table>),
@@ -196,7 +196,7 @@ fn words(
     change_list(lua, Mode::Words, args, "diff.words")
 }
 
-#[instrument(name = "diff.chars", target = "luau::lib::diff", skip_all)]
+#[instrument(name = "diff.chars", target = "lua::lib::diff", skip_all)]
 fn chars(
     lua: &Lua,
     args: (mlua::String, mlua::String, Option<Table>),
@@ -300,7 +300,7 @@ struct UnifiedResult {
     new_label: String,
 }
 
-#[instrument(name = "diff.unified", target = "luau::lib::diff", skip_all)]
+#[instrument(name = "diff.unified", target = "lua::lib::diff", skip_all)]
 fn unified(
     lua: &Lua,
     (old, new, opts): (mlua::String, mlua::String, Option<Table>),
@@ -492,7 +492,7 @@ fn fmt_range(start: usize, count: usize) -> String {
 // Parse unified
 // ---------------------------------------------------------------------------
 
-#[instrument(name = "diff.parse_unified", target = "luau::lib::diff", skip_all)]
+#[instrument(name = "diff.parse_unified", target = "lua::lib::diff", skip_all)]
 fn parse_unified(lua: &Lua, patch: mlua::String) -> mlua::Result<(Value, Value)> {
     let s = patch.to_str()?.to_owned();
     match parse_unified_inner(&s) {
@@ -795,7 +795,7 @@ fn parse_range(
 // Apply
 // ---------------------------------------------------------------------------
 
-#[instrument(name = "diff.apply", target = "luau::lib::diff", skip_all)]
+#[instrument(name = "diff.apply", target = "lua::lib::diff", skip_all)]
 fn apply(lua: &Lua, (orig, patch): (mlua::String, mlua::String)) -> mlua::Result<(Value, Value)> {
     let orig_s = orig.to_str()?.to_owned();
     let patch_s = patch.to_str()?.to_owned();
@@ -934,7 +934,7 @@ fn join_apply_lines(lines: &[(String, bool)]) -> String {
 // Apply structured change list
 // ---------------------------------------------------------------------------
 
-#[instrument(name = "diff.apply_changes", target = "luau::lib::diff", skip_all)]
+#[instrument(name = "diff.apply_changes", target = "lua::lib::diff", skip_all)]
 fn apply_changes(
     lua: &Lua,
     (orig, changes): (mlua::String, Table),
@@ -1018,7 +1018,7 @@ fn read_changes(t: &Table, prefix: &str) -> Result<Vec<Change>, String> {
 // Similarity
 // ---------------------------------------------------------------------------
 
-#[instrument(name = "diff.similarity", target = "luau::lib::diff", skip_all)]
+#[instrument(name = "diff.similarity", target = "lua::lib::diff", skip_all)]
 fn similarity(_: &Lua, (a, b): (mlua::String, mlua::String)) -> mlua::Result<f64> {
     let a_s = a.to_str()?;
     let b_s = b.to_str()?;

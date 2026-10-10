@@ -190,7 +190,7 @@ describe("log", function()
 
     describe("level filtering", function()
         test("warn-level logger suppresses trace/debug/info", function()
-            -- We can't observe stderr from inside Luau, but we can
+            -- We can't observe stderr from inside Lua, but we can
             -- verify the calls return without error at every level.
             local logger = log.new({ level = "warn" })
             -- These calls go to stderr — one emitted line per warn/error.

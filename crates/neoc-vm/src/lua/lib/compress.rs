@@ -31,7 +31,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// `#[instrument]` span and `compress.<fn>` channel prefix) and recorded for the
 /// header with [`crate::lua::facade::Module::record_fn`]. The `(value, error)`
 /// shape, the `compress.encode` / `compress.decode` error prefixes, the raise on
-/// `create_string`, and the `luau::lib::compress` spans are byte-identical to
+/// `create_string`, and the `lua::lib::compress` spans are byte-identical to
 /// the hand-written registration this replaces.
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:compress")?;
@@ -54,7 +54,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     Ok(m)
 }
 
-#[instrument(name = "compress.encode", target = "luau::lib::compress", skip_all)]
+#[instrument(name = "compress.encode", target = "lua::lib::compress", skip_all)]
 fn encode(
     lua: &Lua,
     (format, data, opts): (String, mlua::String, Option<Table>),
@@ -73,7 +73,7 @@ fn encode(
     }
 }
 
-#[instrument(name = "compress.decode", target = "luau::lib::compress", skip_all)]
+#[instrument(name = "compress.decode", target = "lua::lib::compress", skip_all)]
 fn decode(
     lua: &Lua,
     (format, data, opts): (String, mlua::String, Option<Table>),

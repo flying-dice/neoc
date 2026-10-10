@@ -231,7 +231,7 @@ impl UserData for PatternHandle {
     }
 }
 
-#[instrument(name = "regex.Pattern.new", target = "luau::lib::regex", skip_all)]
+#[instrument(name = "regex.Pattern.new", target = "lua::lib::regex", skip_all)]
 fn pattern_new(
     lua: &Lua,
     (pattern, flags): (String, Option<String>),
@@ -259,7 +259,7 @@ macro_rules! compile_or_return {
     };
 }
 
-#[instrument(name = "regex.is_match", target = "luau::lib::regex", skip_all)]
+#[instrument(name = "regex.is_match", target = "lua::lib::regex", skip_all)]
 fn flat_is_match(
     lua: &Lua,
     (pattern, text, flags): (String, String, Option<String>),
@@ -268,7 +268,7 @@ fn flat_is_match(
     ok(lua, p.compiled.is_match(&text))
 }
 
-#[instrument(name = "regex.find", target = "luau::lib::regex", skip_all)]
+#[instrument(name = "regex.find", target = "lua::lib::regex", skip_all)]
 fn flat_find(
     lua: &Lua,
     (pattern, text, flags): (String, String, Option<String>),
@@ -280,7 +280,7 @@ fn flat_find(
     }
 }
 
-#[instrument(name = "regex.find_all", target = "luau::lib::regex", skip_all)]
+#[instrument(name = "regex.find_all", target = "lua::lib::regex", skip_all)]
 fn flat_find_all(
     lua: &Lua,
     (pattern, text, flags): (String, String, Option<String>),
@@ -293,7 +293,7 @@ fn flat_find_all(
     ok(lua, t)
 }
 
-#[instrument(name = "regex.replace", target = "luau::lib::regex", skip_all)]
+#[instrument(name = "regex.replace", target = "lua::lib::regex", skip_all)]
 fn flat_replace(
     lua: &Lua,
     (pattern, text, replacement, flags): (String, String, String, Option<String>),
@@ -305,7 +305,7 @@ fn flat_replace(
     )
 }
 
-#[instrument(name = "regex.replace_all", target = "luau::lib::regex", skip_all)]
+#[instrument(name = "regex.replace_all", target = "lua::lib::regex", skip_all)]
 fn flat_replace_all(
     lua: &Lua,
     (pattern, text, replacement, flags): (String, String, String, Option<String>),
@@ -319,7 +319,7 @@ fn flat_replace_all(
     )
 }
 
-#[instrument(name = "regex.split", target = "luau::lib::regex", skip_all)]
+#[instrument(name = "regex.split", target = "lua::lib::regex", skip_all)]
 fn flat_split(
     lua: &Lua,
     (pattern, text, limit, flags): (String, String, Option<i64>, Option<String>),
@@ -328,7 +328,7 @@ fn flat_split(
     split_into_table(lua, &p.compiled, &text, limit, "regex.split")
 }
 
-#[instrument(name = "regex.escape", target = "luau::lib::regex", skip_all)]
+#[instrument(name = "regex.escape", target = "lua::lib::regex", skip_all)]
 fn flat_escape(_: &Lua, text: String) -> mlua::Result<String> {
     Ok(regex::escape(&text))
 }
@@ -791,7 +791,7 @@ mod tests {
     #[test]
     fn replace_uses_capture_references() {
         // `$1` / `${name}` per the regex crate's replacement grammar — matches
-        // PCRE/Rust convention; documented on the d.luau side.
+        // PCRE/Rust convention.
         let lua = engine();
         let (positional, named): (String, String) = lua
             .load(
@@ -912,7 +912,7 @@ mod tests {
     /// `Pattern:find` is infallible — the regex is already compiled, so a
     /// no-match cannot raise. Return shape must be a bare `Match?`, not the
     /// `(Match?, string?)` tuple the flat `regex.find` uses. Lock the
-    /// observable return arity so the d.luau signature stays accurate.
+    /// observable return arity so the `regex.neoc` signature stays accurate.
     #[test]
     fn pattern_find_returns_single_value() {
         let lua = engine();

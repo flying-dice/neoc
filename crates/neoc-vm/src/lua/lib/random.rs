@@ -16,9 +16,9 @@
 //! ## random_int is inclusive on both ends
 //!
 //! `random_int(min, max)` returns an integer in the closed interval `[min, max]`,
-//! matching Luau's existing `math.random(m, n)` and Python's `random.randint`.
+//! matching Lua's existing `math.random(m, n)` and Python's `random.randint`.
 //! Picked over the half-open `[min, max)` convention (Node, Rust `gen_range`,
-//! Go, Java) because the Luau audience already reads inclusive semantics from
+//! Go, Java) because the Lua audience already reads inclusive semantics from
 //! `math.random`, and "between min and max" is the no-surprise reading for a
 //! script writer.
 //!
@@ -59,7 +59,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// through [`crate::lua::facade::Module::try_func`]. Each inner function
 /// returns the bare failure reason, and the facade prepends the
 /// `"random.<fn>: "` prefix, so the `(value, error)` shape, the exact error
-/// strings, and the `luau::lib::random` spans are byte-identical to the
+/// strings, and the `lua::lib::random` spans are byte-identical to the
 /// hand-written registration this replaces.
 ///
 /// `random_bytes` and `uuid_parse` raise an `mlua::Error` from
@@ -130,7 +130,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 // CSPRNG
 // ---------------------------------------------------------------------------
 
-#[instrument(name = "random.random_bytes", target = "luau::lib::random", skip_all)]
+#[instrument(name = "random.random_bytes", target = "lua::lib::random", skip_all)]
 fn random_bytes(lua: &Lua, n_bytes: i64) -> mlua::Result<(Value, Value)> {
     if n_bytes < 0 {
         return err(lua, "random.random_bytes: byte count must be non-negative");
@@ -227,7 +227,7 @@ fn uuid_v7() -> mlua::Result<String> {
     Ok(Uuid::now_v7().to_string())
 }
 
-#[instrument(name = "random.uuid_parse", target = "luau::lib::random", skip_all)]
+#[instrument(name = "random.uuid_parse", target = "lua::lib::random", skip_all)]
 fn uuid_parse(lua: &Lua, input: mlua::String) -> mlua::Result<(Value, Value)> {
     let bytes = input.as_bytes();
     let s = match std::str::from_utf8(&bytes) {
@@ -423,7 +423,7 @@ mod tests {
 
     #[test]
     fn random_int_extreme_bounds_no_overflow() {
-        // Unreachable from Luau (number is f64; exact ints cap at 2^53) but a
+        // Unreachable from Lua (number is f64; exact ints cap at 2^53) but a
         // Rust-direct caller can ask for the full i64 span. With span = 2^64,
         // ~half the draws land >= 2^63 — the exact path that wrapped/panicked
         // before the i128 fix. Loop so a wrap, if present, is near-certain.

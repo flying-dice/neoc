@@ -31,7 +31,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// `#[instrument]` span and `hex.decode` channel prefix) and recorded for the
 /// header with [`crate::lua::facade::Module::record_fn`]. The `(value, error)`
 /// shape, the `hex.decode` error prefix, the raise on `create_string`, and the
-/// `luau::lib::hex` spans are byte-identical to the hand-written registration
+/// `lua::lib::hex` spans are byte-identical to the hand-written registration
 /// this replaces.
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:hex")?;
@@ -59,7 +59,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     Ok(m)
 }
 
-#[instrument(name = "hex.decode", target = "luau::lib::hex", skip_all)]
+#[instrument(name = "hex.decode", target = "lua::lib::hex", skip_all)]
 fn decode(lua: &Lua, input: mlua::String) -> mlua::Result<(Value, Value)> {
     // Drop ASCII whitespace before decoding so dumps like "de ad be ef" or
     // newline-wrapped blobs round-trip. The error position then refers to the

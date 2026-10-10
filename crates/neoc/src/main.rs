@@ -12,9 +12,9 @@ use clap::{Parser, Subcommand};
 
 mod cli;
 
-/// neoc — embedded Luau runtime and neoc-language compiler.
+/// neoc — embedded Lua runtime and neoc-language compiler.
 ///
-/// The runtime subcommands (`run`, `emit-headers`) execute and introspect Luau
+/// The runtime subcommands (`run`, `emit-headers`) execute and introspect Lua
 /// scripts; the compiler subcommands (`build`, `check`, `fmt`, `lsp`) transpile
 /// neoc source and serve language tooling.
 #[derive(Debug, Parser)]
@@ -26,18 +26,18 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    /// Run one or more Luau scripts (globs expand internally), or evaluate an
+    /// Run one or more Lua scripts (globs expand internally), or evaluate an
     /// inline snippet with `--eval`. Pass script arguments after `--`.
     Run {
-        /// Script files or globs (for example `tests/**/*.test.luau`).
+        /// Script files or globs (for example `tests/**/*.test.lua`).
         #[arg(required_unless_present = "eval", conflicts_with = "eval")]
         paths: Vec<String>,
         /// Evaluate the given source string in-process instead of reading
         /// files. Treated as neoc by default (one module; its `main` runs if it
-        /// defines one); pass `--lua` to run it as raw Lua/Luau instead.
+        /// defines one); pass `--lua` to run it as raw Lua instead.
         #[arg(short = 'e', long = "eval", value_name = "SOURCE")]
         eval: Option<String>,
-        /// Treat the `--eval` source as raw Lua/Luau, loaded into the engine
+        /// Treat the `--eval` source as raw Lua, loaded into the engine
         /// verbatim with no neoc compilation.
         #[arg(long, requires = "eval", conflicts_with_all = ["neoc", "paths"])]
         lua: bool,
@@ -88,10 +88,10 @@ fn report_script_error_mapped(
     process::exit(1);
 }
 
-/// Rewrites every Luau chunk reference for `chunk` in `text` from its emitted-
+/// Rewrites every Lua chunk reference for `chunk` in `text` from its emitted-
 /// Lua line to the originating neoc line via `map`.
 ///
-/// Luau renders a chunk frame as `[string "<chunk>"]:<line>` (in both the
+/// Lua renders a chunk frame as `[string "<chunk>"]:<line>` (in both the
 /// leading `runtime error:` line and each `stack traceback:` frame). Only frames
 /// whose chunk name equals `chunk` are rewritten — `[C]` frames and any other
 /// chunk are left untouched. On an exact miss the map returns the nearest
@@ -192,7 +192,7 @@ fn install_shutdown_handler() {
     });
 }
 
-/// Builds the sandboxed Luau engine, binding `user_args` as the `_NEOC_ARGS`
+/// Builds the sandboxed Lua engine, binding `user_args` as the `_NEOC_ARGS`
 /// global when any were supplied. Exits the process on engine-init failure.
 fn engine_with_args(user_args: &[String]) -> mlua::Lua {
     let engine = lua::sandbox::make_engine().unwrap_or_else(|e| {
@@ -238,7 +238,7 @@ async fn run(paths: &[String], user_args: &[String]) {
 
     for path in paths {
         // A `.neoc` entry is transpiled to Lua in-process and run directly, so
-        // `neoc run app.neoc` behaves like running a Luau script. `.lua`/`.luau`
+        // `neoc run app.neoc` behaves like running a Lua script. `.lua`
         // scripts load verbatim. For a `.neoc` entry the source map travels with
         // the Lua so a runtime fault is reported at the neoc line, not the
         // emitted-Lua line.
@@ -274,7 +274,7 @@ async fn run(paths: &[String], user_args: &[String]) {
 
         drain_scheduler(&engine).await;
 
-        let is_test = path.ends_with(".test.luau") || path.ends_with(".spec.luau");
+        let is_test = path.ends_with(".test.lua") || path.ends_with(".spec.lua");
         if is_test {
             match lua::lib::test::summary(&engine) {
                 Ok((passed, failed)) => {
@@ -322,7 +322,7 @@ async fn run(paths: &[String], user_args: &[String]) {
 /// Evaluates an inline snippet in-process, with no file on disk, under the chunk
 /// name `<eval>`. By default the snippet is neoc: transpiled to Lua first, with
 /// its source map carried along so a runtime fault is reported at the neoc line.
-/// With `as_lua` set, the snippet is raw Lua/Luau loaded into the engine
+/// With `as_lua` set, the snippet is raw Lua loaded into the engine
 /// verbatim — no compilation, no source map. Script arguments after `--` are
 /// bound as `_NEOC_ARGS`.
 async fn run_eval(source: &str, as_lua: bool, user_args: &[String]) {
@@ -440,7 +440,7 @@ fn run_compiler(command: cli::Command) -> ! {
     }
 }
 
-/// Builds the multi-thread tokio runtime the Luau engine paths drive on, then
+/// Builds the multi-thread tokio runtime the Lua engine paths drive on, then
 /// blocks on `fut`.
 fn block_on_runtime<F: std::future::Future<Output = ()>>(fut: F) {
     tokio::runtime::Builder::new_multi_thread()
@@ -507,7 +507,7 @@ mod tests {
     // ---- source map: `neoc run` runtime-fault line rewriting ----------------
     //
     // `map_lua_lines_to_neoc` is the consumer side of the #56 source map: it
-    // rewrites every `[string "<chunk>"]:<luaLine>` reference in a Luau runtime
+    // rewrites every `[string "<chunk>"]:<luaLine>` reference in a Lua runtime
     // fault to its originating neoc line. The map's own tests cover lookup
     // (`SourceMap::neoc_line`); these pin the two consumer behaviours those
     // don't reach — the string rewrite itself (chunk-selective), and the
@@ -537,7 +537,7 @@ mod tests {
              stack traceback:\n\
              \t[string \"{chunk}\"]:{lua_line}: in function 'read'\n\
              \t[C]: in ?\n\
-             \t[string \"other.luau\"]:{lua_line}: in main chunk"
+             \t[string \"other.lua\"]:{lua_line}: in main chunk"
         );
         let got = super::map_lua_lines_to_neoc(&err, chunk, &map);
 
@@ -554,7 +554,7 @@ mod tests {
         // A `[C]` frame and a different chunk are left untouched.
         assert!(got.contains("[C]: in ?"), "[C] frame untouched:\n{got}");
         assert!(
-            got.contains(&format!("[string \"other.luau\"]:{lua_line}:")),
+            got.contains(&format!("[string \"other.lua\"]:{lua_line}:")),
             "a non-matching chunk must not be rewritten:\n{got}"
         );
     }
@@ -613,7 +613,7 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("mkdir fixture");
 
         let rendered = script.replace("__PORT__", &port.to_string());
-        std::fs::write(dir.join("server.luau"), rendered).expect("write server.luau");
+        std::fs::write(dir.join("server.lua"), rendered).expect("write server.lua");
         dir
     }
 
@@ -634,7 +634,7 @@ mod tests {
 
         let child = Command::new(&bin)
             .arg("run")
-            .arg(fixture.join("server.luau"))
+            .arg(fixture.join("server.lua"))
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()

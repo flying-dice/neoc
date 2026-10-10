@@ -68,14 +68,14 @@ test:
     # require a live Docker daemon and are excluded from the runner.
     - |
       cargo run -p neoc -- run \
-        "crates/neoc/tests/lib/*.test.luau" \
-        "crates/neoc/tests/std/*.test.luau" \
-        "crates/neoc/tests/vnd/jsonschema.test.luau" \
-        "crates/neoc/tests/vnd/quick_xml.test.luau" \
-        "crates/neoc/tests/vnd/rusqlite.test.luau" \
-        "crates/neoc/tests/vnd/serde_json.test.luau" \
-        "crates/neoc/tests/vnd/serde_yaml.test.luau" \
-        "crates/neoc/tests/vnd/toml.test.luau"
+        "crates/neoc/tests/lib/*.test.lua" \
+        "crates/neoc/tests/std/*.test.lua" \
+        "crates/neoc/tests/vnd/jsonschema.test.lua" \
+        "crates/neoc/tests/vnd/quick_xml.test.lua" \
+        "crates/neoc/tests/vnd/rusqlite.test.lua" \
+        "crates/neoc/tests/vnd/serde_json.test.lua" \
+        "crates/neoc/tests/vnd/serde_yaml.test.lua" \
+        "crates/neoc/tests/vnd/toml.test.lua"
 
 # ── wasm ──────────────────────────────────────────────────────────────────────
 #

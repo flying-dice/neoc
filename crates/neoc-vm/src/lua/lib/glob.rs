@@ -224,7 +224,7 @@ fn set_new(lua: &Lua, patterns: Table) -> mlua::Result<(Value, Value)> {
 // Flat functions
 // ---------------------------------------------------------------------------
 
-#[instrument(name = "glob.scan", target = "luau::lib::glob", skip_all)]
+#[instrument(name = "glob.scan", target = "lua::lib::glob", skip_all)]
 fn flat_scan(lua: &Lua, (pattern, opts): (String, Option<Table>)) -> mlua::Result<(Value, Value)> {
     let g = match GlobHandle::compile(&pattern) {
         Ok(g) => g,

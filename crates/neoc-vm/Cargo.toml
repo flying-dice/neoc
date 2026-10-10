@@ -149,7 +149,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 # need them, and turning them off shrinks the dependency tree.
 jsonschema = { version = "0.30", default-features = false }
 
-# Exposed to Luau as `lib.testcontainers` so scripts (and our integration
+# Exposed to Lua as `lib.testcontainers` so scripts (and our integration
 # tests) can spin up disposable backing services without external setup.
 testcontainers-modules = { version = "0.11", features = ["mysql", "postgres"] }
 

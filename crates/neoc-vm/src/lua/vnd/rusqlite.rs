@@ -110,7 +110,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 ///
 /// `open` is set verbatim with [`crate::lua::facade::Module::set`] rather than
 /// `try_func` because the hand-written function carries its own
-/// `#[instrument(name = "rusqlite.open", target = "luau::lib::rusqlite")]`
+/// `#[instrument(name = "rusqlite.open", target = "lua::lib::rusqlite")]`
 /// attribute and bakes the `rusqlite.open` error prefix — routing through
 /// `try_func` would add a second span and double the prefix. Its signature is
 /// recorded for the header via [`crate::lua::facade::Module::record_fn`]. The
@@ -196,7 +196,7 @@ pub struct Database {
     conn: Arc<LocalConn>,
 }
 
-#[instrument(name = "rusqlite.open", target = "luau::lib::rusqlite", skip_all)]
+#[instrument(name = "rusqlite.open", target = "lua::lib::rusqlite", skip_all)]
 fn open(lua: &Lua, path: String) -> mlua::Result<(Value, Value)> {
     // OPEN_NO_MUTEX — we serialize via the Lua scheduler, SQLite's own
     // per-connection serialized mutex would just be redundant work.

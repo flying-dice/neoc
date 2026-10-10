@@ -5,7 +5,7 @@
 //! `format` convenience functions. Backed by the `semver` crate, which
 //! implements **Cargo-compatible range syntax** (`^`, `~`, `>=`, `<`, `=`,
 //! comma-AND). npm extensions (`||`, hyphen ranges, x-ranges) are out of
-//! scope — see the module docs in `semver.d.luau` for the matrix.
+//! scope.
 
 use std::cmp::Ordering;
 use std::sync::OnceLock;
@@ -200,7 +200,7 @@ impl UserData for VersionHandle {
     }
 }
 
-#[instrument(name = "semver.Version.parse", target = "luau::lib::semver", skip_all)]
+#[instrument(name = "semver.Version.parse", target = "lua::lib::semver", skip_all)]
 fn version_parse_method(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
     match parse_version(&s, "semver.Version.parse") {
         Ok(v) => ok(lua, VersionHandle(v)),
@@ -230,7 +230,7 @@ impl UserData for VersionReqHandle {
 
 #[instrument(
     name = "semver.VersionReq.parse",
-    target = "luau::lib::semver",
+    target = "lua::lib::semver",
     skip_all
 )]
 fn req_parse_method(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
@@ -244,7 +244,7 @@ fn req_parse_method(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
 // Flat functions
 // ---------------------------------------------------------------------------
 
-#[instrument(name = "semver.parse", target = "luau::lib::semver", skip_all)]
+#[instrument(name = "semver.parse", target = "lua::lib::semver", skip_all)]
 fn flat_parse(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
     match parse_version(&s, "semver.parse") {
         Ok(v) => ok(lua, VersionHandle(v)),
@@ -252,12 +252,12 @@ fn flat_parse(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
     }
 }
 
-#[instrument(name = "semver.valid", target = "luau::lib::semver", skip_all)]
+#[instrument(name = "semver.valid", target = "lua::lib::semver", skip_all)]
 fn flat_valid(_: &Lua, s: String) -> mlua::Result<bool> {
     Ok(Version::parse(&s).is_ok())
 }
 
-#[instrument(name = "semver.coerce", target = "luau::lib::semver", skip_all)]
+#[instrument(name = "semver.coerce", target = "lua::lib::semver", skip_all)]
 fn flat_coerce(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
     match coerce_version(&s) {
         Some(v) => ok(lua, VersionHandle(v)),
@@ -265,7 +265,7 @@ fn flat_coerce(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
     }
 }
 
-#[instrument(name = "semver.compare", target = "luau::lib::semver", skip_all)]
+#[instrument(name = "semver.compare", target = "lua::lib::semver", skip_all)]
 fn flat_compare(lua: &Lua, (a, b): (Value, Value)) -> mlua::Result<(Value, Value)> {
     let av = match coerce_to_version(a, "semver.compare") {
         Ok(v) => v,
@@ -278,7 +278,7 @@ fn flat_compare(lua: &Lua, (a, b): (Value, Value)) -> mlua::Result<(Value, Value
     ok(lua, ordering_to_i64(av.cmp_precedence(&bv)))
 }
 
-#[instrument(name = "semver.satisfies", target = "luau::lib::semver", skip_all)]
+#[instrument(name = "semver.satisfies", target = "lua::lib::semver", skip_all)]
 fn flat_satisfies(lua: &Lua, (version, range): (Value, Value)) -> mlua::Result<(Value, Value)> {
     let v = match coerce_to_version(version, "semver.satisfies") {
         Ok(v) => v,
@@ -291,7 +291,7 @@ fn flat_satisfies(lua: &Lua, (version, range): (Value, Value)) -> mlua::Result<(
     ok(lua, r.matches(&v))
 }
 
-#[instrument(name = "semver.increment", target = "luau::lib::semver", skip_all)]
+#[instrument(name = "semver.increment", target = "lua::lib::semver", skip_all)]
 fn flat_increment(lua: &Lua, (version, level): (String, String)) -> mlua::Result<(Value, Value)> {
     let v = match parse_version(&version, "semver.increment") {
         Ok(v) => v,
@@ -303,7 +303,7 @@ fn flat_increment(lua: &Lua, (version, level): (String, String)) -> mlua::Result
     }
 }
 
-#[instrument(name = "semver.format", target = "luau::lib::semver", skip_all)]
+#[instrument(name = "semver.format", target = "lua::lib::semver", skip_all)]
 fn flat_format(lua: &Lua, version: Value) -> mlua::Result<(Value, Value)> {
     match coerce_to_version(version, "semver.format") {
         Ok(v) => ok(lua, v.to_string()),

@@ -267,7 +267,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// verbatim with [`crate::lua::facade::Module::set`] (keeping its
 /// `template.compile` span and channel prefix) and recorded for the header with
 /// [`crate::lua::facade::Module::record_fn`]. The `(value, error)` shape, the
-/// exact error strings, the raise on `into_lua`, and the `luau::lib::template`
+/// exact error strings, the raise on `into_lua`, and the `lua::lib::template`
 /// spans are byte-identical to the hand-written registration this replaces. The
 /// shared `Engine` is cloned into each closure exactly as before. The compiled
 /// `Template` userdata keeps its own `impl UserData` and is recorded here for
@@ -326,7 +326,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 // Compile / render implementations.
 // ---------------------------------------------------------------------------
 
-#[instrument(name = "template.compile", target = "luau::lib::template", skip_all)]
+#[instrument(name = "template.compile", target = "lua::lib::template", skip_all)]
 fn compile_impl(lua: &Lua, engine: &Engine, src: String) -> mlua::Result<(Value, Value)> {
     let name = engine.next_template_name();
     let mut guard = engine.tera.lock();

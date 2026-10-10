@@ -51,7 +51,7 @@ use tracing::instrument;
 use crate::lua::facade::Module;
 use crate::lua::sandbox::{err, ok};
 
-/// Canonical algorithm list — the d.luau / docs order. Used by `algorithms()`,
+/// Canonical algorithm list — the `docs/src/lib/reference/crypto.md` order. Used by `algorithms()`,
 /// `key_size` / `nonce_size` / `tag_size`, and by tests that iterate every
 /// backend.
 const ALGOS: &[&str] = &["aes_128_gcm", "aes_256_gcm", "chacha20_poly1305"];
@@ -271,7 +271,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     Ok(m)
 }
 
-#[instrument(name = "crypto.encrypt", target = "luau::lib::crypto", skip_all)]
+#[instrument(name = "crypto.encrypt", target = "lua::lib::crypto", skip_all)]
 fn encrypt(
     lua: &Lua,
     (algo, key, nonce, plaintext, aad): (
@@ -298,7 +298,7 @@ fn encrypt(
     }
 }
 
-#[instrument(name = "crypto.decrypt", target = "luau::lib::crypto", skip_all)]
+#[instrument(name = "crypto.decrypt", target = "lua::lib::crypto", skip_all)]
 fn decrypt(
     lua: &Lua,
     (algo, key, nonce, ciphertext, aad): (

@@ -1,11 +1,17 @@
--- The application host, in raw Luau — the entry point and the driver.
+-- The application host, in raw Lua — the entry point and the driver.
 --
--- `luau` has no HTTP or database, so this is a console app: the same
+-- `luajit` has no HTTP or database, so this is a console app: the same
 -- ports-and-adapters model as the http-sqlite examples, fitted to the runtime.
 -- neoc owns the controllers + the `Store` port; this host implements the port
 -- (an in-memory table) and drives, then prints. It imports the controllers from
 -- the transpiled neoc library.
-local app = require("../../auto/lua/main")
+--
+-- LuaJIT resolves `require` through `package.path` relative to the working
+-- directory, not the requiring file, so anchor the generated module's
+-- directory on this script's own path.
+local here = arg[0]:match("^(.*[/\\])") or "./"
+package.path = here .. "../../auto/lua/?.lua;" .. package.path
+local app = require("main")
 
 -- The `Store` port, implemented over an in-memory table. neoc's `store.add(b)`
 -- lowers to `store:add(b)` (colon → implicit self), so the methods take self.

@@ -178,7 +178,7 @@ impl UserData for ServerHandle {
 // Server — `lib.hyper.serve`
 // ---------------------------------------------------------------------------
 
-#[instrument(name = "hyper.serve", target = "luau::lib::hyper", skip_all)]
+#[instrument(name = "hyper.serve", target = "lua::lib::hyper", skip_all)]
 pub(super) fn serve(
     lua: &Lua,
     (listener, handler): (mlua::AnyUserData, Function),

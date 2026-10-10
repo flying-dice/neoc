@@ -55,7 +55,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// `mysql`, `postgres`, and `generic` are set verbatim with
 /// [`crate::lua::facade::Module::set`] rather than `try_async_func` because each
 /// hand-written async function carries its own
-/// `#[instrument(name = "testcontainers_modules.<fn>", target = "luau::lib::testcontainers_modules")]`
+/// `#[instrument(name = "testcontainers_modules.<fn>", target = "lua::lib::testcontainers_modules")]`
 /// attribute and bakes the `testcontainers_modules.<fn>` error prefix into its
 /// pre-built `(Value, Value)` return — routing through the facade would add a
 /// second span and double the prefix. Their signatures are recorded for the
@@ -229,7 +229,7 @@ where
 
 #[instrument(
     name = "testcontainers_modules.mysql",
-    target = "luau::lib::testcontainers_modules",
+    target = "lua::lib::testcontainers_modules",
     skip_all
 )]
 async fn start_mysql(lua: Lua) -> mlua::Result<(Value, Value)> {
@@ -238,7 +238,7 @@ async fn start_mysql(lua: Lua) -> mlua::Result<(Value, Value)> {
 
 #[instrument(
     name = "testcontainers_modules.postgres",
-    target = "luau::lib::testcontainers_modules",
+    target = "lua::lib::testcontainers_modules",
     skip_all
 )]
 async fn start_postgres(lua: Lua) -> mlua::Result<(Value, Value)> {
@@ -363,7 +363,7 @@ async fn map_ports(
 
 #[instrument(
     name = "testcontainers_modules.generic",
-    target = "luau::lib::testcontainers_modules",
+    target = "lua::lib::testcontainers_modules",
     skip_all
 )]
 async fn start_generic(lua: Lua, opts: Table) -> mlua::Result<(Value, Value)> {

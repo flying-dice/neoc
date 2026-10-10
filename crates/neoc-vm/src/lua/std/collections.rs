@@ -36,7 +36,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 
 /// Declares the `std:collections` surface through the facade. Each type is a
 /// constructor sub-table (`Map.new()`, `Counter.new(initial?)`, `Mutex.new()`)
-/// whose `new` span (`"<Type>.new"` at `luau::lib::collections`) and registered
+/// whose `new` span (`"<Type>.new"` at `lua::lib::collections`) and registered
 /// Lua surface are byte-identical to the hand-written registration this
 /// replaces; the instance methods stay in each type's `impl UserData` and are
 /// recorded here for the header only.

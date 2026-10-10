@@ -6,7 +6,7 @@ extern {
         impl CsvReader {
             /// Return the cached header row (parsing it if not yet read). Errors if the reader was not created with `headers = true`.
             fn headers(self) -> Result<Unknown, string>;
-            /// Return a Luau iterator yielding the next row on each call, `nil` at EOF. Iterator errors raise.
+            /// Return a Lua iterator yielding the next row on each call, `nil` at EOF. Iterator errors raise.
             fn rows(self) -> Unknown;
         }
         struct CsvWriter;
@@ -18,7 +18,7 @@ extern {
         }
         /// Parse a CSV string into an array of rows. With `headers = true` rows are keyed by header name; typed columns coerce to number/boolean/nil.
         fn parse(data: string, opts: Option<Unknown>) -> Result<Unknown, string>;
-        /// Return a Luau iterator over rows in an in-memory CSV string. Iterator errors raise.
+        /// Return a Lua iterator over rows in an in-memory CSV string. Iterator errors raise.
         fn rows(data: string, opts: Option<Unknown>) -> Unknown;
         /// Construct a streaming reader over a `ReaderHandle`, taking an exclusive borrow on the handle for its lifetime.
         fn reader(handle: Unknown, opts: Option<Unknown>) -> Result<CsvReader, string>;

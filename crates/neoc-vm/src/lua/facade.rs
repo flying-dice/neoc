@@ -17,7 +17,7 @@
 //!    identical error prefix the original used.
 //! 2. **Per-call tracing spans.** Every registered function opens a
 //!    `tracing` span named `"<stem>.<name>"` at target
-//!    `"luau::lib::<module>"` around the call body, matching the old
+//!    `"lua::lib::<module>"` around the call body, matching the old
 //!    `#[instrument(name = …, target = …, skip_all)]` attribute. See
 //!    [`dyn_span`].
 //! 3. **The registered Lua surface.** The functions and userdata types land
@@ -515,12 +515,12 @@ impl<'l> Module<'l> {
     /// The `tracing` target for this module's spans.
     ///
     /// Every runtime module — regardless of namespace — traces under
-    /// `"luau::lib::<module>"`, matching the existing hand-written
+    /// `"lua::lib::<module>"`, matching the existing hand-written
     /// `#[instrument(target = …)]` attributes (a `std:collections` registry
-    /// key still traces at `"luau::lib::collections"`). The namespace is a
+    /// key still traces at `"lua::lib::collections"`). The namespace is a
     /// registration concern, not part of the trace target.
     fn target(&self) -> String {
-        format!("luau::lib::{}", module_stem(&self.name))
+        format!("lua::lib::{}", module_stem(&self.name))
     }
 
     /// Emits the `.neoc` header text for this module.
@@ -776,7 +776,7 @@ fn mod_name(name: &str) -> &str {
 // Dynamic tracing spans
 //
 // The old per-function `#[instrument(name = "<stem>.<fn>", target =
-// "luau::lib::<mod>", skip_all)]` froze its name + target into a static
+// "lua::lib::<mod>", skip_all)]` froze its name + target into a static
 // callsite at the attribute's source location. The facade registers every
 // function from one source location, so the same name/target pair has to be
 // chosen at runtime instead. `tracing`'s macros can't do that — they cache a
@@ -798,7 +798,7 @@ fn mod_name(name: &str) -> &str {
 fn shared_callsite() -> &'static DefaultCallsite {
     static META: Metadata<'static> = Metadata::new(
         "neoc.facade",
-        "luau",
+        "lua",
         Level::INFO,
         Some(file!()),
         Some(line!()),
@@ -822,7 +822,7 @@ fn metadata_cache() -> &'static Mutex<HashMap<(String, String), &'static Metadat
 /// Builds (or fetches the interned) `INFO`-level span `Metadata` for the
 /// given target + name, then returns an unentered [`tracing::Span`] over it.
 /// Entering the returned span around a call body reproduces the old
-/// `#[instrument]` span: same name, same `luau::…` target, no fields.
+/// `#[instrument]` span: same name, same `lua::…` target, no fields.
 fn dyn_span(target: &str, name: &str) -> tracing::Span {
     let key = (target.to_string(), name.to_string());
     let meta = {
@@ -888,7 +888,7 @@ mod tests {
     }
 
     /// A facade function opens a span named `"<stem>.<name>"` at target
-    /// `"luau::lib::<module>"`, matching the old
+    /// `"lua::lib::<module>"`, matching the old
     /// `#[instrument(name = …, target = …, skip_all)]` attribute.
     #[test]
     fn func_opens_instrument_shaped_span() {
@@ -909,11 +909,11 @@ mod tests {
         let recorded = spans.lock().unwrap();
         assert_eq!(
             recorded.as_slice(),
-            &[("luau::lib::base64".to_string(), "base64.encode".to_string(),)]
+            &[("lua::lib::base64".to_string(), "base64.encode".to_string(),)]
         );
     }
 
-    /// A `std:*` registry key still traces under `luau::lib::<stem>`, matching
+    /// A `std:*` registry key still traces under `lua::lib::<stem>`, matching
     /// the existing hand-written `#[instrument(target = …)]` convention.
     #[test]
     fn std_module_traces_under_lib_target() {
@@ -933,7 +933,7 @@ mod tests {
         assert_eq!(
             recorded.as_slice(),
             &[(
-                "luau::lib::collections".to_string(),
+                "lua::lib::collections".to_string(),
                 "collections.echo".to_string(),
             )]
         );

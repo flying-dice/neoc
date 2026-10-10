@@ -23,7 +23,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// Declares the `vnd:toml` surface through the facade. Every function is
 /// fallible; the `(value, error)` shape, the `toml.<fn>` error prefixes, the
 /// exact error suffixes (reader/writer-handle, UTF-8, parse, serialize, and
-/// I/O failures), and the `luau::lib::toml` spans are byte-identical to the
+/// I/O failures), and the `lua::lib::toml` spans are byte-identical to the
 /// hand-written registration this replaces.
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "vnd:toml")?;

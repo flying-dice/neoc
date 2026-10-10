@@ -149,7 +149,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     Ok(m)
 }
 
-#[instrument(name = "ini.parse", target = "luau::lib::ini", skip_all)]
+#[instrument(name = "ini.parse", target = "lua::lib::ini", skip_all)]
 fn parse(
     lua: &Lua,
     (text, opts_table): (mlua::String, Option<Table>),
@@ -258,7 +258,7 @@ fn read_opts(opts_table: Option<Table>) -> mlua::Result<ParseOpts> {
 // Stringify
 // ---------------------------------------------------------------------------
 
-#[instrument(name = "ini.stringify", target = "luau::lib::ini", skip_all)]
+#[instrument(name = "ini.stringify", target = "lua::lib::ini", skip_all)]
 fn stringify(
     lua: &Lua,
     (config, opts_table): (Table, Option<Table>),

@@ -8,7 +8,7 @@ local serde_json = require("vnd:serde_json")
 
 -- `lib:json` is structural: Object / Array userdata over a pure-std tree.
 -- Access is always through `:get` / `:set` / `:len` — no `.field` or `[i]`
--- sugar, since the JSON shape is dynamic and Luau strict mode can't
+-- sugar, since the JSON shape is dynamic and Lua strict mode can't
 -- type-check it anyway.
 --
 -- Parsing lives in `vnd:serde_json` (the JSON codec); these tests cover

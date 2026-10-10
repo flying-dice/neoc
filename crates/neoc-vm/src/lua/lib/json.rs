@@ -34,7 +34,7 @@
 //! ## No `obj.x` sugar
 //!
 //! Object/Array are **userdata of dynamic JSON shape** — there is no
-//! compile-time way for Luau strict mode to know what fields exist or
+//! compile-time way for Lua strict mode to know what fields exist or
 //! what types they are. Pretending otherwise via `__index` would just
 //! mask type errors. Access is always through `:get(...)` / `:set(...)` /
 //! `:len()` so the dynamic boundary is explicit at the call site.
