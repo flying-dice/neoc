@@ -34,9 +34,11 @@ pub enum Error {
 
 /// A backend the compiler can lower to.
 ///
-/// neoc emits one target, `luau` — the typed superset that downgrades to Lua
-/// through the Luau toolchain. Plain Lua is not a selectable target; obtain it
-/// by downgrading the typed superset.
+/// `luau` is the only target selectable by name (`--target`, manifest) — the
+/// typed superset that downgrades to Lua through the Luau toolchain. `Lua` is
+/// internal: `neoc run` emits it for the embedded `LuaJIT` runtime, and
+/// `"lua".parse()` rejects it, so `Display` → `FromStr` deliberately does not
+/// round-trip for that variant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Target {
     /// Self-typed Luau (`.luau`): the Lua runtime body with neoc types woven on,
@@ -921,6 +923,14 @@ mod tests {
         assert_eq!("luau".parse::<Target>(), Ok(Target::Luau));
         assert_eq!(Target::Luau.to_string(), "luau");
         assert_eq!(Target::Luau.extension(), "luau");
+    }
+
+    #[test]
+    fn lua_target_is_internal_and_does_not_round_trip_by_name() {
+        assert_eq!(Target::Lua.to_string(), "lua");
+        assert_eq!(Target::Lua.extension(), "lua");
+        // Not selectable: its own name parses to a rejection, not `Target::Lua`.
+        assert!(Target::Lua.to_string().parse::<Target>().is_err());
     }
 
     #[test]
