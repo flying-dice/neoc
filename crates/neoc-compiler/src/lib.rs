@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use neoc_ast as ast;
+use neoc_codegen_lua as codegen_lua;
 use neoc_codegen_lua::LineMap;
 use neoc_codegen_luau as codegen_luau;
 use neoc_parser as parser;
@@ -44,6 +45,9 @@ pub enum Target {
     /// with the Luau toolchain.
     #[default]
     Luau,
+    /// Plain Lua 5.1 (`.lua`) — what the embedded LuaJIT runtime executes.
+    /// Used by `neoc run`; not selectable by name.
+    Lua,
 }
 
 impl Target {
@@ -52,6 +56,7 @@ impl Target {
     pub fn extension(self) -> &'static str {
         match self {
             Target::Luau => "luau",
+            Target::Lua => "lua",
         }
     }
 }
@@ -60,6 +65,7 @@ impl std::fmt::Display for Target {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Target::Luau => "luau",
+            Target::Lua => "lua",
         })
     }
 }
@@ -766,6 +772,20 @@ struct Emitted {
 /// it to track spans and returns a real [`SourceMap`] (#56).
 fn emit(target: Target, module: &ast::Module, source: &str, inputs: &EmitInputs) -> Emitted {
     match target {
+        Target::Lua => {
+            let r = codegen_lua::emit_with_imports(
+                module,
+                source,
+                &inputs.enums,
+                &inputs.externs,
+                inputs.as_module,
+            );
+            Emitted {
+                output: r.lua,
+                messages: r.diagnostics.into_iter().map(|d| d.message).collect(),
+                source_map: SourceMap(r.source_map),
+            }
+        }
         Target::Luau => {
             // A self-typed `.luau` is self-contained: it inlines the runtime and
             // its own `Result`/`Option` type aliases (no sidecar). Reuses

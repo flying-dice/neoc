@@ -174,13 +174,13 @@ describe("diff", function()
             -- With context=0, no equal context lines flank the change.
             local equals_zero = 0
             for _, ln in ipairs(r0.hunks[1].lines) do
-                if ln.op == "equal" then equals_zero += 1 end
+                if ln.op == "equal" then equals_zero = equals_zero + 1 end
             end
             expect(equals_zero).toBe(0)
             -- With context=3, both sides see 3 equal context lines.
             local equals_three = 0
             for _, ln in ipairs(r3.hunks[1].lines) do
-                if ln.op == "equal" then equals_three += 1 end
+                if ln.op == "equal" then equals_three = equals_three + 1 end
             end
             expect(equals_three).toBe(6)
         end)

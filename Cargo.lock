@@ -2204,16 +2204,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
 
 [[package]]
-name = "libloading"
-version = "0.8.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55"
-dependencies = [
- "cfg-if",
- "windows-link",
-]
-
-[[package]]
 name = "libm"
 version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2329,15 +2319,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "luau0-src"
-version = "0.12.3+luau663"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76ae337c644bbf86a8d8e9ce3ee023311833d41741baf5e51acc31b37843aba1"
-dependencies = [
- "cc",
-]
-
-[[package]]
 name = "matchers"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2445,7 +2426,6 @@ dependencies = [
  "either",
  "erased-serde",
  "futures-util",
- "libloading",
  "mlua-sys",
  "mlua_derive",
  "num-traits",
@@ -2466,7 +2446,6 @@ dependencies = [
  "cfg-if",
  "lua-src",
  "luajit-src",
- "luau0-src",
  "pkg-config",
 ]
 

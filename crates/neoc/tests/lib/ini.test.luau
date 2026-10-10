@@ -41,8 +41,8 @@ describe("ini.parse", function()
     test("empty input", function()
         local result = ini.parse("")
         local count = 0
-        for _ in result do
-            count += 1
+        for _ in pairs(result) do
+            count = count + 1
         end
         expect(count).toBe(0)
     end)
@@ -50,8 +50,8 @@ describe("ini.parse", function()
     test("comments only", function()
         local result = ini.parse("; comment\n# another")
         local count = 0
-        for _ in result do
-            count += 1
+        for _ in pairs(result) do
+            count = count + 1
         end
         expect(count).toBe(0)
     end)

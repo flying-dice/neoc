@@ -24,7 +24,7 @@ describe("archive", function()
     -- tar: in-memory round-trip ------------------------------------------------
 
     describe("tar bytes round-trip", function()
-        for _, comp in { "none", "gzip", "zstd" } do
+        for _, comp in ipairs({ "none", "gzip", "zstd" }) do
             test(comp .. " round-trips name, size, and content", function()
                 local dir, root = scratch()
                 local blob, err = archive.tar_create_bytes({
@@ -62,7 +62,7 @@ describe("archive", function()
 
         test("read auto-detects compression regardless of how it was made", function()
             local dir, root = scratch()
-            for _, comp in { "none", "gzip", "zstd" } do
+            for _, comp in ipairs({ "none", "gzip", "zstd" }) do
                 local blob = archive.tar_create_bytes({
                     { path = root .. "/main.lua" },
                 }, { compression = comp })
@@ -212,7 +212,7 @@ describe("archive", function()
             local entries = archive.zip_list_bytes(blob)
             expect(#entries).toBe(2)
             -- Highly compressible entry: ratio is a real number well under 1.
-            for _, e in entries do
+            for _, e in ipairs(entries) do
                 if e.name == "a.txt" then
                     expect(e.size).toBe(1000)
                     expect(e.compression_ratio < 1).toBeTruthy()

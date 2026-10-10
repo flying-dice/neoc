@@ -5,6 +5,7 @@ local test     = _t.test
 local expect   = _t.expect
 
 local task = require("std:task")
+local time = require("std:time")
 
 describe("std:task", function()
 
@@ -13,11 +14,11 @@ describe("std:task", function()
     describe("task.wait", function()
         test("returns elapsed >= requested", function()
             local h = task.spawn(function()
-                local start = os.clock()
+                local start = time.now()
                 local elapsed = task.wait(0.05)
                 expect(elapsed >= 0.05).toBe(true)
                 expect(elapsed < 0.15).toBe(true)  -- soft: CI jitter 100ms budget
-                expect(os.clock() - start >= 0.05).toBe(true)
+                expect(start:elapsed():as_millis() >= 50).toBe(true)
             end)
             h:await()
         end)
@@ -207,10 +208,10 @@ describe("std:task", function()
 
         test("delay fires after secs", function()
             local h = task.spawn(function()
-                local start = os.clock()
+                local start = time.now()
                 local dh = task.delay(0.05, function() end)
                 dh:await()
-                expect(os.clock() - start >= 0.05).toBe(true)
+                expect(start:elapsed():as_millis() >= 50).toBe(true)
             end)
             h:await()
         end)

@@ -7,7 +7,7 @@ local crypto = require("lib:crypto")
 local hex    = require("lib:hex")
 
 -- Convert raw bytes to lowercase hex for readable assertions.
-local function to_hex(bytes: string): string
+local function to_hex(bytes)
     local parts = {}
     for i = 1, #bytes do
         parts[i] = string.format("%02x", string.byte(bytes, i))
@@ -136,7 +136,7 @@ describe("crypto", function()
             local key = string.rep("k", 32)
             local nonce = string.rep("n", 12)
             local ct = assert(crypto.encrypt("chacha20_poly1305", key, nonce, "msg"))
-            local tampered = string.char(bit32.bxor(string.byte(ct, 1), 1))
+            local tampered = string.char(bit.bxor(string.byte(ct, 1), 1))
                 .. string.sub(ct, 2)
             local pt, e = crypto.decrypt("chacha20_poly1305", key, nonce, tampered)
             expect(pt).toBeNil()

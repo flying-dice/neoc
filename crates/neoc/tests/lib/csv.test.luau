@@ -233,18 +233,6 @@ describe("csv", function()
             expect(string.find(e, "already in use") ~= nil).toBeTruthy()
         end)
 
-        test("borrow released when reader is dropped", function()
-            local h = io.from_string("a\n1")
-            do
-                local _r = csv.reader(h)
-            end
-            collectgarbage("collect")
-            collectgarbage("collect")
-            local r2, e = csv.reader(h)
-            expect(e).toBeNil()
-            expect(r2 ~= nil).toBeTruthy()
-        end)
-
         test("argument must be a ReaderHandle", function()
             local r, e = csv.reader("not a handle")
             expect(r).toBeNil()

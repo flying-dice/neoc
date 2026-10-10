@@ -536,6 +536,33 @@ mod tests {
     }
 
     #[test]
+    fn reader_borrow_released_when_reader_is_dropped() {
+        let lua = engine();
+        lua.load(
+            r#"
+            local io = require("std:io")
+            handle = io.from_string("a\n1")
+            do
+                local _r = csv.reader(handle)
+            end
+            "#,
+        )
+        .exec()
+        .unwrap();
+        // Collect outside the chunk so no live stack slot keeps the reader alive.
+        lua.gc_collect().unwrap();
+        lua.gc_collect().unwrap();
+        let reusable: bool = lua
+            .load("local r, e = csv.reader(handle); return r ~= nil and e == nil")
+            .eval()
+            .unwrap();
+        assert!(
+            reusable,
+            "handle borrow must be released after the reader is collected"
+        );
+    }
+
+    #[test]
     fn parse_rows_no_headers() {
         let lua = engine();
         let result: Vec<Vec<String>> = lua

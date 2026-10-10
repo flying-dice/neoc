@@ -71,6 +71,7 @@ use mlua::{
 use parking_lot::RwLock;
 
 use crate::lua::facade::Module;
+use crate::lua::sandbox::i64_to_lua;
 
 // ---------------------------------------------------------------------------
 // JsonValue — pure-std representation
@@ -677,10 +678,7 @@ fn json_scalar_to_lua(lua: &Lua, v: &JsonValue) -> mlua::Result<Option<Value>> {
     match v {
         JsonValue::Null => Ok(Some(null_handle(lua)?)),
         JsonValue::Bool(b) => Ok(Some(Value::Boolean(*b))),
-        JsonValue::Int(i) => Ok(Some(match i32::try_from(*i) {
-            Ok(i32v) => Value::Integer(i32v),
-            Err(_) => Value::Number(*i as f64),
-        })),
+        JsonValue::Int(i) => Ok(Some(i64_to_lua(*i))),
         JsonValue::Float(f) => Ok(Some(Value::Number(*f))),
         JsonValue::String(s) => Ok(Some(Value::String(lua.create_string(s)?))),
         JsonValue::Object(_) | JsonValue::Array(_) => Ok(None),
