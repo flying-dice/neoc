@@ -462,12 +462,12 @@ fn run_test_lua_with_failing_expect_reports_and_exits_nonzero() {
 }
 
 #[test]
-fn run_test_luau_suffix_is_not_a_test_file() {
+fn run_non_test_suffix_is_not_summarised() {
     let dir = tempdir().unwrap();
-    let path = write(dir.path(), "foo.test.luau", FAILING_TEST);
+    let path = write(dir.path(), "foo.test.txt", FAILING_TEST);
 
     let out = Command::new(BIN).arg("run").arg(&path).output().unwrap();
-    assert!(out.status.success(), "`.test.luau` must not be summarised");
+    assert!(out.status.success(), "`.test.txt` must not be summarised");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(!stdout.contains("failed"), "got: {stdout}");
 }

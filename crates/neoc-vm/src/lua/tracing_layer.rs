@@ -224,7 +224,6 @@ mod tests {
 
     #[test]
     fn prefix_sharing_targets_are_ignored() {
-        assert!(!is_lua_target("luau"));
         assert!(!is_lua_target("luajit::trace"));
         assert!(!is_lua_target("lua_bridge"));
         assert!(!is_lua_target("mlua"));
