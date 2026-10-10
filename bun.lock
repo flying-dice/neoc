@@ -5,12 +5,12 @@
     "": {
       "name": "neoc",
     },
-    "packages/luau-notes": {
-      "name": "@neoc-sh/demo-luau-notes",
+    "packages/lua-notes": {
+      "name": "@neoc-sh/demo-lua-notes",
       "version": "0.1.0",
     },
   },
   "packages": {
-    "@neoc-sh/demo-luau-notes": ["@neoc-sh/demo-luau-notes@workspace:packages/luau-notes"],
+    "@neoc-sh/demo-lua-notes": ["@neoc-sh/demo-lua-notes@workspace:packages/lua-notes"],
   }
 }

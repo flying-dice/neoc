@@ -1,15 +1,15 @@
 // The application, in pure neoc — the controllers.
 //
-// Raw Luau (the `luau` CLI) has no HTTP or database, so this is the same
+// Raw Lua (LuaJIT) has no HTTP or database, so this is the same
 // ports-and-adapters model as the http-sqlite examples with a runtime-
 // appropriate port: an in-memory `Store`. neoc owns the controllers and the
-// `Store` port; the Luau host implements the port (a table) and drives. The
+// `Store` port; the Lua host implements the port (a table) and drives. The
 // port speaks only primitives (string / number), so the host never constructs
-// a neoc value. `neoc build` transpiles this to `src/main/luau/main.luau`, a
+// a neoc value. `neoc build` transpiles this to `src/main/lua/main.lua`, a
 // requireable module.
 
 // The storage port — the host implements it over whatever it likes (here a
-// Luau table). Primitives only, by design.
+// Lua table). Primitives only, by design.
 pub trait Store {
     fn add(self, body: string) -> number;
     fn count(self) -> number;

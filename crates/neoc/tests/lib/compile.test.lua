@@ -23,7 +23,7 @@ describe("compile", function()
 
     describe("bundle", function()
         test("bundles an entrypoint into a self-contained executable", function()
-            local script = unique_path("entry.luau")
+            local script = unique_path("entry.lua")
             local output = unique_path("out")
             fs.write(script, 'print("bundled-ok")')
 
@@ -42,7 +42,7 @@ describe("compile", function()
 
         test("returns (nil, err) for missing entrypoint", function()
             local ok, err = compile.bundle({
-                entrypoint = "/nonexistent-path.luau",
+                entrypoint = "/nonexistent-path.lua",
                 output     = unique_path("nope"),
             })
             expect(ok).toBeNil()

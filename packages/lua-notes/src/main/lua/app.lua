@@ -1,6 +1,6 @@
--- The application host, in raw Luau — the entry point and the driver.
+-- The application host, in raw Lua — the entry point and the driver.
 --
--- `luau` has no HTTP or database, so this is a console app: the same
+-- `luajit` has no HTTP or database, so this is a console app: the same
 -- ports-and-adapters model as the http-sqlite examples, fitted to the runtime.
 -- neoc owns the controllers + the `Store` port; this host implements the port
 -- (an in-memory table) and drives, then prints. It imports the controllers from

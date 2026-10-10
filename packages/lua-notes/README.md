@@ -1,17 +1,17 @@
-# luau-notes
+# lua-notes
 
-A notes app on **raw Luau** (the `luau` CLI), built on **ports & adapters**.
+A notes app on **raw Lua** (LuaJIT), built on **ports & adapters**.
 
-Raw Luau has no HTTP server and no database, so this is a console app and the
+Raw Lua has no HTTP server and no database, so this is a console app and the
 storage port is an **in-memory `Store`**: neoc owns the controllers + the port;
-the Luau host implements the port and drives.
+the Lua host implements the port and drives.
 
 ## How it's wired
 
 ```
         implements the Store port              calls; gets strings back
   ┌──────────────────────────────┐      ┌──────────────────────────────┐
-  │  host  app.luau  (raw Luau)   │ ───▶ │  neoc controllers  main.lua  │
+  │  host  app.lua  (raw Lua)     │ ───▶ │  neoc controllers  main.lua  │
   │  • Store = in-memory table    │      │  create / list               │
   │    (add / count / at)         │ ◀─── │  (generic over Store)        │
   │  • drives + print()s          │      │  call store:add / :count/:at │
@@ -25,8 +25,8 @@ the Luau host implements the port and drives.
    host never constructs a neoc value.
 2. **`neoc build`** transpiles the project (target `lua`) to `src/auto/lua/main.lua` —
    a requireable module that ends with `return { create = create, list = list }`.
-3. **`src/main/luau/app.luau`** — the host. It implements `Store` as an in-memory
-   Luau table (neoc's `store.add(b)` lowers to the colon call `store:add(b)`, so
+3. **`src/main/lua/app.lua`** — the host. It implements `Store` as an in-memory
+   Lua table (neoc's `store.add(b)` lowers to the colon call `store:add(b)`, so
    the methods take `self`), `require`s the controllers, drives a short sequence,
    and `print`s the results.
 
@@ -37,7 +37,7 @@ back** into the `Store` port the host implements — on a runtime with no I/O.
 
 ```sh
 bun run build    # neoc build (emits src/auto/lua/main.lua)
-bun run start    # luau src/main/luau/app.luau
+bun run start    # luajit src/main/lua/app.lua
 ```
 
 ```

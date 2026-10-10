@@ -83,7 +83,7 @@ describe("serde_yaml", function()
         end)
 
         test("decodes null field as the JSON-null sentinel (not Lua nil)", function()
-            -- See the matching note in serde_json.test.luau: null lands as
+            -- See the matching note in serde_json.test.lua: null lands as
             -- a sentinel userdata, not nil, because decode goes through
             -- `mlua::LuaSerdeExt::to_value`.
             local val, err = serde_yaml.decode_string("key: null\n")

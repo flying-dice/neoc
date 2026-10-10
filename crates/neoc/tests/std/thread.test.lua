@@ -46,7 +46,7 @@ describe("thread", function()
 
         test("spawn from file with bidirectional messaging", function()
             local w = thread.spawn({
-                file = "crates/neoc/tests/std/thread_worker.luau",
+                file = "crates/neoc/tests/std/thread_worker.lua",
                 args = { n = 7 },
             })
             -- Worker sends a greeting, waits for "ack", replies, then returns.
@@ -57,9 +57,9 @@ describe("thread", function()
         end)
 
         test("missing file returns clear error", function()
-            local w, err = thread.spawn({ file = "tests/__does_not_exist.luau" })
+            local w, err = thread.spawn({ file = "tests/__does_not_exist.lua" })
             expect(w).toBeNil()
-            expect(err).toContain("read tests/__does_not_exist.luau:")
+            expect(err).toContain("read tests/__does_not_exist.lua:")
         end)
 
         test("workers have full lib access and shared state", function()

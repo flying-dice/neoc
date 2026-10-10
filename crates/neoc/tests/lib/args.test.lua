@@ -125,7 +125,7 @@ describe("args.parse", function()
     end)
 
     test("subcommand scoped namespace", function()
-        local parsed = args.parse({ "build", "--output=out.txt", "src/main.luau" }, {
+        local parsed = args.parse({ "build", "--output=out.txt", "src/main.lua" }, {
             name = "mytool",
             subcommands = {
                 build = { flags = { output = { type = "string" } } },
@@ -134,7 +134,7 @@ describe("args.parse", function()
         })
         expect(parsed.subcommand).toBe("build")
         expect(parsed.build.output).toBe("out.txt")
-        expect(parsed.build.positional[1]).toBe("src/main.luau")
+        expect(parsed.build.positional[1]).toBe("src/main.lua")
     end)
 
     test("unknown subcommand errors", function()
@@ -217,13 +217,13 @@ describe("args.help", function()
     test("renders header, flags, and built-in help", function()
         local text = args.help({
             name = "mytool",
-            description = "Build and deploy Luau projects",
+            description = "Build and deploy Lua projects",
             flags = {
                 verbose = { short = "v", type = "boolean", desc = "Enable verbose output" },
                 output = { short = "o", type = "string", desc = "Output file path" },
             },
         })
-        expect(text).toContain("Build and deploy Luau projects")
+        expect(text).toContain("Build and deploy Lua projects")
         expect(text).toContain("--verbose")
         expect(text).toContain("Enable verbose output")
         expect(text).toContain("--output")

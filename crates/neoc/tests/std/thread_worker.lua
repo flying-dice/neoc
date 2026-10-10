@@ -1,6 +1,6 @@
 local thread = require("std:thread")
 
--- Worker script used by tests/std/thread.test.luau to exercise the `file` option.
+-- Worker script used by tests/std/thread.test.lua to exercise the `file` option.
 -- Args arrive as the first vararg (Node `workerData` style); `thread.parent`
 -- is the bidirectional channel back to the spawner.
 
