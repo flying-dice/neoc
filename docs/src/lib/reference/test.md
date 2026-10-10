@@ -8,7 +8,7 @@ Lua test runner. Registers test cases, runs them, reports pass/fail with asserti
 |---|---|
 | Namespace | `lib` |
 | Source | [`src/lua/lib/test.rs`](https://github.com/flying-dice/neoc/blob/main/src/lua/lib/test.rs) |
-| Tests | [`tests/lib/test.test.lua`](https://github.com/flying-dice/neoc/blob/main/tests/lib/test.test.lua) |
+| Tests | None |
 | Stability | Experimental |
 
 ## Syntax

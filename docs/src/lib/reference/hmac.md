@@ -8,7 +8,7 @@ Keyed-hash message authentication codes — HMAC over SHA-256 / SHA-384 / SHA-51
 |---|---|
 | Namespace | `lib` |
 | Source | [`src/lua/lib/hmac.rs`](https://github.com/flying-dice/neoc/blob/main/src/lua/lib/hmac.rs) |
-| Tests | [`tests/lib/hmac.test.lua`](https://github.com/flying-dice/neoc/blob/main/tests/lib/hmac.test.lua) |
+| Tests | [`crates/neoc/tests/lib/hmac.test.lua`](https://github.com/flying-dice/neoc/blob/main/crates/neoc/tests/lib/hmac.test.lua) |
 | Stability | Experimental |
 | Mirror | Python `hmac`; Node `crypto.createHmac`; Go `crypto/hmac` |
 

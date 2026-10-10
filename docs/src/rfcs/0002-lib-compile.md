@@ -77,7 +77,7 @@ Payload cap: 4 GiB (u32 length). Not a practical constraint for Lua.
 
 ### Payload: raw source (v1)
 
-v1 embeds raw Lua source. Bytecode pre-compilation would skip compiler at launch but requires LuaJIT bytecode dump bindings + added complexity. Deferred.
+v1 embeds raw Lua source. Bytecode embedding rejected: LuaJIT does not verify bytecode, so a crafted chunk corrupts memory and escapes the sandbox. All script entry points load text only (`crates/neoc-vm/src/lua/sandbox.rs`).
 
 ### Cross-compilation (v1)
 

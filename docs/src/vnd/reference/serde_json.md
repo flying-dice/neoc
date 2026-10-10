@@ -8,7 +8,7 @@ JSON parsing/serialisation via [`serde_json`](https://crates.io/crates/serde_jso
 |---|---|
 | Namespace | `vnd` |
 | Source | [`src/lua/vnd/serde_json.rs`](https://github.com/flying-dice/neoc/blob/main/src/lua/vnd/serde_json.rs) |
-| Tests | [`tests/vnd/serde_json.test.lua`](https://github.com/flying-dice/neoc/blob/main/tests/vnd/serde_json.test.lua) |
+| Tests | [`crates/neoc/tests/vnd/serde_json.test.lua`](https://github.com/flying-dice/neoc/blob/main/crates/neoc/tests/vnd/serde_json.test.lua) |
 | Stability | Experimental |
 | Mirror | [`serde_json`](https://docs.rs/serde_json/) |
 

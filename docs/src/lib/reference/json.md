@@ -8,7 +8,7 @@ Structural handles for JSON documents. Two userdata types — Object and Array �
 |---|---|
 | Namespace | `lib` |
 | Source | [`src/lua/lib/json.rs`](https://github.com/flying-dice/neoc/blob/main/src/lua/lib/json.rs) |
-| Tests | [`tests/lib/json.test.lua`](https://github.com/flying-dice/neoc/blob/main/tests/lib/json.test.lua) |
+| Tests | [`crates/neoc/tests/lib/json.test.lua`](https://github.com/flying-dice/neoc/blob/main/crates/neoc/tests/lib/json.test.lua) |
 | Stability | Stable |
 | Sharable | No — Object, Array, `json.null` are not Sendable |
 
@@ -153,7 +153,7 @@ obj:set("missing", json.null)
 
 ## Acceptance
 
-Exercised by [`tests/lib/json.test.lua`](https://github.com/flying-dice/neoc/blob/main/tests/lib/json.test.lua):
+Exercised by [`crates/neoc/tests/lib/json.test.lua`](https://github.com/flying-dice/neoc/blob/main/crates/neoc/tests/lib/json.test.lua):
 
 1. **Constructors.** `json.object()`/`json.array()` → empty, `:len()` == 0.
 2. **Round-trip.** `serde_json.from_str('{"a":1}')` → Object, `:get("a")` == 1.

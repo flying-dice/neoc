@@ -19,14 +19,13 @@ Facts:
 
 - The Lua 5.1 emitter (`neoc-codegen-lua`) already existed and defines the lowering in `lang/DYNAMIC.md`.
 - LuaJIT runs Lua 5.1 directly and is bindable from Rust via [`mlua`](https://docs.rs/mlua/) `luajit`.
-- LuaJIT is substantially faster than the Luau interpreter on the workloads neoc scripts run.
 - LuaJIT is a mature, widely embedded runtime.
 
 ## Decision
 
 `neoc` embeds LuaJIT through `mlua`'s `luajit` feature. `lua` (Lua 5.1, `.lua`) is the only compile target. One runtime, one target.
 
-The sandbox loads an explicit standard-library set (base, `coroutine`, `table`, `string`, `math`, `bit`) and strips unsafe globals (`load`, `loadstring`, `dofile`, `loadfile`, `getfenv`, `setfenv`, `newproxy`, `module`, `collectgarbage`, `gcinfo`, `string.dump`). `io`, `os`, `package`, `debug`, `ffi`, and `jit` are unavailable to scripts. See [ADR 0002](/adrs/0002-strip-unsafe-lua-stdlib).
+The sandbox amends [ADR 0002](/adrs/0002-strip-unsafe-lua-stdlib) for LuaJIT; 0002 holds the strip list.
 
 Conformance run-trials execute in-process on the same LuaJIT sandbox.
 
@@ -34,8 +33,8 @@ Conformance run-trials execute in-process on the same LuaJIT sandbox.
 
 - One runtime and one target: nothing to choose, so nothing to choose wrongly.
 - No typed output. Declared neoc types are enforced by runtime checks (`lang/DYNAMIC.md` §9), not by an emitted type layer.
-- Numbers are doubles only. There is no native `i64`; integers beyond 2^53 lose precision.
+- Numbers are doubles only, unchanged from ADR 0001. There is no native `i64`; integers beyond 2^53 lose precision.
 - No `buffer` type. Binary data is Lua strings.
-- `ffi`, `jit`, and `debug` are unavailable to scripts; the sandbox is an allow-list, not a deny-list.
+- `ffi`, `jit`, and `debug` are unavailable to scripts; the library set is an allow-list; base globals are a deny-list (`STRIPPED_GLOBALS`).
 - Gated on `mlua` upstream's continued LuaJIT support.
 - `vendored` builds LuaJIT into the binary: no system Lua dependency; a C toolchain is required at build time.

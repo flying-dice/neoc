@@ -196,7 +196,7 @@ Removed entirely:
 ## Drawbacks
 
 - **Breaking change.** All scripts using `workers.shared` must rewrite to spawn-time handoff. Migration plan stages across multiple PRs — `main` stays green.
-- **Discoverability.** `Concurrent*` or `std:sync` → naming convention IS documentation. Sendable model requires docs or spawn-time error to learn boundary. Mitigation: clear errors + `.d.lua` type stubs.
+- **Discoverability.** `Concurrent*` or `std:sync` → naming convention IS documentation. Sendable model requires docs or spawn-time error to learn boundary. Mitigation: clear errors + `.d.luau` type stubs.
 - **No static checking.** Swift enforces `Sendable` at compile time; we enforce at spawn time (runtime check). Error is immediate and clear but not caught before execution. Inherent to dynamic typing — acceptable tradeoff.
 
 ## Alternatives

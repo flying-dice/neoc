@@ -9,7 +9,7 @@ Date: 2026-05-03
 
 ## Status
 
-Accepted
+Accepted. Amended by [ADR 0011](/adrs/0011-use-luajit-as-the-embedded-runtime) (2026-10-10): LuaJIT strip list.
 
 ## Context
 

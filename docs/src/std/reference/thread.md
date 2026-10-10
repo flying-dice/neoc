@@ -8,7 +8,7 @@ Thread-local primitives and `sleep`.
 |---|---|
 | Namespace | `std` |
 | Source | [`src/lua/std/thread.rs`](https://github.com/flying-dice/neoc/blob/main/src/lua/std/thread.rs) |
-| Tests | [`tests/std/thread.test.lua`](https://github.com/flying-dice/neoc/blob/main/tests/std/thread.test.lua) |
+| Tests | [`crates/neoc/tests/std/thread.test.lua`](https://github.com/flying-dice/neoc/blob/main/crates/neoc/tests/std/thread.test.lua) |
 | Stability | Experimental |
 | Mirror | [`std::thread`](https://doc.rust-lang.org/std/thread/) |
 

@@ -8,7 +8,7 @@ TOML parsing/serialisation via [`toml`](https://crates.io/crates/toml).
 |---|---|
 | Namespace | `vnd` |
 | Source | [`src/lua/vnd/toml.rs`](https://github.com/flying-dice/neoc/blob/main/src/lua/vnd/toml.rs) |
-| Tests | [`tests/vnd/toml.test.lua`](https://github.com/flying-dice/neoc/blob/main/tests/vnd/toml.test.lua) |
+| Tests | [`crates/neoc/tests/vnd/toml.test.lua`](https://github.com/flying-dice/neoc/blob/main/crates/neoc/tests/vnd/toml.test.lua) |
 | Stability | Experimental |
 | Mirror | [`toml`](https://docs.rs/toml/) |
 

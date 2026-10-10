@@ -8,7 +8,7 @@ Cryptographically secure random bytes, ints, strings, tokens, and UUIDs (v4 / v7
 |---|---|
 | Namespace | `lib` |
 | Source | [`src/lua/lib/random.rs`](https://github.com/flying-dice/neoc/blob/main/src/lua/lib/random.rs) |
-| Tests | [`tests/lib/random.test.lua`](https://github.com/flying-dice/neoc/blob/main/tests/lib/random.test.lua) |
+| Tests | [`crates/neoc/tests/lib/random.test.lua`](https://github.com/flying-dice/neoc/blob/main/crates/neoc/tests/lib/random.test.lua) |
 | Stability | Experimental |
 | Mirror | Python `secrets` + `uuid`; Node `crypto` |
 

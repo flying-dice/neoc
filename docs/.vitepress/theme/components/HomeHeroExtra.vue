@@ -165,7 +165,7 @@ function copy(which: 'install' | 'script', text: string) {
           :class="['hhx-tab', { active: example === 'test' }]"
           @click="example = 'test'"
         >test</button>
-        <span class="hhx-tab-shell">LuaJIT</span>
+        <span class="hhx-tab-shell">Lua</span>
       </div>
 
       <div class="hhx-script">
