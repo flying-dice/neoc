@@ -5,7 +5,9 @@ stages:
   - release
   - pages
 
-image: rust:1-bookworm
+# Exact toolchain pin — must match rust-toolchain.toml. Bump both in one MR and
+# fix any new lint fallout there (#98).
+image: rust:1.98.0-bookworm
 
 default:
   before_script:
@@ -169,19 +171,40 @@ build:windows-x86_64:
 # (v*.*.*). upload pushes binaries to the Generic Package Registry for permanent
 # URLs; attach adds those links to the release-plz-created GitLab Release.
 
-release-plz:
-  stage: release
-  # Uses the default rust:1-bookworm image — release-plz needs cargo to read
-  # CARGO_HOME is set to /tmp so that cargo's registry and the release-plz
-  # binary land outside the project directory. The project dir must be clean
-  # (no untracked files) for release-plz to compute the next version.
-  #
-  # GIT_DEPTH: 0 — full clone so release-plz can see all tags.
-  # git checkout — CI checks out detached HEAD; release-plz needs a branch ref.
-  dependencies: []
+# Shared by `release-plz` and `release-plz:config` via `extends`: one version,
+# one digest, one install script — both jobs run the same verified binary.
+# Pinned to v0.3.157 — v0.3.158 breaks check_publish_fields for
+# publish=false workspaces. https://github.com/release-plz/release-plz/issues/2693
+# Bump RELEASE_PLZ_VERSION and RELEASE_PLZ_SHA256 together (digest of the
+# x86_64-unknown-linux-gnu tarball, as listed on the GitHub release asset).
+#
+# GIT_DEPTH: 0 — full clone so release-plz can see all tags.
+# CARGO_HOME is set to /tmp so that cargo's registry and the release-plz
+# binary land outside the project directory. The project dir must be clean
+# (no untracked files) for release-plz to compute the next version.
+.release-plz-base:
   variables:
     GIT_DEPTH: 0
     CARGO_HOME: /tmp/cargo
+    RELEASE_PLZ_VERSION: "0.3.157"
+    RELEASE_PLZ_SHA256: e9ec7c7e86ef364a5c19197c48b8e084ada60dc27382643ad19fafc68b441c34
+  # Pulled into each job's before_script via !reference; jobs define their own
+  # `script`, which overrides this one under `extends`.
+  script:
+    - mkdir -p "$CARGO_HOME/bin"
+    - export PATH="$CARGO_HOME/bin:$PATH"
+    - |
+      curl -fsSL -o /tmp/release-plz.tar.gz \
+        "https://github.com/release-plz/release-plz/releases/download/release-plz-v${RELEASE_PLZ_VERSION}/release-plz-x86_64-unknown-linux-gnu.tar.gz"
+    - echo "${RELEASE_PLZ_SHA256}  /tmp/release-plz.tar.gz" | sha256sum -c -
+    - tar -xzf /tmp/release-plz.tar.gz -C "$CARGO_HOME/bin/"
+
+release-plz:
+  extends: .release-plz-base
+  stage: release
+  # Uses the default rust image — release-plz needs cargo to read the workspace.
+  # git checkout — CI checks out detached HEAD; release-plz needs a branch ref.
+  dependencies: []
   before_script:
     # -B resets the branch to HEAD so a stale local branch ref on the reused
     # runner workspace can't shadow the fresh commit GitLab just checked out.
@@ -192,20 +215,52 @@ release-plz:
     # release-plz creates commits on the release MR branch — needs an identity.
     - git config user.email "${RELEASE_PLZ_BOT_EMAIL}"
     - git config user.name "release-plz"
-    - mkdir -p "$CARGO_HOME/bin"
-    - export PATH="$CARGO_HOME/bin:$PATH"
-    # Pinned to v0.3.157 — v0.3.158 breaks check_publish_fields for
-    # publish=false workspaces. https://github.com/release-plz/release-plz/issues/2693
-    - |
-      curl -sSL \
-        "https://github.com/release-plz/release-plz/releases/download/release-plz-v0.3.157/release-plz-x86_64-unknown-linux-gnu.tar.gz" \
-        | tar -xz -C "$CARGO_HOME/bin/"
+    - !reference [.release-plz-base, script]
   script:
     - release-plz release --git-token "$RELEASE_PLZ_TOKEN" --forge gitlab
     - release-plz release-pr --git-token "$RELEASE_PLZ_TOKEN" --forge gitlab
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: on_success
+
+# Pre-merge guard for release-plz.toml. The real `release-plz` job is gated to
+# the default branch, so a config regression would only surface on main. This
+# runs the pinned binary's `update` (local only — no forge token, no push, no
+# publish) on any branch that touches the release config, and asserts that the
+# resolved package set is exactly `neoc`. The ~3 min cost is the
+# `cargo package` verify that git_only mode performs.
+#
+# `changes` compares against main, not the previous push: a branch that broke
+# the config in push 1 still runs the guard on a source-only push 2.
+# release-plz-* branches are skipped: the release MR is written by the same
+# pinned binary from the config already validated on main, and never edits
+# release-plz.toml.
+release-plz:config:
+  extends: .release-plz-base
+  stage: release
+  needs: []
+  dependencies: []
+  before_script:
+    # CI checks out a detached HEAD; release-plz needs a branch ref.
+    - git checkout -B "$CI_COMMIT_BRANCH"
+    - !reference [.release-plz-base, script]
+  script:
+    # Log outside the work tree: release-plz refuses to run on a dirty tree.
+    - release-plz update --config release-plz.toml -vv > /tmp/release-plz.log 2>&1 || { cat /tmp/release-plz.log; exit 1; }
+    - 'grep -F "Release order:" /tmp/release-plz.log'
+    - 'grep -qF "Release order: [PackageName(\"neoc\")]" /tmp/release-plz.log'
+  rules:
+    - if: $CI_COMMIT_BRANCH =~ /^release-plz-/
+      when: never
+    - if: $CI_COMMIT_BRANCH && $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH
+      changes:
+        paths:
+          - release-plz.toml
+          - .gitlab-ci.yml
+          - Cargo.toml
+          - crates/*/Cargo.toml
+          - rust-toolchain.toml
+        compare_to: refs/heads/main
 
 upload-release-assets:
   stage: release
