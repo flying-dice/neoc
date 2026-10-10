@@ -2519,26 +2519,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "neoc-codegen-luau"
-version = "0.0.0"
-dependencies = [
- "cucumber",
- "futures",
- "neoc-ast",
- "neoc-codegen-lua",
- "neoc-parser",
-]
-
-[[package]]
 name = "neoc-compiler"
 version = "0.0.0"
 dependencies = [
  "cucumber",
  "futures",
  "libtest-mimic",
+ "mlua",
  "neoc-ast",
  "neoc-codegen-lua",
- "neoc-codegen-luau",
  "neoc-grammar",
  "neoc-macros",
  "neoc-parser",

@@ -21,7 +21,7 @@ fn main() { let _ = rusqlite::open(":memory:"); }
 
 #[test]
 fn lua_mod_imports_via_require_and_reads_member() {
-    let out = transpile(MOD_SOURCE, Target::Luau).output;
+    let out = transpile(MOD_SOURCE, Target::Lua).output;
     assert!(
         out.contains("local rusqlite = require(\"vnd:rusqlite\")"),
         "missing Lua require for the mod path:\n{out}"
@@ -52,7 +52,7 @@ fn main() {
 
 #[test]
 fn lua_extern_struct_literal_is_bare_table_and_constructor_is_static() {
-    let out = transpile(STRUCT_SOURCE, Target::Luau).output;
+    let out = transpile(STRUCT_SOURCE, Target::Lua).output;
     // Lua has no `new` operator: a constructor is a static/namespaced call.
     assert!(
         out.contains("Database.new(\":memory:\")"),
@@ -97,7 +97,7 @@ fn main() {
 
 #[test]
 fn lua_extern_struct_in_mod_constructs_through_require_binding() {
-    let out = transpile(MOD_STRUCT_SOURCE, Target::Luau).output;
+    let out = transpile(MOD_STRUCT_SOURCE, Target::Lua).output;
     // The constructor qualifies through the `require` binding; only `sqlite` is
     // bound, so a bare `Database.new(...)` would read a nil global.
     assert!(
@@ -121,13 +121,13 @@ fn lua_extern_struct_in_mod_constructs_through_require_binding() {
 
 #[test]
 fn mod_struct_block_checks_clean() {
-    let out = transpile(MOD_STRUCT_SOURCE, Target::Luau);
+    let out = transpile(MOD_STRUCT_SOURCE, Target::Lua);
     assert!(out.ok(), "slice should check clean: {:#?}", out.diagnostics);
 }
 
 #[test]
 fn extern_block_checks_clean() {
-    let out = transpile(STRUCT_SOURCE, Target::Luau);
+    let out = transpile(STRUCT_SOURCE, Target::Lua);
     assert!(out.ok(), "slice should check clean: {:#?}", out.diagnostics);
 }
 
@@ -141,7 +141,7 @@ extern {
 }
 fn main() { console::log("hi"); }
 "#;
-    let out = transpile(src, Target::Luau).output;
+    let out = transpile(src, Target::Lua).output;
     assert!(
         !out.contains("require("),
         "ambient mod should emit no import:\n{out}"
@@ -157,7 +157,7 @@ fn top_level_extern_fn_is_a_bare_global() {
     // A top-level extern `fn` (not in a mod) is a host global: no import, bare
     // call.
     let src = "extern { fn print(s: string); }\nfn main() { print(\"hi\"); }\n";
-    let out = transpile(src, Target::Luau).output;
+    let out = transpile(src, Target::Lua).output;
     assert!(
         !out.contains("require("),
         "top-level extern fn should emit no import:\n{out}"
@@ -186,7 +186,7 @@ fn main() { let _ = serve(0); }
 
 #[test]
 fn lua_ambient_mod_fn_called_bare_qualifies_through_its_namespace() {
-    let out = transpile(MOD_FN_SOURCE, Target::Luau).output;
+    let out = transpile(MOD_FN_SOURCE, Target::Lua).output;
     assert!(
         !out.contains("require("),
         "ambient mod emits no require:\n{out}"

@@ -516,14 +516,14 @@ mod tests {
 
     #[test]
     fn map_lua_lines_rewrites_matching_chunk_frames_to_neoc_lines() {
-        // A `struct` forces the Luau backend to prepend an inline `type`
-        // preamble, shifting the body down — so an emitted line's number differs
-        // from its neoc origin, which is what makes the rewrite observable.
+        // The emitted module opens with the inlined runtime preamble, shifting the
+        // body down — so an emitted line's number differs from its neoc origin,
+        // which is what makes the rewrite observable.
         let src = "struct Point { x: number }\npub fn read(p: Point) -> number {\n  p.x\n}\n";
-        let out = transpile(src, Target::Luau);
+        let out = transpile(src, Target::Lua);
         assert!(out.diagnostics.is_empty(), "{:#?}", out.diagnostics);
         let map = out.source_map;
-        assert!(!map.is_empty(), "a Luau transpile must carry a map");
+        assert!(!map.is_empty(), "a transpile must carry a map");
 
         // First emitted line whose origin differs from its own number — the
         // preamble shift guarantees one exists.

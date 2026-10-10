@@ -36,12 +36,12 @@ impl Drop for TempDir {
     }
 }
 
-/// Lays out a minimal Luau project: a manifest, an entry that `use`s a sibling,
+/// Lays out a minimal project: a manifest, an entry that `use`s a sibling,
 /// and the sibling itself. Returns the project root.
 fn scaffold(root: &Path) {
     fs::write(
         root.join("neoc.toml"),
-        "[package]\nname = \"demo\"\ntarget = \"luau\"\n",
+        "[package]\nname = \"demo\"\ntarget = \"lua\"\n",
     )
     .unwrap();
     let src = root.join("src").join("main").join("neoc");
@@ -62,7 +62,7 @@ fn build_discovers_root_resolves_sibling_and_preserves_paths() {
 
     let project = discover_project(root).unwrap().expect("found project");
     assert_eq!(project.name, "demo");
-    assert_eq!(project.target, Target::Luau);
+    assert_eq!(project.target, Target::Lua);
 
     // The entry resolves its `use greet::hello` against the source root.
     assert_eq!(resolution_root(&project.entry), project.source_root);
@@ -91,10 +91,10 @@ fn build_discovers_root_resolves_sibling_and_preserves_paths() {
     }
 
     // Output landed in src/auto/<target>/, one file per module, preserving names.
-    assert!(out_dir.join("main.luau").is_file(), "main.luau missing");
-    assert!(out_dir.join("greet.luau").is_file(), "greet.luau missing");
+    assert!(out_dir.join("main.lua").is_file(), "main.lua missing");
+    assert!(out_dir.join("greet.lua").is_file(), "greet.lua missing");
     // The source tree stays clean — nothing emitted into src/main/neoc.
-    assert!(!project.source_root.join("main.luau").exists());
+    assert!(!project.source_root.join("main.lua").exists());
 }
 
 #[test]
@@ -103,7 +103,7 @@ fn nested_module_path_is_preserved_into_output() {
     let root = tmp.path();
     fs::write(
         root.join("neoc.toml"),
-        "[package]\nname = \"demo\"\ntarget = \"luau\"\n",
+        "[package]\nname = \"demo\"\ntarget = \"lua\"\n",
     )
     .unwrap();
     let src = root.join("src").join("main").join("neoc");
@@ -135,6 +135,6 @@ fn nested_module_path_is_preserved_into_output() {
                 .to_path_buf()
         })
         .collect();
-    assert!(rels.contains(&PathBuf::from("main.luau")), "{rels:?}");
-    assert!(rels.contains(&PathBuf::from("a/b.luau")), "{rels:?}");
+    assert!(rels.contains(&PathBuf::from("main.lua")), "{rels:?}");
+    assert!(rels.contains(&PathBuf::from("a/b.lua")), "{rels:?}");
 }

@@ -30,8 +30,8 @@ pub enum Command {
         /// Write output under this directory instead of next to the source.
         #[arg(short, long, value_name = "DIR")]
         output: Option<PathBuf>,
-        /// Target language: `luau`. Defaults to the project's manifest target,
-        /// or `luau` for a lone file.
+        /// Target language: `lua`. Defaults to the project's manifest target,
+        /// or `lua` for a lone file.
         #[arg(short, long)]
         target: Option<Target>,
     },
@@ -268,7 +268,7 @@ fn build_project(
     let target = target.unwrap_or(project.target);
     // Output lands in `src/auto/<target>/` by default (the generated tree
     // mirroring `src/main/`), preserving the module's path under the source
-    // root (`src/main/neoc/a/b.neoc` → `src/auto/<target>/a/b.luau`). `-o`
+    // root (`src/main/neoc/a/b.neoc` → `src/auto/<target>/a/b.lua`). `-o`
     // overrides.
     let out_dir = output.map_or_else(|| project.output_dir(target), Path::to_path_buf);
 
@@ -678,8 +678,8 @@ mod tests {
 
     #[test]
     fn out_path_replaces_extension_next_to_source() {
-        let got = out_path(Path::new("src/foo.neoc"), None, Target::Luau);
-        assert_eq!(got, PathBuf::from("src/foo.luau"));
+        let got = out_path(Path::new("src/foo.neoc"), None, Target::Lua);
+        assert_eq!(got, PathBuf::from("src/foo.lua"));
     }
 
     #[test]
@@ -687,20 +687,20 @@ mod tests {
         let got = out_path(
             Path::new("src/nested/foo.neoc"),
             Some(Path::new("out")),
-            Target::Luau,
+            Target::Lua,
         );
-        assert_eq!(got, PathBuf::from("out/foo.luau"));
+        assert_eq!(got, PathBuf::from("out/foo.lua"));
     }
 
     #[test]
     fn project_out_path_preserves_path_under_source_root() {
         let got = project_out_path(
-            Path::new("/proj/src/main/neoc/a/b.luau"),
+            Path::new("/proj/src/main/neoc/a/b.lua"),
             Path::new("/proj/src/main/neoc"),
-            Path::new("/proj/src/main/luau"),
-            Target::Luau,
+            Path::new("/proj/src/main/lua"),
+            Target::Lua,
         );
-        assert_eq!(got, PathBuf::from("/proj/src/main/luau/a/b.luau"));
+        assert_eq!(got, PathBuf::from("/proj/src/main/lua/a/b.lua"));
     }
 
     #[test]
@@ -708,21 +708,21 @@ mod tests {
         let got = project_out_path(
             Path::new("/proj/src/main/neoc/main.neoc"),
             Path::new("/proj/src/main/neoc"),
-            Path::new("/proj/src/auto/luau"),
-            Target::Luau,
+            Path::new("/proj/src/auto/lua"),
+            Target::Lua,
         );
-        assert_eq!(got, PathBuf::from("/proj/src/auto/luau/main.luau"));
+        assert_eq!(got, PathBuf::from("/proj/src/auto/lua/main.lua"));
     }
 
     #[test]
     fn project_out_path_outside_source_root_falls_back_to_file_name() {
         let got = project_out_path(
-            Path::new("/elsewhere/x.luau"),
+            Path::new("/elsewhere/x.lua"),
             Path::new("/proj/src/main/neoc"),
-            Path::new("/proj/src/main/luau"),
-            Target::Luau,
+            Path::new("/proj/src/main/lua"),
+            Target::Lua,
         );
-        assert_eq!(got, PathBuf::from("/proj/src/main/luau/x.luau"));
+        assert_eq!(got, PathBuf::from("/proj/src/main/lua/x.lua"));
     }
 
     #[test]

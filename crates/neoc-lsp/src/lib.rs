@@ -1240,7 +1240,7 @@ mod tests {
         // `neoc.toml`, a `pub fn` in `geom.neoc`, and a `main.neoc` importing it
         // by the same `use geom::scale` path. Cross-file navigation must resolve
         // each file against its own project and never bleed into the other.
-        const MANIFEST: &str = "[package]\nname = \"app\"\ntarget = \"luau\"\n";
+        const MANIFEST: &str = "[package]\nname = \"app\"\ntarget = \"lua\"\n";
         let tmp = TempDir::new("nav");
         tmp.write("a/neoc.toml", MANIFEST);
         let a_geom = tmp.write(

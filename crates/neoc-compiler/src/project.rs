@@ -40,7 +40,7 @@ pub struct Project {
 impl Project {
     /// The build-output directory for `target`: `<root>/src/auto/<target>`. The
     /// generated `src/auto/` tree mirrors the hand-written `src/main/` tree, one
-    /// subdirectory per target (`src/auto/luau`); each module keeps its path
+    /// subdirectory per target (`src/auto/lua`); each module keeps its path
     /// under the source root (`src/main/neoc/a/b.neoc` →
     /// `src/auto/<target>/a/b.<ext>`).
     ///
@@ -88,7 +88,7 @@ struct Package {
 ///
 /// Returns [`Error::Project`] only when a manifest *is* found but is malformed:
 /// not valid TOML, missing `[package]`, missing `name`, or carrying a `target`
-/// that is not `"luau"`. A missing manifest is not an error.
+/// that is not `"lua"`. A missing manifest is not an error.
 pub fn discover_project(start: &Path) -> Result<Option<Project>, Error> {
     let mut dir: &Path = if start.is_dir() {
         start
@@ -123,10 +123,8 @@ fn load_project(root: &Path, manifest_path: &Path) -> Result<Project, Error> {
         // parse error at line N, column M"); `.message()` drops the location.
         .map_err(|e| Error::Project(format!("invalid `{MANIFEST}`: {e}")))?;
 
-    // `Target::from_str` already names the offending value and, for a target
-    // this release removed, the migration to `luau`. Prefix rather than replace
-    // it, so a manifest written against the old API keeps the pointer and still
-    // learns *where* the bad value lives.
+    // `Target::from_str` already names the offending value; prefix rather than
+    // replace it, so the author also learns *where* the bad value lives.
     let target: Target = manifest
         .package
         .target
@@ -202,7 +200,7 @@ mod tests {
     fn walk_up_finds_root_from_nested_file() {
         let tmp = TempDir::new("walk-up");
         let root = tmp.path();
-        write_manifest(root, "[package]\nname = \"app\"\ntarget = \"luau\"\n");
+        write_manifest(root, "[package]\nname = \"app\"\ntarget = \"lua\"\n");
         let nested = root.join("src").join("main").join("neoc").join("a");
         fs::create_dir_all(&nested).unwrap();
         let file = nested.join("b.neoc");
@@ -211,7 +209,7 @@ mod tests {
         let project = discover_project(&file).unwrap().expect("found project");
         assert_eq!(project.root, root);
         assert_eq!(project.name, "app");
-        assert_eq!(project.target, Target::Luau);
+        assert_eq!(project.target, Target::Lua);
     }
 
     #[test]
@@ -238,45 +236,6 @@ mod tests {
         assert!(msg.contains("wasm"), "{msg}");
         // No host parser jargon leaks.
         assert!(!msg.contains("toml::"), "{msg}");
-    }
-
-    #[test]
-    fn a_manifest_on_a_removed_target_names_the_migration() {
-        // The upgrade path for a project built against the old API: `ts` and
-        // `py` were selectable before the luau-only core (#89), so the manifest
-        // that carries one must learn where to go, not just that it is wrong.
-        //
-        // Both halves are asserted: the prefix this file adds, and the clause
-        // it must *not* discard. Replacing `from_str`'s message with a bare
-        // "unknown target" keeps the prefix and the bare name `luau`, so only
-        // the migration clause tells the two apart.
-        for (target, clause) in [
-            (
-                "ts",
-                "no longer emits TypeScript or JavaScript; migrate to `luau`",
-            ),
-            ("py", "no longer emits Python; migrate to `luau`"),
-        ] {
-            let tmp = TempDir::new(&format!("removed-target-{target}"));
-            write_manifest(
-                tmp.path(),
-                &format!("[package]\nname = \"x\"\ntarget = \"{target}\"\n"),
-            );
-            let err = discover_project(tmp.path()).unwrap_err();
-            #[allow(irrefutable_let_patterns)]
-            let Error::Project(msg) = err else {
-                panic!("expected Error::Project");
-            };
-            assert!(
-                msg.starts_with(&format!("`{MANIFEST}` has an unknown target")),
-                "should locate the value: {msg}"
-            );
-            assert!(
-                msg.contains(&format!("`{target}`")),
-                "should name the value: {msg}"
-            );
-            assert!(msg.contains(clause), "should keep the migration: {msg}");
-        }
     }
 
     #[test]
@@ -313,19 +272,19 @@ mod tests {
     #[test]
     fn layout_derivation() {
         let tmp = TempDir::new("layout");
-        write_manifest(tmp.path(), "[package]\nname = \"app\"\ntarget = \"luau\"\n");
+        write_manifest(tmp.path(), "[package]\nname = \"app\"\ntarget = \"lua\"\n");
         let project = discover_project(tmp.path()).unwrap().unwrap();
         let root = tmp.path();
         assert_eq!(project.source_root, root.join("src/main/neoc"));
         assert_eq!(project.entry, root.join("src/main/neoc/main.neoc"));
-        assert_eq!(project.output_dir(Target::Luau), root.join("src/auto/luau"));
+        assert_eq!(project.output_dir(Target::Lua), root.join("src/auto/lua"));
         assert_eq!(project.sql_dir(), root.join("src/main/sql"));
     }
 
     #[test]
     fn resolution_root_in_project_is_source_root() {
         let tmp = TempDir::new("res-in");
-        write_manifest(tmp.path(), "[package]\nname = \"app\"\ntarget = \"luau\"\n");
+        write_manifest(tmp.path(), "[package]\nname = \"app\"\ntarget = \"lua\"\n");
         let src = tmp.path().join("src/main/neoc");
         fs::create_dir_all(&src).unwrap();
         let entry = src.join("main.neoc");
@@ -348,10 +307,10 @@ mod tests {
         let tmp = TempDir::new("unknown-keys");
         write_manifest(
             tmp.path(),
-            "[package]\nname = \"app\"\ntarget = \"luau\"\nversion = \"1.0\"\n[extra]\nfoo = 1\n",
+            "[package]\nname = \"app\"\ntarget = \"lua\"\nversion = \"1.0\"\n[extra]\nfoo = 1\n",
         );
         let project = discover_project(tmp.path()).unwrap().unwrap();
         assert_eq!(project.name, "app");
-        assert_eq!(project.target, Target::Luau);
+        assert_eq!(project.target, Target::Lua);
     }
 }

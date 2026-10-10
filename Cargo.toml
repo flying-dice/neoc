@@ -18,7 +18,6 @@ neoc-parser = { path = "crates/neoc-parser" }
 neoc-types = { path = "crates/neoc-types" }
 neoc-macros = { path = "crates/neoc-macros" }
 neoc-codegen-lua = { path = "crates/neoc-codegen-lua" }
-neoc-codegen-luau = { path = "crates/neoc-codegen-luau" }
 neoc-compiler = { path = "crates/neoc-compiler" }
 neoc-fmt = { path = "crates/neoc-fmt" }
 neoc-lsp = { path = "crates/neoc-lsp" }

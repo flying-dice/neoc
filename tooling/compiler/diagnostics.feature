@@ -12,7 +12,7 @@ Feature: Diagnostics
       """
       fn add(a: number) -> number { a +
       """
-    When I transpile to luau
+    When I transpile to lua
     Then it fails
     Then a parse diagnostic reports "syntax error"
 
@@ -24,7 +24,7 @@ Feature: Diagnostics
           nope
       }
       """
-    When I transpile to luau
+    When I transpile to lua
     Then it fails
     Then a type diagnostic reports "unknown name `nope`"
 
@@ -36,7 +36,7 @@ Feature: Diagnostics
           "x"
       }
       """
-    When I transpile to luau
+    When I transpile to lua
     Then it fails
     Then a type diagnostic reports "expects `number`, found `string`"
 
@@ -48,6 +48,6 @@ Feature: Diagnostics
           n.frobnicate()
       }
       """
-    When I transpile to luau
+    When I transpile to lua
     Then it fails
     Then a type diagnostic reports "type `number` has no method `frobnicate`"

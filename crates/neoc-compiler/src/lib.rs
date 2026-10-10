@@ -10,7 +10,6 @@ use std::path::{Path, PathBuf};
 use neoc_ast as ast;
 use neoc_codegen_lua as codegen_lua;
 use neoc_codegen_lua::LineMap;
-use neoc_codegen_luau as codegen_luau;
 use neoc_parser as parser;
 use neoc_types as types;
 
@@ -34,21 +33,13 @@ pub enum Error {
 
 /// A backend the compiler can lower to.
 ///
-/// `luau` is the only target selectable by name (`--target`, manifest) — the
-/// typed superset that downgrades to Lua through the Luau toolchain. `Lua` is
-/// internal: `neoc run` emits it for the embedded `LuaJIT` runtime, and
-/// `"lua".parse()` rejects it, so `Display` → `FromStr` deliberately does not
-/// round-trip for that variant.
+/// `lua` is the only target: plain Lua 5.1 (`LuaJIT` dialect), selected by name
+/// with `--target` or the manifest `target` key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Target {
-    /// Self-typed Luau (`.luau`): the Lua runtime body with neoc types woven on,
-    /// self-contained per module (inlined runtime + inline `Result`/`Option`
-    /// type aliases) — no sidecars. The default target; downgrade to Lua 5.1
-    /// with the Luau toolchain.
+    /// Plain Lua 5.1 (`.lua`) — self-contained per module (inlined runtime), and
+    /// what the embedded `LuaJIT` runtime executes.
     #[default]
-    Luau,
-    /// Plain Lua 5.1 (`.lua`) — what the embedded `LuaJIT` runtime executes.
-    /// Used by `neoc run`; not selectable by name.
     Lua,
 }
 
@@ -57,7 +48,6 @@ impl Target {
     #[must_use]
     pub fn extension(self) -> &'static str {
         match self {
-            Target::Luau => "luau",
             Target::Lua => "lua",
         }
     }
@@ -66,7 +56,6 @@ impl Target {
 impl std::fmt::Display for Target {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            Target::Luau => "luau",
             Target::Lua => "lua",
         })
     }
@@ -77,28 +66,8 @@ impl std::str::FromStr for Target {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "luau" => Ok(Target::Luau),
-            // Rejected-but-plausible names carry a pointer rather than a bare
-            // "unknown". `lua` was never selectable — emit the typed superset
-            // and downgrade through the Luau toolchain. `ts`/`js`/`py`/`python`
-            // *were* selectable and were removed with the ts and python
-            // backends (#89); a manifest or `--target` written against the old
-            // API hits this arm, so name the migration here and not only in the
-            // changelog.
-            "lua" => Err(
-                "unknown target `lua` — neoc emits `luau` (downgrade to Lua with the Luau \
-                 toolchain); the only target is `luau`"
-                    .to_string(),
-            ),
-            "ts" | "js" => Err(format!(
-                "unknown target `{s}` — neoc no longer emits TypeScript or JavaScript; migrate \
-                 to `luau`, the only target"
-            )),
-            "py" | "python" => Err(format!(
-                "unknown target `{s}` — neoc no longer emits Python; migrate to `luau`, the only \
-                 target"
-            )),
-            other => Err(format!("unknown target `{other}` (expected `luau`)")),
+            "lua" => Ok(Target::Lua),
+            other => Err(format!("unknown target `{other}` (expected `lua`)")),
         }
     }
 }
@@ -201,7 +170,7 @@ impl Diagnostic {
 
 /// A line-level map from emitted target source back to neoc source.
 ///
-/// Wraps the Luau backend's [`LineMap`]: the Luau target records, per module, the
+/// Wraps the Lua backend's [`LineMap`]: the Lua target records, per module, the
 /// neoc line each emitted line came from, so a runtime can translate a fault's
 /// emitted line to a neoc position through [`SourceMap::neoc_line`] — the path
 /// `neoc run` takes to report a fault at its `.neoc` line.
@@ -259,7 +228,7 @@ pub fn transpile(source: &str, target: Target) -> CompileOutput {
     let checked = types::check(&parsed.module);
     diagnostics.extend(checked.diagnostics.iter().map(Diagnostic::typed_from));
 
-    // Mark string-typed `+` as concatenation before emitting: the Luau backend
+    // Mark string-typed `+` as concatenation before emitting: the Lua backend
     // lowers it to `..` (`lang/DYNAMIC.md` §4.2).
     let table = types::collect(&parsed.module);
     let elaborated = types::elaborate_with_table(&parsed.module, &table);
@@ -746,7 +715,7 @@ fn canonical_or(path: &Path) -> PathBuf {
 /// by the project driver from the resolved `use` graph.
 #[derive(Default)]
 struct EmitInputs<'a> {
-    /// `pub` enum declarations brought in by `use` (Luau resolves variant forms).
+    /// `pub` enum declarations brought in by `use` (the backend resolves variant forms).
     enums: Vec<&'a ast::EnumDecl>,
     /// Extern items brought in by `use`, for native-import reconstruction in the
     /// consumer (`lang/EXTERN.md` §Lowering).
@@ -770,7 +739,7 @@ struct Emitted {
 /// Dispatches emission to the backend for `target`, returning its source, any
 /// emit diagnostic messages, and a [`SourceMap`] back to neoc.
 ///
-/// `source` is the neoc text the module was parsed from; the Luau backend uses
+/// `source` is the neoc text the module was parsed from; the Lua backend uses
 /// it to track spans and returns a real [`SourceMap`] (#56).
 fn emit(target: Target, module: &ast::Module, source: &str, inputs: &EmitInputs) -> Emitted {
     match target {
@@ -784,24 +753,6 @@ fn emit(target: Target, module: &ast::Module, source: &str, inputs: &EmitInputs)
             );
             Emitted {
                 output: r.lua,
-                messages: r.diagnostics.into_iter().map(|d| d.message).collect(),
-                source_map: SourceMap(r.source_map),
-            }
-        }
-        Target::Luau => {
-            // A self-typed `.luau` is self-contained: it inlines the runtime and
-            // its own `Result`/`Option` type aliases (no sidecar). Reuses
-            // `codegen-lua`'s lowering through the Luau seam, which tracks neoc
-            // spans into a real source map (#56).
-            let r = codegen_luau::emit(
-                module,
-                source,
-                &inputs.enums,
-                &inputs.externs,
-                inputs.as_module,
-            );
-            Emitted {
-                output: r.luau,
                 messages: r.diagnostics.into_iter().map(|d| d.message).collect(),
                 source_map: SourceMap(r.source_map),
             }
@@ -919,64 +870,18 @@ mod tests {
     }
 
     #[test]
-    fn luau_is_the_only_accepted_target() {
-        assert_eq!("luau".parse::<Target>(), Ok(Target::Luau));
-        assert_eq!(Target::Luau.to_string(), "luau");
-        assert_eq!(Target::Luau.extension(), "luau");
-    }
-
-    #[test]
-    fn lua_target_is_internal_and_does_not_round_trip_by_name() {
+    fn lua_is_the_only_accepted_target() {
+        assert_eq!("lua".parse::<Target>(), Ok(Target::Lua));
         assert_eq!(Target::Lua.to_string(), "lua");
         assert_eq!(Target::Lua.extension(), "lua");
-        // Not selectable: its own name parses to a rejection, not `Target::Lua`.
-        assert!(Target::Lua.to_string().parse::<Target>().is_err());
+        assert_eq!(Target::default(), Target::Lua);
     }
 
     #[test]
-    fn removed_and_unselectable_targets_point_at_luau() {
-        // Every name a user plausibly types — the two targets this release
-        // removed, their aliases, and the never-selectable `lua` — names both
-        // the offending value and where to go. A bare "unknown" here would
-        // leave an author with a `target = "ts"` manifest guessing.
-        //
-        // One row per arm, each asserted against *its own* clause. A uniform
-        // assertion would not discriminate: the generic arm's
-        // `(expected `luau`)` already backticks the input and names `luau`, so
-        // it satisfies both halves of the pointer without pointing anywhere.
-        for (names, clause) in [
-            (
-                &["ts", "js"][..],
-                "no longer emits TypeScript or JavaScript; migrate to `luau`",
-            ),
-            (
-                &["py", "python"][..],
-                "no longer emits Python; migrate to `luau`",
-            ),
-            (&["lua"][..], "downgrade to Lua with the Luau toolchain"),
-        ] {
-            for name in names {
-                let msg = target_err(name);
-                // Backticked, so `lua` is not satisfied by the `luau` it points
-                // at.
-                assert!(
-                    msg.contains(&format!("`{name}`")),
-                    "should name the input: {msg}"
-                );
-                assert!(msg.contains(clause), "should carry its own pointer: {msg}");
-            }
+    fn any_other_target_is_rejected_naming_the_input() {
+        for name in ["ts", "js", "py", "python", "wasm", ""] {
+            let msg = target_err(name);
+            assert_eq!(msg, format!("unknown target `{name}` (expected `lua`)"));
         }
-    }
-
-    #[test]
-    fn an_unrelated_target_is_rejected_without_a_migration_claim() {
-        // The generic arm: no pointer to invent, so it states the expectation
-        // and nothing more. The absence is the assertion — a migration clause
-        // here would promise `wasm` a path that does not exist.
-        let msg = target_err("wasm");
-        assert!(msg.contains("`wasm`"), "{msg}");
-        assert!(msg.contains("expected `luau`"), "{msg}");
-        assert!(!msg.contains("migrate"), "invents a migration: {msg}");
-        assert!(!msg.contains("no longer emits"), "invents a removal: {msg}");
     }
 }

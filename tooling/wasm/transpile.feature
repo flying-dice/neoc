@@ -1,7 +1,7 @@
 Feature: In-page transpilation
 
   The browser entry point is a wasm-bindgen wrapper over `neoc-compiler`: a page
-  hands it `.neoc` source text and a target — `luau` — and gets the emitted
+  hands it `.neoc` source text and a target — `lua` — and gets the emitted
   output back, transpiled entirely in the browser with no server round trip. It
   is the same `transpile` seam the native runtime embeds, compiled to wasm.
 
@@ -13,12 +13,12 @@ Feature: In-page transpilation
   the real export then.
 
   @chaos @pending
-  Scenario: A function transpiles to Luau in the browser
+  Scenario: A function transpiles to Lua in the browser
     Given the source:
       """
       fn add(a: number, b: number) -> number { a + b }
       """
-    And the target is "luau"
+    And the target is "lua"
     When I transpile it in the browser
     Then it transpiles to:
       """
@@ -43,7 +43,7 @@ Feature: In-page transpilation
       """
       fn add(a: number) -> number { a +
       """
-    And the target is "luau"
+    And the target is "lua"
     When I transpile it in the browser
     Then transpilation is refused
 
@@ -52,7 +52,7 @@ Feature: In-page transpilation
     Given the source:
       """
       """
-    And the target is "luau"
+    And the target is "lua"
     When I transpile it in the browser
     Then it transpiles to:
       """
