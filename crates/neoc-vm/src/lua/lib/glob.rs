@@ -507,7 +507,7 @@ fn expect_bool(v: Value) -> Result<bool, String> {
 
 fn expect_integer(v: Value) -> Result<i64, String> {
     match v {
-        // `mlua::Integer` is `i32` under the Luau backend; the cast widens.
+        // Whole-valued numbers surface as `Integer` under LuaJIT.
         Value::Integer(i) => Ok(i as i64),
         Value::Number(f) if f.is_finite() && f.fract() == 0.0 => Ok(f as i64),
         Value::Number(_) => Err("must be an integer".to_owned()),
