@@ -1,6 +1,6 @@
 # cargo-deny policy. CI runs `cargo deny check advisories` (job `deny`).
-# Every ignore carries a reason and a review date; delete the entry as soon as
-# the upstream fix is adopted.
+# Every ignore carries a reason, a tracking issue and a review date (= issue due
+# date); delete the entry as soon as the upstream fix is adopted.
 
 [advisories]
 yanked = "warn"
@@ -10,7 +10,7 @@ ignore = [
     { id = "RUSTSEC-2026-0253", reason = "lru 0.12 LruCache::pop; direct dep of neoc-vm, fixed in lru >= 0.18.2. Bump tracked in #105. Review: 2027-01-10." },
     { id = "RUSTSEC-2026-0194", reason = "quick-xml 0.31 quadratic attribute check; direct dep of neoc-vm, fixed in quick-xml >= 0.41.0. Bump tracked in #105. Review: 2027-01-10." },
     { id = "RUSTSEC-2026-0195", reason = "quick-xml 0.31 NsReader allocation; direct dep of neoc-vm, fixed in quick-xml >= 0.41.0. Bump tracked in #105. Review: 2027-01-10." },
-    { id = "RUSTSEC-2025-0111", reason = "tokio-tar file smuggling, no fix. Reached only via testcontainers (dev-dependency, test harness). Review: 2027-01-10." },
-    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile unmaintained. Reached only via testcontainers -> bollard (dev-dependency). Review: 2027-01-10." },
-    { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2 unmaintained. Build-time proc-macro only, via mlua_derive. Review: 2027-01-10." },
+    { id = "RUSTSEC-2025-0111", reason = "tokio-tar file smuggling, no fix. Ships in neoc via neoc-vm -> testcontainers-modules -> testcontainers 0.23.3 (lib.testcontainers). testcontainers only builds tars (tokio_tar::Builder); vuln is in Archive parsing, no read path exposed to Luau. Upgrade tracked in #106. Review: 2027-01-10." },
+    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile unmaintained, no vuln. Ships in neoc via testcontainers -> bollard 0.18.1; reads local Docker TLS certs only. Upgrade tracked in #106. Review: 2027-01-10." },
+    { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2 unmaintained. Build-time proc-macro only, via mlua_derive; not linked. mlua upgrade tracked in #106. Review: 2027-01-10." },
 ]

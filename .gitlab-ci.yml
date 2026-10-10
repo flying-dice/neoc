@@ -51,7 +51,7 @@ lint:
 # ── audit ─────────────────────────────────────────────────────────────────────
 #
 # Advisory gate: fails on any RustSec advisory not ignored (with reason) in
-# deny.toml. Runs on MR and default-branch pipelines. The cargo-deny version is
+# deny.toml. Runs in every push pipeline, like lint/test. The cargo-deny version is
 # pinned (prebuilt musl release, sha256-verified); bump both together. The
 # advisory DB is fetched fresh each run on purpose — a stale cache would hide
 # new advisories. The binary is cached in .cargo/bin via the tools cache.
@@ -75,9 +75,6 @@ deny:
           "cargo-deny-${CARGO_DENY_VERSION}-x86_64-unknown-linux-musl/cargo-deny"
       fi
     - .cargo/bin/cargo-deny check advisories
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
 # ── test ──────────────────────────────────────────────────────────────────────
 
