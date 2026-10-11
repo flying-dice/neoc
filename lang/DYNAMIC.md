@@ -200,7 +200,7 @@ Number, string, and bool literals lower to their Lua spelling (`STRING_LITERAL` 
 ⟦ -e ⟧ₑ       = (-⟦e⟧)
 ```
 
-`+` selects Lua `+` or `..` by the static type of its operands (`STATIC.md` T-ARITH / T-CONCAT) — the choice is fixed at compile time, never a runtime check. `!=` lowers to Lua `~=`.
+`+` selects Lua `+` or `..` by the static type of its operands (`STATIC.md` T-ARITH / T-CONCAT) — the choice is fixed at compile time, never a runtime check. `!=` lowers to Lua `~=`. Compound `s += e` on strings is the `s = s + e` case (`STATIC.md` §10), so it lowers to `s = (s .. ⟦e⟧)`.
 
 ### 4.3 Range expressions
 
@@ -296,6 +296,34 @@ and yields the expression  ⟪t⟫[1]
 ```
 
 `⟪t⟫` is a fresh temporary. On the short-circuiting variant (`Err` for `Result`, `None` for `Option`) the hoisted `return ⟪t⟫` exits the enclosing function with the carrier unchanged; otherwise the expression evaluates to the wrapped value at `[1]`. Testing both tags lets the lowering serve `Result` and `Option` alike without the carrier's static type — a value carries exactly one tag, so only the matching test can fire. The enclosing function's return type makes this well-formed (`STATIC.md` §6).
+
+### 4.11 Loop-carried string appends
+
+Lua interns every string, so `s = s .. x` in a loop hashes and copies the whole intermediate result on every pass. A loop that only *appends* to a local string therefore lowers the appends to pushes on an accumulator table and folds it with one `table.concat` after the loop. This is an optimisation: the program's observable behaviour is that of the plain `..` lowering (§4.2), and any shape outside the rule below keeps that lowering.
+
+An *append* to `s` is an assignment `s = s + e₁ + … + eₙ` or `s += e` where `+` is string concatenation (`STATIC.md` T-CONCAT) and `s` is the leftmost operand. The rule applies to a loop `L` (`for`, `while`, `loop`) and a variable `s` when all of these hold:
+
+1. `s` is introduced by a `let` with an initialiser, as a simple binding, and `L` is in that `let`'s scope (in the same block after the `let`, or nested in a later statement).
+2. Within `L` — head, condition, and body — every occurrence of `s` is an append target, or the whole operand of a `return`. An occurrence anywhere else (a read, a prepend `s = e + s`, another assignment, an operand of an appended `eᵢ`, a struct-literal shorthand `S { s }`) disables the rule.
+3. `L` contains at least one append to `s`, none of them inside a closure or nested function, and binds no name `s` of its own (`let`, pattern, closure parameter, nested function).
+4. No closure or nested function anywhere in `s`'s scope mentions `s`: such a function could read the string while `L` still holds it in the accumulator.
+
+Where several nested loops satisfy the rule, only the outermost is rewritten; its appends include those of the inner loops. A loop that fails the rule may still contain a nested loop that satisfies it.
+
+```
+⟦ L ⟧ₛ   with s accumulating =
+  do
+    local ⟪acc⟫ = { s }
+    ⟦ L ⟧ₛ                     -- appends and returns lowered as below
+    s = table.concat(⟪acc⟫)
+  end
+
+⟦ s = s + e₁ + … + eₙ ⟧ₛ  inside L = ⟪acc⟫[#⟪acc⟫ + 1] = ⟦e₁⟧ₑ  …  ⟪acc⟫[#⟪acc⟫ + 1] = ⟦eₙ⟧ₑ
+⟦ s += e ⟧ₛ               inside L = ⟪acc⟫[#⟪acc⟫ + 1] = ⟦e⟧ₑ
+⟦ return s ⟧ₛ             inside L = return table.concat(⟪acc⟫)
+```
+
+`⟪acc⟫` is a fresh local. The accumulator is seeded with the string's current value, so a prior value is kept and a loop that never runs leaves `s` unchanged. The fold runs after the loop however it was left: a `break` only leaves the loop, so the folded string holds exactly the appends made before it; a `return` of any other value leaves the function, and `s` is then unreachable (condition 4). `eᵢ` is evaluated and pushed in order, so evaluation order is that of the chained `..`. Every pushed value is a `string`, and `table.concat` joins strings exactly as `..` does.
 
 ## 5. Patterns
 

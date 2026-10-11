@@ -1,0 +1,14 @@
+// DYNAMIC.md §4.11: a string a closure mentions is never accumulated — the
+// closure can read it mid-loop. The append keeps the plain `..` lowering.
+extern {
+    fn println(s: string);
+}
+
+fn main() {
+    let s = "";
+    let peek = || s;
+    for i in 0..3 {
+        s += "z";
+        println(peek());
+    }
+}

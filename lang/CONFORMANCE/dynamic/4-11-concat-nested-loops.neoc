@@ -1,0 +1,25 @@
+// DYNAMIC.md §4.11: appends in nested loops go to the outermost loop's single
+// accumulator, folded once after it. When the outer loop reads the string
+// between inner loops, only the inner loop accumulates, folding on each pass.
+extern {
+    fn println(s: string);
+}
+
+fn main() {
+    let grid = "";
+    for r in 0..3 {
+        for c in 0..3 {
+            grid += "#";
+        }
+        grid += "/";
+    }
+    println(grid);
+
+    let log = "";
+    for r in 0..2 {
+        for c in 0..2 {
+            log += "+";
+        }
+        println(log);
+    }
+}
