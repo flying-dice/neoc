@@ -191,7 +191,7 @@ Removed entirely:
 
 ### Single-script invocations
 
-`neoc script.luau` without `thread.spawn` → works unchanged. No import, no ceremony, no cost.
+`neoc script.lua` without `thread.spawn` → works unchanged. No import, no ceremony, no cost.
 
 ## Drawbacks
 
@@ -253,4 +253,4 @@ Each step lands as own PR. `main` stays green throughout.
 
 6. **`workers.shared` and friends deleted.** All registry machinery removed. `workers.on_shutdown` + `shutdown_signal` alias survive.
 
-7. **Single-script unaffected.** `neoc script.luau` without `thread.spawn` works unchanged.
+7. **Single-script unaffected.** `neoc script.lua` without `thread.spawn` works unchanged.

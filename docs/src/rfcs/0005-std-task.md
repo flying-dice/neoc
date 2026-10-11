@@ -405,7 +405,7 @@ impl UserData for TaskHandle {
 #### Deliverables
 
 - [ ] Type definition stub (`.d.luau`) at `types/std/task.d.luau`.
-- [ ] Spec at `tests/std/task.spec.luau` using `lib:test`, committed before implementation PR (see [RFC 0000](0000-spec-driven-development.md)).
+- [ ] Spec at `tests/std/task.spec.lua` using `lib:test`, committed before implementation PR (see [RFC 0000](0000-spec-driven-development.md)).
 - [ ] Full test suite covering test matrix in issue #2.
 
 ## Drawbacks
@@ -419,7 +419,7 @@ impl UserData for TaskHandle {
 
 ### Do nothing / raw coroutines
 
-`coroutine.create` + `coroutine.resume` available today. Forces manual scheduling, manual error handling, OS-clock polling for timers. Wrong default for Luau developers. Rejected.
+`coroutine.create` + `coroutine.resume` available today. Forces manual scheduling, manual error handling, OS-clock polling for timers. Wrong default for Lua developers. Rejected.
 
 ### `task.wait` as blocking (busy-wait)
 

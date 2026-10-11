@@ -8,7 +8,7 @@ Cryptographically secure random bytes, ints, strings, tokens, and UUIDs (v4 / v7
 |---|---|
 | Namespace | `lib` |
 | Source | [`src/lua/lib/random.rs`](https://github.com/flying-dice/neoc/blob/main/src/lua/lib/random.rs) |
-| Tests | [`tests/lib/random.test.luau`](https://github.com/flying-dice/neoc/blob/main/tests/lib/random.test.luau) |
+| Tests | [`crates/neoc/tests/lib/random.test.lua`](https://github.com/flying-dice/neoc/blob/main/crates/neoc/tests/lib/random.test.lua) |
 | Stability | Experimental |
 | Mirror | Python `secrets` + `uuid`; Node `crypto` |
 
@@ -24,7 +24,7 @@ local rng = require("lib:random")
 > **Stub.** Full surface in module source; contract exercised by test file.
 
 Reach for `lib:random` whenever the value needs to be unpredictable to an
-attacker — tokens, salts, IDs, nonces. Luau's built-in `math.random` is a
+attacker — tokens, salts, IDs, nonces. Lua's built-in `math.random` is a
 seedable PRNG and is unfit for any of those uses.
 
 Use `uuid_v7` for database primary keys (timestamp-ordered → cheap B-tree

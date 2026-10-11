@@ -8,7 +8,7 @@ Authenticated symmetric encryption (AEAD) — AES-128-GCM, AES-256-GCM, ChaCha20
 |---|---|
 | Namespace | `lib` |
 | Source | [`src/lua/lib/crypto.rs`](https://github.com/flying-dice/neoc/blob/main/src/lua/lib/crypto.rs) |
-| Tests | [`tests/lib/crypto.test.luau`](https://github.com/flying-dice/neoc/blob/main/tests/lib/crypto.test.luau) |
+| Tests | [`crates/neoc/tests/lib/crypto.test.lua`](https://github.com/flying-dice/neoc/blob/main/crates/neoc/tests/lib/crypto.test.lua) |
 | Stability | Experimental |
 | Mirror | Node `crypto.createCipheriv`; Go `crypto/cipher` (GCM); Java `Cipher` (`AES/GCM/NoPadding`); .NET `AesGcm` / `ChaCha20Poly1305` |
 

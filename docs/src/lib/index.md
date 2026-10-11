@@ -11,7 +11,7 @@ Qualifies when: well-defined purpose, stable surface, genuinely useful to most s
 - [`lib:crypto`](/lib/reference/crypto) — Authenticated symmetric encryption (AES-GCM, ChaCha20-Poly1305)
 - [`lib:json`](/lib/reference/json) — JSON Object/Array handles, `null` sentinel
 - [`lib:mime`](/lib/reference/mime) — MIME type detection and extension mapping
-- [`lib:test`](/lib/reference/test) — Luau test runner and assertions
+- [`lib:test`](/lib/reference/test) — Lua test runner and assertions
 - [`lib:vcr`](/lib/reference/vcr) — Record-and-replay HTTP fixtures
 
 ## See also

@@ -162,7 +162,7 @@ extern type **is** the target value — there is no wrapper indirection.
   function, no marshalling.
 - **Method call** `x.m(args)` → target method call on the handle.
 - **Associated call** `T::f(args)` → static/namespaced target call.
-- **Constructor** `T::new(args)` → the target's constructor form. Luau has no
+- **Constructor** `T::new(args)` → the target's constructor form. Lua has no
   `new` operator, so a constructor is the plain associated call `T.new(args)`
   (`DYNAMIC.md` §3.9) — it differs from an ordinary associated call only in that
   the checker types its return as the enclosing `Self`.
@@ -249,7 +249,7 @@ ships no `extern` prelude, and its only implicit names are the `Result`/`Option`
 language prelude (`DYNAMIC.md` §7) and the `Unknown` primitive. Naming the host's
 types is an author's job until then, and the set is the host's — the earlier
 JavaScript list (`Promise<T>`, `Array<T>`, `Object`, `Function`, `Error`) named
-no type Luau has.
+no type Lua has.
 
 ---
 

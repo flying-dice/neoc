@@ -99,9 +99,9 @@ pub fn benches(c: &mut criterion::Criterion) {
 
 Add to `criterion_group!` in `crates/neoc/benches/lib/lib.rs`. Run: `cargo bench --bench lib foo`.
 
-### 5. Luau integration test
+### 5. Lua integration test
 
-`crates/neoc/tests/<ns>/foo.test.luau`:
+`crates/neoc/tests/<ns>/foo.test.lua`:
 
 ```lua
 local _t       = require("lib:test")
@@ -120,7 +120,7 @@ describe("foo", function()
 end)
 ```
 
-Run: `cargo run -p neoc -- run crates/neoc/tests/<ns>/foo.test.luau`.
+Run: `cargo run -p neoc -- run crates/neoc/tests/<ns>/foo.test.lua`.
 
 ### 6. Update README
 
@@ -140,7 +140,7 @@ Add row to modules table. Alphabetical within namespace.
 cargo build
 cargo test --workspace --lib
 cargo test -p neoc --bin neoc
-cargo run -p neoc -- run 'crates/neoc/tests/**/*.test.luau'
+cargo run -p neoc -- run 'crates/neoc/tests/**/*.test.lua'
 cargo bench --bench lib <name>
 cargo clippy --all-targets
 cargo fmt --check
@@ -152,7 +152,7 @@ GitLab CI (`.gitlab-ci.yml`) on push to `main` and MRs targeting `main`.
 
 Stages:
 1. **Lint** — `fmt --check`, `clippy` (warnings = errors)
-2. **Test** — Rust + Luau integration (Docker tests excluded)
+2. **Test** — Rust + Lua integration (Docker tests excluded)
 3. **Build** — cross-compiled binaries as artifacts
 4. **Pages** — VitePress docs (main only)
 

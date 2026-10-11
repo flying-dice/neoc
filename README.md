@@ -2,7 +2,7 @@
 
 > *Neocybex (n.) — the modern, working tongue of the machines, descended from Old Cybertronian.*
 
-**A fast, lightweight [Luau](https://luau.org/) runtime _and_ the compiler for the neoc language. Rust's standard library, blessed gap-fillers, and vendored crates. One trusted supply chain.**
+**A fast, lightweight [LuaJIT](https://luajit.org/) runtime _and_ the compiler for the neoc language. Rust's standard library, blessed gap-fillers, and vendored crates. One trusted supply chain.**
 
 A toolkit AI agents use to build things. Install one program — everything needed, no setup, no mid-task downloads.
 
@@ -14,9 +14,9 @@ This monorepo ships a single `neoc` binary that does both jobs:
 
 | Subcommand | Job |
 |---|---|
-| `neoc run <script>` | run a Luau script in the sandboxed runtime |
+| `neoc run <script>` | run a Lua script in the sandboxed runtime |
 | `neoc emit-headers --out <dir>` | emit `ext` headers describing the runtime surface |
-| `neoc build <src>` | compile `.neoc` → Luau |
+| `neoc build <src>` | compile `.neoc` → Lua |
 | `neoc check <src>` | parse + type-check, no output |
 | `neoc fmt <src>` | format `.neoc` source |
 | `neoc lsp` | language server over stdio |
@@ -74,7 +74,7 @@ cargo install --path .
 `NEOC_INSTALL_DIR` (default `~/.neoc/bin`) controls binary placement.
 
 ```lua
--- fetch.luau
+-- fetch.lua
 local fs    = require("std:fs")
 local hyper = require("vnd:hyper")
 local json  = require("vnd:serde_json")
@@ -87,7 +87,7 @@ print("saved " .. data:get("path_with_namespace"))
 ```
 
 ```sh
-neoc run fetch.luau
+neoc run fetch.lua
 ```
 
 ## What's inside
@@ -99,37 +99,36 @@ Three layers, one binary — `std:*` mirrors Rust's standard library, `lib:*` ar
 ## Running
 
 ```sh
-neoc run script.luau                   # one script
-neoc run 'tests/**/*.luau'             # globs expand
-neoc run one.luau two.luau             # several in sequence
+neoc run script.lua                   # one script
+neoc run 'tests/**/*.lua'             # globs expand
+neoc run one.lua two.lua             # several in sequence
 ```
 
-`.test.luau` / `.spec.luau` suffix triggers built-in test runner.
+`.test.lua` / `.spec.lua` suffix triggers built-in test runner.
 
 ## Compiling neoc
 
 ```sh
-neoc build main.neoc                   # → Luau (the only target)
+neoc build main.neoc                   # → Lua (the only target)
 neoc check main.neoc                   # parse + type-check only
 neoc fmt main.neoc                     # canonical formatting
 neoc lsp                               # language server (stdio)
 ```
 
-`.neoc` compiles to Luau — a self-typed superset of Lua 5.1, which the Luau toolchain downgrades to plain Lua 5.1, so the lowering also runs unchanged on Lua 5.4, LuaJIT, and this runtime. Each emitted `.luau` module is self-contained: no runtime library, no sidecar files.
+`.neoc` compiles to Lua 5.1, the dialect LuaJIT runs — the lowering runs unchanged on this runtime. Each emitted `.lua` module is self-contained: no runtime library, no sidecar files.
 
 ## Workspace layout
 
 ```
 crates/neoc            # the `neoc` binary: unified CLI + folded compiler subcommands
-crates/neoc-vm         # the Luau runtime: engine, script execution, .neoc headers
+crates/neoc-vm         # the LuaJIT runtime: engine, script execution, .neoc headers
 crates/neoc-grammar    # vendors tree-sitter-neoc (submodule); cc-builds the parser
 crates/neoc-ast        # typed AST — pure data, span-free
 crates/neoc-parser     # CST → AST adapter
 crates/neoc-types      # name resolution, inference, well-formedness
 crates/neoc-macros     # built-in derives (Clone/Eq/Debug/Display)
 crates/neoc-codegen-lua # AST → Lua 5.1
-crates/neoc-codegen-luau # AST → self-typed Luau
-crates/neoc-compiler   # public lib API: transpile to Luau (the runtime embeds this)
+crates/neoc-compiler   # public lib API: transpile to Lua (the runtime embeds this)
 crates/neoc-autosql    # SQL schema + queries → typed .neoc data layer (neoc autosql)
 crates/neoc-fmt        # formatter
 crates/neoc-lsp        # language server

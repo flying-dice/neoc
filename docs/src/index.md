@@ -3,7 +3,7 @@ layout: home
 
 hero:
   name: "neoc"
-  text: "A fast, lightweight Luau runtime"
+  text: "A fast, lightweight LuaJIT runtime"
   tagline: Rust's standard library, blessed gap-fillers, and vendored crates. One trusted supply chain.
   actions:
     - theme: brand
@@ -15,7 +15,7 @@ hero:
 
 features:
   - title: "std:*"
-    details: Rust's standard library, 1:1 in Luau. Collections, files, I/O, networking, threads, workers.
+    details: Rust's standard library, 1:1 in Lua. Collections, files, I/O, networking, threads, workers.
     link: /std/
   - title: "lib:*"
     details: Curated helpers and gap-fillers. Encoding, JSON handles, test runner, recording layer.
@@ -27,7 +27,7 @@ features:
 
 ## About
 
-Reference for **neoc** — every module, function, and behaviour exposed to Luau scripts, organised by namespace.
+Reference for **neoc** — every module, function, and behaviour exposed to Lua scripts, organised by namespace.
 
 Site structure follows the [documentation styleguide](https://github.com/flying-dice/neoc/blob/main/docs/styleguide/documentation-styleguide.md):
 

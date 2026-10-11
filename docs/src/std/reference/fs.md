@@ -8,7 +8,7 @@ Filesystem reads, writes, and metadata. Mirrors Rust's `std::fs`.
 |---|---|
 | Namespace | `std` |
 | Source | [`src/lua/std/fs.rs`](https://github.com/flying-dice/neoc/blob/main/src/lua/std/fs.rs) |
-| Tests | [`tests/std/fs.test.luau`](https://github.com/flying-dice/neoc/blob/main/tests/std/fs.test.luau) |
+| Tests | [`crates/neoc/tests/std/fs.test.lua`](https://github.com/flying-dice/neoc/blob/main/crates/neoc/tests/std/fs.test.lua) |
 | Stability | Experimental |
 | Mirror | [`std::fs`](https://doc.rust-lang.org/std/fs/) |
 

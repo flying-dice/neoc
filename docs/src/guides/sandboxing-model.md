@@ -4,9 +4,9 @@ What neoc strips from Lua, why, and what replaces it.
 
 ## Why sandbox
 
-Luau ships modules exposing unrestricted OS access — `io.open`, `os.execute`, `package.loadlib`, `debug` library. Embedding without stripping inherits whatever scripts choose to do.
+LuaJIT ships modules exposing unrestricted OS access — `io.open`, `os.execute`, `package.loadlib`, the `debug` library, and the `ffi` and `jit` libraries. Embedding without stripping inherits whatever scripts choose to do.
 
-neoc takes the opposite default. Unsafe standard library stripped at engine construction. Every capability reintroduced through explicit modules under `std:*`, `lib:*`, `vnd:*`. Scripts cannot reach unregistered capabilities.
+neoc takes the opposite default. The engine loads an explicit standard-library set and strips unsafe globals at construction. Every capability reintroduced through explicit modules under `std:*`, `lib:*`, `vnd:*`. Scripts cannot reach unregistered capabilities.
 
 ## What is stripped
 
@@ -16,9 +16,11 @@ neoc takes the opposite default. Unsafe standard library stripped at engine cons
 | `os.*` | Replaced by `std:thread`, `std:net`, worker model |
 | `package.*` | `require` replaced; see [module system](/guides/module-system) |
 | `debug.*` | Reflection unsafe in multi-tenant runtime |
-| `loadfile`, `dofile` | Replaced by argument-driven model |
+| `ffi.*`, `jit.*` | Arbitrary native memory and VM control; never loaded |
+| `load`, `loadstring`, `loadfile`, `dofile`, `string.dump` | Runtime code loading; replaced by argument-driven model |
+| `getfenv`, `setfenv`, `newproxy`, `module`, `collectgarbage`, `gcinfo` | Environment and identity tampering, GC control |
 
-Available unchanged: `string`, `table`, `math`, `coroutine`, `bit32`, `utf8`, `buffer`, `vector`, `print` family.
+Available: the base functions that remain, `string`, `table`, `math`, `coroutine`, `bit`, and the `print` family.
 
 ## What replaces it
 
@@ -35,7 +37,7 @@ Available unchanged: `string`, `table`, `math`, `coroutine`, `bit32`, `utf8`, `b
 
 ## The worker model
 
-Scripts execute in independent Luau VMs called *workers*. Each worker: self-contained interpreter with private globals, locals, upvalues, userdata.
+Scripts execute in independent LuaJIT VMs called *workers*. Each worker: self-contained interpreter with private globals, locals, upvalues, userdata.
 
 Cross-worker state follows *Sendable* protocol via `shared` table in `thread.spawn`. Sendable types: `Map`, `Counter` from [`std:collections`](/std/reference/collections), TCP listener from [`std:net`](/std/reference/net). Non-Sendable types (json handles, `json.null`) rejected at spawn time. Plain Lua values pass via `args` field.
 

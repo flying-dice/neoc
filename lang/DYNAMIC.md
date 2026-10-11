@@ -4,7 +4,7 @@ Defines what every meaningful neoc program *does* when executed, expressed as a 
 
 This file is a **lowering table**: one entry per neoc construct, giving the Lua 5.1 source it produces. Once a program is lowered, its runtime behaviour is whatever Lua 5.1 would do with that source — see the Lua 5.1 Reference Manual for the underlying semantics.
 
-> **Note on targets.** Plain `lua` is not a selectable build target. neoc emits the typed superset `luau`, which carries exactly the lowering described here plus inline neoc types, and downgrades to Lua 5.1 through the Luau toolchain. The Lua 5.1 lowering below is the *internal base* the `luau` target emits over; read it as the meaning each construct carries.
+> **Note on targets.** `lua` is the only build target. It emits the Lua 5.1 lowering described here, which LuaJIT runs unchanged; read it as the meaning each construct carries.
 
 Notation: lowering brackets `⟦ ⟧` as defined in `NOTATION.md`. Metavariables in Lua snippets are `⟪ ⟫`. Statement-context lowerings are subscripted `⟦ e ⟧ₛ`; expression-context `⟦ e ⟧ₑ`.
 
@@ -412,7 +412,7 @@ Everything not specified here defers to the Lua 5.1 Reference Manual (§2 Basic 
 
 ## 9. Runtime type enforcement
 
-Generated code enforces declared types at runtime — **deep, always-on, at drift points**. A `string` field rejects a non-string at construction and at any later mutation; the full shape is validated recursively. This section defines *what* a check lowers to. *Where* checks go — which positions require one and which are statically guaranteed not to — is `STATIC.md` §10. As with the rest of this file, the lowering is to Lua 5.1; the `luau` target meets the same observable contract through `CONFORMANCE/` (§9.4).
+Generated code enforces declared types at runtime — **deep, always-on, at drift points**. A `string` field rejects a non-string at construction and at any later mutation; the full shape is validated recursively. This section defines *what* a check lowers to. *Where* checks go — which positions require one and which are statically guaranteed not to — is `STATIC.md` §10. As with the rest of this file, the lowering is to Lua 5.1; the `lua` target meets the same observable contract through `CONFORMANCE/` (§9.4).
 
 ### 9.1 Validators
 

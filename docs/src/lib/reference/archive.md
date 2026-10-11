@@ -8,7 +8,7 @@ Create and extract `tar` (optionally gzip/zstd-compressed) and `zip` archives, i
 |---|---|
 | Namespace | `lib` |
 | Source | [`src/lua/lib/archive.rs`](https://github.com/flying-dice/neoc/blob/main/src/lua/lib/archive.rs) |
-| Tests | [`tests/lib/archive.test.luau`](https://github.com/flying-dice/neoc/blob/main/tests/lib/archive.test.luau) |
+| Tests | [`crates/neoc/tests/lib/archive.test.lua`](https://github.com/flying-dice/neoc/blob/main/crates/neoc/tests/lib/archive.test.lua) |
 | Stability | Stable |
 
 ## Syntax

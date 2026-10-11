@@ -60,7 +60,7 @@ Immutability distinction valuable even without borrow semantics: `Path` receiver
 ```
 src/lua/std/path.rs             -- module implementation (Path, PathBuf UserData + flat functions)
 src/lua/std/mod.rs              -- registration (alphabetical insert)
-tests/std/path.test.luau        -- Luau integration tests
+tests/std/path.test.lua        -- Lua integration tests
 types/std/path.d.luau           -- type definition stubs
 ```
 
@@ -505,7 +505,7 @@ Rejected. Known gap forcing manual separator manipulation. neoc targets professi
 - **Shared helper:** `fn register_path_read_methods<T: UserData + AsRef<StdPath>>(methods: &mut UserDataMethods<T>)` — avoid duplicating `Path` methods on `PathBuf`.
 - **Lexical normalize:** `path-clean = "1"` or in-tree. Document in PR.
 - **`path.resolve` CWD:** calls `std::env::current_dir()`. Failure → `error("path.resolve: current_dir unavailable: <reason>")`.
-- **Tests:** `tests/std/path.test.luau` — all acceptance criteria. Separator-sensitive assertions conditional on `require("std:env").os`. Cover: `path.basename("/")`, `path.extname(".gitignore")`, `path.normalize("/../foo")`, all functions with `""`.
+- **Tests:** `tests/std/path.test.lua` — all acceptance criteria. Separator-sensitive assertions conditional on `require("std:env").os`. Cover: `path.basename("/")`, `path.extname(".gitignore")`, `path.normalize("/../foo")`, all functions with `""`.
 - **`.d.luau` stub:** `types/std/path.d.luau` — required per M1 DoD. `PathBuf = Path & { ... }` models inheritance.
 - **Bench:** Criterion, `bench` feature. Minimum: `join` (10 segments), `normalize` (multiple `..`).
 - **Sequencing:** No dependency on `std:fs` or `std:env` at module level. `path.resolve` calls Rust stdlib `current_dir()` directly. Lands independently; no blockers.

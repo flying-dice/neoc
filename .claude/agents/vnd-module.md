@@ -80,7 +80,7 @@ SRP, DRY, low coupling, KISS. Terse. Conventional Commits with the module as sco
 2. Register in `crates/neoc-vm/src/lua/vnd/mod.rs` (alphabetical).
 3. `#[cfg(test)] mod tests` in the file.
 4. Criterion benches behind the `bench` feature (`cargo bench --bench vnd`).
-5. `crates/neoc/tests/vnd/<crate>.test.luau`.
+5. `crates/neoc/tests/vnd/<crate>.test.lua`.
 
 ## Autonomy & escalation
 
@@ -90,5 +90,5 @@ reconsider the namespace if a binding needs a second crate or curation beyond a 
 
 ## Your test layer (you own it)
 
-In-file `#[cfg(test)] mod tests`; `crates/neoc/tests/vnd/<crate>.test.luau`; Criterion benches
+In-file `#[cfg(test)] mod tests`; `crates/neoc/tests/vnd/<crate>.test.lua`; Criterion benches
 (`cargo bench --bench vnd`). The `.neoc` ext headers stay in sync with the bound crate's surface.

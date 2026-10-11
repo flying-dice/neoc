@@ -38,7 +38,7 @@ Concrete scenarios:
 
 ## Detailed design
 
-### Luau API
+### Lua API
 
 ```lua
 local csv = require("lib:csv")
@@ -106,7 +106,7 @@ local output = writer:finish()
 
 **`csv.rows(data[, opts]) → iterator`**
 
-Returns a Luau iterator over an in-memory string. Each call returns the next row (array or table per `headers`), or `nil` at EOF. Errors raise (not tuple) — iterators cannot return `(nil, err)` ergonomically; raise matches `pairs`/`ipairs` shape. Convenience wrapper over `csv.reader(std:io.from_string(data), opts):rows()`.
+Returns a Lua iterator over an in-memory string. Each call returns the next row (array or table per `headers`), or `nil` at EOF. Errors raise (not tuple) — iterators cannot return `(nil, err)` ergonomically; raise matches `pairs`/`ipairs` shape. Convenience wrapper over `csv.reader(std:io.from_string(data), opts):rows()`.
 
 **`csv.reader(handle[, opts]) → reader`**
 
@@ -118,7 +118,7 @@ Returns a Luau iterator over an in-memory string. Each call returns the next row
 Methods:
 
 - `reader:headers() → ({string}, nil) | (nil, string)` — return the header row. **Cached**, mirrors Rust `csv::Reader::headers`: the first call (or the first row consumed via `:rows()` when `headers = true`) parses and stores the headers; all subsequent calls return the cached value regardless of reader position. Errors if `headers ~= true`. Safe to call before or after `:rows()`.
-- `reader:rows() → iterator` — Luau iterator yielding the next row on each call, `nil` at EOF. Same raise-on-error semantics as `csv.rows`. The reader holds an exclusive borrow on the handle for its lifetime (see Handle borrow enforcement below).
+- `reader:rows() → iterator` — Lua iterator yielding the next row on each call, `nil` at EOF. Same raise-on-error semantics as `csv.rows`. The reader holds an exclusive borrow on the handle for its lifetime (see Handle borrow enforcement below).
 
 **Handle borrow enforcement.** `csv.reader(handle, opts)` takes an exclusive borrow on the `ReaderHandle` for the lifetime of the returned reader. A second `csv.reader` call with the same handle while the first reader is alive returns a tuple error — no deadlock, no interleaved reads. The borrow flag clears on reader GC (or explicit `:close()` if added in v2). Implementation flips a boolean on the `ReaderHandle` UserData; check is O(1).
 
@@ -246,7 +246,7 @@ Empty field in a typed column → `nil` (see [Empty fields](#empty-fields)). Cal
 - Surface adds five entry points (`parse`, `rows`, `reader`, `stringify`, `writer`) vs a leaner `encode`/`decode` pair. Streaming I/O, lazy-parse, and incremental writing each have a distinct shape and don't fold into the symmetric encode/decode used by `lib:compress` / `lib:base64`.
 - Reader is handle-based (`csv.reader(handle)`); writer is in-memory accumulator (`csv.writer({headers})`). The asymmetry is deliberate — handle-based writer is deferred until `std:io` exposes a buffer sink (so the in-memory case has a clean expression). Tracked as a v2 candidate in [Alternatives](#alternatives).
 - `types` map requires headers — coupling two options that are otherwise independent.
-- Iterators (`csv.rows`, `reader:rows()`) raise instead of tuple-erroring, diverging from the rest of the module. Required by Luau iterator protocol.
+- Iterators (`csv.rows`, `reader:rows()`) raise instead of tuple-erroring, diverging from the rest of the module. Required by Lua iterator protocol.
 - Writer state (`:finish` consumes) adds a footgun — well-typed but easy to misuse in long-lived scripts.
 
 ## Alternatives
@@ -279,10 +279,10 @@ _None._
 - Module location: `src/lib/csv/` (per existing `lib:*` layout).
 - `csv.reader(handle, opts)` takes an exclusive borrow on the `ReaderHandle` and wraps it with `csv::Reader::from_reader`. Returns a `CsvReader` `UserData`. The `ReaderHandle` gains a `borrowed: AtomicBool` field (set on borrow, cleared on `CsvReader` drop). `csv.reader` checks the flag first; if already set → tuple error `csv.reader: handle is already in use by another reader`. No `MutexGuard` is held across calls — only the inner trait object is moved into the reader, which holds it for its lifetime. This eliminates both deadlock and interleaved-read failure modes.
 - `csv.rows(data, opts)` is a thin wrapper: constructs an internal `Cursor`-backed `ReaderHandle` (or reuses `std:io.from_string`) and delegates to `csv.reader(…):rows()`. Same `csv::Reader::records()` underneath; no separate code path. The handle is owned by the iterator closure, so the borrow flag is irrelevant in this path.
-- `reader:headers()` is backed by `csv::Reader::headers()` directly — the backing crate already caches the headers on first parse and returns a borrowed `StringRecord` thereafter. We clone into a fresh Luau table per call. Calling `:headers()` before `:rows()` triggers the initial parse; calling it after triggers no extra I/O (cached). Documented to match Rust semantics 1:1.
+- `reader:headers()` is backed by `csv::Reader::headers()` directly — the backing crate already caches the headers on first parse and returns a borrowed `StringRecord` thereafter. We clone into a fresh Lua table per call. Calling `:headers()` before `:rows()` triggers the initial parse; calling it after triggers no extra I/O (cached). Documented to match Rust semantics 1:1.
 - `csv.writer` wraps `csv::Writer<Vec<u8>>`; `:finish()` consumes and returns `String::from_utf8`. Built with `flexible(false)` so column-count mismatches surface as errors rather than producing ragged output.
 - `writer:row` shape detection: walk keys once. `1..n` integer keys only → array; string keys only → keyed lookup against `headers`; both present → tuple error. Array length compared to `#headers`; mismatch → tuple error with both counts. Keyed shape: iterate `headers`, look up each in the table; absent key → empty string field (matches `stringify`).
 - Parse errors append the raw source bytes of the offending line truncated to 80 bytes. Truncation walks UTF-8 boundaries via `str::is_char_boundary`; truncated lines get a trailing `…`. Line numbers come from `csv::Error::position()` / `csv::ByteRecord::position()`. Source bytes come from a bounded rolling capture (`RawCapture`, 64 KiB) fed by a `Read` wrapper around the underlying source; the error path slices `[record.byte(), reader.byte())` and strips the trailing record terminator. If the bytes have aged out of the capture (cap exceeded — only possible for records longer than 64 KiB) the line falls back to a best-effort reconstruction from parsed fields.
-- Single-byte option validation happens at the Luau→Rust boundary, before constructing the `ReaderBuilder` / `WriterBuilder`. Options-validation errors omit the `line N:` segment and raw line (no position context).
+- Single-byte option validation happens at the Lua→Rust boundary, before constructing the `ReaderBuilder` / `WriterBuilder`. Options-validation errors omit the `line N:` segment and raw line (no position context).
 - Error prefixes follow `0003-errors-guide` — `module.function:` form, set via `from_err(lua, "csv.parse", …)` etc.
 - Type stub: `docs/src/lib/csv.d.luau` (mirror existing module stubs).

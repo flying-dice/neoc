@@ -68,7 +68,7 @@ http.serve_static("./dist/**/*", {
 ## Consequences
 
 **Easier:**
-- Zero-friction static serving from Luau — one call, no external tools.
+- Zero-friction static serving from Lua — one call, no external tools.
 - Glob allowlist → path traversal structurally impossible.
 - `mime_overrides` unblocks callers from upstream patches.
 

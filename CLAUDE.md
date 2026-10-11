@@ -3,7 +3,7 @@
 Guidance for Claude (and any LLM agent) working in the **neoc** monorepo — one
 Cargo workspace holding two halves:
 
-- **Runtime** (`crates/neoc-vm`) — an embedded Luau engine backed by Rust. Lua
+- **Runtime** (`crates/neoc-vm`) — an embedded LuaJIT engine backed by Rust. Lua
   scripts run in a sandboxed VM with a curated module surface (`std:*`, `lib:*`,
   `vnd:*`). The unsafe halves of the Lua standard library are stripped;
   everything scripts need is provided through explicit modules. The `neoc`
@@ -119,7 +119,7 @@ design is wrong — flag it.
 cargo build                                          # debug build
 cargo build --release                                # release build
 cargo test --workspace                               # full suite (runtime + compiler)
-cargo run -p neoc -- run 'crates/neoc/tests/**/*.test.luau'  # Luau integration tests
+cargo run -p neoc -- run 'crates/neoc/tests/**/*.test.lua'  # Lua integration tests
 cargo run -p neoc -- emit-headers --out crates/neoc-vm/src/lua  # regenerate ext headers
 cargo bench --bench lib                              # Criterion benchmarks (lib modules)
 cargo bench --bench vnd                              # Criterion benchmarks (vnd modules)
@@ -137,9 +137,9 @@ crates/neoc/                 # the thin `neoc` binary (the only bin)
   src/
     main.rs                  # CLI entry (run/emit-headers + compiler subcommands)
     cli.rs                   # folded compiler subcommand tree (build/check/fmt/lsp)
-  tests/                     # Luau integration tests (*.test.luau, *.spec.luau) + cli.rs
+  tests/                     # Lua integration tests (*.test.lua, *.spec.lua) + cli.rs
 
-crates/neoc-vm/              # the Luau runtime library
+crates/neoc-vm/              # the LuaJIT runtime library
   src/
     lib.rs                   # library root (pub mod dto, errors, lua)
     errors.rs                # runtime error types (NeocError)
@@ -212,7 +212,7 @@ Priority order, 1 > 2 > 3 > 4:
 2. Register in `crates/neoc-vm/src/lua/<ns>/mod.rs` (alphabetical).
 3. Add `#[cfg(test)] mod tests` in the file.
 4. Add Criterion benches (gated behind the `bench` feature).
-5. Add `crates/neoc/tests/<ns>/<name>.test.luau`.
+5. Add `crates/neoc/tests/<ns>/<name>.test.lua`.
 
 ---
 
@@ -406,7 +406,7 @@ Each column maps to a scoped label. Labels are mutually exclusive within the
 
 The binary supports Linux, macOS, and Windows. Signal handling uses
 `#[cfg(unix)]` / `#[cfg(not(unix))]` conditionally. `mlua` is built `vendored`
-(bundles Luau). `rusqlite` uses `bundled` (bundles SQLite).
+(bundles LuaJIT). `rusqlite` uses `bundled` (bundles SQLite).
 
 ---
 

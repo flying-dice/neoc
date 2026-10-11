@@ -8,7 +8,7 @@ Concurrent, shareable collection types — `map`, `counter`, `mutex`.
 |---|---|
 | Namespace | `std` |
 | Source | [`src/lua/std/collections.rs`](https://github.com/flying-dice/neoc/blob/main/src/lua/std/collections.rs) |
-| Tests | [`tests/std/collections.test.luau`](https://github.com/flying-dice/neoc/blob/main/tests/std/collections.test.luau) |
+| Tests | [`crates/neoc/tests/std/collections.test.lua`](https://github.com/flying-dice/neoc/blob/main/crates/neoc/tests/std/collections.test.lua) |
 | Stability | Experimental |
 | Mirror | [`std::collections`](https://doc.rust-lang.org/std/collections/) |
 

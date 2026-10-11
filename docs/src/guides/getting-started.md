@@ -1,6 +1,6 @@
 # Getting started
 
-Install neoc and run a first Luau script. Assumes a working CLI and basic Lua familiarity.
+Install neoc and run a first Lua script. Assumes a working CLI and basic Lua familiarity.
 
 ## Installation
 
@@ -33,7 +33,7 @@ cargo install --path .
 
 ## Running a script
 
-Luau scripts are `.luau` files. The binary takes file paths or glob patterns, runs each match independently.
+Lua scripts are `.lua` files. The binary takes file paths or glob patterns, runs each match independently.
 
 ### First script
 
@@ -42,7 +42,7 @@ print("hello, neoc")
 ```
 
 ```bash
-neoc run hello.luau
+neoc run hello.lua
 ```
 
 Output: `hello, neoc\n`
@@ -50,14 +50,14 @@ Output: `hello, neoc\n`
 ### Multiple scripts
 
 ```bash
-neoc run 'tests/**/*.test.luau'
+neoc run 'tests/**/*.test.lua'
 ```
 
 Shell quoting prevents shell expansion; neoc expands the glob internally.
 
 ## Execution model
 
-Each script runs in its own Luau VM. Runtime maintains a worker pool, dispatches scripts across it. Globals, locals, and userdata are private to each worker. Cross-worker state only via explicit `std:workers` surface.
+Each script runs in its own LuaJIT VM. Runtime maintains a worker pool, dispatches scripts across it. Globals, locals, and userdata are private to each worker. Cross-worker state only via explicit `std:workers` surface.
 
 See [The sandboxing model](/guides/sandboxing-model) for rationale and implications.
 

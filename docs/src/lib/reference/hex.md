@@ -8,7 +8,7 @@ Hex encoding/decoding — bytes to hex string and back.
 |---|---|
 | Namespace | `lib` |
 | Source | [`src/lua/lib/hex.rs`](https://github.com/flying-dice/neoc/blob/main/src/lua/lib/hex.rs) |
-| Tests | [`tests/lib/hex.test.luau`](https://github.com/flying-dice/neoc/blob/main/tests/lib/hex.test.luau) |
+| Tests | [`crates/neoc/tests/lib/hex.test.lua`](https://github.com/flying-dice/neoc/blob/main/crates/neoc/tests/lib/hex.test.lua) |
 | Stability | Experimental |
 | Mirror | Rust `hex` crate; Python `bytes.hex()` / `bytes.fromhex()` |
 

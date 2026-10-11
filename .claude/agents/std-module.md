@@ -82,7 +82,7 @@ SRP, DRY, low coupling, KISS. Terse. Conventional Commits with the module as sco
 2. Register in `crates/neoc-vm/src/lua/std/mod.rs` (alphabetical).
 3. `#[cfg(test)] mod tests` in the file.
 4. Criterion benches behind the `bench` feature where the module is performance-sensitive.
-5. `crates/neoc/tests/std/<name>.test.luau`.
+5. `crates/neoc/tests/std/<name>.test.lua`.
 
 ## Autonomy & escalation
 
@@ -91,5 +91,5 @@ anything that would pull a non-blessed dependency into `std` (it belongs in anot
 
 ## Your test layer (you own it)
 
-In-file `#[cfg(test)] mod tests`; `crates/neoc/tests/std/<name>.test.luau`; Criterion benches
+In-file `#[cfg(test)] mod tests`; `crates/neoc/tests/std/<name>.test.lua`; Criterion benches
 behind `bench`. The `.neoc` ext headers stay in sync with the Rust surface.

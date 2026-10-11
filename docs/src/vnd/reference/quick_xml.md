@@ -8,7 +8,7 @@ XML parsing/serialisation via [`quick-xml`](https://crates.io/crates/quick-xml).
 |---|---|
 | Namespace | `vnd` |
 | Source | [`src/lua/vnd/quick_xml.rs`](https://github.com/flying-dice/neoc/blob/main/src/lua/vnd/quick_xml.rs) |
-| Tests | [`tests/vnd/quick_xml.test.luau`](https://github.com/flying-dice/neoc/blob/main/tests/vnd/quick_xml.test.luau) |
+| Tests | [`crates/neoc/tests/vnd/quick_xml.test.lua`](https://github.com/flying-dice/neoc/blob/main/crates/neoc/tests/vnd/quick_xml.test.lua) |
 | Stability | Experimental |
 | Mirror | [`quick-xml`](https://docs.rs/quick-xml/) |
 
