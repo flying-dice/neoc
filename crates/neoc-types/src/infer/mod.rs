@@ -316,7 +316,9 @@ impl<'a> Checker<'a> {
         match ty {
             ast::Type::List(inner) => self.check_alias_arity(inner),
             ast::Type::Fn { params, ret } => {
-                params.iter().for_each(|p| self.check_alias_arity(p));
+                for p in params {
+                    self.check_alias_arity(p);
+                }
                 if let Some(r) = ret {
                     self.check_alias_arity(r);
                 }
@@ -325,7 +327,9 @@ impl<'a> Checker<'a> {
                 let Some(last) = path.segments.last() else {
                     return;
                 };
-                last.args.iter().for_each(|a| self.check_alias_arity(a));
+                for a in &last.args {
+                    self.check_alias_arity(a);
+                }
                 if let Some(expected) = self.table.alias_arity(&last.name)
                     && expected != last.args.len()
                 {
@@ -349,7 +353,9 @@ impl<'a> Checker<'a> {
                 ast::StructBody::Unit => {}
                 ast::StructBody::Tuple(ty) => self.check_alias_arity(ty),
                 ast::StructBody::Named(fields) => {
-                    fields.iter().for_each(|f| self.check_alias_arity(&f.ty));
+                    for f in fields {
+                        self.check_alias_arity(&f.ty);
+                    }
                 }
             },
             ast::ItemKind::Enum(e) => {
@@ -357,10 +363,14 @@ impl<'a> Checker<'a> {
                     match &v.body {
                         ast::VariantBody::Unit => {}
                         ast::VariantBody::Tuple(tys) => {
-                            tys.iter().for_each(|t| self.check_alias_arity(t));
+                            for t in tys {
+                                self.check_alias_arity(t);
+                            }
                         }
                         ast::VariantBody::Named(fields) => {
-                            fields.iter().for_each(|f| self.check_alias_arity(&f.ty));
+                            for f in fields {
+                                self.check_alias_arity(&f.ty);
+                            }
                         }
                     }
                 }
