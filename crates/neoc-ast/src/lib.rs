@@ -600,6 +600,25 @@ pub struct TraitItem {
     pub default: Option<Block>,
 }
 
+impl TraitDecl {
+    /// The trait's default-bodied methods as ordinary function declarations, in
+    /// source order — what an implementor that does not override them inherits
+    /// (`DYNAMIC.md` §3.4).
+    #[must_use]
+    pub fn default_methods(&self) -> Vec<FnDecl> {
+        self.items
+            .iter()
+            .filter_map(|item| {
+                item.default.as_ref().map(|body| FnDecl {
+                    attrs: Vec::new(),
+                    sig: item.sig.clone(),
+                    body: body.clone(),
+                })
+            })
+            .collect()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImplBlock {
     pub generics: Vec<GenericParam>,

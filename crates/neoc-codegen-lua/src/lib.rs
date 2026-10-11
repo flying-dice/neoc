@@ -304,6 +304,7 @@ fn emit_inner(
         enums: EnumIndex::build(module, imported_enums),
         tuple_structs: TupleStructIndex::build(module),
         traits: ast::trait_index(module),
+        trait_defaults: trait_defaults(module),
         line_index: source.map(LineIndex::build),
         forward_decls: forward_declared_fns(module, as_module),
         validation: validate::plan(module),
@@ -438,6 +439,10 @@ pub(crate) struct Emitter {
     /// `__traits` runtime tag — `Type.__traits = { … }` on the type table
     /// (`DYNAMIC.md`). Inert until the runtime trait-enforcement work (#75).
     traits: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
+    /// Default-bodied methods of each trait declared in this module, by trait
+    /// name. An `impl Trait for Type` that does not override one emits it onto
+    /// the type's table at the impl site (`DYNAMIC.md` §3.4).
+    trait_defaults: HashMap<String, Vec<ast::FnDecl>>,
     /// The enclosing-loop stack. Each frame records whether the loop body was
     /// restructured for `continue` (the repeat/break idiom) and, if so, the name
     /// of its outer-break flag — see [`expr`].
@@ -1043,13 +1048,30 @@ impl Emitter {
         let Some(target) = p.segments.last().map(|s| s.name.clone()) else {
             return;
         };
-        for f in &b.items {
+        let inherited = self.inherited_defaults(b);
+        for f in b.items.iter().chain(&inherited) {
             // A trait impl binds the trait's associated types; project them into
             // each method signature so a `Self::Item` return renders as the bound
             // type rather than a dangling type name (`STATIC.md` §3.4).
             let f = f.project_assoc(&b.assoc_bindings);
             self.emit_fn(Some(&target), &f, ast::Visibility::Public);
         }
+    }
+
+    /// The default methods of `b`'s trait that `b` does not override, in the
+    /// trait's declaration order. Empty for an inherent impl or a trait without
+    /// defaults in this module.
+    fn inherited_defaults(&self, b: &ast::ImplBlock) -> Vec<ast::FnDecl> {
+        let Some(trait_name) = b.trait_.as_ref().and_then(|p| p.segments.last()) else {
+            return Vec::new();
+        };
+        self.trait_defaults
+            .get(&trait_name.name)
+            .into_iter()
+            .flatten()
+            .filter(|d| !b.items.iter().any(|f| f.sig.name == d.sig.name))
+            .cloned()
+            .collect()
     }
 
     /// Emit a function. `target` is the type name when this is a method or
@@ -1097,6 +1119,20 @@ impl Emitter {
         });
         self.line("end");
     }
+}
+
+/// The default-bodied methods of every trait declared in `module`, by trait
+/// name. Traits without a default are absent.
+fn trait_defaults(module: &ast::Module) -> HashMap<String, Vec<ast::FnDecl>> {
+    module
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            ast::ItemKind::Trait(t) => Some((t.name.clone(), t.default_methods())),
+            _ => None,
+        })
+        .filter(|(_, defaults)| !defaults.is_empty())
+        .collect()
 }
 
 /// Whether `attrs` contains any `#[derive(...)]`.
