@@ -1055,7 +1055,7 @@ pub fn benches(c: &mut criterion::Criterion) {
     g.bench_function("library/parse_rfc3339", |b| {
         b.iter(|| {
             let _ =
-                Zoned::from_str(black_box("2026-05-20T16:30:00-05:00[America/New_York]")).unwrap();
+                Zoned::from_str(black_box("2026-05-20T16:30:00-04:00[America/New_York]")).unwrap();
         });
     });
 
