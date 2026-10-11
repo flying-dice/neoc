@@ -318,9 +318,7 @@ impl<'a> Elaborator<'a> {
                 base: base.as_ref().map(|b| self.boxed(b)),
             },
             ast::ExprKind::List(items) => ast::ExprKind::List(self.exprs(items)),
-            ast::ExprKind::Assign { target, op, value } => {
-                self.assign(target, *op, value, span)
-            }
+            ast::ExprKind::Assign { target, op, value } => self.assign(target, *op, value, span),
             ast::ExprKind::If { cond, then, else_ } => ast::ExprKind::If {
                 cond: self.boxed(cond),
                 then: self.block(then),

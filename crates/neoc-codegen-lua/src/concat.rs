@@ -155,6 +155,28 @@ fn walk_expr<'a>(e: &'a ast::Expr, site: Site, v: &mut impl Visitor<'a>) {
             walk_expr(target, site, v);
             walk_expr(value, site, v);
         }
+        ast::ExprKind::If { .. }
+        | ast::ExprKind::Match { .. }
+        | ast::ExprKind::While { .. }
+        | ast::ExprKind::For { .. }
+        | ast::ExprKind::Loop { .. }
+        | ast::ExprKind::Closure { .. }
+        | ast::ExprKind::Block(_)
+        | ast::ExprKind::Return(_) => walk_control(e, site, v),
+        ast::ExprKind::Int(_)
+        | ast::ExprKind::Float(_)
+        | ast::ExprKind::Str(_)
+        | ast::ExprKind::Bool(_)
+        | ast::ExprKind::Unit
+        | ast::ExprKind::Break
+        | ast::ExprKind::Continue => {}
+    }
+}
+
+/// The control-flow and scoping forms of [`walk_expr`]: the ones that own
+/// blocks, bind names, or open a closure.
+fn walk_control<'a>(e: &'a ast::Expr, site: Site, v: &mut impl Visitor<'a>) {
+    match &e.kind {
         ast::ExprKind::If { cond, then, else_ } => {
             walk_expr(cond, site, v);
             walk_block(then, site, v);
@@ -193,18 +215,8 @@ fn walk_expr<'a>(e: &'a ast::Expr, site: Site, v: &mut impl Visitor<'a>) {
             walk_expr(body, Site { closure: true }, v);
         }
         ast::ExprKind::Block(b) => walk_block(b, site, v),
-        ast::ExprKind::Return(value) => {
-            if let Some(value) = value {
-                walk_expr(value, site, v);
-            }
-        }
-        ast::ExprKind::Int(_)
-        | ast::ExprKind::Float(_)
-        | ast::ExprKind::Str(_)
-        | ast::ExprKind::Bool(_)
-        | ast::ExprKind::Unit
-        | ast::ExprKind::Break
-        | ast::ExprKind::Continue => {}
+        ast::ExprKind::Return(Some(value)) => walk_expr(value, site, v),
+        _ => {}
     }
 }
 
@@ -452,12 +464,7 @@ impl Emitter {
     /// (§4.11). Declines when `name` is captured by a closure or nested
     /// function, or rebound, anywhere it is visible: a capture could read the
     /// string while the loop still holds it in the accumulator.
-    fn plan_concat<'a>(
-        &mut self,
-        name: &str,
-        rest: &'a [ast::Stmt],
-        value: Option<&'a ast::Expr>,
-    ) {
+    fn plan_concat<'a>(&mut self, name: &str, rest: &'a [ast::Stmt], value: Option<&'a ast::Expr>) {
         let mut scope = NameScan::new(name);
         walk_scope(rest, value, name, &mut scope);
         if scope.captured > 0 || scope.shadows > 0 {

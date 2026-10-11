@@ -45,7 +45,9 @@ fn for_loop_append_accumulates() {
     assert!(out.contains("local __sb_1 = { s }"), "{out}");
     assert!(out.contains("__sb_1[#__sb_1 + 1] = \"x\""), "{out}");
     // The fold follows the loop's `end` and precedes the read.
-    let end = out.find("    end\n    s = table.concat(__sb_1)").expect(&out);
+    let end = out
+        .find("    end\n    s = table.concat(__sb_1)")
+        .expect(&out);
     assert!(end < out.find("println(s)").expect(&out), "{out}");
     assert!(!out.contains(".. \"x\""), "{out}");
 }
@@ -77,11 +79,11 @@ fn append_chain_pushes_each_part_in_order() {
 fn break_still_folds_after_the_loop() {
     let out = lua(r#"fn main() {
     let s = "";
-    loop { s += "x"; if s.len() > 100 { break } }
+    loop { s += "x"; if s == "xxx" { break } }
     println(s);
 }"#);
-    // `s.len()` reads the string: not accumulated. Control: a break that does
-    // not read it is.
+    // The `break` condition reads the string: not accumulated. Control: a
+    // break that does not read it is.
     assert_eq!(folds(&out), 0, "{out}");
     let out = lua(r#"fn main() {
     let s = "";
@@ -291,10 +293,10 @@ fn parameters_are_not_rewritten() {
 
 #[test]
 fn numeric_compound_assign_is_untouched() {
-    let out = lua(r#"fn main() {
+    let out = lua("fn main() {
     let n = 0;
     for i in 0..3 { n += 1; }
-}"#);
+}");
     assert_eq!(folds(&out), 0, "{out}");
     assert!(out.contains("n = n + 1"), "{out}");
 }
