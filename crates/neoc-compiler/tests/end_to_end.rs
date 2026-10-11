@@ -310,3 +310,34 @@ fn main() {
     let out = run_hosted(&format!("printn = print\n{host}"), src, "main").expect("runs");
     assert_eq!(out, "a!b\n1\n");
 }
+
+#[test]
+fn compound_assign_reads_a_host_getter_base_once() {
+    // `STATIC.md` §4.1: `h.inner` is a host getter; the place reads it once,
+    // the later `printn` read once more.
+    let host = r#"printn = print
+calls = 0
+local inner = { port = 80 }
+handle = function()
+  return setmetatable({}, { __index = function(_, k)
+    if k == "inner" then calls = calls + 1 return inner end
+  end })
+end
+getter_calls = function() return calls end"#;
+    let src = r"
+extern {
+    fn printn(n: number);
+    struct Inner { port: number }
+    struct Handle { inner: Inner }
+    fn handle() -> Handle;
+    fn getter_calls() -> number;
+}
+fn main() {
+    let h = handle();
+    h.inner.port += 1;
+    printn(h.inner.port);
+    printn(getter_calls());
+}";
+    let out = run_hosted(host, src, "main").expect("runs");
+    assert_eq!(out, "81\n2\n");
+}

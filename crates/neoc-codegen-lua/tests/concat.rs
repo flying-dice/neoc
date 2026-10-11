@@ -483,13 +483,15 @@ fn run() -> Result<number, string> {
 }
 
 #[test]
-fn field_chain_on_a_name_binds_no_temporary() {
-    let out = lua(r"struct In { c: number }
+fn field_chain_binds_its_base_once() {
+    // `a.b` may be a host getter on an `extern` struct: read it once.
+    let out = lua("struct In { c: number }
 struct Out { b: In }
 fn main() {
     let a = Out { b: In { c: 1 } };
     a.b.c += 1;
 }");
-    assert!(!out.contains("__place_"), "{out}");
-    assert!(out.contains("a.b.c = a.b.c + 1"), "{out}");
+    assert_eq!(out.matches("a.b").count(), 1, "{out}");
+    assert!(out.contains("local __place_1 = a.b"), "{out}");
+    assert!(out.contains("__place_1.c = __place_1.c + 1"), "{out}");
 }
