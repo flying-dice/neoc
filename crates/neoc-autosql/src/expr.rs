@@ -5,14 +5,20 @@
 //! function-return catalog (aggregates, string/number builtins, `COALESCE`).
 //! [`params`] walks a `WHERE`/`HAVING` predicate and records a [`Param`] for
 //! each placeholder, typed from the column or expression it is compared with.
+//!
+//! Subqueries are typed here too. A scalar subquery `(SELECT …)` is its one
+//! column's type and always nullable (an empty result is NULL); `EXISTS` is a
+//! non-null `bool`; `x IN (SELECT …)` is a `bool`, nullable when `x` or the
+//! subquery column can be NULL (SQL three-valued logic). A window function
+//! (`f(…) OVER (…)`) is typed by [`window_function`].
 
 use sqlparser::ast::{
-    BinaryOperator, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArguments, UnaryOperator,
-    Value,
+    BinaryOperator, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArguments, Query,
+    UnaryOperator, Value, WindowType,
 };
 
 use crate::catalog::last_ident;
-use crate::query::Param;
+use crate::query::{self, Param, ResultCol};
 use crate::scope::{Resolved, Scope};
 use crate::{ColType, Error, Prim};
 
@@ -73,6 +79,24 @@ pub(crate) fn infer(query: &str, expr: &Expr, scope: &Scope) -> Result<Resolved,
             nullable: nullable(query, expr, scope),
         }),
         Expr::IsNull(_) | Expr::IsNotNull(_) => Ok(prim(Prim::Bool, false)),
+        Expr::Subquery(subquery) => {
+            let column = single_column(query, subquery, scope, "a scalar subquery")?;
+            Ok(Resolved {
+                ty: column.ty,
+                nullable: true,
+            })
+        }
+        Expr::Exists { subquery, .. } => {
+            subquery_columns(query, subquery, scope, &mut Vec::new())?;
+            Ok(prim(Prim::Bool, false))
+        }
+        Expr::InSubquery { expr, subquery, .. } => {
+            let column = single_column(query, subquery, scope, "an IN subquery")?;
+            Ok(prim(
+                Prim::Bool,
+                column.nullable || nullable(query, expr, scope),
+            ))
+        }
         _ => Err(unsupported(
             query,
             "this expression is not supported in a SELECT list — alias a column, \
@@ -96,12 +120,17 @@ pub(crate) fn params(
                 params(query, left, scope, out)?;
                 params(query, right, scope, out)?;
             }
+            _ if is_placeholder(right) => {
+                subquery_params(query, left, scope, out)?;
+                push_param(query, left, scope, out)?;
+            }
+            _ if is_placeholder(left) => {
+                push_param(query, right, scope, out)?;
+                subquery_params(query, right, scope, out)?;
+            }
             _ => {
-                if is_placeholder(right) {
-                    push_param(query, left, scope, out)?;
-                } else if is_placeholder(left) {
-                    push_param(query, right, scope, out)?;
-                }
+                subquery_params(query, left, scope, out)?;
+                subquery_params(query, right, scope, out)?;
             }
         },
         Expr::Nested(inner) => params(query, inner, scope, out)?,
@@ -109,27 +138,166 @@ pub(crate) fn params(
         Expr::Between {
             expr, low, high, ..
         } => {
+            subquery_params(query, expr, scope, out)?;
             for bound in [low.as_ref(), high.as_ref()] {
                 if is_placeholder(bound) {
                     push_param(query, expr, scope, out)?;
+                } else {
+                    subquery_params(query, bound, scope, out)?;
                 }
             }
         }
         Expr::Like { expr, pattern, .. } | Expr::ILike { expr, pattern, .. }
             if is_placeholder(pattern) =>
         {
+            subquery_params(query, expr, scope, out)?;
             push_param(query, expr, scope, out)?;
         }
         Expr::InList { expr, list, .. } => {
+            subquery_params(query, expr, scope, out)?;
             for item in list {
                 if is_placeholder(item) {
                     push_param(query, expr, scope, out)?;
+                } else {
+                    subquery_params(query, item, scope, out)?;
                 }
             }
         }
-        _ => {}
+        Expr::InSubquery { expr, subquery, .. } if is_placeholder(expr) => {
+            // `? IN (SELECT …)`: the placeholder comes first textually, but its
+            // type is the subquery's column, so type the subquery first.
+            let mut inner = Vec::new();
+            let column = single_column_into(query, subquery, scope, "an IN subquery", &mut inner)?;
+            out.push(Param {
+                name: column.field,
+                ty: column.ty,
+                nullable: column.nullable,
+            });
+            out.extend(inner);
+        }
+        _ => subquery_params(query, expr, scope, out)?,
     }
     Ok(())
+}
+
+/// Appends the parameters of every subquery nested in `expr` — in a projection
+/// item, a predicate operand, or a function argument — in textual order. A
+/// placeholder outside a subquery is not collected here: only `WHERE`/`HAVING`
+/// comparisons ([`params`]) bind a bare placeholder.
+pub(crate) fn subquery_params(
+    query: &str,
+    expr: &Expr,
+    scope: &Scope,
+    out: &mut Vec<Param>,
+) -> Result<(), Error> {
+    match expr {
+        Expr::Exists { subquery, .. } => {
+            subquery_columns(query, subquery, scope, out)?;
+        }
+        Expr::Subquery(subquery) => {
+            single_column_into(query, subquery, scope, "a scalar subquery", out)?;
+        }
+        Expr::InSubquery { expr, subquery, .. } => {
+            subquery_params(query, expr, scope, out)?;
+            single_column_into(query, subquery, scope, "an IN subquery", out)?;
+        }
+        _ => {
+            for child in children(expr) {
+                subquery_params(query, child, scope, out)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The direct sub-expressions of the expression forms a subquery can hide in,
+/// in textual order. Forms not listed here have their subqueries rejected by
+/// the whole-statement placeholder count, never silently mis-bound.
+fn children(expr: &Expr) -> Vec<&Expr> {
+    match expr {
+        Expr::BinaryOp { left, right, .. } => vec![left, right],
+        Expr::UnaryOp { expr, .. }
+        | Expr::Nested(expr)
+        | Expr::IsNull(expr)
+        | Expr::IsNotNull(expr)
+        | Expr::Cast { expr, .. } => vec![expr],
+        Expr::Between {
+            expr, low, high, ..
+        } => vec![expr, low, high],
+        Expr::InList { expr, list, .. } => std::iter::once(expr.as_ref()).chain(list).collect(),
+        Expr::Like { expr, pattern, .. } | Expr::ILike { expr, pattern, .. } => {
+            vec![expr, pattern]
+        }
+        Expr::Case {
+            operand,
+            conditions,
+            results,
+            else_result,
+        } => operand
+            .iter()
+            .map(AsRef::as_ref)
+            .chain(conditions.iter().zip(results).flat_map(|(c, r)| [c, r]))
+            .chain(else_result.iter().map(AsRef::as_ref))
+            .collect(),
+        Expr::Function(func) => function_args(func),
+        _ => Vec::new(),
+    }
+}
+
+/// The plain-expression arguments of a function call (wildcards skipped).
+fn function_args(func: &Function) -> Vec<&Expr> {
+    let FunctionArguments::List(list) = &func.args else {
+        return Vec::new();
+    };
+    list.args
+        .iter()
+        .filter_map(|arg| match arg {
+            FunctionArg::Unnamed(FunctionArgExpr::Expr(e))
+            | FunctionArg::Named {
+                arg: FunctionArgExpr::Expr(e),
+                ..
+            } => Some(e),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Types a subquery nested in `scope` — its relations visible as the enclosing
+/// scope for correlated references — appending its parameters to `params`.
+fn subquery_columns(
+    query: &str,
+    subquery: &Query,
+    scope: &Scope,
+    params: &mut Vec<Param>,
+) -> Result<Vec<ResultCol>, Error> {
+    query::query_columns(query, subquery, &scope.child_env(), params)
+}
+
+/// The one column a scalar or `IN` subquery must project.
+fn single_column(
+    query: &str,
+    subquery: &Query,
+    scope: &Scope,
+    what: &str,
+) -> Result<ResultCol, Error> {
+    single_column_into(query, subquery, scope, what, &mut Vec::new())
+}
+
+fn single_column_into(
+    query: &str,
+    subquery: &Query,
+    scope: &Scope,
+    what: &str,
+    params: &mut Vec<Param>,
+) -> Result<ResultCol, Error> {
+    let mut columns = subquery_columns(query, subquery, scope, params)?;
+    if columns.len() != 1 {
+        return Err(Error::Resolve(format!(
+            "query `{query}`: {what} must project exactly one column, found {}",
+            columns.len()
+        )));
+    }
+    Ok(columns.remove(0))
 }
 
 /// Pushes a parameter — typed as the assigned column, named for it — for every
@@ -186,6 +354,12 @@ fn literal(query: &str, value: &Value) -> Result<Resolved, Error> {
 fn function(query: &str, func: &Function, scope: &Scope) -> Result<Resolved, Error> {
     let name = last_ident(&func.name).to_ascii_lowercase();
     let args = arg_types(query, func, scope)?;
+    if let Some(over) = &func.over {
+        check_window(query, over, scope)?;
+        if let Some(typed) = window_function(query, &name, &args)? {
+            return Ok(typed);
+        }
+    }
     let arg_nullable = args.iter().flatten().any(|r| r.nullable);
     let first = args.first().and_then(|a| a.as_ref());
     // The type of the first argument, always nullable, defaulting `default`
@@ -222,6 +396,68 @@ fn function(query: &str, func: &Function, scope: &Scope) -> Result<Resolved, Err
         // `nullif` and any unknown function: first argument's type, nullable.
         _ => first_typed(Prim::String),
     })
+}
+
+/// Resolves the plain columns an inline `OVER (PARTITION BY … ORDER BY …)`
+/// names, so an unknown or ambiguous column is reported. A named window
+/// (`OVER w`) is accepted as written: the function's type does not depend on it.
+fn check_window(query: &str, over: &WindowType, scope: &Scope) -> Result<(), Error> {
+    let WindowType::WindowSpec(spec) = over else {
+        return Ok(());
+    };
+    let order_by = spec.order_by.iter().map(|o| &o.expr);
+    for expr in spec.partition_by.iter().chain(order_by) {
+        if column_name(expr).is_some() {
+            infer(query, expr, scope)?;
+        }
+    }
+    Ok(())
+}
+
+/// The type of a window-only function, `None` for one (an aggregate such as
+/// `SUM(x) OVER (…)`) that types the same as its plain form.
+///
+/// - Ranking (`row_number`, `rank`, `dense_rank`, `ntile`, `cume_dist`,
+///   `percent_rank`) is a non-null `number`.
+/// - `lag`/`lead` take the first argument's type and are nullable — the offset
+///   row can be missing — unless a non-null default (third argument) covers the
+///   missing row and the value itself is non-null.
+/// - `first_value`/`last_value` take the first argument's type and nullability
+///   (the current row is always in the default frame).
+/// - `nth_value` takes the first argument's type and is nullable (the frame can
+///   have fewer than `n` rows).
+fn window_function(
+    query: &str,
+    name: &str,
+    args: &[Option<Resolved>],
+) -> Result<Option<Resolved>, Error> {
+    let first = || {
+        args.first().copied().flatten().ok_or_else(|| {
+            unsupported(
+                query,
+                &format!("window function `{name}` needs a value argument"),
+            )
+        })
+    };
+    Ok(Some(match name {
+        "row_number" | "rank" | "dense_rank" | "ntile" | "cume_dist" | "percent_rank" => {
+            prim(Prim::Number, false)
+        }
+        "lag" | "lead" => {
+            let value = first()?;
+            let defaulted = args.get(2).copied().flatten().is_some_and(|d| !d.nullable);
+            Resolved {
+                ty: value.ty,
+                nullable: value.nullable || !defaulted,
+            }
+        }
+        "first_value" | "last_value" => first()?,
+        "nth_value" => Resolved {
+            nullable: true,
+            ..first()?
+        },
+        _ => return Ok(None),
+    }))
 }
 
 /// Types each function argument; `None` for a `*` / `table.*` wildcard.

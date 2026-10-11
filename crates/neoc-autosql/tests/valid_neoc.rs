@@ -163,6 +163,49 @@ fn full_feature_surface_is_well_formed() {
 }
 
 #[test]
+fn query_breadth_is_well_formed() {
+    let queries = vec![
+        q(
+            "prolific_authors",
+            "WITH counts AS (SELECT author_id, count(*) AS n FROM books GROUP BY author_id) \
+             SELECT authors.name, counts.n FROM authors JOIN counts ON counts.author_id = authors.id \
+             WHERE counts.n > ?;",
+        ),
+        q(
+            "authors_without_books",
+            "SELECT id, name FROM authors \
+             WHERE NOT EXISTS (SELECT 1 FROM books WHERE books.author_id = authors.id);",
+        ),
+        q(
+            "authors_of_rated",
+            "SELECT name FROM authors \
+             WHERE id IN (SELECT author_id FROM books WHERE rating > ?);",
+        ),
+        q(
+            "best_rating",
+            "SELECT name, (SELECT max(rating) FROM books WHERE books.author_id = authors.id) AS best \
+             FROM authors;",
+        ),
+        q(
+            "titles_and_names",
+            "SELECT title AS label FROM books UNION SELECT name AS label FROM authors;",
+        ),
+        q(
+            "ranked_books",
+            "SELECT title, row_number() OVER (PARTITION BY author_id ORDER BY rating) AS place, \
+             lag(title) OVER (ORDER BY id) AS previous FROM books;",
+        ),
+        q(
+            "recent_titles",
+            "SELECT t.title FROM (SELECT title FROM books WHERE id > ?) AS t;",
+        ),
+    ];
+    let files = generate_project(&library(), &queries, Dialect::Sqlite).unwrap();
+    let names: Vec<&str> = queries.iter().map(|q| q.name.as_str()).collect();
+    assert_project_well_formed("breadth", &files, &names);
+}
+
+#[test]
 fn left_join_nullability_shows_in_the_row_struct() {
     let queries = vec![q(
         "books_with_author",
