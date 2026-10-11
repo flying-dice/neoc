@@ -87,9 +87,10 @@ end"#;
 /// `{:?}` rendering. A string double-quoted with `\`, `"`, newline, tab and carriage return escaped;
 /// other scalars by `tostring`; a value whose metatable carries `debug` by that
 /// method; a tagged payload (`Option`/`Result`) as `Tag(…)`; a list as `[…]`.
-/// A struct or named-payload variant whose type has no `debug` — reachable only
-/// through a type parameter, which carries no obligation — renders its name
-/// with elided fields, `Name { .. }`.
+/// A value whose type has no `debug` — reachable only through a type
+/// parameter, which carries no obligation — renders by shape: a struct or
+/// named-payload variant as `Name { .. }` (named keys carry no order), a
+/// tuple-payload variant positionally, a unit variant bare.
 const DEBUG_HELPER: &str = r#"local function __debug(v)
   if type(v) == "string" then
     local escaped = string.gsub(v, "[\\\"\n\t\r]", { ["\\"] = "\\\\", ["\""] = "\\\"", ["\n"] = "\\n", ["\t"] = "\\t", ["\r"] = "\\r" })

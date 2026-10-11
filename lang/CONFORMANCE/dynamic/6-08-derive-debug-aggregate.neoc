@@ -65,6 +65,14 @@ struct Plain {
     v: number,
 }
 
+// No derives: through `Wrap<T>` a tuple payload renders positionally (slots
+// are ordered), a named payload elides (keys are not), a unit variant bare.
+enum NoDbg {
+    P(number),
+    N { v: number },
+    U,
+}
+
 #[derive(Debug)]
 struct Text {
     s: string,
@@ -88,6 +96,9 @@ fn main() {
     println(Wrap { v: Inner { v: 1 } }.debug());
     println(Wrap { v: 5 }.debug());
     println(Wrap { v: Plain { v: 1 } }.debug());
+    println(Wrap { v: NoDbg::P(2) }.debug());
+    println(Wrap { v: NoDbg::N { v: 3 } }.debug());
+    println(Wrap { v: NoDbg::U }.debug());
     println(Text { s: "a", o: Some("b"), xs: ["b", "c"] }.debug());
     println(Text { s: "q\"x\\y", o: None, xs: ["b, c"] }.debug());
     println(Text { s: "t\tn\nz", o: None, xs: [] }.debug());

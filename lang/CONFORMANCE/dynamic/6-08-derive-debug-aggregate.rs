@@ -183,6 +183,25 @@ struct Plain {
     v: f64,
 }
 
+// No `debug` either: neoc renders a tuple payload positionally, elides a named
+// one, and prints a unit variant bare.
+#[allow(dead_code)]
+enum NoDbg {
+    P(f64),
+    N { v: f64 },
+    U,
+}
+
+impl Neoc for NoDbg {
+    fn neoc(&self) -> String {
+        match self {
+            NoDbg::P(v) => format!("P({})", v.neoc()),
+            NoDbg::N { .. } => "N { .. }".to_string(),
+            NoDbg::U => "U".to_string(),
+        }
+    }
+}
+
 impl Neoc for Plain {
     fn neoc(&self) -> String {
         "Plain { .. }".to_string()
@@ -227,6 +246,9 @@ fn main() {
     println!("{:?}", Wrap { v: Inner { v: 1.0 } });
     println!("{:?}", Wrap { v: 5.0 });
     println!("{:?}", Wrap { v: Plain { v: 1.0 } });
+    println!("{:?}", Wrap { v: NoDbg::P(2.0) });
+    println!("{:?}", Wrap { v: NoDbg::N { v: 3.0 } });
+    println!("{:?}", Wrap { v: NoDbg::U });
     println!("{:?}", Text { s: s("a"), o: Some(s("b")), xs: vec![s("b"), s("c")] });
     println!("{:?}", Text { s: s("q\"x\\y"), o: None, xs: vec![s("b, c")] });
     println!("{:?}", Text { s: s("t\tn\nz"), o: None, xs: vec![] });

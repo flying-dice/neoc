@@ -87,7 +87,7 @@ Field access `e.f` requires `e` to have a struct type declaring `f`:
 
 A newtype `struct N(τ)` has one positional field accessed as `.0`; its constructor `N` has type `fn(τ) -> N`. These field types are enforced at runtime wherever a value can drift from them — §10.
 
-A named field — a struct field or a named enum-variant field — may not begin with `__` (double underscore). Such names are reserved: a named field becomes a data key in the value's record, and the `__` prefix is held for the runtime's own structural keys, so a user field spelled that way would collide with them and silently corrupt the value. This restricts field identifiers only: type names, variant names, local bindings, and function parameters never form record keys and are unaffected by this rule, and positional (tuple) slots use single-underscore names the compiler assigns. Module-level item names carry their own reservation (§4.3).
+A named field — a struct field or a named enum-variant field — may not begin with `__` (double underscore). Such names are reserved: a named field becomes a data key in the value's record, and the `__` prefix is held for the runtime's own structural keys, so a user field spelled that way would collide with them and silently corrupt the value. This restricts field identifiers only: type names, variant names, local bindings, and function parameters never form record keys and are unaffected by this rule, and positional (tuple) slots use single-underscore names the compiler assigns. Module-level names carry their own reservation (§4.3).
 
 ```
 f begins with `__`
@@ -233,12 +233,12 @@ Each item form extends the environment with its name and type. A `fn` adds its n
 
 The function body must have the declared return type. A function with no `-> τ` clause returns `()`, and its body must have type `()`.
 
-A module-level item name — a `fn`, `const`, `struct`, `enum`, `trait`, or type alias — may not begin with `__` (double underscore). Each item becomes a module-scope binding in the lowering, and the `__` prefix is held for helpers the compiler emits at module scope (e.g. the derive helpers, `DYNAMIC.md` §6); a user item spelled that way would shadow one and silently change the behaviour of code the compiler generated. Local bindings, parameters, and `extern` declarations are unaffected.
+A module-level name — a `fn`, `const`, `struct`, `enum`, `trait`, or type alias; the name a `use` binds (its alias, else the path's last segment); or a `fn`, `struct`, or `mod` declared at the top level of an `extern` block — may not begin with `__` (double underscore). Each is a bare name at module scope in the lowering, and the `__` prefix is held for helpers the compiler emits at module scope (e.g. the derive helpers, `DYNAMIC.md` §6); a user name spelled that way would shadow a helper, or resolve to one in place of the host value, and silently change behaviour. Local bindings, parameters, and `extern` items nested in a `mod` (reached as `m.f`, never bare) are unaffected.
 
 ```
-item x declared at module scope    x begins with `__`
-───────────────────────────────────────────────────── (D-ITEM-RESERVED)
-item x ill-formed
+name x bound at module scope    x begins with `__`
+────────────────────────────────────────────────── (D-NAME-RESERVED)
+binding of x ill-formed
 ```
 
 ## 5. `extern` declarations

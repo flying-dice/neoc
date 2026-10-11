@@ -845,7 +845,7 @@ fn reserved_variant_field_rejected() {
     );
 }
 
-// ---- reserved item names (STATIC.md §4.3, D-ITEM-RESERVED) -----------------
+// ---- reserved module-level names (STATIC.md §4.3, D-NAME-RESERVED) -----------------
 
 #[test]
 fn reserved_fn_name_rejected() {
@@ -854,7 +854,7 @@ fn reserved_fn_name_rejected() {
     let d = diags("fn __debug(a: number) -> string { \"user\" }");
     assert_eq!(
         d,
-        vec!["item name `__debug` is reserved: item names may not begin with `__`".to_string()]
+        vec!["name `__debug` is reserved: module-level names may not begin with `__`".to_string()]
     );
 }
 
@@ -864,11 +864,45 @@ fn reserved_type_and_const_names_rejected() {
     assert_eq!(
         d,
         vec![
-            "item name `__S` is reserved: item names may not begin with `__`".to_string(),
-            "item name `__E` is reserved: item names may not begin with `__`".to_string(),
-            "item name `__C` is reserved: item names may not begin with `__`".to_string(),
+            "name `__S` is reserved: module-level names may not begin with `__`".to_string(),
+            "name `__E` is reserved: module-level names may not begin with `__`".to_string(),
+            "name `__C` is reserved: module-level names may not begin with `__`".to_string(),
         ]
     );
+}
+
+#[test]
+fn reserved_use_binding_rejected() {
+    // A `use` binds its alias (or last segment) at module scope, so an alias
+    // spelled `__debug` would shadow the derive helper.
+    let d = diags("use util::shout as __debug;");
+    assert!(
+        d.contains(
+            &"name `__debug` is reserved: module-level names may not begin with `__`".to_string()
+        ),
+        "got: {d:?}"
+    );
+}
+
+#[test]
+fn reserved_extern_names_rejected() {
+    // A top-level extern fn/struct/mod is a bare global in the lowering, which
+    // the module-local helper of the same name would capture.
+    let d = diags("extern { fn __debug(s: string) -> string; struct __H; mod __m { fn f(); } }");
+    assert_eq!(
+        d,
+        vec![
+            "name `__debug` is reserved: module-level names may not begin with `__`".to_string(),
+            "name `__H` is reserved: module-level names may not begin with `__`".to_string(),
+            "name `__m` is reserved: module-level names may not begin with `__`".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn extern_name_inside_mod_allowed() {
+    // A fn inside an extern `mod` lowers as `m.__f`, never bare.
+    assert!(diags("extern { mod m { fn __f(); } }").is_empty());
 }
 
 #[test]

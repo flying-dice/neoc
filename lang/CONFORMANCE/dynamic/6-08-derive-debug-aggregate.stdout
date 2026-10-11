@@ -12,6 +12,9 @@ Many { ys = [], r = Ok(2), oo = Some(Some(Inner { v = 3 })) }
 Wrap { v = Inner { v = 1 } }
 Wrap { v = 5 }
 Wrap { v = Plain { .. } }
+Wrap { v = P(2) }
+Wrap { v = N { .. } }
+Wrap { v = U }
 Text { s = "a", o = Some("b"), xs = ["b", "c"] }
 Text { s = "q\"x\\y", o = None, xs = ["b, c"] }
 Text { s = "t\tn\nz", o = None, xs = [] }

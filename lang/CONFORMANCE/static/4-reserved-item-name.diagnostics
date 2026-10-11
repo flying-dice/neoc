@@ -1,1 +1,1 @@
-item name `__debug` is reserved: item names may not begin with `__`
+name `__debug` is reserved: module-level names may not begin with `__`

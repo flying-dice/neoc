@@ -1,4 +1,4 @@
-// STATIC.md §4.3 (D-ITEM-RESERVED): a module-level item name may not begin
+// STATIC.md §4.3 (D-NAME-RESERVED): a module-level name may not begin
 // with `__`; the prefix is held for compiler-emitted helpers (`DYNAMIC.md` §6).
 fn __debug(a: number) -> string {
     "user"
