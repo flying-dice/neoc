@@ -1,0 +1,107 @@
+// DYNAMIC.md §6.3: derived `debug` renders an aggregate field with the same
+// `{:?}` analogue, never as a table address. Covers each field kind — a nested
+// struct, `Option<number>` (`Some(1)` / `None`), `[number]` (`[1, 2]` / `[]`)
+// and an enum payload (`Boxed(Inner { v = 2 })`). Also pins `[Inner]`,
+// `Result<number, string>`, nested `Option<Option<Inner>>`, a generic `Wrap<T>`
+// at `T = Inner` / `T = number`, the `Name { .. }` form of a type without
+// `debug` reached through a type parameter, and quoted, escaped strings — a
+// field, a payload, and list elements, so `["b, c"]` and `["b", "c"]` differ.
+extern {
+    fn println(s: string);
+}
+
+#[derive(Debug)]
+struct Inner {
+    v: number,
+}
+
+#[derive(Debug)]
+enum Shape {
+    Dot,
+    Boxed(Inner),
+}
+
+#[derive(Debug)]
+struct WithInner {
+    i: Inner,
+}
+
+#[derive(Debug)]
+struct WithOption {
+    o: Option<number>,
+}
+
+#[derive(Debug)]
+struct WithList {
+    xs: [number],
+}
+
+#[derive(Debug)]
+struct WithShape {
+    s: Shape,
+}
+
+#[derive(Debug)]
+struct All {
+    i: Inner,
+    o: Option<number>,
+    xs: [number],
+    s: Shape,
+}
+
+#[derive(Debug)]
+struct Many {
+    ys: [Inner],
+    r: Result<number, string>,
+    oo: Option<Option<Inner>>,
+}
+
+#[derive(Debug)]
+struct Wrap<T> {
+    v: T,
+}
+
+struct Plain {
+    v: number,
+}
+
+// No derives: through `Wrap<T>` a tuple payload renders positionally (slots
+// are ordered), a named payload elides (keys are not), a unit variant bare.
+enum NoDbg {
+    P(number),
+    N {
+        v: number,
+    },
+    U,
+}
+
+#[derive(Debug)]
+struct Text {
+    s: string,
+    o: Option<string>,
+    xs: [string],
+}
+
+fn main() {
+    println(WithInner { i: Inner { v: 1 } }.debug());
+    println(WithOption { o: Some(1) }.debug());
+    println(WithOption { o: None }.debug());
+    println(WithList { xs: [1, 2] }.debug());
+    println(WithList { xs: [] }.debug());
+    println(WithShape { s: Shape::Boxed(Inner { v: 2 }) }.debug());
+    println(WithShape { s: Shape::Dot }.debug());
+    println(Shape::Boxed(Inner { v: 2 }).debug());
+    let all = All { i: Inner { v: 1 }, o: Some(3), xs: [4], s: Shape::Dot };
+    println(all.debug());
+    println(Many { ys: [Inner { v: 1 }], r: Err("bad"), oo: Some(None) }.debug());
+    println(Many { ys: [], r: Ok(2), oo: Some(Some(Inner { v: 3 })) }.debug());
+    println(Wrap { v: Inner { v: 1 } }.debug());
+    println(Wrap { v: 5 }.debug());
+    println(Wrap { v: Plain { v: 1 } }.debug());
+    println(Wrap { v: NoDbg::P(2) }.debug());
+    println(Wrap { v: NoDbg::N { v: 3 } }.debug());
+    println(Wrap { v: NoDbg::U }.debug());
+    println(Text { s: "a", o: Some("b"), xs: ["b", "c"] }.debug());
+    println(Text { s: "q\"x\\y", o: None, xs: ["b, c"] }.debug());
+    println(Text { s: "t\tn\nz", o: None, xs: [] }.debug());
+}

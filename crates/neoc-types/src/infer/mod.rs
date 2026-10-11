@@ -310,8 +310,26 @@ impl<'a> Checker<'a> {
     pub fn check_module(&mut self, module: &ast::Module) {
         self.check_coherence();
         for item in &module.items {
+            self.check_reserved_module_names(item);
             self.check_field_names(item);
             self.check_item(item);
+        }
+    }
+
+    /// Rejects a module-level name that begins with `__` (`STATIC.md` §4.3,
+    /// D-NAME-RESERVED). The `__` prefix is held for compiler-emitted
+    /// module-level helpers; a user name spelled that way would shadow one, or
+    /// resolve to one, and silently change behaviour.
+    fn check_reserved_module_names(&mut self, item: &ast::Item) {
+        for (name, span) in module_scope_names(item) {
+            if name.starts_with("__") {
+                self.error_at(
+                    span,
+                    format!(
+                        "name `{name}` is reserved: module-level names may not begin with `__`"
+                    ),
+                );
+            }
         }
     }
 
@@ -1640,4 +1658,37 @@ fn find_fn_sig<'a>(module: &'a ast::Module, name: &str) -> Option<&'a ast::FnSig
         ast::ItemKind::Fn(decl) if decl.sig.name == name => Some(&decl.sig),
         _ => None,
     })
+}
+
+/// The bare names `item` binds at module scope, each with the span to report
+/// it at (`STATIC.md` §4.3): an item's own name, the name a `use` binds (its
+/// alias, else the path's last segment), and each `fn`/`struct`/`mod` at the
+/// top level of an `extern` block. An `extern` item nested in a `mod` is
+/// reached as `m.f`, never bare, so it is not one.
+fn module_scope_names(item: &ast::Item) -> Vec<(&str, ast::Span)> {
+    let span = item.span;
+    match &item.kind {
+        ast::ItemKind::Fn(f) => vec![(f.sig.name.as_str(), f.sig.name_span)],
+        ast::ItemKind::Const(c) => vec![(c.name.as_str(), span)],
+        ast::ItemKind::TypeAlias(t) => vec![(t.name.as_str(), span)],
+        ast::ItemKind::Struct(s) => vec![(s.name.as_str(), span)],
+        ast::ItemKind::Enum(e) => vec![(e.name.as_str(), span)],
+        ast::ItemKind::Trait(t) => vec![(t.name.as_str(), span)],
+        ast::ItemKind::Use(u) => u
+            .alias
+            .as_ref()
+            .or(u.path.last())
+            .map_or_else(Vec::new, |bound| vec![(bound.as_str(), span)]),
+        ast::ItemKind::Extern(block) => block
+            .items
+            .iter()
+            .filter_map(|ext| match &ext.kind {
+                ast::ExternItemKind::Fn(sig) => Some((sig.name.as_str(), sig.name_span)),
+                ast::ExternItemKind::Struct(decl) => Some((decl.name.as_str(), span)),
+                ast::ExternItemKind::Mod(module) => Some((module.name.as_str(), span)),
+                ast::ExternItemKind::Impl(_) => None,
+            })
+            .collect(),
+        ast::ItemKind::Impl(_) => Vec::new(),
+    }
 }

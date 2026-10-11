@@ -845,6 +845,72 @@ fn reserved_variant_field_rejected() {
     );
 }
 
+// ---- reserved module-level names (STATIC.md §4.3, D-NAME-RESERVED) -----------------
+
+#[test]
+fn reserved_fn_name_rejected() {
+    // A `__`-prefixed fn would shadow a compiler-emitted helper such as the
+    // derive helpers `__eq` / `__debug`, so it is ill-formed.
+    let d = diags("fn __debug(a: number) -> string { \"user\" }");
+    assert_eq!(
+        d,
+        vec!["name `__debug` is reserved: module-level names may not begin with `__`".to_string()]
+    );
+}
+
+#[test]
+fn reserved_type_and_const_names_rejected() {
+    let d = diags("struct __S { v: number } enum __E { A } const __C: number = 1;");
+    assert_eq!(
+        d,
+        vec![
+            "name `__S` is reserved: module-level names may not begin with `__`".to_string(),
+            "name `__E` is reserved: module-level names may not begin with `__`".to_string(),
+            "name `__C` is reserved: module-level names may not begin with `__`".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn reserved_use_binding_rejected() {
+    // A `use` binds its alias (or last segment) at module scope, so an alias
+    // spelled `__debug` would shadow the derive helper.
+    let d = diags("use util::shout as __debug;");
+    assert!(
+        d.contains(
+            &"name `__debug` is reserved: module-level names may not begin with `__`".to_string()
+        ),
+        "got: {d:?}"
+    );
+}
+
+#[test]
+fn reserved_extern_names_rejected() {
+    // A top-level extern fn/struct/mod is a bare global in the lowering, which
+    // the module-local helper of the same name would capture.
+    let d = diags("extern { fn __debug(s: string) -> string; struct __H; mod __m { fn f(); } }");
+    assert_eq!(
+        d,
+        vec![
+            "name `__debug` is reserved: module-level names may not begin with `__`".to_string(),
+            "name `__H` is reserved: module-level names may not begin with `__`".to_string(),
+            "name `__m` is reserved: module-level names may not begin with `__`".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn extern_name_inside_mod_allowed() {
+    // A fn inside an extern `mod` lowers as `m.__f`, never bare.
+    assert!(diags("extern { mod m { fn __f(); } }").is_empty());
+}
+
+#[test]
+fn single_underscore_item_and_local_allowed() {
+    // The boundary is `__` at item level; locals and parameters are unaffected.
+    assert!(diags("fn _helper(__p: number) -> number { let __x = __p; __x }").is_empty());
+}
+
 #[test]
 fn single_underscore_field_allowed() {
     // The boundary is `__` (double underscore): a single-underscore or

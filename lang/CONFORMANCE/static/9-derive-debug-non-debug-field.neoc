@@ -1,0 +1,4 @@
+// STATIC.md §9: deriving `Debug` requires every field to satisfy `Debug`.
+struct Plain { v: number }
+#[derive(Debug)]
+struct S { p: Plain }

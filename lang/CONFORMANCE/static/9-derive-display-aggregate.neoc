@@ -1,0 +1,4 @@
+// STATIC.md §9: `Option<T>`, `Result<T, E>` and `[T]` never satisfy `Display`;
+// deriving `Display` over one is rejected, not rendered as a table address.
+#[derive(Display)]
+struct S { o: Option<number>, r: Result<number, string>, xs: [number] }

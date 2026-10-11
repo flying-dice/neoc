@@ -87,7 +87,7 @@ Field access `e.f` requires `e` to have a struct type declaring `f`:
 
 A newtype `struct N(τ)` has one positional field accessed as `.0`; its constructor `N` has type `fn(τ) -> N`. These field types are enforced at runtime wherever a value can drift from them — §10.
 
-A named field — a struct field or a named enum-variant field — may not begin with `__` (double underscore). Such names are reserved: a named field becomes a data key in the value's record, and the `__` prefix is held for the runtime's own structural keys, so a user field spelled that way would collide with them and silently corrupt the value. This restricts field identifiers only: type names, variant names, local bindings, and function parameters never form record keys and are unaffected, and positional (tuple) slots use single-underscore names the compiler assigns.
+A named field — a struct field or a named enum-variant field — may not begin with `__` (double underscore). Such names are reserved: a named field becomes a data key in the value's record, and the `__` prefix is held for the runtime's own structural keys, so a user field spelled that way would collide with them and silently corrupt the value. This restricts field identifiers only: type names, variant names, local bindings, and function parameters never form record keys and are unaffected by this rule, and positional (tuple) slots use single-underscore names the compiler assigns. Module-level names carry their own reservation (§4.3).
 
 ```
 f begins with `__`
@@ -233,6 +233,14 @@ Each item form extends the environment with its name and type. A `fn` adds its n
 
 The function body must have the declared return type. A function with no `-> τ` clause returns `()`, and its body must have type `()`.
 
+A module-level name — a `fn`, `const`, `struct`, `enum`, `trait`, or type alias; the name a `use` binds (its alias, else the path's last segment); or a `fn`, `struct`, or `mod` declared at the top level of an `extern` block — may not begin with `__` (double underscore). Each is a bare name at module scope in the lowering, and the `__` prefix is held for helpers the compiler emits at module scope (e.g. the derive helpers, `DYNAMIC.md` §6); a user name spelled that way would shadow a helper, or resolve to one in place of the host value, and silently change behaviour. Local bindings, parameters, and `extern` items nested in a `mod` (reached as `m.f`, never bare) are unaffected.
+
+```
+name x bound at module scope    x begins with `__`
+────────────────────────────────────────────────── (D-NAME-RESERVED)
+binding of x ill-formed
+```
+
 ## 5. `extern` declarations
 
 An `extern { … }` block introduces bindings the target supplies, with no bodies. It describes the target's surface — see `EXTERN.md` for the authoritative model (items, attributes, lowering, errors). The well-formedness rules:
@@ -289,7 +297,7 @@ An `impl Trait for Type` must provide every required method of `Trait` (those wi
 
 Each built-in attribute constrains what it may attach to:
 
-- `#[derive(…)]` — only on a `struct` or `enum`. Each derive name must be one of the built-in derivable traits (`Clone`, `Eq`, `Debug`, `Display`; `DYNAMIC.md` §6). Deriving `Eq` requires every field to be of a type that supports equality; deriving `Display` requires every field's type to itself satisfy `Display`.
+- `#[derive(…)]` — only on a `struct` or `enum`. Each derive name must be one of the built-in derivable traits (`Clone`, `Eq`, `Debug`, `Display`; `DYNAMIC.md` §6). Deriving `Eq`, `Debug`, or `Display` requires every field's type to satisfy that trait. A user `struct`/`enum` satisfies it by deriving or implementing it, and only when its type arguments do too; `[T]`, `Option<T>`, and `Result<T, E>` satisfy `Eq` and `Debug` when their element or payload types do, and never satisfy `Display` — they have no user-facing form.
 - `#[test]` — only on a `fn` taking no parameters and returning `()` or `Result<(), E>`.
 - Field-validation attributes — only on a struct field, and only when the field's type matches the constraint (`#[min(_)]` / `#[max(_)]` on `number`, `#[max_len(_)]` on `string` or `[T]`).
 

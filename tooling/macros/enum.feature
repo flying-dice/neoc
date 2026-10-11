@@ -2,7 +2,7 @@ Feature: Deriving on an enum
 
   On an enum, a derive branches on the runtime tag (`__tag`) and handles each
   variant by its payload shape — unit, tuple, or named (`lang/DYNAMIC.md` §7).
-  Clone rebuilds the tagged table; Eq short-circuits on a tag mismatch then
+  Clone rebuilds the tagged table behind the enum's metatable; Eq short-circuits on a tag mismatch then
   compares the matched variant's payload; Debug and Display render per variant.
   A unit variant carries no payload, so Eq emits no comparison branch for it.
 
@@ -16,13 +16,13 @@ Feature: Deriving on an enum
       """
       function Shape.clone(self)
         if self.__tag == "Dot" then
-          return { __enum = "Shape", __tag = "Dot" }
+          return setmetatable({ __enum = "Shape", __tag = "Dot" }, Shape)
         end
         if self.__tag == "Pair" then
-          return { __enum = "Shape", __tag = "Pair", self[1], self[2] }
+          return setmetatable({ __enum = "Shape", __tag = "Pair", self[1], self[2] }, Shape)
         end
         if self.__tag == "Named" then
-          return { __enum = "Shape", __tag = "Named", label = self.label }
+          return setmetatable({ __enum = "Shape", __tag = "Named", label = self.label }, Shape)
         end
       end
       """
@@ -66,7 +66,7 @@ Feature: Deriving on an enum
     When I derive Debug
     Then it emits the line "    return "Dot""
     And it emits the line "    return "Pair(" .. tostring(self[1]) .. ", " .. tostring(self[2]) .. ")""
-    And it emits the line "    return "Named { " .. "label = " .. tostring(self.label) .. " }""
+    And it emits the line "    return "Named { " .. "label = " .. __debug(self.label) .. " }""
 
   Scenario: Display drops the type-name decoration
     Given the enum:
@@ -87,3 +87,15 @@ Feature: Deriving on an enum
     When I derive Hash
     Then deriving is rejected
     And the rejection message is "unknown derive `Hash`; the derivable traits are Clone, Eq, Debug, Display"
+
+  Scenario: Eq and Debug send an aggregate payload through the structural helpers
+    Given the enum:
+      """
+      enum Shape { Boxed(Inner), Many([number]), Maybe(Option<number>) }
+      """
+    When I derive Eq
+    Then it emits the line "    return __eq(a[1], b[1])"
+    And the derive uses the helper "Eq"
+    When I derive Debug
+    Then it emits the line "    return "Boxed(" .. __debug(self[1]) .. ")""
+    And the derive uses the helper "Debug"

@@ -1,0 +1,20 @@
+WithInner { i = Inner { v = 1 } }
+WithOption { o = Some(1) }
+WithOption { o = None }
+WithList { xs = [1, 2] }
+WithList { xs = [] }
+WithShape { s = Boxed(Inner { v = 2 }) }
+WithShape { s = Dot }
+Boxed(Inner { v = 2 })
+All { i = Inner { v = 1 }, o = Some(3), xs = [4], s = Dot }
+Many { ys = [Inner { v = 1 }], r = Err("bad"), oo = Some(None) }
+Many { ys = [], r = Ok(2), oo = Some(Some(Inner { v = 3 })) }
+Wrap { v = Inner { v = 1 } }
+Wrap { v = 5 }
+Wrap { v = Plain { .. } }
+Wrap { v = P(2) }
+Wrap { v = N { .. } }
+Wrap { v = U }
+Text { s = "a", o = Some("b"), xs = ["b", "c"] }
+Text { s = "q\"x\\y", o = None, xs = ["b, c"] }
+Text { s = "t\tn\nz", o = None, xs = [] }

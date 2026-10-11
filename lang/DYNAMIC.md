@@ -322,19 +322,19 @@ A derive attaches a method to the type's table, the same slot an `impl` method u
 
 ### 6.1 `#[derive(Clone)]`
 
-Emits a `clone` returning a shallow copy carrying the same `__struct`/`__enum` tag (`function S.clone(self)`), re-setting the metatable on the new value.
+Emits a `clone` returning a shallow copy carrying the same `__struct`/`__enum` tag (`function S.clone(self)`), re-setting the metatable on the new value — for a struct and for an enum variant alike, so the clone keeps its methods and `__traits`. Fields are copied, not cloned: an aggregate field is shared with the original.
 
 ### 6.2 `#[derive(Eq)]`
 
-Emits an `eq(a, b)` comparing tag and every field structurally (`function S.eq(a, b)` — both operands explicit, no `self`). The `==` operator on `Eq` types lowers to a call to this method rather than the target's native `==` (§4.2).
+Emits an `eq(a, b)` comparing tag and every field structurally (`function S.eq(a, b)` — both operands explicit, no `self`). A `number`/`string`/`bool` field is compared with `==`; any other field (a nested struct or enum, `Option<T>`, `[T]`) goes through a module-local `__eq` helper that recurses — a value whose type has `eq` through that method, any other table key by key, so enums compare tag then payload and lists element-wise with equal length. The helper is emitted only in a module that needs it. The `==` operator on `Eq` types lowers to a call to this method rather than the target's native `==` (§4.2).
 
 ### 6.3 `#[derive(Debug)]`
 
-Emits a `debug` (`function S.debug(self)`) producing a developer-facing string showing the type name and field values — the analogue of Rust's `{:?}`.
+Emits a `debug` (`function S.debug(self)`) producing a developer-facing string showing the type name and field values — the analogue of Rust's `{:?}`. A `number`/`bool` field renders with `tostring`; any other field renders through a module-local `__debug` helper (emitted only when needed) that recurses: a `string` double-quoted with `\`, `"`, newline, tab and carriage return escaped as `\\`, `\"`, `\n`, `\t`, `\r` (`"a"`, so `["b, c"]` and `["b", "c"]` stay distinct), a nested struct or enum through its own `debug`, `Option<T>` as `Some(1)` / `None`, `Result<T, E>` as `Ok(1)` / `Err("bad")`, `[T]` as `[1, 2]` / `[]`, an enum payload as `A(Inner { v = 2 })`. Every field's type must satisfy `Debug` (`STATIC.md` §9); a value reaching the helper through a type parameter whose type has no `debug` renders by shape alone: a struct as its name with elided fields, `Plain { .. }`; a named-payload variant likewise, `V { .. }` (named keys carry no order); a tuple-payload variant positionally, `P(2)` (slots are ordered); a unit variant bare, `U`. A table address never appears.
 
 ### 6.4 `#[derive(Display)]`
 
-Emits a `display` (`function S.display(self)`) producing the user-facing string — the analogue of Rust's `{}`. Requires every field to itself satisfy `Display` (`STATIC.md` §9).
+Emits a `display` (`function S.display(self)`) producing the user-facing string — the analogue of Rust's `{}`. Each field renders with `tostring`. Requires every field to itself satisfy `Display` (`STATIC.md` §9); `[T]`, `Option<T>`, and `Result<T, E>` do not, so a field of one is rejected rather than rendered as a table address.
 
 ### 6.5 `#[test]`
 

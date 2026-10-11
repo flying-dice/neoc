@@ -20,7 +20,7 @@ use std::path::Path;
 
 use cucumber::{World, gherkin::Step, given, then, when};
 use neoc_ast::{self as ast, ItemKind};
-use neoc_macros::{DeriveTarget, derive};
+use neoc_macros::{DeriveTarget, Helper, derive};
 
 /// State threaded through one scenario: the parsed declaration under test and
 /// the outcome of the last derive — either the emitted Lua lines or the
@@ -32,6 +32,8 @@ struct Macros {
     module: Option<ast::Module>,
     /// The emitted Lua lines from the last successful derive.
     emitted: Option<Vec<String>>,
+    /// The helpers the last successful derive calls.
+    helpers: Vec<Helper>,
     /// The error message from the last rejected derive.
     error: Option<String>,
 }
@@ -51,8 +53,9 @@ fn derive_trait(world: &mut Macros, trait_name: String) {
     let module = world.module.as_ref().expect("a Given step must run first");
     let target = first_target(module);
     match derive(&trait_name, target) {
-        Ok(lines) => {
-            world.emitted = Some(lines);
+        Ok(derived) => {
+            world.emitted = Some(derived.lines);
+            world.helpers = derived.helpers;
             world.error = None;
         }
         Err(message) => {
@@ -100,6 +103,29 @@ fn emitted_lua_is(world: &mut Macros, step: &Step) {
         expected,
         "emitted Lua mismatch\n  expected:\n{expected}\n  actual:\n{}",
         actual.trim(),
+    );
+}
+
+#[then(regex = r#"^the derive uses the helper "(Eq|Debug)"$"#)]
+fn derive_uses_helper(world: &mut Macros, name: String) {
+    let expected = if name == "Eq" {
+        Helper::Eq
+    } else {
+        Helper::Debug
+    };
+    assert!(
+        world.helpers.contains(&expected),
+        "expected helper {expected:?}, got {:?}",
+        world.helpers,
+    );
+}
+
+#[then("the derive uses no helper")]
+fn derive_uses_no_helper(world: &mut Macros) {
+    assert!(
+        world.helpers.is_empty(),
+        "expected no helper, got {:?}",
+        world.helpers,
     );
 }
 
