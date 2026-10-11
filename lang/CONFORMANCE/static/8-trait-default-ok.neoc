@@ -1,0 +1,26 @@
+// STATIC.md §3.4: a default-bodied trait method may be omitted by an impl, and
+// is callable on the implementor and through a bound.
+trait Greet {
+    fn name(self) -> string;
+
+    fn hi(self) -> string {
+        "hi " + self.name()
+    }
+}
+
+struct D;
+
+impl Greet for D {
+    fn name(self) -> string {
+        "d"
+    }
+}
+
+fn go<T: Greet>(x: T) -> string {
+    x.hi()
+}
+
+fn main() {
+    let d = D;
+    let a = d.hi();
+}

@@ -1,0 +1,1 @@
+type parameter `Self` has no method `nope` from its bounds
