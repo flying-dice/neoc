@@ -14,7 +14,7 @@
 //!
 //! ## Server
 //! `serve(listener, handler)` mirrors hyper's `service_fn` model: the
-//! listener (built by `(require("std:net")).listener`) is consumed by an
+//! listener (built by `(require("std:net")).TcpListener.bind`) is consumed by an
 //! accept loop and every request is dispatched to a single Lua function.
 //! There is no built-in routing — the handler reads `req.method` /
 //! `req.path` and decides what to do, exactly like the hyper Rust example.
@@ -23,7 +23,7 @@
 //! local net   = require("std:net")
 //! local hyper = require("vnd:hyper")
 //!
-//! local listener = net.listener("127.0.0.1:0")
+//! local listener = net.TcpListener.bind("127.0.0.1:0")
 //! local server = hyper.serve(listener, function(req)
 //!     if req.method == "GET" and req.path == "/" then
 //!         return { status = 200, body = "hello" }
@@ -562,7 +562,7 @@ mod bench_helpers {
 
     pub fn spawn_lua_server(lua: &Lua, handler_src: &str) -> String {
         let listener_fn: Function = lua
-            .load(r#"return (require("std:net")).listener"#)
+            .load(r#"return (require("std:net")).TcpListener.bind"#)
             .eval()
             .expect("require std:net");
         let serve_fn: Function = lua
