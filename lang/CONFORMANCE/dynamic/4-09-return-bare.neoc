@@ -1,0 +1,18 @@
+// DYNAMIC.md §4.9: a bare `return` leaves a unit function early, skipping the
+// rest of the body; falling off the end is the other exit.
+extern {
+    fn println(s: string);
+}
+
+fn report(n: number) {
+    if n > 1 {
+        println("high");
+        return;
+    }
+    println("low");
+}
+
+fn main() {
+    report(0);
+    report(2);
+}

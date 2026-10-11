@@ -1,0 +1,19 @@
+// DYNAMIC.md §5: a string literal pattern tests `__s == "<lit>"`; `_` is the
+// catch-all that makes a `string` scrutinee exhaustive.
+extern {
+    fn println(n: number);
+}
+
+fn code(word: string) -> number {
+    match word {
+        "yes" => 1,
+        "no" => 2,
+        _ => 0,
+    }
+}
+
+fn main() {
+    println(code("yes"));
+    println(code("no"));
+    println(code("maybe"));
+}

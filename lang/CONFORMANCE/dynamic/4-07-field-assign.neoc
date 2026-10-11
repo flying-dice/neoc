@@ -1,0 +1,18 @@
+// DYNAMIC.md §4.7 + §9.3: `e.f = v` stores into the field; later reads, through
+// the same value and through an alias, see the new value (tables are shared).
+extern {
+    fn println(n: number);
+}
+
+struct Cell {
+    value: number,
+}
+
+fn main() {
+    let c = Cell { value: 1 };
+    let alias = c;
+    c.value = 5;
+    println(alias.value);
+    alias.value = c.value + 2;
+    println(c.value);
+}
