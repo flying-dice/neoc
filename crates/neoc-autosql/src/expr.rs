@@ -585,7 +585,7 @@ fn nullable(query: &str, expr: &Expr, scope: &Scope, out: &mut Vec<Param>) -> Re
 }
 
 /// Whether an expression is a literal `NULL`, parenthesised or not.
-fn is_null_literal(expr: &Expr) -> bool {
+pub(crate) fn is_null_literal(expr: &Expr) -> bool {
     match expr {
         Expr::Value(Value::Null) => true,
         Expr::Nested(inner) => is_null_literal(inner),

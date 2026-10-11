@@ -628,3 +628,18 @@ Feature: Inferring queries beyond a single flat SELECT
     When I generate for postgres
     Then generation is refused
     And the error mentions "`number` on the left but `string` on the right"
+
+  @chaos
+  Scenario: NULL set NULL inside EXISTS resolves to string
+    Given the schema:
+      """
+      CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT);
+      CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, title TEXT NOT NULL);
+      """
+    And the query "exists_null_null":
+      """
+      SELECT name FROM users WHERE EXISTS (SELECT NULL FROM posts INTERSECT SELECT NULL FROM users EXCEPT SELECT id FROM users);
+      """
+    When I generate for postgres
+    Then generation is refused
+    And the error mentions "`string` on the left but `number` on the right"

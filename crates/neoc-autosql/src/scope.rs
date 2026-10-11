@@ -51,8 +51,8 @@ pub(crate) enum Projection {
     /// By position only — a scalar or `IN` subquery — so an unaliased
     /// expression needs no alias.
     Positional,
-    /// Never — an `EXISTS` subquery tests for a row — so a projection item
-    /// autosql cannot type (`SELECT NULL`) is accepted untyped.
+    /// Never — an `EXISTS` subquery tests for a row — so a literal `NULL`
+    /// projection item (`SELECT NULL`) is accepted untyped.
     Unread,
 }
 

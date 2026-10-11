@@ -101,10 +101,12 @@ Supported:
   NULL); `EXISTS` is a non-null `bool`; `x IN (SELECT …)` is a `bool`, optional
   when `x` or the subquery column is. A scalar or `IN` subquery must project
   exactly one column. Its result column names are never read, so an unaliased
-  expression needs no alias there. An `EXISTS` subquery's projection is not
-  typed at all (`EXISTS (SELECT NULL …)`); its columns must still resolve,
-  and a set operation inside it still needs matching types (an untyped
-  `SELECT NULL` side takes the other side's type).
+  expression needs no alias there. An `EXISTS` subquery's projection is never
+  read, so a literal `NULL` there is accepted (`EXISTS (SELECT NULL …)`); any
+  other item autosql cannot type is refused there too. Its columns must still
+  resolve, and a set operation inside it still needs matching types (an untyped
+  `SELECT NULL` side takes the other side's type; `NULL ∘ NULL` resolves to
+  `string`).
 - **Set operations** (`UNION`/`INTERSECT`/`EXCEPT`, with or without `ALL`, nested
   and parenthesised). Both sides must project the same number of columns and the
   same neoc type position by position. Field names come from the left side. An

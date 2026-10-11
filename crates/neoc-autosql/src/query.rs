@@ -49,7 +49,7 @@ pub(crate) struct ResultCol {
     pub ty: ColType,
     /// `true` when the column can be NULL, so the field is `Option<T>`.
     pub nullable: bool,
-    /// `true` for an `EXISTS` projection item autosql cannot type
+    /// `true` for a literal `NULL` projected by an `EXISTS` subquery
     /// (`SELECT NULL`): `ty` is a placeholder, and a set operation takes the
     /// other side's type for it.
     pub untyped: bool,
@@ -297,7 +297,8 @@ fn set_expr_columns(
 /// Both sides must project the same number of columns, of the same neoc type
 /// position by position — the database resolves set-operation types even where
 /// the result is never read (`EXISTS`). An untyped side (`SELECT NULL`) takes
-/// the other side's type (both untyped stays untyped). Field names come from
+/// the other side's type; two untyped sides resolve to `string`, as
+/// Postgres resolves `NULL ∘ NULL` to text. Field names come from
 /// the left side, as in SQL. An `Int` column meeting a `Real` one binds as
 /// `Real`, which holds either. A result column is nullable when a row of it can
 /// be NULL: for `UNION` if either side can supply a NULL, for `EXCEPT` if the
@@ -336,7 +337,9 @@ fn combine_set_columns(
             SetOperator::Except => l.nullable,
             SetOperator::Intersect => l.nullable && r.nullable,
         };
-        let ty = if l.untyped {
+        let ty = if l.untyped && r.untyped {
+            ColType::of(Prim::String)
+        } else if l.untyped {
             r.ty
         } else if r.untyped || l.ty == r.ty || l.ty.prim != Prim::Number {
             l.ty
@@ -346,11 +349,10 @@ fn combine_set_columns(
                 variant: Variant::Real,
             }
         };
-        let untyped = l.untyped && r.untyped;
         merged.push(ResultCol {
             ty,
             nullable,
-            untyped,
+            untyped: false,
             ..l
         });
     }
@@ -606,8 +608,8 @@ fn project(
 }
 
 /// Types one projection item into the result column `field`. An `EXISTS`
-/// subquery's projection is never read, so there an item autosql cannot type
-/// (`SELECT NULL`) is accepted untyped; an unknown column is still refused.
+/// subquery's projection is never read, so there a literal `NULL` is accepted
+/// untyped; any other item autosql cannot type is refused, as everywhere else.
 fn projected(
     name: &str,
     field: String,
@@ -615,27 +617,21 @@ fn projected(
     scope: &Scope,
     params: &mut Vec<Param>,
 ) -> Result<ResultCol, Error> {
-    let mut inner = Vec::new();
-    match expr::infer(name, e, scope, &mut inner) {
-        Ok(resolved) => {
-            params.extend(inner);
-            Ok(ResultCol {
-                field,
-                ty: resolved.ty,
-                nullable: resolved.nullable,
-                untyped: false,
-            })
-        }
-        Err(Error::Unsupported { .. }) if scope.projection() == Projection::Unread => {
-            Ok(ResultCol {
-                field,
-                ty: ColType::of(Prim::String),
-                nullable: true,
-                untyped: true,
-            })
-        }
-        Err(err) => Err(err),
+    if scope.projection() == Projection::Unread && expr::is_null_literal(e) {
+        return Ok(ResultCol {
+            field,
+            ty: ColType::of(Prim::String),
+            nullable: true,
+            untyped: true,
+        });
     }
+    let resolved = expr::infer(name, e, scope, params)?;
+    Ok(ResultCol {
+        field,
+        ty: resolved.ty,
+        nullable: resolved.nullable,
+        untyped: false,
+    })
 }
 
 /// Result columns for a `RETURNING` clause (empty when there is none),
@@ -1451,6 +1447,36 @@ mod tests {
             let q = one("e", sql);
             assert_eq!(q.result.len(), 1, "{sql}");
         }
+    }
+
+    fn refused_on_postgres(sql: &str) -> Error {
+        AnalyzedQuery::analyze("q", sql, &catalog(), Dialect::Postgres).unwrap_err()
+    }
+
+    #[test]
+    fn exists_refuses_untypable_items_other_than_null() {
+        let err = refused_on_postgres(
+            "SELECT name FROM users WHERE EXISTS \
+             (SELECT POSITION('a' IN title) FROM posts UNION SELECT title FROM posts);",
+        );
+        assert!(matches!(err, Error::Unsupported { .. }), "got {err:?}");
+        let err = refused_on_postgres(
+            "SELECT name FROM users WHERE EXISTS \
+             (SELECT ARRAY[1] FROM posts UNION SELECT title FROM posts);",
+        );
+        assert!(matches!(err, Error::Unsupported { .. }), "got {err:?}");
+    }
+
+    #[test]
+    fn exists_null_set_null_resolves_to_string() {
+        let err = refused_on_postgres(
+            "SELECT name FROM users WHERE EXISTS (SELECT NULL FROM posts \
+             INTERSECT SELECT NULL FROM users EXCEPT SELECT id FROM users);",
+        );
+        assert!(
+            matches!(&err, Error::Resolve(m) if m.contains("`string` on the left but `number`")),
+            "got {err:?}"
+        );
     }
 
     #[test]
