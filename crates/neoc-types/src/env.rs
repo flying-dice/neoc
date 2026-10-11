@@ -302,28 +302,88 @@ impl SymbolTable {
         }
     }
 
-    /// Recursively expands aliases inside a type.
+    /// Recursively expands aliases inside a type. A generic alias applied to
+    /// the right number of arguments is expanded with its parameters replaced
+    /// by those arguments (`Pair<number>` with `type Pair<T> = [T]` is
+    /// `[number]`); an application with the wrong number of arguments, or one
+    /// that re-enters an alias already being expanded, is left as written — the
+    /// checker reports both (`Checker::check_alias_decls`).
     #[must_use]
     pub fn resolve_alias_ty(&self, ty: Ty) -> Ty {
+        self.expand_aliases(ty, &mut Vec::new())
+    }
+
+    /// [`Self::resolve_alias_ty`] with the stack of aliases currently being
+    /// expanded, so a recursive alias terminates.
+    fn expand_aliases(&self, ty: Ty, active: &mut Vec<String>) -> Ty {
         match ty {
             Ty::Named { name, args } => {
-                if let Some(TypeDef::Alias { value, .. }) = self.types.get(&name) {
-                    if args.is_empty() {
-                        return self.resolve_alias_ty(value.clone());
-                    }
+                let args: Vec<Ty> = args
+                    .into_iter()
+                    .map(|a| self.expand_aliases(a, active))
+                    .collect();
+                if let Some(TypeDef::Alias { generics, value }) = self.types.get(&name)
+                    && generics.len() == args.len()
+                    && !active.contains(&name)
+                {
+                    let body = value.map(&|t| match t {
+                        Ty::Param(p) => generics
+                            .iter()
+                            .position(|g| g == p)
+                            .map(|i| args[i].clone()),
+                        _ => None,
+                    });
+                    active.push(name);
+                    let expanded = self.expand_aliases(body, active);
+                    active.pop();
+                    return expanded;
                 }
-                let args = args.into_iter().map(|a| self.resolve_alias_ty(a)).collect();
                 Ty::Named { name, args }
             }
-            Ty::List(inner) => Ty::List(Box::new(self.resolve_alias_ty(*inner))),
+            Ty::List(inner) => Ty::List(Box::new(self.expand_aliases(*inner, active))),
             Ty::Fn(params, ret) => Ty::Fn(
                 params
                     .into_iter()
-                    .map(|p| self.resolve_alias_ty(p))
+                    .map(|p| self.expand_aliases(p, active))
                     .collect(),
-                Box::new(self.resolve_alias_ty(*ret)),
+                Box::new(self.expand_aliases(*ret, active)),
             ),
             other => other,
+        }
+    }
+
+    /// Whether the alias `name` reaches itself through its own body, directly
+    /// or through other aliases.
+    #[must_use]
+    pub fn alias_is_recursive(&self, name: &str) -> bool {
+        let mut seen = Vec::new();
+        let mut pending = vec![name.to_string()];
+        while let Some(current) = pending.pop() {
+            let Some(TypeDef::Alias { value, .. }) = self.types.get(&current) else {
+                continue;
+            };
+            let mut names = Vec::new();
+            collect_ty_names(value, &mut names);
+            for n in names {
+                if n == name {
+                    return true;
+                }
+                if !seen.contains(&n) {
+                    seen.push(n.clone());
+                    pending.push(n);
+                }
+            }
+        }
+        false
+    }
+
+    /// The generic-parameter count of the alias `name`, or `None` when `name`
+    /// is not an alias.
+    #[must_use]
+    pub fn alias_arity(&self, name: &str) -> Option<usize> {
+        match self.types.get(name) {
+            Some(TypeDef::Alias { generics, .. }) => Some(generics.len()),
+            _ => None,
         }
     }
 }

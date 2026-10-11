@@ -38,6 +38,10 @@ pub struct Checker<'a> {
     /// the impl assigned it (`STATIC.md` §3.4). Empty outside a trait impl.
     pub(crate) assoc_bindings: std::collections::HashMap<String, Ty>,
     diagnostics: Vec<Diagnostic>,
+    /// Misuses of a generic `type` alias found while lowering annotations
+    /// (`lower` takes `&self`): each is reported once, when diagnostics are
+    /// taken.
+    alias_misuse: std::cell::RefCell<Vec<String>>,
     /// When set, every inferred expression's type is recorded in `expr_types`.
     /// Off by default so the compile path pays nothing; tooling turns it on for
     /// position→type queries.
@@ -103,6 +107,7 @@ impl<'a> Checker<'a> {
             type_bounds: std::collections::HashMap::new(),
             assoc_bindings: std::collections::HashMap::new(),
             diagnostics: Vec::new(),
+            alias_misuse: std::cell::RefCell::new(Vec::new()),
             record_types: false,
             expr_types: Vec::new(),
             record_resolution: false,
@@ -217,7 +222,14 @@ impl<'a> Checker<'a> {
     }
 
     #[must_use]
-    pub fn into_diagnostics(self) -> Vec<Diagnostic> {
+    pub fn into_diagnostics(mut self) -> Vec<Diagnostic> {
+        let mut seen = Vec::new();
+        for message in self.alias_misuse.take() {
+            if !seen.contains(&message) {
+                self.error(message.clone());
+                seen.push(message);
+            }
+        }
         self.diagnostics
     }
 
@@ -287,13 +299,92 @@ impl<'a> Checker<'a> {
 
     /// Lowers an AST type and expands any transparent `type` aliases through
     /// the symbol table, so an annotation written with an alias compares equal
-    /// to its underlying type (`STATIC.md` §3.3). Inside a trait impl, a
+    /// to its underlying type (`SYNTAX.md` §3.3). Inside a trait impl, a
     /// `Self::Item` projection resolves to the impl's binding for `Item`.
     pub(crate) fn lower(&self, ty: &ast::Type) -> Ty {
+        self.check_alias_arity(ty);
         let lowered = self
             .table
             .resolve_alias_ty(lower_type(ty, &self.type_params));
         self.project_assoc(lowered)
+    }
+
+    /// Records a misuse of a generic `type` alias anywhere in `ty`: applying it
+    /// to a different number of type arguments than it declares (`SYNTAX.md`
+    /// §3.3).
+    fn check_alias_arity(&self, ty: &ast::Type) {
+        match ty {
+            ast::Type::List(inner) => self.check_alias_arity(inner),
+            ast::Type::Fn { params, ret } => {
+                params.iter().for_each(|p| self.check_alias_arity(p));
+                if let Some(r) = ret {
+                    self.check_alias_arity(r);
+                }
+            }
+            ast::Type::Path(path) => {
+                let Some(last) = path.segments.last() else {
+                    return;
+                };
+                last.args.iter().for_each(|a| self.check_alias_arity(a));
+                if let Some(expected) = self.table.alias_arity(&last.name)
+                    && expected != last.args.len()
+                {
+                    self.alias_misuse.borrow_mut().push(format!(
+                        "type alias `{}` expects {expected} type argument(s), found {}",
+                        last.name,
+                        last.args.len()
+                    ));
+                }
+            }
+            ast::Type::Unit | ast::Type::SelfType => {}
+        }
+    }
+
+    /// Checks the type annotations an item declares outside any function body —
+    /// struct and enum fields, a trait's method signatures, an alias's own
+    /// value — and rejects a recursive `type` alias (`SYNTAX.md` §3.3).
+    fn check_declared_types(&mut self, item: &ast::Item) {
+        match &item.kind {
+            ast::ItemKind::Struct(s) => match &s.body {
+                ast::StructBody::Unit => {}
+                ast::StructBody::Tuple(ty) => self.check_alias_arity(ty),
+                ast::StructBody::Named(fields) => {
+                    fields.iter().for_each(|f| self.check_alias_arity(&f.ty));
+                }
+            },
+            ast::ItemKind::Enum(e) => {
+                for v in &e.variants {
+                    match &v.body {
+                        ast::VariantBody::Unit => {}
+                        ast::VariantBody::Tuple(tys) => {
+                            tys.iter().for_each(|t| self.check_alias_arity(t));
+                        }
+                        ast::VariantBody::Named(fields) => {
+                            fields.iter().for_each(|f| self.check_alias_arity(&f.ty));
+                        }
+                    }
+                }
+            }
+            ast::ItemKind::Trait(t) => {
+                for ti in &t.items {
+                    for p in &ti.sig.params {
+                        if let ast::Param::Named { ty, .. } = p {
+                            self.check_alias_arity(ty);
+                        }
+                    }
+                    if let Some(r) = &ti.sig.ret {
+                        self.check_alias_arity(r);
+                    }
+                }
+            }
+            ast::ItemKind::TypeAlias(a) => {
+                self.check_alias_arity(&a.value);
+                if self.table.alias_is_recursive(&a.name) {
+                    self.error_at(item.span, format!("type alias `{}` is recursive", a.name));
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Resolves any `Self::Item` projection sentinel in `ty` to the impl's
@@ -312,6 +403,7 @@ impl<'a> Checker<'a> {
         for item in &module.items {
             self.check_reserved_module_names(item);
             self.check_field_names(item);
+            self.check_declared_types(item);
             self.check_item(item);
         }
     }
