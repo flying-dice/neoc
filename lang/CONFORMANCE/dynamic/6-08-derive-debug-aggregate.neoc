@@ -69,7 +69,9 @@ struct Plain {
 // are ordered), a named payload elides (keys are not), a unit variant bare.
 enum NoDbg {
     P(number),
-    N { v: number },
+    N {
+        v: number,
+    },
     U,
 }
 
