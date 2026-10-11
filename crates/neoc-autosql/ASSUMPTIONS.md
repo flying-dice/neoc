@@ -89,7 +89,10 @@ Supported:
   `FROM (SELECT …) AS name [(cols)]` expose the defining query's result columns
   — type and nullability — to the rest of the statement. Later CTEs see earlier
   ones; a CTE shadows a schema table of the same name. An outer join to either
-  widens its columns to optional, exactly as for a table.
+  widens its columns to optional, exactly as for a table. A name the defining
+  query projects twice (`SELECT u.id, p.id …`) is exposed twice, as the
+  database does — naming it is ambiguous; the `_2` suffix applies only to the
+  generated row struct.
 - **Subqueries in expressions**, anywhere a `SELECT` list item, `WHERE`,
   `HAVING`, or `JOIN … ON` allows an expression (including `UPDATE`/`DELETE`
   `WHERE`). A subquery sees its own `FROM` first, then enclosing queries
@@ -98,20 +101,24 @@ Supported:
   NULL); `EXISTS` is a non-null `bool`; `x IN (SELECT …)` is a `bool`, optional
   when `x` or the subquery column is. A scalar or `IN` subquery must project
   exactly one column. Its result column names are never read, so an unaliased
-  expression needs no alias there.
+  expression needs no alias there. An `EXISTS` subquery's projection is not
+  typed at all (`EXISTS (SELECT NULL …)`); its columns must still resolve.
 - **Set operations** (`UNION`/`INTERSECT`/`EXCEPT`, with or without `ALL`, nested
   and parenthesised). Both sides must project the same number of columns and the
-  same neoc type position by position. Field names come from the left side. A
-  column is optional for `UNION` if either side is, for `EXCEPT` if the left is,
-  for `INTERSECT` only if both are.
-- **Window functions** (`f(…) OVER (…)`). `PARTITION BY`/`ORDER BY` columns are
-  resolved. `row_number`/`rank`/`dense_rank`/`ntile`/`cume_dist`/`percent_rank`
+  same neoc type position by position. Field names come from the left side. An
+  `INTEGER` column meeting a `REAL` one binds as `Real`. A column is optional
+  for `UNION` if either side is, for `EXCEPT` if the left is, for `INTERSECT`
+  only if both are.
+- **Window functions** (`f(…) OVER (…)`). Every `PARTITION BY`/`ORDER BY`
+  expression is resolved, inline or in a `WINDOW` definition; `OVER name` must
+  name a `WINDOW` of the same `SELECT`. `row_number`/`rank`/`dense_rank`/`ntile`/`cume_dist`/`percent_rank`
   are non-null `number`; `lag`/`lead` take their argument's type and are
   optional unless a non-null default (third argument) is given and the value is
-  non-null; `first_value`/`last_value` follow their argument; `nth_value` is
-  optional; an aggregate over a window types as the aggregate does
-  (`count` non-null, `sum`/`avg`/`min`/`max` optional). `OVER w` (a named window)
-  is accepted as written.
+  non-null; `first_value`/`last_value` follow their argument under an inline
+  window with the default frame (it always holds the current row) and are
+  optional under an explicit frame or a named window; `nth_value` is optional;
+  an aggregate over a window types as the aggregate does (`count` non-null,
+  `sum`/`avg`/`min`/`max` optional).
 
 Rejected with a clear `Error::Unsupported`/`Error::Resolve` diagnostic:
 `WITH RECURSIVE`, `LATERAL` and unaliased derived tables, other `FROM` forms
@@ -123,11 +130,12 @@ SELECT list, an unknown table/column, and an ambiguous unqualified column.
 
 Known inference limitations (documented, not yet closed):
 
-- **Parameter order** is collected from `SET` → `WHERE`/`HAVING` → `LIMIT`/
-  `OFFSET`. Placeholders in other positions (the projection outside a subquery,
-  `ORDER BY`, a window specification) are not collected, so generation fails with
-  a placeholder-count mismatch rather than misbind them. Placeholders in a CTE,
-  derived table, or subquery bind in textual order.
+- **Parameter order** is textual: `WITH` → projection subqueries → `FROM`
+  (each derived table and `JOIN … ON`, in order) → `WHERE` → `HAVING` →
+  `WINDOW` → `LIMIT`/`OFFSET`; `UPDATE` binds `SET` before `WHERE`, and
+  `RETURNING` last. Placeholders in other positions (the projection outside a
+  subquery, `ORDER BY`, a window frame bound) are not collected, so generation
+  fails with a placeholder-count mismatch rather than misbind them.
 - **`INSERT` placeholder count** is not validated against the `VALUES` list.
 - **`IN (?)`** binds one parameter per placeholder; there is no variadic
   list-parameter form yet.

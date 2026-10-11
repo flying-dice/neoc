@@ -23,10 +23,11 @@ Feature: Inferring queries beyond a single flat SELECT
   A window function is typed by its kind: `row_number`/`rank`/`dense_rank`/
   `ntile`/`cume_dist`/`percent_rank` are non-null numbers; `lag`/`lead` are
   optional unless a non-null default covers the missing row; `first_value`/
-  `last_value` follow their argument; `nth_value` is optional; an aggregate over
+  `last_value` follow their argument under an inline window with the default
+  frame and are optional otherwise; `nth_value` is optional; an aggregate over
   a window types as the aggregate does. Placeholders bind in textual order,
-  subqueries and CTEs included. `WITH RECURSIVE`, `LATERAL`, and a derived table
-  without an alias are refused.
+  subqueries, CTEs, derived tables, and `JOIN … ON` included. `WITH RECURSIVE`,
+  `LATERAL`, and a derived table without an alias are refused.
 
   Scenario: A CTE exposes its columns, with their nullability, to the query
     Given the schema:
@@ -485,3 +486,116 @@ Feature: Inferring queries beyond a single flat SELECT
     When I generate for sqlite
     Then generation is refused
     And the error mentions "bind placeholder"
+
+  Scenario: JOIN … ON and derived-table placeholders bind in textual order
+    Given the schema:
+      """
+      CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT);
+      CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, title TEXT NOT NULL);
+      """
+    And the query "interleaved":
+      """
+      SELECT u.name FROM users u JOIN posts p ON p.user_id = u.id AND p.id = ? JOIN (SELECT id FROM users WHERE name = ?) d ON d.id = u.id;
+      """
+    When I generate for sqlite
+    Then the generated "interleaved.neoc" contains "db: E, id: number, name: string)"
+
+  Scenario: first_value under an explicit frame is optional
+    Given the schema:
+      """
+      CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT);
+      CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, title TEXT NOT NULL);
+      """
+    And the query "framed":
+      """
+      SELECT first_value(title) OVER (ORDER BY id ROWS BETWEEN 1 FOLLOWING AND 2 FOLLOWING) AS f, first_value(title) OVER (ORDER BY id) AS d FROM posts;
+      """
+    When I generate for sqlite
+    Then the generated "framed.neoc" contains "f: Option<string>,"
+    And the generated "framed.neoc" contains "d: string,"
+
+  Scenario: EXISTS accepts SELECT NULL
+    Given the schema:
+      """
+      CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT);
+      CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, title TEXT NOT NULL);
+      """
+    And the query "exists_null":
+      """
+      SELECT name FROM users WHERE EXISTS (SELECT NULL FROM posts WHERE posts.user_id = users.id);
+      """
+    When I generate for sqlite
+    Then the generated "exists_null.neoc" contains "name: string,"
+
+  Scenario: An INTEGER and a REAL set-operation column bind as Real
+    Given the schema:
+      """
+      CREATE TABLE a (n INTEGER NOT NULL);
+      CREATE TABLE b (r REAL NOT NULL);
+      """
+    And the query "mixed_numbers":
+      """
+      WITH v AS (SELECT n FROM a UNION SELECT r FROM b) SELECT n FROM v WHERE n = ?;
+      """
+    When I generate for sqlite
+    Then the generated "mixed_numbers.neoc" contains "SqlValue::Real(n)"
+
+  @chaos
+  Scenario: A de-duplicated name a derived table never exposes is refused
+    Given the schema:
+      """
+      CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT);
+      CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, title TEXT NOT NULL);
+      """
+    And the query "phantom_column":
+      """
+      SELECT t.id_2 FROM (SELECT u.id, p.id FROM users u JOIN posts p ON p.user_id = u.id) AS t;
+      """
+    When I generate for sqlite
+    Then generation is refused
+    And the error mentions "column `id_2` not found"
+
+  @chaos
+  Scenario: A name a derived table projects twice is ambiguous
+    Given the schema:
+      """
+      CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT);
+      CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, title TEXT NOT NULL);
+      """
+    And the query "twice_projected":
+      """
+      SELECT t.id FROM (SELECT u.id, p.id FROM users u JOIN posts p ON p.user_id = u.id) AS t;
+      """
+    When I generate for sqlite
+    Then generation is refused
+    And the error mentions "ambiguous"
+
+  @chaos
+  Scenario: An unknown column inside a window expression is refused
+    Given the schema:
+      """
+      CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT);
+      CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, title TEXT NOT NULL);
+      """
+    And the query "bad_window_expr":
+      """
+      SELECT row_number() OVER (PARTITION BY lower(nope)) AS n FROM posts;
+      """
+    When I generate for sqlite
+    Then generation is refused
+    And the error mentions "column `nope`"
+
+  @chaos
+  Scenario: An undefined named window is refused
+    Given the schema:
+      """
+      CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT);
+      CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, title TEXT NOT NULL);
+      """
+    And the query "undefined_window":
+      """
+      SELECT rank() OVER undefined_w AS r FROM posts;
+      """
+    When I generate for sqlite
+    Then generation is refused
+    And the error mentions "no window `undefined_w`"

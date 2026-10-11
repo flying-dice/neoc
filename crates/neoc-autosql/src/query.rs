@@ -11,15 +11,15 @@
 use std::ops::ControlFlow;
 
 use sqlparser::ast::{
-    AssignmentTarget, Expr, FromTable, Insert, JoinConstraint, JoinOperator, Query, Select,
-    SelectItem, SetExpr, SetOperator, Statement, TableWithJoins, visit_expressions,
+    AssignmentTarget, Expr, FromTable, Insert, NamedWindowExpr, Query, Select, SelectItem, SetExpr,
+    SetOperator, Statement, visit_expressions,
 };
 
 use crate::catalog::{Catalog, Column, Table, last_ident};
 use crate::expr;
 use crate::naming;
-use crate::scope::{self, Env, Scope};
-use crate::{ColType, Error};
+use crate::scope::{self, Env, Projection, Resolved, Scope};
+use crate::{ColType, Error, Prim, Variant};
 
 /// How a query returns: every matching row, or rows-affected. The kind is
 /// inferred from the statement — a `SELECT` returns rows, everything else
@@ -109,7 +109,7 @@ impl AnalyzedQuery {
         } else {
             Kind::Exec
         };
-        let (mut params, result) = infer(name, &statement, catalog)?;
+        let (mut params, mut result) = infer(name, &statement, catalog)?;
         if kind.returns_rows() && result.is_empty() {
             return Err(Error::Unsupported {
                 name: name.to_string(),
@@ -130,6 +130,9 @@ impl AnalyzedQuery {
             });
         }
         dedup_names(params.iter_mut().map(|p| &mut p.name));
+        // Only the generated struct needs unique field names. A CTE or derived
+        // table keeps its duplicates, so naming one there is ambiguous, as in SQL.
+        dedup_names(result.iter_mut().map(|c| &mut c.field));
         Ok(AnalyzedQuery {
             name: name.to_string(),
             kind,
@@ -179,7 +182,7 @@ fn infer(name: &str, statement: &Statement, catalog: &Catalog) -> Result<Inferre
             if let Some(where_clause) = selection {
                 expr::params(name, where_clause, &scope, &mut params)?;
             }
-            let result = returning_columns(name, &scope, returning.as_deref())?;
+            let result = returning_columns(name, &scope, returning.as_deref(), &mut params)?;
             Ok((params, result))
         }
         Statement::Delete(delete) => {
@@ -191,7 +194,7 @@ fn infer(name: &str, statement: &Statement, catalog: &Catalog) -> Result<Inferre
             if let Some(where_clause) = &delete.selection {
                 expr::params(name, where_clause, &scope, &mut params)?;
             }
-            let result = returning_columns(name, &scope, delete.returning.as_deref())?;
+            let result = returning_columns(name, &scope, delete.returning.as_deref(), &mut params)?;
             Ok((params, result))
         }
         _ => Err(Error::Unsupported {
@@ -274,7 +277,9 @@ fn set_expr_columns(
         } => {
             let left = set_expr_columns(name, left, env, params)?;
             let right = set_expr_columns(name, right, env, params)?;
-            combine_set_columns(name, *op, left, &right)
+            // An EXISTS subquery's columns are never read, so only arity matters.
+            let check_types = env.projection() != Projection::Unread;
+            combine_set_columns(name, *op, left, &right, check_types)
         }
         _ => Err(Error::Unsupported {
             name: name.to_string(),
@@ -288,16 +293,18 @@ fn set_expr_columns(
 /// Merges the two sides of a set operation into one result shape.
 ///
 /// Both sides must project the same number of columns, of the same neoc type
-/// position by position. Field names come from the left side, as in SQL. A
-/// result column is nullable when a row of it can be NULL: for `UNION` if
-/// either side can supply a NULL, for `EXCEPT` if the left can (the right only
-/// removes rows), and for `INTERSECT` only if both can (a row survives only if
-/// it appears on both sides).
+/// position by position (unless `check_types` is off). Field names come from
+/// the left side, as in SQL. An `Int` column meeting a `Real` one binds as
+/// `Real`, which holds either. A result column is nullable when a row of it can
+/// be NULL: for `UNION` if either side can supply a NULL, for `EXCEPT` if the
+/// left can (the right only removes rows), and for `INTERSECT` only if both can
+/// (a row survives only if it appears on both sides).
 fn combine_set_columns(
     name: &str,
     op: SetOperator,
     left: Vec<ResultCol>,
     right: &[ResultCol],
+    check_types: bool,
 ) -> Result<Vec<ResultCol>, Error> {
     let label = match op {
         SetOperator::Union => "UNION",
@@ -313,7 +320,7 @@ fn combine_set_columns(
     }
     let mut merged = Vec::with_capacity(left.len());
     for (index, (l, r)) in left.into_iter().zip(right).enumerate() {
-        if l.ty.prim != r.ty.prim {
+        if check_types && l.ty.prim != r.ty.prim {
             return Err(Error::Resolve(format!(
                 "query `{name}`: {label} column {} is `{}` on the left but `{}` on the right",
                 index + 1,
@@ -326,14 +333,22 @@ fn combine_set_columns(
             SetOperator::Except => l.nullable,
             SetOperator::Intersect => l.nullable && r.nullable,
         };
-        merged.push(ResultCol { nullable, ..l });
+        let ty = if l.ty == r.ty || l.ty.prim != Prim::Number || r.ty.prim != Prim::Number {
+            l.ty
+        } else {
+            ColType {
+                prim: l.ty.prim,
+                variant: Variant::Real,
+            }
+        };
+        merged.push(ResultCol { ty, nullable, ..l });
     }
     Ok(merged)
 }
 
 /// Types a plain `SELECT` and collects its parameters in textual order:
-/// subqueries in the projection, derived tables in `FROM`, then the filter
-/// clauses.
+/// subqueries in the projection, then `FROM` (derived tables and `JOIN … ON`),
+/// the filter clauses, and the `WINDOW` definitions.
 fn select_columns(
     name: &str,
     select: &Select,
@@ -341,30 +356,34 @@ fn select_columns(
     params: &mut Vec<Param>,
 ) -> Result<Vec<ResultCol>, Error> {
     let mut from_params = Vec::new();
-    let scope = Scope::build(name, &select.from, env, &mut from_params)?;
-    let result = project(name, &scope, &select.projection)?;
-    for item in &select.projection {
-        if let SelectItem::UnnamedExpr(e) | SelectItem::ExprWithAlias { expr: e, .. } = item {
-            expr::subquery_params(name, e, &scope, params)?;
-        }
-    }
+    let scope =
+        Scope::build(name, &select.from, env, &mut from_params)?.with_windows(&select.named_window);
+    let result = project(name, &scope, &select.projection, params)?;
     params.extend(from_params);
     select_filter_params(name, select, &scope, params)?;
+    for window in &select.named_window {
+        match &window.1 {
+            NamedWindowExpr::NamedWindow(base) => scope.window(name, &base.value)?,
+            NamedWindowExpr::WindowSpec(spec) => {
+                expr::check_window_spec(name, spec, &scope, params)?;
+            }
+        }
+    }
     Ok(result)
 }
 
-/// Collects bind parameters from a `SELECT`'s filter clauses — `JOIN … ON`,
-/// `WHERE`, then `HAVING` — in textual placeholder order, the order the driver
-/// binds `?`/`$n` positionally. The projection is not a source here: a
-/// standalone `SELECT` rejects a projection placeholder, and an
-/// `INSERT … SELECT` collects its value binds separately (ahead of these).
+/// Collects bind parameters from a `SELECT`'s filter clauses — `WHERE`, then
+/// `HAVING` — in textual placeholder order, the order the driver binds
+/// `?`/`$n` positionally. `JOIN … ON` binds with `FROM` ([`Scope::build`]).
+/// The projection is not a source here: a standalone `SELECT` rejects a
+/// projection placeholder, and an `INSERT … SELECT` collects its value binds
+/// separately (ahead of these).
 fn select_filter_params(
     name: &str,
     select: &Select,
     scope: &Scope,
     out: &mut Vec<Param>,
 ) -> Result<(), Error> {
-    join_params(name, &select.from, scope, out)?;
     if let Some(where_clause) = &select.selection {
         expr::params(name, where_clause, scope, out)?;
     }
@@ -411,13 +430,13 @@ fn infer_insert(name: &str, insert: &Insert, catalog: &Catalog) -> Result<Inferr
         }
     }
     // `INSERT … VALUES`: the placeholders match the column list positionally.
-    let params = insert
+    let mut params = insert
         .columns
         .iter()
         .map(|col| param_for(name, table, &col.value))
         .collect::<Result<Vec<_>, _>>()?;
     let scope = Scope::single(catalog, table);
-    let result = returning_columns(name, &scope, insert.returning.as_deref())?;
+    let result = returning_columns(name, &scope, insert.returning.as_deref(), &mut params)?;
     Ok((params, result))
 }
 
@@ -473,7 +492,7 @@ fn infer_insert_select(
     }
 
     let scope = Scope::single(catalog, table);
-    let result = returning_columns(name, &scope, insert.returning.as_deref())?;
+    let result = returning_columns(name, &scope, insert.returning.as_deref(), &mut params)?;
     Ok((params, result))
 }
 
@@ -529,9 +548,16 @@ fn is_wildcard(item: &SelectItem) -> bool {
 }
 
 /// Turns a projection (a `SELECT` list or a `RETURNING` list) into result
-/// columns, expanding wildcards and typing expressions, then de-duplicates
-/// field names.
-fn project(name: &str, scope: &Scope, items: &[SelectItem]) -> Result<Vec<ResultCol>, Error> {
+/// columns, expanding wildcards and typing expressions, and appends its
+/// subqueries' parameters to `params`. Field names are kept as written —
+/// duplicates included — for a CTE or derived table to expose.
+fn project(
+    name: &str,
+    scope: &Scope,
+    items: &[SelectItem],
+    params: &mut Vec<Param>,
+) -> Result<Vec<ResultCol>, Error> {
+    let anonymous = scope.projection() != Projection::Named;
     let mut result = Vec::new();
     for item in items {
         match item {
@@ -555,15 +581,15 @@ fn project(name: &str, scope: &Scope, items: &[SelectItem]) -> Result<Vec<Result
                 }
             }
             SelectItem::UnnamedExpr(e) => {
-                let resolved = expr::infer(name, e, scope)?;
+                let resolved = projected(name, e, scope, params)?;
                 result.push(ResultCol {
-                    field: field_name(name, e, scope.anonymous_columns())?,
+                    field: field_name(name, e, anonymous)?,
                     ty: resolved.ty,
                     nullable: resolved.nullable,
                 });
             }
             SelectItem::ExprWithAlias { expr: e, alias } => {
-                let resolved = expr::infer(name, e, scope)?;
+                let resolved = projected(name, e, scope, params)?;
                 result.push(ResultCol {
                     field: alias.value.clone(),
                     ty: resolved.ty,
@@ -572,18 +598,44 @@ fn project(name: &str, scope: &Scope, items: &[SelectItem]) -> Result<Vec<Result
             }
         }
     }
-    dedup_names(result.iter_mut().map(|c| &mut c.field));
     Ok(result)
 }
 
-/// Result columns for a `RETURNING` clause (empty when there is none).
+/// Types one projection item. An `EXISTS` subquery's projection is never read,
+/// so there an item autosql cannot type (`SELECT NULL`) is accepted untyped;
+/// an unknown column is still refused.
+fn projected(
+    name: &str,
+    e: &Expr,
+    scope: &Scope,
+    params: &mut Vec<Param>,
+) -> Result<Resolved, Error> {
+    let mut inner = Vec::new();
+    match expr::infer(name, e, scope, &mut inner) {
+        Ok(resolved) => {
+            params.extend(inner);
+            Ok(resolved)
+        }
+        Err(Error::Unsupported { .. }) if scope.projection() == Projection::Unread => {
+            Ok(Resolved {
+                ty: ColType::of(Prim::String),
+                nullable: true,
+            })
+        }
+        Err(err) => Err(err),
+    }
+}
+
+/// Result columns for a `RETURNING` clause (empty when there is none),
+/// appending its subqueries' parameters to `params`.
 fn returning_columns(
     name: &str,
     scope: &Scope,
     returning: Option<&[SelectItem]>,
+    params: &mut Vec<Param>,
 ) -> Result<Vec<ResultCol>, Error> {
     match returning {
-        Some(items) => project(name, scope, items),
+        Some(items) => project(name, scope, items, params),
         None => Ok(Vec::new()),
     }
 }
@@ -633,48 +685,6 @@ fn number_param(name: &str) -> Param {
 /// Whether an optional expression is a bind placeholder.
 fn is_placeholder_expr(expr: Option<&Expr>) -> bool {
     expr.is_some_and(expr::is_placeholder)
-}
-
-/// Collects parameters from each `JOIN … ON` predicate, walked in `FROM`-clause
-/// order so a placeholder in a join condition binds in its textual position
-/// (ahead of the `WHERE`). `USING`/`NATURAL`/cross joins carry no predicate.
-fn join_params(
-    name: &str,
-    from: &[TableWithJoins],
-    scope: &Scope,
-    out: &mut Vec<Param>,
-) -> Result<(), Error> {
-    for table in from {
-        for join in &table.joins {
-            if let Some(on) = join_on(&join.join_operator) {
-                expr::params(name, on, scope, out)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-/// The `ON` predicate of a join, if it has one. `USING`, `NATURAL`, and the
-/// predicate-less cross joins return `None`.
-fn join_on(op: &JoinOperator) -> Option<&Expr> {
-    let constraint = match op {
-        JoinOperator::Inner(c)
-        | JoinOperator::LeftOuter(c)
-        | JoinOperator::RightOuter(c)
-        | JoinOperator::FullOuter(c)
-        | JoinOperator::LeftSemi(c)
-        | JoinOperator::RightSemi(c)
-        | JoinOperator::LeftAnti(c)
-        | JoinOperator::RightAnti(c)
-        | JoinOperator::AsOf { constraint: c, .. } => c,
-        JoinOperator::CrossJoin | JoinOperator::CrossApply | JoinOperator::OuterApply => {
-            return None;
-        }
-    };
-    match constraint {
-        JoinConstraint::On(expr) => Some(expr),
-        JoinConstraint::Using(_) | JoinConstraint::Natural | JoinConstraint::None => None,
-    }
 }
 
 /// Counts every bind placeholder (`?`, `$n`, …) across the whole parsed
@@ -1270,6 +1280,156 @@ mod tests {
         // table is read by name, so an unaliased expression is refused.
         let err = refused("SELECT t.x FROM (SELECT id + 1 FROM users) AS t;");
         assert!(matches!(err, Error::Unsupported { .. }), "got {err:?}");
+    }
+
+    fn param_names(q: &AnalyzedQuery) -> Vec<&str> {
+        q.params.iter().map(|p| p.name.as_str()).collect()
+    }
+
+    #[test]
+    fn join_on_and_derived_table_params_interleave_in_textual_order() {
+        let q = one(
+            "j",
+            "SELECT u.name FROM users u \
+             JOIN posts p ON p.user_id = u.id AND p.id = ? \
+             JOIN (SELECT id FROM users WHERE name = ?) d ON d.id = u.id;",
+        );
+        assert_eq!(param_names(&q), ["id", "name"]);
+        assert_eq!(q.params[0].ty.prim, Prim::Number, "p.id binds first");
+        assert_eq!(q.params[1].ty.prim, Prim::String);
+    }
+
+    #[test]
+    fn insert_select_join_on_binds_before_a_later_derived_table() {
+        let q = one(
+            "i",
+            "INSERT INTO posts (user_id, title) SELECT u.id, ? FROM users u \
+             JOIN posts p ON p.title = ? \
+             JOIN (SELECT id FROM users WHERE name = ?) d ON d.id = u.id;",
+        );
+        assert_eq!(param_names(&q), ["param", "title", "name"]);
+    }
+
+    #[test]
+    fn first_and_last_value_are_nullable_under_an_explicit_frame() {
+        let q = one(
+            "w",
+            "SELECT first_value(title) OVER (ORDER BY id) AS a, \
+             first_value(title) OVER (ORDER BY id ROWS BETWEEN 1 FOLLOWING AND 2 FOLLOWING) AS f, \
+             last_value(title) OVER (ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS l \
+             FROM posts;",
+        );
+        assert!(
+            !q.result[0].nullable,
+            "the default frame holds the current row"
+        );
+        assert!(q.result[1].nullable, "a following-only frame can be empty");
+        assert!(q.result[2].nullable, "a preceding-only frame can be empty");
+    }
+
+    #[test]
+    fn first_value_over_a_named_window_is_nullable() {
+        let q = one(
+            "w",
+            "SELECT first_value(title) OVER w AS f FROM posts \
+             WINDOW w AS (ORDER BY id ROWS BETWEEN 1 FOLLOWING AND 1 FOLLOWING);",
+        );
+        assert!(q.result[0].nullable);
+    }
+
+    #[test]
+    fn duplicate_derived_column_is_not_renamed_and_is_ambiguous() {
+        let derived = "(SELECT u.id, p.id FROM users u JOIN posts p ON p.user_id = u.id) AS t";
+        let err = refused(&format!("SELECT t.id_2 FROM {derived};"));
+        assert!(
+            matches!(&err, Error::Resolve(m) if m.contains("`id_2` not found")),
+            "got {err:?}"
+        );
+        let err = refused(&format!("SELECT t.id FROM {derived};"));
+        assert!(
+            matches!(&err, Error::Resolve(m) if m.contains("ambiguous")),
+            "got {err:?}"
+        );
+        let err = refused(
+            "WITH t AS (SELECT u.id, p.id FROM users u JOIN posts p ON p.user_id = u.id) SELECT id FROM t;",
+        );
+        assert!(
+            matches!(&err, Error::Resolve(m) if m.contains("ambiguous")),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn duplicate_names_are_still_deduplicated_in_the_row_struct() {
+        let q = one(
+            "s",
+            "SELECT * FROM (SELECT u.id, p.id FROM users u JOIN posts p ON p.user_id = u.id) AS t;",
+        );
+        let fields: Vec<&str> = q.result.iter().map(|c| c.field.as_str()).collect();
+        assert_eq!(fields, ["id", "id_2"]);
+    }
+
+    #[test]
+    fn window_expressions_and_names_are_resolved() {
+        let err = refused("SELECT row_number() OVER (PARTITION BY lower(nope)) AS n FROM posts;");
+        assert!(
+            matches!(&err, Error::Resolve(m) if m.contains("`nope`")),
+            "got {err:?}"
+        );
+        let err = refused("SELECT rank() OVER undefined_w AS r FROM posts;");
+        assert!(
+            matches!(&err, Error::Resolve(m) if m.contains("no window `undefined_w`")),
+            "got {err:?}"
+        );
+        let err = refused("SELECT rank() OVER w AS r FROM posts WINDOW w AS (ORDER BY nope);");
+        assert!(
+            matches!(&err, Error::Resolve(m) if m.contains("`nope`")),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn exists_accepts_an_untyped_projection() {
+        let q = one(
+            "e",
+            "SELECT name FROM users WHERE EXISTS (SELECT NULL FROM posts WHERE posts.user_id = users.id AND posts.title = ?);",
+        );
+        assert_eq!(param_names(&q), ["title"]);
+        let err = refused("SELECT name FROM users WHERE EXISTS (SELECT nope FROM posts);");
+        assert!(
+            matches!(&err, Error::Resolve(m) if m.contains("`nope`")),
+            "an unknown column is still refused: {err:?}"
+        );
+    }
+
+    #[test]
+    fn set_operation_of_int_and_real_binds_as_real() {
+        let catalog = Catalog::from_schema(
+            "CREATE TABLE a (n INTEGER NOT NULL); CREATE TABLE b (r REAL NOT NULL);",
+            Dialect::Sqlite,
+        )
+        .unwrap();
+        let q = AnalyzedQuery::analyze(
+            "v",
+            "WITH v AS (SELECT n FROM a UNION SELECT r FROM b) SELECT n FROM v WHERE n = ?;",
+            &catalog,
+            Dialect::Sqlite,
+        )
+        .unwrap();
+        assert_eq!(q.params[0].ty.variant, Variant::Real);
+        assert_eq!(q.result[0].ty.variant, Variant::Real);
+    }
+
+    #[test]
+    fn deeply_nested_subqueries_type_each_level_once() {
+        // Typing each level twice made this 2^depth: depth 16 took ~9 s.
+        let depth = 16;
+        let mut sql = "SELECT max(id) FROM users WHERE name = ?".to_string();
+        for _ in 0..depth {
+            sql = format!("SELECT ({sql}) AS v FROM users WHERE name = ?");
+        }
+        let q = one("deep", &format!("{sql};"));
+        assert_eq!(q.params.len(), depth + 1);
     }
 
     #[test]
