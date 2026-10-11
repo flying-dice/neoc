@@ -12,6 +12,7 @@
 //! from the module's `enum` declarations (plus the `Result`/`Option` prelude)
 //! to tell an enum variant apart from an ordinary value or call.
 
+mod concat;
 mod expr;
 mod pat;
 mod validate;
@@ -443,6 +444,13 @@ pub(crate) struct Emitter {
     loops: Vec<LoopFrame>,
     /// Counter feeding unique outer-break flag names across `continue` loops.
     break_flag_seq: usize,
+    /// Loops (by node address) whose loop-carried string appends accumulate in
+    /// a table, mapped to the variables to accumulate — see [`concat`].
+    concat_plan: HashMap<usize, Vec<String>>,
+    /// The `(variable, accumulator)` pairs of the loops being emitted.
+    accumulators: Vec<(String, String)>,
+    /// Counter feeding unique accumulator names.
+    concat_seq: usize,
     /// Counter feeding unique temporaries for the `?` operator (§4.10).
     try_seq: usize,
     /// Target-module imports from `extern` blocks (`lang/EXTERN.md`). Each

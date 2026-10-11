@@ -36,9 +36,7 @@ impl Emitter {
     /// Emit a block as a function body: statements, then `return <value>` when
     /// the block has a trailing value.
     pub(crate) fn emit_block_as_body(&mut self, block: &ast::Block) {
-        for stmt in &block.stmts {
-            self.emit_stmt(stmt);
-        }
+        self.emit_stmts(block);
         if let Some(value) = &block.value {
             self.at_span(value.span, |em| {
                 let v = em.emit_expr(value);
@@ -47,7 +45,7 @@ impl Emitter {
         }
     }
 
-    fn emit_stmt(&mut self, stmt: &ast::Stmt) {
+    pub(super) fn emit_stmt(&mut self, stmt: &ast::Stmt) {
         self.at_span(stmt.span, |em| match &stmt.kind {
             ast::StmtKind::Let(l) => em.emit_let(l),
             ast::StmtKind::Item(item) => em.emit_item_stmt(item),
@@ -143,22 +141,22 @@ impl Emitter {
     fn emit_expr_stmt(&mut self, e: &ast::Expr) {
         match &e.kind {
             ast::ExprKind::If { .. } => self.emit_if_stmt(e),
-            ast::ExprKind::While { cond, body } => {
-                let c = self.emit_expr(cond);
-                self.line(format!("while {c} do"));
-                self.emit_loop_body(body);
-                self.line("end");
-            }
-            ast::ExprKind::Loop { body } => {
-                self.line("while true do");
-                self.emit_loop_body(body);
-                self.line("end");
-            }
+            ast::ExprKind::While { cond, body } => self.emit_accumulating(e, |em| {
+                let c = em.emit_expr(cond);
+                em.line(format!("while {c} do"));
+                em.emit_loop_body(body);
+                em.line("end");
+            }),
+            ast::ExprKind::Loop { body } => self.emit_accumulating(e, |em| {
+                em.line("while true do");
+                em.emit_loop_body(body);
+                em.line("end");
+            }),
             ast::ExprKind::For {
                 pattern,
                 iter,
                 body,
-            } => self.emit_for(pattern, iter, body),
+            } => self.emit_accumulating(e, |em| em.emit_for(pattern, iter, body)),
             ast::ExprKind::Match { scrutinee, arms } => self.emit_match_stmt(scrutinee, arms),
             ast::ExprKind::Block(b) => {
                 self.line("do");
@@ -166,14 +164,20 @@ impl Emitter {
                 self.line("end");
             }
             ast::ExprKind::Return(value) => {
-                let r = value
-                    .as_ref()
-                    .map_or_else(String::new, |v| format!(" {}", self.emit_expr(v)));
+                let r = value.as_ref().map_or_else(String::new, |v| {
+                    let v = self
+                        .accumulated_return(v)
+                        .unwrap_or_else(|| self.emit_expr(v));
+                    format!(" {v}")
+                });
                 self.line(format!("return{r}"));
             }
             ast::ExprKind::Break => self.emit_break(),
             ast::ExprKind::Continue => self.emit_continue(),
             ast::ExprKind::Assign { target, op, value } => {
+                if self.emit_accumulated_append(target, *op, value) {
+                    return;
+                }
                 let t = self.emit_expr(target);
                 let v = self.emit_expr(value);
                 // Lua has no compound assignment; expand `a += b` to `a = a + b`.
@@ -196,9 +200,7 @@ impl Emitter {
 
     /// A block's statements without a trailing return (statement context).
     fn emit_block_stmts(&mut self, block: &ast::Block) {
-        for stmt in &block.stmts {
-            self.emit_stmt(stmt);
-        }
+        self.emit_stmts(block);
         if let Some(value) = &block.value {
             // A trailing value in statement context is evaluated for effect.
             self.emit_expr_stmt(value);

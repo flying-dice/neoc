@@ -12,6 +12,7 @@ neoc-macros.workspace = true
 
 [dev-dependencies]
 neoc-parser.workspace = true
+neoc-types.workspace = true
 # Behavioural spec: Gherkin features in `tooling/codegen-lua/` driven against
 # `emit`. cucumber supplies its own runner (default libtest harness disabled
 # below); `futures::executor::block_on` drives it so this pure crate stays
