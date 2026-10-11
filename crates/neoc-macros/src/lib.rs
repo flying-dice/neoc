@@ -12,10 +12,11 @@
 //!
 //! # Aggregate fields
 //!
-//! A `number`/`string`/`bool` field is compared with `==` and rendered with
-//! `tostring`. Any other field — a nested `struct`/`enum`, `Option<T>`, `[T]` —
-//! goes through the module-local `__eq` / `__debug` helpers ([`Helper`]), which
-//! dispatch on the value's shape and recurse. The caller splices a helper into
+//! A `number`/`string`/`bool` field is compared with `==`; a `number`/`bool`
+//! field is rendered with `tostring`. Any other field — a nested
+//! `struct`/`enum`, `Option<T>`, `[T]`, and for Debug a `string`, which renders
+//! quoted — goes through the module-local `__eq` / `__debug` helpers
+//! ([`Helper`]), which dispatch on the value's shape and recurse. The caller splices a helper into
 //! the module once, only when a derive reports using it. `Display` assumes
 //! every field already satisfies `Display`; that obligation is checked by the
 //! type checker, not here.
@@ -83,19 +84,29 @@ const EQ_HELPER: &str = r#"local function __eq(a, b)
   return true
 end"#;
 
-/// `{:?}` rendering. Scalars by `tostring`; a value whose metatable carries
-/// `debug` by that method; a tagged payload (`Option`/`Result`) as `Tag(…)`;
-/// a list as `[…]`.
+/// `{:?}` rendering. A string double-quoted with `\`, `"`, newline, tab and carriage return escaped;
+/// other scalars by `tostring`; a value whose metatable carries `debug` by that
+/// method; a tagged payload (`Option`/`Result`) as `Tag(…)`; a list as `[…]`.
+/// A struct or named-payload variant whose type has no `debug` — reachable only
+/// through a type parameter, which carries no obligation — renders its name
+/// with elided fields, `Name { .. }`.
 const DEBUG_HELPER: &str = r#"local function __debug(v)
+  if type(v) == "string" then
+    local escaped = string.gsub(v, "[\\\"\n\t\r]", { ["\\"] = "\\\\", ["\""] = "\\\"", ["\n"] = "\\n", ["\t"] = "\\t", ["\r"] = "\\r" })
+    return "\"" .. escaped .. "\""
+  end
   if type(v) ~= "table" then return tostring(v) end
   local mt = getmetatable(v)
   if mt and mt.debug then return mt.debug(v) end
-  if v.__struct then return v.__struct end
+  if v.__struct then return v.__struct .. " { .. }" end
   local parts = {}
   for i = 1, #v do parts[i] = __debug(v[i]) end
   if v.__tag == nil then return "[" .. table.concat(parts, ", ") .. "]" end
-  if #parts == 0 then return v.__tag end
-  return v.__tag .. "(" .. table.concat(parts, ", ") .. ")"
+  if #parts > 0 then return v.__tag .. "(" .. table.concat(parts, ", ") .. ")" end
+  for k in pairs(v) do
+    if k ~= "__enum" and k ~= "__tag" then return v.__tag .. " { .. }" end
+  end
+  return v.__tag
 end"#;
 
 /// The output of one derive: the method's Lua and the helpers it calls.
@@ -205,13 +216,23 @@ impl DataKey<'_> {
     /// Lua's `==` and `tostring` already handle; anything else is an aggregate
     /// needing the structural helpers.
     fn is_scalar(self) -> bool {
+        self.is_one_of(&["number", "string", "bool"])
+    }
+
+    /// Whether the slot's Debug form is plain `tostring` — every scalar but
+    /// `string`, which the helper quotes.
+    fn debugs_with_tostring(self) -> bool {
+        self.is_one_of(&["number", "bool"])
+    }
+
+    /// Whether the slot's type is unit or a bare primitive named in `names`.
+    fn is_one_of(self, names: &[&str]) -> bool {
         let (DataKey::Named(_, ty) | DataKey::Index(_, ty)) = self;
         match ty {
             ast::Type::Unit => true,
             ast::Type::Path(p) => matches!(
                 p.segments.as_slice(),
-                [seg] if seg.args.is_empty()
-                    && matches!(seg.name.as_str(), "number" | "string" | "bool")
+                [seg] if seg.args.is_empty() && names.contains(&seg.name.as_str())
             ),
             _ => false,
         }
@@ -228,7 +249,7 @@ impl DataKey<'_> {
 
     /// Lua expression rendering the slot read from `recv` for Debug output.
     fn debug_expr(self, recv: &str) -> String {
-        if self.is_scalar() {
+        if self.debugs_with_tostring() {
             format!("tostring({})", self.access(recv))
         } else {
             format!("__debug({})", self.access(recv))
@@ -385,8 +406,8 @@ fn debug_enum_body(variants: &[ast::Variant]) -> Vec<String> {
 /// the given data keys read from `recv`.
 ///
 /// Empty keys yield the bare label (`"Red"`). Named keys yield
-/// `Name { f = <f>, … }`; positional keys yield `Name(<0>, <1>)`. A scalar value
-/// is rendered with `tostring`, an aggregate with `__debug`.
+/// `Name { f = <f>, … }`; positional keys yield `Name(<0>, <1>)`. A `number`/`bool`
+/// value is rendered with `tostring`, anything else with `__debug`.
 fn debug_render(name: &str, keys: &[DataKey], recv: &str) -> String {
     if keys.is_empty() {
         return lua_str(name);
@@ -605,6 +626,23 @@ mod tests {
             ]
         );
         assert_eq!(d.helpers, vec![Helper::Debug]);
+    }
+
+    #[test]
+    fn debug_string_field_goes_through_helper_eq_does_not() {
+        let s = ast::StructDecl {
+            name: "Tag".to_string(),
+            generics: Vec::new(),
+            body: ast::StructBody::Named(vec![typed_field("s", scalar("string"))]),
+        };
+        let debug = derive("Debug", DeriveTarget::Struct(&s)).unwrap();
+        assert_eq!(
+            debug.lines[1],
+            "  return \"Tag { \" .. \"s = \" .. __debug(self.s) .. \" }\""
+        );
+        assert_eq!(debug.helpers, vec![Helper::Debug]);
+        let eq = derive("Eq", DeriveTarget::Struct(&s)).unwrap();
+        assert!(eq.helpers.is_empty());
     }
 
     #[test]

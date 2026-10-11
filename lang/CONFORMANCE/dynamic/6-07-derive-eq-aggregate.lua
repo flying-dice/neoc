@@ -57,6 +57,7 @@ local function __type_error(path, expected, got)
   error(path .. ": expected " .. expected .. ", got " .. actual)
 end
 local function __check_number(v, path) if type(v) ~= "number" then __type_error(path, "number", v) end return v end
+local function __check_string(v, path) if type(v) ~= "string" then __type_error(path, "string", v) end return v end
 local function __check_list(v, path, elem)
   if type(v) ~= "table" or v.__struct or v.__enum then __type_error(path, "list", v) end
   local n = 0
@@ -73,9 +74,33 @@ local function __check_option(v, path, some)
   elseif v.__tag ~= "None" then __type_error(path, "Option", v) end
   return v
 end
-local __check_Inner, __check_Outer, __check_Shape
+local function __check_result(v, path, ok, err)
+  if type(v) ~= "table" or v.__enum ~= "Result" then __type_error(path, "Result", v) end
+  if v.__tag == "Ok" then ok(v[1], path .. ".0")
+  elseif v.__tag == "Err" then err(v[1], path .. ".0")
+  else __type_error(path, "Result", v) end
+  return v
+end
+local __check_HasMod, __check_Inner, __check_Many, __check_Mod, __check_Outer, __check_Shape, __check_Wrap
+function __check_HasMod(v, path)
+  if type(v) ~= "table" or v.__struct ~= "HasMod" then __type_error(path, "HasMod", v) end
+  __check_Mod(v.m, path .. ".m")
+  return v
+end
 function __check_Inner(v, path)
   if type(v) ~= "table" or v.__struct ~= "Inner" then __type_error(path, "Inner", v) end
+  __check_number(v.v, path .. ".v")
+  return v
+end
+function __check_Many(v, path)
+  if type(v) ~= "table" or v.__struct ~= "Many" then __type_error(path, "Many", v) end
+  __check_list(v.ys, path .. ".ys", __check_Inner)
+  __check_result(v.r, path .. ".r", __check_number, __check_string)
+  __check_option(v.oo, path .. ".oo", function(v, p) return __check_option(v, p, __check_Inner) end)
+  return v
+end
+function __check_Mod(v, path)
+  if type(v) ~= "table" or v.__struct ~= "Mod" then __type_error(path, "Mod", v) end
   __check_number(v.v, path .. ".v")
   return v
 end
@@ -94,6 +119,10 @@ function __check_Shape(v, path)
   elseif t == "Boxed" then
     __check_Inner(v[1], path .. ".0")
   else __type_error(path, "Shape", v) end
+  return v
+end
+function __check_Wrap(v, path)
+  if type(v) ~= "table" or v.__struct ~= "Wrap" then __type_error(path, "Wrap", v) end
   return v
 end
 local Inner = {}
@@ -128,6 +157,48 @@ function Outer.eq(a, b)
   return a.__struct == b.__struct and __eq(a.i, b.i) and __eq(a.o, b.o) and __eq(a.xs, b.xs) and __eq(a.s, b.s)
 end
 Outer.__traits = { "Eq" }
+local Many = {}
+Many.__index = Many
+function Many.new(fields)
+  fields.__struct = "Many"
+  return __check_Many(setmetatable(fields, Many), "Many")
+end
+function Many.eq(a, b)
+  return a.__struct == b.__struct and __eq(a.ys, b.ys) and __eq(a.r, b.r) and __eq(a.oo, b.oo)
+end
+Many.__traits = { "Eq" }
+local Wrap = {}
+Wrap.__index = Wrap
+function Wrap.new(fields)
+  fields.__struct = "Wrap"
+  return __check_Wrap(setmetatable(fields, Wrap), "Wrap")
+end
+function Wrap.eq(a, b)
+  return a.__struct == b.__struct and __eq(a.v, b.v)
+end
+Wrap.__traits = { "Eq" }
+local Mod = {}
+Mod.__index = Mod
+function Mod.new(fields)
+  fields.__struct = "Mod"
+  return __check_Mod(setmetatable(fields, Mod), "Mod")
+end
+function Mod.eq(self, o)
+  return ((self.v % 10) == (o.v % 10))
+end
+local HasMod = {}
+HasMod.__index = HasMod
+function HasMod.new(fields)
+  fields.__struct = "HasMod"
+  return __check_HasMod(setmetatable(fields, HasMod), "HasMod")
+end
+function HasMod.eq(a, b)
+  return a.__struct == b.__struct and __eq(a.m, b.m)
+end
+HasMod.__traits = { "Eq" }
+local function many(y, r, oo)
+  return Many.new({ ys = { Inner.new({ v = y }) }, r = r, oo = oo })
+end
 local function make(v, o, xs, s)
   return Outer.new({ i = Inner.new({ v = v }), o = o, xs = xs, s = s })
 end
@@ -162,9 +233,55 @@ local function main()
     println("enum-payload-ne")
   end
   local none = make(1, None, {  }, setmetatable({ __enum = "Shape", __tag = "Dot" }, Shape))
+  if none:eq(make(1, None, {  }, setmetatable({ __enum = "Shape", __tag = "Dot" }, Shape))) then
+    println("none-empty-equal")
+  end
+  local m = many(1, Ok(1), Some(Some(Inner.new({ v = 1 }))))
+  if m:eq(many(1, Ok(1), Some(Some(Inner.new({ v = 1 }))))) then
+    println("many-equal")
+  end
+  if (not m:eq(many(2, Ok(1), Some(Some(Inner.new({ v = 1 })))))) then
+    println("list-of-struct-ne")
+  end
+  if (not m:eq(many(1, Err("1"), Some(Some(Inner.new({ v = 1 })))))) then
+    println("ok-vs-err-ne")
+  end
+  if (not m:eq(many(1, Ok(2), Some(Some(Inner.new({ v = 1 })))))) then
+    println("ok-payload-ne")
+  end
+  if (not m:eq(many(1, Ok(1), Some(Some(Inner.new({ v = 2 })))))) then
+    println("nested-option-payload-ne")
+  end
+  if (not m:eq(many(1, Ok(1), Some(None)))) then
+    println("some-some-vs-some-none-ne")
+  end
+  local w = Wrap.new({ v = Inner.new({ v = 1 }) })
+  local w_same = Wrap.new({ v = Inner.new({ v = 1 }) })
+  local w_other = Wrap.new({ v = Inner.new({ v = 2 }) })
+  if w:eq(w_same) then
+    println("generic-struct-equal")
+  end
+  if (not w:eq(w_other)) then
+    println("generic-struct-ne")
+  end
+  local n = Wrap.new({ v = 5 })
+  local n_same = Wrap.new({ v = 5 })
+  local n_other = Wrap.new({ v = 6 })
+  if n:eq(n_same) then
+    println("generic-number-equal")
+  end
+  if (not n:eq(n_other)) then
+    println("generic-number-ne")
+  end
+  local h = HasMod.new({ m = Mod.new({ v = 1 }) })
+  local h_mod = HasMod.new({ m = Mod.new({ v = 11 }) })
+  local h_other = HasMod.new({ m = Mod.new({ v = 2 }) })
+  if h:eq(h_mod) then
+    println("hand-written-eq")
+  end
   return (function()
-    if none:eq(make(1, None, {  }, setmetatable({ __enum = "Shape", __tag = "Dot" }, Shape))) then
-      println("none-empty-equal")
+    if (not h:eq(h_other)) then
+      println("hand-written-ne")
     end
   end)()
 end

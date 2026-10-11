@@ -39,15 +39,22 @@ function Result.map_err(self, f)
 end
 
 local function __debug(v)
+  if type(v) == "string" then
+    local escaped = string.gsub(v, "[\\\"\n\t\r]", { ["\\"] = "\\\\", ["\""] = "\\\"", ["\n"] = "\\n", ["\t"] = "\\t", ["\r"] = "\\r" })
+    return "\"" .. escaped .. "\""
+  end
   if type(v) ~= "table" then return tostring(v) end
   local mt = getmetatable(v)
   if mt and mt.debug then return mt.debug(v) end
-  if v.__struct then return v.__struct end
+  if v.__struct then return v.__struct .. " { .. }" end
   local parts = {}
   for i = 1, #v do parts[i] = __debug(v[i]) end
   if v.__tag == nil then return "[" .. table.concat(parts, ", ") .. "]" end
-  if #parts == 0 then return v.__tag end
-  return v.__tag .. "(" .. table.concat(parts, ", ") .. ")"
+  if #parts > 0 then return v.__tag .. "(" .. table.concat(parts, ", ") .. ")" end
+  for k in pairs(v) do
+    if k ~= "__enum" and k ~= "__tag" then return v.__tag .. " { .. }" end
+  end
+  return v.__tag
 end
 
 local function __type_error(path, expected, got)
@@ -55,6 +62,7 @@ local function __type_error(path, expected, got)
   error(path .. ": expected " .. expected .. ", got " .. actual)
 end
 local function __check_number(v, path) if type(v) ~= "number" then __type_error(path, "number", v) end return v end
+local function __check_string(v, path) if type(v) ~= "string" then __type_error(path, "string", v) end return v end
 local function __check_list(v, path, elem)
   if type(v) ~= "table" or v.__struct or v.__enum then __type_error(path, "list", v) end
   local n = 0
@@ -71,7 +79,14 @@ local function __check_option(v, path, some)
   elseif v.__tag ~= "None" then __type_error(path, "Option", v) end
   return v
 end
-local __check_All, __check_Inner, __check_Shape, __check_WithInner, __check_WithList, __check_WithOption, __check_WithShape
+local function __check_result(v, path, ok, err)
+  if type(v) ~= "table" or v.__enum ~= "Result" then __type_error(path, "Result", v) end
+  if v.__tag == "Ok" then ok(v[1], path .. ".0")
+  elseif v.__tag == "Err" then err(v[1], path .. ".0")
+  else __type_error(path, "Result", v) end
+  return v
+end
+local __check_All, __check_Inner, __check_Many, __check_Plain, __check_Shape, __check_Text, __check_WithInner, __check_WithList, __check_WithOption, __check_WithShape, __check_Wrap
 function __check_All(v, path)
   if type(v) ~= "table" or v.__struct ~= "All" then __type_error(path, "All", v) end
   __check_Inner(v.i, path .. ".i")
@@ -85,6 +100,18 @@ function __check_Inner(v, path)
   __check_number(v.v, path .. ".v")
   return v
 end
+function __check_Many(v, path)
+  if type(v) ~= "table" or v.__struct ~= "Many" then __type_error(path, "Many", v) end
+  __check_list(v.ys, path .. ".ys", __check_Inner)
+  __check_result(v.r, path .. ".r", __check_number, __check_string)
+  __check_option(v.oo, path .. ".oo", function(v, p) return __check_option(v, p, __check_Inner) end)
+  return v
+end
+function __check_Plain(v, path)
+  if type(v) ~= "table" or v.__struct ~= "Plain" then __type_error(path, "Plain", v) end
+  __check_number(v.v, path .. ".v")
+  return v
+end
 function __check_Shape(v, path)
   if type(v) ~= "table" or v.__enum ~= "Shape" then __type_error(path, "Shape", v) end
   local t = v.__tag
@@ -92,6 +119,13 @@ function __check_Shape(v, path)
   elseif t == "Boxed" then
     __check_Inner(v[1], path .. ".0")
   else __type_error(path, "Shape", v) end
+  return v
+end
+function __check_Text(v, path)
+  if type(v) ~= "table" or v.__struct ~= "Text" then __type_error(path, "Text", v) end
+  __check_string(v.s, path .. ".s")
+  __check_option(v.o, path .. ".o", __check_string)
+  __check_list(v.xs, path .. ".xs", __check_string)
   return v
 end
 function __check_WithInner(v, path)
@@ -112,6 +146,10 @@ end
 function __check_WithShape(v, path)
   if type(v) ~= "table" or v.__struct ~= "WithShape" then __type_error(path, "WithShape", v) end
   __check_Shape(v.s, path .. ".s")
+  return v
+end
+function __check_Wrap(v, path)
+  if type(v) ~= "table" or v.__struct ~= "Wrap" then __type_error(path, "Wrap", v) end
   return v
 end
 local Inner = {}
@@ -185,6 +223,42 @@ function All.debug(self)
   return "All { " .. "i = " .. __debug(self.i) .. ", " .. "o = " .. __debug(self.o) .. ", " .. "xs = " .. __debug(self.xs) .. ", " .. "s = " .. __debug(self.s) .. " }"
 end
 All.__traits = { "Debug" }
+local Many = {}
+Many.__index = Many
+function Many.new(fields)
+  fields.__struct = "Many"
+  return __check_Many(setmetatable(fields, Many), "Many")
+end
+function Many.debug(self)
+  return "Many { " .. "ys = " .. __debug(self.ys) .. ", " .. "r = " .. __debug(self.r) .. ", " .. "oo = " .. __debug(self.oo) .. " }"
+end
+Many.__traits = { "Debug" }
+local Wrap = {}
+Wrap.__index = Wrap
+function Wrap.new(fields)
+  fields.__struct = "Wrap"
+  return __check_Wrap(setmetatable(fields, Wrap), "Wrap")
+end
+function Wrap.debug(self)
+  return "Wrap { " .. "v = " .. __debug(self.v) .. " }"
+end
+Wrap.__traits = { "Debug" }
+local Plain = {}
+Plain.__index = Plain
+function Plain.new(fields)
+  fields.__struct = "Plain"
+  return __check_Plain(setmetatable(fields, Plain), "Plain")
+end
+local Text = {}
+Text.__index = Text
+function Text.new(fields)
+  fields.__struct = "Text"
+  return __check_Text(setmetatable(fields, Text), "Text")
+end
+function Text.debug(self)
+  return "Text { " .. "s = " .. __debug(self.s) .. ", " .. "o = " .. __debug(self.o) .. ", " .. "xs = " .. __debug(self.xs) .. " }"
+end
+Text.__traits = { "Debug" }
 local function main()
   println(WithInner.new({ i = Inner.new({ v = 1 }) }):debug())
   println(WithOption.new({ o = Some(1) }):debug())
@@ -196,4 +270,12 @@ local function main()
   println(setmetatable({ __enum = "Shape", __tag = "Boxed", Inner.new({ v = 2 }) }, Shape):debug())
   local all = All.new({ i = Inner.new({ v = 1 }), o = Some(3), xs = { 4 }, s = setmetatable({ __enum = "Shape", __tag = "Dot" }, Shape) })
   println(all:debug())
+  println(Many.new({ ys = { Inner.new({ v = 1 }) }, r = Err("bad"), oo = Some(None) }):debug())
+  println(Many.new({ ys = {  }, r = Ok(2), oo = Some(Some(Inner.new({ v = 3 }))) }):debug())
+  println(Wrap.new({ v = Inner.new({ v = 1 }) }):debug())
+  println(Wrap.new({ v = 5 }):debug())
+  println(Wrap.new({ v = Plain.new({ v = 1 }) }):debug())
+  println(Text.new({ s = "a", o = Some("b"), xs = { "b", "c" } }):debug())
+  println(Text.new({ s = "q\"x\\y", o = None, xs = { "b, c" } }):debug())
+  println(Text.new({ s = "t\tn\nz", o = None, xs = {  } }):debug())
 end

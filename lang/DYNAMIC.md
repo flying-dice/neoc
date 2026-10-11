@@ -330,11 +330,11 @@ Emits an `eq(a, b)` comparing tag and every field structurally (`function S.eq(a
 
 ### 6.3 `#[derive(Debug)]`
 
-Emits a `debug` (`function S.debug(self)`) producing a developer-facing string showing the type name and field values — the analogue of Rust's `{:?}`. A `number`/`string`/`bool` field renders with `tostring`; any other field renders through a module-local `__debug` helper (emitted only when needed) that recurses: a nested struct or enum through its own `debug`, `Option<T>` as `Some(1)` / `None`, `[T]` as `[1, 2]` / `[]`, an enum payload as `A(Inner { v = 2 })`. A table address never appears.
+Emits a `debug` (`function S.debug(self)`) producing a developer-facing string showing the type name and field values — the analogue of Rust's `{:?}`. A `number`/`bool` field renders with `tostring`; any other field renders through a module-local `__debug` helper (emitted only when needed) that recurses: a `string` double-quoted with `\`, `"`, newline, tab and carriage return escaped as `\\`, `\"`, `\n`, `\t`, `\r` (`"a"`, so `["b, c"]` and `["b", "c"]` stay distinct), a nested struct or enum through its own `debug`, `Option<T>` as `Some(1)` / `None`, `Result<T, E>` as `Ok(1)` / `Err("bad")`, `[T]` as `[1, 2]` / `[]`, an enum payload as `A(Inner { v = 2 })`. Every field's type must satisfy `Debug` (`STATIC.md` §9); a value reaching the helper through a type parameter whose type has no `debug` renders its name with elided fields — `Plain { .. }` for a struct, `V { .. }` for a named-payload variant. A table address never appears.
 
 ### 6.4 `#[derive(Display)]`
 
-Emits a `display` (`function S.display(self)`) producing the user-facing string — the analogue of Rust's `{}`. Requires every field to itself satisfy `Display` (`STATIC.md` §9).
+Emits a `display` (`function S.display(self)`) producing the user-facing string — the analogue of Rust's `{}`. Each field renders with `tostring`. Requires every field to itself satisfy `Display` (`STATIC.md` §9); `[T]`, `Option<T>`, and `Result<T, E>` do not, so a field of one is rejected rather than rendered as a table address.
 
 ### 6.5 `#[test]`
 

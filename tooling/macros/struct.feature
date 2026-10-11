@@ -118,3 +118,14 @@ Feature: Deriving on a struct
       """
     When I derive Eq
     Then the derive uses no helper
+
+  Scenario: Debug quotes a string field through the helper; Eq compares it directly
+    Given the struct:
+      """
+      struct Tag { s: string }
+      """
+    When I derive Debug
+    Then it emits the line "  return "Tag { " .. "s = " .. __debug(self.s) .. " }""
+    And the derive uses the helper "Debug"
+    When I derive Eq
+    Then the derive uses no helper

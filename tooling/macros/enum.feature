@@ -66,7 +66,7 @@ Feature: Deriving on an enum
     When I derive Debug
     Then it emits the line "    return "Dot""
     And it emits the line "    return "Pair(" .. tostring(self[1]) .. ", " .. tostring(self[2]) .. ")""
-    And it emits the line "    return "Named { " .. "label = " .. tostring(self.label) .. " }""
+    And it emits the line "    return "Named { " .. "label = " .. __debug(self.label) .. " }""
 
   Scenario: Display drops the type-name decoration
     Given the enum:
