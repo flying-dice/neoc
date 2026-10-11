@@ -124,17 +124,22 @@ wasm:
 # pipelines only (no merge_request_event rule: it would spawn a detached MR
 # pipeline per push). `--features bench` stays off lint/test (it surfaces false
 # clippy errors). target/criterion is wiped so criterion never compares against
-# estimates restored from the shared cache.
+# estimates restored from the shared cache; workspace artifacts are cleaned
+# (`.clean_workspace`, bench profile builds into target/release) like every
+# other target/-restoring job.
 
 bench:
   stage: bench
   needs: []
+  variables:
+    CLEAN_ARGS: --release
   cache:
     - *tools_cache
     - key: bench-target
       paths:
         - target/
   script:
+    - *clean_workspace
     - rm -rf target/criterion
     - cargo bench -p neoc-vm --bench lib --features bench -- --noplot | tee bench-lib.txt
     - cargo bench -p neoc-vm --bench vnd --features bench -- --noplot | tee bench-vnd.txt
