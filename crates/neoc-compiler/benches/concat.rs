@@ -2,7 +2,9 @@
 //! local, lowered with the accumulator (`table.concat`) against the plain `..`
 //! lowering. Both programs are compiled from neoc source and run on the
 //! runtime's in-process `LuaJIT`; the baseline holds the string in a closure,
-//! which is exactly what turns the rewrite off, and is otherwise identical.
+//! which is exactly what turns the rewrite off, and is otherwise identical. The
+//! appended value is a local, not a literal, so each push pays the `.. ""`
+//! operand check.
 //!
 //! Run with `cargo bench -p neoc-compiler --bench concat`.
 
@@ -17,9 +19,10 @@ fn source(capture: &str) -> String {
     format!(
         "pub fn run() -> string {{
     let s = \"\";
+    let chunk = \"0123456789abcdef\";
     {capture}
     for i in 0..{APPENDS} {{
-        s += \"0123456789abcdef\";
+        s += chunk;
     }}
     s
 }}"
