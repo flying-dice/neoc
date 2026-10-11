@@ -35,6 +35,7 @@ tree-sitter.workspace = true
 # crate stays tokio-free.
 cucumber = "0.21.1"
 futures = "0.3"
+criterion = "0.5"
 
 [[test]]
 name = "cucumber"
@@ -50,4 +51,8 @@ harness = false
 
 [[test]]
 name = "conformance_syntax"
+harness = false
+
+[[bench]]
+name = "concat"
 harness = false

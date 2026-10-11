@@ -2516,12 +2516,14 @@ dependencies = [
  "neoc-ast",
  "neoc-macros",
  "neoc-parser",
+ "neoc-types",
 ]
 
 [[package]]
 name = "neoc-compiler"
 version = "0.0.0"
 dependencies = [
+ "criterion",
  "cucumber",
  "futures",
  "libtest-mimic",
