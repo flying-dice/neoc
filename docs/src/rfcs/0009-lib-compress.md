@@ -249,4 +249,4 @@ Format strings are case-sensitive, lowercase only. `"GZIP"` → error. Rationale
 - `Cargo.toml` — add `flate2`, `zstd`, `brotli`
 - `tests/lib/compress.test.lua` — integration tests: round-trip each format, level option, error cases, cross-format incompatibility
 - `benches/lib/compress.rs` — Criterion benchmarks: three-tier (library / into_out_lua / through_lua) for encode + decode per format at default and max levels
-- type stub for `lib:compress`
+- `.d.luau` type stub for `lib:compress`

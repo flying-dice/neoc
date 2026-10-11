@@ -239,7 +239,7 @@ Empty field in a typed column → `nil` (see [Empty fields](#empty-fields)). Cal
 - [ ] `csv.reader` enforces exclusive borrow on the `ReaderHandle`; second concurrent reader on the same handle → tuple error, no deadlock
 - [ ] `reader:headers()` cached — first call (or first `:rows()` consumption) parses and stores; subsequent calls return cached value
 - [ ] `writer:row` array length mismatch → tuple error; keyed missing key → empty string field
-- [ ] Spec + unit tests + type stub
+- [ ] Spec + unit tests + `.d.luau` type stub
 
 ## Drawbacks
 
@@ -285,4 +285,4 @@ _None._
 - Parse errors append the raw source bytes of the offending line truncated to 80 bytes. Truncation walks UTF-8 boundaries via `str::is_char_boundary`; truncated lines get a trailing `…`. Line numbers come from `csv::Error::position()` / `csv::ByteRecord::position()`. Source bytes come from a bounded rolling capture (`RawCapture`, 64 KiB) fed by a `Read` wrapper around the underlying source; the error path slices `[record.byte(), reader.byte())` and strips the trailing record terminator. If the bytes have aged out of the capture (cap exceeded — only possible for records longer than 64 KiB) the line falls back to a best-effort reconstruction from parsed fields.
 - Single-byte option validation happens at the Lua→Rust boundary, before constructing the `ReaderBuilder` / `WriterBuilder`. Options-validation errors omit the `line N:` segment and raw line (no position context).
 - Error prefixes follow `0003-errors-guide` — `module.function:` form, set via `from_err(lua, "csv.parse", …)` etc.
-- Type stub for `lib:csv` (mirror existing module stubs).
+- Type stub: `docs/src/lib/csv.d.luau` (mirror existing module stubs).

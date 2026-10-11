@@ -79,7 +79,7 @@ MIME types,mimetypes,—,@std/media-types,—,mime,—,—,—,—,mime_content_
 HTML parse/escape,html+html.parser,—,—,—,html+html/template,—,—,System.Web,CGI.escapeHTML,htmlspecialchars,—,—
 Text manipulation,textwrap+difflib,—,—,—,strings,—,—,—,—,—,—,lib:text
 Pickle/serialize,pickle+marshal+shelve,—,—,—,encoding/gob,—,Serializable,BinaryFormatter,Marshal,serialize,—,—
-Buffer/bytes,bytes+bytearray+io.BytesIO,Buffer,Uint8Array,Buffer,bytes,Vec<u8>,ByteBuffer,Span<byte>,String (binary),—,buffer (3p),—
+Buffer/bytes,bytes+bytearray+io.BytesIO,Buffer,Uint8Array,Buffer,bytes,Vec<u8>,ByteBuffer,Span<byte>,String (binary),—,—,—
 Streams,io,node:stream,ReadableStream,node:stream,io.Reader+Writer,std::io,InputStream+OutputStream,Stream,IO,streams,—,—
 Async streams,async generators,Readable async,ReadableStream,Readable async,—,—,Flow,IAsyncEnumerable,Enumerator::Lazy,—,—,—
 JSON Schema,—,—,—,—,—,—,—,—,—,—,—,vnd:jsonschema
