@@ -447,3 +447,49 @@ fn compound_assign_on_a_name_binds_no_temporary() {
     assert!(!out.contains("__place_"), "{out}");
     assert!(out.contains("xs[(i) + 1] = xs[(i) + 1] + 1"), "{out}");
 }
+
+#[test]
+fn field_compound_assign_binds_a_call_base_once() {
+    let out = lua(r#"struct P { x: number, name: string }
+extern { fn pick() -> P; }
+fn main() {
+    pick().x += 5;
+    pick().name += "!";
+}"#);
+    assert_eq!(out.matches("pick()").count(), 2, "{out}");
+    assert!(
+        out.contains(
+            "  do\n    local __place_1 = pick()\n    __place_1.x = __place_1.x + 5\n  end\n"
+        ),
+        "{out}"
+    );
+    assert!(
+        out.contains("__place_2.name = (__place_2.name .. \"!\")"),
+        "{out}"
+    );
+}
+
+#[test]
+fn tuple_field_compound_assign_binds_a_try_base_once() {
+    let out = lua(r"struct N(number);
+extern { fn get() -> Result<N, string>; }
+fn run() -> Result<number, string> {
+    get()?.0 += 1;
+    Ok(0)
+}");
+    assert_eq!(out.matches("get()").count(), 1, "{out}");
+    assert!(out.contains("local __place_1 = __try_0"), "{out}");
+    assert!(out.contains("__place_1[1] = __place_1[1] + 1"), "{out}");
+}
+
+#[test]
+fn field_chain_on_a_name_binds_no_temporary() {
+    let out = lua(r"struct In { c: number }
+struct Out { b: In }
+fn main() {
+    let a = Out { b: In { c: 1 } };
+    a.b.c += 1;
+}");
+    assert!(!out.contains("__place_"), "{out}");
+    assert!(out.contains("a.b.c = a.b.c + 1"), "{out}");
+}

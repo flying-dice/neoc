@@ -188,8 +188,9 @@ impl Emitter {
 
     /// Lower `target op= value`. Lua has no compound assignment, so `p op= v`
     /// expands to `p = p op v` with the place `p` evaluated once (`STATIC.md`
-    /// §4.1): a field or index base, or an index, that is not a name or literal
-    /// binds to a fresh local first, scoped by a `do … end`.
+    /// §4.1): a field or index base, or an index, that is not a name, literal,
+    /// or field chain on a name binds to a fresh local first, scoped by a
+    /// `do … end`.
     fn emit_assign(&mut self, target: &ast::Expr, op: ast::AssignOp, value: &ast::Expr) {
         let seq = self.place_seq;
         let body = self.render(|em| {
@@ -225,8 +226,8 @@ impl Emitter {
     }
 
     /// The Lua place for a compound-assignment target, with any base or index
-    /// that is not a name or literal bound to a fresh local (see
-    /// [`Self::emit_assign`]).
+    /// that is not a name, literal, or field chain on a name bound to a fresh
+    /// local (see [`Self::emit_assign`]).
     fn emit_place(&mut self, target: &ast::Expr) -> String {
         match &target.kind {
             ast::ExprKind::Field { base, field } => {
@@ -992,16 +993,17 @@ fn expr_uses_continue(expr: &ast::Expr) -> bool {
 }
 
 /// Whether evaluating `e` twice is indistinguishable from evaluating it once:
-/// a name or a literal.
+/// a name, a literal, or a field chain on a name (`a.b.c`).
 fn is_repeatable(e: &ast::Expr) -> bool {
-    matches!(
-        e.kind,
+    match &e.kind {
         ast::ExprKind::Path(_)
-            | ast::ExprKind::Int(_)
-            | ast::ExprKind::Float(_)
-            | ast::ExprKind::Str(_)
-            | ast::ExprKind::Bool(_)
-    )
+        | ast::ExprKind::Int(_)
+        | ast::ExprKind::Float(_)
+        | ast::ExprKind::Str(_)
+        | ast::ExprKind::Bool(_) => true,
+        ast::ExprKind::Field { base, .. } => is_repeatable(base),
+        _ => false,
+    }
 }
 
 /// Lua for field `field` of the Lua value `base`.

@@ -200,7 +200,7 @@ Number, string, and bool literals lower to their Lua spelling (`STRING_LITERAL` 
 ⟦ -e ⟧ₑ       = (-⟦e⟧)
 ```
 
-`+` selects Lua `+` or `..` by the static type of its operands (`STATIC.md` T-ARITH / T-CONCAT) — the choice is fixed at compile time, never a runtime check. `!=` lowers to Lua `~=`. Compound assignment `p op= e` (`STATIC.md` §4.1) lowers to `⟦p⟧ = ⟦p⟧ op ⟦e⟧`, with `..` for `op` when `p` is a `string` (`s += e` → `s = (s .. ⟦e⟧)`). A field base, indexed list, or index of `p` that is not a name or literal is bound once to a fresh local first, inside a `do … end`, so `p` is evaluated once:
+`+` selects Lua `+` or `..` by the static type of its operands (`STATIC.md` T-ARITH / T-CONCAT) — the choice is fixed at compile time, never a runtime check. `!=` lowers to Lua `~=`. Compound assignment `p op= e` (`STATIC.md` §4.1) lowers to `⟦p⟧ = ⟦p⟧ op ⟦e⟧`, with `..` for `op` when `p` is a `string` (`s += e` → `s = (s .. ⟦e⟧)`). A field base, indexed list, or index of `p` that is not a name, a literal, or a field chain on a name (`a.b.c`) is bound once to a fresh local first, inside a `do … end`, so `p` is evaluated once:
 
 ```
 ⟦ b[i] op= e ⟧ₛ = do local ⟪b⟫ = ⟦b⟧ₑ ; local ⟪i⟫ = ⟦i⟧ₑ ; ⟪b⟫[⟪i⟫ + 1] = ⟪b⟫[⟪i⟫ + 1] op ⟦e⟧ₑ end

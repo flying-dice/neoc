@@ -1,9 +1,18 @@
 // DYNAMIC.md §4.2, STATIC.md §4.1: compound assignment evaluates its place
 // once. `?` in the index runs `tick` a single time, and the read and the write
-// address the same element, for a string `+=` as for a numeric one.
+// address the same element, for a string `+=` as for a numeric one. A field
+// place whose base is a call (`pick(…).x`, a tuple field `pick_ok(…)?.0`) runs
+// that call once too.
 extern {
     fn println(s: string);
 }
+
+struct P {
+    x: number,
+    name: string,
+}
+
+struct N(number);
 
 fn tick(calls: [string]) -> Result<number, string> {
     calls[0] += "t";
@@ -22,11 +31,39 @@ fn run(calls: [string]) -> Result<string, string> {
     }
 }
 
+fn pick(ps: [P], calls: [string]) -> P {
+    calls[0] += "p";
+    ps[0]
+}
+
+fn pick_ok(ns: [N], calls: [string]) -> Result<N, string> {
+    calls[0] += "n";
+    Ok(ns[0])
+}
+
+fn fields(calls: [string]) -> Result<string, string> {
+    let ps = [P { x: 1, name: "a" }];
+    pick(ps, calls).x += 5;
+    pick(ps, calls).name += "!";
+    let ns = [N(1)];
+    pick_ok(ns, calls)?.0 += 10;
+    if ps[0].x == 6 && ns[0].0 == 11 {
+        Ok(ps[0].name)
+    } else {
+        Err("field place evaluated twice")
+    }
+}
+
+fn show(r: Result<string, string>) -> string {
+    match r {
+        Ok(v) => v,
+        Err(e) => e,
+    }
+}
+
 fn main() {
     let calls = [""];
-    match run(calls) {
-        Ok(v) => println(v),
-        Err(e) => println(e),
-    }
+    println(show(run(calls)));
+    println(show(fields(calls)));
     println(calls[0]);
 }
