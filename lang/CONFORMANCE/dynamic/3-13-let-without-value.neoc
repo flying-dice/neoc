@@ -1,0 +1,21 @@
+// DYNAMIC.md §3.6: a `let` with a type and no initialiser declares the binding
+// (`local r`); each branch then assigns it before the read. The branch taken
+// decides the value.
+extern {
+    fn println(n: number);
+}
+
+fn pick(big: bool) -> number {
+    let r: number;
+    if big {
+        r = 100;
+    } else {
+        r = 1;
+    }
+    r
+}
+
+fn main() {
+    println(pick(true));
+    println(pick(false));
+}

@@ -1,0 +1,29 @@
+// DYNAMIC.md §9.1: validators are forward-declared up front so mutually
+// recursive types resolve. `User` holds a list of `Address`; `Address` holds an
+// `Option<User>` — a cycle through a list and an option. Building the cycle runs
+// every validator against a well-typed value, so each one resolves its sibling.
+extern {
+    fn println(s: string);
+}
+
+struct User {
+    name: string,
+    addresses: [Address],
+}
+
+struct Address {
+    zip: string,
+    resident: Option<User>,
+}
+
+fn main() {
+    let home = Address { zip: "10001", resident: None };
+    let ada = User { name: "ada", addresses: [home] };
+    let work = Address { zip: "94105", resident: Some(ada) };
+    let grace = User { name: "grace", addresses: [work] };
+    match grace.addresses[0].resident {
+        Some(u) => println(u.name),
+        None => println("none"),
+    }
+    println(grace.addresses[0].zip);
+}

@@ -1,0 +1,19 @@
+// DYNAMIC.md §9.2: a mismatch raises a path-aware message
+// `<path>: expected <type>, got <actual>`. A list element reports the list field
+// and the 0-based neoc index (the Lua index minus one, §4.7), not the host's
+// 1-based slot; `actual` is neoc's `number`, not a host type name.
+extern {
+    fn println(s: string);
+    fn tonumber(s: string) -> Unknown;
+}
+
+struct Tags {
+    names: [string],
+}
+
+fn main() {
+    let ok = Tags { names: ["a", "b"] };
+    println(ok.names[1]);
+    let bad = Tags { names: ["a", tonumber("9")] };
+    println(bad.names[0]);
+}

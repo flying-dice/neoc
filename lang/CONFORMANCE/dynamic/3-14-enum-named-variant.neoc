@@ -1,0 +1,26 @@
+// DYNAMIC.md §3.2 + §5: a struct-form variant `E::V { x: a }` is a tagged table
+// whose fields sit by name (`{ __enum = "E", __tag = "V", x = a }`); a struct
+// pattern over the variant tests the tag and binds the named fields.
+extern {
+    fn println(n: number);
+}
+
+enum Shape {
+    Rect {
+        w: number,
+        h: number,
+    },
+    Dot,
+}
+
+fn area(s: Shape) -> number {
+    match s {
+        Shape::Rect { w, h } => w * h,
+        Shape::Dot => 0,
+    }
+}
+
+fn main() {
+    println(area(Shape::Rect { w: 3, h: 4 }));
+    println(area(Shape::Dot));
+}

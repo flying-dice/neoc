@@ -1,0 +1,17 @@
+// DYNAMIC.md §4.1 + §8: `()` is the unit value, a function declared `-> ()`
+// returns it, and a call whose result is the unit value runs for effect. It
+// lowers to `nil` and is never observable as a neoc value, so the program prints
+// only what `println` prints.
+extern {
+    fn println(s: string);
+}
+
+fn nothing() -> () {
+    ()
+}
+
+fn main() {
+    nothing();
+    let u = nothing();
+    println("done");
+}
