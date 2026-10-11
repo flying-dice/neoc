@@ -25,20 +25,18 @@ variables:
 
 # ── Cache anchors ─────────────────────────────────────────────────────────────
 
-# target/ caches are per-ref (`<job>-<ref slug>`) and fall back to the default
-# branch's cache on first run of a new ref, so third-party crates stay warm.
-# Per-ref keys alone are NOT enough: the fallback hands a branch main's
-# workspace rlibs, and cargo's mtime fingerprints can accept an rlib built from
-# different sources after a cache restore (#107: stale-API E0061). The real
-# guarantee is `.clean_workspace`: every job that restores target/ first drops
-# every workspace crate's artifacts, so only third-party dependencies are ever
-# reused. Crate list comes from `cargo tree` so it cannot drift.
+# target/ caches are shared across refs, so a restored target/ can hold
+# workspace rlibs built from another branch's sources — and cargo's mtime
+# fingerprints can accept them (#107: stale-API E0061). `.clean_workspace`
+# runs first in every job that restores target/: it drops every workspace
+# crate's artifacts, so only third-party dependencies are ever reused. Crate
+# list comes from `cargo tree` so it cannot drift; an empty list or a failing
+# `cargo tree` fails the job rather than skipping the clean.
 # CLEAN_ARGS = the job's profile/target flags (e.g. `--release --target <t>`).
 .clean_workspace: &clean_workspace
-  - |
-    for crate in $(cargo tree --workspace --depth 0 --prefix none | awk 'NF {print $1}'); do
-      cargo clean -p "$crate" $CLEAN_ARGS
-    done
+  - crates=$(cargo tree --workspace --depth 0 --prefix none | awk 'NF {print $1}')
+  - test -n "$crates"
+  - cargo clean $(printf -- '-p %s ' $crates) $CLEAN_ARGS
 
 # Shared registry / git / bin cache — keyed by a manual version string so it
 # can be busted when tool versions need to change (bump tools-vN).
@@ -55,9 +53,7 @@ lint:
   stage: lint
   cache:
     - *tools_cache
-    - key: lint-target-$CI_COMMIT_REF_SLUG
-      fallback_keys:
-        - lint-target-$CI_DEFAULT_BRANCH
+    - key: lint-target
       paths:
         - target/
   script:
@@ -72,9 +68,7 @@ test:
   needs: [lint]
   cache:
     - *tools_cache
-    - key: test-target-$CI_COMMIT_REF_SLUG
-      fallback_keys:
-        - test-target-$CI_DEFAULT_BRANCH
+    - key: test-target
       paths:
         - target/
   script:
@@ -114,9 +108,7 @@ wasm:
     CLEAN_ARGS: --target wasm32-unknown-unknown
   cache:
     - *tools_cache
-    - key: wasm-target-$CI_COMMIT_REF_SLUG
-      fallback_keys:
-        - wasm-target-$CI_DEFAULT_BRANCH
+    - key: wasm-target
       paths:
         - target/
   script:
@@ -138,9 +130,7 @@ build:linux-x86_64:
   stage: build
   cache:
     - *tools_cache
-    - key: build-x86_64-linux-gnu-target-$CI_COMMIT_REF_SLUG
-      fallback_keys:
-        - build-x86_64-linux-gnu-target-$CI_DEFAULT_BRANCH
+    - key: build-x86_64-linux-gnu-target
       paths:
         - target/
   variables:
@@ -166,9 +156,7 @@ build:windows-x86_64:
     CLEAN_ARGS: --release --target x86_64-pc-windows-gnu
   cache:
     - *tools_cache
-    - key: build-x86_64-windows-gnu-target-$CI_COMMIT_REF_SLUG
-      fallback_keys:
-        - build-x86_64-windows-gnu-target-$CI_DEFAULT_BRANCH
+    - key: build-x86_64-windows-gnu-target
       paths:
         - target/
   script:
