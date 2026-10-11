@@ -1,0 +1,25 @@
+// DYNAMIC.md §3.9 + EXTERN.md §Lowering: each `extern` `mod` form reaches the
+// target value directly. A path `mod` lowers to a `require` preamble and a
+// `mod::item` call reads the imported handle; an `ambient` `mod` emits no import
+// and reaches a global; an extern `struct` with a `#[extern(constructor)]`
+// constructs through the handle and its methods are colon calls. Declared in the
+// `host` module and `use`d here: the consumer reconstructs the native import from
+// the item's `#[extern(...)]` metadata (no `require("host")`).
+use host::Map;
+use host::encode;
+use host::floor;
+
+extern {
+    fn println(v: Unknown);
+}
+
+pub fn main() {
+    println(floor(7.9));
+    println(encode("hi"));
+    let m = Map::new();
+    m.set("a", 1);
+    m.set("b", 2);
+    println(m.has("a"));
+    println(m.has("z"));
+    println(m.size());
+}

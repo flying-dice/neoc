@@ -1,0 +1,14 @@
+// Module `util` of 3-07-use-cross-module.
+pub fn add(a: number, b: number) -> number {
+    a + b
+}
+
+pub struct Counter {
+    n: number,
+}
+
+impl Counter {
+    fn bump(self) -> number {
+        self.n + 1
+    }
+}

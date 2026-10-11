@@ -21,16 +21,27 @@
 //!   Rust anchor depends on a toolchain (`rustc`); it is marked ignored when
 //!   `rustc` is absent.
 //!
+//! A case is either a single file (`<name>.neoc`) or a directory
+//! (`<name>/main.neoc` plus the sibling modules it `use`s). A directory case
+//! compiles through the project model ([`transpile_project`]), pins one readable
+//! golden per module, and runs with the non-entry modules served to `require`.
+//!
+//! A case may carry a `<name>.fails` marker (`<name>/main.fails` for a directory
+//! case): the sad-path contract. The program must be rejected at run time, with
+//! an error message containing the marker's text; the Rust anchor does not apply
+//! (a rejection has no Rust analogue) and is neither required nor run.
+//!
 //! Two extra trials guard the corpus shape: it is non-empty, and every `.neoc`
-//! has a sibling `.rs`.
+//! entry has a sibling `.rs` anchor (except a `.fails` case).
 
+use std::fmt::Write as _;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use libtest_mimic::{Arguments, Failed, Trial};
-use neoc_compiler::{Target, transpile};
+use neoc_compiler::{Target, transpile, transpile_project};
 
 mod common;
 
@@ -42,8 +53,7 @@ struct TargetSpec {
     /// target's run trials are marked ignored rather than failed.
     available: bool,
     /// Produce the program text and run it under the toolchain, returning stdout.
-    /// `neoc` is the `.neoc` source, `case` the file stem (for error messages).
-    run: fn(neoc: &str, case: &str, neoc_path: &Path) -> Result<String, Failed>,
+    run: fn(case: &Case) -> Result<String, Failed>,
     /// The compiler [`Target`] and committed-output extension this backend emits
     /// (e.g. `(Target::Lua, "lua")`). When set, a `<case>::<target>::source`
     /// trial pins the emitted code against the readable `<case>.<ext>` file
@@ -52,41 +62,41 @@ struct TargetSpec {
     emit: Option<(Target, &'static str)>,
 }
 
-/// Assert the live emit for `target` equals the committed `<case>.<ext>` golden
-/// — the readable output file checked into the corpus.
-fn check_source_golden(
-    neoc: &str,
-    neoc_path: &Path,
-    target: Target,
-    ext: &str,
-    case: &str,
-) -> Result<(), Failed> {
-    let emitted = emit(neoc, target, case)?;
-    let golden_path = neoc_path.with_extension(ext);
-    if std::env::var_os("NEOC_BLESS").is_some() {
-        return std::fs::write(&golden_path, &emitted).map_err(|e| {
+/// Assert, for every module of `case`, that the live emit equals the committed
+/// `<module>.<ext>` golden — the readable output file checked into the corpus
+/// beside the module's `.neoc`.
+fn check_source_golden(case: &Case, target: Target, ext: &str) -> Result<(), Failed> {
+    for module in emit_case(case, target)? {
+        let golden_path = module.source.with_extension(ext);
+        if std::env::var_os("NEOC_BLESS").is_some() {
+            std::fs::write(&golden_path, &module.output).map_err(|e| {
+                Failed::from(format!(
+                    "case `{}`: write {}: {e}",
+                    case.name,
+                    golden_path.display()
+                ))
+            })?;
+            continue;
+        }
+        let committed = std::fs::read_to_string(&golden_path).map_err(|e| {
             Failed::from(format!(
-                "case `{case}`: write {}: {e}",
+                "case `{}`: read {}: {e}",
+                case.name,
                 golden_path.display()
             ))
-        });
+        })?;
+        if module.output != committed {
+            return Err(Failed::from(format!(
+                "case `{}`: emitted .{ext} differs from the committed golden {} — \
+                 regenerate with `NEOC_BLESS=1 cargo test -p neoc-compiler --test conformance` ({target})\n\
+                 --- emitted ---\n{}",
+                case.name,
+                golden_path.display(),
+                module.output
+            )));
+        }
     }
-    let committed = std::fs::read_to_string(&golden_path).map_err(|e| {
-        Failed::from(format!(
-            "case `{case}`: read {}: {e}",
-            golden_path.display()
-        ))
-    })?;
-    if emitted == committed {
-        Ok(())
-    } else {
-        Err(Failed::from(format!(
-            "case `{case}`: emitted .{ext} differs from the committed golden {} — \
-             regenerate with `NEOC_BLESS=1 cargo test -p neoc-compiler --test conformance` ({target})\n\
-             --- emitted ---\n{emitted}",
-            golden_path.display()
-        )))
-    }
+    Ok(())
 }
 
 /// Whether the named binary answers `--version` (i.e. is on PATH).
@@ -118,23 +128,104 @@ fn temp_binary_path() -> PathBuf {
     path
 }
 
-/// Transpile `neoc` to `target`, returning the emitted source. Fails the trial
-/// with the diagnostics if compilation is not clean.
-fn emit(neoc: &str, target: Target, case: &str) -> Result<String, Failed> {
-    let out = transpile(neoc, target);
-    if out.ok() {
-        Ok(out.output)
-    } else {
-        Err(Failed::from(format!(
-            "case `{case}`: unexpected diagnostics: {:#?}",
-            out.diagnostics
-        )))
+/// A conformance case: a single `<name>.neoc`, or a `<name>/` directory whose
+/// `main.neoc` is the entry and whose sibling modules it `use`s.
+struct Case {
+    /// The test-id stem: the file stem, or the directory name.
+    name: String,
+    /// The entry module's `.neoc` path.
+    entry: PathBuf,
+    /// Whether the case is a directory of modules (compiled as a project).
+    project: bool,
+}
+
+impl Case {
+    /// The entry's sibling file with the given extension (`stdout`, `rs`, `fails`).
+    fn sibling(&self, ext: &str) -> PathBuf {
+        self.entry.with_extension(ext)
+    }
+
+    /// The sad-path marker's text, when the case is expected to be rejected.
+    fn expected_failure(&self) -> Option<String> {
+        std::fs::read_to_string(self.sibling("fails"))
+            .ok()
+            .map(|text| text.trim().to_owned())
     }
 }
 
+/// One module of a case after emit.
+struct EmittedModule {
+    /// The module's `.neoc` source; its goldens sit beside it.
+    source: PathBuf,
+    /// The `require` name other modules use: the path under the case directory,
+    /// dot-separated (`main` for the entry).
+    name: String,
+    /// The emitted program text.
+    output: String,
+}
+
+/// Emit every module of `case` for `target`. A single file goes through
+/// [`transpile`]; a directory goes through [`transpile_project`], so `use`
+/// resolves exactly as it does for a real project. Fails the trial with the
+/// diagnostics if compilation is not clean.
+fn emit_case(case: &Case, target: Target) -> Result<Vec<EmittedModule>, Failed> {
+    let unexpected = |diagnostics: &dyn std::fmt::Debug| {
+        Failed::from(format!(
+            "case `{}`: unexpected diagnostics: {diagnostics:#?}",
+            case.name
+        ))
+    };
+    if !case.project {
+        let src = std::fs::read_to_string(&case.entry)
+            .map_err(|e| Failed::from(format!("case `{}`: read .neoc: {e}", case.name)))?;
+        let out = transpile(&src, target);
+        if !out.ok() {
+            return Err(unexpected(&out.diagnostics));
+        }
+        return Ok(vec![EmittedModule {
+            source: case.entry.clone(),
+            name: "main".to_owned(),
+            output: out.output,
+        }]);
+    }
+    let root = case
+        .entry
+        .parent()
+        .and_then(|dir| dir.canonicalize().ok())
+        .ok_or_else(|| Failed::from(format!("case `{}`: no case directory", case.name)))?;
+    let project = transpile_project(&case.entry, target)
+        .map_err(|e| Failed::from(format!("case `{}`: read project: {e}", case.name)))?;
+    if !project.ok() {
+        return Err(unexpected(&project.diagnostics));
+    }
+    project
+        .files
+        .into_iter()
+        .map(|(dest, output)| {
+            let source = dest.with_extension("neoc");
+            let name = source
+                .strip_prefix(&root)
+                .map_err(|e| {
+                    Failed::from(format!("case `{}`: module outside case: {e}", case.name))
+                })?
+                .with_extension("")
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join(".");
+            Ok(EmittedModule {
+                source,
+                name,
+                output,
+            })
+        })
+        .collect()
+}
+
 /// rust: compile the case's `.rs` anchor with `rustc --edition 2021` and run it.
-fn run_rust(_neoc: &str, case: &str, neoc_path: &Path) -> Result<String, Failed> {
-    let rs_path = neoc_path.with_extension("rs");
+fn run_rust(case: &Case) -> Result<String, Failed> {
+    let rs_path = case.sibling("rs");
+    let case = case.name.as_str();
     let src = std::fs::read_to_string(&rs_path)
         .map_err(|e| Failed::from(format!("case `{case}`: read {}: {e}", rs_path.display())))?;
 
@@ -192,15 +283,56 @@ const TESTS_WALK_LUA: &str = r"if __tests then
 end
 ";
 
+/// Lua prologue for a multi-module case: a `require` that serves the case's
+/// own modules (registered in `__preload` by name) before deferring to the
+/// runtime's `require` for `std:`/`lib:`/`vnd:` modules. Each module's chunk runs
+/// once and its returned table is cached, as Lua's own `require` does.
+const REQUIRE_SHIM_LUA: &str = r"local __runtime_require = require
+local __preload, __loaded = {}, {}
+require = function(name)
+  if __loaded[name] ~= nil then return __loaded[name] end
+  local chunk = __preload[name]
+  if chunk == nil then return __runtime_require(name) end
+  local module = chunk()
+  __loaded[name] = module
+  return module
+end
+";
+
 /// lua: the emitted module is self-contained — inlined runtime, no `neoc-lib`.
-/// Alias `println` to the built-in `print`, append `main()` then the `#[test]`
-/// walk, and run in-process on `LuaJIT`.
-fn run_lua(neoc: &str, case: &str, _neoc_path: &Path) -> Result<String, Failed> {
-    let output = emit(neoc, Target::Lua, case)?;
-    let program = format!("println = print\n{output}\nmain()\n{TESTS_WALK_LUA}");
+/// Alias `println` to the built-in `print`, register every non-entry module with
+/// the `require` shim, append the entry then `main()` and the `#[test]` walk, and
+/// run in-process on `LuaJIT`.
+fn lua_program(case: &Case) -> Result<String, Failed> {
+    let mut preload = String::new();
+    let mut entry = String::new();
+    for module in emit_case(case, Target::Lua)? {
+        if module.name == "main" {
+            entry = module.output;
+        } else {
+            let _ = writeln!(
+                preload,
+                "__preload[{:?}] = function()\n{}\nend",
+                module.name, module.output
+            );
+        }
+    }
+    // A project entry is a requireable library like its siblings: it closes with
+    // an export table, so `main` must be `pub` and is called through it.
+    let run = if case.project {
+        format!("local __entry = (function()\n{entry}\nend)()\n__entry.main()\n")
+    } else {
+        format!("{entry}\nmain()\n{TESTS_WALK_LUA}")
+    };
+    Ok(format!("println = print\n{REQUIRE_SHIM_LUA}{preload}{run}"))
+}
+
+fn run_lua(case: &Case) -> Result<String, Failed> {
+    let program = lua_program(case)?;
     common::run_lua(&program).map_err(|e| {
         Failed::from(format!(
-            "case `{case}`: lua failed:\n{e}\n--- emitted lua ---\n{program}"
+            "case `{}`: lua failed:\n{e}\n--- emitted lua ---\n{program}",
+            case.name
         ))
     })
 }
@@ -215,15 +347,33 @@ fn corpus_dir() -> PathBuf {
         .join("dynamic")
 }
 
-/// Every `.neoc` file in the corpus, sorted for a stable iteration order.
-fn cases(dir: &Path) -> Vec<PathBuf> {
-    let mut paths: Vec<PathBuf> = std::fs::read_dir(dir)
+/// Every case in the corpus, sorted for a stable iteration order: each
+/// top-level `.neoc` file, and each subdirectory (entered at its `main.neoc`).
+fn cases(dir: &Path) -> Vec<Case> {
+    let mut cases: Vec<Case> = std::fs::read_dir(dir)
         .expect("read corpus dir")
         .filter_map(|entry| entry.ok().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|ext| ext == "neoc"))
+        .filter_map(|path| {
+            let name = path.file_stem()?.to_str()?.to_owned();
+            if path.is_dir() {
+                Some(Case {
+                    name: path.file_name()?.to_str()?.to_owned(),
+                    entry: path.join("main.neoc"),
+                    project: true,
+                })
+            } else if path.extension().is_some_and(|ext| ext == "neoc") {
+                Some(Case {
+                    name,
+                    entry: path,
+                    project: false,
+                })
+            } else {
+                None
+            }
+        })
         .collect();
-    paths.sort();
-    paths
+    cases.sort_by(|a, b| a.name.cmp(&b.name));
+    cases
 }
 
 /// Build the per-case × target trials plus the corpus-shape guards.
@@ -268,13 +418,28 @@ fn collect_trials() -> Vec<Trial> {
         }
     }));
 
-    // Guard: every `.neoc` has a sibling `.rs` so the two halves can't drift.
-    let case_paths = cases.clone();
-    trials.push(Trial::test("corpus::every_neoc_has_rs_anchor", move || {
-        for neoc in &case_paths {
-            let rs = neoc.with_extension("rs");
-            if !rs.exists() {
-                let case = neoc.file_stem().and_then(|s| s.to_str()).unwrap_or("?");
+    // Guard: every entry module exists, and every case that is not a sad path
+    // has a sibling `.rs` so the two halves can't drift.
+    let guarded: Vec<(String, PathBuf, PathBuf, bool)> = cases
+        .iter()
+        .map(|c| {
+            (
+                c.name.clone(),
+                c.entry.clone(),
+                c.sibling("rs"),
+                c.expected_failure().is_some(),
+            )
+        })
+        .collect();
+    trials.push(Trial::test("corpus::every_case_has_rs_anchor", move || {
+        for (case, entry, rs, fails) in &guarded {
+            if !entry.exists() {
+                return Err(Failed::from(format!(
+                    "case `{case}`: missing entry module {}",
+                    entry.display()
+                )));
+            }
+            if !fails && !rs.exists() {
                 return Err(Failed::from(format!(
                     "case `{case}`: missing sibling Rust anchor {}",
                     rs.display()
@@ -284,56 +449,82 @@ fn collect_trials() -> Vec<Trial> {
         Ok(())
     }));
 
-    for neoc in cases {
-        let case = neoc
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .expect("case file stem")
-            .to_owned();
+    for case in cases {
+        let case = std::sync::Arc::new(case);
+        let sad_path = case.expected_failure();
 
         for target in &targets {
             // Source golden: the live emit equals the committed readable output
             // file. Needs only the compiler, so it runs without any interpreter.
             if let Some((emit_target, ext)) = target.emit {
-                let neoc_path = neoc.clone();
-                let case = case.clone();
+                let case = std::sync::Arc::clone(&case);
                 trials.push(Trial::test(
-                    format!("{case}::{}::source", target.name),
-                    move || {
-                        let src = std::fs::read_to_string(&neoc_path)
-                            .map_err(|e| Failed::from(format!("case `{case}`: read .neoc: {e}")))?;
-                        check_source_golden(&src, &neoc_path, emit_target, ext, &case)
-                    },
+                    format!("{}::{}::source", case.name, target.name),
+                    move || check_source_golden(&case, emit_target, ext),
                 ));
             }
 
-            // Run: transpile, run under the toolchain, assert stdout. Ignored
-            // when the toolchain is absent.
+            // A sad-path case has no Rust anchor: a rejection is not a program.
+            if sad_path.is_some() && target.emit.is_none() {
+                continue;
+            }
+
+            // Run: transpile, run under the toolchain, assert stdout (or, for a
+            // sad path, the rejection). Ignored when the toolchain is absent.
             let run = target.run;
-            let neoc_path = neoc.clone();
-            let case = case.clone();
-            let trial = Trial::test(format!("{case}::{}", target.name), move || {
-                let src = std::fs::read_to_string(&neoc_path)
-                    .map_err(|e| Failed::from(format!("case `{case}`: read .neoc: {e}")))?;
-                let stdout = run(&src, &case, &neoc_path)?;
-                let expected = std::fs::read_to_string(neoc_path.with_extension("stdout"))
-                    .map_err(|e| Failed::from(format!("case `{case}`: read .stdout: {e}")))?;
-                let got = stdout.trim_end_matches('\n');
-                let want = expected.trim_end_matches('\n');
-                if got == want {
-                    Ok(())
-                } else {
-                    Err(Failed::from(format!(
-                        "case `{case}`: stdout mismatch\n--- expected ---\n{want}\n--- got ---\n{got}"
-                    )))
-                }
-            })
-            .with_ignored_flag(!target.available);
+            let case = std::sync::Arc::clone(&case);
+            let sad_path = sad_path.clone();
+            let trial =
+                Trial::test(
+                    format!("{}::{}", case.name, target.name),
+                    move || match sad_path {
+                        Some(want) => assert_rejected(&case, run(&case), &want),
+                        None => assert_stdout(&case, &run(&case)?),
+                    },
+                )
+                .with_ignored_flag(!target.available);
             trials.push(trial);
         }
     }
 
     trials
+}
+
+/// Assert `stdout` equals the case's `.stdout` golden, ignoring trailing newlines.
+fn assert_stdout(case: &Case, stdout: &str) -> Result<(), Failed> {
+    let expected = std::fs::read_to_string(case.sibling("stdout"))
+        .map_err(|e| Failed::from(format!("case `{}`: read .stdout: {e}", case.name)))?;
+    let got = stdout.trim_end_matches('\n');
+    let want = expected.trim_end_matches('\n');
+    if got == want {
+        Ok(())
+    } else {
+        Err(Failed::from(format!(
+            "case `{}`: stdout mismatch\n--- expected ---\n{want}\n--- got ---\n{got}",
+            case.name
+        )))
+    }
+}
+
+/// Assert a sad-path run failed and its error message contains `want`.
+fn assert_rejected(case: &Case, run: Result<String, Failed>, want: &str) -> Result<(), Failed> {
+    match run {
+        Ok(stdout) => Err(Failed::from(format!(
+            "case `{}`: expected a rejection containing `{want}`, but the program ran:\n{stdout}",
+            case.name
+        ))),
+        Err(failure) => {
+            let message = failure.message().unwrap_or_default().to_owned();
+            if message.contains(want) {
+                Ok(())
+            } else {
+                Err(Failed::from(format!(
+                    "case `{}`: rejection does not contain `{want}`:\n{message}",
+                    case.name
+                )))
+            }
+        }
+    }
 }
 
 fn main() {

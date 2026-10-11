@@ -3,7 +3,7 @@
 //! stable under it.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use neoc_fmt::format;
 
@@ -275,23 +275,33 @@ const CANONICAL_LAYERS: &[&str] = &["dynamic", "static"];
 /// layout), so they must survive formatting without having to match it.
 const PARSEABLE_LAYERS: &[&str] = &["dynamic", "static", "syntax"];
 
-/// Every accepted `.neoc` source in `layers`. A `.reject` case is a deliberate
-/// parse failure and carries a different extension, so the `.neoc` filter
-/// exempts it by the corpus's own marker; no case is listed by hand.
+/// Every accepted `.neoc` source in `layers`, including the modules of a
+/// multi-module case (a subdirectory of the layer). A `.reject` case is a
+/// deliberate parse failure and carries a different extension, so the `.neoc`
+/// filter exempts it by the corpus's own marker; no case is listed by hand.
 fn corpus_files(layers: &[&str]) -> Vec<PathBuf> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../lang/CONFORMANCE");
     let mut files = Vec::new();
     for layer in layers {
-        let dir = root.join(layer).canonicalize().expect("corpus dir");
-        for entry in fs::read_dir(&dir).expect("read corpus dir") {
-            let path = entry.unwrap().path();
-            if path.extension().and_then(|e| e.to_str()) == Some("neoc") {
-                files.push(path);
-            }
-        }
+        collect_neoc(
+            &root.join(layer).canonicalize().expect("corpus dir"),
+            &mut files,
+        );
     }
     files.sort();
     files
+}
+
+/// Append every `.neoc` file under `dir`, descending into subdirectories.
+fn collect_neoc(dir: &Path, files: &mut Vec<PathBuf>) {
+    for entry in fs::read_dir(dir).expect("read corpus dir") {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            collect_neoc(&path, files);
+        } else if path.extension().and_then(|e| e.to_str()) == Some("neoc") {
+            files.push(path);
+        }
+    }
 }
 
 #[test]

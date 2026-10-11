@@ -1,0 +1,26 @@
+// DYNAMIC.md §3.7: `use a::b::c` is `local c = require("a.b").c`; `as` renames
+// the local. A `pub` fn, a `pub` struct and a `pub` enum each cross the module
+// boundary; a struct value carries its metatable with it, so a method call
+// needs no wiring in the consumer. A nested path (`geo::shape`) is the dotted
+// module `geo.shape`.
+use geo::shape::Circle;
+use geo::shape::Kind;
+use util::add as plus;
+use util::Counter;
+
+extern {
+    fn println(n: number);
+}
+
+pub fn main() {
+    println(plus(2, 3));
+    let c = Counter { n: 4 };
+    println(c.bump());
+    let circle = Circle { r: 3 };
+    println(circle.area());
+    let rank = match circle.kind() {
+        Kind::Small => 1,
+        Kind::Large => 2,
+    };
+    println(rank);
+}
