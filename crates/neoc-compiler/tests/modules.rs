@@ -395,6 +395,48 @@ fn shadowed_type_local_is_not_captured_by_a_user_binding() {
     assert_eq!(result, "10");
 }
 
+/// `pal`: two type-only structs, `Hue` and `Hue_1`, and a fn that checks its
+/// argument is a `Hue`.
+const PAL_HUE_PAIR: &str = "pub struct Hue {\n    r: number,\n}\n\
+                            pub struct Hue_1 {\n    r: number,\n}\n\
+                            pub fn get(h: Hue) -> number { h.r }\n";
+/// `cfg`: values `Hue` and `Hue_1`.
+const CFG_HUE_PAIR: &str = "pub const Hue: number = 7;\npub const Hue_1: number = 100;\n";
+/// `main` header shadowing both `pal` types and spelling `__type_Hue`, so
+/// `Hue`'s fresh local steps to the name `Hue_1` would take first.
+const USE_HUE_PAIR: &str = "use pal::Hue;\nuse pal::Hue_1;\nuse pal::get;\n\
+                            use cfg::Hue;\nuse cfg::Hue_1;\n";
+
+#[test]
+fn two_shadowed_types_get_distinct_fresh_locals() {
+    let (main_lua, result) = run_project(
+        &[("pal", PAL_HUE_PAIR), ("cfg", CFG_HUE_PAIR)],
+        &format!(
+            "{USE_HUE_PAIR}pub fn main() -> number {{ let __type_Hue = 3; let h = Hue {{ r: Hue }}; \
+             let k = Hue_1 {{ r: Hue_1 }}; get(h) + k.r + __type_Hue }}\n"
+        ),
+    );
+    assert_eq!(
+        main_lua.matches("local __type_Hue_1 =").count(),
+        1,
+        "{main_lua}"
+    );
+    assert_eq!(result, "110");
+}
+
+#[test]
+fn two_shadowed_types_match_their_own_struct_pattern() {
+    let (_, result) = run_project(
+        &[("pal", PAL_HUE_PAIR), ("cfg", CFG_HUE_PAIR)],
+        &format!(
+            "{USE_HUE_PAIR}pub fn main() -> number {{ let __type_Hue = 3; let h = Hue {{ r: Hue }}; \
+             let k = Hue_1 {{ r: Hue_1 }}; let a = match h {{ Hue {{ r }} => r }}; \
+             let b = match k {{ Hue_1 {{ r }} => r }}; a + b + __type_Hue }}\n"
+        ),
+    );
+    assert_eq!(result, "110");
+}
+
 #[test]
 fn shadowed_type_import_struct_update_runs() {
     let (_, result) = run_project(

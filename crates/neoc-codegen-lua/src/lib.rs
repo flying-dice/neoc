@@ -329,28 +329,35 @@ struct TypeRename {
     local: String,
 }
 
-/// Binding → [`TypeRename`] for each shadowed type import.
+/// Binding → [`TypeRename`] for each shadowed type import. Each fresh local
+/// avoids the source's identifiers and every local allocated before it, so two
+/// shadowed types never share one.
+///
+/// Every binding the module can declare appears verbatim in its source, so a
+/// name absent from it cannot be captured by a user binding.
 fn type_renames(shadowed: &[ShadowedTypeImport], source: &str) -> HashMap<String, TypeRename> {
-    shadowed
-        .iter()
-        .map(|s| {
-            let rename = TypeRename {
-                path: s.path.clone(),
-                local: fresh_type_local(&s.binding, source),
-            };
-            (s.binding.clone(), rename)
-        })
-        .collect()
+    let mut allocated = HashSet::new();
+    let mut renames = HashMap::new();
+    for s in shadowed {
+        let local = fresh_type_local(&s.binding, |name| {
+            allocated.contains(name) || source_mentions_ident(source, name)
+        });
+        allocated.insert(local.clone());
+        let rename = TypeRename {
+            path: s.path.clone(),
+            local,
+        };
+        renames.insert(s.binding.clone(), rename);
+    }
+    renames
 }
 
-/// `__type_<binding>`, suffixed until no identifier in `source` spells it. Every
-/// binding the module can declare appears verbatim in its source, so a name
-/// absent from it cannot be captured by a user binding.
-fn fresh_type_local(binding: &str, source: &str) -> String {
+/// `__type_<binding>`, suffixed `_1`, `_2`, … until `is_taken` returns false.
+fn fresh_type_local(binding: &str, is_taken: impl Fn(&str) -> bool) -> String {
     let base = format!("__type_{binding}");
     let mut name = base.clone();
     let mut suffix = 0;
-    while source_mentions_ident(source, &name) {
+    while is_taken(&name) {
         suffix += 1;
         name = format!("{base}_{suffix}");
     }
@@ -1424,6 +1431,31 @@ fn helper() {}";
             "{out}"
         );
         assert!(out.contains("__type_Hue_1.new({ r = Hue })"), "{out}");
+    }
+
+    #[test]
+    fn fresh_locals_of_two_shadowed_types_never_coincide() {
+        // `__type_Hue` is spelled by the source, so `Hue` steps to
+        // `__type_Hue_1` — the name binding `Hue_1` would otherwise take first.
+        let out = emit_shadowed(
+            "use pal::Hue;\nuse pal::Hue_1;\nuse cfg::Hue;\nuse cfg::Hue_1;\n\
+             pub fn main() -> number { let __type_Hue = 3; let h = Hue { r: Hue }; \
+             let k = Hue_1 { r: Hue_1 }; h.r + k.r + __type_Hue }",
+            &[
+                shadowed(&["pal", "Hue"], "Hue"),
+                shadowed(&["pal", "Hue_1"], "Hue_1"),
+            ],
+        );
+        assert!(
+            out.contains("local __type_Hue_1 = require(\"pal\").Hue\n"),
+            "{out}"
+        );
+        assert!(
+            out.contains("local __type_Hue_1_1 = require(\"pal\").Hue_1"),
+            "{out}"
+        );
+        assert!(out.contains("__type_Hue_1.new({ r = Hue })"), "{out}");
+        assert!(out.contains("__type_Hue_1_1.new({ r = Hue_1 })"), "{out}");
     }
 
     #[test]
