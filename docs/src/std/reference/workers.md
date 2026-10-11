@@ -61,7 +61,7 @@ local workers = require("std:workers")
 local hyper   = require("vnd:hyper")
 local net     = require("std:net")
 
-local server = hyper.serve(net.listener("0.0.0.0:3000"), function(req)
+local server = hyper.serve(net.TcpListener.bind("0.0.0.0:3000"), function(req)
     return { status = 200, body = "ok" }
 end)
 
