@@ -120,9 +120,11 @@ wasm:
 # ── bench ─────────────────────────────────────────────────────────────────────
 #
 # Criterion benches for neoc-vm (benches/lib, benches/vnd). Informational only:
-# no baseline comparison, no gating. Never per-MR — manual play on any pipeline,
-# or a pipeline schedule. `--features bench` stays off lint/test (it surfaces
-# false clippy errors).
+# no baseline comparison, no gating. Never per-MR — manual play on branch
+# pipelines only (no merge_request_event rule: it would spawn a detached MR
+# pipeline per push). `--features bench` stays off lint/test (it surfaces false
+# clippy errors). target/criterion is wiped so criterion never compares against
+# estimates restored from the shared cache.
 
 bench:
   stage: bench
@@ -133,6 +135,7 @@ bench:
       paths:
         - target/
   script:
+    - rm -rf target/criterion
     - cargo bench -p neoc-vm --bench lib --features bench -- --noplot | tee bench-lib.txt
     - cargo bench -p neoc-vm --bench vnd --features bench -- --noplot | tee bench-vnd.txt
   artifacts:
@@ -142,10 +145,6 @@ bench:
       - bench-vnd.txt
     expire_in: 30 days
   rules:
-    - if: $CI_PIPELINE_SOURCE == "schedule"
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      when: manual
-      allow_failure: true
     - if: $CI_COMMIT_BRANCH
       when: manual
       allow_failure: true
