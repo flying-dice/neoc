@@ -318,11 +318,7 @@ impl<'a> Elaborator<'a> {
                 base: base.as_ref().map(|b| self.boxed(b)),
             },
             ast::ExprKind::List(items) => ast::ExprKind::List(self.exprs(items)),
-            ast::ExprKind::Assign { target, op, value } => ast::ExprKind::Assign {
-                target: self.boxed(target),
-                op: *op,
-                value: self.boxed(value),
-            },
+            ast::ExprKind::Assign { target, op, value } => self.assign(target, *op, value),
             ast::ExprKind::If { cond, then, else_ } => ast::ExprKind::If {
                 cond: self.boxed(cond),
                 then: self.block(then),
@@ -408,6 +404,33 @@ impl<'a> Elaborator<'a> {
             op,
             lhs: Box::new(new_lhs),
             rhs: Box::new(new_rhs),
+        }
+    }
+
+    /// An assignment. A string-typed `p += v` elaborates to the compound op
+    /// [`ast::AssignOp::Concat`] (`STATIC.md` §4.1, compound assignment), so the
+    /// emitter lowers it with Lua `..` and still evaluates the place `p` once.
+    /// Every other assignment is copied with its operands elaborated.
+    fn assign(
+        &mut self,
+        target: &ast::Expr,
+        op: ast::AssignOp,
+        value: &ast::Expr,
+    ) -> ast::ExprKind {
+        let new_target = self.boxed(target);
+        let new_value = self.boxed(value);
+        let op = if op == ast::AssignOp::Add
+            && self.checker.infer(target) == Ty::Str
+            && self.checker.infer(value) == Ty::Str
+        {
+            ast::AssignOp::Concat
+        } else {
+            op
+        };
+        ast::ExprKind::Assign {
+            target: new_target,
+            op,
+            value: new_value,
         }
     }
 

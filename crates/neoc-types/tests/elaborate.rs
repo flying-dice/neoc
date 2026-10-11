@@ -3,7 +3,7 @@
 //! becomes `BinOp::Concat` while every other `+` stays `BinOp::Add`, and that
 //! the rest of the module is left structurally intact.
 
-use neoc_ast::{BinOp, Expr, ExprKind, ItemKind, Module, StmtKind};
+use neoc_ast::{AssignOp, BinOp, Expr, ExprKind, ItemKind, Module, StmtKind};
 use neoc_types::elaborate;
 
 fn parse(src: &str) -> Module {
@@ -153,4 +153,37 @@ fn module_otherwise_identical() {
     assert_eq!(binop(l.value.as_ref().expect("let value")), BinOp::Add);
     // The trailing `a + a` becomes `Concat`.
     assert_eq!(binop(first_fn_value(&m)), BinOp::Concat);
+}
+
+/// The first statement of the first `fn`, as an assignment's `(op, value)`.
+fn first_assign(module: &Module) -> (AssignOp, &Expr) {
+    let item = module.items.first().expect("module has at least one item");
+    let ItemKind::Fn(f) = &item.kind else {
+        panic!("first item is not a fn");
+    };
+    let stmt = f.body.stmts.get(1).expect("fn has an assignment statement");
+    let StmtKind::Expr(Expr {
+        kind: ExprKind::Assign { op, value, .. },
+        ..
+    }) = &stmt.kind
+    else {
+        panic!("expected an assignment statement, found {:?}", stmt.kind);
+    };
+    (*op, value)
+}
+
+#[test]
+fn string_compound_add_becomes_compound_concat() {
+    let m = elaborate(&parse(r#"fn f() { let s = ""; s += "a"; }"#));
+    let (op, value) = first_assign(&m);
+    assert_eq!(op, AssignOp::Concat);
+    assert!(matches!(value.kind, ExprKind::Str(_)), "{value:?}");
+}
+
+#[test]
+fn number_compound_add_stays_compound() {
+    let m = elaborate(&parse("fn f() { let n = 0; n += 1; }"));
+    let (op, value) = first_assign(&m);
+    assert_eq!(op, AssignOp::Add);
+    assert!(matches!(value.kind, ExprKind::Int(_)), "{value:?}");
 }

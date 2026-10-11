@@ -1,0 +1,32 @@
+// DYNAMIC.md §4.11: a local string appended to inside a loop, and read nowhere
+// in it, accumulates in a table folded by one `table.concat` after the loop.
+// Every append spelling is covered: `s = s + x`, `s += x`, and a chain. The
+// string keeps its prior contents and a loop that never runs leaves it alone.
+extern {
+    fn println(s: string);
+}
+
+fn digit(i: number) -> string {
+    if i == 0 {
+        "a"
+    } else if i == 1 {
+        "b"
+    } else {
+        "c"
+    }
+}
+
+fn main() {
+    let s = "start:";
+    for i in 0..5 {
+        s = s + digit(i % 3);
+        s += "-";
+        s = s + "(" + digit(i % 2) + ")";
+    }
+    println(s);
+    let t = "same";
+    for i in 0..0 {
+        t += "x";
+    }
+    println(t);
+}

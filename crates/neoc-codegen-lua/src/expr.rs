@@ -36,9 +36,7 @@ impl Emitter {
     /// Emit a block as a function body: statements, then `return <value>` when
     /// the block has a trailing value.
     pub(crate) fn emit_block_as_body(&mut self, block: &ast::Block) {
-        for stmt in &block.stmts {
-            self.emit_stmt(stmt);
-        }
+        self.emit_stmts(block);
         if let Some(value) = &block.value {
             self.at_span(value.span, |em| {
                 let v = em.emit_expr(value);
@@ -47,7 +45,7 @@ impl Emitter {
         }
     }
 
-    fn emit_stmt(&mut self, stmt: &ast::Stmt) {
+    pub(super) fn emit_stmt(&mut self, stmt: &ast::Stmt) {
         self.at_span(stmt.span, |em| match &stmt.kind {
             ast::StmtKind::Let(l) => em.emit_let(l),
             ast::StmtKind::Item(item) => em.emit_item_stmt(item),
@@ -143,22 +141,22 @@ impl Emitter {
     fn emit_expr_stmt(&mut self, e: &ast::Expr) {
         match &e.kind {
             ast::ExprKind::If { .. } => self.emit_if_stmt(e),
-            ast::ExprKind::While { cond, body } => {
-                let c = self.emit_expr(cond);
-                self.line(format!("while {c} do"));
-                self.emit_loop_body(body);
-                self.line("end");
-            }
-            ast::ExprKind::Loop { body } => {
-                self.line("while true do");
-                self.emit_loop_body(body);
-                self.line("end");
-            }
+            ast::ExprKind::While { cond, body } => self.emit_accumulating(e, |em| {
+                let c = em.emit_expr(cond);
+                em.line(format!("while {c} do"));
+                em.emit_loop_body(body);
+                em.line("end");
+            }),
+            ast::ExprKind::Loop { body } => self.emit_accumulating(e, |em| {
+                em.line("while true do");
+                em.emit_loop_body(body);
+                em.line("end");
+            }),
             ast::ExprKind::For {
                 pattern,
                 iter,
                 body,
-            } => self.emit_for(pattern, iter, body),
+            } => self.emit_accumulating(e, |em| em.emit_for(pattern, iter, body)),
             ast::ExprKind::Match { scrutinee, arms } => self.emit_match_stmt(scrutinee, arms),
             ast::ExprKind::Block(b) => {
                 self.line("do");
@@ -166,26 +164,20 @@ impl Emitter {
                 self.line("end");
             }
             ast::ExprKind::Return(value) => {
-                let r = value
-                    .as_ref()
-                    .map_or_else(String::new, |v| format!(" {}", self.emit_expr(v)));
+                let r = value.as_ref().map_or_else(String::new, |v| {
+                    let v = self
+                        .accumulated_return(v)
+                        .unwrap_or_else(|| self.emit_expr(v));
+                    format!(" {v}")
+                });
                 self.line(format!("return{r}"));
             }
             ast::ExprKind::Break => self.emit_break(),
             ast::ExprKind::Continue => self.emit_continue(),
             ast::ExprKind::Assign { target, op, value } => {
-                let t = self.emit_expr(target);
-                let v = self.emit_expr(value);
-                // Lua has no compound assignment; expand `a += b` to `a = a + b`.
-                let rhs = match op {
-                    ast::AssignOp::Assign => v,
-                    ast::AssignOp::Add => format!("{t} + {v}"),
-                    ast::AssignOp::Sub => format!("{t} - {v}"),
-                    ast::AssignOp::Mul => format!("{t} * {v}"),
-                    ast::AssignOp::Div => format!("{t} / {v}"),
-                    ast::AssignOp::Rem => format!("{t} % {v}"),
-                };
-                self.line(format!("{t} = {rhs}"));
+                if !self.emit_accumulated_append(target, *op, value) {
+                    self.emit_assign(target, *op, value);
+                }
             }
             _ => {
                 let s = self.emit_expr(e);
@@ -194,11 +186,78 @@ impl Emitter {
         }
     }
 
+    /// Lower `target op= value`. Lua has no compound assignment, so `p op= v`
+    /// expands to `p = p op v` with the place `p` evaluated once (`STATIC.md`
+    /// §4.1): a field or index base, or an index, that is not a name or literal
+    /// binds to a fresh local first, scoped by a `do … end`.
+    fn emit_assign(&mut self, target: &ast::Expr, op: ast::AssignOp, value: &ast::Expr) {
+        let seq = self.place_seq;
+        let body = self.render(|em| {
+            let t = if op == ast::AssignOp::Assign {
+                em.emit_expr(target)
+            } else {
+                em.emit_place(target)
+            };
+            let v = em.emit_expr(value);
+            let rhs = match op {
+                ast::AssignOp::Assign => v,
+                ast::AssignOp::Add => format!("{t} + {v}"),
+                ast::AssignOp::Sub => format!("{t} - {v}"),
+                ast::AssignOp::Mul => format!("{t} * {v}"),
+                ast::AssignOp::Div => format!("{t} / {v}"),
+                ast::AssignOp::Rem => format!("{t} % {v}"),
+                ast::AssignOp::Concat => format!("({t} .. {v})"),
+            };
+            em.line(format!("{t} = {rhs}"));
+        });
+        let scoped = self.place_seq != seq;
+        if scoped {
+            self.line("do");
+            self.indent += 1;
+        }
+        for l in body {
+            self.line(l);
+        }
+        if scoped {
+            self.indent -= 1;
+            self.line("end");
+        }
+    }
+
+    /// The Lua place for a compound-assignment target, with any base or index
+    /// that is not a name or literal bound to a fresh local (see
+    /// [`Self::emit_assign`]).
+    fn emit_place(&mut self, target: &ast::Expr) -> String {
+        match &target.kind {
+            ast::ExprKind::Field { base, field } => {
+                let b = self.emit_once(base);
+                field_access(&b, field)
+            }
+            ast::ExprKind::Index { base, index } => {
+                let b = self.emit_once(base);
+                let i = self.emit_once(index);
+                index_access(&b, &i)
+            }
+            _ => self.emit_expr(target),
+        }
+    }
+
+    /// `e` as a Lua expression safe to repeat: `e` itself when it is a name or
+    /// literal, else a fresh local bound to it.
+    fn emit_once(&mut self, e: &ast::Expr) -> String {
+        let v = self.emit_expr(e);
+        if is_repeatable(e) {
+            return v;
+        }
+        self.place_seq += 1;
+        let tmp = format!("__place_{}", self.place_seq);
+        self.line(format!("local {tmp} = {v}"));
+        tmp
+    }
+
     /// A block's statements without a trailing return (statement context).
     fn emit_block_stmts(&mut self, block: &ast::Block) {
-        for stmt in &block.stmts {
-            self.emit_stmt(stmt);
-        }
+        self.emit_stmts(block);
         if let Some(value) = &block.value {
             // A trailing value in statement context is evaluated for effect.
             self.emit_expr_stmt(value);
@@ -383,18 +442,12 @@ impl Emitter {
             }
             ast::ExprKind::Field { base, field } => {
                 let b = self.emit_expr(base);
-                match field {
-                    ast::FieldAccess::Named(n, _) => format!("{b}.{n}"),
-                    // Tuple/newtype payload is stored positionally (Lua arrays
-                    // are 1-based), so `.0` reads `[1]`. Matches the constructor
-                    // (`N.new` stores at `[1]`) and the derive/pattern lowering.
-                    ast::FieldAccess::Tuple(i) => format!("{b}[{}]", i + 1),
-                }
+                field_access(&b, field)
             }
             ast::ExprKind::Index { base, index } => {
                 let b = self.emit_expr(base);
                 let i = self.emit_expr(index);
-                format!("{b}[({i}) + 1]")
+                index_access(&b, &i)
             }
             ast::ExprKind::StructLit { path, fields, base } => {
                 self.emit_struct_lit(path, fields, base.as_deref())
@@ -936,6 +989,36 @@ fn expr_uses_continue(expr: &ast::Expr) -> bool {
         }
         ast::ExprKind::Block(b) => body_uses_continue(b),
     }
+}
+
+/// Whether evaluating `e` twice is indistinguishable from evaluating it once:
+/// a name or a literal. A field read is not: on an `extern` struct it may be a
+/// host getter.
+fn is_repeatable(e: &ast::Expr) -> bool {
+    matches!(
+        e.kind,
+        ast::ExprKind::Path(_)
+            | ast::ExprKind::Int(_)
+            | ast::ExprKind::Float(_)
+            | ast::ExprKind::Str(_)
+            | ast::ExprKind::Bool(_)
+    )
+}
+
+/// Lua for field `field` of the Lua value `base`.
+fn field_access(base: &str, field: &ast::FieldAccess) -> String {
+    match field {
+        ast::FieldAccess::Named(n, _) => format!("{base}.{n}"),
+        // Tuple/newtype payload is stored positionally (Lua arrays are 1-based),
+        // so `.0` reads `[1]`. Matches the constructor (`N.new` stores at `[1]`)
+        // and the derive/pattern lowering.
+        ast::FieldAccess::Tuple(i) => format!("{base}[{}]", i + 1),
+    }
+}
+
+/// Lua for element `index` of the Lua list `base` (neoc lists are 0-based).
+fn index_access(base: &str, index: &str) -> String {
+    format!("{base}[({index}) + 1]")
 }
 
 fn bin_op(op: ast::BinOp) -> &'static str {
