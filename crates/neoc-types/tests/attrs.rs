@@ -132,6 +132,79 @@ fn derive_eq_with_prelude_and_list_fields_is_clean() {
 }
 
 #[test]
+fn derive_eq_with_non_eq_option_payload_is_rejected() {
+    assert_diag(
+        "struct NoEq { v: number } #[derive(Eq)] struct S { o: Option<NoEq> }",
+        "deriving Eq needs field `o` of type `Option<NoEq>` to support equality",
+    );
+}
+
+#[test]
+fn derive_eq_with_non_eq_result_and_list_elements_is_rejected() {
+    let d = diags(
+        "struct NoEq { v: number } \
+         #[derive(Eq)] struct S { r: Result<number, NoEq>, xs: [NoEq] }",
+    );
+    assert_eq!(
+        d,
+        vec![
+            "deriving Eq needs field `r` of type `Result<number, NoEq>` to support equality"
+                .to_string(),
+            "deriving Eq needs field `xs` of type `[NoEq]` to support equality".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn derive_eq_with_non_eq_type_argument_is_rejected() {
+    assert_diag(
+        "struct NoEq { v: number } #[derive(Eq)] struct Wrap<T> { v: T } \
+         #[derive(Eq)] struct S { w: Wrap<NoEq> }",
+        "deriving Eq needs field `w` of type `Wrap<NoEq>` to support equality",
+    );
+}
+
+#[test]
+fn derive_debug_with_non_debug_field_is_rejected() {
+    let d = diags(
+        "struct Plain { v: number } \
+         #[derive(Debug)] struct S { p: Plain, o: Option<Plain> }",
+    );
+    assert_eq!(
+        d,
+        vec![
+            "deriving Debug needs field `p` of type `Plain` to satisfy Debug".to_string(),
+            "deriving Debug needs field `o` of type `Option<Plain>` to satisfy Debug".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn derive_debug_with_aggregate_debug_fields_is_clean() {
+    assert_clean(
+        "#[derive(Debug)] struct Inner { v: number } \
+         #[derive(Debug)] struct S { i: Inner, o: Option<Inner>, xs: [Inner], r: Result<Inner, string> }",
+    );
+}
+
+#[test]
+fn derive_display_with_option_result_or_list_field_is_rejected() {
+    let d = diags(
+        "#[derive(Display)] struct S { o: Option<number>, r: Result<number, string>, xs: [number] }",
+    );
+    assert_eq!(
+        d,
+        vec![
+            "deriving Display needs field `o` of type `Option<number>` to satisfy Display"
+                .to_string(),
+            "deriving Display needs field `r` of type `Result<number, string>` to satisfy Display"
+                .to_string(),
+            "deriving Display needs field `xs` of type `[number]` to satisfy Display".to_string(),
+        ]
+    );
+}
+
+#[test]
 fn derive_display_with_non_display_field_is_rejected() {
     assert_diag(
         "struct Inner { x: number } #[derive(Display)] struct Outer { i: Inner }",

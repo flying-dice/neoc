@@ -310,8 +310,31 @@ impl<'a> Checker<'a> {
     pub fn check_module(&mut self, module: &ast::Module) {
         self.check_coherence();
         for item in &module.items {
+            self.check_item_name(item);
             self.check_field_names(item);
             self.check_item(item);
+        }
+    }
+
+    /// Rejects a module-level item name that begins with `__` (`STATIC.md`
+    /// §4.3). An item becomes a module-local binding in the emitted target,
+    /// where the `__` prefix is held for compiler-emitted helpers — a user
+    /// item spelled that way would shadow one and silently change behaviour.
+    fn check_item_name(&mut self, item: &ast::Item) {
+        let (name, span) = match &item.kind {
+            ast::ItemKind::Fn(f) => (&f.sig.name, f.sig.name_span),
+            ast::ItemKind::Const(c) => (&c.name, item.span),
+            ast::ItemKind::TypeAlias(t) => (&t.name, item.span),
+            ast::ItemKind::Struct(s) => (&s.name, item.span),
+            ast::ItemKind::Enum(e) => (&e.name, item.span),
+            ast::ItemKind::Trait(t) => (&t.name, item.span),
+            ast::ItemKind::Use(_) | ast::ItemKind::Impl(_) | ast::ItemKind::Extern(_) => return,
+        };
+        if name.starts_with("__") {
+            self.error_at(
+                span,
+                format!("item name `{name}` is reserved: item names may not begin with `__`"),
+            );
         }
     }
 

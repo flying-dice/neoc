@@ -169,6 +169,7 @@ impl Checker<'_> {
             }
             match inner.name.as_str() {
                 "Eq" => self.check_derive_fields(item, "eq", "Eq", "support equality"),
+                "Debug" => self.check_derive_fields(item, "debug", "Debug", "satisfy Debug"),
                 "Display" => {
                     self.check_derive_fields(item, "display", "Display", "satisfy Display");
                 }
@@ -177,10 +178,8 @@ impl Checker<'_> {
         }
     }
 
-    /// For `derive(Eq)` / `derive(Display)`: every field whose type is a
-    /// user-defined `struct`/`enum` must itself carry `method` (i.e. derive or
-    /// implement the trait). Primitives, lists, function types, type
-    /// parameters, prelude types, and `ext` types are taken to satisfy it.
+    /// For `derive(Eq)` / `derive(Debug)` / `derive(Display)`: every field's
+    /// type must satisfy the trait, per [`Self::ty_has_method`].
     fn check_derive_fields(&mut self, item: &ast::Item, method: &str, trait_: &str, needs: &str) {
         for (field, ty) in self.item_field_types(item) {
             if !self.ty_has_method(&ty, method) {
@@ -235,26 +234,31 @@ impl Checker<'_> {
 
     /// Whether `ty` carries `method` for the purpose of a derive obligation.
     ///
-    /// Only a user-defined `struct`/`enum` can fail: it must have the method
-    /// recorded (via `#[derive]` or an explicit `impl`). Every other type —
-    /// primitive, list, function, type parameter, prelude `Result`/`Option`,
-    /// `ext` type, or an unknown name — is treated as satisfying the trait, so
-    /// the check never produces a false positive on a type the checker cannot
-    /// reason about structurally.
+    /// A user-defined `struct`/`enum` must have the method recorded (via
+    /// `#[derive]` or an explicit `impl`), and so must each of its type
+    /// arguments. A list and the prelude `Option`/`Result` satisfy `eq`/`debug`
+    /// when their element or payload types do, and never satisfy `display`:
+    /// they have no user-facing form. Every other type — primitive, function,
+    /// type parameter, `ext` type, or an unknown name — is treated as
+    /// satisfying the trait, so the check never produces a false positive on a
+    /// type the checker cannot reason about structurally.
     fn ty_has_method(&self, ty: &Ty, method: &str) -> bool {
-        let Ty::Named { name, .. } = ty else {
-            return true;
-        };
-        // The prelude `Option`/`Result` are stored as enums but carry no derived
-        // methods; they are taken to satisfy the trait (as documented above).
-        if matches!(name.as_str(), "Option" | "Result") {
-            return true;
-        }
-        match self.table().types.get(name) {
-            Some(TypeDef::Struct(_) | TypeDef::Enum(_)) => self
-                .table()
-                .methods
-                .contains_key(&(name.clone(), method.to_string())),
+        let args_have = |args: &[Ty]| args.iter().all(|a| self.ty_has_method(a, method));
+        match ty {
+            Ty::List(elem) => method != "display" && self.ty_has_method(elem, method),
+            Ty::Named { name, args } if matches!(name.as_str(), "Option" | "Result") => {
+                method != "display" && args_have(args)
+            }
+            Ty::Named { name, args } => {
+                let own = match self.table().types.get(name) {
+                    Some(TypeDef::Struct(_) | TypeDef::Enum(_)) => self
+                        .table()
+                        .methods
+                        .contains_key(&(name.clone(), method.to_string())),
+                    _ => true,
+                };
+                own && args_have(args)
+            }
             _ => true,
         }
     }

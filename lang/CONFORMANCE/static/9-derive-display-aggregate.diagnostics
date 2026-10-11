@@ -1,0 +1,3 @@
+deriving Display needs field `o` of type `Option<number>` to satisfy Display
+deriving Display needs field `r` of type `Result<number, string>` to satisfy Display
+deriving Display needs field `xs` of type `[number]` to satisfy Display

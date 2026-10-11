@@ -845,6 +845,38 @@ fn reserved_variant_field_rejected() {
     );
 }
 
+// ---- reserved item names (STATIC.md §4.3, D-ITEM-RESERVED) -----------------
+
+#[test]
+fn reserved_fn_name_rejected() {
+    // A `__`-prefixed fn would shadow a compiler-emitted helper such as the
+    // derive helpers `__eq` / `__debug`, so it is ill-formed.
+    let d = diags("fn __debug(a: number) -> string { \"user\" }");
+    assert_eq!(
+        d,
+        vec!["item name `__debug` is reserved: item names may not begin with `__`".to_string()]
+    );
+}
+
+#[test]
+fn reserved_type_and_const_names_rejected() {
+    let d = diags("struct __S { v: number } enum __E { A } const __C: number = 1;");
+    assert_eq!(
+        d,
+        vec![
+            "item name `__S` is reserved: item names may not begin with `__`".to_string(),
+            "item name `__E` is reserved: item names may not begin with `__`".to_string(),
+            "item name `__C` is reserved: item names may not begin with `__`".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn single_underscore_item_and_local_allowed() {
+    // The boundary is `__` at item level; locals and parameters are unaffected.
+    assert!(diags("fn _helper(__p: number) -> number { let __x = __p; __x }").is_empty());
+}
+
 #[test]
 fn single_underscore_field_allowed() {
     // The boundary is `__` (double underscore): a single-underscore or
