@@ -2,32 +2,52 @@
 // calls, indexing, calling, and member assignment on an `Unknown` are all
 // permitted and yield `Unknown`; an `Unknown` flows to any type and any type
 // flows to an `Unknown`.
-struct Point { x: number }
+struct Point {
+    x: number,
+}
 
-struct User { inner: Unknown }
+struct User {
+    inner: Unknown,
+}
 
 impl User {
     // Unknown field access flows out to the declared `string` return.
-    fn name(self) -> string { self.inner.name }
+    fn name(self) -> string {
+        self.inner.name
+    }
 
     // Member assignment accepts a value of any type.
-    fn set_name(self, value: string) { self.inner.name = value; }
+    fn set_name(self, value: string) {
+        self.inner.name = value;
+    }
 
     // Method call accepts any arguments and yields Unknown.
-    fn call(self) -> number { self.inner.method(1, "two", true) }
+    fn call(self) -> number {
+        self.inner.method(1, "two", true)
+    }
 
     // Indexing yields Unknown.
-    fn first(self) -> bool { self.inner[0] }
+    fn first(self) -> bool {
+        self.inner[0]
+    }
 
     // A concrete struct flows into an Unknown member.
-    fn store(self, p: Point) { self.inner.point = p; }
+    fn store(self, p: Point) {
+        self.inner.point = p;
+    }
 
     // An Unknown flows out to a concrete struct.
-    fn as_point(self) -> Point { self.inner }
+    fn as_point(self) -> Point {
+        self.inner
+    }
 }
 
 // Any concrete type flows into an `Unknown`.
-fn wrap(s: string) -> Unknown { s }
+fn wrap(s: string) -> Unknown {
+    s
+}
 
 // Calling an `Unknown` accepts any arguments and yields `Unknown`.
-fn invoke(f: Unknown) -> string { f(1, "two") }
+fn invoke(f: Unknown) -> string {
+    f(1, "two")
+}

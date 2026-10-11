@@ -1,5 +1,8 @@
 // STATIC.md §2: `Enum::Variant` must name a declared variant.
-enum Color { Red, Green }
+enum Color {
+    Red,
+    Green,
+}
 
 fn main() {
     let c = Color::Blue;

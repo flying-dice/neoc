@@ -267,22 +267,37 @@ fn trailing_newline_is_exactly_one() {
     assert!(!out.ends_with("\n\n"));
 }
 
-fn corpus_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../lang/CONFORMANCE/dynamic")
-        .canonicalize()
-        .expect("corpus dir")
+/// Layers whose accept cases are written in canonical style.
+const CANONICAL_LAYERS: &[&str] = &["dynamic", "static"];
+
+/// Every corpus layer that carries parseable programs. `syntax/` accept cases
+/// exercise valid but non-canonical surface forms (optional separators,
+/// layout), so they must survive formatting without having to match it.
+const PARSEABLE_LAYERS: &[&str] = &["dynamic", "static", "syntax"];
+
+/// Every accepted `.neoc` source in `layers`. A `.reject` case is a deliberate
+/// parse failure and carries a different extension, so the `.neoc` filter
+/// exempts it by the corpus's own marker; no case is listed by hand.
+fn corpus_files(layers: &[&str]) -> Vec<PathBuf> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../lang/CONFORMANCE");
+    let mut files = Vec::new();
+    for layer in layers {
+        let dir = root.join(layer).canonicalize().expect("corpus dir");
+        for entry in fs::read_dir(&dir).expect("read corpus dir") {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|e| e.to_str()) == Some("neoc") {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    files
 }
 
 #[test]
 fn corpus_is_stable_under_formatting() {
-    let dir = corpus_dir();
     let mut checked = 0;
-    for entry in fs::read_dir(&dir).expect("read corpus dir") {
-        let path = entry.unwrap().path();
-        if path.extension().and_then(|e| e.to_str()) != Some("neoc") {
-            continue;
-        }
+    for path in corpus_files(PARSEABLE_LAYERS) {
         let src = fs::read_to_string(&path).expect("read fixture");
         let once = format(&src).unwrap_or_else(|e| panic!("format {} failed: {e}", path.display()));
         let twice =
@@ -295,15 +310,10 @@ fn corpus_is_stable_under_formatting() {
 
 #[test]
 fn corpus_is_a_near_no_op() {
-    // The corpus is the canonical style. Formatting it should reproduce it
-    // verbatim (the files end without a trailing blank but `format` adds one
+    // The canonical layers define the house style. Formatting them should
+    // reproduce them verbatim (the files end without a trailing blank but `format` adds one
     // trailing newline, which all fixtures already have or tolerate).
-    let dir = corpus_dir();
-    for entry in fs::read_dir(&dir).expect("read corpus dir") {
-        let path = entry.unwrap().path();
-        if path.extension().and_then(|e| e.to_str()) != Some("neoc") {
-            continue;
-        }
+    for path in corpus_files(CANONICAL_LAYERS) {
         let src = fs::read_to_string(&path).expect("read fixture");
         let out = format(&src).unwrap();
         // Normalise the source's trailing newlines the way `format` does, then

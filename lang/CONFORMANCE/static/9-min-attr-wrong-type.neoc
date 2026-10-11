@@ -1,5 +1,4 @@
 // STATIC.md §9: `#[min(_)]` only on a `number` field.
 struct S {
-    #[min(0)]
-    name: string,
+    #[min(0)] name: string,
 }

@@ -1,5 +1,9 @@
 // STATIC.md §7: a match covering every variant is exhaustive and well-typed.
-enum Color { Red, Green, Blue }
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
 
 fn name(c: Color) -> string {
     match c {

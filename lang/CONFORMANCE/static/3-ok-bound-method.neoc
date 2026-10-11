@@ -1,9 +1,9 @@
 // STATIC.md §3.4: a method call on a bounded type parameter resolves through
 // the methods of the parameter's bound.
 trait Show {
-  fn show(self) -> string;
+    fn show(self) -> string;
 }
 
 fn describe<T: Show>(x: T) -> string {
-  x.show()
+    x.show()
 }

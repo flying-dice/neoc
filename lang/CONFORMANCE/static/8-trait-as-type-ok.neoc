@@ -1,21 +1,21 @@
 // STATIC.md §3.4: a trait name used as a type is the existential — any
 // implementor is admissible, and a method call resolves through the trait.
 trait Drawable {
-  fn draw(self) -> string;
+    fn draw(self) -> string;
 }
 
 struct Circle;
 
 impl Drawable for Circle {
-  fn draw(self) -> string {
-    "o"
-  }
+    fn draw(self) -> string {
+        "o"
+    }
 }
 
 fn render(x: Drawable) -> string {
-  x.draw()
+    x.draw()
 }
 
 fn go() -> string {
-  render(Circle)
+    render(Circle)
 }

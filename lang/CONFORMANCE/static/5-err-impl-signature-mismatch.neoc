@@ -1,13 +1,13 @@
 // STATIC.md §3.4: a trait impl must provide each method with the trait's
 // declared signature — here the parameter type diverges (`string` vs `number`).
 trait Show {
-  fn show(self, n: number) -> string;
+    fn show(self, n: number) -> string;
 }
 
 struct P;
 
 impl Show for P {
-  fn show(self, n: string) -> string {
-    "x"
-  }
+    fn show(self, n: string) -> string {
+        "x"
+    }
 }

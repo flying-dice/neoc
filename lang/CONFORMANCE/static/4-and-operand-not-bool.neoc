@@ -1,2 +1,4 @@
 // STATIC.md §4.1: `&&` requires both operands to be `bool`.
-fn main() { let b = true && 1; }
+fn main() {
+    let b = true && 1;
+}

@@ -1,3 +1,9 @@
 // STATIC.md §6 (T-TRY-OPTION): `?` on `Option` in an `Option`-returning fn is well-typed.
-extern { fn g() -> Option<number>; }
-fn f() -> Option<number> { let x = g()?; Some(x) }
+extern {
+    fn g() -> Option<number>;
+}
+
+fn f() -> Option<number> {
+    let x = g()?;
+    Some(x)
+}
