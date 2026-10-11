@@ -1,0 +1,29 @@
+// DYNAMIC.md §3.8 / SYNTAX.md §3.3: a generic `type` alias is transparent. Use
+// sites substitute the alias's parameters: nested (`Pair<Pair<number>>`), alias
+// of alias (`Names = Pair<string>`), in a fn signature, and in a struct field.
+// Aliases are erased, so the lowering is plain lists.
+extern {
+    fn println(n: number);
+}
+
+type Pair<T> = [T];
+
+type Names = Pair<string>;
+
+type Grid<T> = Pair<Pair<T>>;
+
+struct Table {
+    rows: Grid<number>,
+}
+
+fn first<T>(items: Pair<T>) -> T {
+    items[0]
+}
+
+fn main() {
+    let names: Names = ["ada", "grace"];
+    let grid: Grid<number> = [[1, 2], [3, 4]];
+    let table = Table { rows: grid };
+    println(first(first(table.rows)));
+    println(first(table.rows[1]));
+}
