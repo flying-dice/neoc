@@ -85,16 +85,49 @@ Supported:
   then `WHERE`; optional `RETURNING`.
 - **`DELETE … WHERE …`**: params from `WHERE`; optional `RETURNING`.
 
+- **CTEs and derived tables**: `WITH name [(cols)] AS (…)` and
+  `FROM (SELECT …) AS name [(cols)]` expose the defining query's result columns
+  — type and nullability — to the rest of the statement. Later CTEs see earlier
+  ones; a CTE shadows a schema table of the same name. An outer join to either
+  widens its columns to optional, exactly as for a table.
+- **Subqueries in expressions**, anywhere a `SELECT` list item, `WHERE`,
+  `HAVING`, or `JOIN … ON` allows an expression (including `UPDATE`/`DELETE`
+  `WHERE`). A subquery sees its own `FROM` first, then enclosing queries
+  (correlated references), nearest first. Typing follows SQL: a scalar
+  subquery `(SELECT …)` has its column's type and is always optional (no row is
+  NULL); `EXISTS` is a non-null `bool`; `x IN (SELECT …)` is a `bool`, optional
+  when `x` or the subquery column is. A scalar or `IN` subquery must project
+  exactly one column. Its result column names are never read, so an unaliased
+  expression needs no alias there.
+- **Set operations** (`UNION`/`INTERSECT`/`EXCEPT`, with or without `ALL`, nested
+  and parenthesised). Both sides must project the same number of columns and the
+  same neoc type position by position. Field names come from the left side. A
+  column is optional for `UNION` if either side is, for `EXCEPT` if the left is,
+  for `INTERSECT` only if both are.
+- **Window functions** (`f(…) OVER (…)`). `PARTITION BY`/`ORDER BY` columns are
+  resolved. `row_number`/`rank`/`dense_rank`/`ntile`/`cume_dist`/`percent_rank`
+  are non-null `number`; `lag`/`lead` take their argument's type and are
+  optional unless a non-null default (third argument) is given and the value is
+  non-null; `first_value`/`last_value` follow their argument; `nth_value` is
+  optional; an aggregate over a window types as the aggregate does
+  (`count` non-null, `sum`/`avg`/`min`/`max` optional). `OVER w` (a named window)
+  is accepted as written.
+
 Rejected with a clear `Error::Unsupported`/`Error::Resolve` diagnostic:
-subqueries and CTEs, set operations (`UNION`/…), window functions, derived
-tables, an unaliased non-column/non-function projection, a bare `NULL` in the
-SELECT list, and an unknown table/column or ambiguous unqualified column.
+`WITH RECURSIVE`, `LATERAL` and unaliased derived tables, other `FROM` forms
+(table functions, nested joins), `VALUES`/`TABLE` as a query body, set-operation
+sides of differing arity or type, an unaliased non-column/non-function
+projection (outside an `EXISTS`/`IN`/scalar subquery), a bare `NULL` in the
+SELECT list, an unknown table/column, and an ambiguous unqualified column.
+`INSERT … SELECT` takes a plain `SELECT` only (no `WITH` or set operation).
 
 Known inference limitations (documented, not yet closed):
 
 - **Parameter order** is collected from `SET` → `WHERE`/`HAVING` → `LIMIT`/
-  `OFFSET`. Placeholders in other positions (a `JOIN … ON`, the projection, a
-  subquery) are not collected, so a positional driver would misbind them.
+  `OFFSET`. Placeholders in other positions (the projection outside a subquery,
+  `ORDER BY`, a window specification) are not collected, so generation fails with
+  a placeholder-count mismatch rather than misbind them. Placeholders in a CTE,
+  derived table, or subquery bind in textual order.
 - **`INSERT` placeholder count** is not validated against the `VALUES` list.
 - **`IN (?)`** binds one parameter per placeholder; there is no variadic
   list-parameter form yet.
