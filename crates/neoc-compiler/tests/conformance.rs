@@ -26,13 +26,19 @@
 //! compiles through the project model ([`transpile_project`]), pins one readable
 //! golden per module, and runs with the non-entry modules served to `require`.
 //!
-//! A case may carry a `<name>.fails` marker (`<name>/main.fails` for a directory
-//! case): the sad-path contract. The program must be rejected at run time, with
-//! an error message containing the marker's text; the Rust anchor does not apply
-//! (a rejection has no Rust analogue) and is neither required nor run.
+//! A directory case cannot carry `#[test]` fns: each module's `__tests` table is
+//! local to its chunk, out of the walk's reach, so the run trial rejects such a
+//! case rather than silently dropping its tests.
 //!
-//! Two extra trials guard the corpus shape: it is non-empty, and every `.neoc`
-//! entry has a sibling `.rs` anchor (except a `.fails` case).
+//! A case may carry a `<name>.fails` marker (`<name>/main.fails` for a directory
+//! case): the sad-path contract. The program must compile clean, then raise at
+//! run time an error whose message contains the marker's text; its `.stdout`
+//! pins what it printed before the raise. The Rust anchor does not apply (a
+//! rejection has no Rust analogue) and is neither required nor run.
+//!
+//! Two extra trials guard the corpus shape: it is non-empty, and every case is
+//! well formed — its entry exists, it has a sibling `.rs` anchor (except a
+//! `.fails` case), and a `.fails` marker is not blank.
 
 use std::fmt::Write as _;
 use std::io::Write;
@@ -41,6 +47,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use libtest_mimic::{Arguments, Failed, Trial};
+use neoc_codegen_lua::TESTS_TABLE_DECL;
 use neoc_compiler::{Target, transpile, transpile_project};
 
 mod common;
@@ -52,14 +59,29 @@ struct TargetSpec {
     /// Whether the toolchain this target needs is present. When false, the
     /// target's run trials are marked ignored rather than failed.
     available: bool,
-    /// Produce the program text and run it under the toolchain, returning stdout.
-    run: fn(case: &Case) -> Result<String, Failed>,
+    /// Whether this is the hand-written Rust anchor rather than a compiler
+    /// backend. A rejection has no Rust analogue, so an anchor skips sad-path
+    /// cases.
+    anchor: bool,
+    /// Produce the program text and run it under the toolchain. `Err` is a
+    /// harness, compile or load failure, never a run-time rejection.
+    run: fn(case: &Case) -> Result<Outcome, Failed>,
     /// The compiler [`Target`] and committed-output extension this backend emits
     /// (e.g. `(Target::Lua, "lua")`). When set, a `<case>::<target>::source`
     /// trial pins the emitted code against the readable `<case>.<ext>` file
     /// checked into the corpus. `None` for the Rust anchor, whose `.rs` is
     /// hand-written rather than emitted. This check needs no toolchain.
     emit: Option<(Target, &'static str)>,
+}
+
+/// How a case's program ended under a target.
+struct Outcome {
+    /// Everything the program printed before it finished or raised.
+    stdout: String,
+    /// The run-time error the program raised; `None` when it ran to completion.
+    raised: Option<String>,
+    /// The program text that ran, appended to failure reports.
+    program: String,
 }
 
 /// Assert, for every module of `case`, that the live emit equals the committed
@@ -223,7 +245,7 @@ fn emit_case(case: &Case, target: Target) -> Result<Vec<EmittedModule>, Failed> 
 }
 
 /// rust: compile the case's `.rs` anchor with `rustc --edition 2021` and run it.
-fn run_rust(case: &Case) -> Result<String, Failed> {
+fn run_rust(case: &Case) -> Result<Outcome, Failed> {
     let rs_path = case.sibling("rs");
     let case = case.name.as_str();
     let src = std::fs::read_to_string(&rs_path)
@@ -256,14 +278,12 @@ fn run_rust(case: &Case) -> Result<String, Failed> {
         .map_err(|e| Failed::from(format!("case `{case}`: run anchor binary failed: {e}")));
     let _ = std::fs::remove_file(&bin_path);
     let output = output?;
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-    } else {
-        Err(Failed::from(format!(
-            "case `{case}`: anchor binary exited non-zero:\n{}",
-            String::from_utf8_lossy(&output.stderr)
-        )))
-    }
+    Ok(Outcome {
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        raised: (!output.status.success())
+            .then(|| String::from_utf8_lossy(&output.stderr).into_owned()),
+        program: src,
+    })
 }
 
 /// Epilogue run after `main()` so a `#[test]`-bearing case's run-trial actually
@@ -302,11 +322,20 @@ end
 /// lua: the emitted module is self-contained — inlined runtime, no `neoc-lib`.
 /// Alias `println` to the built-in `print`, register every non-entry module with
 /// the `require` shim, append the entry then `main()` and the `#[test]` walk, and
-/// run in-process on `LuaJIT`.
+/// run in-process on `LuaJIT`. A directory case whose modules register `#[test]`
+/// fns is refused: each module's `__tests` is local to its chunk, so the walk
+/// could never reach them.
 fn lua_program(case: &Case) -> Result<String, Failed> {
     let mut preload = String::new();
     let mut entry = String::new();
     for module in emit_case(case, Target::Lua)? {
+        if case.project && module.output.lines().any(|line| line == TESTS_TABLE_DECL) {
+            return Err(Failed::from(format!(
+                "case `{}`: module `{}` declares #[test] fns, which a directory case \
+                 cannot run — move them to a single-file case",
+                case.name, module.name
+            )));
+        }
         if module.name == "main" {
             entry = module.output;
         } else {
@@ -327,13 +356,18 @@ fn lua_program(case: &Case) -> Result<String, Failed> {
     Ok(format!("println = print\n{REQUIRE_SHIM_LUA}{preload}{run}"))
 }
 
-fn run_lua(case: &Case) -> Result<String, Failed> {
+fn run_lua(case: &Case) -> Result<Outcome, Failed> {
     let program = lua_program(case)?;
-    common::run_lua(&program).map_err(|e| {
+    let run = common::run_lua_capturing(&program).map_err(|e| {
         Failed::from(format!(
-            "case `{}`: lua failed:\n{e}\n--- emitted lua ---\n{program}",
+            "case `{}`: lua failed to load:\n{e}\n--- program ---\n{program}",
             case.name
         ))
+    })?;
+    Ok(Outcome {
+        stdout: run.stdout,
+        raised: run.raised,
+        program,
     })
 }
 
@@ -385,12 +419,14 @@ fn target_specs() -> [TargetSpec; 2] {
         TargetSpec {
             name: "rust",
             available: binary_present("rustc"),
+            anchor: true,
             run: run_rust,
             emit: None,
         },
         TargetSpec {
             name: "lua",
             available: true,
+            anchor: false,
             run: run_lua,
             emit: Some((Target::Lua, "lua")),
         },
@@ -418,20 +454,22 @@ fn collect_trials() -> Vec<Trial> {
         }
     }));
 
-    // Guard: every entry module exists, and every case that is not a sad path
-    // has a sibling `.rs` so the two halves can't drift.
-    let guarded: Vec<(String, PathBuf, PathBuf, bool)> = cases
+    // Guard: every entry module exists, every case that is not a sad path has a
+    // sibling `.rs` so the two halves can't drift, and no `.fails` marker is
+    // blank (an empty fragment is contained in every message, so it would admit
+    // any crash).
+    let guarded: Vec<(String, PathBuf, PathBuf, Option<String>)> = cases
         .iter()
         .map(|c| {
             (
                 c.name.clone(),
                 c.entry.clone(),
                 c.sibling("rs"),
-                c.expected_failure().is_some(),
+                c.expected_failure(),
             )
         })
         .collect();
-    trials.push(Trial::test("corpus::every_case_has_rs_anchor", move || {
+    trials.push(Trial::test("corpus::every_case_well_formed", move || {
         for (case, entry, rs, fails) in &guarded {
             if !entry.exists() {
                 return Err(Failed::from(format!(
@@ -439,7 +477,12 @@ fn collect_trials() -> Vec<Trial> {
                     entry.display()
                 )));
             }
-            if !fails && !rs.exists() {
+            if fails.as_deref().is_some_and(str::is_empty) {
+                return Err(Failed::from(format!(
+                    "case `{case}`: empty .fails marker — it must name the expected error"
+                )));
+            }
+            if fails.is_none() && !rs.exists() {
                 return Err(Failed::from(format!(
                     "case `{case}`: missing sibling Rust anchor {}",
                     rs.display()
@@ -465,7 +508,7 @@ fn collect_trials() -> Vec<Trial> {
             }
 
             // A sad-path case has no Rust anchor: a rejection is not a program.
-            if sad_path.is_some() && target.emit.is_none() {
+            if sad_path.is_some() && target.anchor {
                 continue;
             }
 
@@ -474,15 +517,14 @@ fn collect_trials() -> Vec<Trial> {
             let run = target.run;
             let case = std::sync::Arc::clone(&case);
             let sad_path = sad_path.clone();
-            let trial =
-                Trial::test(
-                    format!("{}::{}", case.name, target.name),
-                    move || match sad_path {
-                        Some(want) => assert_rejected(&case, run(&case), &want),
-                        None => assert_stdout(&case, &run(&case)?),
-                    },
-                )
-                .with_ignored_flag(!target.available);
+            let trial = Trial::test(format!("{}::{}", case.name, target.name), move || {
+                let outcome = run(&case)?;
+                match &sad_path {
+                    Some(want) => assert_rejected(&case, &outcome, want),
+                    None => assert_completed(&case, &outcome),
+                }
+            })
+            .with_ignored_flag(!target.available);
             trials.push(trial);
         }
     }
@@ -506,25 +548,34 @@ fn assert_stdout(case: &Case, stdout: &str) -> Result<(), Failed> {
     }
 }
 
-/// Assert a sad-path run failed and its error message contains `want`.
-fn assert_rejected(case: &Case, run: Result<String, Failed>, want: &str) -> Result<(), Failed> {
-    match run {
-        Ok(stdout) => Err(Failed::from(format!(
-            "case `{}`: expected a rejection containing `{want}`, but the program ran:\n{stdout}",
-            case.name
-        ))),
-        Err(failure) => {
-            let message = failure.message().unwrap_or_default().to_owned();
-            if message.contains(want) {
-                Ok(())
-            } else {
-                Err(Failed::from(format!(
-                    "case `{}`: rejection does not contain `{want}`:\n{message}",
-                    case.name
-                )))
-            }
-        }
+/// Assert a happy-path run completed and printed the `.stdout` golden.
+fn assert_completed(case: &Case, outcome: &Outcome) -> Result<(), Failed> {
+    if let Some(raised) = &outcome.raised {
+        return Err(Failed::from(format!(
+            "case `{}`: run failed:\n{raised}\n--- program ---\n{}",
+            case.name, outcome.program
+        )));
     }
+    assert_stdout(case, &outcome.stdout)
+}
+
+/// Assert a sad-path run raised an error whose message contains `want`, after
+/// printing exactly the `.stdout` golden. Only the raised message is searched —
+/// never the program text, which may contain the marker anywhere.
+fn assert_rejected(case: &Case, outcome: &Outcome, want: &str) -> Result<(), Failed> {
+    let Some(raised) = &outcome.raised else {
+        return Err(Failed::from(format!(
+            "case `{}`: expected a rejection containing `{want}`, but the program ran:\n{}",
+            case.name, outcome.stdout
+        )));
+    };
+    if !raised.contains(want) {
+        return Err(Failed::from(format!(
+            "case `{}`: rejection does not contain `{want}`:\n{raised}\n--- program ---\n{}",
+            case.name, outcome.program
+        )));
+    }
+    assert_stdout(case, &outcome.stdout)
 }
 
 fn main() {

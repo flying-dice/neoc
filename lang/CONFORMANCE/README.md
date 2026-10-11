@@ -21,13 +21,13 @@ One sub-directory per spec layer. A test in `lexical/` exercises the lexer in is
 | `lexical/` | `name.neoc` | `name.tokens` — one token per line, format `KIND@line:col "lexeme"`. **Deferred** — see `lexical/README.md`; neoc has no flat tokeniser to assert against. |
 | `syntax/`  | `name.neoc` (accept) | the source must parse against the tree-sitter grammar with no error node. A second form, `name.reject`, is a source the parser must reject (the tree contains an error or missing node); `name.reject.expected` names the error category in prose. |
 | `static/`  | `name.neoc` | `name.diagnostics` — the set of static errors the checker must report, one per line (empty file = well-typed). The match is order-independent. |
-| `dynamic/` | `name.neoc` | `name.lua` (the byte-for-byte lowering — readable, committed), `name.stdout` (the output the lowering must produce when run), and `name.rs` (the closest working Rust translation — see below). A rejection case ships `name.fails` instead of `name.stdout`/`name.rs`. |
+| `dynamic/` | `name.neoc` | `name.lua` (the byte-for-byte lowering — readable, committed), `name.stdout` (the output the lowering must produce when run), and `name.rs` (the closest working Rust translation — see below). A rejection case ships `name.fails` instead of `name.rs`; its `name.stdout` holds what the run prints before the rejection. |
 
 Pairs live side-by-side. The test runner glob is `*.neoc` and the expected files are derived by extension.
 
 ### Multi-module cases
 
-A `dynamic/` case that needs more than one file is a **directory** named like a single-file case. Its entry is `main.neoc`; the other modules sit beside it at the paths their `use` declarations name (`use geo::shape::Circle` is `geo/shape.neoc`). The case compiles as a project — `use` and `extern` `mod` resolve exactly as in a real build — and every module has its own readable `.lua` golden. The entry exports `pub fn main`; the runner serves the non-entry modules to `require` and then calls it. The case's `main.stdout` and `main.rs` anchor live in the directory (the anchor is one file, with the other modules as inline `mod`s).
+A `dynamic/` case that needs more than one file is a **directory** named like a single-file case. Its entry is `main.neoc`; the other modules sit beside it at the paths their `use` declarations name (`use geo::shape::Circle` is `geo/shape.neoc`). The case compiles as a project — `use` and `extern` `mod` resolve exactly as in a real build — and every module has its own readable `.lua` golden. The entry exports `pub fn main`; the runner serves the non-entry modules to `require` and then calls it. The case's `main.stdout` and `main.rs` anchor live in the directory (the anchor is one file, with the other modules as inline `mod`s). A directory case cannot carry `#[test]` fns: each module's test table is local to its chunk, out of the runner's reach, so the runner rejects such a case — put tests in a single-file case.
 
 ```
 dynamic/3-07-use-cross-module/
@@ -38,7 +38,7 @@ dynamic/3-07-use-cross-module/
 
 ### Sad-path cases
 
-A case that the runtime must **reject** carries `name.fails` (`main.fails` in a directory case) in place of `name.stdout` and `name.rs`. The file holds a fragment of the error the run must raise; the runner asserts the program fails and the message contains it. The `.lua` golden still pins the emit. A rejection has no Rust analogue, so the anchor is neither required nor run.
+A case that the runtime must **reject** carries `name.fails` (`main.fails` in a directory case) in place of `name.rs`. The file holds a non-blank fragment of the error the run must raise. The program must compile clean; the runner then asserts the run raises, the raised message (never the program text) contains the fragment, and the output printed before the raise equals `name.stdout` — so a rejection at the wrong point fails the case. The `.lua` golden still pins the emit. A rejection has no Rust analogue, so the anchor is neither required nor run.
 
 ## Naming
 

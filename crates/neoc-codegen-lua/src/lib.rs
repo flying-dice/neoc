@@ -518,6 +518,10 @@ pub(crate) struct LoopFrame {
     pub break_flag: Option<String>,
 }
 
+/// The line declaring a module's `__tests` table (§6.5), emitted only when the
+/// module has a `#[test]` fn — so its presence marks a test-bearing module.
+pub const TESTS_TABLE_DECL: &str = "local __tests = {}";
+
 const RESULT_PRELUDE: &str = r#"local Option = {}
 Option.__index = Option
 local Result = {}
@@ -669,7 +673,7 @@ impl Emitter {
         // The module `__tests` table a `#[test]` fn registers on (§6.5), declared
         // ahead of its registrations and of any prelude/imports prepended below.
         if self.uses_tests {
-            let mut out = vec!["local __tests = {}".to_string(), String::new()];
+            let mut out = vec![TESTS_TABLE_DECL.to_string(), String::new()];
             out.append(&mut self.lines);
             self.lines = out;
             self.prepend_origins(tracking, 2, preamble_origin);
