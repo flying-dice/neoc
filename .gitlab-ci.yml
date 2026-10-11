@@ -25,6 +25,21 @@ variables:
 
 # ── Cache anchors ─────────────────────────────────────────────────────────────
 
+# target/ caches are per-ref (`<job>-<ref slug>`) and fall back to the default
+# branch's cache on first run of a new ref, so third-party crates stay warm.
+# Per-ref keys alone are NOT enough: the fallback hands a branch main's
+# workspace rlibs, and cargo's mtime fingerprints can accept an rlib built from
+# different sources after a cache restore (#107: stale-API E0061). The real
+# guarantee is `.clean_workspace`: every job that restores target/ first drops
+# every workspace crate's artifacts, so only third-party dependencies are ever
+# reused. Crate list comes from `cargo tree` so it cannot drift.
+# CLEAN_ARGS = the job's profile/target flags (e.g. `--release --target <t>`).
+.clean_workspace: &clean_workspace
+  - |
+    for crate in $(cargo tree --workspace --depth 0 --prefix none | awk 'NF {print $1}'); do
+      cargo clean -p "$crate" $CLEAN_ARGS
+    done
+
 # Shared registry / git / bin cache — keyed by a manual version string so it
 # can be busted when tool versions need to change (bump tools-vN).
 .tools_cache: &tools_cache
@@ -40,10 +55,13 @@ lint:
   stage: lint
   cache:
     - *tools_cache
-    - key: lint-target
+    - key: lint-target-$CI_COMMIT_REF_SLUG
+      fallback_keys:
+        - lint-target-$CI_DEFAULT_BRANCH
       paths:
         - target/
   script:
+    - *clean_workspace
     - cargo fmt --check
     - cargo clippy --all-targets
 
@@ -54,10 +72,13 @@ test:
   needs: [lint]
   cache:
     - *tools_cache
-    - key: test-target
+    - key: test-target-$CI_COMMIT_REF_SLUG
+      fallback_keys:
+        - test-target-$CI_DEFAULT_BRANCH
       paths:
         - target/
   script:
+    - *clean_workspace
     - cargo build
     # Full workspace suite: runtime lib/bin tests plus the compiler's
     # integration tests (conformance.rs/_static/_syntax, cli.rs, LSP). The Lua
@@ -89,13 +110,18 @@ test:
 wasm:
   stage: test
   needs: [lint]
+  variables:
+    CLEAN_ARGS: --target wasm32-unknown-unknown
   cache:
     - *tools_cache
-    - key: wasm-target
+    - key: wasm-target-$CI_COMMIT_REF_SLUG
+      fallback_keys:
+        - wasm-target-$CI_DEFAULT_BRANCH
       paths:
         - target/
   script:
     - rustup target add wasm32-unknown-unknown
+    - *clean_workspace
     - cargo check --target wasm32-unknown-unknown -p neoc-ast -p neoc-macros -p neoc-codegen-lua
 
 # ── build ─────────────────────────────────────────────────────────────────────
@@ -112,10 +138,15 @@ build:linux-x86_64:
   stage: build
   cache:
     - *tools_cache
-    - key: build-x86_64-linux-gnu-target
+    - key: build-x86_64-linux-gnu-target-$CI_COMMIT_REF_SLUG
+      fallback_keys:
+        - build-x86_64-linux-gnu-target-$CI_DEFAULT_BRANCH
       paths:
         - target/
+  variables:
+    CLEAN_ARGS: --release
   script:
+    - *clean_workspace
     - cargo build --release
     - mkdir -p artifacts
     - strip target/release/neoc
@@ -132,14 +163,18 @@ build:windows-x86_64:
   variables:
     TARGET: x86_64-pc-windows-gnu
     CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: x86_64-w64-mingw32-gcc
+    CLEAN_ARGS: --release --target x86_64-pc-windows-gnu
   cache:
     - *tools_cache
-    - key: build-x86_64-windows-gnu-target
+    - key: build-x86_64-windows-gnu-target-$CI_COMMIT_REF_SLUG
+      fallback_keys:
+        - build-x86_64-windows-gnu-target-$CI_DEFAULT_BRANCH
       paths:
         - target/
   script:
     - apt-get update -qq && apt-get install -y -qq mingw-w64
     - rustup target add "${TARGET}"
+    - *clean_workspace
     - cargo build --release --target "${TARGET}"
     - mkdir -p artifacts
     - cp "target/${TARGET}/release/neoc.exe" "artifacts/neoc-${TARGET}.exe"
