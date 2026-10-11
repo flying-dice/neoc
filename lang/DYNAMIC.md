@@ -200,7 +200,12 @@ Number, string, and bool literals lower to their Lua spelling (`STRING_LITERAL` 
 ⟦ -e ⟧ₑ       = (-⟦e⟧)
 ```
 
-`+` selects Lua `+` or `..` by the static type of its operands (`STATIC.md` T-ARITH / T-CONCAT) — the choice is fixed at compile time, never a runtime check. `!=` lowers to Lua `~=`. Compound `s += e` on strings is the `s = s + e` case (`STATIC.md` §10), so it lowers to `s = (s .. ⟦e⟧)`.
+`+` selects Lua `+` or `..` by the static type of its operands (`STATIC.md` T-ARITH / T-CONCAT) — the choice is fixed at compile time, never a runtime check. `!=` lowers to Lua `~=`. Compound assignment `p op= e` (`STATIC.md` §4.1) lowers to `⟦p⟧ = ⟦p⟧ op ⟦e⟧`, with `..` for `op` when `p` is a `string` (`s += e` → `s = (s .. ⟦e⟧)`). A field base, indexed list, or index of `p` that is not a name or literal is bound once to a fresh local first, inside a `do … end`, so `p` is evaluated once:
+
+```
+⟦ b[i] op= e ⟧ₛ = do local ⟪b⟫ = ⟦b⟧ₑ ; local ⟪i⟫ = ⟦i⟧ₑ ; ⟪b⟫[⟪i⟫ + 1] = ⟪b⟫[⟪i⟫ + 1] op ⟦e⟧ₑ end
+⟦ b.f op= e ⟧ₛ  = do local ⟪b⟫ = ⟦b⟧ₑ ; ⟪b⟫.f = ⟪b⟫.f op ⟦e⟧ₑ end
+```
 
 ### 4.3 Range expressions
 
@@ -307,23 +312,27 @@ An *append* to `s` is an assignment `s = s + e₁ + … + eₙ` or `s += e` wher
 2. Within `L` — head, condition, and body — every occurrence of `s` is an append target, or the whole operand of a `return`. An occurrence anywhere else (a read, a prepend `s = e + s`, another assignment, an operand of an appended `eᵢ`, a struct-literal shorthand `S { s }`) disables the rule.
 3. `L` contains at least one append to `s`, none of them inside a closure or nested function, and binds no name `s` of its own (`let`, pattern, closure parameter, nested function).
 4. No closure or nested function anywhere in `s`'s scope mentions `s`: such a function could read the string while `L` still holds it in the accumulator.
+5. `L` is not inside a block, `if`, or `match` used for its value. Those lower to an IIFE (§4.5, §4.6, §4.8), where a `return` — or the one `?` hoists (§4.10) — leaves only the IIFE and would skip the fold after `L`.
 
 Where several nested loops satisfy the rule, only the outermost is rewritten; its appends include those of the inner loops. A loop that fails the rule may still contain a nested loop that satisfies it.
 
 ```
 ⟦ L ⟧ₛ   with s accumulating =
   do
-    local ⟪acc⟫ = { s }
+    local ⟪acc⟫ = { (s .. "") }
     ⟦ L ⟧ₛ                     -- appends and returns lowered as below
     s = table.concat(⟪acc⟫)
   end
 
-⟦ s = s + e₁ + … + eₙ ⟧ₛ  inside L = ⟪acc⟫[#⟪acc⟫ + 1] = ⟦e₁⟧ₑ  …  ⟪acc⟫[#⟪acc⟫ + 1] = ⟦eₙ⟧ₑ
-⟦ s += e ⟧ₛ               inside L = ⟪acc⟫[#⟪acc⟫ + 1] = ⟦e⟧ₑ
+⟦ s = s + e₁ + … + eₙ ⟧ₛ  inside L = ⟪acc⟫[#⟪acc⟫ + 1] = ⟪e₁⟫  …  ⟪acc⟫[#⟪acc⟫ + 1] = ⟪eₙ⟫
+⟦ s += e ⟧ₛ               inside L = ⟪acc⟫[#⟪acc⟫ + 1] = ⟪e⟫
+
+⟪e⟫ = ⟦e⟧ₑ             when e is a string literal
+⟪e⟫ = (⟦e⟧ₑ .. "")      otherwise
 ⟦ return s ⟧ₛ             inside L = return table.concat(⟪acc⟫)
 ```
 
-`⟪acc⟫` is a fresh local. The accumulator is seeded with the string's current value, so a prior value is kept and a loop that never runs leaves `s` unchanged. The fold runs after the loop however it was left: a `break` only leaves the loop, so the folded string holds exactly the appends made before it; a `return` of any other value leaves the function, and `s` is then unreachable (condition 4). `eᵢ` is evaluated and pushed in order, so evaluation order is that of the chained `..`. Every pushed value is a `string`, and `table.concat` joins strings exactly as `..` does.
+`⟪acc⟫` is a fresh local. The accumulator is seeded with the string's current value, so a prior value is kept and a loop that never runs leaves `s` unchanged. The fold runs after the loop however it was left: a `break` only leaves the loop, so the folded string holds exactly the appends made before it; a `return` of any other value leaves the function, and `s` is then unreachable (condition 4). `eᵢ` is evaluated and pushed in order, so evaluation order is that of the chained `..`. A well-typed pushed value is a `string`, and `table.concat` joins strings exactly as `..` does. A host can still break an `ext fn`'s `string` contract; `.. ""` then raises at the append, as plain `..` does, where `table.concat` would skip a `nil` or fail only at the fold. For a string, Lua returns the left operand of `.. ""` unchanged. The seed is checked the same way, so a non-string `s` raises on entry to `L`.
 
 ## 5. Patterns
 

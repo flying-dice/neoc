@@ -453,6 +453,8 @@ pub(crate) struct Emitter {
     concat_seq: usize,
     /// Counter feeding unique temporaries for the `?` operator (§4.10).
     try_seq: usize,
+    /// Counter feeding unique temporaries for compound-assignment places.
+    place_seq: usize,
     /// Target-module imports from `extern` blocks (`lang/EXTERN.md`). Each
     /// non-ambient `mod` becomes a `require` preamble line; ambient mods carry a
     /// global-root path and emit no `require`.

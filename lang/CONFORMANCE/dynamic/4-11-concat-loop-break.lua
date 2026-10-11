@@ -2,7 +2,7 @@ local function main()
   local s = ""
   local i = 0
   do
-    local __sb_1 = { s }
+    local __sb_1 = { (s .. "") }
     while true do
       local __brk_1 = false
       repeat
@@ -23,7 +23,7 @@ local function main()
   local w = "w"
   local n = 0
   do
-    local __sb_2 = { w }
+    local __sb_2 = { (w .. "") }
     while (n < 3) do
       n = (n + 1)
       __sb_2[#__sb_2 + 1] = "!"

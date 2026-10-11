@@ -318,7 +318,7 @@ impl<'a> Elaborator<'a> {
                 base: base.as_ref().map(|b| self.boxed(b)),
             },
             ast::ExprKind::List(items) => ast::ExprKind::List(self.exprs(items)),
-            ast::ExprKind::Assign { target, op, value } => self.assign(target, *op, value, span),
+            ast::ExprKind::Assign { target, op, value } => self.assign(target, *op, value),
             ast::ExprKind::If { cond, then, else_ } => ast::ExprKind::If {
                 cond: self.boxed(cond),
                 then: self.block(then),
@@ -407,42 +407,30 @@ impl<'a> Elaborator<'a> {
         }
     }
 
-    /// An assignment. A string-typed `lhs += v` is the `lhs = lhs + v` case of
-    /// `STATIC.md` §10 and elaborates to exactly that, with the `+` a
-    /// [`ast::BinOp::Concat`] — so the emitter sees one append shape whether the
-    /// source spelled it `s = s + v` or `s += v`. Every other assignment is
-    /// copied with its operands elaborated.
+    /// An assignment. A string-typed `p += v` elaborates to the compound op
+    /// [`ast::AssignOp::Concat`] (`STATIC.md` §4.1, compound assignment), so the
+    /// emitter lowers it with Lua `..` and still evaluates the place `p` once.
+    /// Every other assignment is copied with its operands elaborated.
     fn assign(
         &mut self,
         target: &ast::Expr,
         op: ast::AssignOp,
         value: &ast::Expr,
-        span: ast::Span,
     ) -> ast::ExprKind {
-        let new_target = self.expr(target);
-        let new_value = self.expr(value);
-        if op == ast::AssignOp::Add
+        let new_target = self.boxed(target);
+        let new_value = self.boxed(value);
+        let op = if op == ast::AssignOp::Add
             && self.checker.infer(target) == Ty::Str
             && self.checker.infer(value) == Ty::Str
         {
-            let concat = ast::Expr::new(
-                ast::ExprKind::Binary {
-                    op: ast::BinOp::Concat,
-                    lhs: Box::new(new_target.clone()),
-                    rhs: Box::new(new_value),
-                },
-                span,
-            );
-            return ast::ExprKind::Assign {
-                target: Box::new(new_target),
-                op: ast::AssignOp::Assign,
-                value: Box::new(concat),
-            };
-        }
+            ast::AssignOp::Concat
+        } else {
+            op
+        };
         ast::ExprKind::Assign {
-            target: Box::new(new_target),
+            target: new_target,
             op,
-            value: Box::new(new_value),
+            value: new_value,
         }
     }
 

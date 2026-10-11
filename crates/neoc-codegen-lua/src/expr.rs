@@ -175,27 +175,84 @@ impl Emitter {
             ast::ExprKind::Break => self.emit_break(),
             ast::ExprKind::Continue => self.emit_continue(),
             ast::ExprKind::Assign { target, op, value } => {
-                if self.emit_accumulated_append(target, *op, value) {
-                    return;
+                if !self.emit_accumulated_append(target, *op, value) {
+                    self.emit_assign(target, *op, value);
                 }
-                let t = self.emit_expr(target);
-                let v = self.emit_expr(value);
-                // Lua has no compound assignment; expand `a += b` to `a = a + b`.
-                let rhs = match op {
-                    ast::AssignOp::Assign => v,
-                    ast::AssignOp::Add => format!("{t} + {v}"),
-                    ast::AssignOp::Sub => format!("{t} - {v}"),
-                    ast::AssignOp::Mul => format!("{t} * {v}"),
-                    ast::AssignOp::Div => format!("{t} / {v}"),
-                    ast::AssignOp::Rem => format!("{t} % {v}"),
-                };
-                self.line(format!("{t} = {rhs}"));
             }
             _ => {
                 let s = self.emit_expr(e);
                 self.line(s);
             }
         }
+    }
+
+    /// Lower `target op= value`. Lua has no compound assignment, so `p op= v`
+    /// expands to `p = p op v` with the place `p` evaluated once (`STATIC.md`
+    /// §4.1): a field or index base, or an index, that is not a name or literal
+    /// binds to a fresh local first, scoped by a `do … end`.
+    fn emit_assign(&mut self, target: &ast::Expr, op: ast::AssignOp, value: &ast::Expr) {
+        let seq = self.place_seq;
+        let body = self.render(|em| {
+            let t = if op == ast::AssignOp::Assign {
+                em.emit_expr(target)
+            } else {
+                em.emit_place(target)
+            };
+            let v = em.emit_expr(value);
+            let rhs = match op {
+                ast::AssignOp::Assign => v,
+                ast::AssignOp::Add => format!("{t} + {v}"),
+                ast::AssignOp::Sub => format!("{t} - {v}"),
+                ast::AssignOp::Mul => format!("{t} * {v}"),
+                ast::AssignOp::Div => format!("{t} / {v}"),
+                ast::AssignOp::Rem => format!("{t} % {v}"),
+                ast::AssignOp::Concat => format!("({t} .. {v})"),
+            };
+            em.line(format!("{t} = {rhs}"));
+        });
+        let scoped = self.place_seq != seq;
+        if scoped {
+            self.line("do");
+            self.indent += 1;
+        }
+        for l in body {
+            self.line(l);
+        }
+        if scoped {
+            self.indent -= 1;
+            self.line("end");
+        }
+    }
+
+    /// The Lua place for a compound-assignment target, with any base or index
+    /// that is not a name or literal bound to a fresh local (see
+    /// [`Self::emit_assign`]).
+    fn emit_place(&mut self, target: &ast::Expr) -> String {
+        match &target.kind {
+            ast::ExprKind::Field { base, field } => {
+                let b = self.emit_once(base);
+                field_access(&b, field)
+            }
+            ast::ExprKind::Index { base, index } => {
+                let b = self.emit_once(base);
+                let i = self.emit_once(index);
+                index_access(&b, &i)
+            }
+            _ => self.emit_expr(target),
+        }
+    }
+
+    /// `e` as a Lua expression safe to repeat: `e` itself when it is a name or
+    /// literal, else a fresh local bound to it.
+    fn emit_once(&mut self, e: &ast::Expr) -> String {
+        let v = self.emit_expr(e);
+        if is_repeatable(e) {
+            return v;
+        }
+        self.place_seq += 1;
+        let tmp = format!("__place_{}", self.place_seq);
+        self.line(format!("local {tmp} = {v}"));
+        tmp
     }
 
     /// A block's statements without a trailing return (statement context).
@@ -385,18 +442,12 @@ impl Emitter {
             }
             ast::ExprKind::Field { base, field } => {
                 let b = self.emit_expr(base);
-                match field {
-                    ast::FieldAccess::Named(n, _) => format!("{b}.{n}"),
-                    // Tuple/newtype payload is stored positionally (Lua arrays
-                    // are 1-based), so `.0` reads `[1]`. Matches the constructor
-                    // (`N.new` stores at `[1]`) and the derive/pattern lowering.
-                    ast::FieldAccess::Tuple(i) => format!("{b}[{}]", i + 1),
-                }
+                field_access(&b, field)
             }
             ast::ExprKind::Index { base, index } => {
                 let b = self.emit_expr(base);
                 let i = self.emit_expr(index);
-                format!("{b}[({i}) + 1]")
+                index_access(&b, &i)
             }
             ast::ExprKind::StructLit { path, fields, base } => {
                 self.emit_struct_lit(path, fields, base.as_deref())
@@ -938,6 +989,35 @@ fn expr_uses_continue(expr: &ast::Expr) -> bool {
         }
         ast::ExprKind::Block(b) => body_uses_continue(b),
     }
+}
+
+/// Whether evaluating `e` twice is indistinguishable from evaluating it once:
+/// a name or a literal.
+fn is_repeatable(e: &ast::Expr) -> bool {
+    matches!(
+        e.kind,
+        ast::ExprKind::Path(_)
+            | ast::ExprKind::Int(_)
+            | ast::ExprKind::Float(_)
+            | ast::ExprKind::Str(_)
+            | ast::ExprKind::Bool(_)
+    )
+}
+
+/// Lua for field `field` of the Lua value `base`.
+fn field_access(base: &str, field: &ast::FieldAccess) -> String {
+    match field {
+        ast::FieldAccess::Named(n, _) => format!("{base}.{n}"),
+        // Tuple/newtype payload is stored positionally (Lua arrays are 1-based),
+        // so `.0` reads `[1]`. Matches the constructor (`N.new` stores at `[1]`)
+        // and the derive/pattern lowering.
+        ast::FieldAccess::Tuple(i) => format!("{base}[{}]", i + 1),
+    }
+}
+
+/// Lua for element `index` of the Lua list `base` (neoc lists are 0-based).
+fn index_access(base: &str, index: &str) -> String {
+    format!("{base}[({index}) + 1]")
 }
 
 fn bin_op(op: ast::BinOp) -> &'static str {

@@ -1108,6 +1108,11 @@ pub enum AssignOp {
     Mul,
     Div,
     Rem,
+    /// String append `p += e` on a `string` place. Not produced by the parser —
+    /// `+=` always parses as `Add`. The type checker's elaboration rewrites a
+    /// string-typed `Add` to `Concat` so the emitter can pick Lua `..` over `+`
+    /// while still evaluating the place once. (`lang/DYNAMIC.md` §4.2.)
+    Concat,
 }
 
 // ---- statements ------------------------------------------------------------

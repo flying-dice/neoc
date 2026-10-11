@@ -14,12 +14,12 @@ end
 local function main()
   local s = "start:"
   do
-    local __sb_1 = { s }
+    local __sb_1 = { (s .. "") }
     for i = 0, (5) - 1 do
-      __sb_1[#__sb_1 + 1] = digit((i % 3))
+      __sb_1[#__sb_1 + 1] = (digit((i % 3)) .. "")
       __sb_1[#__sb_1 + 1] = "-"
       __sb_1[#__sb_1 + 1] = "("
-      __sb_1[#__sb_1 + 1] = digit((i % 2))
+      __sb_1[#__sb_1 + 1] = (digit((i % 2)) .. "")
       __sb_1[#__sb_1 + 1] = ")"
     end
     s = table.concat(__sb_1)
@@ -27,7 +27,7 @@ local function main()
   println(s)
   local t = "same"
   do
-    local __sb_2 = { t }
+    local __sb_2 = { (t .. "") }
     for i = 0, (0) - 1 do
       __sb_2[#__sb_2 + 1] = "x"
     end

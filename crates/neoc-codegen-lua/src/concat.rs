@@ -24,7 +24,20 @@ struct Site {
     /// Inside a closure or nested function: a separate Lua function that can
     /// capture the variable.
     closure: bool,
+    /// Inside a block, `if`, or `match` used for its value. That lowers to an
+    /// IIFE, where a `return` (or the one hoisted by `?`) leaves only the
+    /// wrapper — it would skip a fold placed after a loop in it.
+    iife: bool,
 }
+
+const TOP: Site = Site {
+    closure: false,
+    iife: false,
+};
+const CLOSURE: Site = Site {
+    closure: true,
+    iife: false,
+};
 
 /// Callbacks for [`walk_expr`]. The walk is exhaustive over the AST so a new
 /// expression form cannot silently escape the analysis.
@@ -38,12 +51,16 @@ trait Visitor<'a> {
     fn bind(&mut self, name: &'a str);
 }
 
-fn walk_block<'a>(b: &'a ast::Block, site: Site, v: &mut impl Visitor<'a>) {
+/// Walk a block. `valued` says whether its trailing expression is the block's
+/// value (a function body, a valued block) or only run for effect.
+fn walk_block<'a>(b: &'a ast::Block, site: Site, valued: bool, v: &mut impl Visitor<'a>) {
     for stmt in &b.stmts {
         walk_stmt(stmt, site, v);
     }
-    if let Some(value) = &b.value {
-        walk_expr(value, site, v);
+    match &b.value {
+        Some(value) if valued => walk_expr(value, site, v),
+        Some(value) => walk_effect(value, site, v),
+        None => {}
     }
 }
 
@@ -55,7 +72,7 @@ fn walk_stmt<'a>(stmt: &'a ast::Stmt, site: Site, v: &mut impl Visitor<'a>) {
                 walk_expr(value, site, v);
             }
         }
-        ast::StmtKind::Expr(e) => walk_expr(e, site, v),
+        ast::StmtKind::Expr(e) => walk_effect(e, site, v),
         ast::StmtKind::Item(item) => {
             // Only nested functions lower (`emit_item_stmt`); they are separate
             // Lua functions and capture by closure.
@@ -66,7 +83,7 @@ fn walk_stmt<'a>(stmt: &'a ast::Stmt, site: Site, v: &mut impl Visitor<'a>) {
                         v.bind(name);
                     }
                 }
-                walk_block(&f.body, Site { closure: true }, v);
+                walk_block(&f.body, CLOSURE, true, v);
             }
         }
     }
@@ -97,6 +114,7 @@ fn walk_pattern<'a>(p: &'a ast::Pattern, v: &mut impl Visitor<'a>) {
     }
 }
 
+/// Walk an expression used for its value.
 fn walk_expr<'a>(e: &'a ast::Expr, site: Site, v: &mut impl Visitor<'a>) {
     if !v.expr(e, site) {
         return;
@@ -162,7 +180,7 @@ fn walk_expr<'a>(e: &'a ast::Expr, site: Site, v: &mut impl Visitor<'a>) {
         | ast::ExprKind::Loop { .. }
         | ast::ExprKind::Closure { .. }
         | ast::ExprKind::Block(_)
-        | ast::ExprKind::Return(_) => walk_control(e, site, v),
+        | ast::ExprKind::Return(_) => walk_control(e, site, true, v),
         ast::ExprKind::Int(_)
         | ast::ExprKind::Float(_)
         | ast::ExprKind::Str(_)
@@ -173,15 +191,42 @@ fn walk_expr<'a>(e: &'a ast::Expr, site: Site, v: &mut impl Visitor<'a>) {
     }
 }
 
-/// The control-flow and scoping forms of [`walk_expr`]: the ones that own
-/// blocks, bind names, or open a closure.
-fn walk_control<'a>(e: &'a ast::Expr, site: Site, v: &mut impl Visitor<'a>) {
+/// Walk an expression used for effect (a statement, a loop body's or
+/// statement block's trailing expression). Block-like forms here lower as Lua
+/// statements, not IIFEs.
+fn walk_effect<'a>(e: &'a ast::Expr, site: Site, v: &mut impl Visitor<'a>) {
+    let block_like = matches!(
+        e.kind,
+        ast::ExprKind::If { .. } | ast::ExprKind::Match { .. } | ast::ExprKind::Block(_)
+    );
+    if !block_like {
+        walk_expr(e, site, v);
+    } else if v.expr(e, site) {
+        walk_control(e, site, false, v);
+    }
+}
+
+/// The control-flow and scoping forms: the ones that own blocks, bind names,
+/// or open a closure. `valued` says whether `e` is used for its value; a valued
+/// block, `if`, or `match` is an IIFE for everything it contains.
+fn walk_control<'a>(e: &'a ast::Expr, site: Site, valued: bool, v: &mut impl Visitor<'a>) {
+    let inner = Site {
+        iife: site.iife || valued,
+        ..site
+    };
+    let branch = |body: &'a ast::Expr, v: &mut _| {
+        if valued {
+            walk_expr(body, inner, v);
+        } else {
+            walk_effect(body, inner, v);
+        }
+    };
     match &e.kind {
         ast::ExprKind::If { cond, then, else_ } => {
-            walk_expr(cond, site, v);
-            walk_block(then, site, v);
+            walk_expr(cond, inner, v);
+            walk_block(then, inner, valued, v);
             if let Some(else_) = else_ {
-                walk_expr(else_, site, v);
+                branch(else_, v);
             }
         }
         ast::ExprKind::Match { scrutinee, arms } => {
@@ -189,14 +234,14 @@ fn walk_control<'a>(e: &'a ast::Expr, site: Site, v: &mut impl Visitor<'a>) {
             for arm in arms {
                 walk_pattern(&arm.pattern, v);
                 if let Some(guard) = &arm.guard {
-                    walk_expr(guard, site, v);
+                    walk_expr(guard, inner, v);
                 }
-                walk_expr(&arm.body, site, v);
+                branch(&arm.body, v);
             }
         }
         ast::ExprKind::While { cond, body } => {
             walk_expr(cond, site, v);
-            walk_block(body, site, v);
+            walk_block(body, site, false, v);
         }
         ast::ExprKind::For {
             pattern,
@@ -205,16 +250,16 @@ fn walk_control<'a>(e: &'a ast::Expr, site: Site, v: &mut impl Visitor<'a>) {
         } => {
             walk_pattern(pattern, v);
             walk_expr(iter, site, v);
-            walk_block(body, site, v);
+            walk_block(body, site, false, v);
         }
-        ast::ExprKind::Loop { body } => walk_block(body, site, v),
+        ast::ExprKind::Loop { body } => walk_block(body, site, false, v),
         ast::ExprKind::Closure { params, body } => {
             for p in params {
                 v.bind(&p.name);
             }
-            walk_expr(body, Site { closure: true }, v);
+            walk_expr(body, CLOSURE, v);
         }
-        ast::ExprKind::Block(b) => walk_block(b, site, v),
+        ast::ExprKind::Block(b) => walk_block(b, inner, valued, v),
         ast::ExprKind::Return(Some(value)) => walk_expr(value, site, v),
         _ => {}
     }
@@ -256,16 +301,22 @@ fn append_parts<'a>(value: &'a ast::Expr, name: &str) -> Option<Vec<&'a ast::Exp
     is_append.then_some(parts)
 }
 
-/// The parts appended by `target = value` when it is an append to `name`.
+/// The parts appended by `target op= value` when it is an append to `name`:
+/// `name = name + p₁ + … + pₙ`, or the elaborated string `name += value`.
 fn append_to<'a>(
     target: &ast::Expr,
     op: ast::AssignOp,
     value: &'a ast::Expr,
     name: &str,
 ) -> Option<Vec<&'a ast::Expr>> {
-    (op == ast::AssignOp::Assign && is_name(target, name))
-        .then(|| append_parts(value, name))
-        .flatten()
+    if !is_name(target, name) {
+        return None;
+    }
+    match op {
+        ast::AssignOp::Assign => append_parts(value, name),
+        ast::AssignOp::Concat => Some(vec![value]),
+        _ => None,
+    }
 }
 
 /// Tallies how a region uses one variable.
@@ -365,6 +416,8 @@ impl<'a> Visitor<'a> for AppendTargets<'a> {
 
 /// Finds the outermost loops of a region that use `name` only as an append
 /// target. Loops inside closures are skipped: they run in another function.
+/// Loops inside an IIFE are skipped too: a `return` or `?` there leaves only
+/// the IIFE, past the fold (`lang/DYNAMIC.md` §4.11, condition 5).
 struct LoopFinder<'n> {
     name: &'n str,
     found: Vec<usize>,
@@ -376,7 +429,7 @@ impl<'a> Visitor<'a> for LoopFinder<'_> {
             e.kind,
             ast::ExprKind::While { .. } | ast::ExprKind::For { .. } | ast::ExprKind::Loop { .. }
         );
-        if !is_loop || site.closure {
+        if !is_loop || site.closure || site.iife {
             return true;
         }
         let mut scan = NameScan::new(self.name);
@@ -422,7 +475,7 @@ fn walk_scope<'a>(
     name: &str,
     v: &mut impl Visitor<'a>,
 ) {
-    let site = Site { closure: false };
+    let site = TOP;
     for stmt in rest {
         if let ast::StmtKind::Let(l) = &stmt.kind
             && binds_name(&l.pattern, name)
@@ -434,6 +487,8 @@ fn walk_scope<'a>(
         }
         walk_stmt(stmt, site, v);
     }
+    // The declaring block's own trailing value: taken as valued, which can
+    // only decline a rewrite (an IIFE) that a statement block would allow.
     if let Some(value) = value {
         walk_expr(value, site, v);
     }
@@ -444,9 +499,8 @@ impl Emitter {
     /// `let` that a later statement appends to.
     pub(crate) fn emit_stmts(&mut self, block: &ast::Block) {
         let mut targets = AppendTargets::default();
-        let site = Site { closure: false };
         for stmt in &block.stmts {
-            walk_stmt(stmt, site, &mut targets);
+            walk_stmt(stmt, TOP, &mut targets);
         }
         for (i, stmt) in block.stmts.iter().enumerate() {
             if let ast::StmtKind::Let(l) = &stmt.kind
@@ -485,7 +539,7 @@ impl Emitter {
 
     /// Emit `emit_loop` (the loop `loop_expr`), accumulating the planned
     /// variables' appends: each gets a table seeded with the string's current
-    /// value, and is folded back with `table.concat` right after the loop — so
+    /// value (checked as a `..` operand, see [`string_operand`]), and is folded back with `table.concat` right after the loop — so
     /// a `break` (which only leaves the loop) still lands on the folded string,
     /// and a `return` leaves a string nothing can read.
     pub(crate) fn emit_accumulating(
@@ -503,7 +557,7 @@ impl Emitter {
             for name in names {
                 em.concat_seq += 1;
                 let acc = format!("__sb_{}", em.concat_seq);
-                em.line(format!("local {acc} = {{ {name} }}"));
+                em.line(format!("local {acc} = {{ {} }}", checked(&name)));
                 em.accumulators.push((name, acc));
             }
             emit_loop(em);
@@ -546,9 +600,27 @@ impl Emitter {
             return false;
         };
         for part in parts {
-            let part = self.emit_expr(part);
+            let part = string_operand(part, self.emit_expr(part));
             self.line(format!("{acc}[#{acc} + 1] = {part}"));
         }
         true
     }
+}
+
+/// `lua` (the lowering of `part`) as a value `..` would accept, raising where
+/// `..` would. A host can break an `ext fn`'s `string` contract; plain `s .. x`
+/// then raises at the append, while `table.concat` would skip a `nil` and
+/// report anything else only at the fold. `x .. ""` is the same check, and Lua
+/// returns a string left operand of it unchanged. A string literal needs none.
+fn string_operand(part: &ast::Expr, lua: String) -> String {
+    if matches!(part.kind, ast::ExprKind::Str(_)) {
+        lua
+    } else {
+        checked(&lua)
+    }
+}
+
+/// `lua .. ""`: `lua` itself if it is a string, else what `..` does with it.
+fn checked(lua: &str) -> String {
+    format!("({lua} .. \"\")")
 }

@@ -1,7 +1,7 @@
 local function upto(limit)
   local s = ""
   do
-    local __sb_1 = { s }
+    local __sb_1 = { (s .. "") }
     for i = 0, (10) - 1 do
       __sb_1[#__sb_1 + 1] = "x"
       if (i == limit) then
@@ -15,7 +15,7 @@ end
 local function verdict(limit)
   local s = ""
   do
-    local __sb_2 = { s }
+    local __sb_2 = { (s .. "") }
     for i = 0, (10) - 1 do
       __sb_2[#__sb_2 + 1] = "y"
       if (i == limit) then

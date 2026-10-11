@@ -1,0 +1,32 @@
+// DYNAMIC.md §4.2, STATIC.md §4.1: compound assignment evaluates its place
+// once. `?` in the index runs `tick` a single time, and the read and the write
+// address the same element, for a string `+=` as for a numeric one.
+extern {
+    fn println(s: string);
+}
+
+fn tick(calls: [string]) -> Result<number, string> {
+    calls[0] += "t";
+    Ok(0)
+}
+
+fn run(calls: [string]) -> Result<string, string> {
+    let xs = ["a", "b"];
+    xs[tick(calls)?] += "!";
+    let ns = [1, 2];
+    ns[tick(calls)?] += 10;
+    if ns[0] == 11 {
+        Ok(xs[0] + xs[1])
+    } else {
+        Err("numeric place evaluated twice")
+    }
+}
+
+fn main() {
+    let calls = [""];
+    match run(calls) {
+        Ok(v) => println(v),
+        Err(e) => println(e),
+    }
+    println(calls[0]);
+}

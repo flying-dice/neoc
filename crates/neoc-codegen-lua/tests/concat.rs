@@ -1,9 +1,10 @@
 //! Loop-carried string append lowering (`lang/DYNAMIC.md` §4.11): when the
 //! emitter accumulates appends in a table and folds with `table.concat`, and —
-//! as important — every shape where it must keep the plain `..`.
+//! as important — every shape where it must keep the plain `..`. Also the
+//! string compound assignment it builds on (§4.2, `STATIC.md` §4.1).
 //!
 //! Source → parse → elaborate → emit, since the append is recognised by the
-//! `Concat` operator the elaboration pass marks.
+//! `Concat` operators (binary and compound) the elaboration pass marks.
 
 use neoc_codegen_lua::emit;
 
@@ -42,7 +43,7 @@ fn for_loop_append_accumulates() {
     for i in 0..3 { s = s + "x"; }
     println(s);
 }"#);
-    assert!(out.contains("local __sb_1 = { s }"), "{out}");
+    assert!(out.contains("local __sb_1 = { (s .. \"\") }"), "{out}");
     assert!(out.contains("__sb_1[#__sb_1 + 1] = \"x\""), "{out}");
     // The fold follows the loop's `end` and precedes the read.
     let end = out
@@ -148,8 +149,8 @@ fn two_strings_get_two_accumulators() {
     for i in 0..2 { a += "x"; b += "y"; }
     println(a + b);
 }"#);
-    assert!(out.contains("local __sb_1 = { a }"), "{out}");
-    assert!(out.contains("local __sb_2 = { b }"), "{out}");
+    assert!(out.contains("local __sb_1 = { (a .. \"\") }"), "{out}");
+    assert!(out.contains("local __sb_2 = { (b .. \"\") }"), "{out}");
 }
 
 #[test]
@@ -312,4 +313,137 @@ fn a_later_shadow_does_not_block_the_first_binding() {
     println(peek());
 }"#);
     assert_eq!(folds(&out), 1, "{out}");
+}
+
+#[test]
+fn loop_in_a_valued_block_is_not_rewritten() {
+    // The block lowers to an IIFE; its `return` would skip the fold.
+    let out = lua(r#"fn f(limit: number) -> string {
+    let s = "";
+    let tag = { for i in 0..5 { s += "x"; if i == limit { return "early"; } } "done" };
+    s + "|" + tag
+}"#);
+    assert_plain(&out);
+}
+
+#[test]
+fn loop_in_a_valued_if_is_not_rewritten() {
+    let out = lua(r#"fn g(limit: number) -> string {
+    let s = "";
+    let tag = if limit >= 0 { for i in 0..5 { s += "y"; if i == limit { return s; } } "done" } else { "neg" };
+    s + "|" + tag
+}"#);
+    assert_plain(&out);
+}
+
+#[test]
+fn loop_in_a_valued_match_is_not_rewritten() {
+    let out = lua(r#"fn g(limit: number) -> string {
+    let s = "";
+    let tag = match limit { 0 => "zero", _ => { for i in 0..5 { s += "y"; } "done" } };
+    s + "|" + tag
+}"#);
+    assert_plain(&out);
+}
+
+#[test]
+fn try_in_a_loop_in_a_valued_block_is_not_rewritten() {
+    // `?` hoists its `return` into the IIFE's body, same as an explicit one.
+    let out = lua(r#"fn step(i: number) -> Result<number, string> { Ok(i) }
+fn h() -> Result<string, string> {
+    let s = "";
+    let tag = { for i in 0..5 { s += "z"; let n = step(i)?; } "done" };
+    Ok(s + "|" + tag)
+}"#);
+    assert_plain(&out);
+}
+
+#[test]
+fn loop_in_a_statement_if_still_accumulates() {
+    // Control: an `if` used for effect lowers to a Lua `if`, no IIFE.
+    let out = lua(r#"fn f(limit: number) -> string {
+    let s = "";
+    if limit >= 0 { for i in 0..5 { s += "x"; if i == limit { return "early"; } } }
+    s
+}"#);
+    assert_eq!(folds(&out), 1, "{out}");
+}
+
+#[test]
+fn a_valued_block_inside_the_loop_still_accumulates() {
+    // The IIFE is inside the loop: its `return` leaves the IIFE and the loop
+    // carries on, as it does under plain `..`; the fold still runs after.
+    let out = lua(r#"fn f() -> string {
+    let s = "";
+    for i in 0..5 { let t = { s += "x"; i }; }
+    s
+}"#);
+    assert_eq!(folds(&out), 1, "{out}");
+}
+
+#[test]
+fn pushed_values_are_checked_like_concat_operands() {
+    // An `ext fn` result is host-supplied; `.. ""` raises where `..` would.
+    let out = lua(r#"extern { fn part(i: number) -> string; }
+fn main() {
+    let s = "";
+    for i in 0..4 { s += part(i); s = s + "-" + part(i); }
+    println(s);
+}"#);
+    assert_eq!(folds(&out), 1, "{out}");
+    assert_eq!(out.matches("= (part(i) .. \"\")").count(), 2, "{out}");
+    assert!(out.contains("__sb_1[#__sb_1 + 1] = \"-\""), "{out}");
+}
+
+#[test]
+fn string_compound_assign_lowers_to_concat() {
+    let out = lua(r#"fn main() {
+    let s = "";
+    s += "x";
+    println(s);
+}"#);
+    assert!(out.contains("s = (s .. \"x\")"), "{out}");
+}
+
+#[test]
+fn compound_assign_evaluates_the_place_once() {
+    // `?` in the index: one `tick()` call, and the read and the write address
+    // the same element.
+    let out = lua(r#"extern { fn tick() -> Result<number, string>; }
+fn run() -> Result<string, string> {
+    let xs = ["a", "b"];
+    xs[tick()?] += "!";
+    Ok(xs[0] + xs[1])
+}"#);
+    assert_eq!(out.matches("tick()").count(), 1, "{out}");
+    assert!(out.contains("local __place_1 = __try_0[1]"), "{out}");
+    assert!(
+        out.contains("xs[(__place_1) + 1] = (xs[(__place_1) + 1] .. \"!\")"),
+        "{out}"
+    );
+}
+
+#[test]
+fn numeric_compound_assign_evaluates_the_place_once() {
+    let out = lua("extern { fn key() -> number; }
+fn main() {
+    let xs = [1, 2];
+    xs[key()] += 1;
+}");
+    assert_eq!(out.matches("key()").count(), 1, "{out}");
+    assert!(
+        out.contains("xs[(__place_1) + 1] = xs[(__place_1) + 1] + 1"),
+        "{out}"
+    );
+}
+
+#[test]
+fn compound_assign_on_a_name_binds_no_temporary() {
+    let out = lua("fn main() {
+    let xs = [1, 2];
+    let i = 0;
+    xs[i] += 1;
+}");
+    assert!(!out.contains("__place_"), "{out}");
+    assert!(out.contains("xs[(i) + 1] = xs[(i) + 1] + 1"), "{out}");
 }

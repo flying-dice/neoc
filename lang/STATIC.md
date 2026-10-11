@@ -193,6 +193,7 @@ x : τ ∈ Γ                          Γ ⊢ e₁ : number   Γ ⊢ e₂ : numb
 - `+` is overloaded on `number` (arithmetic) and `string` (concatenation) only — `T-ARITH` and `T-CONCAT`. No other type supports `+`.
 - Comparison `< > <= >=` requires both operands to be `number` and yields `bool`. Equality `== !=` requires both operands to share one of `number`, `string`, `bool`, or a type deriving `Eq`, and yields `bool`.
 - An `if` used for its value requires both branches and a common type (`T-IF`); an `if` with no `else` has type `()` and its block's value is discarded.
+- Compound assignment `p op= e` (`op` one of `+ - * / %`) requires `p op e` to be well-typed with the type of `p`, so `+=` is arithmetic on `number` and concatenation on `string`. It means `p = p op e` with the place `p` evaluated **once**: the subexpressions of `p` — a field base, an indexed list, an index, any `?` among them — run a single time, before `e`, and the read and the write address the same place.
 
 Block typing: a block's type is the type of its final expression, or `()` if there is none.
 

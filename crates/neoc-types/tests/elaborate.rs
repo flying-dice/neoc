@@ -173,11 +173,11 @@ fn first_assign(module: &Module) -> (AssignOp, &Expr) {
 }
 
 #[test]
-fn string_compound_add_becomes_plain_assign_of_concat() {
+fn string_compound_add_becomes_compound_concat() {
     let m = elaborate(&parse(r#"fn f() { let s = ""; s += "a"; }"#));
     let (op, value) = first_assign(&m);
-    assert_eq!(op, AssignOp::Assign);
-    assert_eq!(binop(value), BinOp::Concat);
+    assert_eq!(op, AssignOp::Concat);
+    assert!(matches!(value.kind, ExprKind::Str(_)), "{value:?}");
 }
 
 #[test]
