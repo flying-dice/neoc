@@ -550,15 +550,51 @@ impl<'a> Checker<'a> {
             ast::ItemKind::Impl(b) => self.check_impl(b),
             ast::ItemKind::Trait(t) => {
                 self.check_supertraits(t);
-                for ti in &t.items {
-                    if let Some(body) = &ti.default {
-                        self.check_fn_body(&ti.sig, body, Some("Self"));
-                    }
-                }
+                self.check_trait_defaults(t);
             }
             ast::ItemKind::Extern(block) => self.check_extern_block(&block.items, false, item.span),
             _ => {}
         }
+    }
+
+    /// Brings `Self` into scope as a type parameter bounded by the trait
+    /// `trait_name`, for checking one of that trait's default bodies. The caller
+    /// saves and restores `type_params` / `type_bounds` around the body.
+    pub(crate) fn enter_trait_self(&mut self, trait_name: &str) {
+        self.type_params.push("Self".to_string());
+        self.type_bounds
+            .entry("Self".to_string())
+            .or_default()
+            .push(trait_name.to_string());
+    }
+
+    /// The type `self` (and `Self`) denotes for target `name`: a type parameter
+    /// when `name` is one in scope (a blanket impl's target, a trait's `Self`),
+    /// otherwise the named type.
+    pub(crate) fn self_target(&self, name: &str) -> Ty {
+        if self.type_params.iter().any(|p| p == name) {
+            Ty::Param(name.to_string())
+        } else {
+            Ty::named(name)
+        }
+    }
+
+    /// Checks each default body of `t` with `Self` as a type parameter bounded
+    /// by the trait itself, so `self.m()` resolves through the trait's own
+    /// methods and its supertraits' (`STATIC.md` §3.4) exactly as it does for
+    /// a `T: Trait` parameter. The body is checked once, abstractly; each
+    /// implementor inherits it (see [`Checker::default_method`]).
+    fn check_trait_defaults(&mut self, t: &ast::TraitDecl) {
+        let prev_params = self.type_params.clone();
+        let prev_bounds = self.type_bounds.clone();
+        self.enter_trait_self(&t.name);
+        for ti in &t.items {
+            if let Some(body) = &ti.default {
+                self.check_fn_body(&ti.sig, body, Some("Self"));
+            }
+        }
+        self.type_params = prev_params;
+        self.type_bounds = prev_bounds;
     }
 
     /// Validates a trait's supertrait list: each named supertrait must be a
@@ -595,13 +631,7 @@ impl<'a> Checker<'a> {
         }
         // `self`'s type is the target — a type parameter (a blanket impl's
         // target) or a concrete type. `Self` in the signature is read the same.
-        let self_target: Option<Ty> = self_ty.map(|t| {
-            if self.type_params.iter().any(|p| p == t) {
-                Ty::Param(t.to_string())
-            } else {
-                Ty::named(t)
-            }
-        });
+        let self_target: Option<Ty> = self_ty.map(|t| self.self_target(t));
 
         self.scopes.push();
         for p in &sig.params {
@@ -727,13 +757,6 @@ impl<'a> Checker<'a> {
             return None;
         }
         Some(target)
-    }
-
-    pub(crate) fn subst_self(ty: Ty, self_ty: Option<&str>) -> Ty {
-        match self_ty {
-            Some(target) => ty.subst_self(&Ty::named(target)),
-            None => ty,
-        }
     }
 
     // ---- statements & blocks ----------------------------------------------
@@ -1293,6 +1316,12 @@ impl<'a> Checker<'a> {
         }
         self.record_member(method_span, name, method);
         let Some(m) = self.table.methods.get(&(name.clone(), method.to_string())) else {
+            // A trait the type implements may supply the method as a default
+            // the impl did not override.
+            if let Some((params, ret)) = self.default_method(name, method) {
+                self.check_call_args(method, &params, &arg_tys, args, span);
+                return ret;
+            }
             // A blanket impl may grant the method: if the receiver satisfies a
             // blanket's conditions and its trait declares `method`, resolve
             // through that trait with `Self` read as the concrete type.

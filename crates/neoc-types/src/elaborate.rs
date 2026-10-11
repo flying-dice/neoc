@@ -25,11 +25,17 @@ use crate::ty::Ty;
 /// elaboration runs after [`crate::check`] has already reported them.
 pub struct Elaborator<'a> {
     checker: Checker<'a>,
+    /// The trait whose default bodies are being elaborated, so `Self` is in
+    /// scope as a parameter bounded by it (mirrors the checker).
+    trait_self: Option<String>,
 }
 
 impl<'a> Elaborator<'a> {
     fn new(checker: Checker<'a>) -> Self {
-        Self { checker }
+        Self {
+            checker,
+            trait_self: None,
+        }
     }
 
     // ---- items -------------------------------------------------------------
@@ -159,6 +165,7 @@ impl<'a> Elaborator<'a> {
     }
 
     fn trait_decl(&mut self, t: &ast::TraitDecl) -> ast::TraitDecl {
+        self.trait_self = Some(t.name.clone());
         let items = t
             .items
             .iter()
@@ -170,12 +177,21 @@ impl<'a> Elaborator<'a> {
                     .map(|body| self.fn_body(&ti.sig, body, Some("Self"))),
             })
             .collect();
+        self.trait_self = None;
         ast::TraitDecl {
             name: t.name.clone(),
             generics: t.generics.clone(),
             supertraits: t.supertraits.clone(),
             assoc_types: t.assoc_types.clone(),
             items,
+        }
+    }
+
+    /// `ty` with `Self` read as `target`, when there is one.
+    fn subst_target(ty: Ty, target: Option<&Ty>) -> Ty {
+        match target {
+            Some(t) => ty.subst_self(t),
+            None => ty,
         }
     }
 
@@ -191,23 +207,27 @@ impl<'a> Elaborator<'a> {
         let prev_bounds = std::mem::take(&mut self.checker.type_bounds);
         self.checker.type_params = sig.generics.iter().map(|g| g.name.clone()).collect();
         self.checker.type_bounds = crate::collect::param_bounds(sig);
+        if let Some(trait_name) = self.trait_self.clone() {
+            self.checker.enter_trait_self(&trait_name);
+        }
+        let self_target = self_ty.map(|t| self.checker.self_target(t));
 
         self.checker.scopes.push();
         for p in &sig.params {
             match p {
                 ast::Param::Receiver => {
-                    if let Some(t) = self_ty {
-                        self.checker.scopes.bind("self", Ty::named(t));
+                    if let Some(st) = &self_target {
+                        self.checker.scopes.bind("self", st.clone());
                     }
                 }
                 ast::Param::Named { name, ty, .. } => {
-                    let pty = Checker::subst_self(self.checker.lower(ty), self_ty);
+                    let pty = Self::subst_target(self.checker.lower(ty), self_target.as_ref());
                     self.checker.scopes.bind(name.clone(), pty);
                 }
             }
         }
         let ret = sig.ret.as_ref().map_or(Ty::Unit, |r| self.checker.lower(r));
-        let ret = Checker::subst_self(ret, self_ty);
+        let ret = Self::subst_target(ret, self_target.as_ref());
         let prev_ret = std::mem::replace(&mut self.checker.ret_ty, ret);
         let prev_target =
             std::mem::replace(&mut self.checker.impl_target, self_ty.map(str::to_string));
