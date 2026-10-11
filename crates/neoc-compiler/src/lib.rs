@@ -563,6 +563,7 @@ fn check_and_emit_module(
     let inputs = EmitInputs {
         enums: imported_enums(root, loaded, &me.module),
         externs,
+        shadowed_types: shadowed_type_imports(root, loaded, &me.module, &table),
         // Every module a project build emits is a requireable library — the
         // entry included, since a host consuming the build `require`s it.
         as_module: true,
@@ -648,10 +649,11 @@ fn resolve_use(
     // surface. Gate per namespace, mirroring the namespaces `import_from` will
     // actually write: a value collision would bind one name twice in the emitted
     // module; a type collision shadows last-wins in the checker. A type-only
-    // import (a data-only struct, type-erased in the emitted output) and a
-    // value import that share a final segment land in different namespaces and
-    // legitimately coexist (#58), so checking *both* namespaces against either
-    // binding would over-reject.
+    // import (a data-only struct: absent from the value namespace, its
+    // constructor table still emitted under a fresh local, `lang/DYNAMIC.md`
+    // §3.7) and a value import that share a final segment land in different
+    // namespaces and legitimately coexist (#58), so checking *both* namespaces
+    // against either binding would over-reject.
     // Aliases sidestep the check — `binding` is the alias, not the final
     // segment. The earlier `use` keeps its binding; the conflicting one is not
     // re-imported, so downstream resolution stays deterministic.
@@ -720,6 +722,10 @@ struct EmitInputs<'a> {
     /// Extern items brought in by `use`, for native-import reconstruction in the
     /// consumer (`lang/EXTERN.md` §Lowering).
     externs: Vec<ast::ExternItem>,
+    /// Type-only `use`s whose binding the module's value namespace also holds.
+    /// The backend binds each to a fresh local so the constructor and the value
+    /// coexist at runtime (`lang/DYNAMIC.md` §3.7).
+    shadowed_types: Vec<codegen_lua::ShadowedTypeImport>,
     /// Whether the module is emitted as a requireable library. A project build
     /// sets `true` so each module ends with a `return { … }` export table a
     /// consumer can `require`; single-file `transpile` leaves it `false` so the
@@ -749,6 +755,7 @@ fn emit(target: Target, module: &ast::Module, source: &str, inputs: &EmitInputs)
                 source,
                 &inputs.enums,
                 &inputs.externs,
+                &inputs.shadowed_types,
                 inputs.as_module,
             );
             Emitted {
@@ -828,6 +835,42 @@ fn imported_externs(
         }
     }
     out
+}
+
+/// The `use`s of `module` that import a type-namespace-only item under a
+/// binding its resolved value namespace (`table`: own `const`/`fn` items plus
+/// value imports) also holds. The type is absent from the value namespace, but
+/// its constructor is still a runtime table the module needs (`S { .. }` lowers
+/// to `S.new`), so the backend binds it to a fresh local rather than letting the
+/// value shadow it (`lang/DYNAMIC.md` §3.7).
+fn shadowed_type_imports(
+    root: &Path,
+    loaded: &HashMap<PathBuf, LoadedModule>,
+    module: &ast::Module,
+    table: &types::SymbolTable,
+) -> Vec<codegen_lua::ShadowedTypeImport> {
+    module
+        .items
+        .iter()
+        .filter_map(|item| {
+            let ast::ItemKind::Use(u) = &item.kind else {
+                return None;
+            };
+            let last = u.path.last()?;
+            let source = module_file(root, &u.path)
+                .map(|p| canonical_or(&p))
+                .and_then(|dep| loaded.get(&dep))?;
+            let type_only =
+                source.table.types.contains_key(last) && !source.table.values.contains_key(last);
+            let binding = u.alias.as_ref().unwrap_or(last);
+            (type_only && table.values.contains_key(binding)).then(|| {
+                codegen_lua::ShadowedTypeImport {
+                    path: u.path.clone(),
+                    binding: binding.clone(),
+                }
+            })
+        })
+        .collect()
 }
 
 /// The `pub` enum declarations `module` imports, gathered through its `use`

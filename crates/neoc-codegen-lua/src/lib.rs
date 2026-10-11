@@ -211,13 +211,26 @@ pub struct EmitResult {
     pub source_map: LineMap,
 }
 
+/// A `use` that brings in a type-namespace-only item (a struct) under a binding
+/// the module's value namespace also holds — a value import or a module-level
+/// `const`/`fn`. The struct constructor is still a runtime table (`S { .. }`
+/// lowers to `S.new`), so the import binds a fresh local the value cannot
+/// shadow (`lang/DYNAMIC.md` §3.7).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShadowedTypeImport {
+    /// The `use` path, module segments then the imported item.
+    pub path: Vec<ast::Ident>,
+    /// The name the `use` binds: its alias, else the item.
+    pub binding: ast::Ident,
+}
+
 /// Lower a module to Lua 5.1 source, with no source map.
 ///
 /// Use [`emit_with_source`] when a runtime needs to translate emitted-Lua line
 /// numbers back to neoc positions; the emitted Lua text is identical either way.
 #[must_use]
 pub fn emit(module: &ast::Module) -> EmitResult {
-    emit_inner(module, None, &[], &[], false)
+    emit_inner(module, None, &[], &[], &[], false)
 }
 
 /// Lower a module to Lua 5.1 source and build a [`LineMap`] from `source`.
@@ -228,7 +241,7 @@ pub fn emit(module: &ast::Module) -> EmitResult {
 /// differs.
 #[must_use]
 pub fn emit_with_source(module: &ast::Module, source: &str) -> EmitResult {
-    emit_inner(module, Some(source), &[], &[], false)
+    emit_inner(module, Some(source), &[], &[], &[], false)
 }
 
 /// Like [`emit_with_source`], but also given the `pub` enum declarations the
@@ -240,6 +253,11 @@ pub fn emit_with_source(module: &ast::Module, source: &str) -> EmitResult {
 /// definitions are emitted by — or, for externs, *not* emitted by — the module
 /// that declares them.
 ///
+/// `shadowed_types` names the `use`s whose type-only binding the module's value
+/// namespace also takes. Each binds a fresh local that struct-literal / update /
+/// associated-path references read; the value keeps the plain name
+/// (`lang/DYNAMIC.md` §3.7).
+///
 /// `as_module` selects a requireable library (each `pub` runtime binding emitted
 /// as a `local` and a trailing `return { name = name, … }`) over a directly
 /// runnable script (globals, no trailing `return`). A project build passes
@@ -250,6 +268,7 @@ pub fn emit_with_imports(
     source: &str,
     imported_enums: &[&ast::EnumDecl],
     imported_externs: &[ast::ExternItem],
+    shadowed_types: &[ShadowedTypeImport],
     as_module: bool,
 ) -> EmitResult {
     emit_inner(
@@ -257,6 +276,7 @@ pub fn emit_with_imports(
         Some(source),
         imported_enums,
         imported_externs,
+        shadowed_types,
         as_module,
     )
 }
@@ -266,6 +286,7 @@ fn emit_inner(
     source: Option<&str>,
     imported_enums: &[&ast::EnumDecl],
     imported_externs: &[ast::ExternItem],
+    shadowed_types: &[ShadowedTypeImport],
     as_module: bool,
 ) -> EmitResult {
     // A `use`d extern item lowers to its native `require` in *this* consumer, not
@@ -291,11 +312,66 @@ fn emit_inner(
         imported_externs: imported_externs.to_vec(),
         imported_extern_names: ast::extern_value_names_from_items(imported_externs),
         as_module,
+        type_renames: type_renames(shadowed_types, source.unwrap_or_default()),
         ..Emitter::default()
     };
     e.emit_module(module);
     let diagnostics = std::mem::take(&mut e.diagnostics);
     e.finish_with_map(diagnostics)
+}
+
+/// The fresh local a shadowed type import binds, keyed by its binding.
+struct TypeRename {
+    /// The `use` path, to pick the type import out from the value `use` that
+    /// shares its binding.
+    path: Vec<ast::Ident>,
+    /// The emitted local holding the type's runtime table.
+    local: String,
+}
+
+/// Binding → [`TypeRename`] for each shadowed type import. Each fresh local
+/// avoids the source's identifiers and every local allocated before it, so two
+/// shadowed types never share one.
+///
+/// Every binding the module can declare appears verbatim in its source, so a
+/// name absent from it cannot be captured by a user binding.
+fn type_renames(shadowed: &[ShadowedTypeImport], source: &str) -> HashMap<String, TypeRename> {
+    let mut allocated = HashSet::new();
+    let mut renames = HashMap::new();
+    for s in shadowed {
+        let local = fresh_type_local(&s.binding, |name| {
+            allocated.contains(name) || source_mentions_ident(source, name)
+        });
+        allocated.insert(local.clone());
+        let rename = TypeRename {
+            path: s.path.clone(),
+            local,
+        };
+        renames.insert(s.binding.clone(), rename);
+    }
+    renames
+}
+
+/// `__type_<binding>`, suffixed `_1`, `_2`, … until `is_taken` returns false.
+fn fresh_type_local(binding: &str, is_taken: impl Fn(&str) -> bool) -> String {
+    let base = format!("__type_{binding}");
+    let mut name = base.clone();
+    let mut suffix = 0;
+    while is_taken(&name) {
+        suffix += 1;
+        name = format!("{base}_{suffix}");
+    }
+    name
+}
+
+/// Whether `name` occurs in `source` as a whole identifier token.
+fn source_mentions_ident(source: &str, name: &str) -> bool {
+    let is_ident = |c: char| c.is_alphanumeric() || c == '_';
+    source.match_indices(name).any(|(at, _)| {
+        let before = source[..at].chars().next_back();
+        let after = source[at + name.len()..].chars().next();
+        !before.is_some_and(is_ident) && !after.is_some_and(is_ident)
+    })
 }
 
 /// A precomputed index of line-start byte offsets, for turning a byte offset
@@ -410,6 +486,10 @@ pub(crate) struct Emitter {
     /// through its native `require` and `mod`-qualified reference, never the
     /// defining module's emitted output (which holds no runtime value for it).
     imported_extern_names: std::collections::HashSet<String>,
+    /// Shadowed type imports, binding → fresh local. The `use` binds the fresh
+    /// local and constructor references (`S { .. }`, `S::member`) read it; the
+    /// plain name stays the value binding.
+    type_renames: HashMap<String, TypeRename>,
     /// Whether this module is emitted as a requireable library (project build)
     /// rather than a directly runnable script (single-file). When `true`, each
     /// `pub` runtime binding is a `local` and the module ends with a
@@ -831,8 +911,13 @@ impl Emitter {
             return;
         }
         let binding = u.alias.as_deref().unwrap_or(last);
+        let local = self
+            .type_renames
+            .get(binding)
+            .filter(|r| r.path == u.path)
+            .map_or(binding, |r| r.local.as_str());
         let module = prefix.join(".");
-        self.line(format!("local {binding} = require(\"{module}\").{last}"));
+        self.line(format!("local {local} = require(\"{module}\").{last}"));
     }
 
     fn emit_const(&mut self, c: &ast::ConstDecl, vis: ast::Visibility) {
@@ -1166,7 +1251,7 @@ mod module_tests {
     fn as_module_emits_local_pub_fn_and_export_table() {
         let parsed = neoc_parser::parse("pub fn greet(name: string) -> string { name }");
         assert!(parsed.ok(), "{:?}", parsed.diagnostics);
-        let out = emit_with_imports(&parsed.module, "", &[], &[], true).lua;
+        let out = emit_with_imports(&parsed.module, "", &[], &[], &[], true).lua;
         // The `pub fn` is a `local`, not a global — globals are the single-file
         // script form (§3.7).
         assert!(
@@ -1183,7 +1268,7 @@ mod module_tests {
     fn single_file_keeps_globals_and_no_return_table() {
         let parsed = neoc_parser::parse("pub fn greet(name: string) -> string { name }");
         assert!(parsed.ok(), "{:?}", parsed.diagnostics);
-        let out = emit_with_imports(&parsed.module, "", &[], &[], false).lua;
+        let out = emit_with_imports(&parsed.module, "", &[], &[], &[], false).lua;
         assert!(
             out.contains("function greet"),
             "single-file pub fn stays a global:\n{out}"
@@ -1209,10 +1294,175 @@ enum Hidden { A, B }
 fn helper() {}";
         let parsed = neoc_parser::parse(src);
         assert!(parsed.ok(), "{:?}", parsed.diagnostics);
-        let out = emit_with_imports(&parsed.module, "", &[], &[], true).lua;
+        let out = emit_with_imports(&parsed.module, "", &[], &[], &[], true).lua;
         let last = out.trim_end().lines().last().unwrap();
         // Pub const, struct, and the method-bearing enum export; the private fn
         // and the plain (no-method) enum do not.
         assert_eq!(last, "return { MAX = MAX, Point = Point, Color = Color }");
+    }
+
+    /// Emit `src` as a library with `shadowed` as its shadowed type imports.
+    fn emit_shadowed(src: &str, shadowed: &[ShadowedTypeImport]) -> String {
+        let parsed = neoc_parser::parse(src);
+        assert!(parsed.ok(), "{:?}", parsed.diagnostics);
+        emit_with_imports(&parsed.module, src, &[], &[], shadowed, true).lua
+    }
+
+    fn shadowed(path: &[&str], binding: &str) -> ShadowedTypeImport {
+        ShadowedTypeImport {
+            path: path.iter().map(ToString::to_string).collect(),
+            binding: binding.to_string(),
+        }
+    }
+
+    // `lang/DYNAMIC.md` §3.7: a shadowed type import binds a fresh local; the
+    // value keeps the plain name.
+    #[test]
+    fn shadowed_type_import_binds_fresh_local_and_literal_reads_it() {
+        let out = emit_shadowed(
+            "use pal::Hue;\nuse cfg::Hue;\npub fn main() -> number { let h = Hue { r: Hue }; h.r }",
+            &[shadowed(&["pal", "Hue"], "Hue")],
+        );
+        assert!(
+            out.contains("local __type_Hue = require(\"pal\").Hue"),
+            "{out}"
+        );
+        assert!(out.contains("local Hue = require(\"cfg\").Hue"), "{out}");
+        assert_eq!(out.matches("local Hue =").count(), 1, "{out}");
+        assert!(out.contains("__type_Hue.new({ r = Hue })"), "{out}");
+    }
+
+    #[test]
+    fn shadowed_type_import_after_value_import_still_binds_fresh_local() {
+        let out = emit_shadowed(
+            "use cfg::Hue;\nuse pal::Hue;\npub fn main() -> number { let h = Hue { r: Hue }; h.r }",
+            &[shadowed(&["pal", "Hue"], "Hue")],
+        );
+        assert!(out.contains("local Hue = require(\"cfg\").Hue"), "{out}");
+        assert!(
+            out.contains("local __type_Hue = require(\"pal\").Hue"),
+            "{out}"
+        );
+        assert!(out.contains("__type_Hue.new({ r = Hue })"), "{out}");
+    }
+
+    #[test]
+    fn shadowed_type_import_struct_update_reads_fresh_local() {
+        let out = emit_shadowed(
+            "use pal::Hue;\nuse cfg::Hue;\n\
+             pub fn main() -> number { let h = Hue { r: 1 }; let g = Hue { r: Hue, ..h }; g.r }",
+            &[shadowed(&["pal", "Hue"], "Hue")],
+        );
+        assert_eq!(out.matches("__type_Hue.new(").count(), 2, "{out}");
+        assert!(!out.contains(" Hue.new("), "{out}");
+    }
+
+    #[test]
+    fn shadowed_type_import_associated_path_reads_fresh_local() {
+        let out = emit_shadowed(
+            "use pal::Hue;\nuse cfg::Hue;\npub fn main() -> number { Hue::make(Hue).r }",
+            &[shadowed(&["pal", "Hue"], "Hue")],
+        );
+        assert!(out.contains("__type_Hue.make(Hue)"), "{out}");
+    }
+
+    #[test]
+    fn shadowed_type_import_alias_binds_fresh_local_for_the_alias() {
+        let out = emit_shadowed(
+            "use pal::Hue as X;\nuse cfg::Hue as X;\npub fn main() -> number { let h = X { r: X }; h.r }",
+            &[shadowed(&["pal", "Hue"], "X")],
+        );
+        assert!(
+            out.contains("local __type_X = require(\"pal\").Hue"),
+            "{out}"
+        );
+        assert!(out.contains("local X = require(\"cfg\").Hue"), "{out}");
+        assert!(out.contains("__type_X.new({ r = X })"), "{out}");
+    }
+
+    #[test]
+    fn shadowed_type_import_from_nested_module_requires_dotted_path() {
+        let out = emit_shadowed(
+            "use a::pal::Hue;\nuse cfg::Hue;\npub fn main() -> number { let h = Hue { r: Hue }; h.r }",
+            &[shadowed(&["a", "pal", "Hue"], "Hue")],
+        );
+        assert!(
+            out.contains("local __type_Hue = require(\"a.pal\").Hue"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn shadowed_type_import_by_module_const_binds_fresh_local() {
+        let out = emit_shadowed(
+            "use pal::Hue;\nconst Hue: number = 7;\npub fn main() -> number { let h = Hue { r: Hue }; h.r }",
+            &[shadowed(&["pal", "Hue"], "Hue")],
+        );
+        assert!(
+            out.contains("local __type_Hue = require(\"pal\").Hue"),
+            "{out}"
+        );
+        assert!(out.contains("__type_Hue.new({ r = Hue })"), "{out}");
+    }
+
+    #[test]
+    fn only_the_shadowed_use_of_a_path_binds_a_fresh_local() {
+        // Keyed by `use` decl, not path: `pal::Hue as Q` binds a name nothing
+        // else takes, so it keeps it.
+        let out = emit_shadowed(
+            "use pal::Hue;\nuse pal::Hue as Q;\nuse cfg::Hue;\n\
+             pub fn main() -> number { let h = Q { r: Hue }; h.r }",
+            &[shadowed(&["pal", "Hue"], "Hue")],
+        );
+        assert!(out.contains("local Q = require(\"pal\").Hue"), "{out}");
+        assert!(out.contains("Q.new({ r = Hue })"), "{out}");
+        assert!(!out.contains("__type_Q"), "{out}");
+    }
+
+    #[test]
+    fn fresh_local_skips_names_the_source_spells() {
+        let out = emit_shadowed(
+            "use pal::Hue;\nuse cfg::Hue;\n\
+             pub fn main() -> number { let __type_Hue = 3; let h = Hue { r: Hue }; h.r + __type_Hue }",
+            &[shadowed(&["pal", "Hue"], "Hue")],
+        );
+        assert!(
+            out.contains("local __type_Hue_1 = require(\"pal\").Hue"),
+            "{out}"
+        );
+        assert!(out.contains("__type_Hue_1.new({ r = Hue })"), "{out}");
+    }
+
+    #[test]
+    fn fresh_locals_of_two_shadowed_types_never_coincide() {
+        // `__type_Hue` is spelled by the source, so `Hue` steps to
+        // `__type_Hue_1` — the name binding `Hue_1` would otherwise take first.
+        let out = emit_shadowed(
+            "use pal::Hue;\nuse pal::Hue_1;\nuse cfg::Hue;\nuse cfg::Hue_1;\n\
+             pub fn main() -> number { let __type_Hue = 3; let h = Hue { r: Hue }; \
+             let k = Hue_1 { r: Hue_1 }; h.r + k.r + __type_Hue }",
+            &[
+                shadowed(&["pal", "Hue"], "Hue"),
+                shadowed(&["pal", "Hue_1"], "Hue_1"),
+            ],
+        );
+        assert!(
+            out.contains("local __type_Hue_1 = require(\"pal\").Hue\n"),
+            "{out}"
+        );
+        assert!(
+            out.contains("local __type_Hue_1_1 = require(\"pal\").Hue_1"),
+            "{out}"
+        );
+        assert!(out.contains("__type_Hue_1.new({ r = Hue })"), "{out}");
+        assert!(out.contains("__type_Hue_1_1.new({ r = Hue_1 })"), "{out}");
+    }
+
+    #[test]
+    fn source_mentions_ident_matches_whole_tokens_only() {
+        assert!(source_mentions_ident("let __type_Hue = 1", "__type_Hue"));
+        assert!(!source_mentions_ident("let __type_Hue_1 = 1", "__type_Hue"));
+        assert!(!source_mentions_ident("let x__type_Hue = 1", "__type_Hue"));
+        assert!(!source_mentions_ident("", "__type_Hue"));
     }
 }

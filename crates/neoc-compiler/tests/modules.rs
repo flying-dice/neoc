@@ -8,10 +8,13 @@
 //!
 //! neoc emits one target, `lua`, so these tests assert against it.
 
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use neoc_compiler::{Stage, Target, transpile, transpile_project};
+
+mod common;
 
 /// The checked-in `tests/fixtures/modules/` directory.
 fn fixtures() -> PathBuf {
@@ -267,15 +270,12 @@ fn type_only_and_value_use_with_same_name_coexist() {
     // per-namespace gate agree on all of them. Without this case the whole
     // compiler suite passes against the union-gate regression.
     //
-    // Resolution only. The Lua backend still emits a `local` for the erased
-    // type-only import, shadowing the value binding (#91), so the emitted output
-    // is not asserted here — that is a codegen defect, not a resolution one.
-    let dir = tempdir();
-    write(&dir, "pal.neoc", "pub struct Hue {\n    r: number,\n}\n");
-    write(&dir, "cfg.neoc", "pub const Hue: number = 7;\n");
-    let entry = write(
-        &dir,
-        "main.neoc",
+    // The struct constructor is still a runtime table (`Hue { .. }` lowers to
+    // `Hue.new`), so the type-only import is not erased: it binds a fresh
+    // local and the value import keeps the plain name (#91). Run the
+    // emitted modules in-process on LuaJIT: `main` must read `cfg`'s `7`.
+    let (main_lua, result) = run_project(
+        &[("pal", PAL_HUE), ("cfg", CFG_HUE)],
         "use pal::Hue;\n\
          use cfg::Hue;\n\
          \n\
@@ -284,13 +284,221 @@ fn type_only_and_value_use_with_same_name_coexist() {
          \x20   h.r\n\
          }\n",
     );
+    assert!(
+        main_lua.contains("local __type_Hue = require(\"pal\").Hue"),
+        "type-only import binds a fresh local:\n{main_lua}"
+    );
+    assert!(
+        main_lua.contains("local Hue = require(\"cfg\").Hue"),
+        "value import keeps the plain name:\n{main_lua}"
+    );
+    assert_eq!(
+        main_lua.matches("local Hue =").count(),
+        1,
+        "exactly one `local Hue`:\n{main_lua}"
+    );
+    assert!(
+        main_lua.contains("__type_Hue.new({ r = Hue })"),
+        "literal constructs through the type binding, field reads the value:\n{main_lua}"
+    );
+    assert_eq!(result, "7");
+}
+
+/// `pal`: a data-only struct `Hue` (type namespace only) with an associated fn.
+const PAL_HUE: &str = "pub struct Hue {\n    r: number,\n}\n\
+                       impl Hue {\n    fn make(r: number) -> Hue { Hue { r: r } }\n}\n";
+/// `cfg`: a value `Hue`.
+const CFG_HUE: &str = "pub const Hue: number = 7;\n";
+
+/// Build a temp project of `deps` (dotted module path → source) plus
+/// `main.neoc`, assert it type-checks, then run `main.main()` in-process on
+/// `LuaJIT` under a `require` shim over the emitted chunks. Returns `main`'s Lua
+/// and the printed result.
+fn run_project(deps: &[(&str, &str)], main: &str) -> (String, String) {
+    let dir = tempdir();
+    for (module, src) in deps {
+        write(&dir, &format!("{}.neoc", module.replace('.', "/")), src);
+    }
+    let entry = write(&dir, "main.neoc", main);
 
     let project = transpile_project(&entry, Target::Lua).expect("read project");
     assert!(
         project.ok(),
-        "type-only + value share of a name should type-check, got: {:#?}",
+        "project should type-check, got: {:#?}",
         project.diagnostics
     );
+    let lua_of = |module: &str| {
+        let rel = PathBuf::from(format!("{}.lua", module.replace('.', "/")));
+        project
+            .files
+            .iter()
+            .find(|(p, _)| p.ends_with(&rel))
+            .map_or_else(|| panic!("{module} output present"), |(_, src)| src.clone())
+    };
+    let chunks = deps
+        .iter()
+        .map(|(m, _)| *m)
+        .chain(["main"])
+        .fold(String::new(), |mut out, m| {
+            let _ = writeln!(out, "[\"{m}\"] = function(...)\n{}\nend,", lua_of(m));
+            out
+        });
+    let program = format!(
+        "local __chunks = {{\n{chunks}}}\n\
+         local __loaded = {{}}\n\
+         function require(name)\n\
+           if __loaded[name] == nil then __loaded[name] = __chunks[name]() end\n\
+           return __loaded[name]\n\
+         end\n\
+         print(require(\"main\").main())\n"
+    );
+    let stdout = common::run_lua(&program)
+        .unwrap_or_else(|e| panic!("lua failed:\n{e}\n--- program ---\n{program}"));
+    (lua_of("main"), stdout.trim().to_string())
+}
+
+// `lang/DYNAMIC.md` §3.7: a type-only import shadowed by any value the module
+// binds — value `use`, module-level `const` or `fn` — keeps its constructor
+// reachable through a fresh local. Each case runs on LuaJIT.
+
+#[test]
+fn type_only_use_shadowed_by_module_const_runs() {
+    let (_, result) = run_project(
+        &[("pal", PAL_HUE)],
+        "use pal::Hue;\nconst Hue: number = 7;\n\
+         pub fn main() -> number { let h = Hue { r: Hue }; h.r }\n",
+    );
+    assert_eq!(result, "7");
+}
+
+#[test]
+fn type_only_use_shadowed_by_module_fn_runs() {
+    let (_, result) = run_project(
+        &[("pal", PAL_HUE)],
+        "use pal::Hue;\nfn Hue() -> number { 7 }\n\
+         pub fn main() -> number { let h = Hue { r: Hue() }; h.r }\n",
+    );
+    assert_eq!(result, "7");
+}
+
+#[test]
+fn shadowed_type_local_is_not_captured_by_a_user_binding() {
+    let (main_lua, result) = run_project(
+        &[("pal", PAL_HUE), ("cfg", CFG_HUE)],
+        "use pal::Hue;\nuse cfg::Hue;\n\
+         pub fn main() -> number { let __type_Hue = 3; let h = Hue { r: Hue }; h.r + __type_Hue }\n",
+    );
+    assert!(
+        main_lua.contains("local __type_Hue_1 = require(\"pal\").Hue"),
+        "{main_lua}"
+    );
+    assert_eq!(result, "10");
+}
+
+/// `pal`: two type-only structs, `Hue` and `Hue_1`, and a fn that checks its
+/// argument is a `Hue`.
+const PAL_HUE_PAIR: &str = "pub struct Hue {\n    r: number,\n}\n\
+                            pub struct Hue_1 {\n    r: number,\n}\n\
+                            pub fn get(h: Hue) -> number { h.r }\n";
+/// `cfg`: values `Hue` and `Hue_1`.
+const CFG_HUE_PAIR: &str = "pub const Hue: number = 7;\npub const Hue_1: number = 100;\n";
+/// `main` header shadowing both `pal` types and spelling `__type_Hue`, so
+/// `Hue`'s fresh local steps to the name `Hue_1` would take first.
+const USE_HUE_PAIR: &str = "use pal::Hue;\nuse pal::Hue_1;\nuse pal::get;\n\
+                            use cfg::Hue;\nuse cfg::Hue_1;\n";
+
+#[test]
+fn two_shadowed_types_get_distinct_fresh_locals() {
+    let (main_lua, result) = run_project(
+        &[("pal", PAL_HUE_PAIR), ("cfg", CFG_HUE_PAIR)],
+        &format!(
+            "{USE_HUE_PAIR}pub fn main() -> number {{ let __type_Hue = 3; let h = Hue {{ r: Hue }}; \
+             let k = Hue_1 {{ r: Hue_1 }}; get(h) + k.r + __type_Hue }}\n"
+        ),
+    );
+    assert_eq!(
+        main_lua.matches("local __type_Hue_1 =").count(),
+        1,
+        "{main_lua}"
+    );
+    assert_eq!(result, "110");
+}
+
+#[test]
+fn two_shadowed_types_match_their_own_struct_pattern() {
+    let (_, result) = run_project(
+        &[("pal", PAL_HUE_PAIR), ("cfg", CFG_HUE_PAIR)],
+        &format!(
+            "{USE_HUE_PAIR}pub fn main() -> number {{ let __type_Hue = 3; let h = Hue {{ r: Hue }}; \
+             let k = Hue_1 {{ r: Hue_1 }}; let a = match h {{ Hue {{ r }} => r }}; \
+             let b = match k {{ Hue_1 {{ r }} => r }}; a + b + __type_Hue }}\n"
+        ),
+    );
+    assert_eq!(result, "110");
+}
+
+#[test]
+fn shadowed_type_import_struct_update_runs() {
+    let (_, result) = run_project(
+        &[("pal", PAL_HUE), ("cfg", CFG_HUE)],
+        "use pal::Hue;\nuse cfg::Hue;\n\
+         pub fn main() -> number { let h = Hue { r: 1 }; let g = Hue { r: Hue, ..h }; g.r }\n",
+    );
+    assert_eq!(result, "7");
+}
+
+#[test]
+fn shadowed_type_import_associated_fn_runs() {
+    let (_, result) = run_project(
+        &[("pal", PAL_HUE), ("cfg", CFG_HUE)],
+        "use pal::Hue;\nuse cfg::Hue;\npub fn main() -> number { Hue::make(Hue).r }\n",
+    );
+    assert_eq!(result, "7");
+}
+
+#[test]
+fn shadowed_type_import_under_alias_runs() {
+    let (_, result) = run_project(
+        &[("pal", PAL_HUE), ("cfg", CFG_HUE)],
+        "use pal::Hue as X;\nuse cfg::Hue as X;\n\
+         pub fn main() -> number { let h = X { r: X }; h.r }\n",
+    );
+    assert_eq!(result, "7");
+}
+
+#[test]
+fn shadowed_type_import_after_value_import_runs() {
+    let (_, result) = run_project(
+        &[("pal", PAL_HUE), ("cfg", CFG_HUE)],
+        "use cfg::Hue;\nuse pal::Hue;\n\
+         pub fn main() -> number { let h = Hue { r: Hue }; h.r }\n",
+    );
+    assert_eq!(result, "7");
+}
+
+#[test]
+fn shadowed_type_import_from_nested_module_runs() {
+    let (_, result) = run_project(
+        &[("a.pal", PAL_HUE), ("cfg", CFG_HUE)],
+        "use a::pal::Hue;\nuse cfg::Hue;\n\
+         pub fn main() -> number { let h = Hue { r: Hue }; h.r }\n",
+    );
+    assert_eq!(result, "7");
+}
+
+#[test]
+fn unshadowed_alias_of_a_shadowed_type_keeps_its_name() {
+    let (main_lua, result) = run_project(
+        &[("pal", PAL_HUE), ("cfg", CFG_HUE)],
+        "use pal::Hue;\nuse pal::Hue as Q;\nuse cfg::Hue;\n\
+         pub fn main() -> number { let h = Q { r: Hue }; h.r + 1 }\n",
+    );
+    assert!(
+        main_lua.contains("local Q = require(\"pal\").Hue"),
+        "{main_lua}"
+    );
+    assert!(!main_lua.contains("__type_Q"), "{main_lua}");
+    assert_eq!(result, "8");
 }
 
 #[test]

@@ -130,6 +130,14 @@ A trait produces no standalone output. Its required methods are realised by each
 
 The path up to the final segment is the module; the final segment is the item selected from it. `require` uses the dotted module convention. A `use` of a method-bearing type needs no per-type wiring in the consumer: the value carries its metatable across the boundary (§7).
 
+**Type import shadowed by a value.** A `use` of a type-only item (a struct with no value-namespace binding, `STATIC.md` §2) may share its binding with a value the module also binds — a value `use`, or a module-level `const` / `fn`. The two coexist statically, but the struct's constructor is still a runtime table, so the type import binds a fresh local `t` instead: `__type_<binding>`, suffixed `_1`, `_2`, … until no identifier in the module's source spells it and no fresh local already allocated in the module takes it, so no user binding can capture it and no two shadowed types share one. The value keeps the plain name. Struct literal, struct update, and `S::assoc` references to the type read `t`; every other reference to the name reads the value.
+
+```
+⟦ use a::b::c ⟧          = local t = require("a.b").c     when c is type-only and the module's value namespace binds c
+⟦ c { f: e, … } ⟧ₑ       = t.new({ f = ⟦e⟧, … })
+⟦ c::m ⟧ₑ                = t.m
+```
+
 ### 3.8 `type` alias
 
 No output. Type aliases are erased; they exist only in `STATIC.md`.

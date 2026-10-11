@@ -576,7 +576,8 @@ impl Emitter {
             return self.emit_struct_update(name, fields, base);
         }
         let body = self.emit_field_inits(fields);
-        format!("{name}.new({{ {body} }})")
+        let local = self.type_local(name);
+        format!("{local}.new({{ {body} }})")
     }
 
     /// Whether `name` is a struct declared in an `extern` block.
@@ -587,13 +588,20 @@ impl Emitter {
     /// Qualify an extern struct's value reference through its enclosing `mod`'s
     /// `require` binding (`Database` in `mod sqlite` → `sqlite.Database`), so the
     /// reference reads the imported module table rather than a nil bare global
-    /// (`lang/EXTERN.md` §Lowering). A struct with no enclosing `mod`
-    /// (top-level / ambient) keeps its bare name.
+    /// (`lang/EXTERN.md` §Lowering). Any other type reads its local
+    /// ([`type_local`](Self::type_local)): its bare name, or a shadowed type
+    /// import's fresh local (`lang/DYNAMIC.md` §3.7).
     pub(crate) fn qualify_extern_value(&self, ty: &str) -> String {
         match self.extern_struct_ns.get(ty) {
             Some(ns) => format!("{ns}.{ty}"),
-            None => ty.to_string(),
+            None => self.type_local(ty).to_string(),
         }
+    }
+
+    /// The local holding `ty`'s runtime table: a shadowed type import's fresh
+    /// local, else `ty` (`lang/DYNAMIC.md` §3.7).
+    fn type_local<'a>(&'a self, ty: &'a str) -> &'a str {
+        self.type_renames.get(ty).map_or(ty, |r| r.local.as_str())
     }
 
     /// Qualify a free extern `fn`'s call through its enclosing `mod`'s binding
@@ -629,7 +637,7 @@ impl Emitter {
         }
         body.push("return __b".to_string());
         let copy = Self::wrap_iife(body);
-        format!("{name}.new({copy})")
+        format!("{}.new({copy})", self.type_local(name))
     }
 
     /// Lower struct-literal / struct-variant fields to `name = value` entries,
