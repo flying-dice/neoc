@@ -1,5 +1,18 @@
 // STATIC.md §8 / §3.5: a blanket impl overlapping a direct impl is rejected.
-trait Show { fn show(self) -> string; }
+trait Show {
+    fn show(self) -> string;
+}
+
 struct P;
-impl Show for P { fn show(self) -> string { "p" } }
-impl<T> Show for T { fn show(self) -> string { "any" } }
+
+impl Show for P {
+    fn show(self) -> string {
+        "p"
+    }
+}
+
+impl<T> Show for T {
+    fn show(self) -> string {
+        "any"
+    }
+}

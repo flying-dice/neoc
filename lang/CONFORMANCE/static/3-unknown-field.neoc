@@ -1,5 +1,8 @@
 // STATIC.md §3.3 (T-FIELD): field access must name a declared field.
-struct P { x: number, y: number }
+struct P {
+    x: number,
+    y: number,
+}
 
 fn main() {
     let p = P { x: 1, y: 2 };

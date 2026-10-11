@@ -1,4 +1,9 @@
 // STATIC.md §9: an `Option<T>` field satisfies `Eq` only when `T` does.
-struct NoEq { v: number }
+struct NoEq {
+    v: number,
+}
+
 #[derive(Eq)]
-struct S { o: Option<NoEq> }
+struct S {
+    o: Option<NoEq>,
+}

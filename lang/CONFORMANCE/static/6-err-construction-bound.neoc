@@ -1,14 +1,14 @@
 // STATIC.md §3.5: constructing a generic type checks each pinned type argument
 // against the parameter's bound — `number` has no `impl Show`.
 trait Show {
-  fn show(self) -> string;
+    fn show(self) -> string;
 }
 
 struct Boxed<T: Show> {
-  item: T,
+    item: T,
 }
 
 fn go() -> number {
-  let b = Boxed { item: 42 };
-  1
+    let b = Boxed { item: 42 };
+    1
 }

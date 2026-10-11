@@ -1,5 +1,7 @@
 // STATIC.md §3.2 (T-CALL): each argument must match the parameter type.
-fn g(n: number) -> number { n }
+fn g(n: number) -> number {
+    n
+}
 
 fn main() {
     g("hi");

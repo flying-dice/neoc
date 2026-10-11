@@ -1,2 +1,4 @@
 // STATIC.md §4.3: a `let` with a type annotation must bind that type.
-fn main() { let x: number = "hi"; }
+fn main() {
+    let x: number = "hi";
+}

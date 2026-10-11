@@ -1,5 +1,7 @@
 // STATIC.md §3.4: a method call must resolve to a known method.
-struct P { x: number }
+struct P {
+    x: number,
+}
 
 fn main() {
     let p = P { x: 1 };

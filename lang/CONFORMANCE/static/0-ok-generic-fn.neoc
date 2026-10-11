@@ -1,5 +1,7 @@
 // STATIC.md §3.5: a generic identity function type-checks at each call site.
-fn id<T>(x: T) -> T { x }
+fn id<T>(x: T) -> T {
+    x
+}
 
 fn main() {
     let a = id(1);

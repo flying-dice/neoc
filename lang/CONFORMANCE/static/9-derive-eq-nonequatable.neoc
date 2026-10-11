@@ -1,4 +1,9 @@
 // STATIC.md §9: deriving `Eq` requires every field to support equality.
-struct F { f: fn(number) -> number }
+struct F {
+    f: fn(number) -> number,
+}
+
 #[derive(Eq)]
-struct S { cb: F }
+struct S {
+    cb: F,
+}
