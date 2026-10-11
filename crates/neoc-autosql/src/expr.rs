@@ -564,9 +564,11 @@ fn arg_types(
 }
 
 /// The nullability of an operand, appending its subquery parameters to `out`.
-/// An operand autosql cannot type (a nested `NULL` or placeholder) counts as
-/// non-null — a best effort that never fails the whole expression over it — but
-/// an unknown or ambiguous column is still an error.
+/// A literal `NULL` operand is nullable: it propagates through `||`,
+/// arithmetic, and comparison. Any other operand autosql cannot type (a nested
+/// placeholder or unsupported form) counts as non-null — a best effort that
+/// never fails the whole expression over it — but an unknown or ambiguous
+/// column is still an error.
 fn nullable(query: &str, expr: &Expr, scope: &Scope, out: &mut Vec<Param>) -> Result<bool, Error> {
     let mut inner = Vec::new();
     match infer(query, expr, scope, &mut inner) {
@@ -576,9 +578,18 @@ fn nullable(query: &str, expr: &Expr, scope: &Scope, out: &mut Vec<Param>) -> Re
         }
         Err(Error::Unsupported { .. }) => {
             subquery_params(query, expr, scope, out)?;
-            Ok(false)
+            Ok(is_null_literal(expr))
         }
         Err(e) => Err(e),
+    }
+}
+
+/// Whether an expression is a literal `NULL`, parenthesised or not.
+fn is_null_literal(expr: &Expr) -> bool {
+    match expr {
+        Expr::Value(Value::Null) => true,
+        Expr::Nested(inner) => is_null_literal(inner),
+        _ => false,
     }
 }
 

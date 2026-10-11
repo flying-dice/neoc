@@ -599,3 +599,32 @@ Feature: Inferring queries beyond a single flat SELECT
     When I generate for sqlite
     Then generation is refused
     And the error mentions "no window `undefined_w`"
+
+  Scenario: A NULL operand makes the expression optional
+    Given the schema:
+      """
+      CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT);
+      CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, title TEXT NOT NULL);
+      """
+    And the query "null_operand":
+      """
+      SELECT name || NULL AS s, id + NULL AS a FROM users;
+      """
+    When I generate for sqlite
+    Then the generated "null_operand.neoc" contains "s: Option<string>,"
+    And the generated "null_operand.neoc" contains "a: Option<number>,"
+
+  @chaos
+  Scenario: A set operation inside EXISTS still needs matching types
+    Given the schema:
+      """
+      CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT);
+      CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, title TEXT NOT NULL);
+      """
+    And the query "exists_mismatch":
+      """
+      SELECT name FROM users WHERE EXISTS (SELECT id FROM users UNION SELECT title FROM posts);
+      """
+    When I generate for postgres
+    Then generation is refused
+    And the error mentions "`number` on the left but `string` on the right"

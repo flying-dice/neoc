@@ -90,11 +90,6 @@ impl<'a> Env<'a> {
         }
     }
 
-    /// How this environment's query has its result columns read.
-    pub fn projection(&self) -> Projection {
-        self.projection
-    }
-
     /// This environment extended with a CTE visible to later CTEs and the body.
     pub fn with_cte(&self, table: Table) -> Env<'a> {
         let mut env = self.clone();

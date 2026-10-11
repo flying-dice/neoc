@@ -18,7 +18,7 @@ use sqlparser::ast::{
 use crate::catalog::{Catalog, Column, Table, last_ident};
 use crate::expr;
 use crate::naming;
-use crate::scope::{self, Env, Projection, Resolved, Scope};
+use crate::scope::{self, Env, Projection, Scope};
 use crate::{ColType, Error, Prim, Variant};
 
 /// How a query returns: every matching row, or rows-affected. The kind is
@@ -49,6 +49,10 @@ pub(crate) struct ResultCol {
     pub ty: ColType,
     /// `true` when the column can be NULL, so the field is `Option<T>`.
     pub nullable: bool,
+    /// `true` for an `EXISTS` projection item autosql cannot type
+    /// (`SELECT NULL`): `ty` is a placeholder, and a set operation takes the
+    /// other side's type for it.
+    pub untyped: bool,
 }
 
 /// One bound parameter, in placeholder order.
@@ -277,9 +281,7 @@ fn set_expr_columns(
         } => {
             let left = set_expr_columns(name, left, env, params)?;
             let right = set_expr_columns(name, right, env, params)?;
-            // An EXISTS subquery's columns are never read, so only arity matters.
-            let check_types = env.projection() != Projection::Unread;
-            combine_set_columns(name, *op, left, &right, check_types)
+            combine_set_columns(name, *op, left, &right)
         }
         _ => Err(Error::Unsupported {
             name: name.to_string(),
@@ -293,7 +295,9 @@ fn set_expr_columns(
 /// Merges the two sides of a set operation into one result shape.
 ///
 /// Both sides must project the same number of columns, of the same neoc type
-/// position by position (unless `check_types` is off). Field names come from
+/// position by position — the database resolves set-operation types even where
+/// the result is never read (`EXISTS`). An untyped side (`SELECT NULL`) takes
+/// the other side's type (both untyped stays untyped). Field names come from
 /// the left side, as in SQL. An `Int` column meeting a `Real` one binds as
 /// `Real`, which holds either. A result column is nullable when a row of it can
 /// be NULL: for `UNION` if either side can supply a NULL, for `EXCEPT` if the
@@ -304,7 +308,6 @@ fn combine_set_columns(
     op: SetOperator,
     left: Vec<ResultCol>,
     right: &[ResultCol],
-    check_types: bool,
 ) -> Result<Vec<ResultCol>, Error> {
     let label = match op {
         SetOperator::Union => "UNION",
@@ -320,7 +323,7 @@ fn combine_set_columns(
     }
     let mut merged = Vec::with_capacity(left.len());
     for (index, (l, r)) in left.into_iter().zip(right).enumerate() {
-        if check_types && l.ty.prim != r.ty.prim {
+        if !l.untyped && !r.untyped && l.ty.prim != r.ty.prim {
             return Err(Error::Resolve(format!(
                 "query `{name}`: {label} column {} is `{}` on the left but `{}` on the right",
                 index + 1,
@@ -333,7 +336,9 @@ fn combine_set_columns(
             SetOperator::Except => l.nullable,
             SetOperator::Intersect => l.nullable && r.nullable,
         };
-        let ty = if l.ty == r.ty || l.ty.prim != Prim::Number || r.ty.prim != Prim::Number {
+        let ty = if l.untyped {
+            r.ty
+        } else if r.untyped || l.ty == r.ty || l.ty.prim != Prim::Number {
             l.ty
         } else {
             ColType {
@@ -341,7 +346,13 @@ fn combine_set_columns(
                 variant: Variant::Real,
             }
         };
-        merged.push(ResultCol { ty, nullable, ..l });
+        let untyped = l.untyped && r.untyped;
+        merged.push(ResultCol {
+            ty,
+            nullable,
+            untyped,
+            ..l
+        });
     }
     Ok(merged)
 }
@@ -567,6 +578,7 @@ fn project(
                         field,
                         ty: resolved.ty,
                         nullable: resolved.nullable,
+                        untyped: false,
                     });
                 }
             }
@@ -577,49 +589,49 @@ fn project(
                         field,
                         ty: resolved.ty,
                         nullable: resolved.nullable,
+                        untyped: false,
                     });
                 }
             }
             SelectItem::UnnamedExpr(e) => {
-                let resolved = projected(name, e, scope, params)?;
-                result.push(ResultCol {
-                    field: field_name(name, e, anonymous)?,
-                    ty: resolved.ty,
-                    nullable: resolved.nullable,
-                });
+                let field = field_name(name, e, anonymous)?;
+                result.push(projected(name, field, e, scope, params)?);
             }
             SelectItem::ExprWithAlias { expr: e, alias } => {
-                let resolved = projected(name, e, scope, params)?;
-                result.push(ResultCol {
-                    field: alias.value.clone(),
-                    ty: resolved.ty,
-                    nullable: resolved.nullable,
-                });
+                result.push(projected(name, alias.value.clone(), e, scope, params)?);
             }
         }
     }
     Ok(result)
 }
 
-/// Types one projection item. An `EXISTS` subquery's projection is never read,
-/// so there an item autosql cannot type (`SELECT NULL`) is accepted untyped;
-/// an unknown column is still refused.
+/// Types one projection item into the result column `field`. An `EXISTS`
+/// subquery's projection is never read, so there an item autosql cannot type
+/// (`SELECT NULL`) is accepted untyped; an unknown column is still refused.
 fn projected(
     name: &str,
+    field: String,
     e: &Expr,
     scope: &Scope,
     params: &mut Vec<Param>,
-) -> Result<Resolved, Error> {
+) -> Result<ResultCol, Error> {
     let mut inner = Vec::new();
     match expr::infer(name, e, scope, &mut inner) {
         Ok(resolved) => {
             params.extend(inner);
-            Ok(resolved)
+            Ok(ResultCol {
+                field,
+                ty: resolved.ty,
+                nullable: resolved.nullable,
+                untyped: false,
+            })
         }
         Err(Error::Unsupported { .. }) if scope.projection() == Projection::Unread => {
-            Ok(Resolved {
+            Ok(ResultCol {
+                field,
                 ty: ColType::of(Prim::String),
                 nullable: true,
+                untyped: true,
             })
         }
         Err(err) => Err(err),
@@ -1400,6 +1412,45 @@ mod tests {
             matches!(&err, Error::Resolve(m) if m.contains("`nope`")),
             "an unknown column is still refused: {err:?}"
         );
+    }
+
+    #[test]
+    fn null_operand_makes_the_expression_nullable() {
+        let q = one(
+            "n",
+            "SELECT name || NULL AS s, id + NULL AS a, (NULL) * id AS m, \
+             CASE WHEN id > 1 THEN name ELSE NULL END AS c FROM users;",
+        );
+        for col in &q.result {
+            assert!(col.nullable, "`{}` propagates NULL", col.field);
+        }
+    }
+
+    #[test]
+    fn exists_set_operation_still_checks_types() {
+        let err = AnalyzedQuery::analyze(
+            "e",
+            "SELECT name FROM users WHERE EXISTS (SELECT id FROM users UNION SELECT title FROM posts);",
+            &catalog(),
+            Dialect::Postgres,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, Error::Resolve(m) if m.contains("`number` on the left but `string`")),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn exists_untyped_side_takes_the_other_sides_type() {
+        for sql in [
+            "SELECT name FROM users WHERE EXISTS (SELECT NULL FROM posts UNION SELECT id FROM users);",
+            "SELECT name FROM users WHERE EXISTS (SELECT title FROM posts UNION SELECT NULL FROM users);",
+            "SELECT name FROM users WHERE EXISTS (SELECT NULL FROM posts UNION SELECT NULL FROM users);",
+        ] {
+            let q = one("e", sql);
+            assert_eq!(q.result.len(), 1, "{sql}");
+        }
     }
 
     #[test]
