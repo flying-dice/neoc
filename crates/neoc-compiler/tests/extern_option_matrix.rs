@@ -530,3 +530,59 @@ fn closure_return_is_not_hinted_from_the_enclosing_fn() {
         out.output
     );
 }
+
+const NAMED: &str = "trait Named { fn name(self) -> string; }\nstruct Dog { n: string }\nimpl Named for Dog { fn name(self) -> string { self.n } }\nstruct Wrap<T> { v: T }\nimpl<T> Wrap<T> {\n    fn map<U>(self, f: fn(T) -> U) -> Wrap<U> { Wrap { v: f(self.v) } }\n    fn fold<U>(self, init: U, f: fn(T, U) -> U) -> U { f(self.v, init) }\n}\n";
+
+/// A method's own type parameter is not the caller's of the same name.
+#[test]
+fn method_type_parameters_do_not_capture_the_callers() {
+    for (name, body) in [
+        (
+            "Option::map",
+            "fn show<U: Named>(o: Option<U>) -> Option<string> { o.map(|x| x.name()) }",
+        ),
+        (
+            "argument path",
+            "fn names<U: Named>(w: Wrap<U>) -> string { w.fold(\"hi \", |x, acc| x.name()) }",
+        ),
+    ] {
+        let out = build(&format!("{NAMED}{body}"), "");
+        assert!(out.ok(), "{name}: {:#?}", out.diagnostics);
+    }
+}
+
+#[test]
+fn caller_type_parameter_named_like_a_methods_does_not_type_the_closure_as_extern() {
+    let out = build(
+        "struct N { title: Option<string>, size: number }\nstruct Wrap<T> { v: T }\nimpl<T> Wrap<T> { fn map<U>(self, f: fn(T) -> U) -> Wrap<U> { Wrap { v: f(self.v) } } }\nfn f<U>(w: Wrap<U>, g: fn(U) -> Settings) -> Wrap<Settings> {\n    w.map(|x| { println(x.title.is_some()); g(x) })\n}",
+        "",
+    );
+    assert!(out.ok(), "{:#?}", out.diagnostics);
+    assert_eq!(wraps(&out.output, FROM), 0, "{}", out.output);
+}
+
+/// Nested struct literals are checked in time linear in their depth.
+#[test]
+fn nested_struct_literals_check_in_linear_time() {
+    let mut lit = String::from("B { x: None, n: 0 }");
+    for _ in 0..30 {
+        lit = format!("B {{ x: Some({lit}), n: 1 }}");
+    }
+    let src =
+        format!("struct B {{ x: Option<B>, n: number }}\npub fn main() {{ let b = {lit}; }}\n");
+    let start = std::time::Instant::now();
+    let out = transpile(&src, Target::Lua);
+    assert!(out.ok(), "{:#?}", out.diagnostics);
+    assert!(start.elapsed().as_secs() < 5, "{:?}", start.elapsed());
+}
+
+/// A host-slot argument typed only by the slot's expected type still unwraps.
+#[test]
+fn host_slot_argument_typed_by_the_slot_unwraps() {
+    let out = build(
+        "fn via<T>(f: fn(T) -> T, d: Unknown) -> T { f(d) }",
+        "let o: Option<number> = Some(3); let r = lookup(\"a\", via(|v| v, o)); let s = mk(); s.title = via(|v| v, Some(\"x\"));",
+    );
+    assert!(out.ok(), "{:#?}", out.diagnostics);
+    assert!(wraps(&out.output, TO) >= 2, "{}", out.output);
+}

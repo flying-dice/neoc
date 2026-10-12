@@ -627,6 +627,9 @@ impl<'a> Elaborator<'a> {
         if !is_option(ty) {
             return new;
         }
+        // Read the value as the checker did, with the slot's type in hand.
+        self.checker
+            .hint_closures(orig, ty, &std::collections::HashMap::new());
         let actual = self.checker.quiet_infer(orig);
         if actual.is_unknown() || actual.is_dynamic() {
             return new;

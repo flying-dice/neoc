@@ -1908,21 +1908,27 @@ impl<'a> Checker<'a> {
     ) {
         // The other fields bind the owner's type parameters, which fix a
         // closure field's parameter types (`W { x: mk(), f: |s| s.title }`).
+        // Each initialiser is inferred once: nested literals would otherwise
+        // double the work at every level.
         let mut subst = std::collections::HashMap::new();
-        for init in inits {
+        let mut early: Vec<Option<Ty>> = vec![None; inits.len()];
+        for (i, init) in inits.iter().enumerate() {
             if let (Some(e), Some((_, declared))) =
                 (&init.value, decl.iter().find(|(n, _)| *n == init.name))
             {
                 if !Self::yields_closure(e) {
-                    let actual = self.quiet_infer(e);
+                    let actual = self.infer(e);
                     self.unify_param(declared, &actual, &mut subst);
+                    early[i] = Some(actual);
                 }
             }
         }
-        for init in inits {
+        for (i, init) in inits.iter().enumerate() {
             match decl.iter().find(|(n, _)| *n == init.name) {
                 Some((_, expected)) => {
-                    let actual = if let Some(e) = &init.value {
+                    let actual = if let Some(known) = early[i].take() {
+                        known
+                    } else if let Some(e) = &init.value {
                         self.hint_closures(e, expected, &subst);
                         self.infer(e)
                     } else {
@@ -2323,6 +2329,11 @@ impl<'a> Checker<'a> {
         if let Ty::Param(p) = recv {
             return self.bound_method(p, method);
         }
+        // The enclosing item's type parameters in the receiver's arguments
+        // share names with the method's own; read them as `Unknown`, so a
+        // closure parameter built from one is left to its annotation.
+        let erased = recv.map(&|t| matches!(t, Ty::Param(_)).then_some(Ty::Unknown));
+        let recv = &erased;
         let Ty::Named { name, args } = recv else {
             return None;
         };
