@@ -722,7 +722,7 @@ impl<'a> Checker<'a> {
             }
         }
         for (idx, (b, span, is_extern)) in impls.into_iter().enumerate() {
-            let Some(target) = crate::collect::impl_target_name(&b.ty) else {
+            let Some(target) = crate::collect::impl_target_name(self.table, b) else {
                 continue;
             };
             let trait_name = b

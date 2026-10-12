@@ -1,0 +1,19 @@
+struct P {
+    x: number,
+}
+
+type A = P;
+
+impl P {
+    fn f(self) -> number {
+        1
+    }
+}
+
+impl A {
+    fn f(self) -> number {
+        2
+    }
+}
+
+fn main() {}
