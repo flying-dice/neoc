@@ -102,7 +102,7 @@ pub(crate) fn param_bounds(sig: &ast::FnSig) -> HashMap<String, Vec<String>> {
 }
 
 /// The function type of a signature, plus whether it has a `self` receiver.
-fn fn_type(sig: &ast::FnSig, type_params: &[String]) -> (Vec<Ty>, Ty, bool) {
+pub(crate) fn fn_type(sig: &ast::FnSig, type_params: &[String]) -> (Vec<Ty>, Ty, bool) {
     let mut params = type_params.to_vec();
     params.extend(generic_names(&sig.generics));
     let mut tys = Vec::new();

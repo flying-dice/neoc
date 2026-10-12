@@ -25,6 +25,8 @@ pub enum BindingKind {
     ClosureParam,
     /// A `let` binding.
     Let,
+    /// A `fn` declared as a statement inside a block.
+    Fn,
     /// A binding introduced by a `match` arm pattern.
     MatchArm,
     /// A binding introduced by a `for` loop pattern.

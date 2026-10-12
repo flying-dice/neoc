@@ -1,0 +1,1 @@
+nested `fn` cannot use local `base` of the enclosing block

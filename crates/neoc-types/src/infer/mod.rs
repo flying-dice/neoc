@@ -749,7 +749,7 @@ impl<'a> Checker<'a> {
         // target) or a concrete type. `Self` in the signature is read the same.
         let self_target: Option<Ty> = self_ty.map(|t| self.self_target(t));
 
-        self.scopes.push();
+        self.scopes.push_fn();
         for p in &sig.params {
             match p {
                 ast::Param::Receiver => {
@@ -878,13 +878,49 @@ impl<'a> Checker<'a> {
     // ---- statements & blocks ----------------------------------------------
 
     fn infer_block(&mut self, block: &ast::Block) -> Ty {
-        self.scopes.push();
+        self.enter_block(&block.stmts);
         for stmt in &block.stmts {
             self.check_stmt(stmt);
         }
         let ty = block.value.as_ref().map_or(Ty::Unit, |e| self.infer(e));
-        self.scopes.pop();
+        self.exit_block();
         ty
+    }
+
+    /// Opens a block's scopes. Item statements (`STATIC.md` §2) are hoisted:
+    /// every nested `fn` is bound in an item frame before any statement runs,
+    /// so it is visible across the whole block — before and after its
+    /// declaration, and to its siblings — then a frame for the locals opens.
+    pub(crate) fn enter_block(&mut self, stmts: &[ast::Stmt]) {
+        self.scopes.push_items();
+        for stmt in stmts {
+            let ast::StmtKind::Item(item) = &stmt.kind else {
+                continue;
+            };
+            let ast::ItemKind::Fn(f) = &item.kind else {
+                continue;
+            };
+            if self.scopes.bound_here(&f.sig.name) {
+                self.error_at(
+                    f.sig.name_span,
+                    format!("`{}` is declared twice in this block", f.sig.name),
+                );
+                continue;
+            }
+            let (params, ret, _) = crate::collect::fn_type(&f.sig, &[]);
+            self.bind_local(
+                f.sig.name.clone(),
+                Ty::Fn(params, Box::new(ret)),
+                f.sig.name_span,
+                crate::resolve::BindingKind::Fn,
+            );
+        }
+        self.scopes.push();
+    }
+
+    pub(crate) fn exit_block(&mut self) {
+        self.scopes.pop();
+        self.scopes.pop();
     }
 
     fn check_stmt(&mut self, stmt: &ast::Stmt) {
@@ -893,8 +929,32 @@ impl<'a> Checker<'a> {
             ast::StmtKind::Expr(e) => {
                 let _ = self.infer(e);
             }
-            ast::StmtKind::Item(item) => self.check_item(item),
+            ast::StmtKind::Item(item) => self.check_item_stmt(item),
         }
+    }
+
+    /// Checks an item in statement position: only a non-generic `fn` is
+    /// allowed, and its body sees no type parameter of the enclosing item
+    /// (`STATIC.md` §2).
+    fn check_item_stmt(&mut self, item: &ast::Item) {
+        let ast::ItemKind::Fn(f) = &item.kind else {
+            self.error_at(
+                item.span,
+                "only a `fn` may be declared inside a block".to_string(),
+            );
+            return;
+        };
+        if !f.sig.generics.is_empty() {
+            self.error_at(
+                f.sig.name_span,
+                format!("nested `fn {}` cannot be generic", f.sig.name),
+            );
+        }
+        let outer_params = std::mem::take(&mut self.type_params);
+        let outer_bounds = std::mem::take(&mut self.type_bounds);
+        self.check_item(item);
+        self.type_params = outer_params;
+        self.type_bounds = outer_bounds;
     }
 
     fn check_let(&mut self, l: &ast::LetStmt, span: ast::Span) {
@@ -1045,7 +1105,14 @@ impl<'a> Checker<'a> {
             if let Some(ty) = self.resolve_unit_value(name) {
                 return ty;
             }
-            self.error_at(span, format!("unknown name `{name}`"));
+            if self.scopes.is_captured_local(name) {
+                self.error_at(
+                    span,
+                    format!("nested `fn` cannot use local `{name}` of the enclosing block"),
+                );
+            } else {
+                self.error_at(span, format!("unknown name `{name}`"));
+            }
             return Ty::Unknown;
         }
         // Qualified path: `Type::assoc` / `Enum::Variant`.

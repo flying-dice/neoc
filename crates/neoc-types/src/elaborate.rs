@@ -188,7 +188,7 @@ impl<'a> Elaborator<'a> {
         }
         let self_target = self_ty.map(|t| self.checker.self_target(t));
 
-        self.checker.scopes.push();
+        self.checker.scopes.push_fn();
         for p in &sig.params {
             match p {
                 ast::Param::Receiver => {
@@ -230,10 +230,10 @@ impl<'a> Elaborator<'a> {
     // ---- statements & blocks ----------------------------------------------
 
     fn block(&mut self, block: &ast::Block) -> ast::Block {
-        self.checker.scopes.push();
+        self.checker.enter_block(&block.stmts);
         let stmts = block.stmts.iter().map(|s| self.stmt(s)).collect();
         let value = block.value.as_ref().map(|e| Box::new(self.expr(e)));
-        self.checker.scopes.pop();
+        self.checker.exit_block();
         ast::Block { stmts, value }
     }
 

@@ -618,13 +618,28 @@ fn normalize_variant_fields(fields: &mut VariantFields, table: &SymbolTable) {
 /// other.
 pub type BindingId = u32;
 
+/// One lexical frame of a [`Scopes`] stack.
+#[derive(Debug, Default)]
+struct Frame {
+    names: HashMap<String, (Ty, BindingId)>,
+    /// Holds a block's item statements (nested `fn`s), which stay visible
+    /// inside a nested item body; every other frame holds locals.
+    items: bool,
+    /// The outermost frame of a `fn` body: locals of the frames below it are
+    /// out of reach (an item statement captures nothing).
+    fn_boundary: bool,
+}
+
 /// The lexical scope stack for value bindings (`let`, params, closure params,
-/// pattern bindings). Innermost scope is last. Each binding carries a
-/// [`BindingId`] minted on `bind`, so a later `lookup` can report *which*
-/// binding a name resolved to, not just its type.
+/// pattern bindings, item-statement `fn`s). Innermost scope is last. Each
+/// binding carries a [`BindingId`] minted on `bind`, so a later `lookup` can
+/// report *which* binding a name resolved to, not just its type.
+///
+/// A `fn` body is a capture boundary: lookups cross it only into item frames,
+/// never into the locals of an enclosing block (`STATIC.md` §2).
 #[derive(Debug, Default)]
 pub struct Scopes {
-    frames: Vec<HashMap<String, (Ty, BindingId)>>,
+    frames: Vec<Frame>,
     next_id: BindingId,
 }
 
@@ -632,13 +647,30 @@ impl Scopes {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            frames: vec![HashMap::new()],
+            frames: vec![Frame::default()],
             next_id: 0,
         }
     }
 
     pub fn push(&mut self) {
-        self.frames.push(HashMap::new());
+        self.frames.push(Frame::default());
+    }
+
+    /// Opens the frame of a `fn` body — a capture boundary.
+    pub fn push_fn(&mut self) {
+        self.frames.push(Frame {
+            fn_boundary: true,
+            ..Frame::default()
+        });
+    }
+
+    /// Opens a block's item frame: the hoisted item-statement names, visible
+    /// across the whole block and inside the items it declares.
+    pub fn push_items(&mut self) {
+        self.frames.push(Frame {
+            items: true,
+            ..Frame::default()
+        });
     }
 
     pub fn pop(&mut self) {
@@ -652,18 +684,35 @@ impl Scopes {
         let id = self.next_id;
         self.next_id += 1;
         if let Some(frame) = self.frames.last_mut() {
-            frame.insert(name.into(), (ty, id));
+            frame.names.insert(name.into(), (ty, id));
         }
         id
+    }
+
+    /// Whether the innermost frame already binds `name`.
+    #[must_use]
+    pub fn bound_here(&self, name: &str) -> bool {
+        self.frames
+            .last()
+            .is_some_and(|f| f.names.contains_key(name))
+    }
+
+    /// The frames a lookup may read, innermost first: past a `fn` boundary only
+    /// item frames remain.
+    fn reachable(&self) -> impl Iterator<Item = &Frame> {
+        let mut crossed = false;
+        self.frames.iter().rev().filter(move |f| {
+            let reach = !crossed || f.items;
+            crossed |= f.fn_boundary;
+            reach
+        })
     }
 
     /// Looks a name's type up from the innermost scope outward.
     #[must_use]
     pub fn lookup(&self, name: &str) -> Option<&Ty> {
-        self.frames
-            .iter()
-            .rev()
-            .find_map(|f| f.get(name))
+        self.reachable()
+            .find_map(|f| f.names.get(name))
             .map(|(ty, _)| ty)
     }
 
@@ -672,10 +721,16 @@ impl Scopes {
     /// scope (the name is a top-level item, a prelude name, or unresolved).
     #[must_use]
     pub fn binding_of(&self, name: &str) -> Option<BindingId> {
-        self.frames
-            .iter()
-            .rev()
-            .find_map(|f| f.get(name))
+        self.reachable()
+            .find_map(|f| f.names.get(name))
             .map(|(_, id)| *id)
+    }
+
+    /// Whether `name` is a local of an enclosing block that a `fn` boundary
+    /// hides from the current position.
+    #[must_use]
+    pub fn is_captured_local(&self, name: &str) -> bool {
+        self.lookup(name).is_none()
+            && self.frames.iter().any(|f| f.names.contains_key(name))
     }
 }

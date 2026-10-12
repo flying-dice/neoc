@@ -29,6 +29,15 @@ A `.neoc` file lowers to a single Lua chunk:
 ⟦ fn f(…) { … } ⟧       = local function f(…) … end
 ```
 
+A `fn` declared as a statement inside a block (`STATIC.md` §2) is hoisted to the head of that block, ahead of every other statement, so it is in scope from the block's first line. One such `fn` lowers to a `local function`, which can call itself. Several are declared together first and assigned after, so siblings can call one another:
+
+```
+⟦ { fn f(…) { … } … } ⟧           = local function f(…) … end …
+⟦ { fn f(…) { … } fn g(…) { … } … } ⟧ = local f, g
+                                      function f(…) … end
+                                      function g(…) … end  …
+```
+
 ## 3. Items
 
 ### 3.1 `struct`

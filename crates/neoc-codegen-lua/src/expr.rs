@@ -48,17 +48,39 @@ impl Emitter {
     pub(super) fn emit_stmt(&mut self, stmt: &ast::Stmt) {
         self.at_span(stmt.span, |em| match &stmt.kind {
             ast::StmtKind::Let(l) => em.emit_let(l),
-            ast::StmtKind::Item(item) => em.emit_item_stmt(item),
+            ast::StmtKind::Item(_) => {}
             ast::StmtKind::Expr(e) => em.emit_expr_stmt(e),
         });
     }
 
-    fn emit_item_stmt(&mut self, item: &ast::Item) {
-        // Nested items are rare; only functions are meaningful inside a block.
-        if let ast::ItemKind::Fn(f) = &item.kind {
-            self.emit_fn_local(f);
-        } else {
-            self.error("only nested functions are supported inside a block");
+    /// Emit a block's item statements ahead of its other statements
+    /// (`DYNAMIC.md` §2): the checker hoists them over the whole block, so
+    /// each is a Lua local in scope from the block's first line. A lone `fn`
+    /// is a `local function`, so it can recurse. Several are declared together
+    /// first and assigned after, so siblings can call each other.
+    pub(crate) fn emit_hoisted_fns(&mut self, block: &ast::Block) {
+        let fns: Vec<(&ast::FnDecl, ast::Span)> = block
+            .stmts
+            .iter()
+            .filter_map(|s| match &s.kind {
+                ast::StmtKind::Item(ast::Item {
+                    kind: ast::ItemKind::Fn(f),
+                    ..
+                }) => Some((f, s.span)),
+                _ => None,
+            })
+            .collect();
+        if let [(f, span)] = fns.as_slice() {
+            self.at_span(*span, |em| em.emit_fn_local(f, "local function"));
+            return;
+        }
+        if fns.is_empty() {
+            return;
+        }
+        let names: Vec<&str> = fns.iter().map(|(f, _)| f.sig.name.as_str()).collect();
+        self.line(format!("local {}", names.join(", ")));
+        for (f, span) in fns {
+            self.at_span(span, |em| em.emit_fn_local(f, "function"));
         }
     }
 
@@ -876,7 +898,7 @@ impl Emitter {
         self.line("end");
     }
 
-    fn emit_fn_local(&mut self, f: &ast::FnDecl) {
+    fn emit_fn_local(&mut self, f: &ast::FnDecl, keyword: &str) {
         let params: Vec<String> = f
             .sig
             .params
@@ -887,7 +909,7 @@ impl Emitter {
             })
             .collect();
         self.line(format!(
-            "local function {}({})",
+            "{keyword} {}({})",
             f.sig.name,
             params.join(", ")
         ));

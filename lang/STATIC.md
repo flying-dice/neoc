@@ -26,6 +26,8 @@ Scoping is lexical and block-structured:
 
 - A source file is a module scope. Items are visible throughout the module regardless of order (forward references between items are allowed).
 - Each `Block` (`SYNTAX.md` §6.1) opens a nested scope. A `let` binding is visible from the statement after it to the end of its block.
+- A `fn` may be declared as a statement inside a block (an **item statement**). Item statements are hoisted: the name is visible throughout the whole block — before and after the declaration, inside its own body (recursion), and to sibling item statements (mutual recursion) — and shadows an outer item or binding of the same name. Two item statements of one block may not share a name. Only a `fn` may appear in statement position, and it must not be generic.
+- An item statement is a pure item and captures nothing: its body sees its parameters, the item statements of every enclosing block, and module-level names, but not the `let` bindings, parameters, or type parameters of the enclosing function. Naming one is an error. The name is not visible outside its block.
 - Inner bindings shadow outer bindings of the same name in the same namespace. Shadowing is allowed and is not a warning.
 
 Name resolution order for an unqualified name: innermost block scope outward to the module scope, then names brought in by `use`, then the prelude (`Ok`, `Err`, `Some`, `None`, `Result`, `Option`, and the predeclared type names `number`, `string`, `bool`), then `extern` declarations.

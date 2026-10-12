@@ -498,6 +498,7 @@ impl Emitter {
     /// Emit a block's statements, planning loop-carried string appends for each
     /// `let` that a later statement appends to.
     pub(crate) fn emit_stmts(&mut self, block: &ast::Block) {
+        self.emit_hoisted_fns(block);
         let mut targets = AppendTargets::default();
         for stmt in &block.stmts {
             walk_stmt(stmt, TOP, &mut targets);
@@ -510,7 +511,9 @@ impl Emitter {
             {
                 self.plan_concat(name, &block.stmts[i + 1..], block.value.as_deref());
             }
-            self.emit_stmt(stmt);
+            if !matches!(stmt.kind, ast::StmtKind::Item(_)) {
+                self.emit_stmt(stmt);
+            }
         }
     }
 
