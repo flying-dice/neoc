@@ -1,2 +1,4 @@
 nested `fn` cannot use type parameter `T` of the enclosing function
+nested `fn` cannot use type parameter `T` of the enclosing function
+nested `fn` cannot use type parameter `U` of the enclosing function
 nested `fn` cannot use type parameter `U` of the enclosing function
