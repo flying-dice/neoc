@@ -1577,8 +1577,12 @@ impl<'a> Checker<'a> {
                 // A marker binding is a placeholder: a concrete type from a
                 // later argument replaces it.
                 match subst.get(name) {
-                    Some(prev) if !prev.is_unresolved() || a.is_unresolved() => {}
-                    _ => {
+                    Some(prev) if Self::mentions_marker(prev) => {
+                        let merged = Self::fill_marker(prev, a);
+                        subst.insert(name.clone(), merged);
+                    }
+                    Some(_) => {}
+                    None => {
                         subst.insert(name.clone(), a.clone());
                     }
                 }
@@ -2473,6 +2477,36 @@ impl<'a> Checker<'a> {
     }
 
     /// Whether `ty` carries the `unresolved` marker.
+    /// `prev` with each marker replaced by the matching part of `with`, where
+    /// the two have the same shape; a part that differs in shape stays as
+    /// `prev` had it.
+    fn fill_marker(prev: &Ty, with: &Ty) -> Ty {
+        match (prev, with) {
+            (p, w) if p.is_unresolved() => w.clone(),
+            (Ty::List(p), Ty::List(w)) => Ty::List(Box::new(Self::fill_marker(p, w))),
+            (Ty::Named { name, args: pa }, Ty::Named { name: wn, args: wa })
+                if name == wn && pa.len() == wa.len() =>
+            {
+                Ty::Named {
+                    name: name.clone(),
+                    args: pa
+                        .iter()
+                        .zip(wa)
+                        .map(|(p, w)| Self::fill_marker(p, w))
+                        .collect(),
+                }
+            }
+            (Ty::Fn(pp, pr), Ty::Fn(wp, wr)) if pp.len() == wp.len() => Ty::Fn(
+                pp.iter()
+                    .zip(wp)
+                    .map(|(p, w)| Self::fill_marker(p, w))
+                    .collect(),
+                Box::new(Self::fill_marker(pr, wr)),
+            ),
+            _ => prev.clone(),
+        }
+    }
+
     fn mentions_marker(ty: &Ty) -> bool {
         let found = std::cell::Cell::new(false);
         let _ = ty.map(&|t| {

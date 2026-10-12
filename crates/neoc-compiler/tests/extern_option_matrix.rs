@@ -1017,3 +1017,28 @@ fn main() { let x = run2([|s| 1], || P { x: 1 }); let y = x.x; }
     let out = transpile(src, Target::Lua);
     assert!(out.ok(), "{:#?}", out.diagnostics);
 }
+
+#[test]
+fn a_later_argument_fills_a_marker_nested_in_a_binding() {
+    for (call, read) in [
+        ("run2([|s| [s]], || [P { x: 1 }])", "let y = x[0].x;"),
+        (
+            "run2([|s| Some(s)], || Some(P { x: 1 }))",
+            "match x { Some(p) => { let y = p.x; } None => {} }",
+        ),
+        (
+            "run2([|s| Ok(s)], || Ok(P { x: 1 }))",
+            "match x { Ok(p) => { let y = p.x; } Err(e) => {} }",
+        ),
+        (
+            "run2([|s| |n: number| s], || |n: number| P { x: 1 })",
+            "let y = x(1).x;",
+        ),
+    ] {
+        let src = format!(
+            "extern {{ struct Settings {{ title: Option<string> }} }}\nstruct P {{ x: number }}\nfn run2<T, U>(fs: [fn(U) -> T], g: fn() -> T) -> T {{ g() }}\nfn main() {{ let x = {call}; {read} }}\n"
+        );
+        let out = transpile(&src, Target::Lua);
+        assert!(out.ok(), "{call}: {:#?}", out.diagnostics);
+    }
+}
