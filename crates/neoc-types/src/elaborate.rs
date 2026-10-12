@@ -631,7 +631,7 @@ impl<'a> Elaborator<'a> {
         self.checker
             .hint_closures(orig, ty, &std::collections::HashMap::new());
         let actual = self.checker.quiet_infer(orig);
-        if actual.is_unknown() || actual.is_dynamic() {
+        if actual.is_unknown() || actual.is_unresolved() || actual.is_dynamic() {
             return new;
         }
         marshal_to_host(ty, new)

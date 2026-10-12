@@ -13,14 +13,11 @@ use crate::collect::{generic_names, lower_type};
 use crate::env::{
     ScopeLookup, Scopes, StructFields, StructInfo, SymbolTable, TraitRef, TypeDef, VariantFields,
 };
-use crate::ty::Ty;
+use crate::ty::{Ty, UNRESOLVED};
 
 mod impl_check;
 pub(crate) mod marshal;
 
-/// The name of the marker type a closure parameter takes when no hint could type
-/// it (see `infer_closure`).
-const UNRESOLVED: &str = "_";
 mod pattern;
 mod solve;
 mod usefulness;
@@ -1102,6 +1099,7 @@ impl<'a> Checker<'a> {
                 let elem = match it {
                     Ty::List(inner) => *inner,
                     Ty::Unknown => Ty::Unknown,
+                    t if t.is_unresolved() => Ty::Unknown,
                     other => {
                         self.error_at(
                             iter.span,
@@ -1491,7 +1489,7 @@ impl<'a> Checker<'a> {
                 Self::apply_subst(&ret, &subst)
             }
             Ty::Unknown => Ty::Unknown,
-            Ty::Param(n) if n == UNRESOLVED => Ty::Unknown,
+            Ty::Param(n) if n == UNRESOLVED => Ty::Param(UNRESOLVED.to_string()),
             // A dynamic value is callable — this is how an imported `class X;`
             // is constructed (`X(args) : Unknown`). The call yields `Unknown`
             // again (`STATIC.md` §5).
@@ -2075,7 +2073,7 @@ impl<'a> Checker<'a> {
         match b {
             Ty::List(inner) => *inner,
             Ty::Unknown => Ty::Unknown,
-            Ty::Param(n) if n == UNRESOLVED => Ty::Unknown,
+            Ty::Param(n) if n == UNRESOLVED => Ty::Param(UNRESOLVED.to_string()),
             // Indexing through a dynamic value yields `Unknown` again.
             Ty::Dynamic => Ty::Dynamic,
             other => {
@@ -2323,7 +2321,7 @@ impl<'a> Checker<'a> {
                         if let (Some(v), Some((_, d))) =
                             (&f.value, decl.iter().find(|(n, _)| *n == f.name))
                         {
-                            self.hint_closures(v, d, &inner);
+                            self.hint_closures(v, &Self::subst_named(d, &inner), &inner);
                         }
                     }
                 }
@@ -2342,6 +2340,10 @@ impl<'a> Checker<'a> {
                     .push(expected);
             }
             (ast::ExprKind::Try(inner), _) => self.hint_try(inner, ty, subst),
+            // `xs[i]` under an expected `T` reads `xs` as `[T]`.
+            (ast::ExprKind::Index { base, .. }, _) => {
+                self.hint_closures(base, &Ty::List(Box::new(ty.clone())), subst);
+            }
             _ => {}
         }
     }
@@ -2505,6 +2507,7 @@ impl<'a> Checker<'a> {
                 }
                 ast::ExprKind::MethodCall { args, .. } => args.iter().for_each(|a| walk(a, out)),
                 ast::ExprKind::Try(inner) => walk(inner, out),
+                ast::ExprKind::Index { base, .. } => walk(base, out),
                 ast::ExprKind::StructLit { fields, .. } => fields
                     .iter()
                     .filter_map(|f| f.value.as_ref())
@@ -2535,6 +2538,7 @@ impl<'a> Checker<'a> {
             }
             ast::ExprKind::MethodCall { args, .. } => args.iter().any(Self::yields_closure),
             ast::ExprKind::Try(inner) => Self::yields_closure(inner),
+            ast::ExprKind::Index { base, .. } => Self::yields_closure(base),
             ast::ExprKind::StructLit { fields, .. } => fields
                 .iter()
                 .any(|f| f.value.as_ref().is_some_and(Self::yields_closure)),
@@ -2588,7 +2592,20 @@ impl<'a> Checker<'a> {
         // The enclosing item's type parameters in the receiver's arguments
         // share names with the method's own; read them as `Unknown`, so a
         // closure parameter built from one is left to its annotation.
-        let erased = recv.map(&|t| matches!(t, Ty::Param(_)).then_some(Ty::Unknown));
+        // A parameter that is none of the enclosing item's (a stray one left by
+        // an unresolved `None`) is an unknown host value in waiting: it takes
+        // the `unresolved` marker, so a closure over it cannot read members.
+        let own: Vec<&String> = self
+            .type_params
+            .iter()
+            .chain(&self.enclosing_type_params)
+            .collect();
+        let erased = recv.map(&|t| match t {
+            Ty::Param(n) if n == UNRESOLVED => None,
+            Ty::Param(n) if own.contains(&n) => Some(Ty::Unknown),
+            Ty::Param(_) => Some(Ty::Param(UNRESOLVED.to_string())),
+            _ => None,
+        });
         let recv = &erased;
         let Ty::Named { name, args } = recv else {
             return None;
@@ -2755,7 +2772,7 @@ impl<'a> Checker<'a> {
                 }
             },
             Ty::Unknown => Ty::Unknown,
-            Ty::Param(n) if n == UNRESOLVED => Ty::Unknown,
+            Ty::Param(n) if n == UNRESOLVED => Ty::Param(UNRESOLVED.to_string()),
             other => {
                 self.error(format!(
                     "`?` expects a `Result` or `Option`, found `{other}`"

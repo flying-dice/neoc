@@ -862,3 +862,57 @@ fn caller_type_parameters_are_known_and_the_marker_stays_quiet() {
         );
     }
 }
+
+/// The marker behaves as an unknown value everywhere but a member read: bounds,
+/// `for`, host arguments, operators, and display; and it follows calls, index,
+/// and `?`.
+#[test]
+fn the_marker_acts_unknown_except_for_member_reads() {
+    let items = "trait Shout { fn shout(self) -> string; }\nfn show<T: Shout>(x: T) -> number { 1 }\nfn hold<T, U>(f: fn(T) -> U) -> number { 1 }";
+    for body in [
+        "let r = hold(|s| show(s));",
+        "let r = hold(|s| { for x in s { } 1 });",
+        "let r = hold(|s| lookup(\"a\", s));",
+        "let r = hold(|s| s + 1);",
+    ] {
+        let out = build(items, body);
+        assert!(out.ok(), "{body}\n{:#?}", out.diagnostics);
+        assert!(
+            !out.output.contains("__option_to_host(s)"),
+            "{body}\n{}",
+            out.output
+        );
+    }
+    for body in [
+        "let r = hold(|s| s[0].title);",
+        "let r = hold(|s| s().title);",
+        "let r = hold(|s| { let q = s?; q.title });",
+    ] {
+        let out = build(items, body);
+        assert!(
+            out.diagnostics
+                .iter()
+                .any(|d| d.message.contains("closure parameter is not known here")),
+            "{body}\n{:#?}",
+            out.diagnostics
+        );
+    }
+}
+
+/// Closures reached through an index, or in a bare type-parameter field whose
+/// argument the call fixes, are hinted.
+#[test]
+fn indexed_and_bare_field_closures_are_hinted() {
+    let out = build(
+        "fn run(f: fn(Settings) -> Option<string>) -> Option<string> { f(mk()) }",
+        "let r = run((if true { [|s| s.title] } else { [|s| s.title] })[0]);",
+    );
+    assert!(out.ok(), "{:#?}", out.diagnostics);
+    assert!(wraps(&out.output, FROM) >= 1, "{}", out.output);
+    let out = build(
+        "struct W<A> { f: A }\nfn take(w: W<fn(Settings) -> Option<string>>) { }",
+        "take(W { f: |s| s.title });",
+    );
+    assert!(out.ok(), "{:#?}", out.diagnostics);
+    assert!(wraps(&out.output, FROM) >= 1, "{}", out.output);
+}

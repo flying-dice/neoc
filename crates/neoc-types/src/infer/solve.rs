@@ -413,6 +413,7 @@ impl Checker<'_> {
     ) -> bool {
         let direct = match ty {
             Ty::Unknown => return true,
+            t if t.is_unresolved() => return true,
             Ty::Param(p) => self
                 .type_bounds
                 .get(p)
@@ -540,6 +541,6 @@ fn match_ty(pat: &Ty, actual: &Ty, generics: &[String], bound: &mut [Option<Ty>]
                     .zip(aa)
                     .all(|(p, a)| match_ty(p, a, generics, bound))
         }
-        _ => pat == actual || actual.is_unknown(),
+        _ => pat == actual || actual.is_unknown() || actual.is_unresolved(),
     }
 }

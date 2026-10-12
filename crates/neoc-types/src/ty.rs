@@ -7,6 +7,9 @@
 
 use std::fmt;
 
+/// The name of the marker type of an unresolved closure parameter.
+pub(crate) const UNRESOLVED: &str = "_";
+
 /// A resolved neoc type.
 ///
 /// Equality on `Ty` is the type identity neoc uses: primitives match by kind,
@@ -69,6 +72,14 @@ impl Ty {
             name: "Option".to_string(),
             args: vec![inner],
         }
+    }
+
+    /// Returns `true` for the marker type of a closure parameter no hint could
+    /// type: it stands for a value of unknown type, and reading a member of it
+    /// is rejected (see `lang/EXTERN.md` §Option marshalling).
+    #[must_use]
+    pub fn is_unresolved(&self) -> bool {
+        matches!(self, Ty::Param(n) if n == UNRESOLVED)
     }
 
     /// Returns `true` if this type is the error placeholder.
@@ -182,7 +193,11 @@ impl Ty {
     /// anything, so an earlier error does not cascade into a second one.
     #[must_use]
     pub(crate) fn same_or_unknown(&self, other: &Ty) -> bool {
-        self == other || self.is_unknown() || other.is_unknown()
+        self == other
+            || self.is_unknown()
+            || other.is_unknown()
+            || self.is_unresolved()
+            || other.is_unresolved()
     }
 
     /// Structural compatibility for the no-subtyping fragment.
@@ -267,6 +282,7 @@ impl fmt::Display for Ty {
                 }
                 Ok(())
             }
+            Ty::Param(name) if name == UNRESOLVED => f.write_str("<unknown>"),
             Ty::Param(name) => f.write_str(name),
             Ty::Unknown => f.write_str("<unknown>"),
             Ty::Dynamic => f.write_str("Unknown"),
