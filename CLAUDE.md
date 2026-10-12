@@ -321,8 +321,8 @@ scripting runtimes (Lua first); the voice is plain.
 ## Commits & PRs
 
 Use [Conventional Commits](https://www.conventionalcommits.org). Terse, but
-spec-compliant. release-plz reads these to compute the next version and generate
-the changelog — wrong format means wrong (or missing) releases.
+spec-compliant. Releases are cut by pushing a `vX.Y.Z` tag (see CONTRIBUTING.md);
+release notes are generated from merged PRs and commits.
 
 ```
 fix(codegen-lua): trait defaults emit a clean Lua function signature

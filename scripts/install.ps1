@@ -37,8 +37,7 @@ function Resolve-Version {
 function Get-Target {
     $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
     switch ($arch) {
-        "X64"   { return "x86_64-pc-windows-msvc" }
-        "Arm64" { return "aarch64-pc-windows-msvc" }
+        "X64"   { return "x86_64-pc-windows-gnu" }
         default {
             Write-Error "Unsupported architecture: $arch"
             exit 1
@@ -51,37 +50,43 @@ function Install-Neoc {
 
     $target = Get-Target
     $resolvedVersion = Resolve-Version
-    $artifactName = "neoc-$target"
+    $artifactName = "neoc-$target.exe"
 
     Write-Host "  Platform: $target"
     Write-Host "  Version:  $resolvedVersion"
     Write-Host "  Install:  $InstallDir"
 
-    $downloadUrl = "https://github.com/$Repo/releases/download/$resolvedVersion/$artifactName.zip"
+    $baseUrl = "https://github.com/$Repo/releases/download/$resolvedVersion"
 
     $tmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.IO.Path]::GetRandomFileName())
     New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
 
     try {
-        $archivePath = Join-Path $tmpDir "archive.zip"
-        Write-Host "  Downloading $downloadUrl ..."
+        $binPath = Join-Path $tmpDir $Binary
+        $sumsPath = Join-Path $tmpDir "SHA256SUMS"
+        Write-Host "  Downloading $baseUrl/$artifactName ..."
 
         try {
-            Invoke-WebRequest -Uri $downloadUrl -OutFile $archivePath -UseBasicParsing
+            Invoke-WebRequest -Uri "$baseUrl/$artifactName" -OutFile $binPath -UseBasicParsing
+            Invoke-WebRequest -Uri "$baseUrl/SHA256SUMS" -OutFile $sumsPath -UseBasicParsing
         } catch {
             Write-Error "Download failed - check that version '$resolvedVersion' exists and has a release asset for '$target'"
             exit 1
         }
 
-        Expand-Archive -Path $archivePath -DestinationPath $tmpDir -Force
+        $expected = (Get-Content $sumsPath | Where-Object { $_ -match "\s\*?$([regex]::Escape($artifactName))$" } | Select-Object -First 1) -split "\s+" | Select-Object -First 1
+        $actual = (Get-FileHash -Algorithm SHA256 $binPath).Hash.ToLower()
+        if (-not $expected -or $expected.ToLower() -ne $actual) {
+            Write-Error "Checksum mismatch for $artifactName"
+            exit 1
+        }
 
         if (-not (Test-Path $InstallDir)) {
             New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
         }
 
-        $src = Join-Path $tmpDir $Binary
         $dest = Join-Path $InstallDir $Binary
-        Move-Item -Path $src -Destination $dest -Force
+        Move-Item -Path $binPath -Destination $dest -Force
 
         Write-Host ""
         Write-Host "neoc $resolvedVersion installed to $dest"

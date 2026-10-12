@@ -5,7 +5,7 @@ Mechanical walkthrough — order, file locations, pre-MR checks. Points to [STYL
 ## Before you start
 
 - `rustup` + `cargo` on `PATH`. Toolchain pinned in [rust-toolchain.toml](rust-toolchain.toml) — rustup auto-installs it; don't use `+stable`.
-- Bumping the toolchain is its own PR: edit `rust-toolchain.toml`, the `Dockerfile` builder image and any CI image or toolchain reference (`.github` workflows, `.gitlab-ci.yml` while it exists) together, fix any new clippy/rustc lint fallout in that PR, and run `scripts/check-toolchain-pin.sh`.
+- Bumping the toolchain is its own PR: edit `rust-toolchain.toml`, the `Dockerfile` builder image and any CI image or toolchain reference (`.github` workflows) together, fix any new clippy/rustc lint fallout in that PR, and run `scripts/check-toolchain-pin.sh`.
 - Read [Design principles](README.md#design-principles) — non-negotiable.
 - Read [STYLEGUIDE.md](STYLEGUIDE.md) — binding rules.
 
@@ -149,7 +149,7 @@ cargo fmt --check
 
 ## CI
 
-GitLab CI (`.gitlab-ci.yml`) on push to `main` and MRs targeting `main`.
+GitHub Actions (`.github/workflows/ci.yml`) on push to `main` and `develop`, and on manual dispatch. Never per PR (limited CI minutes): run the checks above locally.
 
 Stages:
 1. **Lint** — `fmt --check`, `clippy` (warnings = errors)
@@ -169,20 +169,35 @@ Stages:
 - Implementation: `issues/{id}-{slug}`
 - Design: `design/{id}-{slug}`
 
-### Releasing
+### How to release
 
-[release-plz](https://release-plz.dev/) via conventional commits:
-1. Merge to `main` with conventional commit messages
-2. release-plz creates/updates Release MR (version bump + changelog)
-3. Merge Release MR = approval gate
-4. Tag pushed → GitLab Release created
-5. Build pipeline: lint → test → cross-compile → upload binaries
+Releases are cut by pushing a tag. There is no release bot and no release PR.
 
-Requires `GITLAB_TOKEN` CI variable (`api` + `write_repository` scopes).
+```sh
+git checkout main && git pull
+git tag vX.Y.Z
+git push origin vX.Y.Z
+```
+
+The tag must match `vMAJOR.MINOR.PATCH`, optionally with a `-<pre>` suffix
+(`v0.2.0-rc.1`), and must point at a commit on `main`. The `Release` workflow
+(`.github/workflows/release.yml`):
+
+1. Stamps the tag's version into the workspace `Cargo.toml` in the CI checkout
+   only (`scripts/stamp-version.sh`), so `neoc --version` reports it. Nothing is
+   committed back.
+2. Builds `neoc-x86_64-unknown-linux-gnu` and `neoc-x86_64-pc-windows-gnu.exe`.
+3. Creates the GitHub Release with generated notes, both binaries, and
+   `SHA256SUMS`. A `-<pre>` tag is marked as a pre-release.
+
+Any build failure, or a tag not on `main`, fails the workflow without publishing.
+It needs only the default `GITHUB_TOKEN`. `scripts/install.sh` and
+`scripts/install.ps1` install from the latest non-pre-release; set
+`NEOC_VERSION=vX.Y.Z-rc.1` to install a pre-release.
 
 ## Commit style
 
-[Conventional Commits](https://www.conventionalcommits.org/). release-plz reads these.
+[Conventional Commits](https://www.conventionalcommits.org/).
 
 ```
 <type>(<scope>): <subject>

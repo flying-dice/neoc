@@ -14,32 +14,30 @@ INSTALL_DIR="${NEOC_INSTALL_DIR:-$HOME/.neoc/bin}"
 VERSION="${NEOC_VERSION:-latest}"
 
 detect_platform() {
-    local os arch target
+    local os arch
 
     os="$(uname -s)"
     arch="$(uname -m)"
 
     case "$os" in
-        Linux)  os="unknown-linux-gnu" ;;
-        Darwin) os="apple-darwin" ;;
+        Linux) ;;
         *)
             echo "error: unsupported OS: $os" >&2
-            echo "       use the PowerShell script on Windows" >&2
+            echo "       releases ship Linux x86_64 and Windows x86_64 binaries" >&2
+            echo "       (use install.ps1 on Windows)" >&2
             exit 1
             ;;
     esac
 
     case "$arch" in
-        x86_64|amd64)   arch="x86_64" ;;
-        aarch64|arm64)   arch="aarch64" ;;
+        x86_64|amd64) ;;
         *)
             echo "error: unsupported architecture: $arch" >&2
             exit 1
             ;;
     esac
 
-    target="${arch}-${os}"
-    echo "$target"
+    echo "x86_64-unknown-linux-gnu"
 }
 
 resolve_version() {
@@ -56,7 +54,7 @@ resolve_version() {
 }
 
 main() {
-    local target version artifact_name download_url tmp_dir
+    local target version artifact_name base_url tmp_dir expected actual
 
     echo "Installing neoc..."
 
@@ -68,19 +66,25 @@ main() {
     echo "  Version:  $version"
     echo "  Install:  $INSTALL_DIR"
 
-    download_url="https://github.com/$REPO/releases/download/${version}/${artifact_name}.tar.gz"
+    base_url="https://github.com/$REPO/releases/download/${version}"
 
     tmp_dir="$(mktemp -d)"
-    trap 'rm -rf "$tmp_dir"' EXIT
+    trap "rm -rf '$tmp_dir'" EXIT
 
-    echo "  Downloading $download_url ..."
-    if ! curl -fsSL "$download_url" -o "$tmp_dir/archive.tar.gz"; then
+    echo "  Downloading $base_url/$artifact_name ..."
+    if ! curl -fsSL "$base_url/$artifact_name" -o "$tmp_dir/$BINARY" \
+        || ! curl -fsSL "$base_url/SHA256SUMS" -o "$tmp_dir/SHA256SUMS"; then
         echo "error: download failed — check that version '$version' exists" >&2
         echo "       and has a release asset for '$target'" >&2
         exit 1
     fi
 
-    tar -xzf "$tmp_dir/archive.tar.gz" -C "$tmp_dir"
+    expected="$(awk -v f="$artifact_name" '$2 == f {print $1}' "$tmp_dir/SHA256SUMS")"
+    actual="$(sha256sum "$tmp_dir/$BINARY" | awk '{print $1}')"
+    if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
+        echo "error: checksum mismatch for $artifact_name" >&2
+        exit 1
+    fi
 
     mkdir -p "$INSTALL_DIR"
     mv "$tmp_dir/$BINARY" "$INSTALL_DIR/$BINARY"
