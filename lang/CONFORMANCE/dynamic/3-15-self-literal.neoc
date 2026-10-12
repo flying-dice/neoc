@@ -1,0 +1,33 @@
+// SYNTAX.md struct literals / DYNAMIC.md §3.3: inside an `impl`, `Self` heads a
+// struct literal and names the impl's target — including struct update. It
+// lowers exactly as the target's own name would.
+extern {
+    fn println(n: number);
+}
+
+struct Point {
+    x: number,
+    y: number,
+}
+
+impl Point {
+    fn origin() -> Self {
+        Self { x: 0, y: 0 }
+    }
+
+    fn at(x: number, y: number) -> Self {
+        Self { x, y }
+    }
+
+    fn with_x(self, x: number) -> Self {
+        Self { x, ..self }
+    }
+}
+
+fn main() {
+    let o = Point::origin();
+    let p = Point::at(3, 4).with_x(9);
+    println(o.x);
+    println(p.x);
+    println(p.y);
+}
