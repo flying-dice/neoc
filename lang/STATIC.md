@@ -77,6 +77,16 @@ struct S { f₁: τ₁, …, fₙ: τₙ } ∈ Γ    Γ ⊢ eᵢ : τᵢ   (for 
 Γ ⊢ S { f₁: e₁, …, fₙ: eₙ } : S
 ```
 
+Inside an `impl` body, `Self` may head a struct literal (including `Self { f, .. base }`) and stands for the impl's target. The target must be a struct; the literal then types exactly as one headed by the target's name. `Self` heads no literal outside an impl, in a trait default body (`Self` is the unknown implementor), or in a blanket impl (`Self` is a type parameter). A `Self` literal is also rejected where a local binding shadows the target's name — the literal lowers through that name (`DYNAMIC.md` §4.4), so the local would capture it.
+
+```
+Γ ⊢ impl target = S    struct S { … } ∈ Γ    S ∉ dom(Γ_locals)    Γ ⊢ S { f₁: e₁, … } : S
+────────────────────────────────────────────────────────────────────────────── (T-STRUCT-LIT-SELF)
+Γ ⊢ Self { f₁: e₁, … } : S
+```
+
+Diagnostics: `` `Self` is only available inside an impl ``; `` `Self` in a trait default body is not a struct ``; `` `Self` is the type parameter `T`, which is not a struct ``; `` `Self` is `E`, which is not a struct ``; `` `Self` names `S`, which a local binding shadows here; rename the local ``.
+
 Field access `e.f` requires `e` to have a struct type declaring `f`:
 
 ```
