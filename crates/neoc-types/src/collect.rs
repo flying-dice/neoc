@@ -639,6 +639,7 @@ fn collect_impl(table: &mut SymbolTable, b: &ast::ImplBlock) {
                 param: type_name.clone(),
                 conditions,
                 trait_name: trait_name.name.clone(),
+                methods: b.items.iter().map(|f| f.sig.name.clone()).collect(),
                 assoc_bindings: assoc,
             });
         }

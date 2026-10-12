@@ -159,3 +159,23 @@ fn a_blanket_and_a_concrete_impl_giving_the_same_default_are_both_errors() {
     let src = "trait Show {\n  fn show(self) -> string;\n}\ntrait A {\n  fn a(self) -> string {\n    \"A\"\n  }\n}\ntrait B {\n  fn a(self) -> number {\n    1\n  }\n}\nimpl<T: Show> A for T {}\nstruct D;\nimpl Show for D {\n  fn show(self) -> string {\n    \"d\"\n  }\n}\nimpl B for D {}\n";
     assert_eq!(diagnostics(src).len(), 2, "{:?}", diagnostics(src));
 }
+
+#[test]
+fn a_blanket_method_clashing_with_an_inherited_default_is_an_error_at_both() {
+    let src = "trait Show {\n  fn show(self) -> string;\n}\ntrait A {\n  fn a(self) -> number;\n}\ntrait B {\n  fn a(self) -> string {\n    \"B\"\n  }\n}\nimpl<T: Show> A for T {\n  fn a(self) -> number {\n    1\n  }\n}\nstruct D;\nimpl Show for D {\n  fn show(self) -> string {\n    \"d\"\n  }\n}\nimpl B for D {}\n";
+    let mut d = diagnostics(src);
+    d.sort();
+    assert_eq!(
+        d,
+        [
+            "`impl A for T` (for `D`) gives `D` a method `a`, but trait `B` also gives `D` a default `a`; override `a` in that trait's impl",
+            "`impl B for D` inherits default method `a`, but `D` already has a method `a`; override `a` in the impl",
+        ]
+    );
+}
+
+#[test]
+fn a_blanket_method_overriding_its_own_default_is_accepted() {
+    let src = "trait Show {\n  fn show(self) -> string;\n}\ntrait A {\n  fn a(self) -> string {\n    \"x\"\n  }\n}\nimpl<T: Show> A for T {\n  fn a(self) -> string {\n    \"y\"\n  }\n}\nstruct D;\nimpl Show for D {\n  fn show(self) -> string {\n    \"d\"\n  }\n}\n";
+    assert!(diagnostics(src).is_empty(), "{:?}", diagnostics(src));
+}

@@ -146,6 +146,9 @@ pub struct BlanketImpl {
     pub conditions: Vec<String>,
     /// The trait this blanket provides for every satisfying type.
     pub trait_name: String,
+    /// The methods the blanket provides itself — required ones and overridden
+    /// defaults. Every other default of `trait_name` is inherited.
+    pub methods: Vec<String>,
     /// The blanket's associated-type bindings (`type Item = …`), written in
     /// terms of `param`. Carried so a satisfying type's call site can project a
     /// method's `Self::Item` to the bound type, with `param` read as that type.

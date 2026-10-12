@@ -1,0 +1,31 @@
+// STATIC.md §8: a method a blanket impl provides itself and a default another
+// trait gives the same type share one slot on its table — an error at both.
+trait Show {
+    fn show(self) -> string;
+}
+
+trait A {
+    fn a(self) -> number;
+}
+
+trait B {
+    fn a(self) -> string {
+        "B"
+    }
+}
+
+impl<T: Show> A for T {
+    fn a(self) -> number {
+        1
+    }
+}
+
+struct D;
+
+impl Show for D {
+    fn show(self) -> string {
+        "d"
+    }
+}
+
+impl B for D {}

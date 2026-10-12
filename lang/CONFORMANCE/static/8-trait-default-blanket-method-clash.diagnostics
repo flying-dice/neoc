@@ -1,0 +1,2 @@
+`impl A for T` (for `D`) gives `D` a method `a`, but trait `B` also gives `D` a default `a`; override `a` in that trait's impl
+`impl B for D` inherits default method `a`, but `D` already has a method `a`; override `a` in the impl

@@ -110,6 +110,7 @@ impl Checker<'_> {
             for ty in self.blanket_targets(&conditions) {
                 let label = format!("`impl {trait_name} for {target}` (for `{ty}`)");
                 self.check_inherited_defaults(&label, &ty, trait_name, &inherited);
+                self.check_blanket_methods(&label, &ty, trait_name, &provided);
             }
         } else {
             let label = format!("`impl {trait_name} for {target}`");
@@ -151,6 +152,7 @@ impl Checker<'_> {
                 .table
                 .methods
                 .contains_key(&(target.to_string(), m.to_string()))
+                || self.blanket_method_source(target, m, trait_name).is_some()
             {
                 format!("`{target}` already has a method `{m}`")
             } else if let Some(other) = self
@@ -164,6 +166,31 @@ impl Checker<'_> {
             };
             self.error(format!(
                 "{label} inherits default method `{m}`, but {clash}; override `{m}` in the impl"
+            ));
+        }
+    }
+
+    /// Rejects each method the blanket impl `label` of `trait_name` provides
+    /// itself to concrete type `target` when another trait gives `target` an
+    /// inherited default of the same name — the two land on one table
+    /// (`STATIC.md` §8).
+    fn check_blanket_methods(
+        &mut self,
+        label: &str,
+        target: &str,
+        trait_name: &str,
+        provided: &[&String],
+    ) {
+        for &m in provided {
+            let Some(other) = self
+                .default_sources(target, m)
+                .into_iter()
+                .find(|t| t != trait_name && self.inherits_default(target, t, m))
+            else {
+                continue;
+            };
+            self.error(format!(
+                "{label} gives `{target}` a method `{m}`, but trait `{other}` also gives `{target}` a default `{m}`; override `{m}` in that trait's impl"
             ));
         }
     }

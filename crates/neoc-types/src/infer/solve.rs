@@ -132,6 +132,53 @@ impl Checker<'_> {
         traits
     }
 
+    /// A trait other than `except` whose blanket impl, applying to concrete type
+    /// `name`, provides `method` itself — first in name order.
+    pub(super) fn blanket_method_source(
+        &self,
+        name: &str,
+        method: &str,
+        except: &str,
+    ) -> Option<String> {
+        let ty = Ty::named(name);
+        let mut traits: Vec<&String> = self
+            .table()
+            .blanket_impls
+            .iter()
+            .filter(|bl| bl.trait_name != except && bl.methods.iter().any(|m| m == method))
+            .filter(|bl| bl.conditions.iter().all(|c| self.type_satisfies(&ty, c)))
+            .map(|bl| &bl.trait_name)
+            .collect();
+        traits.sort();
+        traits.first().map(|t| (*t).clone())
+    }
+
+    /// Whether concrete type `name` inherits trait `trait_name`'s default
+    /// `method`: the impl giving `name` the trait — direct or blanket — does
+    /// not provide `method` itself.
+    pub(super) fn inherits_default(&self, name: &str, trait_name: &str, method: &str) -> bool {
+        if !self.declares_default(trait_name, method) {
+            return false;
+        }
+        let direct = self
+            .table()
+            .trait_impls
+            .get(name)
+            .is_some_and(|impls| impls.contains(trait_name));
+        if direct {
+            return !self
+                .table()
+                .methods
+                .contains_key(&(name.to_string(), method.to_string()));
+        }
+        let ty = Ty::named(name);
+        self.table().blanket_impls.iter().any(|bl| {
+            bl.trait_name == trait_name
+                && !bl.methods.iter().any(|m| m == method)
+                && bl.conditions.iter().all(|c| self.type_satisfies(&ty, c))
+        })
+    }
+
     /// Whether trait `trait_name` declares a default-bodied `method`.
     fn declares_default(&self, trait_name: &str, method: &str) -> bool {
         matches!(self.table().types.get(trait_name), Some(TypeDef::Trait(t))
