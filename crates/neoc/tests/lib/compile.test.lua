@@ -9,7 +9,7 @@ local fs      = require("std:fs")
 
 -- Per-run unique paths under the workspace `.tmp/` (gitignored), not the
 -- system `/tmp`. Bundle output is the entire neoc binary (~230 MB); on
--- GitLab shared runners `/tmp` is a small tmpfs and back-to-back runs
+-- CI runners `/tmp` is a small tmpfs and back-to-back runs
 -- surface as `No space left on device`. The workspace volume is per-job
 -- and sized for build artefacts.
 local function unique_path(suffix)

@@ -97,7 +97,7 @@ describe("html", function()
             -- Issue spec cites `&#999999;` as out-of-range but 999999 =
             -- U+F423F is a valid scalar (PUA-A) — standard runtimes decode
             -- it. 1114112 is the actual first invalid codepoint. Flagged
-            -- on the MR for the author to amend the spec table.
+            -- on the PR for the author to amend the spec table.
             expect(html.unescape("&#1114112;")).toBe("&#1114112;")
         end)
         test("decimal in private-use area decodes (counter to spec)", function()

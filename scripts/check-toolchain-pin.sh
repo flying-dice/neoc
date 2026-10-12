@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Fails unless rust-toolchain.toml pins an exact `1.x.y` and every other site
 # that names a Rust version agrees with it: the Dockerfile builder image,
-# `.gitlab-ci.yml` while it exists, and any `.github` workflow. A toolchain bump
+# and any `.github` workflow. A toolchain bump
 # is an explicit PR that edits all sites and fixes lint fallout.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -14,7 +14,6 @@ fi
 
 status=0
 files=(Dockerfile)
-[[ -f .gitlab-ci.yml ]] && files+=(.gitlab-ci.yml)
 while IFS= read -r f; do files+=("$f"); done < <(find .github -type f \( -name '*.yml' -o -name '*.yaml' \) 2>/dev/null)
 
 for f in "${files[@]}"; do

@@ -79,11 +79,11 @@ local fs    = require("std:fs")
 local hyper = require("vnd:hyper")
 local json  = require("vnd:serde_json")
 
-local resp = assert(hyper.get("https://gitlab.beluga-sirius.ts.net/api/v4/projects/flying-dice%2Fneoc"))
+local resp = assert(hyper.get("https://raw.githubusercontent.com/flying-dice/neoc/main/package.json"))
 local data = assert(json.from_str(resp.body))
 
-fs.write("repo.json", json.to_string_pretty(data))
-print("saved " .. data:get("path_with_namespace"))
+fs.write("package.json", json.to_string_pretty(data))
+print("saved " .. data:get("name"))
 ```
 
 ```sh

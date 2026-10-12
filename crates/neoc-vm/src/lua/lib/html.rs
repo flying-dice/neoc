@@ -278,7 +278,7 @@ mod tests {
         // 999999 = 0xF423F is a valid Unicode scalar (Supplementary
         // Private Use Area-A). Spec table is wrong; standard runtimes
         // (Python `html`, Go `html`, Deno `@std/html`) decode it. Flagged
-        // on MR for the author to amend.
+        // on the PR for the author to amend.
         let lua = engine();
         let s: String = lua
             .load(r#"return html.unescape("&#1114112;")"#)

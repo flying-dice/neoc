@@ -3,7 +3,7 @@ import llmstxt from 'vitepress-plugin-llms'
 
 // https://vitepress.dev/reference/site-config
 export default defineConfig({
-  // Set VITEPRESS_BASE in GitLab CI/CD variables if Pages is served at a
+  // Set VITEPRESS_BASE in the CI environment if Pages is served at a
   // subpath (e.g. /neoc/). Defaults to / for local dev and domain-root deploys.
   base: process.env.VITEPRESS_BASE ?? '/',
   vite: {
@@ -230,12 +230,12 @@ export default defineConfig({
     },
 
     socialLinks: [
-      { icon: 'gitlab', link: 'https://gitlab.beluga-sirius.ts.net/flying-dice/neoc' },
+      { icon: 'github', link: 'https://github.com/flying-dice/neoc' },
     ],
 
     editLink: {
-      pattern: 'https://gitlab.beluga-sirius.ts.net/flying-dice/neoc/-/edit/main/docs/src/:path',
-      text: 'Edit this page on GitLab',
+      pattern: 'https://github.com/flying-dice/neoc/edit/main/docs/src/:path',
+      text: 'Edit this page on GitHub',
     },
 
     search: {
