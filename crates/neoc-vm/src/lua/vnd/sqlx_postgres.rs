@@ -15,6 +15,13 @@
 //! db:close()
 //! ```
 //!
+//! Strings bind as `TEXT` when valid UTF-8 and as `BYTEA` otherwise.
+//! Result columns decode as: `BOOL` → boolean, `INT2`/`INT4`/`INT8` and
+//! `FLOAT4`/`FLOAT8` → number, `BYTEA` → string, `TEXT`/`VARCHAR`/`BPCHAR`/
+//! `NAME`/`JSON`/`JSONB`/`UUID` → string. Any other column type raises
+//! `unsupported column type <T>; cast to text in SQL` — e.g. `SELECT
+//! created_at::text`.
+//!
 //! Postgres is strictly typed at bind time — to insert SQL `NULL` into a
 //! non-text column, prefer the `NULL` literal in SQL over passing `nil` (we
 //! bind `nil` as `Option::<i64>::None`, which the server rejects against
@@ -225,7 +232,7 @@ fn bind_param<'q>(
         Value::Boolean(b) => q.bind(b),
         Value::Integer(i) => q.bind(i),
         Value::Number(f) => q.bind(f),
-        // TODO: clean-code - 0.6 - KISS: implicit utf8→text / non-utf8→bytea fallback hides bind type from caller; consider explicit bytes type
+        // Documented contract (module docs): utf8 → TEXT, otherwise BYTEA.
         Value::String(s) => {
             let bytes = s.as_bytes();
             match std::str::from_utf8(&bytes) {
@@ -257,13 +264,16 @@ fn row_to_table(lua: &Lua, row: &PgRow) -> mlua::Result<Table> {
 fn decode_cell(lua: &Lua, row: &PgRow, idx: usize, type_name: &str) -> mlua::Result<Value> {
     match decode_known(lua, row, idx, type_name)? {
         Some(v) => Ok(v),
-        None => decode_text(lua, row, idx),
+        None if is_text_type(type_name) => decode_text(lua, row, idx),
+        None => Err(mlua::Error::external(format!(
+            "sqlx_postgres.query: unsupported column type {type_name}; cast to text in SQL"
+        ))),
     }
 }
 
 /// Decode a column whose Postgres type maps to a fixed Lua scalar. Returns
-/// `None` for any type not in this table — the caller falls back to a text
-/// decode. Postgres is strict about widths (INT4 via i32, FLOAT4 via f32, …);
+/// `None` for any type not in this table — the caller decodes it as text if
+/// [`is_text_type`] allows, otherwise raises. Postgres is strict about widths (INT4 via i32, FLOAT4 via f32, …);
 /// a mismatch raises a decode error rather than coercing.
 fn decode_known(
     lua: &Lua,
@@ -305,10 +315,37 @@ fn decode_known(
     Ok(Some(v))
 }
 
-/// Text fallback for any type `decode_known` doesn't recognise: the TEXT family
-/// plus JSON/JSONB/UUID and temporal types decode through `String`. NUMERIC
-/// needs the `bigdecimal`/`rust_decimal` sqlx feature and is not handled.
+/// Column types that decode as a Lua string: the TEXT family plus JSON, JSONB
+/// and UUID. Every other type not handled by `decode_known` (NUMERIC,
+/// temporal types, arrays, …) raises; callers cast to text in SQL.
+fn is_text_type(type_name: &str) -> bool {
+    matches!(
+        type_name,
+        "TEXT" | "VARCHAR" | "BPCHAR" | "NAME" | "JSON" | "JSONB" | "UUID"
+    )
+}
+
+/// Decode a column from [`is_text_type`] through `String`.
 fn decode_text(lua: &Lua, row: &PgRow, idx: usize) -> mlua::Result<Value> {
     let v: String = row.try_get(idx).map_err(mlua::Error::external)?;
     Ok(Value::String(lua.create_string(&v)?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_text_type;
+
+    #[test]
+    fn text_family_decodes_as_string() {
+        for t in ["TEXT", "VARCHAR", "BPCHAR", "NAME", "JSON", "JSONB", "UUID"] {
+            assert!(is_text_type(t), "{t}");
+        }
+    }
+
+    #[test]
+    fn other_types_are_rejected() {
+        for t in ["NUMERIC", "TIMESTAMPTZ", "INTERVAL", "INT4[]", "MONEY"] {
+            assert!(!is_text_type(t), "{t}");
+        }
+    }
 }

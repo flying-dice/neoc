@@ -32,6 +32,10 @@
 //! - `result:ok()` → `bool`.
 //! - `result:errors()` → Lua table of strings (1-indexed). Empty when ok.
 //!
+//! A value with no JSON encoding (a function, userdata) makes `is_valid`
+//! raise, while `validate` returns a result with `ok() == false` and an
+//! `invalid input: …` error.
+//!
 //! `value` may be any Lua value — table, string, number, bool, nil — and
 //! is converted to `serde_json::Value` via `serde_json::to_value` before validating.
 
