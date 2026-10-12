@@ -10,7 +10,7 @@
 set -euo pipefail
 
 tag="${1:-}"
-re='^v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)$'
+re='^v((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?)$'
 if [[ ! "$tag" =~ $re ]]; then
     echo "error: '$tag' is not a release tag (expected vMAJOR.MINOR.PATCH[-pre])" >&2
     exit 1

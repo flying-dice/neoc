@@ -197,7 +197,7 @@ Per exported function:
 
 ## CI and distribution
 
-- GitLab CI on push to `main` and MRs.
+- GitHub Actions on push to `main` and `develop`.
 - Install scripts: `curl | bash` (Unix), `irm | iex` (Windows). Download from GitHub Releases.
 - Artifacts: `neoc-<target>` (Rust target triple).
 
