@@ -16,6 +16,7 @@ use crate::env::{
 use crate::ty::Ty;
 
 mod impl_check;
+pub(crate) mod marshal;
 mod pattern;
 mod solve;
 mod usefulness;
@@ -1084,6 +1085,11 @@ impl<'a> Checker<'a> {
                 self.expect(&expected, &actual, "return value");
                 Ty::Unknown
             }
+            // Inserted by elaboration, after checking; typed for completeness.
+            ast::ExprKind::Marshal { direction, operand } => match direction {
+                ast::MarshalDirection::ToHost => Ty::Dynamic,
+                ast::MarshalDirection::FromHost => self.infer(operand),
+            },
             ast::ExprKind::Break | ast::ExprKind::Continue => Ty::Unknown,
         };
         if self.record_types {

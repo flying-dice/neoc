@@ -427,6 +427,11 @@ pub(crate) struct Emitter {
     indent: usize,
     diagnostics: Vec<Diagnostic>,
     uses_result: bool,
+    /// Whether an `Option` was marshalled to / from the host, gating the module
+    /// helpers `OPTION_TO_HOST_HELPER` / `OPTION_FROM_HOST_HELPER`
+    /// (`lang/EXTERN.md` §Option marshalling).
+    uses_option_to_host: bool,
+    uses_option_from_host: bool,
     /// Module-local helpers the derives call; spliced ahead of the body, once
     /// each, in a fixed order.
     derive_helpers: std::collections::BTreeSet<neoc_macros::Helper>,
@@ -539,6 +544,23 @@ pub(crate) struct LoopFrame {
 /// The line declaring a module's `__tests` table (§6.5), emitted only when the
 /// module has a `#[test]` fn — so its presence marks a test-bearing module.
 pub const TESTS_TABLE_DECL: &str = "local __tests = {}";
+
+/// Local names of the `Option` marshalling helpers (`lang/EXTERN.md` §Option
+/// marshalling).
+pub(crate) const OPTION_TO_HOST: &str = "__option_to_host";
+pub(crate) const OPTION_FROM_HOST: &str = "__option_from_host";
+
+/// `Option` to host value: `None` is `nil`, `Some(v)` is `v`.
+const OPTION_TO_HOST_HELPER: &str = r#"local function __option_to_host(v)
+  if v.__tag == "Some" then return v[1] end
+  return nil
+end"#;
+
+/// Host value to `Option`: `nil` is `None`, any other value `v` is `Some(v)`.
+const OPTION_FROM_HOST_HELPER: &str = r#"local function __option_from_host(v)
+  if v == nil then return None end
+  return Some(v)
+end"#;
 
 const RESULT_PRELUDE: &str = r#"local Option = {}
 Option.__index = Option
@@ -684,6 +706,26 @@ impl Emitter {
             let mut out: Vec<String> = Vec::new();
             for h in &self.derive_helpers {
                 out.extend(h.source().split('\n').map(str::to_string));
+                out.push(String::new());
+            }
+            let added = out.len();
+            out.append(&mut self.lines);
+            self.lines = out;
+            self.prepend_origins(tracking, added, preamble_origin);
+        }
+        // `Option` marshalling helpers sit above the derive helpers and below the
+        // prelude whose `Some`/`None` they read.
+        let mut marshal_helpers: Vec<&str> = Vec::new();
+        if self.uses_option_to_host {
+            marshal_helpers.push(OPTION_TO_HOST_HELPER);
+        }
+        if self.uses_option_from_host {
+            marshal_helpers.push(OPTION_FROM_HOST_HELPER);
+        }
+        if !marshal_helpers.is_empty() {
+            let mut out: Vec<String> = Vec::new();
+            for h in marshal_helpers {
+                out.extend(h.split('\n').map(str::to_string));
                 out.push(String::new());
             }
             let added = out.len();
@@ -1279,8 +1321,8 @@ fn block_refs<'a>(block: &'a ast::Block, used: &mut std::collections::HashSet<&'
 fn expr_refs<'a>(expr: &'a ast::Expr, used: &mut std::collections::HashSet<&'a str>) {
     use ast::ExprKind::{
         Assign, Binary, Block, Bool, Break, Call, Closure, Continue, Field, Float, For, If, Index,
-        Int, List, Loop, Match, MethodCall, Path, Range, Return, Str, StructLit, Try, Unary, Unit,
-        While,
+        Int, List, Loop, Marshal, Match, MethodCall, Path, Range, Return, Str, StructLit, Try,
+        Unary, Unit, While,
     };
     match &expr.kind {
         Path(segs) => {
@@ -1292,7 +1334,7 @@ fn expr_refs<'a>(expr: &'a ast::Expr, used: &mut std::collections::HashSet<&'a s
             expr_refs(lhs, used);
             expr_refs(rhs, used);
         }
-        Unary { operand, .. } | Try(operand) => expr_refs(operand, used),
+        Unary { operand, .. } | Marshal { operand, .. } | Try(operand) => expr_refs(operand, used),
         Range { start, end, .. } => {
             expr_refs(start, used);
             expr_refs(end, used);

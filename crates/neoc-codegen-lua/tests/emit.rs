@@ -971,3 +971,47 @@ fn assignment_in_value_position_diagnoses() {
         "assignment is a statement, not an expression value",
     );
 }
+
+// ---- Option marshalling at the extern boundary (lang/EXTERN.md) ------------
+
+fn marshal_value(direction: ast::MarshalDirection) -> String {
+    lua(&fn_value_body(e(ast::ExprKind::Marshal {
+        direction,
+        operand: Box::new(e(ast::ExprKind::Path(vec!["x".into()]))),
+    })))
+}
+
+#[test]
+fn marshal_to_host_unwraps_through_its_helper() {
+    let out = marshal_value(ast::MarshalDirection::ToHost);
+    assert!(
+        out.contains("local function __option_to_host(v)\n  if v.__tag == \"Some\" then return v[1] end\n  return nil\nend"),
+        "{out}"
+    );
+    assert!(out.contains("__option_to_host(x)"), "{out}");
+    assert!(!out.contains("__option_from_host"), "{out}");
+}
+
+#[test]
+fn marshal_from_host_wraps_after_the_prelude() {
+    let out = marshal_value(ast::MarshalDirection::FromHost);
+    assert!(out.contains("__option_from_host(x)"), "{out}");
+    assert!(
+        out.contains("if v == nil then return None end\n  return Some(v)"),
+        "{out}"
+    );
+    assert!(!out.contains("__option_to_host"), "{out}");
+    // The helper reads the prelude's `Some`/`None`, so the prelude comes first.
+    let prelude = out.find("local Some =").expect("prelude emitted");
+    let helper = out
+        .find("local function __option_from_host")
+        .expect("helper emitted");
+    assert!(prelude < helper, "{out}");
+}
+
+#[test]
+fn no_marshal_emits_no_option_helpers() {
+    let out = lua_from_source("fn f(a: Option<number>) -> Option<number> { a }");
+    assert!(!out.contains("__option_to_host"), "{out}");
+    assert!(!out.contains("__option_from_host"), "{out}");
+}

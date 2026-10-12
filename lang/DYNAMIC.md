@@ -189,6 +189,19 @@ An `extern { … }` block declares the target's surface (`EXTERN.md` is the auth
 
 An `#[extern(name = "…")]` overrides the target identifier of an `fn`/`struct`; the neoc-side name is unaffected.
 
+**`Option<T>` at the boundary.** An argument for an `Option<T>` parameter or field is unwrapped to `nil` / its payload, and an `Option<T>` result or field read is wrapped from `nil` / the value (`EXTERN.md` §Option marshalling). The two conversions are module-local helpers, emitted only in a module that marshals, the wrapping one reading the `Some`/`None` of the prelude (§7):
+
+```
+local function __option_to_host(v)       -- None → nil, Some(v) → v
+  if v.__tag == "Some" then return v[1] end
+  return nil
+end
+local function __option_from_host(v)     -- nil → None, v → Some(v)
+  if v == nil then return None end
+  return Some(v)
+end
+```
+
 **Cross-file `use` of an extern item.** A `pub` extern item `use`d from another file lowers to its **native** import in the *consumer*, not a `require` of the defining file — an extern emits no runtime value there (§3.7 does not apply). The consumer reconstructs the native import and the construction/method/associated lowering above from the imported item's `#[extern(…)]` metadata, identical to how the defining module would. `EXTERN.md` §Cross-file `use` is the authoritative reference.
 
 ```

@@ -1,0 +1,11 @@
+// STATIC.md §5 / EXTERN.md §Option marshalling: `Option` marshals only as a whole
+// parameter, return, or field type — a list cannot hold `nil`, a callback's
+// marshalling is the host's.
+extern {
+    fn tags() -> [Option<string>];
+    fn on_change(f: fn(Option<number>));
+}
+
+fn main() {
+    let t = tags();
+}

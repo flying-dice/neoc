@@ -279,6 +279,7 @@ impl Checker<'_> {
         for ext in items {
             let attr = self.check_extern_attr(&ext.attrs, &ext.kind, ambient, span);
             let child_ambient = ambient || attr.ambient;
+            self.check_extern_option_types(&ext.kind, ext.span);
             match &ext.kind {
                 ast::ExternItemKind::Fn(_) | ast::ExternItemKind::Struct(_) => {}
                 ast::ExternItemKind::Impl(b) => {

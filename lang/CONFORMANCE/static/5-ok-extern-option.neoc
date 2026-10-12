@@ -1,0 +1,17 @@
+// STATIC.md §5 / EXTERN.md §Option marshalling: `Option<T>` as a whole parameter,
+// return, or field type of an extern signature is well-formed.
+extern {
+    fn lookup(key: string, fallback: Option<number>) -> Option<string>;
+
+    struct Settings {
+        title: Option<string>,
+    }
+
+    impl Settings {
+        fn rename(self, title: Option<string>) -> Option<string>;
+    }
+}
+
+fn main() {
+    let found = lookup("a", None);
+}

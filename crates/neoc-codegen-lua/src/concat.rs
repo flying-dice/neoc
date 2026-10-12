@@ -129,7 +129,9 @@ fn walk_expr<'a>(e: &'a ast::Expr, site: Site, v: &mut impl Visitor<'a>) {
             walk_expr(lhs, site, v);
             walk_expr(rhs, site, v);
         }
-        ast::ExprKind::Unary { operand, .. } | ast::ExprKind::Try(operand) => {
+        ast::ExprKind::Unary { operand, .. }
+        | ast::ExprKind::Marshal { operand, .. }
+        | ast::ExprKind::Try(operand) => {
             walk_expr(operand, site, v);
         }
         ast::ExprKind::Range { start, end, .. } => {

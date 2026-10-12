@@ -196,3 +196,74 @@ fn lua_ambient_mod_fn_called_bare_qualifies_through_its_namespace() {
         "in-mod fn called bare should qualify through its namespace:\n{out}"
     );
 }
+
+// ---- Option marshalling (lang/EXTERN.md §Option marshalling) ----------------
+
+const OPTION_SOURCE: &str = r#"
+extern {
+    #[extern(path = "std:collections")]
+    mod collections {
+        struct Counter;
+        impl Counter {
+            #[extern(constructor)]
+            fn new(initial: Option<number>);
+            fn find(self, key: string) -> Option<string>;
+        }
+    }
+    struct Settings { title: Option<string> }
+}
+fn main(s: Settings) {
+    let c = Counter::new(Some(5));
+    let hit = c.find("a");
+    s.title = None;
+    let lit = Settings { title: hit };
+    let read = s.title;
+}
+"#;
+
+#[test]
+fn option_marshals_through_constructor_method_and_fields() {
+    let out = transpile(OPTION_SOURCE, Target::Lua);
+    assert!(out.ok(), "should check clean: {:#?}", out.diagnostics);
+    let out = out.output;
+    for needle in [
+        "collections.Counter.new(__option_to_host(Some(5)))",
+        "__option_from_host(c:find(\"a\"))",
+        "s.title = __option_to_host(None)",
+        "{ title = __option_to_host(hit) }",
+        "__option_from_host(s.title)",
+    ] {
+        assert!(out.contains(needle), "missing `{needle}`:\n{out}");
+    }
+}
+
+#[test]
+fn neoc_option_function_emits_no_marshalling() {
+    let out = transpile(
+        "fn keep(v: Option<number>) -> Option<number> { v }\nfn main() { let _ = keep(Some(1)); }",
+        Target::Lua,
+    )
+    .output;
+    assert!(
+        !out.contains("__option_"),
+        "pure neoc call marshalled:\n{out}"
+    );
+}
+
+#[test]
+fn extern_fn_passed_as_value_marshals_when_called() {
+    let src = r#"
+extern {
+    #[extern(ambient)]
+    mod host { fn put(v: Option<number>) -> Option<number>; }
+}
+fn main() { let f = put; let _ = f(None); }
+"#;
+    let out = transpile(src, Target::Lua).output;
+    assert!(
+        out.contains(
+            "function(__a0) return __option_from_host(host.put(__option_to_host(__a0))) end"
+        ),
+        "extern fn value should wrap in a marshalling closure:\n{out}"
+    );
+}

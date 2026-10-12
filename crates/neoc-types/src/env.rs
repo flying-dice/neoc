@@ -198,6 +198,14 @@ pub struct SymbolTable {
     /// checker record a `recv.member` use as resolving to its definition, for
     /// goto/hover/references (member resolution).
     pub member_defs: HashMap<(String, String), (usize, usize)>,
+    /// Value-namespace names declared inside an `extern` block: the free `fn`s
+    /// the host implements. A call to one marshals `Option<T>` across the
+    /// boundary (`lang/EXTERN.md` §Option marshalling).
+    pub extern_values: HashSet<String>,
+    /// Type-namespace names declared inside an `extern` block. Their methods,
+    /// constructors, and fields are host-implemented, so each marshals
+    /// `Option<T>` the same way.
+    pub extern_types: HashSet<String>,
 }
 
 /// How a concrete `impl<P…> Trait<A…> for Type<B…>` applies its trait: the
@@ -275,10 +283,16 @@ impl SymbolTable {
         let mut found = false;
         if let Some(ty) = source.values.get(name) {
             self.values.insert(binding.to_string(), ty.clone());
+            if source.extern_values.contains(name) {
+                self.extern_values.insert(binding.to_string());
+            }
             found = true;
         }
         if let Some(def) = source.types.get(name) {
             self.types.insert(binding.to_string(), def.clone());
+            if source.extern_types.contains(name) {
+                self.extern_types.insert(binding.to_string());
+            }
             for ((ty_name, method), info) in &source.methods {
                 if ty_name == name {
                     self.methods
@@ -343,6 +357,9 @@ impl SymbolTable {
                 continue;
             };
             self.types.insert(name.clone(), def.clone());
+            if universe.extern_types.contains(&name) {
+                self.extern_types.insert(name.clone());
+            }
             collect_typedef_names(def, &mut pending);
             for ((ty_name, method), info) in &universe.methods {
                 if ty_name == &name {

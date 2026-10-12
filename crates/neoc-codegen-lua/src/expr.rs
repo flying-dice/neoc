@@ -8,7 +8,7 @@
 //! checker is `+` on `string` (it lowers to `..` only after the checker
 //! rewrites the operator to [`ast::BinOp::Concat`]).
 
-use crate::Emitter;
+use crate::{Emitter, OPTION_FROM_HOST, OPTION_TO_HOST};
 use neoc_ast as ast;
 
 /// What a `::`-joined path resolves to at a use site.
@@ -497,6 +497,20 @@ impl Emitter {
             }
             ast::ExprKind::Match { scrutinee, arms } => self.emit_match_value(scrutinee, arms),
             ast::ExprKind::Try(inner) => self.emit_try(inner),
+            ast::ExprKind::Marshal { direction, operand } => {
+                let o = self.emit_expr(operand);
+                match direction {
+                    ast::MarshalDirection::ToHost => {
+                        self.uses_option_to_host = true;
+                        format!("{OPTION_TO_HOST}({o})")
+                    }
+                    ast::MarshalDirection::FromHost => {
+                        self.uses_option_from_host = true;
+                        self.uses_result = true;
+                        format!("{OPTION_FROM_HOST}({o})")
+                    }
+                }
+            }
             ast::ExprKind::Range {
                 start,
                 end,
@@ -970,7 +984,9 @@ fn expr_uses_continue(expr: &ast::Expr) -> bool {
         ast::ExprKind::Binary { lhs, rhs, .. } => {
             expr_uses_continue(lhs) || expr_uses_continue(rhs)
         }
-        ast::ExprKind::Unary { operand, .. } => expr_uses_continue(operand),
+        ast::ExprKind::Unary { operand, .. } | ast::ExprKind::Marshal { operand, .. } => {
+            expr_uses_continue(operand)
+        }
         ast::ExprKind::Range { start, end, .. } => {
             expr_uses_continue(start) || expr_uses_continue(end)
         }

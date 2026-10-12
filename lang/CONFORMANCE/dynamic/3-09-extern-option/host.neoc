@@ -1,0 +1,19 @@
+// Module `host` of 3-09-extern-option: host signatures that take and return `Option`.
+extern {
+    #[extern(path = "std:collections")]
+    pub mod collections {
+        pub struct Counter;
+        impl Counter {
+            #[extern(constructor)]
+            pub fn new(initial: Option<number>);
+            pub fn get(self) -> number;
+        }
+        pub struct Map;
+        impl Map {
+            #[extern(constructor)]
+            pub fn new();
+            pub fn set(self, key: string, value: Unknown);
+            pub fn get(self, key: string) -> Option<Unknown>;
+        }
+    }
+}

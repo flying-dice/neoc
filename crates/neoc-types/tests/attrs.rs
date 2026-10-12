@@ -393,3 +393,75 @@ fn unknown_field_attribute_is_rejected() {
         "unknown attribute `bogus` on field `x`",
     );
 }
+
+// ---- Option at the extern boundary (lang/EXTERN.md §Option marshalling) ----
+
+#[test]
+fn extern_option_as_whole_param_return_and_field_is_clean() {
+    assert_clean(
+        "extern { fn lookup(k: string, d: Option<number>) -> Option<string>; \
+         struct Settings { title: Option<string> } \
+         impl Settings { fn rename(self, t: Option<string>) -> Option<string>; } }",
+    );
+}
+
+#[test]
+fn extern_nested_option_param_is_rejected() {
+    assert_diag(
+        "extern { fn f(x: Option<Option<number>>); }",
+        "`Option<Option<number>>` is ambiguous across an `extern` boundary: `Some(None)` and `None` both reach the host as `nil`",
+    );
+}
+
+#[test]
+fn extern_nested_option_return_is_rejected() {
+    assert_diag(
+        "extern { fn f() -> Option<Option<string>>; }",
+        "`Option<Option<string>>` is ambiguous across an `extern` boundary: `Some(None)` and `None` both reach the host as `nil`",
+    );
+}
+
+#[test]
+fn extern_nested_option_field_is_rejected() {
+    assert_diag(
+        "extern { struct S { v: Option<Option<number>> } }",
+        "`Option<Option<number>>` is ambiguous across an `extern` boundary: `Some(None)` and `None` both reach the host as `nil`",
+    );
+}
+
+#[test]
+fn extern_nested_option_through_alias_is_rejected() {
+    assert_diag(
+        "type Maybe = Option<number>; extern { fn f(x: Option<Maybe>); }",
+        "`Option<Option<number>>` is ambiguous across an `extern` boundary: `Some(None)` and `None` both reach the host as `nil`",
+    );
+}
+
+#[test]
+fn extern_nested_option_in_method_is_rejected() {
+    assert_diag(
+        "extern { struct S; impl S { fn m(self, x: Option<Option<number>>); } }",
+        "`Option<Option<number>>` is ambiguous across an `extern` boundary: `Some(None)` and `None` both reach the host as `nil`",
+    );
+}
+
+#[test]
+fn extern_option_in_list_is_rejected() {
+    assert_diag(
+        "extern { fn f() -> [Option<string>]; }",
+        "`[Option<string>]` puts an `Option` inside another type at an `extern` boundary; `Option<T>` marshals only as a whole parameter, return, or field type",
+    );
+}
+
+#[test]
+fn extern_option_in_callback_is_rejected() {
+    assert_diag(
+        "extern { fn f(cb: fn(Option<number>)); }",
+        "`fn(Option<number>) -> ()` puts an `Option` inside another type at an `extern` boundary; `Option<T>` marshals only as a whole parameter, return, or field type",
+    );
+}
+
+#[test]
+fn nested_option_outside_extern_is_clean() {
+    assert_clean("fn f(x: Option<Option<number>>) -> Option<Option<number>> { x }");
+}

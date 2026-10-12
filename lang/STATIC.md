@@ -291,6 +291,8 @@ An `extern { … }` block introduces bindings the target supplies, with no bodie
 
 An opaque extern `struct T ;` (no readable fields) is a pure handle: neoc knows the name and can pass values of it around, but cannot inspect them — only extern `fn`s/methods mentioning the type produce or consume its values. An extern `struct` with fields exposes those as the target value's data/callback properties (a field read `x.f`, a struct literal `T { f: v }`). An extern `impl` adds methods/associated functions; an `#[extern(constructor)]` associated `fn` yields the enclosing type. A `mod` adds a target-module scope reached by its path.
 
+An `Option<τ>` in an extern signature or field marshals as `nil` / the bare value (`EXTERN.md` §Option marshalling). It is well-formed only as the whole parameter, return, or field type, and τ contains no `Option`: `Option<Option<τ>>`, `[Option<τ>]`, and `fn(Option<τ>)` in an extern signature are rejected.
+
 `extern` is the only construct that adds a binding without a corresponding definition in neoc source. Everything callable from neoc that is not defined in neoc has an `extern` declaration somewhere.
 
 ## 6. The `?` operator and well-formedness of error propagation

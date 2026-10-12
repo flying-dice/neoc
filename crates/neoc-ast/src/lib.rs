@@ -1067,8 +1067,24 @@ pub enum ExprKind {
     },
     Block(Block),
     Return(Option<Box<Expr>>),
+    /// An `Option<T>` crossing the `extern` boundary (`lang/EXTERN.md`
+    /// §Option marshalling). Never produced by the parser — elaboration wraps
+    /// each `Option`-typed extern argument, result, and field in one.
+    Marshal {
+        direction: MarshalDirection,
+        operand: Box<Expr>,
+    },
     Break,
     Continue,
+}
+
+/// Which way an `Option<T>` crosses the `extern` boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarshalDirection {
+    /// neoc to host: `None` becomes `nil`, `Some(v)` becomes `v`.
+    ToHost,
+    /// Host to neoc: `nil` becomes `None`, any other value `v` becomes `Some(v)`.
+    FromHost,
 }
 
 #[derive(Debug, Clone, PartialEq)]

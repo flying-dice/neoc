@@ -1,0 +1,2 @@
+`Option<Option<number>>` is ambiguous across an `extern` boundary: `Some(None)` and `None` both reach the host as `nil`
+`Option<Option<string>>` is ambiguous across an `extern` boundary: `Some(None)` and `None` both reach the host as `nil`

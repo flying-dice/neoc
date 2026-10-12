@@ -1,0 +1,10 @@
+// STATIC.md §5 / EXTERN.md §Option marshalling: `Some(None)` and `None` would both
+// reach the host as `nil`, so an `Option` inside an `Option` is rejected.
+extern {
+    fn find(key: string) -> Option<Option<number>>;
+    fn store(key: string, value: Option<Option<string>>);
+}
+
+fn main() {
+    store("a", None);
+}

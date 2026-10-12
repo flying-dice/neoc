@@ -1,0 +1,2 @@
+`[Option<string>]` puts an `Option` inside another type at an `extern` boundary; `Option<T>` marshals only as a whole parameter, return, or field type
+`fn(Option<number>) -> ()` puts an `Option` inside another type at an `extern` boundary; `Option<T>` marshals only as a whole parameter, return, or field type

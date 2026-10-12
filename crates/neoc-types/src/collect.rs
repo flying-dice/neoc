@@ -464,8 +464,12 @@ fn collect_extern_items(table: &mut SymbolTable, items: &[ast::ExternItem]) {
                 table
                     .values
                     .insert(sig.name.clone(), Ty::Fn(params, Box::new(ret)));
+                table.extern_values.insert(sig.name.clone());
             }
-            ast::ExternItemKind::Struct(s) => collect_struct(table, s),
+            ast::ExternItemKind::Struct(s) => {
+                collect_struct(table, s);
+                table.extern_types.insert(s.name.clone());
+            }
             ast::ExternItemKind::Impl(b) => collect_impl(table, b),
             ast::ExternItemKind::Mod(m) => collect_extern_items(table, &m.items),
         }

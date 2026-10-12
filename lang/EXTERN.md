@@ -194,6 +194,49 @@ module would. For `use db::Database` where `Database` is declared in a
 
 ---
 
+## Option marshalling
+
+`Option<T>` is neoc's tagged absence; the host has `nil`. At the boundary an
+`Option<T>` crosses as **`nil` ⇔ `None`, the bare value ⇔ `Some(v)`**, in both
+directions:
+
+- **neoc to host** — an argument bound for an `Option<T>` parameter, and a value
+  written to an `Option<T>` field (`x.f = v`, `T { f: v }`), reach the host as
+  `nil` for `None` and as `v` for `Some(v)`.
+- **host to neoc** — an `Option<T>` result, and a read of an `Option<T>` field
+  (`x.f`), is `None` when the host supplies `nil` and `Some(v)` for any other
+  value `v`. `false` and `0` are values: `Some(false)`, `Some(0)`.
+
+```
+⟦ f(a) ⟧ₑ    = f(unwrap(⟦a⟧))      — parameter  p: Option<T>
+⟦ f(a) ⟧ₑ    = wrap(f(⟦a⟧))        — result     -> Option<T>
+⟦ x.f ⟧ₑ     = wrap(x.f)           — field      f: Option<T>
+⟦ x.f = v ⟧ₛ = x.f = unwrap(⟦v⟧)
+unwrap(None) = nil     unwrap(Some(v)) = v
+wrap(nil)    = None    wrap(v)         = Some(v)    (v ≠ nil)
+```
+
+The rule applies to every host-implemented signature: an extern `fn`, a method,
+an associated function, a constructor, and the fields of an extern `struct`. A
+neoc function, and a neoc `struct` or `enum` with an `Option` field, are
+unaffected — an `Option` stays a tagged value inside neoc. An extern `fn` named
+as a value (passed on rather than called) marshals the same way when it is
+eventually called.
+
+Two shapes have no unambiguous host form and are rejected:
+
+- **`Option<Option<T>>`** (an `Option` anywhere inside an `Option`): `Some(None)`
+  and `None` would both reach the host as `nil`.
+- **An `Option` that is not the whole parameter, return, or field type** — inside
+  `[T]`, a function type, `Result<T, E>`, or another type's arguments. A list
+  cannot hold `nil`, and a callback's marshalling is the host's to define, not
+  the call site's.
+
+Author a host value that may be absent as `Option<T>`; use `Unknown` for a host
+value whose absence is not `nil`.
+
+---
+
 ## `Unknown`
 
 `Unknown` is a **language primitive** — the dynamic boundary type (`STATIC.md`
@@ -224,7 +267,9 @@ Hard errors, each with a corrective suggestion:
   `name`, or with an explicit return type;
 - `#[extern(name)]` on a `mod`; `#[extern(path)]` on a non-`mod`;
 - a path-based attribute;
-- `#[extern(ambient)]` on a descendant of an ambient `mod`.
+- `#[extern(ambient)]` on a descendant of an ambient `mod`;
+- an `Option` nested inside an `Option`, or an `Option` that is not the whole
+  parameter, return, or field type of an extern signature (§Option marshalling).
 
 ---
 
@@ -257,13 +302,14 @@ no type Lua has.
 
 The governing principle when a host surface has no faithful neoc form —
 **degrade toward the bare target value; never put a neoc *tagged* representation
-(`Option`, `enum`) into a foreign call**, because the backend passes arguments
-verbatim and a tag would leak into the call.
+(`enum`) into a foreign call**, because the backend passes arguments verbatim and
+a tag would leak into the call. `Option<T>` is the one tagged type with a
+defined host form (§Option marshalling).
 
 | host surface | neoc | rationale |
 | --- | --- | --- |
-| an omittable trailing argument | drop it, or declare the arity the call site needs | `Option<T>` leaks its tag and doesn't recover omission (`None` ≠ absent) |
-| a field that may be absent | its base type `T` (`Unknown` if none) | a foreign field read is not a neoc `Option` |
+| an omittable trailing argument | `Option<T>` | `None` passes `nil` (§Option marshalling); a host that distinguishes `nil` from absent needs the arity the call site needs |
+| a field that may be absent | `Option<T>` | an absent field reads `nil`, which is `None` |
 | a variadic function | declare the arity a call site needs | a list `[T]` mis-shapes the call (`f({a,b})` vs `f(a,b)`); a faithful form needs **spread emission** at `ext` call sites, not built |
 | a value of several unrelated types | `Unknown` | a real union type would need sum types neoc deliberately lacks |
 | a value restricted to fixed strings | `string` | the value *is* a string at runtime; an `enum` would leak its tag. A faithful form needs **string-valued enum lowering** (unit-variant → its string), not built |

@@ -1,0 +1,27 @@
+// EXTERN.md §Option marshalling + DYNAMIC.md §3.9: an `Option` argument reaches the
+// host as `nil` (`None`) or the bare value (`Some(v)`); an `Option` result is `None`
+// for the host's `nil` and `Some(v)` otherwise, `false` included.
+use host::Counter;
+use host::Map;
+
+extern {
+    fn println(v: Unknown);
+}
+
+pub fn main() {
+    let seeded = Counter::new(Some(5));
+    let bare = Counter::new(None);
+    println(seeded.get());
+    println(bare.get());
+
+    let m = Map::new();
+    m.set("a", "x");
+    println(m.get("a").unwrap_or("none"));
+    println(m.get("z").unwrap_or("none"));
+    println(m.get("z").is_none());
+
+    let flags = Map::new();
+    flags.set("off", false);
+    println(flags.get("off").is_some());
+    println(flags.get("off").unwrap_or(true));
+}

@@ -18,6 +18,7 @@ use neoc_ast as ast;
 use crate::collect::collect;
 use crate::env::SymbolTable;
 use crate::infer::Checker;
+use crate::infer::marshal::{ExternSig, is_option};
 use crate::ty::Ty;
 
 /// The walking elaborator. Owns a [`Checker`] purely for its inference and
@@ -291,40 +292,26 @@ impl<'a> Elaborator<'a> {
                 inclusive: *inclusive,
             },
             ast::ExprKind::Try(inner) => ast::ExprKind::Try(self.boxed(inner)),
-            ast::ExprKind::Call { callee, args } => ast::ExprKind::Call {
-                callee: self.boxed(callee),
-                args: self.exprs(args),
-            },
+            ast::ExprKind::Call { callee, args } => self.call(callee, args, span),
             ast::ExprKind::MethodCall {
                 receiver,
                 method,
                 method_span,
                 args,
-            } => ast::ExprKind::MethodCall {
-                receiver: self.boxed(receiver),
-                method: method.clone(),
-                method_span: *method_span,
-                args: self.exprs(args),
-            },
-            ast::ExprKind::Field { base, field } => ast::ExprKind::Field {
-                base: self.boxed(base),
-                field: field.clone(),
-            },
+            } => self.method_call(receiver, method, *method_span, args, span),
+            ast::ExprKind::Field { base, field } => self.field(base, field, span),
             ast::ExprKind::Index { base, index } => ast::ExprKind::Index {
                 base: self.boxed(base),
                 index: self.boxed(index),
             },
-            ast::ExprKind::StructLit { path, fields, base } => ast::ExprKind::StructLit {
-                path: self.resolve_self_head(path),
-                fields: fields
-                    .iter()
-                    .map(|f| ast::FieldInit {
-                        name: f.name.clone(),
-                        value: f.value.as_ref().map(|v| self.expr(v)),
-                    })
-                    .collect(),
-                base: base.as_ref().map(|b| self.boxed(b)),
-            },
+            ast::ExprKind::StructLit { path, fields, base } => {
+                let head = self.resolve_self_head(path);
+                ast::ExprKind::StructLit {
+                    path: head.clone(),
+                    fields: fields.iter().map(|f| self.field_init(&head, f)).collect(),
+                    base: base.as_ref().map(|b| self.boxed(b)),
+                }
+            }
             ast::ExprKind::List(items) => ast::ExprKind::List(self.exprs(items)),
             ast::ExprKind::Assign { target, op, value } => self.assign(target, *op, value),
             ast::ExprKind::If { cond, then, else_ } => ast::ExprKind::If {
@@ -350,7 +337,8 @@ impl<'a> Elaborator<'a> {
             ast::ExprKind::Return(value) => {
                 ast::ExprKind::Return(value.as_ref().map(|e| self.boxed(e)))
             }
-            // Leaves: literals, paths, unit, break, continue.
+            ast::ExprKind::Path(_) => self.path_value(expr),
+            // Leaves: literals, unit, break, continue.
             other => other.clone(),
         };
         ast::Expr::new(kind, span)
@@ -425,8 +413,12 @@ impl<'a> Elaborator<'a> {
         op: ast::AssignOp,
         value: &ast::Expr,
     ) -> ast::ExprKind {
-        let new_target = self.boxed(target);
-        let new_value = self.boxed(value);
+        let new_target = Box::new(self.place(target));
+        let mut new_value = self.expr(value);
+        if let Some(ty) = self.extern_place_ty(target) {
+            new_value = marshal_to_host(&ty, new_value);
+        }
+        let new_value = Box::new(new_value);
         let op = if op == ast::AssignOp::Add
             && self.checker.infer(target) == Ty::Str
             && self.checker.infer(value) == Ty::Str
@@ -507,6 +499,142 @@ impl<'a> Elaborator<'a> {
         }
     }
 
+    // ---- extern boundary ---------------------------------------------------
+    //
+    // `Option<T>` crosses the boundary as `nil` / the bare value (`lang/EXTERN.md`
+    // §Option marshalling). Every call, field read, field write, and struct
+    // literal that touches a host-implemented signature is wrapped in a
+    // `Marshal` node here, where the types are known.
+
+    /// A call. Arguments bound for an `Option` parameter of a host-implemented
+    /// callee unwrap; an `Option` result wraps.
+    fn call(&mut self, callee: &ast::Expr, args: &[ast::Expr], span: ast::Span) -> ast::ExprKind {
+        let sig = self.checker.extern_callee_sig(callee);
+        let new_callee = match &callee.kind {
+            ast::ExprKind::Path(_) => callee.clone(),
+            _ => self.expr(callee),
+        };
+        let args = self.exprs(args);
+        let call = ast::ExprKind::Call {
+            callee: Box::new(new_callee),
+            args: marshal_args(sig.as_ref(), args),
+        };
+        marshal_result(sig.as_ref(), call, span)
+    }
+
+    fn method_call(
+        &mut self,
+        receiver: &ast::Expr,
+        method: &str,
+        method_span: ast::Span,
+        args: &[ast::Expr],
+        span: ast::Span,
+    ) -> ast::ExprKind {
+        let sig = self.checker.extern_method_sig(receiver, method);
+        let call = ast::ExprKind::MethodCall {
+            receiver: self.boxed(receiver),
+            method: method.to_string(),
+            method_span,
+            args: marshal_args(sig.as_ref(), self.exprs(args)),
+        };
+        marshal_result(sig.as_ref(), call, span)
+    }
+
+    /// A field read. An `Option` field of a host-implemented struct wraps.
+    fn field(
+        &mut self,
+        base: &ast::Expr,
+        field: &ast::FieldAccess,
+        span: ast::Span,
+    ) -> ast::ExprKind {
+        let ty = self.checker.extern_field_read_ty(base, field);
+        let read = ast::ExprKind::Field {
+            base: self.boxed(base),
+            field: field.clone(),
+        };
+        marshal_result(ty.map(|t| (Vec::new(), t)).as_ref(), read, span)
+    }
+
+    /// An assignment target: a field place keeps its own read un-wrapped (the
+    /// write marshals the value instead); any other target elaborates as usual.
+    fn place(&mut self, target: &ast::Expr) -> ast::Expr {
+        match &target.kind {
+            ast::ExprKind::Field { base, field } => ast::Expr::new(
+                ast::ExprKind::Field {
+                    base: self.boxed(base),
+                    field: field.clone(),
+                },
+                target.span,
+            ),
+            _ => self.expr(target),
+        }
+    }
+
+    /// The declared type of an assignment target that is a field of a
+    /// host-implemented struct.
+    fn extern_place_ty(&mut self, target: &ast::Expr) -> Option<Ty> {
+        let ast::ExprKind::Field { base, field } = &target.kind else {
+            return None;
+        };
+        self.checker.extern_field_read_ty(base, field)
+    }
+
+    /// One `name: value` of a struct literal. A field of a host-implemented
+    /// struct typed `Option<T>` unwraps; shorthand expands to the named value.
+    fn field_init(&mut self, path: &[ast::Ident], init: &ast::FieldInit) -> ast::FieldInit {
+        let ty = self.checker.extern_lit_field_ty(path, &init.name);
+        let value = match (&init.value, ty) {
+            (Some(v), Some(ty)) => Some(marshal_to_host(&ty, self.expr(v))),
+            (Some(v), None) => Some(self.expr(v)),
+            (None, Some(ty)) if is_option(&ty) => {
+                let named = ast::Expr::new(
+                    ast::ExprKind::Path(vec![init.name.clone()]),
+                    ast::Span::default(),
+                );
+                Some(marshal_to_host(&ty, named))
+            }
+            (None, _) => None,
+        };
+        ast::FieldInit {
+            name: init.name.clone(),
+            value,
+        }
+    }
+
+    /// A path in value position. A host-implemented function whose signature
+    /// carries an `Option` becomes a neoc closure that marshals around the call,
+    /// so passing it on keeps the boundary rule.
+    fn path_value(&mut self, path: &ast::Expr) -> ast::ExprKind {
+        let Some(sig) = self.checker.extern_callee_sig(path) else {
+            return path.kind.clone();
+        };
+        let (params, ret) = &sig;
+        if !params.iter().any(is_option) && !is_option(ret) {
+            return path.kind.clone();
+        }
+        let names: Vec<String> = (0..params.len()).map(|i| format!("__a{i}")).collect();
+        let args = names
+            .iter()
+            .map(|n| ast::Expr::new(ast::ExprKind::Path(vec![n.clone()]), path.span))
+            .collect();
+        let call = ast::ExprKind::Call {
+            callee: Box::new(path.clone()),
+            args: marshal_args(Some(&sig), args),
+        };
+        let body = ast::Expr::new(marshal_result(Some(&sig), call, path.span), path.span);
+        ast::ExprKind::Closure {
+            params: names
+                .into_iter()
+                .map(|name| ast::ClosureParam {
+                    name,
+                    ty: None,
+                    span: path.span,
+                })
+                .collect(),
+            body: Box::new(body),
+        }
+    }
+
     // ---- helpers -----------------------------------------------------------
 
     fn boxed(&mut self, expr: &ast::Expr) -> Box<ast::Expr> {
@@ -515,6 +643,45 @@ impl<'a> Elaborator<'a> {
 
     fn exprs(&mut self, exprs: &[ast::Expr]) -> Vec<ast::Expr> {
         exprs.iter().map(|e| self.expr(e)).collect()
+    }
+}
+
+/// Unwraps each argument bound for an `Option` parameter of an extern `sig`.
+fn marshal_args(sig: Option<&ExternSig>, args: Vec<ast::Expr>) -> Vec<ast::Expr> {
+    let Some((params, _)) = sig else { return args };
+    args.into_iter()
+        .enumerate()
+        .map(|(i, arg)| match params.get(i) {
+            Some(ty) => marshal_to_host(ty, arg),
+            None => arg,
+        })
+        .collect()
+}
+
+/// `arg` as the host receives a value of declared type `ty`: an `Option`
+/// unwraps to `nil` / the bare value, anything else passes through.
+fn marshal_to_host(ty: &Ty, arg: ast::Expr) -> ast::Expr {
+    if !is_option(ty) {
+        return arg;
+    }
+    let span = arg.span;
+    ast::Expr::new(
+        ast::ExprKind::Marshal {
+            direction: ast::MarshalDirection::ToHost,
+            operand: Box::new(arg),
+        },
+        span,
+    )
+}
+
+/// Wraps the extern result `kind` when the host declares it `Option<T>`.
+fn marshal_result(sig: Option<&ExternSig>, kind: ast::ExprKind, span: ast::Span) -> ast::ExprKind {
+    match sig {
+        Some((_, ret)) if is_option(ret) => ast::ExprKind::Marshal {
+            direction: ast::MarshalDirection::FromHost,
+            operand: Box::new(ast::Expr::new(kind, span)),
+        },
+        _ => kind,
     }
 }
 

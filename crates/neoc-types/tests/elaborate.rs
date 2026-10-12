@@ -187,3 +187,128 @@ fn number_compound_add_stays_compound() {
     assert_eq!(op, AssignOp::Add);
     assert!(matches!(value.kind, ExprKind::Int(_)), "{value:?}");
 }
+
+// ---- Option marshalling at the extern boundary (lang/EXTERN.md) ------------
+
+/// The trailing value expression of `fn main`.
+fn main_value(m: &Module) -> &Expr {
+    let f = m
+        .items
+        .iter()
+        .find_map(|i| match &i.kind {
+            ItemKind::Fn(f) if f.sig.name == "main" => Some(f),
+            _ => None,
+        })
+        .expect("fn main");
+    f.body.value.as_deref().expect("main has a value")
+}
+
+const HOST: &str = "extern { fn put(v: Option<number>) -> Option<number>; }\n";
+
+#[test]
+fn extern_call_unwraps_option_arg_and_wraps_option_result() {
+    use neoc_ast::MarshalDirection::{FromHost, ToHost};
+    let m = elaborate(&parse(&format!(
+        "{HOST}fn main() -> Option<number> {{ put(Some(1)) }}"
+    )));
+    let ExprKind::Marshal { direction, operand } = &main_value(&m).kind else {
+        panic!("result not wrapped: {:?}", main_value(&m));
+    };
+    assert_eq!(*direction, FromHost);
+    let ExprKind::Call { args, .. } = &operand.kind else {
+        panic!("not a call: {operand:?}");
+    };
+    assert!(matches!(
+        &args[0].kind,
+        ExprKind::Marshal {
+            direction: ToHost,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn neoc_fn_call_is_not_marshalled() {
+    let m = elaborate(&parse(
+        "fn put(v: Option<number>) -> Option<number> { v }\n\
+         fn main() -> Option<number> { put(Some(1)) }",
+    ));
+    let ExprKind::Call { args, .. } = &main_value(&m).kind else {
+        panic!("not a plain call: {:?}", main_value(&m));
+    };
+    assert!(matches!(&args[0].kind, ExprKind::Call { .. }));
+}
+
+#[test]
+fn local_shadowing_an_extern_name_is_not_marshalled() {
+    let m = elaborate(&parse(&format!(
+        "{HOST}fn main(put: fn(Option<number>) -> Option<number>) -> Option<number> {{ put(None) }}"
+    )));
+    assert!(matches!(&main_value(&m).kind, ExprKind::Call { .. }));
+}
+
+#[test]
+fn extern_fn_value_with_option_becomes_marshalling_closure() {
+    let m = elaborate(&parse(&format!(
+        "{HOST}fn main() -> fn(Option<number>) -> Option<number> {{ put }}"
+    )));
+    let ExprKind::Closure { params, body } = &main_value(&m).kind else {
+        panic!("not a closure: {:?}", main_value(&m));
+    };
+    assert_eq!(params.len(), 1);
+    assert!(matches!(&body.kind, ExprKind::Marshal { .. }));
+}
+
+#[test]
+fn extern_fn_value_without_option_is_left_alone() {
+    let m = elaborate(&parse(
+        "extern { fn get(v: number) -> number; }\nfn main() -> fn(number) -> number { get }",
+    ));
+    assert!(matches!(&main_value(&m).kind, ExprKind::Path(_)));
+}
+
+#[test]
+fn extern_struct_option_field_marshals_read_write_and_literal() {
+    use neoc_ast::MarshalDirection::{FromHost, ToHost};
+    let m = elaborate(&parse(
+        "extern { struct S { title: Option<string> } }\n\
+         fn main(s: S) -> Option<string> { s.title = Some(\"a\"); let t = S { title: None }; s.title }",
+    ));
+    let ItemKind::Fn(f) = &m.items[1].kind else {
+        panic!("not a fn");
+    };
+    let StmtKind::Expr(write) = &f.body.stmts[0].kind else {
+        panic!("not an expression statement");
+    };
+    let ExprKind::Assign { target, value, .. } = &write.kind else {
+        panic!("not an assignment: {write:?}");
+    };
+    assert!(matches!(&target.kind, ExprKind::Field { .. }));
+    assert!(matches!(
+        &value.kind,
+        ExprKind::Marshal {
+            direction: ToHost,
+            ..
+        }
+    ));
+    let StmtKind::Let(l) = &f.body.stmts[1].kind else {
+        panic!("not a let");
+    };
+    let ExprKind::StructLit { fields, .. } = &l.value.as_ref().expect("value").kind else {
+        panic!("not a literal");
+    };
+    assert!(matches!(
+        &fields[0].value.as_ref().expect("value").kind,
+        ExprKind::Marshal {
+            direction: ToHost,
+            ..
+        }
+    ));
+    assert!(matches!(
+        &main_value(&m).kind,
+        ExprKind::Marshal {
+            direction: FromHost,
+            ..
+        }
+    ));
+}
