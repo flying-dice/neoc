@@ -586,3 +586,61 @@ fn host_slot_argument_typed_by_the_slot_unwraps() {
     assert!(out.ok(), "{:#?}", out.diagnostics);
     assert!(wraps(&out.output, TO) >= 2, "{}", out.output);
 }
+
+/// Hints are noted, never inferred, ahead of the scope they belong to: a name
+/// bound after the hint site must not be read at it.
+#[test]
+fn hints_do_not_resolve_names_ahead_of_their_scope() {
+    let out = build(
+        "fn apply(o: Option<Settings>, f: fn(Option<Settings>) -> Option<string>) -> Option<string> { f(o) }\nfn run() -> string { let o = Some(mk()); o.map(|s| s.title).unwrap_or(None).unwrap_or(\"absent\") }",
+        "let r = apply(Some(mk()), |o| o.map(|s| s.title).unwrap_or(None));",
+    );
+    assert!(out.ok(), "{:#?}", out.diagnostics);
+    assert!(wraps(&out.output, FROM) >= 2, "{}", out.output);
+}
+
+#[test]
+fn shadowed_names_do_not_change_what_a_closure_is_typed_as() {
+    for (name, src) in [
+        (
+            "method receiver rebound",
+            "struct A { n: number }\nimpl A { fn m(self, f: fn(number) -> number) -> number { f(self.n) } }\nstruct S { size: number }\nfn run(a: A) -> number { let f = |x| x; let a = f(1); a.m(|t| t.size) }",
+        ),
+        (
+            "callee rebound",
+            "struct S { size: number }\nfn run2() -> fn(S) -> number { let wrap = |f| f; wrap(|s| s.size) }",
+        ),
+        (
+            "closure parameter shadows",
+            "struct A { n: number }\nimpl A { fn m(self, f: fn(number) -> number) -> number { f(self.n) } }\nstruct B { s: string }\nimpl B { fn m<U>(self, f: fn(U) -> number) -> number { 0 } }\nfn mk(a: A) -> fn(B) -> number { |a| a.m(|t| t.len) }",
+        ),
+    ] {
+        let out = transpile(&format!("{src}\npub fn main() {{}}\n"), Target::Lua);
+        assert!(out.ok(), "{name}: {:#?}", out.diagnostics);
+    }
+}
+
+#[test]
+fn host_fn_does_not_escape_through_a_rebound_callee() {
+    let out = transpile(
+        "extern { fn take(o: Option<string>); }\nfn run() -> fn(Option<string>) { let store = |f| f; Some(store(take)).unwrap() }\npub fn main() {}\n",
+        Target::Lua,
+    );
+    assert!(!out.ok(), "{}", out.output);
+}
+
+/// Nested method calls with closure arguments check in time linear in depth.
+#[test]
+fn nested_method_calls_with_closures_check_in_linear_time() {
+    let mut e = String::from("a");
+    for _ in 0..40 {
+        e = format!("a.m2({e}.m(|x| x))");
+    }
+    let src = format!(
+        "struct A {{ n: number }}\nimpl A {{ fn m(self, f: fn(number) -> number) -> A {{ self }} fn m2(self, x: A) -> A {{ x }} }}\nfn run(a: A) -> A {{ {e} }}\npub fn main() {{}}\n"
+    );
+    let start = std::time::Instant::now();
+    let out = transpile(&src, Target::Lua);
+    assert!(out.ok(), "{:#?}", out.diagnostics);
+    assert!(start.elapsed().as_secs() < 5, "{:?}", start.elapsed());
+}

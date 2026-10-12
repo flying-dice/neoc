@@ -74,6 +74,9 @@ pub struct Checker<'a> {
     /// Parameter types the surrounding context fixes for a closure, keyed by the
     /// closure's span and consumed when the closure is inferred.
     closure_hints: std::collections::HashMap<(usize, usize), Vec<Ty>>,
+    /// Result types a call or method call is expected to produce, keyed by the
+    /// call's span and consumed when it is inferred, in its own scope.
+    expected_tys: std::collections::HashMap<(usize, usize), Vec<Ty>>,
     /// How many closure bodies the checker is inside.
     closure_depth: usize,
     /// The type each closure parameter resolved to, keyed by the closure's
@@ -145,6 +148,7 @@ impl<'a> Checker<'a> {
             conflicting_impls: std::collections::HashSet::new(),
             host_fn_spans: std::collections::HashSet::new(),
             closure_hints: std::collections::HashMap::new(),
+            expected_tys: std::collections::HashMap::new(),
             closure_depth: 0,
             closure_params: std::collections::HashMap::new(),
         }
@@ -1440,7 +1444,11 @@ impl<'a> Checker<'a> {
             Ty::Fn(params, _) => params.clone(),
             _ => Vec::new(),
         };
-        let arg_tys = self.infer_args(args, &expected);
+        let mut seed = std::collections::HashMap::new();
+        if let Ty::Fn(_, ret) = &callee_ty {
+            self.seed_from_expected(span, ret, &mut seed);
+        }
+        let arg_tys = self.infer_args(args, &expected, seed);
         match callee_ty {
             Ty::Fn(params, ret) => {
                 if params.len() != arg_tys.len() {
@@ -1629,8 +1637,13 @@ impl<'a> Checker<'a> {
                 self.allow_host_fn_args(args, &params);
             }
         }
-        let expected = self.method_param_tys(&recv, method);
-        let arg_tys = self.infer_args(args, &expected);
+        let sig = self.method_sig(&recv, method);
+        let expected = sig.as_ref().map(|(p, _)| p.clone()).unwrap_or_default();
+        let mut seed = std::collections::HashMap::new();
+        if let Some((_, ret)) = &sig {
+            self.seed_from_expected(span, ret, &mut seed);
+        }
+        let arg_tys = self.infer_args(args, &expected, seed);
         // A method on a bounded type parameter resolves through its bounds:
         // `fn f<T: Display>(x: T) { x.show() }` finds `show` on `Display`.
         if let Ty::Param(p) = &recv {
@@ -2049,7 +2062,12 @@ impl<'a> Checker<'a> {
     /// types its callee's signature fixes (`expected[i]` is `fn(..) -> _`).
     /// Non-closure arguments are inferred first so they can bind the callee's
     /// type parameters (`test(mk(), |s| ..)` fixes `T` from `mk()`).
-    fn infer_args(&mut self, args: &[ast::Expr], expected: &[Ty]) -> Vec<Ty> {
+    fn infer_args(
+        &mut self,
+        args: &[ast::Expr],
+        expected: &[Ty],
+        seed: std::collections::HashMap<String, Ty>,
+    ) -> Vec<Ty> {
         let is_closure = Self::yields_closure;
         let mut tys: Vec<Option<Ty>> = args
             .iter()
@@ -2060,7 +2078,10 @@ impl<'a> Checker<'a> {
             .zip(&tys)
             .filter_map(|(p, t)| t.clone().map(|t| (p.clone(), t)))
             .unzip();
-        let mut subst = self.param_subst(&ps, &as_);
+        let mut subst = seed;
+        for (p, a) in ps.iter().zip(&as_) {
+            self.unify_param(p, a, &mut subst);
+        }
         // Closure-like arguments are solved in dependency order: one whose
         // parameter types are already fixed goes first, and what it binds
         // (`both(|s| s.title, || mk())` fixes `T` from the second) feeds the
@@ -2077,7 +2098,10 @@ impl<'a> Checker<'a> {
                 .unwrap_or(0);
             let i = pending.remove(ready);
             if let Some(p) = expected.get(i) {
-                self.hint_closures(&args[i], p, &subst);
+                // A parameter typed by a bare type parameter takes what the
+                // call has bound it to (`Some(f)` under `Option<fn(S) -> _>`).
+                let p = Self::subst_named(p, &subst);
+                self.hint_closures(&args[i], &p, &subst);
             }
             let ty = self.infer(&args[i]);
             if let Some(p) = expected.get(i) {
@@ -2150,24 +2174,16 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
-            (
-                ast::ExprKind::MethodCall {
-                    receiver,
-                    method,
-                    args,
-                    ..
-                },
-                _,
-            ) => {
-                let recv = self.quiet_infer(receiver);
-                if let Some((params, ret)) = self.method_sig(&recv, method) {
-                    let mut seed = std::collections::HashMap::new();
-                    self.unify_param(&ret, ty, &mut seed);
-                    for (arg, p) in args.iter().zip(&params) {
-                        let p = Self::subst_named(p, &seed);
-                        self.hint_closures(arg, &p, &std::collections::HashMap::new());
-                    }
-                }
+            (ast::ExprKind::Call { .. } | ast::ExprKind::MethodCall { .. }, _) => {
+                // The call is not inferred yet, and its callee is resolved in a
+                // scope not yet entered: note the expected type for it to read.
+                // Type parameters still open in `ty` are not this call's.
+                let expected = Self::subst_named(ty, subst)
+                    .map(&|t| matches!(t, Ty::Param(_)).then_some(Ty::Unknown));
+                self.expected_tys
+                    .entry((expr.span.start, expr.span.end))
+                    .or_default()
+                    .push(expected);
             }
             (ast::ExprKind::Try(inner), _) => {
                 // `e?` under an expected `T` reads `e` as a `Result<T, _>` or
@@ -2182,23 +2198,6 @@ impl<'a> Checker<'a> {
                 };
                 self.hint_closures(inner, &result, subst);
                 self.hint_closures(inner, &option, subst);
-            }
-            (ast::ExprKind::Call { callee, args }, _) => {
-                // A call whose result type is expected: bind the callee's type
-                // parameters from it (`Some(f)` under `Option<fn(S) -> _>`,
-                // `wrap(f)` under `fn(S) -> _`, a variant constructor) and hand
-                // each argument its parameter type.
-                if !matches!(callee.kind, ast::ExprKind::Path(_)) {
-                    return;
-                }
-                if let Ty::Fn(params, ret) = self.quiet_infer(callee) {
-                    let mut seed = std::collections::HashMap::new();
-                    self.unify_param(&ret, ty, &mut seed);
-                    for (arg, p) in args.iter().zip(&params) {
-                        let p = Self::subst_named(p, &seed);
-                        self.hint_closures(arg, &p, &std::collections::HashMap::new());
-                    }
-                }
             }
             _ => {}
         }
@@ -2313,18 +2312,10 @@ impl<'a> Checker<'a> {
         found.get()
     }
 
-    /// The parameter types of `recv.method(..)`, projected through the
-    /// receiver's type arguments, found the way [`Self::infer_method_call`]
+    /// The parameter and return types of `recv.method(..)`, projected through
+    /// the receiver's type arguments, found the way [`Self::infer_method_call`]
     /// resolves the method: an inherent method, a trait the receiver is typed
     /// as, a trait default, a blanket impl, or a type parameter's bound.
-    pub(crate) fn method_param_tys(&self, recv: &Ty, method: &str) -> Vec<Ty> {
-        self.method_sig(recv, method)
-            .map(|(params, _)| params)
-            .unwrap_or_default()
-    }
-
-    /// The projected parameter and return types of `recv.method(..)`, resolved
-    /// as [`Self::method_param_tys`] describes.
     pub(crate) fn method_sig(&self, recv: &Ty, method: &str) -> Option<(Vec<Ty>, Ty)> {
         if let Ty::Param(p) = recv {
             return self.bound_method(p, method);
@@ -2355,6 +2346,21 @@ impl<'a> Checker<'a> {
         }
         self.default_method(recv, method, true)
             .or_else(|| self.blanket_method(recv, method))
+    }
+
+    /// Binds the callee's type parameters in `ret` from the result type the
+    /// call at `span` was noted to be expected to produce.
+    fn seed_from_expected(
+        &mut self,
+        span: ast::Span,
+        ret: &Ty,
+        seed: &mut std::collections::HashMap<String, Ty>,
+    ) {
+        if let Some(candidates) = self.expected_tys.remove(&(span.start, span.end)) {
+            for c in &candidates {
+                self.unify_param(ret, c, seed);
+            }
+        }
     }
 
     /// Lets the host receive a named extern `fn` raw in each argument whose
