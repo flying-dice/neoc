@@ -168,6 +168,10 @@ pub struct SymbolTable {
     pub pub_values: HashSet<String>,
     /// Type-namespace names this module declares `pub`.
     pub pub_types: HashSet<String>,
+    /// Aliases brought in from another module. Such an alias is not read
+    /// through at value positions: the type it expands to is not bound in this
+    /// module, so the lowering has nothing to refer to.
+    pub imported_aliases: HashSet<String>,
     /// Trait implementations, indexed by implementing type: type name → the set
     /// of traits it implements, one entry per `impl Trait for Type` and per
     /// `#[derive(Trait)]`. Keyed by head (the type) so the checker answers "does
@@ -280,6 +284,9 @@ impl SymbolTable {
             found = true;
         }
         if let Some(def) = source.types.get(name) {
+            if matches!(def, TypeDef::Alias { .. }) {
+                self.imported_aliases.insert(binding.to_string());
+            }
             self.types.insert(binding.to_string(), def.clone());
             for ((ty_name, method), info) in &source.methods {
                 if ty_name == name {
@@ -344,6 +351,9 @@ impl SymbolTable {
             let Some(def) = universe.types.get(&name) else {
                 continue;
             };
+            if matches!(def, TypeDef::Alias { .. }) {
+                self.imported_aliases.insert(name.clone());
+            }
             self.types.insert(name.clone(), def.clone());
             collect_typedef_names(def, &mut pending);
             for ((ty_name, method), info) in &universe.methods {
@@ -401,20 +411,23 @@ impl SymbolTable {
     /// The nominal type a `type` alias name stands for, through any chain of
     /// aliases: `A` with `type A = P` is `P`; `N` with `type N = W<number>` is
     /// `W`. `None` when `name` is not an alias or its value is not a named type
-    /// (a list, a function type, or an ill-formed alias).
+    /// (a list, a function type, or an ill-formed alias), or when the alias was
+    /// imported from another module (see [`Self::imported_aliases`]).
     #[must_use]
     pub fn alias_head(&self, name: &str) -> Option<String> {
-        let Some(TypeDef::Alias { generics, .. }) = self.types.get(name) else {
-            return None;
-        };
-        let applied = Ty::Named {
-            name: name.to_string(),
-            args: vec![Ty::Unknown; generics.len()],
-        };
-        match self.resolve_alias_ty(applied) {
-            Ty::Named { name, .. } => Some(name),
-            _ => None,
+        let mut current = name;
+        // Bounded, so an alias cycle (reported elsewhere) cannot loop.
+        for _ in 0..=self.types.len() {
+            match self.types.get(current) {
+                Some(TypeDef::Alias {
+                    value: Ty::Named { name: next, .. },
+                    ..
+                }) if !self.imported_aliases.contains(current) => current = next,
+                Some(TypeDef::Alias { .. }) => return None,
+                _ => break,
+            }
         }
+        (current != name).then(|| current.to_string())
     }
 
     /// Recursively expands aliases inside a type. A generic alias applied to
@@ -795,4 +808,47 @@ pub enum ScopeLookup<'a> {
     DeclaringBlockLocal,
     /// No binding; the name is a module item, a prelude name, or unknown.
     Unbound,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn alias(target: &str) -> TypeDef {
+        TypeDef::Alias {
+            generics: Vec::new(),
+            value: Ty::named(target),
+        }
+    }
+
+    /// STATIC.md §3.8: a local alias reads through to its target, through a chain.
+    #[test]
+    fn alias_head_follows_local_chain() {
+        let mut t = SymbolTable::default();
+        t.types.insert("B".into(), alias("A"));
+        t.types.insert("A".into(), alias("P"));
+        assert_eq!(t.alias_head("B").as_deref(), Some("P"));
+        assert_eq!(t.alias_head("P"), None);
+    }
+
+    /// An imported alias is not read through: its target is not bound here.
+    #[test]
+    fn alias_head_skips_imported_alias() {
+        let mut source = SymbolTable::default();
+        source.types.insert("A".into(), alias("P"));
+        let mut t = SymbolTable::default();
+        assert!(t.import_from(&source, "A", "A"));
+        assert_eq!(t.alias_head("A"), None);
+        t.types.insert("B".into(), alias("A"));
+        assert_eq!(t.alias_head("B"), None);
+    }
+
+    /// A cyclic alias terminates.
+    #[test]
+    fn alias_head_terminates_on_cycle() {
+        let mut t = SymbolTable::default();
+        t.types.insert("A".into(), alias("B"));
+        t.types.insert("B".into(), alias("A"));
+        let _ = t.alias_head("A");
+    }
 }
