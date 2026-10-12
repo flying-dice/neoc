@@ -1,0 +1,27 @@
+// EXTERN.md §Option marshalling: host-ness belongs to the extern struct, not to a
+// name. A neoc enum variant named like an extern struct keeps its `Option` as a
+// tagged value, and its field patterns and literal fields are ordinary neoc.
+extern {
+    struct Settings {
+        title: Option<string>,
+    }
+    fn show(v: Option<number>) -> string;
+}
+
+enum Msg {
+    Settings {
+        title: Option<string>,
+    },
+    Other,
+}
+
+fn read(m: Msg) -> Option<string> {
+    match m {
+        Msg::Settings { title } => title,
+        Msg::Other => None,
+    }
+}
+
+fn main() {
+    let m = Msg::Settings { title: Some("hi") };
+}

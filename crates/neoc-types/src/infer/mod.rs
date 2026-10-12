@@ -1737,7 +1737,7 @@ impl<'a> Checker<'a> {
         base: Option<&ast::Expr>,
         span: ast::Span,
     ) -> Ty {
-        if path.last().is_some_and(|n| self.is_extern_type(n)) {
+        if self.is_host_struct_head(path) {
             for v in fields.iter().filter_map(|f| f.value.as_ref()) {
                 self.allow_host_fn(v);
             }

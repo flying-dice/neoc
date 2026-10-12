@@ -205,19 +205,18 @@ impl Checker<'_> {
         kind: crate::resolve::BindingKind,
     ) {
         let decl = self.struct_pattern_field_tys(path, ty);
-        let ctor = path.last().map_or("", String::as_str);
         for fp in fields {
             let fty = decl
                 .iter()
                 .find(|(n, _)| *n == fp.name)
                 .map_or(Ty::Unknown, |(_, t)| t.clone());
-            if self.is_host_option_field(ctor, &fty)
+            if self.is_host_option_field(ty, &fty)
                 && !matches!(fp.pattern, Some(ast::Pattern::Wildcard))
             {
                 self.error_at(
                     fp.span,
                     format!(
-                        "a pattern cannot read `Option` field `{0}` of host-implemented `{ctor}`; \
+                        "a pattern cannot read `Option` field `{0}` of host-implemented `{ty}`; \
                          read it with `.{0}`, which marshals it",
                         fp.name
                     ),
@@ -232,12 +231,26 @@ impl Checker<'_> {
     }
 
     fn struct_pattern_field_tys(&self, path: &[ast::Ident], ty: &Ty) -> Vec<(String, Ty)> {
-        let Some(ctor) = path.last() else {
+        let Some(mut ctor) = path.last() else {
             return Vec::new();
         };
-        if let Some(TypeDef::Struct(s)) = self.table.types.get(ctor) {
-            if let StructFields::Named(fields) = &s.fields {
-                return fields.clone();
+        // `Self { .. }` inside an impl is the impl's target struct.
+        if let ([head], Some(target)) = (path, &self.impl_target) {
+            if head == "Self" {
+                ctor = target;
+            }
+        }
+        // `Enum::Variant { .. }` names a variant even when a struct shares its name.
+        let names_variant = path.len() >= 2
+            && matches!(
+                self.table.types.get(&path[path.len() - 2]),
+                Some(TypeDef::Enum(_))
+            );
+        if !names_variant {
+            if let Some(TypeDef::Struct(s)) = self.table.types.get(ctor) {
+                if let StructFields::Named(fields) = &s.fields {
+                    return fields.clone();
+                }
             }
         }
         let enum_name = if path.len() >= 2 {

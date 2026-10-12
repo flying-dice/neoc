@@ -1,0 +1,16 @@
+// EXTERN.md §Option marshalling: `Self` in an impl on an extern struct is that
+// struct, so a pattern headed `Self` cannot destructure an `Option` field either.
+extern {
+    struct Settings {
+        title: Option<string>,
+    }
+}
+
+impl Settings {
+    fn title_of(s: Self) -> Option<string> {
+        let Self { title } = s;
+        title
+    }
+}
+
+fn main() {}

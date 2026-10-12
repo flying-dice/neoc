@@ -216,10 +216,25 @@ impl Checker<'_> {
         Some((m.params.clone(), m.ret.clone()))
     }
 
-    /// Whether a struct pattern naming `ctor` reads `Option` field `ty` raw
-    /// from the host — `ctor` is host-implemented and `ty` is `Option<_>`.
-    pub(crate) fn is_host_option_field(&self, ctor: &str, ty: &Ty) -> bool {
-        self.table().extern_types.contains(ctor) && is_option(ty)
+    /// Whether a struct pattern against a value of type `scrutinee` reads
+    /// `Option` field `ty` raw from the host — `scrutinee` is host-implemented
+    /// and `ty` is `Option<_>`.
+    pub(crate) fn is_host_option_field(&self, scrutinee: &Ty, ty: &Ty) -> bool {
+        self.is_extern_ty(scrutinee) && is_option(ty)
+    }
+
+    /// Whether a struct literal headed `path` builds a host-implemented
+    /// struct. `Self` reads as the enclosing impl's target; a qualified path
+    /// names an enum variant, never a host struct.
+    pub(crate) fn is_host_struct_head(&self, path: &[ast::Ident]) -> bool {
+        match path {
+            [head] if head == "Self" => self
+                .impl_target
+                .as_deref()
+                .is_some_and(|t| self.is_extern_type(t)),
+            [head] => self.is_extern_type(head),
+            _ => false,
+        }
     }
 
     /// The declared type of `field` on host-implemented struct `owner`.
@@ -245,7 +260,7 @@ impl Checker<'_> {
     /// The declared type of field `name` on the struct literal `path`, when
     /// that struct is host-implemented.
     pub(crate) fn extern_lit_field_ty(&self, path: &[ast::Ident], name: &str) -> Option<Ty> {
-        let owner = path.last()?;
+        let [owner] = path else { return None };
         self.extern_field_ty(
             owner,
             &ast::FieldAccess::Named(name.to_string(), ast::Span::default()),

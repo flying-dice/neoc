@@ -389,3 +389,23 @@ fn self_literal_in_impl_on_extern_struct_marshals_option_field() {
         }
     ));
 }
+
+#[test]
+fn enum_variant_named_like_an_extern_struct_is_not_marshalled() {
+    let m = elaborate(&parse(
+        "extern { struct Settings { title: Option<string> } }\n\
+         enum Msg { Settings { title: Option<string> }, Other }\n\
+         fn main() -> Msg { Msg::Settings { title: Some(\"a\") } }",
+    ));
+    let ExprKind::StructLit { fields, .. } = &main_value(&m).kind else {
+        panic!("not a literal: {:?}", main_value(&m));
+    };
+    assert!(
+        !matches!(
+            &fields[0].value.as_ref().expect("value").kind,
+            ExprKind::Marshal { .. }
+        ),
+        "{:?}",
+        fields[0]
+    );
+}
