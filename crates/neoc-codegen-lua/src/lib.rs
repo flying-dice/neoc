@@ -305,6 +305,8 @@ fn emit_inner(
     extern_structs.extend(ast::extern_struct_names_from_items(imported_externs));
     let mut extern_struct_ns = ast::extern_struct_namespaces(module);
     extern_struct_ns.extend(ast::extern_struct_namespaces_from_items(imported_externs));
+    let mut extern_target_names = ast::extern_target_names(module);
+    extern_target_names.extend(ast::extern_target_names_from_items(imported_externs));
     let mut extern_fn_ns = ast::extern_fn_namespaces(module);
     extern_fn_ns.extend(ast::extern_fn_namespaces_from_items(imported_externs));
     let mut e = Emitter {
@@ -318,6 +320,7 @@ fn emit_inner(
         extern_structs,
         extern_struct_ns,
         extern_fn_ns,
+        extern_target_names,
         imported_externs: imported_externs.to_vec(),
         imported_extern_names: ast::extern_value_names_from_items(imported_externs),
         as_module,
@@ -494,6 +497,10 @@ pub(crate) struct Emitter {
     /// fn with no enclosing `mod` keeps its bare name. Populated from both the
     /// module's own `extern` blocks and `use`-imported items.
     extern_fn_ns: std::collections::HashMap<String, String>,
+    /// Maps an extern `struct` / free `fn` with `#[extern(name = "X")]` to its
+    /// target identifier `X`; every lowered reference uses `X`, not the neoc name
+    /// (`lang/EXTERN.md` §Attributes).
+    extern_target_names: std::collections::HashMap<String, String>,
     /// Private free functions referenced before their definition. They are
     /// declared `local` up front and assigned in place, so a caller emitted
     /// earlier closes over the (later-assigned) local rather than a nil global.

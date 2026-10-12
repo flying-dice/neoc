@@ -464,6 +464,58 @@ fn collect_extern_fn_namespaces(
     }
 }
 
+/// Maps each extern `struct` and free `fn` carrying `#[extern(name = "X")]` to
+/// its target identifier `X` (`lang/EXTERN.md` §Attributes). The neoc-side name
+/// is unaffected; a backend emits the target identifier wherever it lowers a
+/// reference to the item (constructor, associated call, free call), qualified
+/// through the enclosing `mod`'s binding when there is one. Items without a
+/// `name` override are absent and keep their neoc name.
+#[must_use]
+pub fn extern_target_names(module: &Module) -> std::collections::HashMap<Ident, Ident> {
+    let mut out = std::collections::HashMap::new();
+    for item in &module.items {
+        if let ItemKind::Extern(block) = &item.kind {
+            collect_extern_target_names(&block.items, &mut out);
+        }
+    }
+    out
+}
+
+/// The `name`-override map among `items`, the item-list form of
+/// [`extern_target_names`]. A backend feeds it `use`-imported extern items so an
+/// imported item's `name` override is honoured in the consumer too.
+#[must_use]
+pub fn extern_target_names_from_items(
+    items: &[ExternItem],
+) -> std::collections::HashMap<Ident, Ident> {
+    let mut out = std::collections::HashMap::new();
+    collect_extern_target_names(items, &mut out);
+    out
+}
+
+fn collect_extern_target_names(
+    items: &[ExternItem],
+    out: &mut std::collections::HashMap<Ident, Ident>,
+) {
+    for ext in items {
+        let target = || ExternAttr::parse(&ext.attrs).and_then(|a| a.name);
+        match &ext.kind {
+            ExternItemKind::Struct(s) => {
+                if let Some(t) = target() {
+                    out.insert(s.name.clone(), t);
+                }
+            }
+            ExternItemKind::Fn(sig) => {
+                if let Some(t) = target() {
+                    out.insert(sig.name.clone(), t);
+                }
+            }
+            ExternItemKind::Mod(m) => collect_extern_target_names(&m.items, out),
+            ExternItemKind::Impl(_) => {}
+        }
+    }
+}
+
 /// The parsed `#[extern(...)]` attribute on an extern item
 /// (`lang/EXTERN.md` §Attributes). A closed set of params; absent params are
 /// `false`/`None`. Built from an item's [`Attribute`] list.
@@ -1640,6 +1692,32 @@ mod tests {
         assert_eq!(ns.get("Changes"), Some(&"sqlite".to_string()));
         // A struct with no enclosing `mod` keeps its bare name — absent here.
         assert!(!ns.contains_key("Top"));
+    }
+
+    #[test]
+    fn extern_target_names_collect_name_overrides_only() {
+        // extern { #[extern(name = "FlagMap")] struct Flags; struct Plain; }
+        let struct_item = |attrs: Vec<Attribute>, name: &str| {
+            extern_item(
+                attrs,
+                ExternItemKind::Struct(StructDecl {
+                    name: name.to_string(),
+                    generics: Vec::new(),
+                    body: StructBody::Unit,
+                }),
+            )
+        };
+        let name_attr = extern_attr(vec![AttrArg::Named {
+            name: "name".to_string(),
+            value: Box::new(AttrArg::Str("FlagMap".to_string())),
+        }]);
+        let items = vec![
+            struct_item(vec![name_attr], "Flags"),
+            struct_item(Vec::new(), "Plain"),
+        ];
+        let targets = extern_target_names_from_items(&items);
+        assert_eq!(targets.get("Flags"), Some(&"FlagMap".to_string()));
+        assert!(!targets.contains_key("Plain"));
     }
 
     #[test]

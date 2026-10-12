@@ -669,8 +669,11 @@ impl Emitter {
     /// import's fresh local (`lang/DYNAMIC.md` §3.7).
     pub(crate) fn qualify_extern_value(&self, ty: &str) -> String {
         match self.extern_struct_ns.get(ty) {
-            Some(ns) => format!("{ns}.{ty}"),
-            None => self.type_local(ty).to_string(),
+            Some(ns) => format!("{ns}.{}", self.extern_target(ty)),
+            None => match self.extern_target_names.get(ty) {
+                Some(target) => target.clone(),
+                None => self.type_local(ty).to_string(),
+            },
         }
     }
 
@@ -686,7 +689,18 @@ impl Emitter {
     /// §Lowering). Returns `None` for a fn with no enclosing `mod` (top-level),
     /// which keeps its bare name.
     pub(crate) fn qualify_extern_fn(&self, name: &str) -> Option<String> {
-        self.extern_fn_ns.get(name).map(|ns| format!("{ns}.{name}"))
+        match self.extern_fn_ns.get(name) {
+            Some(ns) => Some(format!("{ns}.{}", self.extern_target(name))),
+            None => self.extern_target_names.get(name).cloned(),
+        }
+    }
+
+    /// The target identifier of an extern item: its `#[extern(name = "...")]`
+    /// override, else its neoc name.
+    fn extern_target<'a>(&'a self, name: &'a str) -> &'a str {
+        self.extern_target_names
+            .get(name)
+            .map_or(name, String::as_str)
     }
 
     /// Lower `S { f: e, .. base }` (functional update). The emitter has no field

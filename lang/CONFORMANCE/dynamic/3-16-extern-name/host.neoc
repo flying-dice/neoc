@@ -1,0 +1,21 @@
+// Module `host` of 3-16-extern-name: neoc-side names that differ from the target
+// identifiers. `#[extern(name = "...")]` sets the target identifier of an `fn` or
+// `struct`; the neoc-side name is unaffected (EXTERN.md §Attributes).
+extern {
+    #[extern(path = "std:collections")]
+    pub mod collections {
+        #[extern(name = "Map")]
+        pub struct Flags;
+        impl Flags {
+            #[extern(constructor)]
+            pub fn new();
+            pub fn set(self, key: string, value: Unknown);
+            pub fn size(self) -> number;
+        }
+    }
+    #[extern(ambient)]
+    pub mod math {
+        #[extern(name = "floor")]
+        pub fn round_down(x: number) -> number;
+    }
+}
