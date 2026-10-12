@@ -39,13 +39,13 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "encode",
         &[("input", "string")],
         "Encode `input` bytes to a lowercase hex string — two characters per byte, drawn from `0`–`9` and `a`–`f`.",
-        |_, input: mlua::String| Ok(hex::encode(input.as_bytes())),
+        |_, input: mlua::LuaString| Ok(hex::encode(input.as_bytes())),
     )?
     .func(
         "encode_upper",
         &[("input", "string")],
         "Encode `input` bytes to an uppercase hex string (`0`–`9` and `A`–`F`).",
-        |_, input: mlua::String| Ok(hex::encode_upper(input.as_bytes())),
+        |_, input: mlua::LuaString| Ok(hex::encode_upper(input.as_bytes())),
     )?
     .set("decode", lua.create_function(decode)?)?;
 
@@ -60,7 +60,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 }
 
 #[instrument(name = "hex.decode", target = "lua::lib::hex", skip_all)]
-fn decode(lua: &Lua, input: mlua::String) -> mlua::Result<(Value, Value)> {
+fn decode(lua: &Lua, input: mlua::LuaString) -> mlua::Result<(Value, Value)> {
     // Drop ASCII whitespace before decoding so dumps like "de ad be ef" or
     // newline-wrapped blobs round-trip. The error position then refers to the
     // whitespace-stripped stream, but the offending character is still named —
@@ -83,7 +83,7 @@ fn decode(lua: &Lua, input: mlua::String) -> mlua::Result<(Value, Value)> {
 // Same three-tier shape as `lib:base64` — encode the same 2.25 KiB payload so
 // iteration cost clears mlua call overhead and the deltas stay stable:
 //   - library:      `hex::encode(bytes)` — pure hex crate.
-//   - into_out_lua: identity Rust fn over the same `mlua::String`. The bridge.
+//   - into_out_lua: identity Rust fn over the same `mlua::LuaString`. The bridge.
 //   - through_lua:  `hex.encode(payload)` from a compiled chunk. End-to-end.
 // ---------------------------------------------------------------------------
 
@@ -105,11 +105,11 @@ pub fn benches(c: &mut criterion::Criterion) {
     });
 
     let ident: mlua::Function = lua
-        .create_function(|_, s: mlua::String| Ok(s))
+        .create_function(|_, s: mlua::LuaString| Ok(s))
         .expect("ident");
     g.bench_function("into_out_lua", |b| {
         b.iter(|| {
-            let _: mlua::String = ident.call(black_box(payload_lua.clone())).unwrap();
+            let _: mlua::LuaString = ident.call(black_box(payload_lua.clone())).unwrap();
         });
     });
 
@@ -119,7 +119,7 @@ pub fn benches(c: &mut criterion::Criterion) {
         .expect("chunk");
     g.bench_function("through_lua", |b| {
         b.iter(|| {
-            let _: mlua::String = chunk.call(black_box(payload_lua.clone())).unwrap();
+            let _: mlua::LuaString = chunk.call(black_box(payload_lua.clone())).unwrap();
         });
     });
 
@@ -182,7 +182,7 @@ mod tests {
     fn decode_is_case_insensitive() {
         let lua = engine();
         // Mixed case must decode to the same bytes as either pure case.
-        let s: mlua::String = lua
+        let s: mlua::LuaString = lua
             .load(
                 r#"
                 local dec, err = hex.decode("fFaB")
@@ -198,7 +198,7 @@ mod tests {
     #[test]
     fn decode_skips_whitespace() {
         let lua = engine();
-        let s: mlua::String = lua
+        let s: mlua::LuaString = lua
             .load(
                 r#"
                 local dec, err = hex.decode("de ad\tbe\nef")
@@ -214,7 +214,7 @@ mod tests {
     #[test]
     fn round_trip_binary() {
         let lua = engine();
-        let s: mlua::String = lua
+        let s: mlua::LuaString = lua
             .load(
                 r#"
                 local raw = "\0\1\2\254\255"

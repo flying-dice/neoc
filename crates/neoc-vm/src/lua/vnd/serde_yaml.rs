@@ -70,7 +70,7 @@ fn decode(lua: &Lua, ud: AnyUserData) -> Result<Value, String> {
     json_result_to_value(lua, result)
 }
 
-fn decode_string(lua: &Lua, s: mlua::String) -> Result<Value, String> {
+fn decode_string(lua: &Lua, s: mlua::LuaString) -> Result<Value, String> {
     let bytes = s.as_bytes();
     let result = serde_yaml::from_slice::<serde_json::Value>(&bytes);
     json_result_to_value(lua, result)
@@ -151,7 +151,7 @@ app:
     });
 
     let ident_decode: mlua::Function = lua
-        .create_function(|_, _s: mlua::String| Ok(Value::Nil))
+        .create_function(|_, _s: mlua::LuaString| Ok(Value::Nil))
         .expect("ident_decode");
     g.bench_function("decode_string/into_out_lua", |b| {
         b.iter(|| {
@@ -191,7 +191,7 @@ app:
         .expect("ident_encode");
     g.bench_function("encode/into_out_lua", |b| {
         b.iter(|| {
-            let _: mlua::String = ident_encode.call(black_box(parsed_lua.clone())).unwrap();
+            let _: mlua::LuaString = ident_encode.call(black_box(parsed_lua.clone())).unwrap();
         });
     });
 

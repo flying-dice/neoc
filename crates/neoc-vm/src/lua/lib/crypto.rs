@@ -276,10 +276,10 @@ fn encrypt(
     lua: &Lua,
     (algo, key, nonce, plaintext, aad): (
         String,
-        mlua::String,
-        mlua::String,
-        mlua::String,
-        Option<mlua::String>,
+        mlua::LuaString,
+        mlua::LuaString,
+        mlua::LuaString,
+        Option<mlua::LuaString>,
     ),
 ) -> mlua::Result<(Value, Value)> {
     let cipher = match Cipher::new(&algo, &key.as_bytes()) {
@@ -303,10 +303,10 @@ fn decrypt(
     lua: &Lua,
     (algo, key, nonce, ciphertext, aad): (
         String,
-        mlua::String,
-        mlua::String,
-        mlua::String,
-        Option<mlua::String>,
+        mlua::LuaString,
+        mlua::LuaString,
+        mlua::LuaString,
+        Option<mlua::LuaString>,
     ),
 ) -> mlua::Result<(Value, Value)> {
     let cipher = match Cipher::new(&algo, &key.as_bytes()) {
@@ -367,11 +367,11 @@ pub fn benches(c: &mut criterion::Criterion) {
 
     // into_out_lua tier — identity marshalling, no encryption.
     let ident: mlua::Function = lua
-        .create_function(|_, s: mlua::String| Ok(s))
+        .create_function(|_, s: mlua::LuaString| Ok(s))
         .expect("ident");
     g.bench_function("into_out_lua", |b| {
         b.iter(|| {
-            let _: mlua::String = ident.call(black_box(payload_lua.clone())).unwrap();
+            let _: mlua::LuaString = ident.call(black_box(payload_lua.clone())).unwrap();
         });
     });
 
@@ -387,7 +387,7 @@ pub fn benches(c: &mut criterion::Criterion) {
         let name = format!("through_lua/encrypt/{algo}");
         g.bench_function(name, |b| {
             b.iter(|| {
-                let _: mlua::String = chunk
+                let _: mlua::LuaString = chunk
                     .call((
                         black_box(key_lua.clone()),
                         black_box(nonce_lua.clone()),
@@ -487,7 +487,7 @@ mod tests {
             lua.globals()
                 .set("aad", lua.create_string(&aad).unwrap())
                 .unwrap();
-            let s: mlua::String = lua
+            let s: mlua::LuaString = lua
                 .load(format!(
                     r#"return crypto.encrypt("{algo}", key, nonce, pt, aad)"#
                 ))
@@ -501,8 +501,8 @@ mod tests {
     fn round_trip_matches_plaintext() {
         let lua = engine();
         for algo in super::ALGOS {
-            let (pt_in, pt_out, e): (mlua::String, Option<mlua::String>, Option<String>) = lua
-                .load(format!(
+            let (pt_in, pt_out, e): (mlua::LuaString, Option<mlua::LuaString>, Option<String>) =
+                lua.load(format!(
                     r#"
                     local key = ("k"):rep(crypto.key_size("{algo}"))
                     local nonce = ("n"):rep(crypto.nonce_size("{algo}"))
@@ -525,7 +525,7 @@ mod tests {
         // Encrypt with one AAD, decrypt with another — must fail. Catches a
         // regression where AAD was dropped on either path.
         let lua = engine();
-        let (val, e): (Option<mlua::String>, Option<String>) = lua
+        let (val, e): (Option<mlua::LuaString>, Option<String>) = lua
             .load(
                 r#"
                 local key = ("k"):rep(32)
@@ -547,7 +547,7 @@ mod tests {
     fn tampered_ciphertext_fails_decrypt() {
         // Flip a byte in the ciphertext — the tag check must reject it.
         let lua = engine();
-        let (val, e): (Option<mlua::String>, Option<String>) = lua
+        let (val, e): (Option<mlua::LuaString>, Option<String>) = lua
             .load(
                 r#"
                 local key = ("k"):rep(32)
@@ -566,7 +566,7 @@ mod tests {
     #[test]
     fn wrong_key_fails_decrypt() {
         let lua = engine();
-        let (val, e): (Option<mlua::String>, Option<String>) = lua
+        let (val, e): (Option<mlua::LuaString>, Option<String>) = lua
             .load(
                 r#"
                 local key_a = ("a"):rep(32)
@@ -587,7 +587,12 @@ mod tests {
         // The contract: a script that "doesn't pass AAD" must decrypt a
         // ciphertext produced with an empty-string AAD, and vice versa.
         let lua = engine();
-        let (a, b, c, d): (mlua::String, mlua::String, mlua::String, mlua::String) = lua
+        let (a, b, c, d): (
+            mlua::LuaString,
+            mlua::LuaString,
+            mlua::LuaString,
+            mlua::LuaString,
+        ) = lua
             .load(
                 r#"
                 local key = ("k"):rep(32)
@@ -609,7 +614,7 @@ mod tests {
     #[test]
     fn wrong_key_length_errors() {
         let lua = engine();
-        let (v, e): (Option<mlua::String>, Option<String>) = lua
+        let (v, e): (Option<mlua::LuaString>, Option<String>) = lua
             .load(
                 r#"
                 return crypto.encrypt("aes_256_gcm", "short", ("n"):rep(12), "msg")
@@ -626,7 +631,7 @@ mod tests {
     #[test]
     fn wrong_nonce_length_errors() {
         let lua = engine();
-        let (v, e): (Option<mlua::String>, Option<String>) = lua
+        let (v, e): (Option<mlua::LuaString>, Option<String>) = lua
             .load(
                 r#"
                 return crypto.encrypt("aes_256_gcm", ("k"):rep(32), "short", "msg")
@@ -646,7 +651,7 @@ mod tests {
         // reject it before reaching the backend so the error names the real
         // cause instead of falling out as "decryption failed".
         let lua = engine();
-        let (v, e): (Option<mlua::String>, Option<String>) = lua
+        let (v, e): (Option<mlua::LuaString>, Option<String>) = lua
             .load(
                 r#"
                 return crypto.decrypt("aes_256_gcm", ("k"):rep(32), ("n"):rep(12), "short")
@@ -686,7 +691,7 @@ mod tests {
         // (16 bytes) and decrypt back to empty — a corner case scripts hit
         // when "the payload is just the header".
         let lua = engine();
-        let (ct, pt, e): (mlua::String, Option<mlua::String>, Option<String>) = lua
+        let (ct, pt, e): (mlua::LuaString, Option<mlua::LuaString>, Option<String>) = lua
             .load(
                 r#"
                 local key = ("k"):rep(32)

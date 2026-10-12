@@ -69,7 +69,7 @@ fn decode(lua: &Lua, ud: AnyUserData) -> Result<Value, String> {
     parse_str(lua, s)
 }
 
-fn decode_string(lua: &Lua, s: mlua::String) -> Result<Value, String> {
+fn decode_string(lua: &Lua, s: mlua::LuaString) -> Result<Value, String> {
     let s = std::str::from_utf8(&s.as_bytes())
         .map(str::to_owned)
         .map_err(|e| e.to_string())?;

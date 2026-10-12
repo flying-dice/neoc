@@ -25,7 +25,7 @@ libtest-mimic = "0.8"
 # (`tests/common`): the runtime's own sandboxed engine, so emitted Lua is executed
 # under the environment `neoc run` gives it, never skipped for a missing
 # interpreter. No cycle: `neoc-vm` does not depend on this crate.
-mlua = { version = "0.10", features = ["luajit", "vendored"] }
+mlua = { version = "0.12", features = ["luajit", "vendored"] }
 neoc-vm.workspace = true
 neoc-grammar.workspace = true
 tree-sitter.workspace = true

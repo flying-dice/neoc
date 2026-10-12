@@ -433,7 +433,7 @@ fn run_neoc_multi_module_is_rejected_with_pointer_to_build() {
 fn run_lua_file_rejects_bytecode() {
     let dir = tempdir().unwrap();
     let lua = mlua::Lua::new();
-    let dump: mlua::String = lua
+    let dump: mlua::LuaString = lua
         .load("return string.dump(function() return 7 end, true)")
         .eval()
         .unwrap();

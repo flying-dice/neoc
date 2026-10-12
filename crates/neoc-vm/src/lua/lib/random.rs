@@ -82,7 +82,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             "random_string",
             &[("n", "number"), ("alphabet", "string?")],
             "Return a random string of `n` characters drawn from `alphabet` (default `[0-9A-Za-z]`).",
-            |_, (n, alphabet): (i64, Option<mlua::String>)| random_string(n, alphabet),
+            |_, (n, alphabet): (i64, Option<mlua::LuaString>)| random_string(n, alphabet),
         )?
         .try_func(
             "token_urlsafe",
@@ -107,7 +107,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             "uuid_format",
             &[("input", "string")],
             "Format 16 raw bytes as a canonical hyphenated UUID string.",
-            |_, input: mlua::String| uuid_format(input),
+            |_, input: mlua::LuaString| uuid_format(input),
         )?;
 
     m.record_fn(
@@ -175,7 +175,7 @@ fn uniform_u128(span: u128) -> u128 {
     }
 }
 
-fn random_string(n: i64, alphabet: Option<mlua::String>) -> Result<String, String> {
+fn random_string(n: i64, alphabet: Option<mlua::LuaString>) -> Result<String, String> {
     if n < 0 {
         return Err("length must be non-negative".to_string());
     }
@@ -228,7 +228,7 @@ fn uuid_v7() -> mlua::Result<String> {
 }
 
 #[instrument(name = "random.uuid_parse", target = "lua::lib::random", skip_all)]
-fn uuid_parse(lua: &Lua, input: mlua::String) -> mlua::Result<(Value, Value)> {
+fn uuid_parse(lua: &Lua, input: mlua::LuaString) -> mlua::Result<(Value, Value)> {
     let bytes = input.as_bytes();
     let s = match std::str::from_utf8(&bytes) {
         Ok(s) => s,
@@ -240,7 +240,7 @@ fn uuid_parse(lua: &Lua, input: mlua::String) -> mlua::Result<(Value, Value)> {
     }
 }
 
-fn uuid_format(input: mlua::String) -> Result<String, String> {
+fn uuid_format(input: mlua::LuaString) -> Result<String, String> {
     let bytes = input.as_bytes();
     if bytes.len() != 16 {
         return Err(format!("expected 16 bytes, got {}", bytes.len()));
@@ -287,7 +287,7 @@ pub fn benches(c: &mut criterion::Criterion) {
         .expect("chunk");
     g.bench_function("through_lua/random_bytes_32", |b| {
         b.iter(|| {
-            let _: mlua::String = chunk.call::<mlua::String>(()).unwrap();
+            let _: mlua::LuaString = chunk.call::<mlua::LuaString>(()).unwrap();
         });
     });
 
@@ -335,14 +335,14 @@ mod tests {
     #[test]
     fn random_bytes_length_matches_request() {
         let lua = engine();
-        let s: mlua::String = lua.load(r#"return rng.random_bytes(32)"#).eval().unwrap();
+        let s: mlua::LuaString = lua.load(r#"return rng.random_bytes(32)"#).eval().unwrap();
         assert_eq!(s.as_bytes().len(), 32);
     }
 
     #[test]
     fn random_bytes_zero_is_empty() {
         let lua = engine();
-        let s: mlua::String = lua.load(r#"return rng.random_bytes(0)"#).eval().unwrap();
+        let s: mlua::LuaString = lua.load(r#"return rng.random_bytes(0)"#).eval().unwrap();
         assert_eq!(s.as_bytes().len(), 0);
     }
 
@@ -351,7 +351,7 @@ mod tests {
         // 32 bytes — collision probability negligible. If this ever flakes,
         // the CSPRNG is broken or this isn't being called.
         let lua = engine();
-        let (a, b): (mlua::String, mlua::String) = lua
+        let (a, b): (mlua::LuaString, mlua::LuaString) = lua
             .load(r#"return rng.random_bytes(32), rng.random_bytes(32)"#)
             .eval()
             .unwrap();

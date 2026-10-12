@@ -1,6 +1,7 @@
 //! Engine factory + (value, err) helpers shared by every lib module.
 
-use mlua::{AsChunk, Chunk, ChunkMode, IntoLua, Lua, StdLib, Value};
+use mlua::chunk::{AsChunk, Chunk, ChunkMode};
+use mlua::{IntoLua, Lua, StdLib, Value};
 
 use crate::lua::modules;
 
@@ -58,7 +59,7 @@ pub fn make_engine() -> mlua::Result<Lua> {
 /// and escapes the sandbox — so every entry point that runs script-supplied
 /// source goes through here and refuses binary chunks.
 #[track_caller]
-pub fn load_source<'a>(lua: &Lua, source: impl AsChunk<'a>) -> Chunk<'a> {
+pub fn load_source<'a>(lua: &Lua, source: impl AsChunk + 'a) -> Chunk<'a> {
     lua.load(source).set_mode(ChunkMode::Text)
 }
 
@@ -114,7 +115,7 @@ pub fn from_err<E: ::std::fmt::Display>(
 #[cfg(test)]
 pub(crate) fn ascii_bytecode() -> String {
     let lua = Lua::new();
-    let dump: mlua::String = lua
+    let dump: mlua::LuaString = lua
         .load("return string.dump(function() return 7 end, true)")
         .eval()
         .expect("dump");

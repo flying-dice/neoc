@@ -152,32 +152,32 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 // ---------------------------------------------------------------------------
 
 #[instrument(name = "text.to_camel_case", target = "lua::lib::text", skip_all)]
-fn to_camel_case(_: &Lua, s: mlua::String) -> mlua::Result<String> {
+fn to_camel_case(_: &Lua, s: mlua::LuaString) -> mlua::Result<String> {
     Ok(s.to_str()?.to_lower_camel_case())
 }
 
 #[instrument(name = "text.to_snake_case", target = "lua::lib::text", skip_all)]
-fn to_snake_case(_: &Lua, s: mlua::String) -> mlua::Result<String> {
+fn to_snake_case(_: &Lua, s: mlua::LuaString) -> mlua::Result<String> {
     Ok(s.to_str()?.to_snake_case())
 }
 
 #[instrument(name = "text.to_kebab_case", target = "lua::lib::text", skip_all)]
-fn to_kebab_case(_: &Lua, s: mlua::String) -> mlua::Result<String> {
+fn to_kebab_case(_: &Lua, s: mlua::LuaString) -> mlua::Result<String> {
     Ok(s.to_str()?.to_kebab_case())
 }
 
 #[instrument(name = "text.to_pascal_case", target = "lua::lib::text", skip_all)]
-fn to_pascal_case(_: &Lua, s: mlua::String) -> mlua::Result<String> {
+fn to_pascal_case(_: &Lua, s: mlua::LuaString) -> mlua::Result<String> {
     Ok(s.to_str()?.to_upper_camel_case())
 }
 
 #[instrument(name = "text.to_title_case", target = "lua::lib::text", skip_all)]
-fn to_title_case(_: &Lua, s: mlua::String) -> mlua::Result<String> {
+fn to_title_case(_: &Lua, s: mlua::LuaString) -> mlua::Result<String> {
     Ok(s.to_str()?.to_title_case())
 }
 
 #[instrument(name = "text.to_constant_case", target = "lua::lib::text", skip_all)]
-fn to_constant_case(_: &Lua, s: mlua::String) -> mlua::Result<String> {
+fn to_constant_case(_: &Lua, s: mlua::LuaString) -> mlua::Result<String> {
     Ok(s.to_str()?.to_shouty_snake_case())
 }
 
@@ -226,7 +226,7 @@ fn parse_wrap_opts(opts: Option<&Table>) -> Result<WrapOpts, String> {
 #[instrument(name = "text.word_wrap", target = "lua::lib::text", skip_all)]
 fn word_wrap(
     lua: &Lua,
-    (text, width, opts): (mlua::String, i64, Option<Table>),
+    (text, width, opts): (mlua::LuaString, i64, Option<Table>),
 ) -> mlua::Result<(Value, Value)> {
     if width <= 0 {
         return err(lua, "text.word_wrap: width must be > 0");
@@ -331,7 +331,7 @@ fn chunk_by_width(s: &str, width: usize) -> (Vec<String>, String, usize) {
 // ---------------------------------------------------------------------------
 
 #[instrument(name = "text.levenshtein", target = "lua::lib::text", skip_all)]
-fn levenshtein(_: &Lua, (a, b): (mlua::String, mlua::String)) -> mlua::Result<i64> {
+fn levenshtein(_: &Lua, (a, b): (mlua::LuaString, mlua::LuaString)) -> mlua::Result<i64> {
     let a = a.to_str()?;
     let b = b.to_str()?;
     Ok(strsim_levenshtein(&a, &b) as i64)
@@ -355,7 +355,7 @@ fn parse_closest_limit(opts: Option<&Table>) -> Result<Option<usize>, String> {
 #[instrument(name = "text.closest", target = "lua::lib::text", skip_all)]
 fn closest(
     lua: &Lua,
-    (input, candidates, opts): (mlua::String, Table, Option<Table>),
+    (input, candidates, opts): (mlua::LuaString, Table, Option<Table>),
 ) -> mlua::Result<(Value, Value)> {
     let input_str = input.to_str()?.to_string();
 
@@ -437,7 +437,7 @@ fn parse_truncate_boundary(opts: Option<&Table>) -> Result<Boundary, String> {
 #[instrument(name = "text.truncate", target = "lua::lib::text", skip_all)]
 fn truncate(
     lua: &Lua,
-    (text, max_len, opts): (mlua::String, i64, Option<Table>),
+    (text, max_len, opts): (mlua::LuaString, i64, Option<Table>),
 ) -> mlua::Result<(Value, Value)> {
     if max_len < 0 {
         return err(lua, "text.truncate: max_len must be >= 0");
@@ -519,7 +519,7 @@ enum PadSide {
 #[instrument(name = "text.pad_left", target = "lua::lib::text", skip_all)]
 fn pad_left(
     lua: &Lua,
-    (text, width, fill): (mlua::String, i64, Option<mlua::String>),
+    (text, width, fill): (mlua::LuaString, i64, Option<mlua::LuaString>),
 ) -> mlua::Result<(Value, Value)> {
     pad_text(lua, "text.pad_left", text, width, fill, PadSide::Left)
 }
@@ -527,7 +527,7 @@ fn pad_left(
 #[instrument(name = "text.pad_right", target = "lua::lib::text", skip_all)]
 fn pad_right(
     lua: &Lua,
-    (text, width, fill): (mlua::String, i64, Option<mlua::String>),
+    (text, width, fill): (mlua::LuaString, i64, Option<mlua::LuaString>),
 ) -> mlua::Result<(Value, Value)> {
     pad_text(lua, "text.pad_right", text, width, fill, PadSide::Right)
 }
@@ -535,14 +535,14 @@ fn pad_right(
 #[instrument(name = "text.center", target = "lua::lib::text", skip_all)]
 fn center(
     lua: &Lua,
-    (text, width, fill): (mlua::String, i64, Option<mlua::String>),
+    (text, width, fill): (mlua::LuaString, i64, Option<mlua::LuaString>),
 ) -> mlua::Result<(Value, Value)> {
     pad_text(lua, "text.center", text, width, fill, PadSide::Center)
 }
 
 // Validates and extracts a single-codepoint, single-column fill character.
 // Default `" "` when no fill is supplied.
-fn parse_fill_char(fill: Option<mlua::String>, prefix: &str) -> Result<char, String> {
+fn parse_fill_char(fill: Option<mlua::LuaString>, prefix: &str) -> Result<char, String> {
     let Some(s) = fill else { return Ok(' ') };
     let s_ref = s.to_str().map_err(|e| format!("{prefix}: {e}"))?;
     let mut chars = s_ref.chars();
@@ -561,9 +561,9 @@ fn parse_fill_char(fill: Option<mlua::String>, prefix: &str) -> Result<char, Str
 fn pad_text(
     lua: &Lua,
     prefix: &str,
-    text: mlua::String,
+    text: mlua::LuaString,
     width: i64,
-    fill: Option<mlua::String>,
+    fill: Option<mlua::LuaString>,
     side: PadSide,
 ) -> mlua::Result<(Value, Value)> {
     if width < 0 {
@@ -599,7 +599,7 @@ fn pad_text(
 // ---------------------------------------------------------------------------
 
 #[instrument(name = "text.slugify", target = "lua::lib::text", skip_all)]
-fn slugify(_: &Lua, text: mlua::String) -> mlua::Result<String> {
+fn slugify(_: &Lua, text: mlua::LuaString) -> mlua::Result<String> {
     let s_ref = text.to_str()?;
     Ok(slugify_str(&s_ref))
 }
@@ -644,11 +644,11 @@ pub fn benches(c: &mut criterion::Criterion) {
     });
 
     let ident: mlua::Function = lua
-        .create_function(|_, s: mlua::String| Ok(s))
+        .create_function(|_, s: mlua::LuaString| Ok(s))
         .expect("ident");
     g.bench_function("into_out_lua", |b| {
         b.iter(|| {
-            let _: mlua::String = ident.call(black_box(payload_lua.clone())).unwrap();
+            let _: mlua::LuaString = ident.call(black_box(payload_lua.clone())).unwrap();
         });
     });
 

@@ -215,7 +215,7 @@ mod tests {
     #[test]
     fn normalize_nfd_decomposes() {
         let lua = engine();
-        let s: mlua::String = lua
+        let s: mlua::LuaString = lua
             .load(r#"return (uni.normalize("é", "nfd"))"#)
             .eval()
             .unwrap();

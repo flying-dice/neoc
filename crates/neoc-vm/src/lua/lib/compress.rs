@@ -57,7 +57,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 #[instrument(name = "compress.encode", target = "lua::lib::compress", skip_all)]
 fn encode(
     lua: &Lua,
-    (format, data, opts): (String, mlua::String, Option<Table>),
+    (format, data, opts): (String, mlua::LuaString, Option<Table>),
 ) -> mlua::Result<(Value, Value)> {
     let bytes = data.as_bytes();
     let level = match extract_integer_opt(opts.as_ref(), "level", "compress.encode") {
@@ -76,7 +76,7 @@ fn encode(
 #[instrument(name = "compress.decode", target = "lua::lib::compress", skip_all)]
 fn decode(
     lua: &Lua,
-    (format, data, opts): (String, mlua::String, Option<Table>),
+    (format, data, opts): (String, mlua::LuaString, Option<Table>),
 ) -> mlua::Result<(Value, Value)> {
     let bytes = data.as_bytes();
     if bytes.is_empty() {
@@ -385,11 +385,11 @@ pub fn benches(c: &mut criterion::Criterion) {
     // One bench: payload size is constant across all compress benches.
 
     let ident: mlua::Function = lua
-        .create_function(|_, s: mlua::String| Ok(s))
+        .create_function(|_, s: mlua::LuaString| Ok(s))
         .expect("ident");
     g.bench_function("into_out_lua", |b| {
         b.iter(|| {
-            let _: mlua::String = ident.call(black_box(payload_lua.clone())).unwrap();
+            let _: mlua::LuaString = ident.call(black_box(payload_lua.clone())).unwrap();
         });
     });
 
@@ -406,7 +406,7 @@ pub fn benches(c: &mut criterion::Criterion) {
             let name = format!("through_lua/{fmt}_encode_{suffix}");
             g.bench_function(name, |b| {
                 b.iter(|| {
-                    let _: mlua::String = chunk.call(black_box(payload_lua.clone())).unwrap();
+                    let _: mlua::LuaString = chunk.call(black_box(payload_lua.clone())).unwrap();
                 });
             });
         }
@@ -418,7 +418,7 @@ pub fn benches(c: &mut criterion::Criterion) {
                 ))
                 .eval()
                 .expect("encode chunk");
-            let compressed: mlua::String =
+            let compressed: mlua::LuaString =
                 encode_chunk.call(payload_lua.clone()).expect("compress");
             let decode_chunk: mlua::Function = lua
                 .load(format!(
@@ -429,7 +429,8 @@ pub fn benches(c: &mut criterion::Criterion) {
             let name = format!("through_lua/{fmt}_decode_{suffix}");
             g.bench_function(name, |b| {
                 b.iter(|| {
-                    let _: mlua::String = decode_chunk.call(black_box(compressed.clone())).unwrap();
+                    let _: mlua::LuaString =
+                        decode_chunk.call(black_box(compressed.clone())).unwrap();
                 });
             });
         }
@@ -521,7 +522,7 @@ mod tests {
     #[test]
     fn round_trip_binary() {
         let lua = engine();
-        let s: mlua::String = lua
+        let s: mlua::LuaString = lua
             .load(
                 r#"
                 local raw = "\0\1\2\254\255"
@@ -539,7 +540,7 @@ mod tests {
     fn encode_empty_produces_output() {
         let lua = engine();
         for format in ["gzip", "zlib", "zstd", "brotli"] {
-            let s: mlua::String = lua
+            let s: mlua::LuaString = lua
                 .load(format!(r#"return compress.encode("{format}", "")"#))
                 .eval()
                 .unwrap();
@@ -554,7 +555,7 @@ mod tests {
     fn round_trip_empty() {
         let lua = engine();
         for format in ["gzip", "zlib", "zstd", "brotli"] {
-            let s: mlua::String = lua
+            let s: mlua::LuaString = lua
                 .load(format!(
                     r#"
                     local compressed = compress.encode("{format}", "")

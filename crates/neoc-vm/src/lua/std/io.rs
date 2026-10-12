@@ -134,7 +134,7 @@ impl UserData for ReaderHandle {
 
 impl UserData for WriterHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        methods.add_method("write", |lua, this, data: mlua::String| {
+        methods.add_method("write", |lua, this, data: mlua::LuaString| {
             let result = this.0.lock().write_all(&data.as_bytes());
             io_result(lua, "io.write", result, |lua, ()| ok(lua, true))
         });
@@ -224,7 +224,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 }
 
 #[instrument(name = "io.from_string", target = "lua::lib::io", skip_all)]
-fn from_string(_: &Lua, s: mlua::String) -> mlua::Result<ReaderHandle> {
+fn from_string(_: &Lua, s: mlua::LuaString) -> mlua::Result<ReaderHandle> {
     Ok(ReaderHandle::new(std::io::Cursor::new(
         s.as_bytes().to_vec(),
     )))

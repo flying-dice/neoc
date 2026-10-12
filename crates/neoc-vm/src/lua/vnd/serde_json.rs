@@ -135,7 +135,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     Ok(m)
 }
 
-fn from_str(lua: &Lua, s: mlua::String) -> Result<Value, String> {
+fn from_str(lua: &Lua, s: mlua::LuaString) -> Result<Value, String> {
     parse_to_handle(lua, &s.as_bytes()).map_err(|e| e.to_string())
 }
 
@@ -209,7 +209,7 @@ pub fn benches(c: &mut criterion::Criterion) {
     // Boundary: takes a Lua string, returns nil. Measures string-marshal-in
     // + Function call cost, no parsing.
     let ident_decode: mlua::Function = lua
-        .create_function(|_, _s: mlua::String| Ok(Value::Nil))
+        .create_function(|_, _s: mlua::LuaString| Ok(Value::Nil))
         .expect("ident_decode");
     g.bench_function("from_str/into_out_lua", |b| {
         b.iter(|| {
@@ -251,7 +251,7 @@ pub fn benches(c: &mut criterion::Criterion) {
         .expect("ident_encode");
     g.bench_function("to_string/into_out_lua", |b| {
         b.iter(|| {
-            let _: mlua::String = ident_encode.call(black_box(parsed_lua.clone())).unwrap();
+            let _: mlua::LuaString = ident_encode.call(black_box(parsed_lua.clone())).unwrap();
         });
     });
 
@@ -322,7 +322,7 @@ pub fn benches(c: &mut criterion::Criterion) {
 
     g.bench_function("to_string/into_out_lua", |b| {
         b.iter(|| {
-            let _: mlua::String = ident_encode
+            let _: mlua::LuaString = ident_encode
                 .call(black_box(parsed_large_lua.clone()))
                 .unwrap();
         });

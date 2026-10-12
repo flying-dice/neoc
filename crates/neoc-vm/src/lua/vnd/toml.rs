@@ -75,7 +75,7 @@ fn decode(lua: &Lua, ud: AnyUserData) -> Result<Value, String> {
     parse_str(lua, s)
 }
 
-fn decode_string(lua: &Lua, s: mlua::String) -> Result<Value, String> {
+fn decode_string(lua: &Lua, s: mlua::LuaString) -> Result<Value, String> {
     let s = std::str::from_utf8(&s.as_bytes())
         .map(str::to_owned)
         .map_err(|e| e.to_string())?;
@@ -157,7 +157,7 @@ max_retries = 3
     });
 
     let ident_decode: mlua::Function = lua
-        .create_function(|_, _s: mlua::String| Ok(Value::Nil))
+        .create_function(|_, _s: mlua::LuaString| Ok(Value::Nil))
         .expect("ident_decode");
     g.bench_function("decode_string/into_out_lua", |b| {
         b.iter(|| {
@@ -197,7 +197,7 @@ max_retries = 3
         .expect("ident_encode");
     g.bench_function("encode/into_out_lua", |b| {
         b.iter(|| {
-            let _: mlua::String = ident_encode.call(black_box(parsed_lua.clone())).unwrap();
+            let _: mlua::LuaString = ident_encode.call(black_box(parsed_lua.clone())).unwrap();
         });
     });
 

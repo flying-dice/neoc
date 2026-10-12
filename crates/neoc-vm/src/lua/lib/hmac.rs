@@ -133,7 +133,7 @@ pub struct Hmac {
 
 impl UserData for Hmac {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        methods.add_method_mut("update", |_, this, data: mlua::String| {
+        methods.add_method_mut("update", |_, this, data: mlua::LuaString| {
             this.state.update(&data.as_bytes());
             Ok(())
         });
@@ -181,7 +181,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
     m.set(
         "verify",
-        lua.create_function(|_, (a, b): (mlua::String, mlua::String)| {
+        lua.create_function(|_, (a, b): (mlua::LuaString, mlua::LuaString)| {
             Ok(verify(&a.as_bytes(), &b.as_bytes()))
         })?,
     )?;
@@ -241,7 +241,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 }
 
 #[instrument(name = "hmac.Hmac.new", target = "lua::lib::hmac", skip_all)]
-fn hmac_new(lua: &Lua, (algo, key): (String, mlua::String)) -> mlua::Result<(Value, Value)> {
+fn hmac_new(lua: &Lua, (algo, key): (String, mlua::LuaString)) -> mlua::Result<(Value, Value)> {
     match State::new(&algo, &key.as_bytes()) {
         Ok(state) => ok(lua, Hmac { state }),
         Err(msg) => err(lua, format!("hmac.Hmac.new: {msg}")),
@@ -251,7 +251,7 @@ fn hmac_new(lua: &Lua, (algo, key): (String, mlua::String)) -> mlua::Result<(Val
 #[instrument(name = "hmac.hmac", target = "lua::lib::hmac", skip_all)]
 fn hmac_one_shot(
     lua: &Lua,
-    (algo, key, data): (String, mlua::String, mlua::String),
+    (algo, key, data): (String, mlua::LuaString, mlua::LuaString),
 ) -> mlua::Result<(Value, Value)> {
     match State::new(&algo, &key.as_bytes()) {
         Ok(mut state) => {
@@ -293,11 +293,11 @@ pub fn benches(c: &mut criterion::Criterion) {
 
     // into_out_lua tier — identity marshalling, no MAC.
     let ident: mlua::Function = lua
-        .create_function(|_, s: mlua::String| Ok(s))
+        .create_function(|_, s: mlua::LuaString| Ok(s))
         .expect("ident");
     g.bench_function("into_out_lua", |b| {
         b.iter(|| {
-            let _: mlua::String = ident.call(black_box(payload_lua.clone())).unwrap();
+            let _: mlua::LuaString = ident.call(black_box(payload_lua.clone())).unwrap();
         });
     });
 
@@ -312,7 +312,7 @@ pub fn benches(c: &mut criterion::Criterion) {
         let name = format!("through_lua/{algo}");
         g.bench_function(name, |b| {
             b.iter(|| {
-                let _: mlua::String = chunk
+                let _: mlua::LuaString = chunk
                     .call((black_box(key_lua.clone()), black_box(payload_lua.clone())))
                     .unwrap();
             });
@@ -366,7 +366,7 @@ mod tests {
             ),
         ];
         for (algo, expected_hex) in cases {
-            let s: mlua::String = lua
+            let s: mlua::LuaString = lua
                 .load(format!(
                     r#"return hmac.hmac("{algo}", "Jefe", "what do ya want for nothing?")"#
                 ))
@@ -384,7 +384,7 @@ mod tests {
     fn streaming_matches_one_shot() {
         let lua = engine();
         for algo in super::ALGOS {
-            let (one, streamed): (mlua::String, mlua::String) = lua
+            let (one, streamed): (mlua::LuaString, mlua::LuaString) = lua
                 .load(format!(
                     r#"
                     local one = hmac.hmac("{algo}", "secret", "hello world")
@@ -407,7 +407,7 @@ mod tests {
     #[test]
     fn digest_is_idempotent() {
         let lua = engine();
-        let (a, b): (mlua::String, mlua::String) = lua
+        let (a, b): (mlua::LuaString, mlua::LuaString) = lua
             .load(
                 r#"
                 local m = hmac.Hmac.new("sha256", "k")
@@ -423,7 +423,7 @@ mod tests {
     #[test]
     fn update_after_digest_extends_state() {
         let lua = engine();
-        let (after, expected): (mlua::String, mlua::String) = lua
+        let (after, expected): (mlua::LuaString, mlua::LuaString) = lua
             .load(
                 r#"
                 local m = hmac.Hmac.new("sha256", "k")
@@ -446,7 +446,7 @@ mod tests {
         // Different keys over identical data must produce different tags —
         // the whole point of a keyed MAC.
         let lua = engine();
-        let (a, b): (mlua::String, mlua::String) = lua
+        let (a, b): (mlua::LuaString, mlua::LuaString) = lua
             .load(
                 r#"
                 return hmac.hmac("sha256", "key-a", "msg"),
@@ -463,7 +463,7 @@ mod tests {
         // HMAC is defined for an empty key and empty message; both must yield a
         // full-width tag, not an error.
         let lua = engine();
-        let s: mlua::String = lua
+        let s: mlua::LuaString = lua
             .load(r#"return hmac.hmac("sha256", "", "")"#)
             .eval()
             .unwrap();
@@ -473,7 +473,7 @@ mod tests {
     #[test]
     fn binary_key_and_data_round_trip() {
         let lua = engine();
-        let (streamed, oneshot): (mlua::String, mlua::String) = lua
+        let (streamed, oneshot): (mlua::LuaString, mlua::LuaString) = lua
             .load(
                 r#"
                 local key = "\0\1\2\254\255"
@@ -603,7 +603,7 @@ mod tests {
     fn large_input_streaming() {
         // 1 MiB through update in 4 KiB chunks must equal the one-shot tag.
         let lua = engine();
-        let (streamed, oneshot): (mlua::String, mlua::String) = lua
+        let (streamed, oneshot): (mlua::LuaString, mlua::LuaString) = lua
             .load(
                 r#"
                 local chunk = string.rep("x", 4096)

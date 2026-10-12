@@ -18,7 +18,7 @@ tracing = "0.1"
 tracing-core = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "net", "io-util", "signal"] }
-mlua = { version = "0.10", features = ["luajit", "async", "send", "vendored", "serialize", "macros"] }
+mlua = { version = "0.12", features = ["luajit", "async", "send", "vendored", "serialize", "macros"] }
 parking_lot = "0.12"
 regex = "1"
 base64 = "0.22"

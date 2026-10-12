@@ -35,28 +35,28 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "encode",
         &[("input", "string")],
         "Encode `input` using the standard alphabet (A–Z, a–z, 0–9, +, /) with `=` padding.",
-        |_, s: mlua::String| Ok(STANDARD.encode(s.as_bytes())),
+        |_, s: mlua::LuaString| Ok(STANDARD.encode(s.as_bytes())),
     )?
     .set("decode", lua.create_function(decode)?)?
     .func(
         "encode_no_pad",
         &[("input", "string")],
         "Encode using the standard alphabet without `=` padding.",
-        |_, s: mlua::String| Ok(STANDARD_NO_PAD.encode(s.as_bytes())),
+        |_, s: mlua::LuaString| Ok(STANDARD_NO_PAD.encode(s.as_bytes())),
     )?
     .set("decode_no_pad", lua.create_function(decode_no_pad)?)?
     .func(
         "encode_url_safe",
         &[("input", "string")],
         "Encode using the URL-safe alphabet (`-` and `_` instead of `+` and `/`), with `=` padding.",
-        |_, s: mlua::String| Ok(URL_SAFE.encode(s.as_bytes())),
+        |_, s: mlua::LuaString| Ok(URL_SAFE.encode(s.as_bytes())),
     )?
     .set("decode_url_safe", lua.create_function(decode_url_safe)?)?
     .func(
         "encode_url_safe_no_pad",
         &[("input", "string")],
         "Encode using the URL-safe alphabet without padding.",
-        |_, s: mlua::String| Ok(URL_SAFE_NO_PAD.encode(s.as_bytes())),
+        |_, s: mlua::LuaString| Ok(URL_SAFE_NO_PAD.encode(s.as_bytes())),
     )?
     .set(
         "decode_url_safe_no_pad",
@@ -99,7 +99,7 @@ fn decode_with(
     lua: &Lua,
     engine: &base64::engine::GeneralPurpose,
     op: &'static str,
-    input: mlua::String,
+    input: mlua::LuaString,
 ) -> mlua::Result<(Value, Value)> {
     match engine.decode(input.as_bytes()) {
         Ok(b) => ok(lua, lua.create_string(&b)?),
@@ -108,17 +108,17 @@ fn decode_with(
 }
 
 #[instrument(name = "base64.decode", target = "lua::lib::base64", skip_all)]
-fn decode(lua: &Lua, input: mlua::String) -> mlua::Result<(Value, Value)> {
+fn decode(lua: &Lua, input: mlua::LuaString) -> mlua::Result<(Value, Value)> {
     decode_with(lua, &STANDARD, "base64.decode", input)
 }
 
 #[instrument(name = "base64.decode_no_pad", target = "lua::lib::base64", skip_all)]
-fn decode_no_pad(lua: &Lua, input: mlua::String) -> mlua::Result<(Value, Value)> {
+fn decode_no_pad(lua: &Lua, input: mlua::LuaString) -> mlua::Result<(Value, Value)> {
     decode_with(lua, &STANDARD_NO_PAD, "base64.decode_no_pad", input)
 }
 
 #[instrument(name = "base64.decode_url_safe", target = "lua::lib::base64", skip_all)]
-fn decode_url_safe(lua: &Lua, input: mlua::String) -> mlua::Result<(Value, Value)> {
+fn decode_url_safe(lua: &Lua, input: mlua::LuaString) -> mlua::Result<(Value, Value)> {
     decode_with(lua, &URL_SAFE, "base64.decode_url_safe", input)
 }
 
@@ -127,7 +127,7 @@ fn decode_url_safe(lua: &Lua, input: mlua::String) -> mlua::Result<(Value, Value
     target = "lua::lib::base64",
     skip_all
 )]
-fn decode_url_safe_no_pad(lua: &Lua, input: mlua::String) -> mlua::Result<(Value, Value)> {
+fn decode_url_safe_no_pad(lua: &Lua, input: mlua::LuaString) -> mlua::Result<(Value, Value)> {
     decode_with(
         lua,
         &URL_SAFE_NO_PAD,
@@ -143,7 +143,7 @@ fn decode_url_safe_no_pad(lua: &Lua, input: mlua::String) -> mlua::Result<(Value
 // cost above mlua call overhead so the deltas are stable:
 //   - library:       `STANDARD.encode(bytes)` — pure base64 crate.
 //   - into_out_lua:  identity Rust fn registered with mlua, called with the
-//                    same `mlua::String` shape. Isolates the bridge.
+//                    same `mlua::LuaString` shape. Isolates the bridge.
 //   - through_lua:   `b64.encode(payload)` invoked from a compiled
 //                    Lua chunk. End-to-end path users actually pay.
 // ---------------------------------------------------------------------------
@@ -166,11 +166,11 @@ pub fn benches(c: &mut criterion::Criterion) {
     });
 
     let ident: mlua::Function = lua
-        .create_function(|_, s: mlua::String| Ok(s))
+        .create_function(|_, s: mlua::LuaString| Ok(s))
         .expect("ident");
     g.bench_function("into_out_lua", |b| {
         b.iter(|| {
-            let _: mlua::String = ident.call(black_box(payload_lua.clone())).unwrap();
+            let _: mlua::LuaString = ident.call(black_box(payload_lua.clone())).unwrap();
         });
     });
 
@@ -180,7 +180,7 @@ pub fn benches(c: &mut criterion::Criterion) {
         .expect("chunk");
     g.bench_function("through_lua", |b| {
         b.iter(|| {
-            let _: mlua::String = chunk.call(black_box(payload_lua.clone())).unwrap();
+            let _: mlua::LuaString = chunk.call(black_box(payload_lua.clone())).unwrap();
         });
     });
 
@@ -222,7 +222,7 @@ mod tests {
     #[test]
     fn round_trip_binary() {
         let lua = engine();
-        let s: mlua::String = lua
+        let s: mlua::LuaString = lua
             .load(
                 r#"
                 local raw = "\0\1\2\254\255"
@@ -276,7 +276,7 @@ mod tests {
     #[test]
     fn decode_url_safe() {
         let lua = engine();
-        let s: mlua::String = lua
+        let s: mlua::LuaString = lua
             .load(
                 r#"
                 local raw = "\251\255\254"
@@ -317,7 +317,7 @@ mod tests {
     #[test]
     fn round_trip_url_safe_no_pad() {
         let lua = engine();
-        let s: mlua::String = lua
+        let s: mlua::LuaString = lua
             .load(
                 r#"
                 local raw = "\251\255\254"

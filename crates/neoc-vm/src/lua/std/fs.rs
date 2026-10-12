@@ -148,7 +148,7 @@ fn read(lua: &Lua, path: String) -> mlua::Result<(Value, Value)> {
 }
 
 #[instrument(name = "fs.write", target = "lua::lib::fs", skip_all)]
-fn write(lua: &Lua, (path, data): (String, mlua::String)) -> mlua::Result<(Value, Value)> {
+fn write(lua: &Lua, (path, data): (String, mlua::LuaString)) -> mlua::Result<(Value, Value)> {
     match std::fs::write(&path, data.as_bytes()) {
         Ok(()) => ok(lua, true),
         Err(e) => from_err(lua, "fs.write", e),

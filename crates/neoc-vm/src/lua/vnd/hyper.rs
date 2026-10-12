@@ -342,7 +342,7 @@ fn decode_handler_response(v: Value) -> mlua::Result<HandlerResponse> {
         Value::Table(t) => {
             let status: u16 = t.get::<Option<u16>>("status")?.unwrap_or(200);
             let body: Vec<u8> = t
-                .get::<Option<mlua::String>>("body")?
+                .get::<Option<mlua::LuaString>>("body")?
                 .map(|s| s.as_bytes().to_vec())
                 .unwrap_or_default();
             let headers: Vec<(String, String)> = match t.get::<Option<Table>>("headers")? {

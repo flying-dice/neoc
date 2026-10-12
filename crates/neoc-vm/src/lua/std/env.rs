@@ -193,7 +193,7 @@ mod tests {
         let env = get_env(&lua);
         let var_fn: mlua::Function = env.get("var").unwrap();
         let (val, err): (Value, Value) = var_fn.call("_NEOC_TEST_VAR").unwrap();
-        assert_eq!(val.as_str().unwrap(), "hello");
+        assert_eq!(val.as_string().unwrap().to_str().unwrap(), "hello");
         assert!(err.is_nil());
         unsafe { std::env::remove_var("_NEOC_TEST_VAR") };
     }
@@ -205,7 +205,7 @@ mod tests {
         let var_fn: mlua::Function = env.get("var").unwrap();
         let (val, err): (Value, Value) = var_fn.call("_NEOC_DEFINITELY_MISSING_VAR_XYZ").unwrap();
         assert!(val.is_nil());
-        let msg = err.as_str().unwrap();
+        let msg = err.as_string().unwrap().to_str().unwrap();
         assert!(msg.starts_with("env.var: _NEOC_DEFINITELY_MISSING_VAR_XYZ:"));
     }
 }

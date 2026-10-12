@@ -55,7 +55,7 @@ fn extract_opts(opts: &Table) -> Result<Opts, String> {
 }
 
 fn body_from_opts(opts: &Table) -> Option<Vec<u8>> {
-    let s: Option<mlua::String> = opts.get("body").ok();
+    let s: Option<mlua::LuaString> = opts.get("body").ok();
     s.map(|v| v.as_bytes().to_vec())
 }
 

@@ -183,7 +183,7 @@ fn parse_label(
 #[instrument(name = "diff.lines", target = "lua::lib::diff", skip_all)]
 fn lines(
     lua: &Lua,
-    args: (mlua::String, mlua::String, Option<Table>),
+    args: (mlua::LuaString, mlua::LuaString, Option<Table>),
 ) -> mlua::Result<(Value, Value)> {
     change_list(lua, Mode::Lines, args, "diff.lines")
 }
@@ -191,7 +191,7 @@ fn lines(
 #[instrument(name = "diff.words", target = "lua::lib::diff", skip_all)]
 fn words(
     lua: &Lua,
-    args: (mlua::String, mlua::String, Option<Table>),
+    args: (mlua::LuaString, mlua::LuaString, Option<Table>),
 ) -> mlua::Result<(Value, Value)> {
     change_list(lua, Mode::Words, args, "diff.words")
 }
@@ -199,7 +199,7 @@ fn words(
 #[instrument(name = "diff.chars", target = "lua::lib::diff", skip_all)]
 fn chars(
     lua: &Lua,
-    args: (mlua::String, mlua::String, Option<Table>),
+    args: (mlua::LuaString, mlua::LuaString, Option<Table>),
 ) -> mlua::Result<(Value, Value)> {
     change_list(lua, Mode::Chars, args, "diff.chars")
 }
@@ -207,7 +207,7 @@ fn chars(
 fn change_list(
     lua: &Lua,
     mode: Mode,
-    (old, new, opts): (mlua::String, mlua::String, Option<Table>),
+    (old, new, opts): (mlua::LuaString, mlua::LuaString, Option<Table>),
     prefix: &str,
 ) -> mlua::Result<(Value, Value)> {
     let old_s = old.to_str()?.to_owned();
@@ -303,7 +303,7 @@ struct UnifiedResult {
 #[instrument(name = "diff.unified", target = "lua::lib::diff", skip_all)]
 fn unified(
     lua: &Lua,
-    (old, new, opts): (mlua::String, mlua::String, Option<Table>),
+    (old, new, opts): (mlua::LuaString, mlua::LuaString, Option<Table>),
 ) -> mlua::Result<(Value, Value)> {
     let old_s = old.to_str()?.to_owned();
     let new_s = new.to_str()?.to_owned();
@@ -493,7 +493,7 @@ fn fmt_range(start: usize, count: usize) -> String {
 // ---------------------------------------------------------------------------
 
 #[instrument(name = "diff.parse_unified", target = "lua::lib::diff", skip_all)]
-fn parse_unified(lua: &Lua, patch: mlua::String) -> mlua::Result<(Value, Value)> {
+fn parse_unified(lua: &Lua, patch: mlua::LuaString) -> mlua::Result<(Value, Value)> {
     let s = patch.to_str()?.to_owned();
     match parse_unified_inner(&s) {
         Ok(r) => {
@@ -796,7 +796,10 @@ fn parse_range(
 // ---------------------------------------------------------------------------
 
 #[instrument(name = "diff.apply", target = "lua::lib::diff", skip_all)]
-fn apply(lua: &Lua, (orig, patch): (mlua::String, mlua::String)) -> mlua::Result<(Value, Value)> {
+fn apply(
+    lua: &Lua,
+    (orig, patch): (mlua::LuaString, mlua::LuaString),
+) -> mlua::Result<(Value, Value)> {
     let orig_s = orig.to_str()?.to_owned();
     let patch_s = patch.to_str()?.to_owned();
     match apply_inner(&orig_s, &patch_s) {
@@ -937,7 +940,7 @@ fn join_apply_lines(lines: &[(String, bool)]) -> String {
 #[instrument(name = "diff.apply_changes", target = "lua::lib::diff", skip_all)]
 fn apply_changes(
     lua: &Lua,
-    (orig, changes): (mlua::String, Table),
+    (orig, changes): (mlua::LuaString, Table),
 ) -> mlua::Result<(Value, Value)> {
     let prefix = "diff.apply_changes";
     let orig_s = orig.to_str()?.to_owned();
@@ -1019,7 +1022,7 @@ fn read_changes(t: &Table, prefix: &str) -> Result<Vec<Change>, String> {
 // ---------------------------------------------------------------------------
 
 #[instrument(name = "diff.similarity", target = "lua::lib::diff", skip_all)]
-fn similarity(_: &Lua, (a, b): (mlua::String, mlua::String)) -> mlua::Result<f64> {
+fn similarity(_: &Lua, (a, b): (mlua::LuaString, mlua::LuaString)) -> mlua::Result<f64> {
     let a_s = a.to_str()?;
     let b_s = b.to_str()?;
     // Fast paths: identical (incl. both empty) → 1.0; one empty, other not → 0.0.

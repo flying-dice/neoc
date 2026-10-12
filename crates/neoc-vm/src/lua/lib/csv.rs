@@ -303,7 +303,7 @@ fn parse_types_map(t: &Table, prefix: &str) -> Result<HashMap<String, ColumnType
 #[instrument(name = "csv.parse", target = "lua::lib::csv", skip_all)]
 fn parse_fn(
     lua: &Lua,
-    (data, opts): (mlua::String, Option<Table>),
+    (data, opts): (mlua::LuaString, Option<Table>),
 ) -> mlua::Result<(Value, Value)> {
     let prefix = "csv.parse";
     let parse_opts = match parse_parse_opts(opts.as_ref(), prefix) {
@@ -365,7 +365,7 @@ fn parse_fn(
 }
 
 #[instrument(name = "csv.rows", target = "lua::lib::csv", skip_all)]
-fn rows_fn(lua: &Lua, (data, opts): (mlua::String, Option<Table>)) -> mlua::Result<Function> {
+fn rows_fn(lua: &Lua, (data, opts): (mlua::LuaString, Option<Table>)) -> mlua::Result<Function> {
     let parse_opts = parse_parse_opts(opts.as_ref(), "csv.rows").map_err(mlua::Error::external)?;
     let bytes = data.as_bytes().to_vec();
     let capture = new_capture();

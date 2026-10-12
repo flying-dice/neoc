@@ -134,7 +134,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
     m.set(
         "compile",
-        lua.create_function(|lua, schema_json: mlua::String| {
+        lua.create_function(|lua, schema_json: mlua::LuaString| {
             let bytes = schema_json.as_bytes();
             let schema_value: JV = match serde_json::from_slice(&bytes) {
                 Ok(v) => v,

@@ -97,9 +97,9 @@ fn unescape(s: &str) -> String {
     s.replace(COLON_ESCAPE, ":")
 }
 
-/// Borrow an `mlua::String` as an owned UTF-8 `String`, mapping the (rare)
+/// Borrow an `mlua::LuaString` as an owned UTF-8 `String`, mapping the (rare)
 /// non-UTF-8 error into an mlua error. Shared by every INI key/value read.
-fn str_of(s: &mlua::String) -> mlua::Result<String> {
+fn str_of(s: &mlua::LuaString) -> mlua::Result<String> {
     s.to_str()
         .map(|s| s.to_owned())
         .map_err(|e| mlua::Error::external(e.to_string()))
@@ -152,7 +152,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 #[instrument(name = "ini.parse", target = "lua::lib::ini", skip_all)]
 fn parse(
     lua: &Lua,
-    (text, opts_table): (mlua::String, Option<Table>),
+    (text, opts_table): (mlua::LuaString, Option<Table>),
 ) -> mlua::Result<(Value, Value)> {
     let raw = str_of(&text)?;
 
@@ -222,7 +222,7 @@ fn read_char_list(tbl: &Table, key: &str) -> mlua::Result<Option<Vec<char>>> {
         return Ok(None);
     };
     let mut chars = Vec::new();
-    for pair in list.pairs::<i64, mlua::String>() {
+    for pair in list.pairs::<i64, mlua::LuaString>() {
         let (_, v) = pair?;
         let s = str_of(&v)?;
         if let Some(c) = s.chars().next() {
@@ -277,7 +277,7 @@ fn stringify(
         first_section = false;
     }
 
-    for pair in config.pairs::<mlua::String, Table>() {
+    for pair in config.pairs::<mlua::LuaString, Table>() {
         let (k, section_table) = pair?;
         let section_name = str_of(&k)?;
         if section_name.is_empty() {
@@ -299,7 +299,7 @@ fn stringify(
 
 fn write_props(table: &Table, out: &mut String, spacing: bool) -> mlua::Result<()> {
     let delim = if spacing { " = " } else { "=" };
-    for pair in table.pairs::<mlua::String, Value>() {
+    for pair in table.pairs::<mlua::LuaString, Value>() {
         let (k, v) = pair?;
         let key = str_of(&k)?;
         // A bare key (no delimiter) denotes a `true` flag; every other scalar is
@@ -372,11 +372,11 @@ pub fn benches(c: &mut criterion::Criterion) {
     });
 
     let ident: mlua::Function = lua
-        .create_function(|_, s: mlua::String| Ok(s))
+        .create_function(|_, s: mlua::LuaString| Ok(s))
         .expect("ident");
     g.bench_function("into_out_lua", |b| {
         b.iter(|| {
-            let _: mlua::String = ident.call(black_box(payload_lua.clone())).unwrap();
+            let _: mlua::LuaString = ident.call(black_box(payload_lua.clone())).unwrap();
         });
     });
 

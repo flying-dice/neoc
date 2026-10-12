@@ -438,7 +438,7 @@ fn build_include(opts: Option<&Table>, prefix: &str) -> Result<Option<GlobSet>, 
 /// Resolves the bare `path_or_bytes` argument: a valid UTF-8 string naming an
 /// existing file is read from disk; anything else (non-UTF-8 archive bytes, or a
 /// path that is not a file) is taken as the archive bytes verbatim.
-fn resolve_source(arg: &mlua::String) -> Result<Vec<u8>, String> {
+fn resolve_source(arg: &mlua::LuaString) -> Result<Vec<u8>, String> {
     let bytes = arg.as_bytes();
     if let Ok(s) = std::str::from_utf8(&bytes) {
         let p = Path::new(s);
@@ -755,7 +755,7 @@ fn zip_options(mode: Option<u32>) -> zip::write::SimpleFileOptions {
 /// Builds a zip from an in-memory `{ [name] = contents }` map.
 fn build_zip_bytes(entries: &Table) -> Result<Vec<u8>, String> {
     let mut writer = zip::ZipWriter::new(io::Cursor::new(Vec::new()));
-    for pair in entries.pairs::<String, mlua::String>() {
+    for pair in entries.pairs::<String, mlua::LuaString>() {
         let (name, content) = pair.map_err(|e| format!("entry: {e}"))?;
         writer
             .start_file(&name, zip_options(Some(0o644)))
@@ -977,7 +977,7 @@ fn tar_create(
 #[instrument(name = "archive.tar_extract", target = "lua::lib::archive", skip_all)]
 fn tar_extract(
     lua: &Lua,
-    (source, dest, opts): (mlua::String, String, Option<Table>),
+    (source, dest, opts): (mlua::LuaString, String, Option<Table>),
 ) -> mlua::Result<(Value, Value)> {
     let prefix = "archive.tar_extract";
     let cap = match opt_max_output(opts.as_ref(), prefix) {
@@ -1005,7 +1005,7 @@ fn tar_extract(
 )]
 fn tar_extract_bytes(
     lua: &Lua,
-    (bytes, name, opts): (mlua::String, String, Option<Table>),
+    (bytes, name, opts): (mlua::LuaString, String, Option<Table>),
 ) -> mlua::Result<(Value, Value)> {
     let prefix = "archive.tar_extract_bytes";
     let cap = match opt_max_output(opts.as_ref(), prefix) {
@@ -1019,7 +1019,7 @@ fn tar_extract_bytes(
 }
 
 #[instrument(name = "archive.tar_list", target = "lua::lib::archive", skip_all)]
-fn tar_list(lua: &Lua, source: mlua::String) -> mlua::Result<(Value, Value)> {
+fn tar_list(lua: &Lua, source: mlua::LuaString) -> mlua::Result<(Value, Value)> {
     let prefix = "archive.tar_list";
     let bytes = match resolve_source(&source) {
         Ok(b) => b,
@@ -1036,7 +1036,7 @@ fn tar_list(lua: &Lua, source: mlua::String) -> mlua::Result<(Value, Value)> {
     target = "lua::lib::archive",
     skip_all
 )]
-fn tar_list_bytes(lua: &Lua, bytes: mlua::String) -> mlua::Result<(Value, Value)> {
+fn tar_list_bytes(lua: &Lua, bytes: mlua::LuaString) -> mlua::Result<(Value, Value)> {
     let prefix = "archive.tar_list_bytes";
     match tar_list_entries(&bytes.as_bytes()) {
         Ok(metas) => ok(lua, entries_to_table(lua, &metas)?),
@@ -1080,7 +1080,7 @@ fn zip_create(
 #[instrument(name = "archive.zip_extract", target = "lua::lib::archive", skip_all)]
 fn zip_extract(
     lua: &Lua,
-    (source, dest, opts): (mlua::String, String, Option<Table>),
+    (source, dest, opts): (mlua::LuaString, String, Option<Table>),
 ) -> mlua::Result<(Value, Value)> {
     let prefix = "archive.zip_extract";
     let cap = match opt_max_output(opts.as_ref(), prefix) {
@@ -1108,7 +1108,7 @@ fn zip_extract(
 )]
 fn zip_extract_bytes(
     lua: &Lua,
-    (bytes, name, opts): (mlua::String, String, Option<Table>),
+    (bytes, name, opts): (mlua::LuaString, String, Option<Table>),
 ) -> mlua::Result<(Value, Value)> {
     let prefix = "archive.zip_extract_bytes";
     let cap = match opt_max_output(opts.as_ref(), prefix) {
@@ -1122,7 +1122,7 @@ fn zip_extract_bytes(
 }
 
 #[instrument(name = "archive.zip_list", target = "lua::lib::archive", skip_all)]
-fn zip_list(lua: &Lua, source: mlua::String) -> mlua::Result<(Value, Value)> {
+fn zip_list(lua: &Lua, source: mlua::LuaString) -> mlua::Result<(Value, Value)> {
     let prefix = "archive.zip_list";
     let bytes = match resolve_source(&source) {
         Ok(b) => b,
@@ -1139,7 +1139,7 @@ fn zip_list(lua: &Lua, source: mlua::String) -> mlua::Result<(Value, Value)> {
     target = "lua::lib::archive",
     skip_all
 )]
-fn zip_list_bytes(lua: &Lua, bytes: mlua::String) -> mlua::Result<(Value, Value)> {
+fn zip_list_bytes(lua: &Lua, bytes: mlua::LuaString) -> mlua::Result<(Value, Value)> {
     let prefix = "archive.zip_list_bytes";
     match zip_list_entries(&bytes.as_bytes()) {
         Ok(metas) => ok(lua, entries_to_table(lua, &metas)?),

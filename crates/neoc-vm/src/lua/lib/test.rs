@@ -136,7 +136,7 @@ fn register_suite_fns(lua: &Lua, m: &mut Module<'_>) -> mlua::Result<()> {
     let run_test =
         lua.create_async_function(|lua, (name, f): (String, mlua::Function)| async move {
             let state: Table = lua.named_registry_value(STATE_KEY)?;
-            let suite: Option<mlua::String> = state.get("current_suite")?;
+            let suite: Option<mlua::LuaString> = state.get("current_suite")?;
             let label = match suite {
                 Some(s) => format!("{} > {name}", s.to_str()?),
                 None => name,

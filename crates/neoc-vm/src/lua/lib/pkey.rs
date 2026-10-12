@@ -279,7 +279,7 @@ impl UserData for KeyPair {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("public_key", |_, this, _: ()| Ok(this.public()));
 
-        methods.add_method("sign", |lua, this, msg: mlua::String| {
+        methods.add_method("sign", |lua, this, msg: mlua::LuaString| {
             match this.sign(&msg.as_bytes()) {
                 Ok(sig) => ok(lua, lua.create_string(&sig)?),
                 Err(e) => err(lua, format!("KeyPair.sign: {e}")),
@@ -399,7 +399,7 @@ impl UserData for PublicKey {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method(
             "verify",
-            |_, this, (msg, sig): (mlua::String, mlua::String)| {
+            |_, this, (msg, sig): (mlua::LuaString, mlua::LuaString)| {
                 Ok(this.verify(&msg.as_bytes(), &sig.as_bytes()))
             },
         );
@@ -464,7 +464,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             "from_der",
             &[("algo", "string"), ("der", "string")],
             "Load a private key from PKCS#8 DER bytes. `algo` is required, as for `from_pem`.",
-            |_, (algo, der): (String, mlua::String)| {
+            |_, (algo, der): (String, mlua::LuaString)| {
                 KeyPair::from_der(Algo::parse(&algo)?, &der.as_bytes())
             },
         )?
@@ -507,7 +507,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             "from_der",
             &[("algo", "string"), ("der", "string")],
             "Load a public key from SPKI DER bytes under `algo`.",
-            |_, (algo, der): (String, mlua::String)| {
+            |_, (algo, der): (String, mlua::LuaString)| {
                 PublicKey::from_der(Algo::parse(&algo)?, &der.as_bytes())
             },
         )?

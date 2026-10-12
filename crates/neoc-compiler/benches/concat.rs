@@ -47,7 +47,7 @@ fn string_concat_4k(c: &mut Criterion) {
     let accumulated = load(&source(""));
     let plain = load(&source("let peek = || s;"));
     for (_, run) in [&accumulated, &plain] {
-        let built = run.call::<mlua::String>(()).expect("run");
+        let built = run.call::<mlua::LuaString>(()).expect("run");
         assert_eq!(built.as_bytes().len(), APPENDS * 16);
     }
 
@@ -55,14 +55,14 @@ fn string_concat_4k(c: &mut Criterion) {
     group.bench_function("table_concat", |b| {
         b.iter_batched(
             || (),
-            |()| accumulated.1.call::<mlua::String>(()),
+            |()| accumulated.1.call::<mlua::LuaString>(()),
             BatchSize::SmallInput,
         );
     });
     group.bench_function("plain_dotdot", |b| {
         b.iter_batched(
             || (),
-            |()| plain.1.call::<mlua::String>(()),
+            |()| plain.1.call::<mlua::LuaString>(()),
             BatchSize::SmallInput,
         );
     });

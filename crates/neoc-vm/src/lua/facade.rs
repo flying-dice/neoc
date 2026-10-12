@@ -40,7 +40,7 @@ use crate::lua::sandbox::{from_err, ok};
 ///
 /// Implemented for the bridge types a Lua-bound function takes or returns.
 /// The associated name is the neoc surface type, not the Rust type: every
-/// string-shaped binding (`mlua::String`, `String`, `&str`, `Vec<u8>`)
+/// string-shaped binding (`mlua::LuaString`, `String`, `&str`, `Vec<u8>`)
 /// collapses to `"string"`, every numeric binding collapses to `"number"`,
 /// and every dynamic value binding (`mlua::Value`, `mlua::MultiValue`,
 /// `mlua::AnyUserData`) collapses to the opaque `"LuaValue"`.
@@ -57,7 +57,7 @@ macro_rules! neoc_type {
     };
 }
 
-neoc_type!("string" => mlua::String, String, &str, Vec<u8>);
+neoc_type!("string" => mlua::LuaString, String, &str, Vec<u8>);
 neoc_type!("number" => f64, f32, i64, i32, u64, u32, usize, isize);
 neoc_type!("bool" => bool);
 neoc_type!("()" => ());

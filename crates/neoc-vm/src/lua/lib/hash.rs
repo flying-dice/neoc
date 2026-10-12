@@ -146,7 +146,7 @@ pub struct Hasher {
 
 impl UserData for Hasher {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        methods.add_method_mut("update", |_, this, data: mlua::String| {
+        methods.add_method_mut("update", |_, this, data: mlua::LuaString| {
             this.state.update(&data.as_bytes());
             Ok(())
         });
@@ -255,7 +255,10 @@ fn hasher_new(lua: &Lua, algo: String) -> mlua::Result<(Value, Value)> {
 }
 
 #[instrument(name = "hash.hash", target = "lua::lib::hash", skip_all)]
-fn hash_one_shot(lua: &Lua, (algo, data): (String, mlua::String)) -> mlua::Result<(Value, Value)> {
+fn hash_one_shot(
+    lua: &Lua,
+    (algo, data): (String, mlua::LuaString),
+) -> mlua::Result<(Value, Value)> {
     match State::new(&algo) {
         Ok(mut state) => {
             state.update(&data.as_bytes());
@@ -294,11 +297,11 @@ pub fn benches(c: &mut criterion::Criterion) {
 
     // into_out_lua tier — identity marshalling, no hashing.
     let ident: mlua::Function = lua
-        .create_function(|_, s: mlua::String| Ok(s))
+        .create_function(|_, s: mlua::LuaString| Ok(s))
         .expect("ident");
     g.bench_function("into_out_lua", |b| {
         b.iter(|| {
-            let _: mlua::String = ident.call(black_box(payload_lua.clone())).unwrap();
+            let _: mlua::LuaString = ident.call(black_box(payload_lua.clone())).unwrap();
         });
     });
 
@@ -313,7 +316,7 @@ pub fn benches(c: &mut criterion::Criterion) {
         let name = format!("through_lua/{algo}");
         g.bench_function(name, |b| {
             b.iter(|| {
-                let _: mlua::String = chunk.call(black_box(payload_lua.clone())).unwrap();
+                let _: mlua::LuaString = chunk.call(black_box(payload_lua.clone())).unwrap();
             });
         });
     }
@@ -389,7 +392,7 @@ mod tests {
             ("sha1", "abc", "a9993e364706816aba3e25717850c26c9cd0d89d"),
         ];
         for (algo, input, expected_hex) in cases {
-            let s: mlua::String = lua
+            let s: mlua::LuaString = lua
                 .load(format!(r#"return hash.hash("{algo}", "{input}")"#))
                 .eval()
                 .unwrap_or_else(|e| panic!("{algo}: {e}"));
@@ -405,7 +408,7 @@ mod tests {
     fn xxh3_known_vector() {
         // xxhash spec test vector: empty input → 0x2d06800538d394c2 (xxh3_64).
         let lua = engine();
-        let s: mlua::String = lua.load(r#"return hash.hash("xxh3", "")"#).eval().unwrap();
+        let s: mlua::LuaString = lua.load(r#"return hash.hash("xxh3", "")"#).eval().unwrap();
         assert_eq!(bytes_to_hex(&s.as_bytes()), "2d06800538d394c2");
     }
 
@@ -413,7 +416,7 @@ mod tests {
     fn xxh64_known_vector() {
         // xxhash spec test vector: empty input, seed 0 → 0xef46db3751d8e999.
         let lua = engine();
-        let s: mlua::String = lua.load(r#"return hash.hash("xxh64", "")"#).eval().unwrap();
+        let s: mlua::LuaString = lua.load(r#"return hash.hash("xxh64", "")"#).eval().unwrap();
         assert_eq!(bytes_to_hex(&s.as_bytes()), "ef46db3751d8e999");
     }
 
@@ -424,7 +427,7 @@ mod tests {
             "sha256", "sha384", "sha512", "sha3_256", "sha3_512", "blake3", "xxh3", "xxh64", "md5",
             "sha1",
         ] {
-            let (one, streamed): (mlua::String, mlua::String) = lua
+            let (one, streamed): (mlua::LuaString, mlua::LuaString) = lua
                 .load(format!(
                     r#"
                     local one = hash.hash("{algo}", "hello world")
@@ -453,7 +456,7 @@ mod tests {
             "sha256", "sha384", "sha512", "sha3_256", "sha3_512", "blake3", "xxh3", "xxh64", "md5",
             "sha1",
         ] {
-            let s: mlua::String = lua
+            let s: mlua::LuaString = lua
                 .load(format!(r#"return hash.hash("{algo}", "")"#))
                 .eval()
                 .unwrap_or_else(|e| panic!("{algo}: {e}"));
@@ -467,7 +470,7 @@ mod tests {
     #[test]
     fn digest_is_idempotent() {
         let lua = engine();
-        let (a, b): (mlua::String, mlua::String) = lua
+        let (a, b): (mlua::LuaString, mlua::LuaString) = lua
             .load(
                 r#"
                 local h = hash.Hasher.new("sha256")
@@ -486,7 +489,7 @@ mod tests {
     fn update_after_digest_extends_state() {
         // Python `hashlib` allows continuing to update after digest. We do too.
         let lua = engine();
-        let (after_first, expected): (mlua::String, mlua::String) = lua
+        let (after_first, expected): (mlua::LuaString, mlua::LuaString) = lua
             .load(
                 r#"
                 local h = hash.Hasher.new("sha256")
@@ -507,7 +510,7 @@ mod tests {
     #[test]
     fn binary_input_round_trip() {
         let lua = engine();
-        let s: mlua::String = lua
+        let s: mlua::LuaString = lua
             .load(
                 r#"
                 local raw = "\0\1\2\254\255"
@@ -591,7 +594,7 @@ mod tests {
     fn large_input_streaming() {
         // 1 MiB through update in 4 KiB chunks must equal one-shot of the same.
         let lua = engine();
-        let (streamed, oneshot): (mlua::String, mlua::String) = lua
+        let (streamed, oneshot): (mlua::LuaString, mlua::LuaString) = lua
             .load(
                 r#"
                 local chunk = string.rep("x", 4096)

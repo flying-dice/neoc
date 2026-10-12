@@ -23,13 +23,13 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "escape",
         &[("input", "string"), ("opts", "LuaValue?")],
         "Escape the five XML entities (`&`, `<`, `>`, `\"`, `'`) in `input`.",
-        |_, (input, _opts): (mlua::String, Option<Table>)| Ok(escape_str(input.to_str()?.as_ref())),
+        |_, (input, _opts): (mlua::LuaString, Option<Table>)| Ok(escape_str(input.to_str()?.as_ref())),
     )?
     .func(
         "unescape",
         &[("input", "string")],
         "Reverse HTML entity references (named and numeric) in `input`; unknown entities pass through unchanged.",
-        |_, input: mlua::String| Ok(unescape_str(input.to_str()?.as_ref())),
+        |_, input: mlua::LuaString| Ok(unescape_str(input.to_str()?.as_ref())),
     )?;
     Ok(m)
 }
@@ -292,7 +292,7 @@ mod tests {
         // Counter-test for the spec correction above: 999999 = U+F423F is
         // a valid scalar (PUA-A) and must decode, not pass through.
         let lua = engine();
-        let s: mlua::String = lua
+        let s: mlua::LuaString = lua
             .load(r#"return html.unescape("&#999999;")"#)
             .eval()
             .unwrap();

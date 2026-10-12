@@ -15,7 +15,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use futures::StreamExt as _;
-use mlua::{Lua, MultiValue, Table, Thread, ThreadStatus, UserData, UserDataMethods, Value};
+use mlua::thread::ThreadStatus;
+use mlua::{Lua, MultiValue, Table, Thread, UserData, UserDataMethods, Value};
 use parking_lot::Mutex;
 use tokio::sync::Notify;
 
@@ -227,7 +228,7 @@ fn validate_thread(thread: &Thread, kind: &'static str) -> mlua::Result<()> {
         ThreadStatus::Finished | ThreadStatus::Error => Err(mlua::Error::external(format!(
             "{kind}: cannot schedule a dead coroutine"
         ))),
-        ThreadStatus::Running => Err(mlua::Error::external(format!(
+        ThreadStatus::Running | ThreadStatus::Normal => Err(mlua::Error::external(format!(
             "{kind}: cannot schedule a running coroutine"
         ))),
         _ => Ok(()),
@@ -258,7 +259,10 @@ fn into_thread(lua: &Lua, val: Value, kind: &'static str) -> mlua::Result<Thread
 // ---------------------------------------------------------------------------
 
 async fn drive_thread(thread: Thread, args: MultiValue) -> TaskOutcome {
-    let mut stream = thread.into_async::<MultiValue>(args);
+    let mut stream = match thread.into_async::<MultiValue>(args) {
+        Ok(stream) => stream,
+        Err(e) => return TaskOutcome::Err(e.to_string()),
+    };
     let mut last: Option<Vec<Value>> = None;
     loop {
         match stream.next().await {
