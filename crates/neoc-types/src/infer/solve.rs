@@ -92,7 +92,14 @@ impl Checker<'_> {
             .find(|m| m.name == method && m.has_default && m.has_receiver == receiver)
             .map(|m| {
                 let self_ty = Ty::named(name);
-                let proj = |ty: &Ty| ty.subst_self(&self_ty);
+                let empty = HashMap::new();
+                let bindings = self
+                    .table()
+                    .impl_assoc
+                    .get(&(name.to_string(), trait_name.clone()))
+                    .unwrap_or(&empty);
+                let proj =
+                    |ty: &Ty| crate::collect::project_assoc(ty.subst_self(&self_ty), bindings);
                 (m.params.iter().map(proj).collect(), proj(&m.ret))
             })
     }

@@ -653,6 +653,11 @@ fn collect_impl(table: &mut SymbolTable, b: &ast::ImplBlock) {
             .entry(type_name.clone())
             .or_default()
             .insert(trait_name.name.clone());
+        if !assoc.is_empty() {
+            table
+                .impl_assoc
+                .insert((type_name.clone(), trait_name.name.clone()), assoc.clone());
+        }
     }
     record_impl_methods(
         table,

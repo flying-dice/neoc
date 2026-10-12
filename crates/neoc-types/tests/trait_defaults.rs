@@ -179,3 +179,9 @@ fn a_blanket_method_overriding_its_own_default_is_accepted() {
     let src = "trait Show {\n  fn show(self) -> string;\n}\ntrait A {\n  fn a(self) -> string {\n    \"x\"\n  }\n}\nimpl<T: Show> A for T {\n  fn a(self) -> string {\n    \"y\"\n  }\n}\nstruct D;\nimpl Show for D {\n  fn show(self) -> string {\n    \"d\"\n  }\n}\n";
     assert!(diagnostics(src).is_empty(), "{:?}", diagnostics(src));
 }
+
+#[test]
+fn a_default_returning_an_associated_type_projects_to_the_impl_binding() {
+    let src = "trait It {\n  type Item;\n  fn first(self) -> Self::Item;\n  fn again(self) -> Self::Item {\n    self.first()\n  }\n}\nstruct S;\nimpl It for S {\n  type Item = number;\n  fn first(self) -> number {\n    1\n  }\n}\nfn go(s: S) -> number {\n  s.again()\n}\n";
+    assert!(diagnostics(src).is_empty(), "{:?}", diagnostics(src));
+}

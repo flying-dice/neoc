@@ -119,6 +119,10 @@ pub struct SymbolTable {
     /// this type satisfy a bound" with a lookup rather than a scan of every
     /// impl (`STATIC.md` §3.5).
     pub trait_impls: HashMap<String, HashSet<String>>,
+    /// The associated-type bindings (`type Item = …`) of each concrete
+    /// `impl Trait for Type`, keyed `(type, trait)`. Lets an inherited default
+    /// method's `Self::Item` project to the type's binding (`STATIC.md` §8).
+    pub impl_assoc: HashMap<(String, String), HashMap<String, Ty>>,
     /// Per-function declared bounds: function name → (type parameter → the
     /// trait names bounding it), from both `<T: …>` and `where T: …`. Lets a
     /// call site enforce that each argument's concrete type satisfies the bound
