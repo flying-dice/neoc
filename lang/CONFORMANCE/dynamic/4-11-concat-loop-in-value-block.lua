@@ -49,45 +49,57 @@ local function step(i, limit)
 end
 local function in_block(limit)
   local s = ""
-  local tag = (function()
+  local __exit_1, __val_1 = (function()
     for i = 0, (3) - 1 do
       s = (s .. "x")
       if (i == limit) then
-        return "early"
+        return 1, "early"
       end
     end
-    return "done"
+    return false, "done"
   end)()
+  if __exit_1 then
+    return __val_1
+  end
+  local tag = __val_1
   return ((s .. "|") .. tag)
 end
 local function in_if(limit)
   local s = ""
-  local tag = (function()
+  local __exit_2, __val_2 = (function()
     if (limit >= 0) then
       for i = 0, (3) - 1 do
         s = (s .. "y")
         if (i == limit) then
-          return s
+          return 1, s
         end
       end
-      return "done"
+      return false, "done"
     else
-      return "neg"
+      return false, "neg"
     end
   end)()
+  if __exit_2 then
+    return __val_2
+  end
+  local tag = __val_2
   return ((s .. "|") .. tag)
 end
 local function in_try(limit)
   local s = ""
-  local tag = (function()
+  local __exit_3, __val_3 = (function()
     for i = 0, (3) - 1 do
       s = (s .. "z")
       local __try_0 = step(i, limit)
-      if __try_0.__tag == "Err" or __try_0.__tag == "None" then return __try_0 end
+      if __try_0.__tag == "Err" or __try_0.__tag == "None" then return 1, __try_0 end
       local n = __try_0[1]
     end
-    return "done"
+    return false, "done"
   end)()
+  if __exit_3 then
+    return __val_3
+  end
+  local tag = __val_3
   return Ok(((s .. "|") .. tag))
 end
 local function show(r)
@@ -108,4 +120,7 @@ local function main()
   println(in_if(99))
   println(in_if((-1)))
   println(show(in_try(99)))
+  println(in_block(1))
+  println(in_if(1))
+  println(show(in_try(1)))
 end

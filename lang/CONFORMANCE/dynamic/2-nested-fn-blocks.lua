@@ -2,13 +2,13 @@ local function base()
   return 100
 end
 local function main()
-  local f = function(n) return (function()
+  local f = function(n)
     local function twice(k)
       return (k * 2)
     end
     local r = (n + 1)
     return twice(r)
-  end)() end
+  end
   println(f(4))
   local acc = 0
   for i = 0, (5) - 1 do
