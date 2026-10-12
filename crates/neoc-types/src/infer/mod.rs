@@ -741,10 +741,10 @@ impl<'a> Checker<'a> {
             };
             let types = if b.generics.iter().any(|g| g.name == target) {
                 // A blanket impl lands on every type meeting its conditions.
-                let conditions = crate::collect::generic_param_bounds(&b.generics)
+                let conditions = crate::collect::generic_param_bounds(&b.generics, &[])
                     .remove(&target)
                     .unwrap_or_default();
-                self.blanket_targets(&conditions)
+                self.blanket_targets(&target, &conditions)
             } else {
                 vec![target]
             };
