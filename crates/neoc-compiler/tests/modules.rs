@@ -1266,3 +1266,30 @@ fn neoc_impl_redeclaring_a_method_of_a_third_modules_extern_impl_is_rejected() {
         project.diagnostics
     );
 }
+
+/// A module that declares its own `extern struct` of the same name as another
+/// module's still may not redeclare that module's host method.
+#[test]
+fn neoc_impl_on_a_locally_declared_extern_struct_cannot_shadow_another_modules_host_method() {
+    let dir = tempdir();
+    write(
+        &dir,
+        "host.neoc",
+        "extern {\n    pub struct Settings {\n        title: Option<string>,\n    }\n    pub fn mk() -> Settings;\n    impl Settings {\n        fn rename(self, t: Option<string>) -> Option<string>;\n    }\n}\n",
+    );
+    let entry = write(
+        &dir,
+        "app.neoc",
+        "use host::mk;\n\nextern {\n    struct Settings {\n        title: Option<string>,\n    }\n}\n\nimpl Settings {\n    fn rename(self, t: Option<string>) -> Option<string> {\n        t\n    }\n}\n\npub fn main() {\n    let s = mk();\n}\n",
+    );
+
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
+    assert!(
+        project
+            .diagnostics
+            .iter()
+            .any(|d| d.diagnostic.message.contains("implemented by the host")),
+        "{:#?}",
+        project.diagnostics
+    );
+}

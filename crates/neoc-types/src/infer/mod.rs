@@ -2055,9 +2055,8 @@ impl<'a> Checker<'a> {
         ty: &Ty,
         subst: &std::collections::HashMap<String, Ty>,
     ) {
-        let Ty::Fn(ps, _) = ty else { return };
-        match &expr.kind {
-            ast::ExprKind::Closure { .. } => {
+        match (&expr.kind, ty) {
+            (ast::ExprKind::Closure { body, .. }, Ty::Fn(ps, ret)) => {
                 let hint = ps
                     .iter()
                     .map(|p| {
@@ -2071,17 +2070,39 @@ impl<'a> Checker<'a> {
                     .collect();
                 self.closure_hints
                     .insert((expr.span.start, expr.span.end), hint);
+                self.hint_closures(body, ret, subst);
             }
-            ast::ExprKind::Block(b) => self.hint_block(b, ty, subst),
-            ast::ExprKind::If { then, else_, .. } => {
+            (ast::ExprKind::Block(b), _) => self.hint_block(b, ty, subst),
+            (ast::ExprKind::If { then, else_, .. }, _) => {
                 self.hint_block(then, ty, subst);
                 if let Some(e) = else_ {
                     self.hint_closures(e, ty, subst);
                 }
             }
-            ast::ExprKind::Match { arms, .. } => {
+            (ast::ExprKind::Match { arms, .. }, _) => {
                 for arm in arms {
                     self.hint_closures(&arm.body, ty, subst);
+                }
+            }
+            (ast::ExprKind::List(items), Ty::List(inner)) => {
+                for item in items {
+                    self.hint_closures(item, inner, subst);
+                }
+            }
+            (ast::ExprKind::Call { callee, args }, Ty::Named { name, args: targs }) => {
+                // `Some(f)` / `Ok(f)` / `Err(f)` under an annotated `Option` /
+                // `Result` hand `f` the matching type argument.
+                let ast::ExprKind::Path(p) = &callee.kind else {
+                    return;
+                };
+                let slot = match (p.as_slice(), name.as_str()) {
+                    ([c], "Option") if c == "Some" => targs.first(),
+                    ([c], "Result") if c == "Ok" => targs.first(),
+                    ([c], "Result") if c == "Err" => targs.get(1),
+                    _ => None,
+                };
+                if let (Some(slot), [arg]) = (slot, args.as_slice()) {
+                    self.hint_closures(arg, slot, subst);
                 }
             }
             _ => {}
@@ -2099,6 +2120,11 @@ impl<'a> Checker<'a> {
                     || else_.as_ref().is_some_and(|e| Self::yields_closure(e))
             }
             ast::ExprKind::Match { arms, .. } => arms.iter().any(|a| Self::yields_closure(&a.body)),
+            ast::ExprKind::List(items) => items.iter().any(Self::yields_closure),
+            ast::ExprKind::Call { callee, args } => {
+                matches!(&callee.kind, ast::ExprKind::Path(p) if p.len() == 1 && matches!(p[0].as_str(), "Some" | "Ok" | "Err"))
+                    && args.iter().any(Self::yields_closure)
+            }
             _ => false,
         }
     }

@@ -882,13 +882,13 @@ fn redeclared_host_method_diagnostics(
         let Some(owner) = p.segments.last().map(|s| s.name.clone()) else {
             continue;
         };
-        if own.extern_types.contains(&owner) || !universe.extern_types.contains(&owner) {
-            continue;
-        }
         for m in &b.items {
-            let host = universe
-                .host_methods
-                .contains(&(owner.clone(), m.sig.name.clone()));
+            let key = (owner.clone(), m.sig.name.clone());
+            // The checker reports a clash within one module; this covers a host
+            // method declared by an `extern` block elsewhere.
+            let host = universe.host_methods.contains(&key)
+                && !own.host_method_clashes.contains(&key)
+                && !own.methods.get(&key).is_some_and(|info| info.host);
             if host {
                 out.push(Diagnostic::typed(
                     format!(

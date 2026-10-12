@@ -356,6 +356,41 @@ const CLOSURE_SITES: &[(&str, &str, &str)] = &[
         "let w = W { f: |s| true }; w.f = |s| s.title.is_some();",
     ),
     (
+        "array literal under an annotated let",
+        "",
+        "let fs: [fn(Settings) -> bool] = [|s| s.title.is_some()];",
+    ),
+    (
+        "array literal argument",
+        "fn run(fs: [fn(Settings) -> bool]) -> bool { fs[0](mk()) }",
+        "let r = run([|s| s.title.is_some()]);",
+    ),
+    (
+        "closure returned by a closure argument",
+        "fn outer(f: fn(number) -> fn(Settings) -> bool) -> bool { f(1)(mk()) }",
+        "let r = outer(|n| |s| s.title.is_some());",
+    ),
+    (
+        "closure returned by a closure argument over a typed parameter",
+        "fn call(f: fn(Settings) -> fn(Settings) -> bool) -> bool { f(mk())(mk()) }",
+        "let r = call(|a| |s| s.title.is_some());",
+    ),
+    (
+        "closure returned by a fn tail closure",
+        "fn mkf() -> fn() -> fn(Settings) -> bool { || |s| s.title.is_some() }",
+        "",
+    ),
+    (
+        "Some under an annotated let",
+        "",
+        "let o: Option<fn(Settings) -> bool> = Some(|s| s.title.is_some());",
+    ),
+    (
+        "Ok under an annotated let",
+        "",
+        "let r: Result<fn(Settings) -> bool, string> = Ok(|s| s.title.is_some());",
+    ),
+    (
         "bound by an earlier closure",
         "fn both<T>(g: fn() -> T, f: fn(T) -> bool) -> bool { f(g()) }",
         "let r = both(|| mk(), |s| s.title.is_some());",
