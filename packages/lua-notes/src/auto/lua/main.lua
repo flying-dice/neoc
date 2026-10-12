@@ -18,9 +18,14 @@ local function list(store)
   local out = ""
   local i = 0
   local n = store:count()
-  while (i < n) do
-    out = ((out .. store:at(i)) .. " | ")
-    i = (i + 1)
+  do
+    local __sb_1 = { (out .. "") }
+    while (i < n) do
+      __sb_1[#__sb_1 + 1] = (store:at(i) .. "")
+      __sb_1[#__sb_1 + 1] = " | "
+      i = (i + 1)
+    end
+    out = table.concat(__sb_1)
   end
   return out
 end
