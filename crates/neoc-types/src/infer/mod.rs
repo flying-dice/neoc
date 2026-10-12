@@ -1154,6 +1154,35 @@ impl<'a> Checker<'a> {
         self.resolve_qualified(segs, span)
     }
 
+    /// Type of a field-shorthand init (`P { x }`), which names `x` without an
+    /// expression. A capture is reported (once, when `report`) like any other
+    /// use of the name (`STATIC.md` §2).
+    fn shorthand_ty(&mut self, name: &str, report: bool) -> Option<Ty> {
+        match self.scopes.resolve(name) {
+            ScopeLookup::Local(t, _) => Some(t.clone()),
+            ScopeLookup::Captured => {
+                if report {
+                    self.report_capture_unspanned(name);
+                }
+                None
+            }
+            ScopeLookup::DeclaringBlockLocal => {
+                let item = self.table.values.get(name).cloned();
+                if item.is_none() && report {
+                    self.report_capture_unspanned(name);
+                }
+                item
+            }
+            ScopeLookup::Unbound => None,
+        }
+    }
+
+    fn report_capture_unspanned(&mut self, name: &str) {
+        self.error(format!(
+            "nested `fn` cannot use `{name}`, a binding of the enclosing function"
+        ));
+    }
+
     /// Reports a nested `fn` naming a binding of an enclosing function
     /// (`STATIC.md` §2).
     fn report_capture(&mut self, name: &str, span: ast::Span) {
@@ -1731,7 +1760,7 @@ impl<'a> Checker<'a> {
                 init.value
                     .as_ref()
                     .map(|e| self.infer(e))
-                    .or_else(|| self.scopes.lookup(fname).cloned())
+                    .or_else(|| self.shorthand_ty(fname, false))
             });
             if let Some(actual) = actual {
                 self.unify_param(declared, &actual, &mut subst);
@@ -1804,11 +1833,7 @@ impl<'a> Checker<'a> {
                 Some((_, expected)) => {
                     let actual = match &init.value {
                         Some(e) => self.infer(e),
-                        None => self
-                            .scopes
-                            .lookup(&init.name)
-                            .cloned()
-                            .unwrap_or(Ty::Unknown),
+                        None => self.shorthand_ty(&init.name, true).unwrap_or(Ty::Unknown),
                     };
                     if !self.assignable(expected, &actual) {
                         self.error(format!(
