@@ -18,9 +18,9 @@
 //! Strings bind as `TEXT` when valid UTF-8 and as `BYTEA` otherwise.
 //! Result columns decode as: `BOOL` → boolean, `INT2`/`INT4`/`INT8` and
 //! `FLOAT4`/`FLOAT8` → number, `BYTEA` → string, `TEXT`/`VARCHAR`/`CHAR(n)`/
-//! `NAME`/`JSON`/`JSONB`/`UUID` → string. Any other column type raises
-//! `unsupported column type <T>; cast to text in SQL` — e.g. `SELECT
-//! created_at::text`.
+//! `NAME`/`citext` → string. Any other column type raises `unsupported column
+//! type <T>; cast to text in SQL` — e.g. `SELECT created_at::text`,
+//! `SELECT data::text` for `JSON`/`JSONB`, `SELECT id::text` for `UUID`.
 //!
 //! Postgres is strictly typed at bind time — to insert SQL `NULL` into a
 //! non-text column, prefer the `NULL` literal in SQL over passing `nil` (we
@@ -315,17 +315,19 @@ fn decode_known(
     Ok(Some(v))
 }
 
-/// Column types that decode as a Lua string: the TEXT family (`CHAR(n)` reports
-/// as `CHAR`), JSON, JSONB and UUID. Every other type not handled by `decode_known` (NUMERIC,
-/// temporal types, arrays, …) raises; callers cast to text in SQL.
+/// Column types that decode as a Lua string: the TEXT family (`CHAR(n)`
+/// reports as `CHAR`), `UNKNOWN` and `citext`. These are exactly the types
+/// sqlx lets `String` decode. Every other type not handled by `decode_known`
+/// (NUMERIC, JSON, JSONB, UUID, temporal types, arrays, …) raises; callers
+/// cast to text in SQL.
 fn is_text_type(type_name: &str) -> bool {
     matches!(
         type_name,
-        "TEXT" | "VARCHAR" | "CHAR" | "NAME" | "JSON" | "JSONB" | "UUID"
+        "TEXT" | "VARCHAR" | "CHAR" | "NAME" | "UNKNOWN" | "citext"
     )
 }
 
-/// Decode a column from [`is_text_type`] through `String`.
+/// Decode a column accepted by [`is_text_type`] through `String`.
 fn decode_text(lua: &Lua, row: &PgRow, idx: usize) -> mlua::Result<Value> {
     let v: String = row.try_get(idx).map_err(mlua::Error::external)?;
     Ok(Value::String(lua.create_string(&v)?))
@@ -337,14 +339,23 @@ mod tests {
 
     #[test]
     fn text_family_decodes_as_string() {
-        for t in ["TEXT", "VARCHAR", "CHAR", "NAME", "JSON", "JSONB", "UUID"] {
+        for t in ["TEXT", "VARCHAR", "CHAR", "NAME", "UNKNOWN", "citext"] {
             assert!(is_text_type(t), "{t}");
         }
     }
 
     #[test]
     fn other_types_are_rejected() {
-        for t in ["NUMERIC", "TIMESTAMPTZ", "INTERVAL", "INT4[]", "MONEY"] {
+        for t in [
+            "NUMERIC",
+            "TIMESTAMPTZ",
+            "INTERVAL",
+            "INT4[]",
+            "MONEY",
+            "JSON",
+            "JSONB",
+            "UUID",
+        ] {
             assert!(!is_text_type(t), "{t}");
         }
     }

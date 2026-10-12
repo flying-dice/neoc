@@ -143,7 +143,11 @@ describe("sqlx_postgres", function()
 
         test("unsupported column type raises with a cast hint", function()
             local db = sqlx_postgres.open(POSTGRES_URL)
-            expect(function() db:query("SELECT 1::numeric AS n") end).toThrow()
+            for _, q in ipairs({ "SELECT 1::numeric AS n", "SELECT '{}'::jsonb AS j" }) do
+                local ok, msg = pcall(function() return db:query(q) end)
+                expect(ok).toBeFalsy()
+                expect(tostring(msg)).toContain("cast to text in SQL")
+            end
             local row = db:query_one("SELECT 1::numeric::text AS n")
             expect(row.n).toBe("1")
             db:close()
