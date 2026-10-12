@@ -982,3 +982,26 @@ fn own_type_parameters_and_written_underscore_are_not_the_marker() {
         out.output
     );
 }
+
+/// A callee type parameter is open even when the caller reuses its name.
+#[test]
+fn callee_and_caller_sharing_a_type_parameter_name() {
+    // No host `Option` in the module: develop's behaviour is unchanged.
+    let out = transpile(
+        "extern { fn println(v: Unknown); }\nstruct P { x: number }\nfn call<T>(f: fn(T) -> number, x: Unknown) -> number { f(x) }\nfn g<T>(t: T) -> number { call(|s| s.x, P { x: 1 }) }\npub fn main() { println(g(1)); }\n",
+        Target::Lua,
+    );
+    assert!(out.ok(), "{:#?}", out.diagnostics);
+    // The leak shape under the same collision: a bounded caller `T`.
+    let out = build(
+        "trait HasT { fn title(self) -> Option<string>; }\nfn call<T>(f: fn(T) -> bool, x: Unknown) -> bool { true }\nfn g<T: HasT>(t: T) -> bool { call(|s| s.title().is_some(), mk()) }",
+        "println(1);",
+    );
+    assert!(
+        out.diagnostics
+            .iter()
+            .any(|d| d.message.contains("closure parameter is not known here")),
+        "{:#?}",
+        out.diagnostics
+    );
+}

@@ -86,6 +86,9 @@ pub struct Checker<'a> {
     closure_params: std::collections::HashMap<(usize, usize), Vec<Ty>>,
     /// Closure parameters left `Unknown` although the finished call fixes them.
     hint_misses: Vec<String>,
+    /// While hinting a method call's arguments: the enclosing item's own type
+    /// parameters, which the projected signature may name, are never open.
+    own_params_closed: bool,
     /// Closure-literal parameters whose type a hint withheld because a type
     /// parameter was still open, keyed by closure span and position.
     open_hint_params: std::collections::HashSet<((usize, usize), usize)>,
@@ -158,6 +161,7 @@ impl<'a> Checker<'a> {
             closure_depth: 0,
             closure_params: std::collections::HashMap::new(),
             hint_misses: Vec::new(),
+            own_params_closed: false,
             open_hint_params: std::collections::HashSet::new(),
         }
     }
@@ -1664,7 +1668,11 @@ impl<'a> Checker<'a> {
         if let Some((_, ret)) = &sig {
             self.seed_from_expected(span, ret, &mut seed);
         }
+        // A method signature is projected through its receiver, so it can name
+        // the enclosing item's own type parameters (`Self` as a bounded `V`).
+        let outer = std::mem::replace(&mut self.own_params_closed, true);
         let arg_tys = self.infer_args(args, &expected, &seed);
+        self.own_params_closed = outer;
         // A method on a bounded type parameter resolves through its bounds:
         // `fn f<T: Display>(x: T) { x.show() }` finds `show` on `Display`.
         if let Ty::Param(p) = &recv {
@@ -2438,15 +2446,17 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// Whether `ty` names a callee type parameter `subst` does not bind. The
-    /// enclosing item's own type parameters are never open: no host value can
-    /// reach them.
+    /// Whether `ty` names a callee type parameter `subst` does not bind. For a
+    /// method call the enclosing item's own type parameters (named by the
+    /// receiver projection) are not open: no host value can reach them. For a
+    /// plain call every parameter of the declared signature is the callee's,
+    /// even when the caller reuses the name.
     fn mentions_unbound(&self, ty: &Ty, subst: &std::collections::HashMap<String, Ty>) -> bool {
         let found = std::cell::Cell::new(false);
         let _ = ty.map(&|t| {
             if matches!(t, Ty::Param(n) if !subst.contains_key(n)
-                && !self.type_params.contains(n)
-                && !self.enclosing_type_params.contains(n))
+                && !(self.own_params_closed
+                    && (self.type_params.contains(n) || self.enclosing_type_params.contains(n))))
             {
                 found.set(true);
             }
