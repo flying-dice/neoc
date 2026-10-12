@@ -961,3 +961,24 @@ fn try_and_index_in_closures_stay_linear() {
     let _ = transpile(&src, Target::Lua);
     assert!(start.elapsed().as_secs() < 5, "{:?}", start.elapsed());
 }
+
+/// The caller's own type parameters are known to a closure, and `_` as a
+/// written type parameter is not the marker.
+#[test]
+fn own_type_parameters_and_written_underscore_are_not_the_marker() {
+    let out = build(
+        "trait Vis { fn vis(self, f: fn(Self) -> bool) -> bool; fn x(self) -> number; }\nstruct P { x: number }\nimpl Vis for P { fn vis(self, f: fn(Self) -> bool) -> bool { f(self) } fn x(self) -> number { 1 } }\nfn dv<V: Vis>(v: V) -> bool { v.vis(|s| s.x() > 0) }",
+        "dv(P { x: 1 });",
+    );
+    assert!(out.ok(), "{:#?}", out.diagnostics);
+    let out = build(
+        "extern { fn show(v: Option<string>); }\nfn idu<_>(x: _) -> _ { x }",
+        "show(idu(Some(\"a\")));",
+    );
+    assert!(
+        !out.ok() || wraps(&out.output, TO) >= 1,
+        "{:#?}\n{}",
+        out.diagnostics,
+        out.output
+    );
+}

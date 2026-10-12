@@ -2265,7 +2265,7 @@ impl<'a> Checker<'a> {
                         let fixed = Self::subst_named(p, subst);
                         // A parameter the call has bound, even to the caller's
                         // own type parameter, is known; one it has not is open.
-                        if Self::mentions_unbound(p, subst) || Self::mentions_marker(&fixed) {
+                        if self.mentions_unbound(p, subst) || Self::mentions_marker(&fixed) {
                             self.open_hint_params.insert((key, i));
                             Ty::Unknown
                         } else {
@@ -2279,7 +2279,7 @@ impl<'a> Checker<'a> {
             // A closure for a bare type-parameter slot (`id(|s| ..)`, `Some(|s| ..)`)
             // has no `fn` type to read its parameters from.
             (ast::ExprKind::Closure { params, .. }, t)
-                if Self::mentions_unbound(t, subst) || Self::mentions_marker(t) =>
+                if self.mentions_unbound(t, subst) || Self::mentions_marker(t) =>
             {
                 let key = (expr.span.start, expr.span.end);
                 for i in 0..params.len() {
@@ -2310,7 +2310,7 @@ impl<'a> Checker<'a> {
                     let inner: std::collections::HashMap<String, Ty> = generics
                         .into_iter()
                         .zip(targs.iter().map(|t| {
-                            if Self::mentions_unbound(t, subst) {
+                            if self.mentions_unbound(t, subst) {
                                 Ty::Param(UNRESOLVED.to_string())
                             } else {
                                 Self::subst_named(t, subst)
@@ -2438,11 +2438,16 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// Whether `ty` names a type parameter `subst` does not bind.
-    fn mentions_unbound(ty: &Ty, subst: &std::collections::HashMap<String, Ty>) -> bool {
+    /// Whether `ty` names a callee type parameter `subst` does not bind. The
+    /// enclosing item's own type parameters are never open: no host value can
+    /// reach them.
+    fn mentions_unbound(&self, ty: &Ty, subst: &std::collections::HashMap<String, Ty>) -> bool {
         let found = std::cell::Cell::new(false);
         let _ = ty.map(&|t| {
-            if matches!(t, Ty::Param(n) if !subst.contains_key(n)) {
+            if matches!(t, Ty::Param(n) if !subst.contains_key(n)
+                && !self.type_params.contains(n)
+                && !self.enclosing_type_params.contains(n))
+            {
                 found.set(true);
             }
             None

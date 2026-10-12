@@ -8,7 +8,7 @@
 use std::fmt;
 
 /// The name of the marker type of an unresolved closure parameter.
-pub(crate) const UNRESOLVED: &str = "_";
+pub(crate) const UNRESOLVED: &str = "?";
 
 /// A resolved neoc type.
 ///
