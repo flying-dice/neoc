@@ -1,0 +1,19 @@
+// STATIC.md §8: an inherent method and a trait-impl method of one name share
+// one method table.
+trait Greet {
+    fn hi(self) -> string;
+}
+
+struct D;
+
+impl D {
+    fn hi(self) -> string {
+        "inherent"
+    }
+}
+
+impl Greet for D {
+    fn hi(self) -> string {
+        "trait"
+    }
+}

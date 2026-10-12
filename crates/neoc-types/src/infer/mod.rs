@@ -524,6 +524,7 @@ impl<'a> Checker<'a> {
     /// Checks every item in the module.
     pub fn check_module(&mut self, module: &ast::Module) {
         self.check_coherence(module);
+        self.check_method_clashes(module);
         for item in &module.items {
             self.check_reserved_module_names(item);
             self.check_field_names(item);
@@ -639,6 +640,74 @@ impl<'a> Checker<'a> {
                         "`impl {} for {ty}` overlaps the blanket impl of `{}`",
                         bl.trait_ref.name, bl.trait_ref.name
                     ));
+                }
+            }
+        }
+    }
+
+    /// Rejects a second explicit method of one name on a type (`STATIC.md` §8).
+    /// A type has one method table, so an inherent method, a trait-impl method,
+    /// an `extern` impl method, or a blanket impl's method that takes a name
+    /// the type already has — in either declaration order — is an error at the
+    /// later impl. Inherited defaults are checked by
+    /// [`Checker::check_inherited_defaults`].
+    fn check_method_clashes(&mut self, module: &ast::Module) {
+        let mut impls: Vec<(&ast::ImplBlock, ast::Span)> = Vec::new();
+        for item in &module.items {
+            match &item.kind {
+                ast::ItemKind::Impl(b) => impls.push((b, item.span)),
+                ast::ItemKind::Extern(block) => collect_extern_impls(&block.items, &mut impls),
+                _ => {}
+            }
+        }
+        // `(type, method)` → the label and trait of the impl that first gave it.
+        let mut owners: std::collections::HashMap<(String, String), (String, Option<String>)> =
+            std::collections::HashMap::new();
+        for (b, span) in impls {
+            let Some(target) = crate::collect::impl_target_name(&b.ty) else {
+                continue;
+            };
+            let trait_name = b
+                .trait_
+                .as_ref()
+                .and_then(|p| p.segments.last())
+                .map(|s| s.name.clone());
+            let label = match &b.trait_ {
+                Some(p) => p.segments.last().map_or_else(
+                    || format!("`impl {target}`"),
+                    |s| format!("`impl {} for {target}`", s.name),
+                ),
+                None => format!("`impl {target}`"),
+            };
+            let types = if b.generics.iter().any(|g| g.name == target) {
+                // A blanket impl lands on every type meeting its conditions.
+                let conditions = crate::collect::generic_param_bounds(&b.generics)
+                    .remove(&target)
+                    .unwrap_or_default();
+                self.blanket_targets(&conditions)
+            } else {
+                vec![target]
+            };
+            for ty in types {
+                for f in &b.items {
+                    match owners.entry((ty.clone(), f.sig.name.clone())) {
+                        std::collections::hash_map::Entry::Vacant(e) => {
+                            e.insert((label.clone(), trait_name.clone()));
+                        }
+                        // Two impls of one trait are already a coherence error.
+                        std::collections::hash_map::Entry::Occupied(e)
+                            if trait_name.is_some() && e.get().1 == trait_name => {}
+                        std::collections::hash_map::Entry::Occupied(e) => {
+                            self.error_at(
+                                span,
+                                format!(
+                                    "{label} gives `{ty}` a method `{}`, but {} already does; a type has one method per name",
+                                    f.sig.name,
+                                    e.get().0
+                                ),
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -2225,5 +2294,20 @@ fn module_scope_names(item: &ast::Item) -> Vec<(&str, ast::Span)> {
             })
             .collect(),
         ast::ItemKind::Impl(_) => Vec::new(),
+    }
+}
+
+/// Every `impl` in an `extern` block's items, recursing through `mod`, in
+/// source order.
+fn collect_extern_impls<'a>(
+    items: &'a [ast::ExternItem],
+    out: &mut Vec<(&'a ast::ImplBlock, ast::Span)>,
+) {
+    for ext in items {
+        match &ext.kind {
+            ast::ExternItemKind::Impl(b) => out.push((b, ext.span)),
+            ast::ExternItemKind::Mod(m) => collect_extern_impls(&m.items, out),
+            _ => {}
+        }
     }
 }

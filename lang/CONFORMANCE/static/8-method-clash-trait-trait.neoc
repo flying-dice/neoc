@@ -1,0 +1,23 @@
+// STATIC.md §8: two trait impls providing one method name share one method
+// table.
+trait Greet {
+    fn hi(self) -> string;
+}
+
+trait Wave {
+    fn hi(self) -> string;
+}
+
+struct D;
+
+impl Greet for D {
+    fn hi(self) -> string {
+        "greet"
+    }
+}
+
+impl Wave for D {
+    fn hi(self) -> string {
+        "wave"
+    }
+}

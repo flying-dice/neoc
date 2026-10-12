@@ -1,0 +1,17 @@
+// STATIC.md §8: a neoc `impl` method may not redeclare a method of an extern
+// `impl` on the same type, in either declaration order.
+extern {
+    struct Settings {}
+}
+
+impl Settings {
+    fn rename(self, t: string) -> string {
+        t
+    }
+}
+
+extern {
+    impl Settings {
+        fn rename(self, t: string) -> string;
+    }
+}
