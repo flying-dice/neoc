@@ -1,0 +1,8 @@
+// `Self` heads a struct literal only inside an impl.
+struct P {
+    x: number,
+}
+
+fn make() -> P {
+    Self { x: 1 }
+}

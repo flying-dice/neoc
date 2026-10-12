@@ -1,0 +1,10 @@
+// `Self` heads a struct literal only when the impl targets a struct.
+enum Color {
+    Red,
+}
+
+impl Color {
+    fn make() -> Color {
+        Self { x: 1 }
+    }
+}

@@ -10,7 +10,7 @@ use neoc_ast as ast;
 
 use crate::Diagnostic;
 use crate::collect::{generic_names, lower_type};
-use crate::env::{Scopes, StructFields, SymbolTable, TypeDef, VariantFields};
+use crate::env::{Scopes, StructFields, StructInfo, SymbolTable, TypeDef, VariantFields};
 use crate::ty::Ty;
 
 mod impl_check;
@@ -26,6 +26,10 @@ pub struct Checker<'a> {
     pub(crate) scopes: Scopes,
     /// Return type of the function whose body is currently being checked.
     pub(crate) ret_ty: Ty,
+    /// What `Self` names in the current function body: the enclosing impl's
+    /// target, or `Self` itself in a trait default body. `None` outside an impl.
+    /// Lets `Self { .. }` head a struct literal (`STATIC.md` §3.3).
+    pub(crate) impl_target: Option<String>,
     /// Type parameters in scope for the current item.
     pub(crate) type_params: Vec<String>,
     /// Bounds for the in-scope type parameters: `T` → the trait names it is
@@ -99,6 +103,7 @@ impl<'a> Checker<'a> {
             table,
             scopes: Scopes::new(),
             ret_ty: Ty::Unit,
+            impl_target: None,
             type_params: Vec::new(),
             type_bounds: std::collections::HashMap::new(),
             assoc_bindings: std::collections::HashMap::new(),
@@ -625,10 +630,12 @@ impl<'a> Checker<'a> {
             None => lowered_ret,
         };
         let prev_ret = std::mem::replace(&mut self.ret_ty, ret.clone());
+        let prev_target = std::mem::replace(&mut self.impl_target, self_ty.map(str::to_string));
 
         let actual = self.infer_block(body);
         self.expect(&ret, &actual, "function body");
 
+        self.impl_target = prev_target;
         self.ret_ty = prev_ret;
         self.scopes.pop();
         self.type_params = prev_params;
@@ -667,6 +674,59 @@ impl<'a> Checker<'a> {
                 );
             }
         }
+    }
+
+    /// The struct a literal headed by `path` constructs, with its declaration.
+    /// A bare `Self` is the enclosing impl's struct target (`STATIC.md` §3.3,
+    /// T-STRUCT-LIT-SELF); `None` after reporting when there is no such struct.
+    fn struct_lit_target(
+        &mut self,
+        path: &[ast::Ident],
+        span: ast::Span,
+    ) -> Option<(String, &'a StructInfo)> {
+        let name = path.last()?;
+        let name = if name == "Self" {
+            self.self_lit_target(span)?
+        } else {
+            name.clone()
+        };
+        let table = self.table;
+        let Some(TypeDef::Struct(s)) = table.types.get(&name) else {
+            self.error_at(span, format!("unknown struct `{name}`"));
+            return None;
+        };
+        Some((name, s))
+    }
+
+    /// The type a `Self { .. }` literal names. Rejects a literal outside an impl,
+    /// in a trait default body, in a blanket impl, on a non-struct target, and
+    /// where a local shadows the target's name — the literal lowers through that
+    /// name (`DYNAMIC.md` §4.4), so the local would capture it.
+    fn self_lit_target(&mut self, span: ast::Span) -> Option<String> {
+        let Some(target) = self.impl_target.clone() else {
+            self.error_at(span, "`Self` is only available inside an impl");
+            return None;
+        };
+        let reason = if target == "Self" {
+            Some("`Self` in a trait default body is not a struct".to_string())
+        } else if self.type_params.contains(&target) {
+            Some(format!(
+                "`Self` is the type parameter `{target}`, which is not a struct"
+            ))
+        } else if !matches!(self.table.types.get(&target), Some(TypeDef::Struct(_))) {
+            Some(format!("`Self` is `{target}`, which is not a struct"))
+        } else if self.scopes.lookup(&target).is_some() {
+            Some(format!(
+                "`Self` names `{target}`, which a local binding shadows here; rename the local"
+            ))
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            self.error_at(span, reason);
+            return None;
+        }
+        Some(target)
     }
 
     pub(crate) fn subst_self(ty: Ty, self_ty: Option<&str>) -> Ty {
@@ -1318,39 +1378,39 @@ impl<'a> Checker<'a> {
         base: Option<&ast::Expr>,
         span: ast::Span,
     ) -> Ty {
-        let Some(name) = path.last() else {
-            return Ty::Unknown;
-        };
         // Struct-variant literal `Enum::Variant { .. }`.
         if path.len() >= 2 {
             return self.infer_variant_lit(path, fields, span);
         }
-        let Some(TypeDef::Struct(s)) = self.table.types.get(name) else {
-            self.error_at(span, format!("unknown struct `{name}`"));
-            for f in fields {
-                if let Some(v) = &f.value {
-                    let _ = self.infer(v);
-                }
-            }
+        let Some((name, s)) = self.struct_lit_target(path, span) else {
+            self.infer_field_inits(fields);
             return Ty::Unknown;
         };
         let StructFields::Named(decl) = &s.fields else {
             self.error_at(span, format!("`{name}` is not a struct with named fields"));
-            return Ty::named(name);
+            return Ty::named(&name);
         };
-        let generics = s.generics.clone();
-        let decl = decl.clone();
-        self.check_named_fields(name, &decl, fields, base.is_some());
+        self.check_named_fields(&name, decl, fields, base.is_some());
         // Infer the struct's type arguments by unifying each declared field
         // type against its initialiser's type, so `Box { value: 99 }` yields
         // `Box<number>` and downstream field/method projection (§generics) sees
         // the concrete argument.
-        let result = self.infer_nominal_args(name, &generics, &decl, fields, base, span);
+        let result = self.infer_nominal_args(&name, &s.generics, decl, fields, base, span);
         if let Some(b) = base {
             let bt = self.infer(b);
-            self.expect(&Ty::named(name), &bt, "struct update base");
+            self.expect(&Ty::named(&name), &bt, "struct update base");
         }
         result
+    }
+
+    /// Infers each initialiser of a literal that could not be resolved, so errors
+    /// inside them still surface.
+    fn infer_field_inits(&mut self, fields: &[ast::FieldInit]) {
+        for f in fields {
+            if let Some(v) = &f.value {
+                let _ = self.infer(v);
+            }
+        }
     }
 
     /// Build the `Ty::Named` for a struct literal, inferring its type arguments

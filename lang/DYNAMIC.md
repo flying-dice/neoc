@@ -216,6 +216,7 @@ Number, string, and bool literals lower to their Lua spelling (`STRING_LITERAL` 
 ```
 ⟦ S { f: e, … } ⟧ₑ      = S.new({ f = ⟦e⟧, … })
 ⟦ S { f, .. base } ⟧ₑ   = S.new({ f = f, <copied fields from ⟦base⟧> })
+⟦ Self { … } ⟧ₑ         = ⟦ S { … } ⟧ₑ   (inside `impl S`; also with `.. base` — STATIC.md §3.3)
 ⟦ N(a) ⟧ₑ               = N.new(⟦a⟧)     (tuple/newtype struct: a call constructs through .new)
 ⟦ E::V ⟧ₑ               = { __enum = "E", __tag = "V" }
 ⟦ E::V(a, …) ⟧ₑ         = { __enum = "E", __tag = "V", ⟦a⟧, … }

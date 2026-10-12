@@ -209,14 +209,26 @@ impl<'a> Elaborator<'a> {
         let ret = sig.ret.as_ref().map_or(Ty::Unit, |r| self.checker.lower(r));
         let ret = Checker::subst_self(ret, self_ty);
         let prev_ret = std::mem::replace(&mut self.checker.ret_ty, ret);
+        let prev_target =
+            std::mem::replace(&mut self.checker.impl_target, self_ty.map(str::to_string));
 
         let block = self.block(body);
 
+        self.checker.impl_target = prev_target;
         self.checker.ret_ty = prev_ret;
         self.checker.scopes.pop();
         self.checker.type_params = prev_params;
         self.checker.type_bounds = prev_bounds;
         block
+    }
+
+    /// `path` with a bare `Self` head read as the enclosing impl's target, so the
+    /// lowering sees the struct's own name.
+    fn resolve_self_head(&self, path: &[ast::Ident]) -> Vec<ast::Ident> {
+        match (path, &self.checker.impl_target) {
+            ([head], Some(target)) if head == "Self" => vec![target.clone()],
+            _ => path.to_vec(),
+        }
     }
 
     // ---- statements & blocks ----------------------------------------------
@@ -307,7 +319,7 @@ impl<'a> Elaborator<'a> {
                 index: self.boxed(index),
             },
             ast::ExprKind::StructLit { path, fields, base } => ast::ExprKind::StructLit {
-                path: path.clone(),
+                path: self.resolve_self_head(path),
                 fields: fields
                     .iter()
                     .map(|f| ast::FieldInit {
