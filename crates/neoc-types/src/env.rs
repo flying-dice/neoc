@@ -217,6 +217,9 @@ pub struct SymbolTable {
     /// `extern` block and another declares as a neoc type. Type identity is by
     /// bare name, so a module that sees such a name cannot tell which it holds.
     pub ambiguous_types: HashSet<String>,
+    /// Project pool only: every `(type, method)` an `extern` `impl` in any
+    /// module implements by the host, whichever module declares the type.
+    pub host_methods: HashSet<(String, String)>,
 }
 
 /// How a concrete `impl<P…> Trait<A…> for Type<B…>` applies its trait: the

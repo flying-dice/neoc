@@ -1234,3 +1234,35 @@ fn neoc_impl_redeclaring_a_host_method_from_another_module_is_rejected() {
         project.diagnostics
     );
 }
+
+/// The extern `impl` may sit in a module other than the one declaring the
+/// extern struct; a neoc `impl` redeclaring its method is still rejected.
+#[test]
+fn neoc_impl_redeclaring_a_method_of_a_third_modules_extern_impl_is_rejected() {
+    let dir = tempdir();
+    write(
+        &dir,
+        "host.neoc",
+        "extern {\n    pub struct Settings {\n        title: Option<string>,\n    }\n    pub fn mk() -> Settings;\n}\n",
+    );
+    write(
+        &dir,
+        "hostb.neoc",
+        "use host::Settings;\n\nextern {\n    impl Settings {\n        pub fn rename(self, t: Option<string>) -> Option<string>;\n    }\n}\n\npub fn go(s: Settings) -> Option<string> {\n    s.rename(Some(\"b\"))\n}\n",
+    );
+    let entry = write(
+        &dir,
+        "app.neoc",
+        "use host::Settings;\nuse host::mk;\nuse hostb::go;\n\nimpl Settings {\n    fn rename(self, t: Option<string>) -> Option<string> {\n        t\n    }\n}\n\npub fn main() {\n    let r = go(mk());\n}\n",
+    );
+
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
+    assert!(
+        project
+            .diagnostics
+            .iter()
+            .any(|d| d.diagnostic.message.contains("implemented by the host")),
+        "{:#?}",
+        project.diagnostics
+    );
+}

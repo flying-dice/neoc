@@ -805,6 +805,11 @@ fn type_universe(loaded: &HashMap<PathBuf, LoadedModule>) -> types::SymbolTable 
     let mut neoc_any = std::collections::HashSet::new();
     for module in loaded.values() {
         let t = &module.table;
+        for (key, info) in &t.methods {
+            if info.host {
+                universe.host_methods.insert(key.clone());
+            }
+        }
         for name in t.types.keys() {
             if t.extern_types.contains(name) {
                 extern_any.insert(name.clone());
@@ -882,9 +887,8 @@ fn redeclared_host_method_diagnostics(
         }
         for m in &b.items {
             let host = universe
-                .methods
-                .get(&(owner.clone(), m.sig.name.clone()))
-                .is_some_and(|info| info.host);
+                .host_methods
+                .contains(&(owner.clone(), m.sig.name.clone()));
             if host {
                 out.push(Diagnostic::typed(
                     format!(

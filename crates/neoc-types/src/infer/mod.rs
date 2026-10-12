@@ -71,9 +71,9 @@ pub struct Checker<'a> {
     /// receives the function raw: a callee, or a direct host-slot argument
     /// (`EXTERN.md` §Option marshalling).
     host_fn_spans: std::collections::HashSet<(usize, usize)>,
-    /// Parameter types the enclosing call's signature fixes for the closure
-    /// argument about to be inferred; consumed by that closure.
-    closure_expect: Option<Vec<Ty>>,
+    /// Parameter types the surrounding context fixes for a closure, keyed by the
+    /// closure's span and consumed when the closure is inferred.
+    closure_hints: std::collections::HashMap<(usize, usize), Vec<Ty>>,
     /// The type each closure parameter resolved to, keyed by the closure's
     /// span. The checker decides once; the elaborator reads the record
     /// instead of re-deriving it, so the two cannot disagree.
@@ -139,7 +139,7 @@ impl<'a> Checker<'a> {
             calls: Vec::new(),
             conflicting_impls: std::collections::HashSet::new(),
             host_fn_spans: std::collections::HashSet::new(),
-            closure_expect: None,
+            closure_hints: std::collections::HashMap::new(),
             closure_params: std::collections::HashMap::new(),
         }
     }
@@ -817,6 +817,7 @@ impl<'a> Checker<'a> {
         let prev_ret = std::mem::replace(&mut self.ret_ty, ret.clone());
         let prev_target = std::mem::replace(&mut self.impl_target, self_ty.map(str::to_string));
 
+        self.hint_block(body, &ret, &std::collections::HashMap::new());
         let actual = self.infer_block(body);
         self.expect(&ret, &actual, "function body");
 
@@ -1002,6 +1003,9 @@ impl<'a> Checker<'a> {
 
     fn check_let(&mut self, l: &ast::LetStmt, span: ast::Span) {
         let declared = l.ty.as_ref().map(|t| self.lower_at(t, span));
+        if let (Some(d), Some(e)) = (&declared, &l.value) {
+            self.hint_closures(e, d, &std::collections::HashMap::new());
+        }
         let value_ty = l.value.as_ref().map(|e| self.infer(e));
         let ty = match (&declared, &value_ty) {
             (Some(d), Some(v)) => {
@@ -1092,8 +1096,11 @@ impl<'a> Checker<'a> {
             }
             ast::ExprKind::Closure { params, body } => self.infer_closure(params, body, span),
             ast::ExprKind::Return(value) => {
-                let actual = value.as_ref().map_or(Ty::Unit, |e| self.infer(e));
                 let expected = self.ret_ty.clone();
+                if let Some(e) = value {
+                    self.hint_closures(e, &expected, &std::collections::HashMap::new());
+                }
+                let actual = value.as_ref().map_or(Ty::Unit, |e| self.infer(e));
                 self.expect(&expected, &actual, "return value");
                 Ty::Unknown
             }
@@ -1122,6 +1129,7 @@ impl<'a> Checker<'a> {
                 self.allow_host_fn(value);
             }
         }
+        self.hint_closures(value, &t, &std::collections::HashMap::new());
         let v = self.infer(value);
         self.expect(&t, &v, "assignment");
         Ty::Unit
@@ -1886,6 +1894,7 @@ impl<'a> Checker<'a> {
             match decl.iter().find(|(n, _)| *n == init.name) {
                 Some((_, expected)) => {
                     let actual = if let Some(e) = &init.value {
+                        self.hint_closures(e, expected, &std::collections::HashMap::new());
                         self.infer(e)
                     } else {
                         // Shorthand names the value: it is a path like any other.
@@ -2006,7 +2015,7 @@ impl<'a> Checker<'a> {
     /// Non-closure arguments are inferred first so they can bind the callee's
     /// type parameters (`test(mk(), |s| ..)` fixes `T` from `mk()`).
     fn infer_args(&mut self, args: &[ast::Expr], expected: &[Ty]) -> Vec<Ty> {
-        let is_closure = |a: &ast::Expr| matches!(a.kind, ast::ExprKind::Closure { .. });
+        let is_closure = Self::yields_closure;
         let mut tys: Vec<Option<Ty>> = args
             .iter()
             .map(|a| (!is_closure(a)).then(|| self.infer(a)))
@@ -2016,34 +2025,41 @@ impl<'a> Checker<'a> {
             .zip(&tys)
             .filter_map(|(p, t)| t.clone().map(|t| (p.clone(), t)))
             .unzip();
-        let subst = self.param_subst(&ps, &as_);
+        let mut subst = self.param_subst(&ps, &as_);
         for (i, a) in args.iter().enumerate() {
             if tys[i].is_none() {
-                self.expect_closure_params(a, expected.get(i), &subst);
-                tys[i] = Some(self.infer(a));
+                if let Some(p) = expected.get(i) {
+                    self.hint_closures(a, p, &subst);
+                }
+                let ty = self.infer(a);
+                // A closure earlier in the list binds what later ones read
+                // (`both(|| mk(), |s| s.title)` fixes `T` from the first).
+                if let Some(p) = expected.get(i) {
+                    self.unify_param(p, &ty, &mut subst);
+                }
+                tys[i] = Some(ty);
             }
         }
         tys.into_iter().map(|t| t.unwrap_or(Ty::Unknown)).collect()
     }
 
-    /// When `arg` is a closure and `param` is a function type, records the
-    /// parameter types the call fixes for the closure to adopt. A closure
-    /// parameter without an annotation takes its type from the call
-    /// (`apply(|v| v.title)` reads `v` as the `fn` parameter's type). A
-    /// parameter the call leaves open — it still mentions a type parameter
-    /// after `subst` — stays `Unknown`.
-    pub(crate) fn expect_closure_params(
+    /// Records, for every closure that `expr` evaluates to, the parameter types
+    /// `ty` fixes: a closure is the expression itself, a block's or `if`'s
+    /// result, or a `match` arm's. A closure parameter without an annotation
+    /// takes its type from there (`apply(|v| v.title)` reads `v` as the `fn`
+    /// parameter's type). A position that still mentions a type parameter
+    /// after `subst` stays `Unknown`.
+    pub(crate) fn hint_closures(
         &mut self,
-        arg: &ast::Expr,
-        param: Option<&Ty>,
+        expr: &ast::Expr,
+        ty: &Ty,
         subst: &std::collections::HashMap<String, Ty>,
     ) {
-        if !matches!(arg.kind, ast::ExprKind::Closure { .. }) {
-            return;
-        }
-        if let Some(Ty::Fn(ps, _)) = param {
-            self.closure_expect = Some(
-                ps.iter()
+        let Ty::Fn(ps, _) = ty else { return };
+        match &expr.kind {
+            ast::ExprKind::Closure { .. } => {
+                let hint = ps
+                    .iter()
                     .map(|p| {
                         let fixed = Self::subst_named(p, subst);
                         if Self::mentions_param(&fixed) {
@@ -2052,8 +2068,50 @@ impl<'a> Checker<'a> {
                             fixed
                         }
                     })
-                    .collect(),
-            );
+                    .collect();
+                self.closure_hints
+                    .insert((expr.span.start, expr.span.end), hint);
+            }
+            ast::ExprKind::Block(b) => self.hint_block(b, ty, subst),
+            ast::ExprKind::If { then, else_, .. } => {
+                self.hint_block(then, ty, subst);
+                if let Some(e) = else_ {
+                    self.hint_closures(e, ty, subst);
+                }
+            }
+            ast::ExprKind::Match { arms, .. } => {
+                for arm in arms {
+                    self.hint_closures(&arm.body, ty, subst);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Whether `expr` evaluates to a closure literal: itself, or the result of
+    /// a block, `if`, or `match`.
+    fn yields_closure(expr: &ast::Expr) -> bool {
+        match &expr.kind {
+            ast::ExprKind::Closure { .. } => true,
+            ast::ExprKind::Block(b) => b.value.as_ref().is_some_and(|v| Self::yields_closure(v)),
+            ast::ExprKind::If { then, else_, .. } => {
+                then.value.as_ref().is_some_and(|v| Self::yields_closure(v))
+                    || else_.as_ref().is_some_and(|e| Self::yields_closure(e))
+            }
+            ast::ExprKind::Match { arms, .. } => arms.iter().any(|a| Self::yields_closure(&a.body)),
+            _ => false,
+        }
+    }
+
+    /// [`Self::hint_closures`] for the value a block ends in.
+    pub(crate) fn hint_block(
+        &mut self,
+        block: &ast::Block,
+        ty: &Ty,
+        subst: &std::collections::HashMap<String, Ty>,
+    ) {
+        if let Some(v) = &block.value {
+            self.hint_closures(v, ty, subst);
         }
     }
 
@@ -2081,19 +2139,41 @@ impl<'a> Checker<'a> {
     }
 
     /// The parameter types of `recv.method(..)`, projected through the
-    /// receiver's type arguments, when `method` is an inherent method.
+    /// receiver's type arguments, found the way [`Self::infer_method_call`]
+    /// resolves the method: an inherent method, a trait the receiver is typed
+    /// as, a trait default, a blanket impl, or a type parameter's bound.
     pub(crate) fn method_param_tys(&self, recv: &Ty, method: &str) -> Vec<Ty> {
-        let Ty::Named { name, .. } = recv else {
+        if let Ty::Param(p) = recv {
+            return self
+                .bound_method(p, method)
+                .map(|(params, _)| params)
+                .unwrap_or_default();
+        }
+        let Ty::Named { name, args } = recv else {
             return Vec::new();
         };
-        let Some(m) = self.table.methods.get(&(name.clone(), method.to_string())) else {
-            return Vec::new();
-        };
-        let nominal = self.nominal_subst(recv);
-        m.params
-            .iter()
-            .map(|p| Self::subst_named(p, &nominal))
-            .collect()
+        if self.is_trait(name) {
+            let applied = TraitRef {
+                name: name.clone(),
+                args: args.clone(),
+            };
+            return self
+                .trait_method(&applied, method)
+                .map(|(params, _)| params)
+                .unwrap_or_default();
+        }
+        if let Some(m) = self.table.methods.get(&(name.clone(), method.to_string())) {
+            let nominal = self.nominal_subst(recv);
+            return m
+                .params
+                .iter()
+                .map(|p| Self::subst_named(p, &nominal))
+                .collect();
+        }
+        self.default_method(recv, method, true)
+            .or_else(|| self.blanket_method(recv, method))
+            .map(|(params, _)| params)
+            .unwrap_or_default()
     }
 
     fn infer_closure(
@@ -2103,7 +2183,10 @@ impl<'a> Checker<'a> {
         span: ast::Span,
     ) -> Ty {
         self.scopes.push();
-        let expect = self.closure_expect.take().unwrap_or_default();
+        let expect = self
+            .closure_hints
+            .remove(&(span.start, span.end))
+            .unwrap_or_default();
         let mut ptys = Vec::new();
         for (i, p) in params.iter().enumerate() {
             let ty = p.ty.as_ref().map_or_else(

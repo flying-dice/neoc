@@ -237,7 +237,7 @@ value cannot serve both.
 checker rejects both. Read the field with `.title`, which marshals; `title: _`
 and `..` read nothing and are allowed.
 
-Only a declared `Option<T>` marshals, and only where the checker knows the host type: a value typed `Unknown` — including a closure parameter whose type neither an annotation nor the call it is passed to fixes — is read raw. A closure passed to a call takes its unannotated parameter types from that call's signature, with the callee's type parameters bound from its other arguments; a position that still mentions a type parameter is `Unknown`. A closure bound with `let` has no call to fix its parameters, so they are `Unknown` unless annotated. An `Option` passed for an `Unknown` or
+Only a declared `Option<T>` marshals, and only where the checker knows the host type: a value typed `Unknown` — including a closure parameter whose type neither an annotation nor the call it is passed to fixes — is read raw. A closure passed to a call takes its unannotated parameter types from that call's signature, with the callee's type parameters bound from its other arguments, earlier closures included; a position that still mentions a type parameter is `Unknown`. A closure bound with `let` has no call to fix its parameters, so they are `Unknown` unless annotated. An `Option` passed for an `Unknown` or
 generic parameter crosses as the tagged neoc value, since the signature names no
 `Option` to unwrap.
 

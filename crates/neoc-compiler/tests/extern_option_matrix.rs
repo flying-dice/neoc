@@ -311,3 +311,67 @@ fn unannotated_closure_parameter_reads_raw() {
     assert!(out.ok(), "{:#?}", out.diagnostics);
     assert!(!out.output.contains(FROM), "{}", out.output);
 }
+
+/// Closure parameters fixed by context other than a plain call: each site must
+/// wrap the read of `s.title` itself, not merely marshal something elsewhere.
+const CLOSURE_SITES: &[(&str, &str, &str)] = &[
+    (
+        "trait default method",
+        "trait Visit {\n    fn visit(self, f: fn(Settings) -> bool) -> bool;\n    fn twice(self, f: fn(Settings) -> bool) -> bool { self.visit(f) }\n}\nstruct P { n: number }\nimpl Visit for P { fn visit(self, f: fn(Settings) -> bool) -> bool { f(mk()) } }",
+        "let r = P { n: 1 }.twice(|s| s.title.is_some());",
+    ),
+    (
+        "bounded type parameter",
+        "trait Visit { fn visit(self, f: fn(Settings) -> bool) -> bool; }\nfn bounded<T: Visit>(x: T) -> bool { x.visit(|s| s.title.is_some()) }",
+        "",
+    ),
+    (
+        "struct literal field",
+        "struct W { f: fn(Settings) -> bool }",
+        "let w = W { f: |s| s.title.is_some() };",
+    ),
+    (
+        "return position",
+        "fn ret() -> fn(Settings) -> bool { |s| s.title.is_some() }",
+        "",
+    ),
+    (
+        "block-wrapped argument",
+        "fn call(f: fn(Settings) -> bool) -> bool { f(mk()) }",
+        "let r = call({ |s| s.title.is_some() });",
+    ),
+    (
+        "if branches",
+        "fn call(f: fn(Settings) -> bool) -> bool { f(mk()) }",
+        "let r = call(if true { |s| s.title.is_some() } else { |s| s.size > 0 });",
+    ),
+    (
+        "annotated let",
+        "",
+        "let f: fn(Settings) -> bool = |s| s.title.is_some();",
+    ),
+    (
+        "assignment",
+        "struct W { f: fn(Settings) -> bool }",
+        "let w = W { f: |s| true }; w.f = |s| s.title.is_some();",
+    ),
+    (
+        "bound by an earlier closure",
+        "fn both<T>(g: fn() -> T, f: fn(T) -> bool) -> bool { f(g()) }",
+        "let r = both(|| mk(), |s| s.title.is_some());",
+    ),
+];
+
+#[test]
+fn closure_sites_wrap_the_host_read() {
+    let mut bad = Vec::new();
+    for (name, items, body) in CLOSURE_SITES {
+        let out = build(items, body);
+        if !out.ok() {
+            bad.push(format!("{name}: rejected {:#?}", out.diagnostics));
+        } else if !out.output.contains("__option_from_host(s.title)") {
+            bad.push(format!("{name}: read not wrapped\n{}", out.output));
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n---\n"));
+}
