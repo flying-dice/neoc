@@ -345,7 +345,7 @@ A `///` line comment and a `/** … */` block comment (`LEXICAL.md` §3) attache
 
 ## 10. Complete grammar
 
-Every production from §1–§9, collected in dependency order. Implementers parse against this section; §1–§9 are commentary. Token classes (`UPPER_SNAKE_CASE`) and keyword/punctuation literals resolve to `LEXICAL.md` §8. Cross-checked against the tree-sitter grammar in `crates/neoc-grammar/grammar.js`; where the two disagree, this section wins.
+Every production from §1–§9, collected in dependency order. Implementers parse against this section; §1–§9 are commentary. Token classes (`UPPER_SNAKE_CASE`) and keyword/punctuation literals resolve to `LEXICAL.md` §8. Cross-checked against the tree-sitter grammar in `crates/neoc-grammar/tree-sitter-neoc/grammar.js`; where the two disagree, this section wins.
 
 ```
 (* source file *)

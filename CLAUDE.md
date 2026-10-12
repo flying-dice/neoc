@@ -13,7 +13,7 @@ Cargo workspace holding two halves:
   value of `--target`. A `.lua` module is self-contained — no sidecars, no
   runtime library.
   The library crate (`neoc-compiler`) is what the runtime embeds; the grammar
-  lives in the `neoc-grammar` submodule.
+  lives in the `neoc-grammar` crate.
 
 One binary, `neoc`, drives both: `run` / `emit-headers` (runtime) and `build` /
 `check` / `fmt` / `lsp` (compiler).
@@ -151,7 +151,7 @@ crates/neoc-vm/              # the LuaJIT runtime library
       vnd/                   # vnd:* modules (hyper, serde_json, rusqlite, sqlx_*, …)
   benches/                   # Criterion suites (lib/, vnd/)
 
-neoc-grammar                 # vendors tree-sitter-neoc (submodule); cc-builds parser.c
+neoc-grammar                 # tree-sitter grammar (grammar.js + generated parser.c); cc-builds it
 neoc-ast                     # typed AST — pure data, span-free, PartialEq
 neoc-parser                  # CST → AST adapter; parse diagnostics
 neoc-types                   # declaration collection, inference, well-formedness, elaborate
@@ -165,8 +165,7 @@ neoc-wasm                    # browser entry point
 ```
 
 The dependency graph is acyclic; the AST is the frozen contract every compiler
-stage shares. The grammar is the second repo, `tree-sitter-neoc`, consumed here
-as the `neoc-grammar` submodule.
+stage shares. The tree-sitter grammar lives in `crates/neoc-grammar/tree-sitter-neoc/`.
 
 ---
 
