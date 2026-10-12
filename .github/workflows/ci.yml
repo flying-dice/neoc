@@ -226,6 +226,35 @@ jobs:
             bench-vnd.txt
           retention-days: 30
 
+  # Smoke check for bench code (NEOC-32): compiles every bench under
+  # `--features bench` and runs each bench body once (criterion `--test`), no
+  # timing. Catches stale bench inputs that lint/test never build. Blocking;
+  # follows the workflow triggers (push to main/develop, manual dispatch), no
+  # PR trigger because CI minutes are limited.
+  bench-smoke:
+    name: bench:smoke
+    if: github.event_name != 'schedule'
+    needs: [lint]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CLEAN_ARGS: ""
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: bench-smoke
+          key: ${{ github.ref }}
+          save-if: true
+      - name: Clean workspace crates
+        run: |
+          crates=$(cargo tree --workspace --depth 0 --prefix none | awk 'NF {print $1}')
+          test -n "$crates"
+          cargo clean $(printf -- '-p %s ' $crates) $CLEAN_ARGS
+      - run: cargo bench -p neoc-vm --features bench --benches -- --test
+
   # Build jobs are independent of lint/test so binaries are produced for every
   # commit, even on WIP branches. Check lint/test for the quality gates.
   build-linux-x86_64:
