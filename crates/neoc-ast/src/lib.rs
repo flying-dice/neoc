@@ -469,13 +469,14 @@ fn collect_extern_fn_namespaces(
 /// is unaffected; a backend emits the target identifier wherever it lowers a
 /// reference to the item (constructor, associated call, free call), qualified
 /// through the enclosing `mod`'s binding when there is one. Items without a
-/// `name` override are absent and keep their neoc name.
+/// `name` override are absent and keep their neoc name. A fn inside a `mod` is
+/// also keyed `mod::fn`, for the qualified path form.
 #[must_use]
 pub fn extern_target_names(module: &Module) -> std::collections::HashMap<Ident, Ident> {
     let mut out = std::collections::HashMap::new();
     for item in &module.items {
         if let ItemKind::Extern(block) = &item.kind {
-            collect_extern_target_names(&block.items, &mut out);
+            collect_extern_target_names(&block.items, None, &mut out);
         }
     }
     out
@@ -489,12 +490,13 @@ pub fn extern_target_names_from_items(
     items: &[ExternItem],
 ) -> std::collections::HashMap<Ident, Ident> {
     let mut out = std::collections::HashMap::new();
-    collect_extern_target_names(items, &mut out);
+    collect_extern_target_names(items, None, &mut out);
     out
 }
 
 fn collect_extern_target_names(
     items: &[ExternItem],
+    ns: Option<&Ident>,
     out: &mut std::collections::HashMap<Ident, Ident>,
 ) {
     for ext in items {
@@ -507,10 +509,17 @@ fn collect_extern_target_names(
             }
             ExternItemKind::Fn(sig) => {
                 if let Some(t) = target() {
+                    // Also key the `mod::fn` path form (`math::round_down`) so a
+                    // qualified reference maps without the flat name.
+                    if let Some(ns) = ns {
+                        out.insert(format!("{ns}::{}", sig.name), t.clone());
+                    }
                     out.insert(sig.name.clone(), t);
                 }
             }
-            ExternItemKind::Mod(m) => collect_extern_target_names(&m.items, out),
+            ExternItemKind::Mod(m) => {
+                collect_extern_target_names(&m.items, Some(ns.unwrap_or(&m.name)), out);
+            }
             ExternItemKind::Impl(_) => {}
         }
     }

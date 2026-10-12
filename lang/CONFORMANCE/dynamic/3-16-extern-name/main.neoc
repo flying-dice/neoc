@@ -2,7 +2,8 @@
 // target identifier, and every lowered reference honours it: the constructor
 // (`Flags::new` → `collections.Map.new`), a free `fn` call in an `ambient` `mod`
 // (`round_down` → `math.floor`), and a free `fn` outside any `mod`
-// (`say` → `print`). Same program declared locally and `use`d from `host`.
+// (`say` → `print`), also as a value (`apply(say)`) and by its `mod::fn` path
+// (`math::round_down`). Same program declared locally and `use`d from `host`.
 use host::Flags;
 use host::round_down;
 
@@ -11,8 +12,13 @@ extern {
     fn say(v: Unknown);
 }
 
+fn apply(f: fn(Unknown), v: Unknown) {
+    f(v);
+}
+
 pub fn main() {
     say(round_down(7.9));
+    apply(say, host::math::round_down(2.5));
     let f = Flags::new();
     f.set("a", 1);
     f.set("b", 2);

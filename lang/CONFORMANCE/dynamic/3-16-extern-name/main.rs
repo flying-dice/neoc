@@ -28,8 +28,13 @@ fn say(v: f64) {
     println!("{}", v);
 }
 
+fn apply(f: fn(f64), v: f64) {
+    f(v);
+}
+
 fn main() {
     say(round_down(7.9));
+    apply(say, host::round_down(2.5));
     let mut f = Flags::new();
     f.set("a", 1.0);
     f.set("b", 2.0);

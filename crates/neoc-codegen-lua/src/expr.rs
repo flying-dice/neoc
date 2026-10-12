@@ -523,7 +523,9 @@ impl Emitter {
         match self.resolve_path(segments) {
             Some(PathKind::Value(name)) => {
                 self.note_prelude(&name);
-                name
+                // A free extern `fn` used as a value reads its qualified target
+                // identifier, as a call to it does.
+                self.qualify_extern_fn(&name).unwrap_or(name)
             }
             // `Type::member` reads the type's table — keep the qualifier so the
             // associated function/const resolves against `Type`, not a bare name.
@@ -531,7 +533,12 @@ impl Emitter {
             // `require` binding (`sqlite.Database.new`); a local impl type or a
             // `mod` head passes through unchanged.
             Some(PathKind::Assoc(ty, name)) => {
-                format!("{}.{name}", self.qualify_extern_value(&ty))
+                // `mod::fn` maps through the fn's `name` override.
+                let member = self
+                    .extern_target_names
+                    .get(&format!("{ty}::{name}"))
+                    .unwrap_or(&name);
+                format!("{}.{member}", self.qualify_extern_value(&ty))
             }
             Some(PathKind::Variant(en, var, VariantShape::Unit)) => {
                 self.note_prelude(&en);
