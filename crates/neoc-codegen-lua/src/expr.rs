@@ -497,20 +497,7 @@ impl Emitter {
             }
             ast::ExprKind::Match { scrutinee, arms } => self.emit_match_value(scrutinee, arms),
             ast::ExprKind::Try(inner) => self.emit_try(inner),
-            ast::ExprKind::Marshal { direction, operand } => {
-                let o = self.emit_expr(operand);
-                match direction {
-                    ast::MarshalDirection::ToHost => {
-                        self.uses_option_to_host = true;
-                        format!("{OPTION_TO_HOST}({o})")
-                    }
-                    ast::MarshalDirection::FromHost => {
-                        self.uses_option_from_host = true;
-                        self.uses_result = true;
-                        format!("{OPTION_FROM_HOST}({o})")
-                    }
-                }
-            }
+            ast::ExprKind::Marshal { direction, operand } => self.emit_marshal(*direction, operand),
             ast::ExprKind::Range {
                 start,
                 end,
@@ -628,6 +615,23 @@ impl Emitter {
     pub(crate) fn note_prelude(&mut self, name: &str) {
         if matches!(name, "Ok" | "Err" | "Some" | "None" | "Result" | "Option") {
             self.uses_result = true;
+        }
+    }
+
+    /// An `Option` crossing the `extern` boundary: through the module-local
+    /// helper for its direction (`lang/EXTERN.md` §Option marshalling).
+    fn emit_marshal(&mut self, direction: ast::MarshalDirection, operand: &ast::Expr) -> String {
+        let o = self.emit_expr(operand);
+        match direction {
+            ast::MarshalDirection::ToHost => {
+                self.marshalled.to_host = true;
+                format!("{OPTION_TO_HOST}({o})")
+            }
+            ast::MarshalDirection::FromHost => {
+                self.marshalled.from_host = true;
+                self.uses_result = true;
+                format!("{OPTION_FROM_HOST}({o})")
+            }
         }
     }
 

@@ -430,8 +430,7 @@ pub(crate) struct Emitter {
     /// Whether an `Option` was marshalled to / from the host, gating the module
     /// helpers `OPTION_TO_HOST_HELPER` / `OPTION_FROM_HOST_HELPER`
     /// (`lang/EXTERN.md` §Option marshalling).
-    uses_option_to_host: bool,
-    uses_option_from_host: bool,
+    marshalled: MarshalUse,
     /// Module-local helpers the derives call; spliced ahead of the body, once
     /// each, in a fixed order.
     derive_helpers: std::collections::BTreeSet<neoc_macros::Helper>,
@@ -545,6 +544,13 @@ pub(crate) struct LoopFrame {
 /// module has a `#[test]` fn — so its presence marks a test-bearing module.
 pub const TESTS_TABLE_DECL: &str = "local __tests = {}";
 
+/// Which `Option` marshalling helpers a module needs.
+#[derive(Default)]
+pub(crate) struct MarshalUse {
+    pub(crate) to_host: bool,
+    pub(crate) from_host: bool,
+}
+
 /// Local names of the `Option` marshalling helpers (`lang/EXTERN.md` §Option
 /// marshalling).
 pub(crate) const OPTION_TO_HOST: &str = "__option_to_host";
@@ -557,10 +563,10 @@ const OPTION_TO_HOST_HELPER: &str = r#"local function __option_to_host(v)
 end"#;
 
 /// Host value to `Option`: `nil` is `None`, any other value `v` is `Some(v)`.
-const OPTION_FROM_HOST_HELPER: &str = r#"local function __option_from_host(v)
+const OPTION_FROM_HOST_HELPER: &str = r"local function __option_from_host(v)
   if v == nil then return None end
   return Some(v)
-end"#;
+end";
 
 const RESULT_PRELUDE: &str = r#"local Option = {}
 Option.__index = Option
@@ -716,10 +722,10 @@ impl Emitter {
         // `Option` marshalling helpers sit above the derive helpers and below the
         // prelude whose `Some`/`None` they read.
         let mut marshal_helpers: Vec<&str> = Vec::new();
-        if self.uses_option_to_host {
+        if self.marshalled.to_host {
             marshal_helpers.push(OPTION_TO_HOST_HELPER);
         }
-        if self.uses_option_from_host {
+        if self.marshalled.from_host {
             marshal_helpers.push(OPTION_FROM_HOST_HELPER);
         }
         if !marshal_helpers.is_empty() {

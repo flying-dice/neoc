@@ -252,13 +252,13 @@ fn neoc_option_function_emits_no_marshalling() {
 
 #[test]
 fn extern_fn_passed_as_value_marshals_when_called() {
-    let src = r#"
+    let src = r"
 extern {
     #[extern(ambient)]
     mod host { fn put(v: Option<number>) -> Option<number>; }
 }
 fn main() { let f = put; let _ = f(None); }
-"#;
+";
     let out = transpile(src, Target::Lua).output;
     assert!(
         out.contains(
