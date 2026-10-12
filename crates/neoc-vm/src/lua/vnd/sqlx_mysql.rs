@@ -35,6 +35,7 @@ use sqlx::{Column, ConnectOptions, Decode, Row, TypeInfo, ValueRef};
 use tracing::instrument;
 use tracing::log::LevelFilter;
 
+use super::split_sql_args;
 use crate::lua::facade::Module;
 use crate::lua::sandbox::{from_err, i64_to_lua, ok};
 
@@ -323,22 +324,6 @@ fn build_query<'q>(
 // ---------------------------------------------------------------------------
 // Lua → sqlx
 // ---------------------------------------------------------------------------
-
-fn split_sql_args(mut args: MultiValue) -> Result<(String, Vec<Value>), String> {
-    let head = args
-        .pop_front()
-        .ok_or_else(|| "missing SQL string".to_string())?;
-    let sql = match head {
-        Value::String(s) => s.to_str().map_err(|e| e.to_string())?.to_owned(),
-        other => {
-            return Err(format!(
-                "expected SQL string, got {} — accepted: string",
-                other.type_name()
-            ));
-        }
-    };
-    Ok((sql, args.into_iter().collect()))
-}
 
 fn bind_param<'q>(
     q: Query<'q, MySql, MySqlArguments>,
