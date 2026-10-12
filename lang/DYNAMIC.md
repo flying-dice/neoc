@@ -297,7 +297,7 @@ Method dispatch goes through the receiver's metatable. The colon call `⟦e⟧:m
 ⟦ { s₁; …; sₙ } ⟧ₛ    = do ⟦s₁⟧ₛ … ⟦sₙ⟧ₛ end
 ```
 
-A value-producing block is an IIFE; a statement block is a Lua `do … end`.
+A value-producing block is an IIFE; a statement block is a Lua `do … end`. A `return`, `?`, `break`, or `continue` in the block that targets something outside it leaves through the exit protocol (§4.12).
 
 ### 4.9 Closures, loops, control flow
 
@@ -313,9 +313,11 @@ A value-producing block is an IIFE; a statement block is a Lua `do … end`.
 ⟦ return e ⟧ₛ            = return ⟦e⟧ₑ
 ```
 
+A closure body is a function body: `return` and `?` in it leave the closure. A block body lowers to the statements of the Lua function, not to an IIFE inside it.
+
 ### 4.10 The `?` operator
 
-`e?` must return the carrier from the **enclosing function** on the short-circuit, so the guard cannot live in an IIFE — an IIFE's `return` would only exit the wrapper. The guard is hoisted as statements into the surrounding body and the operator's value is the unwrapped payload:
+`e?` must return the carrier from the **enclosing function** on the short-circuit, so the guard cannot be a bare `return` inside an IIFE — that would only exit the wrapper. The guard is hoisted as statements into the surrounding body and the operator's value is the unwrapped payload:
 
 ```
 ⟦ e? ⟧ₑ  hoists, before the statement that uses the value:
@@ -324,7 +326,7 @@ A value-producing block is an IIFE; a statement block is a Lua `do … end`.
 and yields the expression  ⟪t⟫[1]
 ```
 
-`⟪t⟫` is a fresh temporary. On the short-circuiting variant (`Err` for `Result`, `None` for `Option`) the hoisted `return ⟪t⟫` exits the enclosing function with the carrier unchanged; otherwise the expression evaluates to the wrapped value at `[1]`. Testing both tags lets the lowering serve `Result` and `Option` alike without the carrier's static type — a value carries exactly one tag, so only the matching test can fire. The enclosing function's return type makes this well-formed (`STATIC.md` §6).
+`⟪t⟫` is a fresh temporary. On the short-circuiting variant (`Err` for `Result`, `None` for `Option`) the hoisted `return ⟪t⟫` exits the enclosing function with the carrier unchanged; otherwise the expression evaluates to the wrapped value at `[1]`. Testing both tags lets the lowering serve `Result` and `Option` alike without the carrier's static type — a value carries exactly one tag, so only the matching test can fire. The enclosing function's return type makes this well-formed (`STATIC.md` §6). Inside a value-position block, `if`, or `match`, the `return ⟪t⟫` is the return exit of §4.12. A closure is its own function: `?` in its body returns from the closure.
 
 ### 4.11 Loop-carried string appends
 
@@ -336,7 +338,7 @@ An *append* to `s` is an assignment `s = s + e₁ + … + eₙ` or `s += e` wher
 2. Within `L` — head, condition, and body — every occurrence of `s` is an append target, or the whole operand of a `return`. An occurrence anywhere else (a read, a prepend `s = e + s`, another assignment, an operand of an appended `eᵢ`, a struct-literal shorthand `S { s }`) disables the rule.
 3. `L` contains at least one append to `s`, none of them inside a closure or nested function, and binds no name `s` of its own (`let`, pattern, closure parameter, nested function).
 4. No closure or nested function anywhere in `s`'s scope mentions `s`: such a function could read the string while `L` still holds it in the accumulator.
-5. `L` is not inside a block, `if`, or `match` used for its value. Those lower to an IIFE (§4.5, §4.6, §4.8), where a `return` — or the one `?` hoists (§4.10) — leaves only the IIFE and would skip the fold after `L`.
+5. `L` is not inside a block, `if`, or `match` used for its value. Those lower to an IIFE (§4.5, §4.6, §4.8), where a `return` — or the one `?` hoists (§4.10) — leaves through the exit protocol (§4.12) and would skip the fold after `L`.
 
 Where several nested loops satisfy the rule, only the outermost is rewritten; its appends include those of the inner loops. A loop that fails the rule may still contain a nested loop that satisfies it.
 
@@ -357,6 +359,38 @@ Where several nested loops satisfy the rule, only the outermost is rewritten; it
 ```
 
 `⟪acc⟫` is a fresh local. The accumulator is seeded with the string's current value, so a prior value is kept and a loop that never runs leaves `s` unchanged. The fold runs after the loop however it was left: a `break` only leaves the loop, so the folded string holds exactly the appends made before it; a `return` of any other value leaves the function, and `s` is then unreachable (condition 4). `eᵢ` is evaluated and pushed in order, so evaluation order is that of the chained `..`. A well-typed pushed value is a `string`, and `table.concat` joins strings exactly as `..` does. A host can still break an `ext fn`'s `string` contract; `.. ""` then raises at the append, as plain `..` does, where `table.concat` would skip a `nil` or fail only at the fold. For a string, Lua returns the left operand of `.. ""` unchanged. The seed is checked the same way, so a non-string `s` raises on entry to `L`.
+
+### 4.12 Leaving a value-position wrapper
+
+A block, `if`, or `match` used for its value is an IIFE (§4.5, §4.6, §4.8). A Lua `return` or `break` leaves only the function it is written in, so these neoc forms need help when they sit inside a wrapper and target something outside it:
+
+| Form | Target |
+| --- | --- |
+| `return e`, `e?` | the enclosing function (a closure body is its own function) |
+| `break`, `continue` | the innermost enclosing loop, when that loop is outside the wrapper |
+
+A wrapper whose body contains no such form lowers as before. A wrapper whose body contains one returns two values, an *exit* and the value, and its call site acts on the exit:
+
+```
+⟦ w ⟧ₑ  with exits  hoists, before the statement that uses the value:
+  local ⟪x⟫, ⟪v⟫ = (function() ⟦body⟧ end)()
+  if ⟪x⟫ == 1 then <return ⟪v⟫> elseif ⟪x⟫ == 2 then <break> elseif ⟪x⟫ == 3 then <continue> end
+and yields the expression  ⟪v⟫
+```
+
+Only the exits the body can take get a branch. Inside the body, the value of the wrapper is `return false, ⟦e⟧ₑ`; `return e` and a hoisted `?` guard are `return 1, ⟦e⟧ₑ`; a `break` or `continue` whose loop is outside the wrapper is `return 2` or `return 3`. A loop inside the wrapper keeps its own `break` and `continue`. `<return ⟪v⟫>`, `<break>`, and `<continue>` are what the same form lowers to at the call site (§4.9, §4.10): when the call site is itself inside a wrapper, they are that wrapper's own exits, so an exit passes through nested wrappers one call site at a time.
+
+A form that ends a path rather than producing a value (`return`, `break`, `continue`) as the last expression of a wrapper or arm lowers as a statement; it supplies no value.
+
+**Evaluation order.** Hoisting runs a wrapper's call before the statement that uses its value. To keep neoc's left-to-right order, an operand, argument, receiver, list item, or field initialiser that hoists statements first binds each non-literal operand to its left to a fresh local. The right operand of `&&` and `||` runs only when the left does not decide the result: a right operand that hoists binds the result to a local and assigns it inside the `if`. A `while` condition that hoists runs its statements on every pass:
+
+```
+while true do
+  <hoisted>
+  if not (⟦c⟧) then break end
+  ⟦ body ⟧ₛ
+end
+```
 
 ## 5. Patterns
 

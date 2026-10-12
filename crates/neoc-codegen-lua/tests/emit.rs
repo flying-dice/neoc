@@ -900,9 +900,22 @@ fn assert_value_position_diagnostic(expr: ast::ExprKind, expected: &str) {
     );
 }
 
+/// As [`assert_value_position_diagnostic`], with `expr` as a call argument. A
+/// `return`, `break`, or `continue` ending a block or arm is a statement
+/// (§4.12); as an operand it has no value to give.
+fn assert_operand_diagnostic(expr: ast::ExprKind, expected: &str) {
+    assert_value_position_diagnostic(
+        ast::ExprKind::Call {
+            callee: Box::new(e(ast::ExprKind::Path(vec!["f".into()]))),
+            args: vec![e(expr)],
+        },
+        expected,
+    );
+}
+
 #[test]
 fn continue_in_value_position_diagnoses() {
-    assert_value_position_diagnostic(
+    assert_operand_diagnostic(
         ast::ExprKind::Continue,
         "control-flow expression used in value position",
     );
@@ -910,7 +923,7 @@ fn continue_in_value_position_diagnoses() {
 
 #[test]
 fn break_in_value_position_diagnoses() {
-    assert_value_position_diagnostic(
+    assert_operand_diagnostic(
         ast::ExprKind::Break,
         "control-flow expression used in value position",
     );
@@ -918,7 +931,7 @@ fn break_in_value_position_diagnoses() {
 
 #[test]
 fn return_in_value_position_diagnoses() {
-    assert_value_position_diagnostic(
+    assert_operand_diagnostic(
         ast::ExprKind::Return(None),
         "control-flow expression used in value position",
     );

@@ -233,9 +233,8 @@ fn error_message(err: &str) -> String {
 #[test]
 fn concat_rewrite_matches_plain_when_an_iife_returns() {
     // A loop inside a valued block / `if` emits inside an IIFE, where `return`
-    // and `?` leave only the IIFE (#110). Whatever that does, the rewrite must
-    // do the same. (`h(1)` is left out: under #110 its `Err` lands in `tag`
-    // and the `+` raises, rewrite or not.)
+    // and `?` leave through the exit protocol (`DYNAMIC.md` §4.12). Whatever
+    // that does, the rewrite must do the same.
     let src = r#"
 extern { fn print(s: string); }
 fn step(i: number, limit: number) -> Result<number, string> {
@@ -262,10 +261,11 @@ fn show(r: Result<string, string>) -> string {
 fn main() {
     print(f(1)); print(f(99));
     print(g(1)); print(g(99));
-    print(show(h(99)));
+    print(show(h(99))); print(show(h(1)));
 }"#;
     let out = assert_same_as_plain_concat("", src).expect("runs");
-    assert!(out.starts_with("xx|early\n"), "{out}");
+    assert!(out.starts_with("early\n"), "{out}");
+    assert!(out.ends_with("zzz|done\nstop\n"), "{out}");
 }
 
 #[test]

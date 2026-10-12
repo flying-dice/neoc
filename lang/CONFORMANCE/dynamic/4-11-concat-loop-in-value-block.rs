@@ -62,4 +62,7 @@ fn main() {
     println!("{}", in_if(99));
     println!("{}", in_if(-1));
     println!("{}", show(in_try(99)));
+    println!("{}", in_block(1));
+    println!("{}", in_if(1));
+    println!("{}", show(in_try(1)));
 }

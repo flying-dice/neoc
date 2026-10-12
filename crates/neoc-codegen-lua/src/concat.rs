@@ -20,17 +20,17 @@ use std::collections::HashSet;
 
 /// Where a node sits relative to the variable being analysed.
 #[derive(Clone, Copy)]
-struct Site {
+pub(crate) struct Site {
     /// Inside a closure or nested function: a separate Lua function that can
     /// capture the variable.
-    closure: bool,
+    pub(crate) closure: bool,
     /// Inside a block, `if`, or `match` used for its value. That lowers to an
     /// IIFE, where a `return` (or the one hoisted by `?`) leaves only the
     /// wrapper — it would skip a fold placed after a loop in it.
-    iife: bool,
+    pub(crate) iife: bool,
 }
 
-const TOP: Site = Site {
+pub(crate) const TOP: Site = Site {
     closure: false,
     iife: false,
 };
@@ -41,7 +41,7 @@ const CLOSURE: Site = Site {
 
 /// Callbacks for [`walk_expr`]. The walk is exhaustive over the AST so a new
 /// expression form cannot silently escape the analysis.
-trait Visitor<'a> {
+pub(crate) trait Visitor<'a> {
     /// Visit an expression before its children; return `false` to skip them.
     fn expr(&mut self, e: &'a ast::Expr, site: Site) -> bool;
     /// A single-segment value reference to `name` (a path, or a struct-literal
@@ -53,7 +53,12 @@ trait Visitor<'a> {
 
 /// Walk a block. `valued` says whether its trailing expression is the block's
 /// value (a function body, a valued block) or only run for effect.
-fn walk_block<'a>(b: &'a ast::Block, site: Site, valued: bool, v: &mut impl Visitor<'a>) {
+pub(crate) fn walk_block<'a>(
+    b: &'a ast::Block,
+    site: Site,
+    valued: bool,
+    v: &mut impl Visitor<'a>,
+) {
     for stmt in &b.stmts {
         walk_stmt(stmt, site, v);
     }
@@ -64,7 +69,7 @@ fn walk_block<'a>(b: &'a ast::Block, site: Site, valued: bool, v: &mut impl Visi
     }
 }
 
-fn walk_stmt<'a>(stmt: &'a ast::Stmt, site: Site, v: &mut impl Visitor<'a>) {
+pub(crate) fn walk_stmt<'a>(stmt: &'a ast::Stmt, site: Site, v: &mut impl Visitor<'a>) {
     match &stmt.kind {
         ast::StmtKind::Let(l) => {
             walk_pattern(&l.pattern, v);
@@ -89,7 +94,7 @@ fn walk_stmt<'a>(stmt: &'a ast::Stmt, site: Site, v: &mut impl Visitor<'a>) {
     }
 }
 
-fn walk_pattern<'a>(p: &'a ast::Pattern, v: &mut impl Visitor<'a>) {
+pub(crate) fn walk_pattern<'a>(p: &'a ast::Pattern, v: &mut impl Visitor<'a>) {
     match p {
         ast::Pattern::Binding { name, .. } => v.bind(name),
         ast::Pattern::Struct { fields, .. } => {
@@ -115,7 +120,7 @@ fn walk_pattern<'a>(p: &'a ast::Pattern, v: &mut impl Visitor<'a>) {
 }
 
 /// Walk an expression used for its value.
-fn walk_expr<'a>(e: &'a ast::Expr, site: Site, v: &mut impl Visitor<'a>) {
+pub(crate) fn walk_expr<'a>(e: &'a ast::Expr, site: Site, v: &mut impl Visitor<'a>) {
     if !v.expr(e, site) {
         return;
     }
@@ -194,7 +199,7 @@ fn walk_expr<'a>(e: &'a ast::Expr, site: Site, v: &mut impl Visitor<'a>) {
 /// Walk an expression used for effect (a statement, a loop body's or
 /// statement block's trailing expression). Block-like forms here lower as Lua
 /// statements, not IIFEs.
-fn walk_effect<'a>(e: &'a ast::Expr, site: Site, v: &mut impl Visitor<'a>) {
+pub(crate) fn walk_effect<'a>(e: &'a ast::Expr, site: Site, v: &mut impl Visitor<'a>) {
     let block_like = matches!(
         e.kind,
         ast::ExprKind::If { .. } | ast::ExprKind::Match { .. } | ast::ExprKind::Block(_)

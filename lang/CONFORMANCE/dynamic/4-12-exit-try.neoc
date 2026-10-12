@@ -1,0 +1,77 @@
+// DYNAMIC.md §4.12: `?` in a block, `if`, or `match` used for its value, in a
+// closure, and in a `while` condition returns the carrier from the nearest
+// enclosing function. The condition case also pins that the hoisted guard runs
+// on every pass, not once before the loop.
+extern {
+    fn println(s: string);
+}
+
+fn parse(n: number) -> Result<number, string> {
+    if n < 0 {
+        Err("neg")
+    } else {
+        Ok(n)
+    }
+}
+
+fn in_block(a: number, b: number) -> Result<string, string> {
+    let total = {
+        let x = parse(a)?;
+        let y = parse(b)?;
+        x + y
+    };
+    Ok("sum")
+}
+
+fn in_match(a: number) -> Result<string, string> {
+    let r = match a {
+        0 => "zero",
+        _ => {
+            let v = parse(a)?;
+            if v > 100 {
+                "big"
+            } else {
+                "ok"
+            }
+        },
+    };
+    Ok(r)
+}
+
+fn in_closure(a: number) -> Result<string, string> {
+    let f = |y| {
+        let z = parse(y)?;
+        Ok("closure")
+    };
+    let r = f(a)?;
+    Ok(r + "|after")
+}
+
+fn in_cond(limit: number) -> Result<string, string> {
+    let i = 0;
+    while parse(limit - i)? > 0 {
+        i += 2;
+    }
+    Ok("done")
+}
+
+fn show(r: Result<string, string>) -> string {
+    match r {
+        Ok(v) => v,
+        Err(e) => e,
+    }
+}
+
+fn main() {
+    println(show(in_block(1, 2)));
+    println(show(in_block(1, -2)));
+    println(show(in_block(-1, 2)));
+    println(show(in_match(0)));
+    println(show(in_match(5)));
+    println(show(in_match(500)));
+    println(show(in_match(-5)));
+    println(show(in_closure(1)));
+    println(show(in_closure(-1)));
+    println(show(in_cond(3)));
+    println(show(in_cond(4)));
+}

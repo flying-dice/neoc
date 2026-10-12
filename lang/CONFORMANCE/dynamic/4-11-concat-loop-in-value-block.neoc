@@ -1,8 +1,8 @@
 // DYNAMIC.md §4.11, condition 5: a loop inside a block, `if`, or `match` used
 // for its value keeps the plain `..` lowering. That form lowers to an IIFE,
-// where a `return` or `?` leaves only the IIFE — past any fold after the loop.
-// Only paths that do not leave early run here: an early exit from an IIFE is
-// tracked separately (#110).
+// where a `return` or `?` leaves through the exit protocol (§4.12) — past any
+// fold after the loop. Both the paths that run to the end and the early exits
+// run here.
 extern {
     fn println(s: string);
 }
@@ -69,4 +69,7 @@ fn main() {
     println(in_if(99));
     println(in_if(-1));
     println(show(in_try(99)));
+    println(in_block(1));
+    println(in_if(1));
+    println(show(in_try(1)));
 }

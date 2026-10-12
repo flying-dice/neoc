@@ -38,10 +38,7 @@ impl Emitter {
     pub(crate) fn emit_block_as_body(&mut self, block: &ast::Block) {
         self.emit_stmts(block);
         if let Some(value) = &block.value {
-            self.at_span(value.span, |em| {
-                let v = em.emit_expr(value);
-                em.line(format!("return {v}"));
-            });
+            self.at_span(value.span, |em| em.emit_tail(value));
         }
     }
 
@@ -161,12 +158,24 @@ impl Emitter {
 
     /// An expression used for effect. Block-like forms lower as statements (no
     /// IIFE needed); everything else is a bare expression line.
-    fn emit_expr_stmt(&mut self, e: &ast::Expr) {
+    pub(crate) fn emit_expr_stmt(&mut self, e: &ast::Expr) {
         match &e.kind {
             ast::ExprKind::If { .. } => self.emit_if_stmt(e),
             ast::ExprKind::While { cond, body } => self.emit_accumulating(e, |em| {
-                let c = em.emit_expr(cond);
-                em.line(format!("while {c} do"));
+                let mut c = String::new();
+                let hoisted = em.render(|em| c = em.emit_expr(cond));
+                if hoisted.is_empty() {
+                    em.line(format!("while {c} do"));
+                } else {
+                    // The condition's hoisted statements run on every pass.
+                    em.line("while true do");
+                    em.indented(|em| {
+                        for l in hoisted {
+                            em.line(l);
+                        }
+                        em.line(format!("if not ({c}) then break end"));
+                    });
+                }
                 em.emit_loop_body(body);
                 em.line("end");
             }),
@@ -187,13 +196,11 @@ impl Emitter {
                 self.line("end");
             }
             ast::ExprKind::Return(value) => {
-                let r = value.as_ref().map_or_else(String::new, |v| {
-                    let v = self
-                        .accumulated_return(v)
-                        .unwrap_or_else(|| self.emit_expr(v));
-                    format!(" {v}")
+                let v = value.as_ref().map(|v| {
+                    self.accumulated_return(v)
+                        .unwrap_or_else(|| self.emit_expr(v))
                 });
-                self.line(format!("return{r}"));
+                self.emit_return(v);
             }
             ast::ExprKind::Break => self.emit_break(),
             ast::ExprKind::Continue => self.emit_continue(),
@@ -320,7 +327,11 @@ impl Emitter {
     /// Lower a neoc `break`. In a plain loop it is Lua `break`; in a loop
     /// restructured for `continue` it sets the outer-break flag and breaks the
     /// inner `repeat`, so the `if <flag> then break end` after it exits the loop.
-    fn emit_break(&mut self) {
+    pub(crate) fn emit_break(&mut self) {
+        if self.loop_is_outside() {
+            self.emit_loop_exit(crate::flow::EXIT_BREAK);
+            return;
+        }
         match self.loops.last().and_then(|f| f.break_flag.clone()) {
             Some(flag) => self.line(format!("do {flag} = true; break end")),
             None => self.line("break"),
@@ -330,8 +341,10 @@ impl Emitter {
     /// Lower `continue`. Only reachable inside a loop restructured for it
     /// (`emit_loop_body` scans the body first), where it is a `break` of the
     /// inner `repeat`, skipping to the next iteration.
-    fn emit_continue(&mut self) {
-        if self.loops.last().is_some_and(|f| f.break_flag.is_some()) {
+    pub(crate) fn emit_continue(&mut self) {
+        if self.loop_is_outside() {
+            self.emit_loop_exit(crate::flow::EXIT_CONTINUE);
+        } else if self.loops.last().is_some_and(|f| f.break_flag.is_some()) {
             self.line("break");
         } else {
             self.error("`continue` outside a loop");
@@ -374,8 +387,7 @@ impl Emitter {
     /// The `for` head lowers to numeric bounds with no allocation (see
     /// `emit_for`); the inclusive/exclusive split mirrors it.
     fn emit_range_value(&mut self, start: &ast::Expr, end: &ast::Expr, inclusive: bool) -> String {
-        let lo = self.emit_expr(start);
-        let hi = self.emit_expr(end);
+        let (lo, hi) = self.emit_pair(start, end);
         let hi = if inclusive { hi } else { format!("({hi}) - 1") };
         format!(
             "(function() local __r = {{}} for __i = {lo}, {hi} do __r[#__r + 1] = __i end return __r end)()"
@@ -424,8 +436,10 @@ impl Emitter {
             ast::ExprKind::Unit => "nil".to_string(),
             ast::ExprKind::Path(segments) => self.emit_path(segments),
             ast::ExprKind::Binary { op, lhs, rhs } => {
-                let l = self.emit_expr(lhs);
-                let r = self.emit_expr(rhs);
+                if matches!(op, ast::BinOp::And | ast::BinOp::Or) {
+                    return self.emit_short_circuit(*op, lhs, rhs);
+                }
+                let (l, r) = self.emit_pair(lhs, rhs);
                 format!("({l} {} {r})", bin_op(*op))
             }
             ast::ExprKind::Unary { op, operand } => {
@@ -459,41 +473,37 @@ impl Emitter {
                         }
                     }
                 }
-                let f = self.emit_expr(callee);
-                let a = self.emit_args(args);
-                format!("{f}({a})")
+                let (f, a) = self.emit_call_operands(callee, args);
+                format!("{f}({})", a.join(", "))
             }
             ast::ExprKind::Field { base, field } => {
                 let b = self.emit_expr(base);
                 field_access(&b, field)
             }
             ast::ExprKind::Index { base, index } => {
-                let b = self.emit_expr(base);
-                let i = self.emit_expr(index);
+                let (b, i) = self.emit_pair(base, index);
                 index_access(&b, &i)
             }
             ast::ExprKind::StructLit { path, fields, base } => {
                 self.emit_struct_lit(path, fields, base.as_deref())
             }
             ast::ExprKind::List(items) => {
-                let parts: Vec<String> = items.iter().map(|i| self.emit_expr(i)).collect();
-                format!("{{ {} }}", parts.join(", "))
+                let items: Vec<&ast::Expr> = items.iter().collect();
+                format!("{{ {} }}", self.emit_operands(&items).join(", "))
             }
             ast::ExprKind::If { .. } | ast::ExprKind::Block(_) => self.emit_block_like_value(e),
-            ast::ExprKind::Closure { params, body } => {
-                let ps: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
-                let b = self.emit_expr(body);
-                format!("function({}) return {b} end", ps.join(", "))
-            }
+            ast::ExprKind::Closure { params, body } => self.emit_closure(params, body),
             ast::ExprKind::MethodCall {
                 receiver,
                 method,
                 method_span: _,
                 args,
             } => {
-                let recv = self.emit_expr(receiver);
-                let a = self.emit_args(args);
-                format!("{recv}:{method}({a})")
+                let mut ops = vec![&**receiver];
+                ops.extend(args);
+                let mut lua = self.emit_operands(&ops).into_iter();
+                let recv = lua.next().unwrap_or_default();
+                format!("{recv}:{method}({})", lua.collect::<Vec<_>>().join(", "))
             }
             ast::ExprKind::Match { scrutinee, arms } => self.emit_match_value(scrutinee, arms),
             ast::ExprKind::Try(inner) => self.emit_try(inner),
@@ -625,10 +635,26 @@ impl Emitter {
     }
 
     fn emit_args(&mut self, args: &[ast::Expr]) -> String {
-        args.iter()
-            .map(|a| self.emit_expr(a))
-            .collect::<Vec<_>>()
-            .join(", ")
+        let args: Vec<&ast::Expr> = args.iter().collect();
+        self.emit_operands(&args).join(", ")
+    }
+
+    /// Lower a closure as a Lua function. Its body is a function body: a
+    /// `return` or `?` in it leaves the closure, not an enclosing function
+    /// (`lang/DYNAMIC.md` §4.9).
+    fn emit_closure(&mut self, params: &[ast::ClosureParam], body: &ast::Expr) -> String {
+        let ps: Vec<&str> = params.iter().map(|p| p.name.as_str()).collect();
+        let open = format!("function({})", ps.join(", "));
+        let lines = self.in_function(|em| {
+            em.render(|em| match &body.kind {
+                ast::ExprKind::Block(b) => em.emit_block_as_body(b),
+                _ => em.emit_tail(body),
+            })
+        });
+        match lines.as_slice() {
+            [one] if !matches!(body.kind, ast::ExprKind::Block(_)) => format!("{open} {one} end"),
+            _ => Self::wrap_lines(&open, lines, "end"),
+        }
     }
 
     fn emit_struct_lit(
@@ -720,37 +746,52 @@ impl Emitter {
         fields: &[ast::FieldInit],
         base: &ast::Expr,
     ) -> String {
-        let base_lua = self.emit_expr(base);
+        let mut values = self.emit_field_values(fields, Some(base)).into_iter();
+        let base_lua = values.next().unwrap_or_default();
         let mut body = vec![
             "local __b = {}".to_string(),
             format!("for k, v in pairs({base_lua}) do __b[k] = v end"),
         ];
-        for f in fields {
-            let value = match &f.value {
-                Some(v) => self.emit_expr(v),
-                None => f.name.clone(),
-            };
+        for (f, value) in fields.iter().zip(values) {
             body.push(format!("__b.{} = {value}", f.name));
         }
         body.push("return __b".to_string());
-        let copy = Self::wrap_iife(body);
+        let copy = Self::wrap_lines("(function()", body, "end)()");
         format!("{}.new({copy})", self.type_local(name))
     }
 
     /// Lower struct-literal / struct-variant fields to `name = value` entries,
     /// expanding field shorthand (`{ x }` → `x = x`).
     fn emit_field_inits(&mut self, fields: &[ast::FieldInit]) -> String {
+        let values = self.emit_field_values(fields, None);
         fields
             .iter()
-            .map(|f| {
-                let value = match &f.value {
-                    Some(v) => self.emit_expr(v),
-                    None => f.name.clone(),
-                };
-                format!("{} = {value}", f.name)
-            })
+            .zip(values)
+            .map(|(f, value)| format!("{} = {value}", f.name))
             .collect::<Vec<_>>()
             .join(", ")
+    }
+
+    /// The Lua value of each field initialiser, in order. `base` (the `..base`
+    /// of a functional update) evaluates first; its value is returned ahead of
+    /// the fields'.
+    fn emit_field_values(
+        &mut self,
+        fields: &[ast::FieldInit],
+        base: Option<&ast::Expr>,
+    ) -> Vec<String> {
+        let mut ops: Vec<&ast::Expr> = base.into_iter().collect();
+        ops.extend(fields.iter().filter_map(|f| f.value.as_ref()));
+        let mut lua = self.emit_operands(&ops).into_iter();
+        let base = base.map(|_| lua.next().unwrap_or_default());
+        let mut values: Vec<String> = base.into_iter().collect();
+        for f in fields {
+            values.push(match f.value {
+                Some(_) => lua.next().unwrap_or_default(),
+                None => f.name.clone(),
+            });
+        }
+        values
     }
 
     /// Lower a tuple-variant construction `E::V(a, …)` to its tagged table.
@@ -776,43 +817,25 @@ impl Emitter {
         }
     }
 
-    /// Wrap captured body lines in an IIFE that yields a value.
-    fn wrap_iife(body: Vec<String>) -> String {
-        let mut out = String::from("(function()\n");
-        for l in body {
-            if l.is_empty() {
-                out.push('\n');
-            } else {
-                out.push_str("  ");
-                out.push_str(&l);
-                out.push('\n');
-            }
-        }
-        out.push_str("end)()");
-        out
-    }
-
     /// Wrap a block-like expression in an IIFE so it yields a value.
     fn emit_block_like_value(&mut self, e: &ast::Expr) -> String {
-        let body = self.render(|em| match &e.kind {
+        self.emit_wrapped(e, |em| match &e.kind {
             ast::ExprKind::If { .. } => em.emit_if_return(e),
             ast::ExprKind::Block(b) => em.emit_block_as_body(b),
             _ => {}
-        });
-        Self::wrap_iife(body)
+        })
     }
 
     /// Lower a `match` in value position to an IIFE that binds the scrutinee
     /// once, tests arms in order, and returns the first match's body.
     fn emit_match_value(&mut self, scrutinee: &ast::Expr, arms: &[ast::MatchArm]) -> String {
         let scrut = self.emit_expr(scrutinee);
-        let body = self.render(|em| {
+        self.emit_wrapped_arms(arms, |em| {
             em.line(format!("local __s = {scrut}"));
             for arm in arms {
                 em.emit_match_arm(arm, true);
             }
-        });
-        Self::wrap_iife(body)
+        })
     }
 
     /// Lower a `match` in statement position: the scrutinee bound once, arm
@@ -865,8 +888,7 @@ impl Emitter {
     /// in statement context.
     fn emit_arm_body(&mut self, body: &ast::Expr, value: bool) {
         if value {
-            let v = self.emit_expr(body);
-            self.line(format!("return {v}"));
+            self.emit_tail(body);
         } else {
             self.emit_expr_stmt(body);
         }
@@ -884,8 +906,9 @@ impl Emitter {
         let tmp = format!("__try_{}", self.try_seq);
         self.try_seq += 1;
         self.line(format!("local {tmp} = {value}"));
+        let ret = self.return_stmt(Some(tmp.clone()));
         self.line(format!(
-            "if {tmp}.__tag == \"Err\" or {tmp}.__tag == \"None\" then return {tmp} end"
+            "if {tmp}.__tag == \"Err\" or {tmp}.__tag == \"None\" then {ret} end"
         ));
         format!("{tmp}[1]")
     }
@@ -911,9 +934,8 @@ impl Emitter {
                 self.indented(|em| em.emit_block_as_body(b));
             }
             Some(other) => {
-                let v = self.emit_expr(other);
                 self.line("else");
-                self.indented(|em| em.line(format!("return {v}")));
+                self.indented(|em| em.emit_tail(other));
             }
             None => {}
         }
@@ -931,7 +953,7 @@ impl Emitter {
             })
             .collect();
         self.line(format!("{keyword} {}({})", f.sig.name, params.join(", ")));
-        self.indented(|em| em.emit_block_as_body(&f.body));
+        self.in_function(|em| em.indented(|em| em.emit_block_as_body(&f.body)));
         self.line("end");
     }
 
@@ -1061,7 +1083,7 @@ fn index_access(base: &str, index: &str) -> String {
     format!("{base}[({index}) + 1]")
 }
 
-fn bin_op(op: ast::BinOp) -> &'static str {
+pub(crate) fn bin_op(op: ast::BinOp) -> &'static str {
     match op {
         ast::BinOp::Or => "or",
         ast::BinOp::And => "and",

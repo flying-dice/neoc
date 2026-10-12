@@ -15,6 +15,7 @@
 mod binders;
 mod concat;
 mod expr;
+mod flow;
 mod pat;
 mod validate;
 
@@ -501,6 +502,11 @@ pub(crate) struct Emitter {
     concat_seq: usize,
     /// Counter feeding unique temporaries for the `?` operator (§4.10).
     try_seq: usize,
+    /// Value-position wrappers (IIFEs) enclosing the code being emitted within
+    /// the current function, innermost last — see [`flow`].
+    iifes: Vec<flow::IifeFrame>,
+    /// Counter feeding unique names for a wrapper's exit code and value.
+    flow_seq: usize,
     /// Counter feeding unique temporaries for compound-assignment places.
     place_seq: usize,
     /// Target-module imports from `extern` blocks (`lang/EXTERN.md`). Each

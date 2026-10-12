@@ -1,0 +1,87 @@
+// DYNAMIC.md §4.12: a wrapper that can leave early still evaluates in source
+// order. Operands to its left run before it; the right side of `&&` and `||`
+// runs only when the left does not decide the result.
+extern {
+    fn println(s: string);
+}
+
+struct Pair {
+    a: number,
+    b: number,
+}
+
+fn mark(s: string) -> number {
+    println(s);
+    1
+}
+
+fn add(a: number, b: number) -> number {
+    a + b
+}
+
+fn call_args(stop: bool) -> string {
+    let n = add(mark("left"), {
+        if stop {
+            return "stopped";
+        }
+        mark("right")
+    });
+    if n == 2 {
+        "sum"
+    } else {
+        "?"
+    }
+}
+
+fn fields(stop: bool) -> string {
+    let p = Pair { a: mark("a"), b: {
+        if stop {
+            return "stopped";
+        }
+        mark("b")
+    } };
+    if p.a + p.b == 2 {
+        "pair"
+    } else {
+        "?"
+    }
+}
+
+fn lazy_and(a: bool) -> string {
+    let ok = a && {
+        if a {
+            return "rhs ran";
+        }
+        true
+    };
+    if ok {
+        "true"
+    } else {
+        "false"
+    }
+}
+
+fn lazy_or(a: bool) -> string {
+    let ok = a || {
+        if !a {
+            return "rhs ran";
+        }
+        true
+    };
+    if ok {
+        "true"
+    } else {
+        "false"
+    }
+}
+
+fn main() {
+    println(call_args(false));
+    println(call_args(true));
+    println(fields(false));
+    println(fields(true));
+    println(lazy_and(false));
+    println(lazy_and(true));
+    println(lazy_or(true));
+    println(lazy_or(false));
+}
