@@ -237,7 +237,7 @@ value cannot serve both.
 checker rejects both. Read the field with `.title`, which marshals; `title: _`
 and `..` read nothing and are allowed.
 
-Only a declared `Option<T>` marshals. An `Option` passed for an `Unknown` or
+Only a declared `Option<T>` marshals, and only where the checker knows the host type: a value typed `Unknown` — including a closure parameter without an annotation — is read raw. An `Option` passed for an `Unknown` or
 generic parameter crosses as the tagged neoc value, since the signature names no
 `Option` to unwrap.
 

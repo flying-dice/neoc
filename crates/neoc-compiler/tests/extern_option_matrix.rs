@@ -248,3 +248,19 @@ fn host_fn_values_pass_raw_into_host_slots_and_are_rejected_elsewhere() {
         }
     }
 }
+
+/// An `Unknown`-typed value is read raw (`EXTERN.md` §Option marshalling): the
+/// checker cannot tell a host `Option` from any other field there.
+#[test]
+fn unknown_typed_receiver_reads_raw() {
+    let out = build("", "let u: Unknown = mk(); let x = u.title;");
+    assert!(out.ok(), "{:#?}", out.diagnostics);
+    assert!(!out.output.contains(FROM), "{}", out.output);
+}
+
+#[test]
+fn unannotated_closure_parameter_reads_raw() {
+    let out = build("", "let f = |u| u.title; println(f(mk()));");
+    assert!(out.ok(), "{:#?}", out.diagnostics);
+    assert!(!out.output.contains(FROM), "{}", out.output);
+}
