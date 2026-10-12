@@ -90,6 +90,20 @@ fn range_bounds(stop: bool) -> String {
     s
 }
 
+fn update(stop: bool) -> String {
+    let p = Pt { x: 1, y: 2 };
+    let q = Pt {
+        y: mark("y"),
+        ..({
+            if stop {
+                return "stopped".to_string();
+            }
+            p
+        })
+    };
+    (if q.x == 1 { "kept" } else { "?" }).to_string()
+}
+
 fn main() {
     println!("{}", call_args(false));
     println!("{}", call_args(true));
@@ -103,4 +117,6 @@ fn main() {
     println!("{}", shorthand(true));
     println!("{}", range_bounds(false));
     println!("{}", range_bounds(true));
+    println!("{}", update(false));
+    println!("{}", update(true));
 }

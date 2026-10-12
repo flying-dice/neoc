@@ -87,10 +87,37 @@ local function inner_loop(n)
   end
   return s
 end
+local function for_head(k)
+  local s = ""
+  do
+    local __sb_4 = { (s .. "") }
+    for x = 0, (4) - 1 do
+      local __brk_2 = false
+      repeat
+        local __exit_4, __val_4 = (function()
+          if (x == k) then
+            return 3
+          end
+          return false, { 10, 20 }
+        end)()
+        if __exit_4 then
+          break
+        end
+        for _, y in ipairs(__val_4) do
+          __sb_4[#__sb_4 + 1] = "y"
+        end
+      until true
+      if __brk_2 then break end
+    end
+    s = table.concat(__sb_4)
+  end
+  return s
+end
 local function main()
   println(skip(9))
   println(skip(3))
   println(deep(10))
   println(deep(2))
   println(inner_loop(3))
+  println(for_head(1))
 end

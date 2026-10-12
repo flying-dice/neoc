@@ -164,6 +164,32 @@ local function range_bounds(stop)
   end
   return s
 end
+local function update(stop)
+  local p = Pt.new({ x = 1, y = 2 })
+  local __op_7 = mark("y")
+  local __exit_7, __val_7 = (function()
+    if stop then
+      return 1, "stopped"
+    end
+    return false, p
+  end)()
+  if __exit_7 then
+    return __val_7
+  end
+  local q = Pt.new((function()
+    local __b = {}
+    for k, v in pairs(__val_7) do __b[k] = v end
+    __b.y = __op_7
+    return __b
+  end)())
+  return (function()
+    if (q.x == 1) then
+      return "kept"
+    else
+      return "?"
+    end
+  end)()
+end
 local function main()
   println(call_args(false))
   println(call_args(true))
@@ -177,4 +203,6 @@ local function main()
   println(shorthand(true))
   println(range_bounds(false))
   println(range_bounds(true))
+  println(update(false))
+  println(update(true))
 end

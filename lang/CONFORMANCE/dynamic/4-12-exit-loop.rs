@@ -60,10 +60,26 @@ fn inner_loop(n: i64) -> String {
     s
 }
 
+fn for_head(k: i64) -> String {
+    let mut s = String::new();
+    for x in 0..4 {
+        for y in ({
+            if x == k {
+                continue;
+            }
+            vec![10, 20]
+        }) {
+            s += "y";
+        }
+    }
+    s
+}
+
 fn main() {
     println!("{}", skip(9));
     println!("{}", skip(3));
     println!("{}", deep(10));
     println!("{}", deep(2));
     println!("{}", inner_loop(3));
+    println!("{}", for_head(1));
 }

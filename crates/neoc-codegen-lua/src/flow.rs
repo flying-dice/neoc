@@ -131,6 +131,13 @@ fn exits_of_arms(arms: &[ast::MatchArm]) -> Exits {
     scan.exits
 }
 
+/// Whether `e` has a `break` or `continue` that no loop inside `e` binds.
+pub(crate) fn leaves_loop(e: &ast::Expr) -> bool {
+    let mut scan = ExitScan::default();
+    walk_expr(e, TOP, &mut scan);
+    scan.exits.brk || scan.exits.cont
+}
+
 /// Whether `e` ends the current path instead of producing a value.
 pub(crate) fn diverges(e: &ast::Expr) -> bool {
     matches!(

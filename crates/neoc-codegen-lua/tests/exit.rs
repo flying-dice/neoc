@@ -216,3 +216,31 @@ fn f() -> Result<number, string> {
     let loop_head = out.find("while true do").expect(&out);
     assert!(loop_head < guard, "{out}");
 }
+
+#[test]
+fn break_in_a_while_condition_is_rejected() {
+    let src = format!(
+        "{EXTERN}fn f(k: number) {{ let i = 0; while ({{ i += 1; if i == k {{ break; }} i < 10 }}) {{ }} }}"
+    );
+    let parsed = neoc_parser::parse(&src);
+    assert!(parsed.ok(), "{:#?}", parsed.diagnostics);
+    let result = emit(&neoc_types::elaborate(&parsed.module));
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.message == "`break` and `continue` are not allowed in a `while` condition"),
+        "{:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn continue_in_a_for_head_targets_the_enclosing_loop() {
+    let out = lua(r#"fn f(k: number) {
+    for x in 0..4 {
+        for y in ({ if x == k { continue; } [1, 2] }) { println("y"); }
+    }
+}"#);
+    assert!(out.contains("repeat"), "{out}");
+}

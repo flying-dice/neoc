@@ -9,6 +9,7 @@
 //! rewrites the operator to [`ast::BinOp::Concat`]).
 
 use crate::Emitter;
+use crate::flow::leaves_loop;
 use neoc_ast as ast;
 
 /// What a `::`-joined path resolves to at a use site.
@@ -162,6 +163,9 @@ impl Emitter {
         match &e.kind {
             ast::ExprKind::If { .. } => self.emit_if_stmt(e),
             ast::ExprKind::While { cond, body } => self.emit_accumulating(e, |em| {
+                if leaves_loop(cond) {
+                    em.error("`break` and `continue` are not allowed in a `while` condition");
+                }
                 let mut c = String::new();
                 let hoisted = em.render(|em| c = em.emit_expr(cond));
                 if hoisted.is_empty() {
@@ -745,8 +749,8 @@ impl Emitter {
         fields: &[ast::FieldInit],
         base: &ast::Expr,
     ) -> String {
-        let mut values = self.emit_field_values(fields, Some(base)).into_iter();
-        let base_lua = values.next().unwrap_or_default();
+        let mut values = self.emit_field_values(fields, Some(base));
+        let base_lua = values.pop().unwrap_or_default();
         let mut body = vec![
             "local __b = {}".to_string(),
             format!("for k, v in pairs({base_lua}) do __b[k] = v end"),
@@ -772,8 +776,8 @@ impl Emitter {
     }
 
     /// The Lua value of each field initialiser, in order. `base` (the `..base`
-    /// of a functional update) evaluates first; its value is returned ahead of
-    /// the fields'.
+    /// of a functional update) evaluates last, as in Rust; its value is
+    /// returned after the fields'.
     fn emit_field_values(
         &mut self,
         fields: &[ast::FieldInit],
@@ -791,17 +795,12 @@ impl Emitter {
             })
             .collect();
         let mut named = shorthand.iter();
-        let mut ops: Vec<&ast::Expr> = base.into_iter().collect();
-        ops.extend(
-            fields
-                .iter()
-                .filter_map(|f| f.value.as_ref().or_else(|| named.next())),
-        );
-        let mut lua = self.emit_operands(&ops).into_iter();
-        let base = base.map(|_| lua.next().unwrap_or_default());
-        let mut values: Vec<String> = base.into_iter().collect();
-        values.extend(fields.iter().map(|_| lua.next().unwrap_or_default()));
-        values
+        let mut ops: Vec<&ast::Expr> = fields
+            .iter()
+            .filter_map(|f| f.value.as_ref().or_else(|| named.next()))
+            .collect();
+        ops.extend(base);
+        self.emit_operands(&ops)
     }
 
     /// Lower a tuple-variant construction `E::V(a, …)` to its tagged table.
@@ -1008,8 +1007,10 @@ fn expr_uses_continue(expr: &ast::Expr) -> bool {
         ast::ExprKind::Continue => true,
         // Leaves, plus nested loops and closures, which own any `continue`
         // inside them rather than the loop being scanned.
+        // A `for` head runs outside the loop it starts: its `continue` belongs
+        // to the loop being scanned.
+        ast::ExprKind::For { iter, .. } => expr_uses_continue(iter),
         ast::ExprKind::While { .. }
-        | ast::ExprKind::For { .. }
         | ast::ExprKind::Loop { .. }
         | ast::ExprKind::Closure { .. }
         | ast::ExprKind::Int(_)

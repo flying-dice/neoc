@@ -382,7 +382,7 @@ Only the exits the body can take get a branch. Inside the body, the value of the
 
 A form that ends a path rather than producing a value (`return`, `break`, `continue`) as the last expression of a wrapper or arm lowers as a statement; it supplies no value.
 
-**Evaluation order.** Hoisting runs a wrapper's call before the statement that uses its value. To keep neoc's left-to-right order, an operand, argument, receiver, list item, or field initialiser that hoists statements first binds each non-literal operand to its left to a fresh local. The right operand of `&&` and `||` runs only when the left does not decide the result: a right operand that hoists binds the result to a local and assigns it inside the `if`. A `while` condition that hoists runs its statements on every pass:
+**Evaluation order.** Hoisting runs a wrapper's call before the statement that uses its value. To keep neoc's left-to-right order, an operand, argument, receiver, list item, or field initialiser that hoists statements first binds each non-literal operand to its left to a fresh local. The right operand of `&&` and `||` runs only when the left does not decide the result: a right operand that hoists binds the result to a local and assigns it inside the `if`. In a functional update `S { f: e, ..base }` the field initialisers run before `base`. A `while` condition that hoists runs its statements on every pass:
 
 ```
 while true do
@@ -391,6 +391,8 @@ while true do
   ⟦ body ⟧ₛ
 end
 ```
+
+A `break` or `continue` in a `while` condition is rejected. In a `for` head (the iterable or range bound) it targets the enclosing loop, as the head runs outside the loop it starts.
 
 ## 5. Patterns
 
