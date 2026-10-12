@@ -782,7 +782,10 @@ impl<'a> Checker<'a> {
     }
 
     fn check_fn(&mut self, f: &ast::FnDecl, self_ty: Option<&str>) {
+        // A `fn` item declared inside a closure has its own `return`.
+        let depth = std::mem::take(&mut self.closure_depth);
         self.check_fn_body(&f.sig, &f.body, self_ty);
+        self.closure_depth = depth;
     }
 
     fn check_fn_body(&mut self, sig: &ast::FnSig, body: &ast::Block, self_ty: Option<&str>) {
@@ -1448,7 +1451,7 @@ impl<'a> Checker<'a> {
         if let Ty::Fn(_, ret) = &callee_ty {
             self.seed_from_expected(span, ret, &mut seed);
         }
-        let arg_tys = self.infer_args(args, &expected, seed);
+        let arg_tys = self.infer_args(args, &expected, &seed);
         match callee_ty {
             Ty::Fn(params, ret) => {
                 if params.len() != arg_tys.len() {
@@ -1643,7 +1646,7 @@ impl<'a> Checker<'a> {
         if let Some((_, ret)) = &sig {
             self.seed_from_expected(span, ret, &mut seed);
         }
-        let arg_tys = self.infer_args(args, &expected, seed);
+        let arg_tys = self.infer_args(args, &expected, &seed);
         // A method on a bounded type parameter resolves through its bounds:
         // `fn f<T: Display>(x: T) { x.show() }` finds `show` on `Display`.
         if let Ty::Param(p) = &recv {
@@ -2066,7 +2069,7 @@ impl<'a> Checker<'a> {
         &mut self,
         args: &[ast::Expr],
         expected: &[Ty],
-        seed: std::collections::HashMap<String, Ty>,
+        seed: &std::collections::HashMap<String, Ty>,
     ) -> Vec<Ty> {
         let is_closure = Self::yields_closure;
         let mut tys: Vec<Option<Ty>> = args
@@ -2078,7 +2081,7 @@ impl<'a> Checker<'a> {
             .zip(&tys)
             .filter_map(|(p, t)| t.clone().map(|t| (p.clone(), t)))
             .unzip();
-        let mut subst = seed;
+        let mut subst = std::collections::HashMap::new();
         for (p, a) in ps.iter().zip(&as_) {
             self.unify_param(p, a, &mut subst);
         }
@@ -2088,20 +2091,26 @@ impl<'a> Checker<'a> {
         // rest. When none is ready, the first goes with what it has.
         let mut pending: Vec<usize> = (0..args.len()).filter(|&i| tys[i].is_none()).collect();
         while !pending.is_empty() {
+            // What the arguments bind comes first; the expected result type
+            // only fills a type parameter they leave open.
+            let mut eff = subst.clone();
+            for (k, v) in seed {
+                eff.entry(k.clone()).or_insert_with(|| v.clone());
+            }
             let ready = pending
                 .iter()
                 .position(|&i| {
                     expected
                         .get(i)
-                        .is_none_or(|p| !Self::leaves_param_open(p, &subst))
+                        .is_none_or(|p| !Self::leaves_param_open(p, &eff))
                 })
                 .unwrap_or(0);
             let i = pending.remove(ready);
             if let Some(p) = expected.get(i) {
                 // A parameter typed by a bare type parameter takes what the
                 // call has bound it to (`Some(f)` under `Option<fn(S) -> _>`).
-                let p = Self::subst_named(p, &subst);
-                self.hint_closures(&args[i], &p, &subst);
+                let p = Self::subst_named(p, &eff);
+                self.hint_closures(&args[i], &p, &eff);
             }
             let ty = self.infer(&args[i]);
             if let Some(p) = expected.get(i) {
@@ -2357,7 +2366,7 @@ impl<'a> Checker<'a> {
         seed: &mut std::collections::HashMap<String, Ty>,
     ) {
         if let Some(candidates) = self.expected_tys.remove(&(span.start, span.end)) {
-            for c in &candidates {
+            for c in candidates.iter().filter(|c| !c.is_dynamic()) {
                 self.unify_param(ret, c, seed);
             }
         }

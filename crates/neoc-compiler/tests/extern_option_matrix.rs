@@ -644,3 +644,33 @@ fn nested_method_calls_with_closures_check_in_linear_time() {
     assert!(out.ok(), "{:#?}", out.diagnostics);
     assert!(start.elapsed().as_secs() < 5, "{:?}", start.elapsed());
 }
+
+/// The arguments bind a callee's type parameters; the expected result type
+/// only fills what they leave open.
+#[test]
+fn arguments_bind_type_parameters_before_the_expected_type() {
+    let out = build(
+        "fn first<T>(x: T, f: fn(T) -> Option<string>) -> T { x }",
+        "println(first(mk(), |s| s.title));",
+    );
+    assert!(out.ok(), "{:#?}", out.diagnostics);
+    assert!(wraps(&out.output, FROM) >= 1, "{}", out.output);
+
+    for src in [
+        "trait Shape { fn area(self) -> number; }\nstruct Circle { r: number }\nimpl Shape for Circle { fn area(self) -> number { self.r } }\nfn app<T>(x: T, f: fn(T) -> number) -> T { f(x); x }\nfn mk() -> Shape { app(Circle { r: 1 }, |c| c.r) }",
+        "trait Named { fn name(self) -> string; }\nstruct P {}\nimpl Named for P { fn name(self) -> string { \"p\" } }\nfn via<T: Named>(f: fn(T) -> string, x: T) -> T { x }\nfn run() { let n: Named = via(|p| p.name(), P {}); }",
+    ] {
+        let out = transpile(&format!("{src}\npub fn main() {{}}\n"), Target::Lua);
+        assert!(out.ok(), "{src}\n{:#?}", out.diagnostics);
+    }
+}
+
+#[test]
+fn a_fn_item_inside_a_closure_keeps_its_own_return_hint() {
+    let out = build(
+        "fn run(f: fn(number) -> number) -> number { f(1) }\nfn mkf<T>(f: fn(T) -> Option<string>) -> fn(T) -> Option<string> { f }",
+        "let n = run(|x| { fn inner() -> fn(Settings) -> Option<string> { if true { return mkf(|s| s.title); } mkf(|s: Settings| s.title) } x });",
+    );
+    assert!(out.ok(), "{:#?}", out.diagnostics);
+    assert!(wraps(&out.output, FROM) >= 2, "{}", out.output);
+}
