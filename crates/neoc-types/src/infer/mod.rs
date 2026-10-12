@@ -992,6 +992,11 @@ impl<'a> Checker<'a> {
         self.table.alias_head(name)
     }
 
+    /// A struct or variant constructor name, read through an alias.
+    pub(crate) fn ctor_name(&self, name: &str) -> String {
+        self.alias_head_of(name).unwrap_or_else(|| name.to_string())
+    }
+
     /// The struct a literal headed by `path` constructs, with its declaration.
     /// A bare `Self` is the enclosing impl's struct target (`STATIC.md` §3.3,
     /// T-STRUCT-LIT-SELF); `None` after reporting when there is no such struct.

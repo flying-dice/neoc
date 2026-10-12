@@ -15,3 +15,19 @@ fn main() {
     let b: P = A::mk();
     let c = A { x: 1, ..b };
 }
+
+struct Id(number);
+
+type I = Id;
+
+fn g(p: P) -> number {
+    match p {
+        A { x } => x,
+    }
+}
+
+fn h(i: Id) -> number {
+    match i {
+        I(x) => x,
+    }
+}

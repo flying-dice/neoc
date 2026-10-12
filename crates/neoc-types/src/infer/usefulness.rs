@@ -66,6 +66,13 @@ struct Engine<'a> {
 }
 
 impl Engine<'_> {
+    /// A constructor name read through a `type` alias (`STATIC.md` §3.8).
+    fn ctor_name(&self, name: &str) -> String {
+        self.table
+            .alias_head(name)
+            .unwrap_or_else(|| name.to_string())
+    }
+
     /// Normalizes an AST pattern against its column type, expanding or-patterns
     /// into one normalized pattern per alternative.
     fn normalize(&self, pat: &ast::Pattern, ty: &Ty) -> Vec<Pat> {
@@ -89,9 +96,10 @@ impl Engine<'_> {
                 |n| vec![Pat::Ctor(Ctor::Named(n.clone()), vec![])],
             ),
             ast::Pattern::Tuple { path, elems } => {
-                let Some(ctor) = path.last() else {
+                let Some(ctor) = path.last().map(|c| self.ctor_name(c)) else {
                     return vec![Pat::Wild];
                 };
+                let ctor = &ctor;
                 let field_tys = self.field_tys(ctor, ty);
                 let cols: Vec<Vec<Pat>> = elems
                     .iter()
@@ -104,9 +112,10 @@ impl Engine<'_> {
                     .collect()
             }
             ast::Pattern::Struct { path, fields, .. } => {
-                let Some(ctor) = path.last() else {
+                let Some(ctor) = path.last().map(|c| self.ctor_name(c)) else {
                     return vec![Pat::Wild];
                 };
+                let ctor = &ctor;
                 let decl = self.named_field_tys(ctor, ty);
                 // One column per declared field, in declaration order: the
                 // matching sub-pattern, or a wildcard for a shorthand binding,

@@ -16,6 +16,22 @@ impl Checker<'_> {
         let Some(target) = crate::collect::impl_target_name(self.table, b) else {
             return;
         };
+        // An alias that does not name a type declared here (imported, or a
+        // list/function type) has no table to attach methods to.
+        if let ast::Type::Path(p) = &b.ty
+            && let Some(written) = p.segments.last().map(|s| &s.name)
+            && !b.generics.iter().any(|g| g.name == *written)
+            && matches!(self.table.types.get(written), Some(TypeDef::Alias { .. }))
+            && self.table.alias_head(written).is_none()
+        {
+            self.error_at(
+                span,
+                format!(
+                    "`impl {written}` targets a type alias that does not name a struct or enum declared in this module; write the type itself"
+                ),
+            );
+            return;
+        }
         self.check_impl_params_constrained(b, span);
         // Trait-impl completeness (`STATIC.md` §8).
         if let Some(trait_path) = &b.trait_ {

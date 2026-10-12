@@ -1,0 +1,7 @@
+type L = [number];
+
+impl L {
+    fn k(self) -> number {
+        1
+    }
+}
