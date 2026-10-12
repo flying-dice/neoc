@@ -80,7 +80,10 @@ impl Checker<'_> {
         method: &str,
         receiver: bool,
     ) -> Option<(Vec<Ty>, Ty)> {
-        let trait_name = self.direct_default_sources(name, method).into_iter().next()?;
+        let trait_name = self
+            .direct_default_sources(name, method)
+            .into_iter()
+            .next()?;
         let Some(TypeDef::Trait(t)) = self.table().types.get(&trait_name) else {
             return None;
         };
