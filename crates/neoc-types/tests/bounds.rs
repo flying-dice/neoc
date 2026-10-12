@@ -195,3 +195,52 @@ fn construction_with_a_satisfying_type_is_accepted() {
         diagnostics(&src)
     );
 }
+
+const SOURCE: &str = "trait Source<T> {\n  fn next(self) -> T;\n}\nstruct C {\n  n: string,\n}\nimpl Source<string> for C {\n  fn next(self) -> string {\n    self.n\n  }\n}\n";
+
+#[test]
+fn bound_method_reads_the_bound_trait_arguments() {
+    let src = format!("{SOURCE}fn pull<S: Source<number>>(s: S) -> string {{\n  s.next()\n}}\n");
+    let d = diagnostics(&src);
+    assert!(
+        d.iter()
+            .any(|m| m.contains("function body expects `string`, found `number`")),
+        "`next` through `S: Source<number>` is a `number`: {d:?}"
+    );
+}
+
+#[test]
+fn bound_satisfaction_compares_trait_arguments() {
+    let src = format!(
+        "{SOURCE}fn pull<S: Source<number>>(s: S) -> number {{\n  s.next()\n}}\nfn go() {{\n  pull(C {{ n: \"c\" }});\n}}\n"
+    );
+    let d = diagnostics(&src);
+    assert!(
+        d.iter()
+            .any(|m| m.contains("the type `C` does not satisfy the bound `Source<number>`")),
+        "`C` implements `Source<string>` only: {d:?}"
+    );
+}
+
+#[test]
+fn bound_with_matching_trait_arguments_is_accepted() {
+    let src = format!(
+        "{SOURCE}fn pull<S: Source<string>>(s: S) -> string {{\n  s.next()\n}}\nfn go() {{\n  pull(C {{ n: \"c\" }});\n}}\n"
+    );
+    assert!(
+        diagnostics(&src).is_empty(),
+        "`C` implements `Source<string>`: {:?}",
+        diagnostics(&src)
+    );
+}
+
+#[test]
+fn bound_with_missing_trait_arguments_is_an_arity_error() {
+    let src = format!("{SOURCE}fn pull<S: Source>(s: S) {{}}\n");
+    let d = diagnostics(&src);
+    assert!(
+        d.iter()
+            .any(|m| m.contains("trait `Source` expects 1 type argument(s), found 0")),
+        "a bare generic trait in a bound is an arity error: {d:?}"
+    );
+}
