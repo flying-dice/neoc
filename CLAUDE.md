@@ -141,7 +141,7 @@ crates/neoc/                 # the thin `neoc` binary (the only bin)
 
 crates/neoc-vm/              # the LuaJIT runtime library
   src/
-    lib.rs                   # library root (pub mod dto, errors, lua)
+    lib.rs                   # library root (pub mod errors, lua)
     errors.rs                # runtime error types (NeocError)
     lua/
       sandbox.rs             # engine construction

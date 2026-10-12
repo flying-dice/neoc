@@ -11,7 +11,4 @@ pub mod lib;
 pub mod modules;
 pub mod sandbox;
 pub mod std;
-pub mod tracing_layer;
 pub mod vnd;
-
-pub use tracing_layer::{CURRENT_RUN, LuaLayer, RunBuffers, scope};
