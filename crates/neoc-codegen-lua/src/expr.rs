@@ -751,10 +751,24 @@ impl Emitter {
     ) -> String {
         let mut values = self.emit_field_values(fields, Some(base));
         let base_lua = values.pop().unwrap_or_default();
-        let mut body = vec![
-            "local __b = {}".to_string(),
-            format!("for k, v in pairs({base_lua}) do __b[k] = v end"),
-        ];
+        let mut body = Vec::new();
+        // The base runs after the field initialisers (as in Rust). A base that
+        // is a bare name has no effect to order, so the values stay inline.
+        let values: Vec<String> = if matches!(base.kind, ast::ExprKind::Path(_)) {
+            values
+        } else {
+            fields
+                .iter()
+                .zip(values)
+                .enumerate()
+                .map(|(i, (_, value))| {
+                    body.push(format!("local __f{i} = {value}"));
+                    format!("__f{i}")
+                })
+                .collect()
+        };
+        body.push("local __b = {}".to_string());
+        body.push(format!("for k, v in pairs({base_lua}) do __b[k] = v end"));
         for (f, value) in fields.iter().zip(values) {
             body.push(format!("__b.{} = {value}", f.name));
         }

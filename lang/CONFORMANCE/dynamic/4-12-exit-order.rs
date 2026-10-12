@@ -104,6 +104,16 @@ fn update(stop: bool) -> String {
     (if q.x == 1 { "kept" } else { "?" }).to_string()
 }
 
+fn make() -> Pt {
+    println!("base");
+    Pt { x: 0, y: 0 }
+}
+
+fn update_order() -> String {
+    let q = Pt { x: mark("x"), ..make() };
+    (if q.x == 1 { "set" } else { "?" }).to_string()
+}
+
 fn main() {
     println!("{}", call_args(false));
     println!("{}", call_args(true));
@@ -119,4 +129,5 @@ fn main() {
     println!("{}", range_bounds(true));
     println!("{}", update(false));
     println!("{}", update(true));
+    println!("{}", update_order());
 }

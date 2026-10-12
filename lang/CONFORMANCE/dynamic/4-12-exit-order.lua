@@ -177,14 +177,35 @@ local function update(stop)
     return __val_7
   end
   local q = Pt.new((function()
+    local __f0 = __op_7
     local __b = {}
     for k, v in pairs(__val_7) do __b[k] = v end
-    __b.y = __op_7
+    __b.y = __f0
     return __b
   end)())
   return (function()
     if (q.x == 1) then
       return "kept"
+    else
+      return "?"
+    end
+  end)()
+end
+local function make()
+  println("base")
+  return Pt.new({ x = 0, y = 0 })
+end
+local function update_order()
+  local q = Pt.new((function()
+    local __f0 = mark("x")
+    local __b = {}
+    for k, v in pairs(make()) do __b[k] = v end
+    __b.x = __f0
+    return __b
+  end)())
+  return (function()
+    if (q.x == 1) then
+      return "set"
     else
       return "?"
     end
@@ -205,4 +226,5 @@ local function main()
   println(range_bounds(true))
   println(update(false))
   println(update(true))
+  println(update_order())
 end
