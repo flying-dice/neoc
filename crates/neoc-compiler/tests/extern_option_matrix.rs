@@ -674,3 +674,33 @@ fn a_fn_item_inside_a_closure_keeps_its_own_return_hint() {
     assert!(out.ok(), "{:#?}", out.diagnostics);
     assert!(wraps(&out.output, FROM) >= 2, "{}", out.output);
 }
+
+/// Argument order never changes what a closure parameter is typed as.
+#[test]
+fn a_later_annotated_closure_types_an_earlier_one() {
+    for call in [
+        "both(mk(), |s| s.title, |n: Settings| n)",
+        "both(mk(), |s| s.title, id(|n: Settings| n))",
+    ] {
+        let out = build(
+            "fn both<T>(seed: Unknown, f: fn(T) -> Option<string>, g: fn(T) -> T) -> Option<string> { f(g(seed)) }",
+            &format!("println({call});"),
+        );
+        assert!(out.ok(), "{call}\n{:#?}", out.diagnostics);
+        assert!(wraps(&out.output, FROM) >= 1, "{call}\n{}", out.output);
+    }
+}
+
+/// A chain of `?` under a type hint stays linear to check.
+#[test]
+fn nested_try_hints_stay_linear() {
+    let n = 400;
+    let ty = (0..n).fold("number".to_string(), |t, _| format!("Option<{t}>"));
+    let src = format!(
+        "fn deep(x: {ty}) -> Option<number> {{ let y: number = x{}; Some(y) }}\npub fn main() {{}}\n",
+        "?".repeat(n)
+    );
+    let start = std::time::Instant::now();
+    let _ = transpile(&src, Target::Lua);
+    assert!(start.elapsed().as_secs() < 5, "{:?}", start.elapsed());
+}

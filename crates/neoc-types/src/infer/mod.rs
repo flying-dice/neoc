@@ -2104,6 +2104,13 @@ impl<'a> Checker<'a> {
                         .get(i)
                         .is_none_or(|p| !Self::leaves_param_open(p, &eff))
                 })
+                // None ready: an annotated closure fixes its own parameter
+                // types, so it goes first and binds the rest.
+                .or_else(|| {
+                    pending
+                        .iter()
+                        .position(|&i| Self::annotates_params(&args[i]))
+                })
                 .unwrap_or(0);
             let i = pending.remove(ready);
             if let Some(p) = expected.get(i) {
@@ -2197,16 +2204,27 @@ impl<'a> Checker<'a> {
             (ast::ExprKind::Try(inner), _) => {
                 // `e?` under an expected `T` reads `e` as a `Result<T, _>` or
                 // an `Option<T>`.
-                let result = Ty::Named {
-                    name: "Result".to_string(),
-                    args: vec![ty.clone(), Ty::Unknown],
-                };
-                let option = Ty::Named {
-                    name: "Option".to_string(),
-                    args: vec![ty.clone()],
-                };
-                self.hint_closures(inner, &result, subst);
-                self.hint_closures(inner, &option, subst);
+                // A chain `e??` peels to its base first and hints it once per
+                // wrapper, so the work stays linear in the chain.
+                let (mut depth, mut base) = (1, &**inner);
+                while let ast::ExprKind::Try(next) = &base.kind {
+                    depth += 1;
+                    base = next;
+                }
+                for name in ["Result", "Option"] {
+                    let mut wrapped = ty.clone();
+                    for _ in 0..depth {
+                        wrapped = Ty::Named {
+                            name: name.to_string(),
+                            args: if name == "Result" {
+                                vec![wrapped, Ty::Unknown]
+                            } else {
+                                vec![wrapped]
+                            },
+                        };
+                    }
+                    self.hint_closures(base, &wrapped, subst);
+                }
             }
             _ => {}
         }
@@ -2257,6 +2275,19 @@ impl<'a> Checker<'a> {
             Ty::Fn(ps, _) => ps
                 .iter()
                 .any(|p| Self::mentions_param(&Self::subst_named(p, subst))),
+            _ => false,
+        }
+    }
+
+    /// Whether a closure literal in `expr` annotates a parameter type.
+    fn annotates_params(expr: &ast::Expr) -> bool {
+        match &expr.kind {
+            ast::ExprKind::Closure { params, .. } => params.iter().any(|p| p.ty.is_some()),
+            ast::ExprKind::Call { args, .. } | ast::ExprKind::MethodCall { args, .. } => {
+                args.iter().any(Self::annotates_params)
+            }
+            ast::ExprKind::Block(b) => b.value.as_ref().is_some_and(|v| Self::annotates_params(v)),
+            ast::ExprKind::Try(inner) => Self::annotates_params(inner),
             _ => false,
         }
     }
