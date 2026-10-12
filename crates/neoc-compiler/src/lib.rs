@@ -793,6 +793,9 @@ fn type_universe(loaded: &HashMap<PathBuf, LoadedModule>) -> types::SymbolTable 
             if let Some(def) = t.types.get(name) {
                 universe.types.insert(name.clone(), def.clone());
             }
+            if t.extern_types.contains(name) {
+                universe.extern_types.insert(name.clone());
+            }
             for ((ty_name, method), info) in &t.methods {
                 if ty_name == name {
                     universe

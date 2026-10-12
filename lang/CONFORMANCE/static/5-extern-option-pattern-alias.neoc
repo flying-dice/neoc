@@ -1,0 +1,16 @@
+// EXTERN.md §Option marshalling: an alias of an extern struct heads the same
+// pattern, so it cannot destructure an `Option` field either.
+extern {
+    struct Settings {
+        title: Option<string>,
+    }
+}
+
+type S = Settings;
+
+fn read(v: S) -> Option<string> {
+    let S { title } = v;
+    title
+}
+
+fn main() {}

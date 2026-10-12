@@ -245,8 +245,15 @@ impl Checker<'_> {
                 self.table.types.get(&path[path.len() - 2]),
                 Some(TypeDef::Enum(_))
             );
-        (!names_variant && matches!(self.table.types.get(ctor), Some(TypeDef::Struct(_))))
-            .then(|| ctor.clone())
+        if names_variant {
+            return None;
+        }
+        // A type alias heads the pattern as the struct it stands for.
+        let name = match self.table.resolve_alias_ty(Ty::named(ctor)) {
+            Ty::Named { name, .. } => name,
+            _ => ctor.clone(),
+        };
+        matches!(self.table.types.get(&name), Some(TypeDef::Struct(_))).then_some(name)
     }
 
     fn struct_pattern_field_tys(&self, path: &[ast::Ident], ty: &Ty) -> Vec<(String, Ty)> {

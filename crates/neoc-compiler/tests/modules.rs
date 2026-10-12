@@ -1113,3 +1113,37 @@ mod project_check {
         );
     }
 }
+
+/// An extern struct reached only through an imported function's signature is
+/// still host-implemented in the consumer: its `Option` field marshals.
+#[test]
+fn cross_file_extern_struct_option_field_marshals_without_importing_the_type() {
+    let dir = tempdir();
+    write(
+        &dir,
+        "host.neoc",
+        "extern {\n    pub struct Settings {\n        title: Option<string>,\n    }\n    pub fn mk() -> Settings;\n}\n",
+    );
+    let entry = write(
+        &dir,
+        "app.neoc",
+        "use host::mk;\n\nextern {\n    fn println(v: Unknown);\n}\n\npub fn main() {\n    let t = mk();\n    println(t.title.is_none());\n    t.title = Some(\"z\");\n}\n",
+    );
+
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
+    assert!(project.ok(), "expected clean: {:#?}", project.diagnostics);
+    let app_lua = project
+        .files
+        .iter()
+        .find(|(p, _)| p.file_stem().is_some_and(|s| s == "app"))
+        .map(|(_, c)| c.as_str())
+        .expect("app.lua emitted");
+    assert!(
+        app_lua.contains("__option_from_host(t.title)"),
+        "read should wrap:\n{app_lua}"
+    );
+    assert!(
+        app_lua.contains("t.title = __option_to_host(Some(\"z\"))"),
+        "write should unwrap:\n{app_lua}"
+    );
+}
