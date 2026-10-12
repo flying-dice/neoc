@@ -1,0 +1,25 @@
+// STATIC.md §3.4: an impl's supertrait requirement is read at its own arguments —
+// `impl Sub<number> for C` needs `Base<number>`, not the `Base<string>` given.
+trait Base<T> {
+    fn next(self) -> T;
+}
+
+trait Sub<T>: Base<T> {
+    fn peek(self) -> T;
+}
+
+struct C {
+    n: number,
+}
+
+impl Base<string> for C {
+    fn next(self) -> string {
+        "c"
+    }
+}
+
+impl Sub<number> for C {
+    fn peek(self) -> number {
+        self.n
+    }
+}

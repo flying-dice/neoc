@@ -10,7 +10,7 @@ use neoc_ast as ast;
 
 use crate::Diagnostic;
 use crate::collect::{generic_names, lower_type};
-use crate::env::{Scopes, StructFields, StructInfo, SymbolTable, TypeDef, VariantFields};
+use crate::env::{Scopes, StructFields, StructInfo, SymbolTable, TraitRef, TypeDef, VariantFields};
 use crate::ty::Ty;
 
 mod impl_check;
@@ -56,6 +56,11 @@ pub struct Checker<'a> {
     /// default.
     record_calls: bool,
     calls: Vec<CallSite>,
+    /// `(type, trait)` pairs implemented more than once, found by
+    /// [`Checker::check_coherence`]. Their impls share one method table entry
+    /// per name, so signature conformance is skipped for them — the conflict
+    /// is the diagnostic.
+    pub(crate) conflicting_impls: std::collections::HashSet<(String, String)>,
 }
 
 /// The inferred type of one expression, with the byte range it occupies. The
@@ -114,6 +119,7 @@ impl<'a> Checker<'a> {
             resolution: crate::resolve::Resolution::default(),
             record_calls: false,
             calls: Vec::new(),
+            conflicting_impls: std::collections::HashSet::new(),
         }
     }
 
@@ -302,53 +308,101 @@ impl<'a> Checker<'a> {
     }
 
     /// [`Self::lower`] for an annotation the checker owns, first reporting at
-    /// `span` any generic `type` alias in it applied to the wrong number of
-    /// type arguments (`STATIC.md` D-ALIAS-ARITY).
+    /// `span` any generic `type` alias or trait in it applied to the wrong
+    /// number of type arguments (`STATIC.md` D-ALIAS-ARITY, §3.4).
     fn lower_at(&mut self, ty: &ast::Type, span: ast::Span) -> Ty {
         let unexpanded = lower_type(ty, &self.type_params);
-        self.report_alias_arity(&unexpanded, span);
+        self.report_arity(&unexpanded, span);
         self.project_assoc(self.table.resolve_alias_ty(unexpanded))
     }
 
-    /// Reports at `span` each generic `type` alias in `ty` applied to the wrong
-    /// number of type arguments, with `params` the type parameters in scope —
-    /// a parameter that shares an alias's name shadows it (`STATIC.md`
-    /// D-ALIAS-ARITY).
-    fn check_alias_arity(&mut self, ty: &ast::Type, params: &[String], span: ast::Span) {
-        self.report_alias_arity(&lower_type(ty, params), span);
+    /// Reports at `span` each generic `type` alias or trait in `ty` applied to
+    /// the wrong number of type arguments, with `params` the type parameters in
+    /// scope — a parameter that shares an alias's name shadows it (`STATIC.md`
+    /// D-ALIAS-ARITY, §3.4).
+    fn check_arity(&mut self, ty: &ast::Type, params: &[String], span: ast::Span) {
+        self.report_arity(&lower_type(ty, params), span);
     }
 
-    fn report_alias_arity(&mut self, unexpanded: &Ty, span: ast::Span) {
+    fn report_arity(&mut self, unexpanded: &Ty, span: ast::Span) {
         for message in self.table.alias_arity_errors(unexpanded) {
             self.error_at(span, message);
         }
+        // Unexpanded, so a bare trait spelled inside an alias's value is
+        // reported once, at the alias, not again at every use of the alias.
+        self.report_trait_type_arity(unexpanded, span);
     }
 
-    /// Checks the alias arity of the signature `sig`, its own generics added to
+    /// Reports at `span` every trait used as a type inside `ty` with the wrong
+    /// number of arguments (`Source` where `trait Source<T>` needs one),
+    /// recursing through lists, function types, and type arguments.
+    fn report_trait_type_arity(&mut self, ty: &Ty, span: ast::Span) {
+        match ty {
+            Ty::List(inner) => self.report_trait_type_arity(inner, span),
+            Ty::Fn(params, ret) => {
+                for p in params {
+                    self.report_trait_type_arity(p, span);
+                }
+                self.report_trait_type_arity(ret, span);
+            }
+            Ty::Named { name, args } => {
+                for a in args {
+                    self.report_trait_type_arity(a, span);
+                }
+                if let Some(TypeDef::Trait(t)) = self.table.types.get(name) {
+                    let expected = t.generics.len();
+                    let applied = TraitRef {
+                        name: name.clone(),
+                        args: args.clone(),
+                    };
+                    self.check_trait_arity(&applied, expected, span);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Whether `applied` supplies exactly the `expected` number of type
+    /// arguments its trait declares; reports the mismatch at `span` when not.
+    fn check_trait_arity(&mut self, applied: &TraitRef, expected: usize, span: ast::Span) -> bool {
+        let found = applied.args.len();
+        if found != expected {
+            self.error_at(
+                span,
+                format!(
+                    "trait `{}` expects {expected} type argument(s), found {found}",
+                    applied.name
+                ),
+            );
+        }
+        found == expected
+    }
+
+    /// Checks the alias and trait arity of the signature `sig`, its own generics added to
     /// the enclosing `params`.
-    fn check_sig_alias_arity(&mut self, sig: &ast::FnSig, params: &[String]) {
+    fn check_sig_arity(&mut self, sig: &ast::FnSig, params: &[String]) {
         let mut params = params.to_vec();
         params.extend(generic_names(&sig.generics));
         for p in &sig.params {
             if let ast::Param::Named { ty, span, .. } = p {
-                self.check_alias_arity(ty, &params, *span);
+                self.check_arity(ty, &params, *span);
             }
         }
         if let Some(r) = &sig.ret {
-            self.check_alias_arity(r, &params, sig.name_span);
+            self.check_arity(r, &params, sig.name_span);
         }
     }
 
-    /// Checks the alias arity of a struct's fields; a tuple body reports at
+    /// Checks the alias and trait arity of a struct's fields; a tuple body reports at
     /// `span`.
-    fn check_struct_alias_arity(&mut self, s: &ast::StructDecl, span: ast::Span) {
+    fn check_struct_arity(&mut self, s: &ast::StructDecl, span: ast::Span) {
         let params = generic_names(&s.generics);
         match &s.body {
             ast::StructBody::Unit => {}
-            ast::StructBody::Tuple(ty) => self.check_alias_arity(ty, &params, span),
+            ast::StructBody::Tuple(ty) => self.check_arity(ty, &params, span),
             ast::StructBody::Named(fields) => {
                 for f in fields {
-                    self.check_alias_arity(&f.ty, &params, f.name_span);
+                    self.check_arity(&f.ty, &params, f.name_span);
                 }
             }
         }
@@ -356,12 +410,13 @@ impl<'a> Checker<'a> {
 
     /// Checks the type annotations an item declares outside any function body —
     /// struct and enum fields, bodyless trait and `extern` signatures, impl
-    /// headers and associated-type bindings, an alias's own value — and rejects a recursive
-    /// `type` alias (`STATIC.md` D-ALIAS-ARITY, D-ALIAS-RECURSIVE). Signatures
+    /// headers and associated-type bindings, an alias's own value — for alias and
+    /// trait arity, and rejects a recursive `type` alias (`STATIC.md`
+    /// D-ALIAS-ARITY, D-ALIAS-RECURSIVE, §3.4). Signatures
     /// with a body are checked with that body.
     fn check_declared_types(&mut self, item: &ast::Item) {
         match &item.kind {
-            ast::ItemKind::Struct(s) => self.check_struct_alias_arity(s, item.span),
+            ast::ItemKind::Struct(s) => self.check_struct_arity(s, item.span),
             ast::ItemKind::Enum(e) => {
                 let params = generic_names(&e.generics);
                 for v in &e.variants {
@@ -369,12 +424,12 @@ impl<'a> Checker<'a> {
                         ast::VariantBody::Unit => {}
                         ast::VariantBody::Tuple(tys) => {
                             for t in tys {
-                                self.check_alias_arity(t, &params, v.name_span);
+                                self.check_arity(t, &params, v.name_span);
                             }
                         }
                         ast::VariantBody::Named(fields) => {
                             for f in fields {
-                                self.check_alias_arity(&f.ty, &params, f.name_span);
+                                self.check_arity(&f.ty, &params, f.name_span);
                             }
                         }
                     }
@@ -383,19 +438,19 @@ impl<'a> Checker<'a> {
             ast::ItemKind::Trait(t) => {
                 let params = generic_names(&t.generics);
                 for ti in t.items.iter().filter(|ti| ti.default.is_none()) {
-                    self.check_sig_alias_arity(&ti.sig, &params);
+                    self.check_sig_arity(&ti.sig, &params);
                 }
             }
             ast::ItemKind::Impl(b) => {
                 let params = generic_names(&b.generics);
-                self.check_impl_header_alias_arity(b, &params, item.span);
+                self.check_impl_header_arity(b, &params, item.span);
                 for (_, ty) in &b.assoc_bindings {
-                    self.check_alias_arity(ty, &params, item.span);
+                    self.check_arity(ty, &params, item.span);
                 }
             }
-            ast::ItemKind::Extern(block) => self.check_extern_alias_arity(&block.items),
+            ast::ItemKind::Extern(block) => self.check_extern_arity(&block.items),
             ast::ItemKind::TypeAlias(a) => {
-                self.check_alias_arity(&a.value, &generic_names(&a.generics), item.span);
+                self.check_arity(&a.value, &generic_names(&a.generics), item.span);
                 if self.table.alias_is_recursive(&a.name) {
                     self.error_at(item.span, format!("type alias `{}` is recursive", a.name));
                 }
@@ -404,35 +459,30 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// Checks the alias arity of an impl header — its target type and its
+    /// Checks the alias and trait arity of an impl header — its target type and its
     /// trait's type arguments — reporting at `span`.
-    fn check_impl_header_alias_arity(
-        &mut self,
-        b: &ast::ImplBlock,
-        params: &[String],
-        span: ast::Span,
-    ) {
-        self.check_alias_arity(&b.ty, params, span);
+    fn check_impl_header_arity(&mut self, b: &ast::ImplBlock, params: &[String], span: ast::Span) {
+        self.check_arity(&b.ty, params, span);
         if let Some(t) = &b.trait_ {
-            self.check_alias_arity(&ast::Type::Path(t.clone()), params, span);
+            self.check_arity(&ast::Type::Path(t.clone()), params, span);
         }
     }
 
     /// [`Self::check_declared_types`] for the items of an `extern` block,
     /// recursing into nested `mod`s.
-    fn check_extern_alias_arity(&mut self, items: &[ast::ExternItem]) {
+    fn check_extern_arity(&mut self, items: &[ast::ExternItem]) {
         for ext in items {
             match &ext.kind {
-                ast::ExternItemKind::Fn(sig) => self.check_sig_alias_arity(sig, &[]),
-                ast::ExternItemKind::Struct(s) => self.check_struct_alias_arity(s, ext.span),
+                ast::ExternItemKind::Fn(sig) => self.check_sig_arity(sig, &[]),
+                ast::ExternItemKind::Struct(s) => self.check_struct_arity(s, ext.span),
                 ast::ExternItemKind::Impl(b) => {
                     let params = generic_names(&b.generics);
-                    self.check_impl_header_alias_arity(b, &params, ext.span);
+                    self.check_impl_header_arity(b, &params, ext.span);
                     for m in &b.items {
-                        self.check_sig_alias_arity(&m.sig, &params);
+                        self.check_sig_arity(&m.sig, &params);
                     }
                 }
-                ast::ExternItemKind::Mod(m) => self.check_extern_alias_arity(&m.items),
+                ast::ExternItemKind::Mod(m) => self.check_extern_arity(&m.items),
             }
         }
     }
@@ -449,7 +499,7 @@ impl<'a> Checker<'a> {
 
     /// Checks every item in the module.
     pub fn check_module(&mut self, module: &ast::Module) {
-        self.check_coherence();
+        self.check_coherence(module);
         for item in &module.items {
             self.check_reserved_module_names(item);
             self.check_field_names(item);
@@ -515,23 +565,55 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// Rejects the two blanket-impl overlaps a simple checker can detect: two
-    /// blanket impls of the same trait (unorderable), and a blanket impl of a
-    /// trait that a concrete type also implements directly (`STATIC.md` §3.5).
-    /// neoc has no general coherence solver beyond these.
-    fn check_coherence(&mut self) {
+    /// Rejects the impl overlaps a simple checker can detect: two impls of one
+    /// trait for the same type (even at different arguments — a type's method
+    /// names are unique), two blanket impls of the same trait (unorderable),
+    /// and a blanket impl of a trait that a concrete type also implements
+    /// directly (`STATIC.md` §3.5). neoc has no general coherence solver beyond
+    /// these.
+    fn check_coherence(&mut self, module: &ast::Module) {
+        let mut impls: std::collections::HashSet<(String, String)> =
+            std::collections::HashSet::new();
+        for item in &module.items {
+            let ast::ItemKind::Impl(b) = &item.kind else {
+                continue;
+            };
+            let (Some(target), Some(trait_)) = (
+                crate::collect::impl_target_name(&b.ty),
+                b.trait_.as_ref().and_then(|p| p.segments.last()),
+            ) else {
+                continue;
+            };
+            if b.generics.iter().any(|g| g.name == target) {
+                continue;
+            }
+            let key = (target.clone(), trait_.name.clone());
+            if !impls.insert(key.clone()) {
+                self.conflicting_impls.insert(key);
+                self.error_at(
+                    item.span,
+                    format!(
+                        "conflicting impls of `{}` for `{target}`: a type implements a trait at most once",
+                        trait_.name
+                    ),
+                );
+            }
+        }
         let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
         for bl in &self.table.blanket_impls {
-            if !seen.insert(bl.trait_name.as_str()) {
-                self.error(format!("conflicting blanket impls of `{}`", bl.trait_name));
+            if !seen.insert(bl.trait_ref.name.as_str()) {
+                self.error(format!(
+                    "conflicting blanket impls of `{}`",
+                    bl.trait_ref.name
+                ));
             }
         }
         for bl in &self.table.blanket_impls {
             for (ty, traits) in &self.table.trait_impls {
-                if traits.contains(&bl.trait_name) {
+                if traits.contains(&bl.trait_ref.name) {
                     self.error(format!(
                         "`impl {} for {ty}` overlaps the blanket impl of `{}`",
-                        bl.trait_name, bl.trait_name
+                        bl.trait_ref.name, bl.trait_ref.name
                     ));
                 }
             }
@@ -547,9 +629,10 @@ impl<'a> Checker<'a> {
                 let actual = self.infer(&c.value);
                 self.expect(&declared, &actual, "const initialiser");
             }
-            ast::ItemKind::Impl(b) => self.check_impl(b),
+            ast::ItemKind::Impl(b) => self.check_impl(b, item.span),
             ast::ItemKind::Trait(t) => {
-                self.check_supertraits(t);
+                self.check_supertraits(t, item.span);
+                self.check_method_generics_shadowing(t);
                 self.check_trait_defaults(t);
             }
             ast::ItemKind::Extern(block) => self.check_extern_block(&block.items, false, item.span),
@@ -558,9 +641,15 @@ impl<'a> Checker<'a> {
     }
 
     /// Brings `Self` into scope as a type parameter bounded by the trait
-    /// `trait_name`, for checking one of that trait's default bodies. The caller
-    /// saves and restores `type_params` / `type_bounds` around the body.
+    /// `trait_name`, with the trait's own type parameters beside it, for
+    /// checking one of that trait's default bodies — so a default of `trait
+    /// Source<T>` reads `T` as the trait's parameter, fixed per implementor
+    /// only when the default is inherited (`STATIC.md` §8). The caller saves
+    /// and restores `type_params` / `type_bounds` around the body.
     pub(crate) fn enter_trait_self(&mut self, trait_name: &str) {
+        if let Some(TypeDef::Trait(t)) = self.table.types.get(trait_name) {
+            self.type_params.extend(t.generics.iter().cloned());
+        }
         self.type_params.push("Self".to_string());
         self.type_bounds
             .entry("Self".to_string())
@@ -598,19 +687,46 @@ impl<'a> Checker<'a> {
     }
 
     /// Validates a trait's supertrait list: each named supertrait must be a
-    /// trait, and the supertrait relation must be acyclic (`STATIC.md` §3.4).
-    fn check_supertraits(&mut self, t: &ast::TraitDecl) {
+    /// trait applied to its declared number of arguments, and the supertrait
+    /// relation must be acyclic (`STATIC.md` §3.4).
+    fn check_supertraits(&mut self, t: &ast::TraitDecl, span: ast::Span) {
+        let generics = generic_names(&t.generics);
         for sup in &t.supertraits {
-            let Some(name) = sup.segments.last().map(|s| &s.name) else {
+            let Some(applied) = crate::collect::lower_trait_ref(sup, &generics, None) else {
                 continue;
             };
-            if !self.is_trait(name) {
+            let name = &applied.name;
+            let Some(TypeDef::Trait(info)) = self.table.types.get(name) else {
                 self.error(format!("unknown supertrait `{name}` on trait `{}`", t.name));
-            } else if self.trait_chain_includes(name, &t.name) {
+                continue;
+            };
+            let expected = info.generics.len();
+            if self.trait_chain_includes(name, &t.name) {
                 self.error(format!(
                     "supertrait cycle: `{}` and `{name}` are mutually dependent",
                     t.name
                 ));
+            } else {
+                self.check_trait_arity(&applied, expected, span);
+            }
+        }
+    }
+
+    /// Rejects a trait method type parameter that reuses one of the trait's
+    /// own type parameter names (`trait Source<T> { fn conv<T>(…) }`): inside
+    /// the method the name would be ambiguous (`STATIC.md` §3.4).
+    fn check_method_generics_shadowing(&mut self, t: &ast::TraitDecl) {
+        for ti in &t.items {
+            for g in &ti.sig.generics {
+                if t.generics.iter().any(|tg| tg.name == g.name) {
+                    self.error_at(
+                        ti.sig.name_span,
+                        format!(
+                            "type parameter `{}` of method `{}` shadows a type parameter of trait `{}`; rename it",
+                            g.name, ti.sig.name, t.name
+                        ),
+                    );
+                }
             }
         }
     }
@@ -1014,7 +1130,9 @@ impl<'a> Checker<'a> {
                 if let Some(m) = self.table.methods.get(&(type_name.clone(), member.clone())) {
                     return Ty::Fn(m.params.clone(), Box::new(m.ret.clone()));
                 }
-                if let Some((params, ret)) = self.default_method(type_name, member, false) {
+                if let Some((params, ret)) =
+                    self.default_method(&Ty::named(type_name), member, false)
+                {
                     return Ty::Fn(params, Box::new(ret));
                 }
                 self.error_at(
@@ -1129,7 +1247,7 @@ impl<'a> Checker<'a> {
                             params.len()
                         ),
                     );
-                    return Self::instantiate_return(&params, &arg_tys, &ret);
+                    return self.instantiate_return(&params, &arg_tys, &ret);
                 }
                 for (i, (p, a)) in params.iter().zip(&arg_tys).enumerate() {
                     if !self.assignable(p, a) {
@@ -1139,7 +1257,7 @@ impl<'a> Checker<'a> {
                         );
                     }
                 }
-                let subst = Self::param_subst(&params, &arg_tys);
+                let subst = self.param_subst(&params, &arg_tys);
                 self.check_call_bounds(callee, &subst, span);
                 self.record_call(callee, &subst);
                 Self::apply_subst(&ret, &subst)
@@ -1158,17 +1276,17 @@ impl<'a> Checker<'a> {
 
     /// Substitutes type parameters in a function's return type from the
     /// argument types (rank-1 inference for generic constructors like `Ok`).
-    fn instantiate_return(params: &[Ty], args: &[Ty], ret: &Ty) -> Ty {
-        Self::apply_subst(ret, &Self::param_subst(params, args))
+    fn instantiate_return(&self, params: &[Ty], args: &[Ty], ret: &Ty) -> Ty {
+        Self::apply_subst(ret, &self.param_subst(params, args))
     }
 
     /// The substitution binding each of a function's type parameters to the
     /// concrete type the matching argument supplied, inferred by unifying every
     /// parameter type against its argument.
-    fn param_subst(params: &[Ty], args: &[Ty]) -> std::collections::HashMap<String, Ty> {
+    fn param_subst(&self, params: &[Ty], args: &[Ty]) -> std::collections::HashMap<String, Ty> {
         let mut subst = std::collections::HashMap::new();
         for (p, a) in params.iter().zip(args) {
-            Self::unify_param(p, a, &mut subst);
+            self.unify_param(p, a, &mut subst);
         }
         subst
     }
@@ -1217,15 +1335,27 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn unify_param(param: &Ty, arg: &Ty, subst: &mut std::collections::HashMap<String, Ty>) {
+    /// Binds the type parameters in `param` from the matching parts of `arg`.
+    /// A parameter typed as an applied generic trait (`Source<T>`) reads its
+    /// arguments from the application `arg` has of that trait — directly, via
+    /// a subtrait, or through an impl — so `pull(c)` with `impl Source<number>
+    /// for C` binds `T` to `number` (`STATIC.md` §3.4).
+    fn unify_param(&self, param: &Ty, arg: &Ty, subst: &mut std::collections::HashMap<String, Ty>) {
         match (param, arg) {
             (Ty::Param(name), a) if !a.is_unknown() => {
                 subst.entry(name.clone()).or_insert_with(|| a.clone());
             }
-            (Ty::List(p), Ty::List(a)) => Self::unify_param(p, a, subst),
+            (Ty::List(p), Ty::List(a)) => self.unify_param(p, a, subst),
+            (Ty::Named { name, args: pa }, a) if !pa.is_empty() && self.is_trait(name) => {
+                if let Some(applied) = self.application_of(a, name, pa.len()) {
+                    for (p, a) in pa.iter().zip(&applied.args) {
+                        self.unify_param(p, a, subst);
+                    }
+                }
+            }
             (Ty::Named { args: pa, .. }, Ty::Named { args: aa, .. }) if pa.len() == aa.len() => {
                 for (p, a) in pa.iter().zip(aa) {
-                    Self::unify_param(p, a, subst);
+                    self.unify_param(p, a, subst);
                 }
             }
             // Recurse through function types so a method-level generic in a
@@ -1233,9 +1363,9 @@ impl<'a> Checker<'a> {
             // from the closure argument's inferred return type.
             (Ty::Fn(pp, pr), Ty::Fn(ap, ar)) if pp.len() == ap.len() => {
                 for (p, a) in pp.iter().zip(ap) {
-                    Self::unify_param(p, a, subst);
+                    self.unify_param(p, a, subst);
                 }
-                Self::unify_param(pr, ar, subst);
+                self.unify_param(pr, ar, subst);
             }
             _ => {}
         }
@@ -1303,7 +1433,11 @@ impl<'a> Checker<'a> {
             );
             return Ty::Unknown;
         }
-        let Ty::Named { name, .. } = &recv else {
+        let Ty::Named {
+            name,
+            args: recv_args,
+        } = &recv
+        else {
             if recv.is_unknown() {
                 return Ty::Unknown;
             }
@@ -1321,7 +1455,11 @@ impl<'a> Checker<'a> {
         // A method on a trait used as a type (the existential) resolves through
         // the trait's own methods, with `Self` read as the trait type.
         if self.is_trait(name) {
-            if let Some((params, ret)) = self.trait_method(name, method) {
+            let applied = TraitRef {
+                name: name.clone(),
+                args: recv_args.clone(),
+            };
+            if let Some((params, ret)) = self.trait_method(&applied, method) {
                 self.record_member(method_span, name, method);
                 self.check_call_args(method, &params, &arg_tys, args, span);
                 return ret;
@@ -1333,14 +1471,14 @@ impl<'a> Checker<'a> {
         let Some(m) = self.table.methods.get(&(name.clone(), method.to_string())) else {
             // A trait the type implements may supply the method as a default
             // the impl did not override.
-            if let Some((params, ret)) = self.default_method(name, method, true) {
+            if let Some((params, ret)) = self.default_method(&recv, method, true) {
                 self.check_call_args(method, &params, &arg_tys, args, span);
                 return ret;
             }
             // A blanket impl may grant the method: if the receiver satisfies a
             // blanket's conditions and its trait declares `method`, resolve
             // through that trait with `Self` read as the concrete type.
-            if let Some((params, ret)) = self.blanket_method(name, &recv, method) {
+            if let Some((params, ret)) = self.blanket_method(&recv, method) {
                 self.check_call_args(method, &params, &arg_tys, args, span);
                 return ret;
             }
@@ -1362,7 +1500,7 @@ impl<'a> Checker<'a> {
         // parameters against the argument types, then apply to the parameters
         // (so the call type-checks) and the return (so `opt.map(f)` yields
         // `Option<U>` with `U` resolved, not the bare parameter).
-        let method_subst = Self::param_subst(&params, &arg_tys);
+        let method_subst = self.param_subst(&params, &arg_tys);
         if !method_subst.is_empty() {
             for p in &mut params {
                 *p = Self::subst_named(p, &method_subst);
@@ -1483,7 +1621,7 @@ impl<'a> Checker<'a> {
                     .or_else(|| self.scopes.lookup(fname).cloned())
             });
             if let Some(actual) = actual {
-                Self::unify_param(declared, &actual, &mut subst);
+                self.unify_param(declared, &actual, &mut subst);
             }
         }
         // A `..base` update copies the remaining fields from a value of this
@@ -1628,27 +1766,21 @@ impl<'a> Checker<'a> {
     /// the element types share no trait, share more than one (ambiguous), or
     /// any element is not a concrete nominal type.
     fn common_trait(&self, tys: &[Ty]) -> Option<Ty> {
-        let mut common: Option<std::collections::BTreeSet<String>> = None;
+        let mut common: Option<Vec<TraitRef>> = None;
         for t in tys {
-            let name = ty_impl_name(t)?;
-            let traits: std::collections::BTreeSet<String> = self
-                .table
-                .trait_impls
-                .get(&name)
-                .into_iter()
-                .flatten()
-                .cloned()
-                .collect();
+            ty_impl_name(t)?;
+            let traits = self.direct_applications(t);
             common = Some(match common {
                 None => traits,
-                Some(c) => &c & &traits,
+                Some(mut c) => {
+                    c.retain(|tr| traits.contains(tr));
+                    c
+                }
             });
         }
-        let common = common?;
-        if common.len() == 1 {
-            common.into_iter().next().map(Ty::named)
-        } else {
-            None
+        match common?.as_slice() {
+            [only] => Some(only.to_ty()),
+            _ => None,
         }
     }
 
@@ -1802,16 +1934,35 @@ impl<'a> Checker<'a> {
         let Ty::Named { name, args } = expected else {
             return None;
         };
-        if !args.is_empty() || !self.is_trait(name) {
+        if !self.is_trait(name) {
             return None;
         }
         if matches!(actual, Ty::Unknown | Ty::Param(_)) {
             return None;
         }
+        let wanted = TraitRef {
+            name: name.clone(),
+            args: args.clone(),
+        };
         Some(match actual {
-            // A trait value flows into the same trait or a supertrait.
-            Ty::Named { name: a, .. } if self.is_trait(a) => self.trait_chain_includes(a, name),
-            _ => self.type_satisfies(actual, name),
+            // A trait value flows into the same trait or a supertrait, at the
+            // arguments the supertrait chain maps its own to.
+            Ty::Named {
+                name: a,
+                args: a_args,
+            } if self.is_trait(a) => {
+                let from = TraitRef {
+                    name: a.clone(),
+                    args: a_args.clone(),
+                };
+                self.trait_reaches(&from, &wanted)
+            }
+            // An implementor flows into `Trait<A, …>` only through an impl (or
+            // a subtrait's impl) applying the trait to those same arguments.
+            _ => self
+                .trait_applications(actual)
+                .iter()
+                .any(|tr| self.trait_reaches(tr, &wanted)),
         })
     }
 

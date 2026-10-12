@@ -1,0 +1,45 @@
+// STATIC.md §3.4, §3.5: a blanket impl applies `Source<number>` to every
+// `Named` type, so `A` flows into the trait type `Source<number>` and a call
+// through it is typed `number`. At codegen the blanket expands to a concrete
+// `A.next`, which the trait-typed call dispatches to.
+extern {
+    fn println(n: number);
+}
+
+trait Named {
+    fn name(self) -> string;
+}
+
+trait Source<T> {
+    fn next(self) -> T;
+}
+
+impl<U: Named> Source<number> for U {
+    fn next(self) -> number {
+        if self.name() == "a" {
+            7
+        } else {
+            0
+        }
+    }
+}
+
+struct A {
+    n: string,
+}
+
+impl Named for A {
+    fn name(self) -> string {
+        self.n
+    }
+}
+
+fn pull(source: Source<number>) -> number {
+    source.next() + 1
+}
+
+fn main() {
+    let a = A { n: "a" };
+    println(a.next());
+    println(pull(a));
+}

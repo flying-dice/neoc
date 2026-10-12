@@ -10,8 +10,8 @@ use std::collections::HashMap;
 use neoc_ast as ast;
 
 use crate::env::{
-    EnumInfo, MethodInfo, StructFields, StructInfo, SymbolTable, TraitInfo, TraitMethod, TypeDef,
-    VariantFields, VariantInfo,
+    EnumInfo, ImplApplication, MethodInfo, StructFields, StructInfo, SymbolTable, TraitInfo,
+    TraitMethod, TraitRef, TypeDef, VariantFields, VariantInfo,
 };
 use crate::ty::Ty;
 
@@ -579,6 +579,7 @@ fn collect_trait(table: &mut SymbolTable, t: &ast::TraitDecl) {
             );
             TraitMethod {
                 name: item.sig.name.clone(),
+                generics: generic_names(&item.sig.generics),
                 params,
                 ret,
                 has_receiver,
@@ -589,7 +590,7 @@ fn collect_trait(table: &mut SymbolTable, t: &ast::TraitDecl) {
     let supertraits = t
         .supertraits
         .iter()
-        .filter_map(|p| p.segments.last().map(|s| s.name.clone()))
+        .filter_map(|p| lower_trait_ref(p, &generics, None))
         .collect();
     table.types.insert(
         t.name.clone(),
@@ -622,15 +623,26 @@ fn collect_impl(table: &mut SymbolTable, b: &ast::ImplBlock) {
     // `Self` read as that parameter — so trait/impl signature conformance has an
     // entry to check; its bindings are carried so a satisfying type's call site
     // can project `Self::Item`.
+    // `Self` in the header reads as the methods read it: the target
+    // parameter for a blanket impl, else the target type.
+    let self_ty = if impl_generics.contains(&type_name) {
+        Ty::Param(type_name.clone())
+    } else {
+        Ty::named(&type_name)
+    };
+    let trait_ref = b
+        .trait_
+        .as_ref()
+        .and_then(|p| lower_trait_ref(p, &impl_generics, Some(&self_ty)));
     if impl_generics.contains(&type_name) {
-        if let Some(trait_name) = b.trait_.as_ref().and_then(|p| p.segments.last()) {
+        if let Some(trait_ref) = trait_ref {
             let conditions = generic_param_bounds(&b.generics)
                 .remove(&type_name)
                 .unwrap_or_default();
             record_impl_methods(
                 table,
                 &type_name,
-                &Ty::Param(type_name.clone()),
+                &self_ty,
                 &b.items,
                 &impl_generics,
                 &assoc,
@@ -638,7 +650,7 @@ fn collect_impl(table: &mut SymbolTable, b: &ast::ImplBlock) {
             table.blanket_impls.push(crate::env::BlanketImpl {
                 param: type_name.clone(),
                 conditions,
-                trait_name: trait_name.name.clone(),
+                trait_ref,
                 methods: b.items.iter().map(|f| f.sig.name.clone()).collect(),
                 assoc_bindings: assoc,
             });
@@ -647,22 +659,38 @@ fn collect_impl(table: &mut SymbolTable, b: &ast::ImplBlock) {
     }
     // A trait impl records that `type_name` implements the trait, so call-site
     // bound checks can see the satisfaction.
-    if let Some(trait_name) = b.trait_.as_ref().and_then(|p| p.segments.last()) {
+    // A generic trait's application is kept too, so a value flows into
+    // `Trait<A, …>` only at the arguments its impl applies.
+    if let Some(trait_ref) = trait_ref {
         table
             .trait_impls
             .entry(type_name.clone())
             .or_default()
-            .insert(trait_name.name.clone());
+            .insert(trait_ref.name.clone());
         if !assoc.is_empty() {
             table
                 .impl_assoc
-                .insert((type_name.clone(), trait_name.name.clone()), assoc.clone());
+                .insert((type_name.clone(), trait_ref.name.clone()), assoc.clone());
+        }
+        if !trait_ref.args.is_empty() {
+            let target_args = match lower_type(&b.ty, &impl_generics) {
+                Ty::Named { args, .. } => args,
+                _ => Vec::new(),
+            };
+            table.trait_impl_applications.insert(
+                (type_name.clone(), trait_ref.name),
+                ImplApplication {
+                    generics: impl_generics.clone(),
+                    target_args,
+                    trait_args: trait_ref.args,
+                },
+            );
         }
     }
     record_impl_methods(
         table,
         &type_name,
-        &Ty::named(&type_name),
+        &self_ty,
         &b.items,
         &impl_generics,
         &assoc,
@@ -713,8 +741,37 @@ fn record_impl_methods(
     }
 }
 
+/// The trait a path names, applied to its written type arguments read in
+/// `generics` (`Source<number>` → `Source` at `[number]`). The one lowering
+/// every recorded trait application shares — supertraits, impl headers,
+/// blanket impls. In an impl header `self_ty` is the impl's target, so a
+/// `Self` argument reads as it (`impl Source<Self> for C` is `Source<C>`); a
+/// supertrait list passes `None`, leaving `Self` for each use to project.
+/// Aliases among the arguments are expanded once collection completes
+/// ([`crate::env::SymbolTable::normalize_aliases`]), when every alias is known.
+pub(crate) fn lower_trait_ref(
+    path: &ast::TypePath,
+    generics: &[String],
+    self_ty: Option<&Ty>,
+) -> Option<TraitRef> {
+    path.segments.last().map(|s| TraitRef {
+        name: s.name.clone(),
+        args: s
+            .args
+            .iter()
+            .map(|a| {
+                let ty = lower_type(a, generics);
+                match self_ty {
+                    Some(st) => ty.subst_self(st),
+                    None => ty,
+                }
+            })
+            .collect(),
+    })
+}
+
 /// The bare type name an `impl` targets, ignoring generic arguments.
-fn impl_target_name(ty: &ast::Type) -> Option<String> {
+pub(crate) fn impl_target_name(ty: &ast::Type) -> Option<String> {
     match ty {
         ast::Type::Path(p) => p.segments.last().map(|s| s.name.clone()),
         _ => None,

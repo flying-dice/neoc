@@ -55,20 +55,75 @@ pub enum VariantFields {
 pub struct TraitInfo {
     pub generics: Vec<String>,
     pub methods: Vec<TraitMethod>,
-    /// Names of the supertraits this trait requires (`trait A: B + C`). An
-    /// implementor of this trait must also implement each, and a bound by this
-    /// trait grants access to their methods.
-    pub supertraits: Vec<String>,
+    /// The supertraits this trait requires (`trait A: B + C`), each applied to
+    /// arguments written in terms of this trait's generics (`trait Sub<T>:
+    /// Base<T>` → `Base<T>`). An implementor of this trait must also implement
+    /// each, and a bound by this trait grants access to their methods.
+    pub supertraits: Vec<TraitRef>,
     /// Names of the associated types this trait declares (`type Item;`). Each
     /// must be bound by every implementor, and trait methods may refer to them
     /// as `Self::Item`.
     pub assoc_types: Vec<String>,
 }
 
+/// A trait applied to type arguments: `Source<number>` is the trait `Source`
+/// applied to `[number]`. A non-generic trait applies to no arguments.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraitRef {
+    pub name: String,
+    pub args: Vec<Ty>,
+}
+
+impl TraitRef {
+    /// The trait `name` applied to no arguments — a non-generic trait, or a
+    /// generic one whose arguments are not recorded (a bound, until bounds
+    /// carry them). Unapplied parameters read as themselves.
+    #[must_use]
+    pub fn bare(name: impl Into<String>) -> TraitRef {
+        TraitRef {
+            name: name.into(),
+            args: Vec::new(),
+        }
+    }
+
+    /// The trait type this application names when a trait is used as a type
+    /// (`Source<number>`).
+    #[must_use]
+    pub fn to_ty(&self) -> Ty {
+        Ty::Named {
+            name: self.name.clone(),
+            args: self.args.clone(),
+        }
+    }
+
+    /// Reads every type parameter in `generics` as the matching argument in
+    /// `args` throughout this reference's own arguments.
+    #[must_use]
+    pub fn instantiate(&self, generics: &[String], args: &[Ty]) -> TraitRef {
+        TraitRef {
+            name: self.name.clone(),
+            args: self
+                .args
+                .iter()
+                .map(|a| a.subst_params(generics, args))
+                .collect(),
+        }
+    }
+}
+
+impl std::fmt::Display for TraitRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.to_ty())
+    }
+}
+
 /// One method signature of a trait.
 #[derive(Debug, Clone)]
 pub struct TraitMethod {
     pub name: String,
+    /// The method's own type parameters (`fn conv<U>(…)`), distinct from the
+    /// trait's.
+    pub generics: Vec<String>,
     /// Parameter types excluding any `self` receiver.
     pub params: Vec<Ty>,
     pub ret: Ty,
@@ -123,6 +178,11 @@ pub struct SymbolTable {
     /// `impl Trait for Type`, keyed `(type, trait)`. Lets an inherited default
     /// method's `Self::Item` project to the type's binding (`STATIC.md` §8).
     pub impl_assoc: HashMap<(String, String), HashMap<String, Ty>>,
+    /// The application of each concrete `impl Trait<A, …> for Type<…>`, keyed
+    /// `(type name, trait name)`. Lets a value of `Type` flow into the trait
+    /// type `Trait<A, …>` only when the impl applies the trait to those same
+    /// arguments (`STATIC.md` §3.4). Absent for a non-generic trait.
+    pub trait_impl_applications: HashMap<(String, String), ImplApplication>,
     /// Per-function declared bounds: function name → (type parameter → the
     /// trait names bounding it), from both `<T: …>` and `where T: …`. Lets a
     /// call site enforce that each argument's concrete type satisfies the bound
@@ -140,6 +200,16 @@ pub struct SymbolTable {
     pub member_defs: HashMap<(String, String), (usize, usize)>,
 }
 
+/// How a concrete `impl<P…> Trait<A…> for Type<B…>` applies its trait: the
+/// trait arguments `A…`, written in terms of the impl's generics `P…`, which
+/// are fixed by matching the target's arguments `B…` against a value's type.
+#[derive(Debug, Clone)]
+pub struct ImplApplication {
+    pub generics: Vec<String>,
+    pub target_args: Vec<Ty>,
+    pub trait_args: Vec<Ty>,
+}
+
 /// A generic (blanket) trait implementation `impl<T: Conditions> Trait for T`.
 #[derive(Debug, Clone)]
 pub struct BlanketImpl {
@@ -148,10 +218,12 @@ pub struct BlanketImpl {
     /// Traits the target must satisfy for the impl to apply (the bounds on
     /// `param`); empty means it applies to every type.
     pub conditions: Vec<String>,
-    /// The trait this blanket provides for every satisfying type.
-    pub trait_name: String,
+    /// The trait this blanket provides for every satisfying type, applied to
+    /// arguments written in terms of `param` (`impl<T: Show> Source<number>
+    /// for T` → `Source<number>`).
+    pub trait_ref: TraitRef,
     /// The methods the blanket provides itself — required ones and overridden
-    /// defaults. Every other default of `trait_name` is inherited.
+    /// defaults. Every other default of the trait is inherited.
     pub methods: Vec<String>,
     /// The blanket's associated-type bindings (`type Item = …`), written in
     /// terms of `param`. Carried so a satisfying type's call site can project a
@@ -300,6 +372,13 @@ impl SymbolTable {
                 .map(|p| snapshot.resolve_alias_ty(p))
                 .collect();
             m.ret = snapshot.resolve_alias_ty(m.ret.clone());
+        }
+        for app in self.trait_impl_applications.values_mut() {
+            normalize_tys(&mut app.target_args, &snapshot);
+            normalize_tys(&mut app.trait_args, &snapshot);
+        }
+        for bl in &mut self.blanket_impls {
+            normalize_tys(&mut bl.trait_ref.args, &snapshot);
         }
         let names: Vec<String> = self.types.keys().cloned().collect();
         for name in names {
@@ -492,8 +571,17 @@ fn normalize_typedef(def: &mut TypeDef, table: &SymbolTable) {
                     .collect();
                 m.ret = table.resolve_alias_ty(m.ret.clone());
             }
+            for sup in &mut t.supertraits {
+                normalize_tys(&mut sup.args, table);
+            }
         }
         TypeDef::Alias { .. } | TypeDef::Opaque => {}
+    }
+}
+
+fn normalize_tys(tys: &mut [Ty], table: &SymbolTable) {
+    for ty in tys {
+        *ty = table.resolve_alias_ty(ty.clone());
     }
 }
 

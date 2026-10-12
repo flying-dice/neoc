@@ -88,3 +88,15 @@ fn a_supertrait_cycle_is_an_error() {
         "mutually dependent supertraits are rejected: {d:?}"
     );
 }
+
+#[test]
+fn an_ill_arity_supertrait_reports_only_its_arity() {
+    let src = "trait Base<T> {\n  fn base(self) -> T;\n}\n\
+trait Sub<T>: Base {\n  fn sub(self) -> T;\n}\n\
+struct C {\n  n: number,\n}\n\
+impl Sub<number> for C {\n  fn sub(self) -> number {\n    self.n\n  }\n}\n";
+    assert_eq!(
+        diagnostics(src),
+        vec!["trait `Base` expects 1 type argument(s), found 0"]
+    );
+}

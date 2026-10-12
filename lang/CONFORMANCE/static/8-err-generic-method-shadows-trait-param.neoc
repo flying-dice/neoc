@@ -1,0 +1,15 @@
+// STATIC.md §3.4: a trait method may not declare a type parameter named like one
+// of its trait's.
+trait Source<T> {
+    fn conv<T>(self, x: T) -> T;
+}
+
+struct C {
+    n: number,
+}
+
+impl Source<number> for C {
+    fn conv<T>(self, x: T) -> T {
+        x
+    }
+}

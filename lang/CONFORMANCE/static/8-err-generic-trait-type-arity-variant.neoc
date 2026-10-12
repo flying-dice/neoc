@@ -1,0 +1,9 @@
+// STATIC.md §3.4: a generic trait used as an enum variant field takes exactly
+// its declared arguments — bare `Source` is an error.
+trait Source<T> {
+    fn next(self) -> T;
+}
+
+enum E {
+    A(Source),
+}

@@ -1,0 +1,11 @@
+// STATIC.md §3.4, §4.3: a bare generic trait spelled in an alias value is an
+// error, reported at the alias that spells it — not again at each use.
+trait Source<T> {
+    fn next(self) -> T;
+}
+
+type S = Source;
+
+fn a(s: S) {}
+
+fn b(s: S) {}

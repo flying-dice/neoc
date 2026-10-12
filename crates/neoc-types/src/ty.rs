@@ -148,15 +148,41 @@ impl Ty {
         })
     }
 
-    /// Replaces every occurrence of the type parameter `param` with `with`,
-    /// recursing through composites — how a blanket impl's binding, written in
-    /// terms of its target parameter, is read for a concrete satisfying type.
+    /// Replaces each type parameter named in `generics` with the matching
+    /// argument in `args` — how a generic trait's signature is read at the
+    /// arguments it is applied to. A parameter with no matching argument is
+    /// left as-is.
     #[must_use]
-    pub(crate) fn subst_param(&self, param: &str, with: &Ty) -> Ty {
+    pub(crate) fn subst_params(&self, generics: &[String], args: &[Ty]) -> Ty {
+        self.subst_applied(generics, args, None)
+    }
+
+    /// Reads a trait signature for one application: each of the trait's
+    /// `generics` becomes the matching argument in `args`, and `Self` becomes
+    /// `self_ty`. Both substitutions happen in one pass, so an argument that
+    /// itself mentions a parameter or `Self` is never rewritten a second time.
+    #[must_use]
+    pub(crate) fn subst_applied(
+        &self,
+        generics: &[String],
+        args: &[Ty],
+        self_ty: Option<&Ty>,
+    ) -> Ty {
         self.map(&|t| match t {
-            Ty::Param(p) if p == param => Some(with.clone()),
+            Ty::Named { name, args: a } if name == "Self" && a.is_empty() => self_ty.cloned(),
+            Ty::Param(p) => generics
+                .iter()
+                .position(|g| g == p)
+                .and_then(|i| args.get(i).cloned()),
             _ => None,
         })
+    }
+
+    /// Exact equality, except that an `Unknown` on either side agrees with
+    /// anything, so an earlier error does not cascade into a second one.
+    #[must_use]
+    pub(crate) fn same_or_unknown(&self, other: &Ty) -> bool {
+        self == other || self.is_unknown() || other.is_unknown()
     }
 
     /// Structural compatibility for the no-subtyping fragment.

@@ -140,3 +140,71 @@ fn an_unbounded_parameter_is_passable_where_a_trait_is_expected() {
         diagnostics(&src)
     );
 }
+
+#[test]
+fn a_bare_generic_trait_inside_an_alias_is_reported_once_at_the_alias() {
+    let src = "trait Source<T> {\n  fn next(self) -> T;\n}\n\
+type S = Source;\n\
+fn a(s: S) {}\nfn b(s: S) {}\nfn c(s: S) {}\n";
+    let d = diagnostics(src);
+    assert_eq!(
+        d,
+        vec!["trait `Source` expects 1 type argument(s), found 0".to_string()],
+        "one defect at the alias, not one per use (`STATIC.md` §4.3): {d:?}"
+    );
+}
+
+const SOURCE: &str = "trait Source<T> {\n  fn next(self) -> T;\n}\n\
+struct C {\n  n: number,\n}\n\
+impl Source<number> for C {\n  fn next(self) -> number {\n    self.n\n  }\n}\n\
+fn pull<T>(s: Source<T>) -> T {\n  s.next()\n}\n";
+
+#[test]
+fn a_generic_callee_infers_its_trait_argument_from_a_trait_value() {
+    let src = format!("{SOURCE}fn go(s: Source<number>) -> number {{\n  pull(s)\n}}\n");
+    assert!(diagnostics(&src).is_empty(), "{:?}", diagnostics(&src));
+}
+
+#[test]
+fn a_generic_callee_infers_its_trait_argument_from_an_impl() {
+    let src = format!("{SOURCE}fn go(c: C) -> number {{\n  pull(c)\n}}\n");
+    assert!(diagnostics(&src).is_empty(), "{:?}", diagnostics(&src));
+}
+
+#[test]
+fn an_inferred_trait_argument_types_the_call_result() {
+    let src = format!(
+        "{SOURCE}fn bad(s: Source<number>) -> string {{\n  pull(s)\n}}\n\
+         fn bad2(c: C) -> string {{\n  pull(c)\n}}\n"
+    );
+    assert_eq!(
+        diagnostics(&src),
+        vec![
+            "function body expects `string`, found `number`",
+            "function body expects `string`, found `number`",
+        ]
+    );
+}
+
+#[test]
+fn self_in_an_impl_header_trait_argument_reads_as_the_target() {
+    let src = "trait Source<T> {\n  fn next(self) -> T;\n}\n\
+struct C {\n  n: number,\n}\n\
+impl Source<Self> for C {\n  fn next(self) -> C {\n    self\n  }\n}\n\
+fn via(s: Source<C>) -> C {\n  s.next()\n}\n\
+fn go() -> C {\n  via(C { n: 1 })\n}\n";
+    assert!(diagnostics(src).is_empty(), "{:?}", diagnostics(src));
+}
+
+#[test]
+fn an_ill_arity_impl_header_reports_only_its_arity() {
+    let src = "trait Source<T> {\n  fn next(self) -> T;\n}\n\
+struct C {\n  n: number,\n}\n\
+impl Source<number, string> for C {\n  fn next(self) -> number {\n    self.n\n  }\n}\n\
+fn pull(s: Source<number>) -> number {\n  s.next()\n}\n\
+fn go() -> number {\n  pull(C { n: 1 })\n}\n";
+    assert_eq!(
+        diagnostics(src),
+        vec!["trait `Source` expects 1 type argument(s), found 2"]
+    );
+}

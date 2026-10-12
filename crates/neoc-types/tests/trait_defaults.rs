@@ -185,3 +185,64 @@ fn a_default_returning_an_associated_type_projects_to_the_impl_binding() {
     let src = "trait It {\n  type Item;\n  fn first(self) -> Self::Item;\n  fn again(self) -> Self::Item {\n    self.first()\n  }\n}\nstruct S;\nimpl It for S {\n  type Item = number;\n  fn first(self) -> number {\n    1\n  }\n}\nfn go(s: S) -> number {\n  s.again()\n}\n";
     assert!(diagnostics(src).is_empty(), "{:?}", diagnostics(src));
 }
+
+const GENERIC: &str =
+    "trait Source<T> {\n  fn next(self) -> T;\n  fn peek(self) -> T {\n    self.next()\n  }\n}\n";
+
+#[test]
+fn an_inherited_generic_default_reads_the_impls_trait_arguments() {
+    let src = format!(
+        "{GENERIC}struct C {{\n  n: number,\n}}\n\
+impl Source<number> for C {{\n  fn next(self) -> number {{\n    self.n\n  }}\n}}\n\
+fn go(c: C) -> string {{\n  c.peek()\n}}\n"
+    );
+    let d = diagnostics(&src);
+    assert_eq!(
+        d,
+        ["function body expects `string`, found `number`"],
+        "{d:?}"
+    );
+}
+
+#[test]
+fn an_inherited_generic_default_matches_a_generic_impl_target() {
+    let src = format!(
+        "{GENERIC}struct Box<U> {{\n  v: U,\n}}\n\
+impl<U> Source<U> for Box<U> {{\n  fn next(self) -> U {{\n    self.v\n  }}\n}}\n\
+fn go(b: Box<number>) -> number {{\n  b.peek()\n}}\n"
+    );
+    assert!(diagnostics(&src).is_empty(), "{:?}", diagnostics(&src));
+}
+
+#[test]
+fn a_generic_default_body_sees_the_trait_parameter_abstractly() {
+    let src = "trait Source<T> {\n  fn next(self) -> T;\n  fn pair(self, item: T) -> [T] {\n    [item, self.next()]\n  }\n}\n";
+    assert!(diagnostics(src).is_empty(), "{:?}", diagnostics(src));
+}
+
+#[test]
+fn a_generic_default_body_reads_the_trait_parameter_as_a_parameter() {
+    let src = "trait Source<T> {\n  fn next(self) -> T;\n  fn bad(self) -> number {\n    self.next().len()\n  }\n}\n";
+    let d = diagnostics(src);
+    assert_eq!(
+        d,
+        ["type parameter `T` has no method `len` from its bounds"],
+        "{d:?}"
+    );
+}
+
+#[test]
+fn an_override_of_a_generic_default_is_read_at_the_impls_arguments() {
+    let src = format!(
+        "{GENERIC}struct C;\n\
+impl Source<number> for C {{\n  fn next(self) -> number {{\n    1\n  }}\n  fn peek(self) -> string {{\n    \"x\"\n  }}\n}}\n"
+    );
+    let d = diagnostics(&src);
+    assert_eq!(
+        d,
+        [
+            "method `peek` does not match trait `Source`: expected `fn() -> number`, found `fn() -> string`"
+        ],
+        "{d:?}"
+    );
+}

@@ -1,0 +1,11 @@
+// STATIC.md §3.4: `Self` on a trait-typed receiver is the trait type with its
+// arguments — `dup` on `Source<number>` yields `Source<number>`.
+trait Source<T> {
+    fn dup(self) -> Self;
+
+    fn next(self) -> T;
+}
+
+fn twice(source: Source<number>) -> Source<number> {
+    source.dup()
+}

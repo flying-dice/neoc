@@ -1,0 +1,1 @@
+type parameter `U` of the impl is not used by its target `Counter`

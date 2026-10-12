@@ -1,0 +1,35 @@
+// STATIC.md §3.4: `impl Sub<number> for C` needs `Base<number>`, which the
+// blanket impl provides to every `Named` type, `C` included.
+trait Named {
+    fn name(self) -> string;
+}
+
+trait Base<T> {
+    fn next(self) -> T;
+}
+
+trait Sub<T>: Base<T> {
+    fn peek(self) -> T;
+}
+
+impl<X: Named> Base<number> for X {
+    fn next(self) -> number {
+        1
+    }
+}
+
+struct C {
+    n: number,
+}
+
+impl Named for C {
+    fn name(self) -> string {
+        "c"
+    }
+}
+
+impl Sub<number> for C {
+    fn peek(self) -> number {
+        self.n
+    }
+}

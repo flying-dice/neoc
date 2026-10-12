@@ -1,0 +1,21 @@
+// STATIC.md §3.4: trait arguments and `Self` substitute simultaneously — the
+// blanket's own `T` (the target) is not captured by the trait's `T`.
+trait Named {
+    fn name(self) -> string;
+}
+
+trait Source<T> {
+    fn get(self) -> Self;
+
+    fn next(self) -> T;
+}
+
+impl<T: Named> Source<number> for T {
+    fn get(self) -> T {
+        self
+    }
+
+    fn next(self) -> number {
+        1
+    }
+}

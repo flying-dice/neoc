@@ -10,15 +10,16 @@
 //!
 //! Like the dynamic runner this uses `libtest-mimic` (`harness = false`) to emit
 //! one visible test per case, so a failure names exactly which program diverged.
-//! The match is an order-independent set comparison: conformance pins *which*
-//! diagnostics fire, not the order the checker happens to walk the module in.
+//! The match is an order-independent multiset comparison: conformance pins
+//! *which* diagnostics fire and how many times each, not the order the checker
+//! happens to walk the module in — a diagnostic reported twice must be listed
+//! twice.
 //! A case must also parse with no parser diagnostics — the static layer checks
 //! well-formed syntax, so a parse error there is a corpus bug, not a finding.
 //!
 //! Two extra trials guard the corpus shape: it is non-empty, and every `.neoc`
 //! has a sibling `.diagnostics`.
 
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use libtest_mimic::{Arguments, Failed, Trial};
@@ -44,16 +45,34 @@ fn cases(dir: &Path) -> Vec<PathBuf> {
     paths
 }
 
-/// The non-empty lines of a `.diagnostics` file, as a set.
-fn expected_set(text: &str) -> BTreeSet<String> {
-    text.lines()
+/// The non-empty lines of a `.diagnostics` file, sorted — a multiset.
+fn expected_multiset(text: &str) -> Vec<String> {
+    let mut lines: Vec<String> = text
+        .lines()
         .map(str::trim)
         .filter(|l| !l.is_empty())
         .map(str::to_owned)
+        .collect();
+    lines.sort();
+    lines
+}
+
+/// The entries of `a` not matched one-for-one by an entry of `b` — multiset
+/// difference, so a duplicate in `a` survives one occurrence in `b`.
+fn multiset_minus<'a>(a: &'a [String], b: &[String]) -> Vec<&'a String> {
+    let mut rest: Vec<&String> = b.iter().collect();
+    a.iter()
+        .filter(|x| match rest.iter().position(|y| y == x) {
+            Some(i) => {
+                rest.swap_remove(i);
+                false
+            }
+            None => true,
+        })
         .collect()
 }
 
-/// Check one case: parse, type-check, and assert the diagnostic set equals the
+/// Check one case: parse, type-check, and assert the diagnostic multiset equals the
 /// committed `.diagnostics` golden. A parser diagnostic fails the trial — the
 /// static layer's inputs must be syntactically well-formed.
 fn check_case(neoc_path: &Path, case: &str) -> Result<(), Failed> {
@@ -72,25 +91,26 @@ fn check_case(neoc_path: &Path, case: &str) -> Result<(), Failed> {
     }
 
     let check = neoc_types::check(&parsed.module);
-    let got: BTreeSet<String> = check
+    let mut got: Vec<String> = check
         .diagnostics
         .iter()
         .map(|d| d.message.clone())
         .collect();
+    got.sort();
 
     let diag_path = neoc_path.with_extension("diagnostics");
     let expected_text = std::fs::read_to_string(&diag_path)
         .map_err(|e| Failed::from(format!("case `{case}`: read {}: {e}", diag_path.display())))?;
-    let want = expected_set(&expected_text);
+    let want = expected_multiset(&expected_text);
 
     if got == want {
         return Ok(());
     }
 
-    let missing: Vec<&String> = want.difference(&got).collect();
-    let extra: Vec<&String> = got.difference(&want).collect();
+    let missing = multiset_minus(&want, &got);
+    let extra = multiset_minus(&got, &want);
     Err(Failed::from(format!(
-        "case `{case}`: diagnostic set mismatch\n--- expected but not reported ---\n{missing:#?}\n--- reported but not expected ---\n{extra:#?}"
+        "case `{case}`: diagnostic multiset mismatch\n--- expected but not reported ---\n{missing:#?}\n--- reported but not expected ---\n{extra:#?}"
     )))
 }
 

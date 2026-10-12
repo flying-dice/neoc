@@ -1,0 +1,17 @@
+// STATIC.md §3.4: `Sub<number>` flows into `Base<number>` — the argument its
+// declaration maps — never into `Base<string>`.
+trait Base<T> {
+    fn next(self) -> T;
+}
+
+trait Sub<T>: Base<T> {
+    fn peek(self) -> T;
+}
+
+fn take(source: Base<string>) -> string {
+    source.next()
+}
+
+fn pass(source: Sub<number>) -> string {
+    take(source)
+}

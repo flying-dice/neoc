@@ -1,0 +1,15 @@
+// STATIC.md §3.5: every impl type parameter must appear in the impl's target —
+// nothing fixes `U` in `impl<U> Source<U> for Counter`.
+trait Source<T> {
+    fn next(self) -> T;
+}
+
+struct Counter {
+    n: number,
+}
+
+impl<U> Source<U> for Counter {
+    fn next(self) -> U {
+        self.n
+    }
+}

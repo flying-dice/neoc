@@ -1,0 +1,23 @@
+// STATIC.md §3.4: `impl<U> Source<U> for Box<U>` read for `Box<number>` applies
+// `Source<number>`; `Box<number>` does not flow into `Source<string>`.
+trait Source<T> {
+    fn next(self) -> T;
+}
+
+struct Box<U> {
+    v: U,
+}
+
+impl<U> Source<U> for Box<U> {
+    fn next(self) -> U {
+        self.v
+    }
+}
+
+fn pull(source: Source<string>) -> string {
+    source.next()
+}
+
+fn main() {
+    pull(Box { v: 1 });
+}

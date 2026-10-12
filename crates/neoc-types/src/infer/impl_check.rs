@@ -8,20 +8,18 @@
 use neoc_ast as ast;
 
 use super::Checker;
-use crate::env::TypeDef;
+use crate::env::{TraitInfo, TraitMethod, TraitRef, TypeDef};
 use crate::ty::Ty;
 
 impl Checker<'_> {
-    pub(super) fn check_impl(&mut self, b: &ast::ImplBlock) {
-        let Some(target) = (match &b.ty {
-            ast::Type::Path(p) => p.segments.last().map(|s| s.name.clone()),
-            _ => None,
-        }) else {
+    pub(super) fn check_impl(&mut self, b: &ast::ImplBlock, span: ast::Span) {
+        let Some(target) = crate::collect::impl_target_name(&b.ty) else {
             return;
         };
+        self.check_impl_params_constrained(b, span);
         // Trait-impl completeness (`STATIC.md` §8).
         if let Some(trait_path) = &b.trait_ {
-            self.check_trait_impl(b, &target, trait_path);
+            self.check_trait_impl(b, &target, trait_path, span);
         }
         // Bring the impl's own generic parameters and their bounds into scope,
         // so a generic impl's `T` (and, for a blanket impl, the target param's
@@ -46,7 +44,13 @@ impl Checker<'_> {
         self.type_bounds = prev_bounds;
     }
 
-    fn check_trait_impl(&mut self, b: &ast::ImplBlock, target: &str, trait_path: &ast::TypePath) {
+    fn check_trait_impl(
+        &mut self,
+        b: &ast::ImplBlock,
+        target: &str,
+        trait_path: &ast::TypePath,
+        span: ast::Span,
+    ) {
         let Some(trait_name) = trait_path.segments.last().map(|s| &s.name) else {
             return;
         };
@@ -60,20 +64,46 @@ impl Checker<'_> {
         // generics; `Self` reads as that parameter, and supertrait coverage is
         // checked against the parameter's bounds rather than a concrete impl.
         let is_blanket = b.generics.iter().any(|g| g.name == target);
+        // The application collection recorded for this impl (`impl
+        // Source<number> for X` → `Source<number>`); its argument count must
+        // match the trait's parameters.
+        let trait_ref = self.recorded_application(target, trait_name, is_blanket);
+        // A wrong count is reported with the impl header's other type arity.
+        let arity_ok = trait_ref.args.len() == t.generics.len();
+        let impl_generics = crate::collect::generic_names(&b.generics);
         // Supertrait completeness: an implementor must also implement every
-        // supertrait the trait requires (`STATIC.md` §3.4).
+        // supertrait the trait requires, at the arguments the trait's
+        // declaration maps this impl's to (`STATIC.md` §3.4).
+        let target_ty = self
+            .table
+            .resolve_alias_ty(crate::collect::lower_type(&b.ty, &impl_generics));
         for sup in &t.supertraits {
+            // A supertrait spelled with the wrong arity is reported on the
+            // trait; coverage against it would only repeat that error.
+            if !self.has_trait_arity(sup) {
+                continue;
+            }
+            let sup = sup.instantiate(&t.generics, &trait_ref.args);
             let covered = if is_blanket {
                 crate::collect::generic_param_bounds(&b.generics)
                     .get(target)
-                    .is_some_and(|conds| conds.iter().any(|c| self.trait_chain_includes(c, sup)))
+                    .is_some_and(|conds| {
+                        conds
+                            .iter()
+                            .any(|c| self.trait_chain_includes(c, &sup.name))
+                    })
             } else {
-                self.table.implements(target, sup)
+                self.trait_applications(&target_ty)
+                    .iter()
+                    .any(|tr| tr.name != trait_ref.name && self.trait_reaches(tr, &sup))
             };
             if !covered {
-                self.error(format!(
-                    "`{target}` implements `{trait_name}` but not its supertrait `{sup}`; add `impl {sup} for {target}`"
-                ));
+                self.error_at(
+                    span,
+                    format!(
+                        "`{target}` implements `{trait_name}` but not its supertrait `{sup}`; add `impl {sup} for {target}`"
+                    ),
+                );
             }
         }
         let provided: Vec<&String> = b.items.iter().map(|f| &f.sig.name).collect();
@@ -132,7 +162,12 @@ impl Checker<'_> {
                 ));
             }
         }
-        self.check_sig_conformance(b, target, trait_name, t, is_blanket);
+        let conflicting = self
+            .conflicting_impls
+            .contains(&(target.to_string(), trait_ref.name.clone()));
+        if arity_ok && !conflicting {
+            self.check_sig_conformance(b, target, &trait_ref, t, is_blanket);
+        }
     }
 
     /// Rejects each default the impl `label` of `trait_name` gives concrete
@@ -195,19 +230,59 @@ impl Checker<'_> {
         }
     }
 
-    /// Checks each provided method's signature against the trait's declared one
-    /// — parameter types, return type, and receiver — with `Self` read as the
-    /// target type (a parameter for a blanket impl) and `Self::Item` projected
-    /// through the impl's associated-type bindings on both sides. An `Unknown`
-    /// on either side is left to the error that produced it.
+    /// Rejects an impl type parameter its target does not mention (`impl<U>
+    /// Source<U> for Counter`): nothing at a use site fixes it, so it would
+    /// reach callers as an unconstrained parameter (`STATIC.md` §3.5).
+    fn check_impl_params_constrained(&mut self, b: &ast::ImplBlock, span: ast::Span) {
+        let generics = crate::collect::generic_names(&b.generics);
+        let target = crate::collect::lower_type(&b.ty, &generics);
+        for g in generics.iter().filter(|g| !mentions_param(&target, g)) {
+            self.error_at(
+                span,
+                format!("type parameter `{g}` of the impl is not used by its target `{target}`"),
+            );
+        }
+    }
+
+    /// The trait application collection recorded for the impl of `trait_name`
+    /// on `target` — the blanket's for a blanket impl — with aliases already
+    /// expanded. A non-generic trait records none: it applies to no arguments.
+    fn recorded_application(&self, target: &str, trait_name: &str, is_blanket: bool) -> TraitRef {
+        let recorded = if is_blanket {
+            self.table
+                .blanket_impls
+                .iter()
+                .find(|bl| bl.param == target && bl.trait_ref.name == trait_name)
+                .map(|bl| bl.trait_ref.clone())
+        } else {
+            self.table
+                .trait_impl_applications
+                .get(&(target.to_string(), trait_name.to_string()))
+                .map(|app| TraitRef {
+                    name: trait_name.to_string(),
+                    args: app.trait_args.clone(),
+                })
+        };
+        recorded.unwrap_or_else(|| TraitRef::bare(trait_name))
+    }
+
+    /// Checks each provided method's signature against the trait's declared
+    /// one: parameter types, return type, and receiver. The trait's signature
+    /// is read at this impl's application — its type parameters as `trait_ref`'s
+    /// arguments, `Self` as the target type (a parameter for a blanket impl) —
+    /// and `Self::Item` is projected through the impl's associated-type
+    /// bindings on both sides. An `Unknown` on either side is left to the error
+    /// that produced it, and a method whose own generics shadow the trait's is
+    /// left to the trait's diagnostic.
     fn check_sig_conformance(
         &mut self,
         b: &ast::ImplBlock,
         target: &str,
-        trait_name: &str,
+        trait_ref: &TraitRef,
         t: &crate::env::TraitInfo,
         is_blanket: bool,
     ) {
+        let trait_name = trait_ref.name.as_str();
         let impl_bindings: std::collections::HashMap<String, Ty> = b
             .assoc_bindings
             .iter()
@@ -218,7 +293,7 @@ impl Checker<'_> {
         } else {
             Ty::named(target)
         };
-        for m in &t.methods {
+        for m in t.methods.iter().filter(|m| !shadows_trait_generic(m, t)) {
             let Some(info) = self
                 .table
                 .methods
@@ -227,15 +302,13 @@ impl Checker<'_> {
                 continue;
             };
             let project = |ty: Ty| crate::collect::project_assoc(ty, &impl_bindings);
-            let want_params: Vec<Ty> = m
-                .params
-                .iter()
-                .map(|p| project(p.subst_self(&self_ty)))
-                .collect();
-            let want_ret = project(m.ret.subst_self(&self_ty));
+            let read =
+                |ty: &Ty| project(ty.subst_applied(&t.generics, &trait_ref.args, Some(&self_ty)));
+            let want_params: Vec<Ty> = m.params.iter().map(read).collect();
+            let want_ret = read(&m.ret);
             let got_params: Vec<Ty> = info.params.iter().map(|p| project(p.clone())).collect();
             let got_ret = project(info.ret.clone());
-            let exact = |a: &Ty, b: &Ty| a == b || a.is_unknown() || b.is_unknown();
+            let exact = Ty::same_or_unknown;
             let matches = info.has_receiver == m.has_receiver
                 && got_params.len() == want_params.len()
                 && got_params
@@ -279,5 +352,24 @@ impl Checker<'_> {
                 );
             }
         }
+    }
+}
+
+/// Whether one of trait method `m`'s own type parameters reuses a name the
+/// trait declares — rejected on the trait (`STATIC.md` §3.4).
+fn shadows_trait_generic(m: &TraitMethod, t: &TraitInfo) -> bool {
+    m.generics.iter().any(|g| t.generics.contains(g))
+}
+
+/// Whether the type parameter `param` occurs anywhere in `ty`.
+fn mentions_param(ty: &Ty, param: &str) -> bool {
+    match ty {
+        Ty::Param(p) => p == param,
+        Ty::List(inner) => mentions_param(inner, param),
+        Ty::Fn(params, ret) => {
+            params.iter().any(|p| mentions_param(p, param)) || mentions_param(ret, param)
+        }
+        Ty::Named { args, .. } => args.iter().any(|a| mentions_param(a, param)),
+        _ => false,
     }
 }

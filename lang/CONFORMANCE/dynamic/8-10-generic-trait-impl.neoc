@@ -1,0 +1,38 @@
+// STATIC.md §3.4: `impl Source<number> for Counter` is checked against the
+// trait's signatures with `T` read as `number`, and a call through the trait
+// type `Source<number>` sees `number` too. Trait arguments are erased.
+extern {
+    fn println(n: number);
+}
+
+trait Source<T> {
+    fn next(self) -> T;
+
+    fn feed(self, item: T) -> number;
+}
+
+struct Counter {
+    n: number,
+}
+
+impl Source<number> for Counter {
+    fn next(self) -> number {
+        self.n
+    }
+
+    fn feed(self, item: number) -> number {
+        self.n + item
+    }
+}
+
+fn pull(source: Source<number>) -> number {
+    source.next() + source.feed(10)
+}
+
+fn main() {
+    let c = Counter { n: 4 };
+    let a: number = c.next();
+    println(a);
+    println(c.feed(1));
+    println(pull(c));
+}
