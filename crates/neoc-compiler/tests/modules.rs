@@ -424,6 +424,37 @@ fn type_only_use_shadowed_by_closure_and_for_and_match_runs() {
     assert_eq!(result, "13");
 }
 
+// A `pub` struct and `pub fn` sharing a name export one key; the later item wins
+// and the renamed table does not displace the fn.
+#[test]
+fn pub_fn_after_same_named_pub_struct_exports_the_fn() {
+    let (_, result) = run_project(
+        &[(
+            "pal",
+            "pub struct Hue { r: number }\npub fn Hue(x: number) -> number { x + 1 }\n",
+        )],
+        "use pal::Hue;\npub fn main() -> number { Hue(1) }\n",
+    );
+    assert_eq!(result, "2");
+}
+
+// The validator helper is `__type_error`; a captured struct named `error` must
+// not take that local.
+#[test]
+fn captured_struct_named_error_avoids_the_helper_local() {
+    let out = neoc_compiler::transpile(
+        "struct error { v: number }\n\
+         fn main() -> number { let error = 4; let e = error { v: error }; e.v }\n",
+        neoc_compiler::Target::Lua,
+    );
+    assert!(out.ok(), "{:#?}", out.diagnostics);
+    assert!(
+        out.output.contains("local __type_error_1 = {}"),
+        "{}",
+        out.output
+    );
+}
+
 #[test]
 fn type_only_use_not_shadowed_keeps_its_name() {
     let (main_lua, result) = run_project(

@@ -642,21 +642,30 @@ impl Emitter {
     /// enum (no methods) emits no standalone value — its variants are inline
     /// tagged tables resolved through the consumer's imported-enum index — so it
     /// is not exported; type aliases, traits, and `extern` carry no value either.
-    fn exported_names(&self, module: &ast::Module) -> Vec<String> {
-        let mut names = Vec::new();
+    /// Each entry pairs the export key with the Lua local holding its value; a
+    /// `pub` type and value sharing a key export the later item.
+    fn exported_names(&self, module: &ast::Module) -> Vec<(String, String)> {
+        let mut names: Vec<(String, String)> = Vec::new();
+        let mut push = |name: &str, table: String| {
+            // One key per name: when a `pub` type and a `pub` value share it, the
+            // later item wins, as the later `local` did before types could be
+            // renamed.
+            names.retain(|(n, _)| n != name);
+            names.push((name.to_string(), table));
+        };
         for item in &module.items {
             if item.vis != ast::Visibility::Public {
                 continue;
             }
             match &item.kind {
-                ast::ItemKind::Fn(f) => names.push(f.sig.name.clone()),
-                ast::ItemKind::Const(c) => names.push(c.name.clone()),
-                ast::ItemKind::Struct(s) => names.push(s.name.clone()),
+                ast::ItemKind::Fn(f) => push(&f.sig.name, f.sig.name.clone()),
+                ast::ItemKind::Const(c) => push(&c.name, c.name.clone()),
+                ast::ItemKind::Struct(s) => push(&s.name, self.type_local(&s.name).to_string()),
                 ast::ItemKind::Trait(t) if !t.default_names().is_empty() => {
-                    names.push(t.name.clone());
+                    push(&t.name, self.type_local(&t.name).to_string());
                 }
                 ast::ItemKind::Enum(e) if self.enum_has_methods(&e.name) => {
-                    names.push(e.name.clone());
+                    push(&e.name, self.type_local(&e.name).to_string());
                 }
                 _ => {}
             }
@@ -849,7 +858,7 @@ impl Emitter {
             } else {
                 let fields = exports
                     .iter()
-                    .map(|n| format!("{n} = {}", self.type_local(n)))
+                    .map(|(n, table)| format!("{n} = {table}"))
                     .collect::<Vec<_>>()
                     .join(", ");
                 self.line(format!("return {{ {fields} }}"));
@@ -900,7 +909,9 @@ impl Emitter {
                 continue;
             }
             let local = fresh_type_local(&binding, |name| {
-                allocated.contains(name) || source_mentions_ident(&self.source_text, name)
+                allocated.contains(name)
+                    || name == "__type_error"
+                    || source_mentions_ident(&self.source_text, name)
             });
             allocated.insert(local.clone());
             self.type_renames
