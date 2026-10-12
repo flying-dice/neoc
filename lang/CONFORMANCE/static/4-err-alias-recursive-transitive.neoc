@@ -1,7 +1,9 @@
 // STATIC.md §4.3 (D-ALIAS-RECURSIVE): an alias may not reach itself through
 // other aliases either.
 type A<T> = [B<T>];
+
 type B<T> = [A<T>];
 
 type Id<T> = T;
+
 type X = Id<X>;
