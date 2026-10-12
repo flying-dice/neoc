@@ -1,6 +1,6 @@
 fn main() {
-    // The grammar is the `tree-sitter-neoc` submodule (the canonical source);
-    // we compile its committed parser.
+    // `tree-sitter-neoc/grammar.js` is the grammar source; `tree-sitter generate`
+    // produces the committed `src/parser.c`, which we compile.
     let src = std::path::Path::new("tree-sitter-neoc").join("src");
     cc::Build::new()
         .include(&src)

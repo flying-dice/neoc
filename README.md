@@ -21,7 +21,7 @@ This monorepo ships a single `neoc` binary that does both jobs:
 | `neoc fmt <src>` | format `.neoc` source |
 | `neoc lsp` | language server over stdio |
 
-The companion grammar lives in a second repo, `tree-sitter-neoc`, consumed here as the `neoc-grammar` submodule.
+The tree-sitter grammar lives in `crates/neoc-grammar/tree-sitter-neoc/`.
 
 ## Documentation style
 
@@ -122,7 +122,7 @@ neoc lsp                               # language server (stdio)
 ```
 crates/neoc            # the `neoc` binary: unified CLI + folded compiler subcommands
 crates/neoc-vm         # the LuaJIT runtime: engine, script execution, .neoc headers
-crates/neoc-grammar    # vendors tree-sitter-neoc (submodule); cc-builds the parser
+crates/neoc-grammar    # tree-sitter grammar + generated parser; cc-builds it
 crates/neoc-ast        # typed AST — pure data, span-free
 crates/neoc-parser     # CST → AST adapter
 crates/neoc-types      # name resolution, inference, well-formedness
