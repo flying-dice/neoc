@@ -1,0 +1,17 @@
+// STATIC.md §3.4, §3.5: `S: Sub<string>` reaches `Source<string>` through its
+// supertrait, which does not satisfy the bound `Source<number>`.
+trait Source<T> {
+    fn next(self) -> T;
+}
+
+trait Sub<T>: Source<T> {
+    fn peek(self) -> T;
+}
+
+fn pull<S: Source<number>>(s: S) -> number {
+    s.next()
+}
+
+fn from_sub<S: Sub<string>>(s: S) -> number {
+    pull(s)
+}

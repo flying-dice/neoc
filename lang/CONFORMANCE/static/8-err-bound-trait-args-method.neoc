@@ -1,0 +1,9 @@
+// STATIC.md §3.4: a bound keeps its trait arguments, so `next` resolved
+// through `S: Source<number>` reads `T` as `number`.
+trait Source<T> {
+    fn next(self) -> T;
+}
+
+fn pull<S: Source<number>>(s: S) -> string {
+    s.next()
+}

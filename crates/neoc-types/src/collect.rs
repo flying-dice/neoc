@@ -70,32 +70,47 @@ pub(crate) fn generic_names(generics: &[ast::GenericParam]) -> Vec<String> {
     generics.iter().map(|g| g.name.clone()).collect()
 }
 
-/// The trait-name bounds declared inline on a set of generic parameters
-/// (`<T: Display, U: Clone>`). The bound's trait name is the last segment of
-/// its path. Shared by function signatures and generic type declarations.
-pub(crate) fn generic_param_bounds(generics: &[ast::GenericParam]) -> HashMap<String, Vec<String>> {
-    let trait_name = |p: &ast::TypePath| p.segments.last().map(|s| s.name.clone());
-    let mut out: HashMap<String, Vec<String>> = HashMap::new();
+/// The applied-trait bounds declared inline on a set of generic parameters
+/// (`<T: Display, S: Source<T>>`), each with the trait arguments it was written
+/// with. `scope` names the type parameters already in scope (an enclosing
+/// impl's), read as parameters inside the arguments. Shared by function
+/// signatures and generic type declarations.
+pub(crate) fn generic_param_bounds(
+    generics: &[ast::GenericParam],
+    scope: &[String],
+) -> HashMap<String, Vec<TraitRef>> {
+    let mut names = scope.to_vec();
+    names.extend(generic_names(generics));
+    let mut out: HashMap<String, Vec<TraitRef>> = HashMap::new();
     for g in generics {
-        let names: Vec<String> = g.bounds.iter().filter_map(trait_name).collect();
-        if !names.is_empty() {
-            out.entry(g.name.clone()).or_default().extend(names);
+        let refs: Vec<TraitRef> = g
+            .bounds
+            .iter()
+            .filter_map(|p| lower_trait_ref(p, &names, None))
+            .collect();
+        if !refs.is_empty() {
+            out.entry(g.name.clone()).or_default().extend(refs);
         }
     }
     out
 }
 
-/// The trait-name bounds of each type parameter of a signature, gathered from
-/// both the inline form (`<T: Display>`) and the `where` clause
-/// (`where T: Display`). Drives method resolution on a bounded parameter and
-/// call-site bound enforcement (`STATIC.md` §3.4, §3.5).
-pub(crate) fn param_bounds(sig: &ast::FnSig) -> HashMap<String, Vec<String>> {
-    let trait_name = |p: &ast::TypePath| p.segments.last().map(|s| s.name.clone());
-    let mut out = generic_param_bounds(&sig.generics);
+/// The applied-trait bounds of each type parameter of a signature, gathered
+/// from both the inline form (`<T: Display>`) and the `where` clause (`where T:
+/// Display`). Drives method resolution on a bounded parameter and call-site
+/// bound enforcement (`STATIC.md` §3.4, §3.5).
+pub(crate) fn param_bounds(sig: &ast::FnSig, scope: &[String]) -> HashMap<String, Vec<TraitRef>> {
+    let mut out = generic_param_bounds(&sig.generics, scope);
+    let mut names = scope.to_vec();
+    names.extend(generic_names(&sig.generics));
     for w in &sig.where_clause {
-        let names: Vec<String> = w.bounds.iter().filter_map(trait_name).collect();
-        if !names.is_empty() {
-            out.entry(w.ty.clone()).or_default().extend(names);
+        let refs: Vec<TraitRef> = w
+            .bounds
+            .iter()
+            .filter_map(|p| lower_trait_ref(p, &names, None))
+            .collect();
+        if !refs.is_empty() {
+            out.entry(w.ty.clone()).or_default().extend(refs);
         }
     }
     out
@@ -429,7 +444,7 @@ fn collect_item(table: &mut SymbolTable, item: &ast::Item) {
             table
                 .values
                 .insert(f.sig.name.clone(), Ty::Fn(params, Box::new(ret)));
-            let bounds = param_bounds(&f.sig);
+            let bounds = param_bounds(&f.sig, &[]);
             if !bounds.is_empty() {
                 table.fn_bounds.insert(f.sig.name.clone(), bounds);
             }
@@ -476,7 +491,7 @@ fn collect_struct(table: &mut SymbolTable, s: &ast::StructDecl) {
     let generics = generic_names(&s.generics);
     // The struct's parameter bounds are enforced at construction — keyed by the
     // type name, read by the named-literal path and the tuple constructor call.
-    let bounds = generic_param_bounds(&s.generics);
+    let bounds = generic_param_bounds(&s.generics, &[]);
     if !bounds.is_empty() {
         table.fn_bounds.insert(s.name.clone(), bounds);
     }
@@ -519,7 +534,7 @@ fn collect_enum(table: &mut SymbolTable, e: &ast::EnumDecl) {
     let generics = generic_names(&e.generics);
     // The enum's parameter bounds are enforced at each tuple-variant
     // construction, so they are keyed by the variant's constructor name.
-    let bounds = generic_param_bounds(&e.generics);
+    let bounds = generic_param_bounds(&e.generics, &[]);
     let mut variants = Vec::new();
     for v in &e.variants {
         let fields = match &v.body {
@@ -636,7 +651,7 @@ fn collect_impl(table: &mut SymbolTable, b: &ast::ImplBlock) {
         .and_then(|p| lower_trait_ref(p, &impl_generics, Some(&self_ty)));
     if impl_generics.contains(&type_name) {
         if let Some(trait_ref) = trait_ref {
-            let conditions = generic_param_bounds(&b.generics)
+            let conditions = generic_param_bounds(&b.generics, &[])
                 .remove(&type_name)
                 .unwrap_or_default();
             record_impl_methods(

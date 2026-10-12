@@ -63,11 +63,11 @@ impl<'a> Elaborator<'a> {
         b: &ast::ImplBlock,
         param: &str,
     ) -> Vec<ast::Item> {
-        let conditions: Vec<String> = crate::collect::generic_param_bounds(&b.generics)
+        let conditions = crate::collect::generic_param_bounds(&b.generics, &[])
             .remove(param)
             .unwrap_or_default();
         self.checker
-            .blanket_targets(&conditions)
+            .blanket_targets(param, &conditions)
             .into_iter()
             .map(|target| {
                 let concrete = ast::ImplBlock {
@@ -192,7 +192,9 @@ impl<'a> Elaborator<'a> {
         let prev_params = std::mem::take(&mut self.checker.type_params);
         let prev_bounds = std::mem::take(&mut self.checker.type_bounds);
         self.checker.type_params = sig.generics.iter().map(|g| g.name.clone()).collect();
-        self.checker.type_bounds = crate::collect::param_bounds(sig);
+        self.checker.type_bounds = self
+            .checker
+            .scoped_bounds(crate::collect::param_bounds(sig, &[]));
         if let Some(trait_name) = trait_self {
             self.checker.enter_trait_self(trait_name);
         }

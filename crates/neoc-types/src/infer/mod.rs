@@ -45,7 +45,7 @@ pub struct Checker<'a> {
     /// bound by (from `<T: Trait>` and `where T: Trait`). Lets a method call on
     /// a bounded parameter resolve through the bound trait's methods
     /// (`STATIC.md` §method-resolution).
-    pub(crate) type_bounds: std::collections::HashMap<String, Vec<String>>,
+    pub(crate) type_bounds: std::collections::HashMap<String, Vec<TraitRef>>,
     /// Associated-type bindings in scope for the current `impl` body: `Item` →
     /// the type it is bound to. Lets `Self::Item` resolve to the concrete type
     /// the impl assigned it (`STATIC.md` §3.4). Empty outside a trait impl.
@@ -345,6 +345,44 @@ impl<'a> Checker<'a> {
         self.report_arity(&lower_type(ty, params), span);
     }
 
+    /// `bounds` with the aliases in each bound's trait arguments expanded, as
+    /// the table's recorded applications are.
+    pub(crate) fn scoped_bounds(
+        &self,
+        mut bounds: std::collections::HashMap<String, Vec<TraitRef>>,
+    ) -> std::collections::HashMap<String, Vec<TraitRef>> {
+        for tr in bounds.values_mut().flatten() {
+            tr.args = tr
+                .args
+                .drain(..)
+                .map(|a| self.table.resolve_alias_ty(a))
+                .collect();
+        }
+        bounds
+    }
+
+    /// Reports at `span` each trait or alias applied to the wrong number of
+    /// type arguments inside the bounds of `generics` and `where_clause`
+    /// (`Source` where `trait Source<T>` needs one, `STATIC.md` §3.4), `scope`
+    /// being the enclosing type parameters.
+    fn check_bounds_arity(
+        &mut self,
+        generics: &[ast::GenericParam],
+        where_clause: &[ast::WherePredicate],
+        scope: &[String],
+        span: ast::Span,
+    ) {
+        let mut params = scope.to_vec();
+        params.extend(generic_names(generics));
+        let paths = generics
+            .iter()
+            .flat_map(|g| &g.bounds)
+            .chain(where_clause.iter().flat_map(|w| &w.bounds));
+        for path in paths {
+            self.check_arity(&ast::Type::Path(path.clone()), &params, span);
+        }
+    }
+
     /// Reports at `span` each type parameter of an enclosing function that
     /// `ty` names from inside a nested `fn` (`STATIC.md` §2).
     fn report_enclosing_type_params(&mut self, ty: &Ty, span: ast::Span) {
@@ -419,6 +457,7 @@ impl<'a> Checker<'a> {
     /// Checks the alias and trait arity of the signature `sig`, its own generics added to
     /// the enclosing `params`.
     fn check_sig_arity(&mut self, sig: &ast::FnSig, params: &[String]) {
+        self.check_bounds_arity(&sig.generics, &sig.where_clause, params, sig.name_span);
         let mut params = params.to_vec();
         params.extend(generic_names(&sig.generics));
         for p in &sig.params {
@@ -454,8 +493,12 @@ impl<'a> Checker<'a> {
     /// with a body are checked with that body.
     fn check_declared_types(&mut self, item: &ast::Item) {
         match &item.kind {
-            ast::ItemKind::Struct(s) => self.check_struct_arity(s, item.span),
+            ast::ItemKind::Struct(s) => {
+                self.check_bounds_arity(&s.generics, &[], &[], item.span);
+                self.check_struct_arity(s, item.span);
+            }
             ast::ItemKind::Enum(e) => {
+                self.check_bounds_arity(&e.generics, &[], &[], item.span);
                 let params = generic_names(&e.generics);
                 for v in &e.variants {
                     match &v.body {
@@ -481,6 +524,7 @@ impl<'a> Checker<'a> {
             }
             ast::ItemKind::Impl(b) => {
                 let params = generic_names(&b.generics);
+                self.check_bounds_arity(&b.generics, &[], &[], item.span);
                 self.check_impl_header_arity(b, &params, item.span);
                 for (_, ty) in &b.assoc_bindings {
                     self.check_arity(ty, &params, item.span);
@@ -765,7 +809,7 @@ impl<'a> Checker<'a> {
         self.type_bounds
             .entry("Self".to_string())
             .or_default()
-            .push(trait_name.to_string());
+            .push(TraitRef::bare(trait_name));
     }
 
     /// The type `self` (and `Self`) denotes for target `name`: a type parameter
@@ -857,7 +901,9 @@ impl<'a> Checker<'a> {
         let prev_bounds = self.type_bounds.clone();
         self.type_params
             .extend(sig.generics.iter().map(|g| g.name.clone()));
-        for (k, v) in crate::collect::param_bounds(sig) {
+        let scope = self.type_params.clone();
+        self.check_bounds_arity(&sig.generics, &sig.where_clause, &scope, sig.name_span);
+        for (k, v) in self.scoped_bounds(crate::collect::param_bounds(sig, &scope)) {
             self.type_bounds.entry(k).or_default().extend(v);
         }
         // `self`'s type is the target — a type parameter (a blanket impl's
@@ -1558,10 +1604,21 @@ impl<'a> Checker<'a> {
                 continue;
             };
             for tr in traits {
-                if !self.type_satisfies(concrete, tr) {
+                // The bound's arguments are written in the callee's own
+                // parameters; read them at the instantiation (`S: Source<T>`
+                // with `T` fixed to `number` is `Source<number>`).
+                let bound = TraitRef {
+                    name: tr.name.clone(),
+                    args: tr
+                        .args
+                        .iter()
+                        .map(|a| Self::apply_subst(a, subst))
+                        .collect(),
+                };
+                if !self.type_satisfies(concrete, &bound) {
                     self.error_at(
                         span,
-                        format!("the type `{concrete}` does not satisfy the bound `{tr}`"),
+                        format!("the type `{concrete}` does not satisfy the bound `{bound}`"),
                     );
                 }
             }

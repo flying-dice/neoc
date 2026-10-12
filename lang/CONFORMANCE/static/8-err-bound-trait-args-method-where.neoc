@@ -1,0 +1,9 @@
+// STATIC.md §3.4: a `where` bound keeps its trait arguments the same way an
+// inline bound does.
+trait Source<T> {
+    fn next(self) -> T;
+}
+
+fn pull<S>(s: S) -> string where S: Source<number> {
+    s.next()
+}

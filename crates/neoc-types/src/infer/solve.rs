@@ -132,18 +132,33 @@ impl Checker<'_> {
         out
     }
 
+    /// Whether `ty` meets every condition of blanket `bl`, each read with the
+    /// target parameter as `ty`.
+    fn blanket_conditions_hold(&self, bl: &BlanketImpl, ty: &Ty) -> bool {
+        self.blanket_conditions_hold_rec(bl, ty, &mut HashSet::new())
+    }
+
+    fn blanket_conditions_hold_rec(
+        &self,
+        bl: &BlanketImpl,
+        ty: &Ty,
+        seen: &mut HashSet<(String, String)>,
+    ) -> bool {
+        bl.conditions.iter().all(|c| {
+            let c = c.instantiate(std::slice::from_ref(&bl.param), std::slice::from_ref(ty));
+            self.type_satisfies_rec(ty, &c, seen)
+        })
+    }
+
     /// The application blanket `bl` gives `ty` — its trait read with the target
     /// parameter as `ty` — when `ty` meets every one of its conditions.
     fn blanket_application(&self, bl: &BlanketImpl, ty: &Ty) -> Option<TraitRef> {
-        bl.conditions
-            .iter()
-            .all(|c| self.type_satisfies(ty, c))
-            .then(|| {
-                self.well_formed(
-                    bl.trait_ref
-                        .instantiate(std::slice::from_ref(&bl.param), std::slice::from_ref(ty)),
-                )
-            })
+        self.blanket_conditions_hold(bl, ty).then(|| {
+            self.well_formed(
+                bl.trait_ref
+                    .instantiate(std::slice::from_ref(&bl.param), std::slice::from_ref(ty)),
+            )
+        })
     }
 
     /// The trait applications concrete type `ty` has through an `impl` or
@@ -172,17 +187,18 @@ impl Checker<'_> {
     }
 
     /// A method `method` provided by one of the trait bounds on type parameter
-    /// `param`, with `Self` projected to the parameter itself. `None` when no
-    /// bound supplies it. The cross-bound search is first-match in declaration
+    /// `param`, read at the arguments the bound applies (`S: Source<number>`
+    /// reads `T` as `number`), with `Self` projected to the parameter itself.
+    /// `None` when no bound supplies it. The cross-bound search is first-match in declaration
     /// order.
     pub(super) fn bound_method(&self, param: &str, method: &str) -> Option<(Vec<Ty>, Ty)> {
         let bounds = self.type_bounds.get(param)?;
         let self_param = Ty::Param(param.to_string());
-        bounds.iter().find_map(|trait_name| {
+        bounds.iter().find_map(|bound| {
             let tr = if param == "Self" {
-                self.self_application(trait_name)
+                self.self_application(&bound.name)
             } else {
-                TraitRef::bare(trait_name)
+                bound.clone()
             };
             self.resolve_trait_method(&tr, method, &self_param)
         })
@@ -293,7 +309,7 @@ impl Checker<'_> {
                 .blanket_impls
                 .iter()
                 .filter(|bl| self.declares_default(&bl.trait_ref.name, method))
-                .filter(|bl| bl.conditions.iter().all(|c| self.type_satisfies(&ty, c)))
+                .filter(|bl| self.blanket_conditions_hold(bl, &ty))
                 .map(|bl| bl.trait_ref.name.clone()),
         );
         traits.sort();
@@ -315,7 +331,7 @@ impl Checker<'_> {
             .blanket_impls
             .iter()
             .filter(|bl| bl.trait_ref.name != except && bl.methods.iter().any(|m| m == method))
-            .filter(|bl| bl.conditions.iter().all(|c| self.type_satisfies(&ty, c)))
+            .filter(|bl| self.blanket_conditions_hold(bl, &ty))
             .map(|bl| &bl.trait_ref.name)
             .collect();
         traits.sort();
@@ -344,7 +360,7 @@ impl Checker<'_> {
         self.table().blanket_impls.iter().any(|bl| {
             bl.trait_ref.name == trait_name
                 && !bl.methods.iter().any(|m| m == method)
-                && bl.conditions.iter().all(|c| self.type_satisfies(&ty, c))
+                && self.blanket_conditions_hold(bl, &ty)
         })
     }
 
@@ -380,7 +396,7 @@ impl Checker<'_> {
     /// The concrete types — every struct and enum in scope — that satisfy all
     /// of a blanket impl's `conditions`, in name order: the types the blanket
     /// lands on (`DYNAMIC.md` §3.5).
-    pub(crate) fn blanket_targets(&self, conditions: &[String]) -> Vec<String> {
+    pub(crate) fn blanket_targets(&self, param: &str, conditions: &[TraitRef]) -> Vec<String> {
         let mut targets: Vec<String> = self
             .table()
             .types
@@ -389,55 +405,75 @@ impl Checker<'_> {
             .map(|(name, _)| name.clone())
             .filter(|name| {
                 let ty = Ty::named(name);
-                conditions.iter().all(|c| self.type_satisfies(&ty, c))
+                conditions.iter().all(|c| {
+                    let c = c.instantiate(&[param.to_string()], std::slice::from_ref(&ty));
+                    self.type_satisfies(&ty, &c)
+                })
             })
             .collect();
         targets.sort();
         targets
     }
 
-    /// Whether `ty` satisfies the bound `trait_name`. A concrete type satisfies
-    /// it when an `impl` or derive records the pair; a type parameter satisfies
-    /// it when its own in-scope bounds include the trait (bound propagation); a
-    /// blanket impl whose conditions `ty` meets contributes its trait; an
-    /// unknown type satisfies it vacuously, so an earlier error does not cascade.
-    pub(crate) fn type_satisfies(&self, ty: &Ty, trait_name: &str) -> bool {
-        self.type_satisfies_rec(ty, trait_name, &mut HashSet::new())
+    /// Whether `ty` satisfies the bound `bound`, trait arguments included. A
+    /// concrete type satisfies it when an `impl` or derive records the trait at
+    /// arguments agreeing with the bound's; a type parameter satisfies it when
+    /// its own in-scope bounds reach the trait at agreeing arguments (bound
+    /// propagation); a blanket impl whose conditions `ty` meets contributes its
+    /// trait; an unknown type satisfies it vacuously, so an earlier error does
+    /// not cascade (`STATIC.md` §3.4, §3.5).
+    pub(crate) fn type_satisfies(&self, ty: &Ty, bound: &TraitRef) -> bool {
+        self.type_satisfies_rec(ty, bound, &mut HashSet::new())
     }
 
     fn type_satisfies_rec(
         &self,
         ty: &Ty,
-        trait_name: &str,
+        bound: &TraitRef,
         seen: &mut HashSet<(String, String)>,
     ) -> bool {
+        let bound = self.well_formed(bound.clone());
         let direct = match ty {
             Ty::Unknown => return true,
             Ty::Param(p) => self
                 .type_bounds
                 .get(p)
-                .is_some_and(|bs| bs.iter().any(|b| self.trait_chain_includes(b, trait_name))),
-            // Head-indexed: look up the type's own traits, then check each
-            // reaches `trait_name` through the supertrait chain.
-            _ => ty_impl_name(ty).is_some_and(|n| {
+                .is_some_and(|bs| bs.iter().any(|b| self.bound_reaches(b, &bound))),
+            // A non-generic trait is satisfied by name: the impl's target
+            // arguments are irrelevant to it.
+            _ if bound.args.is_empty() => ty_impl_name(ty).is_some_and(|n| {
                 self.table().trait_impls.get(&n).is_some_and(|traits| {
                     traits
                         .iter()
-                        .any(|tr| self.trait_chain_includes(tr, trait_name))
+                        .any(|tr| self.trait_chain_includes(tr, &bound.name))
                 })
             }),
+            _ => self
+                .direct_applications(ty)
+                .iter()
+                .any(|tr| self.trait_reaches(tr, &bound)),
         };
-        direct || self.satisfies_via_blanket(ty, trait_name, seen)
+        direct || self.satisfies_via_blanket(ty, &bound, seen)
     }
 
-    /// Whether a blanket impl of `trait_name` (or a subtrait of it) applies to
-    /// `ty` — i.e. `ty` satisfies every one of the blanket's conditions. The
+    /// Whether the applied trait `from` is `to` or reaches it through its
+    /// supertraits — by name alone when `to` is not generic.
+    fn bound_reaches(&self, from: &TraitRef, to: &TraitRef) -> bool {
+        if to.args.is_empty() {
+            self.trait_chain_includes(&from.name, &to.name)
+        } else {
+            self.trait_reaches(from, to)
+        }
+    }
+
+    /// Whether a blanket impl of `bound` (or a subtrait of it) applies to `ty`
+    /// — i.e. `ty` satisfies every one of the blanket's conditions. The
     /// condition checks recurse; `seen` guards against a blanket cycle
     /// (`impl<T: A> B for T` + `impl<T: B> A for T`).
     fn satisfies_via_blanket(
         &self,
         ty: &Ty,
-        trait_name: &str,
+        bound: &TraitRef,
         seen: &mut HashSet<(String, String)>,
     ) -> bool {
         let key_name = match ty {
@@ -447,15 +483,15 @@ impl Checker<'_> {
                 None => return false,
             },
         };
-        if !seen.insert((key_name, trait_name.to_string())) {
+        if !seen.insert((key_name, bound.to_string())) {
             return false;
         }
         self.table().blanket_impls.iter().any(|bl| {
-            self.trait_chain_includes(&bl.trait_ref.name, trait_name)
-                && bl
-                    .conditions
-                    .iter()
-                    .all(|c| self.type_satisfies_rec(ty, c, seen))
+            let provided = self.well_formed(
+                bl.trait_ref
+                    .instantiate(std::slice::from_ref(&bl.param), std::slice::from_ref(ty)),
+            );
+            self.bound_reaches(&provided, bound) && self.blanket_conditions_hold_rec(bl, ty, seen)
         })
     }
 

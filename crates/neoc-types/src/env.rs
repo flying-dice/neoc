@@ -76,8 +76,8 @@ pub struct TraitRef {
 
 impl TraitRef {
     /// The trait `name` applied to no arguments — a non-generic trait, or a
-    /// generic one whose arguments are not recorded (a bound, until bounds
-    /// carry them). Unapplied parameters read as themselves.
+    /// generic one whose arguments are not recorded. Unapplied parameters read
+    /// as themselves.
     #[must_use]
     pub fn bare(name: impl Into<String>) -> TraitRef {
         TraitRef {
@@ -184,10 +184,11 @@ pub struct SymbolTable {
     /// arguments (`STATIC.md` §3.4). Absent for a non-generic trait.
     pub trait_impl_applications: HashMap<(String, String), ImplApplication>,
     /// Per-function declared bounds: function name → (type parameter → the
-    /// trait names bounding it), from both `<T: …>` and `where T: …`. Lets a
-    /// call site enforce that each argument's concrete type satisfies the bound
-    /// the callee declared.
-    pub fn_bounds: HashMap<String, HashMap<String, Vec<String>>>,
+    /// applied traits bounding it), from both `<T: …>` and `where T: …`, each
+    /// bound with the trait arguments it was written with (`S: Source<T>`).
+    /// Lets a call site enforce that each argument's concrete type satisfies the
+    /// bound the callee declared.
+    pub fn_bounds: HashMap<String, HashMap<String, Vec<TraitRef>>>,
     /// Blanket impls (`impl<T: Show> Describe for T`): every type satisfying
     /// the conditions also implements the trait (`STATIC.md` §3.5). Kept apart
     /// from `trait_impls` because the target is a parameter, not a concrete
@@ -215,9 +216,10 @@ pub struct ImplApplication {
 pub struct BlanketImpl {
     /// The impl's generic parameter that is the target type (`T`).
     pub param: String,
-    /// Traits the target must satisfy for the impl to apply (the bounds on
-    /// `param`); empty means it applies to every type.
-    pub conditions: Vec<String>,
+    /// Applied traits the target must satisfy for the impl to apply (the
+    /// bounds on `param`, trait arguments included); empty means it applies to
+    /// every type.
+    pub conditions: Vec<TraitRef>,
     /// The trait this blanket provides for every satisfying type, applied to
     /// arguments written in terms of `param` (`impl<T: Show> Source<number>
     /// for T` → `Source<number>`).
@@ -379,6 +381,14 @@ impl SymbolTable {
         }
         for bl in &mut self.blanket_impls {
             normalize_tys(&mut bl.trait_ref.args, &snapshot);
+            for c in &mut bl.conditions {
+                normalize_tys(&mut c.args, &snapshot);
+            }
+        }
+        for bounds in self.fn_bounds.values_mut() {
+            for tr in bounds.values_mut().flatten() {
+                normalize_tys(&mut tr.args, &snapshot);
+            }
         }
         let names: Vec<String> = self.types.keys().cloned().collect();
         for name in names {

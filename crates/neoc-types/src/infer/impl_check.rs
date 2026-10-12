@@ -27,7 +27,8 @@ impl Checker<'_> {
         let prev_params = std::mem::take(&mut self.type_params);
         let prev_bounds = std::mem::take(&mut self.type_bounds);
         self.type_params = b.generics.iter().map(|g| g.name.clone()).collect();
-        self.type_bounds = crate::collect::generic_param_bounds(&b.generics);
+        self.type_bounds =
+            self.scoped_bounds(crate::collect::generic_param_bounds(&b.generics, &[]));
         // Bring the impl's associated-type bindings into scope so `Self::Item`
         // in method signatures and bodies resolves to the bound type.
         let prev_assoc = std::mem::take(&mut self.assoc_bindings);
@@ -87,13 +88,9 @@ impl Checker<'_> {
             }
             let sup = sup.instantiate(&t.generics, &trait_ref.args);
             let covered = if is_blanket {
-                crate::collect::generic_param_bounds(&b.generics)
+                crate::collect::generic_param_bounds(&b.generics, &[])
                     .get(target)
-                    .is_some_and(|conds| {
-                        conds
-                            .iter()
-                            .any(|c| self.trait_chain_includes(c, &sup.name))
-                    })
+                    .is_some_and(|conds| conds.iter().any(|c| self.trait_reaches(c, &sup)))
             } else {
                 self.trait_applications(&target_ty)
                     .iter()
@@ -136,10 +133,10 @@ impl Checker<'_> {
         if is_blanket {
             // A blanket impl lands on every satisfying type's table
             // (`DYNAMIC.md` §3.5), so each is checked as its own impl.
-            let conditions = crate::collect::generic_param_bounds(&b.generics)
+            let conditions = crate::collect::generic_param_bounds(&b.generics, &[])
                 .remove(target)
                 .unwrap_or_default();
-            for ty in self.blanket_targets(&conditions) {
+            for ty in self.blanket_targets(target, &conditions) {
                 let label = format!("`impl {trait_name} for {target}` (for `{ty}`)");
                 self.check_inherited_defaults(&label, &ty, trait_name, &inherited);
                 self.check_blanket_methods(&label, &ty, trait_name, &provided);

@@ -1,0 +1,13 @@
+// STATIC.md §3.5: a parameter satisfies a bound only through its own bounds at
+// agreeing arguments — `S: Source<string>` does not satisfy `Source<number>`.
+trait Source<T> {
+    fn next(self) -> T;
+}
+
+fn pull<S: Source<number>>(s: S) -> number {
+    s.next()
+}
+
+fn forward<S: Source<string>>(s: S) -> number {
+    pull(s)
+}

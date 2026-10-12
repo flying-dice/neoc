@@ -1,0 +1,23 @@
+// STATIC.md §3.4, §3.5: a generic type's bound keeps its trait arguments at
+// construction too.
+trait Source<T> {
+    fn next(self) -> T;
+}
+
+struct C {
+    n: string,
+}
+
+impl Source<string> for C {
+    fn next(self) -> string {
+        self.n
+    }
+}
+
+struct Holder<S: Source<number>> {
+    s: S,
+}
+
+fn main() {
+    Holder { s: C { n: "c" } };
+}
