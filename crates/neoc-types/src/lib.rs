@@ -181,3 +181,17 @@ pub fn resolution(module: &neoc_ast::Module) -> Resolution {
     checker.check_module(module);
     checker.into_resolution()
 }
+
+/// Closure parameters that stayed `Unknown` although the finished call fixes
+/// their type, one message per miss.
+///
+/// A self-check of closure-parameter typing against the solved call, for
+/// tests: an empty result over a program means every unannotated closure
+/// parameter in a call argument was typed whenever the call determines it.
+/// Diagnostics are discarded.
+#[doc(hidden)]
+#[must_use]
+pub fn closure_hint_misses(module: &neoc_ast::Module) -> Vec<String> {
+    let table = collect::collect(module);
+    infer::hint_misses_of(module, &table)
+}

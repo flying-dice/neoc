@@ -83,6 +83,8 @@ pub struct Checker<'a> {
     /// span. The checker decides once; the elaborator reads the record
     /// instead of re-deriving it, so the two cannot disagree.
     closure_params: std::collections::HashMap<(usize, usize), Vec<Ty>>,
+    /// Closure parameters left `Unknown` although the finished call fixes them.
+    hint_misses: Vec<String>,
 }
 
 /// A named type's type parameters and declared fields.
@@ -151,6 +153,7 @@ impl<'a> Checker<'a> {
             expected_tys: std::collections::HashMap::new(),
             closure_depth: 0,
             closure_params: std::collections::HashMap::new(),
+            hint_misses: Vec::new(),
         }
     }
 
@@ -2125,7 +2128,41 @@ impl<'a> Checker<'a> {
             }
             tys[i] = Some(ty);
         }
+        self.audit_closure_hints(args, expected, &subst);
         tys.into_iter().map(|t| t.unwrap_or(Ty::Unknown)).collect()
+    }
+
+    /// Self-check of the hint machinery against the solved call: a closure
+    /// literal parameter without an annotation that stayed `Unknown` while the
+    /// finished call fixes its type was missed by a hint, and an `Option`
+    /// crossing through it would go unmarshalled.
+    fn audit_closure_hints(
+        &mut self,
+        args: &[ast::Expr],
+        expected: &[Ty],
+        subst: &std::collections::HashMap<String, Ty>,
+    ) {
+        for (arg, decl) in args.iter().zip(expected) {
+            let (ast::ExprKind::Closure { params, .. }, Ty::Fn(ps, _)) = (&arg.kind, decl) else {
+                continue;
+            };
+            let Some(got) = self.closure_params.get(&(arg.span.start, arg.span.end)) else {
+                continue;
+            };
+            for ((p, want), have) in params.iter().zip(ps).zip(got) {
+                let want = Self::subst_named(want, subst);
+                if p.ty.is_none()
+                    && have.is_unknown()
+                    && !want.is_unknown()
+                    && !Self::mentions_param(&want)
+                {
+                    self.hint_misses.push(format!(
+                        "closure parameter `{}` at {}..{} is `Unknown`, the call fixes `{want}`",
+                        p.name, arg.span.start, arg.span.end
+                    ));
+                }
+            }
+        }
     }
 
     /// Records, for every closure that `expr` evaluates to, the parameter types
@@ -2618,6 +2655,12 @@ fn ty_impl_name(ty: &Ty) -> Option<String> {
 /// the callee identifier's byte range. Runs the checker with call recording on,
 /// then resolves each recorded call against its callee's declaration. Backs
 /// [`call_signatures`](crate::call_signatures).
+pub(crate) fn hint_misses_of(module: &ast::Module, table: &SymbolTable) -> Vec<String> {
+    let mut checker = Checker::new(table);
+    checker.check_module(module);
+    checker.hint_misses
+}
+
 pub(crate) fn call_signatures_of(module: &ast::Module, table: &SymbolTable) -> Vec<CallSignature> {
     let mut checker = Checker::new(table);
     checker.record_calls();
