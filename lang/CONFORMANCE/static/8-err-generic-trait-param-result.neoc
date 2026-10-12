@@ -1,0 +1,25 @@
+// STATIC.md §8: `pull<T>(s: Source<T>)` called with a `C` under `impl
+// Source<number> for C` binds `T` to `number`; its result is a `number`, not a
+// `string`.
+trait Source<T> {
+    fn next(self) -> T;
+}
+
+struct C {
+    n: number,
+}
+
+impl Source<number> for C {
+    fn next(self) -> number {
+        self.n
+    }
+}
+
+fn pull<T>(s: Source<T>) -> T {
+    s.next()
+}
+
+fn main() {
+    let c = C { n: 1 };
+    let a: string = pull(c);
+}

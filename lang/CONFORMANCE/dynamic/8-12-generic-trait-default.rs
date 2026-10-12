@@ -47,6 +47,7 @@ fn pull<T: Clone>(s: &dyn Source<T>) -> Vec<T> {
 fn main() {
     let c = Counter { n: 4.0 };
     println!("{}", c.peek());
+    println!("{}", c.twice(9.0)[0]);
     println!("{}", c.twice(9.0)[1]);
     let n = Namer { s: "a".to_string() };
     let _t: String = n.peek();
