@@ -391,6 +391,26 @@ const CLOSURE_SITES: &[(&str, &str, &str)] = &[
         "let r: Result<fn(Settings) -> bool, string> = Ok(|s| s.title.is_some());",
     ),
     (
+        "generic struct literal field bound by a sibling",
+        "struct W<T> { f: fn(T) -> bool, x: T }",
+        "let w = W { f: |s| s.title.is_some(), x: mk() };",
+    ),
+    (
+        "generic struct variant literal",
+        "enum E<T> { V { f: fn(T) -> bool, x: T } }",
+        "let e = E::V { f: |s| s.title.is_some(), x: mk() };",
+    ),
+    (
+        "const closure",
+        "const F: fn(Settings) -> bool = |s| s.title.is_some();",
+        "",
+    ),
+    (
+        "const array of closures",
+        "const L: [fn(Settings) -> bool] = [|s| s.title.is_some()];",
+        "",
+    ),
+    (
         "bound by an earlier closure",
         "fn both<T>(g: fn() -> T, f: fn(T) -> bool) -> bool { f(g()) }",
         "let r = both(|| mk(), |s| s.title.is_some());",

@@ -665,6 +665,7 @@ impl<'a> Checker<'a> {
             ast::ItemKind::Fn(f) => self.check_fn(f, None),
             ast::ItemKind::Const(c) => {
                 let declared = self.lower_at(&c.ty, item.span);
+                self.hint_closures(&c.value, &declared, &std::collections::HashMap::new());
                 let actual = self.infer(&c.value);
                 self.expect(&declared, &actual, "const initialiser");
             }
@@ -1890,11 +1891,24 @@ impl<'a> Checker<'a> {
         inits: &[ast::FieldInit],
         has_base: bool,
     ) {
+        // The other fields bind the owner's type parameters, which fix a
+        // closure field's parameter types (`W { x: mk(), f: |s| s.title }`).
+        let mut subst = std::collections::HashMap::new();
+        for init in inits {
+            if let (Some(e), Some((_, declared))) =
+                (&init.value, decl.iter().find(|(n, _)| *n == init.name))
+            {
+                if !Self::yields_closure(e) {
+                    let actual = self.quiet_infer(e);
+                    self.unify_param(declared, &actual, &mut subst);
+                }
+            }
+        }
         for init in inits {
             match decl.iter().find(|(n, _)| *n == init.name) {
                 Some((_, expected)) => {
                     let actual = if let Some(e) = &init.value {
-                        self.hint_closures(e, expected, &std::collections::HashMap::new());
+                        self.hint_closures(e, expected, &subst);
                         self.infer(e)
                     } else {
                         // Shorthand names the value: it is a path like any other.
