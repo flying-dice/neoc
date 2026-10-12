@@ -1,0 +1,38 @@
+// DYNAMIC.md §4.11 with §4.12: an append whose later part leaves the loop
+// from a value-position block must not keep the earlier parts. The plain
+// `s = s + "a" + …` never assigns when a part leaves; the accumulator pushes
+// only after every part is evaluated.
+extern {
+    fn println(s: string);
+}
+
+fn append_break(n: number) -> string {
+    let s = "";
+    for i in 0..n {
+        s = s + "a" + {
+            if i == 1 {
+                break;
+            }
+            "b"
+        };
+    }
+    s
+}
+
+fn append_continue(n: number) -> string {
+    let s = "";
+    for i in 0..n {
+        s = s + "a" + {
+            if i == 1 {
+                continue;
+            }
+            "b"
+        };
+    }
+    s
+}
+
+fn main() {
+    println(append_break(3));
+    println(append_continue(3));
+}

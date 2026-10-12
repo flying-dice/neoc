@@ -1,9 +1,9 @@
 // DYNAMIC.md §4.9: a closure body may be a block with statements, not only a
 // single expression. The block is the body of the Lua function, so its
 // statements run per call with the parameter in scope — not inlined into the
-// enclosing scope and computed once at creation. Calling it twice with different arguments
-// proves per-call evaluation: `|n| { let d = n*2; d+1 }` gives
-// `stepped(20) == 41` and `stepped(0) == 1`.
+// enclosing scope and computed once at creation. Calling it twice with
+// different arguments proves per-call evaluation:
+// `|n| { let d = n*2; d+1 }` gives `stepped(20) == 41` and `stepped(0) == 1`.
 extern {
     fn println(n: number);
 }

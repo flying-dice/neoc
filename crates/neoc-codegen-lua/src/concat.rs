@@ -605,8 +605,11 @@ impl Emitter {
         let Some(parts) = append_to(target, op, value, &name) else {
             return false;
         };
-        for part in parts {
-            let part = string_operand(part, self.emit_expr(part));
+        // Every part is evaluated before the first push: a part that leaves the
+        // loop (§4.12) must not leave the earlier parts appended.
+        let lua = self.emit_operands(&parts);
+        for (part, lua) in parts.into_iter().zip(lua) {
+            let part = string_operand(part, lua);
             self.line(format!("{acc}[#{acc} + 1] = {part}"));
         }
         true

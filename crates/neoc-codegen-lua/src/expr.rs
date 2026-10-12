@@ -366,8 +366,7 @@ impl Emitter {
             inclusive,
         } = &iter.kind
         {
-            let lo = self.emit_expr(start);
-            let hi = self.emit_expr(end);
+            let (lo, hi) = self.emit_pair(start, end);
             let hi = if *inclusive {
                 hi
             } else {
@@ -780,17 +779,28 @@ impl Emitter {
         fields: &[ast::FieldInit],
         base: Option<&ast::Expr>,
     ) -> Vec<String> {
+        // A shorthand field reads its name, an operand like any other.
+        let shorthand: Vec<ast::Expr> = fields
+            .iter()
+            .filter(|f| f.value.is_none())
+            .map(|f| {
+                ast::Expr::new(
+                    ast::ExprKind::Path(vec![f.name.clone()]),
+                    ast::Span::default(),
+                )
+            })
+            .collect();
+        let mut named = shorthand.iter();
         let mut ops: Vec<&ast::Expr> = base.into_iter().collect();
-        ops.extend(fields.iter().filter_map(|f| f.value.as_ref()));
+        ops.extend(
+            fields
+                .iter()
+                .filter_map(|f| f.value.as_ref().or_else(|| named.next())),
+        );
         let mut lua = self.emit_operands(&ops).into_iter();
         let base = base.map(|_| lua.next().unwrap_or_default());
         let mut values: Vec<String> = base.into_iter().collect();
-        for f in fields {
-            values.push(match f.value {
-                Some(_) => lua.next().unwrap_or_default(),
-                None => f.name.clone(),
-            });
-        }
+        values.extend(fields.iter().map(|_| lua.next().unwrap_or_default()));
         values
     }
 

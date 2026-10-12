@@ -3,11 +3,17 @@ local function __type_error(path, expected, got)
   error(path .. ": expected " .. expected .. ", got " .. actual)
 end
 local function __check_number(v, path) if type(v) ~= "number" then __type_error(path, "number", v) end return v end
-local __check_Pair
+local __check_Pair, __check_Pt
 function __check_Pair(v, path)
   if type(v) ~= "table" or v.__struct ~= "Pair" then __type_error(path, "Pair", v) end
   __check_number(v.a, path .. ".a")
   __check_number(v.b, path .. ".b")
+  return v
+end
+function __check_Pt(v, path)
+  if type(v) ~= "table" or v.__struct ~= "Pt" then __type_error(path, "Pt", v) end
+  __check_number(v.x, path .. ".x")
+  __check_number(v.y, path .. ".y")
   return v
 end
 local Pair = {}
@@ -109,6 +115,55 @@ local function lazy_or(a)
     end
   end)()
 end
+local Pt = {}
+Pt.__index = Pt
+function Pt.new(fields)
+  fields.__struct = "Pt"
+  return __check_Pt(setmetatable(fields, Pt), "Pt")
+end
+local function shorthand(stop)
+  local x = 1
+  local __op_5 = x
+  local __exit_5, __val_5 = (function()
+    if stop then
+      return 1, "stopped"
+    end
+    x = x + 10
+    return false, 2
+  end)()
+  if __exit_5 then
+    return __val_5
+  end
+  local p = Pt.new({ x = __op_5, y = __val_5 })
+  return (function()
+    if (p.x == 1) then
+      return "bound"
+    else
+      return "shifted"
+    end
+  end)()
+end
+local function range_bounds(stop)
+  local s = ""
+  do
+    local __sb_1 = { (s .. "") }
+    local __op_6 = mark("lo")
+    local __exit_6, __val_6 = (function()
+      if stop then
+        return 1, "stopped"
+      end
+      return false, (mark("hi") + 2)
+    end)()
+    if __exit_6 then
+      return __val_6
+    end
+    for i = __op_6, (__val_6) - 1 do
+      __sb_1[#__sb_1 + 1] = "r"
+    end
+    s = table.concat(__sb_1)
+  end
+  return s
+end
 local function main()
   println(call_args(false))
   println(call_args(true))
@@ -118,4 +173,8 @@ local function main()
   println(lazy_and(true))
   println(lazy_or(true))
   println(lazy_or(false))
+  println(shorthand(false))
+  println(shorthand(true))
+  println(range_bounds(false))
+  println(range_bounds(true))
 end

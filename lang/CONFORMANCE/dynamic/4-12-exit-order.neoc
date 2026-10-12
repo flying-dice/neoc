@@ -75,6 +75,40 @@ fn lazy_or(a: bool) -> string {
     }
 }
 
+struct Pt {
+    x: number,
+    y: number,
+}
+
+fn shorthand(stop: bool) -> string {
+    let x = 1;
+    let p = Pt { x, y: {
+        if stop {
+            return "stopped";
+        }
+        x += 10;
+        2
+    } };
+    if p.x == 1 {
+        "bound"
+    } else {
+        "shifted"
+    }
+}
+
+fn range_bounds(stop: bool) -> string {
+    let s = "";
+    for i in mark("lo")..({
+        if stop {
+            return "stopped";
+        }
+        mark("hi") + 2
+    }) {
+        s += "r";
+    }
+    s
+}
+
 fn main() {
     println(call_args(false));
     println(call_args(true));
@@ -84,4 +118,8 @@ fn main() {
     println(lazy_and(true));
     println(lazy_or(true));
     println(lazy_or(false));
+    println(shorthand(false));
+    println(shorthand(true));
+    println(range_bounds(false));
+    println(range_bounds(true));
 }
