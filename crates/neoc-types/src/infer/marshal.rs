@@ -48,11 +48,26 @@ impl Checker<'_> {
                 }
             }
             ast::ExternItemKind::Struct(s) => {
-                if let ast::StructBody::Named(fields) = &s.body {
-                    let generics: Vec<String> = s.generics.iter().map(|g| g.name.clone()).collect();
-                    for f in fields {
-                        self.check_extern_option_ty(&f.ty, &generics, span);
+                let generics: Vec<String> = s.generics.iter().map(|g| g.name.clone()).collect();
+                match &s.body {
+                    ast::StructBody::Named(fields) => {
+                        for f in fields {
+                            self.check_extern_option_ty(&f.ty, &generics, span);
+                        }
                     }
+                    ast::StructBody::Tuple(ty) => {
+                        let ty = self.table().resolve_alias_ty(lower_type(ty, &generics));
+                        if contains_option(&ty) {
+                            self.error_at(
+                                span,
+                                format!(
+                                    "`{ty}` cannot be the field of an `extern` tuple struct: an `Option` field \
+                                     needs a name to marshal; declare a named field"
+                                ),
+                            );
+                        }
+                    }
+                    ast::StructBody::Unit => {}
                 }
             }
             ast::ExternItemKind::Mod(_) => {}
@@ -122,6 +137,60 @@ impl Checker<'_> {
                 fn_sig(table.values.get(member)?)
             }
         }
+    }
+
+    /// Marks `expr` as a place where the host receives a named extern `fn`
+    /// raw, when `expr` is just that name.
+    pub(crate) fn allow_host_fn(&mut self, expr: &ast::Expr) {
+        if matches!(expr.kind, ast::ExprKind::Path(_)) {
+            self.host_fn_spans.insert((expr.span.start, expr.span.end));
+        }
+    }
+
+    /// Rejects a host-implemented `fn` whose signature carries an `Option`
+    /// when it is named as a value anywhere the host does not receive it raw.
+    pub(crate) fn check_extern_fn_value(&mut self, expr: &ast::Expr) {
+        let Some((params, ret)) = self.extern_callee_sig(expr) else {
+            return;
+        };
+        if !params.iter().any(is_option) && !is_option(&ret) {
+            return;
+        }
+        if self
+            .host_fn_spans
+            .contains(&(expr.span.start, expr.span.end))
+        {
+            return;
+        }
+        self.error_at(
+            expr.span,
+            "a host function that takes or returns an `Option` can be called, or handed \
+             directly to another host function; it cannot be stored or passed on as a value"
+                .to_string(),
+        );
+    }
+
+    /// Whether `owner.member` is a host-implemented method.
+    pub(crate) fn is_host_method(&self, owner: &str, member: &str) -> bool {
+        self.host_method_sig(owner, member).is_some()
+    }
+
+    /// Whether `name` is a host-implemented type.
+    pub(crate) fn is_extern_type(&self, name: &str) -> bool {
+        self.table().extern_types.contains(name)
+    }
+
+    /// Whether `ty` names a host-implemented type.
+    pub(crate) fn is_extern_ty(&self, ty: &Ty) -> bool {
+        matches!(ty, Ty::Named { name, .. } if self.is_extern_type(name))
+    }
+
+    /// Infers `expr` without keeping the diagnostics it produces.
+    pub(crate) fn quiet_infer(&mut self, expr: &ast::Expr) -> Ty {
+        let kept = self.diagnostics.len();
+        let ty = self.infer(expr);
+        self.diagnostics.truncate(kept);
+        ty
     }
 
     /// The extern signature of `receiver.method(..)`, if the host implements

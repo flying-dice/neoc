@@ -337,7 +337,6 @@ impl<'a> Elaborator<'a> {
             ast::ExprKind::Return(value) => {
                 ast::ExprKind::Return(value.as_ref().map(|e| self.boxed(e)))
             }
-            ast::ExprKind::Path(_) => self.path_value(expr),
             // Leaves: literals, unit, break, continue.
             other => other.clone(),
         };
@@ -415,7 +414,7 @@ impl<'a> Elaborator<'a> {
     ) -> ast::ExprKind {
         let new_target = Box::new(self.place(target));
         let new_value = Box::new(match self.extern_place_ty(target) {
-            Some(ty) => marshal_to_host(&ty, self.host_slot(value)),
+            Some(ty) => marshal_to_host(&ty, self.expr(value)),
             None => self.expr(value),
         });
         let op = if op == ast::AssignOp::Add
@@ -513,7 +512,7 @@ impl<'a> Elaborator<'a> {
             ast::ExprKind::Path(_) => callee.clone(),
             _ => self.expr(callee),
         };
-        let args = self.call_args(sig.as_ref(), args);
+        let args = self.exprs(args);
         let call = ast::ExprKind::Call {
             callee: Box::new(new_callee),
             args: marshal_args(sig.as_ref(), args),
@@ -530,7 +529,7 @@ impl<'a> Elaborator<'a> {
         span: ast::Span,
     ) -> ast::ExprKind {
         let sig = self.checker.extern_method_sig(receiver, method);
-        let args = self.call_args(sig.as_ref(), args);
+        let args = self.exprs(args);
         let call = ast::ExprKind::MethodCall {
             receiver: self.boxed(receiver),
             method: method.to_string(),
@@ -538,28 +537,6 @@ impl<'a> Elaborator<'a> {
             args: marshal_args(sig.as_ref(), args),
         };
         marshal_result(sig.as_ref(), call, span)
-    }
-
-    /// Elaborated call arguments: each a host slot when the callee is
-    /// host-implemented (`sig` present), plain elaboration otherwise.
-    fn call_args(&mut self, sig: Option<&ExternSig>, args: &[ast::Expr]) -> Vec<ast::Expr> {
-        match sig {
-            Some(_) => args.iter().map(|a| self.host_slot(a)).collect(),
-            None => self.exprs(args),
-        }
-    }
-
-    /// A value bound for a host slot: an extern call argument, or a field of a
-    /// host-implemented struct. A named extern `fn` passes raw — the host calls
-    /// it with host shapes, so the marshalling closure of [`Self::path_value`]
-    /// would misread them.
-    fn host_slot(&mut self, value: &ast::Expr) -> ast::Expr {
-        match &value.kind {
-            ast::ExprKind::Path(_) if self.checker.extern_callee_sig(value).is_some() => {
-                value.clone()
-            }
-            _ => self.expr(value),
-        }
     }
 
     /// A field read. An `Option` field of a host-implemented struct wraps.
@@ -606,7 +583,7 @@ impl<'a> Elaborator<'a> {
     fn field_init(&mut self, path: &[ast::Ident], init: &ast::FieldInit) -> ast::FieldInit {
         let ty = self.checker.extern_lit_field_ty(path, &init.name);
         let value = match (&init.value, ty) {
-            (Some(v), Some(ty)) => Some(marshal_to_host(&ty, self.host_slot(v))),
+            (Some(v), Some(ty)) => Some(marshal_to_host(&ty, self.expr(v))),
             (Some(v), None) => Some(self.expr(v)),
             (None, Some(ty)) if is_option(&ty) => {
                 let named = ast::Expr::new(
@@ -620,41 +597,6 @@ impl<'a> Elaborator<'a> {
         ast::FieldInit {
             name: init.name.clone(),
             value,
-        }
-    }
-
-    /// A path in value position. A host-implemented function whose signature
-    /// carries an `Option` becomes a neoc closure that marshals around the call,
-    /// so neoc code calling it later keeps the boundary rule. A host slot takes
-    /// the raw function instead ([`Self::host_slot`]).
-    fn path_value(&mut self, path: &ast::Expr) -> ast::ExprKind {
-        let Some(sig) = self.checker.extern_callee_sig(path) else {
-            return path.kind.clone();
-        };
-        let (params, ret) = &sig;
-        if !params.iter().any(is_option) && !is_option(ret) {
-            return path.kind.clone();
-        }
-        let names: Vec<String> = (0..params.len()).map(|i| format!("__a{i}")).collect();
-        let args = names
-            .iter()
-            .map(|n| ast::Expr::new(ast::ExprKind::Path(vec![n.clone()]), path.span))
-            .collect();
-        let call = ast::ExprKind::Call {
-            callee: Box::new(path.clone()),
-            args: marshal_args(Some(&sig), args),
-        };
-        let body = ast::Expr::new(marshal_result(Some(&sig), call, path.span), path.span);
-        ast::ExprKind::Closure {
-            params: names
-                .into_iter()
-                .map(|name| ast::ClosureParam {
-                    name,
-                    ty: None,
-                    span: path.span,
-                })
-                .collect(),
-            body: Box::new(body),
         }
     }
 

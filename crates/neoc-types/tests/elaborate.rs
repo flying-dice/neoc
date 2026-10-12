@@ -248,18 +248,6 @@ fn local_shadowing_an_extern_name_is_not_marshalled() {
 }
 
 #[test]
-fn extern_fn_value_with_option_becomes_marshalling_closure() {
-    let m = elaborate(&parse(&format!(
-        "{HOST}fn main() -> fn(Option<number>) -> Option<number> {{ put }}"
-    )));
-    let ExprKind::Closure { params, body } = &main_value(&m).kind else {
-        panic!("not a closure: {:?}", main_value(&m));
-    };
-    assert_eq!(params.len(), 1);
-    assert!(matches!(&body.kind, ExprKind::Marshal { .. }));
-}
-
-#[test]
 fn extern_fn_value_without_option_is_left_alone() {
     let m = elaborate(&parse(
         "extern { fn get(v: number) -> number; }\nfn main() -> fn(number) -> number { get }",
@@ -369,6 +357,32 @@ fn aliased_option_param_and_result_marshal() {
     };
     assert!(matches!(
         &args[0].kind,
+        ExprKind::Marshal {
+            direction: ToHost,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn self_literal_in_impl_on_extern_struct_marshals_option_field() {
+    use neoc_ast::MarshalDirection::ToHost;
+    let m = elaborate(&parse(
+        "extern { struct S { title: Option<string> } }\n\
+         impl S { fn make(t: Option<string>) -> S { Self { title: t } } }\n\
+         fn main() {}",
+    ));
+    let ItemKind::Impl(i) = &m.items[1].kind else {
+        panic!("not an impl: {:?}", m.items[1]);
+    };
+    let body = &i.items[0].body;
+    let value = body.value.as_ref().expect("tail value");
+    let ExprKind::StructLit { path, fields, .. } = &value.kind else {
+        panic!("not a literal: {value:?}");
+    };
+    assert_eq!(path, &["S".to_string()]);
+    assert!(matches!(
+        &fields[0].value.as_ref().expect("value").kind,
         ExprKind::Marshal {
             direction: ToHost,
             ..

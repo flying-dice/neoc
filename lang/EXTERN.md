@@ -223,15 +223,13 @@ a method a neoc inherent `impl` adds to an extern type is neoc-implemented and
 does not marshal. A neoc function, and a neoc `struct` or `enum` with an
 `Option` field, are unaffected — an `Option` stays a tagged value inside neoc.
 
-**Extern `fn` as a value.** Named rather than called, an extern `fn` whose
-signature carries an `Option` takes one of two forms by destination:
-
-- **into a host slot** — an argument of a host-implemented call, or a value
-  written to a field of an extern `struct` — it passes **raw**. The host calls
-  it with host shapes (`nil` / bare values), which is what it expects.
-- **anywhere else** (a `let`, a neoc argument, a return) it becomes a neoc
-  closure that marshals around the call, so neoc code calling it later sees
-  `Option` both ways.
+**Extern `fn` as a value.** An extern `fn` whose signature carries an `Option`
+is called, or handed directly — by name — to a host slot: an argument of a
+host-implemented call, or a value written to a field of an extern `struct`. There
+it passes **raw**, and the host calls it with host shapes (`nil` / bare values).
+Named anywhere else (a `let`, a neoc argument, a return) it is rejected: neoc
+code would call it with `Option` values, the host with host shapes, and one
+value cannot serve both.
 
 **Patterns.** A pattern reads a host field raw, so a struct pattern on an extern
 `struct` cannot destructure an `Option` field — neither by binding it
@@ -239,7 +237,11 @@ signature carries an `Option` takes one of two forms by destination:
 checker rejects both. Read the field with `.title`, which marshals; `title: _`
 and `..` read nothing and are allowed.
 
-Two shapes have no unambiguous host form and are rejected:
+Only a declared `Option<T>` marshals. An `Option` passed for an `Unknown` or
+generic parameter crosses as the tagged neoc value, since the signature names no
+`Option` to unwrap.
+
+Three shapes have no unambiguous host form and are rejected:
 
 - **`Option<Option<T>>`** (an `Option` anywhere inside an `Option`): `Some(None)`
   and `None` would both reach the host as `nil`.
@@ -247,6 +249,8 @@ Two shapes have no unambiguous host form and are rejected:
   `[T]`, a function type, `Result<T, E>`, or another type's arguments. A list
   cannot hold `nil`, and a callback's marshalling is the host's to define, not
   the call site's.
+- **An `Option` field of an extern tuple struct**, which has no field name to
+  read or write through. Declare a named field.
 
 Author a host value that may be absent as `Option<T>`; use `Unknown` for a host
 value whose absence is not `nil`.

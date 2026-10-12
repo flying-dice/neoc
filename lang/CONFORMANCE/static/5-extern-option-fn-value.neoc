@@ -1,0 +1,16 @@
+// EXTERN.md §Option marshalling: a host function that takes or returns an `Option`
+// is called, or handed directly to another host function. Stored or passed on
+// through neoc code, the host would call it with host shapes it cannot read.
+extern {
+    fn pcall(f: Unknown, a: Unknown) -> Unknown;
+    fn show(v: Option<number>) -> string;
+}
+
+fn keep() -> Unknown {
+    let f = show;
+    pcall(f, 3)
+}
+
+fn ok() -> Unknown {
+    pcall(show, 3)
+}

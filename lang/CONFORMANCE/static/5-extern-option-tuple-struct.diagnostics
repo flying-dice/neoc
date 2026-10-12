@@ -1,0 +1,1 @@
+`Option<number>` cannot be the field of an `extern` tuple struct: an `Option` field needs a name to marshal; declare a named field

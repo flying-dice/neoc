@@ -251,7 +251,7 @@ fn neoc_option_function_emits_no_marshalling() {
 }
 
 #[test]
-fn extern_fn_passed_as_value_marshals_when_called() {
+fn extern_option_fn_stored_as_value_is_rejected() {
     let src = r"
 extern {
     #[extern(ambient)]
@@ -259,12 +259,13 @@ extern {
 }
 fn main() { let f = put; let _ = f(None); }
 ";
-    let out = transpile(src, Target::Lua).output;
+    let out = transpile(src, Target::Lua);
     assert!(
-        out.contains(
-            "function(__a0) return __option_from_host(host.put(__option_to_host(__a0))) end"
-        ),
-        "extern fn value should wrap in a marshalling closure:\n{out}"
+        out.diagnostics.iter().any(|d| d
+            .message
+            .contains("cannot be stored or passed on as a value")),
+        "{:#?}",
+        out.diagnostics
     );
 }
 

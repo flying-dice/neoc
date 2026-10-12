@@ -67,6 +67,10 @@ pub struct Checker<'a> {
     /// per name, so signature conformance is skipped for them — the conflict
     /// is the diagnostic.
     pub(crate) conflicting_impls: std::collections::HashSet<(String, String)>,
+    /// Spans of extern-`fn` names that sit in a position where the host
+    /// receives the function raw: a callee, or a direct host-slot argument
+    /// (`EXTERN.md` §Option marshalling).
+    host_fn_spans: std::collections::HashSet<(usize, usize)>,
 }
 
 /// The inferred type of one expression, with the byte range it occupies. The
@@ -127,6 +131,7 @@ impl<'a> Checker<'a> {
             record_calls: false,
             calls: Vec::new(),
             conflicting_impls: std::collections::HashSet::new(),
+            host_fn_spans: std::collections::HashSet::new(),
         }
     }
 
@@ -1011,7 +1016,10 @@ impl<'a> Checker<'a> {
             ast::ExprKind::Str(_) => Ty::Str,
             ast::ExprKind::Bool(_) => Ty::Bool,
             ast::ExprKind::Unit => Ty::Unit,
-            ast::ExprKind::Path(segs) => self.infer_path(segs, span),
+            ast::ExprKind::Path(segs) => {
+                self.check_extern_fn_value(expr);
+                self.infer_path(segs, span)
+            }
             ast::ExprKind::Binary { op, lhs, rhs } => self.infer_binary(*op, lhs, rhs, span),
             ast::ExprKind::Unary { op, operand } => self.infer_unary(*op, operand),
             ast::ExprKind::Call { callee, args } => self.infer_call(callee, args, span),
@@ -1039,12 +1047,7 @@ impl<'a> Checker<'a> {
                 // Ranges drive `for`; treat their value as a list of numbers.
                 Ty::List(Box::new(Ty::Number))
             }
-            ast::ExprKind::Assign { target, value, .. } => {
-                let t = self.infer(target);
-                let v = self.infer(value);
-                self.expect(&t, &v, "assignment");
-                Ty::Unit
-            }
+            ast::ExprKind::Assign { target, value, .. } => self.infer_assign(target, value),
             ast::ExprKind::While { cond, body } => {
                 let c = self.infer(cond);
                 self.expect(&Ty::Bool, &c, "while condition");
@@ -1100,6 +1103,19 @@ impl<'a> Checker<'a> {
             });
         }
         ty
+    }
+
+    fn infer_assign(&mut self, target: &ast::Expr, value: &ast::Expr) -> Ty {
+        let t = self.infer(target);
+        if let ast::ExprKind::Field { base, .. } = &target.kind {
+            let base_ty = self.quiet_infer(base);
+            if self.is_extern_ty(&base_ty) {
+                self.allow_host_fn(value);
+            }
+        }
+        let v = self.infer(value);
+        self.expect(&t, &v, "assignment");
+        Ty::Unit
     }
 
     fn infer_path(&mut self, segs: &[ast::Ident], span: ast::Span) -> Ty {
@@ -1382,6 +1398,12 @@ impl<'a> Checker<'a> {
     }
 
     fn infer_call(&mut self, callee: &ast::Expr, args: &[ast::Expr], span: ast::Span) -> Ty {
+        if self.extern_callee_sig(callee).is_some() {
+            self.allow_host_fn(callee);
+            for a in args {
+                self.allow_host_fn(a);
+            }
+        }
         let callee_ty = self.infer(callee);
         let arg_tys: Vec<Ty> = args.iter().map(|a| self.infer(a)).collect();
         match callee_ty {
@@ -1567,6 +1589,13 @@ impl<'a> Checker<'a> {
         span: ast::Span,
     ) -> Ty {
         let recv = self.infer(receiver);
+        if let Ty::Named { name, .. } = &recv {
+            if self.is_host_method(name, method) {
+                for a in args {
+                    self.allow_host_fn(a);
+                }
+            }
+        }
         let arg_tys: Vec<Ty> = args.iter().map(|a| self.infer(a)).collect();
         // A method on a bounded type parameter resolves through its bounds:
         // `fn f<T: Display>(x: T) { x.show() }` finds `show` on `Display`.
@@ -1708,6 +1737,11 @@ impl<'a> Checker<'a> {
         base: Option<&ast::Expr>,
         span: ast::Span,
     ) -> Ty {
+        if path.last().is_some_and(|n| self.is_extern_type(n)) {
+            for v in fields.iter().filter_map(|f| f.value.as_ref()) {
+                self.allow_host_fn(v);
+            }
+        }
         // Struct-variant literal `Enum::Variant { .. }`.
         if path.len() >= 2 {
             return self.infer_variant_lit(path, fields, span);

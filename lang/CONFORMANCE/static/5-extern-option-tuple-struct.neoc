@@ -1,0 +1,7 @@
+// EXTERN.md §Option marshalling: an `Option` has no unambiguous host form as the
+// field of an extern tuple struct, which has no field name to read or write by.
+extern {
+    struct Box(Option<number>);
+}
+
+fn main() {}
