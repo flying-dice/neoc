@@ -1,0 +1,17 @@
+struct P {
+    x: number,
+}
+
+type A = P;
+
+impl A {
+    fn mk() -> Self {
+        Self { x: 7 }
+    }
+}
+
+fn main() {
+    let a = A { x: 4 };
+    let b: P = A::mk();
+    let c = A { x: 1, ..b };
+}

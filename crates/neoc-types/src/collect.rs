@@ -141,6 +141,13 @@ pub(crate) fn fn_type(sig: &ast::FnSig, type_params: &[String]) -> (Vec<Ty>, Ty,
 pub fn collect(module: &ast::Module) -> SymbolTable {
     let mut table = SymbolTable::new();
     seed_prelude(&mut table);
+    // Aliases first: an `impl` target may name an alias declared after it, and
+    // is keyed on the type the alias expands to (`STATIC.md` §3.8).
+    for item in &module.items {
+        if matches!(item.kind, ast::ItemKind::TypeAlias(_)) {
+            collect_item(&mut table, item);
+        }
+    }
     for item in &module.items {
         collect_item(&mut table, item);
         record_visibility(&mut table, item);
@@ -620,7 +627,7 @@ fn collect_trait(table: &mut SymbolTable, t: &ast::TraitDecl) {
 
 fn collect_impl(table: &mut SymbolTable, b: &ast::ImplBlock) {
     let impl_generics = generic_names(&b.generics);
-    let Some(type_name) = impl_target_name(&b.ty) else {
+    let Some(type_name) = impl_target_name(table, &b.ty) else {
         return;
     };
     // The impl's associated-type bindings, so a method signature mentioning
@@ -785,12 +792,14 @@ pub(crate) fn lower_trait_ref(
     })
 }
 
-/// The bare type name an `impl` targets, ignoring generic arguments.
-pub(crate) fn impl_target_name(ty: &ast::Type) -> Option<String> {
-    match ty {
-        ast::Type::Path(p) => p.segments.last().map(|s| s.name.clone()),
-        _ => None,
-    }
+/// The bare type name an `impl` targets, ignoring generic arguments. A `type`
+/// alias target is read as the type it expands to (`STATIC.md` §3.8).
+pub(crate) fn impl_target_name(table: &SymbolTable, ty: &ast::Type) -> Option<String> {
+    let ast::Type::Path(p) = ty else {
+        return None;
+    };
+    let name = &p.segments.last()?.name;
+    Some(table.alias_head(name).unwrap_or_else(|| name.clone()))
 }
 
 /// Resolves any `Self::Item` projection sentinel in `ty` to its binding from

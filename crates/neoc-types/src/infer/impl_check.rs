@@ -13,7 +13,7 @@ use crate::ty::Ty;
 
 impl Checker<'_> {
     pub(super) fn check_impl(&mut self, b: &ast::ImplBlock, span: ast::Span) {
-        let Some(target) = crate::collect::impl_target_name(&b.ty) else {
+        let Some(target) = crate::collect::impl_target_name(self.table, &b.ty) else {
             return;
         };
         self.check_impl_params_constrained(b, span);

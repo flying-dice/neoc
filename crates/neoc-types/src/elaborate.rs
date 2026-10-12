@@ -121,9 +121,19 @@ impl<'a> Elaborator<'a> {
     }
 
     fn impl_block(&mut self, b: &ast::ImplBlock) -> ast::ImplBlock {
-        let target = match &b.ty {
-            ast::Type::Path(p) => p.segments.last().map(|s| s.name.clone()),
-            _ => None,
+        let target = crate::collect::impl_target_name(self.checker.table(), &b.ty);
+        // An alias target is rewritten to the type it expands to, so the
+        // lowering keys the methods on the real type table.
+        let ty = match (&b.ty, &target) {
+            (ast::Type::Path(p), Some(t)) if p.segments.last().is_some_and(|s| s.name != *t) => {
+                let mut p = p.clone();
+                if let Some(last) = p.segments.last_mut() {
+                    last.name.clone_from(t);
+                    last.args.clear();
+                }
+                ast::Type::Path(p)
+            }
+            _ => b.ty.clone(),
         };
         // Mirrors `Checker::check_impl`: the impl's generics are in scope while
         // `Self` is read as the target with its arguments.
@@ -143,7 +153,7 @@ impl<'a> Elaborator<'a> {
         ast::ImplBlock {
             generics: b.generics.clone(),
             trait_: b.trait_.clone(),
-            ty: b.ty.clone(),
+            ty,
             items,
             assoc_bindings: b.assoc_bindings.clone(),
         }
@@ -235,7 +245,42 @@ impl<'a> Elaborator<'a> {
     fn resolve_self_head(&self, path: &[ast::Ident]) -> Vec<ast::Ident> {
         match (path, &self.checker.impl_target) {
             ([head], Some(target)) if head == "Self" => vec![target.clone()],
+            ([head], _) => vec![
+                self.checker
+                    .table()
+                    .alias_head(head)
+                    .unwrap_or_else(|| head.clone()),
+            ],
             _ => path.to_vec(),
+        }
+    }
+
+    /// `p` with every alias heading a path read as the type it expands to
+    /// (`STATIC.md` §3.8), so the lowering tests the real type's tag or table.
+    fn pattern(&self, p: &ast::Pattern) -> ast::Pattern {
+        let table = self.checker.table();
+        match p {
+            ast::Pattern::Path(path) => ast::Pattern::Path(expand_pattern_path(table, path, false)),
+            ast::Pattern::Struct { path, fields, rest } => ast::Pattern::Struct {
+                path: expand_pattern_path(table, path, true),
+                fields: fields
+                    .iter()
+                    .map(|f| ast::FieldPat {
+                        name: f.name.clone(),
+                        pattern: f.pattern.as_ref().map(|p| self.pattern(p)),
+                        span: f.span,
+                    })
+                    .collect(),
+                rest: *rest,
+            },
+            ast::Pattern::Tuple { path, elems } => ast::Pattern::Tuple {
+                path: expand_pattern_path(table, path, true),
+                elems: elems.iter().map(|e| self.pattern(e)).collect(),
+            },
+            ast::Pattern::Or(alts) => {
+                ast::Pattern::Or(alts.iter().map(|a| self.pattern(a)).collect())
+            }
+            other => other.clone(),
         }
     }
 
@@ -273,7 +318,7 @@ impl<'a> Elaborator<'a> {
         self.checker
             .bind_pattern(&l.pattern, &ty, crate::resolve::BindingKind::Let);
         ast::LetStmt {
-            pattern: l.pattern.clone(),
+            pattern: self.pattern(&l.pattern),
             ty: l.ty.clone(),
             value,
         }
@@ -302,6 +347,14 @@ impl<'a> Elaborator<'a> {
                 end: self.boxed(end),
                 inclusive: *inclusive,
             },
+            ast::ExprKind::Path(segs) if segs.len() >= 2 => {
+                let mut segs = segs.clone();
+                let at = segs.len() - 2;
+                if let Some(head) = self.checker.table().alias_head(&segs[at]) {
+                    segs[at] = head;
+                }
+                ast::ExprKind::Path(segs)
+            }
             ast::ExprKind::Try(inner) => ast::ExprKind::Try(self.boxed(inner)),
             ast::ExprKind::Call { callee, args } => ast::ExprKind::Call {
                 callee: self.boxed(callee),
@@ -470,7 +523,7 @@ impl<'a> Elaborator<'a> {
                 let body = self.expr(&arm.body);
                 self.checker.scopes.pop();
                 ast::MatchArm {
-                    pattern: arm.pattern.clone(),
+                    pattern: self.pattern(&arm.pattern),
                     guard,
                     body,
                 }
@@ -499,7 +552,7 @@ impl<'a> Elaborator<'a> {
         let new_body = self.block(body);
         self.checker.scopes.pop();
         ast::ExprKind::For {
-            pattern: pattern.clone(),
+            pattern: self.pattern(pattern),
             iter: Box::new(new_iter),
             body: new_body,
         }
@@ -573,6 +626,27 @@ pub fn elaborate(module: &ast::Module) -> ast::Module {
 pub fn elaborate_with_table(module: &ast::Module, table: &SymbolTable) -> ast::Module {
     let checker = Checker::new(table);
     Elaborator::new(checker).module(module)
+}
+
+/// `path` with its type segment read through any alias: the second-to-last
+/// segment of a qualified path (`C::Red`), and, when `head` (a struct or tuple
+/// pattern, where the last segment may itself name the struct), the last.
+fn expand_pattern_path(table: &SymbolTable, path: &[ast::Ident], head: bool) -> Vec<ast::Ident> {
+    let mut path = path.to_vec();
+    let last = path.len().saturating_sub(1);
+    let mut at = vec![];
+    if path.len() >= 2 {
+        at.push(last - 1);
+    }
+    if head {
+        at.push(last);
+    }
+    for i in at {
+        if let Some(h) = table.alias_head(&path[i]) {
+            path[i] = h;
+        }
+    }
+    path
 }
 
 /// The target parameter of a blanket impl `impl<T: …> Trait for T`, or `None`

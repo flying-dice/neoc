@@ -1,0 +1,86 @@
+// STATIC.md §3.8: a `type` alias is transparent in every position, including
+// a struct-literal head, an `impl` target (inherent or trait), the head of a
+// qualified path, and a pattern path (enum variant or struct). `Self` inside
+// such an impl is the aliased struct. The lowering keys everything on the
+// expanded type's own table (DYNAMIC.md §3.8, §4.4).
+extern {
+    fn println(n: number);
+}
+
+struct P {
+    x: number,
+}
+
+type A = P;
+
+type B = A;
+
+impl A {
+    fn mk() -> P {
+        P { x: 7 }
+    }
+
+    fn make(x: number) -> Self {
+        Self { x }
+    }
+
+    fn doubled(self) -> number {
+        self.x * 2
+    }
+}
+
+trait Show {
+    fn show(self) -> number;
+}
+
+impl Show for B {
+    fn show(self) -> number {
+        self.x + 1
+    }
+}
+
+struct W<T> {
+    v: T,
+}
+
+impl N {
+    fn three() -> W<number> {
+        Self { v: 3 }
+    }
+}
+
+type N = W<number>;
+
+enum Color {
+    Red,
+    Green(number),
+}
+
+type C = Color;
+
+fn pick(c: C) -> number {
+    match c {
+        C::Red => 0,
+        C::Green(n) => n,
+    }
+}
+
+fn unwrap(a: A) -> number {
+    let A { x } = a;
+    x
+}
+
+fn main() {
+    let a = A { x: 4 };
+    let b = B { x: 5 };
+    println(a.x);
+    println(b.doubled());
+    println(A::mk().x);
+    println(B::make(6).doubled());
+    println(a.show());
+    println(N::three().v);
+    println(W { v: 8 }.v);
+    println(pick(C::Green(9)));
+    println(pick(C::Red));
+    println(unwrap(A { x: 2 }));
+}

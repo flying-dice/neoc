@@ -398,6 +398,25 @@ impl SymbolTable {
         }
     }
 
+    /// The nominal type a `type` alias name stands for, through any chain of
+    /// aliases: `A` with `type A = P` is `P`; `N` with `type N = W<number>` is
+    /// `W`. `None` when `name` is not an alias or its value is not a named type
+    /// (a list, a function type, or an ill-formed alias).
+    #[must_use]
+    pub fn alias_head(&self, name: &str) -> Option<String> {
+        let Some(TypeDef::Alias { generics, .. }) = self.types.get(name) else {
+            return None;
+        };
+        let applied = Ty::Named {
+            name: name.to_string(),
+            args: vec![Ty::Unknown; generics.len()],
+        };
+        match self.resolve_alias_ty(applied) {
+            Ty::Named { name, .. } => Some(name),
+            _ => None,
+        }
+    }
+
     /// Recursively expands aliases inside a type. A generic alias applied to
     /// the right number of arguments is expanded with its parameters replaced
     /// by those arguments (`Pair<number>` with `type Pair<T> = [T]` is

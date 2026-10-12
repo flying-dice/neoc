@@ -163,7 +163,7 @@ This covers a struct, an enum with methods, and a trait with defaults declared i
 
 ### 3.8 `type` alias
 
-No output. Type aliases are erased; they exist only in `STATIC.md`.
+No output. Type aliases are erased; they exist only in `STATIC.md`. A use of an alias as a struct-literal head, `impl` target, path qualifier, or pattern head lowers as the expanded type's own name.
 
 ### 3.9 `extern`
 

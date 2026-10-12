@@ -662,7 +662,7 @@ impl<'a> Checker<'a> {
                 continue;
             };
             let (Some(target), Some(trait_)) = (
-                crate::collect::impl_target_name(&b.ty),
+                crate::collect::impl_target_name(self.table, &b.ty),
                 b.trait_.as_ref().and_then(|p| p.segments.last()),
             ) else {
                 continue;
@@ -995,7 +995,7 @@ impl<'a> Checker<'a> {
         let name = if name == "Self" {
             self.self_lit_target(span)?
         } else {
-            name.clone()
+            self.table.alias_head(name).unwrap_or_else(|| name.clone())
         };
         let table = self.table;
         let Some(TypeDef::Struct(s)) = table.types.get(&name) else {
@@ -1374,6 +1374,10 @@ impl<'a> Checker<'a> {
 
     fn resolve_qualified(&mut self, segs: &[ast::Ident], span: ast::Span) -> Ty {
         let type_name = &segs[segs.len() - 2];
+        let type_name = &self
+            .table
+            .alias_head(type_name)
+            .unwrap_or_else(|| type_name.clone());
         let member = &segs[segs.len() - 1];
         // `Self` is a type parameter only inside a trait's default body, which
         // is emitted once and shared by every implementor — no runtime handle
