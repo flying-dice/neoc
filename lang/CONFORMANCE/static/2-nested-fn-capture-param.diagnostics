@@ -1,0 +1,1 @@
+nested `fn` cannot use `factor`, a binding of the enclosing function

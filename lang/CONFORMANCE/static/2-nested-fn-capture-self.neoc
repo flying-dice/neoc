@@ -1,0 +1,13 @@
+// STATIC.md §2: an item statement cannot use `self` of the enclosing method.
+struct P {
+    x: number,
+}
+
+impl P {
+    fn get(self) -> number {
+        fn inner() -> number {
+            self.x
+        }
+        inner()
+    }
+}

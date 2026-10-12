@@ -1,0 +1,26 @@
+// STATIC.md §2: a binding of the enclosing function that shadows a module-level
+// item still cannot be named from an item statement — not even to reach the item.
+fn helper() -> number {
+    1
+}
+
+fn other() -> number {
+    2
+}
+
+fn outer(helper: number) -> number {
+    fn g() -> number {
+        helper()
+    }
+    g() + helper
+}
+
+fn main() {
+    let other = 5;
+    {
+        fn h() -> number {
+            other()
+        }
+        let a = h();
+    }
+}

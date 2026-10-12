@@ -618,16 +618,27 @@ fn normalize_variant_fields(fields: &mut VariantFields, table: &SymbolTable) {
 /// other.
 pub type BindingId = u32;
 
+/// What a [`Frame`] holds, which decides whether a lookup from inside a nested
+/// `fn` body may read it.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum FrameKind {
+    /// Locals: `let`s, closure params, pattern bindings.
+    #[default]
+    Locals,
+    /// A block's item statements (nested `fn`s), which stay visible inside a
+    /// nested item body.
+    Items,
+    /// The outermost frame of a `fn` body, holding its params and `self`:
+    /// locals of the frames below it are out of reach (an item statement
+    /// captures nothing).
+    FnBody,
+}
+
 /// One lexical frame of a [`Scopes`] stack.
 #[derive(Debug, Default)]
 struct Frame {
     names: HashMap<String, (Ty, BindingId)>,
-    /// Holds a block's item statements (nested `fn`s), which stay visible
-    /// inside a nested item body; every other frame holds locals.
-    items: bool,
-    /// The outermost frame of a `fn` body: locals of the frames below it are
-    /// out of reach (an item statement captures nothing).
-    fn_boundary: bool,
+    kind: FrameKind,
 }
 
 /// The lexical scope stack for value bindings (`let`, params, closure params,
@@ -659,7 +670,7 @@ impl Scopes {
     /// Opens the frame of a `fn` body — a capture boundary.
     pub fn push_fn(&mut self) {
         self.frames.push(Frame {
-            fn_boundary: true,
+            kind: FrameKind::FnBody,
             ..Frame::default()
         });
     }
@@ -668,7 +679,7 @@ impl Scopes {
     /// across the whole block and inside the items it declares.
     pub fn push_items(&mut self) {
         self.frames.push(Frame {
-            items: true,
+            kind: FrameKind::Items,
             ..Frame::default()
         });
     }
@@ -702,8 +713,8 @@ impl Scopes {
     fn reachable(&self) -> impl Iterator<Item = &Frame> {
         let mut crossed = false;
         self.frames.iter().rev().filter(move |f| {
-            let reach = !crossed || f.items;
-            crossed |= f.fn_boundary;
+            let reach = !crossed || f.kind == FrameKind::Items;
+            crossed |= f.kind == FrameKind::FnBody;
             reach
         })
     }
@@ -726,10 +737,10 @@ impl Scopes {
             .map(|(_, id)| *id)
     }
 
-    /// Whether `name` is a local of an enclosing block that a `fn` boundary
-    /// hides from the current position.
+    /// Whether `name` is a binding of an enclosing function — a `let`, param,
+    /// or `self` — that a nested `fn` boundary hides from the current position.
     #[must_use]
-    pub fn is_captured_local(&self, name: &str) -> bool {
+    pub fn is_hidden_by_fn_boundary(&self, name: &str) -> bool {
         self.lookup(name).is_none() && self.frames.iter().any(|f| f.names.contains_key(name))
     }
 }

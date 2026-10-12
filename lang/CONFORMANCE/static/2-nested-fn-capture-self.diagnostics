@@ -1,0 +1,1 @@
+nested `fn` cannot use `self` of the enclosing function

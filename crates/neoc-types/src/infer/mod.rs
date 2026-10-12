@@ -32,6 +32,9 @@ pub struct Checker<'a> {
     pub(crate) impl_target: Option<String>,
     /// Type parameters in scope for the current item.
     pub(crate) type_params: Vec<String>,
+    /// Type parameters of the functions enclosing a nested `fn`: out of scope
+    /// in its body, and an error to name there (`STATIC.md` §2).
+    enclosing_type_params: Vec<String>,
     /// Bounds for the in-scope type parameters: `T` → the trait names it is
     /// bound by (from `<T: Trait>` and `where T: Trait`). Lets a method call on
     /// a bounded parameter resolve through the bound trait's methods
@@ -110,6 +113,7 @@ impl<'a> Checker<'a> {
             ret_ty: Ty::Unit,
             impl_target: None,
             type_params: Vec::new(),
+            enclosing_type_params: Vec::new(),
             type_bounds: std::collections::HashMap::new(),
             assoc_bindings: std::collections::HashMap::new(),
             diagnostics: Vec::new(),
@@ -313,6 +317,7 @@ impl<'a> Checker<'a> {
     fn lower_at(&mut self, ty: &ast::Type, span: ast::Span) -> Ty {
         let unexpanded = lower_type(ty, &self.type_params);
         self.report_arity(&unexpanded, span);
+        self.report_enclosing_type_params(&unexpanded, span);
         self.project_assoc(self.table.resolve_alias_ty(unexpanded))
     }
 
@@ -322,6 +327,23 @@ impl<'a> Checker<'a> {
     /// D-ALIAS-ARITY, §3.4).
     fn check_arity(&mut self, ty: &ast::Type, params: &[String], span: ast::Span) {
         self.report_arity(&lower_type(ty, params), span);
+    }
+
+    /// Reports at `span` each type parameter of an enclosing function that
+    /// `ty` names from inside a nested `fn` (`STATIC.md` §2).
+    fn report_enclosing_type_params(&mut self, ty: &Ty, span: ast::Span) {
+        let mut named = Vec::new();
+        ty.for_each_named(&mut |name, _| {
+            if self.enclosing_type_params.iter().any(|p| p == name) {
+                named.push(name.to_string());
+            }
+        });
+        for name in named {
+            self.error_at(
+                span,
+                format!("nested `fn` cannot use type parameter `{name}` of the enclosing function"),
+            );
+        }
     }
 
     fn report_arity(&mut self, unexpanded: &Ty, span: ast::Span) {
@@ -952,7 +974,11 @@ impl<'a> Checker<'a> {
         }
         let outer_params = std::mem::take(&mut self.type_params);
         let outer_bounds = std::mem::take(&mut self.type_bounds);
+        let enclosing_len = self.enclosing_type_params.len();
+        self.enclosing_type_params
+            .extend(outer_params.iter().cloned());
         self.check_item(item);
+        self.enclosing_type_params.truncate(enclosing_len);
         self.type_params = outer_params;
         self.type_bounds = outer_bounds;
     }
@@ -1089,6 +1115,18 @@ impl<'a> Checker<'a> {
                 }
                 return t;
             }
+            // A binding of an enclosing function stays an error even when a
+            // module item shares its name: the emitted nested function would
+            // close over the binding, not the item (`STATIC.md` §2).
+            if self.scopes.is_hidden_by_fn_boundary(name) {
+                let what = if name == "self" {
+                    "`self` of the enclosing function".to_string()
+                } else {
+                    format!("`{name}`, a binding of the enclosing function")
+                };
+                self.error_at(span, format!("nested `fn` cannot use {what}"));
+                return Ty::Unknown;
+            }
             if let Some(t) = self.table.values.get(name) {
                 // Resolves to a top-level item, not a local — record it as such
                 // so a rename of the item skips a shadowing local elsewhere.
@@ -1105,14 +1143,7 @@ impl<'a> Checker<'a> {
             if let Some(ty) = self.resolve_unit_value(name) {
                 return ty;
             }
-            if self.scopes.is_captured_local(name) {
-                self.error_at(
-                    span,
-                    format!("nested `fn` cannot use local `{name}` of the enclosing block"),
-                );
-            } else {
-                self.error_at(span, format!("unknown name `{name}`"));
-            }
+            self.error_at(span, format!("unknown name `{name}`"));
             return Ty::Unknown;
         }
         // Qualified path: `Type::assoc` / `Enum::Variant`.

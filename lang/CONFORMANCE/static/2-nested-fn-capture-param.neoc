@@ -1,0 +1,7 @@
+// STATIC.md §2: an item statement cannot use a parameter of the enclosing function.
+fn scale(factor: number) -> number {
+    fn times(n: number) -> number {
+        n * factor
+    }
+    times(2)
+}

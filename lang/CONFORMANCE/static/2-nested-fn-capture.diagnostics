@@ -1,1 +1,1 @@
-nested `fn` cannot use local `base` of the enclosing block
+nested `fn` cannot use `base`, a binding of the enclosing function

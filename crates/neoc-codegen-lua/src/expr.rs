@@ -48,6 +48,7 @@ impl Emitter {
     pub(super) fn emit_stmt(&mut self, stmt: &ast::Stmt) {
         self.at_span(stmt.span, |em| match &stmt.kind {
             ast::StmtKind::Let(l) => em.emit_let(l),
+            // Already emitted at the head of the block by `emit_hoisted_fns`.
             ast::StmtKind::Item(_) => {}
             ast::StmtKind::Expr(e) => em.emit_expr_stmt(e),
         });

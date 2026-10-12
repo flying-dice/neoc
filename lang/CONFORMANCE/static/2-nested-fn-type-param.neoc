@@ -1,0 +1,21 @@
+// STATIC.md §2: an item statement cannot name a type parameter of the enclosing
+// function or impl.
+fn outer<T>(x: T) -> T {
+    fn g(y: T) -> T {
+        y
+    }
+    g(x)
+}
+
+struct W<U> {
+    v: U,
+}
+
+impl<U> W<U> {
+    fn get(self) -> U {
+        fn id(y: U) -> U {
+            y
+        }
+        id(self.v)
+    }
+}

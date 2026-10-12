@@ -74,8 +74,8 @@ fn walk_stmt<'a>(stmt: &'a ast::Stmt, site: Site, v: &mut impl Visitor<'a>) {
         }
         ast::StmtKind::Expr(e) => walk_effect(e, site, v),
         ast::StmtKind::Item(item) => {
-            // Only nested functions lower (`emit_item_stmt`); they are separate
-            // Lua functions and capture by closure.
+            // Only nested functions lower (`emit_hoisted_fns`); each is a
+            // separate Lua function.
             if let ast::ItemKind::Fn(f) = &item.kind {
                 v.bind(&f.sig.name);
                 for p in &f.sig.params {
@@ -511,9 +511,7 @@ impl Emitter {
             {
                 self.plan_concat(name, &block.stmts[i + 1..], block.value.as_deref());
             }
-            if !matches!(stmt.kind, ast::StmtKind::Item(_)) {
-                self.emit_stmt(stmt);
-            }
+            self.emit_stmt(stmt);
         }
     }
 
