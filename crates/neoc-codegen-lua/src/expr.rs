@@ -908,11 +908,7 @@ impl Emitter {
                 ast::Param::Receiver => "self".to_string(),
             })
             .collect();
-        self.line(format!(
-            "{keyword} {}({})",
-            f.sig.name,
-            params.join(", ")
-        ));
+        self.line(format!("{keyword} {}({})", f.sig.name, params.join(", ")));
         self.indented(|em| em.emit_block_as_body(&f.body));
         self.line("end");
     }

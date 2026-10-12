@@ -730,7 +730,6 @@ impl Scopes {
     /// hides from the current position.
     #[must_use]
     pub fn is_captured_local(&self, name: &str) -> bool {
-        self.lookup(name).is_none()
-            && self.frames.iter().any(|f| f.names.contains_key(name))
+        self.lookup(name).is_none() && self.frames.iter().any(|f| f.names.contains_key(name))
     }
 }
