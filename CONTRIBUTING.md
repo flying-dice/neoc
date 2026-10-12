@@ -5,6 +5,7 @@ Mechanical walkthrough — order, file locations, pre-MR checks. Points to [STYL
 ## Before you start
 
 - `rustup` + `cargo` on `PATH`. Toolchain pinned in [rust-toolchain.toml](rust-toolchain.toml) — rustup auto-installs it; don't use `+stable`.
+- Bumping the toolchain is its own PR: edit `rust-toolchain.toml` and the `Dockerfile` builder image together, fix any new clippy/rustc lint fallout in that PR, and run `scripts/check-toolchain-pin.sh`.
 - Read [Design principles](README.md#design-principles) — non-negotiable.
 - Read [STYLEGUIDE.md](STYLEGUIDE.md) — binding rules.
 
