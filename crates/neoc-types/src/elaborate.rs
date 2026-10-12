@@ -209,10 +209,8 @@ impl<'a> Elaborator<'a> {
         let ret = sig.ret.as_ref().map_or(Ty::Unit, |r| self.checker.lower(r));
         let ret = Checker::subst_self(ret, self_ty);
         let prev_ret = std::mem::replace(&mut self.checker.ret_ty, ret);
-        let prev_target = std::mem::replace(
-            &mut self.checker.impl_target,
-            Checker::impl_target_of(self_ty),
-        );
+        let prev_target =
+            std::mem::replace(&mut self.checker.impl_target, self_ty.map(str::to_string));
 
         let block = self.block(body);
 
