@@ -9,7 +9,7 @@
 use neoc_ast as ast;
 
 use crate::Diagnostic;
-use crate::collect::lower_type;
+use crate::collect::{generic_names, lower_type};
 use crate::env::{Scopes, StructFields, SymbolTable, TypeDef, VariantFields};
 use crate::ty::Ty;
 
@@ -287,13 +287,149 @@ impl<'a> Checker<'a> {
 
     /// Lowers an AST type and expands any transparent `type` aliases through
     /// the symbol table, so an annotation written with an alias compares equal
-    /// to its underlying type (`STATIC.md` §3.3). Inside a trait impl, a
+    /// to its underlying type (`SYNTAX.md` §3.3). Inside a trait impl, a
     /// `Self::Item` projection resolves to the impl's binding for `Item`.
     pub(crate) fn lower(&self, ty: &ast::Type) -> Ty {
         let lowered = self
             .table
             .resolve_alias_ty(lower_type(ty, &self.type_params));
         self.project_assoc(lowered)
+    }
+
+    /// [`Self::lower`] for an annotation the checker owns, first reporting at
+    /// `span` any generic `type` alias in it applied to the wrong number of
+    /// type arguments (`STATIC.md` D-ALIAS-ARITY).
+    fn lower_at(&mut self, ty: &ast::Type, span: ast::Span) -> Ty {
+        let unexpanded = lower_type(ty, &self.type_params);
+        self.report_alias_arity(&unexpanded, span);
+        self.project_assoc(self.table.resolve_alias_ty(unexpanded))
+    }
+
+    /// Reports at `span` each generic `type` alias in `ty` applied to the wrong
+    /// number of type arguments, with `params` the type parameters in scope —
+    /// a parameter that shares an alias's name shadows it (`STATIC.md`
+    /// D-ALIAS-ARITY).
+    fn check_alias_arity(&mut self, ty: &ast::Type, params: &[String], span: ast::Span) {
+        self.report_alias_arity(&lower_type(ty, params), span);
+    }
+
+    fn report_alias_arity(&mut self, unexpanded: &Ty, span: ast::Span) {
+        for message in self.table.alias_arity_errors(unexpanded) {
+            self.error_at(span, message);
+        }
+    }
+
+    /// Checks the alias arity of the signature `sig`, its own generics added to
+    /// the enclosing `params`.
+    fn check_sig_alias_arity(&mut self, sig: &ast::FnSig, params: &[String]) {
+        let mut params = params.to_vec();
+        params.extend(generic_names(&sig.generics));
+        for p in &sig.params {
+            if let ast::Param::Named { ty, span, .. } = p {
+                self.check_alias_arity(ty, &params, *span);
+            }
+        }
+        if let Some(r) = &sig.ret {
+            self.check_alias_arity(r, &params, sig.name_span);
+        }
+    }
+
+    /// Checks the alias arity of a struct's fields; a tuple body reports at
+    /// `span`.
+    fn check_struct_alias_arity(&mut self, s: &ast::StructDecl, span: ast::Span) {
+        let params = generic_names(&s.generics);
+        match &s.body {
+            ast::StructBody::Unit => {}
+            ast::StructBody::Tuple(ty) => self.check_alias_arity(ty, &params, span),
+            ast::StructBody::Named(fields) => {
+                for f in fields {
+                    self.check_alias_arity(&f.ty, &params, f.name_span);
+                }
+            }
+        }
+    }
+
+    /// Checks the type annotations an item declares outside any function body —
+    /// struct and enum fields, bodyless trait and `extern` signatures, impl
+    /// headers and associated-type bindings, an alias's own value — and rejects a recursive
+    /// `type` alias (`STATIC.md` D-ALIAS-ARITY, D-ALIAS-RECURSIVE). Signatures
+    /// with a body are checked with that body.
+    fn check_declared_types(&mut self, item: &ast::Item) {
+        match &item.kind {
+            ast::ItemKind::Struct(s) => self.check_struct_alias_arity(s, item.span),
+            ast::ItemKind::Enum(e) => {
+                let params = generic_names(&e.generics);
+                for v in &e.variants {
+                    match &v.body {
+                        ast::VariantBody::Unit => {}
+                        ast::VariantBody::Tuple(tys) => {
+                            for t in tys {
+                                self.check_alias_arity(t, &params, v.name_span);
+                            }
+                        }
+                        ast::VariantBody::Named(fields) => {
+                            for f in fields {
+                                self.check_alias_arity(&f.ty, &params, f.name_span);
+                            }
+                        }
+                    }
+                }
+            }
+            ast::ItemKind::Trait(t) => {
+                let params = generic_names(&t.generics);
+                for ti in t.items.iter().filter(|ti| ti.default.is_none()) {
+                    self.check_sig_alias_arity(&ti.sig, &params);
+                }
+            }
+            ast::ItemKind::Impl(b) => {
+                let params = generic_names(&b.generics);
+                self.check_impl_header_alias_arity(b, &params, item.span);
+                for (_, ty) in &b.assoc_bindings {
+                    self.check_alias_arity(ty, &params, item.span);
+                }
+            }
+            ast::ItemKind::Extern(block) => self.check_extern_alias_arity(&block.items),
+            ast::ItemKind::TypeAlias(a) => {
+                self.check_alias_arity(&a.value, &generic_names(&a.generics), item.span);
+                if self.table.alias_is_recursive(&a.name) {
+                    self.error_at(item.span, format!("type alias `{}` is recursive", a.name));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Checks the alias arity of an impl header — its target type and its
+    /// trait's type arguments — reporting at `span`.
+    fn check_impl_header_alias_arity(
+        &mut self,
+        b: &ast::ImplBlock,
+        params: &[String],
+        span: ast::Span,
+    ) {
+        self.check_alias_arity(&b.ty, params, span);
+        if let Some(t) = &b.trait_ {
+            self.check_alias_arity(&ast::Type::Path(t.clone()), params, span);
+        }
+    }
+
+    /// [`Self::check_declared_types`] for the items of an `extern` block,
+    /// recursing into nested `mod`s.
+    fn check_extern_alias_arity(&mut self, items: &[ast::ExternItem]) {
+        for ext in items {
+            match &ext.kind {
+                ast::ExternItemKind::Fn(sig) => self.check_sig_alias_arity(sig, &[]),
+                ast::ExternItemKind::Struct(s) => self.check_struct_alias_arity(s, ext.span),
+                ast::ExternItemKind::Impl(b) => {
+                    let params = generic_names(&b.generics);
+                    self.check_impl_header_alias_arity(b, &params, ext.span);
+                    for m in &b.items {
+                        self.check_sig_alias_arity(&m.sig, &params);
+                    }
+                }
+                ast::ExternItemKind::Mod(m) => self.check_extern_alias_arity(&m.items),
+            }
+        }
     }
 
     /// Resolves any `Self::Item` projection sentinel in `ty` to the impl's
@@ -312,6 +448,7 @@ impl<'a> Checker<'a> {
         for item in &module.items {
             self.check_reserved_module_names(item);
             self.check_field_names(item);
+            self.check_declared_types(item);
             self.check_item(item);
         }
     }
@@ -401,7 +538,7 @@ impl<'a> Checker<'a> {
         match &item.kind {
             ast::ItemKind::Fn(f) => self.check_fn(f, None),
             ast::ItemKind::Const(c) => {
-                let declared = self.lower(&c.ty);
+                let declared = self.lower_at(&c.ty, item.span);
                 let actual = self.infer(&c.value);
                 self.expect(&declared, &actual, "const initialiser");
             }
@@ -470,7 +607,7 @@ impl<'a> Checker<'a> {
                     }
                 }
                 ast::Param::Named { name, ty, span, .. } => {
-                    let lowered = self.lower(ty);
+                    let lowered = self.lower_at(ty, *span);
                     let pty = match &self_target {
                         Some(st) => lowered.subst_self(st),
                         None => lowered,
@@ -479,7 +616,10 @@ impl<'a> Checker<'a> {
                 }
             }
         }
-        let lowered_ret = sig.ret.as_ref().map_or(Ty::Unit, |r| self.lower(r));
+        let lowered_ret = sig
+            .ret
+            .as_ref()
+            .map_or(Ty::Unit, |r| self.lower_at(r, sig.name_span));
         let ret = match &self_target {
             Some(st) => lowered_ret.subst_self(st),
             None => lowered_ret,
@@ -550,7 +690,7 @@ impl<'a> Checker<'a> {
 
     fn check_stmt(&mut self, stmt: &ast::Stmt) {
         match &stmt.kind {
-            ast::StmtKind::Let(l) => self.check_let(l),
+            ast::StmtKind::Let(l) => self.check_let(l, stmt.span),
             ast::StmtKind::Expr(e) => {
                 let _ = self.infer(e);
             }
@@ -558,8 +698,8 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn check_let(&mut self, l: &ast::LetStmt) {
-        let declared = l.ty.as_ref().map(|t| self.lower(t));
+    fn check_let(&mut self, l: &ast::LetStmt, span: ast::Span) {
+        let declared = l.ty.as_ref().map(|t| self.lower_at(t, span));
         let value_ty = l.value.as_ref().map(|e| self.infer(e));
         let ty = match (&declared, &value_ty) {
             (Some(d), Some(v)) => {
@@ -1428,7 +1568,9 @@ impl<'a> Checker<'a> {
         self.scopes.push();
         let mut ptys = Vec::new();
         for p in params {
-            let ty = p.ty.as_ref().map_or(Ty::Unknown, |t| self.lower(t));
+            let ty =
+                p.ty.as_ref()
+                    .map_or(Ty::Unknown, |t| self.lower_at(t, p.span));
             self.bind_local(
                 p.name.clone(),
                 ty.clone(),

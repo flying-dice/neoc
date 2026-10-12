@@ -1,0 +1,13 @@
+// STATIC.md §4.3 (D-ALIAS-ARITY): a misapplied alias is one error; the
+// annotation it spells checks as no type, so nothing downstream cascades.
+type Pair<T> = [T];
+
+const X: Pair = [1];
+
+fn count(items: Pair<number, string, bool>) -> number {
+    items[0]
+}
+
+fn main() {
+    let x: Pair<number, number> = [1];
+}

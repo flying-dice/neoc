@@ -110,6 +110,34 @@ impl Ty {
         }
     }
 
+    /// Calls `f` with the name and type arguments of every nominal type in
+    /// this type, outermost first, recursing through list, function, and
+    /// nominal-argument positions. The read-only counterpart of [`Self::map`].
+    pub(crate) fn for_each_named(&self, f: &mut impl FnMut(&str, &[Ty])) {
+        match self {
+            Ty::List(inner) => inner.for_each_named(f),
+            Ty::Fn(params, ret) => {
+                for p in params {
+                    p.for_each_named(f);
+                }
+                ret.for_each_named(f);
+            }
+            Ty::Named { name, args } => {
+                f(name, args);
+                for a in args {
+                    a.for_each_named(f);
+                }
+            }
+            Ty::Number
+            | Ty::Str
+            | Ty::Bool
+            | Ty::Unit
+            | Ty::Param(_)
+            | Ty::Unknown
+            | Ty::Dynamic => {}
+        }
+    }
+
     /// Replaces every `Self` with `target`, recursing through composites — how
     /// a trait or impl signature's `Self` is read as the implementing type.
     #[must_use]

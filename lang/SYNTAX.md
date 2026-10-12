@@ -59,7 +59,7 @@ A module- or block-level constant. The initialiser is an expression evaluated on
 TypeAlias ::= "type" IDENT [ Generics ] "=" Type ";"
 ```
 
-Introduces a new spelling for an existing type. Aliases are transparent — `type Id = number;` makes `Id` and `number` interchangeable. There are no conditional, mapped, or union type aliases.
+Introduces a new spelling for an existing type. Aliases are transparent — `type Id = number;` makes `Id` and `number` interchangeable. There are no conditional, mapped, or union type aliases. A generic alias (`type Pair<T> = [T];`) is expanded at each use by substituting its type arguments for its parameters, all at once (`Pair<number>` is `[number]`). Arity and recursion rules: `STATIC.md` §4.3.
 
 ### 3.4 `struct`
 

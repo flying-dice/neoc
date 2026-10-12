@@ -736,6 +736,23 @@ fn unknown_name_diagnostic_spans_the_identifier() {
     assert_eq!(&src[d.start..d.end], "missing");
 }
 
+#[test]
+fn alias_arity_diagnostic_located_per_site() {
+    // STATIC.md D-ALIAS-ARITY: each misapplied alias is reported at its own
+    // parameter, so two identical misuses stay two located diagnostics.
+    let src = "type Pair<T> = [T];\n\
+               fn a(x: Pair<number, string>) {}\n\
+               fn b(y: Pair<number, string>) {}";
+    let parsed = neoc_parser::parse(src);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    let sites: Vec<&str> = check(&parsed.module)
+        .diagnostics
+        .iter()
+        .map(|d| &src[d.start..d.end])
+        .collect();
+    assert_eq!(sites, ["x", "y"]);
+}
+
 // ---- the dynamic boundary type `Unknown` (STATIC.md §3.7) -----------------
 
 #[test]

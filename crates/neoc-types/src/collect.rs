@@ -66,7 +66,7 @@ fn lower_path(path: &ast::TypePath, params: &[String]) -> Ty {
     }
 }
 
-fn generic_names(generics: &[ast::GenericParam]) -> Vec<String> {
+pub(crate) fn generic_names(generics: &[ast::GenericParam]) -> Vec<String> {
     generics.iter().map(|g| g.name.clone()).collect()
 }
 
