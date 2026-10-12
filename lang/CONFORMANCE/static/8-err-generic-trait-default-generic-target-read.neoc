@@ -1,0 +1,25 @@
+// STATIC.md §3.4, §8: a default inherited through `impl<U> Source<U> for
+// Box<U>` reads `T` as the box's `U` — a `Box<number>` yields `number`, so
+// reading it as a `string` is rejected.
+trait Source<T> {
+    fn next(self) -> T;
+
+    fn peek(self) -> T {
+        self.next()
+    }
+}
+
+struct Box<U> {
+    v: U,
+}
+
+impl<U> Source<U> for Box<U> {
+    fn next(self) -> U {
+        self.v
+    }
+}
+
+fn main() {
+    let b = Box { v: 7 };
+    let a: string = b.peek();
+}

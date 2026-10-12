@@ -1,5 +1,5 @@
-// STATIC.md §8, DYNAMIC.md §8: defaults of a generic trait are inherited at
-// each impl's trait arguments — direct (`Source<number>`, `Source<string>`) and
+// STATIC.md §3.4, §8; DYNAMIC.md §3.4: defaults of a generic trait are
+// inherited at each impl's trait arguments — direct (`Source<number>`, `Source<string>`) and
 // generic-target (`impl<U> Source<U> for Box<U>`) — and dispatch through a
 // generic `Source<T>` parameter. Trait arguments are erased.
 extern {
@@ -55,6 +55,7 @@ fn pull<T>(s: Source<T>) -> [T] {
 fn main() {
     let c = Counter { n: 4 };
     println(c.peek());
+    println(c.twice(9)[0]);
     println(c.twice(9)[1]);
     let n = Namer { s: "a" };
     let t: string = n.peek();

@@ -68,6 +68,7 @@ end
 local function main()
   local c = Counter.new({ n = 4 })
   println(c:peek())
+  println(c:twice(9)[(0) + 1])
   println(c:twice(9)[(1) + 1])
   local n = Namer.new({ s = "a" })
   local t = n:peek()
