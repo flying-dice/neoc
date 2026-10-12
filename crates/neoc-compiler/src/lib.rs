@@ -513,6 +513,7 @@ fn focus_diagnostics(
     out.extend(use_diags.into_iter().map(|pd| pd.diagnostic));
     table.import_referenced_types(&imports, universe);
     out.extend(ambiguous_type_diagnostics(universe, &table));
+    out.extend(redeclared_host_method_diagnostics(universe, &me.module));
     let checked = types::check_with_table(&me.module, &table);
     for d in &checked.diagnostics {
         out.push(Diagnostic::typed_from(d));
@@ -550,6 +551,12 @@ fn check_and_emit_module(
     // unresolved unless its own `use` brings it in.
     table.import_referenced_types(&imports, universe);
     for d in ambiguous_type_diagnostics(universe, &table) {
+        diagnostics.push(ProjectDiagnostic {
+            path: path.to_path_buf(),
+            diagnostic: d,
+        });
+    }
+    for d in redeclared_host_method_diagnostics(universe, &me.module) {
         diagnostics.push(ProjectDiagnostic {
             path: path.to_path_buf(),
             diagnostic: d,
@@ -794,15 +801,15 @@ fn emit(target: Target, module: &ast::Module, source: &str, inputs: &EmitInputs)
 /// same name, the merge keeps one — neoc has no module-qualified type identity.
 fn type_universe(loaded: &HashMap<PathBuf, LoadedModule>) -> types::SymbolTable {
     let mut universe = types::SymbolTable::new();
-    let mut extern_pub = std::collections::HashSet::new();
-    let mut neoc_pub = std::collections::HashSet::new();
+    let mut extern_any = std::collections::HashSet::new();
+    let mut neoc_any = std::collections::HashSet::new();
     for module in loaded.values() {
         let t = &module.table;
-        for name in &t.pub_types {
+        for name in t.types.keys() {
             if t.extern_types.contains(name) {
-                extern_pub.insert(name.clone());
+                extern_any.insert(name.clone());
             } else {
-                neoc_pub.insert(name.clone());
+                neoc_any.insert(name.clone());
             }
         }
         for name in &t.pub_types {
@@ -821,7 +828,7 @@ fn type_universe(loaded: &HashMap<PathBuf, LoadedModule>) -> types::SymbolTable 
             }
         }
     }
-    universe.ambiguous_types = extern_pub.intersection(&neoc_pub).cloned().collect();
+    universe.ambiguous_types = extern_any.intersection(&neoc_any).cloned().collect();
     universe
 }
 
@@ -851,6 +858,47 @@ fn ambiguous_type_diagnostics(
             )
         })
         .collect()
+}
+
+/// One diagnostic per method a neoc `impl` in `module` declares on an extern
+/// type that another module's `extern` block already implements by the host.
+/// A same-module redeclaration is reported by the type checker.
+fn redeclared_host_method_diagnostics(
+    universe: &types::SymbolTable,
+    module: &ast::Module,
+) -> Vec<Diagnostic> {
+    let own = types::collect(module);
+    let mut out = Vec::new();
+    for item in &module.items {
+        let ast::ItemKind::Impl(b) = &item.kind else {
+            continue;
+        };
+        let ast::Type::Path(p) = &b.ty else { continue };
+        let Some(owner) = p.segments.last().map(|s| s.name.clone()) else {
+            continue;
+        };
+        if own.extern_types.contains(&owner) || !universe.extern_types.contains(&owner) {
+            continue;
+        }
+        for m in &b.items {
+            let host = universe
+                .methods
+                .get(&(owner.clone(), m.sig.name.clone()))
+                .is_some_and(|info| info.host);
+            if host {
+                out.push(Diagnostic::typed(
+                    format!(
+                        "`{owner}::{}` is implemented by the host and also declared by a neoc \
+                         `impl`; keep one",
+                        m.sig.name
+                    ),
+                    item.span.start,
+                    item.span.end,
+                ));
+            }
+        }
+    }
+    out
 }
 
 /// The extern items `module` imports through its `use` graph, each preserving

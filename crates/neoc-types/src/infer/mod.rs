@@ -74,6 +74,10 @@ pub struct Checker<'a> {
     /// Parameter types the enclosing call's signature fixes for the closure
     /// argument about to be inferred; consumed by that closure.
     closure_expect: Option<Vec<Ty>>,
+    /// The type each closure parameter resolved to, keyed by the closure's
+    /// span. The checker decides once; the elaborator reads the record
+    /// instead of re-deriving it, so the two cannot disagree.
+    closure_params: std::collections::HashMap<(usize, usize), Vec<Ty>>,
 }
 
 /// The inferred type of one expression, with the byte range it occupies. The
@@ -136,6 +140,7 @@ impl<'a> Checker<'a> {
             conflicting_impls: std::collections::HashSet::new(),
             host_fn_spans: std::collections::HashSet::new(),
             closure_expect: None,
+            closure_params: std::collections::HashMap::new(),
         }
     }
 
@@ -1085,7 +1090,7 @@ impl<'a> Checker<'a> {
                 let _ = self.infer_block(body);
                 Ty::Unit
             }
-            ast::ExprKind::Closure { params, body } => self.infer_closure(params, body),
+            ast::ExprKind::Closure { params, body } => self.infer_closure(params, body, span),
             ast::ExprKind::Return(value) => {
                 let actual = value.as_ref().map_or(Ty::Unit, |e| self.infer(e));
                 let expected = self.ret_ty.clone();
@@ -1998,45 +2003,77 @@ impl<'a> Checker<'a> {
 
     /// Infers call arguments, handing each closure argument the parameter
     /// types its callee's signature fixes (`expected[i]` is `fn(..) -> _`).
+    /// Non-closure arguments are inferred first so they can bind the callee's
+    /// type parameters (`test(mk(), |s| ..)` fixes `T` from `mk()`).
     fn infer_args(&mut self, args: &[ast::Expr], expected: &[Ty]) -> Vec<Ty> {
-        args.iter()
-            .enumerate()
-            .map(|(i, a)| {
-                self.expect_closure_params(a, expected.get(i));
-                self.infer(a)
-            })
-            .collect()
+        let is_closure = |a: &ast::Expr| matches!(a.kind, ast::ExprKind::Closure { .. });
+        let mut tys: Vec<Option<Ty>> = args
+            .iter()
+            .map(|a| (!is_closure(a)).then(|| self.infer(a)))
+            .collect();
+        let (ps, as_): (Vec<Ty>, Vec<Ty>) = expected
+            .iter()
+            .zip(&tys)
+            .filter_map(|(p, t)| t.clone().map(|t| (p.clone(), t)))
+            .unzip();
+        let subst = self.param_subst(&ps, &as_);
+        for (i, a) in args.iter().enumerate() {
+            if tys[i].is_none() {
+                self.expect_closure_params(a, expected.get(i), &subst);
+                tys[i] = Some(self.infer(a));
+            }
+        }
+        tys.into_iter().map(|t| t.unwrap_or(Ty::Unknown)).collect()
     }
 
-    /// When `arg` is a closure and `param` is a function type whose parameters
-    /// are all concrete, records them for the closure to adopt. A closure
+    /// When `arg` is a closure and `param` is a function type, records the
+    /// parameter types the call fixes for the closure to adopt. A closure
     /// parameter without an annotation takes its type from the call
-    /// (`apply(|v| v.title)` reads `v` as the `fn` parameter's type).
-    pub(crate) fn expect_closure_params(&mut self, arg: &ast::Expr, param: Option<&Ty>) {
+    /// (`apply(|v| v.title)` reads `v` as the `fn` parameter's type). A
+    /// parameter the call leaves open — it still mentions a type parameter
+    /// after `subst` — stays `Unknown`.
+    pub(crate) fn expect_closure_params(
+        &mut self,
+        arg: &ast::Expr,
+        param: Option<&Ty>,
+        subst: &std::collections::HashMap<String, Ty>,
+    ) {
         if !matches!(arg.kind, ast::ExprKind::Closure { .. }) {
             return;
         }
         if let Some(Ty::Fn(ps, _)) = param {
-            if ps.iter().all(|p| !self.has_free_param(p)) {
-                self.closure_expect = Some(ps.clone());
-            }
+            self.closure_expect = Some(
+                ps.iter()
+                    .map(|p| {
+                        let fixed = Self::subst_named(p, subst);
+                        if Self::mentions_param(&fixed) {
+                            Ty::Unknown
+                        } else {
+                            fixed
+                        }
+                    })
+                    .collect(),
+            );
         }
     }
 
-    /// Hands the pending expectation to the closure being elaborated.
-    pub(crate) fn take_closure_expect(&mut self) -> Vec<Ty> {
-        self.closure_expect.take().unwrap_or_default()
+    /// Takes the closure-parameter record of a checker that already checked
+    /// the module.
+    pub(crate) fn adopt_closure_params(&mut self, checked: Checker<'_>) {
+        self.closure_params = checked.closure_params;
     }
 
-    /// Whether `ty` mentions a type parameter that is not one of the enclosing
-    /// item's own (an unsolved method-level generic such as `map`'s `U`).
-    fn has_free_param(&self, ty: &Ty) -> bool {
+    /// The parameter types recorded for the closure at `span`, if any.
+    pub(crate) fn closure_param_tys(&self, span: ast::Span) -> Option<&Vec<Ty>> {
+        self.closure_params.get(&(span.start, span.end))
+    }
+
+    /// Whether `ty` mentions any type parameter.
+    fn mentions_param(ty: &Ty) -> bool {
         let found = std::cell::Cell::new(false);
         let _ = ty.map(&|t| {
-            if let Ty::Param(n) = t {
-                if !self.type_params.contains(n) {
-                    found.set(true);
-                }
+            if matches!(t, Ty::Param(_)) {
+                found.set(true);
             }
             None
         });
@@ -2059,7 +2096,12 @@ impl<'a> Checker<'a> {
             .collect()
     }
 
-    fn infer_closure(&mut self, params: &[ast::ClosureParam], body: &ast::Expr) -> Ty {
+    fn infer_closure(
+        &mut self,
+        params: &[ast::ClosureParam],
+        body: &ast::Expr,
+        span: ast::Span,
+    ) -> Ty {
         self.scopes.push();
         let expect = self.closure_expect.take().unwrap_or_default();
         let mut ptys = Vec::new();
@@ -2076,6 +2118,9 @@ impl<'a> Checker<'a> {
             );
             ptys.push(ty);
         }
+        self.closure_params
+            .entry((span.start, span.end))
+            .or_insert_with(|| ptys.clone());
         let ret = self.infer(body);
         self.scopes.pop();
         Ty::Fn(ptys, Box::new(ret))

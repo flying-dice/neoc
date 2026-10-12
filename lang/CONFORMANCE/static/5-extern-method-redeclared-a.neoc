@@ -1,4 +1,4 @@
-// EXTERN.md §Option marshalling: host-ness belongs to a declaration. A method
+// EXTERN.md §Errors: host-ness belongs to a declaration. A method
 // both the host and a neoc `impl` declare on one type is ambiguous at the call
 // site, whichever is written first.
 impl Settings {

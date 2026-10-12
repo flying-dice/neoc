@@ -237,7 +237,7 @@ value cannot serve both.
 checker rejects both. Read the field with `.title`, which marshals; `title: _`
 and `..` read nothing and are allowed.
 
-Only a declared `Option<T>` marshals, and only where the checker knows the host type: a value typed `Unknown` — including a closure parameter whose type neither an annotation nor the call it is passed to fixes — is read raw. An `Option` passed for an `Unknown` or
+Only a declared `Option<T>` marshals, and only where the checker knows the host type: a value typed `Unknown` — including a closure parameter whose type neither an annotation nor the call it is passed to fixes — is read raw. A closure passed to a call takes its unannotated parameter types from that call's signature, with the callee's type parameters bound from its other arguments; a position that still mentions a type parameter is `Unknown`. A closure bound with `let` has no call to fix its parameters, so they are `Unknown` unless annotated. An `Option` passed for an `Unknown` or
 generic parameter crosses as the tagged neoc value, since the signature names no
 `Option` to unwrap.
 
@@ -291,7 +291,14 @@ Hard errors, each with a corrective suggestion:
 - an `Option` nested inside an `Option`, or an `Option` that is not the whole
   parameter, return, or field type of an extern signature (§Option marshalling);
 - a struct pattern that binds or tests an `Option` field of an extern `struct`
-  (§Option marshalling).
+  (§Option marshalling);
+- an `Option` field of an extern tuple `struct` (§Option marshalling);
+- an `fn` that takes or returns an `Option` named as a value, other than as a
+  callee or a direct argument to another extern `fn` (§Option marshalling);
+- an `impl` that declares a method the host already implements for the same
+  extern type, in the same module or another;
+- an extern `struct` and a neoc type of the same name anywhere in the project:
+  type names are project-unique.
 
 ---
 

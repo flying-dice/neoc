@@ -1,4 +1,4 @@
-// EXTERN.md §Option marshalling: the same clash with the extern `impl` first.
+// EXTERN.md §Errors: the same clash with the extern `impl` first.
 extern {
     struct Settings {
         size: number,

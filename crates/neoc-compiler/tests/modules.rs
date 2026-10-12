@@ -1180,3 +1180,57 @@ fn extern_and_neoc_type_of_one_name_across_modules_is_rejected() {
         project.diagnostics
     );
 }
+
+/// A private neoc type shares a name with a pub extern type: the clash is
+/// reported even though the neoc one is not exported.
+#[test]
+fn private_neoc_type_named_like_an_extern_type_is_rejected() {
+    let dir = tempdir();
+    write(
+        &dir,
+        "host.neoc",
+        "extern {\n    pub struct Doc {\n        title: Option<string>,\n    }\n    pub fn mk() -> Doc;\n}\n",
+    );
+    let entry = write(
+        &dir,
+        "app.neoc",
+        "use host::mk;\n\nstruct Doc {\n    title: Option<string>,\n}\n\npub fn main() {\n    let a = mk().title;\n}\n",
+    );
+
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
+    assert!(
+        project
+            .diagnostics
+            .iter()
+            .any(|d| d.diagnostic.message.contains("project-unique")),
+        "{:#?}",
+        project.diagnostics
+    );
+}
+
+/// A neoc `impl` in one module may not redeclare a method another module's
+/// `extern` block implements by the host.
+#[test]
+fn neoc_impl_redeclaring_a_host_method_from_another_module_is_rejected() {
+    let dir = tempdir();
+    write(
+        &dir,
+        "host.neoc",
+        "extern {\n    pub struct Settings {\n        title: Option<string>,\n    }\n    pub fn mk() -> Settings;\n    impl Settings {\n        fn rename(self, t: Option<string>) -> Option<string>;\n    }\n}\n",
+    );
+    let entry = write(
+        &dir,
+        "app.neoc",
+        "use host::Settings;\nuse host::mk;\n\nimpl Settings {\n    fn rename(self, t: Option<string>) -> Option<string> {\n        t\n    }\n}\n\npub fn main() {\n    let s = mk();\n}\n",
+    );
+
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
+    assert!(
+        project
+            .diagnostics
+            .iter()
+            .any(|d| d.diagnostic.message.contains("implemented by the host")),
+        "{:#?}",
+        project.diagnostics
+    );
+}

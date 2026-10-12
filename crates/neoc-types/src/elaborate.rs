@@ -332,7 +332,7 @@ impl<'a> Elaborator<'a> {
             ast::ExprKind::Loop { body } => ast::ExprKind::Loop {
                 body: self.block(body),
             },
-            ast::ExprKind::Closure { params, body } => self.closure(params, body),
+            ast::ExprKind::Closure { params, body } => self.closure(params, body, span),
             ast::ExprKind::Block(b) => ast::ExprKind::Block(self.block(b)),
             ast::ExprKind::Return(value) => {
                 ast::ExprKind::Return(value.as_ref().map(|e| self.boxed(e)))
@@ -483,14 +483,21 @@ impl<'a> Elaborator<'a> {
         }
     }
 
-    fn closure(&mut self, params: &[ast::ClosureParam], body: &ast::Expr) -> ast::ExprKind {
+    /// A closure. Parameters bind at the types the checker recorded for it.
+    fn closure(
+        &mut self,
+        params: &[ast::ClosureParam],
+        body: &ast::Expr,
+        span: ast::Span,
+    ) -> ast::ExprKind {
         self.checker.scopes.push();
-        let expect = self.checker.take_closure_expect();
+        let recorded = self.checker.closure_param_tys(span).cloned();
         for (i, p) in params.iter().enumerate() {
-            let ty = p.ty.as_ref().map_or_else(
-                || expect.get(i).cloned().unwrap_or(Ty::Unknown),
-                |t| self.checker.lower(t),
-            );
+            let ty = recorded
+                .as_ref()
+                .and_then(|r| r.get(i).cloned())
+                .or_else(|| p.ty.as_ref().map(|t| self.checker.lower(t)))
+                .unwrap_or(Ty::Unknown);
             self.checker.scopes.bind(p.name.clone(), ty);
         }
         let new_body = self.expr(body);
@@ -516,11 +523,7 @@ impl<'a> Elaborator<'a> {
             ast::ExprKind::Path(_) => callee.clone(),
             _ => self.expr(callee),
         };
-        let expected = match self.checker.quiet_infer(callee) {
-            Ty::Fn(params, _) => params,
-            _ => Vec::new(),
-        };
-        let args = self.exprs_expecting(args, &expected);
+        let args = self.exprs(args);
         let call = ast::ExprKind::Call {
             callee: Box::new(new_callee),
             args: marshal_args(sig.as_ref(), args),
@@ -537,9 +540,7 @@ impl<'a> Elaborator<'a> {
         span: ast::Span,
     ) -> ast::ExprKind {
         let sig = self.checker.extern_method_sig(receiver, method);
-        let recv = self.checker.quiet_infer(receiver);
-        let expected = self.checker.method_param_tys(&recv, method);
-        let args = self.exprs_expecting(args, &expected);
+        let args = self.exprs(args);
         let call = ast::ExprKind::MethodCall {
             receiver: self.boxed(receiver),
             method: method.to_string(),
@@ -614,19 +615,6 @@ impl<'a> Elaborator<'a> {
 
     fn boxed(&mut self, expr: &ast::Expr) -> Box<ast::Expr> {
         Box::new(self.expr(expr))
-    }
-
-    /// Elaborates call arguments, passing closures the parameter types the
-    /// callee's signature fixes, as the checker does.
-    fn exprs_expecting(&mut self, exprs: &[ast::Expr], expected: &[Ty]) -> Vec<ast::Expr> {
-        exprs
-            .iter()
-            .enumerate()
-            .map(|(i, e)| {
-                self.checker.expect_closure_params(e, expected.get(i));
-                self.expr(e)
-            })
-            .collect()
     }
 
     fn exprs(&mut self, exprs: &[ast::Expr]) -> Vec<ast::Expr> {
@@ -714,7 +702,12 @@ pub fn elaborate(module: &ast::Module) -> ast::Module {
 ///   stays with the caller; the elaborator borrows it for the call.
 #[must_use]
 pub fn elaborate_with_table(module: &ast::Module, table: &SymbolTable) -> ast::Module {
-    let checker = Checker::new(table);
+    // The checker decides what each closure parameter's type is; the
+    // elaborator reads that record rather than re-deriving it.
+    let mut first_pass = Checker::new(table);
+    first_pass.check_module(module);
+    let mut checker = Checker::new(table);
+    checker.adopt_closure_params(first_pass);
     Elaborator::new(checker).module(module)
 }
 

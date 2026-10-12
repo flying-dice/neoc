@@ -204,6 +204,24 @@ const CASES: &[(&str, &str, &str, &str)] = &[
         FROM,
     ),
     (
+        "closure param fixed through a generic call",
+        "fn test<T>(x: T, f: fn(T) -> bool) -> bool { f(x) }",
+        "let r = test(mk(), |s| s.title.is_some());",
+        FROM,
+    ),
+    (
+        "closure param inside a generic impl",
+        "struct Wrap<T> { v: T }\nimpl<T> Wrap<T> {\n    fn with(self, f: fn(Settings, T) -> bool) -> bool { f(mk(), self.v) }\n    fn go(self) -> bool { self.with(|s, t| s.title.is_some()) }\n}",
+        "",
+        FROM,
+    ),
+    (
+        "closure param in a generic fn",
+        "fn apply<T>(x: T, f: fn(T) -> bool) -> bool { f(x) }\nfn outer<T>(y: T) -> bool { apply(mk(), |s| s.title.is_some()) }",
+        "",
+        FROM,
+    ),
+    (
         "Self literal",
         "impl Settings { fn f(t: Option<string>) -> Settings { Self { title: t, size: 1 } } }",
         "",
@@ -225,6 +243,23 @@ fn build(items: &str, body: &str) -> neoc_compiler::CompileOutput {
     transpile(&src, Target::Lua)
 }
 
+/// How many times the output applies `marker`, not counting its definition.
+fn wraps(output: &str, marker: &str) -> usize {
+    let applied = output.matches(&format!("{marker}(")).count();
+    let defined = output.matches(&format!("function {marker}(")).count();
+    applied - defined
+}
+
+/// A callee's type parameter named like the caller's is not the caller's.
+#[test]
+fn callee_type_parameter_named_like_the_callers_is_its_own() {
+    let out = build(
+        "fn apply<T>(x: T, f: fn(T) -> number) -> number { f(x) }\nfn outer<T>(y: T) -> number { apply(\"ab\", |s| 1) }",
+        "",
+    );
+    assert!(out.ok(), "{:#?}", out.diagnostics);
+}
+
 #[test]
 fn every_access_form_marshals_or_is_rejected() {
     let mut silent = Vec::new();
@@ -232,7 +267,7 @@ fn every_access_form_marshals_or_is_rejected() {
     for (name, items, body, marker) in CASES {
         let out = build(items, body);
         accepted += usize::from(out.ok());
-        if out.ok() && !out.output.contains(marker) {
+        if out.ok() && wraps(&out.output, marker) == 0 {
             silent.push(format!(
                 "{name}: accepted without `{marker}`\n{}",
                 out.output
