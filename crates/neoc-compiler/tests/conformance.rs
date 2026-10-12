@@ -36,6 +36,9 @@
 //! pins what it printed before the raise. The Rust anchor does not apply (a
 //! rejection has no Rust analogue) and is neither required nor run.
 //!
+//! Eight `harness::*` self-test trials pin the harness's own sad-path and guard
+//! logic: each feeds an input the harness must refuse and passes only if it does.
+//!
 //! Two extra trials guard the corpus shape: it is non-empty, and every case is
 //! well formed — its entry exists, it has a sibling `.rs` anchor (except a
 //! `.fails` case), and a `.fails` marker is not blank.
@@ -152,6 +155,7 @@ fn temp_binary_path() -> PathBuf {
 
 /// A conformance case: a single `<name>.neoc`, or a `<name>/` directory whose
 /// `main.neoc` is the entry and whose sibling modules it `use`s.
+#[derive(Clone)]
 struct Case {
     /// The test-id stem: the file stem, or the directory name.
     name: String,
@@ -454,42 +458,10 @@ fn collect_trials() -> Vec<Trial> {
         }
     }));
 
-    // Guard: every entry module exists, every case that is not a sad path has a
-    // sibling `.rs` so the two halves can't drift, and no `.fails` marker is
-    // blank (an empty fragment is contained in every message, so it would admit
-    // any crash).
-    let guarded: Vec<(String, PathBuf, PathBuf, Option<String>)> = cases
-        .iter()
-        .map(|c| {
-            (
-                c.name.clone(),
-                c.entry.clone(),
-                c.sibling("rs"),
-                c.expected_failure(),
-            )
-        })
-        .collect();
+    // Guard: corpus shape (see `check_well_formed`).
+    let guarded: Vec<Case> = cases.iter().map(Case::clone).collect();
     trials.push(Trial::test("corpus::every_case_well_formed", move || {
-        for (case, entry, rs, fails) in &guarded {
-            if !entry.exists() {
-                return Err(Failed::from(format!(
-                    "case `{case}`: missing entry module {}",
-                    entry.display()
-                )));
-            }
-            if fails.as_deref().is_some_and(str::is_empty) {
-                return Err(Failed::from(format!(
-                    "case `{case}`: empty .fails marker — it must name the expected error"
-                )));
-            }
-            if fails.is_none() && !rs.exists() {
-                return Err(Failed::from(format!(
-                    "case `{case}`: missing sibling Rust anchor {}",
-                    rs.display()
-                )));
-            }
-        }
-        Ok(())
+        check_well_formed(&guarded)
     }));
 
     for case in cases {
@@ -518,11 +490,7 @@ fn collect_trials() -> Vec<Trial> {
             let case = std::sync::Arc::clone(&case);
             let sad_path = sad_path.clone();
             let trial = Trial::test(format!("{}::{}", case.name, target.name), move || {
-                let outcome = run(&case)?;
-                match &sad_path {
-                    Some(want) => assert_rejected(&case, &outcome, want),
-                    None => assert_completed(&case, &outcome),
-                }
+                judge(run, &case, sad_path.as_deref())
             })
             .with_ignored_flag(!target.available);
             trials.push(trial);
@@ -530,6 +498,49 @@ fn collect_trials() -> Vec<Trial> {
     }
 
     trials
+}
+
+/// Every entry module exists, every case that is not a sad path has a sibling
+/// `.rs` so the two halves can't drift, and no `.fails` marker is blank (an
+/// empty fragment is contained in every message, so it would admit any crash).
+fn check_well_formed(cases: &[Case]) -> Result<(), Failed> {
+    for case in cases {
+        let name = &case.name;
+        if !case.entry.exists() {
+            return Err(Failed::from(format!(
+                "case `{name}`: missing entry module {}",
+                case.entry.display()
+            )));
+        }
+        let fails = case.expected_failure();
+        if fails.as_deref().is_some_and(str::is_empty) {
+            return Err(Failed::from(format!(
+                "case `{name}`: empty .fails marker — it must name the expected error"
+            )));
+        }
+        let rs = case.sibling("rs");
+        if fails.is_none() && !rs.exists() {
+            return Err(Failed::from(format!(
+                "case `{name}`: missing sibling Rust anchor {}",
+                rs.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Run `case` under a target and judge the outcome: a sad-path case (`want` is
+/// `Some`) must be rejected, any other must complete.
+fn judge(
+    run: fn(&Case) -> Result<Outcome, Failed>,
+    case: &Case,
+    want: Option<&str>,
+) -> Result<(), Failed> {
+    let outcome = run(case)?;
+    match want {
+        Some(want) => assert_rejected(case, &outcome, want),
+        None => assert_completed(case, &outcome),
+    }
 }
 
 /// Assert `stdout` equals the case's `.stdout` golden, ignoring trailing newlines.
@@ -578,7 +589,150 @@ fn assert_rejected(case: &Case, outcome: &Outcome, want: &str) -> Result<(), Fai
     assert_stdout(case, &outcome.stdout)
 }
 
+/// A scratch case on disk: `files` are written under a fresh temp directory,
+/// the first being the entry module.
+fn scratch_case(project: bool, files: &[(&str, &str)]) -> Case {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let mut dir = std::env::temp_dir();
+    dir.push(format!("neoc_conf_self_{}_{n}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("create scratch case dir");
+    for (name, text) in files {
+        std::fs::write(dir.join(name), text).expect("write scratch file");
+    }
+    Case {
+        name: format!("scratch-{n}"),
+        entry: dir.join(files[0].0),
+        project,
+    }
+}
+
+/// A self-test trial: passes only when `check` fails with a message containing
+/// `needle`. A harness that stops rejecting turns the corpus into a false PASS
+/// that stays green, so each guard is pinned by a case it must refuse.
+fn must_fail(
+    name: &str,
+    needle: &'static str,
+    check: impl FnOnce() -> Result<(), Failed> + Send + 'static,
+) -> Trial {
+    Trial::test(format!("harness::{name}"), move || match check() {
+        Ok(()) => Err(Failed::from(format!(
+            "expected the harness to fail with `{needle}`, but it passed"
+        ))),
+        Err(e) if e.message().is_some_and(|m| m.contains(needle)) => Ok(()),
+        Err(e) => Err(Failed::from(format!(
+            "expected a failure containing `{needle}`, got: {}",
+            e.message().unwrap_or_default()
+        ))),
+    })
+}
+
+/// A fixed outcome for the `assert_*` self-tests.
+fn outcome(stdout: &str, raised: Option<&str>, program: &str) -> Outcome {
+    Outcome {
+        stdout: stdout.to_owned(),
+        raised: raised.map(str::to_owned),
+        program: program.to_owned(),
+    }
+}
+
+/// Self-tests for the harness's own assertion logic: each one feeds a guard
+/// input it must refuse (plus one control it must accept) and passes only if
+/// the guard fails with the expected message.
+fn self_test_trials() -> Vec<Trial> {
+    const OK_MAIN: &str =
+        "extern {\n    fn println(s: string);\n}\n\nfn main() {\n    println(\"hi\");\n}\n";
+    let mut trials = Vec::new();
+
+    // Control: a matching rejection with the golden stdout is accepted.
+    trials.push(Trial::test("harness::rejection_accepted", || {
+        let case = scratch_case(false, &[("c.neoc", OK_MAIN), ("c.stdout", "out\n")]);
+        assert_rejected(&case, &outcome("out", Some("boom: bad"), ""), "boom")
+    }));
+
+    // The marker appears only in the program text and stdout, never in the
+    // raised message: the sad path must search the rejection alone.
+    trials.push(must_fail(
+        "rejection_marker_only_in_program",
+        "rejection does not contain",
+        || {
+            let case = scratch_case(false, &[("c.neoc", OK_MAIN), ("c.stdout", "has-marker\n")]);
+            let out = outcome("has-marker", Some("something else"), "-- has-marker");
+            assert_rejected(&case, &out, "has-marker")
+        },
+    ));
+
+    trials.push(must_fail(
+        "blank_fails_marker",
+        "empty .fails marker",
+        || {
+            let case = scratch_case(false, &[("c.neoc", OK_MAIN), ("c.fails", "  \n")]);
+            check_well_formed(&[case])
+        },
+    ));
+
+    trials.push(must_fail(
+        "missing_rust_anchor",
+        "missing sibling Rust anchor",
+        || {
+            let case = scratch_case(false, &[("c.neoc", OK_MAIN)]);
+            check_well_formed(&[case])
+        },
+    ));
+
+    trials.push(must_fail("directory_case_declares_tests", "declares #[test] fns", || {
+        let main = "extern {\n    fn println(s: string);\n}\n\n#[test]\nfn checks() {\n    println(\"t\");\n}\n\npub fn main() {}\n";
+        let case = scratch_case(true, &[("main.neoc", main)]);
+        lua_program(&case).map(|_| ())
+    }));
+
+    trials.push(must_fail(
+        "rejection_stdout_mismatch",
+        "stdout mismatch",
+        || {
+            let case = scratch_case(false, &[("c.neoc", OK_MAIN), ("c.stdout", "expected\n")]);
+            assert_rejected(&case, &outcome("actual", Some("boom"), ""), "boom")
+        },
+    ));
+
+    // A `.fails` marker on a program that runs clean is not a rejection.
+    trials.push(must_fail(
+        "fails_on_clean_run",
+        "expected a rejection",
+        || {
+            let case = scratch_case(
+                false,
+                &[
+                    ("c.neoc", OK_MAIN),
+                    ("c.fails", "boom\n"),
+                    ("c.stdout", "hi\n"),
+                ],
+            );
+            judge(run_lua, &case, Some("boom"))
+        },
+    ));
+
+    // A compile error never satisfies a `.fails` marker, even when the
+    // diagnostics happen to contain the marker's text.
+    trials.push(must_fail(
+        "fails_on_compile_error",
+        "unexpected diagnostics",
+        || {
+            let bad = "fn main() {\n    let x: number = \"text\";\n}\n";
+            let case = scratch_case(
+                false,
+                &[("c.neoc", bad), ("c.fails", "number\n"), ("c.stdout", "")],
+            );
+            judge(run_lua, &case, Some("number"))
+        },
+    ));
+
+    trials
+}
+
 fn main() {
     let args = Arguments::from_args();
-    libtest_mimic::run(&args, collect_trials()).exit();
+    let mut trials = collect_trials();
+    trials.extend(self_test_trials());
+    libtest_mimic::run(&args, trials).exit();
 }
