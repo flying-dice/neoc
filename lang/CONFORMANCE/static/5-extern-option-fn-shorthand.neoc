@@ -1,0 +1,20 @@
+// EXTERN.md §Option marshalling: field shorthand names the extern `fn` as a value,
+// so a neoc struct or enum variant cannot capture it either.
+extern {
+    fn show(v: Option<number>) -> string;
+}
+
+struct Holder {
+    show: fn(Option<number>) -> string,
+}
+
+enum E {
+    V {
+        show: fn(Option<number>) -> string,
+    },
+}
+
+fn main() {
+    let h = Holder { show };
+    let e = E::V { show };
+}

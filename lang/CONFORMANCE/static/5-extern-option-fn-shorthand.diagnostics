@@ -1,0 +1,2 @@
+a host function that takes or returns an `Option` can be called, or handed directly to another host function; it cannot be stored or passed on as a value
+a host function that takes or returns an `Option` can be called, or handed directly to another host function; it cannot be stored or passed on as a value

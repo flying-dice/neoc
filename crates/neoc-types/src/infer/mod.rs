@@ -1871,9 +1871,18 @@ impl<'a> Checker<'a> {
         for init in inits {
             match decl.iter().find(|(n, _)| *n == init.name) {
                 Some((_, expected)) => {
-                    let actual = match &init.value {
-                        Some(e) => self.infer(e),
-                        None => self.shorthand_ty(&init.name, true).unwrap_or(Ty::Unknown),
+                    let actual = if let Some(e) = &init.value {
+                        self.infer(e)
+                    } else {
+                        // Shorthand names the value: it is a path like any other.
+                        if !self.is_extern_type(owner) {
+                            let named = ast::Expr::new(
+                                ast::ExprKind::Path(vec![init.name.clone()]),
+                                ast::Span::default(),
+                            );
+                            self.check_extern_fn_value(&named);
+                        }
+                        self.shorthand_ty(&init.name, true).unwrap_or(Ty::Unknown)
                     };
                     if !self.assignable(expected, &actual) {
                         self.error(format!(
