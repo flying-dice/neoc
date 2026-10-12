@@ -1190,3 +1190,21 @@ fn imported_method_enum_shadowed_by_value_reads_type_local() {
     assert!(main_lua.contains(", __type_Shape)"), "{main_lua}");
     assert_eq!(result, "8");
 }
+
+#[test]
+fn local_plain_enum_sharing_a_name_with_an_unimported_method_enum_stays_bare() {
+    let (main_lua, result) = run_project(
+        &[(
+            "pal",
+            "pub enum Shape {\n    Dot,\n}\nimpl Shape {\n    fn id(self) -> number { 1 }\n}\n\
+             pub enum Bit {\n    On,\n    Off,\n}\nimpl Bit {\n    fn id(self) -> number { 2 }\n}\n",
+        )],
+        "use pal::Shape;\nenum Bit {\n    On,\n    Off,\n}\n\
+         pub fn main() -> number { match Bit::On { Bit::On => Shape::Dot.id(), Bit::Off => 0 } }\n",
+    );
+    assert!(
+        !main_lua.contains("setmetatable({ __enum = \"Bit\""),
+        "{main_lua}"
+    );
+    assert_eq!(result, "1");
+}

@@ -911,7 +911,9 @@ fn imported_enums<'a>(
             {
                 enums.push(codegen_lua::ImportedEnum {
                     decl: e,
-                    has_methods: method_enums.contains(&e.name),
+                    // Only an enum the `use` names takes the metatable; a
+                    // same-named local enum must stay a plain table.
+                    has_methods: u.path.last() == Some(&e.name) && method_enums.contains(&e.name),
                 });
             }
         }
