@@ -485,8 +485,12 @@ impl<'a> Elaborator<'a> {
 
     fn closure(&mut self, params: &[ast::ClosureParam], body: &ast::Expr) -> ast::ExprKind {
         self.checker.scopes.push();
-        for p in params {
-            let ty = p.ty.as_ref().map_or(Ty::Unknown, |t| self.checker.lower(t));
+        let expect = self.checker.take_closure_expect();
+        for (i, p) in params.iter().enumerate() {
+            let ty = p.ty.as_ref().map_or_else(
+                || expect.get(i).cloned().unwrap_or(Ty::Unknown),
+                |t| self.checker.lower(t),
+            );
             self.checker.scopes.bind(p.name.clone(), ty);
         }
         let new_body = self.expr(body);
@@ -512,7 +516,11 @@ impl<'a> Elaborator<'a> {
             ast::ExprKind::Path(_) => callee.clone(),
             _ => self.expr(callee),
         };
-        let args = self.exprs(args);
+        let expected = match self.checker.quiet_infer(callee) {
+            Ty::Fn(params, _) => params,
+            _ => Vec::new(),
+        };
+        let args = self.exprs_expecting(args, &expected);
         let call = ast::ExprKind::Call {
             callee: Box::new(new_callee),
             args: marshal_args(sig.as_ref(), args),
@@ -529,7 +537,9 @@ impl<'a> Elaborator<'a> {
         span: ast::Span,
     ) -> ast::ExprKind {
         let sig = self.checker.extern_method_sig(receiver, method);
-        let args = self.exprs(args);
+        let recv = self.checker.quiet_infer(receiver);
+        let expected = self.checker.method_param_tys(&recv, method);
+        let args = self.exprs_expecting(args, &expected);
         let call = ast::ExprKind::MethodCall {
             receiver: self.boxed(receiver),
             method: method.to_string(),
@@ -604,6 +614,19 @@ impl<'a> Elaborator<'a> {
 
     fn boxed(&mut self, expr: &ast::Expr) -> Box<ast::Expr> {
         Box::new(self.expr(expr))
+    }
+
+    /// Elaborates call arguments, passing closures the parameter types the
+    /// callee's signature fixes, as the checker does.
+    fn exprs_expecting(&mut self, exprs: &[ast::Expr], expected: &[Ty]) -> Vec<ast::Expr> {
+        exprs
+            .iter()
+            .enumerate()
+            .map(|(i, e)| {
+                self.checker.expect_closure_params(e, expected.get(i));
+                self.expr(e)
+            })
+            .collect()
     }
 
     fn exprs(&mut self, exprs: &[ast::Expr]) -> Vec<ast::Expr> {

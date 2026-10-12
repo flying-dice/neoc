@@ -512,6 +512,7 @@ fn focus_diagnostics(
     }
     out.extend(use_diags.into_iter().map(|pd| pd.diagnostic));
     table.import_referenced_types(&imports, universe);
+    out.extend(ambiguous_type_diagnostics(universe, &table));
     let checked = types::check_with_table(&me.module, &table);
     for d in &checked.diagnostics {
         out.push(Diagnostic::typed_from(d));
@@ -548,6 +549,12 @@ fn check_and_emit_module(
     // the imported signatures so a type the module names directly stays
     // unresolved unless its own `use` brings it in.
     table.import_referenced_types(&imports, universe);
+    for d in ambiguous_type_diagnostics(universe, &table) {
+        diagnostics.push(ProjectDiagnostic {
+            path: path.to_path_buf(),
+            diagnostic: d,
+        });
+    }
     let checked = types::check_with_table(&me.module, &table);
     for d in &checked.diagnostics {
         diagnostics.push(ProjectDiagnostic {
@@ -787,8 +794,17 @@ fn emit(target: Target, module: &ast::Module, source: &str, inputs: &EmitInputs)
 /// same name, the merge keeps one — neoc has no module-qualified type identity.
 fn type_universe(loaded: &HashMap<PathBuf, LoadedModule>) -> types::SymbolTable {
     let mut universe = types::SymbolTable::new();
+    let mut extern_pub = std::collections::HashSet::new();
+    let mut neoc_pub = std::collections::HashSet::new();
     for module in loaded.values() {
         let t = &module.table;
+        for name in &t.pub_types {
+            if t.extern_types.contains(name) {
+                extern_pub.insert(name.clone());
+            } else {
+                neoc_pub.insert(name.clone());
+            }
+        }
         for name in &t.pub_types {
             if let Some(def) = t.types.get(name) {
                 universe.types.insert(name.clone(), def.clone());
@@ -805,7 +821,36 @@ fn type_universe(loaded: &HashMap<PathBuf, LoadedModule>) -> types::SymbolTable 
             }
         }
     }
+    universe.ambiguous_types = extern_pub.intersection(&neoc_pub).cloned().collect();
     universe
+}
+
+/// One diagnostic per type name `table` sees that the project declares both in an
+/// `extern` block and as a neoc type. Type identity is by bare name, so the
+/// module cannot tell which one a value of that type is.
+fn ambiguous_type_diagnostics(
+    universe: &types::SymbolTable,
+    table: &types::SymbolTable,
+) -> Vec<Diagnostic> {
+    let mut names: Vec<&String> = universe
+        .ambiguous_types
+        .iter()
+        .filter(|name| table.types.contains_key(*name))
+        .collect();
+    names.sort();
+    names
+        .into_iter()
+        .map(|name| {
+            Diagnostic::typed(
+                format!(
+                    "type `{name}` is declared in an `extern` block in one module and as a neoc \
+                     type in another; type names are project-unique, so rename one"
+                ),
+                0,
+                0,
+            )
+        })
+        .collect()
 }
 
 /// The extern items `module` imports through its `use` graph, each preserving

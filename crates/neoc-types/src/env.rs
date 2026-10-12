@@ -209,6 +209,14 @@ pub struct SymbolTable {
     /// Type-namespace names declared inside an `extern` block. Their fields
     /// are host-implemented, so each marshals `Option<T>` the same way.
     pub extern_types: HashSet<String>,
+    /// `(type, method)` pairs declared both by an extern `impl` and by a neoc
+    /// `impl`. One method table entry serves both, so the call site cannot tell
+    /// which body runs; the conflict is the diagnostic.
+    pub host_method_clashes: HashSet<(String, String)>,
+    /// Project pool only: `pub` type names that one module declares in an
+    /// `extern` block and another declares as a neoc type. Type identity is by
+    /// bare name, so a module that sees such a name cannot tell which it holds.
+    pub ambiguous_types: HashSet<String>,
 }
 
 /// How a concrete `impl<P…> Trait<A…> for Type<B…>` applies its trait: the

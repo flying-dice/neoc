@@ -283,8 +283,23 @@ impl Checker<'_> {
             match &ext.kind {
                 ast::ExternItemKind::Fn(_) | ast::ExternItemKind::Struct(_) => {}
                 ast::ExternItemKind::Impl(b) => {
+                    let owner = crate::collect::impl_target_name(&b.ty).unwrap_or_default();
                     for m in &b.items {
                         self.check_extern_method_attr(m, span);
+                        if self
+                            .table()
+                            .host_method_clashes
+                            .contains(&(owner.clone(), m.sig.name.clone()))
+                        {
+                            self.error_at(
+                                ext.span,
+                                format!(
+                                    "`{owner}::{}` is implemented by the host and also declared \
+                                     by a neoc `impl`; keep one",
+                                    m.sig.name
+                                ),
+                            );
+                        }
                     }
                 }
                 ast::ExternItemKind::Mod(m) => {

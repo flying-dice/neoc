@@ -1,0 +1,1 @@
+`Settings::rename` is implemented by the host and also declared by a neoc `impl`; keep one

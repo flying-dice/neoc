@@ -476,10 +476,25 @@ fn collect_extern_items(table: &mut SymbolTable, items: &[ast::ExternItem]) {
                 table.extern_types.insert(s.name.clone());
             }
             ast::ExternItemKind::Impl(b) => {
+                note_host_method_clashes(table, b);
                 collect_impl(table, b);
                 mark_host_methods(table, b);
             }
             ast::ExternItemKind::Mod(m) => collect_extern_items(table, &m.items),
+        }
+    }
+}
+
+/// Records each method of extern impl `b` that a neoc `impl` already declared
+/// on the same type.
+fn note_host_method_clashes(table: &mut SymbolTable, b: &ast::ImplBlock) {
+    let Some(owner) = impl_target_name(&b.ty) else {
+        return;
+    };
+    for m in &b.items {
+        let key = (owner.clone(), m.sig.name.clone());
+        if table.methods.get(&key).is_some_and(|info| !info.host) {
+            table.host_method_clashes.insert(key);
         }
     }
 }
@@ -754,6 +769,10 @@ fn record_impl_methods(
             (type_name.to_string(), f.sig.name.clone()),
             (f.sig.name_span.start, f.sig.name_span.end),
         );
+        let key = (type_name.to_string(), f.sig.name.clone());
+        if table.methods.get(&key).is_some_and(|m| m.host) {
+            table.host_method_clashes.insert(key);
+        }
         table.methods.insert(
             (type_name.to_string(), f.sig.name.clone()),
             MethodInfo {

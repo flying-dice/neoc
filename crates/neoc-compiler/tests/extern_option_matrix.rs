@@ -192,6 +192,18 @@ const CASES: &[(&str, &str, &str, &str)] = &[
         TO,
     ),
     (
+        "closure param fixed by a fn parameter",
+        "fn apply(f: fn(Settings) -> Option<string>) -> Option<string> { f(mk()) }",
+        "let a = apply(|v| v.title);",
+        FROM,
+    ),
+    (
+        "closure param fixed by Option::map",
+        "",
+        "let n = Some(mk()).map(|s| s.title.is_some());",
+        FROM,
+    ),
+    (
         "Self literal",
         "impl Settings { fn f(t: Option<string>) -> Settings { Self { title: t, size: 1 } } }",
         "",

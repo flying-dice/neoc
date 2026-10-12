@@ -1147,3 +1147,36 @@ fn cross_file_extern_struct_option_field_marshals_without_importing_the_type() {
         "write should unwrap:\n{app_lua}"
     );
 }
+
+/// Type identity is by bare name: an extern struct and a neoc struct of one name
+/// in different modules cannot be told apart by a module that sees both, so the
+/// project rejects it rather than marshal a neoc value as a host one.
+#[test]
+fn extern_and_neoc_type_of_one_name_across_modules_is_rejected() {
+    let dir = tempdir();
+    write(
+        &dir,
+        "host.neoc",
+        "extern {\n    pub struct Doc {\n        title: Option<string>,\n    }\n}\n",
+    );
+    write(
+        &dir,
+        "util.neoc",
+        "pub struct Doc {\n    title: Option<string>,\n}\n\npub fn mk() -> Doc {\n    Doc { title: Some(\"hi\") }\n}\n",
+    );
+    let entry = write(
+        &dir,
+        "app.neoc",
+        "use host::Doc;\nuse util::mk;\n\npub fn main() {\n    let t = mk().title;\n}\n",
+    );
+
+    let project = transpile_project(&entry, Target::Lua).expect("read project");
+    assert!(
+        project
+            .diagnostics
+            .iter()
+            .any(|d| d.diagnostic.message.contains("project-unique")),
+        "{:#?}",
+        project.diagnostics
+    );
+}

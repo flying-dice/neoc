@@ -1,0 +1,17 @@
+// EXTERN.md §Option marshalling: the same clash with the extern `impl` first.
+extern {
+    struct Settings {
+        size: number,
+    }
+    impl Settings {
+        fn rename(self, t: Option<string>) -> Option<string>;
+    }
+}
+
+impl Settings {
+    fn rename(self, t: Option<string>) -> Option<string> {
+        t
+    }
+}
+
+fn main() {}
