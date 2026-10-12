@@ -804,6 +804,21 @@ fn an_untypable_closure_parameter_is_rejected_when_members_are_read() {
             "fn run<T>(fs: [fn(T) -> bool], g: fn() -> T) -> bool { fs[0](g()) }",
             "println(run([|s| { s }.title.is_some()], || mk()));",
         ),
+        // A bare type-parameter slot, a closure value called, a closure
+        // returning the parameter.
+        ("", "println(id(|s| s.title.is_some())(mk()));"),
+        (
+            "fn useo(o: Option<fn(Settings) -> bool>) -> bool { match o { Some(h) => h(mk()), None => false } }",
+            "let o = Some(|s| s.title.is_some()); println(useo(o));",
+        ),
+        (
+            "fn run<T>(fs: [fn(T) -> bool], g: fn() -> T) -> bool { fs[0](g()) }",
+            "println(run([|s| { let f = || s; f().title.is_some() }], || mk()));",
+        ),
+        (
+            "fn run<T>(fs: [fn(T) -> bool], g: fn() -> T) -> bool { fs[0](g()) }",
+            "println(run([|s| (|| s)().title.is_some()], || mk()));",
+        ),
     ] {
         let out = build(items, body);
         assert!(
@@ -821,4 +836,29 @@ fn an_untypable_closure_parameter_is_rejected_when_members_are_read() {
         "println(run([|s: Settings| s.title.is_some()], || mk()));",
     );
     assert!(out.ok(), "{:#?}", out.diagnostics);
+}
+
+/// A hint naming the caller's own type parameter is known, not open; and the
+/// marker never reaches a diagnostic or blocks plain calls, indexing, or `?`.
+#[test]
+fn caller_type_parameters_are_known_and_the_marker_stays_quiet() {
+    let out = build(
+        "trait Named { fn name(self) -> string; }\nstruct Dog { n: string }\nimpl Named for Dog { fn name(self) -> string { self.n } }\nfn apply<T>(x: T, f: fn(T) -> string) -> string { f(x) }\nfn outer<U: Named>(y: U) -> string { apply(y, |v| v.name()) }",
+        "println(outer(Dog { n: \"d\" }));",
+    );
+    assert!(out.ok(), "{:#?}", out.diagnostics);
+    for body in [
+        "println(run([|s| s()], || mk()));",
+        "println(run([|s| s[0]], || mk()));",
+    ] {
+        let out = build(
+            "fn run<T>(fs: [fn(T) -> bool], g: fn() -> T) -> bool { fs[0](g()) }",
+            body,
+        );
+        assert!(
+            out.diagnostics.iter().all(|d| !d.message.contains('_')),
+            "{body}\n{:#?}",
+            out.diagnostics
+        );
+    }
 }

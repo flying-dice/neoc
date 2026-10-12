@@ -1491,6 +1491,7 @@ impl<'a> Checker<'a> {
                 Self::apply_subst(&ret, &subst)
             }
             Ty::Unknown => Ty::Unknown,
+            Ty::Param(n) if n == UNRESOLVED => Ty::Unknown,
             // A dynamic value is callable — this is how an imported `class X;`
             // is constructed (`X(args) : Unknown`). The call yields `Unknown`
             // again (`STATIC.md` §5).
@@ -1601,6 +1602,7 @@ impl<'a> Checker<'a> {
 
     fn apply_subst(ty: &Ty, subst: &std::collections::HashMap<String, Ty>) -> Ty {
         ty.map(&|t| match t {
+            Ty::Param(name) if name == UNRESOLVED => None,
             Ty::Param(name) => Some(subst.get(name).cloned().unwrap_or(Ty::Unknown)),
             _ => None,
         })
@@ -2073,6 +2075,7 @@ impl<'a> Checker<'a> {
         match b {
             Ty::List(inner) => *inner,
             Ty::Unknown => Ty::Unknown,
+            Ty::Param(n) if n == UNRESOLVED => Ty::Unknown,
             // Indexing through a dynamic value yields `Unknown` again.
             Ty::Dynamic => Ty::Dynamic,
             other => {
@@ -2137,7 +2140,14 @@ impl<'a> Checker<'a> {
             if let Some(p) = expected.get(i) {
                 // A parameter typed by a bare type parameter takes what the
                 // call has bound it to (`Some(f)` under `Option<fn(S) -> _>`).
-                let p = Self::subst_named(p, &eff);
+                // A `fn` type keeps its parameters unsubstituted, so the hint can
+                // tell what the call bound (even to the caller's own type
+                // parameter) from what it left open.
+                let p = if matches!(p, Ty::Fn(..)) {
+                    p.clone()
+                } else {
+                    Self::subst_named(p, &eff)
+                };
                 self.hint_closures(&args[i], &p, &eff);
             }
             let ty = self.infer(&args[i]);
@@ -2255,7 +2265,9 @@ impl<'a> Checker<'a> {
                     .enumerate()
                     .map(|(i, p)| {
                         let fixed = Self::subst_named(p, subst);
-                        if Self::mentions_param(&fixed) {
+                        // A parameter the call has bound, even to the caller's
+                        // own type parameter, is known; one it has not is open.
+                        if Self::mentions_unbound(p, subst) || Self::mentions_marker(&fixed) {
                             self.open_hint_params.insert((key, i));
                             Ty::Unknown
                         } else {
@@ -2265,6 +2277,16 @@ impl<'a> Checker<'a> {
                     .collect();
                 self.merge_hint((expr.span.start, expr.span.end), hint);
                 self.hint_closures(body, ret, subst);
+            }
+            // A closure for a bare type-parameter slot (`id(|s| ..)`, `Some(|s| ..)`)
+            // has no `fn` type to read its parameters from.
+            (ast::ExprKind::Closure { params, .. }, t)
+                if Self::mentions_unbound(t, subst) || Self::mentions_marker(t) =>
+            {
+                let key = (expr.span.start, expr.span.end);
+                for i in 0..params.len() {
+                    self.open_hint_params.insert((key, i));
+                }
             }
             (ast::ExprKind::Block(b), _) => self.hint_block(b, ty, subst),
             (ast::ExprKind::If { then, else_, .. }, _) => {
@@ -2289,7 +2311,13 @@ impl<'a> Checker<'a> {
                 if let Some((generics, decl)) = self.named_literal_fields(path) {
                     let inner: std::collections::HashMap<String, Ty> = generics
                         .into_iter()
-                        .zip(targs.iter().map(|t| Self::subst_named(t, subst)))
+                        .zip(targs.iter().map(|t| {
+                            if Self::mentions_unbound(t, subst) {
+                                Ty::Param(UNRESOLVED.to_string())
+                            } else {
+                                Self::subst_named(t, subst)
+                            }
+                        }))
                         .collect();
                     for f in fields {
                         if let (Some(v), Some((_, d))) =
@@ -2313,52 +2341,58 @@ impl<'a> Checker<'a> {
                     .or_default()
                     .push(expected);
             }
-            (ast::ExprKind::Try(inner), _) => {
-                // `e?` under an expected `T` reads `e` as a `Result<T, _>` or
-                // an `Option<T>`.
-                // A chain `e??` peels to its base first and hints it once per
-                // wrapper, so the work stays linear in the chain.
-                let (mut depth, mut base) = (1, &**inner);
-                while let ast::ExprKind::Try(next) = &base.kind {
-                    depth += 1;
-                    base = next;
-                }
-                // Inside the fn body `?` returns early in the fn's own
-                // `Result` or `Option`; inside a closure that type is not
-                // known, so both are tried, but only on a call or closure
-                // base, which keeps nesting through blocks linear.
-                let kinds: &[&str] = if self.closure_depth == 0 {
-                    match &self.ret_ty {
-                        Ty::Named { name, .. } if name == "Result" => &["Result"],
-                        Ty::Named { name, .. } if name == "Option" => &["Option"],
-                        _ => &[],
-                    }
-                } else if matches!(
-                    base.kind,
-                    ast::ExprKind::Block(_)
-                        | ast::ExprKind::If { .. }
-                        | ast::ExprKind::Match { .. }
-                ) {
-                    &[]
-                } else {
-                    &["Result", "Option"]
-                };
-                for name in kinds {
-                    let mut wrapped = ty.clone();
-                    for _ in 0..depth {
-                        wrapped = Ty::Named {
-                            name: (*name).to_string(),
-                            args: if *name == "Result" {
-                                vec![wrapped, Ty::Unknown]
-                            } else {
-                                vec![wrapped]
-                            },
-                        };
-                    }
-                    self.hint_closures(base, &wrapped, subst);
-                }
-            }
+            (ast::ExprKind::Try(inner), _) => self.hint_try(inner, ty, subst),
             _ => {}
+        }
+    }
+
+    /// [`Self::hint_closures`] for `inner?` under an expected `ty`.
+    fn hint_try(
+        &mut self,
+        inner: &ast::Expr,
+        ty: &Ty,
+        subst: &std::collections::HashMap<String, Ty>,
+    ) {
+        // `e?` under an expected `T` reads `e` as a `Result<T, _>` or
+        // an `Option<T>`.
+        // A chain `e??` peels to its base first and hints it once per
+        // wrapper, so the work stays linear in the chain.
+        let (mut depth, mut base) = (1, inner);
+        while let ast::ExprKind::Try(next) = &base.kind {
+            depth += 1;
+            base = next;
+        }
+        // Inside the fn body `?` returns early in the fn's own
+        // `Result` or `Option`; inside a closure that type is not
+        // known, so both are tried, but only on a call or closure
+        // base, which keeps nesting through blocks linear.
+        let kinds: &[&str] = if self.closure_depth == 0 {
+            match &self.ret_ty {
+                Ty::Named { name, .. } if name == "Result" => &["Result"],
+                Ty::Named { name, .. } if name == "Option" => &["Option"],
+                _ => &[],
+            }
+        } else if matches!(
+            base.kind,
+            ast::ExprKind::Block(_) | ast::ExprKind::If { .. } | ast::ExprKind::Match { .. }
+        ) {
+            &[]
+        } else {
+            &["Result", "Option"]
+        };
+        for name in kinds {
+            let mut wrapped = ty.clone();
+            for _ in 0..depth {
+                wrapped = Ty::Named {
+                    name: (*name).to_string(),
+                    args: if *name == "Result" {
+                        vec![wrapped, Ty::Unknown]
+                    } else {
+                        vec![wrapped]
+                    },
+                };
+            }
+            self.hint_closures(base, &wrapped, subst);
         }
     }
 
@@ -2398,6 +2432,30 @@ impl<'a> Checker<'a> {
             },
             _ => None,
         }
+    }
+
+    /// Whether `ty` names a type parameter `subst` does not bind.
+    fn mentions_unbound(ty: &Ty, subst: &std::collections::HashMap<String, Ty>) -> bool {
+        let found = std::cell::Cell::new(false);
+        let _ = ty.map(&|t| {
+            if matches!(t, Ty::Param(n) if !subst.contains_key(n)) {
+                found.set(true);
+            }
+            None
+        });
+        found.get()
+    }
+
+    /// Whether `ty` carries the `unresolved` marker.
+    fn mentions_marker(ty: &Ty) -> bool {
+        let found = std::cell::Cell::new(false);
+        let _ = ty.map(&|t| {
+            if matches!(t, Ty::Param(n) if n == UNRESOLVED) {
+                found.set(true);
+            }
+            None
+        });
+        found.get()
     }
 
     /// Whether a `fn` parameter type still mentions a type parameter `subst`
@@ -2697,6 +2755,7 @@ impl<'a> Checker<'a> {
                 }
             },
             Ty::Unknown => Ty::Unknown,
+            Ty::Param(n) if n == UNRESOLVED => Ty::Unknown,
             other => {
                 self.error(format!(
                     "`?` expects a `Result` or `Option`, found `{other}`"
