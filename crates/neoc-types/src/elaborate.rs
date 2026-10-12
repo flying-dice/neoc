@@ -121,7 +121,7 @@ impl<'a> Elaborator<'a> {
     }
 
     fn impl_block(&mut self, b: &ast::ImplBlock) -> ast::ImplBlock {
-        let target = crate::collect::impl_target_name(self.checker.table(), &b.ty);
+        let target = crate::collect::impl_target_name(self.checker.table(), b);
         // An alias target is rewritten to the type it expands to, so the
         // lowering keys the methods on the real type table.
         let ty = match (&b.ty, &target) {
@@ -136,13 +136,13 @@ impl<'a> Elaborator<'a> {
             _ => b.ty.clone(),
         };
         // Mirrors `Checker::check_impl`: the impl's generics are in scope while
-        // `Self` is read as the target with its arguments.
+        // `Self` is read as the target with its arguments, and through the
+        // items, where they shadow an alias of the same name.
         let prev_params = std::mem::replace(
             &mut self.checker.type_params,
             b.generics.iter().map(|g| g.name.clone()).collect(),
         );
         let lowered = self.checker.lower(&b.ty);
-        self.checker.type_params = prev_params;
         let prev_self = self.checker.impl_self_ty.replace(lowered);
         let items = b
             .items
@@ -150,6 +150,7 @@ impl<'a> Elaborator<'a> {
             .map(|f| self.fn_decl(f, target.as_deref()))
             .collect();
         self.checker.impl_self_ty = prev_self;
+        self.checker.type_params = prev_params;
         ast::ImplBlock {
             generics: b.generics.clone(),
             trait_: b.trait_.clone(),
@@ -199,12 +200,20 @@ impl<'a> Elaborator<'a> {
         self_ty: Option<&str>,
         trait_self: Option<&str>,
     ) -> ast::Block {
-        let prev_params = std::mem::take(&mut self.checker.type_params);
-        let prev_bounds = std::mem::take(&mut self.checker.type_bounds);
-        self.checker.type_params = sig.generics.iter().map(|g| g.name.clone()).collect();
-        self.checker.type_bounds = self
+        // Extend (not replace) the enclosing impl's parameters, as the checker
+        // does, so a parameter that shadows an alias stays visible.
+        let prev_params = self.checker.type_params.clone();
+        let prev_bounds = self.checker.type_bounds.clone();
+        self.checker
+            .type_params
+            .extend(sig.generics.iter().map(|g| g.name.clone()));
+        let scope = self.checker.type_params.clone();
+        for (k, v) in self
             .checker
-            .scoped_bounds(crate::collect::param_bounds(sig, &[]));
+            .scoped_bounds(crate::collect::param_bounds(sig, &scope))
+        {
+            self.checker.type_bounds.entry(k).or_default().extend(v);
+        }
         if let Some(trait_name) = trait_self {
             self.checker.enter_trait_self(trait_name);
         }
@@ -247,10 +256,18 @@ impl<'a> Elaborator<'a> {
             ([head], Some(target)) if head == "Self" => vec![target.clone()],
             ([head], _) => vec![
                 self.checker
-                    .table()
-                    .alias_head(head)
+                    .alias_head_of(head)
                     .unwrap_or_else(|| head.clone()),
             ],
+            ([.., _, _], _) => {
+                // A variant literal `C::Pt { .. }`: the enum segment may be an alias.
+                let mut path = path.to_vec();
+                let at = path.len() - 2;
+                if let Some(head) = self.checker.alias_head_of(&path[at]) {
+                    path[at] = head;
+                }
+                path
+            }
             _ => path.to_vec(),
         }
     }
@@ -258,11 +275,12 @@ impl<'a> Elaborator<'a> {
     /// `p` with every alias heading a path read as the type it expands to
     /// (`STATIC.md` §3.8), so the lowering tests the real type's tag or table.
     fn pattern(&self, p: &ast::Pattern) -> ast::Pattern {
-        let table = self.checker.table();
         match p {
-            ast::Pattern::Path(path) => ast::Pattern::Path(expand_pattern_path(table, path, false)),
+            ast::Pattern::Path(path) => {
+                ast::Pattern::Path(expand_pattern_path(&self.checker, path, false))
+            }
             ast::Pattern::Struct { path, fields, rest } => ast::Pattern::Struct {
-                path: expand_pattern_path(table, path, true),
+                path: expand_pattern_path(&self.checker, path, true),
                 fields: fields
                     .iter()
                     .map(|f| ast::FieldPat {
@@ -274,7 +292,7 @@ impl<'a> Elaborator<'a> {
                 rest: *rest,
             },
             ast::Pattern::Tuple { path, elems } => ast::Pattern::Tuple {
-                path: expand_pattern_path(table, path, true),
+                path: expand_pattern_path(&self.checker, path, true),
                 elems: elems.iter().map(|e| self.pattern(e)).collect(),
             },
             ast::Pattern::Or(alts) => {
@@ -350,7 +368,7 @@ impl<'a> Elaborator<'a> {
             ast::ExprKind::Path(segs) if segs.len() >= 2 => {
                 let mut segs = segs.clone();
                 let at = segs.len() - 2;
-                if let Some(head) = self.checker.table().alias_head(&segs[at]) {
+                if let Some(head) = self.checker.alias_head_of(&segs[at]) {
                     segs[at] = head;
                 }
                 ast::ExprKind::Path(segs)
@@ -631,7 +649,7 @@ pub fn elaborate_with_table(module: &ast::Module, table: &SymbolTable) -> ast::M
 /// `path` with its type segment read through any alias: the second-to-last
 /// segment of a qualified path (`C::Red`), and, when `head` (a struct or tuple
 /// pattern, where the last segment may itself name the struct), the last.
-fn expand_pattern_path(table: &SymbolTable, path: &[ast::Ident], head: bool) -> Vec<ast::Ident> {
+fn expand_pattern_path(checker: &Checker<'_>, path: &[ast::Ident], head: bool) -> Vec<ast::Ident> {
     let mut path = path.to_vec();
     let last = path.len().saturating_sub(1);
     let mut at = vec![];
@@ -642,7 +660,7 @@ fn expand_pattern_path(table: &SymbolTable, path: &[ast::Ident], head: bool) -> 
         at.push(last);
     }
     for i in at {
-        if let Some(h) = table.alias_head(&path[i]) {
+        if let Some(h) = checker.alias_head_of(&path[i]) {
             path[i] = h;
         }
     }

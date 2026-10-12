@@ -44,6 +44,7 @@ type N = W<f64>;
 enum Color {
     Red,
     Green(f64),
+    Pt { a: f64 },
 }
 
 type C = Color;
@@ -52,6 +53,7 @@ fn pick(c: C) -> f64 {
     match c {
         C::Red => 0.0,
         C::Green(n) => n,
+        C::Pt { a } => a,
     }
 }
 
@@ -72,5 +74,6 @@ fn main() {
     println!("{}", W { v: 8.0 }.v);
     println!("{}", pick(C::Green(9.0)));
     println!("{}", pick(C::Red));
+    println!("{}", pick(C::Pt { a: 11.0 }));
     println!("{}", unwrap(A { x: 2.0 }));
 }

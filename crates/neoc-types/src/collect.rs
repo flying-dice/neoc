@@ -627,7 +627,7 @@ fn collect_trait(table: &mut SymbolTable, t: &ast::TraitDecl) {
 
 fn collect_impl(table: &mut SymbolTable, b: &ast::ImplBlock) {
     let impl_generics = generic_names(&b.generics);
-    let Some(type_name) = impl_target_name(table, &b.ty) else {
+    let Some(type_name) = impl_target_name(table, b) else {
         return;
     };
     // The impl's associated-type bindings, so a method signature mentioning
@@ -794,11 +794,15 @@ pub(crate) fn lower_trait_ref(
 
 /// The bare type name an `impl` targets, ignoring generic arguments. A `type`
 /// alias target is read as the type it expands to (`STATIC.md` §3.8).
-pub(crate) fn impl_target_name(table: &SymbolTable, ty: &ast::Type) -> Option<String> {
-    let ast::Type::Path(p) = ty else {
+pub(crate) fn impl_target_name(table: &SymbolTable, b: &ast::ImplBlock) -> Option<String> {
+    let ast::Type::Path(p) = &b.ty else {
         return None;
     };
     let name = &p.segments.last()?.name;
+    // An impl generic named like an alias shadows it (a blanket target).
+    if b.generics.iter().any(|g| g.name == *name) {
+        return Some(name.clone());
+    }
     Some(table.alias_head(name).unwrap_or_else(|| name.clone()))
 }
 

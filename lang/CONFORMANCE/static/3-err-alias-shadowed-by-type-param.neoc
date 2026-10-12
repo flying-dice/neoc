@@ -1,0 +1,15 @@
+struct P {
+    x: number,
+}
+
+impl P {
+    fn mk() -> number {
+        1
+    }
+}
+
+type A = P;
+
+fn g<A>() -> number {
+    A::mk()
+}

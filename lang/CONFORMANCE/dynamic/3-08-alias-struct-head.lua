@@ -51,6 +51,10 @@ local function pick(c)
       local n = __s[1]
       return n
     end
+    if __s.__tag == "Pt" then
+      local a = __s.a
+      return a
+    end
   end)()
 end
 local function unwrap(a)
@@ -70,5 +74,6 @@ local function main()
   println(W.new({ v = 8 }).v)
   println(pick({ __enum = "Color", __tag = "Green", 9 }))
   println(pick({ __enum = "Color", __tag = "Red" }))
+  println(pick({ __enum = "Color", __tag = "Pt", a = 11 }))
   println(unwrap(P.new({ x = 2 })))
 end
