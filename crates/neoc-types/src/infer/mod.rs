@@ -88,7 +88,7 @@ pub struct Checker<'a> {
     hint_misses: Vec<String>,
     /// While hinting a method call's arguments: the enclosing item's own type
     /// parameters, which the projected signature may name, are never open.
-    own_params_closed: bool,
+    method_hint_depth: u32,
     /// Closure-literal parameters whose type a hint withheld because a type
     /// parameter was still open, keyed by closure span and position.
     open_hint_params: std::collections::HashSet<((usize, usize), usize)>,
@@ -161,7 +161,7 @@ impl<'a> Checker<'a> {
             closure_depth: 0,
             closure_params: std::collections::HashMap::new(),
             hint_misses: Vec::new(),
-            own_params_closed: false,
+            method_hint_depth: 0,
             open_hint_params: std::collections::HashSet::new(),
         }
     }
@@ -1670,9 +1670,9 @@ impl<'a> Checker<'a> {
         }
         // A method signature is projected through its receiver, so it can name
         // the enclosing item's own type parameters (`Self` as a bounded `V`).
-        let outer = std::mem::replace(&mut self.own_params_closed, true);
+        self.method_hint_depth += 1;
         let arg_tys = self.infer_args(args, &expected, &seed);
-        self.own_params_closed = outer;
+        self.method_hint_depth -= 1;
         // A method on a bounded type parameter resolves through its bounds:
         // `fn f<T: Display>(x: T) { x.show() }` finds `show` on `Display`.
         if let Ty::Param(p) = &recv {
@@ -2455,7 +2455,7 @@ impl<'a> Checker<'a> {
         let found = std::cell::Cell::new(false);
         let _ = ty.map(&|t| {
             if matches!(t, Ty::Param(n) if !subst.contains_key(n)
-                && !(self.own_params_closed
+                && !(self.method_hint_depth > 0
                     && (self.type_params.contains(n) || self.enclosing_type_params.contains(n))))
             {
                 found.set(true);
