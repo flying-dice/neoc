@@ -13,6 +13,65 @@ use crate::lua::facade::Module;
 
 const STATE_KEY: &str = "_NEOC_TEST";
 
+/// Default per-test wall-clock limit, overridable with `NEOC_TEST_TIMEOUT_SECS`.
+const DEFAULT_TEST_TIMEOUT_SECS: u64 = 60;
+
+/// Exit status when the watchdog kills the process (matches `timeout(1)`).
+const TIMEOUT_EXIT_CODE: i32 = 124;
+
+/// The test currently running and its deadline. `None` between tests.
+static ACTIVE_TEST: std::sync::Mutex<Option<(std::time::Instant, String)>> =
+    std::sync::Mutex::new(None);
+static WATCHDOG: std::sync::Once = std::sync::Once::new();
+
+fn test_timeout() -> std::time::Duration {
+    let secs = std::env::var("NEOC_TEST_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|s| *s > 0)
+        .unwrap_or(DEFAULT_TEST_TIMEOUT_SECS);
+    std::time::Duration::from_secs(secs)
+}
+
+/// Arm the watchdog for `label`. A plain OS thread, so it still fires when the
+/// test blocks the runtime thread (a deadlock never reaches an `.await`, so a
+/// `tokio::time::timeout` could not interrupt it). On expiry it reports the
+/// stalled test and exits instead of burning the whole CI job timeout.
+fn arm_watchdog(label: &str) {
+    WATCHDOG.call_once(|| {
+        std::thread::spawn(|| {
+            loop {
+                std::thread::sleep(std::time::Duration::from_millis(250));
+                let expired = ACTIVE_TEST
+                    .lock()
+                    .ok()
+                    .and_then(|g| g.clone())
+                    .filter(|(deadline, _)| std::time::Instant::now() >= *deadline);
+                if let Some((_, label)) = expired {
+                    println!("  \x1b[31m✗\x1b[0m {label}");
+                    println!(
+                        "    \x1b[2mtimed out after {}s with no result\x1b[0m",
+                        test_timeout().as_secs()
+                    );
+                    std::process::exit(TIMEOUT_EXIT_CODE);
+                }
+            }
+        });
+    });
+    if let Ok(mut g) = ACTIVE_TEST.lock() {
+        *g = Some((
+            std::time::Instant::now() + test_timeout(),
+            label.to_string(),
+        ));
+    }
+}
+
+fn disarm_watchdog() {
+    if let Ok(mut g) = ACTIVE_TEST.lock() {
+        *g = None;
+    }
+}
+
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
     Ok(declare(lua)?.into_table())
 }
@@ -76,7 +135,10 @@ fn register_suite_fns(lua: &Lua, m: &mut Module<'_>) -> mlua::Result<()> {
                 Some(s) => format!("{} > {name}", s.to_str()?),
                 None => name,
             };
-            match f.call_async::<()>(()).await {
+            arm_watchdog(&label);
+            let outcome = f.call_async::<()>(()).await;
+            disarm_watchdog();
+            match outcome {
                 Ok(_) => {
                     let n: u32 = state.get("passed")?;
                     state.set("passed", n + 1)?;

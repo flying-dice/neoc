@@ -471,3 +471,27 @@ fn run_non_test_suffix_is_not_summarised() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(!stdout.contains("failed"), "got: {stdout}");
 }
+
+#[test]
+fn run_kills_a_hung_test_after_the_per_test_timeout() {
+    // NEOC-27: a test that never returns must fail fast and name the test,
+    // not stall until the CI job timeout.
+    let dir = tempdir().unwrap();
+    let test = write(
+        dir.path(),
+        "hang.test.lua",
+        "local t = require(\"lib:test\")\nt.test(\"spins forever\", function() while true do end end)\n",
+    );
+
+    let out = Command::new(BIN)
+        .arg("run")
+        .arg(&test)
+        .env("NEOC_TEST_TIMEOUT_SECS", "1")
+        .output()
+        .unwrap();
+
+    assert_eq!(out.status.code(), Some(124));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("spins forever"), "got: {stdout}");
+    assert!(stdout.contains("timed out after 1s"), "got: {stdout}");
+}

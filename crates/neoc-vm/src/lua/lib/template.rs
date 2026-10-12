@@ -152,6 +152,9 @@ impl Drop for RenderGuard {
 struct Engine {
     tera: Arc<Mutex<Tera>>,
     counter: Arc<AtomicU64>,
+    /// Template names whose handle was dropped while the engine lock was
+    /// busy. Drained by [`Engine::lock`]. Never held across Lua or tera calls.
+    pending_removal: Arc<Mutex<Vec<String>>>,
 }
 
 impl Engine {
@@ -164,6 +167,31 @@ impl Engine {
         Self {
             tera: Arc::new(Mutex::new(tera)),
             counter: Arc::new(AtomicU64::new(0)),
+            pending_removal: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    /// Lock the tera engine, first dropping templates whose handles were
+    /// collected while the lock was busy.
+    fn lock(&self) -> parking_lot::MutexGuard<'_, Tera> {
+        let mut guard = self.tera.lock();
+        for name in self.pending_removal.lock().drain(..) {
+            guard.templates.remove(&name);
+        }
+        guard
+    }
+
+    /// Remove a template without ever blocking on the engine lock.
+    ///
+    /// Lua's GC can finalize a handle while a filter runs inside `render`, on
+    /// the thread that already holds the non-reentrant engine lock. Blocking
+    /// here would deadlock that thread, so a busy lock defers removal to the
+    /// next [`Engine::lock`].
+    fn remove_template(&self, name: &str) {
+        if let Some(mut guard) = self.tera.try_lock() {
+            guard.templates.remove(name);
+        } else {
+            self.pending_removal.lock().push(name.to_string());
         }
     }
 
@@ -225,8 +253,7 @@ struct TemplateInner {
 
 impl Drop for TemplateInner {
     fn drop(&mut self) {
-        let mut guard = self.engine.tera.lock();
-        guard.templates.remove(&self.name);
+        self.engine.remove_template(&self.name);
     }
 }
 
@@ -329,7 +356,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 #[instrument(name = "template.compile", target = "lua::lib::template", skip_all)]
 fn compile_impl(lua: &Lua, engine: &Engine, src: String) -> mlua::Result<(Value, Value)> {
     let name = engine.next_template_name();
-    let mut guard = engine.tera.lock();
+    let mut guard = engine.lock();
     if let Err(e) = guard.add_raw_template(&name, &src) {
         return from_err(lua, "template.compile", format_tera_error(&e));
     }
@@ -363,7 +390,7 @@ fn render_impl(
         ONE_OFF_PLAIN
     };
 
-    let mut guard = engine.tera.lock();
+    let mut guard = engine.lock();
     if let Err(e) = guard.add_raw_template(name, &src) {
         return Err(format_tera_error(&e));
     }
@@ -380,7 +407,7 @@ fn template_render(lua: &Lua, this: &TemplateHandle, ctx: Value) -> mlua::Result
         Ok(c) => c,
         Err(e) => return from_err(lua, "Template.render", e),
     };
-    let guard = this.inner.engine.tera.lock();
+    let guard = this.inner.engine.lock();
     let render_result = with_active_lua(lua, || guard.render(&this.inner.name, &ctx_obj));
     drop(guard);
     match render_result {
@@ -399,7 +426,7 @@ fn add_filter_impl(
         return Err("filter name must be non-empty".to_string());
     }
     let key = lua.create_registry_value(func).map_err(|e| e.to_string())?;
-    let mut guard = engine.tera.lock();
+    let mut guard = engine.lock();
     guard.register_filter(
         &name,
         LuaFilter {
@@ -920,6 +947,48 @@ mod tests {
         assert!(matches!(val, Value::Nil));
         let e = e.unwrap();
         assert!(e.contains("recursive render"), "got: {e}");
+    }
+
+    #[test]
+    fn template_collected_during_render_does_not_deadlock() {
+        // Reproducer for NEOC-27. Lua's GC can finalize a `Template` handle
+        // while a filter runs inside `render`, on the thread holding the
+        // non-reentrant engine lock. `TemplateInner::drop` then re-locked
+        // and hung forever. Run on a worker so a regression fails the test
+        // instead of stalling the suite.
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let lua = engine();
+            // The sandbox strips `collectgarbage`; expose a full GC for the test.
+            let gc = lua
+                .create_function(|lua, ()| {
+                    lua.gc_collect()?;
+                    lua.gc_collect()
+                })
+                .unwrap();
+            lua.globals().set("gc", gc).unwrap();
+            lua.load(
+                r#"
+                t = template.compile("x")
+                template.add_filter("collect", function(v, _)
+                    t = nil
+                    gc()
+                    return v
+                end)
+                "#,
+            )
+            .exec()
+            .unwrap();
+            let (out, _): (Option<String>, Value) = lua
+                .load(r#"return template.render("{{ x | collect }}", { x = "y" })"#)
+                .eval()
+                .unwrap();
+            let _ = tx.send(out);
+        });
+        let out = rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("render deadlocked: Template dropped under the engine lock");
+        assert_eq!(out.as_deref(), Some("y"));
     }
 
     #[test]
