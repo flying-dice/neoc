@@ -980,6 +980,18 @@ impl<'a> Checker<'a> {
     fn resolve_qualified(&mut self, segs: &[ast::Ident], span: ast::Span) -> Ty {
         let type_name = &segs[segs.len() - 2];
         let member = &segs[segs.len() - 1];
+        // `Self` is a type parameter only inside a trait's default body, which
+        // is emitted once and shared by every implementor — no runtime handle
+        // for `Self` exists there (`STATIC.md` §8).
+        if type_name == "Self" && self.type_params.iter().any(|p| p == "Self") {
+            self.error_at(
+                span,
+                format!(
+                    "`Self::{member}` cannot be used in a default method body; it is shared by every implementor, so call a method on `self` instead"
+                ),
+            );
+            return Ty::Unknown;
+        }
         match self.table.types.get(type_name) {
             Some(TypeDef::Enum(e)) => {
                 if let Some(v) = e.variants.iter().find(|v| v.name == *member) {

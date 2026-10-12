@@ -1,0 +1,27 @@
+// STATIC.md §8: a blanket impl lands on every satisfying type's table, so a
+// default it gives a type may not take a name the type already has.
+trait Show {
+    fn show(self) -> string;
+}
+
+trait Greet {
+    fn hi(self) -> string {
+        "default"
+    }
+}
+
+impl<T: Show> Greet for T {}
+
+struct D;
+
+impl Show for D {
+    fn show(self) -> string {
+        "d"
+    }
+}
+
+impl D {
+    fn hi(self) -> number {
+        41
+    }
+}

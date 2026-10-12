@@ -95,14 +95,25 @@ impl Checker<'_> {
                 ));
             }
         }
-        if !is_blanket {
-            let inherited: Vec<&str> = t
-                .methods
-                .iter()
-                .filter(|m| m.has_default && !provided.iter().any(|p| **p == m.name))
-                .map(|m| m.name.as_str())
-                .collect();
-            self.check_inherited_defaults(target, trait_name, &inherited);
+        let inherited: Vec<&str> = t
+            .methods
+            .iter()
+            .filter(|m| m.has_default && !provided.iter().any(|p| **p == m.name))
+            .map(|m| m.name.as_str())
+            .collect();
+        if is_blanket {
+            // A blanket impl lands on every satisfying type's table
+            // (`DYNAMIC.md` §3.5), so each is checked as its own impl.
+            let conditions = crate::collect::generic_param_bounds(&b.generics)
+                .remove(target)
+                .unwrap_or_default();
+            for ty in self.blanket_targets(&conditions) {
+                let label = format!("`impl {trait_name} for {target}` (for `{ty}`)");
+                self.check_inherited_defaults(&label, &ty, trait_name, &inherited);
+            }
+        } else {
+            let label = format!("`impl {trait_name} for {target}`");
+            self.check_inherited_defaults(&label, target, trait_name, &inherited);
         }
         // Associated-type completeness: every declared `type Item;` must be
         // bound, and a binding must name a declared associated type.
@@ -123,12 +134,18 @@ impl Checker<'_> {
         self.check_sig_conformance(b, target, trait_name, t, is_blanket);
     }
 
-    /// Rejects each default `impl trait_name for target` inherits whose name the
-    /// type already has — an inherent or trait-impl method, or another
-    /// implemented trait's default. The type's one method table can hold only
-    /// one of them, so the call would resolve differently statically and at
-    /// runtime (`STATIC.md` §8).
-    fn check_inherited_defaults(&mut self, target: &str, trait_name: &str, inherited: &[&str]) {
+    /// Rejects each default the impl `label` of `trait_name` gives concrete
+    /// type `target` whose name the type already has — an inherent or
+    /// trait-impl method, or another implemented trait's default. The type's
+    /// one method table can hold only one of them, so the call would resolve
+    /// differently statically and at runtime (`STATIC.md` §8).
+    fn check_inherited_defaults(
+        &mut self,
+        label: &str,
+        target: &str,
+        trait_name: &str,
+        inherited: &[&str],
+    ) {
         for &m in inherited {
             let clash = if self
                 .table
@@ -146,7 +163,7 @@ impl Checker<'_> {
                 continue;
             };
             self.error(format!(
-                "`impl {trait_name} for {target}` inherits default method `{m}`, but {clash}; override `{m}` in the impl"
+                "{label} inherits default method `{m}`, but {clash}; override `{m}` in the impl"
             ));
         }
     }

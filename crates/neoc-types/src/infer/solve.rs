@@ -140,6 +140,25 @@ impl Checker<'_> {
         })
     }
 
+    /// The concrete types — every struct and enum in scope — that satisfy all
+    /// of a blanket impl's `conditions`, in name order: the types the blanket
+    /// lands on (`DYNAMIC.md` §3.5).
+    pub(crate) fn blanket_targets(&self, conditions: &[String]) -> Vec<String> {
+        let mut targets: Vec<String> = self
+            .table()
+            .types
+            .iter()
+            .filter(|(_, def)| matches!(def, TypeDef::Struct(_) | TypeDef::Enum(_)))
+            .map(|(name, _)| name.clone())
+            .filter(|name| {
+                let ty = Ty::named(name);
+                conditions.iter().all(|c| self.type_satisfies(&ty, c))
+            })
+            .collect();
+        targets.sort();
+        targets
+    }
+
     /// Whether `ty` satisfies the bound `trait_name`. A concrete type satisfies
     /// it when an `impl` or derive records the pair; a type parameter satisfies
     /// it when its own in-scope bounds include the trait (bound propagation); a

@@ -111,3 +111,31 @@ fn two_traits_giving_the_same_default_is_an_error_at_each_impl() {
     let src = "trait A {\n  fn a(self) -> string {\n    \"x\"\n  }\n}\ntrait B {\n  fn a(self) -> number {\n    1\n  }\n}\nstruct D;\nimpl A for D {}\nimpl B for D {}\n";
     assert_eq!(diagnostics(src).len(), 2, "{:?}", diagnostics(src));
 }
+
+#[test]
+fn a_blanket_default_clashing_with_an_inherent_method_is_an_error() {
+    let src = "trait Show {\n  fn show(self) -> string;\n}\ntrait Greet {\n  fn hi(self) -> string {\n    \"x\"\n  }\n}\nimpl<T: Show> Greet for T {}\nstruct D;\nimpl Show for D {\n  fn show(self) -> string {\n    \"d\"\n  }\n}\nimpl D {\n  fn hi(self) -> number {\n    41\n  }\n}\n";
+    assert_eq!(
+        diagnostics(src),
+        [
+            "`impl Greet for T` (for `D`) inherits default method `hi`, but `D` already has a method `hi`; override `hi` in the impl"
+        ]
+    );
+}
+
+#[test]
+fn a_blanket_default_without_a_clash_is_accepted() {
+    let src = "trait Show {\n  fn show(self) -> string;\n}\ntrait Greet {\n  fn hi(self) -> string {\n    \"x\"\n  }\n}\nimpl<T: Show> Greet for T {}\nstruct D;\nimpl Show for D {\n  fn show(self) -> string {\n    \"d\"\n  }\n}\n";
+    assert!(diagnostics(src).is_empty(), "{:?}", diagnostics(src));
+}
+
+#[test]
+fn a_default_body_naming_a_self_path_is_an_error() {
+    let src = "fn name() -> string {\n  \"free\"\n}\ntrait Named {\n  fn name() -> string;\n  fn tag() -> string {\n    Self::name()\n  }\n}\n";
+    assert_eq!(
+        diagnostics(src),
+        [
+            "`Self::name` cannot be used in a default method body; it is shared by every implementor, so call a method on `self` instead"
+        ]
+    );
+}

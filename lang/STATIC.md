@@ -318,7 +318,7 @@ A guard makes an arm conditional, so a guarded arm does not contribute to covera
 
 ## 8. Trait-impl completeness
 
-An `impl Trait for Type` must provide every required method of `Trait` (those without a default body) with a signature matching the trait's, after substituting `Self` with `Type`. A missing required method is a static error. Providing a method not declared by the trait is a static error. A default-bodied trait method may be overridden or omitted. An omitted default — receiver method or associated function — is inherited: `x.m()` and `Type::m()` resolve to it, with `Self` read as `Type`.
+An `impl Trait for Type` must provide every required method of `Trait` (those without a default body) with a signature matching the trait's, after substituting `Self` with `Type`. A missing required method is a static error. Providing a method not declared by the trait is a static error. A default-bodied trait method may be overridden or omitted. An omitted default — receiver method or associated function — is inherited: `x.m()` and `Type::m()` resolve to it, with `Self` in its signature read as `Type`. A default body is checked once and shared by every implementor, so it may not name `Self` in a path (`Self::f()`, `Self::new()`) — a static error; it reaches the implementor only through `self`.
 
 A type has one method table, so each method name on it must come from exactly one place. An inherited default whose name the type already has — from an inherent impl, another trait impl's method, or another implemented trait's inherited default — is a static error at the inheriting impl. Override the default in the impl to resolve it.
 

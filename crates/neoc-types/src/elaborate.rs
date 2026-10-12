@@ -66,27 +66,8 @@ impl<'a> Elaborator<'a> {
         let conditions: Vec<String> = crate::collect::generic_param_bounds(&b.generics)
             .remove(param)
             .unwrap_or_default();
-        let mut targets: Vec<String> = self
-            .checker
-            .table()
-            .types
-            .iter()
-            .filter(|(_, def)| {
-                matches!(
-                    def,
-                    crate::env::TypeDef::Struct(_) | crate::env::TypeDef::Enum(_)
-                )
-            })
-            .map(|(name, _)| name.clone())
-            .filter(|name| {
-                let ty = Ty::named(name);
-                conditions
-                    .iter()
-                    .all(|c| self.checker.type_satisfies(&ty, c))
-            })
-            .collect();
-        targets.sort();
-        targets
+        self.checker
+            .blanket_targets(&conditions)
             .into_iter()
             .map(|target| {
                 let concrete = ast::ImplBlock {

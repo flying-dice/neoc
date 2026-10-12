@@ -1,0 +1,13 @@
+// STATIC.md §8: a default body is shared by every implementor, so it cannot
+// name `Self` in a path — not in an associated-fn default, nor a receiver one.
+trait Named {
+    fn name() -> string;
+
+    fn tag() -> string {
+        Self::name()
+    }
+
+    fn label(self) -> string {
+        Self::name()
+    }
+}
