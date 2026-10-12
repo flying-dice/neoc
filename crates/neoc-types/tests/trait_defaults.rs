@@ -139,3 +139,23 @@ fn a_default_body_naming_a_self_path_is_an_error() {
         ]
     );
 }
+
+#[test]
+fn two_blankets_giving_the_same_default_is_an_error_for_each() {
+    let src = "trait Show {\n  fn show(self) -> string;\n}\ntrait A {\n  fn a(self) -> string {\n    \"A\"\n  }\n}\ntrait B {\n  fn a(self) -> number {\n    1\n  }\n}\nimpl<T: Show> A for T {}\nimpl<T: Show> B for T {}\nstruct D;\nimpl Show for D {\n  fn show(self) -> string {\n    \"d\"\n  }\n}\n";
+    let mut d = diagnostics(src);
+    d.sort();
+    assert_eq!(
+        d,
+        [
+            "`impl A for T` (for `D`) inherits default method `a`, but trait `B` also gives `D` a default `a`; override `a` in the impl",
+            "`impl B for T` (for `D`) inherits default method `a`, but trait `A` also gives `D` a default `a`; override `a` in the impl",
+        ]
+    );
+}
+
+#[test]
+fn a_blanket_and_a_concrete_impl_giving_the_same_default_are_both_errors() {
+    let src = "trait Show {\n  fn show(self) -> string;\n}\ntrait A {\n  fn a(self) -> string {\n    \"A\"\n  }\n}\ntrait B {\n  fn a(self) -> number {\n    1\n  }\n}\nimpl<T: Show> A for T {}\nstruct D;\nimpl Show for D {\n  fn show(self) -> string {\n    \"d\"\n  }\n}\nimpl B for D {}\n";
+    assert_eq!(diagnostics(src).len(), 2, "{:?}", diagnostics(src));
+}

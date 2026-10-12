@@ -80,7 +80,7 @@ impl Checker<'_> {
         method: &str,
         receiver: bool,
     ) -> Option<(Vec<Ty>, Ty)> {
-        let trait_name = self.default_sources(name, method).into_iter().next()?;
+        let trait_name = self.direct_default_sources(name, method).into_iter().next()?;
         let Some(TypeDef::Trait(t)) = self.table().types.get(&trait_name) else {
             return None;
         };
@@ -96,20 +96,43 @@ impl Checker<'_> {
 
     /// The traits concrete type `name` implements directly that declare a
     /// default-bodied `method`, in name order.
-    pub(super) fn default_sources(&self, name: &str, method: &str) -> Vec<String> {
+    fn direct_default_sources(&self, name: &str, method: &str) -> Vec<String> {
         let Some(impls) = self.table().trait_impls.get(name) else {
             return Vec::new();
         };
         let mut traits: Vec<String> = impls
             .iter()
-            .filter(|trait_name| {
-                matches!(self.table().types.get(*trait_name), Some(TypeDef::Trait(t))
-                    if t.methods.iter().any(|m| m.name == method && m.has_default))
-            })
+            .filter(|trait_name| self.declares_default(trait_name, method))
             .cloned()
             .collect();
         traits.sort();
         traits
+    }
+
+    /// Every trait that gives concrete type `name` a default-bodied `method` —
+    /// through a direct impl or a blanket impl whose conditions `name` meets —
+    /// in name order, without repeats. Each lands on the type's one method
+    /// table (`DYNAMIC.md` §3.4, §3.5).
+    pub(super) fn default_sources(&self, name: &str, method: &str) -> Vec<String> {
+        let ty = Ty::named(name);
+        let mut traits = self.direct_default_sources(name, method);
+        traits.extend(
+            self.table()
+                .blanket_impls
+                .iter()
+                .filter(|bl| self.declares_default(&bl.trait_name, method))
+                .filter(|bl| bl.conditions.iter().all(|c| self.type_satisfies(&ty, c)))
+                .map(|bl| bl.trait_name.clone()),
+        );
+        traits.sort();
+        traits.dedup();
+        traits
+    }
+
+    /// Whether trait `trait_name` declares a default-bodied `method`.
+    fn declares_default(&self, trait_name: &str, method: &str) -> bool {
+        matches!(self.table().types.get(trait_name), Some(TypeDef::Trait(t))
+            if t.methods.iter().any(|m| m.name == method && m.has_default))
     }
 
     /// A method granted to concrete type `name` (of type `recv`) by a blanket
