@@ -411,6 +411,36 @@ const CLOSURE_SITES: &[(&str, &str, &str)] = &[
         "",
     ),
     (
+        "generic literal fixed by the parameter type",
+        "struct W<T> { f: fn(T) -> bool }\nfn take(w: W<Settings>) -> bool { let g = w.f; g(mk()) }",
+        "let r = take(W { f: |s| s.title.is_some() });",
+    ),
+    (
+        "generic literal fixed by an annotated let",
+        "struct W<T> { f: fn(T) -> bool }",
+        "let w: W<Settings> = W { f: |s| s.title.is_some() };",
+    ),
+    (
+        "generic literal fixed by the return type",
+        "struct W<T> { f: fn(T) -> bool }\nfn mkw() -> W<Settings> { W { f: |s| s.title.is_some() } }",
+        "",
+    ),
+    (
+        "generic tuple variant fixed by the parameter type",
+        "enum E<T> { A(fn(T) -> bool) }\nfn run(e: E<Settings>) {}",
+        "run(E::A(|s| s.title.is_some()));",
+    ),
+    (
+        "type parameter bound by a later argument",
+        "fn both<T>(f: fn(T) -> bool, g: fn() -> T) -> bool { f(g()) }",
+        "let r = both(|s| s.title.is_some(), || mk());",
+    ),
+    (
+        "type parameter bound by the expected result",
+        "fn wrap<T>(f: fn(T) -> bool) -> fn(T) -> bool { f }",
+        "let g: fn(Settings) -> bool = wrap(|s| s.title.is_some());",
+    ),
+    (
         "bound by an earlier closure",
         "fn both<T>(g: fn() -> T, f: fn(T) -> bool) -> bool { f(g()) }",
         "let r = both(|| mk(), |s| s.title.is_some());",

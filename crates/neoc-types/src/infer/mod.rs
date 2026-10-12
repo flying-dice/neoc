@@ -80,6 +80,9 @@ pub struct Checker<'a> {
     closure_params: std::collections::HashMap<(usize, usize), Vec<Ty>>,
 }
 
+/// A named type's type parameters and declared fields.
+type NamedFields = (Vec<String>, Vec<(String, Ty)>);
+
 /// The inferred type of one expression, with the byte range it occupies. The
 /// basis for tooling that maps a cursor position to a type (hover, type inlay
 /// hints).
@@ -2040,19 +2043,29 @@ impl<'a> Checker<'a> {
             .filter_map(|(p, t)| t.clone().map(|t| (p.clone(), t)))
             .unzip();
         let mut subst = self.param_subst(&ps, &as_);
-        for (i, a) in args.iter().enumerate() {
-            if tys[i].is_none() {
-                if let Some(p) = expected.get(i) {
-                    self.hint_closures(a, p, &subst);
-                }
-                let ty = self.infer(a);
-                // A closure earlier in the list binds what later ones read
-                // (`both(|| mk(), |s| s.title)` fixes `T` from the first).
-                if let Some(p) = expected.get(i) {
-                    self.unify_param(p, &ty, &mut subst);
-                }
-                tys[i] = Some(ty);
+        // Closure-like arguments are solved in dependency order: one whose
+        // parameter types are already fixed goes first, and what it binds
+        // (`both(|s| s.title, || mk())` fixes `T` from the second) feeds the
+        // rest. When none is ready, the first goes with what it has.
+        let mut pending: Vec<usize> = (0..args.len()).filter(|&i| tys[i].is_none()).collect();
+        while !pending.is_empty() {
+            let ready = pending
+                .iter()
+                .position(|&i| {
+                    expected
+                        .get(i)
+                        .is_none_or(|p| !Self::leaves_param_open(p, &subst))
+                })
+                .unwrap_or(0);
+            let i = pending.remove(ready);
+            if let Some(p) = expected.get(i) {
+                self.hint_closures(&args[i], p, &subst);
             }
+            let ty = self.infer(&args[i]);
+            if let Some(p) = expected.get(i) {
+                self.unify_param(p, &ty, &mut subst);
+            }
+            tys[i] = Some(ty);
         }
         tys.into_iter().map(|t| t.unwrap_or(Ty::Unknown)).collect()
     }
@@ -2082,8 +2095,7 @@ impl<'a> Checker<'a> {
                         }
                     })
                     .collect();
-                self.closure_hints
-                    .insert((expr.span.start, expr.span.end), hint);
+                self.merge_hint((expr.span.start, expr.span.end), hint);
                 self.hint_closures(body, ret, subst);
             }
             (ast::ExprKind::Block(b), _) => self.hint_block(b, ty, subst),
@@ -2103,23 +2115,90 @@ impl<'a> Checker<'a> {
                     self.hint_closures(item, inner, subst);
                 }
             }
-            (ast::ExprKind::Call { callee, args }, Ty::Named { name, args: targs }) => {
-                // `Some(f)` / `Ok(f)` / `Err(f)` under an annotated `Option` /
-                // `Result` hand `f` the matching type argument.
-                let ast::ExprKind::Path(p) = &callee.kind else {
+            (ast::ExprKind::StructLit { path, fields, .. }, Ty::Named { args: targs, .. }) => {
+                // A literal under an expected `W<Settings>` reads its type
+                // parameters from that type.
+                if let Some((generics, decl)) = self.named_literal_fields(path) {
+                    let inner: std::collections::HashMap<String, Ty> = generics
+                        .into_iter()
+                        .zip(targs.iter().map(|t| Self::subst_named(t, subst)))
+                        .collect();
+                    for f in fields {
+                        if let (Some(v), Some((_, d))) =
+                            (&f.value, decl.iter().find(|(n, _)| *n == f.name))
+                        {
+                            self.hint_closures(v, d, &inner);
+                        }
+                    }
+                }
+            }
+            (ast::ExprKind::Call { callee, args }, _) => {
+                // A call whose result type is expected: bind the callee's type
+                // parameters from it (`Some(f)` under `Option<fn(S) -> _>`,
+                // `wrap(f)` under `fn(S) -> _`, a variant constructor) and hand
+                // each argument its parameter type.
+                if !matches!(callee.kind, ast::ExprKind::Path(_)) {
                     return;
-                };
-                let slot = match (p.as_slice(), name.as_str()) {
-                    ([c], "Option") if c == "Some" => targs.first(),
-                    ([c], "Result") if c == "Ok" => targs.first(),
-                    ([c], "Result") if c == "Err" => targs.get(1),
-                    _ => None,
-                };
-                if let (Some(slot), [arg]) = (slot, args.as_slice()) {
-                    self.hint_closures(arg, slot, subst);
+                }
+                if let Ty::Fn(params, ret) = self.quiet_infer(callee) {
+                    let mut seed = std::collections::HashMap::new();
+                    self.unify_param(&ret, ty, &mut seed);
+                    for (arg, p) in args.iter().zip(&params) {
+                        let p = Self::subst_named(p, &seed);
+                        self.hint_closures(arg, &p, subst);
+                    }
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Records `hint` for the closure at `key`, keeping any parameter type an
+    /// earlier hint already fixed where this one leaves it `Unknown`.
+    fn merge_hint(&mut self, key: (usize, usize), mut hint: Vec<Ty>) {
+        if let Some(prev) = self.closure_hints.get(&key) {
+            for (new, old) in hint.iter_mut().zip(prev) {
+                if new.is_unknown() {
+                    *new = old.clone();
+                }
+            }
+        }
+        self.closure_hints.insert(key, hint);
+    }
+
+    /// The type parameters and declared fields of the named struct (`W`) or
+    /// struct variant (`E::V`) a literal path names.
+    fn named_literal_fields(&self, path: &[ast::Ident]) -> Option<NamedFields> {
+        match path {
+            [name] => match self.table.types.get(name)? {
+                TypeDef::Struct(s) => match &s.fields {
+                    StructFields::Named(f) => Some((s.generics.clone(), f.clone())),
+                    _ => None,
+                },
+                _ => None,
+            },
+            [en, variant] => match self.table.types.get(en)? {
+                TypeDef::Enum(e) => {
+                    let v = e.variants.iter().find(|v| v.name == *variant)?;
+                    match &v.fields {
+                        VariantFields::Named(f) => Some((e.generics.clone(), f.clone())),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Whether a `fn` parameter type still mentions a type parameter `subst`
+    /// does not bind, so a closure passed for it cannot be typed yet.
+    fn leaves_param_open(ty: &Ty, subst: &std::collections::HashMap<String, Ty>) -> bool {
+        match ty {
+            Ty::Fn(ps, _) => ps
+                .iter()
+                .any(|p| Self::mentions_param(&Self::subst_named(p, subst))),
+            _ => false,
         }
     }
 
@@ -2136,9 +2215,12 @@ impl<'a> Checker<'a> {
             ast::ExprKind::Match { arms, .. } => arms.iter().any(|a| Self::yields_closure(&a.body)),
             ast::ExprKind::List(items) => items.iter().any(Self::yields_closure),
             ast::ExprKind::Call { callee, args } => {
-                matches!(&callee.kind, ast::ExprKind::Path(p) if p.len() == 1 && matches!(p[0].as_str(), "Some" | "Ok" | "Err"))
+                matches!(callee.kind, ast::ExprKind::Path(_))
                     && args.iter().any(Self::yields_closure)
             }
+            ast::ExprKind::StructLit { fields, .. } => fields
+                .iter()
+                .any(|f| f.value.as_ref().is_some_and(Self::yields_closure)),
             _ => false,
         }
     }
