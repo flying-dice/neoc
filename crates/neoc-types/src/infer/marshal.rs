@@ -216,11 +216,17 @@ impl Checker<'_> {
         Some((m.params.clone(), m.ret.clone()))
     }
 
-    /// Whether a struct pattern against a value of type `scrutinee` reads
-    /// `Option` field `ty` raw from the host — `scrutinee` is host-implemented
-    /// and `ty` is `Option<_>`.
-    pub(crate) fn is_host_option_field(&self, scrutinee: &Ty, ty: &Ty) -> bool {
-        self.is_extern_ty(scrutinee) && is_option(ty)
+    /// Whether a struct pattern reads `Option` field `ty` raw from the host:
+    /// the pattern names a host-implemented `owner` struct, or its `scrutinee`
+    /// is one, and `ty` is `Option<_>`.
+    pub(crate) fn is_host_option_field(
+        &self,
+        scrutinee: &Ty,
+        owner: Option<&str>,
+        ty: &Ty,
+    ) -> bool {
+        (self.is_extern_ty(scrutinee) || owner.is_some_and(|o| self.is_extern_type(o)))
+            && is_option(ty)
     }
 
     /// Whether a struct literal headed `path` builds a host-implemented

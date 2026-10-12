@@ -205,18 +205,20 @@ impl Checker<'_> {
         kind: crate::resolve::BindingKind,
     ) {
         let decl = self.struct_pattern_field_tys(path, ty);
+        let owner = self.pattern_struct_owner(path);
         for fp in fields {
             let fty = decl
                 .iter()
                 .find(|(n, _)| *n == fp.name)
                 .map_or(Ty::Unknown, |(_, t)| t.clone());
-            if self.is_host_option_field(ty, &fty)
+            if self.is_host_option_field(ty, owner.as_deref(), &fty)
                 && !matches!(fp.pattern, Some(ast::Pattern::Wildcard))
             {
+                let host = owner.clone().unwrap_or_else(|| ty.to_string());
                 self.error_at(
                     fp.span,
                     format!(
-                        "a pattern cannot read `Option` field `{0}` of host-implemented `{ty}`; \
+                        "a pattern cannot read `Option` field `{0}` of host-implemented `{host}`; \
                          read it with `.{0}`, which marshals it",
                         fp.name
                     ),
@@ -230,24 +232,29 @@ impl Checker<'_> {
         }
     }
 
-    fn struct_pattern_field_tys(&self, path: &[ast::Ident], ty: &Ty) -> Vec<(String, Ty)> {
-        let Some(mut ctor) = path.last() else {
-            return Vec::new();
+    /// The struct a pattern headed `path` names, if it names one: `Self`
+    /// reads as the enclosing impl's target, and `Enum::Variant` names a
+    /// variant even when a struct shares its name.
+    pub(crate) fn pattern_struct_owner(&self, path: &[ast::Ident]) -> Option<String> {
+        let ctor = match (path, &self.impl_target) {
+            ([head], Some(target)) if head == "Self" => target,
+            _ => path.last()?,
         };
-        // `Self { .. }` inside an impl is the impl's target struct.
-        if let ([head], Some(target)) = (path, &self.impl_target) {
-            if head == "Self" {
-                ctor = target;
-            }
-        }
-        // `Enum::Variant { .. }` names a variant even when a struct shares its name.
         let names_variant = path.len() >= 2
             && matches!(
                 self.table.types.get(&path[path.len() - 2]),
                 Some(TypeDef::Enum(_))
             );
-        if !names_variant {
-            if let Some(TypeDef::Struct(s)) = self.table.types.get(ctor) {
+        (!names_variant && matches!(self.table.types.get(ctor), Some(TypeDef::Struct(_))))
+            .then(|| ctor.clone())
+    }
+
+    fn struct_pattern_field_tys(&self, path: &[ast::Ident], ty: &Ty) -> Vec<(String, Ty)> {
+        let Some(ctor) = path.last() else {
+            return Vec::new();
+        };
+        if let Some(owner) = self.pattern_struct_owner(path) {
+            if let Some(TypeDef::Struct(s)) = self.table.types.get(&owner) {
                 if let StructFields::Named(fields) = &s.fields {
                     return fields.clone();
                 }

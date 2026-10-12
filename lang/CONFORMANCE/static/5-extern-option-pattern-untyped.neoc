@@ -1,0 +1,17 @@
+// EXTERN.md §Option marshalling: the pattern names the extern struct, so it is
+// rejected whatever the scrutinee's inferred type.
+extern {
+    struct Settings {
+        title: Option<string>,
+    }
+}
+
+fn main() {
+    let s = Settings { title: None };
+    let f = |v| {
+        let Settings { title } = v;
+        title
+    };
+    let u: Unknown = s;
+    let Settings { title } = u;
+}
