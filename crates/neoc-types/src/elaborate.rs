@@ -125,11 +125,21 @@ impl<'a> Elaborator<'a> {
             ast::Type::Path(p) => p.segments.last().map(|s| s.name.clone()),
             _ => None,
         };
+        // Mirrors `Checker::check_impl`: the impl's generics are in scope while
+        // `Self` is read as the target with its arguments.
+        let prev_params = std::mem::replace(
+            &mut self.checker.type_params,
+            b.generics.iter().map(|g| g.name.clone()).collect(),
+        );
+        let lowered = self.checker.lower(&b.ty);
+        self.checker.type_params = prev_params;
+        let prev_self = self.checker.impl_self_ty.replace(lowered);
         let items = b
             .items
             .iter()
             .map(|f| self.fn_decl(f, target.as_deref()))
             .collect();
+        self.checker.impl_self_ty = prev_self;
         ast::ImplBlock {
             generics: b.generics.clone(),
             trait_: b.trait_.clone(),

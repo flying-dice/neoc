@@ -32,6 +32,10 @@ pub struct Checker<'a> {
     /// target, or `Self` itself in a trait default body. `None` outside an impl.
     /// Lets `Self { .. }` head a struct literal (`STATIC.md` §3.3).
     pub(crate) impl_target: Option<String>,
+    /// The enclosing impl's target as written, type arguments included
+    /// (`Wrap<T>` for `impl<T> Wrap<T>`). What `Self` lowers to in a method
+    /// signature and body (`STATIC.md` §3.3). `None` outside an impl.
+    pub(crate) impl_self_ty: Option<Ty>,
     /// Type parameters in scope for the current item.
     pub(crate) type_params: Vec<String>,
     /// Type parameters of the functions enclosing a nested `fn`: out of scope
@@ -114,6 +118,7 @@ impl<'a> Checker<'a> {
             scopes: Scopes::new(),
             ret_ty: Ty::Unit,
             impl_target: None,
+            impl_self_ty: None,
             type_params: Vec::new(),
             enclosing_type_params: Vec::new(),
             type_bounds: std::collections::HashMap::new(),
@@ -310,7 +315,16 @@ impl<'a> Checker<'a> {
         let lowered = self
             .table
             .resolve_alias_ty(lower_type(ty, &self.type_params));
-        self.project_assoc(lowered)
+        self.read_impl_self(self.project_assoc(lowered))
+    }
+
+    /// `ty` with `Self` read as the enclosing impl's full target, arguments
+    /// included; unchanged outside an impl.
+    fn read_impl_self(&self, ty: Ty) -> Ty {
+        match &self.impl_self_ty {
+            Some(target) => ty.subst_self(target),
+            None => ty,
+        }
     }
 
     /// [`Self::lower`] for an annotation the checker owns, first reporting at
@@ -320,7 +334,7 @@ impl<'a> Checker<'a> {
         let unexpanded = lower_type(ty, &self.type_params);
         self.report_arity(&unexpanded, span);
         self.report_enclosing_type_params(&unexpanded, span);
-        self.project_assoc(self.table.resolve_alias_ty(unexpanded))
+        self.read_impl_self(self.project_assoc(self.table.resolve_alias_ty(unexpanded)))
     }
 
     /// Reports at `span` each generic `type` alias or trait in `ty` applied to
@@ -760,6 +774,10 @@ impl<'a> Checker<'a> {
     pub(crate) fn self_target(&self, name: &str) -> Ty {
         if self.type_params.iter().any(|p| p == name) {
             Ty::Param(name.to_string())
+        } else if let Some(full @ Ty::Named { name: n, .. }) = &self.impl_self_ty
+            && n == name
+        {
+            full.clone()
         } else {
             Ty::named(name)
         }
@@ -1795,7 +1813,7 @@ impl<'a> Checker<'a> {
         let result = self.infer_nominal_args(&name, &s.generics, decl, fields, base, span);
         if let Some(b) = base {
             let bt = self.infer(b);
-            self.expect(&Ty::named(&name), &bt, "struct update base");
+            self.expect(&result, &bt, "struct update base");
         }
         result
     }

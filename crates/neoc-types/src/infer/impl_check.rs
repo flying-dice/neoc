@@ -36,9 +36,11 @@ impl Checker<'_> {
             .iter()
             .map(|(name, ty)| (name.clone(), self.lower(ty)))
             .collect();
+        let prev_self = self.impl_self_ty.replace(self.lower(&b.ty));
         for f in &b.items {
             self.check_fn(f, Some(&target));
         }
+        self.impl_self_ty = prev_self;
         self.assoc_bindings = prev_assoc;
         self.type_params = prev_params;
         self.type_bounds = prev_bounds;

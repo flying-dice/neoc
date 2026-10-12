@@ -89,6 +89,8 @@ Inside an `impl` body, `Self` may head a struct literal (including `Self { f, ..
 
 Diagnostics: `` `Self` is only available inside an impl ``; `` `Self` in a trait default body is not a struct ``; `` `Self` is the type parameter `T`, which is not a struct ``; `` `Self` is `E`, which is not a struct ``; `` `Self` names `S`, which a local binding shadows here; rename the local ``.
 
+In an impl's method signatures, annotations, and bodies, `Self` as a type is the impl's target as written, type arguments included: inside `impl<T> Wrap<T>`, `Self` is `Wrap<T>`, not the bare `Wrap`.
+
 Field access `e.f` requires `e` to have a struct type declaring `f`:
 
 ```
