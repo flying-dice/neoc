@@ -48,9 +48,8 @@
 //! ## Backing on `tracing`
 //!
 //! Each call also emits a `tracing::event!` at `target =
-//! "lua::lib::log"`, so the existing `LuaLayer` captures it when a
-//! script runs inside `lua::scope` (used for VCR/recording). The stderr
-//! write happens unconditionally — it does not depend on a subscriber
+//! "lua::lib::log"`, so any installed `tracing` subscriber can capture
+//! it. The stderr write happens unconditionally — it does not depend on a subscriber
 //! being installed.
 
 use std::collections::{BTreeSet, HashSet};
@@ -453,7 +452,7 @@ fn civil_from_unix(secs: i64) -> (i32, u32, u32, u32, u32, u32) {
 }
 
 // ---------------------------------------------------------------------------
-// Tracing emit — for VCR capture via the existing LuaLayer.
+// Tracing emit — for capture by any installed subscriber.
 // ---------------------------------------------------------------------------
 
 fn emit_tracing(lvl: LogLevel, msg: &str, fields: &Map<String, Json>) {
