@@ -329,3 +329,39 @@ jobs:
           path: artifacts/
           retention-days: 14
           if-no-files-found: error
+
+  # Builds the Dockerfile (no push) and smoke-runs the image. Gated to commits
+  # that touch image inputs (Dockerfile, .dockerignore, Cargo.toml/.lock,
+  # rust-toolchain.toml, crate manifests); a manual dispatch always builds.
+  # A manifest target whose path `.dockerignore` drops fails here (NEOC-26).
+  docker:
+    name: docker:build
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Detect image-input changes
+        id: changes
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != "push" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # Capture first: `grep -q` closing the pipe early trips pipefail.
+          files=$(git diff --name-only "$BEFORE" "$GITHUB_SHA")
+          if grep -Eq \
+            '^(Dockerfile|\.dockerignore|Cargo\.toml|Cargo\.lock|rust-toolchain\.toml|crates/.*/Cargo\.toml)$' <<<"$files"; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "No image-input changes; skipping."
+          fi
+      - name: Build image
+        if: steps.changes.outputs.run == 'true'
+        run: docker build -t neoc:ci .
+      - name: Smoke test
+        if: steps.changes.outputs.run == 'true'

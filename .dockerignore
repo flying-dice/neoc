@@ -4,7 +4,6 @@
 .DS_Store
 target
 docs
-crates/neoc/tests
 **/node_modules
 **/.venv
 **/__pycache__
