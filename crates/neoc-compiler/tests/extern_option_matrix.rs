@@ -1005,3 +1005,15 @@ fn callee_and_caller_sharing_a_type_parameter_name() {
         out.diagnostics
     );
 }
+
+#[test]
+fn a_later_argument_fixes_a_type_parameter_the_marker_held() {
+    let src = r"
+extern { struct Settings { title: Option<string> } }
+struct P { x: number }
+fn run2<T>(fs: [fn(T) -> number], g: fn() -> T) -> T { g() }
+fn main() { let x = run2([|s| 1], || P { x: 1 }); let y = x.x; }
+";
+    let out = transpile(src, Target::Lua);
+    assert!(out.ok(), "{:#?}", out.diagnostics);
+}

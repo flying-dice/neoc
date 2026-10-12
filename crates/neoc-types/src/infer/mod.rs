@@ -1574,7 +1574,14 @@ impl<'a> Checker<'a> {
     fn unify_param(&self, param: &Ty, arg: &Ty, subst: &mut std::collections::HashMap<String, Ty>) {
         match (param, arg) {
             (Ty::Param(name), a) if !a.is_unknown() => {
-                subst.entry(name.clone()).or_insert_with(|| a.clone());
+                // A marker binding is a placeholder: a concrete type from a
+                // later argument replaces it.
+                match subst.get(name) {
+                    Some(prev) if !prev.is_unresolved() || a.is_unresolved() => {}
+                    _ => {
+                        subst.insert(name.clone(), a.clone());
+                    }
+                }
             }
             (Ty::List(p), Ty::List(a)) => self.unify_param(p, a, subst),
             (Ty::Named { name, args: pa }, a) if !pa.is_empty() && self.is_trait(name) => {
