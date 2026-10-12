@@ -43,7 +43,7 @@ impl EnumIndex {
     /// a variant construction of, an enum brought in by `use` lowers correctly —
     /// not for emission; their definitions belong to (and are emitted by) the
     /// module that declares them.
-    fn build(module: &ast::Module, imported_enums: &[&ast::EnumDecl]) -> Self {
+    fn build(module: &ast::Module, imported_enums: &[ImportedEnum<'_>]) -> Self {
         let mut enums: HashMap<String, HashMap<String, VariantShape>> = HashMap::new();
         enums.insert(
             "Result".to_string(),
@@ -69,7 +69,7 @@ impl EnumIndex {
             }
         }
         for e in imported_enums {
-            Self::register(&mut enums, e);
+            Self::register(&mut enums, e.decl);
         }
         Self { enums }
     }
@@ -225,6 +225,52 @@ pub struct ShadowedTypeImport {
     pub binding: ast::Ident,
 }
 
+/// A `pub` enum a module imports by `use`, with whether its defining module
+/// gives it a method table. The consumer constructs the enum's variants with
+/// the same `setmetatable` the defining module does, so `:method` dispatch
+/// resolves on an imported value (`lang/DYNAMIC.md` §3.2).
+#[derive(Debug, Clone, Copy)]
+pub struct ImportedEnum<'a> {
+    /// The enum's declaration.
+    pub decl: &'a ast::EnumDecl,
+    /// Whether the enum carries a method table; see [`method_enum_names`].
+    pub has_methods: bool,
+}
+
+/// The names of the enums in `module` that carry a method table: one with a
+/// `#[derive(...)]` or any `impl` block targeting it (`lang/DYNAMIC.md` §3.2).
+/// A consumer builds [`ImportedEnum::has_methods`] from the defining module with
+/// this, so both sides agree on which enums are method-bearing.
+#[must_use]
+pub fn method_enum_names(module: &ast::Module) -> HashSet<String> {
+    let enum_names: HashSet<&str> = module
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            ast::ItemKind::Enum(e) => Some(e.name.as_str()),
+            _ => None,
+        })
+        .collect();
+    let mut out = HashSet::new();
+    for item in &module.items {
+        match &item.kind {
+            ast::ItemKind::Enum(e) if has_derive(&item.attrs) => {
+                out.insert(e.name.clone());
+            }
+            ast::ItemKind::Impl(b) => {
+                if let ast::Type::Path(p) = &b.ty
+                    && let Some(seg) = p.segments.last()
+                    && enum_names.contains(seg.name.as_str())
+                {
+                    out.insert(seg.name.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 /// Lower a module to Lua 5.1 source, with no source map.
 ///
 /// Use [`emit_with_source`] when a runtime needs to translate emitted-Lua line
@@ -271,7 +317,7 @@ pub fn emit_with_source(module: &ast::Module, source: &str) -> EmitResult {
 pub fn emit_with_imports(
     module: &ast::Module,
     source: &str,
-    imported_enums: &[&ast::EnumDecl],
+    imported_enums: &[ImportedEnum<'_>],
     imported_externs: &[ast::ExternItem],
     shadowed_types: &[ShadowedTypeImport],
     imported_traits: &[(&str, &ast::TraitDecl)],
@@ -291,7 +337,7 @@ pub fn emit_with_imports(
 fn emit_inner(
     module: &ast::Module,
     source: Option<&str>,
-    imported_enums: &[&ast::EnumDecl],
+    imported_enums: &[ImportedEnum<'_>],
     imported_externs: &[ast::ExternItem],
     shadowed_types: &[ShadowedTypeImport],
     imported_traits: &[(&str, &ast::TraitDecl)],
@@ -327,7 +373,7 @@ fn emit_inner(
         type_renames: type_renames(shadowed_types, source.unwrap_or_default()),
         ..Emitter::default()
     };
-    e.emit_module(module);
+    e.emit_module(module, imported_enums);
     let diagnostics = std::mem::take(&mut e.diagnostics);
     e.finish_with_map(diagnostics)
 }
@@ -768,8 +814,8 @@ impl Emitter {
         }
     }
 
-    fn emit_module(&mut self, module: &ast::Module) {
-        self.collect_method_enums(module);
+    fn emit_module(&mut self, module: &ast::Module, imported_enums: &[ImportedEnum<'_>]) {
+        self.collect_method_enums(module, imported_enums);
         self.collect_assoc_types(module);
         self.extern_imports = ast::extern_imports(module);
         // A `use`d extern item emits its native `require` here, in the consumer,
@@ -826,32 +872,16 @@ impl Emitter {
     /// or any `impl` block targeting it, plus the always method-bearing prelude
     /// enums `Option`/`Result` (`DYNAMIC.md` §7). Variant construction for these
     /// enums is `setmetatable`d so `:method` dispatch resolves (§3.2).
-    fn collect_method_enums(&mut self, module: &ast::Module) {
-        let enum_names: std::collections::HashSet<&str> = module
-            .items
-            .iter()
-            .filter_map(|item| match &item.kind {
-                ast::ItemKind::Enum(e) => Some(e.name.as_str()),
-                _ => None,
-            })
-            .collect();
-        for item in &module.items {
-            match &item.kind {
-                ast::ItemKind::Enum(e) if has_derive(&item.attrs) => {
-                    self.method_enums.insert(e.name.clone());
-                }
-                ast::ItemKind::Impl(b) => {
-                    if let ast::Type::Path(p) = &b.ty {
-                        if let Some(seg) = p.segments.last() {
-                            if enum_names.contains(seg.name.as_str()) {
-                                self.method_enums.insert(seg.name.clone());
-                            }
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
+    fn collect_method_enums(&mut self, module: &ast::Module, imported_enums: &[ImportedEnum<'_>]) {
+        self.method_enums.extend(method_enum_names(module));
+        // An imported enum's table is built by its defining module; the consumer
+        // only needs to know it has one to `setmetatable` its variants onto it.
+        self.method_enums.extend(
+            imported_enums
+                .iter()
+                .filter(|e| e.has_methods)
+                .map(|e| e.decl.name.clone()),
+        );
         // The prelude enums are method-bearing (`DYNAMIC.md` §3.2, §7), so inline
         // variant construction (`Option::Some(x)`, `Option::None`) must be
         // `setmetatable`d onto the prelude's metatable to match the constructor

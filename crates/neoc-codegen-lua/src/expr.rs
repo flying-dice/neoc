@@ -770,7 +770,7 @@ impl Emitter {
     /// enum returns the bare table.
     fn variant_table(&self, en: &str, table: String) -> String {
         if self.enum_has_methods(en) {
-            format!("setmetatable({table}, {en})")
+            format!("setmetatable({table}, {})", self.type_local(en))
         } else {
             table
         }

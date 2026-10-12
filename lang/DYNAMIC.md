@@ -94,6 +94,8 @@ Every variant construction is then `setmetatable`d onto `E`, so a value finds it
 
 `impl` methods (§3.3) and derived methods (§6) attach to `E` as for a struct. The metatable changes nothing `match` or `?` rely on — they read `.__tag`/`.__enum`, which a metatable does not shadow. A plain enum with no methods keeps the bare tagged table (no metatable). The `Result`/`Option` prelude enums are themselves method-bearing — they carry the inherent operations of §7 — and take this same metatable shape.
 
+An enum imported by `use` is constructed the same way: a method-bearing enum's variants in the importing module are `setmetatable`d onto the imported `E` table, whatever form the construction takes. When the import's binding is shadowed by a value (§3.7), the metatable reference reads the type-only local.
+
 ### 3.2a The `__traits` tag
 
 Alongside `__struct`/`__enum`, a type that implements one or more traits carries `__traits`: the names of those traits, transitively closed over supertraits (a type implementing `Greet` where `trait Greet: Show` lists both). A `#[derive(T)]` counts as an `impl T`. The set is computed from the impls present in the lowered module, so a blanket impl (§3.5) that expanded to a concrete `impl` is included. Type-keyed and sorted, so the emission is deterministic.

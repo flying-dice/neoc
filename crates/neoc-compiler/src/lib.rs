@@ -719,7 +719,7 @@ fn canonical_or(path: &Path) -> PathBuf {
 #[derive(Default)]
 struct EmitInputs<'a> {
     /// `pub` enum declarations brought in by `use` (the backend resolves variant forms).
-    enums: Vec<&'a ast::EnumDecl>,
+    enums: Vec<codegen_lua::ImportedEnum<'a>>,
     /// Each `use` binding that names a `pub` trait, with the trait's
     /// declaration (an impl assigns its omitted defaults from the trait table).
     traits: Vec<(String, &'a ast::TraitDecl)>,
@@ -883,14 +883,16 @@ fn shadowed_type_imports(
 }
 
 /// The `pub` enum declarations `module` imports, gathered through its `use`
-/// graph. The backend registers these so a `match` on, or a construction of, an
-/// enum brought in by `use` lowers correctly; the enum definitions are emitted
-/// by the modules that declare them, not here.
+/// graph, each flagged with whether its defining module gives it a method
+/// table. The backend registers these so a `match` on, or a construction of, an
+/// enum brought in by `use` lowers correctly (and `setmetatable`s a method-bearing
+/// one); the enum definitions are emitted by the modules that declare them, not
+/// here.
 fn imported_enums<'a>(
     root: &Path,
     loaded: &'a HashMap<PathBuf, LoadedModule>,
     module: &ast::Module,
-) -> Vec<&'a ast::EnumDecl> {
+) -> Vec<codegen_lua::ImportedEnum<'a>> {
     let mut enums = Vec::new();
     for item in &module.items {
         let ast::ItemKind::Use(u) = &item.kind else {
@@ -902,11 +904,15 @@ fn imported_enums<'a>(
         let Some(source) = loaded.get(&dep) else {
             continue;
         };
+        let method_enums = codegen_lua::method_enum_names(&source.module);
         for dep_item in &source.module.items {
             if let ast::ItemKind::Enum(e) = &dep_item.kind
                 && dep_item.vis == ast::Visibility::Public
             {
-                enums.push(e);
+                enums.push(codegen_lua::ImportedEnum {
+                    decl: e,
+                    has_methods: method_enums.contains(&e.name),
+                });
             }
         }
     }

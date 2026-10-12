@@ -1113,3 +1113,80 @@ mod project_check {
         );
     }
 }
+
+// `lang/DYNAMIC.md` §3.2: an imported method-bearing enum's variants are built
+// with the defining module's metatable at every construction form, so `:method`
+// dispatch resolves in the consumer. Each case runs on LuaJIT.
+
+/// `pal`: a method-bearing enum with a unit, a tuple and a struct variant.
+const PAL_SHAPE: &str = "pub enum Shape {\n    Dot,\n    Sq(number),\n    Rect { w: number },\n}\n\
+                         impl Shape {\n    fn id(self) -> number { 1 }\n}\n";
+
+#[test]
+fn imported_method_enum_unit_variant_has_metatable() {
+    let (main_lua, result) = run_project(
+        &[("pal", PAL_SHAPE)],
+        "use pal::Shape;\npub fn main() -> number { let c = Shape::Dot; c.id() }\n",
+    );
+    assert!(
+        main_lua.contains("setmetatable({ __enum = \"Shape\", __tag = \"Dot\" }, Shape)"),
+        "{main_lua}"
+    );
+    assert_eq!(result, "1");
+}
+
+#[test]
+fn imported_method_enum_tuple_variant_has_metatable() {
+    let (_, result) = run_project(
+        &[("pal", PAL_SHAPE)],
+        "use pal::Shape;\npub fn main() -> number { Shape::Sq(2).id() }\n",
+    );
+    assert_eq!(result, "1");
+}
+
+#[test]
+fn imported_method_enum_struct_variant_has_metatable() {
+    let (_, result) = run_project(
+        &[("pal", PAL_SHAPE)],
+        "use pal::Shape;\npub fn main() -> number { Shape::Rect { w: 2 }.id() }\n",
+    );
+    assert_eq!(result, "1");
+}
+
+#[test]
+fn imported_derive_only_enum_has_metatable() {
+    let (main_lua, result) = run_project(
+        &[(
+            "pal",
+            "#[derive(Eq)]\npub enum Mode {\n    On,\n    Off,\n}\n",
+        )],
+        "use pal::Mode;\npub fn main() -> number { if Mode::On == Mode::On { 1 } else { 0 } }\n",
+    );
+    assert!(main_lua.contains(", Mode)"), "{main_lua}");
+    assert_eq!(result, "1");
+}
+
+#[test]
+fn imported_plain_enum_stays_a_bare_table() {
+    let (main_lua, result) = run_project(
+        &[("pal", "pub enum Bit {\n    On,\n    Off,\n}\n")],
+        "use pal::Bit;\npub fn main() -> number { match Bit::On { Bit::On => 1, Bit::Off => 0 } }\n",
+    );
+    assert!(!main_lua.contains("setmetatable"), "{main_lua}");
+    assert_eq!(result, "1");
+}
+
+#[test]
+fn imported_method_enum_shadowed_by_value_reads_type_local() {
+    let (main_lua, result) = run_project(
+        &[("pal", PAL_SHAPE)],
+        "use pal::Shape;\nconst Shape: number = 7;\n\
+         pub fn main() -> number { Shape::Dot.id() + Shape }\n",
+    );
+    assert!(
+        main_lua.contains("local __type_Shape = require(\"pal\").Shape"),
+        "{main_lua}"
+    );
+    assert!(main_lua.contains(", __type_Shape)"), "{main_lua}");
+    assert_eq!(result, "8");
+}
