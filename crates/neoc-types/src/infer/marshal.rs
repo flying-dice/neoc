@@ -170,11 +170,6 @@ impl Checker<'_> {
         );
     }
 
-    /// Whether `owner.member` is a host-implemented method.
-    pub(crate) fn is_host_method(&self, owner: &str, member: &str) -> bool {
-        self.host_method_sig(owner, member).is_some()
-    }
-
     /// Whether `name` is a host-implemented type.
     pub(crate) fn is_extern_type(&self, name: &str) -> bool {
         self.table().extern_types.contains(name)
@@ -207,7 +202,7 @@ impl Checker<'_> {
     }
 
     /// The signature of `owner::member`, if the host implements it.
-    fn host_method_sig(&self, owner: &str, member: &str) -> Option<ExternSig> {
+    pub(crate) fn host_method_sig(&self, owner: &str, member: &str) -> Option<ExternSig> {
         let m = self
             .table()
             .methods

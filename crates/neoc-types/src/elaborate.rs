@@ -414,7 +414,10 @@ impl<'a> Elaborator<'a> {
     ) -> ast::ExprKind {
         let new_target = Box::new(self.place(target));
         let new_value = Box::new(match self.extern_place_ty(target) {
-            Some(ty) => marshal_to_host(&ty, self.expr(value)),
+            Some(ty) => {
+                let new = self.expr(value);
+                self.host_arg(&ty, value, new)
+            }
             None => self.expr(value),
         });
         let op = if op == ast::AssignOp::Add
@@ -523,10 +526,10 @@ impl<'a> Elaborator<'a> {
             ast::ExprKind::Path(_) => callee.clone(),
             _ => self.expr(callee),
         };
-        let args = self.exprs(args);
+        let new_args = self.exprs(args);
         let call = ast::ExprKind::Call {
             callee: Box::new(new_callee),
-            args: marshal_args(sig.as_ref(), args),
+            args: self.marshal_args(sig.as_ref(), args, new_args),
         };
         marshal_result(sig.as_ref(), call, span)
     }
@@ -540,12 +543,12 @@ impl<'a> Elaborator<'a> {
         span: ast::Span,
     ) -> ast::ExprKind {
         let sig = self.checker.extern_method_sig(receiver, method);
-        let args = self.exprs(args);
+        let new_args = self.exprs(args);
         let call = ast::ExprKind::MethodCall {
             receiver: self.boxed(receiver),
             method: method.to_string(),
             method_span,
-            args: marshal_args(sig.as_ref(), args),
+            args: self.marshal_args(sig.as_ref(), args, new_args),
         };
         marshal_result(sig.as_ref(), call, span)
     }
@@ -594,14 +597,18 @@ impl<'a> Elaborator<'a> {
     fn field_init(&mut self, path: &[ast::Ident], init: &ast::FieldInit) -> ast::FieldInit {
         let ty = self.checker.extern_lit_field_ty(path, &init.name);
         let value = match (&init.value, ty) {
-            (Some(v), Some(ty)) => Some(marshal_to_host(&ty, self.expr(v))),
+            (Some(v), Some(ty)) => {
+                let new = self.expr(v);
+                Some(self.host_arg(&ty, v, new))
+            }
             (Some(v), None) => Some(self.expr(v)),
             (None, Some(ty)) if is_option(&ty) => {
                 let named = ast::Expr::new(
                     ast::ExprKind::Path(vec![init.name.clone()]),
                     ast::Span::default(),
                 );
-                Some(marshal_to_host(&ty, named))
+                let new = named.clone();
+                Some(self.host_arg(&ty, &named, new))
             }
             (None, _) => None,
         };
@@ -613,6 +620,37 @@ impl<'a> Elaborator<'a> {
 
     // ---- helpers -----------------------------------------------------------
 
+    /// `new` (the elaborated `orig`) as the host receives a value of declared
+    /// type `ty`: an `Option` unwraps to `nil` / the bare value. A value typed
+    /// `Unknown` is already host-shaped and passes through.
+    fn host_arg(&mut self, ty: &Ty, orig: &ast::Expr, new: ast::Expr) -> ast::Expr {
+        if !is_option(ty) {
+            return new;
+        }
+        let actual = self.checker.quiet_infer(orig);
+        if actual.is_unknown() || actual.is_dynamic() {
+            return new;
+        }
+        marshal_to_host(ty, new)
+    }
+
+    /// Unwraps each argument bound for an `Option` parameter of an extern `sig`.
+    fn marshal_args(
+        &mut self,
+        sig: Option<&ExternSig>,
+        orig: &[ast::Expr],
+        new: Vec<ast::Expr>,
+    ) -> Vec<ast::Expr> {
+        let Some((params, _)) = sig else { return new };
+        new.into_iter()
+            .enumerate()
+            .map(|(i, arg)| match (params.get(i), orig.get(i)) {
+                (Some(ty), Some(o)) => self.host_arg(ty, o, arg),
+                _ => arg,
+            })
+            .collect()
+    }
+
     fn boxed(&mut self, expr: &ast::Expr) -> Box<ast::Expr> {
         Box::new(self.expr(expr))
     }
@@ -620,18 +658,6 @@ impl<'a> Elaborator<'a> {
     fn exprs(&mut self, exprs: &[ast::Expr]) -> Vec<ast::Expr> {
         exprs.iter().map(|e| self.expr(e)).collect()
     }
-}
-
-/// Unwraps each argument bound for an `Option` parameter of an extern `sig`.
-fn marshal_args(sig: Option<&ExternSig>, args: Vec<ast::Expr>) -> Vec<ast::Expr> {
-    let Some((params, _)) = sig else { return args };
-    args.into_iter()
-        .enumerate()
-        .map(|(i, arg)| match params.get(i) {
-            Some(ty) => marshal_to_host(ty, arg),
-            None => arg,
-        })
-        .collect()
 }
 
 /// `arg` as the host receives a value of declared type `ty`: an `Option`

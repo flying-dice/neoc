@@ -441,6 +441,21 @@ const CLOSURE_SITES: &[(&str, &str, &str)] = &[
         "let g: fn(Settings) -> bool = wrap(|s| s.title.is_some());",
     ),
     (
+        "method under an expected result type",
+        "struct Tool;\nimpl Tool { fn pred<U>(self, f: fn(U) -> bool) -> fn(U) -> bool { f } }",
+        "let t = Tool; let p: fn(Settings) -> bool = t.pred(|s| s.title.is_some());",
+    ),
+    (
+        "method call as a typed argument",
+        "struct Tool;\nimpl Tool { fn pred<U>(self, f: fn(U) -> bool) -> fn(U) -> bool { f } }\nfn run(p: fn(Settings) -> bool) -> bool { p(mk()) }",
+        "let t = Tool; let r = run(t.pred(|s| s.title.is_some()));",
+    ),
+    (
+        "try under an expected type",
+        "fn mr<T>(f: fn(T) -> bool) -> Result<fn(T) -> bool, string> { Ok(f) }\nfn g() -> Result<bool, string> { let p: fn(Settings) -> bool = mr(|s| s.title.is_some())?; Ok(p(mk())) }",
+        "",
+    ),
+    (
         "bound by an earlier closure",
         "fn both<T>(g: fn() -> T, f: fn(T) -> bool) -> bool { f(g()) }",
         "let r = both(|| mk(), |s| s.title.is_some());",
@@ -459,4 +474,59 @@ fn closure_sites_wrap_the_host_read() {
         }
     }
     assert!(bad.is_empty(), "{}", bad.join("\n---\n"));
+}
+
+/// An extern `fn` that takes an `Option` is handed to the host raw only through
+/// a slot the signature types concretely; a type-parameter slot returns it to
+/// neoc, which would then call it unmarshalled.
+#[test]
+fn host_fn_value_through_a_generic_host_slot_is_rejected() {
+    for body in [
+        "let f = hid(take); f(Some(\"a\"));",
+        "let c = Cell { v: take }; let g = c.v; g(Some(\"a\"));",
+        "let c: Cell<fn(Option<string>)> = Cell { v: take };",
+    ] {
+        let src = format!(
+            "extern {{ fn take(t: Option<string>); fn hid<T>(x: T) -> T; struct Cell<T> {{ v: T }} }}\npub fn main() {{ {body} }}\n"
+        );
+        let out = transpile(&src, Target::Lua);
+        assert!(!out.ok(), "{body}: accepted\n{}", out.output);
+    }
+}
+
+/// A value typed `Unknown` is already host-shaped: it reaches an `Option`
+/// parameter raw rather than through `__option_to_host`.
+#[test]
+fn unknown_value_reaches_an_option_parameter_raw() {
+    let src = "extern { fn take(t: Option<string>); fn dyn_s() -> Unknown; }\npub fn main() { let u: Unknown = dyn_s(); take(u); }\n";
+    let out = transpile(src, Target::Lua);
+    assert!(out.ok(), "{:#?}", out.diagnostics);
+    assert_eq!(wraps(&out.output, TO), 0, "{}", out.output);
+}
+
+/// A callee's type parameters are not the enclosing call's, with or without an
+/// extern in sight.
+#[test]
+fn inner_call_type_parameters_do_not_leak_from_the_outer_call() {
+    let out = build(
+        "fn outer<T>(a: T, k: number) -> number { k }\nfn inner<T>(f: fn(T) -> number) -> number { 7 }",
+        "let r = outer(\"s\", inner(|x| x * 2));",
+    );
+    assert!(out.ok(), "{:#?}", out.diagnostics);
+}
+
+/// `return` inside a closure is not the enclosing fn's `return`.
+#[test]
+fn closure_return_is_not_hinted_from_the_enclosing_fn() {
+    let out = build(
+        "struct N { title: Option<string> }\nfn outer() -> fn(Settings) -> bool {\n    let g = |x: number| { if x > 0 { return |d| d.title.is_none(); } |e| false };\n    |d| d.title.is_some()\n}",
+        "",
+    );
+    assert!(out.ok(), "{:#?}", out.diagnostics);
+    assert_eq!(
+        out.output.matches("__option_from_host(d.title)").count(),
+        1,
+        "{}",
+        out.output
+    );
 }

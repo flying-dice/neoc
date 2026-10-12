@@ -74,6 +74,8 @@ pub struct Checker<'a> {
     /// Parameter types the surrounding context fixes for a closure, keyed by the
     /// closure's span and consumed when the closure is inferred.
     closure_hints: std::collections::HashMap<(usize, usize), Vec<Ty>>,
+    /// How many closure bodies the checker is inside.
+    closure_depth: usize,
     /// The type each closure parameter resolved to, keyed by the closure's
     /// span. The checker decides once; the elaborator reads the record
     /// instead of re-deriving it, so the two cannot disagree.
@@ -143,6 +145,7 @@ impl<'a> Checker<'a> {
             conflicting_impls: std::collections::HashSet::new(),
             host_fn_spans: std::collections::HashSet::new(),
             closure_hints: std::collections::HashMap::new(),
+            closure_depth: 0,
             closure_params: std::collections::HashMap::new(),
         }
     }
@@ -1101,7 +1104,9 @@ impl<'a> Checker<'a> {
             ast::ExprKind::Closure { params, body } => self.infer_closure(params, body, span),
             ast::ExprKind::Return(value) => {
                 let expected = self.ret_ty.clone();
-                if let Some(e) = value {
+                // Inside a closure `ret_ty` is still the enclosing fn's, which
+                // says nothing about the closure's own `return`.
+                if let (Some(e), 0) = (value, self.closure_depth) {
                     self.hint_closures(e, &expected, &std::collections::HashMap::new());
                 }
                 let actual = value.as_ref().map_or(Ty::Unit, |e| self.infer(e));
@@ -1129,8 +1134,15 @@ impl<'a> Checker<'a> {
         let t = self.infer(target);
         if let ast::ExprKind::Field { base, .. } = &target.kind {
             let base_ty = self.quiet_infer(base);
-            if self.is_extern_ty(&base_ty) {
-                self.allow_host_fn(value);
+            if let (Ty::Named { name, .. }, ast::ExprKind::Field { field, .. }) =
+                (&base_ty, &target.kind)
+            {
+                if self
+                    .extern_field_ty(name, field)
+                    .is_some_and(|slot| !Self::mentions_param(&slot))
+                {
+                    self.allow_host_fn(value);
+                }
             }
         }
         self.hint_closures(value, &t, &std::collections::HashMap::new());
@@ -1419,11 +1431,9 @@ impl<'a> Checker<'a> {
     }
 
     fn infer_call(&mut self, callee: &ast::Expr, args: &[ast::Expr], span: ast::Span) -> Ty {
-        if self.extern_callee_sig(callee).is_some() {
+        if let Some((params, _)) = self.extern_callee_sig(callee) {
             self.allow_host_fn(callee);
-            for a in args {
-                self.allow_host_fn(a);
-            }
+            self.allow_host_fn_args(args, &params);
         }
         let callee_ty = self.infer(callee);
         let expected = match &callee_ty {
@@ -1615,10 +1625,8 @@ impl<'a> Checker<'a> {
     ) -> Ty {
         let recv = self.infer(receiver);
         if let Ty::Named { name, .. } = &recv {
-            if self.is_host_method(name, method) {
-                for a in args {
-                    self.allow_host_fn(a);
-                }
+            if let Some((params, _)) = self.host_method_sig(name, method) {
+                self.allow_host_fn_args(args, &params);
             }
         }
         let expected = self.method_param_tys(&recv, method);
@@ -1764,8 +1772,12 @@ impl<'a> Checker<'a> {
         span: ast::Span,
     ) -> Ty {
         if self.is_host_struct_head(path) {
-            for v in fields.iter().filter_map(|f| f.value.as_ref()) {
-                self.allow_host_fn(v);
+            for f in fields {
+                if let (Some(v), Some(slot)) = (&f.value, self.extern_lit_field_ty(path, &f.name)) {
+                    if !Self::mentions_param(&slot) {
+                        self.allow_host_fn(v);
+                    }
+                }
             }
         }
         // Struct-variant literal `Enum::Variant { .. }`.
@@ -2132,6 +2144,39 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
+            (
+                ast::ExprKind::MethodCall {
+                    receiver,
+                    method,
+                    args,
+                    ..
+                },
+                _,
+            ) => {
+                let recv = self.quiet_infer(receiver);
+                if let Some((params, ret)) = self.method_sig(&recv, method) {
+                    let mut seed = std::collections::HashMap::new();
+                    self.unify_param(&ret, ty, &mut seed);
+                    for (arg, p) in args.iter().zip(&params) {
+                        let p = Self::subst_named(p, &seed);
+                        self.hint_closures(arg, &p, &std::collections::HashMap::new());
+                    }
+                }
+            }
+            (ast::ExprKind::Try(inner), _) => {
+                // `e?` under an expected `T` reads `e` as a `Result<T, _>` or
+                // an `Option<T>`.
+                let result = Ty::Named {
+                    name: "Result".to_string(),
+                    args: vec![ty.clone(), Ty::Unknown],
+                };
+                let option = Ty::Named {
+                    name: "Option".to_string(),
+                    args: vec![ty.clone()],
+                };
+                self.hint_closures(inner, &result, subst);
+                self.hint_closures(inner, &option, subst);
+            }
             (ast::ExprKind::Call { callee, args }, _) => {
                 // A call whose result type is expected: bind the callee's type
                 // parameters from it (`Some(f)` under `Option<fn(S) -> _>`,
@@ -2145,7 +2190,7 @@ impl<'a> Checker<'a> {
                     self.unify_param(&ret, ty, &mut seed);
                     for (arg, p) in args.iter().zip(&params) {
                         let p = Self::subst_named(p, &seed);
-                        self.hint_closures(arg, &p, subst);
+                        self.hint_closures(arg, &p, &std::collections::HashMap::new());
                     }
                 }
             }
@@ -2218,6 +2263,8 @@ impl<'a> Checker<'a> {
                 matches!(callee.kind, ast::ExprKind::Path(_))
                     && args.iter().any(Self::yields_closure)
             }
+            ast::ExprKind::MethodCall { args, .. } => args.iter().any(Self::yields_closure),
+            ast::ExprKind::Try(inner) => Self::yields_closure(inner),
             ast::ExprKind::StructLit { fields, .. } => fields
                 .iter()
                 .any(|f| f.value.as_ref().is_some_and(Self::yields_closure)),
@@ -2249,7 +2296,7 @@ impl<'a> Checker<'a> {
     }
 
     /// Whether `ty` mentions any type parameter.
-    fn mentions_param(ty: &Ty) -> bool {
+    pub(crate) fn mentions_param(ty: &Ty) -> bool {
         let found = std::cell::Cell::new(false);
         let _ = ty.map(&|t| {
             if matches!(t, Ty::Param(_)) {
@@ -2265,37 +2312,49 @@ impl<'a> Checker<'a> {
     /// resolves the method: an inherent method, a trait the receiver is typed
     /// as, a trait default, a blanket impl, or a type parameter's bound.
     pub(crate) fn method_param_tys(&self, recv: &Ty, method: &str) -> Vec<Ty> {
+        self.method_sig(recv, method)
+            .map(|(params, _)| params)
+            .unwrap_or_default()
+    }
+
+    /// The projected parameter and return types of `recv.method(..)`, resolved
+    /// as [`Self::method_param_tys`] describes.
+    pub(crate) fn method_sig(&self, recv: &Ty, method: &str) -> Option<(Vec<Ty>, Ty)> {
         if let Ty::Param(p) = recv {
-            return self
-                .bound_method(p, method)
-                .map(|(params, _)| params)
-                .unwrap_or_default();
+            return self.bound_method(p, method);
         }
         let Ty::Named { name, args } = recv else {
-            return Vec::new();
+            return None;
         };
         if self.is_trait(name) {
             let applied = TraitRef {
                 name: name.clone(),
                 args: args.clone(),
             };
-            return self
-                .trait_method(&applied, method)
-                .map(|(params, _)| params)
-                .unwrap_or_default();
+            return self.trait_method(&applied, method);
         }
         if let Some(m) = self.table.methods.get(&(name.clone(), method.to_string())) {
             let nominal = self.nominal_subst(recv);
-            return m
+            let params = m
                 .params
                 .iter()
                 .map(|p| Self::subst_named(p, &nominal))
                 .collect();
+            return Some((params, Self::subst_named(&m.ret, &nominal)));
         }
         self.default_method(recv, method, true)
             .or_else(|| self.blanket_method(recv, method))
-            .map(|(params, _)| params)
-            .unwrap_or_default()
+    }
+
+    /// Lets the host receive a named extern `fn` raw in each argument whose
+    /// slot is declared with a concrete type. A slot typed by a type parameter
+    /// hands the value back to neoc, which would then call it unmarshalled.
+    fn allow_host_fn_args(&mut self, args: &[ast::Expr], slots: &[Ty]) {
+        for (a, slot) in args.iter().zip(slots) {
+            if !Self::mentions_param(slot) {
+                self.allow_host_fn(a);
+            }
+        }
     }
 
     fn infer_closure(
@@ -2326,7 +2385,9 @@ impl<'a> Checker<'a> {
         self.closure_params
             .entry((span.start, span.end))
             .or_insert_with(|| ptys.clone());
+        self.closure_depth += 1;
         let ret = self.infer(body);
+        self.closure_depth -= 1;
         self.scopes.pop();
         Ty::Fn(ptys, Box::new(ret))
     }
