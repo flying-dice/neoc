@@ -18,7 +18,7 @@ pub(crate) fn is_option(ty: &Ty) -> bool {
 }
 
 /// Whether `Option` occurs anywhere inside `ty`.
-fn contains_option(ty: &Ty) -> bool {
+pub(crate) fn contains_option(ty: &Ty) -> bool {
     match ty {
         Ty::Named { name, args } => name == "Option" || args.iter().any(contains_option),
         Ty::List(inner) => contains_option(inner),

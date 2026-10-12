@@ -760,3 +760,43 @@ fn try_through_blocks_stays_linear() {
     let _ = transpile(&src, Target::Lua);
     assert!(start.elapsed().as_secs() < 5, "{:?}", start.elapsed());
 }
+
+/// A closure parameter no hint could type is rejected where a host `Option`
+/// could flow through it, instead of reading the field raw.
+#[test]
+fn an_untypable_closure_parameter_is_rejected_when_members_are_read() {
+    for (items, body) in [
+        (
+            "fn run<T>(fs: [fn(T) -> bool], g: fn() -> T) -> bool { fs[0](g()) }",
+            "println(run([|s| s.title.is_some()], || mk()));",
+        ),
+        (
+            "struct B<T> { f: fn(T) -> bool }\nfn run<T>(b: B<T>, g: fn() -> T) -> bool { let h = b.f; h(g()) }",
+            "println(run(B { f: |s| s.title.is_some() }, || mk()));",
+        ),
+        (
+            "fn run<T>(f: Option<fn(T) -> bool>, g: fn() -> T) -> bool { match f { Some(h) => h(g()), None => false } }",
+            "println(run(Some(|s| s.title.is_some()), || mk()));",
+        ),
+        (
+            "fn mr<T>(f: fn(T) -> bool) -> Option<fn(T) -> bool> { Some(f) }\nfn call(f: fn() -> Option<fn(Settings) -> bool>) -> Option<bool> { let p = f()?; Some(p(mk())) }\nfn g(c: bool) -> Option<bool> { call(|| Some(if c { mr(|s| s.title.is_some()) } else { None }?)) }",
+            "println(g(true));",
+        ),
+    ] {
+        let out = build(items, body);
+        assert!(
+            out.diagnostics.iter().any(|d| d
+                .message
+                .contains("closure parameter `s` is not known here")),
+            "{body}\n{:#?}\n{}",
+            out.diagnostics,
+            out.output
+        );
+    }
+    // Annotated, or typed by the binding argument first: accepted and marshalled.
+    let out = build(
+        "fn run<T>(fs: [fn(T) -> bool], g: fn() -> T) -> bool { fs[0](g()) }",
+        "println(run([|s: Settings| s.title.is_some()], || mk()));",
+    );
+    assert!(out.ok(), "{:#?}", out.diagnostics);
+}

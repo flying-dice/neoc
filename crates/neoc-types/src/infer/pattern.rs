@@ -227,7 +227,9 @@ impl Checker<'_> {
             match &fp.pattern {
                 Some(p) => self.bind_pattern(p, &fty, kind),
                 // Shorthand `Point { x }` binds the field name itself.
-                None => self.bind_local(fp.name.clone(), fty, fp.span, kind),
+                None => {
+                    self.bind_local(fp.name.clone(), fty, fp.span, kind);
+                }
             }
         }
     }

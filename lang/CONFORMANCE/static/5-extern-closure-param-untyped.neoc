@@ -1,0 +1,18 @@
+// EXTERN.md §Option marshalling: a closure passed to a call takes its
+// parameter types from the call. When the callee's type parameter is still
+// open, a host `Option` could flow through the parameter, so reading a member
+// of it is an error; annotate the parameter.
+extern {
+    struct Settings {
+        title: Option<string>,
+    }
+    fn mk() -> Settings;
+}
+
+fn run<T>(fs: [fn(T) -> bool], g: fn() -> T) -> bool {
+    fs[0](g())
+}
+
+fn main() {
+    run([|s| s.title.is_some()], || mk());
+}
