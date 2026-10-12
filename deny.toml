@@ -6,6 +6,5 @@
 yanked = "warn"
 ignore = [
     { id = "RUSTSEC-2023-0071", reason = "rsa Marvin timing side-channel (https://github.com/RustCrypto/RSA/issues/626), no fixed release. rsa is the only pure-Rust RSA backend and RustCrypto is sanctioned (#35). Pulled by lib:pkey and sqlx-mysql. Remove once rsa ships a constant-time fix (#51). Review: 2027-01-10." },
-    { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2 unmaintained. Build-time proc-macro only, via mlua_derive; not linked. mlua upgrade tracked in #106. Review: 2027-01-10." },
-    { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml unmaintained, no vuln advisory. Ships in neoc via neoc-vm -> serde_yaml 0.9 (vnd:serde_yaml); no safe upgrade exists. Replacement (serde-saphyr / saphyr) to be tracked under NEOC-36. Review: 2027-01-10." },
+    { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml unmaintained, no vuln advisory. Ships in neoc via neoc-vm -> serde_yaml 0.9 (vnd:serde_yaml); no safe upgrade exists. Replacement tracked in NEOC-91. Review: 2027-01-10." },
 ]
