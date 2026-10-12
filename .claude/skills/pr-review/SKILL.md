@@ -1,9 +1,9 @@
 ---
-name: mr-review
-description: Use when you are the reviewer on a merge request — before approving, requesting changes, or posting review comments
+name: pr-review
+description: Use when you are the reviewer on a pull request — before approving, requesting changes, or posting review comments
 ---
 
-Assigned as reviewer. No session context. Code speaks for itself. Author ran this rubric via `mr-self-review` — your job: prove their evidence, then find what they missed.
+Assigned as reviewer. No session context. Code speaks for itself. Author ran this rubric via `pr-self-review` — your job: prove their evidence, then find what they missed.
 
 ## Standard
 
@@ -14,44 +14,41 @@ Highest clean-code bar. No tradeoff, no mercy, no benefit of the doubt. Every de
 Cost-ordered. Phase 0–1 block → pass ends — no deep probing on a build a cheaper phase already failed. Phase 2–3 findings never end the pass — collect every finding, post once.
 
 ### Phase 0 — Dedupe
-- Fetch MR head SHA, latest pipeline, unresolved thread count. Compare with your last review note.
+- Fetch PR head SHA, latest CI run (if any), unresolved thread count. Compare with your last review note.
 - All three identical and no new author replies → stop. No note. Not a pickup — no acknowledgement.
-- Otherwise → acknowledgement note per the `gitlab` skill, continue.
+- Otherwise → acknowledgement comment, continue.
 
 ### Phase 1 — Prerequisites
-1. Read MR description + linked issue via `gitlab-mcp`.
-2. **Pipeline** at head SHA — `glab ci status` / `gitlab-mcp`. Build, lint, typecheck, tests run there: **check the result, don't re-run them.** Not `success` → one `[issue]` thread `Pipeline not green @ <sha8>`, hand back, stop.
+1. Read PR description + linked Jira ticket (`gh pr view <n>`).
+2. **CI** at head SHA — `gh pr checks <n>`. Build, lint, typecheck, tests run there: **check the result, don't re-run them.** CI has no `pull_request` trigger, so a PR usually has no checks: `gh pr checks` exits non-zero with "no checks reported", or no run for the SHA → run the G1 local checks yourself and record them. A run exists and any check is not `pass` → one `[issue]` thread `CI not green @ <sha8>`, hand back, stop.
 3. **Self-review note** for the head SHA present. Absent or names an older SHA → one `[issue]` thread `No self-review @ <sha8>`, hand back, stop.
 
 ### Phase 2 — Evidence audit
 - Re-derive ≥ 3 rows of the author's evidence yourself at head: one G5 test row, one G2 claim, one AC row. Re-run the command; compare output.
 - Any mismatch → finding, then audit every row. Accept a finding, never someone else's evidence for it. Continue to Phase 3.
-- Re-request: verify each prior thread against the new head → `RESOLVED` (resolve the thread) or `STANDS` (reply with the measurement, keep open).
+- Re-request: verify each prior thread against the new head → `RESOLVED` (resolve the thread via `gh api graphql` `resolveReviewThread`) or `STANDS` (reply with the measurement, keep open).
 
 ### Phase 3 — Adversarial rubric
-1. Code locally only to read it or run scenarios CI can't — **detached worktree at the MR head SHA**, fetched from the target project's MR ref (`<mr-head-sha>` = MR `sha` recorded in Phase 0):
+1. Code locally only to read it or run scenarios CI can't — **detached worktree at the PR head SHA**, fetched from the PR ref (`<pr-head-sha>` = PR head `sha` recorded in Phase 0):
    ```sh
-   git -C ~/Projects/<repo> fetch origin +refs/merge-requests/<iid>/head:refs/mr-review/<iid>
-   test "$(git -C ~/Projects/<repo> rev-parse --verify -q refs/mr-review/<iid>)" = "<mr-head-sha>"
-   git -C ~/Projects/<repo> worktree add --detach ~/Projects/.worktrees/<repo>/mr-<iid> <mr-head-sha>
+   git -C ~/Projects/<repo> fetch origin +refs/pull/<n>/head:refs/pr-review/<n>
+   test "$(git -C ~/Projects/<repo> rev-parse --verify -q refs/pr-review/<n>)" = "<pr-head-sha>"
+   git -C ~/Projects/<repo> worktree add --detach ~/Projects/.worktrees/<repo>/pr-<n> <pr-head-sha>
    ```
-   `refs/mr-review/` sits outside `refs/remotes/origin/*` — a `fetch --prune origin` from any agent cannot delete it, no remote branch can clobber it. SHA mismatch → head moved; back to Phase 0. Never `origin/<mr-source-branch>` — absent when the source branch is deleted or lives in a fork. Never check the MR branch out by name — the author's agent may own it.
+   `refs/pr-review/` sits outside `refs/remotes/origin/*` — a `fetch --prune origin` from any agent cannot delete it, no remote branch can clobber it. SHA mismatch → head moved; back to Phase 0. Never `origin/<pr-source-branch>` — absent when the source branch is deleted or lives in a fork. Never check the PR branch out by name — the author's agent may own it.
 2. Run the rubric in reviewer mode, independently — do not start from the author's table. Fan-out per the rubric, `model: "opus"`.
 3. Failed scenario → full given/when/then in an inline comment for the author to automate.
-4. **Pipeline gap** — a check you'd expect in CI is missing and you had to run it by hand to trust the change → raise a GitLab issue to add it. Don't let a manual run quietly paper over the gap.
+4. **CI gap** — a check you'd expect in CI is missing and you had to run it by hand to trust the change → raise a Jira ticket to add it. Don't let a manual run quietly paper over the gap.
 
 ### Phase 4 — Post
 1. **Re-fetch head SHA.** Moved since Phase 0 → re-verify every finding against the new head. Mark each `STANDS` / `WITHDRAWN`; post only `STANDS`.
 2. Every `file:line` from `grep -n` / `sed -n` at head, run in this pass.
-3. Inline comments. One thread per finding. `position.head_sha` = head. Read the stored position back after posting.
-4. Multi-line bodies as JSON payloads. GET the discussion back; confirm it landed.
-5. Post the review note.
-6. Count unresolved threads from `/discussions` (`resolvable && !resolved`). Never trust `blocking_discussions_resolved`.
-7. Changes needed → threads stay open; hand back with an MR note that **@mentions the MR assignee once**. Reference other notes as `#note_<id>`, not `@name`.
-8. Approved → all three actions required, in order:
-   a. **Approve the MR** — `glab mr approve` / `gitlab-mcp`. A comment is not approval.
-   b. **Update reviewer** — set reviewer to the next approver per the `gitlab` skill approval matrix.
-   c. **Notify** — @mention the next reviewer in an MR note.
+3. Inline review comments. One thread per finding, anchored at the head SHA (`commit_id` = head). Read the stored comment back after posting.
+4. Multi-line bodies as JSON payloads (`gh api`). GET the review thread back; confirm it landed.
+5. Post the review comment.
+6. Count unresolved review threads via `gh api graphql` (`reviewThreads { isResolved }`). Never trust the review decision alone.
+7. Changes needed → threads stay open; hand back with a PR comment that **@mentions the PR assignee once**. Reference other comments by link, not `@name`.
+8. Approved → **Approve the PR** — `gh pr review <n> --approve`. A comment is not approval.
 
 <!-- rubric:begin -->
 ## Rubric
@@ -59,10 +56,10 @@ Cost-ordered. Phase 0–1 block → pass ends — no deep probing on a build a c
 10 gates. Cost-ordered. Each gate: PASS / FAIL / `N/A — <reason>`. No blanks. Evidence = command + measured output at head SHA. Assertion without evidence = FAIL.
 
 Stop rules:
-- **Author mode** (`mr-self-review`): G1–G4 fail-fast — first FAIL → fix, push, restart at G1. G5–G10 run in full; fix every FAIL, push, restart at G1.
-- **Reviewer mode** (`mr-review`): G1 FAIL → hand back, stop — no probing a red or stale head. G2–G10 run in full; post every finding in one pass. A partial review buys another round.
+- **Author mode** (`pr-self-review`): G1–G4 fail-fast — first FAIL → fix, push, restart at G1. G5–G10 run in full; fix every FAIL, push, restart at G1.
+- **Reviewer mode** (`pr-review`): G1 FAIL → hand back, stop — no probing a red or stale head. G2–G10 run in full; post every finding in one pass. A partial review buys another round.
 
-Local runs: never repeat what the pipeline already ran green. Run only what the rubric demands and the pipeline cannot show — unhappy-path probes, greps, link checks. A gate needing a check the pipeline lacks → run it by command and record the pipeline gap.
+Local runs: never repeat what CI already ran green. Run only what the rubric demands and CI cannot show — unhappy-path probes, greps, link checks. A gate needing a check CI lacks → run it by command and record the CI gap.
 
 ### Fan-out
 `git diff --stat origin/<target>...HEAD` → > 50 lines changed OR > 3 files: one message, 4 parallel `Agent` calls, `subagent_type: "Explore"`, model as the skill pins. Read-only — never edit, push, or post. Otherwise single-reader: run every gate yourself.
@@ -76,36 +73,37 @@ Local runs: never repeat what the pipeline already ran green. Run only what the 
 
 G1, G3, G4, G10: run yourself.
 
-- Prompt each with: MR iid, head SHA, worktree path, its gate text verbatim, return format `file:line — failure mode — evidence command + output`.
+- Prompt each with: PR number, head SHA, worktree path, its gate text verbatim, return format `file:line — failure mode — evidence command + output`.
 - Re-measure every sub-agent finding before acting on it. Not reproducible → record as such. Never drop silently.
 - `Agent` tool absent or denied → fan-out NOT RUN. Run single-reader, record `Mode: degraded — <reason>`. Never present a single-reader pass as fan-out.
 
-### G1 — Head & pipeline
-- Head SHA recorded: local `git rev-parse HEAD` == MR `sha`.
-- Pipeline for that exact SHA: `success`. `running` / `pending` = not ready. `failed` / `canceled` = FAIL.
-- Pipeline covers the change: jobs for the touched language/area ran (not skipped by `rules`).
+### G1 — Head & CI
+CI minutes are limited: CI does not run per PR. No run for the SHA → run the checks locally (`cargo fmt --check`, `cargo clippy --workspace --all-targets`, `cargo test --workspace`) and record command + output, or dispatch `gh workflow run ci.yml --ref <branch>` when the change needs the full matrix.
+- Head SHA recorded: local `git rev-parse HEAD` == PR head `sha`.
+- CI for that exact SHA, when a run exists: `gh pr checks <n>` all `pass`. `pending` = not ready. `fail` / `cancel` = FAIL.
+- CI covers the change: jobs for the touched language/area ran (not skipped by path filters or `if:`).
 - Re-request: ≥ 1 new commit since the last reviewed head. 0 = FAIL.
 - Target branch exists. No merge conflicts.
 
 ### G2 — Claims ↔ evidence
-Scope: MR description, commit messages, every comment and doc line added or edited in the diff.
+Scope: PR description, commit messages, every comment and doc line added or edited in the diff.
 - Each factual claim — behaviour, rationale, figure, "only", "every", "never", "N×", "orders of magnitude" — has a command + output proving it, or is deleted.
 - Comment states what code does → read the code, confirm. Comment says the opposite = FAIL.
 - Rationale for ignores / allowlists / suppressions → verified per entry, not by a header sentence.
 - Description ↔ diff: every file in the diff accounted for; nothing described that the diff lacks.
 
 ### G3 — Acceptance criteria
-- Table: AC (verbatim from the issue) → test name or `file:line` → PASS / FAIL.
-- AC not met as written → amend on the issue first (comment + issue owner acknowledgement), then cite it. MR-only amendment = FAIL.
+- Table: AC (verbatim from the ticket) → test name or `file:line` → PASS / FAIL.
+- AC not met as written → amend on the Jira ticket first (comment + ticket owner acknowledgement), then cite it. PR-only amendment = FAIL.
 
 ### G4 — Diff hygiene
-- Unrelated change present → split into its own MR.
+- Unrelated change present → split into its own PR.
 - Silent revert: `git diff <last-reviewed-head>..HEAD` and `git log -p origin/<target>..HEAD` — no line or value from an earlier fix commit undone. Intended reverts named in the description with reason.
 - Rename / removal: `grep -rn '<old term>'` → 0 hits outside changelog / history. Includes test names, comments, docs.
-- Formatter + lint for touched files pass — shown by a pipeline job; no job → run by command (`cargo fmt --check`, `prettier --check`, repo equivalent). Prose wrap matches the surrounding paragraph.
-- `refs #<iid>` only. `Closes` / `Fixes` / `Resolves` = FAIL.
+- Formatter + lint for touched files pass — shown by a CI job; no job → run by command (`cargo fmt --check`, `prettier --check`, repo equivalent). Prose wrap matches the surrounding paragraph.
+- Reference the Jira key (`refs NEOC-<n>`) only. `Closes` / `Fixes` / `Resolves` = FAIL.
 - Breaking change (public API, language semantics, config key, CLI flag, wire format) → conventional `!` or `BREAKING CHANGE:` footer.
-- No debug output, commented-out code, or TODO without an issue ref.
+- No debug output, commented-out code, or TODO without a Jira ref.
 
 ### G5 — Test validity
 - Every new public fn / branch / error arm → ≥ 1 test exercising it. Report count: new items vs tested items.
@@ -129,10 +127,10 @@ Given / when / then table. Each category run or `N/A — <reason>`:
 | Error path | each `Err` / `throw` / non-zero exit reached and asserted |
 | Concurrency / lifecycle | shutdown mid-op, retry timer vs teardown, double start, claim/lock scope |
 | Security / sandbox | arg / env injection, eval or bytecode escape, secrets in job scope or logs, unverified binaries |
-| Rollback | MR reverts cleanly; migration has a down path |
+| Rollback | PR reverts cleanly; migration has a down path |
 | Interface migration | every caller / consumer updated or shimmed; semver honoured |
 | Complexity | per-pass recomputation, exponential recursion, unbounded buffers |
-| CI config | rules fire on MR and branch pipelines; steps fail closed |
+| CI config | triggers fire on the intended events; steps fail closed |
 
 ### G7 — Narrowing & deletion audit
 - New or narrowed predicate / match arm / filter → list the shapes it now excludes; run each against the pre-fix and post-fix build; diff outputs. Valid case silenced = FAIL.
@@ -140,9 +138,9 @@ Given / when / then table. Each category run or `N/A — <reason>`:
 - Same function fixed twice → review its contract, not the symptom.
 
 ### G8 — Docs / spec drift
-- Spec, ADR, RFC, CONTRIBUTING, README, CLI help affected by the behaviour → updated in the same MR.
+- Spec, ADR, RFC, CONTRIBUTING, README, CLI help affected by the behaviour → updated in the same PR.
 - Every added or changed link resolves (`test -e` for paths, HTTP 200 for URLs).
-- Docs describe the state after this MR, not a future one. Dependency on another MR → declared in the description and enforced: draft until the dependency merges, merge order at the top of the description. Declared but unenforced = FAIL.
+- Docs describe the state after this PR, not a future one. Dependency on another PR → declared in the description and enforced: draft until the dependency merges, merge order at the top of the description. Declared but unenforced = FAIL.
 - Grep the doc set for the changed term — every mention agrees. Self-contradiction = FAIL.
 
 ### G9 — Citations
@@ -150,23 +148,23 @@ Given / when / then table. Each category run or `N/A — <reason>`:
 
 ### G10 — Fix-round discipline (re-request only)
 - Per prior thread: fix commit SHA + test name + the finding's given/when/then reproduced at the new head → fixed behaviour observed.
-- Diff since the last reviewed head touches only finding sites + their tests. Prose rewrites and new behaviour → separate MR.
+- Diff since the last reviewed head touches only finding sites + their tests. Prose rewrites and new behaviour → separate PR.
 - G1–G9 re-run against the fix diff. Comment / doc lines the fix introduced get G2.
 
-### Target shape — one-round MRs
-- One defect / one concern per MR.
+### Target shape — one-round PRs
+- One defect / one concern per PR.
 - Minimal diff. Description matches the diff exactly.
 - Test drives the original defect's given/when/then and asserts the fixed behaviour.
-- Pipeline green at the reviewed SHA.
+- CI green at the reviewed SHA.
 - Fix round: every finding fixed with its own test. Nothing else touched.
 
 ### Rubric maintenance
-Same finding class raised on ≥ 2 MRs and no gate covers it → issue on `flying-dice/merge-request-review` proposing the gate. Edit both copies of this rubric in one MR.
+Same finding class raised on ≥ 2 PRs and no gate covers it → Jira ticket proposing the gate. Edit both copies of this rubric in one PR.
 <!-- rubric:end -->
 
 ## Review note
 
-Post on the MR. Every gate PASS, FAIL, or `N/A — <reason>`. No blanks.
+Post on the PR. Every gate PASS, FAIL, or `N/A — <reason>`. No blanks.
 
 ```
 ## Review — <sha8> — APPROVED | CHANGES REQUESTED | HOLD
@@ -176,7 +174,7 @@ Evidence audit: <n> rows re-derived, <m> mismatched
 Prior threads: <r> resolved, <s> stand
 New findings: <k>
 
-- [ ] G1 Head & pipeline
+- [ ] G1 Head & CI
 - [ ] G2 Claims ↔ evidence
 - [ ] G3 Acceptance criteria
 - [ ] G4 Diff hygiene
@@ -210,7 +208,7 @@ Regressions. Edge cases. Error paths. Concurrency. Rollback safety. Interface ch
 
 ## Out of scope
 
-Only what the linter/CI already enforces — don't duplicate the tool. Re-running build/lint/typecheck/tests the pipeline already passed — check the result, don't repeat it. Targeted runs the rubric demands (unhappy-path probes) are in scope. Everything else with a clean-code or correctness basis is a finding and blocks, regardless of size.
+Only what the linter/CI already enforces — don't duplicate the tool. Re-running build/lint/typecheck/tests CI already passed — check the result, don't repeat it. Targeted runs the rubric demands (unhappy-path probes) are in scope. Everything else with a clean-code or correctness basis is a finding and blocks, regardless of size.
 
 ## SPECIAL INSTRUCTION
 

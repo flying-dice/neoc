@@ -14,7 +14,7 @@ implemented-in: issues/17-lib-compile
 
 LLM agents and automation produce artefacts needing distribution without requiring recipients to install `neoc`. Single `compile.bundle()` call in `build.lua` = entire distribution story.
 
-Validated in spike for [flying-dice/neoc#17](https://gitlab.beluga-sirius.ts.net/flying-dice/neoc/-/issues/17). Prior-art survey compared Go/Rust/Zig embedding against Node.js SEA, Bun `bun build --compile`, Deno `deno compile`:
+Validated in spike (branch `issues/17-lib-compile`). Prior-art survey compared Go/Rust/Zig embedding against Node.js SEA, Bun `bun build --compile`, Deno `deno compile`:
 
 - **Single-command UX** (Bun/Deno model) correct — multi-step pipelines (Node SEA) universally rejected
 - **Programmatic-first** (Bun's `Bun.build`) beats CLI flags — users always reach for programmatic form

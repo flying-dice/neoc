@@ -321,5 +321,5 @@ Tempting but premature. The error code taxonomy doesn't exist yet. Breaking ADR-
 - **Layer 1 files touched:** `Cargo.toml` (add `strsim`), `src/lua/modules.rs` (require error enrichment), individual module files for type hint enrichment.
 - **Layer 2 files touched:** `Cargo.toml` (add `thiserror`, `miette`), new `src/errors.rs` (NeocError enum), `src/main.rs` (miette rendering).
 - **Docs:** `docs/src/guides/error-conventions.md` (extend with suggestion rules), new `docs/src/errors/` directory.
-- **Sequencing:** Layer 1 ships first (single commit, `fix` type). Layer 2 follows (separate MR, `feat` type). Independent of any other in-flight work.
+- **Sequencing:** Layer 1 ships first (single commit, `fix` type). Layer 2 follows (separate PR, `feat` type). Independent of any other in-flight work.
 - **Testing:** Add `tests/require-errors.test.lua` covering typo suggestions. Existing tests unaffected — they test happy paths.

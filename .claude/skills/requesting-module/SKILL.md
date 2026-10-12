@@ -1,6 +1,6 @@
 ---
 name: requesting-module
-description: Use when filing a new module request issue on the neoc board — enforces pre-research, parallels matrix, scope discipline
+description: Use when filing a new module request issue on the neoc Jira board — enforces pre-research, parallels matrix, scope discipline
 ---
 
 Module request = signal, not design. Design happens later in RFC. The request answers one question: **does every other runtime ship this, and would we be naked without it?**
@@ -9,7 +9,7 @@ Module request = signal, not design. Design happens later in RFC. The request an
 
 No issue without all four:
 
-1. **Board scan.** Confirm no open issue covers it. Don't duplicate.
+1. **Board scan.** Confirm no open ticket covers it. Don't duplicate.
 2. **Parallels matrix.** Look up the canonical module/API name in:
    - Python (stdlib)
    - Node (`node:*`)
@@ -25,7 +25,7 @@ Skip any step = the issue is rejected at refinement.
 ## Issue template
 
 **Title:** `<tier>:<name> — <one-line purpose>`
-**Labels:** `module`, `priority:high|medium|low`, `workflow::Backlog`
+**Labels:** `module`; **Priority:** High | Medium | Low; **Status:** Backlog
 **Milestone:** match tier (M1 std, M2 lib, M3 vnd)
 
 **Body:**

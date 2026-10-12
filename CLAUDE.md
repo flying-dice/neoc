@@ -331,7 +331,7 @@ Previously inlined the trait's source signature verbatim, producing
 invalid Lua. Now goes through the same param-name extractor inherent
 impl methods use.
 
-Closes #42.
+Refs NEOC-42.
 ```
 
 - **Type** — one of: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`,
@@ -343,7 +343,7 @@ Closes #42.
 - **Description** — imperative, lowercase, no trailing period.
 - **Body** — optional, terse prose. Bullet what changed. Use it when the *why*
   isn't obvious from the subject.
-- **Footer** — `Closes #42`, `Refs #7`, etc.
+- **Footer** — `Refs NEOC-42`, etc.
 - **Breaking changes** — append `!` after type/scope (`feat(compiler)!:`) **and**
   add a `BREAKING CHANGE:` footer with full, careful English. The library API in
   `neoc-compiler/src/lib.rs` is the most user-visible surface — changes there
@@ -356,48 +356,24 @@ they feed the changelog.
 
 ---
 
-## Issue workflow — GitLab board
+## Issue workflow — Jira and GitHub
 
-Issue lifecycle is managed through the [GitLab board](https://gitlab.beluga-sirius.ts.net/flying-dice/neoc/-/boards/3)
-using scoped `workflow::*` labels. Do not use `draft` labels or `DRAFT:` title
-prefixes.
+Work is tracked in [Jira](https://flying-dice.atlassian.net/jira/software/projects/NEOC)
+(project `NEOC`). Source and pull requests live on GitHub at
+`flying-dice/neoc`. Jira is the source of truth for ticket state.
 
-**Columns:** Backlog → Refinement → Design → Implementation → Review → Done
-
-Each column maps to a scoped label. Labels are mutually exclusive within the
-`workflow::` scope — applying a new stage label replaces the old one.
-
-| Label | Meaning |
-|---|---|
-| `workflow::Backlog` | Not yet refined — awaiting CODEOWNER go-ahead |
-| `workflow::Refinement` | Being fleshed out: acceptance criteria, open questions, approach options |
-| `workflow::Design` | RFC or ADR in progress; awaiting CODEOWNER approval before implementation |
-| `workflow::Implementation` | Implementation merge request open; work in progress |
-| `workflow::Review` | Merge request under CODEOWNER review; awaiting approval |
-| *(closed)* | Done — issue closed on merge |
-
-**Gates:**
-
-| Transition | Gate |
-|---|---|
-| Backlog → Refinement | CODEOWNER gives explicit go-ahead. No bot self-promotes from Backlog. |
-| Refinement → Design | Flesh out the ticket. Wait for CODEOWNER signal to advance. |
-| Design → Implementation | If a design MR is needed, open one on a `design/{id}-{slug}` branch — CODEOWNER approves. If the description is sufficient design, move straight to Implementation. |
-| Implementation → Review | Open the implementation MR from an `issues/{id}-{slug}` branch. CODEOWNER reviews. Label stays `workflow::Review` until approved. |
-| Review → Done | CODEOWNER approves, merge to `main`, close the issue. |
-
-**Branching model:**
-
-- Implementation work: `issues/{id}-{slug}` (e.g. `issues/6-std-task`).
-- Design artefacts: `design/{id}-{slug}` (e.g. `design/23-std-env`).
-
-**Hard rules:**
-- The `workflow::*` label is the source of truth for issue state — not the
-  issue's open/closed status alone.
-- Never move an issue out of `workflow::Backlog` without explicit CODEOWNER
-  instruction.
-- CODEOWNER approval is required at the Review gate before merge (see CODEOWNERS).
-- The GitLab project is hosted at `gitlab.beluga-sirius.ts.net/flying-dice/neoc`.
+- **Branches.** Branch from `develop`: `issues/{key}-{slug}` for implementation
+  (e.g. `issues/NEOC-6-std-task`), `design/{key}-{slug}` for RFC/ADR work.
+- **Pull requests.** Open against `develop`. Title follows Conventional
+  Commits. Reference the Jira key in the body or commit footer (`Refs NEOC-6`).
+- **Review.** CODEOWNERS approval is required before merge. Reviewers use the
+  `pr-review` skill; authors run `pr-self-review` first.
+- **CI.** Minutes are limited: CI runs on push to `main` and `develop` (docs-only pushes excluded), on
+  manual dispatch (`gh workflow run ci.yml --ref <branch>`), and weekly. It does
+  not run per PR. Verify locally before opening a PR (see Build and test).
+- **Gates.** Never move a ticket out of Backlog without explicit CODEOWNER
+  instruction. A design PR needs CODEOWNER approval before implementation starts.
+- **Done.** Merge to `develop`, then mark the Jira ticket Done.
 
 ---
 

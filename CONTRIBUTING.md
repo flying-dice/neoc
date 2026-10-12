@@ -1,6 +1,6 @@
 # Contributing
 
-Mechanical walkthrough — order, file locations, pre-MR checks. Points to [STYLEGUIDE.md](STYLEGUIDE.md) and [README.md](README.md) for conventions and rationale.
+Mechanical walkthrough — order, file locations, pre-PR checks. Points to [STYLEGUIDE.md](STYLEGUIDE.md) and [README.md](README.md) for conventions and rationale.
 
 ## Before you start
 
@@ -135,7 +135,7 @@ Add row to modules table. Alphabetical within namespace.
 4. Extend bench group (3 tiers)
 5. Add `describe(...)` cases to test file
 
-## Pre-MR checks
+## Pre-PR checks
 
 ```sh
 cargo build
@@ -149,25 +149,14 @@ cargo fmt --check
 
 ## CI
 
-GitHub Actions (`.github/workflows/ci.yml`) on push to `main` and `develop`, and on manual dispatch. Never per PR (limited CI minutes): run the checks above locally.
+GitHub Actions (`.github/workflows/ci.yml`) on push to `main` and `develop` (docs, Markdown, media, CODEOWNERS and `.claude` changes excluded), on manual dispatch, and weekly. Never per PR (limited CI minutes): run the [pre-PR checks](#pre-pr-checks) locally. Dispatch a run on a branch with `gh workflow run ci.yml --ref <branch>`; follow it with `gh run watch <run-id> --exit-status` and read PR check status with `gh pr checks`.
 
-Stages:
-1. **Lint** — `fmt --check`, `clippy` (warnings = errors)
-2. **Test** — Rust + Lua integration (Docker tests excluded)
-3. **Build** — cross-compiled binaries as artifacts
-4. **Pages** — VitePress docs (main only)
-
-### Cross-compilation
-
-| Job | Target |
-|---|---|
-| `build:linux-x86_64` | `x86_64-unknown-linux-gnu` |
-| `build:windows-x86_64` | `x86_64-pc-windows-gnu` |
+Jobs: `lint` (`fmt --check`, `clippy` with warnings = errors), `deny`, `test` (Rust + Lua integration), `packages`, `wasm`, `bench` (dispatch and schedule only), `bench:smoke`. Release binaries are built by the `Release` workflow (see [How to release](#how-to-release)).
 
 ### Branching
 
-- Implementation: `issues/{id}-{slug}`
-- Design: `design/{id}-{slug}`
+- Implementation: `issues/{key}-{slug}` (e.g. `issues/NEOC-6-std-task`)
+- Design: `design/{key}-{slug}`
 
 ### How to release
 
@@ -215,14 +204,14 @@ It needs only the default `GITHUB_TOKEN`. `scripts/install.sh` and
 
 Scope optional (module name or subsystem). Breaking: `!` suffix + `BREAKING CHANGE:` footer. Subject lowercase, no period. One logical change per commit.
 
-## MR expectations
+## PR expectations
 
-- One module or one well-scoped change per MR.
+- One module or one well-scoped change per PR.
 - Say *why* in description, not just *what*.
-- Update docs in same MR.
+- Update docs in same PR.
 - New crates require sign-off per [STYLEGUIDE.md](STYLEGUIDE.md#allowed-dependencies).
 - Benchmark regressions: call out + explain in description.
-- Apply `workflow::Implementation` label, update to `workflow::Review` when ready.
+- Reference the Jira key (`Refs NEOC-<n>`). Open against `develop`; mark ready for review when the pre-PR checks pass.
 
 ## When in doubt
 
