@@ -13,4 +13,5 @@ ignore = [
     { id = "RUSTSEC-2025-0111", reason = "tokio-tar file smuggling, no fix. Ships in neoc via neoc-vm -> testcontainers-modules -> testcontainers 0.23.3 (lib.testcontainers). testcontainers only builds tars (tokio_tar::Builder); vuln is in Archive parsing, no read path exposed to Luau. Upgrade tracked in #106. Review: 2027-01-10." },
     { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile unmaintained, no vuln. Ships in neoc via testcontainers -> bollard 0.18.1; reads local Docker TLS certs only. Upgrade tracked in #106. Review: 2027-01-10." },
     { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2 unmaintained. Build-time proc-macro only, via mlua_derive; not linked. mlua upgrade tracked in #106. Review: 2027-01-10." },
+    { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml unmaintained, no vuln advisory. Ships in neoc via neoc-vm -> serde_yaml 0.9 (vnd:serde_yaml); no safe upgrade exists. Replacement (serde-saphyr / saphyr) to be tracked under NEOC-36. Review: 2027-01-10." },
 ]
