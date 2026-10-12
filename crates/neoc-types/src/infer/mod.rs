@@ -1099,7 +1099,7 @@ impl<'a> Checker<'a> {
                 let elem = match it {
                     Ty::List(inner) => *inner,
                     Ty::Unknown => Ty::Unknown,
-                    t if t.is_unresolved() => Ty::Unknown,
+                    t if t.is_unresolved() => t,
                     other => {
                         self.error_at(
                             iter.span,
@@ -2367,7 +2367,7 @@ impl<'a> Checker<'a> {
         // Inside the fn body `?` returns early in the fn's own
         // `Result` or `Option`; inside a closure that type is not
         // known, so both are tried, but only on a call or closure
-        // base, which keeps nesting through blocks linear.
+        // base, which keeps nesting through blocks and indexing linear.
         let kinds: &[&str] = if self.closure_depth == 0 {
             match &self.ret_ty {
                 Ty::Named { name, .. } if name == "Result" => &["Result"],
@@ -2376,11 +2376,13 @@ impl<'a> Checker<'a> {
             }
         } else if matches!(
             base.kind,
-            ast::ExprKind::Block(_) | ast::ExprKind::If { .. } | ast::ExprKind::Match { .. }
+            ast::ExprKind::Call { .. }
+                | ast::ExprKind::MethodCall { .. }
+                | ast::ExprKind::Closure { .. }
         ) {
-            &[]
-        } else {
             &["Result", "Option"]
+        } else {
+            &[]
         };
         for name in kinds {
             let mut wrapped = ty.clone();

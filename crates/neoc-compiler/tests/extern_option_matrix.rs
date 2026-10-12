@@ -916,3 +916,48 @@ fn indexed_and_bare_field_closures_are_hinted() {
     assert!(out.ok(), "{:#?}", out.diagnostics);
     assert!(wraps(&out.output, FROM) >= 1, "{}", out.output);
 }
+
+/// Parts of an unresolved value are unresolved: destructuring or iterating it
+/// does not launder it into a readable one.
+#[test]
+fn destructured_and_iterated_markers_stay_unresolved() {
+    for (items, body) in [
+        (
+            "fn run<T>(fs: [fn(Option<T>) -> bool], g: fn() -> T) -> bool { fs[0](Some(g())) }",
+            "run([|s| match s { Some(x) => x.title.is_some(), None => false }], || mk());",
+        ),
+        (
+            "fn run<T>(fs: [fn(Option<T>) -> bool], g: fn() -> T) -> bool { fs[0](Some(g())) }",
+            "run([|s| match s { Some(x) => { let y = x; y.title.is_some() }, None => false }], || mk());",
+        ),
+        (
+            "fn run<T>(fs: [fn([T]) -> bool], g: fn() -> T) -> bool { fs[0]([g()]) }",
+            "run([|xs| { for x in xs { x.title.is_some(); } true }], || mk());",
+        ),
+    ] {
+        let out = build(items, body);
+        assert!(
+            out.diagnostics
+                .iter()
+                .any(|d| d.message.contains("closure parameter is not known here")),
+            "{body}\n{:#?}",
+            out.diagnostics
+        );
+    }
+}
+
+/// `?` and indexing nested inside a closure stay linear to check.
+#[test]
+fn try_and_index_in_closures_stay_linear() {
+    let n = 30;
+    let mut e = "|s| true".to_string();
+    for _ in 0..n {
+        e = format!("Some([{e}])?[0]");
+    }
+    let src = format!(
+        "extern {{ struct Settings {{ title: Option<string> }} }}\nfn ap(f: fn(Settings) -> bool) -> bool {{ false }}\nfn f() -> Option<bool> {{ let g = |x: number| ap({e}); None }}\nfn main() {{}}\n"
+    );
+    let start = std::time::Instant::now();
+    let _ = transpile(&src, Target::Lua);
+    assert!(start.elapsed().as_secs() < 5, "{:?}", start.elapsed());
+}

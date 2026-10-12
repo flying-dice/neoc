@@ -153,6 +153,10 @@ impl Checker<'_> {
     }
 
     fn tuple_pattern_field_tys(&self, path: &[ast::Ident], ty: &Ty, arity: usize) -> Vec<Ty> {
+        // Parts of an unresolved value are unresolved too.
+        if ty.is_unresolved() {
+            return vec![ty.clone(); arity];
+        }
         let unknowns = vec![Ty::Unknown; arity];
         let Some(ctor) = path.last() else {
             return unknowns;
