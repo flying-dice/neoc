@@ -65,28 +65,51 @@ impl Checker<'_> {
         self.resolve_trait_method(trait_name, method, &Ty::named(trait_name))
     }
 
-    /// A default-bodied receiver method `method` that concrete type `name`
-    /// inherits from a trait it implements and did not override, with `Self`
-    /// read as `name` (`STATIC.md` §3.4: a default method "may be overridden or
-    /// omitted"). Only the traits `name` implements directly are searched — a
-    /// supertrait's defaults reach the type through its own `impl` of that
-    /// supertrait, which the conformance check requires. Traits are searched in
-    /// name order so the answer is deterministic.
-    pub(super) fn default_method(&self, name: &str, method: &str) -> Option<(Vec<Ty>, Ty)> {
-        let mut traits: Vec<&String> = self.table().trait_impls.get(name)?.iter().collect();
+    /// A default-bodied method `method` — a receiver method when `receiver`,
+    /// else an associated function — that concrete type `name` inherits from a
+    /// trait it implements and did not override, with `Self` read as `name`
+    /// (`STATIC.md` §8). Only the traits `name` implements directly are
+    /// searched — a supertrait's defaults reach the type through its own `impl`
+    /// of that supertrait, which the conformance check requires. Two traits
+    /// supplying the same default is rejected at the impl
+    /// ([`Checker::default_sources`]); name order keeps the answer
+    /// deterministic regardless.
+    pub(super) fn default_method(
+        &self,
+        name: &str,
+        method: &str,
+        receiver: bool,
+    ) -> Option<(Vec<Ty>, Ty)> {
+        let trait_name = self.default_sources(name, method).into_iter().next()?;
+        let Some(TypeDef::Trait(t)) = self.table().types.get(&trait_name) else {
+            return None;
+        };
+        t.methods
+            .iter()
+            .find(|m| m.name == method && m.has_default && m.has_receiver == receiver)
+            .map(|m| {
+                let self_ty = Ty::named(name);
+                let proj = |ty: &Ty| ty.subst_self(&self_ty);
+                (m.params.iter().map(proj).collect(), proj(&m.ret))
+            })
+    }
+
+    /// The traits concrete type `name` implements directly that declare a
+    /// default-bodied `method`, in name order.
+    pub(super) fn default_sources(&self, name: &str, method: &str) -> Vec<String> {
+        let Some(impls) = self.table().trait_impls.get(name) else {
+            return Vec::new();
+        };
+        let mut traits: Vec<String> = impls
+            .iter()
+            .filter(|trait_name| {
+                matches!(self.table().types.get(*trait_name), Some(TypeDef::Trait(t))
+                    if t.methods.iter().any(|m| m.name == method && m.has_default))
+            })
+            .cloned()
+            .collect();
         traits.sort();
-        traits.into_iter().find_map(|trait_name| {
-            let Some(TypeDef::Trait(t)) = self.table().types.get(trait_name) else {
-                return None;
-            };
-            let m = t
-                .methods
-                .iter()
-                .find(|m| m.name == method && m.has_receiver && m.has_default)?;
-            let self_ty = Ty::named(name);
-            let proj = |ty: &Ty| ty.subst_self(&self_ty);
-            Some((m.params.iter().map(proj).collect(), proj(&m.ret)))
-        })
+        traits
     }
 
     /// A method granted to concrete type `name` (of type `recv`) by a blanket

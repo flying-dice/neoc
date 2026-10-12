@@ -77,3 +77,37 @@ fn a_default_with_a_wrong_argument_count_is_an_error() {
         "{d:?}"
     );
 }
+
+#[test]
+fn an_omitted_associated_fn_default_resolves_on_the_type() {
+    let src = "trait Make {\n  fn tag() -> string {\n    \"made\"\n  }\n}\nstruct D;\nimpl Make for D {}\nfn go() -> string {\n  D::tag()\n}\n";
+    assert!(diagnostics(src).is_empty(), "{:?}", diagnostics(src));
+}
+
+#[test]
+fn a_default_clashing_with_an_inherent_method_is_an_error() {
+    let src = "trait Greet {\n  fn hi(self) -> string {\n    \"x\"\n  }\n}\nstruct D;\nimpl D {\n  fn hi(self) -> string {\n    \"y\"\n  }\n}\nimpl Greet for D {}\n";
+    assert_eq!(
+        diagnostics(src),
+        [
+            "`impl Greet for D` inherits default method `hi`, but `D` already has a method `hi`; override `hi` in the impl"
+        ]
+    );
+}
+
+#[test]
+fn a_default_clashing_with_another_traits_method_is_an_error() {
+    let src = "trait A {\n  fn a(self) -> string {\n    \"x\"\n  }\n}\ntrait B {\n  fn a(self) -> string;\n}\nstruct D;\nimpl B for D {\n  fn a(self) -> string {\n    \"y\"\n  }\n}\nimpl A for D {}\n";
+    assert_eq!(
+        diagnostics(src),
+        [
+            "`impl A for D` inherits default method `a`, but `D` already has a method `a`; override `a` in the impl"
+        ]
+    );
+}
+
+#[test]
+fn two_traits_giving_the_same_default_is_an_error_at_each_impl() {
+    let src = "trait A {\n  fn a(self) -> string {\n    \"x\"\n  }\n}\ntrait B {\n  fn a(self) -> number {\n    1\n  }\n}\nstruct D;\nimpl A for D {}\nimpl B for D {}\n";
+    assert_eq!(diagnostics(src).len(), 2, "{:?}", diagnostics(src));
+}

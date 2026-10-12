@@ -231,7 +231,7 @@ pub struct ShadowedTypeImport {
 /// numbers back to neoc positions; the emitted Lua text is identical either way.
 #[must_use]
 pub fn emit(module: &ast::Module) -> EmitResult {
-    emit_inner(module, None, &[], &[], &[], false)
+    emit_inner(module, None, &[], &[], &[], &[], false)
 }
 
 /// Lower a module to Lua 5.1 source and build a [`LineMap`] from `source`.
@@ -242,7 +242,7 @@ pub fn emit(module: &ast::Module) -> EmitResult {
 /// differs.
 #[must_use]
 pub fn emit_with_source(module: &ast::Module, source: &str) -> EmitResult {
-    emit_inner(module, Some(source), &[], &[], &[], false)
+    emit_inner(module, Some(source), &[], &[], &[], &[], false)
 }
 
 /// Like [`emit_with_source`], but also given the `pub` enum declarations the
@@ -259,6 +259,10 @@ pub fn emit_with_source(module: &ast::Module, source: &str) -> EmitResult {
 /// associated-path references read; the value keeps the plain name
 /// (`lang/DYNAMIC.md` §3.7).
 ///
+/// `imported_traits` pairs each `use` binding that names a trait with that
+/// trait's declaration, so an `impl` of an imported trait assigns the defaults
+/// it omits from the trait's runtime table (`lang/DYNAMIC.md` §3.4).
+///
 /// `as_module` selects a requireable library (each `pub` runtime binding emitted
 /// as a `local` and a trailing `return { name = name, … }`) over a directly
 /// runnable script (globals, no trailing `return`). A project build passes
@@ -270,6 +274,7 @@ pub fn emit_with_imports(
     imported_enums: &[&ast::EnumDecl],
     imported_externs: &[ast::ExternItem],
     shadowed_types: &[ShadowedTypeImport],
+    imported_traits: &[(&str, &ast::TraitDecl)],
     as_module: bool,
 ) -> EmitResult {
     emit_inner(
@@ -278,6 +283,7 @@ pub fn emit_with_imports(
         imported_enums,
         imported_externs,
         shadowed_types,
+        imported_traits,
         as_module,
     )
 }
@@ -288,6 +294,7 @@ fn emit_inner(
     imported_enums: &[&ast::EnumDecl],
     imported_externs: &[ast::ExternItem],
     shadowed_types: &[ShadowedTypeImport],
+    imported_traits: &[(&str, &ast::TraitDecl)],
     as_module: bool,
 ) -> EmitResult {
     // A `use`d extern item lowers to its native `require` in *this* consumer, not
@@ -304,7 +311,7 @@ fn emit_inner(
         enums: EnumIndex::build(module, imported_enums),
         tuple_structs: TupleStructIndex::build(module),
         traits: ast::trait_index(module),
-        trait_defaults: trait_defaults(module),
+        trait_defaults: trait_defaults(module, imported_traits),
         line_index: source.map(LineIndex::build),
         forward_decls: forward_declared_fns(module, as_module),
         validation: validate::plan(module),
@@ -439,10 +446,16 @@ pub(crate) struct Emitter {
     /// `__traits` runtime tag — `Type.__traits = { … }` on the type table
     /// (`DYNAMIC.md`). Inert until the runtime trait-enforcement work (#75).
     traits: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
-    /// Default-bodied methods of each trait declared in this module, by trait
-    /// name. An `impl Trait for Type` that does not override one emits it onto
-    /// the type's table at the impl site (`DYNAMIC.md` §3.4).
-    trait_defaults: HashMap<String, Vec<ast::FnDecl>>,
+    /// The default-bodied method names of each trait in scope — declared here
+    /// or `use`d — by binding. An `impl Trait for Type` that omits one assigns
+    /// the trait table's function onto the type's table (`DYNAMIC.md` §3.4).
+    trait_defaults: HashMap<String, Vec<String>>,
+    /// Trait bindings already emitted (a trait table or a `use`), so an impl's
+    /// default assignments can read them.
+    bound_traits: std::collections::HashSet<String>,
+    /// Default assignments of impls that precede their trait's binding, keyed
+    /// by that binding; emitted right after it.
+    pending_defaults: HashMap<String, Vec<String>>,
     /// The enclosing-loop stack. Each frame records whether the loop body was
     /// restructured for `continue` (the repeat/break idiom) and, if so, the name
     /// of its outer-break flag — see [`expr`].
@@ -598,6 +611,9 @@ impl Emitter {
                 ast::ItemKind::Fn(f) => names.push(f.sig.name.clone()),
                 ast::ItemKind::Const(c) => names.push(c.name.clone()),
                 ast::ItemKind::Struct(s) => names.push(s.name.clone()),
+                ast::ItemKind::Trait(t) if !t.default_names().is_empty() => {
+                    names.push(t.name.clone());
+                }
                 ast::ItemKind::Enum(e) if self.enum_has_methods(&e.name) => {
                     names.push(e.name.clone());
                 }
@@ -914,7 +930,32 @@ impl Emitter {
             // No inline Lua output: aliases erase; an `extern` block describes
             // the target surface — its `mod` imports emit in the preamble, its
             // structs/fns/methods are the target's own values.
-            ast::ItemKind::TypeAlias(_) | ast::ItemKind::Extern(_) | ast::ItemKind::Trait(_) => {}
+            ast::ItemKind::Trait(t) => self.emit_trait(t, item.vis),
+            ast::ItemKind::TypeAlias(_) | ast::ItemKind::Extern(_) => {}
+        }
+    }
+
+    /// Emit a trait's default-bodied methods onto its table (`DYNAMIC.md`
+    /// §3.4). A trait without defaults emits nothing.
+    fn emit_trait(&mut self, t: &ast::TraitDecl, vis: ast::Visibility) {
+        let defaults = t.default_methods();
+        if defaults.is_empty() {
+            return;
+        }
+        let local = self.decl_prefix(vis);
+        self.line(format!("{local}{} = {{}}", t.name));
+        for f in &defaults {
+            self.emit_fn(Some(&t.name), f, ast::Visibility::Public);
+        }
+        self.bind_trait(&t.name);
+    }
+
+    /// Record `binding` as emitted and flush the default assignments waiting
+    /// on it.
+    fn bind_trait(&mut self, binding: &str) {
+        self.bound_traits.insert(binding.to_string());
+        for l in self.pending_defaults.remove(binding).unwrap_or_default() {
+            self.line(l);
         }
     }
 
@@ -954,6 +995,7 @@ impl Emitter {
             .map_or(binding, |r| r.local.as_str());
         let module = prefix.join(".");
         self.line(format!("local {local} = require(\"{module}\").{last}"));
+        self.bind_trait(binding);
     }
 
     fn emit_const(&mut self, c: &ast::ConstDecl, vis: ast::Visibility) {
@@ -1048,30 +1090,43 @@ impl Emitter {
         let Some(target) = p.segments.last().map(|s| s.name.clone()) else {
             return;
         };
-        let inherited = self.inherited_defaults(b);
-        for f in b.items.iter().chain(&inherited) {
+        for f in &b.items {
             // A trait impl binds the trait's associated types; project them into
             // each method signature so a `Self::Item` return renders as the bound
             // type rather than a dangling type name (`STATIC.md` §3.4).
             let f = f.project_assoc(&b.assoc_bindings);
             self.emit_fn(Some(&target), &f, ast::Visibility::Public);
         }
+        self.emit_inherited_defaults(b, &target);
     }
 
-    /// The default methods of `b`'s trait that `b` does not override, in the
-    /// trait's declaration order. Empty for an inherent impl or a trait without
-    /// defaults in this module.
-    fn inherited_defaults(&self, b: &ast::ImplBlock) -> Vec<ast::FnDecl> {
+    /// Assign each default of `b`'s trait that `b` does not override from the
+    /// trait's table onto `target`'s, in the trait's declaration order — or,
+    /// when the trait's binding comes later in the module, defer them until it
+    /// is emitted (`DYNAMIC.md` §3.4).
+    fn emit_inherited_defaults(&mut self, b: &ast::ImplBlock, target: &str) {
         let Some(trait_name) = b.trait_.as_ref().and_then(|p| p.segments.last()) else {
-            return Vec::new();
+            return;
         };
-        self.trait_defaults
-            .get(&trait_name.name)
+        let trait_name = &trait_name.name;
+        let lines: Vec<String> = self
+            .trait_defaults
+            .get(trait_name)
             .into_iter()
             .flatten()
-            .filter(|d| !b.items.iter().any(|f| f.sig.name == d.sig.name))
-            .cloned()
-            .collect()
+            .filter(|d| !b.items.iter().any(|f| f.sig.name == **d))
+            .map(|d| format!("{target}.{d} = {trait_name}.{d}"))
+            .collect();
+        if self.bound_traits.contains(trait_name) {
+            for l in lines {
+                self.line(l);
+            }
+        } else {
+            self.pending_defaults
+                .entry(trait_name.clone())
+                .or_default()
+                .extend(lines);
+        }
     }
 
     /// Emit a function. `target` is the type name when this is a method or
@@ -1121,16 +1176,20 @@ impl Emitter {
     }
 }
 
-/// The default-bodied methods of every trait declared in `module`, by trait
-/// name. Traits without a default are absent.
-fn trait_defaults(module: &ast::Module) -> HashMap<String, Vec<ast::FnDecl>> {
-    module
-        .items
-        .iter()
-        .filter_map(|item| match &item.kind {
-            ast::ItemKind::Trait(t) => Some((t.name.clone(), t.default_methods())),
-            _ => None,
-        })
+/// The default-bodied method names of every trait in scope, by binding: each
+/// trait declared in `module`, then each `use`d one in `imported`. Traits
+/// without a default are absent.
+fn trait_defaults(
+    module: &ast::Module,
+    imported: &[(&str, &ast::TraitDecl)],
+) -> HashMap<String, Vec<String>> {
+    let declared = module.items.iter().filter_map(|item| match &item.kind {
+        ast::ItemKind::Trait(t) => Some((t.name.as_str(), t)),
+        _ => None,
+    });
+    declared
+        .chain(imported.iter().copied())
+        .map(|(binding, t)| (binding.to_string(), t.default_names()))
         .filter(|(_, defaults)| !defaults.is_empty())
         .collect()
 }
@@ -1318,7 +1377,7 @@ mod module_tests {
     fn as_module_emits_local_pub_fn_and_export_table() {
         let parsed = neoc_parser::parse("pub fn greet(name: string) -> string { name }");
         assert!(parsed.ok(), "{:?}", parsed.diagnostics);
-        let out = emit_with_imports(&parsed.module, "", &[], &[], &[], true).lua;
+        let out = emit_with_imports(&parsed.module, "", &[], &[], &[], &[], true).lua;
         // The `pub fn` is a `local`, not a global — globals are the single-file
         // script form (§3.7).
         assert!(
@@ -1332,10 +1391,50 @@ mod module_tests {
     }
 
     #[test]
+    fn imported_trait_default_is_assigned_from_the_use_binding() {
+        let lib = neoc_parser::parse(
+            "pub trait Greet { fn name(self) -> string; fn hi(self) -> string { self.name() } }",
+        );
+        let ast::ItemKind::Trait(greet) = &lib.module.items[0].kind else {
+            panic!("expected a trait");
+        };
+        let parsed = neoc_parser::parse(
+            "use lib::Greet as G; struct D; impl G for D { fn name(self) -> string { \"d\" } }",
+        );
+        assert!(parsed.ok(), "{:?}", parsed.diagnostics);
+        let out = emit_with_imports(&parsed.module, "", &[], &[], &[], &[("G", greet)], true).lua;
+        assert!(out.contains("D.hi = G.hi"), "{out}");
+        assert!(!out.contains("D.name = G.name"), "{out}");
+    }
+
+    #[test]
+    fn default_assignment_waits_for_a_later_trait_table() {
+        let parsed = neoc_parser::parse(
+            "struct D; impl Greet for D {} trait Greet { fn hi(self) -> string { \"x\" } }",
+        );
+        assert!(parsed.ok(), "{:?}", parsed.diagnostics);
+        let out = emit_with_imports(&parsed.module, "", &[], &[], &[], &[], true).lua;
+        let table = out.find("local Greet = {}").expect("trait table");
+        let assign = out.find("D.hi = Greet.hi").expect("default assignment");
+        assert!(table < assign, "{out}");
+    }
+
+    #[test]
+    fn pub_trait_with_defaults_is_exported() {
+        let parsed = neoc_parser::parse("pub trait Greet { fn hi(self) -> string { \"x\" } }");
+        assert!(parsed.ok(), "{:?}", parsed.diagnostics);
+        let out = emit_with_imports(&parsed.module, "", &[], &[], &[], &[], true).lua;
+        assert!(
+            out.trim_end().ends_with("return { Greet = Greet }"),
+            "{out}"
+        );
+    }
+
+    #[test]
     fn single_file_keeps_globals_and_no_return_table() {
         let parsed = neoc_parser::parse("pub fn greet(name: string) -> string { name }");
         assert!(parsed.ok(), "{:?}", parsed.diagnostics);
-        let out = emit_with_imports(&parsed.module, "", &[], &[], &[], false).lua;
+        let out = emit_with_imports(&parsed.module, "", &[], &[], &[], &[], false).lua;
         assert!(
             out.contains("function greet"),
             "single-file pub fn stays a global:\n{out}"
@@ -1361,7 +1460,7 @@ enum Hidden { A, B }
 fn helper() {}";
         let parsed = neoc_parser::parse(src);
         assert!(parsed.ok(), "{:?}", parsed.diagnostics);
-        let out = emit_with_imports(&parsed.module, "", &[], &[], &[], true).lua;
+        let out = emit_with_imports(&parsed.module, "", &[], &[], &[], &[], true).lua;
         let last = out.trim_end().lines().last().unwrap();
         // Pub const, struct, and the method-bearing enum export; the private fn
         // and the plain (no-method) enum do not.
@@ -1372,7 +1471,7 @@ fn helper() {}";
     fn emit_shadowed(src: &str, shadowed: &[ShadowedTypeImport]) -> String {
         let parsed = neoc_parser::parse(src);
         assert!(parsed.ok(), "{:?}", parsed.diagnostics);
-        emit_with_imports(&parsed.module, src, &[], &[], shadowed, true).lua
+        emit_with_imports(&parsed.module, src, &[], &[], shadowed, &[], true).lua
     }
 
     fn shadowed(path: &[&str], binding: &str) -> ShadowedTypeImport {

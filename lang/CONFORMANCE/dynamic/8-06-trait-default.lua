@@ -14,6 +14,10 @@ function __check_Quiet(v, path)
   __check_string(v.n, path .. ".n")
   return v
 end
+local Greet = {}
+function Greet.hi(self)
+  return ("hi " .. self:name())
+end
 local Quiet = {}
 Quiet.__index = Quiet
 function Quiet.new(fields)
@@ -31,9 +35,7 @@ Loud.__traits = { "Greet" }
 function Quiet.name(self)
   return self.n
 end
-function Quiet.hi(self)
-  return ("hi " .. self:name())
-end
+Quiet.hi = Greet.hi
 function Loud.name(self)
   return self.n
 end

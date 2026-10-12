@@ -9,6 +9,14 @@ function __check_Badger(v, path)
   __check_string(v.name, path .. ".name")
   return v
 end
+local Show = {}
+function Show.shout(self)
+  return (self:show() .. "!")
+end
+local Greet = {}
+function Greet.greet(self)
+  return ("Hi, " .. self:shout())
+end
 local Badger = {}
 Badger.__index = Badger
 function Badger.new(fields)
@@ -19,12 +27,8 @@ Badger.__traits = { "Greet", "Show" }
 function Badger.show(self)
   return self.name
 end
-function Badger.shout(self)
-  return (self:show() .. "!")
-end
-function Badger.greet(self)
-  return ("Hi, " .. self:shout())
-end
+Badger.shout = Show.shout
+Badger.greet = Greet.greet
 local function main()
   local b = Badger.new({ name = "Bram" })
   println(b:shout())

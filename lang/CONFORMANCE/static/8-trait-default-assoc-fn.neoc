@@ -1,0 +1,15 @@
+// STATIC.md §8: an omitted associated-function default is inherited, so
+// `Type::f()` resolves to it with `Self` read as the type.
+trait Make {
+    fn tag() -> string {
+        "made"
+    }
+}
+
+struct D;
+
+impl Make for D {}
+
+fn go() -> string {
+    D::tag()
+}

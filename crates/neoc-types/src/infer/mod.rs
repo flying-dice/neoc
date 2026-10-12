@@ -1002,6 +1002,9 @@ impl<'a> Checker<'a> {
                 if let Some(m) = self.table.methods.get(&(type_name.clone(), member.clone())) {
                     return Ty::Fn(m.params.clone(), Box::new(m.ret.clone()));
                 }
+                if let Some((params, ret)) = self.default_method(type_name, member, false) {
+                    return Ty::Fn(params, Box::new(ret));
+                }
                 self.error_at(
                     span,
                     format!("`{type_name}` has no associated function `{member}`"),
@@ -1318,7 +1321,7 @@ impl<'a> Checker<'a> {
         let Some(m) = self.table.methods.get(&(name.clone(), method.to_string())) else {
             // A trait the type implements may supply the method as a default
             // the impl did not override.
-            if let Some((params, ret)) = self.default_method(name, method) {
+            if let Some((params, ret)) = self.default_method(name, method, true) {
                 self.check_call_args(method, &params, &arg_tys, args, span);
                 return ret;
             }

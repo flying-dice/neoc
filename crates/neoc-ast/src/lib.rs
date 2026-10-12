@@ -617,6 +617,16 @@ impl TraitDecl {
             })
             .collect()
     }
+
+    /// The names of the trait's default-bodied methods, in source order.
+    #[must_use]
+    pub fn default_names(&self) -> Vec<String> {
+        self.items
+            .iter()
+            .filter(|item| item.default.is_some())
+            .map(|item| item.sig.name.clone())
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

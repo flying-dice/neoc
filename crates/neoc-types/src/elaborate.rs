@@ -25,17 +25,11 @@ use crate::ty::Ty;
 /// elaboration runs after [`crate::check`] has already reported them.
 pub struct Elaborator<'a> {
     checker: Checker<'a>,
-    /// The trait whose default bodies are being elaborated, so `Self` is in
-    /// scope as a parameter bounded by it (mirrors the checker).
-    trait_self: Option<String>,
 }
 
 impl<'a> Elaborator<'a> {
     fn new(checker: Checker<'a>) -> Self {
-        Self {
-            checker,
-            trait_self: None,
-        }
+        Self { checker }
     }
 
     // ---- items -------------------------------------------------------------
@@ -141,7 +135,7 @@ impl<'a> Elaborator<'a> {
         ast::FnDecl {
             attrs: f.attrs.clone(),
             sig: f.sig.clone(),
-            body: self.fn_body(&f.sig, &f.body, self_ty),
+            body: self.fn_body(&f.sig, &f.body, self_ty, None),
         }
     }
 
@@ -165,7 +159,6 @@ impl<'a> Elaborator<'a> {
     }
 
     fn trait_decl(&mut self, t: &ast::TraitDecl) -> ast::TraitDecl {
-        self.trait_self = Some(t.name.clone());
         let items = t
             .items
             .iter()
@@ -174,10 +167,9 @@ impl<'a> Elaborator<'a> {
                 default: ti
                     .default
                     .as_ref()
-                    .map(|body| self.fn_body(&ti.sig, body, Some("Self"))),
+                    .map(|body| self.fn_body(&ti.sig, body, Some("Self"), Some(&t.name))),
             })
             .collect();
-        self.trait_self = None;
         ast::TraitDecl {
             name: t.name.clone(),
             generics: t.generics.clone(),
@@ -196,19 +188,22 @@ impl<'a> Elaborator<'a> {
     }
 
     /// Mirrors [`Checker::check_fn_body`]: enters the signature's type params,
-    /// binds each parameter, then elaborates the body in that scope.
+    /// binds each parameter, then elaborates the body in that scope. For a
+    /// default body of trait `trait_self`, `Self` is a parameter bounded by
+    /// that trait (mirrors `Checker::check_trait_defaults`).
     fn fn_body(
         &mut self,
         sig: &ast::FnSig,
         body: &ast::Block,
         self_ty: Option<&str>,
+        trait_self: Option<&str>,
     ) -> ast::Block {
         let prev_params = std::mem::take(&mut self.checker.type_params);
         let prev_bounds = std::mem::take(&mut self.checker.type_bounds);
         self.checker.type_params = sig.generics.iter().map(|g| g.name.clone()).collect();
         self.checker.type_bounds = crate::collect::param_bounds(sig);
-        if let Some(trait_name) = self.trait_self.clone() {
-            self.checker.enter_trait_self(&trait_name);
+        if let Some(trait_name) = trait_self {
+            self.checker.enter_trait_self(trait_name);
         }
         let self_target = self_ty.map(|t| self.checker.self_target(t));
 

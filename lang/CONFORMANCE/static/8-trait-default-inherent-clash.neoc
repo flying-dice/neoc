@@ -1,0 +1,17 @@
+// STATIC.md §8: an inherited default may not take a name the type already has
+// from an inherent impl — the two would share one slot on the type's table.
+trait Greet {
+    fn hi(self) -> string {
+        "default"
+    }
+}
+
+struct D;
+
+impl D {
+    fn hi(self) -> string {
+        "inherent"
+    }
+}
+
+impl Greet for D {}

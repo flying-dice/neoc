@@ -95,6 +95,15 @@ impl Checker<'_> {
                 ));
             }
         }
+        if !is_blanket {
+            let inherited: Vec<&str> = t
+                .methods
+                .iter()
+                .filter(|m| m.has_default && !provided.iter().any(|p| **p == m.name))
+                .map(|m| m.name.as_str())
+                .collect();
+            self.check_inherited_defaults(target, trait_name, &inherited);
+        }
         // Associated-type completeness: every declared `type Item;` must be
         // bound, and a binding must name a declared associated type.
         for at in &t.assoc_types {
@@ -112,6 +121,34 @@ impl Checker<'_> {
             }
         }
         self.check_sig_conformance(b, target, trait_name, t, is_blanket);
+    }
+
+    /// Rejects each default `impl trait_name for target` inherits whose name the
+    /// type already has — an inherent or trait-impl method, or another
+    /// implemented trait's default. The type's one method table can hold only
+    /// one of them, so the call would resolve differently statically and at
+    /// runtime (`STATIC.md` §8).
+    fn check_inherited_defaults(&mut self, target: &str, trait_name: &str, inherited: &[&str]) {
+        for &m in inherited {
+            let clash = if self
+                .table
+                .methods
+                .contains_key(&(target.to_string(), m.to_string()))
+            {
+                format!("`{target}` already has a method `{m}`")
+            } else if let Some(other) = self
+                .default_sources(target, m)
+                .into_iter()
+                .find(|t| t != trait_name)
+            {
+                format!("trait `{other}` also gives `{target}` a default `{m}`")
+            } else {
+                continue;
+            };
+            self.error(format!(
+                "`impl {trait_name} for {target}` inherits default method `{m}`, but {clash}; override `{m}` in the impl"
+            ));
+        }
     }
 
     /// Checks each provided method's signature against the trait's declared one

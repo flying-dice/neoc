@@ -562,6 +562,7 @@ fn check_and_emit_module(
     let elaborated = types::elaborate_with_table(&me.module, &table);
     let inputs = EmitInputs {
         enums: imported_enums(root, loaded, &me.module),
+        traits: imported_traits(root, loaded, &me.module),
         externs,
         shadowed_types: shadowed_type_imports(root, loaded, &me.module, &table),
         // Every module a project build emits is a requireable library — the
@@ -719,6 +720,9 @@ fn canonical_or(path: &Path) -> PathBuf {
 struct EmitInputs<'a> {
     /// `pub` enum declarations brought in by `use` (the backend resolves variant forms).
     enums: Vec<&'a ast::EnumDecl>,
+    /// Each `use` binding that names a `pub` trait, with the trait's
+    /// declaration (an impl assigns its omitted defaults from the trait table).
+    traits: Vec<(String, &'a ast::TraitDecl)>,
     /// Extern items brought in by `use`, for native-import reconstruction in the
     /// consumer (`lang/EXTERN.md` §Lowering).
     externs: Vec<ast::ExternItem>,
@@ -756,6 +760,11 @@ fn emit(target: Target, module: &ast::Module, source: &str, inputs: &EmitInputs)
                 &inputs.enums,
                 &inputs.externs,
                 &inputs.shadowed_types,
+                &inputs
+                    .traits
+                    .iter()
+                    .map(|(binding, t)| (binding.as_str(), *t))
+                    .collect::<Vec<_>>(),
                 inputs.as_module,
             );
             Emitted {
@@ -902,6 +911,48 @@ fn imported_enums<'a>(
         }
     }
     enums
+}
+
+/// The `pub` traits `module` imports by `use`, each with the binding it is
+/// imported under. The backend reads their default-method names so an `impl`
+/// of an imported trait assigns the defaults it omits; the trait's table is
+/// emitted by the module that declares it.
+fn imported_traits<'a>(
+    root: &Path,
+    loaded: &'a HashMap<PathBuf, LoadedModule>,
+    module: &ast::Module,
+) -> Vec<(String, &'a ast::TraitDecl)> {
+    let mut traits = Vec::new();
+    for item in &module.items {
+        let ast::ItemKind::Use(u) = &item.kind else {
+            continue;
+        };
+        let Some(last) = u.path.last() else {
+            continue;
+        };
+        let Some(dep) = module_file(root, &u.path).map(|p| canonical_or(&p)) else {
+            continue;
+        };
+        let Some(source) = loaded.get(&dep) else {
+            continue;
+        };
+        let found = source
+            .module
+            .items
+            .iter()
+            .find_map(|dep_item| match &dep_item.kind {
+                ast::ItemKind::Trait(t)
+                    if dep_item.vis == ast::Visibility::Public && t.name == *last =>
+                {
+                    Some(t)
+                }
+                _ => None,
+            });
+        if let Some(t) = found {
+            traits.push((u.alias.clone().unwrap_or_else(|| last.clone()), t));
+        }
+    }
+    traits
 }
 
 #[cfg(test)]

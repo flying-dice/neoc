@@ -106,7 +106,15 @@ Because the constructor sets `S.__index = S` and `setmetatable`s each instance (
 
 ### 3.4 `trait`
 
-A trait produces no standalone output. Its required methods are realised by each `impl Trait for Type`. A default-bodied trait method, when not overridden, is emitted onto the implementing type's table at the impl site, with `Self` replaced by the implementing type name. A blanket impl (§3.5) is expanded to a concrete `impl` for each implementing type before lowering, so its methods land on that type's table like any other impl — no runtime trait machinery is involved.
+A trait without default-bodied methods produces no output; its required methods are realised by each `impl Trait for Type`. A trait with defaults emits a table holding them, bound like any other item (`local`, or exported when `pub`), so a `use` of the trait reaches it (§3.7). An `impl Trait for Type` that omits a default assigns the trait's function onto the type's table:
+
+```
+⟦ trait Tr { fn m(self) { body } } ⟧ = local Tr = {}
+                                        function Tr.m(self) ⟦ body ⟧ₛ end
+⟦ impl Tr for S {} ⟧                  = S.m = Tr.m
+```
+
+The body is emitted once, in the trait's module, and shared by every implementor; it never names `Self` at runtime. When the impl precedes the trait's binding in the module, the assignment is emitted right after that binding. A blanket impl (§3.5) is expanded to a concrete `impl` for each implementing type before lowering, so its methods land on that type's table like any other impl — no runtime trait machinery is involved.
 
 ### 3.5 `const`
 

@@ -1,0 +1,20 @@
+// DYNAMIC.md §3.4: an omitted associated-function default is assigned onto the
+// type's table like a method, so `D::tag()` reaches it. The impl precedes the
+// trait, so the assignment follows the trait's table.
+extern {
+    fn println(s: string);
+}
+
+struct D;
+
+impl Make for D {}
+
+trait Make {
+    fn tag() -> string {
+        "made"
+    }
+}
+
+fn main() {
+    println(D::tag());
+}
