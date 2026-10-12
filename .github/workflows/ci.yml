@@ -17,7 +17,7 @@ on:
     - cron: "0 4 * * 1"
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: ${{ github.ref_type != 'tag' && github.ref != 'refs/heads/main' && github.ref != 'refs/heads/develop' }}
 
 permissions:
@@ -185,7 +185,9 @@ jobs:
           cargo clean $(printf -- '-p %s ' $crates) $CLEAN_ARGS
       - run: rm -rf target/criterion
       - run: cargo bench -p neoc-vm --bench lib --features bench -- --noplot | tee bench-lib.txt
+        shell: bash
       - run: cargo bench -p neoc-vm --bench vnd --features bench -- --noplot | tee bench-vnd.txt
+        shell: bash
       - uses: actions/upload-artifact@v4
         if: always()
         with:
