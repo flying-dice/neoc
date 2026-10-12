@@ -351,7 +351,7 @@ impl<'a> Checker<'a> {
 
     /// Checks the type annotations an item declares outside any function body —
     /// struct and enum fields, bodyless trait and `extern` signatures, impl
-    /// associated-type bindings, an alias's own value — and rejects a recursive
+    /// headers and associated-type bindings, an alias's own value — and rejects a recursive
     /// `type` alias (`STATIC.md` D-ALIAS-ARITY, D-ALIAS-RECURSIVE). Signatures
     /// with a body are checked with that body.
     fn check_declared_types(&mut self, item: &ast::Item) {
@@ -383,6 +383,7 @@ impl<'a> Checker<'a> {
             }
             ast::ItemKind::Impl(b) => {
                 let params = generic_names(&b.generics);
+                self.check_impl_header_alias_arity(b, &params, item.span);
                 for (_, ty) in &b.assoc_bindings {
                     self.check_alias_arity(ty, &params, item.span);
                 }
@@ -398,6 +399,20 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// Checks the alias arity of an impl header — its target type and its
+    /// trait's type arguments — reporting at `span`.
+    fn check_impl_header_alias_arity(
+        &mut self,
+        b: &ast::ImplBlock,
+        params: &[String],
+        span: ast::Span,
+    ) {
+        self.check_alias_arity(&b.ty, params, span);
+        if let Some(t) = &b.trait_ {
+            self.check_alias_arity(&ast::Type::Path(t.clone()), params, span);
+        }
+    }
+
     /// [`Self::check_declared_types`] for the items of an `extern` block,
     /// recursing into nested `mod`s.
     fn check_extern_alias_arity(&mut self, items: &[ast::ExternItem]) {
@@ -407,6 +422,7 @@ impl<'a> Checker<'a> {
                 ast::ExternItemKind::Struct(s) => self.check_struct_alias_arity(s, ext.span),
                 ast::ExternItemKind::Impl(b) => {
                     let params = generic_names(&b.generics);
+                    self.check_impl_header_alias_arity(b, &params, ext.span);
                     for m in &b.items {
                         self.check_sig_alias_arity(&m.sig, &params);
                     }
