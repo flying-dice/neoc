@@ -326,7 +326,7 @@ An `impl Trait for Type` must provide every required method of `Trait` (those wi
 
 A type has one method table, so each method name on it must come from exactly one place. An inherited default whose name the type already has — from an inherent impl, another trait impl's method, or another implemented trait's inherited default — is a static error at the inheriting impl. Override the default in the impl to resolve it.
 
-The same holds for explicit methods: two methods of one name on a type — from an inherent `impl`, a trait `impl`, an `extern` `impl`, or a blanket `impl` reaching the type — are a static error at the later `impl`, in either declaration order. A name repeated inside one `impl` is the same error.
+The same holds for explicit methods and associated functions: two of one name on a type — from an inherent `impl`, a trait `impl`, an `extern` `impl`, or a blanket `impl` reaching the type — are a static error at the later `impl`, in either declaration order. A name repeated inside one `impl` is the same error. A second `impl` of one trait for a type is reported as a conflicting impl only. A derived method yields to an explicit one of its name.
 
 ## 9. Attribute well-formedness
 

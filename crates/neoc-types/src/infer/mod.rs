@@ -652,18 +652,18 @@ impl<'a> Checker<'a> {
     /// later impl. Inherited defaults are checked by
     /// [`Checker::check_inherited_defaults`].
     fn check_method_clashes(&mut self, module: &ast::Module) {
-        let mut impls: Vec<(&ast::ImplBlock, ast::Span)> = Vec::new();
+        let mut impls: Vec<(&ast::ImplBlock, ast::Span, bool)> = Vec::new();
+        // `(type, method)` → who first gave it: label, trait, impl index.
+        let mut owners: std::collections::HashMap<(String, String), Owner> =
+            std::collections::HashMap::new();
         for item in &module.items {
             match &item.kind {
-                ast::ItemKind::Impl(b) => impls.push((b, item.span)),
+                ast::ItemKind::Impl(b) => impls.push((b, item.span, false)),
                 ast::ItemKind::Extern(block) => collect_extern_impls(&block.items, &mut impls),
                 _ => {}
             }
         }
-        // `(type, method)` → the label and trait of the impl that first gave it.
-        let mut owners: std::collections::HashMap<(String, String), (String, Option<String>)> =
-            std::collections::HashMap::new();
-        for (b, span) in impls {
+        for (idx, (b, span, is_extern)) in impls.into_iter().enumerate() {
             let Some(target) = crate::collect::impl_target_name(&b.ty) else {
                 continue;
             };
@@ -672,12 +672,14 @@ impl<'a> Checker<'a> {
                 .as_ref()
                 .and_then(|p| p.segments.last())
                 .map(|s| s.name.clone());
-            let label = match &b.trait_ {
-                Some(p) => p.segments.last().map_or_else(
-                    || format!("`impl {target}`"),
-                    |s| format!("`impl {} for {target}`", s.name),
-                ),
-                None => format!("`impl {target}`"),
+            let header = match &trait_name {
+                Some(t) => format!("impl {t} for {target}"),
+                None => format!("impl {target}"),
+            };
+            let label = if is_extern {
+                format!("`extern {header}`")
+            } else {
+                format!("`{header}`")
             };
             let types = if b.generics.iter().any(|g| g.name == target) {
                 // A blanket impl lands on every type meeting its conditions.
@@ -692,11 +694,13 @@ impl<'a> Checker<'a> {
                 for f in &b.items {
                     match owners.entry((ty.clone(), f.sig.name.clone())) {
                         std::collections::hash_map::Entry::Vacant(e) => {
-                            e.insert((label.clone(), trait_name.clone()));
+                            e.insert((label.clone(), trait_name.clone(), idx));
                         }
-                        // Two impls of one trait are already a coherence error.
+                        // Another impl of one trait is already a coherence error.
                         std::collections::hash_map::Entry::Occupied(e)
-                            if trait_name.is_some() && e.get().1 == trait_name => {}
+                            if trait_name.is_some()
+                                && e.get().1 == trait_name
+                                && e.get().2 != idx => {}
                         std::collections::hash_map::Entry::Occupied(e) => {
                             self.error_at(
                                 span,
@@ -2301,13 +2305,17 @@ fn module_scope_names(item: &ast::Item) -> Vec<(&str, ast::Span)> {
 /// source order.
 fn collect_extern_impls<'a>(
     items: &'a [ast::ExternItem],
-    out: &mut Vec<(&'a ast::ImplBlock, ast::Span)>,
+    out: &mut Vec<(&'a ast::ImplBlock, ast::Span, bool)>,
 ) {
     for ext in items {
         match &ext.kind {
-            ast::ExternItemKind::Impl(b) => out.push((b, ext.span)),
+            ast::ExternItemKind::Impl(b) => out.push((b, ext.span, true)),
             ast::ExternItemKind::Mod(m) => collect_extern_impls(&m.items, out),
             _ => {}
         }
     }
 }
+
+/// Who first gave a type a method name: the impl's label, its trait, and its
+/// position among the module's impls.
+type Owner = (String, Option<String>, usize);

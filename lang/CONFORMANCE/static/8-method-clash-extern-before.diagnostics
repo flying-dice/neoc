@@ -1,1 +1,1 @@
-`impl Settings` gives `Settings` a method `rename`, but `impl Settings` already does; a type has one method per name
+`extern impl Settings` gives `Settings` a method `rename`, but `impl Settings` already does; a type has one method per name

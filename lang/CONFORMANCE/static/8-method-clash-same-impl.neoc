@@ -1,0 +1,16 @@
+// STATIC.md §8: a name repeated inside one trait `impl` is the same error.
+trait Greet {
+    fn hi(self) -> string;
+}
+
+struct D;
+
+impl Greet for D {
+    fn hi(self) -> string {
+        "a"
+    }
+
+    fn hi(self) -> string {
+        "b"
+    }
+}

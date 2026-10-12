@@ -146,3 +146,43 @@ impl E {\n  fn tag(self) -> string { \"own\" }\n}\n\
 impl<T: Show> Tag for T {\n  fn tag(self) -> string { self.show() }\n}\n";
     assert!(diagnostics(src).is_empty(), "{:?}", diagnostics(src));
 }
+
+#[test]
+fn a_repeated_name_inside_one_trait_impl_clashes() {
+    let src = format!(
+        "{TRAITS}impl Greet for D {{\n  fn hi(self) -> string {{ \"1\" }}\n  fn hi(self) -> string {{ \"2\" }}\n  fn a(self) -> string {{ \"a\" }}\n}}\n"
+    );
+    expect_clash(
+        &src,
+        "`impl Greet for D` gives `D` a method `hi`, but `impl Greet for D` already does; a type has one method per name",
+    );
+}
+
+#[test]
+fn a_repeated_name_inside_one_blanket_impl_clashes() {
+    let src = "trait Tag {\n  fn tag(self) -> string;\n}\ntrait Show {\n  fn show(self) -> string;\n}\nstruct D;\n\
+impl Show for D {\n  fn show(self) -> string { \"d\" }\n}\n\
+impl<T: Show> Tag for T {\n  fn tag(self) -> string { \"1\" }\n  fn tag(self) -> string { \"2\" }\n}\n";
+    expect_clash(
+        src,
+        "`impl Tag for T` gives `D` a method `tag`, but `impl Tag for T` already does; a type has one method per name",
+    );
+}
+
+#[test]
+fn a_hand_written_method_takes_precedence_over_a_derive() {
+    let src =
+        "#[derive(Clone)]\nstruct D { a: number }\nimpl D {\n  fn clone(self) -> D { self }\n}\n";
+    assert!(diagnostics(src).is_empty(), "{:?}", diagnostics(src));
+}
+
+#[test]
+fn an_associated_function_clashes_with_a_method_of_its_name() {
+    let src = format!(
+        "{TRAITS}impl D {{\n  fn hi() -> string {{ \"x\" }}\n}}\nimpl Wave for D {{\n  fn hi(self) -> string {{ \"w\" }}\n}}\n"
+    );
+    expect_clash(
+        &src,
+        "`impl Wave for D` gives `D` a method `hi`, but `impl D` already does; a type has one method per name",
+    );
+}
