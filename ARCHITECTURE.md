@@ -31,7 +31,7 @@ Each emitted `.lua` module is self-contained — no runtime library, no sidecar 
 
 | Crate | Owns | Depends on |
 | --- | --- | --- |
-| `neoc-grammar` | vendors the `tree-sitter-neoc` grammar (git submodule); `cc`-builds its parser; exposes the `LANGUAGE` binding | (C runtime) |
+| `neoc-grammar` | holds the `tree-sitter-neoc` grammar (`grammar.js` + generated parser); `cc`-builds the parser; exposes the `LANGUAGE` binding | (C runtime) |
 | `neoc-ast` | the typed AST — pure data, span-free, `PartialEq` | — |
 | `neoc-parser` | CST → AST adapter, one walker per construct family; parse diagnostics | ast, grammar |
 | `neoc-types` | declaration collection, inference, well-formedness checks, `elaborate` | ast |

@@ -20,10 +20,6 @@ variables:
   RUSTFLAGS: "-D warnings"
   # Keep all cargo data inside the project dir so it lands in the cache.
   CARGO_HOME: "${CI_PROJECT_DIR}/.cargo"
-  # The neoc-grammar crate compiles the `tree-sitter-neoc` submodule's
-  # parser.c. `.gitmodules` uses a relative URL (`../tree-sitter-neoc.git`) so
-  # the CI job token can clone it; fetch it before any build/lint job runs.
-  GIT_SUBMODULE_STRATEGY: recursive
 
 # ── Cache anchors ─────────────────────────────────────────────────────────────
 
