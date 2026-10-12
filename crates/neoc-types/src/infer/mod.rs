@@ -17,6 +17,10 @@ use crate::ty::Ty;
 
 mod impl_check;
 pub(crate) mod marshal;
+
+/// The name of the marker type a closure parameter takes when no hint could type
+/// it (see `infer_closure`).
+const UNRESOLVED: &str = "_";
 mod pattern;
 mod solve;
 mod usefulness;
@@ -88,10 +92,6 @@ pub struct Checker<'a> {
     /// Closure-literal parameters whose type a hint withheld because a type
     /// parameter was still open, keyed by closure span and position.
     open_hint_params: std::collections::HashSet<((usize, usize), usize)>,
-    /// Bindings of such parameters that stayed `Unknown`.
-    unresolved_params: std::collections::HashSet<crate::env::BindingId>,
-    /// Non-zero while a closure literal is inferred as a call argument.
-    call_arg_depth: u32,
 }
 
 /// A named type's type parameters and declared fields.
@@ -162,8 +162,6 @@ impl<'a> Checker<'a> {
             closure_params: std::collections::HashMap::new(),
             hint_misses: Vec::new(),
             open_hint_params: std::collections::HashSet::new(),
-            unresolved_params: std::collections::HashSet::new(),
-            call_arg_depth: 0,
         }
     }
 
@@ -1648,8 +1646,13 @@ impl<'a> Checker<'a> {
         args: &[ast::Expr],
         span: ast::Span,
     ) -> Ty {
-        self.check_resolved_receiver(receiver);
         let recv = self.infer(receiver);
+        if self.check_resolved_receiver(&recv, receiver.span) {
+            for a in args {
+                self.infer(a);
+            }
+            return Ty::Unknown;
+        }
         if let Ty::Named { name, .. } = &recv {
             if let Some((params, _)) = self.host_method_sig(name, method) {
                 self.allow_host_fn_args(args, &params);
@@ -1754,8 +1757,10 @@ impl<'a> Checker<'a> {
     }
 
     fn infer_field(&mut self, base: &ast::Expr, field: &ast::FieldAccess, span: ast::Span) -> Ty {
-        self.check_resolved_receiver(base);
         let base_ty = self.infer(base);
+        if self.check_resolved_receiver(&base_ty, base.span) {
+            return Ty::Unknown;
+        }
         let Ty::Named { name, .. } = &base_ty else {
             if base_ty.is_unknown() {
                 return Ty::Unknown;
@@ -2135,9 +2140,7 @@ impl<'a> Checker<'a> {
                 let p = Self::subst_named(p, &eff);
                 self.hint_closures(&args[i], &p, &eff);
             }
-            self.call_arg_depth += 1;
             let ty = self.infer(&args[i]);
-            self.call_arg_depth = 0;
             if let Some(p) = expected.get(i) {
                 self.check_closure_clash(p, &ty, &subst, args[i].span);
                 self.unify_param(p, &ty, &mut subst);
@@ -2304,7 +2307,7 @@ impl<'a> Checker<'a> {
                 let expected = Self::subst_named(ty, subst)
                     // An open parameter stays marked, not `Unknown`, so a closure
                     // typed from this call knows its parameter was withheld.
-                    .map(&|t| matches!(t, Ty::Param(_)).then(|| Ty::Param("_".to_string())));
+                    .map(&|t| matches!(t, Ty::Param(_)).then(|| Ty::Param(UNRESOLVED.to_string())));
                 self.expected_tys
                     .entry((expr.span.start, expr.span.end))
                     .or_default()
@@ -2587,31 +2590,32 @@ impl<'a> Checker<'a> {
         self.scopes.push();
         let expect = self
             .closure_hints
-            .remove(&(span.start, span.end))
+            .get(&(span.start, span.end))
+            .cloned()
             .unwrap_or_default();
-        let in_arg = std::mem::take(&mut self.call_arg_depth) > 0;
         let mut ptys = Vec::new();
         for (i, p) in params.iter().enumerate() {
-            let ty = p.ty.as_ref().map_or_else(
+            let mut ty = p.ty.as_ref().map_or_else(
                 || expect.get(i).cloned().unwrap_or(Ty::Unknown),
                 |t| self.lower_at(t, p.span),
             );
-            let id = self.bind_local(
+            // A call argument's parameter that no hint could type, in a
+            // module where a host `Option` could flow through it, gets the
+            // `unresolved` marker type: it flows like an unknown value but
+            // any member read on it is an error, however it was reached.
+            if p.ty.is_none()
+                && ty.is_unknown()
+                && self.open_hint_params.contains(&((span.start, span.end), i))
+                && self.host_option_exposed()
+            {
+                ty = Ty::Param(UNRESOLVED.to_string());
+            }
+            self.bind_local(
                 p.name.clone(),
                 ty.clone(),
                 p.span,
                 crate::resolve::BindingKind::ClosureParam,
             );
-            // A call argument's parameter that no hint could type, in a
-            // module where a host `Option` could flow through it.
-            if in_arg
-                && p.ty.is_none()
-                && ty.is_unknown()
-                && self.open_hint_params.contains(&((span.start, span.end), i))
-                && self.host_option_exposed()
-            {
-                self.unresolved_params.insert(id);
-            }
             ptys.push(ty);
         }
         self.closure_params
@@ -2620,7 +2624,6 @@ impl<'a> Checker<'a> {
         self.closure_depth += 1;
         let ret = self.infer(body);
         self.closure_depth -= 1;
-        self.call_arg_depth = 0;
         self.scopes.pop();
         Ty::Fn(ptys, Box::new(ret))
     }
@@ -2646,23 +2649,18 @@ impl<'a> Checker<'a> {
             })
     }
 
-    /// Rejects a member access on a closure parameter that no hint could type.
-    fn check_resolved_receiver(&mut self, base: &ast::Expr) {
-        let ast::ExprKind::Path(segs) = &base.kind else {
-            return;
-        };
-        let [name] = segs.as_slice() else { return };
-        if let crate::env::ScopeLookup::Local(_, id) = self.scopes.resolve(name) {
-            if self.unresolved_params.contains(&id) {
-                self.error_at(
-                    base.span,
-                    format!(
-                        "the type of closure parameter `{name}` is not known here; annotate it, \
-                         e.g. `|{name}: Type|`"
-                    ),
-                );
-            }
+    /// Rejects a member access on a value of the `unresolved` marker type: a
+    /// closure parameter no hint could type, or anything derived from one.
+    fn check_resolved_receiver(&mut self, base_ty: &Ty, span: ast::Span) -> bool {
+        let unresolved = matches!(base_ty, Ty::Param(n) if n == UNRESOLVED);
+        if unresolved {
+            self.error_at(
+                span,
+                "the type of this closure parameter is not known here; annotate it, \
+                 e.g. `|s: Type|`",
+            );
         }
+        unresolved
     }
 
     // ---- `?` (STATIC.md §6) -----------------------------------------------

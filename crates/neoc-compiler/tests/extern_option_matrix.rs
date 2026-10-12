@@ -782,12 +782,34 @@ fn an_untypable_closure_parameter_is_rejected_when_members_are_read() {
             "fn mr<T>(f: fn(T) -> bool) -> Option<fn(T) -> bool> { Some(f) }\nfn call(f: fn() -> Option<fn(Settings) -> bool>) -> Option<bool> { let p = f()?; Some(p(mk())) }\nfn g(c: bool) -> Option<bool> { call(|| Some(if c { mr(|s| s.title.is_some()) } else { None }?)) }",
             "println(g(true));",
         ),
+        // A sibling closure in the same argument, and the parameter routed
+        // through a binding, a `match`, a call, or a block.
+        (
+            "fn run<T>(fs: [fn(T) -> bool], g: fn() -> T) -> bool { fs[1](g()) }",
+            "println(run([|a| true, |s| s.title.is_some()], || mk()));",
+        ),
+        (
+            "fn run<T>(fs: [fn(T) -> bool], g: fn() -> T) -> bool { fs[0](g()) }",
+            "println(run([|s| { let t = s; t.title.is_some() }], || mk()));",
+        ),
+        (
+            "fn run<T>(fs: [fn(T) -> bool], g: fn() -> T) -> bool { fs[0](g()) }",
+            "println(run([|s| match s { t => t.title.is_some() }], || mk()));",
+        ),
+        (
+            "fn run<T>(fs: [fn(T) -> bool], g: fn() -> T) -> bool { fs[0](g()) }",
+            "println(run([|s| id(s).title.is_some()], || mk()));",
+        ),
+        (
+            "fn run<T>(fs: [fn(T) -> bool], g: fn() -> T) -> bool { fs[0](g()) }",
+            "println(run([|s| { s }.title.is_some()], || mk()));",
+        ),
     ] {
         let out = build(items, body);
         assert!(
-            out.diagnostics.iter().any(|d| d
-                .message
-                .contains("closure parameter `s` is not known here")),
+            out.diagnostics
+                .iter()
+                .any(|d| d.message.contains("closure parameter is not known here")),
             "{body}\n{:#?}\n{}",
             out.diagnostics,
             out.output

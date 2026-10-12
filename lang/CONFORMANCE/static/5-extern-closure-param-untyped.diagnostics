@@ -1,1 +1,1 @@
-the type of closure parameter `s` is not known here; annotate it, e.g. `|s: Type|`
+the type of this closure parameter is not known here; annotate it, e.g. `|s: Type|`
