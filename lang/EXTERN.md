@@ -217,11 +217,27 @@ wrap(nil)    = None    wrap(v)         = Some(v)    (v ≠ nil)
 ```
 
 The rule applies to every host-implemented signature: an extern `fn`, a method,
-an associated function, a constructor, and the fields of an extern `struct`. A
-neoc function, and a neoc `struct` or `enum` with an `Option` field, are
-unaffected — an `Option` stays a tagged value inside neoc. An extern `fn` named
-as a value (passed on rather than called) marshals the same way when it is
-eventually called.
+an associated function, or a constructor declared in an extern `impl`, and the
+fields of an extern `struct`. Host-ness belongs to the declaration, not the type:
+a method a neoc inherent `impl` adds to an extern type is neoc-implemented and
+does not marshal. A neoc function, and a neoc `struct` or `enum` with an
+`Option` field, are unaffected — an `Option` stays a tagged value inside neoc.
+
+**Extern `fn` as a value.** Named rather than called, an extern `fn` whose
+signature carries an `Option` takes one of two forms by destination:
+
+- **into a host slot** — an argument of a host-implemented call, or a value
+  written to a field of an extern `struct` — it passes **raw**. The host calls
+  it with host shapes (`nil` / bare values), which is what it expects.
+- **anywhere else** (a `let`, a neoc argument, a return) it becomes a neoc
+  closure that marshals around the call, so neoc code calling it later sees
+  `Option` both ways.
+
+**Patterns.** A pattern reads a host field raw, so a struct pattern on an extern
+`struct` cannot destructure an `Option` field — neither by binding it
+(`Settings { title }`) nor by testing it (`Settings { title: Some(t) }`); the
+checker rejects both. Read the field with `.title`, which marshals; `title: _`
+and `..` read nothing and are allowed.
 
 Two shapes have no unambiguous host form and are rejected:
 
@@ -269,7 +285,9 @@ Hard errors, each with a corrective suggestion:
 - a path-based attribute;
 - `#[extern(ambient)]` on a descendant of an ambient `mod`;
 - an `Option` nested inside an `Option`, or an `Option` that is not the whole
-  parameter, return, or field type of an extern signature (§Option marshalling).
+  parameter, return, or field type of an extern signature (§Option marshalling);
+- a struct pattern that binds or tests an `Option` field of an extern `struct`
+  (§Option marshalling).
 
 ---
 

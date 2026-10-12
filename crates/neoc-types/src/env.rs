@@ -152,6 +152,10 @@ pub struct MethodInfo {
     pub params: Vec<Ty>,
     pub ret: Ty,
     pub has_receiver: bool,
+    /// Declared in an `extern impl`: the host implements it, so a call
+    /// marshals `Option<T>` (`lang/EXTERN.md` §Option marshalling). A neoc
+    /// inherent `impl` on an extern type adds methods with this unset.
+    pub host: bool,
 }
 
 /// The collected declarations of a module: the persistent half of `Γ`.
@@ -202,9 +206,8 @@ pub struct SymbolTable {
     /// the host implements. A call to one marshals `Option<T>` across the
     /// boundary (`lang/EXTERN.md` §Option marshalling).
     pub extern_values: HashSet<String>,
-    /// Type-namespace names declared inside an `extern` block. Their methods,
-    /// constructors, and fields are host-implemented, so each marshals
-    /// `Option<T>` the same way.
+    /// Type-namespace names declared inside an `extern` block. Their fields
+    /// are host-implemented, so each marshals `Option<T>` the same way.
     pub extern_types: HashSet<String>,
 }
 

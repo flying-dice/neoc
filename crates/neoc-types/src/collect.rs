@@ -151,6 +151,7 @@ fn derived_method(derive: &str, self_ty: &Ty) -> Option<(&'static str, MethodInf
                 params: Vec::new(),
                 ret: self_ty.clone(),
                 has_receiver: true,
+                host: false,
             },
         ),
         "Eq" => (
@@ -159,6 +160,7 @@ fn derived_method(derive: &str, self_ty: &Ty) -> Option<(&'static str, MethodInf
                 params: vec![self_ty.clone()],
                 ret: Ty::Bool,
                 has_receiver: true,
+                host: false,
             },
         ),
         "Debug" => (
@@ -167,6 +169,7 @@ fn derived_method(derive: &str, self_ty: &Ty) -> Option<(&'static str, MethodInf
                 params: Vec::new(),
                 ret: Ty::Str,
                 has_receiver: true,
+                host: false,
             },
         ),
         "Display" => (
@@ -175,6 +178,7 @@ fn derived_method(derive: &str, self_ty: &Ty) -> Option<(&'static str, MethodInf
                 params: Vec::new(),
                 ret: Ty::Str,
                 has_receiver: true,
+                host: false,
             },
         ),
         _ => return None,
@@ -347,6 +351,7 @@ fn prelude_method(table: &mut SymbolTable, ty: &str, name: &str, params: Vec<Ty>
             params,
             ret,
             has_receiver: true,
+            host: false,
         },
     );
 }
@@ -470,8 +475,23 @@ fn collect_extern_items(table: &mut SymbolTable, items: &[ast::ExternItem]) {
                 collect_struct(table, s);
                 table.extern_types.insert(s.name.clone());
             }
-            ast::ExternItemKind::Impl(b) => collect_impl(table, b),
+            ast::ExternItemKind::Impl(b) => {
+                collect_impl(table, b);
+                mark_host_methods(table, b);
+            }
             ast::ExternItemKind::Mod(m) => collect_extern_items(table, &m.items),
+        }
+    }
+}
+
+/// Flags every method of extern impl `b` as host-implemented.
+fn mark_host_methods(table: &mut SymbolTable, b: &ast::ImplBlock) {
+    let Some(owner) = impl_target_name(&b.ty) else {
+        return;
+    };
+    for m in &b.items {
+        if let Some(info) = table.methods.get_mut(&(owner.clone(), m.sig.name.clone())) {
+            info.host = true;
         }
     }
 }
@@ -740,6 +760,7 @@ fn record_impl_methods(
                 params,
                 ret,
                 has_receiver,
+                host: false,
             },
         );
     }

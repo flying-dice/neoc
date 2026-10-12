@@ -414,11 +414,10 @@ impl<'a> Elaborator<'a> {
         value: &ast::Expr,
     ) -> ast::ExprKind {
         let new_target = Box::new(self.place(target));
-        let mut new_value = self.expr(value);
-        if let Some(ty) = self.extern_place_ty(target) {
-            new_value = marshal_to_host(&ty, new_value);
-        }
-        let new_value = Box::new(new_value);
+        let new_value = Box::new(match self.extern_place_ty(target) {
+            Some(ty) => marshal_to_host(&ty, self.host_slot(value)),
+            None => self.expr(value),
+        });
         let op = if op == ast::AssignOp::Add
             && self.checker.infer(target) == Ty::Str
             && self.checker.infer(value) == Ty::Str
@@ -514,7 +513,7 @@ impl<'a> Elaborator<'a> {
             ast::ExprKind::Path(_) => callee.clone(),
             _ => self.expr(callee),
         };
-        let args = self.exprs(args);
+        let args = self.call_args(sig.as_ref(), args);
         let call = ast::ExprKind::Call {
             callee: Box::new(new_callee),
             args: marshal_args(sig.as_ref(), args),
@@ -531,13 +530,36 @@ impl<'a> Elaborator<'a> {
         span: ast::Span,
     ) -> ast::ExprKind {
         let sig = self.checker.extern_method_sig(receiver, method);
+        let args = self.call_args(sig.as_ref(), args);
         let call = ast::ExprKind::MethodCall {
             receiver: self.boxed(receiver),
             method: method.to_string(),
             method_span,
-            args: marshal_args(sig.as_ref(), self.exprs(args)),
+            args: marshal_args(sig.as_ref(), args),
         };
         marshal_result(sig.as_ref(), call, span)
+    }
+
+    /// Elaborated call arguments: each a host slot when the callee is
+    /// host-implemented (`sig` present), plain elaboration otherwise.
+    fn call_args(&mut self, sig: Option<&ExternSig>, args: &[ast::Expr]) -> Vec<ast::Expr> {
+        match sig {
+            Some(_) => args.iter().map(|a| self.host_slot(a)).collect(),
+            None => self.exprs(args),
+        }
+    }
+
+    /// A value bound for a host slot: an extern call argument, or a field of a
+    /// host-implemented struct. A named extern `fn` passes raw — the host calls
+    /// it with host shapes, so the marshalling closure of [`Self::path_value`]
+    /// would misread them.
+    fn host_slot(&mut self, value: &ast::Expr) -> ast::Expr {
+        match &value.kind {
+            ast::ExprKind::Path(_) if self.checker.extern_callee_sig(value).is_some() => {
+                value.clone()
+            }
+            _ => self.expr(value),
+        }
     }
 
     /// A field read. An `Option` field of a host-implemented struct wraps.
@@ -584,7 +606,7 @@ impl<'a> Elaborator<'a> {
     fn field_init(&mut self, path: &[ast::Ident], init: &ast::FieldInit) -> ast::FieldInit {
         let ty = self.checker.extern_lit_field_ty(path, &init.name);
         let value = match (&init.value, ty) {
-            (Some(v), Some(ty)) => Some(marshal_to_host(&ty, self.expr(v))),
+            (Some(v), Some(ty)) => Some(marshal_to_host(&ty, self.host_slot(v))),
             (Some(v), None) => Some(self.expr(v)),
             (None, Some(ty)) if is_option(&ty) => {
                 let named = ast::Expr::new(
@@ -603,7 +625,8 @@ impl<'a> Elaborator<'a> {
 
     /// A path in value position. A host-implemented function whose signature
     /// carries an `Option` becomes a neoc closure that marshals around the call,
-    /// so passing it on keeps the boundary rule.
+    /// so neoc code calling it later keeps the boundary rule. A host slot takes
+    /// the raw function instead ([`Self::host_slot`]).
     fn path_value(&mut self, path: &ast::Expr) -> ast::ExprKind {
         let Some(sig) = self.checker.extern_callee_sig(path) else {
             return path.kind.clone();

@@ -205,11 +205,24 @@ impl Checker<'_> {
         kind: crate::resolve::BindingKind,
     ) {
         let decl = self.struct_pattern_field_tys(path, ty);
+        let ctor = path.last().map_or("", String::as_str);
         for fp in fields {
             let fty = decl
                 .iter()
                 .find(|(n, _)| *n == fp.name)
                 .map_or(Ty::Unknown, |(_, t)| t.clone());
+            if self.is_host_option_field(ctor, &fty)
+                && !matches!(fp.pattern, Some(ast::Pattern::Wildcard))
+            {
+                self.error_at(
+                    fp.span,
+                    format!(
+                        "a pattern cannot read `Option` field `{0}` of host-implemented `{ctor}`; \
+                         read it with `.{0}`, which marshals it",
+                        fp.name
+                    ),
+                );
+            }
             match &fp.pattern {
                 Some(p) => self.bind_pattern(p, &fty, kind),
                 // Shorthand `Point { x }` binds the field name itself.

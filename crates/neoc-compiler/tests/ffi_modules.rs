@@ -267,3 +267,42 @@ fn main() { let f = put; let _ = f(None); }
         "extern fn value should wrap in a marshalling closure:\n{out}"
     );
 }
+
+#[test]
+fn extern_fn_passed_to_host_stays_raw() {
+    let src = r"
+extern {
+    fn pcall(f: Unknown, a: Unknown) -> Unknown;
+    fn tostring(v: Option<number>) -> string;
+}
+fn main() { let _ = pcall(tostring, 3); }
+";
+    let out = transpile(src, Target::Lua).output;
+    assert!(
+        out.contains("pcall(tostring, 3)"),
+        "extern fn handed to the host should pass raw:\n{out}"
+    );
+}
+
+#[test]
+fn neoc_impl_method_on_extern_type_emits_no_marshalling() {
+    let src = r"
+extern {
+    struct Counter;
+    impl Counter { fn get(self) -> number; }
+}
+impl Counter {
+    fn plus(self, extra: Option<number>) -> Option<number> {
+        match extra { Some(e) => Some(self.get() + e), None => None }
+    }
+}
+fn main(c: Counter) { let _ = c.plus(Some(2)); }
+";
+    let out = transpile(src, Target::Lua);
+    assert!(out.ok(), "should check clean: {:#?}", out.diagnostics);
+    assert!(
+        !out.output.contains("__option_"),
+        "neoc-implemented method marshalled:\n{}",
+        out.output
+    );
+}

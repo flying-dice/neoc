@@ -114,11 +114,7 @@ impl Checker<'_> {
             }
             [.., owner, member] => {
                 if table.types.contains_key(owner) {
-                    if !table.extern_types.contains(owner) {
-                        return None;
-                    }
-                    let m = table.methods.get(&(owner.clone(), member.clone()))?;
-                    return Some((m.params.clone(), m.ret.clone()));
+                    return self.host_method_sig(owner, member);
                 }
                 if !table.extern_values.contains(member) {
                     return None;
@@ -128,8 +124,8 @@ impl Checker<'_> {
         }
     }
 
-    /// The extern signature of `receiver.method(..)`, if the receiver is a
-    /// host-implemented type.
+    /// The extern signature of `receiver.method(..)`, if the host implements
+    /// that method. A neoc `impl` method on an extern type does not cross.
     pub(crate) fn extern_method_sig(
         &mut self,
         receiver: &ast::Expr,
@@ -138,11 +134,23 @@ impl Checker<'_> {
         let Ty::Named { name, .. } = self.infer(receiver) else {
             return None;
         };
-        if !self.table().extern_types.contains(&name) {
-            return None;
-        }
-        let m = self.table().methods.get(&(name, method.to_string()))?;
+        self.host_method_sig(&name, method)
+    }
+
+    /// The signature of `owner::member`, if the host implements it.
+    fn host_method_sig(&self, owner: &str, member: &str) -> Option<ExternSig> {
+        let m = self
+            .table()
+            .methods
+            .get(&(owner.to_string(), member.to_string()))
+            .filter(|m| m.host)?;
         Some((m.params.clone(), m.ret.clone()))
+    }
+
+    /// Whether a struct pattern naming `ctor` reads `Option` field `ty` raw
+    /// from the host — `ctor` is host-implemented and `ty` is `Option<_>`.
+    pub(crate) fn is_host_option_field(&self, ctor: &str, ty: &Ty) -> bool {
+        self.table().extern_types.contains(ctor) && is_option(ty)
     }
 
     /// The declared type of `field` on host-implemented struct `owner`.

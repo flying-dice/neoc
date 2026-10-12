@@ -312,3 +312,66 @@ fn extern_struct_option_field_marshals_read_write_and_literal() {
         }
     ));
 }
+
+#[test]
+fn extern_fn_value_passed_to_host_stays_raw() {
+    let m = elaborate(&parse(
+        "extern { fn pcall(f: Unknown, a: Unknown) -> Unknown; fn show(v: Option<number>) -> string; }\n\
+         fn main() -> Unknown { pcall(show, 3) }",
+    ));
+    let ExprKind::Call { args, .. } = &main_value(&m).kind else {
+        panic!("not a call: {:?}", main_value(&m));
+    };
+    assert!(matches!(&args[0].kind, ExprKind::Path(_)), "{:?}", args[0]);
+}
+
+#[test]
+fn neoc_impl_method_on_extern_type_is_not_marshalled() {
+    let m = elaborate(&parse(
+        "extern { struct Counter; impl Counter { fn get(self) -> Option<number>; } }\n\
+         impl Counter { fn plus(self, extra: Option<number>) -> Option<number> { extra } }\n\
+         fn main(c: Counter) -> Option<number> { c.plus(Some(2)) }",
+    ));
+    let ExprKind::MethodCall { args, .. } = &main_value(&m).kind else {
+        panic!("neoc method marshalled: {:?}", main_value(&m));
+    };
+    assert!(
+        matches!(&args[0].kind, ExprKind::Call { .. }),
+        "{:?}",
+        args[0]
+    );
+}
+
+#[test]
+fn host_method_on_extern_type_beside_neoc_impl_still_marshals() {
+    let m = elaborate(&parse(
+        "extern { struct Counter; impl Counter { fn get(self) -> Option<number>; } }\n\
+         impl Counter { fn twice(self) -> number { 2 } }\n\
+         fn main(c: Counter) -> Option<number> { c.get() }",
+    ));
+    assert!(matches!(&main_value(&m).kind, ExprKind::Marshal { .. }));
+}
+
+#[test]
+fn aliased_option_param_and_result_marshal() {
+    use neoc_ast::MarshalDirection::{FromHost, ToHost};
+    let m = elaborate(&parse(
+        "type MaybeN = Option<number>;\n\
+         extern { fn put(v: MaybeN) -> MaybeN; }\n\
+         fn main() -> MaybeN { put(Some(1)) }",
+    ));
+    let ExprKind::Marshal { direction, operand } = &main_value(&m).kind else {
+        panic!("aliased result not wrapped: {:?}", main_value(&m));
+    };
+    assert_eq!(*direction, FromHost);
+    let ExprKind::Call { args, .. } = &operand.kind else {
+        panic!("not a call: {operand:?}");
+    };
+    assert!(matches!(
+        &args[0].kind,
+        ExprKind::Marshal {
+            direction: ToHost,
+            ..
+        }
+    ));
+}

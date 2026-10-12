@@ -1,0 +1,15 @@
+// EXTERN.md §Option marshalling: a pattern reads a host field raw, so it cannot
+// destructure an `Option` field of an extern struct. `.title` marshals; `_` and
+// `..` read nothing.
+extern {
+    struct Settings { title: Option<string>, size: number }
+}
+
+fn main() {
+    let s = Settings { title: None, size: 1 };
+    let Settings { title, .. } = s;
+    match s {
+        Settings { title: Some(t), .. } => {}
+        Settings { title: _, size } => {}
+    }
+}
