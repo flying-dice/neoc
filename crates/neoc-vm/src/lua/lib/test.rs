@@ -66,9 +66,15 @@ fn arm_watchdog(label: &str) {
     }
 }
 
-fn disarm_watchdog() {
-    if let Ok(mut g) = ACTIVE_TEST.lock() {
-        *g = None;
+/// Disarms the watchdog on drop, so a cancelled test future cannot leave a
+/// stale deadline behind.
+struct WatchdogGuard;
+
+impl Drop for WatchdogGuard {
+    fn drop(&mut self) {
+        if let Ok(mut g) = ACTIVE_TEST.lock() {
+            *g = None;
+        }
     }
 }
 
@@ -136,8 +142,9 @@ fn register_suite_fns(lua: &Lua, m: &mut Module<'_>) -> mlua::Result<()> {
                 None => name,
             };
             arm_watchdog(&label);
+            let watchdog = WatchdogGuard;
             let outcome = f.call_async::<()>(()).await;
-            disarm_watchdog();
+            drop(watchdog);
             match outcome {
                 Ok(_) => {
                     let n: u32 = state.get("passed")?;
