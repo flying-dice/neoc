@@ -55,6 +55,9 @@ fn known_shapes_have_no_missed_hints() {
         "println(both(mk(), |s| s.title, |n: Settings| n));",
         "println(both(mk(), |s| s.title, id(|n: Settings| n)));",
         "let r = apply(id(mk()), |s| s.size);",
+        "println(both(mk(), { |s| s.title }, if true { |n: Settings| n } else { |n: Settings| n }));",
+        "println(both(mk(), |s| s.title, if true { |n: Settings| n } else { |n: Settings| n }));",
+        "println(both(mk(), match 1 { _ => |s| s.title }, match 1 { _ => |n: Settings| n }));",
     ] {
         let src = format!("{HOST}\npub fn main() {{ {body} }}\n");
         let m = misses(&src);
@@ -62,8 +65,8 @@ fn known_shapes_have_no_missed_hints() {
     }
 }
 
-/// The audit itself fires: a callee whose parameter the call cannot fix leaves
-/// nothing to miss, so only a real miss is reported.
+/// A closure the call fixes nothing for leaves nothing to miss. That the audit
+/// fires on a real miss is covered by `audit_tests` in the checker.
 #[test]
 fn audit_reports_nothing_when_the_call_fixes_nothing() {
     let src = format!("{HOST}\npub fn main() {{ let f = |s| s; }}\n");

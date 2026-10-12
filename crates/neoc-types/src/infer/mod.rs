@@ -2124,6 +2124,7 @@ impl<'a> Checker<'a> {
             }
             let ty = self.infer(&args[i]);
             if let Some(p) = expected.get(i) {
+                self.check_closure_clash(p, &ty, &subst, args[i].span);
                 self.unify_param(p, &ty, &mut subst);
             }
             tys[i] = Some(ty);
@@ -2132,10 +2133,40 @@ impl<'a> Checker<'a> {
         tys.into_iter().map(|t| t.unwrap_or(Ty::Unknown)).collect()
     }
 
+    /// Reports a closure whose annotated parameter type contradicts what the
+    /// call has already fixed for the same position (`run(mk(), |s: Other| ..)`
+    /// where the first argument made the parameter a `Settings`).
+    fn check_closure_clash(
+        &mut self,
+        decl: &Ty,
+        got: &Ty,
+        subst: &std::collections::HashMap<String, Ty>,
+        span: ast::Span,
+    ) {
+        let (Ty::Fn(dps, _), Ty::Fn(gps, _)) = (decl, got) else {
+            return;
+        };
+        for (d, g) in dps.iter().zip(gps) {
+            let want = Self::subst_named(d, subst);
+            let concrete = |t: &Ty| !t.is_unknown() && !t.is_dynamic() && !Self::mentions_param(t);
+            if concrete(&want)
+                && concrete(g)
+                && !self.assignable(&want, g)
+                && !self.assignable(g, &want)
+            {
+                self.error_at(
+                    span,
+                    format!("closure parameter is `{g}`, but the call fixes it as `{want}`"),
+                );
+            }
+        }
+    }
+
     /// Self-check of the hint machinery against the solved call: a closure
     /// literal parameter without an annotation that stayed `Unknown` while the
     /// finished call fixes its type was missed by a hint, and an `Option`
-    /// crossing through it would go unmarshalled.
+    /// crossing through it would go unmarshalled. Covers every closure the
+    /// argument evaluates to through blocks, `if`, and `match`.
     fn audit_closure_hints(
         &mut self,
         args: &[ast::Expr],
@@ -2143,25 +2174,46 @@ impl<'a> Checker<'a> {
         subst: &std::collections::HashMap<String, Ty>,
     ) {
         for (arg, decl) in args.iter().zip(expected) {
-            let (ast::ExprKind::Closure { params, .. }, Ty::Fn(ps, _)) = (&arg.kind, decl) else {
-                continue;
-            };
-            let Some(got) = self.closure_params.get(&(arg.span.start, arg.span.end)) else {
-                continue;
-            };
-            for ((p, want), have) in params.iter().zip(ps).zip(got) {
-                let want = Self::subst_named(want, subst);
-                if p.ty.is_none()
-                    && have.is_unknown()
-                    && !want.is_unknown()
-                    && !Self::mentions_param(&want)
-                {
-                    self.hint_misses.push(format!(
-                        "closure parameter `{}` at {}..{} is `Unknown`, the call fixes `{want}`",
-                        p.name, arg.span.start, arg.span.end
-                    ));
+            let Ty::Fn(ps, _) = decl else { continue };
+            let want: Vec<Ty> = ps.iter().map(|p| Self::subst_named(p, subst)).collect();
+            let mut literals = Vec::new();
+            Self::hinted_closures(arg, &mut literals);
+            for lit in literals {
+                let ast::ExprKind::Closure { params, .. } = &lit.kind else {
+                    continue;
+                };
+                if let Some(got) = self.closure_params.get(&(lit.span.start, lit.span.end)) {
+                    self.hint_misses
+                        .extend(missed_hints(params, &want, got, lit.span));
                 }
             }
+        }
+    }
+
+    /// The closure literals `expr` evaluates to through blocks, `if`, and
+    /// `match`: the ones that read the same expected type as `expr` itself.
+    fn hinted_closures<'e>(expr: &'e ast::Expr, out: &mut Vec<&'e ast::Expr>) {
+        match &expr.kind {
+            ast::ExprKind::Closure { .. } => out.push(expr),
+            ast::ExprKind::Block(b) => {
+                if let Some(v) = &b.value {
+                    Self::hinted_closures(v, out);
+                }
+            }
+            ast::ExprKind::If { then, else_, .. } => {
+                if let Some(v) = &then.value {
+                    Self::hinted_closures(v, out);
+                }
+                if let Some(e) = else_ {
+                    Self::hinted_closures(e, out);
+                }
+            }
+            ast::ExprKind::Match { arms, .. } => {
+                for arm in arms {
+                    Self::hinted_closures(&arm.body, out);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -2248,12 +2300,32 @@ impl<'a> Checker<'a> {
                     depth += 1;
                     base = next;
                 }
-                for name in ["Result", "Option"] {
+                // Inside the fn body `?` returns early in the fn's own
+                // `Result` or `Option`; inside a closure that type is not
+                // known, so both are tried, but only on a call or closure
+                // base, which keeps nesting through blocks linear.
+                let kinds: &[&str] = if self.closure_depth == 0 {
+                    match &self.ret_ty {
+                        Ty::Named { name, .. } if name == "Result" => &["Result"],
+                        Ty::Named { name, .. } if name == "Option" => &["Option"],
+                        _ => &[],
+                    }
+                } else if matches!(
+                    base.kind,
+                    ast::ExprKind::Block(_)
+                        | ast::ExprKind::If { .. }
+                        | ast::ExprKind::Match { .. }
+                ) {
+                    &[]
+                } else {
+                    &["Result", "Option"]
+                };
+                for name in kinds {
                     let mut wrapped = ty.clone();
                     for _ in 0..depth {
                         wrapped = Ty::Named {
-                            name: name.to_string(),
-                            args: if name == "Result" {
+                            name: (*name).to_string(),
+                            args: if *name == "Result" {
                                 vec![wrapped, Ty::Unknown]
                             } else {
                                 vec![wrapped]
@@ -2318,15 +2390,50 @@ impl<'a> Checker<'a> {
 
     /// Whether a closure literal in `expr` annotates a parameter type.
     fn annotates_params(expr: &ast::Expr) -> bool {
-        match &expr.kind {
-            ast::ExprKind::Closure { params, .. } => params.iter().any(|p| p.ty.is_some()),
-            ast::ExprKind::Call { args, .. } | ast::ExprKind::MethodCall { args, .. } => {
-                args.iter().any(Self::annotates_params)
+        Self::closure_literals(expr).iter().any(|c| {
+            matches!(&c.kind, ast::ExprKind::Closure { params, .. } if params.iter().any(|p| p.ty.is_some()))
+        })
+    }
+
+    /// Every closure literal `expr` evaluates to or carries as an argument.
+    fn closure_literals(expr: &ast::Expr) -> Vec<&ast::Expr> {
+        fn walk<'a>(e: &'a ast::Expr, out: &mut Vec<&'a ast::Expr>) {
+            match &e.kind {
+                ast::ExprKind::Closure { .. } => out.push(e),
+                ast::ExprKind::Block(b) => {
+                    if let Some(v) = &b.value {
+                        walk(v, out);
+                    }
+                }
+                ast::ExprKind::If { then, else_, .. } => {
+                    if let Some(v) = &then.value {
+                        walk(v, out);
+                    }
+                    if let Some(e) = else_ {
+                        walk(e, out);
+                    }
+                }
+                ast::ExprKind::Match { arms, .. } => arms.iter().for_each(|a| walk(&a.body, out)),
+                ast::ExprKind::List(items) => items.iter().for_each(|i| walk(i, out)),
+                ast::ExprKind::Call { callee, args } => {
+                    if matches!(callee.kind, ast::ExprKind::Path(_)) {
+                        for a in args {
+                            walk(a, out);
+                        }
+                    }
+                }
+                ast::ExprKind::MethodCall { args, .. } => args.iter().for_each(|a| walk(a, out)),
+                ast::ExprKind::Try(inner) => walk(inner, out),
+                ast::ExprKind::StructLit { fields, .. } => fields
+                    .iter()
+                    .filter_map(|f| f.value.as_ref())
+                    .for_each(|v| walk(v, out)),
+                _ => {}
             }
-            ast::ExprKind::Block(b) => b.value.as_ref().is_some_and(|v| Self::annotates_params(v)),
-            ast::ExprKind::Try(inner) => Self::annotates_params(inner),
-            _ => false,
         }
+        let mut out = Vec::new();
+        walk(expr, &mut out);
+        out
     }
 
     /// Whether `expr` evaluates to a closure literal: itself, or the result of
@@ -2655,6 +2762,30 @@ fn ty_impl_name(ty: &Ty) -> Option<String> {
 /// the callee identifier's byte range. Runs the checker with call recording on,
 /// then resolves each recorded call against its callee's declaration. Backs
 /// [`call_signatures`](crate::call_signatures).
+/// Unannotated closure parameters in `params` that are `Unknown` in `got`
+/// although the call fixes `want` for them.
+fn missed_hints(
+    params: &[ast::ClosureParam],
+    want: &[Ty],
+    got: &[Ty],
+    span: ast::Span,
+) -> Vec<String> {
+    params
+        .iter()
+        .zip(want)
+        .zip(got)
+        .filter(|((p, w), g)| {
+            p.ty.is_none() && g.is_unknown() && !w.is_unknown() && !Checker::mentions_param(w)
+        })
+        .map(|((p, w), _)| {
+            format!(
+                "closure parameter `{}` at {}..{} is `Unknown`, the call fixes `{w}`",
+                p.name, span.start, span.end
+            )
+        })
+        .collect()
+}
+
 pub(crate) fn hint_misses_of(module: &ast::Module, table: &SymbolTable) -> Vec<String> {
     let mut checker = Checker::new(table);
     checker.check_module(module);
@@ -2759,5 +2890,61 @@ fn module_scope_names(item: &ast::Item) -> Vec<(&str, ast::Span)> {
             })
             .collect(),
         ast::ItemKind::Impl(_) => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod audit_tests {
+    use super::*;
+
+    fn param(name: &str, ty: Option<ast::Type>) -> ast::ClosureParam {
+        ast::ClosureParam {
+            name: name.to_string(),
+            ty,
+            span: ast::Span::default(),
+        }
+    }
+
+    #[test]
+    fn audit_reports_an_unannotated_parameter_left_unknown() {
+        let settings = Ty::Named {
+            name: "Settings".to_string(),
+            args: vec![],
+        };
+        let found = missed_hints(
+            &[param("s", None)],
+            std::slice::from_ref(&settings),
+            &[Ty::Unknown],
+            ast::Span::default(),
+        );
+        assert_eq!(found.len(), 1, "{found:?}");
+        // Typed, still open, or where the call fixes nothing: no miss.
+        assert!(
+            missed_hints(
+                &[param("s", None)],
+                std::slice::from_ref(&settings),
+                std::slice::from_ref(&settings),
+                ast::Span::default()
+            )
+            .is_empty()
+        );
+        assert!(
+            missed_hints(
+                &[param("s", None)],
+                &[Ty::Param("T".into())],
+                &[Ty::Unknown],
+                ast::Span::default()
+            )
+            .is_empty()
+        );
+        assert!(
+            missed_hints(
+                &[param("s", None)],
+                &[Ty::Unknown],
+                &[Ty::Unknown],
+                ast::Span::default()
+            )
+            .is_empty()
+        );
     }
 }

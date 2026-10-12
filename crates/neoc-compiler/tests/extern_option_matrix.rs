@@ -704,3 +704,59 @@ fn nested_try_hints_stay_linear() {
     let _ = transpile(&src, Target::Lua);
     assert!(start.elapsed().as_secs() < 5, "{:?}", start.elapsed());
 }
+
+/// Closure shapes the ordering rule must see through.
+#[test]
+fn wrapped_annotated_closures_type_earlier_ones() {
+    for g in [
+        "if true { |n: Settings| n } else { |n: Settings| n }",
+        "match 1 { _ => |n: Settings| n }",
+        "{ |n: Settings| n }",
+    ] {
+        let out = build(
+            "fn both<T>(seed: Unknown, f: fn(T) -> Option<string>, g: fn(T) -> T) -> Option<string> { f(g(seed)) }",
+            &format!("println(both(mk(), {{ |s| s.title }}, {g}));"),
+        );
+        assert!(out.ok(), "{g}\n{:#?}", out.diagnostics);
+        assert!(wraps(&out.output, FROM) >= 1, "{g}\n{}", out.output);
+    }
+}
+
+/// A closure may not contradict the type the call already fixed.
+#[test]
+fn a_closure_contradicting_the_call_is_rejected() {
+    for body in [
+        "println(run(mk(), |s: Other| s.title));",
+        "println(run(5, |s: Settings| s.title));",
+    ] {
+        let out = build(
+            "struct Other { title: Option<string> }\nfn run<T>(seed: T, f: fn(T) -> Option<string>) -> Option<string> { f(seed) }",
+            body,
+        );
+        assert!(!out.ok(), "{body}");
+        assert!(
+            out.diagnostics
+                .iter()
+                .any(|d| d.message.contains("closure parameter")),
+            "{body}\n{:#?}",
+            out.diagnostics
+        );
+    }
+}
+
+/// `?` nested through blocks stays linear to check.
+#[test]
+fn try_through_blocks_stays_linear() {
+    let n = 40;
+    let ty = (0..n).fold("number".to_string(), |t, _| format!("Option<{t}>"));
+    let mut body = "mko()?".to_string();
+    for _ in 0..n {
+        body = format!("{{ {body} }}?");
+    }
+    let src = format!(
+        "extern {{ fn mko() -> {ty}; }}\nfn g() -> Option<number> {{ let x: number = {body}; Some(x) }}\npub fn main() {{}}\n"
+    );
+    let start = std::time::Instant::now();
+    let _ = transpile(&src, Target::Lua);
+    assert!(start.elapsed().as_secs() < 5, "{:?}", start.elapsed());
+}
