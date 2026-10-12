@@ -1,0 +1,60 @@
+// STATIC.md §3.8: only the head of a path is read through an alias. A variant
+// whose name equals an alias is still that variant, in expressions and in
+// patterns, and a trait impl through an alias applies the trait's arguments to
+// the expanded type.
+extern {
+    fn println(n: number);
+}
+
+struct Foo {
+    a: number,
+}
+
+type Pt = Foo;
+
+type Green = Foo;
+
+enum Color {
+    Red,
+    Green(number),
+    Pt {
+        a: number,
+    },
+}
+
+fn pick(c: Color) -> number {
+    match c {
+        Color::Red => 0,
+        Color::Green(n) => n,
+        Color::Pt { a } => a,
+    }
+}
+
+struct Pair<A, B> {
+    a: A,
+    b: B,
+}
+
+type PB = Pair<bool, number>;
+
+trait Sup<X> {
+    fn s(self) -> X;
+}
+
+impl Sup<number> for PB {
+    fn s(self) -> number {
+        self.b
+    }
+}
+
+fn through<T: Sup<number>>(t: T) -> number {
+    t.s()
+}
+
+fn main() {
+    println(pick(Color::Red));
+    println(pick(Color::Green(4)));
+    println(pick(Color::Pt { a: 5 }));
+    println(through(Pair { a: true, b: 6 }));
+    println(Pt { a: 7 }.a);
+}

@@ -66,11 +66,15 @@ struct Engine<'a> {
 }
 
 impl Engine<'_> {
-    /// A constructor name read through a `type` alias (`STATIC.md` §3.8).
-    fn ctor_name(&self, name: &str) -> String {
-        self.table
-            .alias_head(name)
-            .unwrap_or_else(|| name.to_string())
+    /// The constructor a struct or tuple pattern path names. An unqualified
+    /// path heads a struct, so a `type` alias there is read through
+    /// (`STATIC.md` §3.8); the last segment of a qualified path is a variant.
+    fn pattern_ctor(&self, path: &[ast::Ident]) -> Option<String> {
+        let last = path.last()?;
+        if path.len() == 1 {
+            return Some(self.table.alias_head(last).unwrap_or_else(|| last.clone()));
+        }
+        Some(last.clone())
     }
 
     /// Normalizes an AST pattern against its column type, expanding or-patterns
@@ -96,7 +100,7 @@ impl Engine<'_> {
                 |n| vec![Pat::Ctor(Ctor::Named(n.clone()), vec![])],
             ),
             ast::Pattern::Tuple { path, elems } => {
-                let Some(ctor) = path.last().map(|c| self.ctor_name(c)) else {
+                let Some(ctor) = self.pattern_ctor(path) else {
                     return vec![Pat::Wild];
                 };
                 let ctor = &ctor;
@@ -112,7 +116,7 @@ impl Engine<'_> {
                     .collect()
             }
             ast::Pattern::Struct { path, fields, .. } => {
-                let Some(ctor) = path.last().map(|c| self.ctor_name(c)) else {
+                let Some(ctor) = self.pattern_ctor(path) else {
                     return vec![Pat::Wild];
                 };
                 let ctor = &ctor;

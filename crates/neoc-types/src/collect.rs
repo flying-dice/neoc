@@ -695,7 +695,7 @@ fn collect_impl(table: &mut SymbolTable, b: &ast::ImplBlock) {
                 .insert((type_name.clone(), trait_ref.name.clone()), assoc.clone());
         }
         if !trait_ref.args.is_empty() {
-            let target_args = match lower_type(&b.ty, &impl_generics) {
+            let target_args = match table.resolve_alias_ty(lower_type(&b.ty, &impl_generics)) {
                 Ty::Named { args, .. } => args,
                 _ => Vec::new(),
             };

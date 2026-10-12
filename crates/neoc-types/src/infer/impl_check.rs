@@ -250,7 +250,9 @@ impl Checker<'_> {
     /// reach callers as an unconstrained parameter (`STATIC.md` §3.5).
     fn check_impl_params_constrained(&mut self, b: &ast::ImplBlock, span: ast::Span) {
         let generics = crate::collect::generic_names(&b.generics);
-        let target = crate::collect::lower_type(&b.ty, &generics);
+        let target = self
+            .table
+            .resolve_alias_ty(crate::collect::lower_type(&b.ty, &generics));
         for g in generics.iter().filter(|g| !mentions_param(&target, g)) {
             self.error_at(
                 span,

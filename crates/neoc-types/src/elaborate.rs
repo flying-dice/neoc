@@ -647,8 +647,9 @@ pub fn elaborate_with_table(module: &ast::Module, table: &SymbolTable) -> ast::M
 }
 
 /// `path` with its type segment read through any alias: the second-to-last
-/// segment of a qualified path (`C::Red`), and, when `head` (a struct or tuple
-/// pattern, where the last segment may itself name the struct), the last.
+/// segment of a qualified path (`C::Red`; the last is a variant, never an
+/// alias), or, when `head` (a struct or tuple pattern), the lone segment of an
+/// unqualified path.
 fn expand_pattern_path(checker: &Checker<'_>, path: &[ast::Ident], head: bool) -> Vec<ast::Ident> {
     let mut path = path.to_vec();
     let last = path.len().saturating_sub(1);
@@ -656,7 +657,7 @@ fn expand_pattern_path(checker: &Checker<'_>, path: &[ast::Ident], head: bool) -
     if path.len() >= 2 {
         at.push(last - 1);
     }
-    if head {
+    if head && path.len() == 1 {
         at.push(last);
     }
     for i in at {

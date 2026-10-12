@@ -154,7 +154,7 @@ impl Checker<'_> {
 
     fn tuple_pattern_field_tys(&self, path: &[ast::Ident], ty: &Ty, arity: usize) -> Vec<Ty> {
         let unknowns = vec![Ty::Unknown; arity];
-        let Some(ctor) = path.last().map(|c| self.ctor_name(c)) else {
+        let Some(ctor) = self.pattern_ctor(path) else {
             return unknowns;
         };
         let ctor = &ctor;
@@ -220,7 +220,7 @@ impl Checker<'_> {
     }
 
     fn struct_pattern_field_tys(&self, path: &[ast::Ident], ty: &Ty) -> Vec<(String, Ty)> {
-        let Some(ctor) = path.last().map(|c| self.ctor_name(c)) else {
+        let Some(ctor) = self.pattern_ctor(path) else {
             return Vec::new();
         };
         let ctor = &ctor;

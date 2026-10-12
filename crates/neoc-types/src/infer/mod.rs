@@ -992,9 +992,15 @@ impl<'a> Checker<'a> {
         self.table.alias_head(name)
     }
 
-    /// A struct or variant constructor name, read through an alias.
-    pub(crate) fn ctor_name(&self, name: &str) -> String {
-        self.alias_head_of(name).unwrap_or_else(|| name.to_string())
+    /// The constructor a struct or tuple pattern path names. An unqualified
+    /// path heads a struct, so an alias there is read through; the last segment
+    /// of a qualified path is a variant, never an alias.
+    pub(crate) fn pattern_ctor(&self, path: &[ast::Ident]) -> Option<String> {
+        let last = path.last()?;
+        if path.len() == 1 {
+            return Some(self.alias_head_of(last).unwrap_or_else(|| last.clone()));
+        }
+        Some(last.clone())
     }
 
     /// The struct a literal headed by `path` constructs, with its declaration.
