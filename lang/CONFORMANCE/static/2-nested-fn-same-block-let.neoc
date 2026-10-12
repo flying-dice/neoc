@@ -1,0 +1,12 @@
+// STATIC.md §2: a nested `fn` is hoisted ahead of its block's `let`s, so a
+// same-block `let` does not shadow a sibling item statement for it.
+fn main() {
+    fn h() -> number {
+        1
+    }
+    let h = 5;
+    fn g() -> number {
+        h()
+    }
+    let a = g();
+}

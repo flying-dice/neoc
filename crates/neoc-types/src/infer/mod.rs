@@ -10,7 +10,9 @@ use neoc_ast as ast;
 
 use crate::Diagnostic;
 use crate::collect::{generic_names, lower_type};
-use crate::env::{Scopes, StructFields, StructInfo, SymbolTable, TraitRef, TypeDef, VariantFields};
+use crate::env::{
+    ScopeLookup, Scopes, StructFields, StructInfo, SymbolTable, TraitRef, TypeDef, VariantFields,
+};
 use crate::ty::Ty;
 
 mod impl_check;
@@ -1100,33 +1102,31 @@ impl<'a> Checker<'a> {
         }
         if segs.len() == 1 {
             let name = &segs[0];
-            if let Some(t) = self.scopes.lookup(name) {
-                let t = t.clone();
-                // Record the use → the local binding it resolves to. A shadow
-                // wins because `binding_of` reads the innermost frame first.
-                if self.record_resolution {
-                    if let Some(id) = self.scopes.binding_of(name) {
+            let declaring_block_local = match self.scopes.resolve(name) {
+                ScopeLookup::Local(t, id) => {
+                    let t = t.clone();
+                    // Record the use → the local binding it resolves to. A
+                    // shadow wins because `resolve` reads the innermost frame
+                    // first.
+                    if self.record_resolution {
                         self.resolution.note_use(
                             span.start,
                             span.end,
                             crate::resolve::Resolved::Local(id),
                         );
                     }
+                    return t;
                 }
-                return t;
-            }
-            // A binding of an enclosing function stays an error even when a
-            // module item shares its name: the emitted nested function would
-            // close over the binding, not the item (`STATIC.md` §2).
-            if self.scopes.is_hidden_by_fn_boundary(name) {
-                let what = if name == "self" {
-                    "`self` of the enclosing function".to_string()
-                } else {
-                    format!("`{name}`, a binding of the enclosing function")
-                };
-                self.error_at(span, format!("nested `fn` cannot use {what}"));
-                return Ty::Unknown;
-            }
+                // A capture stays an error even when a module item shares its
+                // name: the emitted nested function would close over the
+                // binding, not the item (`STATIC.md` §2).
+                ScopeLookup::Captured => {
+                    self.report_capture(name, span);
+                    return Ty::Unknown;
+                }
+                ScopeLookup::DeclaringBlockLocal => true,
+                ScopeLookup::Unbound => false,
+            };
             if let Some(t) = self.table.values.get(name) {
                 // Resolves to a top-level item, not a local — record it as such
                 // so a rename of the item skips a shadowing local elsewhere.
@@ -1143,11 +1143,26 @@ impl<'a> Checker<'a> {
             if let Some(ty) = self.resolve_unit_value(name) {
                 return ty;
             }
-            self.error_at(span, format!("unknown name `{name}`"));
+            if declaring_block_local {
+                self.report_capture(name, span);
+            } else {
+                self.error_at(span, format!("unknown name `{name}`"));
+            }
             return Ty::Unknown;
         }
         // Qualified path: `Type::assoc` / `Enum::Variant`.
         self.resolve_qualified(segs, span)
+    }
+
+    /// Reports a nested `fn` naming a binding of an enclosing function
+    /// (`STATIC.md` §2).
+    fn report_capture(&mut self, name: &str, span: ast::Span) {
+        let what = if name == "self" {
+            "`self` of the enclosing function".to_string()
+        } else {
+            format!("`{name}`, a binding of the enclosing function")
+        };
+        self.error_at(span, format!("nested `fn` cannot use {what}"));
     }
 
     /// Resolves a bare name to a unit struct or unit enum variant, if one

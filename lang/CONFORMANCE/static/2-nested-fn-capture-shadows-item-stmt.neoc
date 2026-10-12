@@ -1,0 +1,42 @@
+// STATIC.md §2: a closer `let` or param that shadows an enclosing item statement
+// is still a binding of the enclosing function, so a nested `fn` cannot name it.
+fn main() {
+    fn h() -> number {
+        1
+    }
+    let h = 5;
+    {
+        fn g() -> number {
+            h()
+        }
+        let a = g();
+    }
+}
+
+fn param() {
+    fn p() -> number {
+        1
+    }
+    fn k(p: number) -> number {
+        fn g() -> number {
+            p()
+        }
+        g() + p
+    }
+    let a = k(5);
+}
+
+fn outer_block() {
+    fn q() -> number {
+        1
+    }
+    {
+        let q = 5;
+        {
+            fn g() -> number {
+                q()
+            }
+            let a = g();
+        }
+    }
+}

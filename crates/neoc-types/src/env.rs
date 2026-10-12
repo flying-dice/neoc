@@ -708,39 +708,62 @@ impl Scopes {
             .is_some_and(|f| f.names.contains_key(name))
     }
 
-    /// The frames a lookup may read, innermost first: past a `fn` boundary only
-    /// item frames remain.
-    fn reachable(&self) -> impl Iterator<Item = &Frame> {
+    /// Resolves an unqualified `name` through the stack, innermost first
+    /// (`STATIC.md` §2).
+    ///
+    /// An item statement is hoisted ahead of its declaring block's `let`s, so
+    /// that block's locals frame — the frame just outside a `fn` body — is
+    /// skipped. Past a `fn` boundary only item frames are readable; the nearest
+    /// enclosing local, param, or `self` there is a capture, and it shadows any
+    /// outer item or module name of the same spelling.
+    #[must_use]
+    pub fn resolve(&self, name: &str) -> ScopeLookup<'_> {
         let mut crossed = false;
-        self.frames.iter().rev().filter(move |f| {
-            let reach = !crossed || f.kind == FrameKind::Items;
-            crossed |= f.kind == FrameKind::FnBody;
-            reach
-        })
+        let mut outside_fn_body = false;
+        let mut skipped = false;
+        for f in self.frames.iter().rev() {
+            let declaring_locals = outside_fn_body && f.kind == FrameKind::Locals;
+            outside_fn_body = f.kind == FrameKind::FnBody;
+            if declaring_locals {
+                skipped |= f.names.contains_key(name);
+            } else if let Some((ty, id)) = f.names.get(name) {
+                return if !crossed || f.kind == FrameKind::Items {
+                    ScopeLookup::Local(ty, *id)
+                } else {
+                    ScopeLookup::Captured
+                };
+            }
+            crossed |= outside_fn_body;
+        }
+        if skipped {
+            ScopeLookup::DeclaringBlockLocal
+        } else {
+            ScopeLookup::Unbound
+        }
     }
 
-    /// Looks a name's type up from the innermost scope outward.
+    /// Looks a readable binding's type up from the innermost scope outward.
     #[must_use]
     pub fn lookup(&self, name: &str) -> Option<&Ty> {
-        self.reachable()
-            .find_map(|f| f.names.get(name))
-            .map(|(ty, _)| ty)
+        match self.resolve(name) {
+            ScopeLookup::Local(ty, _) => Some(ty),
+            _ => None,
+        }
     }
+}
 
-    /// The [`BindingId`] a name resolves to from the innermost scope outward —
-    /// the binding a use of `name` refers to. `None` when no binding is in
-    /// scope (the name is a top-level item, a prelude name, or unresolved).
-    #[must_use]
-    pub fn binding_of(&self, name: &str) -> Option<BindingId> {
-        self.reachable()
-            .find_map(|f| f.names.get(name))
-            .map(|(_, id)| *id)
-    }
-
-    /// Whether `name` is a binding of an enclosing function — a `let`, param,
-    /// or `self` — that a nested `fn` boundary hides from the current position.
-    #[must_use]
-    pub fn is_hidden_by_fn_boundary(&self, name: &str) -> bool {
-        self.lookup(name).is_none() && self.frames.iter().any(|f| f.names.contains_key(name))
-    }
+/// What [`Scopes::resolve`] found for an unqualified name.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ScopeLookup<'a> {
+    /// A binding the current position may read.
+    Local(&'a Ty, BindingId),
+    /// A `let`, param, or `self` of an enclosing function, across a nested
+    /// `fn` boundary: naming it is an error, and it hides outer names.
+    Captured,
+    /// Bound only by a `let` of the block that declares the current nested
+    /// `fn`: out of reach, so outer names show through; naming it with nothing
+    /// outer to resolve to is a capture error.
+    DeclaringBlockLocal,
+    /// No binding; the name is a module item, a prelude name, or unknown.
+    Unbound,
 }
