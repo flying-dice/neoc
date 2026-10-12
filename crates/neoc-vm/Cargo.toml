@@ -151,7 +151,7 @@ jsonschema = { version = "0.30", default-features = false }
 
 # Exposed to Lua as `lib.testcontainers` so scripts (and our integration
 # tests) can spin up disposable backing services without external setup.
-testcontainers-modules = { version = "0.11", features = ["mysql", "postgres"] }
+testcontainers-modules = { version = "0.15", features = ["mysql", "postgres"] }
 
 # RAII temp files and directories backing `lib:tempfile`. Rust's de-facto
 # tempfile crate — `NamedTempFile` / `TempDir` unlink on drop, which is the
