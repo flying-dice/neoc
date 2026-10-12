@@ -2,11 +2,9 @@
 // return, or field type of an extern signature is well-formed.
 extern {
     fn lookup(key: string, fallback: Option<number>) -> Option<string>;
-
     struct Settings {
         title: Option<string>,
     }
-
     impl Settings {
         fn rename(self, title: Option<string>) -> Option<string>;
     }
