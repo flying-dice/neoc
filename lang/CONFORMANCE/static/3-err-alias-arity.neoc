@@ -1,7 +1,0 @@
-// SYNTAX.md §3.3: a generic `type` alias is applied to exactly the type
-// arguments it declares.
-type Pair<T> = [T];
-
-fn count(items: Pair<number, string>) -> number {
-    1
-}

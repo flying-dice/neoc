@@ -242,6 +242,22 @@ name x bound at module scope    x begins with `__`
 binding of x ill-formed
 ```
 
+A `type` alias is transparent: every use expands to its value (`SYNTAX.md` §3.3). A use of a generic alias supplies exactly the type arguments the alias declares. A type parameter in scope shadows an alias of the same name, and a `Self::` projection names an associated type, so neither is a use of the alias. An ill-formed use is reported once, at the annotation that spells it; the annotation then checks as no type, so nothing downstream cascades.
+
+```
+type A<α₁, …, αₙ> = τ ∈ Γ    use A<τ₁, …, τₘ>    m ≠ n
+──────────────────────────────────────────────────────── (D-ALIAS-ARITY)
+use ill-formed
+```
+
+An alias may not reach itself through its own value, directly or through other aliases — its expansion would never end. Each alias on the cycle is ill-formed, reported at its declaration.
+
+```
+type A<…> = τ ∈ Γ    τ mentions A, directly or via aliases
+──────────────────────────────────────────────────────── (D-ALIAS-RECURSIVE)
+declaration of A ill-formed
+```
+
 ## 5. `extern` declarations
 
 An `extern { … }` block introduces bindings the target supplies, with no bodies. It describes the target's surface — see `EXTERN.md` for the authoritative model (items, attributes, lowering, errors). The well-formedness rules:

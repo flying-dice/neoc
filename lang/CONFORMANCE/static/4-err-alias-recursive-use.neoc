@@ -1,0 +1,7 @@
+// STATIC.md §4.3 (D-ALIAS-RECURSIVE): a recursive alias used at a site is
+// reported once, at its declaration; the use expands no further.
+type Loop = [Loop];
+
+fn f(x: Loop) -> number {
+    1
+}

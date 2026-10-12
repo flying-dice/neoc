@@ -305,9 +305,10 @@ impl SymbolTable {
     /// Recursively expands aliases inside a type. A generic alias applied to
     /// the right number of arguments is expanded with its parameters replaced
     /// by those arguments (`Pair<number>` with `type Pair<T> = [T]` is
-    /// `[number]`); an application with the wrong number of arguments, or one
-    /// that re-enters an alias already being expanded, is left as written — the
-    /// checker reports both (`Checker::check_alias_decls`).
+    /// `[number]`). An application with the wrong number of arguments, or one
+    /// that re-enters an alias already being expanded, expands to [`Ty::Unknown`]
+    /// so the misuse stays a single diagnostic — the checker reports it
+    /// ([`Self::alias_arity_errors`], [`Self::alias_is_recursive`]).
     #[must_use]
     pub fn resolve_alias_ty(&self, ty: Ty) -> Ty {
         self.expand_aliases(ty, &mut Vec::new())
@@ -322,10 +323,10 @@ impl SymbolTable {
                     .into_iter()
                     .map(|a| self.expand_aliases(a, active))
                     .collect();
-                if let Some(TypeDef::Alias { generics, value }) = self.types.get(&name)
-                    && generics.len() == args.len()
-                    && !active.contains(&name)
-                {
+                if let Some(TypeDef::Alias { generics, value }) = self.types.get(&name) {
+                    if generics.len() != args.len() || active.contains(&name) {
+                        return Ty::Unknown;
+                    }
                     let body = value.map(&|t| match t {
                         Ty::Param(p) => generics
                             .iter()
@@ -355,7 +356,7 @@ impl SymbolTable {
     /// Whether the alias `name` reaches itself through its own body, directly
     /// or through other aliases.
     #[must_use]
-    pub fn alias_is_recursive(&self, name: &str) -> bool {
+    pub(crate) fn alias_is_recursive(&self, name: &str) -> bool {
         let mut seen = Vec::new();
         let mut pending = vec![name.to_string()];
         while let Some(current) = pending.pop() {
@@ -377,14 +378,26 @@ impl SymbolTable {
         false
     }
 
-    /// The generic-parameter count of the alias `name`, or `None` when `name`
-    /// is not an alias.
+    /// One message per application in `ty` of a generic `type` alias to a
+    /// different number of type arguments than it declares (`STATIC.md` §4.3).
+    /// `ty` is lowered but not yet alias-expanded, so an in-scope type
+    /// parameter or a `Self::Item` projection that shares an alias's name is
+    /// not an application of it.
     #[must_use]
-    pub fn alias_arity(&self, name: &str) -> Option<usize> {
-        match self.types.get(name) {
-            Some(TypeDef::Alias { generics, .. }) => Some(generics.len()),
-            _ => None,
-        }
+    pub(crate) fn alias_arity_errors(&self, ty: &Ty) -> Vec<String> {
+        let mut out = Vec::new();
+        ty.for_each_named(&mut |name, args| {
+            if let Some(TypeDef::Alias { generics, .. }) = self.types.get(name)
+                && generics.len() != args.len()
+            {
+                out.push(format!(
+                    "type alias `{name}` expects {} type argument(s), found {}",
+                    generics.len(),
+                    args.len()
+                ));
+            }
+        });
+        out
     }
 }
 
@@ -392,22 +405,7 @@ impl SymbolTable {
 /// through lists, function params/returns, and type arguments). Primitives,
 /// `Unit`, type parameters, and `Unknown` carry no name.
 fn collect_ty_names(ty: &Ty, out: &mut Vec<String>) {
-    match ty {
-        Ty::List(inner) => collect_ty_names(inner, out),
-        Ty::Fn(params, ret) => {
-            for p in params {
-                collect_ty_names(p, out);
-            }
-            collect_ty_names(ret, out);
-        }
-        Ty::Named { name, args } => {
-            out.push(name.clone());
-            for a in args {
-                collect_ty_names(a, out);
-            }
-        }
-        Ty::Number | Ty::Str | Ty::Bool | Ty::Unit | Ty::Param(_) | Ty::Unknown | Ty::Dynamic => {}
-    }
+    ty.for_each_named(&mut |name, _| out.push(name.to_string()));
 }
 
 /// Pushes every type name referenced by a definition's fields, variants, alias

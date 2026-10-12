@@ -1,2 +1,0 @@
-// SYNTAX.md §3.3: a `type` alias is transparent, so it may not expand to itself.
-type Loop<T> = [Loop<T>];
