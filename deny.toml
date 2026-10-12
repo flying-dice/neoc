@@ -6,10 +6,6 @@
 yanked = "warn"
 ignore = [
     { id = "RUSTSEC-2023-0071", reason = "rsa Marvin timing side-channel (https://github.com/RustCrypto/RSA/issues/626), no fixed release. rsa is the only pure-Rust RSA backend and RustCrypto is sanctioned (#35). Pulled by lib:pkey and sqlx-mysql. Remove once rsa ships a constant-time fix (#51). Review: 2027-01-10." },
-    { id = "RUSTSEC-2026-0002", reason = "lru 0.12 IterMut; direct dep of neoc-vm, fixed in lru >= 0.16.3. Bump tracked in #105. Review: 2027-01-10." },
-    { id = "RUSTSEC-2026-0253", reason = "lru 0.12 LruCache::pop; direct dep of neoc-vm, fixed in lru >= 0.18.2. Bump tracked in #105. Review: 2027-01-10." },
-    { id = "RUSTSEC-2026-0194", reason = "quick-xml 0.31 quadratic attribute check; direct dep of neoc-vm, fixed in quick-xml >= 0.41.0. Bump tracked in #105. Review: 2027-01-10." },
-    { id = "RUSTSEC-2026-0195", reason = "quick-xml 0.31 NsReader allocation; direct dep of neoc-vm, fixed in quick-xml >= 0.41.0. Bump tracked in #105. Review: 2027-01-10." },
     { id = "RUSTSEC-2025-0111", reason = "tokio-tar file smuggling, no fix. Ships in neoc via neoc-vm -> testcontainers-modules -> testcontainers 0.23.3 (lib.testcontainers). testcontainers only builds tars (tokio_tar::Builder); vuln is in Archive parsing, no read path exposed to Luau. Upgrade tracked in #106. Review: 2027-01-10." },
     { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile unmaintained, no vuln. Ships in neoc via testcontainers -> bollard 0.18.1; reads local Docker TLS certs only. Upgrade tracked in #106. Review: 2027-01-10." },
     { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2 unmaintained. Build-time proc-macro only, via mlua_derive; not linked. mlua upgrade tracked in #106. Review: 2027-01-10." },

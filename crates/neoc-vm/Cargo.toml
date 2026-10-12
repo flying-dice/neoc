@@ -13,7 +13,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
 toml = { version = "0.8", features = ["parse", "display"] }
-quick-xml = { version = "0.31", features = ["serialize"] }
+quick-xml = { version = "0.41", features = ["serialize"] }
 tracing = "0.1"
 tracing-core = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
@@ -162,7 +162,7 @@ tempfile = "3"
 # de-facto Rust standard (alongside `hashicorp/golang-lru` in Go). Provides the
 # capacity-bounded recency map; per-entry TTL is layered on top in the module.
 # Its only dependency is `hashbrown`, already in the tree transitively.
-lru = "0.12"
+lru = "0.18"
 # Unicode correctness primitives backing `lib:unicode` (#25). The three the
 # issue names are unicode-rs crates already in the tree transitively, so this
 # only promotes them to direct deps:
