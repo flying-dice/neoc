@@ -1,0 +1,11 @@
+// STATIC.md §3.3 / DYNAMIC.md §4.4: `Self { .. }` lowers through the target's
+// name, so a local of that name in scope would capture it. Rejected.
+struct P {
+    x: number,
+}
+
+impl P {
+    fn make(P: number) -> Self {
+        Self { x: P }
+    }
+}

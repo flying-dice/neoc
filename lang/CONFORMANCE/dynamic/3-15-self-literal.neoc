@@ -1,6 +1,7 @@
-// SYNTAX.md struct literals / DYNAMIC.md §3.3: inside an `impl`, `Self` heads a
-// struct literal and names the impl's target — including struct update. It
-// lowers exactly as the target's own name would.
+// STATIC.md §3.3 T-STRUCT-LIT-SELF / DYNAMIC.md §4.4: inside an `impl`, `Self`
+// heads a struct literal and names the impl's target — including struct update,
+// generic impls, trait impls, and closures in a method body. It lowers exactly
+// as the target's own name would.
 extern {
     fn println(n: number);
 }
@@ -22,6 +23,36 @@ impl Point {
     fn with_x(self, x: number) -> Self {
         Self { x, ..self }
     }
+
+    fn diagonal(n: number) -> Self {
+        let make = |k: number| Self { x: k, y: k };
+        make(n * 2)
+    }
+}
+
+trait Make {
+    fn make() -> Self;
+}
+
+impl Make for Point {
+    fn make() -> Self {
+        Self { x: 42, y: 0 }
+    }
+}
+
+struct Wrap<T> {
+    v: T,
+    n: number,
+}
+
+impl<T> Wrap<T> {
+    fn of(v: T) -> Wrap<T> {
+        Self { v, n: 1 }
+    }
+
+    fn with(self, v: T) -> Wrap<T> {
+        Self { v, ..self }
+    }
 }
 
 fn main() {
@@ -30,4 +61,9 @@ fn main() {
     println(o.x);
     println(p.x);
     println(p.y);
+    println(Point::diagonal(4).y);
+    println(Point::make().x);
+    let w = Wrap::of(5).with(7);
+    println(w.v);
+    println(w.n);
 }

@@ -1,0 +1,7 @@
+// STATIC.md §3.3: in a trait default body `Self` is the implementor, not a
+// struct with fields, so it cannot head a struct literal.
+trait Make {
+    fn make() -> Self {
+        Self { x: 1 }
+    }
+}
