@@ -12,6 +12,7 @@
 //! from the module's `enum` declarations (plus the `Result`/`Option` prelude)
 //! to tell an enum variant apart from an ordinary value or call.
 
+mod binders;
 mod concat;
 mod expr;
 mod pat;
@@ -212,13 +213,14 @@ pub struct EmitResult {
     pub source_map: LineMap,
 }
 
-/// A `use` that brings in a type-namespace-only item (a struct) under a binding
-/// the module's value namespace also holds — a value import or a module-level
-/// `const`/`fn`. The struct constructor is still a runtime table (`S { .. }`
-/// lowers to `S.new`), so the import binds a fresh local the value cannot
-/// shadow (`lang/DYNAMIC.md` §3.7).
+/// A `use` that brings in a type-namespace-only item (a struct). The struct
+/// constructor is still a runtime table (`S { .. }` lowers to `S.new`), so when
+/// a value binding in the module spells the same — a value import, a
+/// module-level `const` / `fn`, or any `let`, parameter or pattern binding —
+/// the import binds a fresh local the value cannot capture
+/// (`lang/DYNAMIC.md` §3.7).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ShadowedTypeImport {
+pub struct TypeImport {
     /// The `use` path, module segments then the imported item.
     pub path: Vec<ast::Ident>,
     /// The name the `use` binds: its alias, else the item.
@@ -300,9 +302,10 @@ pub fn emit_with_source(module: &ast::Module, source: &str) -> EmitResult {
 /// definitions are emitted by — or, for externs, *not* emitted by — the module
 /// that declares them.
 ///
-/// `shadowed_types` names the `use`s whose type-only binding the module's value
-/// namespace also takes. Each binds a fresh local that struct-literal / update /
-/// associated-path references read; the value keeps the plain name
+/// `type_imports` names the `use`s of type-only items. One whose binding the
+/// module's value namespace also takes binds a fresh local that struct-literal /
+/// update / associated-path references read; the value keeps the plain name. A
+/// type the module declares itself is treated the same way
 /// (`lang/DYNAMIC.md` §3.7).
 ///
 /// `imported_traits` pairs each `use` binding that names a trait with that
@@ -319,7 +322,7 @@ pub fn emit_with_imports(
     source: &str,
     imported_enums: &[ImportedEnum<'_>],
     imported_externs: &[ast::ExternItem],
-    shadowed_types: &[ShadowedTypeImport],
+    type_imports: &[TypeImport],
     imported_traits: &[(&str, &ast::TraitDecl)],
     as_module: bool,
 ) -> EmitResult {
@@ -328,7 +331,7 @@ pub fn emit_with_imports(
         Some(source),
         imported_enums,
         imported_externs,
-        shadowed_types,
+        type_imports,
         imported_traits,
         as_module,
     )
@@ -339,7 +342,7 @@ fn emit_inner(
     source: Option<&str>,
     imported_enums: &[ImportedEnum<'_>],
     imported_externs: &[ast::ExternItem],
-    shadowed_types: &[ShadowedTypeImport],
+    type_imports: &[TypeImport],
     imported_traits: &[(&str, &ast::TraitDecl)],
     as_module: bool,
 ) -> EmitResult {
@@ -370,7 +373,8 @@ fn emit_inner(
         imported_externs: imported_externs.to_vec(),
         imported_extern_names: ast::extern_value_names_from_items(imported_externs),
         as_module,
-        type_renames: type_renames(shadowed_types, source.unwrap_or_default()),
+        type_imports: type_imports.to_vec(),
+        source_text: source.unwrap_or_default().to_string(),
         ..Emitter::default()
     };
     e.emit_module(module, imported_enums);
@@ -378,36 +382,13 @@ fn emit_inner(
     e.finish_with_map(diagnostics)
 }
 
-/// The fresh local a shadowed type import binds, keyed by its binding.
+/// The fresh local a captured type's table is bound to, keyed by its binding.
 struct TypeRename {
-    /// The `use` path, to pick the type import out from the value `use` that
-    /// shares its binding.
+    /// The `use` path of a type import, to pick it out from a value `use` that
+    /// shares its binding. Empty for a type the module declares.
     path: Vec<ast::Ident>,
     /// The emitted local holding the type's runtime table.
     local: String,
-}
-
-/// Binding → [`TypeRename`] for each shadowed type import. Each fresh local
-/// avoids the source's identifiers and every local allocated before it, so two
-/// shadowed types never share one.
-///
-/// Every binding the module can declare appears verbatim in its source, so a
-/// name absent from it cannot be captured by a user binding.
-fn type_renames(shadowed: &[ShadowedTypeImport], source: &str) -> HashMap<String, TypeRename> {
-    let mut allocated = HashSet::new();
-    let mut renames = HashMap::new();
-    for s in shadowed {
-        let local = fresh_type_local(&s.binding, |name| {
-            allocated.contains(name) || source_mentions_ident(source, name)
-        });
-        allocated.insert(local.clone());
-        let rename = TypeRename {
-            path: s.path.clone(),
-            local,
-        };
-        renames.insert(s.binding.clone(), rename);
-    }
-    renames
 }
 
 /// `__type_<binding>`, suffixed `_1`, `_2`, … until `is_taken` returns false.
@@ -570,9 +551,16 @@ pub(crate) struct Emitter {
     /// through its native `require` and `mod`-qualified reference, never the
     /// defining module's emitted output (which holds no runtime value for it).
     imported_extern_names: std::collections::HashSet<String>,
-    /// Shadowed type imports, binding → fresh local. The `use` binds the fresh
-    /// local and constructor references (`S { .. }`, `S::member`) read it; the
-    /// plain name stays the value binding.
+    /// Type-only imports, from the project. A subset becomes `type_renames`.
+    type_imports: Vec<TypeImport>,
+    /// The module's source text, to keep fresh locals clear of every identifier
+    /// the user wrote.
+    source_text: String,
+    /// Types whose table a value binding of the same name would capture,
+    /// binding → fresh local. The declaration (or the `use`) binds the fresh
+    /// local, and every reference to the table (`S { .. }`, `S::member`,
+    /// `impl` methods, derives) reads it; the plain name stays the value
+    /// binding (`lang/DYNAMIC.md` §3.7).
     type_renames: HashMap<String, TypeRename>,
     /// Whether this module is emitted as a requireable library (project build)
     /// rather than a directly runnable script (single-file). When `true`, each
@@ -817,6 +805,7 @@ impl Emitter {
     fn emit_module(&mut self, module: &ast::Module, imported_enums: &[ImportedEnum<'_>]) {
         self.collect_method_enums(module, imported_enums);
         self.collect_assoc_types(module);
+        self.allocate_type_renames(module);
         self.extern_imports = ast::extern_imports(module);
         // A `use`d extern item emits its native `require` here, in the consumer,
         // not an import from the defining file (`lang/EXTERN.md` §Lowering).
@@ -860,11 +849,62 @@ impl Emitter {
             } else {
                 let fields = exports
                     .iter()
-                    .map(|n| format!("{n} = {n}"))
+                    .map(|n| format!("{n} = {}", self.type_local(n)))
                     .collect::<Vec<_>>()
                     .join(", ");
                 self.line(format!("return {{ {fields} }}"));
             }
+        }
+    }
+
+    /// Pick the types whose table a value binding would capture and give each a
+    /// fresh local (`lang/DYNAMIC.md` §3.7): every struct, method-bearing enum
+    /// and default-bearing trait the module declares, plus each type-only
+    /// import, whose name the module also binds as a value — via `let`, a
+    /// parameter, a pattern, a closure parameter, a `const` / `fn`, or a value
+    /// `use`. Each fresh local avoids every identifier in the source and every
+    /// local allocated before it.
+    fn allocate_type_renames(&mut self, module: &ast::Module) {
+        let binders = binders::value_binders(module);
+        let uses: Vec<&ast::UseDecl> = module
+            .items
+            .iter()
+            .filter_map(|i| match &i.kind {
+                ast::ItemKind::Use(u) => Some(u),
+                _ => None,
+            })
+            .collect();
+        let use_binding = |u: &ast::UseDecl| u.alias.clone().or_else(|| u.path.last().cloned());
+        let mut candidates: Vec<(String, Vec<ast::Ident>)> = Vec::new();
+        for item in &module.items {
+            let name = match &item.kind {
+                ast::ItemKind::Struct(s) => &s.name,
+                ast::ItemKind::Enum(e) if self.enum_has_methods(&e.name) => &e.name,
+                ast::ItemKind::Trait(t) if !t.default_names().is_empty() => &t.name,
+                _ => continue,
+            };
+            candidates.push((name.clone(), Vec::new()));
+        }
+        candidates.extend(
+            self.type_imports
+                .iter()
+                .map(|t| (t.binding.clone(), t.path.clone())),
+        );
+        let mut allocated = HashSet::new();
+        for (binding, path) in candidates {
+            // A value `use` shares the binding when it is a different `use`.
+            let value_use = uses
+                .iter()
+                .any(|u| use_binding(u).as_deref() == Some(&binding) && u.path != path);
+            if !binders.contains(&binding) && !value_use {
+                continue;
+            }
+            let local = fresh_type_local(&binding, |name| {
+                allocated.contains(name) || source_mentions_ident(&self.source_text, name)
+            });
+            allocated.insert(local.clone());
+            self.type_renames
+                .insert(binding, TypeRename { path, local });
         }
     }
 
@@ -980,9 +1020,10 @@ impl Emitter {
             return;
         }
         let local = self.decl_prefix(vis);
-        self.line(format!("{local}{} = {{}}", t.name));
+        let table = self.type_local(&t.name).to_string();
+        self.line(format!("{local}{table} = {{}}"));
         for f in &defaults {
-            self.emit_fn(Some(&t.name), f, ast::Visibility::Public);
+            self.emit_fn(Some(&table), f, ast::Visibility::Public);
         }
         self.bind_trait(&t.name);
     }
@@ -999,8 +1040,13 @@ impl Emitter {
     /// Emit the methods generated by each `#[derive(...)]` on a type, right
     /// after its constructor so they land on the type's table.
     fn emit_derives(&mut self, attrs: &[ast::Attribute], target: neoc_macros::DeriveTarget) {
+        let type_name = match target {
+            neoc_macros::DeriveTarget::Struct(s) => &s.name,
+            neoc_macros::DeriveTarget::Enum(e) => &e.name,
+        };
+        let table = self.type_local(type_name).to_string();
         for name in ast::derive_names(attrs) {
-            match neoc_macros::derive(&name, target) {
+            match neoc_macros::derive_on(&name, target, &table) {
                 Ok(derived) => {
                     self.derive_helpers.extend(derived.helpers);
                     for l in derived.lines {
@@ -1043,33 +1089,34 @@ impl Emitter {
 
     fn emit_struct(&mut self, s: &ast::StructDecl, vis: ast::Visibility) {
         let local = self.decl_prefix(vis);
+        let t = self.type_local(&s.name).to_string();
         match &s.body {
             ast::StructBody::Unit => {
-                self.line(format!(
-                    "{local}{} = {{ __struct = \"{}\" }}",
-                    s.name, s.name
-                ));
+                self.line(format!("{local}{t} = {{ __struct = \"{}\" }}", s.name));
+                // The unit struct is also a value; keep its plain name bound so a
+                // reference reads it unless a nearer binding shadows it.
+                if t != s.name {
+                    self.line(format!("local {} = {t}", s.name));
+                }
             }
             ast::StructBody::Tuple(_) => {
-                self.line(format!("{local}{} = {{}}", s.name));
-                self.line(format!("{}.__index = {}", s.name, s.name));
-                self.line(format!("function {}.new(value)", s.name));
+                self.line(format!("{local}{t} = {{}}"));
+                self.line(format!("{t}.__index = {t}"));
+                self.line(format!("function {t}.new(value)"));
                 self.indented(|e| {
-                    let built = format!(
-                        "setmetatable({{ __struct = \"{}\", value }}, {})",
-                        s.name, s.name
-                    );
+                    let built =
+                        format!("setmetatable({{ __struct = \"{}\", value }}, {t})", s.name);
                     e.line(format!("return {}", e.construct_check(&s.name, &built)));
                 });
                 self.line("end");
             }
             ast::StructBody::Named(_) => {
-                self.line(format!("{local}{} = {{}}", s.name));
-                self.line(format!("{}.__index = {}", s.name, s.name));
-                self.line(format!("function {}.new(fields)", s.name));
+                self.line(format!("{local}{t} = {{}}"));
+                self.line(format!("{t}.__index = {t}"));
+                self.line(format!("function {t}.new(fields)"));
                 self.indented(|e| {
                     e.line(format!("fields.__struct = \"{}\"", s.name));
-                    let built = format!("setmetatable(fields, {})", s.name);
+                    let built = format!("setmetatable(fields, {t})");
                     e.line(format!("return {}", e.construct_check(&s.name, &built)));
                 });
                 self.line("end");
@@ -1106,7 +1153,8 @@ impl Emitter {
             .map(|t| format!("\"{t}\""))
             .collect::<Vec<_>>()
             .join(", ");
-        self.line(format!("{name}.__traits = {{ {list} }}"));
+        let t = self.type_local(name).to_string();
+        self.line(format!("{t}.__traits = {{ {list} }}"));
     }
 
     /// Emit the method table for an enum that has `impl`/derived methods. The
@@ -1115,8 +1163,9 @@ impl Emitter {
     /// (§3.2).
     fn emit_enum_table(&mut self, name: &str, vis: ast::Visibility) {
         let local = self.decl_prefix(vis);
-        self.line(format!("{local}{name} = {{}}"));
-        self.line(format!("{name}.__index = {name}"));
+        let t = self.type_local(name).to_string();
+        self.line(format!("{local}{t} = {{}}"));
+        self.line(format!("{t}.__index = {t}"));
     }
 
     fn emit_impl(&mut self, b: &ast::ImplBlock) {
@@ -1127,12 +1176,13 @@ impl Emitter {
         let Some(target) = p.segments.last().map(|s| s.name.clone()) else {
             return;
         };
+        let table = self.type_local(&target).to_string();
         for f in &b.items {
             // A trait impl binds the trait's associated types; project them into
             // each method signature so a `Self::Item` return renders as the bound
             // type rather than a dangling type name (`STATIC.md` §3.4).
             let f = f.project_assoc(&b.assoc_bindings);
-            self.emit_fn(Some(&target), &f, ast::Visibility::Public);
+            self.emit_fn(Some(&table), &f, ast::Visibility::Public);
         }
         self.emit_inherited_defaults(b, &target);
     }
@@ -1146,13 +1196,15 @@ impl Emitter {
             return;
         };
         let trait_name = &trait_name.name;
+        let target_table = self.type_local(target).to_string();
+        let trait_table = self.type_local(trait_name).to_string();
         let lines: Vec<String> = self
             .trait_defaults
             .get(trait_name)
             .into_iter()
             .flatten()
             .filter(|d| !b.items.iter().any(|f| f.sig.name == **d))
-            .map(|d| format!("{target}.{d} = {trait_name}.{d}"))
+            .map(|d| format!("{target_table}.{d} = {trait_table}.{d}"))
             .collect();
         if self.bound_traits.contains(trait_name) {
             for l in lines {
@@ -1505,14 +1557,14 @@ fn helper() {}";
     }
 
     /// Emit `src` as a library with `shadowed` as its shadowed type imports.
-    fn emit_shadowed(src: &str, shadowed: &[ShadowedTypeImport]) -> String {
+    fn emit_shadowed(src: &str, shadowed: &[TypeImport]) -> String {
         let parsed = neoc_parser::parse(src);
         assert!(parsed.ok(), "{:?}", parsed.diagnostics);
         emit_with_imports(&parsed.module, src, &[], &[], shadowed, &[], true).lua
     }
 
-    fn shadowed(path: &[&str], binding: &str) -> ShadowedTypeImport {
-        ShadowedTypeImport {
+    fn shadowed(path: &[&str], binding: &str) -> TypeImport {
+        TypeImport {
             path: path.iter().map(ToString::to_string).collect(),
             binding: binding.to_string(),
         }

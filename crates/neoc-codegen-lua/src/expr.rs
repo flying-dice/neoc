@@ -446,7 +446,7 @@ impl Emitter {
                     if let [name] = segments.as_slice() {
                         if self.is_tuple_struct(name) {
                             let a = self.emit_args(args);
-                            return format!("{name}.new({a})");
+                            return format!("{}.new({a})", self.type_local(name));
                         }
                         // A bare call to a free extern `fn` declared inside an
                         // extern `mod` qualifies through the `mod`'s binding
@@ -686,7 +686,7 @@ impl Emitter {
 
     /// The local holding `ty`'s runtime table: a shadowed type import's fresh
     /// local, else `ty` (`lang/DYNAMIC.md` §3.7).
-    fn type_local<'a>(&'a self, ty: &'a str) -> &'a str {
+    pub(crate) fn type_local<'a>(&'a self, ty: &'a str) -> &'a str {
         self.type_renames.get(ty).map_or(ty, |r| r.local.as_str())
     }
 

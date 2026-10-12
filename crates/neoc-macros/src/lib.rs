@@ -164,11 +164,33 @@ impl Helper {
 /// Returns an error message when `derive_name` is not one of the four built-in
 /// derives. The message names the unknown derive and lists the supported ones.
 pub fn derive(derive_name: &str, target: DeriveTarget) -> Result<Derived, String> {
+    derive_on(derive_name, target, target.type_name())
+}
+
+/// Like [`derive`], but attaches the derived methods to the Lua local `table`
+/// instead of the type's own name. The emitter passes a fresh local when a value
+/// binding spelled like the type would otherwise capture the type's table
+/// (`DYNAMIC.md` §3.7).
+///
+/// # Arguments
+///
+/// * `derive_name` — the trait being derived, as for [`derive`].
+/// * `target` — the `struct` or `enum` the derive is applied to.
+/// * `table` — the Lua identifier holding the type's runtime table. The
+///   `__struct` / `__enum` tags still carry the neoc type name.
+///
+/// # Errors
+///
+/// Returns an error message when `derive_name` is not a built-in derive.
+pub fn derive_on(derive_name: &str, target: DeriveTarget, table: &str) -> Result<Derived, String> {
     match derive_name {
-        "Clone" => Ok(Derived::plain(derive_clone(target))),
-        "Eq" => Ok(Derived::with_helper(derive_eq(target), Helper::Eq)),
-        "Debug" => Ok(Derived::with_helper(derive_debug(target), Helper::Debug)),
-        "Display" => Ok(Derived::plain(derive_display(target))),
+        "Clone" => Ok(Derived::plain(derive_clone(target, table))),
+        "Eq" => Ok(Derived::with_helper(derive_eq(target, table), Helper::Eq)),
+        "Debug" => Ok(Derived::with_helper(
+            derive_debug(target, table),
+            Helper::Debug,
+        )),
+        "Display" => Ok(Derived::plain(derive_display(target, table))),
         other => Err(format!(
             "unknown derive `{other}`; the derivable traits are Clone, Eq, Debug, Display"
         )),
@@ -287,29 +309,28 @@ impl DataKey<'_> {
 
 // ---- Clone -----------------------------------------------------------------
 
-fn derive_clone(target: DeriveTarget) -> Vec<String> {
-    let ty = target.type_name();
+fn derive_clone(target: DeriveTarget, ty: &str) -> Vec<String> {
     let mut out = vec![format!("function {ty}.clone(self)")];
     match target {
-        DeriveTarget::Struct(s) => out.extend(clone_struct_body(&s.name, &s.body)),
-        DeriveTarget::Enum(e) => out.extend(clone_enum_body(&e.name, &e.variants)),
+        DeriveTarget::Struct(s) => out.extend(clone_struct_body(&s.name, ty, &s.body)),
+        DeriveTarget::Enum(e) => out.extend(clone_enum_body(&e.name, ty, &e.variants)),
     }
     out.push("end".to_string());
     out
 }
 
-fn clone_struct_body(name: &str, body: &ast::StructBody) -> Vec<String> {
+fn clone_struct_body(name: &str, table: &str, body: &ast::StructBody) -> Vec<String> {
     let mut entries = vec![format!("__struct = \"{name}\"")];
     entries.extend(struct_keys(body).into_iter().map(|k| k.copy_entry("self")));
     // Re-attach the type's metatable so the clone is a full value methods can
     // be called on, not a bare table (matches the `.new` constructor).
     vec![format!(
-        "  return setmetatable({{ {} }}, {name})",
+        "  return setmetatable({{ {} }}, {table})",
         entries.join(", ")
     )]
 }
 
-fn clone_enum_body(name: &str, variants: &[ast::Variant]) -> Vec<String> {
+fn clone_enum_body(name: &str, table: &str, variants: &[ast::Variant]) -> Vec<String> {
     let mut out = Vec::new();
     for v in variants {
         let mut entries = vec![
@@ -325,7 +346,7 @@ fn clone_enum_body(name: &str, variants: &[ast::Variant]) -> Vec<String> {
         // Re-attach the enum's metatable (as the struct path does) so the clone
         // keeps its methods and `__traits`.
         out.push(format!(
-            "    return setmetatable({{ {} }}, {name})",
+            "    return setmetatable({{ {} }}, {table})",
             entries.join(", ")
         ));
         out.push("  end".to_string());
@@ -335,8 +356,7 @@ fn clone_enum_body(name: &str, variants: &[ast::Variant]) -> Vec<String> {
 
 // ---- Eq --------------------------------------------------------------------
 
-fn derive_eq(target: DeriveTarget) -> Vec<String> {
-    let ty = target.type_name();
+fn derive_eq(target: DeriveTarget, ty: &str) -> Vec<String> {
     let mut out = vec![format!("function {ty}.eq(a, b)")];
     match target {
         DeriveTarget::Struct(s) => out.extend(eq_struct_body(&s.body)),
@@ -372,8 +392,7 @@ fn eq_enum_body(variants: &[ast::Variant]) -> Vec<String> {
 
 // ---- Debug -----------------------------------------------------------------
 
-fn derive_debug(target: DeriveTarget) -> Vec<String> {
-    let ty = target.type_name();
+fn derive_debug(target: DeriveTarget, ty: &str) -> Vec<String> {
     let mut out = vec![format!("function {ty}.debug(self)")];
     match target {
         DeriveTarget::Struct(s) => out.extend(debug_struct_body(&s.name, &s.body)),
@@ -440,8 +459,7 @@ fn debug_render(name: &str, keys: &[DataKey], recv: &str) -> String {
 
 // ---- Display ---------------------------------------------------------------
 
-fn derive_display(target: DeriveTarget) -> Vec<String> {
-    let ty = target.type_name();
+fn derive_display(target: DeriveTarget, ty: &str) -> Vec<String> {
     let mut out = vec![format!("function {ty}.display(self)")];
     match target {
         DeriveTarget::Struct(s) => out.extend(display_struct_body(&s.name, &s.body)),
@@ -535,6 +553,34 @@ mod tests {
             name: name.to_string(),
             name_span: ast::Span::default(),
             body,
+        }
+    }
+
+    // `DYNAMIC.md` §3.7: derived methods attach to, and clones re-stamp the
+    // metatable of, the given table local — not the type's own name.
+    #[test]
+    fn derive_on_uses_the_given_table_for_struct_and_enum() {
+        let p = point();
+        let out = derive_on("Clone", DeriveTarget::Struct(&p), "__type_Point").unwrap();
+        let text = out.lines.join("\n");
+        assert!(text.contains("function __type_Point.clone(self)"), "{text}");
+        assert!(text.contains("}, __type_Point)"), "{text}");
+        assert!(!text.contains("}, Point)"), "{text}");
+        assert!(text.contains("__struct = \"Point\""), "{text}");
+
+        let sh = shape();
+        let out = derive_on("Clone", DeriveTarget::Enum(&sh), "__type_Shape").unwrap();
+        let text = out.lines.join("\n");
+        assert!(text.contains("}, __type_Shape)"), "{text}");
+        assert!(text.contains("__enum = \"Shape\""), "{text}");
+
+        for d in ["Eq", "Debug", "Display"] {
+            let out = derive_on(d, DeriveTarget::Struct(&p), "__type_Point").unwrap();
+            assert!(
+                out.lines[0].contains(" __type_Point."),
+                "{:?}",
+                out.lines[0]
+            );
         }
     }
 

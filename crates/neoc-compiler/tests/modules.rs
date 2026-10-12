@@ -381,6 +381,59 @@ fn type_only_use_shadowed_by_module_fn_runs() {
     assert_eq!(result, "7");
 }
 
+// `lang/DYNAMIC.md` §3.7: an imported struct is captured as readily by a local
+// `let`, a parameter or a pattern binding as by a module-level value.
+
+#[test]
+fn type_only_use_shadowed_by_let_runs() {
+    let (main_lua, result) = run_project(
+        &[("pal", PAL_HUE)],
+        "use pal::Hue;\n\
+         pub fn main() -> number { let Hue = 7; let h = Hue { r: Hue }; h.r }\n",
+    );
+    assert!(
+        main_lua.contains("local __type_Hue = require(\"pal\").Hue"),
+        "{main_lua}"
+    );
+    assert_eq!(result, "7");
+}
+
+#[test]
+fn type_only_use_shadowed_by_parameter_runs() {
+    let (_, result) = run_project(
+        &[("pal", PAL_HUE)],
+        "use pal::Hue;\nfn f(Hue: number) -> number { let h = Hue { r: Hue }; h.r }\n\
+         pub fn main() -> number { f(7) }\n",
+    );
+    assert_eq!(result, "7");
+}
+
+#[test]
+fn type_only_use_shadowed_by_closure_and_for_and_match_runs() {
+    let (_, result) = run_project(
+        &[("pal", PAL_HUE)],
+        "use pal::Hue;\n\
+         pub fn main() -> number {\n\
+             let c = |Hue: number| { let h = Hue { r: Hue }; h.r };\n\
+             let t = 0;\n\
+             for Hue in 1..2 { t = t + Hue { r: Hue }.r; }\n\
+             let m = match Some(5) { Some(Hue) => Hue { r: Hue }.r, None => 0 };\n\
+             c(7) + t + m\n\
+         }\n",
+    );
+    assert_eq!(result, "13");
+}
+
+#[test]
+fn type_only_use_not_shadowed_keeps_its_name() {
+    let (main_lua, result) = run_project(
+        &[("pal", PAL_HUE)],
+        "use pal::Hue;\npub fn main() -> number { let h = Hue { r: 4 }; h.r }\n",
+    );
+    assert!(!main_lua.contains("__type_"), "{main_lua}");
+    assert_eq!(result, "4");
+}
+
 #[test]
 fn shadowed_type_local_is_not_captured_by_a_user_binding() {
     let (main_lua, result) = run_project(

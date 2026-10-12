@@ -564,7 +564,7 @@ fn check_and_emit_module(
         enums: imported_enums(root, loaded, &me.module),
         traits: imported_traits(root, loaded, &me.module),
         externs,
-        shadowed_types: shadowed_type_imports(root, loaded, &me.module, &table),
+        type_imports: type_only_imports(root, loaded, &me.module),
         // Every module a project build emits is a requireable library — the
         // entry included, since a host consuming the build `require`s it.
         as_module: true,
@@ -729,7 +729,7 @@ struct EmitInputs<'a> {
     /// Type-only `use`s whose binding the module's value namespace also holds.
     /// The backend binds each to a fresh local so the constructor and the value
     /// coexist at runtime (`lang/DYNAMIC.md` §3.7).
-    shadowed_types: Vec<codegen_lua::ShadowedTypeImport>,
+    type_imports: Vec<codegen_lua::TypeImport>,
     /// Whether the module is emitted as a requireable library. A project build
     /// sets `true` so each module ends with a `return { … }` export table a
     /// consumer can `require`; single-file `transpile` leaves it `false` so the
@@ -759,7 +759,7 @@ fn emit(target: Target, module: &ast::Module, source: &str, inputs: &EmitInputs)
                 source,
                 &inputs.enums,
                 &inputs.externs,
-                &inputs.shadowed_types,
+                &inputs.type_imports,
                 &inputs
                     .traits
                     .iter()
@@ -846,18 +846,17 @@ fn imported_externs(
     out
 }
 
-/// The `use`s of `module` that import a type-namespace-only item under a
-/// binding its resolved value namespace (`table`: own `const`/`fn` items plus
-/// value imports) also holds. The type is absent from the value namespace, but
-/// its constructor is still a runtime table the module needs (`S { .. }` lowers
-/// to `S.new`), so the backend binds it to a fresh local rather than letting the
-/// value shadow it (`lang/DYNAMIC.md` §3.7).
-fn shadowed_type_imports(
+/// The `use`s of `module` that import a type-namespace-only item. The type is
+/// absent from the value namespace, but its constructor is still a runtime table
+/// the module needs (`S { .. }` lowers to `S.new`). The backend binds it to a
+/// fresh local whenever a value in the module — a `const` / `fn`, a value
+/// import, or any `let`, parameter or pattern binding — shares its name, rather
+/// than letting that value capture the table (`lang/DYNAMIC.md` §3.7).
+fn type_only_imports(
     root: &Path,
     loaded: &HashMap<PathBuf, LoadedModule>,
     module: &ast::Module,
-    table: &types::SymbolTable,
-) -> Vec<codegen_lua::ShadowedTypeImport> {
+) -> Vec<codegen_lua::TypeImport> {
     module
         .items
         .iter()
@@ -872,11 +871,9 @@ fn shadowed_type_imports(
             let type_only =
                 source.table.types.contains_key(last) && !source.table.values.contains_key(last);
             let binding = u.alias.as_ref().unwrap_or(last);
-            (type_only && table.values.contains_key(binding)).then(|| {
-                codegen_lua::ShadowedTypeImport {
-                    path: u.path.clone(),
-                    binding: binding.clone(),
-                }
+            type_only.then(|| codegen_lua::TypeImport {
+                path: u.path.clone(),
+                binding: binding.clone(),
             })
         })
         .collect()

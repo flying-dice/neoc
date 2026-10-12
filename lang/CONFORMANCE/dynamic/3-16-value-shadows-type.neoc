@@ -1,0 +1,89 @@
+// STATIC.md §2 / DYNAMIC.md §3.7: a value binding may share a type's name. The
+// type's table is still reached by `S { .. }`, `S::assoc`, `impl` methods,
+// derives, and trait defaults wherever a same-named `let`, parameter, closure
+// parameter, pattern binding, `const`, or `fn` is in play. Each type below is
+// captured by one of them; every program point still reads its own table.
+extern {
+    fn println(n: number);
+}
+
+#[derive(Clone)]
+struct Hue {
+    r: number,
+}
+
+struct Pt {
+    x: number,
+}
+
+struct Box {
+    v: number,
+}
+
+enum Mode {
+    On,
+    Off,
+}
+
+trait Score {
+    fn base(self) -> number;
+
+    fn bonus(self) -> number {
+        self.base() + 100
+    }
+}
+
+const Pt: number = 5;
+
+fn Box() -> number {
+    6
+}
+
+impl Pt {
+    fn make(Pt: number) -> Pt {
+        Pt { x: Pt }
+    }
+}
+
+impl Mode {
+    fn code(self) -> number {
+        match self {
+            Mode::On => 1,
+            Mode::Off => 0,
+        }
+    }
+}
+
+impl Score for Pt {
+    fn base(self) -> number {
+        self.x
+    }
+}
+
+fn pick(Mode: number) -> number {
+    let m = Mode::On;
+    Mode + m.code()
+}
+
+fn main() {
+    // `let` and a closure parameter named like a struct.
+    let Hue = 7;
+    let h = Hue { r: Hue };
+    println(h.r);
+    let grow = |Hue: number| Hue { r: Hue + 1 };
+    println(grow(1).r);
+    println(h.clone().r);
+    // Module `const` / `fn` named like a struct.
+    println(Pt);
+    println(Pt::make(3).x);
+    println(Pt::make(3).bonus());
+    println(Box());
+    println((Box { v: Box() }).v);
+    // A parameter named like an enum.
+    println(pick(10));
+    // A `for` variable named like a struct.
+    for Hue in 0..2 {
+        println(Hue);
+    }
+    println(Pt::make(2).x);
+}

@@ -149,9 +149,13 @@ The body is emitted once, in the trait's module, and shared by every implementor
 
 The path up to the final segment is the module; the final segment is the item selected from it. `require` uses the dotted module convention. A `use` of a method-bearing type needs no per-type wiring in the consumer: the value carries its metatable across the boundary (§7).
 
-**Type import shadowed by a value.** A `use` of a type-only item (a struct with no value-namespace binding, `STATIC.md` §2) may share its binding with a value the module also binds — a value `use`, or a module-level `const` / `fn`. The two coexist statically, but the struct's constructor is still a runtime table, so the type import binds a fresh local `t` instead: `__type_<binding>`, suffixed `_1`, `_2`, … until no identifier in the module's source spells it and no fresh local already allocated in the module takes it, so no user binding can capture it and no two shadowed types share one. The value keeps the plain name. Struct literal, struct update, and `S::assoc` references to the type read `t`; every other reference to the name reads the value.
+**Type table captured by a value.** A type's runtime table is a Lua local named like the type, and `S { .. }`, `S::assoc`, an `impl`'s methods, a derive, and a trait default all reach it by that name. The value namespace may reuse the name (`STATIC.md` §2), so a value binding spelled like a type could capture the table. When the module binds the name in the value namespace anywhere — a `let`, a parameter, a closure parameter, a pattern binding, a `for` variable, a nested `fn`, a module-level `const` / `fn`, or a value `use` — the type's table is bound to a fresh local `t` instead: `__type_<name>`, suffixed `_1`, `_2`, … until no identifier in the module's source spells it and no fresh local already allocated in the module takes it, so no user binding can capture it and no two types share one. The value keeps the plain name. Struct literal, struct update, `S::assoc` references, the `impl` and derive methods, an enum's variant metatable, and the export of a `pub` type all use `t`; every other reference to the name reads the value. A type no value binds keeps its plain name.
+
+This covers a struct, an enum with methods, and a trait with defaults declared in the module, and a `use` of a type-only item (a struct with no value-namespace binding, `STATIC.md` §2). A unit struct is also a value, so it additionally binds its plain name to `t`; a nearer binding shadows it as any value.
 
 ```
+⟦ struct c { … } ⟧       = local t = {}  …                when the module's value namespace binds c
+⟦ impl c { fn m … } ⟧    = function t.m(…) … end
 ⟦ use a::b::c ⟧          = local t = require("a.b").c     when c is type-only and the module's value namespace binds c
 ⟦ c { f: e, … } ⟧ₑ       = t.new({ f = ⟦e⟧, … })
 ⟦ c::m ⟧ₑ                = t.m
