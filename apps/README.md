@@ -60,6 +60,8 @@ Security model:
    per screen and state (`tags: ['app']`, inside `AppWindow`); `JOURNEYS.md` with matching `e2e/journeys.spec.ts`;
    a `data-testid` on every interactive element. Its main module must be browser-safe for headless tests.
 5. Run `bun install`, then `bun run lint && bun run typecheck && bun run test:e2e`.
-6. Design it with the `app-design` skill (journeys → research panel → conformance score → iterate).
+6. Design it with the `app-design` skill (journeys → research panel → conformance score → iterate). The app stays
+   in its MR until the readiness gate in `.claude/skills/agentos-code-review` holds.
 
-Apps must not import from `apps/desktop` or from other apps, and must not import `electron` directly.
+Apps must not import from `apps/desktop` or from other apps, and must not import `electron` directly
+(`bun run lint:boundaries` enforces the full rule set; see AGENTS.md → "Boundaries").
