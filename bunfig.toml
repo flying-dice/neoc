@@ -1,0 +1,7 @@
+[install]
+# electron-builder expects a flat node_modules layout
+linker = "hoisted"
+
+[test]
+# Playwright specs (e2e/, apps/*/e2e/) run with `bun run test:e2e`, not bun test.
+pathIgnorePatterns = ["e2e/**", "**/e2e/**", "node_modules/**"]

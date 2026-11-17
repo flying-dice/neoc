@@ -1,0 +1,18 @@
+{
+  "extends": "@electron-toolkit/tsconfig/tsconfig.web.json",
+  "include": [
+    "src/renderer/src/env.d.ts",
+    "src/renderer/src/**/*",
+    "src/renderer/src/**/*.svelte",
+    "../../packages/sdk/src/host/bridge.ts"
+  ],
+  "compilerOptions": {
+    "verbatimModuleSyntax": true,
+    "useDefineForClassFields": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "allowJs": true,
+    "checkJs": true,
+    "lib": ["ESNext", "DOM", "DOM.Iterable"]
+  }
+}

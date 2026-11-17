@@ -1,0 +1,180 @@
+/*
+ * AgentOS design tokens
+ * iOS / iPadOS 16–17 design language (pre-Liquid Glass).
+ *
+ * Every colour is declared once with light-dark(), so the theme follows
+ * `color-scheme`: the OS setting by default, or forced with
+ * data-theme="light" | "dark" on any ancestor.
+ */
+
+:root {
+  color-scheme: light dark;
+}
+[data-theme='light'] {
+  color-scheme: light;
+}
+[data-theme='dark'] {
+  color-scheme: dark;
+}
+/* A themed subtree re-resolves its text colour; otherwise it would inherit
+   the colour already computed for the outer theme (black text on dark). */
+[data-theme] {
+  color: var(--label);
+}
+
+:root,
+[data-theme] {
+  /* ── System colours ─────────────────────────────────────────── */
+  /*
+   * Blue and red are the "Increase Contrast" variants so text meets WCAG AA
+   * (4.5:1) on every background: #0066cc is 5.6:1 on white; #409cff is
+   * 4.9:1 on gray5. See docs/design/DESIGN_LANGUAGE.md §2.
+   */
+  --ios-blue: light-dark(#0066cc, #409cff);
+  --ios-green: light-dark(#34c759, #30d158);
+  --ios-indigo: light-dark(#5856d6, #5e5ce6);
+  --ios-orange: light-dark(#ff9500, #ff9f0a);
+  --ios-pink: light-dark(#ff2d55, #ff375f);
+  --ios-purple: light-dark(#af52de, #bf5af2);
+  --ios-red: light-dark(#d70015, #ff6961);
+  --ios-teal: light-dark(#30b0c7, #40c8e0);
+  --ios-yellow: light-dark(#ffcc00, #ffd60a);
+  --ios-mint: light-dark(#00c7be, #63e6e2);
+  --ios-cyan: light-dark(#32ade6, #64d2ff);
+  --ios-brown: light-dark(#a2845e, #ac8e68);
+
+  --ios-gray: #8e8e93;
+  --ios-gray2: light-dark(#aeaeb2, #636366);
+  --ios-gray3: light-dark(#c7c7cc, #48484a);
+  --ios-gray4: light-dark(#d1d1d6, #3a3a3c);
+  --ios-gray5: light-dark(#e5e5ea, #2c2c2e);
+  --ios-gray6: light-dark(#f2f2f7, #1c1c1e);
+
+  /* Accent used by controls; override per subtree to re-tint. */
+  --tint: var(--ios-blue);
+  /*
+   * A tint used as a *background behind white text* (filled buttons, selected
+   * rows, sent bubbles). Dark mode's bright tint is too light for white text,
+   * so fills darken it. Components re-derive it from their local --tint.
+   */
+  --tint-fill: light-dark(var(--tint), color-mix(in oklab, var(--tint) 70%, black));
+
+  /* ── Labels ─────────────────────────────────────────────────── */
+  --label: light-dark(#000000, #ffffff);
+  /* 0.75 (not iOS's 0.6) in light mode: 4.8:1 on grouped backgrounds. */
+  --label-secondary: light-dark(rgb(60 60 67 / 0.75), rgb(235 235 245 / 0.6));
+  --label-tertiary: light-dark(rgb(60 60 67 / 0.3), rgb(235 235 245 / 0.3));
+  --label-quaternary: light-dark(rgb(60 60 67 / 0.18), rgb(235 235 245 / 0.16));
+  --placeholder: var(--label-tertiary);
+  --link: var(--ios-blue);
+
+  /* ── Separators ─────────────────────────────────────────────── */
+  --separator: light-dark(rgb(60 60 67 / 0.29), rgb(84 84 88 / 0.6));
+  --separator-opaque: light-dark(#c6c6c8, #38383a);
+
+  /* ── Fills (for thin & small shapes) ────────────────────────── */
+  --fill: light-dark(rgb(120 120 128 / 0.2), rgb(120 120 128 / 0.36));
+  --fill-secondary: light-dark(rgb(120 120 128 / 0.16), rgb(120 120 128 / 0.32));
+  --fill-tertiary: light-dark(rgb(118 118 128 / 0.12), rgb(118 118 128 / 0.24));
+  --fill-quaternary: light-dark(rgb(116 116 128 / 0.08), rgb(118 118 128 / 0.18));
+
+  /* ── Backgrounds ────────────────────────────────────────────── */
+  --bg: light-dark(#ffffff, #000000);
+  --bg-secondary: light-dark(#f2f2f7, #1c1c1e);
+  --bg-tertiary: light-dark(#ffffff, #2c2c2e);
+
+  --bg-grouped: light-dark(#f2f2f7, #000000);
+  --bg-grouped-secondary: light-dark(#ffffff, #1c1c1e);
+  --bg-grouped-tertiary: light-dark(#f2f2f7, #2c2c2e);
+
+  /* Elevated surfaces (windows, sheets) — dark mode lifts to gray6. */
+  --bg-elevated: light-dark(#ffffff, #1c1c1e);
+  --bg-grouped-elevated: light-dark(#f2f2f7, #1c1c1e);
+  --bg-grouped-elevated-secondary: light-dark(#ffffff, #2c2c2e);
+
+  /* ── Materials (blur + vibrancy) ────────────────────────────── */
+  --material-blur: blur(30px) saturate(190%);
+  --material-ultrathin: light-dark(rgb(255 255 255 / 0.32), rgb(28 28 30 / 0.32));
+  --material-thin: light-dark(rgb(255 255 255 / 0.5), rgb(28 28 30 / 0.5));
+  --material-regular: light-dark(rgb(250 250 250 / 0.72), rgb(30 30 32 / 0.7));
+  --material-thick: light-dark(rgb(246 246 248 / 0.88), rgb(28 28 30 / 0.86));
+  --material-chrome: light-dark(rgb(249 249 249 / 0.82), rgb(22 22 24 / 0.8));
+  --dimming: rgb(0 0 0 / 0.4);
+
+  /* ── Control-specific ───────────────────────────────────────── */
+  --switch-off: light-dark(rgb(120 120 128 / 0.16), rgb(120 120 128 / 0.32));
+  --segment-thumb: light-dark(#ffffff, #636366);
+  --knob: #ffffff;
+
+  /* ── Typography ─────────────────────────────────────────────── */
+  --font-text: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', 'Segoe UI',
+    system-ui, sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue',
+    'Segoe UI', system-ui, sans-serif;
+  --font-rounded: ui-rounded, 'SF Pro Rounded', -apple-system, BlinkMacSystemFont, system-ui,
+    sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Dynamic Type — "Large" (default) content size: size / line-height / tracking */
+  --type-large-title: 400 34px/41px var(--font-display);
+  --type-title1: 400 28px/34px var(--font-display);
+  --type-title2: 400 22px/28px var(--font-display);
+  --type-title3: 400 20px/25px var(--font-display);
+  --type-headline: 600 17px/22px var(--font-text);
+  --type-body: 400 17px/22px var(--font-text);
+  --type-callout: 400 16px/21px var(--font-text);
+  --type-subheadline: 400 15px/20px var(--font-text);
+  --type-footnote: 400 13px/18px var(--font-text);
+  --type-caption1: 400 12px/16px var(--font-text);
+  --type-caption2: 400 11px/13px var(--font-text);
+
+  --tracking-large-title: 0.37px;
+  --tracking-title1: 0.36px;
+  --tracking-title2: 0.35px;
+  --tracking-title3: 0.38px;
+  --tracking-body: -0.41px;
+  --tracking-callout: -0.32px;
+  --tracking-subheadline: -0.24px;
+  --tracking-footnote: -0.08px;
+  --tracking-caption: 0px;
+
+  /* ── Shape ──────────────────────────────────────────────────── */
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: 10px; /* inset-grouped lists, search fields */
+  --radius-lg: 14px; /* alerts, popovers */
+  --radius-xl: 18px; /* windows */
+  --radius-2xl: 22px; /* widgets */
+  --radius-dock: 30px;
+  --radius-icon: 22.37%; /* app icon squircle approximation */
+
+  /* ── Elevation ──────────────────────────────────────────────── */
+  --shadow-control: 0 3px 8px rgb(0 0 0 / 0.15), 0 3px 1px rgb(0 0 0 / 0.06);
+  --shadow-card: 0 2px 10px rgb(0 0 0 / 0.08);
+  --shadow-popover: 0 10px 40px rgb(0 0 0 / 0.2);
+  --shadow-window: 0 0 0 0.5px rgb(0 0 0 / 0.12), 0 24px 60px rgb(0 0 0 / 0.28),
+    0 8px 20px rgb(0 0 0 / 0.12);
+  --shadow-window-inactive: 0 0 0 0.5px rgb(0 0 0 / 0.1), 0 12px 32px rgb(0 0 0 / 0.18);
+
+  /* ── Motion ─────────────────────────────────────────────────── */
+  --ease-ios: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-spring: cubic-bezier(0.34, 1.36, 0.64, 1);
+  --duration-fast: 180ms;
+  --duration: 300ms;
+  --duration-slow: 450ms;
+
+  /* ── Layout ─────────────────────────────────────────────────── */
+  --row-height: 44px;
+  --row-inset: 16px;
+  --hairline: 0.5px;
+}
+
+/* Accessibility → Reduce Transparency: materials become opaque. */
+:root.reduce-transparency {
+  --material-blur: none;
+  --material-ultrathin: var(--bg-grouped-elevated);
+  --material-thin: var(--bg-grouped-elevated);
+  --material-regular: var(--bg-grouped-elevated);
+  --material-thick: var(--bg-grouped-elevated);
+  --material-chrome: var(--bg-grouped-elevated);
+}

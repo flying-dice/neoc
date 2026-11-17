@@ -1,0 +1,52 @@
+{
+  "name": "@agentos/app-calculator",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AgentOS Calculator — a reference app module",
+  "type": "module",
+  "exports": {
+    "./manifest": {
+      "types": "./src/manifest.ts",
+      "default": "./src/manifest.ts"
+    },
+    "./renderer": {
+      "types": "./src/renderer/index.ts",
+      "svelte": "./src/renderer/index.ts",
+      "default": "./src/renderer/index.ts"
+    },
+    "./main": {
+      "types": "./src/main/index.ts",
+      "default": "./src/main/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "svelte-check --tsconfig ./tsconfig.json",
+    "test": "bun test ./src",
+    "storybook": "storybook dev -p 6007 --no-open",
+    "build-storybook": "storybook build -o storybook-static --quiet"
+  },
+  "dependencies": {
+    "@agentos/sdk": "workspace:*",
+    "@agentos/ui": "workspace:*"
+  },
+  "peerDependencies": {
+    "svelte": "^5.0.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.4",
+    "svelte": "^5.57.2",
+    "svelte-check": "^4.7.6",
+    "typescript": "^5.9.3",
+    "zod": "^4.6.7",
+    "@agentos/storybook": "workspace:*",
+    "@storybook/addon-a11y": "10.6.7",
+    "@storybook/addon-docs": "10.6.7",
+    "@storybook/addon-svelte-csf": "5.1.6",
+    "@storybook/addon-themes": "10.6.7",
+    "@storybook/svelte-vite": "10.6.7",
+    "storybook": "10.6.7",
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "vite": "^8.3.4"
+  }
+}

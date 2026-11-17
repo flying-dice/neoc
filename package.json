@@ -1,0 +1,31 @@
+{
+  "name": "agentos",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "bun run --filter @agentos/desktop dev",
+    "build": "bun run --filter @agentos/desktop build",
+    "typecheck": "bun run --filter '*' typecheck",
+    "lint": "bun run lint:atomic && bun run lint:testids && bun run --filter '*' lint",
+    "format": "bun run --filter '*' format",
+    "lint:atomic": "bun scripts/check-atomic.ts",
+    "lint:testids": "bun scripts/check-testids.ts",
+    "test": "bun run --filter '*' test",
+    "test:e2e": "bun scripts/storybooks.ts build && playwright test",
+    "test:e2e:update": "bun scripts/storybooks.ts build && playwright test --update-snapshots",
+    "storybooks": "bun scripts/storybooks.ts",
+    "dev:web": "bun run --filter @agentos/desktop dev:web"
+  },
+  "trustedDependencies": [
+    "electron",
+    "esbuild"
+  ],
+  "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
+    "@playwright/test": "^1.65.1"
+  }
+}

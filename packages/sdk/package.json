@@ -1,0 +1,62 @@
+{
+  "name": "@agentos/sdk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AgentOS app SDK — the contract between app modules and the host OS (manifest, renderer API, main API, tools)",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./app/main": {
+      "types": "./src/app/main.ts",
+      "default": "./src/app/main.ts"
+    },
+    "./app/renderer": {
+      "types": "./src/app/renderer.ts",
+      "svelte": "./src/app/renderer.ts",
+      "default": "./src/app/renderer.ts"
+    },
+    "./host/protocol": {
+      "types": "./src/host/protocol.ts",
+      "default": "./src/host/protocol.ts"
+    },
+    "./host/main": {
+      "types": "./src/host/main.ts",
+      "default": "./src/host/main.ts"
+    },
+    "./host/preload": {
+      "types": "./src/host/preload.ts",
+      "default": "./src/host/preload.ts"
+    },
+    "./host/renderer": {
+      "types": "./src/host/renderer.ts",
+      "default": "./src/host/renderer.ts"
+    },
+    "./testing": {
+      "types": "./src/testing/index.ts",
+      "default": "./src/testing/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "bun test"
+  },
+  "peerDependencies": {
+    "svelte": "^5.0.0",
+    "zod": "^4.0.0",
+    "electron": ">=30"
+  },
+  "devDependencies": {
+    "electron": "44.11.3",
+    "svelte": "^5.57.2",
+    "typescript": "^5.9.3",
+    "zod": "^4.6.7",
+    "@types/bun": "^1.4.4"
+  },
+  "dependencies": {
+    "@agentos/ui": "workspace:*",
+    "@agentclientprotocol/sdk": "2.7.0"
+  }
+}

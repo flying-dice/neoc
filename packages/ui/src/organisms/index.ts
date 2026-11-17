@@ -1,0 +1,10 @@
+// @organisms barrel — generated listing; keep alphabetical.
+export { default as Dock } from './Dock.svelte'
+export { default as ListSection } from './ListSection.svelte'
+export { default as MacWindow } from './MacWindow.svelte'
+export { default as MenuBar } from './MenuBar.svelte'
+export { default as NavigationBar } from './NavigationBar.svelte'
+export { default as StageStrip } from './StageStrip.svelte'
+export { default as StatusBar } from './StatusBar.svelte'
+export { default as TabBar } from './TabBar.svelte'
+export { default as Window } from './Window.svelte'
