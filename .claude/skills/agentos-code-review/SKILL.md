@@ -17,14 +17,14 @@ git diff main...HEAD --stat && git diff main...HEAD
 
 Classify each touched area: **app** (`apps/<id>`, not desktop), **kit** (`packages/ui`: reaches every app), **SDK**
 (`packages/sdk`: the contract; a `host/protocol` change touches both processes), **desktop** (host, shell, built-in
-apps), **tooling** (scripts, e2e, CI, skills). Read the files around each change, not just the hunks.
+apps), **tooling** (scripts, e2e, skills). Read the files around each change, not just the hunks.
 
 For a diff over ~400 lines or more than 3 areas, give each of sections 2 to 5 to its own sub-agent with the diff and
 file list (not your hypotheses), then merge and dedupe the findings yourself.
 
 ## 1. The gate
 
-The PR's CI (`gh pr checks <n>`) or a local run must show all green on the head commit:
+There is no hosted CI. Run the gate yourself on the PR's head commit (`gh pr checkout <n>`) and see it all green:
 
 ```sh
 bun run lint && bun run typecheck && bun run test && bun run test:e2e
@@ -108,7 +108,7 @@ the tests and green journeys, but not a new research round.
 
 **Verdict: READY TO MERGE** | **Verdict: STAYS IN MR** (one line on why)
 
-Gate: lint ✓ · typecheck ✓ · test ✓ · e2e ✓ (CI run <link> on <sha> | local)
+Gate: lint ✓ · typecheck ✓ · test ✓ · e2e ✓ (local, on <sha>)
 Readiness: <app>: window ✓ · stories ✓ · journeys ✓ · wiring ✓ · verified ✗ · researched ✗ (no docs/ux/<app>/)
 
 ### Findings
@@ -118,7 +118,7 @@ Readiness: <app>: window ✓ · stories ✓ · journeys ✓ · wiring ✓ · ver
 2. **Major**, …
 
 ### Not checked
-- e2e not run locally (no macOS runner): relied on CI run <link>.
+- e2e not run (not on a Mac): the gate is unverified, so the verdict is STAYS IN MR.
 ```
 
 Severities: **blocker** (a bug, data loss, security or boundary violation, a missing gate or readiness item, an

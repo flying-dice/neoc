@@ -9,8 +9,8 @@ Sources of truth: `apps/README.md` (app model, SDK, security), `docs/TESTING.md`
 ## Merge policy
 
 - All work happens on a branch and lands through a PR. Never push to `main`.
-- Nothing merges without the full gate green on the head commit (CI: lint, typecheck, test, e2e) and an
-  `agentos-code-review` verdict of **READY TO MERGE**.
+- Nothing merges without the full gate green locally on the head commit (lint, typecheck, test, e2e; there is no
+  hosted CI) and an `agentos-code-review` verdict of **READY TO MERGE**.
 - An app that isn't ready for the full gate and the UX research panel stays in its MR. Keep pushing to the
   branch; don't merge a partial app behind a flag or with "tests later".
 
@@ -65,7 +65,8 @@ bun run storybooks list # every app's Storybook (each package: bun run storybook
 bun scripts/design-audit.ts <app>   # static styleguide audit
 ```
 
-Visual baselines (`e2e/__screenshots__`) are macOS-only for now; CI runs e2e on macOS.
+Visual baselines (`e2e/__screenshots__`) are macOS-only, so run `test:e2e` on a Mac. There is no hosted CI: the
+`pre-commit` skill runs the gate and `agentos-code-review` checks it.
 
 ## Adding an app
 

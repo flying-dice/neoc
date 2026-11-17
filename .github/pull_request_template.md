@@ -4,7 +4,7 @@
 
 ## Gate
 
-- [ ] CI green on the head commit: lint (atomic, test ids, boundaries, eslint) · typecheck · test · e2e
+- [ ] Gate green locally on the head commit: lint (atomic, test ids, boundaries, eslint) · typecheck · test · e2e
 - [ ] New behaviour has new checks: bun tests for logic, a story per new screen or state, a spec per new or changed journey
 - [ ] Changed snapshots were opened and looked at (or none changed)
 - [ ] `pre-commit` run: no `TODO: clean-code` marker above 0.5, no skipped tests, no lowered thresholds
