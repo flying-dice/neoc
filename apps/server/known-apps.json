@@ -1,6 +1,0 @@
-{
-  "base": "https://raw.githubusercontent.com/flying-dice/AgentOS/main/bundles/",
-  "apps": [
-    "calculator/bundle.json"
-  ]
-}

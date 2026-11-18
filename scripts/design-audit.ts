@@ -1,13 +1,13 @@
 #!/usr/bin/env bun
 /**
- * Static design-language audit for one app: flags styles that bypass the
+ * Static design-language audit for one shell page: flags styles that bypass the
  * tokens in docs/design/DESIGN_LANGUAGE.md. Feeds the styleguide conformance
  * score in the app-design skill (it is evidence, not the whole score).
  *
- *   bun scripts/design-audit.ts <appId> [--json]
+ *   bun scripts/design-audit.ts <page> [--json]
  *   bun scripts/design-audit.ts --all
  *
- * Checks every <style> block and style: directive in the app's components:
+ * Checks every <style> block and style: directive in the page's components:
  *   colour      raw #hex / rgb() / hsl() instead of a colour token
  *   type        raw font sizes instead of --type-* tokens
  *   radius      raw border-radius instead of --radius-* (999px, 50%, inherit ok)
@@ -21,17 +21,15 @@
  * A deliberate exception is allowed on a line ending with
  * `/* design-exception: <reason> *\/` (e.g. the Calculator's instrument palette).
  */
-import { Glob } from 'bun'
 import { dirname, join, relative, resolve } from 'node:path'
 
 const ROOT = resolve(import.meta.dir, '..')
 const DESKTOP = join(ROOT, 'client/src/renderer/src')
 
-/** Built-in apps → their page component (pages pull in their own components). */
+/** The shell's pages → their page component (pages pull in their own components). */
 const BUILTIN_PAGES: Record<string, string> = {
   desktop: 'DesktopPage.svelte',
   discover: 'DiscoverPage.svelte',
-  agents: 'AgentsPage.svelte',
   settings: 'SettingsPage.svelte',
   files: 'FilesPage.svelte',
   gallery: 'GalleryPage.svelte',
@@ -58,11 +56,7 @@ async function filesFor(app: string): Promise<string[]> {
     await visit(join(DESKTOP, 'pages', BUILTIN_PAGES[app]))
     return [...seen]
   }
-  const dir = join(ROOT, 'apps', app, 'src/renderer')
-  const files: string[] = []
-  for await (const f of new Glob('**/*.svelte').scan({ cwd: dir })) if (!f.includes('.stories.')) files.push(join(dir, f))
-  if (!files.length) throw new Error(`Unknown app "${app}". Built-in: ${Object.keys(BUILTIN_PAGES).join(', ')}; or a folder in apps/.`)
-  return files
+  throw new Error(`Unknown page "${app}". Audited: ${Object.keys(BUILTIN_PAGES).join(', ')}.`)
 }
 
 const RULES: { rule: string; test: (line: string) => boolean }[] = [
@@ -112,11 +106,9 @@ async function audit(app: string): Promise<{ app: string; files: string[]; count
 
 const args = process.argv.slice(2)
 const json = args.includes('--json')
-const apps = args.includes('--all')
-  ? [...Object.keys(BUILTIN_PAGES), ...(await Array.fromAsync(new Glob('apps/*/src/manifest.ts').scan({ cwd: ROOT }))).map((p) => p.split('/')[1])]
-  : args.filter((a) => !a.startsWith('--'))
+const apps = args.includes('--all') ? Object.keys(BUILTIN_PAGES) : args.filter((a) => !a.startsWith('--'))
 if (!apps.length) {
-  console.error('Usage: bun scripts/design-audit.ts <appId> [--json] | --all')
+  console.error('Usage: bun scripts/design-audit.ts <page> [--json] | --all')
   process.exit(1)
 }
 
