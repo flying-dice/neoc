@@ -31,7 +31,9 @@ async fn a_huge_blob_is_refused_by_sqlite_before_it_is_allocated() {
 async fn a_query_returning_too_many_rows_fails_with_a_clear_error() {
     let db = db();
     let rows = |n: usize| {
-        format!("WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < {n}) SELECT x FROM c")
+        format!(
+            "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < {n}) SELECT x FROM c"
+        )
     };
     assert_eq!(db.query(rows(MAX_QUERY_ROWS), vec![]).await.unwrap().len(), MAX_QUERY_ROWS);
     let err = db.query(rows(MAX_QUERY_ROWS + 1), vec![]).await.unwrap_err();

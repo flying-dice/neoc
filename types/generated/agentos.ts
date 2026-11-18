@@ -265,7 +265,12 @@ export type AppPreview = {
 /**
  * The app-ref URL to hand to `app.install`.
  */
-url: string, id: string, name: string, version: string, icon?: string, tint?: string, description?: string, 
+url: string, 
+/**
+ * SHA-256 (hex) of the app-ref document this preview was made from: hand it back to `app.install`
+ * so that what is installed is what was previewed.
+ */
+sha256: string, id: string, name: string, version: string, icon?: string, tint?: string, description?: string, 
 /**
  * What the app asks to use: `data`, `notify`, `shell`.
  */

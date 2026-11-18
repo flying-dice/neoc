@@ -1,4 +1,4 @@
-use crate::{error::DomainError, KitRequirement, Permission};
+use crate::{error::DomainError, limits::MAX_PACKAGE_FILES, KitRequirement, Permission};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fmt;
@@ -124,6 +124,9 @@ pub fn source_label(url: &str) -> String {
 
 /// `file` resolved against the URL of the document that names it: absolute URLs stay as they are, a
 /// relative one is looked up next to the document (`dir/app-ref.json` + `app.luau` = `dir/app.luau`).
+///
+/// For the entries of a registry, which may point anywhere. A package's files go through
+/// [`resolve_package_url`] instead.
 #[must_use]
 pub fn resolve_url(base: &str, file: &str) -> String {
     if file.contains("://") {
@@ -131,6 +134,45 @@ pub fn resolve_url(base: &str, file: &str) -> String {
     }
     let dir = base.rsplit_once('/').map_or(base, |(dir, _)| dir);
     format!("{dir}/{}", file.trim_start_matches("./"))
+}
+
+/// `scheme://authority` of a URL, lowercased (`None` when it has no `://`).
+fn origin_of(url: &str) -> Option<String> {
+    let (scheme, rest) = url.split_once("://")?;
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    Some(format!("{scheme}://{authority}").to_ascii_lowercase())
+}
+
+/// Whether a path segment climbs out of its directory (`..`, also percent-encoded or with a backslash).
+fn climbs(path: &str) -> bool {
+    path.split(['/', '\\']).any(|segment| segment.to_ascii_lowercase().replace("%2e", ".") == "..")
+}
+
+/// A package file's URL resolved against the app ref that lists it. Unlike [`resolve_url`] it never leaves
+/// the ref: an absolute URL must have the ref's scheme and authority (an `https` ref cannot list
+/// `file:///etc/passwd` or another host), and no path may climb with `..`.
+pub fn resolve_package_url(base: &str, file: &str) -> Result<String, DomainError> {
+    let refuse =
+        |reason: &str| DomainError::UnsafeFileUrl { url: file.to_owned(), reason: reason.to_owned() };
+    if file.chars().any(char::is_control) {
+        return Err(refuse("it contains a control character"));
+    }
+    if climbs(file) {
+        return Err(refuse("it climbs out of the app's directory with `..`"));
+    }
+    if file.contains("://") {
+        let (Some(wanted), Some(own)) = (origin_of(file), origin_of(base)) else {
+            return Err(refuse("it is not a URL of the app ref's origin"));
+        };
+        if wanted != own {
+            return Err(refuse(&format!("it is on {wanted}, the app ref is on {own}")));
+        }
+        return Ok(file.to_owned());
+    }
+    if file.starts_with(['/', '\\']) {
+        return Err(refuse("a package file is relative to its app ref"));
+    }
+    Ok(resolve_url(base, file))
 }
 
 /// A registry file: the app refs it offers, by URL (relative URLs resolve against the registry's own).
@@ -156,12 +198,18 @@ pub struct AppRef {
 
 impl AppRef {
     /// The same app ref with every relative file URL resolved against `base` (the URL it was loaded from).
-    #[must_use]
-    pub fn resolved(mut self, base: &str) -> Self {
-        for file in &mut self.files {
-            file.url = resolve_url(base, &file.url);
+    /// Refuses a ref that lists too many files or a file outside the ref's own origin and directory.
+    pub fn resolved(mut self, base: &str) -> Result<Self, DomainError> {
+        if self.files.len() > MAX_PACKAGE_FILES {
+            return Err(DomainError::PackageTooLarge(format!(
+                "the app ref lists {} files, at most {MAX_PACKAGE_FILES} are allowed",
+                self.files.len()
+            )));
         }
-        self
+        for file in &mut self.files {
+            file.url = resolve_package_url(base, &file.url)?;
+        }
+        Ok(self)
     }
 
     pub fn file(&self, path: &str) -> Result<&FileRef, DomainError> {
@@ -248,6 +296,91 @@ mod tests {
         assert_eq!(resolve_url("file:///r/ref.json", "https://y.org/z"), "https://y.org/z");
         assert_eq!(source_label("https://apps.example.org:8443/x/ref.json"), "apps.example.org:8443");
         assert_eq!(source_label("file:///r/ref.json"), "this computer");
+    }
+
+    fn ref_listing(urls: &[&str]) -> AppRef {
+        let files = urls
+            .iter()
+            .enumerate()
+            .map(|(i, u)| FileRef { path: format!("f{i}.luau"), url: (*u).into(), sha256: String::new() })
+            .collect();
+        let manifest = Manifest {
+            id: AppId::parse("notes").unwrap(),
+            name: "n".into(),
+            version: "1".into(),
+            main: "f0.luau".into(),
+            permissions: vec![],
+            migrations: vec![],
+            icon: None,
+            tint: None,
+            description: None,
+            requires: None,
+        };
+        AppRef { manifest, files }
+    }
+
+    #[test]
+    fn a_package_file_must_stay_on_the_refs_scheme_and_origin() {
+        let base = "https://apps.example.org/notes/app-ref.json";
+        for ok in [
+            "app.luau",
+            "./lib/x.luau",
+            "https://apps.example.org/notes/app.luau",
+            "HTTPS://Apps.Example.org/a",
+        ] {
+            assert!(resolve_package_url(base, ok).is_ok(), "{ok}");
+        }
+        for bad in [
+            "file:///dev/zero",
+            "file:///etc/passwd",
+            "http://apps.example.org/a.luau",
+            "https://evil.example/a.luau",
+            "https://apps.example.org@evil.example/a.luau",
+            "https://apps.example.org:8443/a.luau",
+            "ftp://apps.example.org/a",
+        ] {
+            assert!(
+                matches!(resolve_package_url(base, bad), Err(DomainError::UnsafeFileUrl { .. })),
+                "{bad} must be refused"
+            );
+        }
+        // a file ref may list file urls, and only file urls
+        assert!(resolve_package_url("file:///r/ref.json", "file:///r/app.luau").is_ok());
+        assert!(resolve_package_url("file:///r/ref.json", "https://evil.example/a").is_err());
+        assert!(resolve_package_url("mem://notes/ref.json", "mem://notes/a").is_ok());
+        assert!(resolve_package_url("mem://notes/ref.json", "mem://other/a").is_err());
+    }
+
+    #[test]
+    fn a_package_file_cannot_climb_out_with_dot_dot_or_start_at_the_root() {
+        let base = "file:///r/notes/app-ref.json";
+        for bad in [
+            "../secrets.luau",
+            "lib/../../x.luau",
+            "lib/%2e%2E/x.luau",
+            "lib\\..\\x.luau",
+            "file:///r/notes/../x.luau",
+            "/etc/passwd",
+            "\\evil",
+            "a\0b.luau",
+        ] {
+            assert!(resolve_package_url(base, bad).is_err(), "{bad:?} must be refused");
+        }
+        assert_eq!(resolve_package_url(base, "lib/a..b.luau").unwrap(), "file:///r/notes/lib/a..b.luau");
+    }
+
+    #[test]
+    fn resolving_a_ref_refuses_one_that_lists_a_foreign_file_or_too_many() {
+        let base = "https://apps.example.org/notes/app-ref.json";
+        let ok = ref_listing(&["a.luau", "b/c.luau"]).resolved(base).unwrap();
+        assert_eq!(ok.files[1].url, "https://apps.example.org/notes/b/c.luau");
+        assert!(matches!(
+            ref_listing(&["a.luau", "file:///dev/zero"]).resolved(base),
+            Err(DomainError::UnsafeFileUrl { .. })
+        ));
+        let many = vec!["a.luau"; MAX_PACKAGE_FILES + 1];
+        assert!(matches!(ref_listing(&many).resolved(base), Err(DomainError::PackageTooLarge(_))));
+        assert!(ref_listing(&many[..MAX_PACKAGE_FILES]).resolved(base).is_ok());
     }
 
     #[test]
