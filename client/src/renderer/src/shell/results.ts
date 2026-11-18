@@ -63,7 +63,12 @@ export const catalogSchema = z.object({
 
 export const agentListSchema = z.object({
   agents: z.array(
-    z.object({ id: text, name: text, avatar: text.optional(), role: text }) satisfies z.ZodType<AgentRow>
+    z.object({
+      id: text,
+      name: text,
+      avatar: text.optional(),
+      role: text
+    }) satisfies z.ZodType<AgentRow>
   )
 })
 

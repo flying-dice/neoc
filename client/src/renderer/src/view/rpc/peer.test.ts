@@ -138,7 +138,10 @@ describe('json-rpc peer (by-name params)', () => {
     const peer = createRpcPeer({ send: (m) => void sent.push(m) })
     const inflight = peer.request('a').catch((e: RpcError) => e)
     peer.failPending('dropped')
-    expect(await inflight).toMatchObject({ code: RpcErrorCode.ConnectionClosed, message: 'dropped' })
+    expect(await inflight).toMatchObject({
+      code: RpcErrorCode.ConnectionClosed,
+      message: 'dropped'
+    })
     const again = peer.request('b')
     peer.receive(JSON.stringify({ jsonrpc: '2.0', id: 2, result: 1 }))
     expect(await again).toBe(1)

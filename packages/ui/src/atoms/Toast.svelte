@@ -1,6 +1,8 @@
 <!--
   @atom Toast — a transient message on an elevated card: a leading glyph (a snippet, coloured by `kind`), the
   text, an optional action button and a dismiss button. Errors are `alert`s, the rest polite `status` messages.
+  While the pointer or keyboard focus is on the toast it reports `onhold`, and `onrelease` when both have left, so
+  the owner can pause its expiry (WCAG 2.2.1). The buttons are at least 44x44.
   Test ids: `testid` on the toast, `${testid}-action`, `${testid}-dismiss`.
 -->
 <script lang="ts">
@@ -16,16 +18,39 @@
     icon?: Snippet
     onaction?: () => void
     ondismiss?: () => void
+    /** The pointer or focus arrived on the toast: do not expire it while it is read. */
+    onhold?: () => void
+    /** The pointer and focus have both left. */
+    onrelease?: () => void
   }
 
-  let { testid, kind = 'info', text, action, icon, onaction, ondismiss }: Props = $props()
+  let { testid, kind = 'info', text, action, icon, onaction, ondismiss, onhold, onrelease }: Props =
+    $props()
+
+  let hovered = false
+  let focused = false
+  function track(change: () => void): void {
+    const was = hovered || focused
+    change()
+    const now = hovered || focused
+    if (now && !was) onhold?.()
+    else if (!now && was) onrelease?.()
+  }
 </script>
 
+<!-- A status message with no behaviour of its own: the handlers only pause its expiry while it is read. -->
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div
   class="ios-toast {kind}"
   role={kind === 'error' ? 'alert' : 'status'}
   aria-atomic="true"
   data-testid={testid}
+  onpointerenter={() => track(() => (hovered = true))}
+  onpointerleave={() => track(() => (hovered = false))}
+  onfocusin={() => track(() => (focused = true))}
+  onfocusout={(e) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) track(() => (focused = false))
+  }}
 >
   {#if icon}<span class="glyph" aria-hidden="true">{@render icon()}</span>{/if}
   <span class="text">{text}</span>
@@ -80,8 +105,8 @@
     color: var(--tint);
     font: inherit;
     font-weight: 600;
-    min-height: 36px;
-    min-width: 36px;
+    min-height: 44px;
+    min-width: 44px;
     padding: 0 10px;
     border-radius: var(--radius-sm);
   }

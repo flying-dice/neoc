@@ -2,13 +2,19 @@
   @organism ViewHost — one window's view instance on screen. It provides the view core to every adapter, renders the
   root node through the component registry and owns the window-level behaviour: dim and banner while offline
   (inputs still take drafts), toasts and live announcements, the inline error banner (the last good tree stays),
-  window-scoped keyboard shortcuts, size class and the minute clock for `env.*`. Molecules: Node, Notices,
-  ConnectionBanner. Atoms: Text.
+  window-scoped keyboard shortcuts, size class and the minute clock for `env.*`. A link the window asks to open
+  (Markdown link, `openUrl`) never opens on its own: a confirmation shows the host and the full address first, and
+  `onopenurl` runs only when the person says Open.
+  Molecules: Node, Notices, ConnectionBanner, Alert. Atoms: Text.
+  Test ids: `${app}-view`, `-tree`, `-view-error`, `-view-closed`, `-offline`, `-notice`, `-announcer`, and the link
+  confirmation `${app}-link-confirm` (`-host`, `-url`, `-action-open`, `-action-cancel`).
 -->
 <script lang="ts">
   import { Text } from '@agentos/ui/atoms'
+  import { Alert } from '@agentos/ui/molecules'
   import { untrack } from 'svelte'
   import { provideView } from '../context'
+  import { describeLink, type ExternalLink } from '../core/link'
   import type { ViewCore } from '../core/view'
   import { createDomEffects } from '../effects'
   import { defaultRegistry } from '../kit'
@@ -24,6 +30,7 @@
     registry?: ComponentRegistry
     /** Reconnect now (the offline banner's Retry). */
     onretry?: () => void
+    /** Open a link the person confirmed (the shell decides how). */
     onopenurl?: (url: string) => void
     onclosewindow?: () => void
   }
@@ -44,9 +51,19 @@
     retry: untrack(() => onretry)
   })
 
+  // Links wait for the person's say-so: the text of a link says nothing about where it goes.
+  let link = $state<ExternalLink | null>(null)
+  let linkOpen = $state(false)
+  function askToOpen(url: string): void {
+    const next = describeLink(url)
+    if (!next) return // not a web or mail link: nothing to confirm, nothing to open
+    link = next
+    linkOpen = true
+  }
+
   $effect(() => {
     view.setEffects(
-      createDomEffects({ app, root: () => root, openUrl: onopenurl, closeWindow: onclosewindow })
+      createDomEffects({ app, root: () => root, openUrl: askToOpen, closeWindow: onclosewindow })
     )
   })
 
@@ -143,7 +160,27 @@
     ondismiss={(id) => view.dismissNotice(id)}
     onaction={(id) => view.toastAction(id)}
     onundo={(id) => void view.undo(id)}
+    onhold={(id) => view.holdNotice(id)}
+    onrelease={(id) => view.releaseNotice(id)}
   />
+  {#if link}
+    {@const target = link}
+    <Alert
+      testid="{app}-link-confirm"
+      bind:open={linkOpen}
+      title={target.kind === 'web' ? 'Open this link?' : 'Write to this address?'}
+      message={target.kind === 'web'
+        ? 'It opens a page outside AgentOS, in your browser.'
+        : 'It opens your mail app.'}
+      actions={[
+        { label: 'Cancel', style: 'cancel' },
+        { label: 'Open', preferred: true, onclick: () => onopenurl?.(target.url) }
+      ]}
+    >
+      <span class="link-host" data-testid="{app}-link-confirm-host">{target.host}</span>
+      <span class="link-url" data-testid="{app}-link-confirm-url">{target.url}</span>
+    </Alert>
+  {/if}
   <div class="sr-only" role="status" aria-live="polite" data-testid="{app}-announcer">
     {store.announcement}
   </div>
@@ -185,6 +222,18 @@
     gap: 4px;
     padding: 24px;
     text-align: center;
+  }
+  .link-host {
+    display: block;
+    font: var(--type-headline);
+    color: var(--label);
+  }
+  .link-url {
+    display: block;
+    margin-top: 4px;
+    font: var(--type-caption1);
+    font-family: var(--font-mono);
+    color: var(--label-secondary);
   }
   .sr-only {
     position: absolute;

@@ -34,12 +34,18 @@ describe('callParsed', () => {
     expect((error as ResultError).message).toContain('agents')
   })
 
-  test.each([null, 'ok', 7, [], { devices: [{ id: 1 }] }])('devices.list rejects %p', async (bad) => {
-    const error = await callParsed(apiAnswering(bad), 'host.devices.list', {}, deviceListSchema).catch(
-      (e: unknown) => e
-    )
-    expect(error).toBeInstanceOf(ResultError)
-  })
+  test.each([null, 'ok', 7, [], { devices: [{ id: 1 }] }])(
+    'devices.list rejects %p',
+    async (bad) => {
+      const error = await callParsed(
+        apiAnswering(bad),
+        'host.devices.list',
+        {},
+        deviceListSchema
+      ).catch((e: unknown) => e)
+      expect(error).toBeInstanceOf(ResultError)
+    }
+  )
 
   test('an app in an unknown state is refused rather than shown half-working', async () => {
     const error = await callParsed(

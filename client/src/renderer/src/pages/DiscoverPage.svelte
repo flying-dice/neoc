@@ -14,7 +14,9 @@
   import { Alert } from '@agentos/ui/molecules'
   import { TextInput } from '@agentos/ui/atoms'
   import { windowManager as wm } from '../lib/windowManager.svelte'
+  import { AGENTS_APP_ID, appOf } from '../lib/apps.svelte'
   import { host } from '../lib/host.svelte'
+  import { appPreviewSchema, callParsed } from '../shell/results'
   import {
     iconOf,
     tintBackground,
@@ -37,6 +39,10 @@
     /** The app-ref URL to install from (not installed yet). */
     url?: string
   }
+
+  // The Agents app is an ordinary installed app: its entry points show only while it is running.
+  const agentsRunning = $derived(!!appOf(AGENTS_APP_ID))
+  const openAgents = (): void => wm.open(AGENTS_APP_ID)
 
   let catalog = $state<Catalog>({ apps: [], errors: [] })
   let busy = $state<Record<string, boolean>>({})
@@ -132,7 +138,7 @@
     previewError = null
     preview = null
     try {
-      preview = await host.api.call<AppPreview>('app.preview', { url })
+      preview = await callParsed(host.api, 'app.preview', { url }, appPreviewSchema)
     } catch (e) {
       previewError = messageOf(e)
     } finally {
@@ -153,7 +159,7 @@
   type Section =
     'discover' | 'agents' | 'create' | 'work' | 'play' | 'develop' | 'categories' | 'updates'
 
-  const sections: { id: Section; label: string; icon: IconName; badge?: number }[] = [
+  const sections: { id: Section; label: string; icon: IconName }[] = [
     { id: 'discover', label: 'Discover', icon: 'star' },
     { id: 'agents', label: 'Agents', icon: 'sparkles' },
     { id: 'create', label: 'Create', icon: 'paintbrush' },
@@ -161,7 +167,7 @@
     { id: 'play', label: 'Play', icon: 'play' },
     { id: 'develop', label: 'Develop', icon: 'hammer' },
     { id: 'categories', label: 'Categories', icon: 'square.grid' },
-    { id: 'updates', label: 'Updates', icon: 'arrow.down.circle', badge: 2 }
+    { id: 'updates', label: 'Updates', icon: 'arrow.down.circle' }
   ]
 
   let section = $state<Section>('discover')
@@ -217,14 +223,18 @@
     featured.filter((f) => `${f.name} ${f.blurb}`.toLowerCase().includes(query.toLowerCase()))
   )
 
-  const information: [string, string][] = [
+  const plural = (n: number, noun: string): string => `${n} ${noun}${n === 1 ? '' : 's'}`
+  const information = $derived<[string, string][]>([
     ['Developer', 'AgentOS'],
     ['Version', '0.1.0'],
     ['Category', 'Productivity'],
     ['Compatibility', 'macOS, Windows, Linux'],
-    ['Agents Running', '3 of 4'],
-    ['Languages', 'English and 7 more']
-  ]
+    [
+      'Apps Running',
+      `${host.apps.filter((a) => a.state === 'running').length} of ${host.apps.length}`
+    ],
+    ['Languages', 'English']
+  ])
 </script>
 
 <SplitViewTemplate sidebarWidth={280}>
@@ -241,14 +251,17 @@
           title={s.label}
           icon={s.icon}
           iconColor="var(--tint)"
-          value={s.badge ? String(s.badge) : undefined}
           selected={section === s.id}
           onclick={() => (section = s.id)}
         />
       {/each}
     </ListSection>
     <ListSection sidebar>
-      <ListRow testid="discover-account" title="AgentOS User" subtitle="4 agents">
+      <ListRow
+        testid="discover-account"
+        title="AgentOS User"
+        subtitle={plural(host.agents.length, 'agent')}
+      >
         {#snippet leading()}
           <IconTile size={34} background="linear-gradient(180deg,#c7c7cc,#8e8e93)">
             <Icon name="person" size={20} color="#fff" />
@@ -263,9 +276,9 @@
       {#snippet navigationBar()}
         <NavigationBar testid="discover-nav" title="AgentOS">
           {#snippet trailing()}
-            <Button testid="discover-open" size="small" capsule onclick={() => wm.open('agents')}
-              >OPEN</Button
-            >
+            {#if agentsRunning}
+              <Button testid="discover-open" size="small" capsule onclick={openAgents}>OPEN</Button>
+            {/if}
             <IconButton testid="discover-share" icon="square.and.arrow.up" label="Share" />
           {/snippet}
         </NavigationBar>
@@ -282,15 +295,17 @@
                 they need you, and keep everything on your machine.
               </p>
               <div class="hero-actions">
-                <Button
-                  testid="discover-hero-open-agents"
-                  size="large"
-                  capsule
-                  tint="#fff"
-                  onclick={() => wm.open('agents')}
-                >
-                  <span class="hero-cta">Open Agents</span>
-                </Button>
+                {#if agentsRunning}
+                  <Button
+                    testid="discover-hero-open-agents"
+                    size="large"
+                    capsule
+                    tint="#fff"
+                    onclick={openAgents}
+                  >
+                    <span class="hero-cta">Open Agents</span>
+                  </Button>
+                {/if}
                 <Button
                   testid="discover-hero-ui-kit"
                   variant="plain"
@@ -341,6 +356,11 @@
                 </Text>
               {/each}
             </div>
+            {#if host.appsError}
+              <p class="store-error" role="alert" data-testid="discover-apps-list-error">
+                {host.appsError}
+              </p>
+            {/if}
             {#each catalog.errors as problem (problem)}
               <p class="store-error" role="status" data-testid="discover-registry-error">
                 {problem}
@@ -445,7 +465,10 @@
                   icon={f.icon}
                   background={f.background}
                   installed={installed[f.id]}
-                  onget={() => (installed[f.id] ? wm.open('agents') : (installed[f.id] = true))}
+                  onget={() => {
+                    if (!installed[f.id]) installed[f.id] = true
+                    else openAgents()
+                  }}
                 />
               {:else}
                 <Text style="subheadline" color="secondary">No agents match “{query}”.</Text>

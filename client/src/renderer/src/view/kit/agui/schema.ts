@@ -6,9 +6,11 @@
  */
 import type { Interrupt, ResumeEntry, RunAgentInput } from '@ag-ui/core'
 import { EventSchemas } from '@ag-ui/core/schemas'
+import { uniqueBy } from '@agentos/ui'
 import { z } from 'zod'
 
 export { EventType } from '@ag-ui/core'
+export { uniqueBy }
 export type { Event as AguiEvent, Interrupt, ResumeEntry, RunAgentInput } from '@ag-ui/core'
 
 // ── state the host keeps per thread (agentos_domain::thread) ───────────────────────────────────────────────
@@ -26,7 +28,10 @@ export const settingSchema = z.discriminatedUnion('kind', [
     category: note,
     kind: z.literal('select'),
     current: text,
-    options: z.array(choiceSchema).default([])
+    options: z
+      .array(choiceSchema)
+      .default([])
+      .transform(uniqueBy((c) => c.value))
   }),
   z.object({
     id: text,
@@ -40,7 +45,10 @@ export const settingSchema = z.discriminatedUnion('kind', [
 
 export const modeSchema = z.object({
   current: text,
-  available: z.array(z.object({ id: text, name: text, description: note })).default([])
+  available: z
+    .array(z.object({ id: text, name: text, description: note }))
+    .default([])
+    .transform(uniqueBy((m) => m.id))
 })
 
 export const commandSchema = z.object({ name: text, description: text.default(''), hint: note })
@@ -62,8 +70,14 @@ export const sessionSchema = z.object({
   title: note,
   toolsConnected: z.boolean().default(true),
   modes: modeSchema.nullish(),
-  config: z.array(settingSchema).default([]),
-  commands: z.array(commandSchema).default([]),
+  config: z
+    .array(settingSchema)
+    .default([])
+    .transform(uniqueBy((c) => c.id)),
+  commands: z
+    .array(commandSchema)
+    .default([])
+    .transform(uniqueBy((c) => c.name)),
   usage: usageSchema.nullish()
 })
 
@@ -105,7 +119,10 @@ export const snapshotSchema = z.object({
   running: z.boolean().default(false),
   state: threadStateSchema.default(() => emptyThreadState()),
   messages: z.array(z.record(z.string(), z.any())).default([]),
-  interrupts: z.array(interruptSchema).default([])
+  interrupts: z
+    .array(interruptSchema)
+    .default([])
+    .transform(uniqueBy((i) => i.id))
 })
 export type ThreadSnapshot = z.infer<typeof snapshotSchema>
 
@@ -119,7 +136,10 @@ export const permissionOptionSchema = z.object({
 export type PermissionOption = z.infer<typeof permissionOptionSchema>
 
 const permissionMetaSchema = z.object({
-  'agentos:options': z.array(permissionOptionSchema).default([]),
+  'agentos:options': z
+    .array(permissionOptionSchema)
+    .default([])
+    .transform(uniqueBy((o) => o.optionId)),
   'agentos:tool': z.object({ title: text.optional(), kind: z.string().nullish() }).optional()
 })
 

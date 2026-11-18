@@ -103,12 +103,21 @@ export const apps: Record<AppId, AppDefinition> = $state({ ...builtinApps })
 
 const installed = $state<{ list: AppSummary[] }>({ list: [] })
 
-/** Every app installed on the host, whatever its state. */
-export const installedApps = {
-  get list(): AppSummary[] {
-    return installed.list
-  }
+/**
+ * The definition of an app the shell can open a window for, or `undefined` (not installed, disabled, failed, or not
+ * an id at all). Reads through `apps`, so a template that asks re-renders when the app comes or goes.
+ */
+export function appOf(id: AppId): AppDefinition | undefined {
+  const definition = apps[id]
+  // `apps` is a plain record: `constructor` or `__proto__` must not find an inherited member
+  return definition?.id === id ? definition : undefined
 }
+
+/**
+ * The Luau app that the desktop's Agents widget and Discover's "Open Agents" bring forward. It is an ordinary
+ * installed app (a host may not have it, or it may be disabled), so every entry point checks `appOf` first.
+ */
+export const AGENTS_APP_ID: AppId = 'agents'
 
 /** An installed app by id, in any state. */
 export const installedApp = (id: AppId): AppSummary | undefined =>

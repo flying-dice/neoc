@@ -111,6 +111,7 @@
       testid="{common.testid}-thread"
       {blocks}
       liveActivityId={live}
+      busy={chat?.status === 'running'}
       status={chat?.status === 'connecting' ? `Starting ${agentName}…` : undefined}
       onchoose={(id, optionId) => void session?.respond(id, optionId)}
     >
