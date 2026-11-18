@@ -1,0 +1,110 @@
+# Rust host: spike results and decision memo
+
+Everything below was built and run in this workspace (`rust-spike/`, rustc 1.98.1, macOS arm64). `cargo nextest run --workspace`:
+**42 tests, 42 passed, 0.5 s.** Clippy: 0 errors, 21 pedantic warnings (spike code). `scripts/check-deps.py` and `cargo deny --exclude-dev check bans`: OK.
+The spikes were restructured into the proposed hexagonal layout (section "Workspace layout"), so the layout is proven by compiling code, not only drawn.
+~3.5k lines of code in 11 crates; the host binary is 5.5 MiB (release, stripped).
+
+**Verdict: the stack works end to end. Recommend it as decided.** One test (`crates/agentos-host/tests/e2e.rs`) installs a Luau app from a `file://` app ref over `/rpc`, calls its tool from an `rmcp` client with a per-agent bearer token, shows `app.notify` reaching the UI socket, round-trips a UI event to a new view tree, uninstalls, and sees `tools/list_changed`.
+
+## Answers per question
+
+### 1. Luau via `mlua 0.12.2` (Luau 0.740, `luau0-src 0.22`) — `crates/agentos-luau`, tests `tests/vm.rs`
+Features `luau, async, serialize, send`. Proven (all in `tests/vm.rs`, 9 tests):
+- **One VM per app**, `lua.sandbox(true)` (builtins readonly, per-app globals; `io`/`os.execute`/`dofile`/`debug.getregistry` absent; two VMs have independent globals).
+- **Memory limit** `set_memory_limit` (4 MiB test: bomb dies with `memory error`, VM stays usable).
+- **CPU budget** via `set_interrupt`: `while true do end` dies at the budget (100 ms test). The kill flag is *sticky*, so `while true do pcall(...) end` cannot swallow it. The slice resets when a host `await` returns (waiting on SQLite is not app CPU). Luau's own pattern matcher polls the interrupt: a backtracking `string.find` dies at the budget too.
+- **Capability table** `app.data.query/exec` (async fn on the blocking pool), `app.tools.register{}`, `app.notify{}`, `app.state.get/set`, `app.on(event, fn)`. Rust→Luau event call with a JSON table works (`serde` feature; `emit()`/`call_tool()`).
+- **Source from bytes** (`lua.load(&[u8]).set_name("=app/main.luau")`; syntax errors report `app/main.luau:1`).
+- **Unload frees**: drop Rust-held `Function`s, then the `Lua`. 300 VMs created, dropped, re-created: RSS growth 80 KiB total, so memory is reused.
+- **Numbers** (`cargo run --release -p agentos-luau --example bench`): VM create + sandbox + API + run main chunk **0.14 ms (opt-level 3) / 0.19 ms (`z`)**; **~524 KiB Luau heap per VM** (mostly the stdlib; 100 apps ≈ 52 MB); event dispatch **1.8 µs (opt 3) / 3.1 µs (`z`)**; per-app in-memory SQLite open+migrate 0.04 ms.
+- **`--!strict` annotations run** (Luau strips them at compile). Type *checking* is a separate tool: `luau-analyze` (Homebrew 0.718) checked a strict file against an API written as type aliases and flagged wrong field types, unknown members and number→string (`apps/strict_demo.luau`). **Type-definition files:** `types/agentos.d.luau` (`declare class …; declare app: AppApi`) is the shipping format; luau-lsp consumes it via `--definitions` / `luau-lsp.types.definitionFiles`. **Not verified here:** the Homebrew `luau-analyze` has no `--definitions` flag, and my attempt to download and run the `luau-lsp` release binary was blocked by the permission policy, so the `.d.luau` file is written but unchecked. First task in the real project: run luau-lsp against it.
+- **Gotchas found:** (a) mlua registers a *filesystem* `require` on Luau: set `require = nil` before `sandbox(true)` and provide a bundle-only one. (b) `to_value` maps JSON null to a truthy lightuserdata: use `SerializeOptions::serialize_none_to_null(false)`. (c) Install `app` *before* `sandbox(true)`. (d) `send` makes `Lua: Send+Sync` (mutex inside), which is what lets tokio multi-thread run VMs; one VM executes one call at a time (an app is single-threaded by design).
+- **Hot reload:** `notify 8.2` watcher → debounce → build a new VM → swap → old VM dropped (`src/reload.rs`, test passes with FSEvents). In the real host this is a `reload(app)` use case triggered by a dev-mode driving adapter (DB is kept; only the VM is rebuilt).
+
+### 2. SQLite — recommend **`rusqlite 0.43.0` (bundled SQLite 3.54.1)** — `crates/agentos-sqlite`
+- Design proven (7 tests): one `Connection` per app behind a mutex, all work in `spawn_blocking`; migrations numbered 1..N, each in its own transaction, recorded in `_migrations(version,name,checksum,applied_at)`, idempotent, incremental on app upgrade, **checksum-tamper detected**, failing migration leaves nothing; **authorizer denies `ATTACH`/`DETACH`** (an app's SQL can't escape its file).
+- **Change notifications:** `update_hook` buffers `(table, op, rowid)`, `commit_hook` publishes one batch to a `tokio::broadcast`, `rollback_hook` discards. Verified: a multi-statement txn gives one batch; a rolled-back txn gives none. This beats calling `changes()` (which can't see triggers, cascades, or rollbacks).
+- **sqlx 0.9.1 probe** (`spikes/sqlx-probe`) also works (dynamic `Migrator` from manifest data, `lock_handle().set_update_hook`). Why not: async-native but still a worker thread per connection; the hook needs the raw handle; **0.9 forces `AssertSqlSafe(..)` on every dynamic SQL string** (all app SQL is dynamic); `migrate!()`/compile-time checking don't apply to runtime-loaded apps; heavier compile. It shares `libsqlite3-sys 0.40` with rusqlite 0.43, so both link in one binary, but the versions must move together.
+- **Gotcha:** rusqlite's `serde_json` feature stores a JSON *string* param as its quoted JSON text. Use own conversion (`to_sql_params`), covered by a test.
+
+### 3. MCP — **`rmcp 3.11.0`** (`server, macros, transport-streamable-http-server`; client features for tests) — `crates/agentos-mcp`
+- `ServerHandler` implemented by hand (`list_tools` from a runtime catalogue, `call_tool`), mounted via `StreamableHttpService` + `nest_service("/mcp")` on axum. The `ToolRegistry` port is implemented by `McpState`: `publish/retract` → `notify_tool_list_changed()` to every live peer.
+- **Both protocol generations proven** (3 tests): legacy `2025-11-25` session (`list_changed` on the GET stream, `with_legacy_session_mode(true)`) **and** `2026-07-28`, which has *no sessions* and uses `subscriptions/listen` (implemented via `listen()` + a broadcast). Install/uninstall during an open session produced `tools/list_changed` and the new `tools/list`.
+- **Auth + identity:** axum middleware → `Authorization: Bearer` → `AgentDirectory` port (constant-time compare) → `AgentIdentity` into request extensions → `ctx.extensions.get::<http::request::Parts>()` inside `call_tool`. 401 + `WWW-Authenticate` otherwise (tested for none/wrong/Basic). Per-agent permission test: "Claude" (granted `notes`) succeeds; "Other" gets an in-band `isError` result `permission denied: Other may not call notes__add_note`, and the VM never ran.
+- Tool names are `<app>__<tool>`. `StreamableHttpServerConfig` has built-in `Host` allow-list (loopback by default) and optional `Origin` validation: keep both on.
+- Risk: rmcp is moving fast (3.x with a new spec version); pin `=3.11.0` and re-run these 3 tests on every bump.
+
+### 4. ACP — **`agent-client-protocol 5.3.0`** (+ `-schema 1.18.0`; features `process`, `stdio`) — `crates/agentos-acp`
+- Client = `Client.v1().connect_with(AcpAgent::new(AcpAgentConfig::new(prog).args(..)), async |cx| { cx.send_request(InitializeRequest::new(ProtocolVersion::V1)).block_task().await })`. It spawns the child, speaks stdio, shuts it down. Runs fine under tokio.
+- **Proven (3 tests):** handshake against a 25-line fake agent binary (`src/bin/fake_agent.rs`); `AgentConnector::start_run` = initialize + `session/new`; and the **real adapter**: `node …/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js` → `initialize` returns agent_info `@agentclientprotocol/claude-agent-acp 0.108.0`, protocol v1, in 0.27 s. No prompts, no model calls. No processes left behind.
+- Not spiked: `session/prompt` streaming → AG-UI mapping (the next milestone), permission-request round trips, and the crate's MCP-over-ACP feature (`unstable_mcp_over_acp`) for handing agents our `/mcp` URL + token in `session/new`.
+
+### 5. AG-UI — **hand-rolled**, `crates/agentos-agui` (163 lines incl. endpoint)
+- Crates.io: `ag-ui 0.5.0-alpha.3` (third party, "working toward becoming official", 600 downloads), `ag-ui-core 0.1.0` (the community SDK inside `ag-ui-protocol/ag-ui/sdks/community/rust`, Aug 2025, client-oriented, no server), `agui-sdk 0.9.1`, `ag-ui-rs 0.3.1` (all single-maintainer). **No maintained official Rust crate.**
+- The wire model is one serde enum: `#[serde(tag="type", rename_all="SCREAMING_SNAKE_CASE", rename_all_fields="camelCase")]` (15 variants: RUN_*, STEP_*, TEXT_MESSAGE_*, TOOL_CALL_*, STATE_*, CUSTOM). SSE endpoint = `POST /agui` taking `RunAgentInput`, returning `axum::response::Sse` of `data: {json}\n\n`; malformed input is a 422 before the stream starts (per the transport spec). Test prints the raw frames (RUN_STARTED, TEXT_MESSAGE_START/CONTENT×2/END, RUN_FINISHED) and checks shapes against docs.ag-ui.com events. Add variants as the client needs them.
+
+### 6. HTTP stack — **axum 0.8.9 + tower-http 0.6.11 + hand-rolled JSON-RPC peer** — `crates/agentos-http`
+- Proven (3 tests): `/rpc` WebSocket upgrade; **Origin + Host guard** (`AllowedOrigins`, middleware): evil Origin → 403 on the handshake, DNS-rebind Host rejected, no-Origin (native client) allowed by config; static serving with `ServeDir` + `index.html` SPA fallback + precompressed gzip.
+- **JSON-RPC: hand-rolled peer** (~120 lines, `rpc.rs`; envelope types live in the domain). Recommended over `jsonrpsee 0.26.1`: we need the *server* to issue requests to the client and await the answer on the same socket. The test does exactly that (client request → handler calls `peer.request("client/echo")` → client answers → original response), plus notifications both ways, per-request tasks (no deadlock), pending-request cleanup on disconnect. jsonrpsee's server model is request/response + subscriptions (not tested here; from its docs).
+- Gotcha found by the e2e: a notification emitted *during* a request can arrive before its response; clients must not assume order.
+
+### 7. Shared types — **`ts-rs 12.0.1` (TS) + `schemars 1.2.3` (JSON Schema) + a 70-line Luau emitter** — `crates/agentos-codegen`
+- Domain types derive `TS`/`JsonSchema` behind a `codegen` feature (derive-only, no I/O). `cargo run -p agentos-codegen --example generate` writes `generated/{types.ts, ui.luau, schemas.json}`. ts-rs honours serde attributes (`tag`, `rename_all`): `UiNode` comes out as the discriminated union `{ "type": "stack", … } | { "type": "button", … }`. The Luau emitter walks the JSON Schema (`oneOf`, `$ref`, recursive `#`, optional fields) into `export type`s; **test: the generated Luau passes `luau-analyze` and a wrongly-shaped node (`txt =` for `text =`) is a type error**.
+- `specta 2.0.0-rc.28` / `specta-typescript 0.0.15` are still pre-release: not chosen. Rough edges: ts-rs warns on `#[serde(try_from)]` (we override with `ts(type="string")`); `#[serde(default)]` fields need `#[ts(optional)]` to become optional in TS.
+- The app-API capability types (`app.data.query` …) stay a hand-written `agentos.d.luau` in the SDK crate that `require`s the generated shapes.
+
+### 8. Distribution
+- **Binary:** host, release, `opt-level="z"`, LTO, `codegen-units=1`, `strip`, `panic=abort`: **5.5 MiB** with Luau, bundled SQLite, rustls, axum, rmcp, ACP, notify. ~50 s release build on this machine. Opt-level 3 is 25-40% faster on VM creation/dispatch (0.14 vs 0.19 ms, 1.8 vs 3.1 µs); ship level 3 unless size matters (Luau's C++ is compiled by `cc` with the profile's opt-level, so `z` also affects VM speed).
+- **Cross-compile:** pure crates `cargo check --target x86_64-unknown-linux-gnu` fine. Anything with C/C++ (Luau, SQLite, `aws-lc-sys` for rustls) fails without a cross C toolchain (`cc-rs: failed to find x86_64-linux-gnu-gcc`). Recommend **`cargo-zigbuild`** (or build natively per OS in release CI); the Docker daemon wasn't running, so Linux builds were **not verified**. macOS: native arm64 built; x86_64-apple-darwin is just `rustup target add` (same SDK). `bundled` SQLite + Luau mean no system libs to link.
+- **Dev hot reload:** see section 1 (proven).
+
+## Recommended crate list (versions resolved in `Cargo.lock`)
+`tokio 1.54.1` · `axum 0.8.9` (ws, macros) · `tower-http 0.6.11` (fs) · `mlua 0.12.2` (luau, async, serialize, send) · `rusqlite 0.43.0` (bundled, hooks) · `rmcp 3.11.0` · `agent-client-protocol 5.3.0` (process, stdio) · `reqwest 0.13.5` (rustls) · `serde 1`/`serde_json 1.0.154` · `ts-rs 12.0.1` · `schemars 1.2.3` · `notify 8.2.2` · `thiserror 2` (libs) · `anyhow 1` (host binary only) · `async-trait 0.1` · `parking_lot 0.12` (no lock poisoning ⇒ no `unwrap`) · `sha2 0.10` · `tokio-util 0.7` · `tokio-stream`/`futures-util`. Dev: `tokio-tungstenite 0.30`, `cargo-nextest`, `cargo-deny`. Hand-rolled: JSON-RPC peer, AG-UI events. Not used: sqlx (probe only), jsonrpsee, specta.
+
+## Workspace layout (hexagonal; each adapter is its own crate depending inward only)
+
+```
+                       agentos-host  (bin; wiring only; the ONLY place anyhow + every adapter appear)
+                                  |
+   driving adapters               |                         driven adapters
+   agentos-http  (/rpc WS, guard, static, RpcHub)   agentos-luau   (AppRuntime)
+   agentos-mcp   (/mcp, ToolRegistry)               agentos-sqlite (DataStore, AppData)
+   agentos-agui  (/agui SSE)                        agentos-fetch  (Fetcher: file/http/https)
+   agentos-acp   (AgentConnector, ACP client)       agentos-codegen (dev-time: TS + Luau + schemas)
+                      \                                  /
+                       agentos-application   ports (traits) + use cases (AppService), in-memory fakes (`testing`)
+                                  |
+                       agentos-domain        pure model: AppId, AppRef/Manifest (+sha256 verify), Permission,
+                                             AgentIdentity, ToolSpec/QualifiedToolName, Notification,
+                                             UiNode/UiPatch/UiEvent, JSON-RPC + protocol messages. No I/O.
+```
+
+| crate | responsibility | may depend on |
+|---|---|---|
+| `domain` | the model above; unit tests without any framework | serde, serde_json, sha2, thiserror (+ ts-rs/schemars behind `codegen`) |
+| `application` | **ports**: `AppRuntime, DataStore/AppData, ToolRegistry, Notifier, EventSink, AgentConnector, AgentDirectory, Clock, Fetcher`. **Use cases** (`AppService`): install-from-url (fetch → sha256 verify → migrations → load → publish tools → announce), uninstall(+purge), dispatch UI event, tool call with permission check, start agent run. Runtime-free (tokio is a dev-dependency only) | domain, async-trait, parking_lot, thiserror |
+| `luau`, `sqlite`, `fetch`, `mcp`, `acp`, `agui`, `http`, `codegen` | one adapter each | application, domain (never another adapter; dev-deps may) |
+| `host` | build adapters, hand each to its port, mount routers, bind 127.0.0.1, graceful shutdown | everything |
+
+- A `ports` crate split (adapters depend on traits only, not use cases) is cheap if `application` grows; driving adapters (`http`, `mcp`) legitimately need the use cases.
+- Add later: `sdk` (the `agentos.d.luau` + stubs shipped to app authors), `registry` (a list of app-ref URLs, pure), `permissions` if policy grows beyond `Permission`.
+- **Error types per layer:** `DomainError` → `PortError` (what adapters return; each adapter maps its errors with `From`) → `AppError` (use cases; wraps both) → JSON-RPC code / MCP `isError` at the edge. `anyhow` only in `main`.
+- **Workspace config (in `Cargo.toml`):** `[workspace.package]`, `[workspace.dependencies]` with pinned versions, `[workspace.lints]`: clippy `pedantic` warn, `unwrap_used`/`expect_used`/`panic` deny, `unsafe_code = "forbid"`; `clippy.toml` with `allow-unwrap-in-tests`; `rustfmt.toml`. (Integration-test helper fns need a one-line `#![allow(clippy::unwrap_used)]` in each `tests/*.rs`; the in-memory fakes carry one `allow`.)
+- **Dependency direction enforcement — recommend `scripts/check-deps.py`** (60 lines over `cargo metadata`): an explicit per-crate allow-list of internal edges, an allow-list of external crates for `domain`/`application`, and a framework deny-list (tokio, axum, mlua, rusqlite, reqwest, rmcp…) for the core. Proven: passes now; adding `application → luau` fails with `internal edge not allowed`. Keep `cargo-deny` too (`deny.toml`: `bans` with `wrappers` pins each framework to its adapter, plus licenses/advisories/sources). Rewrite the script in the repo's `bun` style next to `check-boundaries.ts` if preferred. Crate edges alone aren't enough (a stray `use tokio` in `application` would compile if the dep were present), hence the gate.
+- **Test strategy per layer** (all demonstrated): domain = plain unit tests (7); application = use cases against in-memory port fakes, no mocking library (4: install/verify/tamper-no-state-change/uninstall/permission-before-VM); adapters = integration tests through the real library (luau: sandbox/limits/async/hot reload; sqlite; mcp with an rmcp client; acp against a fake agent + the real adapter; http with a WS client; fetch against a local server); end-to-end = `agentos-host/tests/e2e.rs` driving `/rpc` + `/mcp` + `/agui` of the real wiring. Run with `cargo nextest run --workspace` (0.5 s).
+
+## Open risks
+1. **Luau type tooling unverified** (luau-lsp + `.d.luau`, see §1). `luau-analyze` works for strict checking but needs definitions inlined unless luau-lsp is used.
+2. **Hard CPU kill:** the interrupt covers Luau code and pattern matching; a *host* function that blocks (our SQLite call with a huge query) isn't covered by the Luau budget. SQLite needs `progress_handler`/`interrupt()` and `busy_timeout` (set: 2 s) plus a per-call wall-clock timeout in the runtime adapter; not built.
+3. **Memory per VM ~0.5 MiB** baseline and one global mutex per VM: fine for dozens of apps; measure real apps. Per-VM *CPU fairness* relies on tokio's multi-thread pool (tested: a spinning VM didn't stall another app).
+4. **rmcp / ACP / MCP spec churn** (rmcp 3.x already carries two protocol generations; ACP crate is at 5.x with a draft v2). Pin, re-run the adapter tests on each bump, keep each behind its port. Claude-side MCP clients today speak 2025-x (sessions); both are served.
+5. **Notification ordering** on `/rpc` (notifications can overtake responses) must be part of the client contract.
+6. **Auth on `/rpc`:** Origin+Host guard stops cross-site pages, but any local process can still connect; add a per-launch token (cookie or query) if the threat model includes other local users/processes.
+7. **ACP→AG-UI mapping** (prompt streaming, permission requests, tool-call events) is the largest unproven piece; the transport pieces on both sides are proven.
+8. **Linux/Windows builds unverified** (needs zigbuild/CI); `x86_64-pc-windows-gnu` target is installed but untried; `notify` and process spawning differ per OS.
+9. **Luau ergonomics:** no `require` of files yet (bundle-only `require` to build), no debugger, error spans only as `app/main.luau:line`.
+
+## What I did not do / failed
+- Did not run `luau-lsp` (download executed under a policy block; I deleted it). Did not run Docker/Linux builds (daemon down). Did not test `jsonrpsee` (reasoned from docs). Did not test `https://` fetches (no network test; reqwest+rustls is compiled and works for `http://`).
+- No file in `/Users/jonathanturnock/Projects/AgentOS` was modified; no processes left running.
