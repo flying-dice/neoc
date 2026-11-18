@@ -116,3 +116,51 @@ pub(crate) fn push_shell(sh: &Shared, effect: ShellEffect) {
     });
     effects.push(Effect::Shell(effect));
 }
+
+#[cfg(test)]
+mod tests {
+    use super::host;
+    use crate::vm::{AppVm, Limits, VmConfig};
+    use agentos_application::ports::AppPackage;
+    use agentos_domain::AppId;
+    use agentos_sqlite::AppDb;
+    use std::{collections::BTreeMap, sync::Arc, time::Duration};
+
+    async fn vm_with(limits: Limits) -> AppVm {
+        let files = BTreeMap::from([("app.luau".to_owned(), b"app.on('x', function() end)".to_vec())]);
+        let package = AppPackage { entry: "app.luau".into(), files };
+        let config = VmConfig { limits, ..VmConfig::default() };
+        let db = Arc::new(AppDb::open(None, &[]).expect("in-memory database"));
+        AppVm::load(&AppId::parse("probe").expect("id"), package, db, config).await.expect("loads")
+    }
+
+    #[tokio::test]
+    async fn a_host_call_that_finished_is_reported_even_when_the_calls_wall_clock_ran_out_meanwhile() {
+        let vm = vm_with(Limits { call_wall: Duration::from_millis(100), ..Limits::default() }).await;
+        let sh = vm.shared().clone();
+        sh.budget.begin();
+        // finishes (blocking its thread) after the call's deadline, without ever yielding to the timeout
+        let committed = host(&sh, async {
+            std::thread::sleep(Duration::from_millis(250));
+            Ok(7)
+        })
+        .await;
+        assert_eq!(committed.expect("the host call went through: the app is told so"), 7);
+        // and the app is stopped by what comes next
+        let next = host(&sh, async { Ok(8) }).await.expect_err("the call's budget is spent");
+        assert!(next.to_string().contains("cpu budget exceeded"), "{next}");
+    }
+
+    #[tokio::test]
+    async fn a_host_call_that_failed_after_the_deadline_reports_the_budget_not_its_own_error() {
+        let vm = vm_with(Limits { call_wall: Duration::from_millis(100), ..Limits::default() }).await;
+        let sh = vm.shared().clone();
+        sh.budget.begin();
+        let failed: mlua::Result<()> = host(&sh, async {
+            std::thread::sleep(Duration::from_millis(250));
+            Err(agentos_application::PortError::Rejected("late".into()))
+        })
+        .await;
+        assert!(failed.expect_err("an error").to_string().contains("cpu budget exceeded"));
+    }
+}
