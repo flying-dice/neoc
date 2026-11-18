@@ -1,70 +1,23 @@
 /**
  * What the shell asks the host besides the view protocol: the app lifecycle (`app.*`), the catalog Discover
- * browses and the paired devices (`host.devices.*`). The shapes mirror `crates/agentos-domain/src/api.rs`
- * (generated into `types/generated/agentos.ts`; `hostApi.test.ts` fails if the two disagree).
+ * browses, the agent roster (`agents.*`) and the paired devices (`host.devices.*`). The shapes are generated from
+ * `crates/agentos-domain/src/api.rs` into `types/generated/agentos.ts`.
  */
 import { icons, type IconName } from '@agentos/ui'
+import type * as G from '../../../../../types/generated/agentos'
 
-export type AppState = 'running' | 'disabled' | 'failed'
-
-export interface AppWindowDecl {
-  w: number
-  h: number
-  minW: number
-  minH: number
-}
-
-export interface AppSummary {
-  id: string
-  name: string
-  version: string
-  state: AppState
-  message?: string
-  icon?: string
-  tint?: string
-  description?: string
-  window?: AppWindowDecl
-  source: string
-}
-
-export interface InstalledInfo {
-  version: string
-  state: AppState
-}
-
-export interface AppPreview {
-  url: string
-  id: string
-  name: string
-  version: string
-  icon?: string
-  tint?: string
-  description?: string
-  permissions: string[]
-  source: string
-  installed?: InstalledInfo
-}
-
-export interface Catalog {
-  apps: AppPreview[]
-  errors: string[]
-}
-
-/** One agent on the host's roster (`agents.list`; grants and tokens never come with it). */
-export interface AgentRow {
-  id: string
-  name: string
-  avatar?: string
-  role: string
-}
-
-export interface DeviceRow {
-  id: string
-  name: string
-  createdAt: number
-  lastSeenAt: number
-  current: boolean
-}
+// The wire shapes are the generated ones (the Rust schema in `crates/agentos-domain/src/api.rs`), re-exported
+// under the names the shell uses, so a wire change is a compile error here and nowhere else.
+export type AppState = G.AppState
+export type AppWindowDecl = G.AppWindow
+export type AppSummary = G.AppSummary
+export type InstalledInfo = G.InstalledInfo
+export type AppPreview = G.AppPreview
+export type Catalog = G.Catalog
+/** One agent on the host's roster (`agents.list`): no tokens, and only the names of its environment variables. */
+export type AgentRow = G.AgentRow
+export type AgentList = G.AgentList
+export type DeviceRow = G.DeviceRow
 
 /** The calls the shell makes. The real one is the session's `call`; stories and tests pass a fake. */
 export interface HostApi {

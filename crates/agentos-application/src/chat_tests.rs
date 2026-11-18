@@ -628,10 +628,10 @@ async fn a_read_only_agentos_tool_runs_without_a_prompt_but_a_writing_one_asks()
 
 /// Run one scripted permission request under `AutoReadOnly` and say whether the host answered it by itself.
 async fn auto_approved(rig: &Rig, request: PermissionRequest) -> bool {
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let before = rig.connector.auto.lock().len();
     rig.connector.script(vec![Step::Ask(request)]);
     // a thread of its own per request: the previous turn may still be winding down
-    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let thread = format!("auto-{n}");
     collect(rig.chat.run(input(&thread, "r1", "go")).await.unwrap()).await;

@@ -289,6 +289,14 @@ export type DeviceRow = { id: string, name: string, createdAt: number, lastSeenA
  */
 current: boolean, };
 export type DeviceList = { devices: Array<DeviceRow>, };
+export type AgentRuntimeRow = { command: string, args: Array<string>, envKeys: Array<string>, };
+export type AgentGrantsRow = { all: boolean, apps: Array<string>, };
+export type AgentRow = { id: string, name: string, avatar?: string, role: string, runtime: AgentRuntimeRow, grants: AgentGrantsRow, 
+/**
+ * What the host does with the agent's permission requests (`ApprovalPolicy`).
+ */
+approval: 'ask' | 'auto_read_only' | 'allow_all', };
+export type AgentList = { agents: Array<AgentRow>, };
 export type RpcError = { code: number, message: string, data?: JsonValue }
 
 // ---------------------------------------------------------------------------------------------
