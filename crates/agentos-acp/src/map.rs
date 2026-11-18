@@ -9,7 +9,7 @@ use agent_client_protocol::v1::schema::{
 use agentos_domain::thread::{
     AgentEvent, ConfigChoice, ConfigOption, ContextUsage, Cost, Mode, ModeState, PermissionKind,
     PermissionOption, PermissionRequest, PlanEntry, PlanStatus, SessionState, SlashCommand, StopReason,
-    ToolStatus,
+    ToolKind, ToolStatus,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -210,7 +210,8 @@ fn permission_kind(k: PermissionOptionKind) -> PermissionKind {
         PermissionOptionKind::AllowAlways => PermissionKind::AllowAlways,
         PermissionOptionKind::RejectOnce => PermissionKind::RejectOnce,
         PermissionOptionKind::RejectAlways => PermissionKind::RejectAlways,
-        _ => PermissionKind::AllowOnce,
+        PermissionOptionKind::AllowOnce => PermissionKind::AllowOnce,
+        _ => PermissionKind::Unknown,
     }
 }
 
@@ -220,7 +221,7 @@ pub fn permission_request(request_id: String, req: &RequestPermissionRequest) ->
         request_id,
         tool_call_id: Some(req.tool_call.tool_call_id.to_string()),
         title: req.tool_call.fields.title.clone().unwrap_or_else(|| "Run a tool".to_owned()),
-        kind: req.tool_call.fields.kind.as_ref().and_then(name_of),
+        kind: req.tool_call.fields.kind.as_ref().and_then(name_of).map(|k| ToolKind::parse(&k)),
         options: req
             .options
             .iter()
@@ -358,6 +359,31 @@ mod tests {
         let ConfigOption::Select { current, options, .. } = &out[0] else { panic!() };
         assert_eq!((current.as_str(), options.len()), ("opus", 2));
         assert!(matches!(&out[1], ConfigOption::Boolean { current: true, .. }));
+    }
+
+    #[test]
+    fn a_permission_request_keeps_its_typed_kind_and_option_kinds() {
+        use agent_client_protocol::v1::schema::PermissionOption as AcpOption;
+        let request = |kind| {
+            let fields = ToolCallUpdateFields::new().title("mcp__agentos__notes__search").kind(kind);
+            RequestPermissionRequest::new(
+                "s1",
+                ToolCallUpdate::new("tc", fields),
+                vec![
+                    AcpOption::new("a", "Allow", PermissionOptionKind::AllowOnce),
+                    AcpOption::new("r", "Reject", PermissionOptionKind::RejectAlways),
+                ],
+            )
+        };
+        let execute = permission_request("p1".into(), &request(ToolKind::Execute));
+        assert_eq!(execute.kind, Some(agentos_domain::thread::ToolKind::Execute));
+        assert!(execute.kind_forbids_auto_approval());
+        let other = permission_request("p2".into(), &request(ToolKind::Other));
+        assert_eq!(other.kind, Some(agentos_domain::thread::ToolKind::Other));
+        assert_eq!(
+            other.options.iter().map(|o| o.kind).collect::<Vec<_>>(),
+            [PermissionKind::AllowOnce, PermissionKind::RejectAlways]
+        );
     }
 
     #[test]
