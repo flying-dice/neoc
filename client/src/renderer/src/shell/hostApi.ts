@@ -4,20 +4,31 @@
  * `crates/agentos-domain/src/api.rs` into `types/generated/agentos.ts`.
  */
 import { icons, type IconName } from '@agentos/ui'
-import type * as G from '../../../../../types/generated/agentos'
+import type {
+  HostAgentList,
+  HostAgentRow,
+  HostAppPreview,
+  HostAppState,
+  HostAppSummary,
+  HostAppWindow,
+  HostCatalog,
+  HostDeviceRow,
+  HostInstalledInfo
+} from '../view/protocol'
 
-// The wire shapes are the generated ones (the Rust schema in `crates/agentos-domain/src/api.rs`), re-exported
-// under the names the shell uses, so a wire change is a compile error here and nowhere else.
-export type AppState = G.AppState
-export type AppWindowDecl = G.AppWindow
-export type AppSummary = G.AppSummary
-export type InstalledInfo = G.InstalledInfo
-export type AppPreview = G.AppPreview
-export type Catalog = G.Catalog
+// The wire shapes are the generated ones (the Rust schema in `crates/agentos-domain/src/api.rs`, re-exported by
+// `view/protocol.ts`, the renderer's one door to `types/generated`) under the names the shell uses, so a wire
+// change is a compile error there and here, and nowhere else.
+export type AppState = HostAppState
+export type AppWindowDecl = HostAppWindow
+export type AppSummary = HostAppSummary
+export type InstalledInfo = HostInstalledInfo
+export type AppPreview = HostAppPreview
+export type Catalog = HostCatalog
 /** One agent on the host's roster (`agents.list`): no tokens, and only the names of its environment variables. */
-export type AgentRow = G.AgentRow
-export type AgentList = G.AgentList
-export type DeviceRow = G.DeviceRow
+export type AgentRow = HostAgentRow
+export type AgentList = HostAgentList
+export type DeviceRow = HostDeviceRow
 
 /** The calls the shell makes. The real one is the session's `call`; stories and tests pass a fake. */
 export interface HostApi {

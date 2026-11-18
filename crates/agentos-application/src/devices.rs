@@ -407,6 +407,7 @@ mod tests {
         assert!(r.svc.pair(None, &code.code, "x").await.is_ok(), "the window slid past the failures");
     }
 
+    #[allow(clippy::unnecessary_wraps)] // the shape `pair` takes, so the calls read plainly
     fn ip(s: &str) -> Option<IpAddr> {
         Some(s.parse().unwrap())
     }
@@ -496,7 +497,7 @@ mod tests {
         assert!(r.svc.revoke(&DeviceId("nobody".into())).await.is_err());
         assert!(told.lock().is_empty());
         r.svc.revoke(&paired.device.id).await.unwrap();
-        assert_eq!(*told.lock(), [paired.device.id.0.clone()]);
+        assert_eq!(*told.lock(), std::slice::from_ref(&paired.device.id.0));
     }
 
     #[tokio::test]

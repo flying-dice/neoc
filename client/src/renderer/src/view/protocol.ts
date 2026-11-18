@@ -107,3 +107,15 @@ export const AppErrorCode = {
 
 export type RequestMethod = keyof RequestMethods
 export type HostNotificationMethod = keyof HostNotifications
+
+// ── Host management: the shell's own calls (`app.*`, `agents.*`, `host.devices.*`) ─────────────────────────
+
+export type HostAppState = G.AppState
+export type HostAppWindow = G.AppWindow
+export type HostAppSummary = G.AppSummary
+export type HostInstalledInfo = G.InstalledInfo
+export type HostAppPreview = G.AppPreview
+export type HostCatalog = G.Catalog
+export type HostAgentRow = G.AgentRow
+export type HostAgentList = G.AgentList
+export type HostDeviceRow = G.DeviceRow

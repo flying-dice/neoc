@@ -21,11 +21,7 @@ struct Gate {
 impl RpcHandler for Gate {
     async fn request(&self, _peer: &RpcPeer, method: &str, _params: Value) -> Result<Value, RpcError> {
         match method {
-            "block" => {
-                let _ = self.open.acquire().await.unwrap();
-                Ok(json!("released"))
-            }
-            "view.block" => {
+            "block" | "view.block" => {
                 let _ = self.open.acquire().await.unwrap();
                 Ok(json!("released"))
             }
