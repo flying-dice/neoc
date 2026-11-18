@@ -410,6 +410,8 @@ type WriteHook = Box<dyn Fn(&str, &Value, &str, &Value) + Send>;
 pub struct FakeRuntime {
     apps: Mutex<HashMap<String, Vec<ToolSpec>>>,
     calls: Mutex<Vec<(String, String, CallContext)>>,
+    /// The `read_only` requirement each tool call arrived with, in call order.
+    read_only_calls: Mutex<Vec<bool>>,
     loads: Mutex<HashMap<String, usize>>,
     packages: Mutex<HashMap<String, AppPackage>>,
     sources: Mutex<HashMap<String, Vec<SourceDef>>>,
@@ -442,6 +444,10 @@ impl FakeRuntime {
     }
     pub fn calls(&self) -> usize {
         self.calls.lock().unwrap().len()
+    }
+    /// Whether each tool call asked the runtime for a read-only run, in call order.
+    pub fn read_only_calls(&self) -> Vec<bool> {
+        self.read_only_calls.lock().unwrap().clone()
     }
     /// The context of the most recent tool call.
     pub fn last_ctx(&self) -> Option<CallContext> {
@@ -568,8 +574,16 @@ impl AppRuntime for FakeRuntime {
         self.apps.lock().unwrap().remove(app.as_str());
         Ok(())
     }
-    async fn call_tool(&self, app: &AppId, tool: &str, args: Value, ctx: CallContext) -> PortResult<Value> {
+    async fn call_tool(
+        &self,
+        app: &AppId,
+        tool: &str,
+        args: Value,
+        ctx: CallContext,
+        read_only: bool,
+    ) -> PortResult<Value> {
         self.calls.lock().unwrap().push((app.to_string(), tool.to_owned(), ctx));
+        self.read_only_calls.lock().unwrap().push(read_only);
         Ok(json!({ "echo": args }))
     }
     async fn write_row(

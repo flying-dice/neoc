@@ -9,7 +9,13 @@
 
 use mlua::{Function, Lua, Table, Value as LuaValue};
 use parking_lot::Mutex;
-use std::{collections::BTreeSet, sync::Arc};
+use std::{
+    collections::BTreeSet,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 
 /// One tracked field: which `app.state` table, which key.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -18,8 +24,10 @@ pub struct DepKey {
     pub key: String,
 }
 
-#[derive(Default)]
 pub(crate) struct Tracker {
+    /// The running call is a `readOnly` tool (the VM's flag): assigning a state field would write behind
+    /// its guarantee.
+    read_only: Arc<AtomicBool>,
     next_state: u32,
     /// Reads recorded since `begin`, while a scope is open.
     active: Option<BTreeSet<DepKey>>,
@@ -30,6 +38,9 @@ pub(crate) struct Tracker {
 }
 
 impl Tracker {
+    pub fn new(read_only: Arc<AtomicBool>) -> Self {
+        Self { read_only, next_state: 0, active: None, dirty: BTreeSet::new(), pure: false }
+    }
     pub fn begin(&mut self, pure: bool) {
         self.active = Some(BTreeSet::new());
         self.pure = pure;
@@ -105,6 +116,11 @@ pub(crate) fn make_state(lua: &Lua, tracker: &SharedTracker, initial: &Table) ->
                 if t.pure {
                     return Err(mlua::Error::runtime(
                         "app.state cannot be changed while rendering: render must be pure",
+                    ));
+                }
+                if t.read_only.load(Ordering::SeqCst) {
+                    return Err(mlua::Error::runtime(
+                        "app.state cannot be changed in a tool declared readOnly: a readOnly tool cannot write",
                     ));
                 }
                 let old = write_data.raw_get::<LuaValue>(k.clone())?;

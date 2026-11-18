@@ -17,8 +17,9 @@ mod schema;
 mod tools;
 
 use crate::{
+    budget::Stop,
     require,
-    vm::{Shared, ShellEffect},
+    vm::{Effect, Shared, ShellEffect},
 };
 use agentos_application::PortError;
 use mlua::Lua;
@@ -38,21 +39,31 @@ pub(crate) fn install(lua: &Lua, sh: &Arc<Shared>) -> mlua::Result<()> {
 }
 
 /// Run a host call under the wall-clock backstop; the app's CPU slice restarts when it returns (time
-/// spent waiting on the host is not app CPU).
+/// spent waiting on the host is not app CPU), but the call's own budget does not: every host call is
+/// charged against it, and one is refused (or abandoned while it waits) once the call's budget is spent or
+/// the app was unloaded.
 pub(crate) async fn host<T>(
     sh: &Shared,
     call: impl Future<Output = Result<T, PortError>>,
 ) -> mlua::Result<T> {
+    let allowance = sh.limits.allowance();
+    let stopped = |stop: Stop| mlua::Error::runtime(stop.message());
+    sh.slice.charge_host_call(allowance).map_err(stopped)?;
+    let limit = sh.limits.host_call_timeout.min(sh.slice.call_wall_left(allowance));
     sh.slice.pause();
-    let result = tokio::time::timeout(sh.limits.host_call_timeout, call).await;
+    let result = tokio::select! {
+        timed = tokio::time::timeout(limit, call) => Some(timed),
+        () = sh.slice.retired() => None,
+    };
     sh.slice.resume();
+    sh.slice.check_after_host_call(allowance).map_err(stopped)?;
     match result {
-        Ok(Ok(v)) => Ok(v),
-        Ok(Err(e)) => Err(mlua::Error::external(e)),
-        Err(_) => Err(mlua::Error::runtime(format!(
-            "a host call took longer than {:?} and was abandoned",
-            sh.limits.host_call_timeout
-        ))),
+        Some(Ok(Ok(v))) => Ok(v),
+        Some(Ok(Err(e))) => Err(mlua::Error::external(e)),
+        Some(Err(_)) => {
+            Err(mlua::Error::runtime(format!("a host call took longer than {limit:?} and was abandoned")))
+        }
+        None => Err(stopped(Stop::Unloaded)),
     }
 }
 
@@ -76,6 +87,13 @@ pub(crate) fn need(granted: bool, capability: &str, what: &str) -> mlua::Result<
     }
 }
 
+/// Queue a shell declaration. A later declaration of the same kind replaces the earlier one (the shell only
+/// ever needs the last badge, command list or link list), so a loop of them cannot grow the queue.
 pub(crate) fn push_shell(sh: &Shared, effect: ShellEffect) {
-    sh.effects.lock().push(crate::vm::Effect::Shell(effect));
+    let mut effects = sh.effects.lock();
+    effects.retain(|queued| match queued {
+        Effect::Shell(old) => std::mem::discriminant(old) != std::mem::discriminant(&effect),
+        Effect::Notify(_) | Effect::OpenWindow { .. } => true,
+    });
+    effects.push(Effect::Shell(effect));
 }

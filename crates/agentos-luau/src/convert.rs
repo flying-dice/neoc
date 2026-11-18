@@ -3,13 +3,78 @@
 //! - whole numbers become JSON integers (`{ id = 7 }` binds as `7`, not `7.0`);
 //! - JSON `null` and a Lua `nil` are the same thing (never the truthy `null` lightuserdata);
 //! - a table with keys `1..n` is an array, a table with string keys is an object, an empty table is `[]`;
-//! - functions, userdata, cycles and non-finite numbers are errors, with the path to the offender.
+//! - functions, userdata, cycles and non-finite numbers are errors, with the path to the offender;
+//! - the result is bounded: a [`Walk`] counts nodes and bytes as it goes, so a table that is shared at every
+//!   level (`for i = 1, 30 do t = { t, t } end`, 2^30 paths to the leaves) or a huge string repeated is an
+//!   error instead of gigabytes of JSON outside the Luau memory limit.
 
 use agentos_application::data::Params;
 use mlua::{Lua, Table, Value as LuaValue};
 use serde_json::{Map, Number, Value};
+use std::collections::HashSet;
 
 const MAX_DEPTH: usize = 32;
+
+/// Most JSON values (every scalar, array and object counts one) one conversion may produce. A tool result
+/// or window argument of a hundred thousand values is already far past anything a person or an agent reads.
+pub const MAX_NODES: usize = 100_000;
+
+/// Most bytes of string content and object keys one conversion may produce: 4 MiB, beside the Luau heap
+/// limit (16 MiB) that already bounds what the app can build.
+pub const MAX_BYTES: usize = 4 * 1024 * 1024;
+
+/// What a conversion has used so far, and the tables it is inside of right now. One `Walk` can span many
+/// `lua_to_json_in` calls (a whole view tree), so the budget is for the whole result.
+pub struct Walk {
+    nodes: usize,
+    bytes: usize,
+    max_nodes: usize,
+    max_bytes: usize,
+    /// The tables on the path from the root to here (by address): meeting one again is a cycle. A table met
+    /// a second time off that path is shared, not circular, and is fine (it still costs its nodes again).
+    inside: HashSet<usize>,
+}
+
+impl Walk {
+    pub fn new() -> Self {
+        Self::with_limits(MAX_NODES, MAX_BYTES)
+    }
+    pub fn with_limits(max_nodes: usize, max_bytes: usize) -> Self {
+        Self { nodes: 0, bytes: 0, max_nodes, max_bytes, inside: HashSet::new() }
+    }
+    /// Count one value.
+    pub fn node(&mut self, path: &str) -> mlua::Result<()> {
+        self.nodes += 1;
+        if self.nodes > self.max_nodes {
+            return Err(bad(
+                path,
+                &format!("more than {} values (is a table shared at every level?)", self.max_nodes),
+            ));
+        }
+        Ok(())
+    }
+    /// Count `len` bytes of string content or object keys.
+    pub fn text(&mut self, path: &str, len: usize) -> mlua::Result<()> {
+        self.bytes = self.bytes.saturating_add(len);
+        if self.bytes > self.max_bytes {
+            return Err(bad(path, &format!("more than {} bytes of text", self.max_bytes)));
+        }
+        Ok(())
+    }
+    /// Enter a table; `false` when it is already on the path (a cycle).
+    pub fn enter(&mut self, t: &Table) -> bool {
+        self.inside.insert(t.to_pointer().addr())
+    }
+    pub fn leave(&mut self, t: &Table) {
+        self.inside.remove(&t.to_pointer().addr());
+    }
+}
+
+impl Default for Walk {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 fn bad(path: &str, why: &str) -> mlua::Error {
     mlua::Error::runtime(format!("cannot convert {path} to JSON: {why}"))
@@ -24,12 +89,21 @@ fn as_integer(n: f64) -> Option<i64> {
 }
 
 pub fn lua_to_json(v: &LuaValue) -> mlua::Result<Value> {
-    to_json(v, "value", 0)
+    lua_to_json_in(v, "value", &mut Walk::new())
 }
 
-fn to_json(v: &LuaValue, path: &str, depth: usize) -> mlua::Result<Value> {
+/// Like [`lua_to_json`], inside a budget that several conversions share, naming the value `path` in errors.
+pub fn lua_to_json_in(v: &LuaValue, path: &str, walk: &mut Walk) -> mlua::Result<Value> {
+    to_json(v, path, 0, walk)
+}
+
+fn to_json(v: &LuaValue, path: &str, depth: usize, walk: &mut Walk) -> mlua::Result<Value> {
     if depth > MAX_DEPTH {
-        return Err(bad(path, "nested too deeply (a table that contains itself?)"));
+        return Err(bad(path, "nested too deeply"));
+    }
+    walk.node(path)?;
+    if let LuaValue::String(s) = v {
+        walk.text(path, s.as_bytes().len())?;
     }
     Ok(match v {
         LuaValue::Nil => Value::Null,
@@ -40,7 +114,14 @@ fn to_json(v: &LuaValue, path: &str, depth: usize) -> mlua::Result<Value> {
             None => Value::Number(Number::from_f64(*n).ok_or_else(|| bad(path, "a non-finite number"))?),
         },
         LuaValue::String(s) => Value::String(s.to_string_lossy()),
-        LuaValue::Table(t) => table_to_json(t, path, depth)?,
+        LuaValue::Table(t) => {
+            if !walk.enter(t) {
+                return Err(bad(path, "a table that contains itself"));
+            }
+            let json = table_to_json(t, path, depth, walk);
+            walk.leave(t);
+            json?
+        }
         other => return Err(bad(path, &format!("a {} cannot be stored or sent", other.type_name()))),
     })
 }
@@ -55,7 +136,7 @@ fn array_index(k: &LuaValue) -> Option<usize> {
     usize::try_from(i).ok().filter(|i| *i >= 1)
 }
 
-fn table_to_json(t: &Table, path: &str, depth: usize) -> mlua::Result<Value> {
+fn table_to_json(t: &Table, path: &str, depth: usize, walk: &mut Walk) -> mlua::Result<Value> {
     let mut array: Vec<(usize, Value)> = Vec::new();
     let mut object = Map::new();
     for pair in t.pairs::<LuaValue, LuaValue>() {
@@ -63,13 +144,14 @@ fn table_to_json(t: &Table, path: &str, depth: usize) -> mlua::Result<Value> {
         match k {
             LuaValue::String(s) => {
                 let key = s.to_string_lossy();
-                let child = to_json(&v, &format!("{path}.{key}"), depth + 1)?;
+                walk.text(path, key.len())?;
+                let child = to_json(&v, &format!("{path}.{key}"), depth + 1, walk)?;
                 object.insert(key, child);
             }
             LuaValue::Integer(_) | LuaValue::Number(_) => {
                 let idx =
                     array_index(&k).ok_or_else(|| bad(path, "array keys must be whole numbers from 1"))?;
-                array.push((idx, to_json(&v, &format!("{path}[{idx}]"), depth + 1)?));
+                array.push((idx, to_json(&v, &format!("{path}[{idx}]"), depth + 1, walk)?));
             }
             other => return Err(bad(path, &format!("a table key of type {}", other.type_name()))),
         }
@@ -162,8 +244,33 @@ mod tests {
         );
         assert!(e("return { 1, a = 2 }").contains("mixes"));
         assert!(e("return { n = 0/0 }").contains("non-finite"));
-        assert!(e("local t = {} t.self = t return t").contains("too deeply"));
+        assert!(e("local t = {} t.self = t return t").contains("contains itself"), "a cycle");
+        assert!(e("local t = 1 for i = 1, 40 do t = { t } end return t").contains("too deeply"), "depth");
         assert!(e("return { [true] = 1 }").contains("table key"));
+    }
+
+    #[test]
+    fn a_table_shared_at_every_level_is_cut_off_not_expanded() {
+        let lua = Lua::new();
+        let e = |src: &str| lua_to_json(&eval(&lua, src)).unwrap_err().to_string();
+        // 2^30 paths to the leaf from 31 tables
+        assert!(e("local t = { 1 } for i = 1, 30 do t = { t, t } end return t")
+            .contains("more than 100000 values"));
+        // a megabyte shared forty times
+        assert!(e("local s = string.rep('x', 1000000) local t = {} for i = 1, 40 do t[i] = s end return t")
+            .contains("bytes of text"));
+        // sharing that is small is fine, and counted each time it is met
+        let v = lua_to_json(&eval(&lua, "local a = { 1, 2 } return { a, a, a }")).unwrap();
+        assert_eq!(v, json!([[1, 2], [1, 2], [1, 2]]));
+    }
+
+    #[test]
+    fn a_walk_shared_by_several_conversions_spends_one_budget() {
+        let lua = Lua::new();
+        let mut walk = Walk::with_limits(5, 1024);
+        let two = eval(&lua, "return { 1, 2 }"); // three values
+        assert!(lua_to_json_in(&two, "a", &mut walk).is_ok());
+        assert!(lua_to_json_in(&two, "b", &mut walk).unwrap_err().to_string().contains("more than 5 values"));
     }
 
     #[test]

@@ -152,7 +152,13 @@ async fn the_shared_state_reaches_every_open_window_and_the_agent_tool_drives_it
     let _b = open(&rig, "calculator", "v2").await;
     let out = rig
         .runtime
-        .call_tool(&id("calculator"), "show_on_calculator", json!({"expression": "6 * 7"}), agent_ctx(0))
+        .call_tool(
+            &id("calculator"),
+            "show_on_calculator",
+            json!({"expression": "6 * 7"}),
+            agent_ctx(0),
+            false,
+        )
         .await
         .unwrap();
     assert_eq!(out, json!({"shown": "42"}));
@@ -168,12 +174,21 @@ async fn the_shared_state_reaches_every_open_window_and_the_agent_tool_drives_it
     // the read-only tools: arithmetic (writes nothing: it is readOnly), and history through app.kv
     let r = rig
         .runtime
-        .call_tool(&id("calculator"), "calculate", json!({"expression": "(12.5 + 7) * 3"}), agent_ctx(0))
+        .call_tool(
+            &id("calculator"),
+            "calculate",
+            json!({"expression": "(12.5 + 7) * 3"}),
+            agent_ctx(0),
+            false,
+        )
         .await
         .unwrap();
     assert_eq!(r["result"], json!(58.5));
-    let h =
-        rig.runtime.call_tool(&id("calculator"), "history", json!({"limit": 5}), agent_ctx(0)).await.unwrap();
+    let h = rig
+        .runtime
+        .call_tool(&id("calculator"), "history", json!({"limit": 5}), agent_ctx(0), false)
+        .await
+        .unwrap();
     assert_eq!(
         h["entries"].as_array().unwrap().len(),
         1,
@@ -181,7 +196,7 @@ async fn the_shared_state_reaches_every_open_window_and_the_agent_tool_drives_it
     );
     let bad = rig
         .runtime
-        .call_tool(&id("calculator"), "calculate", json!({"expression": "1 / 0"}), agent_ctx(0))
+        .call_tool(&id("calculator"), "calculate", json!({"expression": "1 / 0"}), agent_ctx(0), false)
         .await;
     assert!(matches!(bad, Err(PortError::Rejected(_))), "division by zero is a tool error: {bad:?}");
 }

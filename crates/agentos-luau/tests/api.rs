@@ -18,7 +18,7 @@ fn app(body: &str) -> String {
 }
 
 async fn call(vm: &AppVm, tool: &str, args: Value) -> Result<Value, VmError> {
-    vm.call_tool(tool, args, &agent_ctx(1_763_457_120_000)).await
+    vm.call_tool(tool, args, &agent_ctx(1_763_457_120_000), false).await
 }
 
 // ---- app.manifest ---------------------------------------------------------------------------------------
@@ -522,6 +522,7 @@ async fn notify_and_shell_calls_become_effects_for_the_host() {
         app.shell.badge(0)
         app.shell.command { id = "new", title = "New Note", shortcut = "cmd+n", run = function() end }
         app.shell.deepLink("note/:id", function(params) end)
+        app.window("main", { render = function(w) end })
         app:openWindow("main", { noteId = 12 })
     "#;
     let cfg = VmConfig { capabilities: Capabilities::all(), ..VmConfig::default() };
@@ -534,7 +535,7 @@ async fn notify_and_shell_calls_become_effects_for_the_host() {
         vec![
             n("Reminder", Some("Call mum")),
             n("Colon call", None),
-            Effect::Shell(ShellEffect::Badge(Some("3".into()))),
+            // `badge(3)` then `badge(0)`: the shell only ever needs the last, so the first is replaced
             Effect::Shell(ShellEffect::Badge(None)),
             Effect::Shell(ShellEffect::Commands(vec![MenuCommand {
                 id: "new".into(),

@@ -93,12 +93,13 @@ pub(super) fn install(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<
         "openWindow",
         lua.create_function(move |_, (_this, name, params): (LuaValue, String, Option<LuaValue>)| {
             check_effects_allowed(&s, "app:openWindow")?;
+            s.writable("app:openWindow")?;
+            s.declared_window(&name)?;
             let params = match params {
                 Some(p) => lua_to_json(&p)?,
                 None => Value::Null,
             };
-            s.effects.lock().push(Effect::OpenWindow { name, params });
-            Ok(())
+            s.push_effect("app:openWindow", Effect::OpenWindow { name, params })
         })?,
     )?;
 
@@ -129,12 +130,12 @@ pub(super) fn install(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<
         lua.create_function(move |_, args: Variadic<LuaValue>| {
             need(s.caps.notify, "notify", "app.notify")?;
             check_effects_allowed(&s, "app.notify")?;
+            s.writable("app.notify")?;
             let t = last_table(args, "app.notify")?;
             let title = text_field(&t, "title", "app.notify", true, 200)?.unwrap_or_default();
             let body = text_field(&t, "body", "app.notify", false, 2000)?;
             text_field(&t, "at", "app.notify", false, 64)?;
-            s.effects.lock().push(Effect::Notify(Notification { app: s.app.clone(), title, body }));
-            Ok(())
+            s.push_effect("app.notify", Effect::Notify(Notification { app: s.app.clone(), title, body }))
         })?,
     )?;
 
@@ -178,6 +179,7 @@ fn install_shell(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<()> {
         "badge",
         lua.create_function(move |_, value: Option<LuaValue>| {
             need(s.caps.shell, "shell", "app.shell.badge")?;
+            s.writable("app.shell.badge")?;
             let badge = match value {
                 None | Some(LuaValue::Nil) => None,
                 Some(LuaValue::String(t)) => Some(t.to_string_lossy()),
@@ -201,6 +203,7 @@ fn install_shell(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<()> {
         "command",
         lua.create_function(move |_, def: Table| {
             need(s.caps.shell, "shell", "app.shell.command")?;
+            s.writable("app.shell.command")?;
             let id = text_field(&def, "id", "app.shell.command", true, 64)?.unwrap_or_default();
             let title = text_field(&def, "title", "app.shell.command", true, 80)?.unwrap_or_default();
             let shortcut = text_field(&def, "shortcut", "app.shell.command", false, 32)?;
@@ -225,6 +228,7 @@ fn install_shell(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<()> {
         "deepLink",
         lua.create_function(move |_, (pattern, handler): (String, Function)| {
             need(s.caps.shell, "shell", "app.shell.deepLink")?;
+            s.writable("app.shell.deepLink")?;
             if pattern.is_empty() || pattern.len() > 128 {
                 return Err(mlua::Error::runtime(
                     "a deep link pattern is 1 to 128 characters, like \"note/:id\"",

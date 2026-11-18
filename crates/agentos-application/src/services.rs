@@ -497,7 +497,10 @@ impl AppService {
         caller.authorize_tool_call(name)?;
         self.require_running(name.app())?;
         let ctx = CallContext { actor: Actor::from(caller), now_ms: self.p.clock.now_unix_ms() };
-        let out = self.p.runtime.call_tool(name.app(), name.tool(), args, ctx).await;
+        // the runtime enforces `readOnly` too, but the guarantee must not rest on the adapter alone: it is
+        // handed the requirement for every tool the app declared `readOnly`
+        let read_only = self.tool_is_read_only(name).unwrap_or(false);
+        let out = self.p.runtime.call_tool(name.app(), name.tool(), args, ctx, read_only).await;
         // a tool may have changed state or data (even when it then failed): open views follow
         for o in self.observers() {
             o.mutated(name.app()).await;

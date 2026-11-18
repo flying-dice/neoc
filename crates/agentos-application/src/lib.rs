@@ -27,6 +27,8 @@ mod services_tests;
 #[allow(clippy::unwrap_used, clippy::missing_panics_doc)]
 // in-memory fakes: a poisoned lock should just panic
 pub mod testing;
+#[cfg(test)]
+mod tool_calls_tests;
 pub mod views;
 #[cfg(test)]
 mod views_tests;
