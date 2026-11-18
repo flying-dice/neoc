@@ -16,7 +16,10 @@ use agentos_domain::{Capabilities, Notification};
 use agentos_luau::{Limits, LuauRuntime, VmError};
 use common::{agent_ctx, db, id, load, package, try_load_with};
 use serde_json::{json, Map, Value};
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 /// "Killed by its budget, not still running": far below any wall-clock backstop.
 const PROMPTLY: Duration = Duration::from_secs(8);
@@ -81,10 +84,13 @@ async fn a_runaway_inside_a_transaction_ends_and_frees_the_write_gate() {
     direct.unwrap();
 }
 
-struct Quiet;
+/// Records what reached the notification port.
+#[derive(Default)]
+struct Notes(std::sync::Mutex<Vec<Notification>>);
 #[async_trait::async_trait]
-impl Notifier for Quiet {
-    async fn notify(&self, _: Notification) -> PortResult<()> {
+impl Notifier for Notes {
+    async fn notify(&self, n: Notification) -> PortResult<()> {
+        self.0.lock().unwrap().push(n);
         Ok(())
     }
 }
@@ -92,6 +98,7 @@ impl Notifier for Quiet {
 struct Rig {
     runtime: Arc<LuauRuntime>,
     shell: Arc<RecordingShell>,
+    notes: Arc<Notes>,
     db: Arc<agentos_sqlite::AppDb>,
 }
 
@@ -101,8 +108,9 @@ fn rig() -> Rig {
 
 fn rig_with(limits: Limits) -> Rig {
     let shell = Arc::new(RecordingShell::default());
-    let runtime = Arc::new(LuauRuntime::new(Arc::new(Quiet), shell.clone(), limits));
-    Rig { runtime, shell, db: db() }
+    let notes = Arc::new(Notes::default());
+    let runtime = Arc::new(LuauRuntime::new(notes.clone(), shell.clone(), limits));
+    Rig { runtime, shell, notes, db: db() }
 }
 
 impl Rig {
@@ -408,4 +416,108 @@ async fn vacuum_into_and_attach_are_refused_through_db_all_and_exec() {
     assert!(!vacuumed.exists(), "VACUUM INTO wrote a file outside the app's database");
     assert!(!attached.exists(), "ATTACH created a file outside the app's database");
     let _ = std::fs::remove_dir_all(dir);
+}
+
+// ---- wave D1: the second review's sandbox holes ----------------------------------------------------------------
+
+// N1: a coroutine parked in a host call switched the CPU budget off for the whole VM.
+
+/// A host call from inside a coroutine yielded to the app's own `coroutine.resume`, which left the "waiting on
+/// the host" flag set for the code that went on running: nothing counted and nothing stopped it.
+#[tokio::test]
+async fn a_coroutine_cannot_park_a_host_call_and_switch_off_the_cpu_budget() {
+    let src = r#"
+      app.on("spin", function()
+        local co = coroutine.create(function() app.kv:get("k") end)
+        local ok, why = coroutine.resume(co)
+        local n = 0
+        while n < 30000000 do n = n + 1 end
+        return { ok = ok, why = tostring(why), n = n }
+      end)
+    "#;
+    let limits = Limits { cpu_ticks: 100_000, call_ticks: 200_000, ..Limits::default() };
+    let vm = try_load_with("spin", src, db(), limits).await.unwrap();
+    let started = Instant::now();
+    let err = vm.emit("spin", json!(null)).await.expect_err("the loop must run into the budget");
+    assert!(script_error(&err).contains("cpu budget exceeded"), "{err}");
+    assert!(started.elapsed() < PROMPTLY);
+}
+
+#[tokio::test]
+async fn a_host_call_inside_a_coroutine_is_refused_with_an_error_that_says_why() {
+    let src = r#"
+      app.on("probe", function()
+        local co = coroutine.create(function() return app.kv:get("k") end)
+        local ok, why = coroutine.resume(co)
+        local wrapped = coroutine.wrap(function() return app.db:all("select 1") end)
+        local ok2, why2 = pcall(wrapped)
+        -- coroutines still do what they are for, and the main thread still reaches the host afterwards
+        local gen = coroutine.wrap(function() for i = 1, 3 do coroutine.yield(i) end end)
+        return { ok = ok, why = tostring(why), ok2 = ok2, why2 = tostring(why2),
+                 gen = gen() + gen() + gen(), kv = app.kv:get("k") }
+      end)
+    "#;
+    let out = load(src).await.emit("probe", json!(null)).await.unwrap();
+    assert_eq!(out["ok"], false, "{out}");
+    assert_eq!(out["ok2"], false, "{out}");
+    for why in [&out["why"], &out["why2"]] {
+        assert!(why.as_str().unwrap().contains("coroutine"), "{out}");
+    }
+    assert_eq!(out["gen"], 6, "{out}");
+    assert_eq!(out["kv"], Value::Null);
+}
+
+/// The same parked call started inside `db:tx` held the database's write gate after the call had returned.
+#[tokio::test]
+async fn a_coroutine_cannot_leave_the_write_gate_held_after_the_call_returns() {
+    let src = r#"
+      app.on("leak", function()
+        local co = coroutine.create(function()
+          app.db:tx(function()
+            app.db:exec("create table if not exists t(a)")
+            app.db:exec("insert into t values (1)")
+          end)
+        end)
+        coroutine.resume(co)
+        KEEP = co
+        return coroutine.status(co)
+      end)
+    "#;
+    let data = db();
+    let vm = try_load_with("leak", src, data.clone(), Limits::default()).await.unwrap();
+    vm.emit("leak", json!(null)).await.unwrap();
+    let write = tokio::time::timeout(
+        Duration::from_secs(3),
+        data.exec("create table if not exists y(a)".into(), vec![]),
+    )
+    .await
+    .expect("the database's write gate is free once the call has returned");
+    write.unwrap();
+}
+
+/// A call cancelled between two statements of a `db:tx` (its caller gave up) must not keep the transaction,
+/// and with it the write gate, until some later call happens to start.
+#[tokio::test]
+async fn a_cancelled_call_gives_up_its_transaction_at_once() {
+    // `db:migrate` inside the transaction waits for the very gate the transaction holds: a call parked
+    // between two statements with the transaction open in the VM
+    let src = r#"
+      app.on("tx", function()
+        app.db:tx(function()
+          app.db:exec("create table if not exists t(a)")
+          app.db:migrate { [1] = "create table m(a)" }
+        end)
+      end)
+    "#;
+    let data = db();
+    let vm = try_load_with("txcancel", src, data.clone(), Limits::default()).await.unwrap();
+    let cancelled = tokio::time::timeout(Duration::from_millis(300), vm.emit("tx", json!(null))).await;
+    assert!(cancelled.is_err(), "the call is parked on the gate and its caller gives up");
+    let write = tokio::time::timeout(
+        Duration::from_secs(3),
+        data.exec("create table if not exists y(a)".into(), vec![]),
+    )
+    .await
+    .expect("the cancelled call's transaction was rolled back and the gate released");
+    write.unwrap();
 }
