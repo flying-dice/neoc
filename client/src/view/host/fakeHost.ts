@@ -236,10 +236,7 @@ export class FakeHost {
         try {
           await this.app.onEvent?.(view, params as unknown as ViewEventParams)
         } catch (error) {
-          throw new RpcError(
-            AppErrorCode.AppError,
-            messageOf(error)
-          )
+          throw new RpcError(AppErrorCode.AppError, messageOf(error))
         }
         return { ok: true }
       }

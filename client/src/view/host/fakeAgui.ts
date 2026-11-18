@@ -381,9 +381,7 @@ export class FakeAgui {
     this.runs.push(run)
     const script = input.resume ? (this.onResume ?? this.onRun) : this.onRun
     queueMicrotask(() => {
-      void Promise.resolve(script(run)).catch((e: unknown) =>
-        run.error(messageOf(e))
-      )
+      void Promise.resolve(script(run)).catch((e: unknown) => run.error(messageOf(e)))
     })
     return new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } })
   }
