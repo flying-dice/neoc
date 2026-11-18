@@ -59,4 +59,3 @@ export {
   type Parts
 } from './datepicker'
 export { initials, safeImageSrc } from './avatar'
-export { trapFocus, focusables } from './focus'
