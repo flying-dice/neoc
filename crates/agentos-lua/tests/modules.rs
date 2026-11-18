@@ -182,6 +182,8 @@ async fn a_worker_gets_the_same_modules_and_lib_log_goes_to_tracing_not_stdout()
     assert_eq!(out["hyper"], "function", "{out}");
     assert_eq!(out["sha"], "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "{out}");
     assert_eq!(vm.call_tool("log", json!({}), &agent_ctx(0), false).await.unwrap(), json!(true));
+    // the worker's OS thread is released with the app, not left to the end of the process
+    vm.shutdown();
 }
 
 // ---- tasks and servers take their turn ---------------------------------------------------------------------
