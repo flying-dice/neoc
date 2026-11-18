@@ -5,7 +5,7 @@
 //! | `data_dir`                    | `AGENTOS_DATA`                       | `~/.agentos`                        |
 //! | `bind`                        | `AGENTOS_BIND`                       | `0.0.0.0`                           |
 //! | `port`                        | `AGENTOS_PORT`                       | `7400`                              |
-//! | `client_dir`                  | `AGENTOS_CLIENT_DIR`                 | `client/dist`, else `apps/desktop/dist` |
+//! | `client_dir`                  | `AGENTOS_CLIENT_DIR`                 | `client/dist`                       |
 //! | `registries`                  | `AGENTOS_REGISTRIES` (comma list)    | `dist/apps/registry.json` when built |
 //! | `install`                     | `AGENTOS_INSTALL` (comma list)       | none: app-ref URLs installed at start |
 //! | `allowed_hosts`               | `AGENTOS_ALLOWED_HOSTS` (comma list) | none                                |
@@ -32,8 +32,8 @@ use std::{
 };
 
 pub const DEFAULT_PORT: u16 = 7400;
-/// Tried in order when `client_dir` is not set: the managed client, then the pre-rename desktop build.
-const DEFAULT_CLIENT_DIRS: [&str; 2] = ["client/dist", "apps/desktop/dist"];
+/// Where the managed client is built, when `client_dir` is not set.
+const DEFAULT_CLIENT_DIR: &str = "client/dist";
 /// The registry `bun run build:apps` writes: used when no `registries` are configured and it exists.
 const DEFAULT_REGISTRY: &str = "dist/apps/registry.json";
 
@@ -73,7 +73,7 @@ pub struct TlsFiles {
 pub enum ClientSource {
     /// Set by the operator: must exist.
     Explicit(PathBuf),
-    /// Not set: the first of [`DEFAULT_CLIENT_DIRS`] that has been built; none is fine (API only).
+    /// Not set: [`DEFAULT_CLIENT_DIR`] when it has been built; none is fine (API only).
     Default,
 }
 
@@ -249,7 +249,7 @@ impl Settings {
                 let source_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
                 let found = [cwd, source_root.as_path()]
                     .iter()
-                    .flat_map(|root| DEFAULT_CLIENT_DIRS.iter().map(move |d| root.join(d)))
+                    .map(|root| root.join(DEFAULT_CLIENT_DIR))
                     .find(|d| built(d));
                 Ok(found.map(|d| d.canonicalize().unwrap_or(d)))
             }
@@ -412,19 +412,20 @@ mod tests {
     }
 
     #[test]
-    fn the_default_client_falls_back_to_the_old_desktop_build() {
-        let root = std::env::temp_dir().join(format!("agentos-fallback-{}", std::process::id()));
+    fn the_default_client_is_client_dist_and_nothing_older() {
+        let root = std::env::temp_dir().join(format!("agentos-default-client-{}", std::process::id()));
         std::fs::create_dir_all(root.join("apps/desktop/dist")).unwrap();
         std::fs::write(root.join("apps/desktop/dist/index.html"), "old").unwrap();
         let s = load(None, &[]).unwrap();
-        let found = s.resolve_client_dir(&root).unwrap().unwrap();
-        assert!(found.ends_with("apps/desktop/dist"), "{found:?}");
+        let ignored = s.resolve_client_dir(&root).unwrap();
+        assert!(
+            !ignored.is_some_and(|f| f.ends_with("apps/desktop/dist")),
+            "the pre-rename build is not served"
+        );
         std::fs::create_dir_all(root.join("client/dist")).unwrap();
         std::fs::write(root.join("client/dist/index.html"), "new").unwrap();
-        assert!(
-            s.resolve_client_dir(&root).unwrap().unwrap().ends_with("client/dist"),
-            "client/ wins when built"
-        );
+        let found = s.resolve_client_dir(&root).unwrap().unwrap();
+        assert!(found.ends_with("client/dist"), "{found:?}");
         let _ = std::fs::remove_dir_all(root);
     }
 }
