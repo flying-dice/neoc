@@ -14,13 +14,12 @@
 
 use crate::{
     error::PortError,
-    ports::{AgentCard, AgentDirectory, AgentRoster, AgentStore, RandomSource, ToolRegistry},
+    ports::{AgentCard, AgentDirectory, AgentProcesses, AgentRoster, AgentStore, RandomSource, ToolRegistry},
     tokens::random_hex,
 };
 use agentos_domain::{
     hash_token, same_hash, Agent, AgentId, AgentIdentity, AgentRuntime, ApprovalPolicy, DomainError, Grants,
 };
-use async_trait::async_trait;
 use parking_lot::RwLock;
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -70,18 +69,6 @@ struct Roster {
     agents: BTreeMap<AgentId, Agent>,
     persistent: Vec<(AgentId, String)>,
     launch: Vec<LaunchToken>,
-}
-
-/// The processes the host runs for agents. When an agent is deleted, or the way it is launched changes, the
-/// process it runs in must not outlive that: a deleted agent keeps no process, and an edited command or
-/// environment is never ignored because an old process is still serving.
-///
-/// (Kept beside the roster that drives it; it belongs with the other ports in `ports.rs`.)
-#[async_trait]
-pub trait AgentProcesses: Send + Sync {
-    /// Stop this agent's process and tell its sessions it ended. A no-op when none is running; the next
-    /// session starts a new one from the agent's current settings.
-    async fn stop_agent(&self, agent: &AgentId);
 }
 
 pub struct AgentService {

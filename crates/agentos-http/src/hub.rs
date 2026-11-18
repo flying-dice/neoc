@@ -317,8 +317,16 @@ struct NoParams {}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct UrlParams {
+    url: String,
+}
+/// `app.install`: `sha256` (from `app.preview`) pins the install to exactly the ref the person reviewed.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct InstallParams {
     url: String,
+    #[serde(default)]
+    sha256: Option<String>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -389,7 +397,11 @@ impl RpcHandler for RpcHub {
         match method {
             "app.install" => {
                 let p: InstallParams = parse(params)?;
-                let id = app.install_from_url(&p.url).await.map_err(|e| rpc_err(&e))?;
+                let id = match &p.sha256 {
+                    Some(sha) => app.install_previewed(&p.url, sha).await,
+                    None => app.install_from_url(&p.url).await,
+                }
+                .map_err(|e| rpc_err(&e))?;
                 Ok(json!({ "app": id }))
             }
             "app.uninstall" => {
@@ -406,7 +418,7 @@ impl RpcHandler for RpcHub {
                 encode(&app.catalog().await)
             }
             "app.preview" => {
-                let p: InstallParams = parse(params)?;
+                let p: UrlParams = parse(params)?;
                 encode(&app.preview(&p.url).await.map_err(|e| rpc_err(&e))?)
             }
             "app.enable" | "app.disable" | "app.deleteData" | "app.reload" => {

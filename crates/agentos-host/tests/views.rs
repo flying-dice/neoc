@@ -348,6 +348,12 @@ async fn app_management_describes_installed_and_available_apps() {
     assert_eq!(preview["result"]["installed"]["state"], "running");
     let missing = rpc(&mut ws, 3, "app.preview", json!({"url": "file:///nowhere/app-ref.json"})).await;
     assert!(missing.get("error").is_some());
+    // `app.install` with a digest installs only the ref that was previewed
+    let sha = preview["result"]["sha256"].as_str().expect("the preview carries the ref's digest").to_owned();
+    assert_eq!(sha.len(), 64, "{preview}");
+    let stale = rpc(&mut ws, 6, "app.install", json!({"url": url, "sha256": "0".repeat(64)})).await;
+    let message = stale["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("changed"), "a ref other than the previewed one is refused: {stale}");
 
     // no registries configured: the catalog is empty, not an error
     let catalog = rpc(&mut ws, 4, "app.available", json!({})).await;

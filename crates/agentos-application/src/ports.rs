@@ -425,3 +425,13 @@ pub trait DeviceRegistry: Send + Sync {
 pub trait AgentDirectory: Send + Sync {
     fn authenticate(&self, bearer_token: &str) -> Option<agentos_domain::AgentIdentity>;
 }
+
+/// The processes the host runs for agents. When an agent is deleted, or the way it is launched changes, the
+/// process it runs in must not outlive that: a deleted agent keeps no process, and an edited command or
+/// environment is never ignored because an old process is still serving.
+#[async_trait]
+pub trait AgentProcesses: Send + Sync {
+    /// Stop this agent's process and tell its sessions it ended. A no-op when none is running; the next
+    /// session starts a new one from the agent's current settings.
+    async fn stop_agent(&self, agent: &AgentId);
+}

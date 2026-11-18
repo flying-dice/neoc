@@ -185,7 +185,7 @@ async fn ensure_seeds_an_agent_once_and_never_overwrites_what_the_person_edited(
 struct StopLog(parking_lot::Mutex<Vec<String>>);
 
 #[async_trait::async_trait]
-impl crate::agents::AgentProcesses for StopLog {
+impl crate::ports::AgentProcesses for StopLog {
     async fn stop_agent(&self, agent: &AgentId) {
         self.0.lock().push(agent.0.clone());
     }
