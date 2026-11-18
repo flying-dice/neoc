@@ -26,7 +26,7 @@ const INTERNAL: Record<string, string[]> = {
   'agentos-domain': [],
   'agentos-application': ['agentos-domain'],
   // The Lua adapter runs apps (Luau, built to Lua 5.1) on top of the Lua VM library below.
-  'agentos-luau': ['agentos-domain', 'agentos-application', 'agentos-luavm'],
+  'agentos-lua': ['agentos-domain', 'agentos-application', 'agentos-luavm'],
   // The Lua 5.1 VM: a support library, not an adapter. It depends on no agentos crate, and only the Lua
   // adapter may depend on it (the one place a script engine is wired to a port), so the VM stays swappable.
   'agentos-luavm': [],
@@ -40,7 +40,7 @@ const INTERNAL: Record<string, string[]> = {
   'agentos-host': [
     'agentos-domain',
     'agentos-application',
-    'agentos-luau',
+    'agentos-lua',
     'agentos-sqlite',
     'agentos-fetch',
     'agentos-mcp',

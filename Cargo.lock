@@ -183,7 +183,7 @@ dependencies = [
  "agentos-domain",
  "agentos-fetch",
  "agentos-http",
- "agentos-luau",
+ "agentos-lua",
  "agentos-mcp",
  "agentos-sqlite",
  "anyhow",
@@ -229,7 +229,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "agentos-luau"
+name = "agentos-lua"
 version = "0.1.0"
 dependencies = [
  "agentos-application",

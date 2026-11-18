@@ -39,7 +39,7 @@ use agentos_http::{
     origin_guard, require_session, rpc_router, session_router, static_router, HostGuard, RpcHub,
     SessionConfig,
 };
-use agentos_luau::{Limits, LuauRuntime};
+use agentos_lua::{Limits, LuaRuntime};
 use agentos_mcp::{mcp_router, McpState};
 use agentos_sqlite::{SqliteDataStore, SqliteSystemDb};
 use axum::{middleware::from_fn_with_state, Router};
@@ -168,7 +168,7 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
     let contacts = Arc::new(AgentService::new(system.clone(), mcp_state.clone(), random.clone(), processes));
     contacts.load().await?;
     let runtime: Arc<dyn AppRuntime> =
-        Arc::new(LuauRuntime::new(hub.clone(), hub.clone(), Limits::default()).with_roster(contacts.clone()));
+        Arc::new(LuaRuntime::new(hub.clone(), hub.clone(), Limits::default()).with_roster(contacts.clone()));
     let tools: Arc<dyn ToolRegistry> = mcp_state.clone();
     let events: Arc<dyn EventSink> = hub.clone();
     let installed: Arc<dyn InstalledAppStore> = system.clone();

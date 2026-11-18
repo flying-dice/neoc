@@ -45,7 +45,7 @@ crates/
   agentos-domain        pure model, no I/O: app ids, app refs, manifests, permissions, agent identity, tools,
                         notifications, view tree and component schema, protocol messages
   agentos-application   ports (traits) and use cases; in-memory fakes for tests; no frameworks
-  agentos-luau          adapter: runs apps as sandboxed Lua 5.1: the app API modules, budgets, views
+  agentos-lua          adapter: runs apps as sandboxed Lua 5.1: the app API modules, budgets, views
   agentos-luavm         support library (not an adapter): the Lua 5.1 VM on mlua, the per-app environment, the
                         budgeted string functions; depends on no other crate, only `luau` may depend on it
   agentos-sqlite        adapter: per-app rusqlite DBs, migrations, live queries via commit hooks
@@ -86,7 +86,7 @@ crates/
 
 - **Package:** a Luau package `apps/<id>/`: `app.luau` (the entry), modules, `JOURNEYS.md` and e2e. It is built into one
   `app.lua` (the entry and its modules bundled by darklua, types stripped, Luau-only syntax lowered); that file is
-  what the app ref lists and the host runs. App logic is tested from Rust integration tests that load the real package (`crates/agentos-luau/tests/calculator_app.rs`, `crates/agentos-host/tests/agents_app.rs`); an in-package `tests/*.luau` harness is planned, not built.
+  what the app ref lists and the host runs. App logic is tested from Rust integration tests that load the real package (`crates/agentos-lua/tests/calculator_app.rs`, `crates/agentos-host/tests/agents_app.rs`); an in-package `tests/*.luau` harness is planned, not built.
   Built into an app ref: manifest, file URLs and sha256s, and `requires` (host API range).
 - **Registries:** a list of app-ref URLs. The default registry is the build's unpacked apps folder over `file://`.
   Users can also add an app by URL; the host shows a preview, then a confirmation that it runs on this host and its

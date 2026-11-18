@@ -13,7 +13,7 @@ use agentos_application::{
     testing::RecordingShell,
 };
 use agentos_domain::{Capabilities, Notification};
-use agentos_luau::{Limits, LuauRuntime, VmError};
+use agentos_lua::{Limits, LuaRuntime, VmError};
 use common::{agent_ctx, db, id, load, package, try_load_with};
 use serde_json::{json, Map, Value};
 use std::{
@@ -93,7 +93,7 @@ impl Notifier for Quiet {
 }
 
 struct Rig {
-    runtime: Arc<LuauRuntime>,
+    runtime: Arc<LuaRuntime>,
     shell: Arc<RecordingShell>,
     db: Arc<agentos_sqlite::AppDb>,
 }
@@ -104,7 +104,7 @@ fn rig() -> Rig {
 
 fn rig_with(limits: Limits) -> Rig {
     let shell = Arc::new(RecordingShell::default());
-    let runtime = Arc::new(LuauRuntime::new(Arc::new(Quiet), shell.clone(), limits));
+    let runtime = Arc::new(LuaRuntime::new(Arc::new(Quiet), shell.clone(), limits));
     Rig { runtime, shell, db: db() }
 }
 

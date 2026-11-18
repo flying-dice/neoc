@@ -2,7 +2,7 @@
 
 Status: the design the platform is built on, and still its reference for the view protocol, bindings, state and the
 Luau authoring API. It is implemented: the host in `crates/` (`agentos-domain` holds the schema and the protocol,
-`agentos-luau` the app API), the renderer in `client/src/view` and the kit in `packages/ui`. Where the
+`agentos-lua` the app API), the renderer in `client/src/view` and the kit in `packages/ui`. Where the
 code and this text differ, the code wins: the generated `types/generated/agentos.d.luau` and
 `docs/reference/components.md` are the exact catalogue. Sections 6 to 8 record the original type-pipeline proposal,
 the prototype and the build plan; each opens with what was actually built. Sources of truth beside it:

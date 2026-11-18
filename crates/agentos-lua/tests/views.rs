@@ -13,7 +13,7 @@ use agentos_domain::{
     ui::{diff, protocol::Command, Node, Op},
     Capabilities,
 };
-use agentos_luau::{Limits, LuauRuntime};
+use agentos_lua::{Limits, LuaRuntime};
 use agentos_sqlite::AppDb;
 use common::{agent_ctx, built_app, db, id};
 use serde_json::{json, Map, Value};
@@ -24,12 +24,12 @@ fn obj(pairs: &[(&str, Value)]) -> Map<String, Value> {
 }
 
 struct Rig {
-    runtime: LuauRuntime,
+    runtime: LuaRuntime,
     db: Arc<AppDb>,
     shell: Arc<agentos_application::testing::RecordingShell>,
 }
 
-fn runtime(shell: Arc<agentos_application::testing::RecordingShell>) -> LuauRuntime {
+fn runtime(shell: Arc<agentos_application::testing::RecordingShell>) -> LuaRuntime {
     struct Quiet;
     #[async_trait::async_trait]
     impl agentos_application::ports::Notifier for Quiet {
@@ -40,7 +40,7 @@ fn runtime(shell: Arc<agentos_application::testing::RecordingShell>) -> LuauRunt
             Ok(())
         }
     }
-    LuauRuntime::new(Arc::new(Quiet), shell, Limits::default())
+    LuaRuntime::new(Arc::new(Quiet), shell, Limits::default())
 }
 
 impl Rig {

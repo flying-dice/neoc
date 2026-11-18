@@ -17,7 +17,7 @@ crate seam except through a port or the protocol.
 |---|---|
 | Domain | `crates/agentos-domain`: pure model (app ids, app refs and manifests, permissions, agent identity, tools, notifications, the view tree and component schema, protocol messages). No I/O, no framework. |
 | Ports and use cases | `crates/agentos-application`: the port traits (`AppRuntime`, `DataStore` / `AppData`, `ToolRegistry`, `Notifier`, `AgentConnector`, `Fetcher`, `Clock`, ...) and the services that orchestrate domain objects through them. In-memory fakes in `testing`. |
-| Driven adapters | `agentos-luau` (sandboxed VMs), `agentos-sqlite`, `agentos-fetch`, `agentos-acp` (agent processes) |
+| Driven adapters | `agentos-lua` (sandboxed VMs), `agentos-sqlite`, `agentos-fetch`, `agentos-acp` (agent processes) |
 | Driving adapters | `agentos-http` (`/rpc`, pairing, guard, static client), `agentos-mcp` (`/mcp`), `agentos-agui` (`/agui`) |
 | Dev-time adapter | `agentos-codegen`: the Rust schema to `types/generated/*` and `docs/reference/components.md` |
 | Composition root | `agentos-host`: wiring only (build adapters, hand each to its port, mount routers) |

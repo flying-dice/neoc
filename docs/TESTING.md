@@ -27,11 +27,11 @@ snapshots deliberately with `bun run test:e2e:update`, then open the changed PNG
   (`ManualClock`, `RecordingShell`, ...). Tests sit beside the code in `*_tests.rs`. No mocking library: write a fake.
 - **Adapters**: integration tests in `crates/<adapter>/tests/`, through the real library (the Lua 5.1 sandbox and
   limits, SQLite migrations and live queries, MCP with an `rmcp` client, ACP against the scripted agent, `/rpc` with a
-  WebSocket client, fetch against a local server). The shipped apps are tested here too: `crates/agentos-luau/tests/calculator_app.rs`
+  WebSocket client, fetch against a local server). The shipped apps are tested here too: `crates/agentos-lua/tests/calculator_app.rs`
   builds `apps/calculator` with darklua and runs the bundle under the real runtime. The Luau apps and fixtures the Rust
-  tests run are built with the product's own pipeline (`scripts/lua51-build.ts`, which `crates/agentos-luau/tests/common`
+  tests run are built with the product's own pipeline (`scripts/lua51-build.ts`, which `crates/agentos-lua/tests/common`
   and `crates/agentos-host/tests/common` call, so `bun` and `darklua` must be installed); inline snippets in those tests
-  are plain Lua 5.1, not Luau. `crates/agentos-luau/tests/lua51.rs` holds what is specific to running on Lua 5.1: the
+  are plain Lua 5.1, not Luau. `crates/agentos-lua/tests/lua51.rs` holds what is specific to running on Lua 5.1: the
   sandbox and read-only libraries, the count hook in coroutines and async threads, the budgeted pattern functions, the
   memory limit, and host calls under `pcall` and in coroutines. `agentos-luavm` has its own unit tests (the string
   functions are compared with the C implementation on generated cases).
@@ -42,7 +42,7 @@ snapshots deliberately with `bun run test:e2e:update`, then open the changed PNG
   (`calculate_evaluates_exactly_and_rejects_what_is_not_arithmetic`), cover the failure path next to the success path,
   and keep each test independent (its own data directory, no fixed ports).
 - A protocol or adapter change adds the test in the layer it touches and, if it crosses layers, one in the host.
-- `cargo nextest run -p agentos-luau`, or a test name, runs a slice. `bun run lint:rust` is the other half of the Rust
+- `cargo nextest run -p agentos-lua`, or a test name, runs a slice. `bun run lint:rust` is the other half of the Rust
   gate: `cargo fmt --check`, clippy with `-D warnings`, the crate-direction check (`bun run lint:deps`) and `cargo deny`.
 
 ## Client, kit and generated types

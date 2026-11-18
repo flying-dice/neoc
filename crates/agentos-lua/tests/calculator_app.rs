@@ -8,7 +8,7 @@ use agentos_application::ports::{
     AppData, AppRuntime, CallContext, Notifier, PortResult, RenderOutput, ViewEventCall,
 };
 use agentos_domain::{ui::Node, Capabilities};
-use agentos_luau::{Limits, LuauRuntime};
+use agentos_lua::{Limits, LuaRuntime};
 use common::{agent_ctx, built_app, db, id, user_ctx};
 use serde_json::{json, Map, Value};
 use std::{path::Path, sync::Arc};
@@ -21,9 +21,9 @@ impl Notifier for Quiet {
     }
 }
 
-async fn calculator() -> LuauRuntime {
+async fn calculator() -> LuaRuntime {
     let package = built_app("calculator");
-    let runtime = LuauRuntime::new(
+    let runtime = LuaRuntime::new(
         Arc::new(Quiet),
         Arc::new(agentos_application::testing::RecordingShell::default()),
         Limits::default(),
@@ -33,7 +33,7 @@ async fn calculator() -> LuauRuntime {
     runtime
 }
 
-async fn tool(rt: &LuauRuntime, name: &str, args: Value, ctx: CallContext) -> PortResult<Value> {
+async fn tool(rt: &LuaRuntime, name: &str, args: Value, ctx: CallContext) -> PortResult<Value> {
     rt.call_tool(&id("calculator"), name, args, ctx, false).await
 }
 
@@ -129,7 +129,7 @@ async fn only_the_tools_that_change_nothing_are_marked_read_only() {
 /// A Calculator window: every key is a real tap on the node the app rendered, and the display, caption and
 /// pending-operator state are read back from the next render.
 struct Keypad {
-    rt: LuauRuntime,
+    rt: LuaRuntime,
     out: RenderOutput,
 }
 

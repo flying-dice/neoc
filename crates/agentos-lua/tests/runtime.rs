@@ -12,7 +12,7 @@ use agentos_application::{
     PortError,
 };
 use agentos_domain::{Capabilities, Notification};
-use agentos_luau::{Limits, LuauRuntime};
+use agentos_lua::{Limits, LuaRuntime};
 use agentos_sqlite::{AppDb, SqliteFeed};
 use common::{agent_ctx, db, id, package, user_ctx};
 use parking_lot::Mutex;
@@ -68,7 +68,7 @@ impl Notifier for RecordingNotifier {
 }
 
 struct Rig {
-    runtime: LuauRuntime,
+    runtime: LuaRuntime,
     notifier: Arc<RecordingNotifier>,
     shell: Arc<RecordingShell>,
     db: Arc<AppDb>,
@@ -77,7 +77,7 @@ struct Rig {
 fn rig() -> Rig {
     let notifier = Arc::new(RecordingNotifier::default());
     let shell = Arc::new(RecordingShell::default());
-    let runtime = LuauRuntime::new(notifier.clone(), shell.clone(), Limits::default());
+    let runtime = LuaRuntime::new(notifier.clone(), shell.clone(), Limits::default());
     Rig { runtime, notifier, shell, db: db() }
 }
 
@@ -254,7 +254,7 @@ async fn a_failing_app_is_isolated_and_a_failed_reload_keeps_the_old_version_run
     let rig = rig();
     load(&rig, NOTES).await.unwrap();
     // a second app that dies while loading does not disturb the first
-    let other = LuauRuntime::new(rig.notifier.clone(), rig.shell.clone(), Limits::default());
+    let other = LuaRuntime::new(rig.notifier.clone(), rig.shell.clone(), Limits::default());
     let data: Arc<dyn AppData> = db();
     let e = other
         .load(&id("crashy"), package("local t = nil\nreturn t.x", &[]), data, Capabilities::all())

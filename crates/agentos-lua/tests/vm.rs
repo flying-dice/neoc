@@ -3,7 +3,7 @@
 
 mod common;
 
-use agentos_luau::{reload, VmError};
+use agentos_lua::{reload, VmError};
 use common::{agent_ctx, db, load, package, quick, try_load, try_load_with};
 use serde_json::json;
 use std::{
@@ -70,7 +70,7 @@ async fn cpu_budget_kills_infinite_loops_even_through_pcall() {
 
 #[tokio::test]
 async fn memory_limit_stops_allocation_bombs() {
-    let limits = agentos_luau::Limits { memory_bytes: 4 * 1024 * 1024, ..Default::default() };
+    let limits = agentos_lua::Limits { memory_bytes: 4 * 1024 * 1024, ..Default::default() };
     let src = r#"
         app.on("bomb", function()
             local t = {}
@@ -162,7 +162,7 @@ async fn the_cpu_budget_is_not_tripped_by_a_loaded_host() {
 
 #[tokio::test]
 async fn the_wall_clock_backstop_still_ends_a_call_that_runs_too_long() {
-    let limits = agentos_luau::Limits {
+    let limits = agentos_lua::Limits {
         cpu_ticks: u64::MAX,
         cpu_wall: Duration::from_millis(200),
         ..Default::default()
@@ -191,7 +191,7 @@ async fn backtracking_pattern_is_stopped_by_the_cpu_budget() {
 async fn a_blocking_host_call_has_its_own_timeout() {
     // the app asks the database for something that never ends: SQLite's own interrupt (adapter) or the
     // host-call backstop (here) ends it, and the VM stays usable
-    let limits = agentos_luau::Limits { host_call_timeout: Duration::from_millis(300), ..Default::default() };
+    let limits = agentos_lua::Limits { host_call_timeout: Duration::from_millis(300), ..Default::default() };
     let src = r#"
         app.on("spin", function()
             return app.db:all("WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT count(*) FROM c")
@@ -251,7 +251,7 @@ async fn unload_frees_the_vm_and_hot_reload_swaps_in_new_code() {
     let data = db();
     let load_now = || async {
         let src = std::fs::read_to_string(dir.join("app.lua")).unwrap();
-        try_load_with("hot", &src, data.clone(), agentos_luau::Limits::default()).await.unwrap()
+        try_load_with("hot", &src, data.clone(), agentos_lua::Limits::default()).await.unwrap()
     };
     let mut vm = load_now().await;
     assert_eq!(vm.emit("v", json!(null)).await.unwrap(), json!(1));

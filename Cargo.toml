@@ -13,7 +13,7 @@ publish = false
 # internal (path deps; the arrows in the dependency diagram)
 agentos-domain      = { path = "crates/agentos-domain" }
 agentos-application = { path = "crates/agentos-application" }
-agentos-luau        = { path = "crates/agentos-luau" }
+agentos-lua        = { path = "crates/agentos-lua" }
 agentos-luavm       = { path = "crates/agentos-luavm" }
 agentos-sqlite      = { path = "crates/agentos-sqlite" }
 agentos-fetch       = { path = "crates/agentos-fetch" }

@@ -8,7 +8,7 @@ use agentos_application::{
     ports::{AgentCard, AgentRoster},
 };
 use agentos_domain::{AgentId, Capabilities};
-use agentos_luau::{AppVm, VmConfig};
+use agentos_lua::{AppVm, VmConfig};
 use common::{agent_ctx, db, id, load, package};
 use serde_json::json;
 use std::sync::Arc;

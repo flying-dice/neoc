@@ -6,7 +6,7 @@
 
 mod common;
 
-use agentos_luau::VmError;
+use agentos_lua::VmError;
 use common::{agent_ctx, db, load, quick, try_load, try_load_with};
 use serde_json::{json, Value};
 use std::{
@@ -19,7 +19,7 @@ const PROMPTLY: Duration = Duration::from_secs(8);
 /// A small slice: 200 000 ticks of 100 VM instructions.
 const SLICE: u64 = 200_000;
 
-async fn emit(vm: &agentos_luau::AppVm, event: &str) -> Result<Value, VmError> {
+async fn emit(vm: &agentos_lua::AppVm, event: &str) -> Result<Value, VmError> {
     vm.emit(event, json!(null)).await
 }
 
@@ -61,11 +61,11 @@ async fn text_only_loading_binary_chunks_never_run() {
         entry: "app.lua".into(),
         files: [("app.lua".to_owned(), bytecode)].into(),
     };
-    let err = agentos_luau::AppVm::load(
+    let err = agentos_lua::AppVm::load(
         &common::id("probe"),
         package,
         db(),
-        common::config(agentos_luau::Limits::default()),
+        common::config(agentos_lua::Limits::default()),
     )
     .await
     .err()
@@ -301,7 +301,7 @@ async fn a_host_call_dropped_at_a_c_boundary_does_not_switch_the_budget_off() {
     }
     // only the slice can end these: the call's own budget is out of reach, so the "waiting on the host" state the
     // dropped call set must really be gone
-    let limits = agentos_luau::Limits {
+    let limits = agentos_lua::Limits {
         cpu_ticks: SLICE,
         call_ticks: u64::MAX / 2,
         call_wall: Duration::from_secs(3600),
@@ -357,7 +357,7 @@ async fn a_left_behind_host_call_in_a_kept_coroutine_still_ends_at_the_calls_bud
           while true do end
         end }
     "#;
-    let limits = agentos_luau::Limits { cpu_ticks: SLICE, call_ticks: 3 * SLICE, ..Default::default() };
+    let limits = agentos_lua::Limits { cpu_ticks: SLICE, call_ticks: 3 * SLICE, ..Default::default() };
     let vm = try_load_with("kept", src, db(), limits).await.unwrap();
     let started = Instant::now();
     let err = vm.call_tool("kept", json!({}), &agent_ctx(0), false).await.unwrap_err();
@@ -450,7 +450,7 @@ async fn work_inside_library_calls_is_charged_so_a_loop_of_them_ends_at_the_budg
         writeln!(src, "app.on('{name}', function() for _ = 1, 1e9 do {body} end end)").unwrap();
     }
     // the walls are what the review measured: no case may outlive them
-    let limits = agentos_luau::Limits {
+    let limits = agentos_lua::Limits {
         cpu_wall: Duration::from_secs(4),
         call_wall: Duration::from_secs(8),
         ..Default::default()
@@ -486,7 +486,7 @@ async fn table_sort_of_a_huge_array_is_stopped_by_the_budget_not_by_the_wall() {
         end)
     "#;
     // the whole sort is ~300 000 ticks of VM work: more than this slice, far less than the walls
-    let limits = agentos_luau::Limits {
+    let limits = agentos_lua::Limits {
         cpu_ticks: 100_000,
         cpu_wall: Duration::from_secs(4),
         call_wall: Duration::from_secs(8),
@@ -583,7 +583,7 @@ async fn rep_cannot_loop_for_minutes_or_outgrow_the_memory_limit() {
         app.on("gsub", function() return #string.rep("a", 10 * 1024 * 1024):gsub("a", "bbbbbbbb") end)
         app.on("ok", function() return #string.rep("ab", 1000) end)
     "#;
-    let limits = agentos_luau::Limits { memory_bytes: 8 * 1024 * 1024, ..Default::default() };
+    let limits = agentos_lua::Limits { memory_bytes: 8 * 1024 * 1024, ..Default::default() };
     let vm = try_load_with("rep", src, db(), limits).await.unwrap();
     let started = Instant::now();
     assert_eq!(emit(&vm, "empty").await.unwrap(), json!(0));
@@ -671,7 +671,7 @@ async fn no_number_a_script_passes_to_a_library_function_panics_the_host() {
             .unwrap();
         }
     }
-    let limits = agentos_luau::Limits { memory_bytes: 8 * 1024 * 1024, ..Default::default() };
+    let limits = agentos_lua::Limits { memory_bytes: 8 * 1024 * 1024, ..Default::default() };
     let vm = try_load_with("numbers", &src, db(), limits).await.unwrap();
     let started = Instant::now();
     for (i, call) in calls.iter().enumerate() {
@@ -689,7 +689,7 @@ async fn no_number_a_script_passes_to_a_library_function_panics_the_host() {
 
 #[tokio::test]
 async fn the_memory_limit_holds_in_coroutines_and_for_every_allocator() {
-    let limits = agentos_luau::Limits { memory_bytes: 4 * 1024 * 1024, ..Default::default() };
+    let limits = agentos_lua::Limits { memory_bytes: 4 * 1024 * 1024, ..Default::default() };
     let src = r#"
         app.on("table", function() local t = {} for i = 1, 1e7 do t[i] = { i } end end)
         app.on("coroutine", function()
@@ -799,10 +799,10 @@ async fn the_proxies_apps_index_never_yield_so_they_work_on_5_1() {
         end }
     "#;
     let host_modules =
-        std::collections::HashMap::from([("ui".to_owned(), agentos_luau::UI_MODULE.as_bytes().to_vec())]);
+        std::collections::HashMap::from([("ui".to_owned(), agentos_lua::UI_MODULE.as_bytes().to_vec())]);
     let config =
-        agentos_luau::VmConfig { host_modules: std::sync::Arc::new(host_modules), ..Default::default() };
-    let vm = agentos_luau::AppVm::load(&common::id("probe"), common::package(src, &[]), db(), config)
+        agentos_lua::VmConfig { host_modules: std::sync::Arc::new(host_modules), ..Default::default() };
+    let vm = agentos_lua::AppVm::load(&common::id("probe"), common::package(src, &[]), db(), config)
         .await
         .unwrap();
     let out = vm.call_tool("bump", json!({}), &agent_ctx(0), false).await.unwrap();

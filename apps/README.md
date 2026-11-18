@@ -319,10 +319,10 @@ SQLite (`apps/agents/app.luau`).
    does not write.
 4. **Make it clean.** `bun run lint:luau` (strict `luau-lsp analyze` against the generated definitions) and
    `bun run lint:stylua` pass; `bun run format` fixes formatting. Fix the types, do not cast them away.
-5. **Test the logic and tools in Rust.** Add a test beside `crates/agentos-luau/tests/calculator_app.rs` that loads the
+5. **Test the logic and tools in Rust.** Add a test beside `crates/agentos-lua/tests/calculator_app.rs` that loads the
    shipped package under the real runtime, calls its tools (`call_tool`) and asserts results, permission denials and
    `readOnly`. A host-level test (`crates/agentos-host/tests/agents_app.rs`) is for what needs the data layer, views or
-   agents. Run `cargo nextest run -p agentos-luau`.
+   agents. Run `cargo nextest run -p agentos-lua`.
 6. **Write `JOURNEYS.md`** (4 to 8 journeys: id, who and what they want, start state, an observable "Done when"; never
    steps, including an error case, a minimum-window case, a keyboard-only case and, where it applies, an agent driving
    the app) **and `e2e/journeys.spec.ts`** with a test of the same id per journey, driven by test ids on the real host

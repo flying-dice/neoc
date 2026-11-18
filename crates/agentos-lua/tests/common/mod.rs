@@ -3,7 +3,7 @@
 
 use agentos_application::ports::{AppData, AppPackage, CallContext};
 use agentos_domain::{Actor, AppId, Capabilities};
-use agentos_luau::{AppVm, Limits, VmConfig};
+use agentos_lua::{AppVm, Limits, VmConfig};
 use agentos_sqlite::AppDb;
 use std::{collections::BTreeMap, path::Path, process::Command, sync::Arc};
 
@@ -34,11 +34,11 @@ pub async fn try_load_with(
     src: &str,
     db: Arc<dyn AppData>,
     limits: Limits,
-) -> agentos_luau::Result<AppVm> {
+) -> agentos_lua::Result<AppVm> {
     AppVm::load(&id(name), package(src, &[]), db, config(limits)).await
 }
 
-pub async fn try_load(name: &str, src: &str) -> agentos_luau::Result<AppVm> {
+pub async fn try_load(name: &str, src: &str) -> agentos_lua::Result<AppVm> {
     try_load_with(name, src, db(), Limits::default()).await
 }
 
@@ -62,7 +62,7 @@ pub fn user_ctx(now_ms: u64) -> CallContext {
 /// with `.darklua.json`), so these tests run what `bun run build:apps` ships. Needs bun and darklua.
 pub fn build_lua(entry: &Path) -> Vec<u8> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let out = std::env::temp_dir().join(format!("agentos-luau-test-{}-{}.lua", std::process::id(), nonce()));
+    let out = std::env::temp_dir().join(format!("agentos-lua-test-{}-{}.lua", std::process::id(), nonce()));
     let run = Command::new("bun")
         .arg("scripts/lua51-build.ts")
         .arg(entry)

@@ -1,5 +1,5 @@
 [package]
-name = "agentos-luau"
+name = "agentos-lua"
 description = "Adapter: apps authored in Luau, run as sandboxed Lua 5.1 on agentos-luavm, implementing the AppRuntime port, one VM per app."
 version.workspace = true
 edition.workspace = true

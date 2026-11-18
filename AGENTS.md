@@ -158,7 +158,7 @@ bundled apps.
 
 Follow `apps/README.md` → "Adding an app". From its first commit the app has an `app.json`, an `app.manifest`
 with a `window` min size (and a comment when the layout needs more than 320x240), a `JOURNEYS.md` plus
-`e2e/journeys.spec.ts`, and a Rust test of its logic and tools next to the others in `crates/agentos-luau/tests`.
+`e2e/journeys.spec.ts`, and a Rust test of its logic and tools next to the others in `crates/agentos-lua/tests`.
 The generic `desktop` project opens every `apps/*/app.json` in the real shell (sizes, layouts, light and dark, axe,
 snapshots) with no extra code; each screen and state beyond the landing view is reached by a journey, or, when a
 journey can't reach it cheaply, shown by a JSON-tree story in the client Storybook. The app is `luau-lsp`-strict and

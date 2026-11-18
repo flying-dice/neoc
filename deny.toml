@@ -9,9 +9,9 @@ exclude-dev = true   # dev-dependencies (test clients) are not part of the shipp
 multiple-versions = "allow"
 # `wrappers` = only these crates may depend on the banned crate directly.
 deny = [
-  # agentos-luau (the adapter) reaches mlua through agentos-luavm's re-export: it does not depend on it directly
+  # agentos-lua (the adapter) reaches mlua through agentos-luavm's re-export: it does not depend on it directly
   { crate = "mlua", wrappers = ["agentos-luavm"], reason = "Lua 5.1 lives in the luavm crate" },
-  { crate = "agentos-luavm", wrappers = ["agentos-luau"], reason = "only the Lua adapter wires the VM library to the AppRuntime port" },
+  { crate = "agentos-luavm", wrappers = ["agentos-lua"], reason = "only the Lua adapter wires the VM library to the AppRuntime port" },
   # luavm exposes SQLite to scripts as `vnd:rusqlite`
   { crate = "rusqlite", wrappers = ["agentos-sqlite", "agentos-luavm"], reason = "SQLite lives in the sqlite adapter (and the Lua VM's vnd:rusqlite module)" },
   { crate = "rmcp", wrappers = ["agentos-mcp"], reason = "MCP lives in the mcp adapter" },

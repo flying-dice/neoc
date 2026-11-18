@@ -106,7 +106,7 @@ pub fn watch_for_reload(service: &Arc<AppService>, stop: &CancellationToken) -> 
     let mut watching = Vec::new();
     for app in service.apps() {
         let Some(dir) = file_url_dir(&app.source_url) else { continue };
-        let watcher = match agentos_luau::reload::watch_dir(&dir) {
+        let watcher = match agentos_lua::reload::watch_dir(&dir) {
             Ok(w) => w,
             Err(e) => {
                 tracing::warn!(app = %app.id, dir = %dir.display(), error = %e, "cannot watch for reload");
@@ -121,7 +121,7 @@ pub fn watch_for_reload(service: &Arc<AppService>, stop: &CancellationToken) -> 
             loop {
                 tokio::select! {
                     () = stop.cancelled() => return,
-                    change = agentos_luau::reload::next_change(&mut watcher.rx, Duration::from_millis(200)) => {
+                    change = agentos_lua::reload::next_change(&mut watcher.rx, Duration::from_millis(200)) => {
                         if change.is_none() {
                             return;
                         }

@@ -5,7 +5,7 @@ mod common;
 
 use agentos_application::{live::SourceKind, ports::MenuCommand};
 use agentos_domain::{Capabilities, Notification};
-use agentos_luau::{AppVm, Effect, ShellEffect, VmConfig, VmError};
+use agentos_lua::{AppVm, Effect, ShellEffect, VmConfig, VmError};
 use common::{agent_ctx, db, id, load, package, try_load, user_ctx};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -69,7 +69,7 @@ async fn require_loads_the_two_host_modules_and_caches_them() {
         app.on("t", function() return { app = app2 == app, same = ui == again, kit = type(ui.VStack), t = type(ui.each) } end)
     "#;
     let host_modules =
-        std::collections::HashMap::from([("ui".to_owned(), agentos_luau::UI_MODULE.as_bytes().to_vec())]);
+        std::collections::HashMap::from([("ui".to_owned(), agentos_lua::UI_MODULE.as_bytes().to_vec())]);
     let config = VmConfig { host_modules: Arc::new(host_modules), ..VmConfig::default() };
     let vm = AppVm::load(&id("probe"), package(src, &[]), db(), config).await.unwrap();
     assert_eq!(
@@ -148,25 +148,25 @@ async fn migrations_are_recorded_ordered_and_a_changed_one_fails_the_load() {
     let shared = db();
     let v1 = app(r#"app.db:migrate { [1] = "create table t(a)" }"#);
     let v2 = app(r#"app.db:migrate { [1] = "create table t(a)", [2] = "alter table t add column b" }"#);
-    agentos_luau_load(&v1, shared.clone()).await.unwrap();
-    agentos_luau_load(&v2, shared.clone()).await.unwrap(); // an app upgrade: only [2] runs
-    agentos_luau_load(&v2, shared.clone()).await.unwrap(); // idempotent
-    let e = agentos_luau_load(&app(r#"app.db:migrate { [1] = "create table t(a, c)" }"#), shared.clone())
+    agentos_lua_load(&v1, shared.clone()).await.unwrap();
+    agentos_lua_load(&v2, shared.clone()).await.unwrap(); // an app upgrade: only [2] runs
+    agentos_lua_load(&v2, shared.clone()).await.unwrap(); // idempotent
+    let e = agentos_lua_load(&app(r#"app.db:migrate { [1] = "create table t(a, c)" }"#), shared.clone())
         .await
         .err()
         .unwrap();
     assert!(e.to_string().contains("edited after being applied"), "{e}");
-    let e = agentos_luau_load(&app(r#"app.db:migrate { [1] = "x", [3] = "y" }"#), shared.clone())
+    let e = agentos_lua_load(&app(r#"app.db:migrate { [1] = "x", [3] = "y" }"#), shared.clone())
         .await
         .err()
         .unwrap();
     assert!(e.to_string().contains("without gaps"), "{e}");
-    let e = agentos_luau_load(&app(r"app.db:migrate { [1] = 5 }"), shared).await.err().unwrap();
+    let e = agentos_lua_load(&app(r"app.db:migrate { [1] = 5 }"), shared).await.err().unwrap();
     assert!(e.to_string().contains("[1] must be a SQL string"), "{e}");
 }
 
-async fn agentos_luau_load(src: &str, db: Arc<agentos_sqlite::AppDb>) -> Result<AppVm, VmError> {
-    common::try_load_with("probe", src, db, agentos_luau::Limits::default()).await
+async fn agentos_lua_load(src: &str, db: Arc<agentos_sqlite::AppDb>) -> Result<AppVm, VmError> {
+    common::try_load_with("probe", src, db, agentos_lua::Limits::default()).await
 }
 
 #[tokio::test]

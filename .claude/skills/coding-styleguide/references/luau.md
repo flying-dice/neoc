@@ -85,5 +85,5 @@ Say why, not what: the reason for a minimum window size, a type fix, an invarian
 
 ## Negative fixtures
 
-To prove a type rule holds, add a file under a `negative/` folder (see `crates/agentos-luau/tests/negative/`) with
+To prove a type rule holds, add a file under a `negative/` folder (see `crates/agentos-lua/tests/negative/`) with
 `-- expect-error` on each line that must be rejected; `lint:luau` demands exactly those lines are flagged.

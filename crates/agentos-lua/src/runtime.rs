@@ -25,7 +25,7 @@ use std::{collections::HashMap, sync::Arc};
 /// Lua 5.1 source of `@agentos/ui` (hosts and tests that build a [`VmConfig`] by hand register it as `ui`).
 pub const UI_MODULE: &str = include_str!("../../../types/generated/ui.lua");
 
-pub struct LuauRuntime {
+pub struct LuaRuntime {
     vms: RwLock<HashMap<AppId, Arc<AppVm>>>,
     notifier: Arc<dyn Notifier>,
     shell: Arc<dyn Shell>,
@@ -34,7 +34,7 @@ pub struct LuauRuntime {
     roster: Option<Arc<dyn AgentRoster>>,
 }
 
-impl LuauRuntime {
+impl LuaRuntime {
     pub fn new(notifier: Arc<dyn Notifier>, shell: Arc<dyn Shell>, limits: Limits) -> Self {
         let host_modules = HashMap::from([("ui".to_owned(), UI_MODULE.as_bytes().to_vec())]);
         Self { vms: RwLock::default(), notifier, shell, limits, host_modules, roster: None }
@@ -87,7 +87,7 @@ fn port_error(app: &AppId, e: VmError) -> PortError {
 }
 
 #[async_trait]
-impl AppRuntime for LuauRuntime {
+impl AppRuntime for LuaRuntime {
     async fn load(
         &self,
         app: &AppId,

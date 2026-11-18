@@ -114,7 +114,7 @@ one missing row means **STAYS IN MR**.
 | Window size | `app.manifest.window` has `w`/`h` and `minW`/`minH`, with a comment saying why when the layout needs more than 320x240; the `desktop` project's resize check passes |
 | Package | `app.json` is valid and agrees with `app.manifest` (id, icon, tint), `permissions` are the smallest that work, `version` bumped for a change to a released app; `bun run build:apps` builds it, and it installs from Discover, opens, works and uninstalls cleanly on a real host (`bun run dev`) |
 | Types and format | `bun run lint:luau` and `bun run lint:stylua` pass (not skipped) and the app is `--!strict` |
-| Tests | the app's logic and tools are covered from Rust (`crates/agentos-luau/tests`, or `crates/agentos-host/tests` for views, data and agents), including permission and `readOnly` behaviour |
+| Tests | the app's logic and tools are covered from Rust (`crates/agentos-lua/tests`, or `crates/agentos-host/tests` for views, data and agents), including permission and `readOnly` behaviour |
 | States | every screen and state is reached by a journey or a JSON-tree story (section 2), green in the stories, desktop and journeys projects |
 | Journeys | `JOURNEYS.md` with 4 to 8 journeys (goal, start state, observable "Done when"), each with a passing spec of the same id |
 | Verified | the PR's "Manual verification" section (`verify-change`) covers light and dark, the minimum and large windows, Split View / Slide Over and keyboard |
@@ -134,7 +134,7 @@ Gate: lint ✓ · typecheck ✓ · test ✓ · e2e ✓ (local, on <sha>)
 Readiness: <app>: window ✓ · package ✓ · types ✓ · tests ✓ · states ✓ · journeys ✓ · verified ✗ · researched ✗ (no docs/ux/<app>/)
 
 ### Findings
-1. **Blocker**, `crates/agentos-luau/src/api/misc.rs:153`: `app.agents:list` runs without checking the `agents` permission.
+1. **Blocker**, `crates/agentos-lua/src/api/misc.rs:153`: `app.agents:list` runs without checking the `agents` permission.
    Failure: an app that never asked for it can read the agent roster.
    Fix: `need(s.caps.agents, "agents", "app.agents:list")?` first, plus a test that an app without the permission is refused.
 2. **Major**, …
