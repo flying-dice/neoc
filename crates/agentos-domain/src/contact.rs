@@ -153,6 +153,15 @@ impl AgentId {
     }
 }
 
+impl AgentRuntime {
+    /// The host can start this agent. An agent without a command is an external MCP client (a person's own
+    /// tool): it has an identity, grants and a token, and the host never launches it.
+    #[must_use]
+    pub fn is_launchable(&self) -> bool {
+        !self.command.trim().is_empty()
+    }
+}
+
 impl Agent {
     /// What the host checks before storing an agent.
     pub fn validate(&self) -> Result<(), DomainError> {
@@ -163,9 +172,6 @@ impl Agent {
         }
         if self.role.chars().count() > 200 {
             return bad("role must be at most 200 characters");
-        }
-        if self.runtime.command.trim().is_empty() {
-            return bad("runtime.command is required");
         }
         if self.avatar.as_ref().is_some_and(|a| a.chars().count() > 64) {
             return bad("avatar must be at most 64 characters (an icon name or a colour)");
@@ -253,7 +259,7 @@ mod tests {
         assert!(agent().validate().is_ok());
         let mut a = agent();
         a.runtime.command = " ".into();
-        assert!(a.validate().is_err());
+        assert!(a.validate().is_ok() && !a.runtime.is_launchable(), "an external MCP client has no command");
         a = agent();
         a.name = String::new();
         assert!(a.validate().is_err());

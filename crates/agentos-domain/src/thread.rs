@@ -9,6 +9,12 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+/// A value as JSON (`null` if it cannot be: these types always can). For callers without `serde` of their own.
+#[must_use]
+pub fn json_of<T: Serialize + ?Sized>(value: &T) -> Value {
+    serde_json::to_value(value).unwrap_or(Value::Null)
+}
+
 // ---- session state ----------------------------------------------------------------------------------------
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -347,7 +353,11 @@ pub enum AgentEvent {
     Commands(Vec<SlashCommand>),
     Usage(ContextUsage),
     Title(String),
-    Permission(PermissionRequest),
+    /// A permission request the person was asked about is no longer open (it timed out, the turn was
+    /// cancelled, the agent went away).
+    PermissionClosed {
+        request_id: String,
+    },
 }
 
 // ---- history --------------------------------------------------------------------------------------------

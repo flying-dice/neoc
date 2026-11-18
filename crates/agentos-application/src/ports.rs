@@ -2,8 +2,12 @@
 
 use crate::live::{SourceDef, SourceId};
 use agentos_domain::{
+    thread::{
+        AgentEvent, ConfigOption, ConfigValue, PermissionAnswer, PermissionRequest, SessionState, StopReason,
+        ThreadMessage,
+    },
     ui::{protocol::Command, ClientDecl, Node, SourceDecl},
-    Actor, AgentId, AppDecl, AppId, Capabilities, Device, DeviceId, Notification, ToolSpec,
+    Actor, Agent, AgentId, AppDecl, AppId, Capabilities, Device, DeviceId, Notification, ToolSpec,
 };
 use async_trait::async_trait;
 use serde_json::{Map, Value};
@@ -154,6 +158,8 @@ pub trait AppObserver: Send + Sync {
 pub trait ToolRegistry: Send + Sync {
     async fn publish(&self, app: &AppId, tools: Vec<ToolSpec>) -> PortResult<()>;
     async fn retract(&self, app: &AppId) -> PortResult<()>;
+    /// What one agent may see changed (its grants were edited): tell its sessions the tool list changed.
+    async fn visibility_changed(&self, agent: &AgentId) -> PortResult<()>;
 }
 
 #[async_trait]
@@ -183,15 +189,100 @@ pub trait EventSink: Send + Sync {
 
 // ---- agents ---------------------------------------------------------------------------------
 
+/// Where an agent finds the tools: the host's `/mcp` and the bearer token that identifies this agent.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RunId(pub String);
+pub struct McpAccess {
+    pub url: String,
+    pub token: String,
+}
 
+/// What a session reported when it opened.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SessionOpened {
+    pub session_id: String,
+    /// Modes, settings and the agent's identity as `initialize` and `session/new` answered them.
+    pub session: SessionState,
+}
+
+/// How the person's policy answers a permission request without asking.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PermissionDecision {
+    /// Answer on the agent's behalf (an option id), no prompt.
+    Auto(String),
+    /// Ask the person: the request becomes an interrupt.
+    Ask,
+}
+
+/// Receives what one agent session reports. Called from the connector's tasks, so it must not block.
+pub trait AgentEventSink: Send + Sync {
+    fn on_event(&self, event: AgentEvent);
+    /// A permission request arrived: decide now whether the person is asked.
+    fn on_permission(&self, request: &PermissionRequest) -> PermissionDecision;
+    /// The agent process ended (the session is gone).
+    fn on_exit(&self, reason: String);
+}
+
+/// Long-lived agent processes and their sessions (ACP lives behind this).
 #[async_trait]
 pub trait AgentConnector: Send + Sync {
-    /// Launch (or reuse) an agent process and send a prompt; ACP lives behind this.
-    async fn start_run(&self, agent: &AgentId, prompt: &str) -> PortResult<RunId>;
+    /// Start the agent process if it is not running, initialize it, and open a session. `mcp` (when the
+    /// agent supports HTTP MCP) is how the session reaches the host's tools.
+    async fn open_session(
+        &self,
+        agent: &Agent,
+        mcp: Option<McpAccess>,
+        sink: Arc<dyn AgentEventSink>,
+    ) -> PortResult<SessionOpened>;
+    /// Send a prompt and wait for the turn to end. Everything the agent reports meanwhile goes to the sink.
+    async fn prompt(&self, agent: &AgentId, session_id: &str, text: &str) -> PortResult<StopReason>;
+    /// Ask the agent to stop the running turn (`session/cancel`).
+    async fn cancel(&self, agent: &AgentId, session_id: &str) -> PortResult<()>;
+    /// The person's answer to a permission request that [`PermissionDecision::Ask`] left open.
+    async fn answer_permission(&self, request_id: &str, answer: PermissionAnswer);
+    async fn set_mode(&self, agent: &AgentId, session_id: &str, mode: &str) -> PortResult<()>;
+    /// Change a setting; answers every option's new state.
+    async fn set_config(
+        &self,
+        agent: &AgentId,
+        session_id: &str,
+        id: &str,
+        value: ConfigValue,
+    ) -> PortResult<Vec<ConfigOption>>;
+    /// Forget a session (its thread was deleted); the process keeps running for other sessions.
+    async fn close_session(&self, agent: &AgentId, session_id: &str);
     /// Stop every agent process this connector started (host shutdown). Idempotent.
     async fn stop_all(&self);
+}
+
+/// The agent contacts: who they are and the hash of their persistent MCP token. Only hashes of secrets cross
+/// this port.
+#[async_trait]
+pub trait AgentStore: Send + Sync {
+    async fn list(&self) -> PortResult<Vec<Agent>>;
+    /// Insert a new contact; `false` when the id is taken.
+    async fn insert(&self, agent: &Agent, token_hash: Option<&str>) -> PortResult<bool>;
+    /// Replace the record of an existing contact; `false` if there is none.
+    async fn update(&self, agent: &Agent) -> PortResult<bool>;
+    async fn delete(&self, id: &AgentId) -> PortResult<bool>;
+    /// `false` if there is no such agent.
+    async fn set_token_hash(&self, id: &AgentId, token_hash: &str) -> PortResult<bool>;
+    /// Every (agent, token hash) pair that has a persistent token.
+    async fn token_hashes(&self) -> PortResult<Vec<(AgentId, String)>>;
+}
+
+/// What the host keeps of a chat thread between runs and restarts.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StoredThread {
+    pub agent_id: AgentId,
+    pub messages: Vec<ThreadMessage>,
+}
+
+#[async_trait]
+pub trait ThreadStore: Send + Sync {
+    async fn load(&self, thread_id: &str) -> PortResult<Option<StoredThread>>;
+    /// Insert or replace the whole transcript.
+    async fn save(&self, thread_id: &str, thread: &StoredThread, now_ms: u64) -> PortResult<()>;
+    async fn delete(&self, thread_id: &str) -> PortResult<()>;
 }
 
 // ---- infrastructure ---------------------------------------------------------------------------

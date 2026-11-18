@@ -1,7 +1,7 @@
 use crate::{error::DomainError, tool::QualifiedToolName, AppId};
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct AgentId(pub String);
 
 /// What an app may ask the host for (declared in its manifest) and what an agent may do to apps.

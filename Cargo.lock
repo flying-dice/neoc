@@ -82,6 +82,8 @@ version = "0.1.0"
 dependencies = [
  "agentos-domain",
  "async-trait",
+ "futures-channel",
+ "futures-util",
  "parking_lot",
  "serde_json",
  "sha2 0.10.9",
