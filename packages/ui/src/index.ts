@@ -59,3 +59,29 @@ export {
   type Parts
 } from './datepicker'
 export { initials, safeImageSrc } from './avatar'
+export { gridTemplate, cellPlacement, type GridTrack } from './logic/grid'
+export {
+  HeightIndex,
+  visibleRange,
+  windowFor,
+  covered,
+  anchorOf,
+  anchorShift,
+  type RowRange,
+  type Viewport,
+  type Anchor
+} from './logic/virtual'
+export {
+  moveBefore,
+  moveBy,
+  insertionIndex,
+  withInserted,
+  moveAnnouncement,
+  type Move,
+  type Key
+} from './logic/reorder'
+export { listKeyAction, tabKeyIndex, typeaheadMatch, TypeaheadBuffer, type ListAction } from './logic/listKeys'
+export type { ListStyle } from './logic/listContext'
+export { pullToRefresh, type PullOptions } from './logic/pullToRefresh'
+export { PULL_THRESHOLD } from './logic/gestures'
+export { scrollParent } from './logic/dom'
