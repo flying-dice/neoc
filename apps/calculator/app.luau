@@ -165,7 +165,9 @@ app.window("main", {
     return ui.Scope {
       scheme = "dark",
       background = "primary", -- the instrument canvas: black body
+      frame = "fill",
       ui.VStack {
+        frame = "fill",
         spacing = 2,
         padding = 3,
         ui.Spacer {},
@@ -187,7 +189,17 @@ app.window("main", {
           lines = 1,
           live = "polite",
         },
-        ui.Grid { columns = 4, rows = 5, spacing = 2, frame = "fill", ui.each(KEYS, keyView) },
+        -- round keys: square cells, at most 320 pt wide, so the keypad is the same size in a wide window and always fits
+        -- round keys: square cells, a fixed 296 pt wide (the narrowest window's content), centred: the keypad is the
+        -- same size in any window and always fits
+        ui.Grid {
+          columns = 4,
+          spacing = 2,
+          cellAspect = 1,
+          align = "center",
+          frame = { idealW = 296, maxW = 296 },
+          ui.each(KEYS, keyView),
+        },
         ui.Shortcut {
           key = "backspace",
           shortcut = "backspace",
