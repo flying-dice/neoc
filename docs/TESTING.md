@@ -44,7 +44,9 @@ snapshots deliberately with `bun run test:e2e:update`, then open the changed PNG
 `bun test` (via `bun run test`) covers the client renderer core and shell in `client/src`, the kit's logic in
 `packages/ui/src` (`keys`, `text`, `sheet`, `stepper`, ...) and `types/tests` (the generated types against samples).
 They are plain-object tests: the renderer core is framework-free and runs against a TypeScript fake host on an in-memory
-wire (`client/src/renderer/src/view/host/`). `bun run codegen:check` fails when `types/generated/*` or
+wire (`client/src/renderer/src/view/host/`). Rune modules (`*.svelte.ts`: the shell's host, apps and window stores) run
+under `bun test` too, through the preload in `client/bunfig.toml` (`client/test/svelte-modules.ts` compiles them).
+`bun run codegen:check` fails when `types/generated/*` or
 `docs/reference/components.md` are stale against the Rust schema; `bun run codegen` regenerates them.
 
 ## Luau apps

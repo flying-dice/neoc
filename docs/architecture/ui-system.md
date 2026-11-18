@@ -126,7 +126,7 @@ are the adapters (wire props -> kit components). Adapters import only `@agentos/
 | `SplitView` | `columns 2|3`, `visibility` Binding `all|double|detail`, `sidebarWidth narrow|regular|wide`, `preferredCompact sidebar|content|detail`, `style balanced|prominentDetail` | | `sidebar`, `content`, `detail` | `SplitViewTemplate` (add third column; collapses to a stack below 700 px per DESIGN_LANGUAGE s5) |
 | `TabView` | `selection` Binding, `style bottom|top|sidebar|page` | | children = tabs, each tab has slot `tabItem {label, icon, badge}` | `TabBar` + `TabBarItem` |
 | `Toolbar` items | `ToolbarItem {placement}`, `ToolbarGroup`, `Menu`, `Button`, `Spacer` as slot content | | | `NavigationBar` leading/trailing |
-| `Link` (T2) | `url`, `title` | | | new; opens through host with confirmation |
+| `Link` (T2) | `url`, `title` | | | new; opens through host with confirmation (built: every Markdown link and `view.command openUrl` shows the host and the full URL first; `mailto:` takes the same path) |
 | `Breadcrumb` (T3) | `items` | `onSelect` | | new (Files) |
 | `Inspector` (T3) | `presented` Binding, `width` | | children | new trailing pane (Coder, Reviewer) |
 
