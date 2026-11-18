@@ -45,6 +45,22 @@ pub fn reachable_urls(
     urls
 }
 
+/// The URL under which a process on this machine reaches the host it listens on: loopback when `bind` is
+/// loopback or a wildcard (a wildcard socket answers on loopback), else the one address it is bound to (a
+/// host bound to a LAN address does not listen on loopback at all). IPv6 addresses are bracketed.
+#[must_use]
+pub fn local_url(scheme: &str, bind: IpAddr, port: u16, path: &str) -> String {
+    let ip = match bind {
+        IpAddr::V4(v4) if v4.is_unspecified() => IpAddr::from([127, 0, 0, 1]),
+        IpAddr::V6(v6) if v6.is_unspecified() => IpAddr::from([0, 0, 0, 0, 0, 0, 0, 1]),
+        other => other,
+    };
+    match ip {
+        IpAddr::V4(v4) => format!("{scheme}://{v4}:{port}{path}"),
+        IpAddr::V6(v6) => format!("{scheme}://[{v6}]:{port}{path}"),
+    }
+}
+
 fn is_link_local(ip: &IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => v4.is_link_local(),
@@ -70,6 +86,21 @@ mod tests {
             Some("studio.local"),
         );
         assert_eq!(urls, ["http://127.0.0.1:7400", "http://192.168.1.20:7400", "http://studio.local:7400"]);
+    }
+
+    #[test]
+    fn a_local_process_reaches_the_host_on_loopback_or_on_the_one_address_it_is_bound_to() {
+        let url = |bind: &str| local_url("http", bind.parse().unwrap(), 7400, "/mcp");
+        assert_eq!(url("0.0.0.0"), "http://127.0.0.1:7400/mcp");
+        assert_eq!(url("127.0.0.1"), "http://127.0.0.1:7400/mcp");
+        assert_eq!(url("192.168.1.20"), "http://192.168.1.20:7400/mcp", "not listening on loopback");
+        assert_eq!(url("::"), "http://[::1]:7400/mcp");
+        assert_eq!(url("::1"), "http://[::1]:7400/mcp");
+        assert_eq!(url("fd00::20"), "http://[fd00::20]:7400/mcp", "an IPv6 address is bracketed");
+        assert_eq!(
+            local_url("https", "10.0.0.5".parse().unwrap(), 8443, "/mcp"),
+            "https://10.0.0.5:8443/mcp"
+        );
     }
 
     #[test]
