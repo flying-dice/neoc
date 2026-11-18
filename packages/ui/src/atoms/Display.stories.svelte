@@ -1,5 +1,6 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
+  import { expect, waitFor, within } from 'storybook/test'
   import Avatar from './Avatar.svelte'
   import Badge from './Badge.svelte'
   import Picture from './Picture.svelte'
@@ -39,10 +40,37 @@
   </div>
 </Story>
 
-<Story name="Display readout" asChild>
-  <div style="display:grid;gap:12px;width:260px;background:#000;color:#fff;padding:12px;border-radius:var(--radius-md)">
+<Story
+  name="Display readout"
+  asChild
+  play={async ({ canvasElement }) => {
+    const fit = within(canvasElement).getByTestId('readout-fit').querySelector<HTMLElement>('.fit-text')!
+    // The readout scales its font to the box once measured, so no glyph is ever clipped.
+    await waitFor(() => expect(fit.scrollWidth).toBeLessThanOrEqual(fit.clientWidth))
+    await expect(parseFloat(getComputedStyle(fit).fontSize)).toBeLessThan(56)
+    await expect(parseFloat(getComputedStyle(fit).fontSize)).toBeGreaterThanOrEqual(56 * 0.3)
+  }}
+>
+  <div style="display:grid;grid-template-columns:minmax(0,1fr);gap:12px;width:260px;background:#000;color:#fff;padding:12px;border-radius:var(--radius-md)">
     <Text style="display" color="inherit">1,234.5</Text>
-    <Text style="display" color="inherit" fit>123,456,789,012.345678</Text>
+    <div data-testid="readout-fit"><Text style="display" color="inherit" fit>123,456,789,012.345678</Text></div>
+    <div data-testid="readout-short"><Text style="display" color="inherit" fit>42</Text></div>
+  </div>
+</Story>
+
+<Story
+  name="Display readout, longer than it can shrink"
+  asChild
+  play={async ({ canvasElement }) => {
+    const fit = within(canvasElement).getByTestId('readout-long').querySelector<HTMLElement>('.fit-text')!
+    // Past the smallest scale it ends in an ellipsis rather than shrinking further or cutting a digit.
+    await waitFor(() => expect(parseFloat(getComputedStyle(fit).fontSize)).toBeCloseTo(56 * 0.3, 0))
+    await expect(getComputedStyle(fit).textOverflow).toBe('ellipsis')
+    await expect(fit.clientWidth).toBeLessThanOrEqual(fit.parentElement!.clientWidth)
+  }}
+>
+  <div style="width:200px;background:#000;color:#fff;padding:12px;border-radius:var(--radius-md)">
+    <div data-testid="readout-long"><Text style="display" color="inherit" fit>123,456,789,012,345,678,901,234,567,890.123456789</Text></div>
   </div>
 </Story>
 

@@ -206,6 +206,7 @@ export const display: KitAppOptions = {
   tree: screen('Display', [
     button('refresh', 'Refresh', true, { style: 'gray', size: 'small' }),
     text('title', { text: 'Large title', style: 'title2', heading: 2 }),
+    text('readout', { text: '123,456,789,012.345678', style: 'display', fit: true }),
     text('ok', { text: 'Saved', foreground: 'success', style: 'footnote' }),
     text('warn', { text: 'Disk almost full', foreground: 'warning', style: 'footnote' }),
     text('clamped', {

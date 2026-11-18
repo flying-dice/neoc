@@ -1,6 +1,7 @@
 <!-- @atom Text — Dynamic Type text styles. -->
 <script lang="ts">
   import type { Snippet } from 'svelte'
+  import { fitScale } from '../text'
 
   type TextStyle =
     | 'largeTitle'
@@ -52,10 +53,43 @@
   }: Props = $props()
 
   const clamp = $derived(lines !== undefined && lines > 1 ? Math.min(lines, 20) : 0)
+
+  // fit: measure the readout at its natural size and scale the font down until it fits the box, never below
+  // FIT_MIN of the style's size; below that it truncates with an ellipsis. A glyph is never clipped.
+  let box: HTMLElement | undefined = $state()
+  let readout: HTMLElement | undefined = $state()
+  let scale = $state(1)
+
+  $effect(() => {
+    if (!fit || !box || !readout) return undefined
+    const measure = (): void => {
+      if (!box || !readout) return
+      // Text width is proportional to the font size, so the natural width is what is measured now over the scale
+      // that is actually applied to the element (not the state, which can be ahead of the DOM).
+      const applied = Number(getComputedStyle(readout).getPropertyValue('--fit-scale')) || 1
+      const natural = readout.scrollWidth / applied
+      const available = box.clientWidth
+      if (natural <= 0 || available <= 0) return
+      const next = fitScale(natural, available)
+      if (Math.abs(next - scale) > 0.002) scale = next
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(box)
+    ro.observe(readout)
+    return () => ro.disconnect()
+  })
 </script>
 
 {#if fit}
-  <span class="fit-box"><span class="ios-text {style} c-{color} fit-text" class:tabular>{@render children()}</span></span>
+  <span class="fit-box" bind:this={box}
+    ><span
+      class="ios-text {style} c-{color} fit-text"
+      class:tabular
+      bind:this={readout}
+      style:--fit-scale={scale}>{@render children()}</span
+    ></span
+  >
 {:else}
 <svelte:element
   this={as}
@@ -132,17 +166,26 @@
     overflow: hidden;
     overflow-wrap: anywhere;
   }
-  /* fit: the box is a size container and the readout is sized in its inline units, capped at the style's size. */
+  /* fit: the box is the available width; the readout scales its font by --fit-scale (measured), and only when it
+     still does not fit at the smallest scale does it end in an ellipsis. */
   .fit-box {
     display: block;
-    container-type: inline-size;
+    width: 100%;
     min-width: 0;
     overflow: hidden;
   }
   .fit-text {
-    display: block;
+    /* inline-block: as wide as its content up to the box, so scrollWidth is always the content's own width. */
+    display: inline-block;
+    vertical-align: top;
+    max-width: 100%;
+    overflow: hidden;
     white-space: nowrap;
-    font-size: min(56px, 16cqw);
+    text-overflow: ellipsis;
+    font-size: calc(56px * var(--fit-scale, 1));
+    /* No transition on the size: the measurement must see the font the scale asks for, not a frame of tween
+       (reduced motion turns every transition into a one-frame one, which made the fit chase its own tail). */
+    transition-property: none;
   }
   .truncate {
     display: block;

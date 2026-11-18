@@ -144,6 +144,10 @@
       canvas.getByTestId('kit-bar').querySelector('[role="progressbar"]')
     ).toHaveAttribute('aria-valuenow', '35')
     await expect(canvas.getByTestId('kit-icon')).toHaveAccessibleName('Starred')
+    // `fit` scales the readout down to the window (480 px, and 320 px at the smallest) without cutting a digit.
+    const readout = canvas.getByTestId('kit-readout').querySelector<HTMLElement>('.fit-text')!
+    await waitFor(() => expect(readout.scrollWidth).toBeLessThanOrEqual(readout.clientWidth))
+    await expect(parseFloat(getComputedStyle(readout).fontSize)).toBeLessThan(56)
   }}
 />
 
