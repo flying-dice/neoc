@@ -78,7 +78,7 @@ app.window("main", {
     end
 
     local agentRows: { ui.Node } = {}
-    for _, agent in roster do
+    for _, agent in ipairs(roster) do
       table.insert(
         agentRows,
         ui.Row {
@@ -109,7 +109,7 @@ app.window("main", {
       }
     elseif #roster > 1 then
       local items: { ui.Node } = {}
-      for _, agent in roster do
+      for _, agent in ipairs(roster) do
         table.insert(
           items,
           ui.Button {

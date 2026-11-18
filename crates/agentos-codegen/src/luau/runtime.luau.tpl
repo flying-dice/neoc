@@ -90,7 +90,7 @@ local function toHandler(value: any, where: string): any
 end
 
 local function assignKeys(list: { any })
-	for index, child in list do
+	for index, child in ipairs(list) do
 		if child.key == nil then
 			child.key = "_" .. tostring(index - 1)
 		end
@@ -127,7 +127,7 @@ local function build(def: any, props: any): Node
 		end
 	end
 
-	for name, value in props do
+	for name, value in pairs(props) do
 		if type(name) == "number" or name == "key" then
 			continue
 		end
@@ -138,7 +138,7 @@ local function build(def: any, props: any): Node
 		elseif def.slots[name] ~= nil and (def.props[name] == nil or isNodeList(value) or type(value) == "function") then
 			slots[name] = toSlot(value, def.rows[name] ~= nil, where)
 		elseif def.groups[name] ~= nil then
-			for sub, inner in value do
+			for sub, inner in pairs(value) do
 				local full = def.groups[name][sub]
 				if full == nil then
 					error(`{where}: no slot '{sub}'`, 3)
@@ -146,7 +146,7 @@ local function build(def: any, props: any): Node
 				slots[full] = toSlot(inner, false, `{where}.{sub}`)
 			end
 		elseif def.prefixes[name] ~= nil then
-			for sub, inner in value do
+			for sub, inner in pairs(value) do
 				slots[def.prefixes[name] .. sub] = toSlot(inner, false, `{where}.{sub}`)
 			end
 		elseif def.props[name] ~= nil then
@@ -166,7 +166,7 @@ local function build(def: any, props: any): Node
 	end
 
 	assignKeys(children)
-	for _, list in slots do
+	for _, list in pairs(slots) do
 		assignKeys(list)
 	end
 

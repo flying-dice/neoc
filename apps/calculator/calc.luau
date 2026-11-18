@@ -106,7 +106,7 @@ function calc.evaluate(expression: string): number
   end
   local values: { number } = {}
   local ops: { string } = {}
-  for _, token in tokens do
+  for _, token in ipairs(tokens) do
     if token.kind == "num" then
       table.insert(values, token.number)
     elseif token.value == "(" then

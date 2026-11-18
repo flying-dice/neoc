@@ -6,7 +6,13 @@
  *
  * For each app this writes, under <out>/<id>/<version>/ (default out: dist/apps):
  *   app-ref.json   { manifest, files: [{ path, url, sha256 }] }, file URLs relative to the app ref
- *   <the files>    app.luau, its modules and SQL migrations, copied as they are
+ *   app.lua        the app as ONE Lua 5.1 file: the Luau entry (app.json `main`, app.luau) and the modules it
+ *                  requires, bundled and stripped by darklua (.darklua.json); `@agentos/app` and `@agentos/ui`
+ *                  stay runtime `require` calls, the host provides them (with lua/prelude.luau, the Lua 5.1
+ *                  polyfills for the Luau standard library, built to types/generated/prelude.lua)
+ *   <migrations>   the SQL migrations app.json lists, copied as they are
+ * The ref's `manifest.main` names the bundled `.lua` file (the entry the host loads); the Luau sources are not shipped.
+ * darklua is required (pinned, see scripts/lua51.ts): the build fails with an install message without it.
  * `--root <dir>` also builds the packages under <dir>/* (the e2e harness builds a test-only app that way).
  * and one <out>/registry.json listing every app's app ref: { "apps": ["calculator/0.1.0/app-ref.json", ...] }.
  *
@@ -18,11 +24,11 @@
  * the two cannot disagree about the id, icon or tint.
  */
 import { createHash } from 'node:crypto'
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { join, relative, resolve } from 'node:path'
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, join, relative, resolve } from 'node:path'
 import { z } from 'zod'
+import { requireDarklua, root, toLua51 } from './lua51'
 
-const root = resolve(import.meta.dir, '..')
 const args = process.argv.slice(2)
 const outFlag = args.indexOf('--out')
 const outDir = resolve(root, outFlag >= 0 ? (args[outFlag + 1] ?? '') : 'dist/apps')
@@ -45,22 +51,6 @@ const PackageManifest = z.object({
   migrations: z.array(z.object({ version: z.number().int(), name: z.string(), file: z.string() })).default([])
 })
 
-/** Files that are part of the package: Luau sources (not tests) and the migrations app.json lists. */
-function packageFiles(dir: string, migrations: string[]): string[] {
-  const found: string[] = []
-  const walk = (current: string): void => {
-    for (const entry of readdirSync(current)) {
-      const path = join(current, entry)
-      const rel = relative(dir, path)
-      if (statSync(path).isDirectory()) {
-        if (!['tests', 'e2e', 'negative', 'node_modules'].includes(entry)) walk(path)
-      } else if (rel.endsWith('.luau')) found.push(rel)
-    }
-  }
-  walk(dir)
-  return [...found, ...migrations].sort()
-}
-
 /** The string literal assigned to `field` inside the app's `app.manifest { ... }` call. */
 function declared(source: string, field: string): string | undefined {
   const block = source.match(/app\.manifest\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
@@ -77,6 +67,7 @@ if (appDirs.length === 0) {
   process.exit(1)
 }
 
+const darklua = requireDarklua()
 const started = performance.now()
 const registry: string[] = []
 for (const dir of appDirs) {
@@ -92,19 +83,29 @@ for (const dir of appDirs) {
   const target = join(outDir, manifest.id, manifest.version)
   rmSync(target, { recursive: true, force: true })
   mkdirSync(target, { recursive: true })
-  const files = packageFiles(dir, manifest.migrations.map((m) => m.file))
-  const refs = files.map((path) => {
-    const bytes = readFileSync(join(dir, path))
-    mkdirSync(join(target, path, '..'), { recursive: true })
-    cpSync(join(dir, path), join(target, path))
-    return { path, url: path, sha256: createHash('sha256').update(bytes).digest('hex') }
-  })
+  const sha256 = (bytes: string | Buffer): string => createHash('sha256').update(bytes).digest('hex')
+  const entry = manifest.main.replace(/\.luau$/, '.lua')
+  let bundle: string
+  try {
+    bundle = toLua51(darklua, join(dir, manifest.main))
+  } catch (error) {
+    console.error(`✗ ${manifest.id}: darklua could not build ${manifest.main}:\n${(error as Error).message}`)
+    process.exit(1)
+  }
+  mkdirSync(dirname(join(target, entry)), { recursive: true })
+  writeFileSync(join(target, entry), bundle)
+  const refs = [{ path: entry, url: entry, sha256: sha256(bundle) }]
+  for (const { file } of manifest.migrations) {
+    mkdirSync(dirname(join(target, file)), { recursive: true })
+    cpSync(join(dir, file), join(target, file))
+    refs.push({ path: file, url: file, sha256: sha256(readFileSync(join(dir, file))) })
+  }
   const appRef = {
     manifest: {
       id: manifest.id,
       name: manifest.name,
       version: manifest.version,
-      main: manifest.main,
+      main: entry,
       permissions: manifest.permissions.map((kind) => ({ kind })),
       migrations: manifest.migrations,
       ...(manifest.icon ? { icon: manifest.icon } : {}),

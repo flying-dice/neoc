@@ -120,7 +120,7 @@ Also: atomic layers (`lint:atomic`, in `packages/ui` and `client/src`) and test 
 
 ```sh
 bun run dev             # build:apps, then the host on :7400 (dev_reload) + Vite on :5173; pair with the code the host prints
-bun run build:apps      # package every apps/*/app.json into app refs + registry.json under dist/apps
+bun run build:apps      # bundle every apps/*/app.json into one Lua 5.1 file (darklua) + app refs + registry.json under dist/apps
 bun run build           # build the client (client/dist)
 bun run host            # cargo run -p agentos-host: serves client/dist, /rpc, /agui, /mcp on :7400
 bun run host pair       # print a fresh device pairing code (every client must pair; see host-stack.md)
@@ -137,14 +137,17 @@ bun run test:e2e        # all Storybooks + desktop + journeys, headless, against
                         # AGENTOS_PORT_BASE=9100 for a second worktree (Storybook = base, e2e host = base + 10)
 bun run test:e2e:update # rebaseline snapshots (then look at them)
 bun run storybooks list # every Storybook (client, packages/ui); each package: bun run storybook
-bun run codegen         # regenerate types/generated/* and docs/reference/components.md from the Rust schema
+bun run codegen         # regenerate types/generated/* (incl. ui.lua, prelude.lua) and docs/reference/components.md from the Rust schema
 bun run codegen:check   # fails when they are stale (part of bun run lint)
 bun scripts/design-audit.ts <page>  # static styleguide audit of a built-in shell page's styles
 ```
 
 Visual baselines (`e2e/__screenshots__`) are macOS-only, so run `test:e2e` on a Mac. There is no hosted CI: the
 `pre-commit` skill runs the gate and `agentos-code-review` checks it. Needed tools: Rust (the pinned toolchain),
-`cargo-nextest`, `cargo-deny`, Bun, and, for the Luau checks, `luau-lsp` and `stylua`.
+`cargo-nextest`, `cargo-deny`, Bun, `darklua` 0.18.0 (`cargo install darklua --version 0.18.0 --locked`; building the
+apps and `bun run codegen` fail without it, they never skip) and, for the Luau checks, `luau-lsp` and `stylua`. A real
+Lua 5.1 interpreter (`lua5.1` on PATH or `LUA51=<path>`) is optional: with it `bun test scripts` also loads the
+bundled apps.
 
 ## Adding an app
 

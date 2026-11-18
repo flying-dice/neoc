@@ -58,6 +58,14 @@ under `bun test` too, through the preload in `client/bunfig.toml` (`client/test/
 - **Format:** `bun run lint:stylua` (`stylua.toml`, `.styluaignore`); `bun run format` rewrites. Both lints print a
   `SKIPPED` message when `luau-lsp` (PATH or `~/.local/bin`) or `stylua` (PATH or `~/.cargo/bin`) is not installed:
   install them, a skipped lint is not a pass.
+- **Lua 5.1 build:** apps run as plain Lua 5.1 (`scripts/lua51.ts`, `.darklua.json`; see `apps/README.md`).
+  `darklua` 0.18.0 is required and **never skipped** (`cargo install darklua --version 0.18.0 --locked`):
+  `bun run build:apps` and `bun run codegen` fail with that message without it. `bun test scripts`
+  (`scripts/lua51.test.ts`) checks the sources avoid what neither darklua nor `lua/prelude.luau` supports, that each
+  app bundles into one file requiring only `@agentos/*`, and (with a native Lua 5.3+ on PATH) that the prelude's
+  `utf8`/`table.move` polyfills agree with the native ones. With a real Lua 5.1 (`lua5.1` on PATH, or `LUA51=<path>`)
+  it also loads the prelude, `ui.lua` and every bundle; without one those tests print `SKIPPED` (a skip is not a
+  pass: install `lua5.1`). `bun run codegen:check` also fails when `types/generated/ui.lua` or `prelude.lua` is stale.
 - **Logic and tools:** tested from Rust against the shipped package (see "Rust"); views and journeys against the real
   host (below).
 

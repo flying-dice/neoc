@@ -295,7 +295,7 @@ fn helpers() -> String {
         "-- Maps a Luau list to children. `nil` results are skipped.\n\
 function ui.each<T>(list: { T }, body: (T, number) -> Node?): { Node }\n\
 \tlocal out: { Node } = {}\n\
-\tfor index, item in list do\n\
+\tfor index, item in ipairs(list) do\n\
 \t\tlocal node = body(item, index)\n\
 \t\tif node ~= nil then\n\
 \t\t\ttable.insert(out, node)\n\

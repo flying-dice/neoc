@@ -67,9 +67,15 @@ fails when they differ. `app.manifest` additionally carries the window (`w`, `h`
 
 `bun run build:apps` (`scripts/build-apps.ts`) turns every `apps/*/app.json` into an **app ref** under
 `dist/apps/<id>/<version>/`: `app-ref.json` (`{ manifest, files: [{ path, url, sha256 }] }`, file URLs relative to it)
-plus the Luau files and migrations, copied as they are, and one `dist/apps/registry.json`
-(`{ "apps": ["calculator/0.1.0/app-ref.json", ...] }`). The package is every `.luau` file except in `tests`, `e2e`,
-`negative` and `node_modules` folders.
+plus the app as **one bundled Lua 5.1 file** (`app.lua`) and its migrations, and one `dist/apps/registry.json`
+(`{ "apps": ["calculator/0.1.0/app-ref.json", ...] }`). Apps are authored in typed Luau but run as Lua 5.1:
+[darklua](https://github.com/seaofvoices/darklua) (`.darklua.json`) strips the types, lowers the Luau-only syntax
+(`+=`, backtick strings, `if` expressions, `continue`) and inlines the package's relative `require`s;
+`require("@agentos/app")` and `require("@agentos/ui")` stay runtime calls. The ref's `manifest.main` is the bundled
+file; the `.luau` sources are not shipped. Two things to know when writing an app: iterate with `pairs(t)` / `ipairs(t)`
+(not `for k, v in t do`: darklua cannot lower it), and use only the Luau library members `lua/prelude.luau` provides
+on Lua 5.1 (`typeof`, `table.clone`, `table.move`, `table.pack`, `table.unpack`, `utf8.*`); `bun test scripts` fails
+on `table.find`, `math.clamp`, `bit32`, `buffer` and the like. `darklua` 0.18.0 must be installed (see AGENTS.md).
 
 - **A registry** is a list of app-ref URLs. The host's default registry is `dist/apps/registry.json` over `file://`
   when it exists; `registries` in `agentos.toml` (or `AGENTOS_REGISTRIES`) adds more. Discover lists what they offer.
