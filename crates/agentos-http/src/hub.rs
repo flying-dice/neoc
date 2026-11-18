@@ -5,10 +5,12 @@
 use crate::rpc::{RpcHandler, RpcPeer};
 use agentos_application::{
     ports::{EventSink, Notifier, PortResult, ServerEvent},
-    AppError, AppService, AppStatus, DeviceService, PortError,
+    AppError, AppService, AppStatus, DeviceService, PortError, ViewError, ViewService, ViewSink,
 };
 use agentos_domain::{
-    protocol::{DispatchUiEvent, RpcError, UiTree},
+    protocol::RpcError,
+    ui::protocol::{codes, ClientNotification, ClientRequest, HostNotification, ParseError, SessionWelcome},
+    ui::{KIT_VERSION, PROTO_VERSION},
     AppId, DeviceId, Notification,
 };
 use async_trait::async_trait;
@@ -27,13 +29,79 @@ const SELF_REVOKE_GRACE: Duration = Duration::from_millis(250);
 pub struct RpcHub {
     app: OnceLock<Arc<AppService>>, // set once after construction (hub <-> service reference cycle)
     devices: OnceLock<Arc<DeviceService>>,
+    views: OnceLock<Arc<ViewService>>,
     peers: Mutex<Vec<RpcPeer>>,
+}
+
+/// A view's notifications go straight into its socket's outbound queue.
+struct PeerSink(RpcPeer);
+impl ViewSink for PeerSink {
+    fn send(&self, notification: HostNotification) {
+        let (method, params) = notification.to_rpc();
+        let _ = self.0.notify(method, params);
+    }
 }
 
 impl RpcHub {
     pub fn bind(&self, app: Arc<AppService>, devices: Arc<DeviceService>) {
         let _ = self.app.set(app);
         let _ = self.devices.set(devices);
+    }
+
+    /// The view service behind `session.*`, `view.*`, `row.*`, `state.*` and `source.*`.
+    pub fn bind_views(&self, views: Arc<ViewService>) {
+        let _ = self.views.set(views);
+    }
+
+    async fn view_request(&self, peer: &RpcPeer, request: ClientRequest) -> Result<Value, RpcError> {
+        let Some(views) = self.views.get() else { return Err(not_ready()) };
+        let conn = peer.connection_id();
+        match request {
+            ClientRequest::Hello(h) => {
+                if h.proto == 0 {
+                    return Err(RpcError {
+                        code: codes::UNSUPPORTED_PROTO,
+                        message: format!(
+                            "protocol {} is not served: this host speaks {PROTO_VERSION}",
+                            h.proto
+                        ),
+                        data: None,
+                    });
+                }
+                encode(&SessionWelcome {
+                    proto: h.proto.min(PROTO_VERSION),
+                    kit: KIT_VERSION.to_string(),
+                    host_version: env!("CARGO_PKG_VERSION").to_owned(),
+                    session_id: format!("c{conn:x}"),
+                    resumed: false,
+                })
+            }
+            ClientRequest::ViewOpen(o) => {
+                let sink: Arc<dyn ViewSink> = Arc::new(PeerSink(peer.clone()));
+                encode(&views.open(conn, sink, o).await.map_err(|e| view_err(&e))?)
+            }
+            ClientRequest::ViewSync(r) => {
+                encode(&views.sync(conn, &r.view_id).await.map_err(|e| view_err(&e))?)
+            }
+            ClientRequest::ViewEvent(e) => encode(&views.event(conn, e).await.map_err(|e| view_err(&e))?),
+            ClientRequest::RowSet(r) => encode(&views.row_set(conn, r).await.map_err(|e| view_err(&e))?),
+            ClientRequest::RowRestore(r) => {
+                encode(&views.row_restore(conn, r).await.map_err(|e| view_err(&e))?)
+            }
+            ClientRequest::SourceSet(r) => {
+                encode(&views.source_set(conn, r).await.map_err(|e| view_err(&e))?)
+            }
+            ClientRequest::StateSet(_) => Err(RpcError {
+                code: codes::APP_ERROR,
+                message: "window state is not two-way bindable yet: bind a source field or a client value"
+                    .into(),
+                data: None,
+            }),
+            ClientRequest::ViewClose(r) => {
+                views.close(conn, &r.view_id).await.map_err(|e| view_err(&e))?;
+                Ok(Value::Null)
+            }
+        }
     }
 
     /// Hang up every socket of a device (it was revoked); the caller's own socket gets a short grace
@@ -101,6 +169,19 @@ fn rpc_err(e: &AppError) -> RpcError {
     RpcError { code, message: e.to_string(), data: None }
 }
 
+/// A result as JSON, or an internal error.
+fn encode<T: serde::Serialize>(value: &T) -> Result<Value, RpcError> {
+    serde_json::to_value(value).map_err(|e| RpcError {
+        code: -32603,
+        message: format!("could not encode the result: {e}"),
+        data: None,
+    })
+}
+
+fn view_err(e: &ViewError) -> RpcError {
+    e.to_rpc()
+}
+
 fn not_ready() -> RpcError {
     RpcError { code: -32603, message: "host not ready".into(), data: None }
 }
@@ -138,9 +219,32 @@ impl RpcHandler for RpcHub {
         self.peers.lock().push(peer);
     }
 
+    async fn disconnected(&self, peer: &RpcPeer) {
+        self.peers.lock().retain(|p| !p.is_same_connection(peer));
+        if let Some(views) = self.views.get() {
+            views.connection_closed(peer.connection_id()).await;
+        }
+    }
+
+    async fn notification(&self, peer: &RpcPeer, method: &str, params: Value) {
+        let Some(views) = self.views.get() else { return };
+        match ClientNotification::from_rpc(method, params) {
+            Ok(ClientNotification::ClientState(n)) => views.client_state(peer.connection_id(), n).await,
+            Ok(ClientNotification::Bye) => views.connection_closed(peer.connection_id()).await,
+            Ok(ClientNotification::Resize(_) | ClientNotification::Visibility(_)) => {}
+            Err(e) => tracing::debug!(%method, error = %e, "ignored a malformed notification"),
+        }
+    }
+
     async fn request(&self, peer: &RpcPeer, method: &str, params: Value) -> Result<Value, RpcError> {
         if method.starts_with("host.") {
             return self.host_request(peer, method, params).await;
+        }
+        // the view protocol first; anything it does not know is an app-management method below
+        match ClientRequest::from_rpc(method, params.clone()) {
+            Ok(request) => return self.view_request(peer, request).await,
+            Err(ParseError::UnknownMethod(_)) => {}
+            Err(e) => return Err(e.to_rpc_error()),
         }
         let Some(app) = self.app.get() else { return Err(not_ready()) };
         match method {
@@ -180,11 +284,6 @@ impl RpcHandler for RpcHub {
                 .map_err(|e| rpc_err(&e))?;
                 Ok(Value::Null)
             }
-            "ui.event" => {
-                let p: DispatchUiEvent = serde_json::from_value(params).map_err(|e| bad_params(&e))?;
-                app.dispatch_ui_event(&p.app, p.event).await.map_err(|e| rpc_err(&e))?;
-                Ok(Value::Null)
-            }
             _ => Err(method_not_found(method)),
         }
     }
@@ -200,11 +299,6 @@ impl EventSink for RpcHub {
             ServerEvent::AppDisabled(app) => self.broadcast("app.disabled", &json!({ "app": app })),
             ServerEvent::AppFailed { app, message } => {
                 self.broadcast("app.failed", &json!({ "app": app, "message": message }));
-            }
-            ServerEvent::UiTree { app, root } => {
-                if let Ok(v) = serde_json::to_value(UiTree { app, root }) {
-                    self.broadcast("ui.tree", &v);
-                }
             }
             ServerEvent::Notification(n) => {
                 if let Ok(v) = serde_json::to_value(n) {

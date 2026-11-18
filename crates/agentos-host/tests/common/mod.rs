@@ -4,8 +4,7 @@
 
 use agentos_application::{ports::Clock, testing::ManualClock, DeviceService};
 use agentos_host::{build, serve::serve, HostConfig};
-use futures_util::StreamExt;
-use serde_json::Value;
+use futures_util::{SinkExt, StreamExt};
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::task::JoinHandle;
 use tokio_tungstenite::{
@@ -14,6 +13,19 @@ use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream,
 };
 use tokio_util::sync::CancellationToken;
+
+use agentos_domain::{AgentId, AgentIdentity, Permission};
+use rmcp::{
+    model::CallToolRequestParams,
+    service::{NotificationContext, RunningService},
+    transport::{streamable_http_client::StreamableHttpClientTransportConfig, StreamableHttpClientTransport},
+    ClientHandler, RoleClient, ServiceExt,
+};
+use serde_json::{json, Value};
+use std::{
+    path::PathBuf,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 pub type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
@@ -109,5 +121,184 @@ pub async fn next_json(ws: &mut Socket) -> Value {
         {
             return serde_json::from_str(&t).unwrap();
         }
+    }
+}
+
+// ---- the clients: an agent over MCP, a browser over /rpc ----------------------------------------------
+
+#[derive(Clone, Default)]
+pub struct Counting(pub Arc<AtomicUsize>);
+impl ClientHandler for Counting {
+    async fn on_tool_list_changed(&self, _: NotificationContext<RoleClient>) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+pub type Agent = RunningService<RoleClient, Counting>;
+
+pub async fn connect_agent(addr: std::net::SocketAddr, token: &str) -> (Agent, Counting) {
+    let counter = Counting::default();
+    let transport = StreamableHttpClientTransport::from_config(
+        StreamableHttpClientTransportConfig::with_uri(format!("http://{addr}/mcp")).auth_header(token),
+    );
+    (counter.clone().serve(transport).await.unwrap(), counter)
+}
+
+pub async fn tool_names(agent: &Agent) -> Vec<String> {
+    agent.peer().list_tools(None).await.unwrap().tools.iter().map(|t| t.name.to_string()).collect()
+}
+
+pub async fn call(agent: &Agent, tool: &str, args: Value) -> rmcp::model::CallToolResult {
+    let args = args.as_object().unwrap().clone();
+    agent.peer().call_tool(CallToolRequestParams::new(tool.to_owned()).with_arguments(args)).await.unwrap()
+}
+
+pub fn text_of(out: &rmcp::model::CallToolResult) -> String {
+    format!("{:?}", out.content)
+}
+
+pub async fn wait_until(what: &str, mut ok: impl FnMut() -> bool) {
+    for _ in 0..200 {
+        if ok() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    panic!("timed out waiting for {what}");
+}
+
+pub fn claude() -> (String, AgentIdentity) {
+    (
+        "tok-claude".into(),
+        AgentIdentity {
+            id: AgentId("claude".into()),
+            name: "Claude".into(),
+            grants: vec![Permission::CallAnyTool],
+        },
+    )
+}
+
+/// WS client that keeps notifications that arrive while it waits for a response (they can overtake it).
+pub struct Ws {
+    pub raw: Socket,
+    pub backlog: Vec<Value>,
+}
+pub async fn rpc(ws: &mut Ws, id: i64, method: &str, params: Value) -> Value {
+    ws.raw
+        .send(Message::text(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}).to_string()))
+        .await
+        .unwrap();
+    loop {
+        let m = next_json(&mut ws.raw).await;
+        if m["id"] == id {
+            return m;
+        }
+        ws.backlog.push(m);
+    }
+}
+pub async fn next_notification(ws: &mut Ws, method: &str) -> Value {
+    if let Some(i) = ws.backlog.iter().position(|m| m["method"] == method) {
+        return ws.backlog.remove(i)["params"].clone();
+    }
+    loop {
+        let m = next_json(&mut ws.raw).await;
+        if m["method"] == method {
+            return m["params"].clone();
+        }
+        ws.backlog.push(m);
+    }
+}
+
+pub async fn browser(r: &Running) -> Ws {
+    let cookie = pair(r, "Safari on iPad").await;
+    let origin = format!("http://127.0.0.1:{}", r.addr.port());
+    Ws { raw: connect_rpc(r.addr, Some(&cookie), Some(&origin)).await.unwrap(), backlog: vec![] }
+}
+
+pub fn temp(name: &str) -> PathBuf {
+    std::env::temp_dir().join(format!("host-{name}-{}", std::process::id()))
+}
+
+// ---- packages and view helpers ----------------------------------------------------------------------------
+
+/// Publish an app package (`files` by path) under `root` as an app ref; returns the `file://` URL of the ref.
+pub fn publish_package(
+    root: &std::path::Path,
+    id: &str,
+    main: &str,
+    files: &[(&str, Vec<u8>)],
+    grants: Vec<Permission>,
+) -> String {
+    use agentos_domain::{AppId, AppRef, FileRef, Manifest};
+    use sha2::{Digest, Sha256};
+    std::fs::create_dir_all(root).unwrap();
+    let mut refs = vec![];
+    for (path, bytes) in files {
+        std::fs::write(root.join(path), bytes).unwrap();
+        refs.push(FileRef {
+            path: (*path).into(),
+            url: format!("file://{}/{path}", root.display()),
+            sha256: format!("{:x}", Sha256::digest(bytes)),
+        });
+    }
+    let r = AppRef {
+        manifest: Manifest {
+            id: AppId::parse(id).unwrap(),
+            name: id.into(),
+            version: "1.0.0".into(),
+            main: main.into(),
+            permissions: grants,
+            migrations: vec![],
+        },
+        files: refs,
+    };
+    std::fs::write(root.join("app-ref.json"), serde_json::to_vec(&r).unwrap()).unwrap();
+    format!("file://{}/app-ref.json", root.display())
+}
+
+/// The path of the node with this key in a wire tree (depth first, `@slot` segments for named slots).
+pub fn path_of(tree: &Value, key: &str) -> Option<String> {
+    fn walk(node: &Value, path: &str, key: &str) -> Option<String> {
+        if node["key"] == key {
+            return Some(path.to_owned());
+        }
+        let children = node["children"].as_array().into_iter().flatten().map(|c| (None, c));
+        let slots = node["slots"].as_object().into_iter().flatten().flat_map(|(name, list)| {
+            list.as_array().into_iter().flatten().map(move |c| (Some(name.as_str()), c))
+        });
+        for (slot, child) in children.chain(slots) {
+            let k = child["key"].as_str().unwrap_or_default();
+            let p = match slot {
+                Some(slot) => format!("{path}/@{slot}/{k}"),
+                None => format!("{path}/{k}"),
+            };
+            if let Some(found) = walk(child, &p, key) {
+                return Some(found);
+            }
+        }
+        None
+    }
+    walk(tree, tree["key"].as_str()?, key)
+}
+
+/// Send a notification (no id, no answer).
+pub async fn notify(ws: &mut Ws, method: &str, params: Value) {
+    ws.raw
+        .send(Message::text(json!({"jsonrpc":"2.0","method":method,"params":params}).to_string()))
+        .await
+        .unwrap();
+}
+
+/// Wait for a notification of `method` whose params satisfy `ok`; others stay in the backlog, in order.
+pub async fn notification_where(ws: &mut Ws, method: &str, ok: impl Fn(&Value) -> bool) -> Value {
+    if let Some(i) = ws.backlog.iter().position(|m| m["method"] == method && ok(&m["params"])) {
+        return ws.backlog.remove(i)["params"].clone();
+    }
+    loop {
+        let m = next_json(&mut ws.raw).await;
+        if m["method"] == method && ok(&m["params"]) {
+            return m["params"].clone();
+        }
+        ws.backlog.push(m);
     }
 }

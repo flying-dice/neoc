@@ -236,3 +236,32 @@ silently. `lint:luau` and `lint:stylua` skip with a message when `luau-lsp` or
   aborted mid-await is only dropped at the next GC, so no lock or transaction is held across an await (a call that
   was cut off cannot wedge the next one); `string` coercion makes `raw_get::<String>(5)` succeed for a number, so
   check the variant.
+
+### Windows and the view protocol (wave A4, phase 2)
+
+- **A window is a view instance.** `app.window(name, { client, state, render, onOpen, onClose })` declares a kind;
+  `view.open` creates an instance with its own `w` (per-window `w.state`, `w.client` Refs and `:get`/`:set`, `w.env`
+  Refs, `w:toast/focus/scrollTo/announce/copy/close`). `render(w)` runs as a pure, tracked scope: state it reads is
+  the instance's dependency set, and a write inside it raises. The Luau node tree (from the generated
+  `@agentos/ui`) becomes the wire tree, **handlers stay closures in the VM keyed `path#event`**, and the tree is
+  validated (`validate_with`, with the view's client and source declarations) before it leaves the VM.
+- **Sources per render.** A source factory called in `render` returns a handle `{["$source"] = id}` (any other field
+  is a `src.<id>.<field>` ref; `$`-prefixed keys are nil). One id per (declaration, params) pair, stable across
+  renders (`s2`, then `s2_2` for a second param set), so ops do not churn. `view.open` subscribes each source with its
+  params resolved from the client's values; `source.set` re-parameterises or moves the window; a re-render that starts
+  to use a new source declares it in `data.patch.declare` with its first window.
+- **Ordering.** After a handler (or an agent tool, through the `AppObserver`) the view service *settles*: re-render
+  every view whose last render read state that changed (keyed `diff` -> `view.ops`, `base`/`rev`; a tree over 1 000
+  ops goes as `view.tree`), deliver the windows' commands and `client.set`, refresh the live sources. All of it is
+  queued on the socket before the response, which therefore means "the UI already reflects it". Notifications from
+  the client are handled in order, inline, so `client.state` is FIFO ahead of a later event.
+- **Two-way writes.** `row.set {source, key, field, value, baseRev}`: the binding kind (text / scalar) comes from the
+  component schema (`ui::bindings`); the merge base is the value the host last sent for that row field (a ring of
+  8); the ack carries `resolution` (`accepted` / `merged` / `replaced` / `rejected`) and, when a value was replaced,
+  `undo {revisionId, lost}` that `row.restore` puts back. `persist = "app"` client values are stored in `_ui_state`
+  and come back in the next `view.open`.
+- **Gaps.** `state.set` (two-way bound window state) answers an error: app/window state is read as values in render,
+  so there is no `state.*` ref to bind; `app:openWindow` has no host-to-client message yet (the requests queue for the
+  shell); `view.resize` / `view.visibility` are accepted and ignored; a toast action's `onTap` is not routed back;
+  renders are not coalesced per frame; host restart has no grace period (a reconnect opens fresh instances that
+  adopt the client's persisted values).

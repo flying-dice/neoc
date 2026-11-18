@@ -30,7 +30,7 @@ use agentos_application::{
         AgentDirectory, AppRuntime, Clock, DataStore, DeviceRegistry, EventSink, Fetcher, InstalledAppStore,
         RandomSource, ToolRegistry,
     },
-    AppService, DeviceService, PairingPolicy, Ports,
+    AppService, DeviceService, PairingPolicy, Ports, ViewService,
 };
 use agentos_domain::{AgentId, AgentIdentity};
 use agentos_fetch::UrlFetcher;
@@ -99,6 +99,7 @@ impl HostConfig {
 pub struct Host {
     pub router: Router,
     pub service: Arc<AppService>,
+    pub views: Arc<ViewService>,
     pub devices: Arc<DeviceService>,
     pub shutdown: CancellationToken,
 }
@@ -192,6 +193,9 @@ pub fn build(cfg: HostConfig) -> anyhow::Result<Host> {
         background: Arc::new(platform::TokioBackground),
     }));
     hub.bind(service.clone(), devices.clone());
+    let views = Arc::new(ViewService::new(service.clone()));
+    service.add_observer(views.clone());
+    hub.bind_views(views.clone());
 
     // the Origin/Host guard knows the machine's own network identity
     let mut guard = match cfg.interfaces {
@@ -219,5 +223,5 @@ pub fn build(cfg: HostConfig) -> anyhow::Result<Host> {
     }
     let router = router.layer(from_fn_with_state(Arc::new(guard), origin_guard));
 
-    Ok(Host { router, service, devices, shutdown })
+    Ok(Host { router, service, views, devices, shutdown })
 }

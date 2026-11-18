@@ -11,27 +11,19 @@ use agentos_application::{
     testing::CollectingSink,
     AppStatus, BindingKind, Resolution, WriteRequest,
 };
-use agentos_domain::{Actor, AgentId, AgentIdentity, AppId, AppRef, FileRef, Manifest, Permission};
+use agentos_domain::{Actor, AppId, AppRef, FileRef, Manifest, Permission};
 use agentos_host::startup::{prepare_data_dir, start_apps};
-use common::{connect_rpc, next_json, pair, start, Running, Socket};
-use futures_util::SinkExt;
-use rmcp::{
-    model::CallToolRequestParams,
-    service::{NotificationContext, RunningService},
-    transport::{streamable_http_client::StreamableHttpClientTransportConfig, StreamableHttpClientTransport},
-    ClientHandler, RoleClient, ServiceExt,
+use common::{
+    browser, call, claude, connect_agent, connect_rpc, next_notification, pair, rpc, start, temp, text_of,
+    tool_names, wait_until, Ws,
 };
-use serde_json::{json, Value};
+use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::{
-    path::{Path, PathBuf},
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
+    path::Path,
+    sync::{atomic::Ordering, Arc},
     time::Duration,
 };
-use tokio_tungstenite::tungstenite::Message;
 
 /// Publish the fixture app under `root` as an app ref with the id `id`; returns the `file://` URL of the ref.
 fn publish_app(root: &Path, id: &str) -> String {
@@ -60,99 +52,6 @@ fn publish_app(root: &Path, id: &str) -> String {
 
 fn publish_notes_app(root: &Path) -> String {
     publish_app(root, "notes")
-}
-
-#[derive(Clone, Default)]
-struct Counting(Arc<AtomicUsize>);
-impl ClientHandler for Counting {
-    async fn on_tool_list_changed(&self, _: NotificationContext<RoleClient>) {
-        self.0.fetch_add(1, Ordering::SeqCst);
-    }
-}
-
-type Agent = RunningService<RoleClient, Counting>;
-
-async fn connect_agent(addr: std::net::SocketAddr, token: &str) -> (Agent, Counting) {
-    let counter = Counting::default();
-    let transport = StreamableHttpClientTransport::from_config(
-        StreamableHttpClientTransportConfig::with_uri(format!("http://{addr}/mcp")).auth_header(token),
-    );
-    (counter.clone().serve(transport).await.unwrap(), counter)
-}
-
-async fn tool_names(agent: &Agent) -> Vec<String> {
-    agent.peer().list_tools(None).await.unwrap().tools.iter().map(|t| t.name.to_string()).collect()
-}
-
-async fn call(agent: &Agent, tool: &str, args: Value) -> rmcp::model::CallToolResult {
-    let args = args.as_object().unwrap().clone();
-    agent.peer().call_tool(CallToolRequestParams::new(tool.to_owned()).with_arguments(args)).await.unwrap()
-}
-
-fn text_of(out: &rmcp::model::CallToolResult) -> String {
-    format!("{:?}", out.content)
-}
-
-async fn wait_until(what: &str, mut ok: impl FnMut() -> bool) {
-    for _ in 0..200 {
-        if ok() {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    panic!("timed out waiting for {what}");
-}
-
-fn claude() -> (String, AgentIdentity) {
-    (
-        "tok-claude".into(),
-        AgentIdentity {
-            id: AgentId("claude".into()),
-            name: "Claude".into(),
-            grants: vec![Permission::CallAnyTool],
-        },
-    )
-}
-
-/// WS client that keeps notifications that arrive while it waits for a response (they can overtake it).
-struct Ws {
-    raw: Socket,
-    backlog: Vec<Value>,
-}
-async fn rpc(ws: &mut Ws, id: i64, method: &str, params: Value) -> Value {
-    ws.raw
-        .send(Message::text(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}).to_string()))
-        .await
-        .unwrap();
-    loop {
-        let m = next_json(&mut ws.raw).await;
-        if m["id"] == id {
-            return m;
-        }
-        ws.backlog.push(m);
-    }
-}
-async fn next_notification(ws: &mut Ws, method: &str) -> Value {
-    if let Some(i) = ws.backlog.iter().position(|m| m["method"] == method) {
-        return ws.backlog.remove(i)["params"].clone();
-    }
-    loop {
-        let m = next_json(&mut ws.raw).await;
-        if m["method"] == method {
-            return m["params"].clone();
-        }
-        ws.backlog.push(m);
-    }
-}
-
-async fn browser(r: &Running) -> Ws {
-    let cookie = pair(r, "Safari on iPad").await;
-    let origin = format!("http://127.0.0.1:{}", r.addr.port());
-    Ws { raw: connect_rpc(r.addr, Some(&cookie), Some(&origin)).await.unwrap(), backlog: vec![] }
-}
-
-fn temp(name: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("host-{name}-{}", std::process::id()))
 }
 
 #[tokio::test]
@@ -271,29 +170,6 @@ async fn install_over_rpc_then_use_from_mcp_and_ui_and_uninstall() {
     let out = call(&agent, "notes__notes.append", json!({"id": "x", "text": "x"})).await;
     assert_eq!(out.is_error, Some(true));
     assert!(text_of(&out).contains("invalid input"), "{out:?}");
-
-    // --- the user clicks "add" in the UI: ui.event -> Luau handler -> new view tree pushed back
-    let reply = rpc(
-        &mut ws,
-        3,
-        "ui.event",
-        json!({"app":"notes","event":{"target":"add-btn","name":"add","data":{"body":"from the user"}}}),
-    )
-    .await;
-    assert!(reply.get("error").is_none(), "{reply}");
-    let tree = next_notification(&mut ws, "ui.tree").await;
-    assert_eq!(tree["root"]["children"][0]["text"], "Notes: 2");
-    let labels: Vec<String> = tree["root"]["children"][1]["items"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|i| i["label"].as_str().unwrap().to_owned())
-        .collect();
-    assert_eq!(labels, vec!["From the agent\n- buy oat milk".to_owned(), "from the user".to_owned()]);
-
-    // --- bad requests are JSON-RPC errors, not hangs
-    let reply = rpc(&mut ws, 4, "ui.event", json!({"app":"ghost","event":{"target":"x","name":"y"}})).await;
-    assert_eq!(reply["error"]["code"], -32002, "{reply}");
 
     // --- uninstall: the tool disappears for the agent (list_changed), VM + registry cleaned up
     let (agent2, counter) = connect_agent(addr, "tok-claude").await;

@@ -58,6 +58,11 @@ impl RpcPeer {
         self.device.as_ref()
     }
 
+    /// An id of this connection, unique among the live ones.
+    pub fn connection_id(&self) -> u64 {
+        Arc::as_ptr(&self.next_id) as usize as u64
+    }
+
     /// Do both handles belong to the same socket?
     pub fn is_same_connection(&self, other: &RpcPeer) -> bool {
         Arc::ptr_eq(&self.next_id, &other.next_id)
@@ -104,6 +109,8 @@ pub trait RpcHandler: Send + Sync + 'static {
     async fn notification(&self, _peer: &RpcPeer, _method: &str, _params: Value) {}
     /// Called once per connection (register the peer in the host's client list / `EventSink`).
     async fn connected(&self, _peer: RpcPeer) {}
+    /// Called once when the connection ended, however it ended.
+    async fn disconnected(&self, _peer: &RpcPeer) {}
 }
 
 pub fn rpc_router(handler: Arc<dyn RpcHandler>) -> Router {
@@ -174,8 +181,8 @@ async fn serve_socket(socket: WebSocket, handler: Arc<dyn RpcHandler>, device: O
                 });
             }
             Ok(RpcMessage::Notification { method, params, .. }) => {
-                let (h, p) = (handler.clone(), peer.clone());
-                tokio::spawn(async move { h.notification(&p, &method, params).await });
+                // in order, before the next frame is read: `client.state` is FIFO ahead of a later event
+                handler.notification(&peer, &method, params).await;
             }
             Ok(RpcMessage::Response { id: RpcId::Num(id), result, .. }) => {
                 if let Some(w) = peer.pending.lock().remove(&id) {
@@ -191,5 +198,6 @@ async fn serve_socket(socket: WebSocket, handler: Arc<dyn RpcHandler>, device: O
         }
     }
     peer.pending.lock().clear(); // wakes every in-flight server->client request with Closed
+    handler.disconnected(&peer).await;
     writer.abort();
 }
