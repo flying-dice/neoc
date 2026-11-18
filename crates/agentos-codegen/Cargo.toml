@@ -1,0 +1,15 @@
+[package]
+name = "agentos-codegen"
+description = "Adapter (dev-time): generates TypeScript types (ts-rs) and Luau type definitions (from JSON Schema via schemars) from the domain types."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+agentos-domain = { workspace = true, features = ["codegen"] }
+schemars = { workspace = true }
+serde_json = { workspace = true }
+ts-rs = { workspace = true }
+
+[lints]
+workspace = true

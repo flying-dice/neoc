@@ -1,0 +1,25 @@
+[package]
+name = "agentos-luau"
+description = "Adapter: sandboxed Luau (mlua) implementing the AppRuntime port, one VM per app."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+agentos-domain = { workspace = true }
+agentos-application = { workspace = true }
+async-trait = { workspace = true }
+mlua = { workspace = true }
+notify = { workspace = true }
+parking_lot = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+# adapter integration tests run apps against the REAL sqlite adapter (dev-only edge, not a runtime one)
+agentos-sqlite = { path = "../agentos-sqlite" }
+
+[lints]
+workspace = true

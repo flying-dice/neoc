@@ -1,0 +1,25 @@
+[package]
+name = "agentos-http"
+description = "Adapter: axum. /rpc JSON-RPC-over-WebSocket peer (+ Origin/Host guard) and static serving of the built client."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+agentos-application = { workspace = true }
+agentos-domain = { workspace = true }
+async-trait = { workspace = true }
+axum = { workspace = true }
+futures-util = { workspace = true }
+parking_lot = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tower-http = { workspace = true }
+
+[dev-dependencies]
+tokio-tungstenite = { workspace = true }
+
+[lints]
+workspace = true
