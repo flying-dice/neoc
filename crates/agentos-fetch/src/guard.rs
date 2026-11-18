@@ -40,9 +40,15 @@ fn v6_blocked(ip: Ipv6Addr) -> bool {
     if s[0] == 0x64 && s[1] == 0xff9b && s[2..6].iter().all(|x| *x == 0) {
         return v4_blocked(Ipv4Addr::from(u32::from(s[6]) << 16 | u32::from(s[7])));
     }
+    // 6to4 (2002::/16) embeds an IPv4 address in the next 32 bits
+    if s[0] == 0x2002 {
+        return v4_blocked(Ipv4Addr::from(u32::from(s[1]) << 16 | u32::from(s[2])));
+    }
     ip.is_loopback()
         || ip.is_unspecified()
         || ip.is_multicast()
+        || s[..6].iter().all(|x| *x == 0) // deprecated IPv4-compatible ::/96, which embeds any IPv4 address
+        || (s[0] & 0xffc0) == 0xfec0 // deprecated site local fec0::/10
         || (s[0] & 0xfe00) == 0xfc00 // unique local fc00::/7 (fd00:ec2::254 is the AWS IPv6 metadata address)
         || (s[0] & 0xffc0) == 0xfe80 // link local
 }
@@ -160,10 +166,18 @@ mod tests {
             "::ffff:10.0.0.1",
             "::ffff:169.254.169.254",
             "64:ff9b::a00:1",
+            "::10.0.0.1",
+            "::a9fe:a9fe",
+            "::7f00:1",
+            "fec0::1",
+            "feff::1",
+            "2002:a00:1::",
+            "2002:a9fe:a9fe::1",
+            "2002:7f00:1::1",
         ] {
             assert!(is_blocked(ip(blocked), false), "{blocked} must be blocked");
         }
-        for public in ["93.184.216.34", "1.1.1.1", "2606:4700:4700::1111", "::ffff:8.8.8.8", "100.128.0.1"] {
+        for public in ["93.184.216.34", "1.1.1.1", "2606:4700:4700::1111", "::ffff:8.8.8.8", "100.128.0.1", "2002:808:808::1"] {
             assert!(!is_blocked(ip(public), false), "{public} must be allowed");
         }
     }
