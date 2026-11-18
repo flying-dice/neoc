@@ -340,8 +340,11 @@ pub struct InstalledApp {
     /// What the person approved at install: the manifest's permissions then. A reload whose manifest asks
     /// for more is refused until the app is installed again (and so approved again).
     pub permissions: Vec<Permission>,
-    /// SHA-256 (hex) of the app-ref document that was installed or last loaded. Empty on a record from
-    /// before this was kept: the next load adopts what the manifest asks for.
+    /// SHA-256 (hex) of the app-ref document that was installed or last loaded. It is what the person
+    /// reviewed (install is pinned to it) and then a record of what is loaded: every successful load of a
+    /// changed ref (a dev `app.reload`, a restart) replaces it, because a reload legitimately changes files.
+    /// It is not compared on reload: the app id and the approved permissions are what a load must keep.
+    /// Empty on a record from before this was kept: the next load adopts what the manifest asks for.
     pub ref_sha256: String,
 }
 

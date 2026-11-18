@@ -465,6 +465,30 @@ async fn install_takes_the_digest_that_was_previewed() {
 }
 
 #[tokio::test]
+async fn a_reload_records_the_digest_it_loaded_and_a_refused_one_keeps_the_last_approved() {
+    // the digest is a record of the ref last loaded, not a pin: a dev `app.reload` legitimately changes files
+    let f = Fakes::new();
+    let url = f.add_app_with("notes", &[("t", "x")], &[], vec![Permission::Data]);
+    let svc = f.service();
+    let id = svc.install_from_url(&url).await.unwrap();
+    let installed = f.installed.records()[0].ref_sha256.clone();
+    assert_eq!(installed.len(), 64);
+
+    rewrite_ref(&f, &url, |r| r.manifest.version = "9.9.9".into());
+    svc.reload(&id).await.unwrap();
+    let after = f.installed.records()[0].clone();
+    assert_ne!(after.ref_sha256, installed, "the ref changed, so the record says which one is now loaded");
+    assert_eq!(after.ref_sha256, svc.preview(&url).await.unwrap().sha256);
+    assert_eq!(after.version, "9.9.9");
+
+    // a ref that asks for more is refused and the record still names the last one that was approved
+    rewrite_ref(&f, &url, |r| r.manifest.permissions.push(Permission::Shell));
+    assert!(svc.reload(&id).await.is_err());
+    assert_eq!(f.installed.records()[0].ref_sha256, after.ref_sha256);
+    assert_eq!(f.installed.records()[0].permissions, vec![Permission::Data]);
+}
+
+#[tokio::test]
 async fn a_record_from_before_approvals_were_kept_adopts_what_the_manifest_asks_for() {
     let f = Fakes::new();
     let url = f.add_app_with("notes", &[("t", "x")], &[], vec![Permission::Data, Permission::Notify]);
