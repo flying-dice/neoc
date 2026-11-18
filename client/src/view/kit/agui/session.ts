@@ -12,6 +12,7 @@
  * mutated, so a Svelte wrapper only has to assign `getState()` on every notification.
  */
 import { EventType, type JsonPatchOperation } from '@ag-ui/core'
+import { messageOf } from '../../errors'
 import { applyPatch } from './jsonPatch'
 import {
   emptyThreadState,
@@ -55,10 +56,11 @@ export type ChatItem =
 
 /**
  * The `/agui` thread id for an app's thread: `<app>:<id>`. The app chooses `id`; the renderer adds the prefix, so one
- * app can never name another app's thread. With no app (a story, a test) or no id, the id is returned as given.
+ * app can never name another app's thread. Without an app (a window that was never opened) or without an id there is
+ * no thread: an unscoped id would reach any app's chat, so it is refused rather than passed through.
  */
 export function scopedThread(app: string | undefined, id: string | undefined): string | undefined {
-  if (!id || !app) return id
+  if (!id || !app) return undefined
   return `${app}:${id}`
 }
 
@@ -249,7 +251,7 @@ export class ChatSession {
       if (!res.ok) throw new Error(await httpError(res))
       this.load(snapshotSchema.parse(await res.json()))
     } catch (e) {
-      this.set({ status: 'error', ready: false, error: message(e) })
+      this.set({ status: 'error', ready: false, error: messageOf(e) })
     }
   }
 
@@ -365,7 +367,7 @@ export class ChatSession {
       this.set({ state: parseThreadState(await res.json()) })
     } catch (e) {
       this.set({ state: before })
-      this.push({ kind: 'error', id: this.newId(), text: message(e) })
+      this.push({ kind: 'error', id: this.newId(), text: messageOf(e) })
     }
   }
 
@@ -385,7 +387,7 @@ export class ChatSession {
       if (this.s.status === 'running' && !ctl.signal.aborted)
         this.fail('The connection closed before the run finished.')
     } catch (e) {
-      if (!ctl.signal.aborted) this.fail(message(e))
+      if (!ctl.signal.aborted) this.fail(messageOf(e))
     } finally {
       if (this.abort === ctl) this.abort = null
     }
@@ -544,8 +546,6 @@ export class ChatSession {
     this.listeners.clear()
   }
 }
-
-const message = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
 /** The `{ "error": "..." }` of a failed request, else its text, else its status line. */
 async function httpError(res: Response): Promise<string> {

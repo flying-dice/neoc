@@ -3,7 +3,9 @@
 //! The host prints a short-lived **pairing code**; a client posts it and receives a **session token**
 //! (a random secret) in exchange. Only SHA-256 hashes of codes and tokens are stored. Codes are
 //! single-use, expire, and wrong guesses are rate limited (per client address, under a ceiling for all
-//! clients together) and eventually burn every outstanding code.
+//! clients together). Wrong guesses are also counted per client, each client counting for at most
+//! `burn_failures_per_client` of them, and once the clients together reach `burn_after_failures` every outstanding
+//! code is burned: a distributed guesser destroys the codes, but one client inside its own limit cannot.
 //! There is no trusted-network shortcut: loopback clients pair like everyone else.
 
 use crate::{
@@ -38,8 +40,13 @@ pub struct PairingPolicy {
     /// addresses.
     pub max_attempts_total: usize,
     pub attempt_window_ms: u64,
-    /// Wrong guesses (inside `burn_window_ms`) after which every outstanding code is destroyed.
+    /// Wrong guesses (inside `burn_window_ms`, counted per client, each client at most
+    /// `burn_failures_per_client`) after which every outstanding code is destroyed: a ceiling for guessers
+    /// with many addresses. It should be above `burn_failures_per_client`, or one client alone could burn the
+    /// codes.
     pub burn_after_failures: usize,
+    /// How many wrong guesses one client address contributes to that ceiling.
+    pub burn_failures_per_client: usize,
     pub burn_window_ms: u64,
 }
 
@@ -51,6 +58,7 @@ impl Default for PairingPolicy {
             max_attempts_total: 20,
             attempt_window_ms: 60_000,
             burn_after_failures: 10,
+            burn_failures_per_client: 5,
             burn_window_ms: 10 * 60_000,
         }
     }
@@ -111,7 +119,8 @@ pub struct DeviceService {
     /// Timestamps (unix ms) of recent attempts, oldest first. In memory: a restart is a fresh window,
     /// but the codes themselves expire on their own.
     attempts: Mutex<Attempts>,
-    failures: Mutex<VecDeque<u64>>,
+    /// Recent wrong guesses per client (at most `burn_failures_per_client` kept each), oldest first.
+    failures: Mutex<HashMap<Client, VecDeque<u64>>>,
     /// Told when a device is revoked, so whatever it has open (sockets, event streams) can be closed.
     revoked: Mutex<Vec<RevokedListener>>,
 }
@@ -173,7 +182,7 @@ impl DeviceService {
             None => false,
         };
         if !valid {
-            self.record_failure(now).await?;
+            self.record_failure(client, now).await?;
             return Err(PairError::InvalidCode);
         }
         self.release_attempt(client, now);
@@ -272,14 +281,25 @@ impl DeviceService {
         }
     }
 
-    async fn record_failure(&self, now: u64) -> Result<(), PairError> {
+    async fn record_failure(&self, client: Client, now: u64) -> Result<(), PairError> {
         let burn = {
+            let window = self.policy.burn_window_ms;
+            let kept = self.policy.burn_failures_per_client.max(1);
             let mut failures = self.failures.lock();
-            while failures.front().is_some_and(|t| now.saturating_sub(*t) >= self.policy.burn_window_ms) {
-                failures.pop_front();
+            // a client with nothing recent is forgotten, so the map stays as small as the traffic
+            failures.retain(|_, queue| {
+                while queue.front().is_some_and(|t| now.saturating_sub(*t) >= window) {
+                    queue.pop_front();
+                }
+                !queue.is_empty()
+            });
+            let mine = failures.entry(client).or_default();
+            mine.push_back(now);
+            while mine.len() > kept {
+                mine.pop_front();
             }
-            failures.push_back(now);
-            let burn = failures.len() >= self.policy.burn_after_failures;
+            let counted: usize = failures.values().map(VecDeque::len).sum();
+            let burn = counted >= self.policy.burn_after_failures;
             if burn {
                 failures.clear();
             }
@@ -455,16 +475,53 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn persistent_guessing_burns_every_outstanding_code() {
+    async fn guessers_with_many_addresses_burn_every_outstanding_code() {
         let r = rig();
         let code = r.svc.issue_pairing_code().await.unwrap();
-        for _ in 0..2 {
+        // two addresses, each inside its own limit, together reach the ceiling
+        for client in ["10.0.0.1", "10.0.0.2"] {
             for _ in 0..5 {
-                let _ = r.svc.pair(None, "AAAA-AAAA", "x").await;
+                let _ = r.svc.pair(ip(client), "AAAA-AAAA", "x").await;
+            }
+        }
+        assert_eq!(r.svc.pair(ip("10.0.0.3"), &code.code, "x").await, Err(PairError::InvalidCode), "burned");
+    }
+
+    #[tokio::test]
+    async fn one_client_inside_its_own_limit_cannot_burn_the_codes() {
+        let r = rig();
+        let code = r.svc.issue_pairing_code().await.unwrap();
+        // 40 wrong guesses over eight minutes, always at the limit: each window of the rate limit is allowed
+        for _ in 0..8 {
+            for _ in 0..5 {
+                assert_eq!(
+                    r.svc.pair(ip("192.168.1.50"), "AAAA-AAAA", "x").await,
+                    Err(PairError::InvalidCode)
+                );
             }
             r.clock.advance(61_000);
         }
-        assert_eq!(r.svc.pair(None, &code.code, "x").await, Err(PairError::InvalidCode), "burned");
+        let paired = r.svc.pair(ip("192.168.1.60"), &code.code, "iPad").await;
+        assert!(paired.is_ok(), "the code the person is about to type still works: {paired:?}");
+    }
+
+    #[tokio::test]
+    async fn failures_leave_the_count_when_the_window_passes() {
+        let r = rig();
+        let code = r.svc.issue_pairing_code().await.unwrap();
+        for client in ["10.0.0.1", "10.0.0.2"] {
+            for _ in 0..4 {
+                let _ = r.svc.pair(ip(client), "AAAA-AAAA", "x").await;
+            }
+        }
+        r.clock.advance(11 * 60_000); // 8 failures: below the ceiling, and now older than the window
+        for client in ["10.0.0.3", "10.0.0.4"] {
+            for _ in 0..4 {
+                let _ = r.svc.pair(ip(client), "AAAA-AAAA", "x").await;
+            }
+        }
+        let fresh = r.svc.issue_pairing_code().await.unwrap();
+        assert!(r.svc.pair(ip("10.0.0.5"), &fresh.code, "x").await.is_ok(), "{code:?} aged out, not burned");
     }
 
     #[tokio::test]

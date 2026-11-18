@@ -32,7 +32,7 @@ export type DeviceRow = HostDeviceRow
 
 /** The calls the shell makes. The real one is the session's `call`; stories and tests pass a fake. */
 export interface HostApi {
-  call<T>(method: string, params?: Record<string, unknown>): Promise<T>
+  call(method: string, params?: Record<string, unknown>): Promise<unknown>
   /** Host notifications that no window owns (`window.open`, `app.installed`, ...). */
   onNotification(listener: (method: string, params: Record<string, unknown>) => void): () => void
 }

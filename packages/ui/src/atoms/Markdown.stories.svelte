@@ -58,6 +58,7 @@
   ].join('\n')
 
   const open = fn()
+  const aux = fn()
 </script>
 
 <Story name="Document" args={{ text: sample, selectable: true }} />
@@ -73,6 +74,24 @@
     await waitFor(() => expect(open).toHaveBeenCalledWith('https://example.com/docs'))
     await userEvent.click(canvas.getByTestId('markdown-link-1'))
     await waitFor(() => expect(open).toHaveBeenCalledWith('mailto:hi@example.com'))
+  }}
+/>
+
+<!-- A middle click would open a tab straight from the href: it asks the host like a click does, and the browser does nothing itself. -->
+<Story
+  name="Middle click asks too"
+  args={{ text: 'Read the [docs](https://example.com/docs).', onlink: aux }}
+  play={async ({ canvasElement }) => {
+    const link = within(canvasElement).getByTestId('markdown-link-0')
+    const middle = new MouseEvent('auxclick', { button: 1, bubbles: true, cancelable: true })
+    link.dispatchEvent(middle)
+    await expect(middle.defaultPrevented).toBe(true)
+    await waitFor(() => expect(aux).toHaveBeenCalledWith('https://example.com/docs'))
+    // the context menu's button (2) is not ours
+    const right = new MouseEvent('auxclick', { button: 2, bubbles: true, cancelable: true })
+    link.dispatchEvent(right)
+    await expect(right.defaultPrevented).toBe(false)
+    await expect(aux).toHaveBeenCalledTimes(1)
   }}
 />
 

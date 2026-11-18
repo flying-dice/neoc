@@ -2,8 +2,8 @@
   @atom Markdown — Markdown rendered as elements, never as markup. The source is parsed to a closed tree of blocks
   and inline nodes (`../markdown`, the `marked` lexer) and each node becomes a Svelte element; raw HTML in the
   source is shown as text, images are never fetched, and a link keeps its target only for http, https and mailto.
-  Clicking a link calls `onlink(url)` (the host opens it, after the usual confirmation) and never navigates the
-  window itself. Test ids: `testid` on the root, `${testid}-link-<n>` on each link (in document order).
+  Clicking a link (or middle-clicking it, which would otherwise open a tab on its own) calls `onlink(url)` (the
+  host opens it, after the usual confirmation) and never navigates the window itself. Test ids: `testid` on the root, `${testid}-link-<n>` on each link (in document order).
 -->
 <script lang="ts">
   import { parseMarkdown, type Block, type Inline, type MarkdownOptions } from '../markdown'
@@ -51,6 +51,10 @@
     e.preventDefault()
     onlink?.(href)
   }
+  /** Middle-click opens a tab straight from the `href`: take it over, so it asks like a click does. */
+  function openAux(e: MouseEvent, href: string): void {
+    if (e.button === 1) open(e, href)
+  }
   const textAlign = (a: 'left' | 'center' | 'right' | null): string | undefined => a ?? undefined
 </script>
 
@@ -66,7 +70,8 @@
         href={node.href}
         rel="noopener noreferrer"
         data-testid="{testid}-link-{linkIds.get(node) ?? 0}"
-        onclick={(e) => open(e, node.href)}>{@render inlines(node.children)}</a
+        onclick={(e) => open(e, node.href)}
+        onauxclick={(e) => openAux(e, node.href)}>{@render inlines(node.children)}</a
       >
     {/if}
   {/each}

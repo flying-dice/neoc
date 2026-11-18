@@ -21,12 +21,12 @@
   const withUnknownShapes = async (): Promise<void> => {
     const base = createFakeHost()
     const api: HostApi = {
-      call: <T,>(method: string, params: Record<string, unknown> = {}): Promise<T> =>
+      call: (method: string, params: Record<string, unknown> = {}): Promise<unknown> =>
         method === 'app.list'
-          ? Promise.resolve({ apps: null } as T)
+          ? Promise.resolve({ apps: null })
           : method === 'app.available'
-            ? Promise.resolve({ apps: 5, errors: 'none' } as T)
-            : base.call<T>(method, params),
+            ? Promise.resolve({ apps: 5, errors: 'none' })
+            : base.call(method, params),
       onNotification: (listener) => base.onNotification(listener)
     }
     host.useFake(api, [FAKE_CALCULATOR])
@@ -138,10 +138,15 @@
       canvas.getByTestId('discover-add-url'),
       'https://apps.example.org/notes/app-ref.json'
     )
+    // every button of the flow is a target a finger can hit (44 pt)
+    const tall = (id: string): number => canvas.getByTestId(id).getBoundingClientRect().height
+    await expect(tall('discover-add-preview')).toBeGreaterThanOrEqual(44)
     await userEvent.click(canvas.getByTestId('discover-add-preview'))
     await expect(await canvas.findByTestId('discover-add-preview-card')).toHaveTextContent(
       'Version 0.2.0'
     )
+    await expect(tall('discover-add-install')).toBeGreaterThanOrEqual(44)
+    await expect(tall('discover-add-cancel')).toBeGreaterThanOrEqual(44)
   }}
 />
 

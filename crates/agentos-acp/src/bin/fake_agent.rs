@@ -76,11 +76,13 @@ fn modes(current: &str) -> SessionModeState {
     )
 }
 
-async fn ask(cx: &ConnectionTo<agent_client_protocol::Client>, session: &str, title: &str) -> Result<String> {
-    let call = ToolCallUpdate::new(
-        "tc-ask",
-        ToolCallUpdateFields::new().title(title.to_owned()).kind(ToolKind::Other),
-    );
+async fn ask(
+    cx: &ConnectionTo<agent_client_protocol::Client>,
+    session: &str,
+    title: &str,
+    kind: ToolKind,
+) -> Result<String> {
+    let call = ToolCallUpdate::new("tc-ask", ToolCallUpdateFields::new().title(title.to_owned()).kind(kind));
     let options = vec![
         PermissionOption::new("allow", "Allow once", PermissionOptionKind::AllowOnce),
         PermissionOption::new("always", "Always allow", PermissionOptionKind::AllowAlways),
@@ -155,12 +157,13 @@ async fn prompt(
         }
         "ask" | "ask-write" => {
             say(cx, session, "Asking. ")?;
-            let tool = if input.trim() == "ask" {
-                "mcp__agentos__notes__search"
+            // a search says it is one (the host auto-approves only read, search and fetch); an append does not
+            let (tool, kind) = if input.trim() == "ask" {
+                ("mcp__agentos__notes__search", ToolKind::Search)
             } else {
-                "mcp__agentos__notes__append"
+                ("mcp__agentos__notes__append", ToolKind::Other)
             };
-            let answer = ask(cx, session, tool).await?;
+            let answer = ask(cx, session, tool, kind).await?;
             say(cx, session, &format!("Answer: {answer}"))?;
         }
         "state" => {

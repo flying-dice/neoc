@@ -68,9 +68,11 @@ describe('thread ids are scoped to the app that names them', () => {
     expect(scopedThread('notes', 'agents:t1')).toBe('notes:agents:t1')
   })
 
-  test('with no app (a story) or no id the id is unchanged', () => {
-    expect(scopedThread(undefined, 't1')).toBe('t1')
+  test('with no app or no id there is no thread: an unscoped id is never passed through', () => {
+    expect(scopedThread(undefined, 't1')).toBeUndefined()
+    expect(scopedThread('', 't1')).toBeUndefined()
     expect(scopedThread('agents', undefined)).toBeUndefined()
+    expect(scopedThread('agents', '')).toBeUndefined()
   })
 })
 

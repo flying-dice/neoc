@@ -71,6 +71,8 @@ async fn a_malformed_params_object_is_32602_for_the_app_and_device_methods() {
     let bad: Vec<(&str, Value)> = vec![
         ("app.install", json!({"url": "x", "force": true})),
         ("app.install", json!({})),
+        ("app.install", json!({"url": "x"})), // the digest of what was previewed is required
+        ("app.install", json!({"url": "x", "sha256": null})),
         ("app.install", json!({"url": 3})),
         ("app.preview", json!({"url": "x", "extra": 1})),
         ("app.preview", json!([])),

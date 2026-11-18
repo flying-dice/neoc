@@ -3,16 +3,17 @@
   shell window mounts, renders it with the managed renderer, and closes it (`view.close`) when the window goes.
   The app runs on the host; nothing of it runs here. Atoms: ActivityIndicator, Button,
   Text.
-  Test ids: `${appId}-opening` while it opens, `${appId}-failed` (+ `-retry`) when it cannot, and the renderer's
-  `${appId}-view` once it is open.
+  Test ids: `${appId}-opening` while it opens, `${appId}-failed` (+ `-retry`, a 44 pt target that takes focus back
+  when a retry fails again) when it cannot, and the renderer's `${appId}-view` once it is open.
 -->
 <script lang="ts">
-  import { onDestroy } from 'svelte'
+  import { onDestroy, tick } from 'svelte'
   import { ActivityIndicator, Button, Text } from '@agentos/ui/atoms'
   import { ViewHost, type protocol, type ViewCore } from '../view'
   import { host } from '../lib/host.svelte'
   import { installedApp } from '../lib/apps.svelte'
   import { openExternal } from '../shell/links'
+  import { messageOf } from '../view/errors'
 
   interface Props {
     appId: string
@@ -53,8 +54,17 @@
         view = opened
       })
       .catch((e: unknown) => {
-        failure = e instanceof Error ? e.message : String(e)
+        failure = messageOf(e)
       })
+  })
+
+  // Retry replaces the alert with the spinner and, when it fails again, the alert with a new button: focus goes
+  // back to that button, so a keyboard or switch user is not dropped to the top of the page for trying twice.
+  $effect(() => {
+    if (!failure || attempt === 0) return
+    void tick().then(() =>
+      box?.querySelector<HTMLElement>(`[data-testid="${appId}-failed-retry"]`)?.focus()
+    )
   })
 
   onDestroy(() => {
@@ -76,7 +86,7 @@
     <div class="state" role="alert" data-testid="{appId}-failed">
       <Text style="headline">Couldn’t open {name}</Text>
       <Text style="footnote" color="secondary">{failure}</Text>
-      <Button testid="{appId}-failed-retry" size="small" capsule onclick={() => attempt++}
+      <Button testid="{appId}-failed-retry" size="small" capsule hit onclick={() => attempt++}
         >Try again</Button
       >
     </div>

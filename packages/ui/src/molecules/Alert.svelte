@@ -3,7 +3,10 @@
   a narrow window). Actions have a role: `default`, `cancel` (bold, runs on Escape) and `destructive` (red); the
   `preferred` action is bold, takes initial focus and runs on Enter from a field. Optional prompt `fields` (text or
   secure) collect values that are handed to the action that closes the alert. Optional `children` render under the
-  message (a long URL, a name that must be read in full: the text wraps anywhere). Focus is trapped and restored.
+  message (a long URL, a name that must be read in full: the text wraps anywhere); they are part of the dialog's
+  accessible description, so a screen reader hears them with the message. Focus starts on the preferred action, or
+  on Cancel with `initialFocus="cancel"` (for a confirmation whose safe answer is to decline). Focus is trapped and
+  restored.
   Atoms: Scrim, Material, TextInput.
   Test ids: `testid` on the dialog, `${testid}-scrim`, `${testid}-action-<key or label slug>` on each action and
   `${testid}-field-<key>` on each field.
@@ -30,6 +33,8 @@
     variant?: 'alert' | 'actionSheet'
     /** The dialog role: `alertdialog` (default for an alert) or `dialog`. */
     role?: 'alertdialog' | 'dialog'
+    /** Which action takes initial focus when there are no fields (default: the preferred one). */
+    initialFocus?: 'preferred' | 'cancel'
     onclose?: () => void
     /** Extra content under the message. */
     children?: Snippet
@@ -44,6 +49,7 @@
     fields = [],
     variant = 'alert',
     role,
+    initialFocus = 'preferred',
     onclose,
     children
   }: Props = $props()
@@ -75,7 +81,11 @@
   }
 
   const keyOf = (a: AlertAction): string => a.key ?? slug(a.label)
-  const isInitial = (a: AlertAction): boolean => fields.length === 0 && (a === preferred || (!preferred && a === cancel))
+  const initial = $derived(initialFocus === 'cancel' && cancel ? cancel : preferred ?? cancel)
+  const isInitial = (a: AlertAction): boolean => fields.length === 0 && a === initial
+  const description = $derived(
+    [message && `${testid}-message`, children && `${testid}-extra`].filter(Boolean).join(' ') || undefined
+  )
 </script>
 
 {#snippet button(action: AlertAction)}
@@ -102,7 +112,7 @@
       data-testid={testid}
       aria-modal="true"
       aria-label={title}
-      aria-describedby={message ? `${testid}-message` : undefined}
+      aria-describedby={description}
       {@attach trapFocus({ onescape: dismissEscape })}
       in:scale={{ start: 1.15, duration: sheet ? 0 : motion(250), easing: cubicOut }}
       out:fade={{ duration: motion(150) }}
@@ -113,7 +123,7 @@
             <div class="body">
               <h2>{title}</h2>
               {#if message}<p id="{testid}-message">{message}</p>{/if}
-              {#if children}<div class="extra">{@render children()}</div>{/if}
+              {#if children}<div class="extra" id="{testid}-extra">{@render children()}</div>{/if}
             </div>
             <div class="actions stacked">
               {#each rest as action (action.label)}{@render button(action)}{/each}
@@ -132,7 +142,7 @@
           <div class="body">
             <h2>{title}</h2>
             {#if message}<p id="{testid}-message">{message}</p>{/if}
-            {#if children}<div class="extra">{@render children()}</div>{/if}
+            {#if children}<div class="extra" id="{testid}-extra">{@render children()}</div>{/if}
             {#if fields.length}
               <form class="fields" onsubmit={(e) => { e.preventDefault(); if (preferred) run(preferred) }}>
                 {#each fields as field, i (field.key)}

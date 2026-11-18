@@ -14,8 +14,8 @@ use agentos_application::{
 use agentos_domain::{Actor, AppId, AppRef, FileRef, Manifest, Permission};
 use agentos_host::startup::{prepare_data_dir, start_apps};
 use common::{
-    browser, call, claude, connect_agent, connect_rpc, next_notification, pair, rpc, start, temp, text_of,
-    tool_names, wait_until, Ws,
+    browser, call, claude, connect_agent, connect_rpc, next_notification, pair, publish_package, rpc, start,
+    temp, text_of, tool_names, wait_until, Ws,
 };
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -76,7 +76,9 @@ async fn install_over_rpc_then_use_from_mcp_and_ui_and_uninstall() {
     let raw =
         connect_rpc(addr, Some(&cookie), Some(&format!("http://127.0.0.1:{}", addr.port()))).await.unwrap();
     let mut ws = Ws { raw, backlog: vec![] };
-    let installed = rpc(&mut ws, 1, "app.install", json!({"url": app_ref_url})).await;
+    let preview = rpc(&mut ws, 50, "app.preview", json!({"url": app_ref_url})).await;
+    let sha256 = preview["result"]["sha256"].as_str().expect("the preview carries the digest").to_owned();
+    let installed = rpc(&mut ws, 1, "app.install", json!({"url": app_ref_url, "sha256": sha256})).await;
     assert_eq!(installed["result"]["app"], "notes", "{installed}");
     assert_eq!(next_notification(&mut ws, "app.installed").await["app"], "notes");
     let listed = rpc(&mut ws, 2, "app.list", json!({})).await;
@@ -361,6 +363,31 @@ async fn shutdown_unloads_installed_apps_and_retracts_their_tools() {
     r.host.service.shutdown().await;
     assert!(r.host.service.installed_apps().is_empty());
     assert!(tmp.join("data/apps/notes.db").exists(), "app data survives a shutdown");
+    r.stop().await;
+    let _ = std::fs::remove_dir_all(tmp);
+}
+
+#[tokio::test]
+async fn the_fetcher_caps_one_package_file_at_the_domain_limit() {
+    let tmp = temp("filecap");
+    let max = agentos_domain::limits::MAX_FILE_BYTES;
+    let url = publish_package(
+        &tmp.join("pkg"),
+        "big",
+        "app.luau",
+        &[("app.luau", b"return 1".to_vec()), ("big.luau", vec![b'-'; max + 1])],
+        vec![],
+    );
+    let r = start(|_| {}).await;
+    let mut ws = browser(&r).await;
+    let preview = rpc(&mut ws, 1, "app.preview", json!({"url": url})).await;
+    let sha256 = preview["result"]["sha256"].as_str().unwrap().to_owned();
+    let installed = rpc(&mut ws, 2, "app.install", json!({"url": url, "sha256": sha256})).await;
+    let message = installed["error"]["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains(&format!("larger than {max} bytes")),
+        "the fetcher refuses past the one file limit, not a bigger private one: {installed}"
+    );
     r.stop().await;
     let _ = std::fs::remove_dir_all(tmp);
 }

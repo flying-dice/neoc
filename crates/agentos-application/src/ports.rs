@@ -340,8 +340,11 @@ pub struct InstalledApp {
     /// What the person approved at install: the manifest's permissions then. A reload whose manifest asks
     /// for more is refused until the app is installed again (and so approved again).
     pub permissions: Vec<Permission>,
-    /// SHA-256 (hex) of the app-ref document that was installed or last loaded. Empty on a record from
-    /// before this was kept: the next load adopts what the manifest asks for.
+    /// SHA-256 (hex) of the app-ref document that was installed or last loaded. It is what the person
+    /// reviewed (install is pinned to it) and then a record of what is loaded: every successful load of a
+    /// changed ref (a dev `app.reload`, a restart) replaces it, because a reload legitimately changes files.
+    /// It is not compared on reload: the app id and the approved permissions are what a load must keep.
+    /// Empty on a record from before this was kept: the next load adopts what the manifest asks for.
     pub ref_sha256: String,
 }
 
@@ -434,4 +437,12 @@ pub trait AgentProcesses: Send + Sync {
     /// Stop this agent's process and tell its sessions it ended. A no-op when none is running; the next
     /// session starts a new one from the agent's current settings.
     async fn stop_agent(&self, agent: &AgentId);
+}
+
+/// For a host whose connector launches no processes (a scripted one in tests): nothing to stop.
+pub struct NoAgentProcesses;
+
+#[async_trait]
+impl AgentProcesses for NoAgentProcesses {
+    async fn stop_agent(&self, _agent: &AgentId) {}
 }

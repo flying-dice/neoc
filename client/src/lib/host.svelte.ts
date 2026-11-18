@@ -3,6 +3,7 @@ import type { ViewCore } from '../view/core/view'
 import { Session } from '../view/core/session'
 import type { Transport } from '../view/rpc/transport'
 import { createWebSocketTransport, defaultRpcUrl } from '../view/rpc/websocket'
+import { messageOf } from '../view/errors'
 import { reactiveStore } from '../view/store.svelte'
 import { createHostChannel, HostError, type HostChannel } from '../shell/channel'
 import type { AgentSummary, AppSummary, Catalog, HostApi } from '../shell/hostApi'
@@ -62,7 +63,6 @@ export interface FakeViews {
 /** A socket that never opens may be a revoked session (the host answers 401): ask once, after this long. */
 const REVOKED_CHECK_MS = 3000
 
-const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v)
 
@@ -91,10 +91,10 @@ export class Host {
 
   /** The host-management calls (`app.*`, `host.*`): the session's connection, or a fake in stories. */
   readonly api: HostApi = {
-    call: <T>(method: string, params: Record<string, unknown> = {}): Promise<T> => {
-      if (this.fake) return this.fake.call<T>(method, params)
+    call: (method: string, params: Record<string, unknown> = {}): Promise<unknown> => {
+      if (this.fake) return this.fake.call(method, params)
       if (!this.channel) return Promise.reject(new HostError(-32000, 'Not connected to AgentOS'))
-      return this.channel.call<T>(method, params)
+      return this.channel.call(method, params)
     },
     onNotification: (listener) =>
       this.fake
@@ -162,7 +162,7 @@ export class Host {
     this.session?.stop()
     this.session = null
     this.channel = null
-    this.apps = []
+    this.setApps([]) // the registry and the Dock roster too: nothing of the revoked session stays on screen
     this.phase = 'unpaired'
   }
 

@@ -320,13 +320,13 @@ struct NoParams {}
 struct UrlParams {
     url: String,
 }
-/// `app.install`: `sha256` (from `app.preview`) pins the install to exactly the ref the person reviewed.
+/// `app.install`: `sha256` (from `app.preview`) pins the install to exactly the ref the person reviewed. It is
+/// required: an install over the wire is always of something that was previewed.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct InstallParams {
     url: String,
-    #[serde(default)]
-    sha256: Option<String>,
+    sha256: String,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -397,11 +397,7 @@ impl RpcHandler for RpcHub {
         match method {
             "app.install" => {
                 let p: InstallParams = parse(params)?;
-                let id = match &p.sha256 {
-                    Some(sha) => app.install_previewed(&p.url, sha).await,
-                    None => app.install_from_url(&p.url).await,
-                }
-                .map_err(|e| rpc_err(&e))?;
+                let id = app.install_previewed(&p.url, &p.sha256).await.map_err(|e| rpc_err(&e))?;
                 Ok(json!({ "app": id }))
             }
             "app.uninstall" => {

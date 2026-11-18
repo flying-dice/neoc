@@ -107,7 +107,10 @@ async fn the_host_prints_a_code_writes_mcp_json_pairs_a_device_and_stops_on_sigt
     // mcp.json: private, with the MCP url and a bearer token
     let mcp: Value = serde_json::from_slice(&std::fs::read(data.join("mcp.json")).unwrap()).unwrap();
     assert_eq!(mcp["url"], format!("{base}/mcp"));
-    assert!(mcp["headers"]["Authorization"].as_str().unwrap().starts_with("Bearer "));
+    assert!(
+        mcp["headers"]["Authorization"].as_str().unwrap().starts_with("Bearer agentos_"),
+        "the local client's token is minted like every agent token"
+    );
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;

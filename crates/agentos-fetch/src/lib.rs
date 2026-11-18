@@ -7,7 +7,8 @@
 //!   until the cap, never buffered whole;
 //! - a redirect is followed only to the same origin, and a URL (or a name it resolves to) that is a private,
 //!   link-local, metadata or other non-public address is refused unless the URL itself names loopback
-//!   ([`guard`]).
+//!   ([`guard`]);
+//! - no proxy is used, whatever the environment says: the guard has to see every connection.
 
 mod guard;
 
@@ -34,6 +35,8 @@ impl UrlFetcher {
     pub fn new(max_bytes: u64) -> Result<Self, reqwest::Error> {
         let http = reqwest::Client::builder()
             .timeout(FETCH_TIMEOUT)
+            // a proxy (HTTP(S)_PROXY, ALL_PROXY) would resolve and connect to the target itself, past the guard
+            .no_proxy()
             .dns_resolver(guard::GuardedResolver::shared())
             .redirect(Policy::custom(|attempt| {
                 let origin = attempt.previous().first().cloned();

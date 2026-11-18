@@ -377,7 +377,7 @@ mod tests {
         };
         let execute = permission_request("p1".into(), &request(ToolKind::Execute));
         assert_eq!(execute.kind, Some(agentos_domain::thread::ToolKind::Execute));
-        assert!(execute.kind_forbids_auto_approval());
+        assert!(!execute.kind_allows_auto_approval());
         let other = permission_request("p2".into(), &request(ToolKind::Other));
         assert_eq!(other.kind, Some(agentos_domain::thread::ToolKind::Other));
         assert_eq!(

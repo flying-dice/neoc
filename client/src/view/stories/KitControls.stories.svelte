@@ -312,7 +312,7 @@
   }}
 />
 
-<!-- A link confirmation names the host (read from the URL, not the link text) and the full address; Escape cancels and nothing opens. -->
+<!-- A link confirmation names the host (read from the URL, not the link text) and the full address, in the dialog's accessible description too; focus starts on Cancel, Escape cancels and nothing opens. -->
 <Story
   name="Link confirmation"
   args={{ scenario: 'markdown' }}
@@ -323,18 +323,23 @@
     await userEvent.click(link)
     const dialog = await canvas.findByTestId('kit-link-confirm')
     await expect(dialog).toHaveAccessibleName('Open this link?')
+    // a screen reader hears where the link goes, not only the generic message
+    await expect(dialog).toHaveAccessibleDescription(/evil\.example/)
+    await expect(dialog).toHaveAccessibleDescription(/https:\/\/evil\.example\/login\?next=1/)
     await expect(canvas.getByTestId('kit-link-confirm-host')).toHaveTextContent(/^evil\.example$/)
     await expect(canvas.getByTestId('kit-link-confirm-url')).toHaveTextContent(
       'https://evil.example/login?next=1'
     )
-    // keyboard: focus starts on the preferred action, Escape cancels
-    await waitFor(() => expect(canvas.getByTestId('kit-link-confirm-action-open')).toHaveFocus())
+    // keyboard: focus starts on the safe answer (Cancel), Escape cancels
+    await waitFor(() => expect(canvas.getByTestId('kit-link-confirm-action-cancel')).toHaveFocus())
     await userEvent.keyboard('{Escape}')
     await waitFor(() => expect(canvas.queryByTestId('kit-link-confirm')).toBeNull())
     await expect(links).toEqual([])
-    // Enter on the focused "Open" opens it
+    // Tab to "Open", Enter opens it
     await userEvent.click(link)
-    await waitFor(() => expect(canvas.getByTestId('kit-link-confirm-action-open')).toHaveFocus())
+    await waitFor(() => expect(canvas.getByTestId('kit-link-confirm-action-cancel')).toHaveFocus())
+    await userEvent.keyboard('{Tab}')
+    await expect(canvas.getByTestId('kit-link-confirm-action-open')).toHaveFocus()
     await userEvent.keyboard('{Enter}')
     await waitFor(() => expect(links).toEqual(['https://evil.example/login?next=1']))
     // leave it asking, for the snapshot
@@ -360,7 +365,7 @@
   }}
 />
 
-<!-- An app's own `openUrl` command asks too (the host can push it at any time); a URL that is not web or mail never shows a dialog. -->
+<!-- An app's own `openUrl` command asks too (the host can push it at any time); a URL that is not web or mail never shows a dialog; a link pushed while a confirmation shows is dropped, so the address the person is reading is the one Open opens. -->
 <Story
   name="Link confirmation: openUrl command"
   args={{ scenario: 'markdown' }}
@@ -373,9 +378,17 @@
     await expect(await canvas.findByTestId('kit-link-confirm-host')).toHaveTextContent(
       'app.example'
     )
-    await userEvent.click(canvas.getByTestId('kit-link-confirm-action-cancel'))
+    // pushes while it shows change nothing: not the address, not the dialog
+    view.command({ cmd: 'openUrl', args: { url: 'https://evil.example/swap' } } as never)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    await expect(canvas.getByTestId('kit-link-confirm-host')).toHaveTextContent(/^app\.example$/)
+    await expect(canvas.getByTestId('kit-link-confirm-url')).toHaveTextContent(
+      'https://app.example/help'
+    )
+    await userEvent.click(canvas.getByTestId('kit-link-confirm-action-open'))
+    await waitFor(() => expect(links).toEqual(['https://app.example/help']))
     await waitFor(() => expect(canvas.queryByTestId('kit-link-confirm')).toBeNull())
-    await expect(links).toEqual([])
+    await expect(links).toEqual(['https://app.example/help']) // the dropped push did not reopen it
     const long =
       'https://app.example/help?topic=a-rather-long-address-that-must-wrap-inside-the-dialog-and-never-overflow-it'
     view.command({ cmd: 'openUrl', args: { url: long } } as never)

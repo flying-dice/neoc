@@ -17,6 +17,7 @@ use crate::{
         StoredThread, TaskHandle, ThreadStore,
     },
     services::AppService,
+    tokens::random_hex,
 };
 use agentos_domain::{
     agui::{AgUiEvent, ReasoningRole, Role, RunAgentInput, RunOutcome},
@@ -115,9 +116,7 @@ struct ThreadSink {
 }
 
 fn hex_id(random: &dyn RandomSource, prefix: &str) -> String {
-    let mut bytes = [0u8; 8];
-    random.fill(&mut bytes);
-    format!("{prefix}{}", agentos_domain::hex_of(&bytes))
+    format!("{prefix}{}", random_hex(random, 8))
 }
 
 fn replace(path: &str, value: &Value) -> Value {
@@ -370,24 +369,28 @@ impl AgentEventSink for ThreadSink {
     fn on_permission(&self, request: &PermissionRequest) -> PermissionDecision {
         let agent = self.agents.get(&self.thread.agent_id);
         let approval = agent.as_ref().map_or(ApprovalPolicy::Ask, |a| a.approval);
-        let allow = request
-            .options
-            .iter()
-            .find(|o| o.kind == PermissionKind::AllowOnce)
-            .or_else(|| request.options.iter().find(|o| o.kind == PermissionKind::AllowAlways))
-            .map(|o| o.option_id.clone());
+        let allow_once =
+            request.options.iter().find(|o| o.kind == PermissionKind::AllowOnce).map(|o| o.option_id.clone());
         let auto = match approval {
-            // every request, a shell command or a file edit included (see `ApprovalPolicy::AllowEverything`)
-            ApprovalPolicy::AllowEverything => allow,
+            // every request, a shell command or a file edit included (see `ApprovalPolicy::AllowEverything`): once
+            // if the agent offers it, else the standing allow
+            ApprovalPolicy::AllowEverything => allow_once.or_else(|| {
+                request
+                    .options
+                    .iter()
+                    .find(|o| o.kind == PermissionKind::AllowAlways)
+                    .map(|o| o.option_id.clone())
+            }),
             ApprovalPolicy::Ask => None,
             // the title and kind are the agent's text: only an exact `mcp__agentos__<app>__<tool>` that exists,
-            // is granted to this agent and was declared readOnly (the runtime refuses writes) skips the prompt
+            // is granted to this agent, was declared readOnly (the runtime refuses writes) and comes with a
+            // read-only kind skips the prompt, and then only as allow-once, never as a standing allow
             ApprovalPolicy::AutoReadOnly => request
                 .agentos_tool()
-                .filter(|_| !request.kind_forbids_auto_approval())
+                .filter(|_| request.kind_allows_auto_approval())
                 .filter(|tool| agent.as_ref().is_some_and(|a| a.grants.allows(tool.app())))
                 .filter(|tool| self.apps.tool_is_read_only(tool) == Some(true))
-                .and(allow),
+                .and(allow_once),
         };
         if let Some(option) = auto {
             return PermissionDecision::Auto(option);
