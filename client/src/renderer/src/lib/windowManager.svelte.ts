@@ -15,6 +15,10 @@ import { apps, type AppId } from './apps.svelte'
 export interface WindowState {
   id: string
   appId: AppId
+  /** The window kind an installed app declared (`app.window("main", ...)`). */
+  kind: string
+  /** The deep link the app's `onOpen(w, params)` receives. */
+  params?: Record<string, unknown>
   stageId: string | null
   layout: WindowLayout
   /** Frame used when floating (kept while in other layouts, to restore). */
@@ -167,7 +171,10 @@ class WindowManager {
    * user's behalf (e.g. by an agent tool) so it appears next to what they're
    * looking at rather than replacing it.
    */
-  open(appId: AppId, options: { alongside?: boolean } = {}): void {
+  open(
+    appId: AppId,
+    options: { alongside?: boolean; kind?: string; params?: Record<string, unknown> } = {}
+  ): void {
     const existing = this.windows.find((w) => w.appId === appId)
     if (existing) {
       if (existing.layout === 'slideover') {
@@ -178,7 +185,7 @@ class WindowManager {
       return this.focus(existing.id)
     }
 
-    const win = this.#createWindow(appId)
+    const win = this.#createWindow(appId, options.kind ?? 'main', options.params)
     const stage = this.activeStage
 
     // Filling the empty side of a pending Split View.
@@ -362,12 +369,14 @@ class WindowManager {
 
   // ── Internals ──────────────────────────────────────────────────────────
 
-  #createWindow(appId: AppId): WindowState {
+  #createWindow(appId: AppId, kind: string, params?: Record<string, unknown>): WindowState {
     const app = apps[appId]
     const frame = this.#cascade(this.onStage.length)
     return {
       id: `${appId}-${uid()}`,
       appId,
+      kind,
+      params,
       stageId: null,
       layout: 'floating',
       frame: {

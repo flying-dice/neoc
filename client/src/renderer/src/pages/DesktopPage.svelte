@@ -11,18 +11,18 @@
 <script lang="ts">
   import type { Snippet } from 'svelte'
   import type { DockApp } from '@agentos/ui'
-  import { hostBridge, type ConnectionStatus } from '@agentos/sdk/host/client'
   import { SplitHandle } from '@agentos/ui/atoms'
   import { DesktopTemplate } from '@agentos/ui/templates'
   import { StatusBar, Dock, Window, StageStrip } from '@agentos/ui/organisms'
   import ClockWidget from '../organisms/ClockWidget.svelte'
   import AgentActivityWidget from '../organisms/AgentActivityWidget.svelte'
   import { apps, dockOrder, dockRecents, type AppId } from '../lib/apps.svelte'
-  import { windowManager as wm } from '../lib/windowManager.svelte'
+  import { windowManager as wm, type WindowState } from '../lib/windowManager.svelte'
+  import { host } from '../lib/host.svelte'
   import { agentStore } from '../lib/agents.svelte'
 
   interface Props {
-    windowContent: Snippet<[AppId]>
+    windowContent: Snippet<[WindowState]>
   }
 
   let { windowContent }: Props = $props()
@@ -35,10 +35,8 @@
       wm.bounds = { width: workspaceWidth, height: workspaceHeight }
   })
 
-  // The link to the server: say so in the status bar while it's down.
-  const host = hostBridge()
-  let connection = $state<ConnectionStatus>(host?.connection.status ?? 'open')
-  $effect(() => host?.connection.onStatus((status) => (connection = status)))
+  // The link to the host: say so in the status bar while it's down.
+  const connection = $derived(host.connection)
   const waiting = $derived(agentStore.waitingCount)
 
   function toDock(id: AppId): DockApp {
@@ -88,9 +86,13 @@
     <div data-testid="status-bar">
       <StatusBar battery={0.86}>
         {#snippet center()}
-          {#if connection !== 'open'}
+          {#if connection !== 'online'}
             <span class="connection" role="status" data-testid="status-connection">
-              {connection === 'connecting' ? 'Connecting to AgentOS…' : 'Reconnecting to AgentOS…'}
+              {connection === 'connecting'
+                ? 'Connecting to AgentOS…'
+                : connection === 'incompatible'
+                  ? 'Reload to update AgentOS'
+                  : 'Reconnecting to AgentOS…'}
             </span>
           {/if}
         {/snippet}
@@ -151,7 +153,7 @@
             onminimize={() => wm.minimize(win.id)}
             onclose={() => wm.close(win.id)}
           >
-            {@render windowContent(win.appId)}
+            {@render windowContent(win)}
           </Window>
         {/if}
       {/each}

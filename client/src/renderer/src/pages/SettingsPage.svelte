@@ -1,19 +1,21 @@
 <!-- @page SettingsPage — iPadOS Settings-style system preferences. -->
 <script lang="ts">
   import type { IconName } from '@agentos/ui'
-  import { hostBridge } from '@agentos/sdk/host/client'
   import { Icon, IconTile, Toggle, SegmentedControl } from '@agentos/ui/atoms'
   import { ListRow, SearchField, IconSlider, Alert } from '@agentos/ui/molecules'
   import { ListSection, NavigationBar } from '@agentos/ui/organisms'
   import { SplitViewTemplate, ScreenTemplate } from '@agentos/ui/templates'
   import ColorSwatch from '../atoms/ColorSwatch.svelte'
+  import DevicesPane from '../templates/DevicesPane.svelte'
   import { settings, accents, type Theme } from '../lib/settings.svelte'
+  import { host } from '../lib/host.svelte'
 
-  type Pane = 'general' | 'appearance' | 'agents' | 'notifications' | 'privacy'
+  type Pane = 'general' | 'appearance' | 'devices' | 'agents' | 'notifications' | 'privacy'
 
   const panes: { id: Pane; title: string; icon: IconName; color: string }[] = [
     { id: 'general', title: 'General', icon: 'gear', color: 'var(--ios-gray)' },
     { id: 'appearance', title: 'Display & Appearance', icon: 'sun', color: 'var(--ios-blue)' },
+    { id: 'devices', title: 'Devices', icon: 'globe', color: 'var(--ios-green)' },
     { id: 'agents', title: 'Agents', icon: 'sparkles', color: 'var(--ios-purple)' },
     { id: 'notifications', title: 'Notifications', icon: 'bell', color: 'var(--ios-red)' },
     { id: 'privacy', title: 'Privacy & Security', icon: 'lock', color: 'var(--ios-blue)' }
@@ -42,7 +44,8 @@
     { id: 'claude-haiku-5-5', name: 'Claude Haiku 5.5', note: 'Fastest' }
   ]
 
-  const versions = hostBridge()?.versions ?? {}
+  const hostVersion = $derived(host.session?.host?.hostVersion ?? '—')
+  const browser = navigator.userAgent.match(/(Chrome|Firefox|Version)\/([\d.]+)/)?.[2] ?? '—'
 </script>
 
 <SplitViewTemplate sidebarWidth={300}>
@@ -89,16 +92,8 @@
             <ListSection header="About">
               <ListRow testid="settings-about-name" title="Name" value="AgentOS" />
               <ListRow testid="settings-about-version" title="Version" value="0.1.0" />
-              <ListRow
-                testid="settings-about-electron"
-                title="Electron"
-                value={versions.electron ?? '—'}
-              />
-              <ListRow
-                testid="settings-about-chromium"
-                title="Chromium"
-                value={versions.chrome ?? '—'}
-              />
+              <ListRow testid="settings-about-host" title="Host" value={hostVersion} />
+              <ListRow testid="settings-about-browser" title="Browser" value={browser} />
             </ListSection>
             <ListSection footer="Background agents keep running when their window is closed.">
               <ListRow testid="settings-launch-at-login-row" title="Launch at Login">
@@ -174,6 +169,8 @@
                 {/snippet}
               </ListRow>
             </ListSection>
+          {:else if pane === 'devices'}
+            <DevicesPane />
           {:else if pane === 'agents'}
             <ListSection header="Default Model">
               {#each models as m (m.id)}

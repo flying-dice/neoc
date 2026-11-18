@@ -15,7 +15,14 @@ export { expect }
 export const FROZEN_TIME = new Date('2026-06-09T09:41:00+01:00')
 
 /** Console noise that isn't a defect in the app under test. */
-const IGNORED_CONSOLE = [/Download the Svelte DevTools/, /\[vite\]/, /storybook/i]
+const IGNORED_CONSOLE = [
+  /Download the Svelte DevTools/,
+  /\[vite\]/,
+  /storybook/i,
+  // the pairing journeys: a wrong code is a 401, a revoked device's socket is refused
+  /status of 401/,
+  /WebSocket connection to .* failed/
+]
 
 export const test = base.extend<{ errors: string[] }>({
   errors: [
@@ -35,30 +42,54 @@ export const test = base.extend<{ errors: string[] }>({
   ]
 })
 
-// ── Desktop (web mode) ───────────────────────────────────────────────────
+// ── Desktop (the real shell on the real host) ─────────────────────────────
 
 export interface DesktopOptions {
-  /** App ids to open, in order (default: the desktop's own landing window). */
+  /** App ids to open, in order (default: the desktop's own landing window, Discover). */
   open?: string[]
   theme?: 'light' | 'dark'
-  scenario?: string
-  /** Delay between streamed agent chunks, ms. */
-  delay?: number
 }
 
-/** Load the real desktop renderer on the in-memory host and wait until it settles. */
+/** The shell's debug handle (`window.__agentos`, see client boot.ts). */
+interface ShellHandle {
+  host: { phase: string; apps: unknown[] }
+  wm: { windows: { id: string }[]; close(id: string): void; open(appId: string): void }
+  apps: Record<string, { minWidth: number; minHeight: number }>
+}
+declare global {
+  interface Window {
+    __agentos: ShellHandle
+  }
+}
+
+/**
+ * Load the shell, paired (the project's storage state), and wait until the desktop has settled. With `open`,
+ * the landing window is replaced by exactly these apps' windows, opened as the Dock would.
+ */
 export async function openDesktop(page: Page, options: DesktopOptions = {}): Promise<void> {
   const params = new URLSearchParams()
-  if (options.open) params.set('open', options.open.join(','))
   if (options.theme) params.set('theme', options.theme)
-  if (options.scenario) params.set('scenario', options.scenario)
-  params.set('delay', String(options.delay ?? 0))
-  await page.goto(`/web.html?${params}`)
+  await page.goto(`/?${params}`)
   await page.locator('html[data-ready="true"]').waitFor()
+  await page.waitForFunction(
+    () => window.__agentos.host.phase === 'ready' && window.__agentos.host.apps.length > 0
+  )
+  await page.getByTestId('dock').waitFor()
   await settle(page)
+  if (options.open) {
+    await page.evaluate((ids) => {
+      const { wm, apps } = window.__agentos
+      for (const win of [...wm.windows]) wm.close(win.id)
+      for (const id of ids) {
+        if (!apps[id]) throw new Error(`Unknown app "${id}". Known: ${Object.keys(apps).join(', ')}`)
+        wm.open(id)
+      }
+    }, options.open)
+    await settle(page)
+  }
 }
 
-/** Wait for fonts, lazy app bundles and two animation frames. */
+/** Wait for fonts, the network and two animation frames. */
 export async function settle(page: Page): Promise<void> {
   await page.waitForLoadState('networkidle')
   await page.evaluate(() => document.fonts.ready)

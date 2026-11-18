@@ -9,19 +9,145 @@
   import { ListSection, NavigationBar } from '@agentos/ui/organisms'
   import { ScreenTemplate, SplitViewTemplate } from '@agentos/ui/templates'
   import AgentListing from '../molecules/AgentListing.svelte'
+  import AppListing from '../molecules/AppListing.svelte'
   import CapabilityCard from '../molecules/CapabilityCard.svelte'
+  import { Alert } from '@agentos/ui/molecules'
+  import { TextInput } from '@agentos/ui/atoms'
   import { windowManager as wm } from '../lib/windowManager.svelte'
-  import { appStore } from '../lib/appStore.svelte'
-  import type { KnownApp } from '@agentos/sdk/host/client'
+  import { host } from '../lib/host.svelte'
+  import {
+    iconOf,
+    tintBackground,
+    type AppPreview,
+    type AppState,
+    type AppSummary,
+    type Catalog
+  } from '../shell/hostApi'
 
-  const knownApps = $derived(
-    appStore.known.filter((a) => a.manifest.name.toLowerCase().includes(query.toLowerCase()))
+  /** One row of the Apps section: an installed app, or one a registry offers. */
+  interface Listing {
+    id: string
+    name: string
+    detail: string
+    description?: string
+    icon?: string
+    tint?: string
+    state?: AppState
+    message?: string
+    /** The app-ref URL to install from (not installed yet). */
+    url?: string
+  }
+
+  let catalog = $state<Catalog>({ apps: [], errors: [] })
+  let busy = $state<Record<string, boolean>>({})
+  let storeError = $state<string | null>(null)
+
+  const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+
+  async function loadCatalog(): Promise<void> {
+    try {
+      catalog = await host.catalog()
+    } catch (e) {
+      storeError = messageOf(e)
+    }
+  }
+  // The catalog says which apps are installed: read it again whenever the installed set changes.
+  $effect(() => {
+    void host.apps
+    void loadCatalog()
+  })
+
+  const fromInstalled = (a: AppSummary): Listing => ({
+    id: a.id,
+    name: a.name,
+    detail: `${a.version} · ${a.source}`,
+    description: a.description,
+    icon: a.icon,
+    tint: a.tint,
+    state: a.state,
+    message: a.message
+  })
+  const fromCatalog = (a: AppPreview): Listing => ({
+    id: a.id,
+    name: a.name,
+    detail: `${a.version} · ${a.source}`,
+    description: a.description,
+    icon: a.icon,
+    tint: a.tint,
+    url: a.url
+  })
+
+  const listings = $derived<Listing[]>(
+    [
+      ...host.apps.map(fromInstalled),
+      ...catalog.apps.filter((a) => !host.apps.some((i) => i.id === a.id)).map(fromCatalog)
+    ].filter((l) => l.name.toLowerCase().includes(query.toLowerCase()))
   )
 
-  async function primary(app: KnownApp): Promise<void> {
-    const state = appStore.stateOf(app)
-    if (state === 'open') return wm.open(app.manifest.id)
-    if (await appStore.install(app)) wm.open(app.manifest.id)
+  async function run(key: string, op: () => Promise<unknown>): Promise<boolean> {
+    if (busy[key]) return false
+    busy[key] = true
+    storeError = null
+    try {
+      await op()
+      await host.refresh()
+      return true
+    } catch (e) {
+      storeError = messageOf(e)
+      return false
+    } finally {
+      delete busy[key]
+    }
+  }
+
+  async function primary(l: Listing): Promise<void> {
+    const call = (method: string, params: Record<string, unknown>): Promise<unknown> =>
+      host.api.call(method, params)
+    let done = false
+    if (l.url) done = await run(l.id, () => call('app.install', { url: l.url }))
+    else if (l.state === 'running') done = true
+    else if (l.state === 'disabled') done = await run(l.id, () => call('app.enable', { app: l.id }))
+    else if (l.state === 'failed') done = await run(l.id, () => call('app.reload', { app: l.id }))
+    if (done) wm.open(l.id)
+  }
+
+  const toggle = (l: Listing): Promise<boolean> =>
+    run(l.id, () =>
+      host.api.call(l.state === 'running' ? 'app.disable' : 'app.enable', { app: l.id })
+    )
+  const remove = (l: Listing): Promise<boolean> =>
+    run(l.id, () => host.api.call('app.uninstall', { app: l.id }))
+
+  // ── Add by URL: preview first, then say plainly what installing means ──
+  let addUrl = $state('')
+  let preview = $state<AppPreview | null>(null)
+  let previewError = $state<string | null>(null)
+  let previewing = $state(false)
+  let confirming = $state(false)
+
+  async function showPreview(): Promise<void> {
+    const url = addUrl.trim()
+    if (!url || previewing) return
+    previewing = true
+    previewError = null
+    preview = null
+    try {
+      preview = await host.api.call<AppPreview>('app.preview', { url })
+    } catch (e) {
+      previewError = messageOf(e)
+    } finally {
+      previewing = false
+    }
+  }
+
+  async function confirmInstall(): Promise<void> {
+    const p = preview
+    if (!p) return
+    if (await run(p.url, () => host.api.call('app.install', { url: p.url }))) {
+      preview = null
+      addUrl = ''
+      wm.open(p.id)
+    }
   }
 
   type Section =
@@ -188,35 +314,119 @@
             <header class="section-head">
               <Text style="title3" weight="bold" as="h2">Apps</Text>
             </header>
-            {#if appStore.error}
-              <p class="store-error" role="alert" data-testid="discover-apps-error">
-                {appStore.error}
-              </p>
+            {#if storeError}
+              <p class="store-error" role="alert" data-testid="discover-apps-error">{storeError}</p>
             {/if}
             <div class="listings">
-              {#each knownApps as app (app.manifest.id)}
-                <AgentListing
-                  testid="discover-app-{app.manifest.id}"
-                  name={app.manifest.name}
-                  blurb="Version {app.installedVersion &&
-                  app.installedVersion !== app.manifest.version
-                    ? `${app.installedVersion} → ${app.manifest.version}`
-                    : app.manifest.version}"
-                  icon={app.manifest.icon}
-                  background={app.manifest.background}
-                  action={appStore.stateOf(app)}
-                  busy={!!appStore.busy[app.manifest.id]}
-                  onget={() => void primary(app)}
-                  onremove={app.installedVersion ? () => void appStore.uninstall(app) : undefined}
+              {#each listings as l (l.id)}
+                <AppListing
+                  testid="discover-app-{l.id}"
+                  name={l.name}
+                  detail={l.detail}
+                  description={l.description}
+                  icon={iconOf(l.icon)}
+                  background={tintBackground(l.tint)}
+                  state={l.state}
+                  message={l.message}
+                  busy={!!busy[l.id]}
+                  onget={() => void primary(l)}
+                  ontoggle={() => void toggle(l)}
+                  onremove={() => void remove(l)}
                 />
               {:else}
                 <Text style="subheadline" color="secondary">
                   {query
                     ? `No apps match “${query}”.`
-                    : 'No apps are available to install. Run `bun run build:apps`.'}
+                    : 'No apps are available yet. Add one by URL below, or build the bundled apps with `bun run build:apps`.'}
                 </Text>
               {/each}
             </div>
+            {#each catalog.errors as problem (problem)}
+              <p class="store-error" role="status" data-testid="discover-registry-error">
+                {problem}
+              </p>
+            {/each}
+
+            <form
+              class="add"
+              data-testid="discover-add"
+              onsubmit={(e) => {
+                e.preventDefault()
+                void showPreview()
+              }}
+            >
+              <Text style="subheadline" weight="semibold" as="h3">Add an app by URL</Text>
+              <Text style="footnote" color="secondary" as="p"
+                >Paste the address of an app ref (https:// or file://). You will see what it is
+                before anything is installed.</Text
+              >
+              <div class="add-row">
+                <span class="url-box">
+                  <TextInput
+                    testid="discover-add-url"
+                    bind:value={addUrl}
+                    placeholder="https://example.org/apps/notes/app-ref.json"
+                    aria-label="App URL"
+                    autocomplete="off"
+                    spellcheck={false}
+                  />
+                </span>
+                <Button
+                  testid="discover-add-preview"
+                  type="submit"
+                  size="small"
+                  capsule
+                  disabled={!addUrl.trim() || previewing}
+                  >{previewing ? 'Looking…' : 'Preview'}</Button
+                >
+              </div>
+              {#if previewError}
+                <p class="store-error" role="alert" data-testid="discover-add-error">
+                  {previewError}
+                </p>
+              {/if}
+              {#if preview}
+                <div class="preview" data-testid="discover-add-preview-card">
+                  <IconTile size={56} background={tintBackground(preview.tint)} shadow>
+                    <Icon name={iconOf(preview.icon)} size={30} weight={1.8} color="#fff" />
+                  </IconTile>
+                  <div class="preview-meta">
+                    <Text style="headline">{preview.name}</Text>
+                    <Text style="caption1" color="secondary"
+                      >Version {preview.version} · from {preview.source}</Text
+                    >
+                    {#if preview.description}
+                      <Text style="footnote">{preview.description}</Text>
+                    {/if}
+                    <Text style="caption1" color="secondary"
+                      >{preview.permissions.length
+                        ? `Asks to use: ${preview.permissions.join(', ')}`
+                        : 'Asks for no extra access'}</Text
+                    >
+                    {#if preview.installed}
+                      <Text style="caption1" color="secondary"
+                        >Already installed (version {preview.installed.version}).</Text
+                      >
+                    {/if}
+                    <span class="preview-actions">
+                      <Button
+                        testid="discover-add-install"
+                        size="small"
+                        capsule
+                        disabled={!!preview.installed || !!busy[preview.url]}
+                        onclick={() => (confirming = true)}>Install…</Button
+                      >
+                      <Button
+                        testid="discover-add-cancel"
+                        variant="plain"
+                        size="small"
+                        onclick={() => (preview = null)}>Cancel</Button
+                      >
+                    </span>
+                  </div>
+                </div>
+              {/if}
+            </form>
           </section>
 
           <hr />
@@ -311,6 +521,19 @@
   {/snippet}
 </SplitViewTemplate>
 
+{#if preview}
+  <Alert
+    testid="discover-install-confirm"
+    bind:open={confirming}
+    title="Install {preview.name}?"
+    message="{preview.name} will run on this host, not in your browser, and the tools it provides will be available to your agents. Only install apps you trust."
+    actions={[
+      { label: 'Cancel', style: 'cancel' },
+      { label: 'Install', preferred: true, onclick: () => void confirmInstall() }
+    ]}
+  />
+{/if}
+
 <style>
   .page {
     container-type: inline-size;
@@ -400,6 +623,57 @@
     margin: 0 0 12px;
     font: var(--type-footnote);
     color: var(--ios-red);
+  }
+  .add {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 22px;
+    padding: 16px;
+    border-radius: var(--radius-lg);
+    background: var(--bg-grouped-elevated, var(--bg-elevated));
+    border: var(--hairline) solid var(--separator);
+  }
+  .add :global(h3),
+  .add :global(p) {
+    margin: 0;
+  }
+  .add-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .url-box {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    min-height: 36px;
+    padding: 0 10px;
+    border-radius: var(--radius-md);
+    background: var(--fill-tertiary, var(--bg-grouped));
+    border: var(--hairline) solid var(--separator);
+  }
+  .url-box:focus-within {
+    outline: 2px solid var(--tint);
+    outline-offset: 1px;
+  }
+  .preview {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    padding-top: 6px;
+  }
+  .preview-meta {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .preview-actions {
+    display: flex;
+    gap: 4px;
+    margin-top: 6px;
   }
   .section-head {
     display: flex;

@@ -1,16 +1,34 @@
 /**
- * The AgentOS PWA entry (`index.html`): connect to the Bun server over
- * JSON-RPC/WebSocket, install the bridge, then start the shell.
+ * The AgentOS PWA entry (`index.html`): ask the host whether this browser is paired, show the pairing screen or
+ * connect one session over `/rpc`, and start the shell.
  *
- * Order matters: shared modules first (app bundles read them), then the bridge
- * (stores read `window.agentos` when first imported), then the shell.
+ *   ?theme=light|dark   force the appearance (tests, screenshots)
+ *
+ * `window.__agentos` exposes the shell's stores for tests and the research panel (the window manager, the app
+ * definitions, the host state); nothing in the product reads it.
  */
-import './lib/sharedModules'
-import { createWsHostBridge, installHostBridge } from '@agentos/sdk/host/client'
+import { mount } from 'svelte'
+import '@agentos/ui/styles.css'
+import './app.css'
+import App from './App.svelte'
+import { apps } from './lib/apps.svelte'
+import { host } from './lib/host.svelte'
+import { settings } from './lib/settings.svelte'
+import { windowManager } from './lib/windowManager.svelte'
 
-const rpc = new URL('/rpc', location.href)
-rpc.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-installHostBridge(createWsHostBridge(rpc))
+declare global {
+  interface Window {
+    __agentos: {
+      host: typeof host
+      wm: typeof windowManager
+      settings: typeof settings
+      apps: typeof apps
+    }
+  }
+}
+
+const theme = new URLSearchParams(location.search).get('theme')
+if (theme === 'light' || theme === 'dark') settings.theme = theme
 
 // Offline shell + installability. Dev serves modules live, so only register in production builds.
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
@@ -19,4 +37,8 @@ if (import.meta.env.PROD && 'serviceWorker' in navigator) {
     .catch((e: unknown) => console.warn('[agentos] service worker:', e))
 }
 
-await import('./main')
+window.__agentos = { host, wm: windowManager, settings, apps }
+mount(App, { target: document.getElementById('app')! })
+void host.start().then(() => {
+  document.documentElement.dataset.ready = 'true'
+})

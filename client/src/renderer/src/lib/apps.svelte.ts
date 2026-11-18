@@ -1,10 +1,10 @@
 import type { IconName } from '@agentos/ui'
-import { hostBridge, type InstalledApp } from '@agentos/sdk/host/client'
+import { iconOf, tintBackground, type AppSummary } from '../shell/hostApi'
 
-/** Apps whose pages still ship with the host (to be migrated to modules). */
+/** Apps whose pages still ship with the shell. */
 export type BuiltinAppId = 'discover' | 'agents' | 'settings' | 'files' | 'gallery' | 'terminal'
 
-/** Built-in ids plus the ids of app modules installed on the server. */
+/** Built-in ids plus the ids of the Luau apps installed on the host. */
 export type AppId = string
 
 export interface AppDefinition {
@@ -25,7 +25,7 @@ export interface AppDefinition {
 const MIN_WIDTH = 320
 const MIN_HEIGHT = 240
 
-/** Registry of built-in AgentOS apps. Pages are wired to ids in App.svelte. */
+/** Registry of the built-in pages. They are wired to ids in App.svelte. */
 const builtinApps: Record<BuiltinAppId, AppDefinition> = {
   discover: {
     id: 'discover',
@@ -90,44 +90,48 @@ const builtinApps: Record<BuiltinAppId, AppDefinition> = {
   }
 }
 
-const toDefinition = ({ manifest: m }: InstalledApp): AppDefinition => ({
-  id: m.id,
-  name: m.name,
-  icon: m.icon,
-  background: m.background,
-  width: m.window?.width ?? 720,
-  height: m.window?.height ?? 520,
-  minWidth: m.window?.minWidth ?? MIN_WIDTH,
-  minHeight: m.window?.minHeight ?? MIN_HEIGHT
+const isBuiltin = (id: string): boolean => id in builtinApps
+
+/** An installed app's window and look, from what the app declared (`app.manifest`). */
+const toDefinition = (a: AppSummary): AppDefinition => ({
+  id: a.id,
+  name: a.name,
+  icon: iconOf(a.icon),
+  background: tintBackground(a.tint),
+  width: a.window?.w ?? 720,
+  height: a.window?.h ?? 520,
+  minWidth: a.window?.minW ?? MIN_WIDTH,
+  minHeight: a.window?.minH ?? MIN_HEIGHT
 })
 
 /**
- * Every app the shell can open: the built-ins plus the app modules installed
- * on the server. Reactive: installs, uninstalls and reloads (from any client)
- * arrive as `apps:changed` and update it in place.
+ * Every app the shell can open a window for: the built-in pages plus the installed apps that are running.
+ * Reactive: installs, uninstalls, disables and failures (from any client) arrive as `app.*` notifications and
+ * update it in place.
  */
 export const apps: Record<AppId, AppDefinition> = $state({ ...builtinApps })
 
-const installed = $state<{ list: InstalledApp[] }>({ list: [] })
+const installed = $state<{ list: AppSummary[] }>({ list: [] })
 
-/** App modules currently installed on the server. */
+/** Every app installed on the host, whatever its state. */
 export const installedApps = {
-  get list(): InstalledApp[] {
+  get list(): AppSummary[] {
     return installed.list
   }
 }
 
-export const moduleApp = (id: AppId): InstalledApp | undefined =>
-  installed.list.find((a) => a.manifest.id === id)
+/** An installed app by id, in any state. */
+export const installedApp = (id: AppId): AppSummary | undefined =>
+  installed.list.find((a) => a.id === id)
 
 type RemovedListener = (appIds: AppId[]) => void
 /** Plain (non-reactive) listener list: callbacks, not state. */
 let removedListeners: RemovedListener[] = []
 
 /**
- * Called synchronously, before uninstalled apps leave `apps`, so their windows
- * can close while their definitions still exist (nothing renders a window for
- * an app that's already gone).
+ * Called synchronously, before apps that stopped running (uninstalled, disabled, failed) leave `apps`, so
+ * their windows can close while their definitions still exist (nothing renders a window for an app that is
+ * already gone).
  */
 export function onAppsRemoved(listener: RemovedListener): () => void {
   removedListeners = [...removedListeners, listener]
@@ -136,40 +140,27 @@ export function onAppsRemoved(listener: RemovedListener): () => void {
   }
 }
 
-export function setInstalledApps(list: InstalledApp[]): void {
-  const next = list.map((a) => a.manifest.id)
-  const removed = installed.list
-    .map((a) => a.manifest.id)
-    .filter((id) => !next.includes(id) && !(id in builtinApps))
+export function setInstalledApps(list: AppSummary[]): void {
+  const running = list.filter((a) => a.state === 'running')
+  const next = running.map((a) => a.id)
+  const removed = Object.keys(apps).filter((id) => !isBuiltin(id) && !next.includes(id))
   if (removed.length) removedListeners.forEach((l) => l(removed))
-  for (const old of installed.list)
-    if (!(old.manifest.id in builtinApps)) delete apps[old.manifest.id]
-  for (const app of list)
-    if (!(app.manifest.id in builtinApps)) apps[app.manifest.id] = toDefinition(app)
+  for (const id of removed) delete apps[id]
+  for (const app of running) if (!isBuiltin(app.id)) apps[app.id] = toDefinition(app)
   installed.list = list
 }
 
-/** Dock: built-ins, then installed apps that ask for a Dock slot, then Settings. */
+/**
+ * Dock: the built-ins, then the running installed apps, then Settings. The Agents page is not here: the host's
+ * agents arrive with the AG-UI Agents app (it is still reachable from the desktop widget).
+ */
 export function dockOrder(): AppId[] {
   return [
     'discover',
-    'agents',
     'files',
     'terminal',
-    ...installed.list
-      .filter((a) => a.manifest.dock && a.status === 'running')
-      .map((a) => a.manifest.id),
+    ...installed.list.filter((a) => a.state === 'running' && !isBuiltin(a.id)).map((a) => a.id),
     'settings'
   ]
 }
 export const dockRecents: AppId[] = ['gallery']
-
-// Keep the installed set in sync with the server (initial load, live changes, reconnects).
-const host = hostBridge()
-if (host) {
-  const refresh = (): void =>
-    void host.apps.list().then(setInstalledApps, (e: unknown) => console.warn('[agentos] apps:', e))
-  refresh()
-  host.apps.onChanged(setInstalledApps)
-  host.connection.onStatus((status) => status === 'open' && refresh())
-}

@@ -1,21 +1,17 @@
 /**
- * Install the in-memory host before any store is imported (stores read the
- * bridge on first import), so built-in app stories run against the same
- * fake backend as web mode: real app server modules, a scripted Claude, and
- * repo apps' clients loaded from source.
+ * What built-in page stories run against, installed before any story is imported:
+ *
+ *  - the shell's host connection is a fake (`shell/fakeHost`): installed apps, a registry catalog, app refs to
+ *    preview and paired devices, with the host's own answers. The real host is exercised by the Playwright
+ *    journeys, not here.
+ *  - the Agents page still reads the old SDK bridge (wave B3 replaces it with the AG-UI Agents app), so its
+ *    stories keep the in-memory host with a scripted agent.
  */
-import '../src/renderer/src/lib/sharedModules'
 import { createMemoryHost, demoAgent, installHost } from '@agentos/sdk/testing'
-import { repoApps } from '../src/renderer/src/web/repoApps'
+import { host } from '../src/renderer/src/lib/host.svelte'
+import { createFakeHost, FAKE_CALCULATOR } from '../src/renderer/src/shell/fakeHost'
 
-const host = createMemoryHost({
-  apps: repoApps(),
-  agents: [demoAgent()],
-  versions: { client: 'storybook', chrome: '146.0.7680.65' }
-})
-installHost(host)
-
-// Stories render the Dock: give them the installed set before the first story mounts.
-await host.ready
-const { setInstalledApps } = await import('../src/renderer/src/lib/apps.svelte')
-setInstalledApps(await host.apps.list())
+installHost(
+  createMemoryHost({ apps: [], agents: [demoAgent()], versions: { client: 'storybook' } })
+)
+host.useFake(createFakeHost(), [FAKE_CALCULATOR])

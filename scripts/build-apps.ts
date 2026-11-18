@@ -2,11 +2,12 @@
 /**
  * Build the Luau app packages under apps/ (every folder with an `app.json`) into app refs.
  *
- *   bun run build:apps [ids…] [--out <dir>]
+ *   bun run build:apps [ids…] [--out <dir>] [--root <dir>]...
  *
  * For each app this writes, under <out>/<id>/<version>/ (default out: dist/apps):
  *   app-ref.json   { manifest, files: [{ path, url, sha256 }] }, file URLs relative to the app ref
  *   <the files>    app.luau, its modules and SQL migrations, copied as they are
+ * `--root <dir>` also builds the packages under <dir>/* (the e2e harness builds a test-only app that way).
  * and one <out>/registry.json listing every app's app ref: { "apps": ["calculator/0.1.0/app-ref.json", ...] }.
  *
  * The host's default registry is dist/apps/registry.json over file:// (see docs/architecture/host-stack.md);
@@ -25,7 +26,10 @@ const root = resolve(import.meta.dir, '..')
 const args = process.argv.slice(2)
 const outFlag = args.indexOf('--out')
 const outDir = resolve(root, outFlag >= 0 ? (args[outFlag + 1] ?? '') : 'dist/apps')
-const only = args.filter((a, i) => !a.startsWith('--') && i !== outFlag + 1)
+const extraRoots = args.flatMap((a, i) => (a === '--root' ? [resolve(root, args[i + 1] ?? '')] : []))
+const only = args.filter(
+  (a, i) => !a.startsWith('--') && i !== outFlag + 1 && args[i - 1] !== '--root'
+)
 
 const Capability = z.enum(['data', 'notify', 'shell'])
 const PackageManifest = z.object({
@@ -63,8 +67,8 @@ function declared(source: string, field: string): string | undefined {
   return block.match(new RegExp(`\\b${field}\\s*=\\s*"([^"]*)"`))?.[1]
 }
 
-const appDirs = readdirSync(join(root, 'apps'))
-  .map((d) => join(root, 'apps', d))
+const appDirs = [join(root, 'apps'), ...extraRoots]
+  .flatMap((parent) => readdirSync(parent).map((d) => join(parent, d)))
   .filter((d) => existsSync(join(d, 'app.json')))
   .filter((d) => only.length === 0 || only.some((id) => d.endsWith(`/${id}`)))
 

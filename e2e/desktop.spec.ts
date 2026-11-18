@@ -1,15 +1,16 @@
 /**
- * Every app, in the real desktop renderer (web mode, in-memory host):
+ * Every app, in the real shell on the real host (e2e/host/start.ts):
  *  • opens from the Dock,
  *  • floating at its preferred size, light and dark: axe + layout + snapshot,
  *  • resized to its minimum and to a large window,
  *  • full screen, Split View and Slide Over,
  *  • on an iPad-sized screen and a large one.
  *
- * The app list comes from the desktop's registries, so a newly installed app
- * is covered with no extra code.
+ * The built-in pages come from the shell's app registry and the installed apps from `apps/<id>/app.json`, so a new
+ * app is covered with no extra code. The Calculator's display is "0" in every shot: nothing here presses a key,
+ * and the journeys (which do) run after this project.
  */
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { readdirSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   chooseLayout,
@@ -26,25 +27,28 @@ import type { Page } from '@playwright/test'
 
 const ROOT = join(import.meta.dirname, '..')
 
+/** Built-in pages that are not in the Dock until wave B3 (the AG-UI Agents app) replaces them. */
+const NOT_IN_THE_DOCK = ['agents']
+
 /** Built-in app ids, read from the `builtinApps` registry in apps.svelte.ts. */
 function builtinAppIds(): string[] {
   const source = readFileSync(join(ROOT, 'client/src/renderer/src/lib/apps.svelte.ts'), 'utf8')
-  const block = source.slice(source.indexOf('const builtinApps'), source.indexOf('const toDefinition'))
-  return [...block.matchAll(/^ {2}([a-z][a-z0-9-]*): \{/gm)].map((m) => m[1])
+  const block = source.slice(source.indexOf('const builtinApps'), source.indexOf('const isBuiltin'))
+  return [...block.matchAll(/^ {2}([a-z][a-z0-9-]*): \{/gm)].map((m) => m[1]).filter((id) => !NOT_IN_THE_DOCK.includes(id))
 }
 
-/** Repo app modules (apps/<dir>/src/manifest.ts): web mode installs every one of them. */
-function repoAppIds(): string[] {
+/** Luau app packages (apps/<dir>/app.json): the host installs the ones in the test registry at start. */
+function installedAppIds(): string[] {
   return readdirSync(join(ROOT, 'apps'))
-    .map((dir) => join(ROOT, 'apps', dir, 'src/manifest.ts'))
+    .map((dir) => join(ROOT, 'apps', dir, 'app.json'))
     .filter((file) => existsSync(file))
-    .map((file) => readFileSync(file, 'utf8').match(/\bid:\s*'([a-z][a-z0-9-]*)'/)![1])
+    .map((file) => (JSON.parse(readFileSync(file, 'utf8')) as { id: string }).id)
 }
 
 /** Layout is checked inside the window's content: the resize corner deliberately overhangs the frame. */
 const contentOf = (page: Page, id: string) => page.getByTestId(`window-${id}-content`)
 
-const APPS = [...builtinAppIds(), ...repoAppIds()]
+const APPS = [...builtinAppIds(), ...installedAppIds()]
 
 test('the desktop renders with every app in the Dock', async ({ page }, testInfo) => {
   await openDesktop(page)
@@ -61,6 +65,8 @@ for (const id of APPS) {
       await settle(page)
       await expect(windowOf(page, id)).toBeVisible()
       await expect(page.getByTestId(`window-${id}-content`)).not.toBeEmpty()
+      // an installed app's window is a view the host rendered: wait for it
+      if (installedAppIds().includes(id)) await expect(page.getByTestId(`${id}-view`)).toBeVisible()
     })
 
     for (const theme of ['light', 'dark'] as const) {

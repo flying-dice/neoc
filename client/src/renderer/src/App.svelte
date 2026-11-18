@@ -1,7 +1,7 @@
 <!--
   Composition root — the only component allowed outside an atomic layer.
-  It applies system settings and maps app ids to built-in pages or to
-  installed app modules.
+  It gates the shell on pairing, applies system settings, and maps app ids to built-in pages or to the windows
+  of the Luau apps installed on the host.
 -->
 <script lang="ts">
   import DesktopPage from './pages/DesktopPage.svelte'
@@ -11,21 +11,24 @@
   import FilesPage from './pages/FilesPage.svelte'
   import GalleryPage from './pages/GalleryPage.svelte'
   import TerminalPage from './pages/TerminalPage.svelte'
-  import ModuleAppView from './organisms/ModuleAppView.svelte'
+  import PairingPage from './pages/PairingPage.svelte'
+  import ViewWindow from './organisms/ViewWindow.svelte'
   import { settings } from './lib/settings.svelte'
-  import { windowManager } from './lib/windowManager.svelte'
-  import { moduleApp, onAppsRemoved, type AppId } from './lib/apps.svelte'
-  import { hostBridge } from '@agentos/sdk/host/client'
+  import { host } from './lib/host.svelte'
+  import { windowManager, type WindowState } from './lib/windowManager.svelte'
+  import { apps, onAppsRemoved } from './lib/apps.svelte'
 
   $effect(() => settings.apply(document.documentElement))
 
-  // App modules can ask the host to open their window (e.g. from an agent tool).
-  // Opened on the user's behalf, so they join the current stage beside the requester.
+  // The host asks for a window (an agent's tool bringing an app forward): open it beside what the person is
+  // looking at, or bring the app's own window forward.
   $effect(() =>
-    hostBridge()?.apps.onOpenRequest((appId) => windowManager.open(appId, { alongside: true }))
+    host.onWindowRequest(({ app, window, params }) => {
+      if (apps[app]) windowManager.open(app, { alongside: true, kind: window, params })
+    })
   )
 
-  // An app uninstalled (here or from another client) closes its windows first.
+  // An app that stops running (uninstalled, disabled or failed, here or from another client) loses its windows.
   $effect(() =>
     onAppsRemoved((ids) => {
       for (const win of [...windowManager.windows])
@@ -33,26 +36,55 @@
     })
   )
 
-  // Land on the Discover window.
-  windowManager.open('discover')
+  // Land on the Discover window, once the desktop is up.
+  let landed = false
+  $effect(() => {
+    if (host.phase === 'ready' && !landed) {
+      landed = true
+      windowManager.open('discover')
+    }
+  })
 </script>
 
-{#snippet windowContent(appId: AppId)}
-  {#if appId === 'discover'}
+{#snippet windowContent(win: WindowState)}
+  {#if win.appId === 'discover'}
     <DiscoverPage />
-  {:else if appId === 'agents'}
+  {:else if win.appId === 'agents'}
     <AgentsPage />
-  {:else if appId === 'settings'}
+  {:else if win.appId === 'settings'}
     <SettingsPage />
-  {:else if appId === 'files'}
+  {:else if win.appId === 'files'}
     <FilesPage />
-  {:else if appId === 'gallery'}
+  {:else if win.appId === 'gallery'}
     <GalleryPage />
-  {:else if appId === 'terminal'}
+  {:else if win.appId === 'terminal'}
     <TerminalPage />
-  {:else if moduleApp(appId)}
-    <ModuleAppView {appId} />
+  {:else}
+    <ViewWindow
+      appId={win.appId}
+      windowId={win.id}
+      kind={win.kind}
+      params={win.params}
+      onclosewindow={() => windowManager.close(win.id)}
+    />
   {/if}
 {/snippet}
 
-<DesktopPage {windowContent} />
+{#if host.phase === 'ready' || host.phase === 'connecting'}
+  <DesktopPage {windowContent} />
+{:else if host.phase === 'checking'}
+  <main class="splash" data-testid="splash" aria-busy="true" aria-label="Starting AgentOS"></main>
+{:else}
+  <PairingPage
+    onpair={(code, name) => host.pair(code, name)}
+    unreachable={host.phase === 'unreachable' ? host.error : null}
+    onretry={() => host.retry()}
+  />
+{/if}
+
+<style>
+  .splash {
+    min-height: 100vh;
+    background: var(--wallpaper-default, var(--bg-grouped));
+  }
+</style>

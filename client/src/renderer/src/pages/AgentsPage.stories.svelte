@@ -4,7 +4,7 @@
   import AgentsPage from './AgentsPage.svelte'
   import { apps } from '../lib/apps.svelte'
   import { agentStore } from '../lib/agents.svelte'
-  import { scenarios } from '../web/scenarios'
+  import { scenarios } from '../lib/scenarios'
 
   const app = apps.agents
   const seed = (name: string) => () => {

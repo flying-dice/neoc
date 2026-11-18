@@ -9,34 +9,6 @@
         "@playwright/test": "^1.65.1",
       },
     },
-    "apps/calculator": {
-      "name": "@agentos/app-calculator",
-      "version": "0.1.0",
-      "dependencies": {
-        "@agentos/sdk": "workspace:*",
-        "@agentos/ui": "workspace:*",
-      },
-      "devDependencies": {
-        "@agentos/storybook": "workspace:*",
-        "@storybook/addon-a11y": "10.6.7",
-        "@storybook/addon-docs": "10.6.7",
-        "@storybook/addon-svelte-csf": "5.1.6",
-        "@storybook/addon-themes": "10.6.7",
-        "@storybook/svelte-vite": "10.6.7",
-        "@sveltejs/vite-plugin-svelte": "^7.3.1",
-        "@types/bun": "^1.4.4",
-        "storybook": "10.6.7",
-        "svelte": "^5.57.2",
-        "svelte-check": "^4.7.6",
-        "typescript": "^5.9.3",
-        "vite": "^8.3.4",
-        "zod": "^4.6.7",
-      },
-      "peerDependencies": {
-        "svelte": "^5.0.0",
-        "zod": "^4.0.0",
-      },
-    },
     "apps/server": {
       "name": "@agentos/server",
       "version": "0.1.0",
@@ -156,8 +128,6 @@
     "@agentclientprotocol/claude-agent-acp": ["@agentclientprotocol/claude-agent-acp@0.108.0", "", { "dependencies": { "@agentclientprotocol/sdk": "2.7.0", "@anthropic-ai/claude-agent-sdk": "0.3.326", "diff": "9.0.0", "zod": "4.6.7" }, "bin": { "claude-agent-acp": "dist/index.js" } }, "sha512-Y0HI3CB0DfhpWItCn2RE3xgpen001V2U/bHm3G6ZVKXsElF5N4uYyjYlmgNzZBKcBtZK0JqiE96NMaeVXtgJjw=="],
 
     "@agentclientprotocol/sdk": ["@agentclientprotocol/sdk@2.7.0", "", { "peerDependencies": { "@modelcontextprotocol/server": "^2.4.0", "zod": "^3.25.76 || ^4.0.0" }, "optionalPeers": ["@modelcontextprotocol/server"] }, "sha512-oXdQq0plWv3iOg01zJghNZRSuyWeMYxOgWIaSdwg1BZe2ZAC9LRhNDi023lNYxXq1zVIpQjIp8P6AfsxpvxF6g=="],
-
-    "@agentos/app-calculator": ["@agentos/app-calculator@workspace:apps/calculator"],
 
     "@agentos/client": ["@agentos/client@workspace:client"],
 
