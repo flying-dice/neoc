@@ -73,9 +73,9 @@ describe('createMemoryHost', () => {
     expect(events).toEqual(['setup 1.0.0', 'aborted', 'disposed'])
     expect(await host.tools.list()).toEqual([])
     expect(await host.apps.list()).toEqual([])
-    expect((await host.apps.available())[0].installedVersion).toBeNull()
+    expect((await host.apps.known())[0].installedVersion).toBeNull()
 
-    await host.apps.install('memory', manifest.id)
+    await host.apps.install(manifest.id)
     expect(events.at(-1)).toBe('setup 1.0.0')
     expect(changed).toEqual([[], [manifest.id]])
   })

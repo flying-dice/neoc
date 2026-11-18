@@ -1,19 +1,24 @@
 /**
- * Builds an app module into a registry bundle (runs under Bun):
+ * Builds an app module into a static bundle directory (runs under Bun):
  *
- *   <out>/<id>/<version>/manifest.json
- *   <out>/<id>/<version>/server.js   ESM for the Bun server (bun:sqlite and any Bun API allowed)
- *   <out>/<id>/<version>/client.js   browser ESM; Svelte/kit/SDK come from the host (SHARED_MODULES)
+ *   <out>/<id>/bundle.json             the latest version (URLs point into <version>/)
+ *   <out>/<id>/<version>/bundle.json   that version: manifest + file URLs and sha256s
+ *   <out>/<id>/<version>/server.js     ESM for the Bun server (bun:sqlite and any Bun API allowed)
+ *   <out>/<id>/<version>/client.js     browser ESM; Svelte/kit/SDK come from the host (SHARED_MODULES)
+ *
+ * The directory is plain static files: commit it, or host it anywhere (GitLab
+ * Pages, any static server) and add the bundle.json URL to a server's known apps.
  *
  * App layout (by convention): src/manifest.ts (default export), src/server/index.ts
  * (default export defineServerApp), src/client/index.ts (default export defineClientApp).
  */
 import { compile, compileModule } from 'svelte/compiler'
-import { dirname, join, relative } from 'node:path'
-import { mkdir, readFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import type { BunPlugin } from 'bun'
 import type { AppManifest } from '../manifest'
-import { manifestSchema, registrySchema, type Registry, type RegistryEntry } from '../registry'
+import { bundleDescriptorSchema, manifestSchema, type BundleDescriptor } from '../bundle'
 import { SHARED_GLOBAL, SHARED_MODULES, SHARED_SIDE_EFFECTS } from './shared'
 
 export { SHARED_GLOBAL, SHARED_MODULES, SHARED_SIDE_EFFECTS } from './shared'
@@ -124,75 +129,82 @@ async function buildOne(options: Parameters<typeof Bun.build>[0], label: string)
 export interface BuildAppOptions {
   /** The app package directory (contains src/manifest.ts). */
   appDir: string
-  /** Registry output directory; bundles go to <outDir>/<id>/<version>/. */
+  /** Bundles directory; the app goes to <outDir>/<id>/. */
   outDir: string
   minify?: boolean
+  /**
+   * Published versions are immutable: refuse to overwrite <id>/<version>/ with
+   * different bytes (bump the version instead). Off for dev builds.
+   */
+  immutable?: boolean
 }
 
-/** Build one app; returns its registry entry (URLs relative to outDir). */
-export async function buildAppBundle({ appDir, outDir, minify = true }: BuildAppOptions): Promise<RegistryEntry> {
+export class PublishedVersionError extends Error {}
+
+/** Build one app; returns its version descriptor (URLs relative to <id>/<version>/). */
+export async function buildAppBundle({
+  appDir,
+  outDir,
+  minify = true,
+  immutable = false
+}: BuildAppOptions): Promise<BundleDescriptor> {
   const manifestModule = (await import(join(appDir, 'src/manifest.ts'))) as { default: AppManifest }
   const manifest = manifestSchema.parse(manifestModule.default) as AppManifest
-  const dir = join(outDir, manifest.id, manifest.version)
-  await mkdir(dir, { recursive: true })
+  const staging = await mkdtemp(join(tmpdir(), `agentos-${manifest.id}-`))
+  try {
+    await buildOne(
+      {
+        entrypoints: [join(appDir, 'src/server/index.ts')],
+        outdir: staging,
+        naming: 'server.js',
+        target: 'bun',
+        format: 'esm',
+        minify
+      },
+      `${manifest.id} server`
+    )
+    await buildOne(
+      {
+        entrypoints: [join(appDir, 'src/client/index.ts')],
+        outdir: staging,
+        naming: 'client.js',
+        target: 'browser',
+        format: 'esm',
+        minify,
+        plugins: [await sharedModulesPlugin(appDir), sveltePlugin()]
+      },
+      `${manifest.id} client`
+    )
+    const descriptor = bundleDescriptorSchema.parse({
+      manifest,
+      server: { url: 'server.js', sha256: await sha256(join(staging, 'server.js')) },
+      client: { url: 'client.js', sha256: await sha256(join(staging, 'client.js')) }
+    })
 
-  await buildOne(
-    {
-      entrypoints: [join(appDir, 'src/server/index.ts')],
-      outdir: dir,
-      naming: 'server.js',
-      target: 'bun',
-      format: 'esm',
-      minify
-    },
-    `${manifest.id} server`
-  )
-  await buildOne(
-    {
-      entrypoints: [join(appDir, 'src/client/index.ts')],
-      outdir: dir,
-      naming: 'client.js',
-      target: 'browser',
-      format: 'esm',
-      minify,
-      plugins: [await sharedModulesPlugin(appDir), sveltePlugin()]
-    },
-    `${manifest.id} client`
-  )
-  await Bun.write(join(dir, 'manifest.json'), JSON.stringify(manifest, null, 2))
-
-  const ref = async (name: string): Promise<{ url: string; sha256: string }> => ({
-    url: relative(outDir, join(dir, name)).split('\\').join('/'),
-    sha256: await sha256(join(dir, name))
-  })
-  return { manifest, server: await ref('server.js'), client: await ref('client.js') }
-}
-
-/**
- * Build a whole registry: every app directory → bundles + registry.json in
- * `outDir`. Old bundle versions in outDir are left in place (registries may
- * serve several versions); registry.json lists the ones just built.
- */
-export async function buildRegistry(options: {
-  name: string
-  appDirs: string[]
-  outDir: string
-  minify?: boolean
-  /** Keep entries for apps not rebuilt this time (partial builds). */
-  merge?: boolean
-}): Promise<Registry> {
-  const built: RegistryEntry[] = []
-  for (const appDir of options.appDirs) {
-    built.push(await buildAppBundle({ appDir, outDir: options.outDir, minify: options.minify }))
+    const appRoot = join(outDir, manifest.id)
+    const dir = join(appRoot, manifest.version)
+    const published = Bun.file(join(dir, 'bundle.json'))
+    if (immutable && (await published.exists())) {
+      const existing = bundleDescriptorSchema.parse(await published.json())
+      if (existing.server.sha256 !== descriptor.server.sha256 || existing.client.sha256 !== descriptor.client.sha256) {
+        throw new PublishedVersionError(
+          `${manifest.id}@${manifest.version} is already published with different contents. ` +
+            `Bump "version" in ${join(appDir, 'src/manifest.ts')} to release a change.`
+        )
+      }
+    }
+    await mkdir(dir, { recursive: true })
+    await Bun.write(join(dir, 'server.js'), Bun.file(join(staging, 'server.js')))
+    await Bun.write(join(dir, 'client.js'), Bun.file(join(staging, 'client.js')))
+    await Bun.write(join(dir, 'bundle.json'), JSON.stringify(descriptor, null, 2) + '\n')
+    const latest = {
+      ...descriptor,
+      server: { ...descriptor.server, url: `${manifest.version}/server.js` },
+      client: { ...descriptor.client, url: `${manifest.version}/client.js` }
+    }
+    await Bun.write(join(appRoot, 'bundle.json'), JSON.stringify(latest, null, 2) + '\n')
+    return descriptor
+  } finally {
+    await rm(staging, { recursive: true, force: true })
   }
-  let kept: RegistryEntry[] = []
-  const existing = Bun.file(join(options.outDir, 'registry.json'))
-  if (options.merge && (await existing.exists())) {
-    const ids = new Set(built.map((e) => e.manifest.id))
-    kept = registrySchema.parse(await existing.json()).apps.filter((e) => !ids.has(e.manifest.id))
-  }
-  const apps = [...kept, ...built].sort((a, b) => a.manifest.id.localeCompare(b.manifest.id))
-  const registry = registrySchema.parse({ name: options.name, apps })
-  await Bun.write(join(options.outDir, 'registry.json'), JSON.stringify(registry, null, 2))
-  return registry
 }

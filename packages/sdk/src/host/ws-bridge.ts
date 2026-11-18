@@ -142,8 +142,8 @@ export function createWsHostBridge(url: string | URL, options: WsHostBridgeOptio
     },
     apps: {
       list: () => invoke('apps:list'),
-      available: () => invoke('registry:list'),
-      install: (registry, appId) => invoke('apps:install', registry, appId),
+      known: () => invoke('apps:known'),
+      install: (appId) => invoke('apps:install', appId),
       uninstall: (appId) => invoke('apps:uninstall', appId),
       onChanged: (l) => on('apps:changed', (e) => l(e.apps)),
       invoke: (appId, channel, payload) => invoke('apps:invoke', appId, channel, payload),

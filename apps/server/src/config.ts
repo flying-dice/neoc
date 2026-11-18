@@ -11,13 +11,13 @@ export interface ServerConfig {
   dataDir: string
   /** The built PWA client to serve (vite build output). */
   clientDir: string
-  /** This repo's registry (bun run build:apps); served at /registry and installed from. */
-  localRegistryDir: string
-  /** Extra registries: URLs of registry.json files (http(s): or file:). */
-  registries: string[]
+  /** The known-apps file: the bundle.json URLs this server offers (default: the built-in list). */
+  knownAppsFile: string
+  /** Extra bundle.json URLs to offer (https:, file:, or http: on localhost). */
+  extraApps: string[]
   /** Browser origins allowed to open /rpc besides the server's own (e.g. the Vite dev server). */
   allowedOrigins: string[]
-  /** Dev mode: reload apps when the local registry is rebuilt. */
+  /** Dev mode: reload installed apps when their bundles are rebuilt. */
   dev: boolean
 }
 
@@ -35,8 +35,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     port,
     dataDir: resolve(env.AGENTOS_DATA ?? join(homedir(), '.agentos')),
     clientDir: resolve(env.AGENTOS_CLIENT_DIR ?? join(repoRoot, 'apps/desktop/dist')),
-    localRegistryDir: resolve(env.AGENTOS_REGISTRY_DIR ?? join(repoRoot, 'dist/registry')),
-    registries: list(env.AGENTOS_REGISTRIES),
+    knownAppsFile: resolve(env.AGENTOS_KNOWN_APPS ?? join(repoRoot, 'apps/server/known-apps.json')),
+    extraApps: list(env.AGENTOS_APPS),
     allowedOrigins: list(env.AGENTOS_ALLOWED_ORIGINS),
     dev: env.AGENTOS_DEV === '1'
   }

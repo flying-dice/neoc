@@ -53,7 +53,7 @@ export class AppRuntime {
 
   /** Write verified bundles, record the install and (re)register the app. */
   async install(
-    registry: string,
+    source: string,
     manifest: AppManifest,
     bundles: { server: Uint8Array; serverSha: string; client: Uint8Array; clientSha: string }
   ): Promise<InstalledApp> {
@@ -67,7 +67,7 @@ export class AppRuntime {
     const row: InstalledRow = {
       id: manifest.id,
       version: manifest.version,
-      registry,
+      source,
       manifest,
       serverSha: bundles.serverSha,
       clientSha: bundles.clientSha,
@@ -186,7 +186,7 @@ export class AppRuntime {
     return {
       manifest: r.row.manifest,
       clientUrl: `/bundles/${r.row.id}/${r.row.version}/client.js?v=${r.row.clientSha.slice(0, 12)}`,
-      registry: r.row.registry,
+      source: r.row.source,
       status: r.status,
       ...(r.error ? { error: r.error } : {})
     }

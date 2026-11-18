@@ -2,7 +2,7 @@
   "name": "@agentos/sdk",
   "version": "0.1.0",
   "private": true,
-  "description": "AgentOS SDK: the contract between app modules, the PWA client and the Bun server (manifest, app server/client APIs, JSON-RPC host protocol, registry format, bundle build)",
+  "description": "AgentOS SDK: the contract between app modules, the PWA client and the Bun server (manifest, app server/client APIs, JSON-RPC host protocol, bundle format, bundle build)",
   "type": "module",
   "exports": {
     ".": {
@@ -34,9 +34,9 @@
       "types": "./src/rpc/index.ts",
       "default": "./src/rpc/index.ts"
     },
-    "./registry": {
-      "types": "./src/registry.ts",
-      "default": "./src/registry.ts"
+    "./bundle": {
+      "types": "./src/bundle.ts",
+      "default": "./src/bundle.ts"
     },
     "./build": {
       "types": "./src/build/index.ts",

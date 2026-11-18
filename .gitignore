@@ -12,3 +12,4 @@ playwright-report
 
 # Per-developer Claude Code settings (project skills/workflows are committed)
 .claude/settings.local.json
+.claude/worktrees/

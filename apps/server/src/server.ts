@@ -5,14 +5,13 @@ import type { ServerWebSocket } from 'bun'
 import { createRpcPeer, RpcError, RpcErrorCode, type RpcPeer } from '@agentos/sdk/rpc'
 import { createProtocolDispatcher, type HostEmitter } from '@agentos/sdk/host/server'
 import type { AppManifest } from '@agentos/sdk'
-import type { RegistryApp } from '@agentos/sdk/host/protocol'
 import { AgentHost, type AgentDefinition } from './acp/agentHost'
 import { agentDefinitions } from './acp/agents'
+import { KnownApps, type ResolvedApp } from './apps/knownApps'
 import { AppRuntime } from './apps/runtime'
 import type { ServerConfig } from './config'
 import { SystemDb } from './db'
 import { createMcpHandler } from './mcp/server'
-import { Registries } from './registry/registries'
 import { ToolRegistry } from './tools/registry'
 
 const VERSION = '0.1.0'
@@ -21,11 +20,11 @@ export interface RunningServer {
   url: URL
   runtime: AppRuntime
   /**
-   * Dev: re-install apps whose bundles changed in the local registry (after
-   * `bun run build:apps`), exercising the same unregister → register path as
-   * an update. Returns the ids reloaded.
+   * Dev: re-install installed apps whose known bundle changed (after
+   * `bun run build:apps`), through the same unregister → register path as an
+   * update. Returns the ids reloaded.
    */
-  syncLocal(): Promise<string[]>
+  reloadChanged(): Promise<string[]>
   stop(): Promise<void>
 }
 
@@ -59,10 +58,7 @@ export async function startServer(
   }
 
   const runtime = new AppRuntime(db, tools, emit, config.dataDir)
-  const registries = new Registries([
-    pathToFileURL(join(config.localRegistryDir, 'registry.json')),
-    ...config.registries.map((u) => new URL(u))
-  ])
+  const known = new KnownApps(pathToFileURL(config.knownAppsFile), config.extraApps)
   const mcp = createMcpHandler(tools, VERSION)
 
   // Bun.serve with port 0 picks a free port; the MCP URL needs the real one.
@@ -85,18 +81,18 @@ export async function startServer(
     workspace
   )
 
-  const install = async (registry: string, appId: string): Promise<ReturnType<AppRuntime['list']>[number]> => {
-    const { source, entry } = await registries.find(registry, appId)
+  const install = async (app: ResolvedApp): Promise<ReturnType<AppRuntime['list']>[number]> => {
+    const { descriptor } = app
     const [server, client] = await Promise.all([
-      registries.download(source, entry.server),
-      registries.download(source, entry.client)
+      known.download(app, descriptor.server),
+      known.download(app, descriptor.client)
     ])
-    // The registry schema validated the manifest; its icon is a free string there.
-    return runtime.install(source.registry.name, entry.manifest as AppManifest, {
+    // The bundle schema validated the manifest; its icon is a free string there.
+    return runtime.install(app.source.href, descriptor.manifest as AppManifest, {
       server,
-      serverSha: entry.server.sha256,
+      serverSha: descriptor.server.sha256,
       client,
-      clientSha: entry.client.sha256
+      clientSha: descriptor.client.sha256
     })
   }
 
@@ -104,21 +100,14 @@ export async function startServer(
     invoke: {
       'host:info': () => ({ name: 'AgentOS', version: VERSION, platform: process.platform, versions: { bun: Bun.version } }),
       'apps:list': () => runtime.list(),
-      'apps:install': (registry, appId) => install(registry, appId),
+      'apps:install': async (appId) => install(await known.find(appId)),
       'apps:uninstall': (appId) => runtime.uninstall(appId),
-      'registry:list': async () => {
-        const out: RegistryApp[] = []
-        for (const { registry } of await registries.load()) {
-          for (const entry of registry.apps) {
-            out.push({
-              registry: registry.name,
-              manifest: entry.manifest as AppManifest,
-              installedVersion: runtime.installedRow(entry.manifest.id)?.version ?? null
-            })
-          }
-        }
-        return out
-      },
+      'apps:known': async () =>
+        (await known.load()).map(({ source, descriptor }) => ({
+          source: source.href,
+          manifest: descriptor.manifest as AppManifest,
+          installedVersion: runtime.installedRow(descriptor.manifest.id)?.version ?? null
+        })),
       'apps:invoke': (appId, channel, payload) => runtime.invoke(appId, channel, payload),
       'tools:list': () => tools.list(),
       'tools:call': (id, input) => tools.call(id, input),
@@ -137,7 +126,6 @@ export async function startServer(
   await runtime.start()
 
   const clientRoot = resolve(config.clientDir)
-  const registryRoot = resolve(config.localRegistryDir)
 
   const server = Bun.serve<SocketData>({
     hostname: config.hostname,
@@ -166,12 +154,6 @@ export async function startServer(
           if (res) return res
         }
         return new Response('Not found', { status: 404 })
-      }
-
-      // This repo is a registry too: other AgentOS servers can install from /registry/registry.json.
-      if (url.pathname.startsWith('/registry/')) {
-        const res = await serveFile(within(registryRoot, url.pathname.slice('/registry/'.length)))
-        return res ?? new Response('Not found', { status: 404 })
       }
 
       const res = await serveFile(within(clientRoot, url.pathname === '/' ? 'index.html' : url.pathname.slice(1)))
@@ -212,21 +194,18 @@ export async function startServer(
   )
   console.log(`[agentos] server on ${origin.href} · MCP ${mcpUrl} · ${runtime.list().length} apps · data ${config.dataDir}`)
 
-  const localRegistry = pathToFileURL(join(config.localRegistryDir, 'registry.json')).href
-
   return {
     url: origin,
     runtime,
-    async syncLocal() {
-      const local = (await registries.load()).find((r) => r.url.href === localRegistry)
-      if (!local) return []
+    async reloadChanged() {
       const reloaded: string[] = []
-      for (const entry of local.registry.apps) {
-        const row = runtime.installedRow(entry.manifest.id)
-        if (!row || row.registry !== local.registry.name) continue
-        if (row.serverSha === entry.server.sha256 && row.clientSha === entry.client.sha256) continue
-        await install(local.registry.name, entry.manifest.id)
-        reloaded.push(entry.manifest.id)
+      for (const app of await known.load()) {
+        const { manifest, server, client } = app.descriptor
+        const row = runtime.installedRow(manifest.id)
+        if (!row || row.source !== app.source.href) continue
+        if (row.serverSha === server.sha256 && row.clientSha === client.sha256) continue
+        await install(app)
+        reloaded.push(manifest.id)
       }
       return reloaded
     },

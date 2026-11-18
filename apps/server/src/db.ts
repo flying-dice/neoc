@@ -4,7 +4,8 @@ import type { AppManifest } from '@agentos/sdk'
 export interface InstalledRow {
   id: string
   version: string
-  registry: string
+  /** The bundle.json URL it was installed from. */
+  source: string
   manifest: AppManifest
   serverSha: string
   clientSha: string
@@ -26,7 +27,7 @@ export class SystemDb {
       CREATE TABLE IF NOT EXISTS installed_apps (
         id TEXT PRIMARY KEY,
         version TEXT NOT NULL,
-        registry TEXT NOT NULL,
+        source TEXT NOT NULL,
         manifest TEXT NOT NULL,
         server_sha TEXT NOT NULL,
         client_sha TEXT NOT NULL,
@@ -39,19 +40,22 @@ export class SystemDb {
         PRIMARY KEY (app_id, key)
       );
     `)
+    // Databases from before known apps recorded a registry name: keep the column, under its new name.
+    const columns = this.#db.query<{ name: string }, []>('PRAGMA table_info(installed_apps)').all()
+    if (columns.some((c) => c.name === 'registry')) this.#db.exec('ALTER TABLE installed_apps RENAME COLUMN registry TO source')
   }
 
   installed(): InstalledRow[] {
     const rows = this.#db
       .query<
-        { id: string; version: string; registry: string; manifest: string; server_sha: string; client_sha: string; installed_at: number },
+        { id: string; version: string; source: string; manifest: string; server_sha: string; client_sha: string; installed_at: number },
         []
       >('SELECT * FROM installed_apps ORDER BY installed_at')
       .all()
     return rows.map((r) => ({
       id: r.id,
       version: r.version,
-      registry: r.registry,
+      source: r.source,
       manifest: JSON.parse(r.manifest) as AppManifest,
       serverSha: r.server_sha,
       clientSha: r.client_sha,
@@ -62,9 +66,9 @@ export class SystemDb {
   saveInstalled(row: InstalledRow): void {
     this.#db
       .query(
-        `INSERT INTO installed_apps (id, version, registry, manifest, server_sha, client_sha, installed_at)
-         VALUES ($id, $version, $registry, $manifest, $serverSha, $clientSha, $installedAt)
-         ON CONFLICT(id) DO UPDATE SET version = $version, registry = $registry, manifest = $manifest,
+        `INSERT INTO installed_apps (id, version, source, manifest, server_sha, client_sha, installed_at)
+         VALUES ($id, $version, $source, $manifest, $serverSha, $clientSha, $installedAt)
+         ON CONFLICT(id) DO UPDATE SET version = $version, source = $source, manifest = $manifest,
            server_sha = $serverSha, client_sha = $clientSha, installed_at = $installedAt`
       )
       .run({ ...row, manifest: JSON.stringify(row.manifest) })

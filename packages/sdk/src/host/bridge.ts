@@ -16,7 +16,7 @@ import type {
   ConfigValue,
   HostInfo,
   InstalledApp,
-  RegistryApp,
+  KnownApp,
   SessionConfigOption
 } from './protocol'
 
@@ -52,9 +52,10 @@ export interface HostBridge {
   /** Installed app modules: lifecycle, client ↔ server calls and events, namespaced by app id. */
   apps: {
     list(): Promise<InstalledApp[]>
-    /** Apps offered by the server's registries, with what's installed. */
-    available(): Promise<RegistryApp[]>
-    install(registry: string, appId: string): Promise<InstalledApp>
+    /** Apps the server knows how to install, with what's installed. */
+    known(): Promise<KnownApp[]>
+    /** Install or update a known app. */
+    install(appId: string): Promise<InstalledApp>
     uninstall(appId: string): Promise<void>
     /** The installed set changed (any client installed/uninstalled, or the server reloaded an app). */
     onChanged(listener: (apps: InstalledApp[]) => void): Unsubscribe

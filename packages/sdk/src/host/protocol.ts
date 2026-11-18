@@ -83,16 +83,17 @@ export interface InstalledApp {
   manifest: AppManifest
   /** Where the client bundle is served (an ESM module, imported on first open). */
   clientUrl: string
-  /** Registry it came from. */
-  registry: string
+  /** The bundle.json URL it was installed from. */
+  source: string
   /** "running" once its server module is set up; "failed" if setup threw. */
   status: 'running' | 'failed'
   error?: string
 }
 
-/** An app offered by a registry. */
-export interface RegistryApp {
-  registry: string
+/** An app this server knows how to install (an entry in its known-apps list). */
+export interface KnownApp {
+  /** The bundle.json URL it installs from. */
+  source: string
   manifest: AppManifest
   /** Version installed here, if any (compare with manifest.version for updates). */
   installedVersion: string | null
@@ -103,9 +104,10 @@ export interface RegistryApp {
 export interface InvokeContract {
   'host:info': { args: []; result: HostInfo }
   'apps:list': { args: []; result: InstalledApp[] }
-  'apps:install': { args: [registry: string, appId: string]; result: InstalledApp }
+  /** Install (or update to) a known app. Only known apps: clients can't install arbitrary URLs. */
+  'apps:install': { args: [appId: string]; result: InstalledApp }
   'apps:uninstall': { args: [appId: string]; result: void }
-  'registry:list': { args: []; result: RegistryApp[] }
+  'apps:known': { args: []; result: KnownApp[] }
   'apps:invoke': { args: [appId: string, channel: string, payload: unknown]; result: unknown }
   'tools:list': { args: []; result: ToolInfo[] }
   'tools:call': { args: [id: string, input: Record<string, unknown>]; result: ToolResult }
@@ -142,16 +144,15 @@ export type EventChannel = keyof EventContract
 
 const id = z.string().min(1).max(200)
 const appId = z.string().regex(/^[a-z][a-z0-9-]{1,31}$/)
-const registry = z.string().min(1).max(100)
 
 type Schemas<T> = { [C in keyof T]: z.ZodType<T[C]> }
 
 export const invokeSchemas = {
   'host:info': z.tuple([]),
   'apps:list': z.tuple([]),
-  'apps:install': z.tuple([registry, appId]),
+  'apps:install': z.tuple([appId]),
   'apps:uninstall': z.tuple([appId]),
-  'registry:list': z.tuple([]),
+  'apps:known': z.tuple([]),
   'apps:invoke': z.tuple([appId, z.string().min(1).max(100), z.unknown()]),
   'tools:list': z.tuple([]),
   'tools:call': z.tuple([z.string().regex(/^[A-Za-z0-9_-]{1,80}$/), z.record(z.string(), z.unknown())]),

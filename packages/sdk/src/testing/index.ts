@@ -105,7 +105,7 @@ export interface MemoryApp {
 }
 
 export interface MemoryHostOptions {
-  /** Apps the in-memory "registry" offers. */
+  /** The host's known apps (what Discover offers). */
   apps?: MemoryApp[]
   /** Ids installed at start (default: every app in `apps`). */
   installed?: string[]
@@ -196,7 +196,7 @@ export function createMemoryHost(options: MemoryHostOptions = {}): MemoryHost {
     [...installed.keys()].map((id) => ({
       manifest: catalog.get(id)!.manifest,
       clientUrl: `memory://${id}`,
-      registry: 'memory',
+      source: `memory://${id}/bundle.json`,
       status: 'running' as const
     }))
 
@@ -313,19 +313,19 @@ export function createMemoryHost(options: MemoryHostOptions = {}): MemoryHost {
         await ready
         return installedApps()
       },
-      available: async () => {
+      known: async () => {
         await ready
         return [...catalog.values()].map((a) => ({
-          registry: 'memory',
+          source: `memory://${a.manifest.id}/bundle.json`,
           manifest: a.manifest,
           installedVersion: installed.has(a.manifest.id) ? a.manifest.version : null
         }))
       },
-      async install(registry, appId) {
-        record('apps.install', [registry, appId])
+      async install(appId) {
+        record('apps.install', [appId])
         await ready
         const app = catalog.get(appId)
-        if (!app) throw new Error(`App "${appId}" is not in registry "${registry}"`)
+        if (!app) throw new Error(`Unknown app "${appId}"`)
         await unregister(appId)
         await register(app)
         changes.fire(installedApps())
