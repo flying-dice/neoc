@@ -76,7 +76,9 @@ async fn install_over_rpc_then_use_from_mcp_and_ui_and_uninstall() {
     let raw =
         connect_rpc(addr, Some(&cookie), Some(&format!("http://127.0.0.1:{}", addr.port()))).await.unwrap();
     let mut ws = Ws { raw, backlog: vec![] };
-    let installed = rpc(&mut ws, 1, "app.install", json!({"url": app_ref_url})).await;
+    let preview = rpc(&mut ws, 50, "app.preview", json!({"url": app_ref_url})).await;
+    let sha256 = preview["result"]["sha256"].as_str().expect("the preview carries the digest").to_owned();
+    let installed = rpc(&mut ws, 1, "app.install", json!({"url": app_ref_url, "sha256": sha256})).await;
     assert_eq!(installed["result"]["app"], "notes", "{installed}");
     assert_eq!(next_notification(&mut ws, "app.installed").await["app"], "notes");
     let listed = rpc(&mut ws, 2, "app.list", json!({})).await;
