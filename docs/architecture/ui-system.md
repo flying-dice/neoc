@@ -1308,7 +1308,8 @@ notes or 5 000. Test ids that fall out: `notes-folders-row-3`, `notes-new-note`,
 
 ### 4.6 Testing and sandbox
 
-- **Host-side tests need no browser.** `@agentos/test` mounts a window in the host and exposes the same ids as the
+- **Host-side tests need no browser.** *(Planned, not built: today app logic is tested from Rust integration tests
+  that load the real package, see `docs/TESTING.md`.)* `@agentos/test` mounts a window in the host and exposes the same ids as the
   e2e specs: `local v = test.mount(app, "main"); v:tap("calculator-key-7"); v:expectText("calculator-display", "7")`;
   `v:type("notes-body", "hi")`; `v:tree()` for snapshots (the tree is JSON). Tool tests call `app.tool` directly against a
   temp SQLite and assert the resulting `data.patch` for an open view.

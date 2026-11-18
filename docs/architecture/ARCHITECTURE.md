@@ -80,7 +80,7 @@ crates/
 
 ## 3. Apps
 
-- **Package:** a Luau package `apps/<id>/`: `app.luau` (the entry), modules, `tests/*.luau`, `JOURNEYS.md` and e2e.
+- **Package:** a Luau package `apps/<id>/`: `app.luau` (the entry), modules, `JOURNEYS.md` and e2e. App logic is tested from Rust integration tests that load the real package (`crates/agentos-luau/tests/calculator_app.rs`, `crates/agentos-host/tests/agents_app.rs`); an in-package `tests/*.luau` harness is planned, not built.
   Built into an app ref: manifest, file URLs and sha256s, and `requires` (host API range).
 - **Registries:** a list of app-ref URLs. The default registry is the build's unpacked apps folder over `file://`.
   Users can also add an app by URL; the host shows a preview, then a confirmation that it runs on this host and its

@@ -1,5 +1,7 @@
 # Rust host: spike results and decision memo
 
+> Historical record: the spike that preceded the build (since folded into `crates/`; the throwaway `rust-spike/` directory is gone). The "Running the host" and later sections describe the host as built.
+
 Everything below was built and run in this workspace (`rust-spike/`, rustc 1.98.1, macOS arm64). `cargo nextest run --workspace`:
 **42 tests, 42 passed, 0.5 s.** Clippy: 0 errors, 21 pedantic warnings (spike code). `scripts/check-deps.py` and `cargo deny --exclude-dev check bans`: OK.
 The spikes were restructured into the proposed hexagonal layout (section "Workspace layout"), so the layout is proven by compiling code, not only drawn.
@@ -91,7 +93,7 @@ Features `luau, async, serialize, send`. Proven (all in `tests/vm.rs`, 9 tests):
 - Add later: `sdk` (the `agentos.d.luau` + stubs shipped to app authors), `registry` (a list of app-ref URLs, pure), `permissions` if policy grows beyond `Permission`.
 - **Error types per layer:** `DomainError` → `PortError` (what adapters return; each adapter maps its errors with `From`) → `AppError` (use cases; wraps both) → JSON-RPC code / MCP `isError` at the edge. `anyhow` only in `main`.
 - **Workspace config (in `Cargo.toml`):** `[workspace.package]`, `[workspace.dependencies]` with pinned versions, `[workspace.lints]`: clippy `pedantic` warn, `unwrap_used`/`expect_used`/`panic` deny, `unsafe_code = "forbid"`; `clippy.toml` with `allow-unwrap-in-tests`; `rustfmt.toml`. (Integration-test helper fns need a one-line `#![allow(clippy::unwrap_used)]` in each `tests/*.rs`; the in-memory fakes carry one `allow`.)
-- **Dependency direction enforcement — recommend `scripts/check-deps.py`** (60 lines over `cargo metadata`): an explicit per-crate allow-list of internal edges, an allow-list of external crates for `domain`/`application`, and a framework deny-list (tokio, axum, mlua, rusqlite, reqwest, rmcp…) for the core. Proven: passes now; adding `application → luau` fails with `internal edge not allowed`. Keep `cargo-deny` too (`deny.toml`: `bans` with `wrappers` pins each framework to its adapter, plus licenses/advisories/sources). Rewrite the script in the repo's `bun` style next to `check-boundaries.ts` if preferred. Crate edges alone aren't enough (a stray `use tokio` in `application` would compile if the dep were present), hence the gate.
+- **Dependency direction enforcement — recommend a `cargo metadata` gate (built as `scripts/check-deps.ts`)** (60 lines over `cargo metadata`): an explicit per-crate allow-list of internal edges, an allow-list of external crates for `domain`/`application`, and a framework deny-list (tokio, axum, mlua, rusqlite, reqwest, rmcp…) for the core. Proven: passes now; adding `application → luau` fails with `internal edge not allowed`. Keep `cargo-deny` too (`deny.toml`: `bans` with `wrappers` pins each framework to its adapter, plus licenses/advisories/sources). Crate edges alone aren't enough (a stray `use tokio` in `application` would compile if the dep were present), hence the gate.
 - **Test strategy per layer** (all demonstrated): domain = plain unit tests (7); application = use cases against in-memory port fakes, no mocking library (4: install/verify/tamper-no-state-change/uninstall/permission-before-VM); adapters = integration tests through the real library (luau: sandbox/limits/async/hot reload; sqlite; mcp with an rmcp client; acp against a fake agent + the real adapter; http with a WS client; fetch against a local server); end-to-end = `agentos-host/tests/e2e.rs` driving `/rpc` + `/mcp` + `/agui` of the real wiring. Run with `cargo nextest run --workspace` (0.5 s).
 
 ## Open risks
@@ -183,7 +185,7 @@ Defaults, then `agentos.toml`, then environment variables. The file is `--config
 | `data_dir` | `AGENTOS_DATA` | `~/.agentos` (mode 0700): `system.db`, `apps/<id>.db`, `mcp.json` |
 | `bind` | `AGENTOS_BIND` | `0.0.0.0` |
 | `port` | `AGENTOS_PORT` | `7400` (`0` picks a free port) |
-| `client_dir` | `AGENTOS_CLIENT_DIR` | `client/dist`, else `apps/desktop/dist`; none built = API only |
+| `client_dir` | `AGENTOS_CLIENT_DIR` | `client/dist`; not built = API only |
 | `registries` | `AGENTOS_REGISTRIES` (comma list) | the catalog Discover browses: registry files (`{"apps": ["<id>/<version>/app-ref.json"]}`, relative URLs resolve against the registry) or app refs, by URL; default `dist/apps/registry.json` (what `bun run build:apps` writes) over `file://` when it exists |
 | `install` | `AGENTOS_INSTALL` (comma list) | none: app-ref URLs the host makes sure are installed at every start |
 | `allowed_hosts` | `AGENTOS_ALLOWED_HOSTS` (comma list) | none |
@@ -192,8 +194,8 @@ Defaults, then `agentos.toml`, then environment variables. The file is `--config
 | `secure_cookies` | `AGENTOS_SECURE_COOKIES` | on when TLS is configured |
 | `[tls] cert`, `key` | `AGENTOS_TLS_CERT`, `AGENTOS_TLS_KEY` | TLS off |
 
-An explicit `client_dir` that is not built is an error; the default quietly falls back to the old
-`apps/desktop/dist` until the client moves to `client/`.
+An explicit `client_dir` that is not built is an error; when the default `client/dist` is not built the host serves the
+API only and logs a warning.
 
 ### The gate
 
