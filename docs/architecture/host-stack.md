@@ -106,6 +106,17 @@ Features `luau, async, serialize, send`. Proven (all in `tests/vm.rs`, 9 tests):
 7. **ACP→AG-UI mapping** (prompt streaming, permission requests, tool-call events) is the largest unproven piece; the transport pieces on both sides are proven.
 8. **Linux/Windows builds unverified** (needs zigbuild/CI); `x86_64-pc-windows-gnu` target is installed but untried; `notify` and process spawning differ per OS.
 9. **Luau ergonomics:** no `require` of files yet (bundle-only `require` to build), no debugger, error spans only as `app/main.luau:line`.
+10. **Luau is being replaced by Lua 5.1** (decided 2026-11-18), so these sandbox findings from the second code review
+    are left open on purpose and carry over to the port (it needs its own budget design: Lua 5.1 has hooks, not Luau
+    interrupts):
+    - a view tree's type, key, prop, slot and event names are copied per node with no byte charge, so a shared tree
+      with very long names can exhaust host memory before the node limit trips (`agentos-luau/src/view.rs`);
+    - `lua_to_json` formats child paths eagerly, so a huge key can make one conversion take seconds while it holds the
+      VM gate (`convert.rs`);
+    - effects queued by an unloaded or replaced app are still flushed;
+    - a `readOnly` tool can still call `app.on`, `app.window`, `app.tools.register` and the `db:query` / `row` /
+      `scalar` source constructors and `app.thread` at runtime (they declare, they do not write data);
+    - string bytes are counted before `to_string_lossy`, so invalid UTF-8 is undercounted.
 
 ## What I did not do / failed
 - Did not run `luau-lsp` (download executed under a policy block; I deleted it). Did not run Docker/Linux builds (daemon down). Did not test `jsonrpsee` (reasoned from docs). Did not test `https://` fetches (no network test; reqwest+rustls is compiled and works for `http://`).

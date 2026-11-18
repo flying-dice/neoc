@@ -134,7 +134,7 @@ fn a_ref_or_call_counts_as_a_name() {
 
 #[test]
 fn an_image_needs_alt_or_decorative() {
-    let image = Node::new("Image", "i").prop("src", json!({ "asset": "logo" }));
+    let image = Node::new("Image", "i").prop("src", json!({ "url": "https://example.org/logo.png" }));
     assert_eq!(only_error(&window(image.clone())).code, Code::MissingName);
     assert!(errors(&window(image.clone().prop("alt", json!("The logo")))).is_empty());
     assert!(errors(&window(image.prop("decorative", json!(true)))).is_empty());

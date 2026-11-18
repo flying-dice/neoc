@@ -6,15 +6,8 @@ use crate::ui::spec::{
 
 use super::{LABEL_COLOR, PALETTE, TEXT_STYLE};
 
-const IMAGE_SRC: ObjectDef = ObjectDef {
-    name: "ImageSrc",
-    fields: &[
-        prop!("asset", PropType::Str).doc("A host-bundled asset."),
-        prop!("url", PropType::Str).doc("An https URL, fetched through the host."),
-        prop!("file", PropType::Str).doc("A file the app may read."),
-    ],
-    open: false,
-};
+const IMAGE_SRC: ObjectDef =
+    ObjectDef { name: "ImageSrc", fields: &[prop!("url", PropType::Str).doc("An https URL.")], open: false };
 
 pub const TEXT: ComponentSpec = ComponentSpec::new(
     "Text",

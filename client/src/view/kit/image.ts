@@ -1,23 +1,10 @@
 /**
- * Where an `Image.src` / `Avatar.image` loads from. The wire form is `{asset}`, `{url}` or `{file}`:
- *  - `asset`: a host-bundled asset, served by the host under `/app-assets/<name>` (names are plain file names). Not
- *    `/assets/`: that is where the client build puts its hashed files, which the service worker caches for good;
- *  - `url`: an https URL (the kit refuses anything else);
- *  - `file`: a file the app may read: the host would have to serve it, which it does not yet, so it shows the
- *    placeholder rather than guessing a path.
- * The kit's `safeImageSrc` makes the final decision; this only turns the wire shape into a candidate string.
+ * Where an `Image.src` / `Avatar.image` loads from: the wire form `{url}` (an https URL), or a bare string for
+ * `Avatar.image`. The kit's `safeImageSrc` makes the final decision; this only turns the wire shape into a candidate.
  */
-const ASSET_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
-
-/** The route the host serves bundled app assets from (none of the client build's or the service worker's paths). */
-export const APP_ASSET_PREFIX = '/app-assets/'
-
 export function imageSource(src: unknown): string | undefined {
   if (typeof src === 'string') return src // a bare string: Avatar.image
   if (typeof src !== 'object' || src === null || Array.isArray(src)) return undefined
-  const s = src as Record<string, unknown>
-  if (typeof s.url === 'string') return s.url
-  if (typeof s.asset === 'string' && ASSET_NAME.test(s.asset))
-    return `${APP_ASSET_PREFIX}${s.asset}`
-  return undefined
+  const url = (src as Record<string, unknown>).url
+  return typeof url === 'string' ? url : undefined
 }

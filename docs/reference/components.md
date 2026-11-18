@@ -1417,9 +1417,7 @@ Every node accepts these. A component's own prop of the same name overrides the 
 
 | Field | Type | Required | Default | Notes |
 |---|---|---|---|---|
-| `asset` | string |  |  | A host-bundled asset. |
-| `url` | string |  |  | An https URL, fetched through the host. |
-| `file` | string |  |  | A file the app may read. |
+| `url` | string |  |  | An https URL. |
 
 ### Insets
 

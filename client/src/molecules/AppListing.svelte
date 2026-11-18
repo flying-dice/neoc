@@ -82,6 +82,7 @@
           variant="gray"
           size="small"
           capsule
+          hit
           aria-label="{label.toLowerCase()} {name}"
           onclick={onget}>{label}</Button
         >
@@ -90,6 +91,7 @@
             testid="{testid}-toggle"
             variant="plain"
             size="small"
+            hit
             aria-label="Disable {name}"
             onclick={ontoggle}>Disable</Button
           >
@@ -99,6 +101,7 @@
             testid="{testid}-remove"
             variant="plain"
             size="small"
+            hit
             destructive
             aria-label="Remove {name}"
             onclick={onremove}>Remove</Button
@@ -135,5 +138,10 @@
     font-weight: 700;
     min-height: 24px;
     padding: 0 16px;
+  }
+  /* the drawn capsule stays 24 pt; the kit's hit border pads it to a 44 pt target */
+  .cta :global(.ios-button.hit) {
+    --_h: 24px;
+    min-height: 44px;
   }
 </style>

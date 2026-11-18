@@ -1,6 +1,6 @@
 <!--
   @molecule Image — an image with a required alternative: `alt`, or `decorative` (then hidden from assistive
-  technology). `src` is `{asset}`, `{url}` (https) or `{file}`; whatever cannot load shows the `placeholder` tile.
+  technology). `src` is `{url}` (https); whatever cannot load shows the `placeholder` tile.
   `fit` is `fit` (contain) or `fill` (cover), `size` makes a square, `corner` a radius token. Atoms: Picture.
 -->
 <script lang="ts">

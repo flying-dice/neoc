@@ -188,7 +188,7 @@ they may be children of any container (typically in a `Group` at the root).
 | `Text` | `text` (positional in Luau), `style largeTitle|title1..3|headline|body|callout|subheadline|footnote|caption1|caption2|display`, `weight`, `foreground`, `align leading|center|trailing`, `lines n|0`, `truncation tail|middle|head`, `selectable`, `digits tabular`, `fit` (shrink to box; `display` only), `heading 1..6`, `live off|polite|assertive` | | `Text` | 1 |
 | `Label` | `title`, `icon`, `display titleAndIcon|titleOnly|iconOnly` | | new | 1 |
 | `Icon` | `name` (kit icon set), `size`, `weight`, `tint` | | `Icon` | 1 |
-| `Image` | `src {asset}|{url}|{file}`, `fit fit|fill`, `size`, `corner`, `alt` (required unless `decorative`), `placeholder` | | new | 1 |
+| `Image` | `src {url}` (https), `fit fit|fill`, `size`, `corner`, `alt` (required unless `decorative`), `placeholder` | | new | 1 |
 | `Badge` | `value` (number|string, omit = dot), `tint`, `max` | | `Badge` | 1 |
 | `ProgressView` | `value` 0..1 or null, `style linear|circular|spinner`, `label` | | `ProgressBar`, `ActivityIndicator` | 1 |
 | `Gauge` | `value`, `min`, `max`, `style linear|circular|capacity`, `tint`, `label`, `currentValueLabel` | | new | 2 |

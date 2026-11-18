@@ -65,7 +65,21 @@
   </AppWindow>
 {/snippet}
 
-<Story name="Featured" />
+<Story
+  name="Featured"
+  play={async ({ canvas }) => {
+    // a listing's GET / OPEN, Disable and Remove are targets a finger can hit (44 pt)
+    const ids = [
+      'discover-app-calculator-get',
+      'discover-app-calculator-toggle',
+      'discover-app-calculator-remove'
+    ]
+    for (const id of ids) {
+      const button = await canvas.findByTestId(id)
+      await expect(button.getBoundingClientRect().height).toBeGreaterThanOrEqual(44)
+    }
+  }}
+/>
 
 <Story name="Narrow window" args={{ width: 380, height: 640 }} />
 
