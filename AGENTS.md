@@ -72,23 +72,28 @@ A change is done when all of these hold:
 ## Boundaries
 
 - **Crate dependency direction** (hexagonal; inward only): `agentos-domain` is pure and depends on no other crate;
-  `agentos-application` (ports and use cases) depends on domain; each adapter (`luau`, `sqlite`, `mcp`, `acp`, `agui`,
+  `agentos-application` (ports and use cases) depends on domain; each adapter (`lua`, `sqlite`, `mcp`, `acp`, `agui`,
   `fetch`, `http`, `codegen`) depends on application and domain and **never on another adapter**; `agentos-host` is the
   composition root and the only crate that sees them all. `agentos-luavm` is a support library, not an adapter: the
-  sandboxed Lua 5.1 VM (mlua, vendored), depending on no other crate here. Only the `luau` adapter may depend on it (it
+  sandboxed Lua 5.1 VM (mlua, vendored), depending on no other crate here. Only the `lua` adapter may depend on it (it
   reaches mlua through luavm's re-export, so mlua stays in one crate). Enforced by `bun run lint:deps` (`scripts/check-deps.ts`,
   an allow-list over `cargo metadata`) and `cargo deny check` (`deny.toml`: each framework crate is pinned to its
   adapter). A new crate must be placed in the allow-list on purpose.
 - **Rust hygiene** (`[workspace.lints]`): clippy pedantic with `-D warnings`; `unsafe_code` is forbidden;
   `unwrap`, `expect` and `panic!` are denied outside tests; `thiserror` in library crates, `anyhow` only in the host
   binary.
-- **The Lua sandbox is the app boundary.** An app is written in Luau and runs as Lua 5.1 in its own environment
-  table. It reaches the host only through the `app` table (`types/generated/agentos.d.luau`); it has no filesystem, no
-  network, no `io`/`os`/`debug`, no `load*`/`getfenv`/`setfenv`, its standard libraries are read-only, and `require`
-  loads only `@agentos/app` and `@agentos/ui` (everything else is bundled in at build time). Its capabilities come from
-  the `permissions` in its `app.json` (`data`, `notify`, `shell`, `agents`) and are enforced in the host, not trusted
-  from the app. Memory, CPU (a VM count hook, plus host-side pattern matching that is charged to the same budget) and
-  host-call time are budgeted; SQL `ATTACH` is denied. A tool declared `readOnly` really cannot write.
+- **Apps are the person's own code on their own host, isolated from each other, not from the machine.** An app runs
+  as Lua 5.1 in its own VM and its own environment table: its globals and its standard libraries (read-only) are its
+  own, so one app cannot reach another's state, and it has no `load*`/`getfenv`/`setfenv`. There are **no
+  permissions** and **no budgets** (no CPU, memory or time limits): an app that loops forever hurts only itself and the
+  host's CPU, and that is accepted. It reaches the host through the `app` table (`types/generated/agentos.d.luau`) and
+  through **every `std:`, `lib:` and `vnd:` module of `agentos-luavm`** (`require("std:fs")`, `require("lib:json")`,
+  `require("vnd:hyper")`, ...: files, network, servers, tasks, threads, SQLite, TLS), next to `@agentos/app` and
+  `@agentos/ui`. What an app starts (tasks, servers, workers) belongs to it: unloading or replacing the app aborts
+  it and closes its listeners, and what a task or a request handler runs queues behind the app's other calls (one
+  call at a time per VM). Still enforced: a tool declared `readOnly` really cannot write, SQL `ATTACH` is denied, a
+  cyclic or absurdly shared table handed back to the host is an error (never a stack overflow), and chunks load as
+  text only.
 - **The client runs no app code.** The renderer draws view trees and sends events; nothing executable crosses the
   wire. Kit knowledge of apps, and app knowledge in the client, are both bugs.
 - **Agent and tool output is untrusted:** render it as text. No `{@html}` or `innerHTML` for it (the only `{@html}` is

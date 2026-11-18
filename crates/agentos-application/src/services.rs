@@ -16,9 +16,8 @@ use crate::{
 };
 use agentos_domain::{
     api::{AppPreview, Catalog, InstalledInfo},
-    resolve_url, source_label, Actor, AgentIdentity, AppDecl, AppId, AppRef, Capabilities, DomainError,
-    Manifest, PackageBudget, Permission, QualifiedToolName, Registry, Revision, StoredRevision, ToolSpec,
-    WindowDecl,
+    resolve_url, source_label, Actor, AgentIdentity, AppDecl, AppId, AppRef, DomainError, Manifest,
+    PackageBudget, QualifiedToolName, Registry, Revision, StoredRevision, ToolSpec, WindowDecl,
 };
 use parking_lot::Mutex;
 use serde_json::Value;
@@ -130,38 +129,28 @@ struct FetchedRef {
     sha256: String,
 }
 
-/// What an install record keeps of a load: the version, the digest of the app ref and the permissions the
-/// manifest then asked for (which the check against the record has just shown to be approved).
+/// What an install record keeps of a load: the version and the digest of the app ref.
 struct Approval {
     version: String,
     ref_sha256: String,
-    permissions: Vec<Permission>,
 }
 
 impl Approval {
     fn of(fetched: &FetchedRef) -> Self {
         let m = &fetched.app_ref.manifest;
-        Self {
-            version: m.version.clone(),
-            ref_sha256: fetched.sha256.clone(),
-            permissions: m.permissions.clone(),
-        }
+        Self { version: m.version.clone(), ref_sha256: fetched.sha256.clone() }
     }
 
     /// Record this approval; whether the record changed.
     fn apply(self, record: &mut InstalledApp) -> bool {
-        let changed = record.version != self.version
-            || record.ref_sha256 != self.ref_sha256
-            || record.permissions != self.permissions;
+        let changed = record.version != self.version || record.ref_sha256 != self.ref_sha256;
         record.version = self.version;
         record.ref_sha256 = self.ref_sha256;
-        record.permissions = self.permissions;
         changed
     }
 }
 
-/// A reloaded app ref must still be the app that was installed and must not ask for more than was approved:
-/// the id is what names the app's database, and permissions are what the person agreed to.
+/// A reloaded app ref must still be the app that was installed: the id is what names the app's database.
 fn check_against_record(record: &InstalledApp, manifest: &Manifest) -> Result<(), DomainError> {
     if manifest.id != record.id {
         return Err(DomainError::AppIdChanged {
@@ -169,21 +158,7 @@ fn check_against_record(record: &InstalledApp, manifest: &Manifest) -> Result<()
             served: manifest.id.to_string(),
         });
     }
-    if record.ref_sha256.is_empty() {
-        return Ok(()); // installed before approvals were kept: the load that follows records them
-    }
-    let mut added: Vec<String> = Vec::new();
-    for p in manifest.permissions.iter().filter(|p| !record.permissions.contains(p)) {
-        let name = p.capability_name().map_or_else(|| format!("{p:?}"), str::to_owned);
-        if !added.contains(&name) {
-            added.push(name);
-        }
-    }
-    if added.is_empty() {
-        Ok(())
-    } else {
-        Err(DomainError::PermissionsGrew { app: record.id.to_string(), added })
-    }
+    Ok(())
 }
 
 impl AppService {
@@ -265,7 +240,6 @@ impl AppService {
             version: m.version.clone(),
             enabled: true,
             installed_at_ms: self.p.clock.now_unix_ms(),
-            permissions: m.permissions.clone(),
             ref_sha256: fetched.sha256.clone(),
         };
         if let Err(e) = self.p.installed.save(&record).await {
@@ -674,7 +648,7 @@ impl AppService {
         Ok(FetchedRef { app_ref: app_ref.resolved(url)?, sha256: format!("{:x}", Sha256::digest(&bytes)) })
     }
 
-    /// Keep the version, digest and permissions of the app ref that just loaded in the app's install record.
+    /// Keep the version and digest of the app ref that just loaded in the app's install record.
     async fn remember(&self, app: &AppId, approval: Approval) {
         let updated = {
             let mut apps = self.apps.lock();
@@ -722,11 +696,6 @@ impl AppService {
             icon: m.icon.clone(),
             tint: m.tint.clone(),
             description: m.description.clone(),
-            permissions: m
-                .permissions
-                .iter()
-                .filter_map(|p| p.capability_name().map(str::to_owned))
-                .collect(),
             source: source_label(url),
             installed,
         }
@@ -775,8 +744,7 @@ impl AppService {
     }
 
     /// Load an installed app again from where it was installed. What the source serves now must still be
-    /// that app and must not ask for more permissions than were approved; the returned approval is what the
-    /// record keeps of this load.
+    /// that app; the returned approval is what the record keeps of this load.
     async fn load_from_record(
         &self,
         record: &InstalledApp,
@@ -809,8 +777,7 @@ impl AppService {
             None => self.p.data.open(&m.id, migrations).await?,
         };
         // a failed load leaves the data in place (it is the user's) and the previous VM, if any, untouched
-        let capabilities = Capabilities::from_grants(&m.permissions);
-        let loaded = self.p.runtime.load(&m.id, package, data.clone(), capabilities).await?;
+        let loaded = self.p.runtime.load(&m.id, package, data.clone()).await?;
         let live = Arc::new(LiveSources::new(data.clone(), loaded.sources));
         let pump =
             self.p.background.spawn("live-sources", Box::pin(pump_changes(data.changes(), live.clone())));

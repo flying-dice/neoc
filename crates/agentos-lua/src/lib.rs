@@ -5,7 +5,6 @@
 //! backstop), a wall-clock timeout on host calls, tracked `app.state`, and errors reported with the app's file and line.
 
 mod api;
-mod budget;
 mod convert;
 mod error;
 pub mod reload;
@@ -19,4 +18,4 @@ pub use convert::{json_to_lua, lua_to_json};
 pub use error::{ScriptError, ToolFailure};
 pub use runtime::{LuaRuntime, UI_MODULE};
 pub use state::DepKey;
-pub use vm::{AppVm, Effect, Limits, Result, ShellEffect, VmConfig, VmError};
+pub use vm::{AppVm, Effect, Result, ShellEffect, VmConfig, VmError};

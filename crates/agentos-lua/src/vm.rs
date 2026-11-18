@@ -2,17 +2,16 @@
 //!
 //! The VM is a bare `agentos-luavm` engine with the app's own environment table (see
 //! `agentos_luavm::lua::app_env`): the prelude's polyfills, the `app` capability table and a `require` that
-//! knows only the host modules. It is limited (memory, a CPU budget enforced by the VM's count hook, a
-//! host-call timeout) and then runs the app's entry. After that the host calls into it: tools, write-back
-//! callbacks, events. One call runs in a VM at a time (an app is single-threaded by design); the VM lives
-//! as long as its `AppVm`.
+//! knows only the host modules. Nothing in it is budgeted (no CPU, memory or time limits: the host is a
+//! homelab's own and apps are meant to do real work); it then runs the app's entry. After that the host
+//! calls into it: tools, write-back callbacks, events. One call runs in a VM at a time (an app is
+//! single-threaded by design); the VM lives as long as its `AppVm`.
 
 use crate::{
     api,
-    budget::{Allowance, CpuBudget, HOOK_INSTRUCTIONS},
     convert::{json_to_lua, lua_to_json},
     error::{ScriptError, ToolFailure},
-    state::{DepKey, SharedTracker, Tracker},
+    state::{DepKey, SharedTracker, Tracker, TrackerScope},
     view::{RenderScope, ViewInstance},
 };
 use agentos_application::{
@@ -20,28 +19,29 @@ use agentos_application::{
     live::{SourceDef, SourceId},
     ports::{AgentCard, AgentRoster, AppData, AppPackage, CallContext, MenuCommand, ViewEffect},
 };
-use agentos_domain::{time, tool_schema, AppDecl, AppId, Capabilities, Notification, ToolSpec};
+use agentos_domain::{time, tool_schema, AppDecl, AppId, Notification, ToolSpec};
 use agentos_luavm::mlua;
 use agentos_luavm::{
     lua::{
-        app_env, charged,
-        host_bytes::ByteBudget,
-        patterns,
-        patterns::PatternLimits,
-        sandbox::{load_source, make_bare_engine, set_watchdog, Watchdog},
+        app_env,
+        lib::log::set_log_sink,
+        lifecycle::{self, set_entry, Baton, CallEntry, Life},
+        sandbox::{install_runtime_state, load_source, make_bare_engine},
     },
-    mlua::{Function, HookTriggers, Lua, Table, Value as LuaValue, VmState},
+    mlua::{Function, Lua, Table, Value as LuaValue},
 };
 use parking_lot::Mutex;
 use serde_json::Value;
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
+    future::Future,
+    pin::Pin,
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, Ordering},
         Arc,
     },
-    time::Duration,
 };
+use tokio::sync::Notify;
 
 /// The Lua 5.1 polyfills of the Luau standard library (`lua/prelude.luau`, built by `bun run codegen`): run
 /// once in each app's environment before the app.
@@ -52,7 +52,7 @@ pub enum VmError {
     /// The entry point (or a module it requires) failed while loading.
     #[error("app `{app}` failed to load: {error}")]
     Load { app: String, error: ScriptError },
-    /// App code raised an error, or exceeded its budget.
+    /// App code raised an error.
     #[error("{0}")]
     Script(ScriptError),
     /// The tool called `ctx:fail(message)`.
@@ -77,63 +77,25 @@ pub enum VmError {
 }
 pub type Result<T> = std::result::Result<T, VmError>;
 
-#[derive(Clone, Debug)]
-pub struct Limits {
-    /// Hard cap on the Lua heap (allocations past this raise a Lua `MemoryError`). It also caps what the
-    /// host-side string functions (`gsub`, `rep`) may build.
-    pub memory_bytes: usize,
-    /// Max ticks (one per `HOOK_INSTRUCTIONS` VM instructions; the pattern matcher is charged in the same
-    /// unit) between host awaits: a `while true do end` is killed after this many, however loaded the
-    /// machine is (see `budget`).
-    pub cpu_ticks: u64,
-    /// Wall-clock backstop on the same slice: far above an honest slice, it only catches what the count
-    /// cannot see.
-    pub cpu_wall: Duration,
-    /// Max ticks in one whole top-level call (a tool, an event, a render), host calls included at
-    /// `budget::HOST_CALL_TICKS` each. Host awaits refill the slice (`cpu_ticks`) but never this, so
-    /// `while true do app.kv:get("k") end` is killed. 2.5 million is five slices: an honest call is a few
-    /// hundred ticks and a handful of host calls.
-    pub call_ticks: u64,
-    /// Wall-clock limit of one top-level call, host waits included (a call also holds the VM's gate, and
-    /// inside `db:tx` the database's write gate). Thirty seconds is three host-call timeouts: far above any
-    /// honest call.
-    pub call_wall: Duration,
-    /// Max effects (`app.notify`, `app:openWindow`, window commands) one call may queue. Effects are
-    /// broadcast to every connected client, so an app must not be able to flood them. 32 is far above what an
-    /// honest call queues (one or two); shell declarations replace each other and do not count.
-    pub max_effects: usize,
-    /// Max wall-clock time of one host call (a database call that never returns).
-    pub host_call_timeout: Duration,
+/// Why booting a VM failed: Lua refused something, or the package is not loadable.
+enum BootError {
+    Lua(mlua::Error),
+    Vm(VmError),
 }
-impl Limits {
-    pub(crate) fn allowance(&self) -> Allowance {
-        Allowance {
-            ticks: self.cpu_ticks,
-            wall: self.cpu_wall,
-            call_ticks: self.call_ticks,
-            call_wall: self.call_wall,
-        }
+impl From<mlua::Error> for BootError {
+    fn from(e: mlua::Error) -> Self {
+        Self::Lua(e)
     }
 }
-impl Default for Limits {
-    fn default() -> Self {
-        Self {
-            memory_bytes: 16 * 1024 * 1024,
-            cpu_ticks: 500_000,
-            cpu_wall: Duration::from_secs(10),
-            call_ticks: 2_500_000,
-            call_wall: Duration::from_secs(30),
-            max_effects: 32,
-            host_call_timeout: Duration::from_secs(10),
-        }
+impl From<VmError> for BootError {
+    fn from(e: VmError) -> Self {
+        Self::Vm(e)
     }
 }
 
 /// How a VM is built.
 #[derive(Clone)]
 pub struct VmConfig {
-    pub capabilities: Capabilities,
-    pub limits: Limits,
     /// Lua 5.1 source of host modules `require("@agentos/<name>")` can load besides `@agentos/app`
     /// (the generated `@agentos/ui` constructors), by module name.
     pub host_modules: Arc<HashMap<String, Vec<u8>>>,
@@ -143,10 +105,7 @@ pub struct VmConfig {
 
 impl std::fmt::Debug for VmConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("VmConfig")
-            .field("capabilities", &self.capabilities)
-            .field("limits", &self.limits)
-            .finish_non_exhaustive()
+        f.debug_struct("VmConfig").finish_non_exhaustive()
     }
 }
 
@@ -160,12 +119,7 @@ impl AgentRoster for NoRoster {
 
 impl Default for VmConfig {
     fn default() -> Self {
-        Self {
-            capabilities: Capabilities::all(),
-            limits: Limits::default(),
-            host_modules: Arc::default(),
-            roster: Arc::new(NoRoster),
-        }
+        Self { host_modules: Arc::default(), roster: Arc::new(NoRoster) }
     }
 }
 
@@ -196,11 +150,8 @@ pub(crate) struct ToolDecl {
 /// Everything the `app` API closures share with the VM's owner.
 pub(crate) struct Shared {
     pub app: AppId,
-    pub caps: Capabilities,
     pub package: AppPackage,
     pub db: Arc<dyn AppData>,
-    pub budget: CpuBudget,
-    pub limits: Limits,
     pub host_modules: Arc<HashMap<String, Vec<u8>>>,
     pub roster: Arc<dyn AgentRoster>,
     pub tracker: SharedTracker,
@@ -231,8 +182,11 @@ pub(crate) struct Shared {
     /// The running tool is declared `readOnly`: its database handle refuses writes and `app.kv` /
     /// `db:migrate` raise. Set only while that tool's call holds the VM's gate.
     pub read_only: Arc<AtomicBool>,
-    /// Effects queued by the running call, against `limits.max_effects` (reset when a call starts).
-    pub effects_in_call: AtomicUsize,
+    /// Everything the app spawned (tasks, servers, workers): aborted when the app is unloaded.
+    pub life: Life,
+    /// Woken when a call that nobody made through the host (a request to the app's own server, a task's next
+    /// slice) ends, so the runtime forwards the effects it queued (`app.notify`, `app.shell`).
+    pub effects_signal: Arc<Notify>,
 }
 
 impl Shared {
@@ -257,30 +211,18 @@ impl Shared {
         Ok(())
     }
 
-    /// Count one more effect against the call's cap.
-    pub fn spend_effect(&self, what: &str) -> mlua::Result<()> {
-        let max = self.limits.max_effects;
-        if self.effects_in_call.fetch_add(1, Ordering::Relaxed) >= max {
-            return Err(mlua::Error::runtime(format!(
-                "{what}: too many effects in one call (at most {max}: notifications, windows, window commands)"
-            )));
-        }
-        Ok(())
-    }
-
-    /// Queue something for the host to do after the call (counted against the cap).
-    pub fn push_effect(&self, what: &str, effect: Effect) -> mlua::Result<()> {
-        self.spend_effect(what)?;
+    /// Queue something for the host to do after the call.
+    #[allow(clippy::unnecessary_wraps)] // the same shape as the other effect pushes
+    pub fn push_effect(&self, effect: Effect) -> mlua::Result<()> {
         self.effects.lock().push(effect);
         Ok(())
     }
 
-    /// Queue what a window asked of its view (counted against the cap). A window context outlives the call
+    /// Queue what a window asked of its view. A window context outlives the call
     /// that rendered it (an app can keep `w` in a variable), so this is refused inside a `readOnly` tool like
     /// every other change to the world.
     pub fn push_view_effect(&self, what: &str, view: &str, effect: ViewEffect) -> mlua::Result<()> {
         self.writable(what)?;
-        self.spend_effect(what)?;
         self.view_effects.lock().push((view.to_owned(), effect));
         Ok(())
     }
@@ -340,24 +282,105 @@ impl Drop for ReadOnlyCall<'_> {
     }
 }
 
-/// A top-level call in progress: it holds the VM's gate. Ending it, or abandoning it (its caller gave up), rolls
-/// back a transaction it left open, so the database's write gate is free the moment the call is over rather than
-/// when some later call happens to start. And it collects a host call the call left behind: one that failed
-/// where Lua 5.1 cannot yield (a `gsub` callback, a metamethod) leaves its future in a dead coroutine until the
-/// garbage collector frees it, and the future can hold the database's lock for the next call.
-pub(crate) struct CallGuard<'a> {
-    shared: &'a Shared,
-    lua: &'a Lua,
-    _gate: tokio::sync::MutexGuard<'a, ()>,
+/// What a call keeps while it waits without using the VM (see [`Baton::park`]).
+struct Parked {
+    read_only: bool,
+    scope: TrackerScope,
 }
 
-impl Drop for CallGuard<'_> {
-    fn drop(&mut self) {
-        // before the gate is released (fields drop after this body): dropping the transaction rolls it back
-        drop(self.shared.tx.lock().take());
-        if self.shared.budget.host_waits() > 0 {
-            let _ = self.lua.gc_collect();
+/// A call in progress: it holds the VM's gate, so one call runs in the VM at a time and `db:tx`, the
+/// `readOnly` flag and state tracking are unambiguous. Ending a call, or abandoning it (its caller gave up),
+/// rolls back a transaction it left open, so the database's write gate is free the moment the call is over.
+///
+/// It is also the call's *baton* (see `agentos_luavm::lua::lifecycle`): at a wait that does not use the VM
+/// (`task.wait`, the network, a worker) the call sets its own state aside and lets the next call in, then
+/// takes the gate and its state back.
+pub(crate) struct Turn {
+    shared: Arc<Shared>,
+    gate: Arc<tokio::sync::Mutex<()>>,
+    held: Option<tokio::sync::OwnedMutexGuard<()>>,
+    parked: Option<Parked>,
+    /// The call came from inside the VM (a request to the app's server, a task), not through the host: its
+    /// effects are forwarded by the runtime's pump when it ends.
+    inbound: bool,
+}
+
+impl Turn {
+    async fn take(shared: Arc<Shared>, gate: Arc<tokio::sync::Mutex<()>>, inbound: bool) -> Self {
+        let held = gate.clone().lock_owned().await;
+        Self { shared, gate, held: Some(held), parked: None, inbound }
+    }
+
+    /// A call that holds nothing yet (a coroutine's continuation): it takes the gate at its first wait's end.
+    fn detached(shared: Arc<Shared>, gate: Arc<tokio::sync::Mutex<()>>) -> Self {
+        Self { shared, gate, held: None, parked: None, inbound: true }
+    }
+}
+
+impl Baton for Turn {
+    fn holding(&self) -> bool {
+        self.held.is_some()
+    }
+
+    fn park(&mut self) -> std::result::Result<(), String> {
+        if self.shared.tx.lock().is_some() {
+            return Err(
+                "cannot wait inside db:tx: a transaction holds the database for as long as it is open, \
+                        so finish it first (a call may wait before it starts one, or after it commits)"
+                    .to_owned(),
+            );
         }
+        let mut tracker = self.shared.tracker.lock();
+        if tracker.is_pure() {
+            return Err("cannot wait while rendering: render must be pure and quick".to_owned());
+        }
+        let scope = tracker.suspend();
+        drop(tracker);
+        let read_only = self.shared.read_only.swap(false, Ordering::SeqCst);
+        self.parked = Some(Parked { read_only, scope });
+        self.held = None;
+        Ok(())
+    }
+
+    fn unpark(&mut self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        Box::pin(async move {
+            if self.held.is_none() {
+                self.held = Some(self.gate.clone().lock_owned().await);
+            }
+            if let Some(parked) = self.parked.take() {
+                self.shared.read_only.store(parked.read_only, Ordering::SeqCst);
+                self.shared.tracker.lock().resume(parked.scope);
+            }
+        })
+    }
+}
+
+impl Drop for Turn {
+    fn drop(&mut self) {
+        if self.held.is_some() {
+            // before the gate is released (fields drop after this body): dropping the transaction rolls it back
+            drop(self.shared.tx.lock().take());
+        }
+        if self.inbound {
+            self.shared.effects_signal.notify_one();
+        }
+    }
+}
+
+/// The queue of calls into this VM that the library's inbound callbacks join.
+struct Entry {
+    shared: Arc<Shared>,
+    gate: Arc<tokio::sync::Mutex<()>>,
+}
+
+impl CallEntry for Entry {
+    fn detached(&self) -> Box<dyn Baton> {
+        Box::new(Turn::detached(self.shared.clone(), self.gate.clone()))
+    }
+
+    fn enter(&self) -> Pin<Box<dyn Future<Output = Box<dyn Baton>> + Send + 'static>> {
+        let (shared, gate) = (self.shared.clone(), self.gate.clone());
+        Box::pin(async move { Box::new(Turn::take(shared, gate, true).await) as Box<dyn Baton> })
     }
 }
 
@@ -365,12 +388,14 @@ pub struct AppVm {
     pub app: AppId,
     lua: Lua,
     shared: Arc<Shared>,
-    /// Serialises calls: one runs at a time, so `db:tx`, the CPU budget and state tracking are unambiguous.
-    gate: tokio::sync::Mutex<()>,
+    /// Serialises calls: one runs at a time (see [`Turn`]).
+    gate: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl Drop for AppVm {
     fn drop(&mut self) {
+        // whatever the app started stops with it (a VM that failed to load included)
+        self.shared.life.shutdown();
         self.shared.release();
     }
 }
@@ -390,19 +415,30 @@ impl AppVm {
         db: Arc<dyn AppData>,
         config: VmConfig,
     ) -> Result<Self> {
-        let VmConfig { capabilities, limits, host_modules, roster } = config;
+        let VmConfig { host_modules, roster } = config;
         let load_err =
             |e: &mlua::Error| VmError::Load { app: app.to_string(), error: ScriptError::from_lua(e) };
         let lua = make_bare_engine().map_err(|e| load_err(&e))?;
-        let budget = CpuBudget::new();
+        let life = Life::new();
+        // what the `std:`/`lib:`/`vnd:` modules keep per VM (the task scheduler, the registry of what the app
+        // spawns), and where `lib:log` writes: the host's tracing, with the app's id
+        install_runtime_state(&lua, life.clone());
+        let log_app = app.clone();
+        set_log_sink(
+            &lua,
+            Arc::new(move |level, line| match level {
+                "error" => tracing::error!(app = %log_app, "{line}"),
+                "warn" => tracing::warn!(app = %log_app, "{line}"),
+                "info" => tracing::info!(app = %log_app, "{line}"),
+                "debug" => tracing::debug!(app = %log_app, "{line}"),
+                _ => tracing::trace!(app = %log_app, "{line}"),
+            }),
+        );
         let read_only = Arc::new(AtomicBool::new(false));
         let shared = Arc::new(Shared {
             app: app.clone(),
-            caps: capabilities,
             package,
             db,
-            budget: budget.clone(),
-            limits: limits.clone(),
             host_modules,
             roster,
             tracker: Arc::new(Mutex::new(Tracker::new(read_only.clone()))),
@@ -425,73 +461,46 @@ impl AppVm {
             view_effects: Mutex::default(),
             tx: Mutex::new(None),
             read_only,
-            effects_in_call: AtomicUsize::new(0),
+            life,
+            effects_signal: Arc::new(Notify::new()),
         });
-
-        // The CPU budget. The count hook runs every HOOK_INSTRUCTIONS VM instructions, on the main thread and
-        // (set globally) on every coroutine mlua creates; a coroutine the app creates inherits it from its
-        // creator. Returning Err raises in the running code; the kill is sticky so a `pcall` cannot swallow it.
-        let allowance = limits.allowance();
-        let hook_budget = budget.clone();
-        lua.set_global_hook(HookTriggers::new().every_nth_instruction(HOOK_INSTRUCTIONS), move |_, _| {
-            match hook_budget.exceeded(allowance) {
-                Some(stop) => Err(mlua::Error::runtime(stop.message())),
-                None => Ok(VmState::Continue),
-            }
-        })
-        .map_err(|e| load_err(&e))?;
-        // The host-side library functions (the pattern matcher, `rep`, and the C functions whose work the hook
-        // cannot see) pay into the same budget, and everything they build outside the Lua heap is charged to one
-        // byte budget (see `agentos_luavm::lua::host_bytes`).
-        let charge_budget = budget.clone();
-        let limits_for_library = PatternLimits {
-            charge: Arc::new(move |ticks| match charge_budget.spend(allowance, ticks) {
-                Some(stop) => Err(mlua::Error::runtime(stop.message())),
-                None => Ok(()),
-            }),
-            bytes: ByteBudget::new(limits.memory_bytes),
-        };
-        patterns::install(&lua, limits_for_library.clone()).map_err(|e| load_err(&e))?;
-        charged::install(&lua, &limits_for_library).map_err(|e| load_err(&e))?;
-        // A stop the script catches (pcall, xpcall, coroutine.resume) is raised again: see `set_watchdog`.
-        let (stop_budget, orphan_budget) = (budget.clone(), budget.clone());
-        set_watchdog(
-            &lua,
-            Watchdog {
-                stopped: Arc::new(move || stop_budget.is_stopped()),
-                orphaned: Arc::new(move || orphan_budget.host_waits() > 0),
-            },
-        );
-        lua.set_memory_limit(limits.memory_bytes).map_err(|e| load_err(&e))?;
+        let gate = Arc::new(tokio::sync::Mutex::new(()));
+        // a request to the app's own server or the next slice of one of its tasks takes its turn like any call
+        set_entry(&lua, Arc::new(Entry { shared: shared.clone(), gate: gate.clone() }));
 
         let env = app_env::new_env(&lua).map_err(|e| load_err(&e))?;
-        let vm = Self { app: app.clone(), lua, shared, gate: tokio::sync::Mutex::new(()) };
-        let call = vm.enter().await;
+        let vm = Self { app: app.clone(), lua, shared, gate };
+        vm.in_call(vm.boot(env)).await.map_err(|e| match e {
+            BootError::Lua(e) => load_err(&e),
+            BootError::Vm(e) => e,
+        })?;
+        Ok(vm)
+    }
+
+    /// Run the prelude, seal the environment, install `app` and `require`, then run the package's entry.
+    async fn boot(&self, env: Table) -> std::result::Result<(), BootError> {
         // the polyfills go in before the environment is sealed, and the host's own `app` and `require` after
-        load_source(&vm.lua, PRELUDE)
+        load_source(&self.lua, PRELUDE)
             .set_name("=prelude")
             .set_environment(env.clone())
-            .call::<()>(env.clone())
-            .map_err(|e| load_err(&e))?;
-        app_env::freeze(&vm.lua, &env).map_err(|e| load_err(&e))?;
-        *vm.shared.env.lock() = Some(env.clone());
-        api::install(&vm.lua, &vm.shared, &env).map_err(|e| load_err(&e))?;
-        let entry = vm.shared.package.entry.clone();
-        let source = vm
+            .call::<()>(env.clone())?;
+        app_env::freeze(&self.lua, &env)?;
+        *self.shared.env.lock() = Some(env.clone());
+        api::install(&self.lua, &self.shared, &env)?;
+        let entry = self.shared.package.entry.clone();
+        let source = self
             .shared
             .package
             .files
             .get(&entry)
             .cloned()
             .ok_or_else(|| VmError::Convert(format!("the package has no entry `{entry}`")))?;
-        load_source(&vm.lua, source.as_slice())
-            .set_name(vm.shared.chunk_name(&entry))
+        load_source(&self.lua, source.as_slice())
+            .set_name(self.shared.chunk_name(&entry))
             .set_environment(env)
             .exec_async()
-            .await
-            .map_err(|e| load_err(&e))?;
-        drop(call);
-        Ok(vm)
+            .await?;
+        Ok(())
     }
 
     pub(crate) fn shared(&self) -> &Arc<Shared> {
@@ -502,17 +511,19 @@ impl AppVm {
         &self.lua
     }
 
-    pub(crate) async fn enter_call(&self) -> CallGuard<'_> {
-        self.enter().await
+    pub(crate) fn life(&self) -> &Life {
+        &self.shared.life
     }
 
-    /// Start a top-level call: wait for the previous one, then fresh CPU budgets and a fresh effect count. The
-    /// returned guard ends the call (see [`CallGuard`]).
-    async fn enter(&self) -> CallGuard<'_> {
-        let gate = self.gate.lock().await;
-        self.shared.budget.begin();
-        self.shared.effects_in_call.store(0, Ordering::Relaxed);
-        CallGuard { shared: &self.shared, lua: &self.lua, _gate: gate }
+    /// Woken when a call that came from inside the VM ends (see [`Shared::effects_signal`]).
+    pub fn effects_signal(&self) -> Arc<Notify> {
+        self.shared.effects_signal.clone()
+    }
+
+    /// Run a top-level call: wait for the previous one, then run `body` holding the VM's gate (see [`Turn`]).
+    pub(crate) async fn in_call<T>(&self, body: impl Future<Output = T>) -> T {
+        let turn = Turn::take(self.shared.clone(), self.gate.clone(), false).await;
+        lifecycle::scoped(Box::new(turn), body).await
     }
 
     // ---- what the app declared ------------------------------------------------------------------------
@@ -578,13 +589,15 @@ impl AppVm {
             (t.spec.input_schema.clone(), t.run.clone(), t.spec.read_only || require_read_only)
         };
         let input = tool_schema::validate_args(&schema, &args).map_err(VmError::InvalidInput)?;
-        let _call = self.enter().await;
-        let _read_only = ReadOnlyCall::enter(&self.shared, read_only);
-        let convert = |e: mlua::Error| VmError::Convert(e.to_string());
-        let arg = json_to_lua(&self.lua, &input).map_err(convert)?;
-        let ctx = self.ctx_table(ctx).map_err(convert)?;
-        let out: LuaValue = run.call_async((arg, ctx)).await.map_err(|e| script(&e))?;
-        lua_to_json(&out).map_err(|e| VmError::Convert(e.to_string()))
+        self.in_call(async {
+            let _read_only = ReadOnlyCall::enter(&self.shared, read_only);
+            let convert = |e: mlua::Error| VmError::Convert(e.to_string());
+            let arg = json_to_lua(&self.lua, &input).map_err(convert)?;
+            let ctx = self.ctx_table(ctx).map_err(convert)?;
+            let out: LuaValue = run.call_async((arg, ctx)).await.map_err(|e| script(&e))?;
+            lua_to_json(&out).map_err(|e| VmError::Convert(e.to_string()))
+        })
+        .await
     }
 
     /// Run a row source's `write(key, field, value, ctx)` callback (a two-way bound field was edited).
@@ -603,15 +616,17 @@ impl AppVm {
             .get(&source.0)
             .cloned()
             .ok_or_else(|| VmError::NoSuchWriter(source.0.clone()))?;
-        let _call = self.enter().await;
-        let convert = |e: mlua::Error| VmError::Convert(e.to_string());
-        let args = (
-            json_to_lua(&self.lua, key).map_err(convert)?,
-            field.to_owned(),
-            json_to_lua(&self.lua, value).map_err(convert)?,
-            self.ctx_table(ctx).map_err(convert)?,
-        );
-        write.call_async::<()>(args).await.map_err(|e| script(&e))
+        self.in_call(async {
+            let convert = |e: mlua::Error| VmError::Convert(e.to_string());
+            let args = (
+                json_to_lua(&self.lua, key).map_err(convert)?,
+                field.to_owned(),
+                json_to_lua(&self.lua, value).map_err(convert)?,
+                self.ctx_table(ctx).map_err(convert)?,
+            );
+            write.call_async::<()>(args).await.map_err(|e| script(&e))
+        })
+        .await
     }
 
     /// Dispatch an event to `app.on(name, fn)` with a JSON payload; returns the handler's JSON result.
@@ -632,15 +647,17 @@ impl AppVm {
     ) -> Result<(Value, BTreeSet<DepKey>)> {
         let handler = self.shared.handlers.lock().get(event).cloned();
         let Some(handler) = handler else { return Ok((Value::Null, BTreeSet::new())) };
-        let _call = self.enter().await;
-        let arg = json_to_lua(&self.lua, &payload).map_err(|e| VmError::Convert(e.to_string()))?;
-        if track {
-            self.shared.tracker.lock().begin(false);
-        }
-        let result = handler.call_async::<LuaValue>(arg).await;
-        let deps = if track { self.shared.tracker.lock().end() } else { BTreeSet::new() };
-        let out = result.map_err(|e| script(&e))?;
-        Ok((lua_to_json(&out).map_err(|e| VmError::Convert(e.to_string()))?, deps))
+        self.in_call(async {
+            let arg = json_to_lua(&self.lua, &payload).map_err(|e| VmError::Convert(e.to_string()))?;
+            if track {
+                self.shared.tracker.lock().begin(false);
+            }
+            let result = handler.call_async::<LuaValue>(arg).await;
+            let deps = if track { self.shared.tracker.lock().end() } else { BTreeSet::new() };
+            let out = result.map_err(|e| script(&e))?;
+            Ok((lua_to_json(&out).map_err(|e| VmError::Convert(e.to_string()))?, deps))
+        })
+        .await
     }
 
     /// The `app.state` fields assigned since the last call (views that read them are dirty).
@@ -658,21 +675,23 @@ impl AppVm {
         let _ = self.lua.gc_collect();
     }
 
-    /// The app is going away: whatever is running in it stops at its next tick or host call (a host
-    /// call it is waiting on is abandoned), and nothing new runs. Call this before dropping the last `Arc`,
-    /// so a runaway call cannot keep the VM alive after an uninstall.
-    pub fn retire(&self) {
-        self.shared.budget.retirement().retire();
+    /// Stop what the app started (tasks, servers and their connections, workers; their sockets are closed)
+    /// but leave the VM answering: a reload does this to the old version before the new one starts.
+    pub fn stop_background(&self) {
+        self.shared.life.stop_background();
     }
 
-    /// The app was unloaded or replaced: nothing it is still running may change the world.
-    pub fn is_retired(&self) -> bool {
-        self.shared.budget.retirement().is_retired()
+    /// The app is going away: everything it started (tasks, servers and their connections, workers) is aborted,
+    /// and a host call a running call is waiting on is abandoned. Call this before dropping the last `Arc`, so
+    /// an app cannot keep a listener or a task alive after an uninstall or a reload.
+    pub fn shutdown(&self) {
+        self.shared.life.shutdown();
     }
 
     /// Unload: release every Rust-held reference to Lua values, then the VM. Returns the heap size freed.
     pub fn unload(self) -> usize {
         let used = self.lua.used_memory();
+        self.shared.life.shutdown();
         self.shared.release();
         used
     }

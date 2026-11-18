@@ -6,12 +6,10 @@ use crate::{
     testing::Fakes,
     AppError,
 };
-use agentos_domain::{
-    Actor, AgentId, AgentIdentity, AppId, Capabilities, DomainError, Permission, QualifiedToolName,
-};
+use agentos_domain::{Actor, AgentId, AgentIdentity, AppId, DomainError, QualifiedToolName, ToolGrant};
 use serde_json::json;
 
-fn agent(grants: Vec<Permission>) -> AgentIdentity {
+fn agent(grants: Vec<ToolGrant>) -> AgentIdentity {
     AgentIdentity { id: AgentId("claude".into()), name: "Claude".into(), grants }
 }
 
@@ -35,21 +33,15 @@ async fn install_verifies_files_then_wires_data_runtime_tools_and_announces() {
 }
 
 #[tokio::test]
-async fn the_package_carries_only_the_bundled_entry_and_the_granted_capabilities() {
+async fn the_package_carries_only_the_bundled_entry() {
     let f = Fakes::new();
-    let url = f.add_app_with(
-        "calc",
-        &[("t", "x")],
-        &[("lib/calc.lua", "return 1"), ("notes.txt", "not lua")],
-        vec![Permission::Data, Permission::Notify],
-    );
+    let url =
+        f.add_app_with("calc", &[("t", "x")], &[("lib/calc.lua", "return 1"), ("notes.txt", "not lua")]);
     f.service().install_from_url(&url).await.unwrap();
     let package = f.runtime.package("calc").unwrap();
     assert_eq!(package.entry, "main.lua");
     // the app is one file: other files the ref lists are not fetched or handed to the runtime
     assert_eq!(package.files.keys().collect::<Vec<_>>(), vec!["main.lua"]);
-    let caps = f.runtime.capabilities("calc").unwrap();
-    assert_eq!(caps, Capabilities { data: true, notify: true, shell: false, agents: false });
 }
 
 #[tokio::test]
@@ -118,7 +110,7 @@ async fn tool_calls_are_permission_checked_per_agent_and_run_as_that_agent() {
 
     f.clock.advance(500);
     let ok =
-        svc.call_tool(&agent(vec![Permission::CallTools(id.clone())]), &name, json!({"a":1})).await.unwrap();
+        svc.call_tool(&agent(vec![ToolGrant::CallTools(id.clone())]), &name, json!({"a":1})).await.unwrap();
     assert_eq!(ok, json!({"echo": {"a":1}}));
     let ctx = f.runtime.last_ctx().unwrap();
     assert_eq!((ctx.actor, ctx.now_ms), (Actor::agent("claude", "Claude"), 1_500));
@@ -169,7 +161,7 @@ async fn a_failing_app_is_marked_failed_and_the_others_still_start() {
     );
 
     let name = QualifiedToolName::parse("notes__a").unwrap();
-    let err = second.call_tool(&agent(vec![Permission::CallAnyTool]), &name, json!({})).await.unwrap_err();
+    let err = second.call_tool(&agent(vec![ToolGrant::CallAnyTool]), &name, json!({})).await.unwrap_err();
     assert!(matches!(err, AppError::NotRunning { .. }), "{err:?}");
 
     // fixed: a reload brings it back
@@ -210,7 +202,7 @@ async fn disable_hides_the_app_from_agents_keeps_data_and_survives_a_restart() {
     svc.disable(&id).await.unwrap(); // idempotent
 
     let name = QualifiedToolName::parse("notes__add_note").unwrap();
-    let err = svc.call_tool(&agent(vec![Permission::CallAnyTool]), &name, json!({})).await.unwrap_err();
+    let err = svc.call_tool(&agent(vec![ToolGrant::CallAnyTool]), &name, json!({})).await.unwrap_err();
     assert!(matches!(err, AppError::NotRunning { state, .. } if state == "disabled"));
 
     svc.shutdown().await;
@@ -398,56 +390,16 @@ async fn a_ref_installed_as_one_app_that_later_serves_another_id_is_refused() {
 }
 
 #[tokio::test]
-async fn permissions_that_grow_are_refused_until_the_app_is_installed_again() {
-    let f = Fakes::new();
-    let url = f.add_app_with("calc", &[("t", "x")], &[], vec![Permission::Data]);
-    let svc = f.service();
-    let id = svc.install_from_url(&url).await.unwrap();
-    assert_eq!(f.installed.records()[0].permissions, vec![Permission::Data], "the approval is kept");
-    rewrite_ref(&f, &url, |r| r.manifest.permissions = vec![Permission::Data, Permission::Shell]);
-
-    let err = svc.reload(&id).await.unwrap_err();
-    assert!(
-        matches!(&err, AppError::Domain(DomainError::PermissionsGrew { added, .. }) if added == &["shell"]),
-        "{err:?}"
-    );
-    assert!(err.to_string().contains("shell"), "{err}");
-    assert_eq!(svc.status(&id), Some(AppStatus::Running), "the approved version keeps serving");
-    assert!(!f.runtime.capabilities("calc").unwrap().shell);
-
-    // a restart does not quietly grant it either
-    svc.shutdown().await;
-    let second = f.service();
-    let apps = second.restore_installed().await.unwrap();
-    assert!(matches!(&apps[0].status, AppStatus::Failed(m) if m.contains("shell")));
-    assert!(!f.runtime.capabilities("calc").unwrap().shell);
-    assert!(second.enable(&id).await.is_err(), "enable is refused too");
-
-    // approving = previewing and installing that digest again
-    let preview = second.preview(&url).await.unwrap();
-    assert_eq!(preview.permissions, vec!["data", "shell"]);
-    second.install_previewed(&url, &preview.sha256).await.unwrap();
-    assert_eq!(second.status(&id), Some(AppStatus::Running));
-    assert!(f.runtime.capabilities("calc").unwrap().shell);
-    assert_eq!(f.installed.records()[0].permissions, vec![Permission::Data, Permission::Shell]);
-    // and now a reload with those permissions is fine, as is one that asks for fewer
-    second.reload(&id).await.unwrap();
-    rewrite_ref(&f, &url, |r| r.manifest.permissions = vec![Permission::Data]);
-    second.reload(&id).await.unwrap();
-    assert_eq!(f.installed.records()[0].permissions, vec![Permission::Data]);
-}
-
-#[tokio::test]
 async fn install_takes_the_digest_that_was_previewed() {
     let f = Fakes::new();
-    let url = f.add_app_with("notes", &[("t", "x")], &[], vec![Permission::Data]);
+    let url = f.add_app_with("notes", &[("t", "x")], &[]);
     let svc = f.service();
     let previewed = svc.preview(&url).await.unwrap();
     assert_eq!(previewed.sha256.len(), 64);
     assert_eq!(svc.preview(&url).await.unwrap().sha256, previewed.sha256, "the digest is stable");
 
-    // the ref changes between the preview and the install (it now asks for more)
-    rewrite_ref(&f, &url, |r| r.manifest.permissions.push(Permission::Shell));
+    // the ref changes between the preview and the install
+    rewrite_ref(&f, &url, |r| r.manifest.description = Some("changed after the preview".into()));
     let err = svc.install_previewed(&url, &previewed.sha256).await.unwrap_err();
     assert!(
         matches!(&err, AppError::Domain(DomainError::RefChanged { expected, .. }) if *expected == previewed.sha256),
@@ -462,14 +414,13 @@ async fn install_takes_the_digest_that_was_previewed() {
     svc.install_previewed(&url, &fresh.sha256.to_uppercase()).await.unwrap();
     let rec = f.installed.records();
     assert_eq!(rec[0].ref_sha256, fresh.sha256);
-    assert_eq!(rec[0].permissions, vec![Permission::Data, Permission::Shell]);
 }
 
 #[tokio::test]
-async fn a_reload_records_the_digest_it_loaded_and_a_refused_one_keeps_the_last_approved() {
+async fn a_reload_records_the_digest_it_loaded() {
     // the digest is a record of the ref last loaded, not a pin: a dev `app.reload` legitimately changes files
     let f = Fakes::new();
-    let url = f.add_app_with("notes", &[("t", "x")], &[], vec![Permission::Data]);
+    let url = f.add_app("notes", &[("t", "x")]);
     let svc = f.service();
     let id = svc.install_from_url(&url).await.unwrap();
     let installed = f.installed.records()[0].ref_sha256.clone();
@@ -481,30 +432,22 @@ async fn a_reload_records_the_digest_it_loaded_and_a_refused_one_keeps_the_last_
     assert_ne!(after.ref_sha256, installed, "the ref changed, so the record says which one is now loaded");
     assert_eq!(after.ref_sha256, svc.preview(&url).await.unwrap().sha256);
     assert_eq!(after.version, "9.9.9");
-
-    // a ref that asks for more is refused and the record still names the last one that was approved
-    rewrite_ref(&f, &url, |r| r.manifest.permissions.push(Permission::Shell));
-    assert!(svc.reload(&id).await.is_err());
-    assert_eq!(f.installed.records()[0].ref_sha256, after.ref_sha256);
-    assert_eq!(f.installed.records()[0].permissions, vec![Permission::Data]);
 }
 
 #[tokio::test]
-async fn a_record_from_before_approvals_were_kept_adopts_what_the_manifest_asks_for() {
+async fn a_record_from_before_digests_were_kept_adopts_the_one_it_loads() {
     let f = Fakes::new();
-    let url = f.add_app_with("notes", &[("t", "x")], &[], vec![Permission::Data, Permission::Notify]);
+    let url = f.add_app("notes", &[("t", "x")]);
     let first = f.service();
     first.install_from_url(&url).await.unwrap();
     first.shutdown().await;
     let mut legacy = f.installed.records().remove(0);
-    legacy.permissions = vec![];
     legacy.ref_sha256 = String::new();
     f.installed.save(&legacy).await.unwrap();
 
     let apps = f.service().restore_installed().await.unwrap();
     assert_eq!(apps[0].status, AppStatus::Running, "an existing install keeps working");
     let rec = f.installed.records();
-    assert_eq!(rec[0].permissions, vec![Permission::Data, Permission::Notify]);
     assert_eq!(rec[0].ref_sha256.len(), 64);
 }
 

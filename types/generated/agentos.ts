@@ -272,10 +272,6 @@ url: string,
  */
 sha256: string, id: string, name: string, version: string, icon?: string, tint?: string, description?: string, 
 /**
- * What the app asks to use: `data`, `notify`, `shell`.
- */
-permissions: Array<string>, 
-/**
  * The host the app ref comes from ("this computer" for a file).
  */
 source: string, 

@@ -319,7 +319,7 @@ async fn a_tool_call_makes_the_views_settle_through_the_observer() {
     let agent = agentos_domain::AgentIdentity {
         id: agentos_domain::AgentId("claude".into()),
         name: "Claude".into(),
-        grants: vec![agentos_domain::Permission::CallAnyTool],
+        grants: vec![agentos_domain::ToolGrant::CallAnyTool],
     };
     r.svc
         .call_tool(&agent, &agentos_domain::QualifiedToolName::parse("notes__t").unwrap(), json!({}))

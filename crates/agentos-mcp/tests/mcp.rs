@@ -4,7 +4,7 @@ use agentos_application::{
     testing::{Fakes, StaticDirectory},
     AppService,
 };
-use agentos_domain::{AgentId, AgentIdentity, AppId, Permission};
+use agentos_domain::{AgentId, AgentIdentity, AppId, ToolGrant};
 use agentos_mcp::{mcp_router, McpState};
 use rmcp::{
     model::{CallToolRequestParams, ClientConfig, ProtocolVersion},
@@ -40,7 +40,7 @@ async fn harness() -> Harness {
             AgentIdentity {
                 id: AgentId("claude".into()),
                 name: "Claude".into(),
-                grants: vec![Permission::CallTools(notes)],
+                grants: vec![ToolGrant::CallTools(notes)],
             },
         ),
         (

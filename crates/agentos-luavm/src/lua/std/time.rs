@@ -446,15 +446,17 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     // detect overruns.
     m.set(
         "sleep",
-        lua.create_async_function(|_, d: AnyUserData| idle_result(async move {
-            let target = d
-                .borrow::<DurationHandle>()
-                .map_err(|_| mlua::Error::external("time.sleep: expected Duration argument"))?
-                .0;
-            let start = StdInstant::now();
-            tokio::time::sleep(target).await;
-            Ok(DurationHandle(start.elapsed()))
-        }))?,
+        lua.create_async_function(|_, d: AnyUserData| {
+            idle_result(async move {
+                let target = d
+                    .borrow::<DurationHandle>()
+                    .map_err(|_| mlua::Error::external("time.sleep: expected Duration argument"))?
+                    .0;
+                let start = StdInstant::now();
+                tokio::time::sleep(target).await;
+                Ok(DurationHandle(start.elapsed()))
+            })
+        })?,
     )?;
     m.record_fn(
         "sleep",

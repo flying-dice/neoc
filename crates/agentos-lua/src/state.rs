@@ -56,6 +56,20 @@ impl Tracker {
     pub fn is_pure(&self) -> bool {
         self.pure
     }
+    /// Set the open scope aside (the call waits and another runs): see [`TrackerScope`].
+    pub fn suspend(&mut self) -> TrackerScope {
+        TrackerScope { active: self.active.take(), pure: std::mem::take(&mut self.pure) }
+    }
+    pub fn resume(&mut self, scope: TrackerScope) {
+        self.active = scope.active;
+        self.pure = scope.pure;
+    }
+}
+
+/// A tracking scope set aside while its call waits.
+pub(crate) struct TrackerScope {
+    active: Option<BTreeSet<DepKey>>,
+    pure: bool,
 }
 
 pub(crate) type SharedTracker = Arc<Mutex<Tracker>>;

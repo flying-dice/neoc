@@ -40,7 +40,6 @@ describe('the generated wire types hostApi re-exports', () => {
       'icon',
       'tint',
       'description',
-      'permissions',
       'source',
       'installed',
       'sha256'

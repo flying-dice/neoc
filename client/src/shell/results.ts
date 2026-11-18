@@ -49,7 +49,6 @@ export const appPreviewSchema = z.object({
   icon: text.optional(),
   tint: text.optional(),
   description: text.optional(),
-  permissions: z.array(text),
   source: text,
   installed: z.object({ version: text, state: appStateSchema }).optional(),
   /** The app ref's digest as previewed: `app.install` sends it back so only that ref installs. */

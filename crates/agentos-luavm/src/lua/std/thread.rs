@@ -387,7 +387,7 @@ async fn run_worker(
     parent_channel: Channel,
     shared: Vec<SharedEntry>,
     life: Life,
-    log_sink: Option<std::sync::Arc<dyn Fn(&str, &str) + Send + Sync>>,
+    log_sink: Option<crate::lua::lib::log::LogFn>,
 ) -> mlua::Result<serde_json::Value> {
     // the worker gets the same module set as its parent, spawns into the parent's registry and logs where
     // the parent logs

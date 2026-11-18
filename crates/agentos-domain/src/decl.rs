@@ -1,12 +1,10 @@
 //! What an app declares about itself in Luau with `app.manifest { ... }`, validated here (pure).
 //!
 //! This is distinct from the package [`crate::Manifest`] in the app ref (registry level: files, checksums,
-//! version). The two must agree on the id; the declared permissions must be a subset of what the package
-//! manifest grants.
+//! version). The two must agree on the id.
 
-use crate::{error::DomainError, AppId, Permission};
+use crate::{error::DomainError, AppId};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
 
 /// `DESIGN_LANGUAGE`: no window is smaller than this.
 pub const MIN_WINDOW_W: u32 = 320;
@@ -71,9 +69,6 @@ pub struct AppDecl {
     pub window: Option<WindowDecl>,
     #[serde(default)]
     pub kit: Option<KitRequirement>,
-    /// Capability names: `data`, `notify`, `shell`.
-    #[serde(default)]
-    pub permissions: Vec<String>,
 }
 
 impl AppDecl {
@@ -98,37 +93,17 @@ impl AppDecl {
                 return invalid("window size must not be below its minimum".into());
             }
         }
-        for p in &self.permissions {
-            if Permission::capability(p).is_none() {
-                return invalid(format!("unknown permission `{p}` (use data, notify or shell)"));
-            }
-        }
         Ok(())
     }
 
-    /// The declared permissions as domain grants.
-    #[must_use]
-    pub fn grants(&self) -> Vec<Permission> {
-        self.permissions.iter().filter_map(|p| Permission::capability(p)).collect()
-    }
-
     /// Check this declaration against the package manifest it came with.
-    pub fn check_against(&self, package_id: &AppId, granted: &[Permission]) -> Result<(), DomainError> {
+    pub fn check_against(&self, package_id: &AppId) -> Result<(), DomainError> {
         self.validate()?;
         if &self.id != package_id {
             return Err(DomainError::InvalidManifest(format!(
                 "app.manifest id `{}` does not match the package id `{package_id}`",
                 self.id
             )));
-        }
-        let granted: BTreeSet<_> = granted.iter().filter_map(Permission::capability_name).collect();
-        for g in self.grants() {
-            let name = g.capability_name().unwrap_or_default();
-            if !granted.contains(name) {
-                return Err(DomainError::InvalidManifest(format!(
-                    "app.manifest asks for `{name}` but the package does not grant it"
-                )));
-            }
         }
         Ok(())
     }
@@ -145,7 +120,7 @@ mod tests {
 
     fn notes() -> serde_json::Value {
         json!({"id":"notes","name":"Notes","icon":"note.text","tint":"yellow",
-               "window":{"w":960,"h":640,"minW":480,"minH":360},"kit":">=1.0","permissions":["data","notify"]})
+               "window":{"w":960,"h":640,"minW":480,"minH":360},"kit":">=1.0"})
     }
 
     #[test]
@@ -153,7 +128,6 @@ mod tests {
         let d = decl(notes()).unwrap();
         d.validate().unwrap();
         assert_eq!(d.kit, Some(KitRequirement { major: 1, minor: 0 }));
-        assert_eq!(d.grants(), vec![Permission::Data, Permission::Notify]);
     }
 
     #[test]
@@ -176,15 +150,12 @@ mod tests {
     }
 
     #[test]
-    fn name_icon_and_permissions_are_validated() {
+    fn name_and_icon_are_validated() {
         let mut d = decl(notes()).unwrap();
         d.name = "  ".into();
         assert!(d.validate().is_err());
         let mut d = decl(notes()).unwrap();
         d.icon = "Has Space".into();
-        assert!(d.validate().is_err());
-        let mut d = decl(notes()).unwrap();
-        d.permissions = vec!["root".into()];
         assert!(d.validate().is_err());
     }
 
@@ -201,10 +172,7 @@ mod tests {
     fn the_declaration_must_agree_with_the_package() {
         let d = decl(notes()).unwrap();
         let id = AppId::parse("notes").unwrap();
-        d.check_against(&id, &[Permission::Data, Permission::Notify]).unwrap();
-        assert!(d
-            .check_against(&AppId::parse("other").unwrap(), &[Permission::Data, Permission::Notify])
-            .is_err());
-        assert!(d.check_against(&id, &[Permission::Data]).is_err(), "notify is not granted by the package");
+        d.check_against(&id).unwrap();
+        assert!(d.check_against(&AppId::parse("other").unwrap()).is_err());
     }
 }

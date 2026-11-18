@@ -26,15 +26,17 @@ snapshots deliberately with `bun run test:e2e:update`, then open the changed PNG
 - **Application** (`agentos-application`): use cases tested against the in-memory port fakes in `agentos_application::testing`
   (`ManualClock`, `RecordingShell`, ...). Tests sit beside the code in `*_tests.rs`. No mocking library: write a fake.
 - **Adapters**: integration tests in `crates/<adapter>/tests/`, through the real library (the Lua 5.1 sandbox and
-  limits, SQLite migrations and live queries, MCP with an `rmcp` client, ACP against the scripted agent, `/rpc` with a
+  module set, SQLite migrations and live queries, MCP with an `rmcp` client, ACP against the scripted agent, `/rpc` with a
   WebSocket client, fetch against a local server). The shipped apps are tested here too: `crates/agentos-lua/tests/calculator_app.rs`
   builds `apps/calculator` with darklua and runs the bundle under the real runtime. The Luau apps and fixtures the Rust
   tests run are built with the product's own pipeline (`scripts/lua51-build.ts`, which `crates/agentos-lua/tests/common`
   and `crates/agentos-host/tests/common` call, so `bun` and `darklua` must be installed); inline snippets in those tests
   are plain Lua 5.1, not Luau. `crates/agentos-lua/tests/lua51.rs` holds what is specific to running on Lua 5.1: the
-  sandbox and read-only libraries, the count hook in coroutines and async threads, the budgeted pattern functions, the
-  memory limit, and host calls under `pcall` and in coroutines. `agentos-luavm` has its own unit tests (the string
-  functions are compared with the C implementation on generated cases).
+  sandbox and read-only libraries and host calls under `pcall` and in coroutines; `modules.rs` holds the modules and
+  the lifecycle: every `std:`/`lib:`/`vnd:` module can be required, a request handler and a task take their turn in
+  the VM's one-call-at-a-time queue, an unloaded or replaced app's listener port is free again and its tasks and
+  workers stop. `agentos-luavm` has its own unit tests (the module registry, the lifecycle, and the `vnd:hyper` client
+  against a local TLS server).
 - **Host** (`agentos-host/tests`): the real wiring on an ephemeral loopback port (`tests/common`), driven like a
   browser or an agent would: `/rpc`, `/agui`, `/mcp`, pairing, the Agents app.
 - Tests may use `unwrap`, `expect` and `panic!` (`clippy.toml`); an integration-test file with helpers carries

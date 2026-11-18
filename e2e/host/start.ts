@@ -42,8 +42,7 @@ writeFileSync(
     version: '0.1.0',
     description: 'Notes that you and your agents can both write in.',
     icon: 'note.text',
-    tint: 'yellow',
-    permissions: ['data', 'notify']
+    tint: 'yellow'
   })
 )
 run('bun', ['scripts/build-apps.ts', '--out', join(DIR, 'registry'), '--root', join(DIR, 'extra-apps')])

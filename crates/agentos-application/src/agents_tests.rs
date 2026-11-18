@@ -4,7 +4,7 @@ use crate::{
     testing::{MemAgentStore, MemRegistry, SeededRandom},
 };
 use agentos_domain::{
-    hash_token, Agent, AgentId, AgentRuntime, AppId, ApprovalPolicy, Grants, Permission, QualifiedToolName,
+    hash_token, Agent, AgentId, AgentRuntime, AppId, ApprovalPolicy, Grants, QualifiedToolName, ToolGrant,
 };
 use std::sync::Arc;
 
@@ -65,7 +65,7 @@ async fn grants_take_effect_on_the_next_call_and_the_agent_is_told() {
 
     r.svc.set_grants(&a.id, Grants::apps([app("notes")])).await.unwrap();
     let id = r.svc.authenticate(&token).unwrap();
-    assert_eq!(id.grants, [Permission::CallTools(app("notes"))]);
+    assert_eq!(id.grants, [ToolGrant::CallTools(app("notes"))]);
     assert!(agent_may(&id, &notes).is_ok());
     assert!(agent_may(&id, &QualifiedToolName::new(app("todo"), "add").unwrap()).is_err());
     assert_eq!(r.tools.visibility_changes(), ["claude"]);
@@ -74,7 +74,7 @@ async fn grants_take_effect_on_the_next_call_and_the_agent_is_told() {
     assert_eq!(r.tools.visibility_changes().len(), 1, "an unchanged grant set tells nobody");
 
     r.svc.set_grants(&a.id, Grants::allow_all()).await.unwrap();
-    assert_eq!(r.svc.authenticate(&token).unwrap().grants, [Permission::CallAnyTool]);
+    assert_eq!(r.svc.authenticate(&token).unwrap().grants, [ToolGrant::CallAnyTool]);
     r.svc.set_grants(&a.id, Grants::default()).await.unwrap();
     assert!(agent_may(&r.svc.authenticate(&token).unwrap(), &notes).is_err(), "revoking works too");
     assert_eq!(r.tools.visibility_changes().len(), 3);
@@ -187,7 +187,7 @@ async fn ensure_seeds_an_agent_once_and_never_overwrites_what_the_person_edited(
     );
     fresh.load().await.unwrap();
     assert_eq!(fresh.list().len(), 1);
-    assert_eq!(fresh.authenticate("fixed-token").unwrap().grants, [Permission::CallAnyTool]);
+    assert_eq!(fresh.authenticate("fixed-token").unwrap().grants, [ToolGrant::CallAnyTool]);
 }
 
 /// Records which agents the roster asked to have stopped.

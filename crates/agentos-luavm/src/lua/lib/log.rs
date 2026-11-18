@@ -337,10 +337,13 @@ fn is_reserved_key(k: &str) -> bool {
 
 /// Where an embedder wants `lib:log` lines instead of stderr: called with the level name and the formatted
 /// line. The daemon routes them into its own tracing with the app's id.
-pub struct LogSink(pub std::sync::Arc<dyn Fn(&str, &str) + Send + Sync>);
+pub struct LogSink(pub LogFn);
+
+/// A function that takes a `lib:log` line: the level name and the formatted line.
+pub type LogFn = std::sync::Arc<dyn Fn(&str, &str) + Send + Sync>;
 
 /// Install `sink` as this engine's `lib:log` output.
-pub fn set_log_sink(lua: &Lua, sink: std::sync::Arc<dyn Fn(&str, &str) + Send + Sync>) {
+pub fn set_log_sink(lua: &Lua, sink: LogFn) {
     lua.set_app_data(LogSink(sink));
 }
 

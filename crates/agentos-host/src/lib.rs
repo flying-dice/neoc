@@ -39,7 +39,7 @@ use agentos_http::{
     origin_guard, require_session, rpc_router, session_router, static_router, HostGuard, RpcHub,
     SessionConfig,
 };
-use agentos_lua::{Limits, LuaRuntime};
+use agentos_lua::LuaRuntime;
 use agentos_mcp::{mcp_router, McpState};
 use agentos_sqlite::{SqliteDataStore, SqliteSystemDb};
 use axum::{middleware::from_fn_with_state, Router};
@@ -164,11 +164,11 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
     // its agent is deleted or relaunched with other settings.
     let (connector, processes) = agent_processes(cfg.connector, cfg.agent_cwd);
     // the roster is also the MCP adapter's directory, tells it when an agent's tool list changes, and is what
-    // apps with the `agents` permission list
+    // apps list
     let contacts = Arc::new(AgentService::new(system.clone(), mcp_state.clone(), random.clone(), processes));
     contacts.load().await?;
     let runtime: Arc<dyn AppRuntime> =
-        Arc::new(LuaRuntime::new(hub.clone(), hub.clone(), Limits::default()).with_roster(contacts.clone()));
+        Arc::new(LuaRuntime::new(hub.clone(), hub.clone()).with_roster(contacts.clone()));
     let tools: Arc<dyn ToolRegistry> = mcp_state.clone();
     let events: Arc<dyn EventSink> = hub.clone();
     let installed: Arc<dyn InstalledAppStore> = system.clone();

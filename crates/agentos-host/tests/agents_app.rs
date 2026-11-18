@@ -4,7 +4,7 @@
 
 mod common;
 
-use agentos_domain::{Grants, Permission};
+use agentos_domain::Grants;
 use common::{
     agents::launchable, browser, next_notification, notification_where, path_of, publish_package, rpc, start,
     temp, Running, Ws,
@@ -21,7 +21,6 @@ async fn host_with_agents_app() -> Running {
         "agents",
         "app.lua",
         &[("app.lua", common::built_app("agents"))],
-        vec![Permission::Data, Permission::Agents],
     );
     r.host.service.install_from_url(&url).await.unwrap();
     r
@@ -159,28 +158,5 @@ async fn starting_a_chat_adds_it_to_the_list_and_the_first_message_titles_it() {
         .await
         .unwrap();
     assert_eq!(rows[0]["title"], "Plan my week please");
-    r.stop().await;
-}
-
-#[tokio::test]
-async fn an_app_without_the_agents_permission_cannot_list_the_roster() {
-    let r = start(|c| {
-        c.agents = vec![common::claude(), ("tok-fake".into(), launchable("fake", "Fake", Grants::default()))];
-    })
-    .await;
-    let source = br#"app.manifest { id = "nosy", name = "Nosy", icon = "gear", permissions = {} }
-app.tool { name = "peek", run = function() return app.agents:list() end }"#;
-    let url = publish_package(
-        &temp("nosy").join("pkg"),
-        "nosy",
-        "app.lua",
-        &[("app.lua", source.to_vec())],
-        vec![],
-    );
-    r.host.service.install_from_url(&url).await.unwrap();
-    let (agent, _) = common::connect_agent(r.addr, "tok-claude").await;
-    let out = common::call(&agent, "nosy__peek", json!({})).await;
-    assert_eq!(out.is_error, Some(true));
-    assert!(common::text_of(&out).contains("agents"), "{}", common::text_of(&out));
     r.stop().await;
 }

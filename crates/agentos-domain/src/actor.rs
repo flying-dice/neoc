@@ -55,14 +55,14 @@ impl From<&AgentIdentity> for Actor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AgentId, Permission};
+    use crate::{AgentId, ToolGrant};
 
     #[test]
     fn an_agent_identity_becomes_an_agent_actor() {
         let identity = AgentIdentity {
             id: AgentId("claude".into()),
             name: "Claude".into(),
-            grants: vec![Permission::CallAnyTool],
+            grants: vec![ToolGrant::CallAnyTool],
         };
         let actor = Actor::from(&identity);
         assert_eq!(

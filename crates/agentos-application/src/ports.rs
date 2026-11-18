@@ -7,8 +7,7 @@ use agentos_domain::{
         ThreadMessage,
     },
     ui::{protocol::Command, ClientDecl, Node, SourceDecl},
-    Actor, Agent, AgentId, AppDecl, AppId, Capabilities, Device, DeviceId, Notification, Permission,
-    ToolSpec,
+    Actor, Agent, AgentId, AppDecl, AppId, Device, DeviceId, Notification, ToolSpec,
 };
 use async_trait::async_trait;
 use serde_json::{Map, Value};
@@ -91,15 +90,9 @@ pub enum ViewEffect {
 
 #[async_trait]
 pub trait AppRuntime: Send + Sync {
-    /// Compile + run the package's entry with only the capabilities the host hands over. Loading an app
+    /// Compile + run the package's entry. Loading an app
     /// that is already loaded replaces it (hot reload): the database handle is the caller's, so data is kept.
-    async fn load(
-        &self,
-        app: &AppId,
-        package: AppPackage,
-        data: Arc<dyn AppData>,
-        capabilities: Capabilities,
-    ) -> PortResult<LoadedApp>;
+    async fn load(&self, app: &AppId, package: AppPackage, data: Arc<dyn AppData>) -> PortResult<LoadedApp>;
     /// Stop the app and free its VM. A call still running in it is stopped too (it does not keep the app
     /// alive), so an uninstalled app never runs on.
     async fn unload(&self, app: &AppId) -> PortResult<()>;
@@ -338,13 +331,10 @@ pub struct InstalledApp {
     pub version: String,
     pub enabled: bool,
     pub installed_at_ms: u64,
-    /// What the person approved at install: the manifest's permissions then. A reload whose manifest asks
-    /// for more is refused until the app is installed again (and so approved again).
-    pub permissions: Vec<Permission>,
     /// SHA-256 (hex) of the app-ref document that was installed or last loaded. It is what the person
     /// reviewed (install is pinned to it) and then a record of what is loaded: every successful load of a
     /// changed ref (a dev `app.reload`, a restart) replaces it, because a reload legitimately changes files.
-    /// It is not compared on reload: the app id and the approved permissions are what a load must keep.
+    /// It is not compared on reload: the app id is what a load must keep.
     /// Empty on a record from before this was kept: the next load adopts what the manifest asks for.
     pub ref_sha256: String,
 }

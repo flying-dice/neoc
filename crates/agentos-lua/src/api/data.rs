@@ -15,7 +15,7 @@
 //! notes { folder = 1 }   -- a source handle
 //! ```
 
-use super::{check_effects_allowed, host, need};
+use super::{check_effects_allowed, host};
 use crate::{
     convert::{json_to_lua, lua_to_json, lua_to_params},
     vm::Shared,
@@ -32,15 +32,9 @@ use std::sync::Arc;
 type Sh = Arc<Shared>;
 
 impl Shared {
-    fn data(&self, what: &str) -> mlua::Result<()> {
-        need(self.caps.data, "data", what)
-    }
-
-    /// The gate every write passes: the app has the `data` permission, the call is not a `readOnly` tool (the
-    /// host's read-only handle would refuse the statement too, this gives the app an error that says why)
-    /// and it is not a render.
+    /// The gate every write passes: the call is not a `readOnly` tool (the host's read-only handle would
+    /// refuse the statement too, this gives the app an error that says why) and it is not a render.
     fn require_write(&self, what: &str) -> mlua::Result<()> {
-        self.data(what)?;
         self.writable(what)?;
         check_effects_allowed(self, what)
     }
@@ -184,10 +178,9 @@ fn check_thread_params(sh: &Shared, given: &Table) -> mlua::Result<()> {
 }
 
 /// `app.thread()`: declare a chat thread source for `ChatTranscript { thread = chat { thread = id, agent = id } }`.
-/// It runs no query (the thread's data is `/agui`). It needs the `agents` permission, because a chat shows an
-/// agent's conversation, and the agent it names must be on the roster (see [`check_thread_params`]).
+/// It runs no query (the thread's data is `/agui`). The agent it names must be on the roster (see
+/// [`check_thread_params`]).
 fn declare_thread(sh: &Sh, lua: &Lua) -> mlua::Result<Function> {
-    need(sh.caps.agents, "agents", "app.thread")?;
     let id = {
         let sources = sh.sources.lock();
         format!("s{}", sources.len() + 1)
@@ -271,7 +264,6 @@ fn install_statements(lua: &Lua, sh: &Sh, db: &Table) -> mlua::Result<()> {
         lua.create_async_function(move |lua, (_this, sql, params): (LuaValue, String, Option<LuaValue>)| {
             let s = s.clone();
             async move {
-                s.data("db:all")?;
                 let rows = s.run_query(sql, lua_to_params(params)?).await?;
                 json_to_lua(&lua, &Value::Array(rows))
             }
@@ -283,7 +275,6 @@ fn install_statements(lua: &Lua, sh: &Sh, db: &Table) -> mlua::Result<()> {
         lua.create_async_function(move |lua, (_this, sql, params): (LuaValue, String, Option<LuaValue>)| {
             let s = s.clone();
             async move {
-                s.data("db:one")?;
                 let mut rows = s.run_query(sql, lua_to_params(params)?).await?;
                 rows.truncate(1);
                 match rows.pop() {
@@ -301,7 +292,6 @@ fn install_statements(lua: &Lua, sh: &Sh, db: &Table) -> mlua::Result<()> {
         lua.create_async_function(move |_, (_this, body): (LuaValue, Function)| {
             let s = s.clone();
             async move {
-                s.data("db:tx")?;
                 check_effects_allowed(&s, "db:tx")?;
                 if s.tx.lock().is_some() {
                     return Err(mlua::Error::runtime("db:tx cannot be nested"));
@@ -340,7 +330,6 @@ fn install_sources(lua: &Lua, sh: &Sh, db: &Table) -> mlua::Result<()> {
         lua.create_async_function(move |lua, (_this, sql, opts): (LuaValue, String, Table)| {
             let s = s.clone();
             async move {
-                s.data("db:query")?;
                 reject_unknown(&opts, &["key", "page", "total"], "db:query")?;
                 let key = opt_string(&opts, "key")?
                     .ok_or_else(|| mlua::Error::runtime("db:query needs { key = \"<unique column>\" }"))?;
@@ -378,7 +367,6 @@ fn install_sources(lua: &Lua, sh: &Sh, db: &Table) -> mlua::Result<()> {
         lua.create_async_function(move |lua, (_this, sql, opts): (LuaValue, String, Table)| {
             let s = s.clone();
             async move {
-                s.data("db:row")?;
                 reject_unknown(&opts, &["key", "rev", "write", "conflict", "writable"], "db:row")?;
                 let key = opt_string(&opts, "key")?
                     .ok_or_else(|| mlua::Error::runtime("db:row needs { key = \"<unique column>\" }"))?;
@@ -432,10 +420,7 @@ fn install_sources(lua: &Lua, sh: &Sh, db: &Table) -> mlua::Result<()> {
         "scalar",
         lua.create_async_function(move |lua, (_this, sql): (LuaValue, String)| {
             let s = s.clone();
-            async move {
-                s.data("db:scalar")?;
-                declare(&s, &lua, sql, |_| SourceKind::Scalar).await
-            }
+            async move { declare(&s, &lua, sql, |_| SourceKind::Scalar).await }
         })?,
     )?;
     Ok(())
@@ -451,7 +436,6 @@ fn install_kv(lua: &Lua, sh: &Sh, app: &Table) -> mlua::Result<()> {
         lua.create_async_function(move |lua, (_this, key): (LuaValue, String)| {
             let s = s.clone();
             async move {
-                s.data("app.kv:get")?;
                 let rows = s
                     .run_query(
                         "select value from _kv where key = :k".into(),

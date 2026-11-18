@@ -82,7 +82,6 @@ describe('the catalog', () => {
       id: 'notes',
       name: 'Notes',
       version: '1.0.0',
-      permissions: ['data'],
       source: 'this computer',
       sha256: 'ab'.repeat(32)
     }

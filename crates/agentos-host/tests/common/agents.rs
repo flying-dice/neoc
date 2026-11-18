@@ -3,7 +3,7 @@
 //! tries to write.
 
 use super::{agent_with, publish_package, temp, Running};
-use agentos_domain::{Agent, AgentRuntime, Grants, Permission};
+use agentos_domain::{Agent, AgentRuntime, Grants};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
@@ -51,7 +51,7 @@ pub fn event_types(events: &[Value]) -> Vec<String> {
 }
 
 const LEDGER: &str = r#"
-app.manifest { id = "ledger", name = "Ledger", icon = "gear", permissions = { "data" } }
+app.manifest { id = "ledger", name = "Ledger", icon = "gear" }
 local db = app.db
 local t = app.t
 db:migrate { [1] = "create table entries(id integer primary key, who text not null)" }
@@ -100,7 +100,6 @@ pub async fn install_ledger(r: &Running) {
         "ledger",
         "app.lua",
         &[("app.lua", LEDGER.as_bytes().to_vec())],
-        vec![Permission::Data],
     );
     r.host.service.install_from_url(&url).await.unwrap();
 }

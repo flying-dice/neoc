@@ -7,8 +7,8 @@ mod common;
 use agentos_application::ports::{
     AppData, AppRuntime, CallContext, Notifier, PortResult, RenderOutput, ViewEventCall,
 };
-use agentos_domain::{ui::Node, Capabilities};
-use agentos_lua::{Limits, LuaRuntime};
+use agentos_domain::ui::Node;
+use agentos_lua::LuaRuntime;
 use common::{agent_ctx, built_app, db, id, user_ctx};
 use serde_json::{json, Map, Value};
 use std::{path::Path, sync::Arc};
@@ -23,13 +23,10 @@ impl Notifier for Quiet {
 
 async fn calculator() -> LuaRuntime {
     let package = built_app("calculator");
-    let runtime = LuaRuntime::new(
-        Arc::new(Quiet),
-        Arc::new(agentos_application::testing::RecordingShell::default()),
-        Limits::default(),
-    );
+    let runtime =
+        LuaRuntime::new(Arc::new(Quiet), Arc::new(agentos_application::testing::RecordingShell::default()));
     let data: Arc<dyn AppData> = db();
-    runtime.load(&id("calculator"), package, data, Capabilities::all()).await.unwrap();
+    runtime.load(&id("calculator"), package, data).await.unwrap();
     runtime
 }
 

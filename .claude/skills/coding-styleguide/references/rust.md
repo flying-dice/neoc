@@ -8,7 +8,7 @@ The host is a Cargo workspace (`Cargo.toml`, `rust-toolchain.toml`, edition 2021
 
 | Crate | Owns | May use |
 |---|---|---|
-| `agentos-domain` | the pure model: ids, app refs and manifests, permissions, agent identity, tools, notifications, the view tree and component schema, protocol messages, `merge3`. Unit tests. | `serde`, `serde_json`, `sha2`, `thiserror`; `ts-rs` and `schemars` only behind the derive-only `codegen` feature |
+| `agentos-domain` | the pure model: ids, app refs and manifests, tool grants, agent identity, tools, notifications, the view tree and component schema, protocol messages, `merge3`. Unit tests. | `serde`, `serde_json`, `sha2`, `thiserror`; `ts-rs` and `schemars` only behind the derive-only `codegen` feature |
 | `agentos-application` | **ports** (traits) and **use cases** (`AppService`, `ChatService`, `DeviceService`, live sources, write-back), plus in-memory fakes in `testing`. Runtime-free: tokio is a dev-dependency. | `agentos-domain`, `async-trait`, `parking_lot`, `thiserror`, `tracing`, small runtime-free crates |
 | adapters (`luau`, `sqlite`, `fetch`, `acp`, `agui`, `http`, `mcp`) | one port or one protocol each | application and domain; **never another adapter** (dev-dependencies may) |
 | `agentos-codegen` | dev-time generation from the domain schema; not linked into the host | domain |

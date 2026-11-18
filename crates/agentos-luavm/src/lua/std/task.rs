@@ -22,8 +22,8 @@ use parking_lot::Mutex;
 use tokio::sync::Notify;
 
 use crate::lua::facade::Module;
-use crate::lua::lifecycle::{has_entry, inbound, Life};
 use crate::lua::lifecycle::idle_result;
+use crate::lua::lifecycle::{first_slice, has_entry, inbound, resumed, Life};
 
 // ---------------------------------------------------------------------------
 // Task outcome — stored once the task reaches a terminal state
@@ -292,13 +292,15 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
             scheduler.track(&inner);
 
-            match thread.resume::<MultiValue>(args) {
+            // the first slice runs inside this call, but a wait it stops at is not this call's: see
+            // `lifecycle::resumed`
+            match first_slice(lua, || thread.resume::<MultiValue>(args)) {
                 Ok(vals) => {
                     if matches!(thread.status(), ThreadStatus::Resumable) {
                         let inner_clone = inner.clone();
                         let lua = lua.clone();
                         let abort = scheduler.spawn_task(async move {
-                            let outcome = inbound(&lua, drive_thread(thread, MultiValue::new())).await;
+                            let outcome = resumed(&lua, drive_thread(thread, MultiValue::new())).await;
                             inner_clone.complete(outcome);
                         });
                         *inner.abort.lock() = Some(abort);
@@ -423,12 +425,14 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     // Negative values are clamped to 0. Returns elapsed time as a float.
     m.set(
         "wait",
-        lua.create_async_function(|_, secs: f64| idle_result(async move {
-            let secs = secs.max(0.0);
-            let start = tokio::time::Instant::now();
-            tokio::time::sleep(std::time::Duration::from_secs_f64(secs)).await;
-            Ok(start.elapsed().as_secs_f64())
-        }))?,
+        lua.create_async_function(|_, secs: f64| {
+            idle_result(async move {
+                let secs = secs.max(0.0);
+                let start = tokio::time::Instant::now();
+                tokio::time::sleep(std::time::Duration::from_secs_f64(secs)).await;
+                Ok(start.elapsed().as_secs_f64())
+            })
+        })?,
     )?;
     m.record_fn(
         "wait",

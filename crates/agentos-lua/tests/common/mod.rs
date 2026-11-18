@@ -1,9 +1,9 @@
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
-//! Shared by the Luau adapter's integration tests: apps run against the REAL SQLite adapter.
+//! Shared by the Lua adapter's integration tests: apps run against the REAL SQLite adapter.
 
 use agentos_application::ports::{AppData, AppPackage, CallContext};
-use agentos_domain::{Actor, AppId, Capabilities};
-use agentos_lua::{AppVm, Limits, VmConfig};
+use agentos_domain::{Actor, AppId};
+use agentos_lua::{AppVm, VmConfig};
 use agentos_sqlite::AppDb;
 use std::{collections::BTreeMap, path::Path, process::Command, sync::Arc};
 
@@ -25,29 +25,20 @@ pub fn package(entry: &str, modules: &[(&str, &str)]) -> AppPackage {
     AppPackage { entry: "app.lua".into(), files }
 }
 
-pub fn config(limits: Limits) -> VmConfig {
-    VmConfig { capabilities: Capabilities::all(), limits, ..VmConfig::default() }
+pub fn config() -> VmConfig {
+    VmConfig::default()
 }
 
-pub async fn try_load_with(
-    name: &str,
-    src: &str,
-    db: Arc<dyn AppData>,
-    limits: Limits,
-) -> agentos_lua::Result<AppVm> {
-    AppVm::load(&id(name), package(src, &[]), db, config(limits)).await
+pub async fn try_load_with(name: &str, src: &str, db: Arc<dyn AppData>) -> agentos_lua::Result<AppVm> {
+    AppVm::load(&id(name), package(src, &[]), db, config()).await
 }
 
 pub async fn try_load(name: &str, src: &str) -> agentos_lua::Result<AppVm> {
-    try_load_with(name, src, db(), Limits::default()).await
+    try_load_with(name, src, db()).await
 }
 
 pub async fn load(src: &str) -> AppVm {
     try_load("probe", src).await.unwrap()
-}
-
-pub fn quick(cpu_ticks: u64) -> Limits {
-    Limits { cpu_ticks, ..Limits::default() }
 }
 
 pub fn agent_ctx(now_ms: u64) -> CallContext {

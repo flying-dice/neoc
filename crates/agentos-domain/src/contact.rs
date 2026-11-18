@@ -5,7 +5,7 @@
 //! [`ApprovalPolicy::AutoReadOnly`]: a request to run a tool that cannot write is allowed without a prompt,
 //! everything else asks the person.
 
-use crate::{AgentId, AgentIdentity, AppId, DomainError, Permission};
+use crate::{AgentId, AgentIdentity, AppId, DomainError, ToolGrant};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -59,11 +59,11 @@ impl Grants {
 
     /// The permissions an [`AgentIdentity`] carries for these grants.
     #[must_use]
-    pub fn permissions(&self) -> Vec<Permission> {
+    pub fn permissions(&self) -> Vec<ToolGrant> {
         if self.all {
-            vec![Permission::CallAnyTool]
+            vec![ToolGrant::CallAnyTool]
         } else {
-            self.apps.iter().cloned().map(Permission::CallTools).collect()
+            self.apps.iter().cloned().map(ToolGrant::CallTools).collect()
         }
     }
 }
@@ -246,10 +246,10 @@ mod tests {
         let some = Grants::apps([todo.clone(), notes.clone(), notes.clone()]);
         assert_eq!(some.apps, [notes.clone(), todo.clone()], "sorted, deduplicated");
         assert!(some.allows(&notes) && !some.allows(&AppId::parse("files").unwrap()));
-        assert_eq!(some.permissions(), [Permission::CallTools(notes.clone()), Permission::CallTools(todo)]);
+        assert_eq!(some.permissions(), [ToolGrant::CallTools(notes.clone()), ToolGrant::CallTools(todo)]);
         let all = Grants::allow_all();
         assert!(all.allows(&AppId::parse("anything").unwrap()));
-        assert_eq!(all.permissions(), [Permission::CallAnyTool]);
+        assert_eq!(all.permissions(), [ToolGrant::CallAnyTool]);
     }
 
     #[test]

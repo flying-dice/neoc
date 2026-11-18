@@ -4,7 +4,7 @@ use agentos_application::{
     ports::{AppData, DataStore, InstalledApp, InstalledAppStore, SqlMigration},
     PortError,
 };
-use agentos_domain::{Actor, AppId, Permission, Revision, RevisionReason};
+use agentos_domain::{Actor, AppId, Revision, RevisionReason};
 use std::time::Duration;
 
 fn migs() -> Vec<Migration> {
@@ -408,7 +408,6 @@ async fn installed_apps_are_saved_listed_toggled_and_removed() {
         version: "1.0.0".into(),
         enabled: true,
         installed_at_ms: at,
-        permissions: vec![Permission::Data, Permission::Notify],
         ref_sha256: format!("{at:064x}"),
     };
     db.save(&app("todo", 20)).await.unwrap();
@@ -433,7 +432,6 @@ async fn installed_apps_survive_reopening_the_system_database() {
         version: "1.0.0".into(),
         enabled: false,
         installed_at_ms: 5,
-        permissions: vec![Permission::Shell],
         ref_sha256: "ab".repeat(32),
     };
     SqliteSystemDb::open(Some(&path)).unwrap().save(&record).await.unwrap();

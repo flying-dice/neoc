@@ -11,7 +11,7 @@ use agentos_application::{
     testing::CollectingSink,
     AppStatus, BindingKind, Resolution, WriteRequest,
 };
-use agentos_domain::{Actor, AppId, AppRef, FileRef, Manifest, Permission};
+use agentos_domain::{Actor, AppId, AppRef, FileRef, Manifest};
 use agentos_host::startup::{prepare_data_dir, start_apps};
 use common::{
     browser, call, claude, connect_agent, connect_rpc, next_notification, pair, publish_package, rpc, start,
@@ -41,7 +41,6 @@ fn publish_app(root: &Path, id: &str) -> String {
             name: id.into(),
             version: "1.0.0".into(),
             main: "app.lua".into(),
-            permissions: vec![Permission::Data, Permission::Notify],
             migrations: vec![],
             icon: None,
             tint: None,
@@ -381,7 +380,6 @@ async fn the_fetcher_caps_one_package_file_at_the_domain_limit() {
         "app.lua",
         // an app is one bundled file, so the entry is the file the fetcher is handed
         &[("app.lua", vec![b'-'; max + 1])],
-        vec![],
     );
     let r = start(|_| {}).await;
     let mut ws = browser(&r).await;

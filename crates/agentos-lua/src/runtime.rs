@@ -1,12 +1,9 @@
 //! `AppRuntime` port implementation: a map of app id -> sandboxed VM.
 //!
-//! An app that fails (it does not load, or a call blows its budget) fails alone: its error is returned
+//! An app that fails (it does not load, or a call raises) fails alone: its error is returned
 //! to that caller with the app's file and line, and no other VM, and not the host, is touched.
 
-use crate::{
-    vm::{AppVm, Effect, ShellEffect, VmConfig, VmError},
-    Limits,
-};
+use crate::vm::{AppVm, Effect, ShellEffect, VmConfig, VmError};
 use agentos_application::{
     live::SourceId,
     ports::{
@@ -15,7 +12,7 @@ use agentos_application::{
     },
     PortError,
 };
-use agentos_domain::{AppId, Capabilities};
+use agentos_domain::AppId;
 use async_trait::async_trait;
 use parking_lot::RwLock;
 use serde_json::{Map, Value};
@@ -29,15 +26,14 @@ pub struct LuaRuntime {
     vms: RwLock<HashMap<AppId, Arc<AppVm>>>,
     notifier: Arc<dyn Notifier>,
     shell: Arc<dyn Shell>,
-    limits: Limits,
     host_modules: HashMap<String, Vec<u8>>,
     roster: Option<Arc<dyn AgentRoster>>,
 }
 
 impl LuaRuntime {
-    pub fn new(notifier: Arc<dyn Notifier>, shell: Arc<dyn Shell>, limits: Limits) -> Self {
+    pub fn new(notifier: Arc<dyn Notifier>, shell: Arc<dyn Shell>) -> Self {
         let host_modules = HashMap::from([("ui".to_owned(), UI_MODULE.as_bytes().to_vec())]);
-        Self { vms: RwLock::default(), notifier, shell, limits, host_modules, roster: None }
+        Self { vms: RwLock::default(), notifier, shell, host_modules, roster: None }
     }
 
     /// The agent contacts apps with the `agents` permission can list.
@@ -50,26 +46,31 @@ impl LuaRuntime {
     fn vm(&self, app: &AppId) -> PortResult<Arc<AppVm>> {
         self.vms.read().get(app).cloned().ok_or_else(|| PortError::NotFound(app.to_string()))
     }
+}
 
-    /// Forward what the app asked for during a call: notifications and shell declarations go to their ports.
-    async fn flush_effects(&self, app: &AppId, vm: &AppVm) -> PortResult<()> {
-        for effect in vm.take_effects() {
-            match effect {
-                Effect::Notify(n) => self.notifier.notify(n).await?,
-                Effect::Shell(ShellEffect::Badge(b)) => self.shell.set_badge(app, b).await,
-                Effect::Shell(ShellEffect::Commands(c)) => self.shell.set_menu_commands(app, c).await,
-                Effect::Shell(ShellEffect::DeepLinks(l)) => self.shell.set_deep_links(app, l).await,
-                Effect::OpenWindow { name, params } => {
-                    let params = match params {
-                        Value::Object(map) => map,
-                        _ => Map::new(),
-                    };
-                    self.shell.open_window(app, &name, params).await;
-                }
+/// Forward what the app asked for during a call: notifications and shell declarations go to their ports.
+async fn forward_effects(
+    notifier: &dyn Notifier,
+    shell: &dyn Shell,
+    app: &AppId,
+    vm: &AppVm,
+) -> PortResult<()> {
+    for effect in vm.take_effects() {
+        match effect {
+            Effect::Notify(n) => notifier.notify(n).await?,
+            Effect::Shell(ShellEffect::Badge(b)) => shell.set_badge(app, b).await,
+            Effect::Shell(ShellEffect::Commands(c)) => shell.set_menu_commands(app, c).await,
+            Effect::Shell(ShellEffect::DeepLinks(l)) => shell.set_deep_links(app, l).await,
+            Effect::OpenWindow { name, params } => {
+                let params = match params {
+                    Value::Object(map) => map,
+                    _ => Map::new(),
+                };
+                shell.open_window(app, &name, params).await;
             }
         }
-        Ok(())
     }
+    Ok(())
 }
 
 fn port_error(app: &AppId, e: VmError) -> PortError {
@@ -88,31 +89,45 @@ fn port_error(app: &AppId, e: VmError) -> PortError {
 
 #[async_trait]
 impl AppRuntime for LuaRuntime {
-    async fn load(
-        &self,
-        app: &AppId,
-        package: AppPackage,
-        data: Arc<dyn AppData>,
-        capabilities: Capabilities,
-    ) -> PortResult<LoadedApp> {
+    async fn load(&self, app: &AppId, package: AppPackage, data: Arc<dyn AppData>) -> PortResult<LoadedApp> {
         let config = VmConfig {
-            capabilities,
-            limits: self.limits.clone(),
             host_modules: Arc::new(self.host_modules.clone()),
             roster: self.roster.clone().unwrap_or_else(|| VmConfig::default().roster),
         };
+        // An app that serves a port cannot be replaced by a version that serves the same one while the old
+        // still holds it: stop what the old version started (listeners, tasks, workers) before the new one
+        // starts. Its tools and windows keep working until the new one has loaded, so a version that fails to
+        // load leaves the old one answering, without its background work.
+        let running = self.vms.read().get(app).cloned();
+        if let Some(old) = running {
+            old.stop_background();
+        }
         let vm = AppVm::load(app, package, data, config).await.map_err(|e| port_error(app, e))?;
         let decl = vm.decl().ok_or_else(|| {
             PortError::Rejected(format!("{app}: the app must declare itself with app.manifest {{ ... }}"))
         })?;
         let loaded = LoadedApp { decl: Some(decl), tools: vm.tools(), sources: vm.sources() };
-        self.flush_effects(app, &vm).await?;
+        forward_effects(&*self.notifier, &*self.shell, app, &vm).await?;
+        // a call that comes from inside the VM (a request to the app's own server, a task) queues effects too:
+        // forward them when it ends. The pump is one of the app's own tasks, so it goes with the app.
+        let vm = Arc::new(vm);
+        let (signal, weak) = (vm.effects_signal(), Arc::downgrade(&vm));
+        let (notifier, shell, id) = (self.notifier.clone(), self.shell.clone(), app.clone());
+        vm.life().spawn(async move {
+            loop {
+                signal.notified().await;
+                let Some(vm) = weak.upgrade() else { break };
+                if let Err(error) = forward_effects(&*notifier, &*shell, &id, &vm).await {
+                    tracing::warn!(app = %id, %error, "could not forward what the app asked for");
+                }
+            }
+        });
         // only a VM that loaded completely replaces a running one (hot reload keeps the old one on failure)
-        let replaced = self.vms.write().insert(app.clone(), Arc::new(vm));
-        // the VM a reload replaces stops like an unloaded one: a call still running in it must not keep
-        // writing to the database the new version now owns
+        let replaced = self.vms.write().insert(app.clone(), vm);
+        // the VM a reload replaces stops like an unloaded one: what it started (tasks, servers, workers) is
+        // aborted, so the new version does not share its port or its database with a ghost
         if let Some(old) = replaced {
-            old.retire();
+            old.shutdown();
         }
         Ok(loaded)
     }
@@ -120,9 +135,9 @@ impl AppRuntime for LuaRuntime {
     async fn unload(&self, app: &AppId) -> PortResult<()> {
         let removed = self.vms.write().remove(app);
         if let Some(vm) = removed {
-            // an in-flight call keeps its own Arc until it ends, and a runaway one never would: retire the
-            // app first, so the call stops at its next interrupt or host call and the VM is freed then
-            vm.retire();
+            // an in-flight call keeps its own Arc until it ends: stop everything the app started first (its
+            // listeners are closed, its tasks and workers aborted), so nothing outlives the uninstall
+            vm.shutdown();
             // last Arc => dropped => the VM is freed
             if let Ok(vm) = Arc::try_unwrap(vm) {
                 vm.unload();
@@ -141,7 +156,7 @@ impl AppRuntime for LuaRuntime {
     ) -> PortResult<Value> {
         let vm = self.vm(app)?;
         let out = vm.call_tool(tool, args, &ctx, read_only).await.map_err(|e| port_error(app, e));
-        self.flush_effects(app, &vm).await?;
+        forward_effects(&*self.notifier, &*self.shell, app, &vm).await?;
         out
     }
 
@@ -156,7 +171,7 @@ impl AppRuntime for LuaRuntime {
     ) -> PortResult<()> {
         let vm = self.vm(app)?;
         let out = vm.write_row(source, &key, field, &value, &ctx).await.map_err(|e| port_error(app, e));
-        self.flush_effects(app, &vm).await?;
+        forward_effects(&*self.notifier, &*self.shell, app, &vm).await?;
         out
     }
 
@@ -174,14 +189,14 @@ impl AppRuntime for LuaRuntime {
     ) -> PortResult<RenderOutput> {
         let vm = self.vm(app)?;
         let out = vm.open_view(view, window, params, restored).await.map_err(|e| port_error(app, e));
-        self.flush_effects(app, &vm).await?;
+        forward_effects(&*self.notifier, &*self.shell, app, &vm).await?;
         out
     }
 
     async fn render_view(&self, app: &AppId, view: &str) -> PortResult<RenderOutput> {
         let vm = self.vm(app)?;
         let out = vm.render_view(view).await.map_err(|e| port_error(app, e));
-        self.flush_effects(app, &vm).await?;
+        forward_effects(&*self.notifier, &*self.shell, app, &vm).await?;
         out
     }
 
@@ -194,7 +209,7 @@ impl AppRuntime for LuaRuntime {
     ) -> PortResult<bool> {
         let vm = self.vm(app)?;
         let out = vm.dispatch_view_event(view, call, &ctx).await.map_err(|e| port_error(app, e));
-        self.flush_effects(app, &vm).await?;
+        forward_effects(&*self.notifier, &*self.shell, app, &vm).await?;
         out
     }
 
@@ -205,7 +220,7 @@ impl AppRuntime for LuaRuntime {
     async fn close_view(&self, app: &AppId, view: &str) -> PortResult<()> {
         let vm = self.vm(app)?;
         let out = vm.close_view(view).await.map_err(|e| port_error(app, e));
-        self.flush_effects(app, &vm).await?;
+        forward_effects(&*self.notifier, &*self.shell, app, &vm).await?;
         out
     }
 

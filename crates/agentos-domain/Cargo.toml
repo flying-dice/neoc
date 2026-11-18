@@ -1,6 +1,6 @@
 [package]
 name = "agentos-domain"
-description = "Pure core model: apps, app refs, manifests, permissions, agents, tools, notifications, UI tree, protocol messages. No I/O."
+description = "Pure core model: apps, app refs, manifests, tool grants, agents, tools, notifications, UI tree, protocol messages. No I/O."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true

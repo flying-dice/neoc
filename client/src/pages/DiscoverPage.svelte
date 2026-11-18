@@ -380,11 +380,6 @@
                       {#if preview.description}
                         <Text style="footnote">{preview.description}</Text>
                       {/if}
-                      <Text style="caption1" color="secondary"
-                        >{preview.permissions.length
-                          ? `Asks to use: ${preview.permissions.join(', ')}`
-                          : 'Asks for no extra access'}</Text
-                      >
                       {#if preview.installed}
                         <Text style="caption1" color="secondary"
                           >Already installed (version {preview.installed.version}).</Text

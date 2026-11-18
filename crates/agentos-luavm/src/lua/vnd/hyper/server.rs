@@ -19,9 +19,9 @@ use tokio::runtime::Handle;
 use tokio::sync::oneshot;
 use tracing::instrument;
 
+use crate::lua::lifecycle::{idle, Life};
 use crate::lua::sandbox::{from_err, ok};
 use crate::lua::std::net::Listener;
-use crate::lua::lifecycle::{idle, Life};
 
 use super::invoke_lua_handler;
 
@@ -155,7 +155,10 @@ pub(super) fn serve(
     (listener, handler): (mlua::AnyUserData, Function),
 ) -> mlua::Result<(Value, Value)> {
     let arc = match listener.borrow::<Listener>() {
-        Ok(h) => h.arc(),
+        Ok(h) => match h.arc() {
+            Some(arc) => arc,
+            None => return from_err(lua, "hyper.serve", "the listener is closed"),
+        },
         Err(e) => return from_err(lua, "hyper.serve", format!("expected TcpListener: {e}")),
     };
     let key = match lua.create_registry_value(handler) {

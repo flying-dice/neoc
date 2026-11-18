@@ -42,12 +42,13 @@ This replaces the Bun/TypeScript server, the app client bundles and the shared-m
 
 ```
 crates/
-  agentos-domain        pure model, no I/O: app ids, app refs, manifests, permissions, agent identity, tools,
+  agentos-domain        pure model, no I/O: app ids, app refs, manifests, tool grants, agent identity, tools,
                         notifications, view tree and component schema, protocol messages
   agentos-application   ports (traits) and use cases; in-memory fakes for tests; no frameworks
-  agentos-lua          adapter: runs apps as sandboxed Lua 5.1: the app API modules, budgets, views
+  agentos-lua          adapter: runs apps as Lua 5.1, one VM per app: the app API modules, views, the call queue
   agentos-luavm         support library (not an adapter): the Lua 5.1 VM on mlua, the per-app environment, the
-                        budgeted string functions; depends on no other crate, only `luau` may depend on it
+                        `std:`/`lib:`/`vnd:` modules, the lifecycle of what apps spawn; depends on no other
+                        crate, only `lua` may depend on it
   agentos-sqlite        adapter: per-app rusqlite DBs, migrations, live queries via commit hooks
   agentos-mcp           adapter: rmcp server, dynamic tool list, per-agent bearer identity
   agentos-acp           adapter: agent-client-protocol client, agent processes
@@ -91,17 +92,16 @@ crates/
 - **Registries:** a list of app-ref URLs. The default registry is the build's unpacked apps folder over `file://`.
   Users can also add an app by URL; the host shows a preview, then a confirmation that it runs on this host and its
   tools reach agents. A later installer bundles host, client and apps.
-- **Sandbox** (details in `host-stack.md` §1):
+- **Isolation between apps, not a sandbox from the host** (details in `host-stack.md` §1):
   - one Lua 5.1 VM per app and one environment table per app: an allow-list of base functions, no `load*`,
-    `getfenv`/`setfenv`, `io`/`os`/`debug`, read-only standard libraries, text-only chunks, a locked string
-    metatable;
-  - `require` knows only `@agentos/app` and `@agentos/ui` (an app's own modules are bundled at build time);
-  - a memory limit;
-  - a CPU budget by the VM's count hook (a runaway loop is killed, also inside coroutines and `pcall`; waiting on the
-    host doesn't count), and the pattern-matching string functions run in host code charged to the same budget,
-    because the C matcher cannot be interrupted;
-  - SQL `ATTACH` denied.
-  - Blocking host calls get their own timeouts.
+    `getfenv`/`setfenv`, read-only standard libraries, text-only chunks, a locked string metatable. Apps cannot reach
+    each other's state;
+  - `require` knows `@agentos/app`, `@agentos/ui` (an app's own modules are bundled at build time) and **every
+    `std:`, `lib:` and `vnd:` module of `agentos-luavm`** (files, network, servers, tasks, threads, SQLite, TLS);
+  - no permissions and no CPU, memory or time budgets: apps are the person's own code on their own host;
+  - what an app starts (tasks, servers, workers) is aborted and its listeners are closed when it is unloaded or
+    replaced; callbacks that come from inside the VM take their turn in the app's one-call-at-a-time queue;
+  - SQL `ATTACH` denied, a `readOnly` tool cannot write, a cyclic or huge value handed back to the host is an error.
 - **App API** (typed with generated `.d.luau`):
   - **Window and UI:** `app.manifest`, `app.window(name, { client = …, render = fn })`, `ui.*` constructors.
   - **Data:** `db:migrate`, `db:query` / `db:row` (live sources), `db:exec`.
@@ -173,7 +173,7 @@ docs/, .claude/skills/     rewritten for Rust and Luau (coding style, review, te
 | 8 | Shell declarations | A separate `app.shell` |
 | 9 | i18n | Per-app catalogues resolved on the host; plurals and formatting on the client. Hooks now, catalogues later |
 | 10 | Offline | Dim, keep drafts, queue writes, resync on reconnect |
-| 11 | Permissions | Enforced at the tool and `app.db` capability layer; an agent can be denied a source the user can see |
+| 11 | Permissions | An agent's grants (`ToolGrant`) are enforced at the tool layer; an agent can be denied a source the user can see. Apps themselves have no permissions |
 | 12 | Conflict revisions | Kept 30 days; "undo agent change" is a shell feature, later |
 | 13 | Client/kit version skew | The host serves its own client, so skew is rare: `Unsupported` placeholder plus per-node `fallback` |
 | 14 | Compact breakpoint | `DESIGN_LANGUAGE.md` wins (700 px sidebar collapse); one constant in the kit |

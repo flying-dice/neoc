@@ -1,4 +1,4 @@
-use crate::{error::DomainError, limits::MAX_PACKAGE_FILES, KitRequirement, Permission};
+use crate::{error::DomainError, limits::MAX_PACKAGE_FILES, KitRequirement};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fmt;
@@ -60,8 +60,8 @@ pub struct Manifest {
     pub version: String,
     /// The entry file, a path in the app ref: the app built into one Lua 5.1 file (`app.lua`).
     pub main: String,
-    #[serde(default)]
-    pub permissions: Vec<Permission>,
+    // No `permissions`: apps are not sandboxed from the host's capabilities. A `permissions` key in an older
+    // manifest or app ref is ignored when it is parsed (this struct does not deny unknown fields).
     #[serde(default)]
     pub migrations: Vec<MigrationSpec>,
     /// What a registry or the "add by URL" preview shows without running the app: a symbol name for the icon.
@@ -255,7 +255,6 @@ mod tests {
                 name: "Notes".into(),
                 version: "1.0.0".into(),
                 main: "main.lua".into(),
-                permissions: vec![],
                 migrations: vec![],
                 icon: None,
                 tint: None,
@@ -281,7 +280,6 @@ mod tests {
             name: "n".into(),
             version: "1".into(),
             main: "m.lua".into(),
-            permissions: vec![],
             migrations: vec![],
             icon: None,
             tint: None,
@@ -315,7 +313,6 @@ mod tests {
             name: "n".into(),
             version: "1".into(),
             main: "f0.lua".into(),
-            permissions: vec![],
             migrations: vec![],
             icon: None,
             tint: None,
@@ -393,7 +390,6 @@ mod tests {
             name: "n".into(),
             version: "1".into(),
             main: "m.lua".into(),
-            permissions: vec![],
             migrations: vec![MigrationSpec { version: 2, name: "x".into(), file: "x".into() }],
             icon: None,
             tint: None,
@@ -412,7 +408,6 @@ mod tests {
             name: "n".into(),
             version: "1".into(),
             main: "app.luau".into(),
-            permissions: vec![],
             migrations: vec![],
             icon: None,
             tint: None,

@@ -98,8 +98,6 @@ wire! {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[cfg_attr(feature = "codegen", ts(optional))]
         pub description: Option<String>,
-        /// What the app asks to use: `data`, `notify`, `shell`.
-        pub permissions: Vec<String>,
         /// The host the app ref comes from ("this computer" for a file).
         pub source: String,
         /// Set when this app id is already installed on this host.

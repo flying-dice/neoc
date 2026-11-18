@@ -7,14 +7,13 @@ use agentos_application::{
     live::SourceKind,
     ports::{AgentCard, AgentRoster},
 };
-use agentos_domain::{AgentId, Capabilities};
+use agentos_domain::AgentId;
 use agentos_lua::{AppVm, VmConfig};
 use common::{agent_ctx, db, id, load, package};
 use serde_json::json;
 use std::sync::Arc;
 
-const MANIFEST: &str =
-    r#"app.manifest { id = "probe", name = "Probe", icon = "gear", permissions = { "data", "agents" } }"#;
+const MANIFEST: &str = r#"app.manifest { id = "probe", name = "Probe", icon = "gear" }"#;
 
 struct Cards;
 impl AgentRoster for Cards {
@@ -75,20 +74,6 @@ async fn a_thread_handle_needs_both_params_and_no_others() {
     assert!(out["why_extra"].as_str().unwrap().contains("no param `bogus`"), "{out}");
 }
 
-/// Major 16: `app.thread()` used to need no capability and accept any agent id.
-#[tokio::test]
-async fn app_thread_needs_the_agents_permission() {
-    let config = VmConfig {
-        capabilities: Capabilities { data: true, ..Capabilities::default() },
-        roster: Arc::new(Cards),
-        ..VmConfig::default()
-    };
-    let src = r#"app.manifest { id = "probe", name = "Probe", icon = "gear", permissions = { "data" } }
-                 local chat = app.thread()"#;
-    let err = AppVm::load(&id("probe"), package(src, &[]), db(), config).await.err().unwrap().to_string();
-    assert!(err.contains("app.thread") && err.contains("`agents` permission"), "{err}");
-}
-
 #[tokio::test]
 async fn a_thread_may_name_only_an_agent_on_the_roster_or_a_ref_to_the_apps_own_data() {
     let vm = with_roster(
@@ -128,27 +113,4 @@ async fn the_roster_is_listed_as_cards_without_grants_or_tokens() {
             {"id": "other", "name": "Other", "role": ""}
         ])
     );
-}
-
-#[tokio::test]
-async fn listing_agents_needs_the_agents_permission() {
-    let config = VmConfig {
-        capabilities: Capabilities { data: true, ..Capabilities::default() },
-        roster: Arc::new(Cards),
-        ..VmConfig::default()
-    };
-    let vm = AppVm::load(
-        &id("probe"),
-        package(
-            r#"app.manifest { id = "probe", name = "Probe", icon = "gear", permissions = { "data" } }
-               app.tool { name = "who", run = function() return app.agents:list() end }"#,
-            &[],
-        ),
-        db(),
-        config,
-    )
-    .await
-    .unwrap();
-    let err = vm.call_tool("who", json!({}), &agent_ctx(0), false).await.unwrap_err().to_string();
-    assert!(err.contains("agents") && err.contains("permission"), "{err}");
 }

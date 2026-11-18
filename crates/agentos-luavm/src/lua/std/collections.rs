@@ -248,7 +248,8 @@ impl UserData for Mutex {
         methods.add_async_method("with_lock", |_, this, f: Function| {
             let mu = this.0.clone();
             async move {
-                let _guard = mu.inner.lock().await;
+                // waiting for the lock does not use the VM (and the holder may need it to finish)
+                let _guard = crate::lua::lifecycle::idle(mu.inner.lock()).await?;
                 f.call_async::<MultiValue>(()).await
             }
         });

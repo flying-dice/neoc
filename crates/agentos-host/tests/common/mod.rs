@@ -14,7 +14,7 @@ use tokio_tungstenite::{
 };
 use tokio_util::sync::CancellationToken;
 
-use agentos_domain::{Agent as Contact, AgentId, AgentRuntime, ApprovalPolicy, Grants, Permission};
+use agentos_domain::{Agent as Contact, AgentId, AgentRuntime, ApprovalPolicy, Grants};
 use rmcp::{
     model::CallToolRequestParams,
     service::{NotificationContext, RunningService},
@@ -230,13 +230,7 @@ pub fn temp(name: &str) -> PathBuf {
 // ---- packages and view helpers ----------------------------------------------------------------------------
 
 /// Publish an app package (`files` by path) under `root` as an app ref; returns the `file://` URL of the ref.
-pub fn publish_package(
-    root: &std::path::Path,
-    id: &str,
-    main: &str,
-    files: &[(&str, Vec<u8>)],
-    grants: Vec<Permission>,
-) -> String {
+pub fn publish_package(root: &std::path::Path, id: &str, main: &str, files: &[(&str, Vec<u8>)]) -> String {
     use agentos_domain::{AppId, AppRef, FileRef, Manifest};
     use sha2::{Digest, Sha256};
     std::fs::create_dir_all(root).unwrap();
@@ -255,7 +249,6 @@ pub fn publish_package(
             name: id.into(),
             version: "1.0.0".into(),
             main: main.into(),
-            permissions: grants,
             migrations: vec![],
             icon: None,
             tint: None,

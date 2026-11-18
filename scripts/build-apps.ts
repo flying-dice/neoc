@@ -19,8 +19,8 @@
  * The host's default registry is dist/apps/registry.json over file:// (see docs/architecture/host-stack.md);
  * with `dev_reload` it rebuilds an app's VM when its files change, so `bun run build:apps` is the dev loop.
  *
- * `app.json` is the package manifest (id, name, version, main, permissions, icon, tint, description,
- * requires, migrations); the build checks it against the `app.manifest { ... }` the app declares in Luau, so
+ * `app.json` is the package manifest (id, name, version, main, icon, tint, description,
+ * requires, migrations; a `permissions` key from before apps lost their permissions is ignored); the build checks it against the `app.manifest { ... }` the app declares in Luau, so
  * the two cannot disagree about the id, icon or tint.
  */
 import { createHash } from 'node:crypto'
@@ -37,7 +37,6 @@ const only = args.filter(
   (a, i) => !a.startsWith('--') && i !== outFlag + 1 && args[i - 1] !== '--root'
 )
 
-const Capability = z.enum(['data', 'notify', 'shell', 'agents'])
 const PackageManifest = z.object({
   id: z.string().regex(/^[a-z0-9][a-z0-9-]{2,39}$/),
   name: z.string().min(1).max(60),
@@ -46,7 +45,6 @@ const PackageManifest = z.object({
   main: z.string().default('app.luau'),
   icon: z.string().optional(),
   tint: z.string().optional(),
-  permissions: z.array(Capability).default([]),
   requires: z.object({ host: z.string().optional() }).optional(),
   migrations: z.array(z.object({ version: z.number().int(), name: z.string(), file: z.string() })).default([])
 })
@@ -106,7 +104,6 @@ for (const dir of appDirs) {
       name: manifest.name,
       version: manifest.version,
       main: entry,
-      permissions: manifest.permissions.map((kind) => ({ kind })),
       migrations: manifest.migrations,
       ...(manifest.icon ? { icon: manifest.icon } : {}),
       ...(manifest.tint ? { tint: manifest.tint } : {}),

@@ -14,8 +14,8 @@ use crate::{
 };
 use agentos_domain::{
     ui::{ClientDecl, Node},
-    Agent, AgentId, AppId, AppRef, Capabilities, Device, DeviceId, FileRef, Manifest, MigrationSpec,
-    Revision, StoredRevision, ToolSpec,
+    Agent, AgentId, AppId, AppRef, Device, DeviceId, FileRef, Manifest, MigrationSpec, Revision,
+    StoredRevision, ToolSpec,
 };
 use async_trait::async_trait;
 use serde_json::{json, Map, Value};
@@ -411,7 +411,6 @@ pub struct FakeRuntime {
     loads: Mutex<HashMap<String, usize>>,
     packages: Mutex<HashMap<String, AppPackage>>,
     sources: Mutex<HashMap<String, Vec<SourceDef>>>,
-    capabilities: Mutex<HashMap<String, Capabilities>>,
     fail_load: Mutex<HashSet<String>>,
     writes: Mutex<Vec<WriteRecord>>,
     on_write: Mutex<Option<WriteHook>>,
@@ -455,9 +454,6 @@ impl FakeRuntime {
     }
     pub fn package(&self, app: &str) -> Option<AppPackage> {
         self.packages.lock().unwrap().get(app).cloned()
-    }
-    pub fn capabilities(&self, app: &str) -> Option<Capabilities> {
-        self.capabilities.lock().unwrap().get(app).copied()
     }
     pub fn set_sources(&self, app: &str, defs: Vec<SourceDef>) {
         self.sources.lock().unwrap().insert(app.to_owned(), defs);
@@ -535,13 +531,7 @@ impl FakeRuntime {
 }
 #[async_trait]
 impl AppRuntime for FakeRuntime {
-    async fn load(
-        &self,
-        app: &AppId,
-        package: AppPackage,
-        _: Arc<dyn AppData>,
-        capabilities: Capabilities,
-    ) -> PortResult<LoadedApp> {
+    async fn load(&self, app: &AppId, package: AppPackage, _: Arc<dyn AppData>) -> PortResult<LoadedApp> {
         *self.loads.lock().unwrap().entry(app.to_string()).or_default() += 1;
         if self.fail_load.lock().unwrap().contains(app.as_str()) {
             return Err(PortError::Rejected(format!("{app}/app.lua:3: boom")));
@@ -562,7 +552,6 @@ impl AppRuntime for FakeRuntime {
             .collect();
         self.apps.lock().unwrap().insert(app.to_string(), tools.clone());
         self.packages.lock().unwrap().insert(app.to_string(), package);
-        self.capabilities.lock().unwrap().insert(app.to_string(), capabilities);
         let sources = self.sources.lock().unwrap().get(app.as_str()).cloned().unwrap_or_default();
         Ok(LoadedApp { decl: None, tools, sources })
     }
@@ -951,16 +940,10 @@ impl Fakes {
     }
     /// Publish an app ref at `mem://<id>/app-ref.json`; `main` content = comma-joined tool names.
     pub fn add_app(&self, id: &str, tools: &[(&str, &str)]) -> String {
-        self.add_app_with(id, tools, &[], vec![])
+        self.add_app_with(id, tools, &[])
     }
-    /// Like `add_app`, with extra `.lua` modules (path, source) and package grants.
-    pub fn add_app_with(
-        &self,
-        id: &str,
-        tools: &[(&str, &str)],
-        modules: &[(&str, &str)],
-        permissions: Vec<agentos_domain::Permission>,
-    ) -> String {
+    /// Like `add_app`, with extra `.lua` modules (path, source).
+    pub fn add_app_with(&self, id: &str, tools: &[(&str, &str)], modules: &[(&str, &str)]) -> String {
         let main = tools.iter().map(|t| t.0).collect::<Vec<_>>().join(",").into_bytes();
         let sql = b"CREATE TABLE t(a);".to_vec();
         let sha = |b: &[u8]| format!("{:x}", Sha256::digest(b));
@@ -987,7 +970,6 @@ impl Fakes {
                 name: id.into(),
                 version: "1.0.0".into(),
                 main: "main.lua".into(),
-                permissions,
                 migrations: vec![MigrationSpec {
                     version: 1,
                     name: "init".into(),

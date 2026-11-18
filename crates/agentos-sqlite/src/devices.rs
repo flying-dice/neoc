@@ -39,7 +39,9 @@ CREATE TABLE installed_apps(
 );";
 
 /// What was approved at install (permissions as JSON) and the digest of the app ref that was loaded. Rows from
-/// before get an empty digest, which the host reads as "adopt what the manifest asks for on the next load".
+/// before get an empty digest, which the host reads as "adopt the one it loads next". Apps have no permissions
+/// any more: the `permissions` column stays (migrations are numbered and checksummed, and it has a default) but
+/// nothing reads or writes it.
 const INSTALLED_APPS_APPROVALS: &str = "
 ALTER TABLE installed_apps ADD COLUMN permissions TEXT NOT NULL DEFAULT '[]';
 ALTER TABLE installed_apps ADD COLUMN ref_sha256 TEXT NOT NULL DEFAULT '';";
@@ -77,7 +79,6 @@ fn to_installed(row: &Value) -> Option<InstalledApp> {
         version: row["version"].as_str()?.to_owned(),
         enabled: row["enabled"].as_i64()? != 0,
         installed_at_ms: row["installed_at"].as_u64()?,
-        permissions: serde_json::from_str(row["permissions"].as_str()?).ok()?,
         ref_sha256: row["ref_sha256"].as_str()?.to_owned(),
     })
 }
@@ -88,7 +89,7 @@ impl InstalledAppStore for SqliteSystemDb {
         self.db
             .exec(
                 "INSERT OR REPLACE INTO installed_apps(id, source_url, version, enabled, installed_at, \
-                 permissions, ref_sha256) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)"
+                 ref_sha256) VALUES(?1, ?2, ?3, ?4, ?5, ?6)"
                     .into(),
                 vec![
                     json!(app.id.as_str()),
@@ -96,8 +97,6 @@ impl InstalledAppStore for SqliteSystemDb {
                     json!(app.version),
                     json!(i64::from(app.enabled)),
                     sql_ms(app.installed_at_ms),
-                    json!(serde_json::to_string(&app.permissions)
-                        .map_err(|e| PortError::Internal(e.to_string()))?),
                     json!(app.ref_sha256),
                 ],
             )
@@ -124,7 +123,7 @@ impl InstalledAppStore for SqliteSystemDb {
         let rows = self
             .db
             .query(
-                "SELECT id, source_url, version, enabled, installed_at, permissions, ref_sha256 \
+                "SELECT id, source_url, version, enabled, installed_at, ref_sha256 \
                  FROM installed_apps ORDER BY installed_at, id"
                     .into(),
                 vec![],
@@ -275,7 +274,7 @@ mod tests {
         drop(old);
         let listed = SqliteSystemDb::open(Some(&path)).unwrap().list().await.unwrap();
         assert_eq!(listed.len(), 1);
-        assert_eq!((listed[0].permissions.clone(), listed[0].ref_sha256.as_str()), (vec![], ""));
+        assert_eq!(listed[0].ref_sha256.as_str(), "");
         let _ = std::fs::remove_dir_all(dir);
     }
 

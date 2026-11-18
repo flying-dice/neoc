@@ -40,7 +40,6 @@ const NOTES: AppPreview = {
   icon: 'doc',
   tint: 'yellow',
   description: 'Plain notes your agents can read and append to.',
-  permissions: ['data', 'notify'],
   source: 'this computer',
   sha256: '0'.repeat(64)
 }
@@ -53,7 +52,6 @@ const asPreview = (a: AppSummary, url: string): AppPreview => ({
   icon: a.icon,
   tint: a.tint,
   description: a.description,
-  permissions: ['data'],
   source: a.source,
   installed: { version: a.version, state: a.state },
   sha256: '0'.repeat(64)

@@ -11,8 +11,8 @@ use agentos_application::{
     testing::{CollectingSink, RecordingShell},
     PortError,
 };
-use agentos_domain::{Capabilities, Notification};
-use agentos_lua::{Limits, LuaRuntime};
+use agentos_domain::Notification;
+use agentos_lua::LuaRuntime;
 use agentos_sqlite::{AppDb, SqliteFeed};
 use common::{agent_ctx, db, id, package, user_ctx};
 use parking_lot::Mutex;
@@ -20,7 +20,7 @@ use serde_json::{json, Value};
 use std::{sync::Arc, time::Duration};
 
 const NOTES: &str = r#"
-app.manifest { id = "notes", name = "Notes", icon = "note.text", permissions = { "data", "notify", "shell" } }
+app.manifest { id = "notes", name = "Notes", icon = "note.text" }
 local t = app.t
 local db = app.db
 
@@ -77,13 +77,13 @@ struct Rig {
 fn rig() -> Rig {
     let notifier = Arc::new(RecordingNotifier::default());
     let shell = Arc::new(RecordingShell::default());
-    let runtime = LuaRuntime::new(notifier.clone(), shell.clone(), Limits::default());
+    let runtime = LuaRuntime::new(notifier.clone(), shell.clone());
     Rig { runtime, notifier, shell, db: db() }
 }
 
 async fn load(rig: &Rig, src: &str) -> PortResult<agentos_application::ports::LoadedApp> {
     let data: Arc<dyn AppData> = rig.db.clone();
-    rig.runtime.load(&id("notes"), package(src, &[]), data, Capabilities::all()).await
+    rig.runtime.load(&id("notes"), package(src, &[]), data).await
 }
 
 async fn wait_for(
@@ -254,12 +254,9 @@ async fn a_failing_app_is_isolated_and_a_failed_reload_keeps_the_old_version_run
     let rig = rig();
     load(&rig, NOTES).await.unwrap();
     // a second app that dies while loading does not disturb the first
-    let other = LuaRuntime::new(rig.notifier.clone(), rig.shell.clone(), Limits::default());
+    let other = LuaRuntime::new(rig.notifier.clone(), rig.shell.clone());
     let data: Arc<dyn AppData> = db();
-    let e = other
-        .load(&id("crashy"), package("local t = nil\nreturn t.x", &[]), data, Capabilities::all())
-        .await
-        .unwrap_err();
+    let e = other.load(&id("crashy"), package("local t = nil\nreturn t.x", &[]), data).await.unwrap_err();
     assert!(matches!(&e, PortError::Rejected(m) if m.contains("crashy/app.lua:2")), "{e:?}");
 
     // reload: new code that does not load leaves the running VM in place

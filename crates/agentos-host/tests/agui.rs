@@ -220,12 +220,11 @@ async fn a_read_only_tool_needs_no_prompt_under_the_default_policy_but_a_writing
         "app.lua",
         &[(
             "app.lua",
-            br#"app.manifest { id = "notes", name = "Notes", icon = "gear", permissions = {} }
+            br#"app.manifest { id = "notes", name = "Notes", icon = "gear" }
 app.tool { name = "search", readOnly = true, run = function() return {} end }
 app.tool { name = "append", run = function() return {} end }"#
                 .to_vec(),
         )],
-        vec![],
     );
     c.r.host.service.install_from_url(&url).await.unwrap();
     c.ensure("t1").await;
@@ -246,11 +245,10 @@ async fn a_read_only_tool_of_an_app_the_agent_is_not_granted_still_asks() {
         "app.lua",
         &[(
             "app.lua",
-            br#"app.manifest { id = "notes", name = "Notes", icon = "gear", permissions = {} }
+            br#"app.manifest { id = "notes", name = "Notes", icon = "gear" }
 app.tool { name = "search", readOnly = true, run = function() return {} end }"#
                 .to_vec(),
         )],
-        vec![],
     );
     c.r.host.service.install_from_url(&url).await.unwrap();
     c.ensure("t1").await;

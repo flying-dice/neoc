@@ -6,6 +6,5 @@
   "main": "app.luau",
   "icon": "plus",
   "tint": "orange",
-  "permissions": ["data"],
   "requires": { "host": ">=1.0" }
 }

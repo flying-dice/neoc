@@ -1,6 +1,6 @@
 //! `app.manifest`, `app.window`, `app:openWindow`, `app.on`, `app.log`, `app.notify`, `app.shell`.
 
-use super::{check_effects_allowed, need, push_shell};
+use super::{check_effects_allowed, push_shell};
 use crate::{
     convert::lua_to_json,
     vm::{Effect, Shared, ShellEffect},
@@ -41,16 +41,21 @@ fn text_field(t: &Table, key: &str, what: &str, required: bool, max: usize) -> m
 }
 
 pub(super) fn install(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<()> {
-    // app.manifest { id, name, icon, tint, window, kit, permissions }
+    // app.manifest { id, name, icon, tint, window, kit }
     let s = sh.clone();
     app.set(
         "manifest",
         lua.create_function(move |_, args: Variadic<LuaValue>| {
             let table = last_table(args, "app.manifest")?;
-            let json = lua_to_json(&LuaValue::Table(table))?;
+            let mut json = lua_to_json(&LuaValue::Table(table))?;
+            // `permissions` was a key of the manifest before apps lost their permissions: still accepted (the
+            // apps and tools written for it keep loading), ignored
+            if let serde_json::Value::Object(map) = &mut json {
+                map.remove("permissions");
+            }
             let decl: AppDecl = serde_json::from_value(json)
                 .map_err(|e| mlua::Error::runtime(format!("app.manifest: {e}")))?;
-            decl.check_against(&s.app, &s.caps.grants()).map_err(|e| mlua::Error::runtime(e.to_string()))?;
+            decl.check_against(&s.app).map_err(|e| mlua::Error::runtime(e.to_string()))?;
             let mut slot = s.decl.lock();
             if slot.is_some() {
                 return Err(mlua::Error::runtime("app.manifest was already called"));
@@ -100,7 +105,7 @@ pub(super) fn install(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<
                 Some(p) => lua_to_json(&p)?,
                 None => Value::Null,
             };
-            s.push_effect("app:openWindow", Effect::OpenWindow { name, params })
+            s.push_effect(Effect::OpenWindow { name, params })
         })?,
     )?;
 
@@ -129,14 +134,13 @@ pub(super) fn install(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<
     app.set(
         "notify",
         lua.create_function(move |_, args: Variadic<LuaValue>| {
-            need(s.caps.notify, "notify", "app.notify")?;
             check_effects_allowed(&s, "app.notify")?;
             s.writable("app.notify")?;
             let t = last_table(args, "app.notify")?;
             let title = text_field(&t, "title", "app.notify", true, 200)?.unwrap_or_default();
             let body = text_field(&t, "body", "app.notify", false, 2000)?;
             text_field(&t, "at", "app.notify", false, 64)?;
-            s.push_effect("app.notify", Effect::Notify(Notification { app: s.app.clone(), title, body }))
+            s.push_effect(Effect::Notify(Notification { app: s.app.clone(), title, body }))
         })?,
     )?;
 
@@ -144,15 +148,14 @@ pub(super) fn install(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<
     install_shell(lua, sh, app)
 }
 
-/// `app.agents:list()`: the agent contacts as `{ id, name, avatar?, role }`, for an app with the `agents`
-/// permission. Never grants, tokens or launch commands.
+/// `app.agents:list()`: the agent contacts as `{ id, name, avatar?, role }`. Never grants, tokens or launch
+/// commands.
 fn install_agents(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<()> {
     let agents = lua.create_table()?;
     let s = sh.clone();
     agents.set(
         "list",
         lua.create_function(move |lua, _: Variadic<LuaValue>| {
-            need(s.caps.agents, "agents", "app.agents:list")?;
             let list = lua.create_table()?;
             for (i, card) in s.roster.cards().into_iter().enumerate() {
                 let row = lua.create_table()?;
@@ -179,7 +182,6 @@ fn install_shell(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<()> {
     shell.set(
         "badge",
         lua.create_function(move |_, value: Option<LuaValue>| {
-            need(s.caps.shell, "shell", "app.shell.badge")?;
             s.writable("app.shell.badge")?;
             let badge = match value {
                 None | Some(LuaValue::Nil) => None,
@@ -203,7 +205,6 @@ fn install_shell(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<()> {
     shell.set(
         "command",
         lua.create_function(move |_, def: Table| {
-            need(s.caps.shell, "shell", "app.shell.command")?;
             s.writable("app.shell.command")?;
             let id = text_field(&def, "id", "app.shell.command", true, 64)?.unwrap_or_default();
             let title = text_field(&def, "title", "app.shell.command", true, 80)?.unwrap_or_default();
@@ -228,7 +229,6 @@ fn install_shell(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<()> {
     shell.set(
         "deepLink",
         lua.create_function(move |_, (pattern, handler): (String, Function)| {
-            need(s.caps.shell, "shell", "app.shell.deepLink")?;
             s.writable("app.shell.deepLink")?;
             if pattern.is_empty() || pattern.len() > 128 {
                 return Err(mlua::Error::runtime(

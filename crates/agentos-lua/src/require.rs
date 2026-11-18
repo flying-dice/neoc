@@ -1,23 +1,30 @@
-//! `require`: the two host modules, and nothing else.
+//! `require`: the host's modules, and nothing from the package.
 //!
 //! An app is built into one self-contained Lua 5.1 file (its own modules are bundled in at build time), so at
-//! run time there is nothing to resolve in the package and no filesystem. `require("@agentos/app")` is the
-//! capability table; `require("@agentos/<name>")` is a host module the host registered (the generated `ui`
-//! constructors). Anything else is an error that names what is allowed. A host module runs once, in the
-//! app's own environment (so it sees the same polyfills), and is cached; a cycle is an error.
+//! run time there is nothing to resolve in the package and no filesystem. Three kinds of name resolve:
 //!
-//! `require` is a plain (synchronous) function: a host module only builds tables, and a function the VM
+//! - `require("@agentos/app")` is the `app` table, and `require("@agentos/<name>")` a host module the host
+//!   registered (the generated `ui` constructors). A host module runs once, in the app's own environment (so
+//!   it sees the same polyfills), and is cached; a cycle is an error.
+//! - `require("std:<name>")`, `require("lib:<name>")` and `require("vnd:<name>")` are the library modules of
+//!   `agentos-luavm` (neoc's own spelling: `std:task`, `lib:json`, `vnd:hyper`, ...). Each is built for the app
+//!   on first use in the app's VM and cached, so every `require` of one module in an app sees one table and
+//!   two apps never share one.
+//!
+//! Anything else is an error that names what is allowed.
+//!
+//! `require` is a plain (synchronous) function: a module only builds tables, and a function the VM
 //! cannot yield from is the one thing a metamethod or a C boundary on Lua 5.1 must be.
 
 use crate::vm::Shared;
 use agentos_luavm::{
-    lua::sandbox::load_source,
+    lua::{modules, sandbox::load_source},
     mlua::{self, Lua, Value as LuaValue},
 };
 use std::sync::Arc;
 
 /// What a `require` may name, for the error message of one that names something else.
-const ALLOWED: &str = "\"@agentos/app\" and \"@agentos/ui\"";
+const ALLOWED: &str = "\"@agentos/app\", \"@agentos/ui\" and the std:, lib: and vnd: modules";
 
 pub(crate) fn install(lua: &Lua, sh: &Arc<Shared>, env: &mlua::Table) -> mlua::Result<()> {
     let sh = sh.clone();
@@ -26,6 +33,9 @@ pub(crate) fn install(lua: &Lua, sh: &Arc<Shared>, env: &mlua::Table) -> mlua::R
 }
 
 fn load(lua: &Lua, sh: &Arc<Shared>, spec: &str) -> mlua::Result<LuaValue> {
+    if spec.starts_with("std:") || spec.starts_with("lib:") || spec.starts_with("vnd:") {
+        return library(lua, sh, spec);
+    }
     let Some(name) = spec.strip_prefix("@agentos/") else {
         return Err(mlua::Error::runtime(format!(
             "require(\"{spec}\"): only {ALLOWED} can be required at run time (an app's own modules are bundled \
@@ -46,6 +56,20 @@ fn load(lua: &Lua, sh: &Arc<Shared>, spec: &str) -> mlua::Result<LuaValue> {
         ))
     })?;
     run_module(lua, sh, &format!("@agentos/{name}"), source)
+}
+
+/// A library module (`std:task`, `lib:json`, ...), built in this VM the first time it is required.
+fn library(lua: &Lua, sh: &Arc<Shared>, spec: &str) -> mlua::Result<LuaValue> {
+    if let Some(done) = sh.modules.lock().get(spec) {
+        return Ok(done.clone());
+    }
+    let built = modules::build(lua, spec).ok_or_else(|| {
+        let known: Vec<&str> = modules::names().collect();
+        modules::unknown_module(spec, &known)
+    })??;
+    let value = LuaValue::Table(built);
+    sh.modules.lock().insert(spec.to_owned(), value.clone());
+    Ok(value)
 }
 
 fn run_module(lua: &Lua, sh: &Arc<Shared>, key: &str, source: &[u8]) -> mlua::Result<LuaValue> {

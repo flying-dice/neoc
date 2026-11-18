@@ -486,7 +486,7 @@ fn build_w(
                 Some(p) => lua_to_json(&p)?,
                 None => Value::Null,
             };
-            s.push_effect("w:openWindow", crate::vm::Effect::OpenWindow { name, params })
+            s.push_effect(crate::vm::Effect::OpenWindow { name, params })
         })?,
     )?;
     Ok(w)
@@ -511,7 +511,19 @@ impl AppVm {
         let sh = self.shared().clone();
         let spec =
             sh.windows.lock().get(window).cloned().ok_or_else(|| VmError::NoSuchWindow(window.to_owned()))?;
-        let _call = self.enter_call().await;
+        self.in_call(self.open_view_in_call(view, window, spec, params, restored)).await
+    }
+
+    /// [`AppVm::open_view`] once the call holds the VM.
+    async fn open_view_in_call(
+        &self,
+        view: &str,
+        window: &str,
+        spec: Table,
+        params: Map<String, Value>,
+        restored: Map<String, Value>,
+    ) -> Result<RenderOutput> {
+        let sh = self.shared().clone();
         let convert = |e: mlua::Error| VmError::Convert(e.to_string());
         let decls = client_decls(&spec)?;
         let lua = self.lua();
@@ -571,8 +583,7 @@ impl AppVm {
 
     /// Render the instance again.
     pub async fn render_view(&self, view: &str) -> Result<RenderOutput> {
-        let _call = self.enter_call().await;
-        self.render_inner(view).await
+        self.in_call(self.render_inner(view)).await
     }
 
     async fn render_inner(&self, view: &str) -> Result<RenderOutput> {
@@ -663,7 +674,16 @@ impl AppVm {
             }
         };
         let Some(closures) = closures else { return Ok(false) };
-        let _call = self.enter_call().await;
+        self.in_call(self.run_closures(closures, call, ctx)).await
+    }
+
+    /// The closures of one view event, in the call that holds the VM.
+    async fn run_closures(
+        &self,
+        closures: Vec<Function>,
+        call: ViewEventCall,
+        ctx: &CallContext,
+    ) -> Result<bool> {
         let lua = self.lua();
         let convert = |e: mlua::Error| VmError::Convert(e.to_string());
         for f in closures {
@@ -707,8 +727,7 @@ impl AppVm {
         let Some(instance) = sh.views.lock().remove(view) else { return Ok(()) };
         let on_close = instance.spec.get::<Option<Function>>("onClose").ok().flatten();
         if let Some(f) = on_close {
-            let _call = self.enter_call().await;
-            f.call_async::<()>(instance.w.clone())
+            self.in_call(f.call_async::<()>(instance.w.clone()))
                 .await
                 .map_err(|e| VmError::Script(ScriptError::from_lua(&e)))?;
         }

@@ -352,11 +352,8 @@ mod tests {
     async fn a_certificate_the_platform_does_not_trust_is_refused_without_ca_pem() {
         let (port, _pem) = tls_server().await;
         let lua = make_engine().expect("engine");
-        let (body, err) = run(
-            &lua,
-            &format!(r#"return require("vnd:hyper").get("https://localhost:{port}/")"#),
-        )
-        .await;
+        let (body, err) =
+            run(&lua, &format!(r#"return require("vnd:hyper").get("https://localhost:{port}/")"#)).await;
         assert_eq!(body, None, "the self-signed certificate must not be accepted");
         let err = err.expect("an error");
         assert!(err.contains("hyper.get") && err.contains("tls"), "{err}");

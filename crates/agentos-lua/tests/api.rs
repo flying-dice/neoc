@@ -4,14 +4,13 @@
 mod common;
 
 use agentos_application::{live::SourceKind, ports::MenuCommand};
-use agentos_domain::{Capabilities, Notification};
+use agentos_domain::Notification;
 use agentos_lua::{AppVm, Effect, ShellEffect, VmConfig, VmError};
 use common::{agent_ctx, db, id, load, package, try_load, user_ctx};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-const MANIFEST: &str =
-    r#"app.manifest { id = "probe", name = "Probe", icon = "gear", permissions = { "data", "notify" } }"#;
+const MANIFEST: &str = r#"app.manifest { id = "probe", name = "Probe", icon = "gear" }"#;
 
 fn app(body: &str) -> String {
     format!("{MANIFEST}\n{body}")
@@ -30,7 +29,7 @@ async fn the_manifest_is_parsed_validated_and_checked_against_the_package() {
     assert_eq!((decl.id.as_str(), decl.name.as_str(), decl.icon.as_str()), ("probe", "Probe", "gear"));
 
     let full = r#"app.manifest { id = "probe", name = "P", icon = "gear", tint = "orange", kit = ">=1.0",
-        window = { w = 340, h = 560, minW = 320, minH = 480 }, permissions = {} }"#;
+        window = { w = 340, h = 560, minW = 320, minH = 480 } }"#;
     let decl = load(full).await.decl().unwrap();
     assert_eq!(decl.window.unwrap().min_h, 480);
 
@@ -45,14 +44,12 @@ async fn the_manifest_is_parsed_validated_and_checked_against_the_package() {
         .await;
     fails(r#"app.manifest { id = "probe", name = "P", icon = "gear", window = { w = 100, h = 100, minW = 100, minH = 100 } }"#, "at least 320x240").await;
     fails(r#"app.manifest { id = "probe", name = "P", icon = "gear", kit = "1.0" }"#, "kit").await;
-    fails(r#"app.manifest { id = "probe", name = "P", icon = "gear", permissions = { "root" } }"#, "root")
-        .await;
     fails("app.manifest()", "takes a table").await;
 
-    // a permission the package does not grant
-    let narrow = VmConfig { capabilities: Capabilities::default(), ..VmConfig::default() };
-    let e = AppVm::load(&id("probe"), package(MANIFEST, &[]), db(), narrow).await.err().unwrap().to_string();
-    assert!(e.contains("does not grant it"), "{e}");
+    // apps have no permissions: a `permissions` key from before is accepted and ignored
+    let legacy =
+        r#"app.manifest { id = "probe", name = "P", icon = "gear", permissions = { "data", "root" } }"#;
+    assert!(try_load("probe", legacy).await.is_ok());
 
     let e = try_load("probe", &app(MANIFEST)).await.err().unwrap().to_string();
     assert!(e.contains("already called"), "{e}");
@@ -79,19 +76,30 @@ async fn require_loads_the_two_host_modules_and_caches_them() {
 }
 
 #[tokio::test]
-async fn require_refuses_everything_but_the_host_modules_with_the_requiring_line() {
+async fn require_refuses_everything_but_the_host_and_library_modules_with_the_requiring_line() {
     let load_with =
         |src: &'static str| async move { try_load("probe", src).await.err().unwrap().to_string() };
     // an app is bundled into one file: its relative requires are resolved by the build, never at run time
-    for spec in ["./calc", "../../etc/passwd", "calc", "lib:json", "std:fs", "@other/app"] {
+    for spec in ["./calc", "../../etc/passwd", "calc", "@other/app"] {
         let src: &'static str = Box::leak(format!("local x = require({spec:?})").into_boxed_str());
         let e = load_with(src).await;
-        assert!(e.contains("only \"@agentos/app\" and \"@agentos/ui\" can be required"), "{spec}: {e}");
+        assert!(e.contains("can be required at run time"), "{spec}: {e}");
     }
     assert!(load_with("require('@agentos/nope')").await.contains("unknown host module"));
-    assert!(load_with("local lines = 1\nrequire('./nope')").await.contains("probe/app.lua:2"));
-    // not even the neoc modules the VM crate ships
-    assert!(load_with("require('lib:base64')").await.contains("can be required"));
+    assert!(load_with(
+        "local lines = 1
+require('./nope')"
+    )
+    .await
+    .contains("probe/app.lua:2"));
+    // a library module that does not exist says what was meant
+    let e = load_with("require('lib:jsn')").await;
+    assert!(e.contains("unknown module") && e.contains("did you mean \"lib:json\""), "{e}");
+    // the ones left out on purpose are not there
+    for spec in ["lib:test", "lib:compile", "std:workers"] {
+        let src: &'static str = Box::leak(format!("require({spec:?})").into_boxed_str());
+        assert!(load_with(src).await.contains("unknown module"), "{spec}");
+    }
 }
 
 #[tokio::test]
@@ -166,7 +174,7 @@ async fn migrations_are_recorded_ordered_and_a_changed_one_fails_the_load() {
 }
 
 async fn agentos_lua_load(src: &str, db: Arc<agentos_sqlite::AppDb>) -> Result<AppVm, VmError> {
-    common::try_load_with("probe", src, db, agentos_lua::Limits::default()).await
+    common::try_load_with("probe", src, db).await
 }
 
 #[tokio::test]
@@ -202,20 +210,6 @@ async fn tx_commits_together_rolls_back_on_error_and_cannot_nest() {
     assert_eq!(vm.emit("raise", json!(null)).await.unwrap(), json!(0));
     assert_eq!(vm.emit("nested", json!(null)).await.unwrap(), json!(false));
     assert_eq!(vm.emit("value", json!(null)).await.unwrap(), json!("from tx"));
-}
-
-#[tokio::test]
-async fn a_failed_call_never_leaves_a_transaction_holding_the_database() {
-    // the CPU budget kills the call in the middle of db:tx; the next call must still be able to use the database
-    let src = app(r#"
-        local db = app.db
-        db:migrate { [1] = "create table t(a)" }
-        app.on("spin", function() db:tx(function() db:exec("insert into t values (1)") while true do end end) end)
-        app.on("count", function() return db:one("select count(*) as n from t").n end)
-    "#);
-    let vm = common::try_load_with("probe", &src, db(), common::quick(2_000_000)).await.unwrap();
-    assert!(vm.emit("spin", json!(null)).await.is_err());
-    assert_eq!(vm.emit("count", json!(null)).await.unwrap(), json!(0), "rolled back, and not stuck");
 }
 
 #[tokio::test]
@@ -513,7 +507,7 @@ async fn render_is_pure_state_db_and_effects_raise_while_tracking_a_render() {
 #[tokio::test]
 async fn notify_and_shell_calls_become_effects_for_the_host() {
     let src = r#"
-        app.manifest { id = "probe", name = "Probe", icon = "gear", permissions = { "data", "notify", "shell" } }
+        app.manifest { id = "probe", name = "Probe", icon = "gear" }
         app.notify { title = "Reminder", body = "Call mum" }
         app:notify { title = "Colon call" }
         app.shell.badge(3)
@@ -523,8 +517,7 @@ async fn notify_and_shell_calls_become_effects_for_the_host() {
         app.window("main", { render = function(w) end })
         app:openWindow("main", { noteId = 12 })
     "#;
-    let cfg = VmConfig { capabilities: Capabilities::all(), ..VmConfig::default() };
-    let vm = AppVm::load(&id("probe"), package(src, &[]), db(), cfg).await.unwrap();
+    let vm = AppVm::load(&id("probe"), package(src, &[]), db(), VmConfig::default()).await.unwrap();
     let n = |title: &str, body: Option<&str>| {
         Effect::Notify(Notification { app: id("probe"), title: title.into(), body: body.map(Into::into) })
     };
@@ -548,24 +541,6 @@ async fn notify_and_shell_calls_become_effects_for_the_host() {
 }
 
 #[tokio::test]
-async fn capabilities_gate_notify_shell_and_data() {
-    let gated = |src: &'static str, needle: &'static str, capabilities: Capabilities| async move {
-        let cfg = VmConfig { capabilities, ..VmConfig::default() };
-        let e = AppVm::load(&id("probe"), package(src, &[]), db(), cfg).await.err().unwrap().to_string();
-        assert!(e.contains("permission denied") && e.contains(needle), "{e}");
-    };
-    let off = Capabilities::default();
-    gated("app.notify { title = 'x' }", "`notify`", off).await;
-    gated("app.shell.badge(1)", "`shell`", off).await;
-    gated("app.db:all('select 1')", "`data`", off).await;
-    gated("app.kv:get('x')", "`data`", off).await;
-    gated("app.db:migrate { [1] = 'create table t(a)' }", "`data`", off).await;
-    // granted individually
-    let notify_only = Capabilities { notify: true, ..Capabilities::default() };
-    gated("app.notify { title = 'ok' } app.shell.badge(1)", "`shell`", notify_only).await;
-}
-
-#[tokio::test]
 async fn notify_and_commands_are_validated() {
     for (call, needle) in [
         ("app.notify { body = 'no title' }", "needs `title`"),
@@ -575,9 +550,7 @@ async fn notify_and_commands_are_validated() {
         ("app.shell.badge({})", "badge must be"),
         ("app.shell.deepLink('', function() end)", "1 to 128"),
     ] {
-        let src = format!(
-            "app.manifest {{ id = 'probe', name = 'P', icon = 'gear', permissions = {{ 'notify', 'shell' }} }}\n{call}"
-        );
+        let src = format!("app.manifest {{ id = 'probe', name = 'P', icon = 'gear' }}\n{call}");
         let e = try_load("probe", &src).await.err().unwrap().to_string();
         assert!(e.contains(needle), "wanted `{needle}` in `{e}`");
     }

@@ -1,8 +1,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
-//! Wave C1: what an untrusted app cannot do to the host. Every test here failed before its fix.
+//! What an app cannot do to the host. Every test here failed before its fix.
 //!
-//! - one budget per top-level call, which host calls do not refill, and a kill on unload;
-//! - bounded conversion of what the app hands back (tool results, window trees, effects);
+//! - an unload or a reload ends what the app was doing at its next host call;
+//! - bounded conversion of what the app hands back (tool results, window trees): a cyclic or exponentially
+//!   shared table is an error, not a stack overflow or an allocation;
 //! - a `readOnly` call changes nothing: no data, no windows, no notifications, no shell, no state;
 //! - the SQL sandbox holds against `VACUUM INTO` and `ATTACH` through `db:all`.
 
@@ -12,8 +13,8 @@ use agentos_application::{
     ports::{AppData, AppRuntime, Notifier, PortResult},
     testing::RecordingShell,
 };
-use agentos_domain::{Capabilities, Notification};
-use agentos_lua::{Limits, LuaRuntime, VmError};
+use agentos_domain::Notification;
+use agentos_lua::LuaRuntime;
 use common::{agent_ctx, db, id, load, package, try_load_with};
 use serde_json::{json, Map, Value};
 use std::{
@@ -21,68 +22,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// "Killed by its budget, not still running": far below any wall-clock backstop.
+/// "Ended, not still running": far above what any of these takes.
 const PROMPTLY: Duration = Duration::from_secs(8);
 
-fn script_error(e: &VmError) -> String {
-    e.to_string()
-}
-
-// ---- blocker 2: one budget per call, and a kill on unload ----------------------------------------------------
-
-/// A loop that only ever calls the host. Each host call refilled the slice, so no count ran out, and the loop
-/// held the VM's gate for ever.
-const HOST_LOOP: &str = r#"
-    app.on("spin", function() while true do app.kv:get("k") end end)
-    app.on("ok", function() return 42 end)
-"#;
-
-#[tokio::test]
-async fn a_loop_of_host_calls_is_stopped_by_the_calls_tick_budget() {
-    // a host call is charged 1,000 ticks: this is about a hundred of them
-    let limits = Limits { call_ticks: 100_000, ..Limits::default() };
-    let vm = try_load_with("spin", HOST_LOOP, db(), limits).await.unwrap();
-    let out = tokio::time::timeout(PROMPTLY, vm.emit("spin", json!(null)))
-        .await
-        .expect("the call must be killed by its budget, not run for ever");
-    assert!(script_error(&out.unwrap_err()).contains("cpu budget exceeded"));
-    // the next call has a fresh budget
-    assert_eq!(vm.emit("ok", json!(null)).await.unwrap(), json!(42));
-}
-
-#[tokio::test]
-async fn a_loop_of_host_calls_is_stopped_by_the_calls_wall_clock_deadline() {
-    let limits = Limits { call_ticks: u64::MAX, call_wall: Duration::from_millis(300), ..Limits::default() };
-    let vm = try_load_with("spin", HOST_LOOP, db(), limits).await.unwrap();
-    let started = std::time::Instant::now();
-    let out = tokio::time::timeout(PROMPTLY, vm.emit("spin", json!(null)))
-        .await
-        .expect("the call must hit its deadline");
-    assert!(script_error(&out.unwrap_err()).contains("cpu budget exceeded"));
-    assert!(started.elapsed() < PROMPTLY);
-    assert_eq!(vm.emit("ok", json!(null)).await.unwrap(), json!(42));
-}
-
-#[tokio::test]
-async fn a_runaway_inside_a_transaction_ends_and_frees_the_write_gate() {
-    let src = r#"
-        app.on("tx", function() app.db:tx(function() while true do app.kv:get("k") end end) end)
-        app.on("write", function() app.db:exec("create table if not exists z(a)") return true end)
-    "#;
-    let limits = Limits { call_ticks: 100_000, ..Limits::default() };
-    let data = db();
-    let vm = try_load_with("txloop", src, data.clone(), limits).await.unwrap();
-    let out = tokio::time::timeout(PROMPTLY, vm.emit("tx", json!(null))).await.expect("ends");
-    assert!(out.is_err());
-    // the transaction was rolled back and dropped: a writer is not kept waiting behind it
-    let write =
-        tokio::time::timeout(PROMPTLY, vm.emit("write", json!(null))).await.expect("write gate is free");
-    assert_eq!(write.unwrap(), json!(true));
-    let direct = tokio::time::timeout(PROMPTLY, data.exec("create table if not exists y(a)".into(), vec![]))
-        .await
-        .expect("and so is the database itself");
-    direct.unwrap();
-}
+// ---- a kill on unload (nothing budgets a call; unloading or replacing the app ends what it was doing) ------------
 
 struct Quiet;
 #[async_trait::async_trait]
@@ -99,32 +42,27 @@ struct Rig {
 }
 
 fn rig() -> Rig {
-    rig_with(Limits::default())
-}
-
-fn rig_with(limits: Limits) -> Rig {
     let shell = Arc::new(RecordingShell::default());
-    let runtime = Arc::new(LuaRuntime::new(Arc::new(Quiet), shell.clone(), limits));
+    let runtime = Arc::new(LuaRuntime::new(Arc::new(Quiet), shell.clone()));
     Rig { runtime, shell, db: db() }
 }
 
 impl Rig {
     async fn load(&self, app: &str, src: &str) -> PortResult<agentos_application::ports::LoadedApp> {
         let data: Arc<dyn AppData> = self.db.clone();
-        self.runtime.load(&id(app), package(src, &[]), data, Capabilities::all()).await
+        self.runtime.load(&id(app), package(src, &[]), data).await
     }
     async fn tool(&self, app: &str, tool: &str) -> PortResult<Value> {
         self.runtime.call_tool(&id(app), tool, json!({}), agent_ctx(0), false).await
     }
 }
 
-const MANIFEST: &str = r#"app.manifest { id = "probe", name = "Probe", icon = "gear", permissions = { "data", "notify", "shell" } }"#;
+const MANIFEST: &str = r#"app.manifest { id = "probe", name = "Probe", icon = "gear" }"#;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn unloading_stops_a_runaway_call_and_the_vm_is_freed() {
-    // a call budget that would never run out in this test: only the unload can end the call
-    let rig =
-        rig_with(Limits { call_ticks: u64::MAX, call_wall: Duration::from_secs(3600), ..Limits::default() });
+    // nothing budgets the call: only the unload can end it
+    let rig = rig();
     let src = format!(
         "{MANIFEST}\napp.tool {{ name = \"spin\", run = function() while true do app.kv:get(\"k\") end end }}"
     );
@@ -240,42 +178,6 @@ async fn props_shared_at_every_level_are_cut_off_by_the_trees_budget() {
     )
     .await;
     assert!(err.contains("more than"), "{err}");
-}
-
-#[tokio::test]
-async fn a_call_may_queue_only_so_many_effects() {
-    let rig = rig();
-    let src = format!(
-        r#"{MANIFEST}
-        app.tool {{ name = "flood", run = function()
-          for i = 1, 100 do app.notify {{ title = "n" .. i }} end
-        end }}
-        app.tool {{ name = "few", run = function()
-          for i = 1, 32 do app.notify {{ title = "n" .. i }} end
-          for i = 1, 10000 do app.shell.badge(i) end   -- shell declarations replace each other: no growth
-        end }}"#
-    );
-    rig.load("probe", &src).await.unwrap();
-    let err = rig.tool("probe", "flood").await.unwrap_err().to_string();
-    assert!(err.contains("too many effects in one call (at most 32"), "{err}");
-    // the cap is per call: the next call starts at zero
-    rig.tool("probe", "few").await.unwrap();
-    assert_eq!(rig.shell.badges.lock().unwrap().len(), 1, "one badge reached the shell, the last");
-}
-
-#[tokio::test]
-async fn window_commands_are_capped_per_call_too() {
-    let rig = rig();
-    let src = format!(
-        r#"{MANIFEST}
-        app.window("main", {{
-          onOpen = function(w) for i = 1, 40 do w:announce("x") end end,
-          render = function(w) return {{ type = "Stack", key = "n" }} end,
-        }})"#
-    );
-    rig.load("probe", &src).await.unwrap();
-    let err = rig.runtime.open_view(&id("probe"), "v1", "main", Map::new(), Map::new()).await.unwrap_err();
-    assert!(err.to_string().contains("too many effects"), "{err}");
 }
 
 #[tokio::test]
@@ -417,27 +319,6 @@ async fn vacuum_into_and_attach_are_refused_through_db_all_and_exec() {
 
 // N1: a coroutine parked in a host call switched the CPU budget off for the whole VM.
 
-/// A host call from inside a coroutine yielded to the app's own `coroutine.resume`, which left the "waiting on
-/// the host" flag set for the code that went on running: nothing counted and nothing stopped it.
-#[tokio::test]
-async fn a_coroutine_cannot_park_a_host_call_and_switch_off_the_cpu_budget() {
-    let src = r#"
-      app.on("spin", function()
-        local co = coroutine.create(function() app.kv:get("k") end)
-        local ok, why = coroutine.resume(co)
-        local n = 0
-        while n < 30000000 do n = n + 1 end
-        return { ok = ok, why = tostring(why), n = n }
-      end)
-    "#;
-    let limits = Limits { cpu_ticks: 100_000, call_ticks: 200_000, ..Limits::default() };
-    let vm = try_load_with("spin", src, db(), limits).await.unwrap();
-    let started = Instant::now();
-    let err = vm.emit("spin", json!(null)).await.expect_err("the loop must run into the budget");
-    assert!(script_error(&err).contains("cpu budget exceeded"), "{err}");
-    assert!(started.elapsed() < PROMPTLY);
-}
-
 /// On Lua 5.1 a host call inside the app's own coroutine is not refused (the resume wrappers pass the
 /// executor's wait outward, see `async_coroutines.lua`), so nothing is ever parked: the call finishes before
 /// the coroutine's `resume` returns, and what the app sees is what it would see on the main thread.
@@ -481,7 +362,7 @@ async fn a_coroutine_cannot_leave_the_write_gate_held_after_the_call_returns() {
       end)
     "#;
     let data = db();
-    let vm = try_load_with("leak", src, data.clone(), Limits::default()).await.unwrap();
+    let vm = try_load_with("leak", src, data.clone()).await.unwrap();
     vm.emit("leak", json!(null)).await.unwrap();
     let write = tokio::time::timeout(
         Duration::from_secs(3),
@@ -507,7 +388,7 @@ async fn a_cancelled_call_gives_up_its_transaction_at_once() {
       end)
     "#;
     let data = db();
-    let vm = try_load_with("txcancel", src, data.clone(), Limits::default()).await.unwrap();
+    let vm = try_load_with("txcancel", src, data.clone()).await.unwrap();
     let cancelled = tokio::time::timeout(Duration::from_millis(300), vm.emit("tx", json!(null))).await;
     assert!(cancelled.is_err(), "the call is parked on the gate and its caller gives up");
     let write = tokio::time::timeout(
@@ -563,16 +444,11 @@ async fn a_read_only_tool_cannot_act_on_a_window_through_a_stashed_w() {
 
 // ---- wave D1: the second review's sandbox holes ----------------------------------------------------------------
 
-/// An app that no budget will stop: only an unload or a reload ends its call.
-fn unbounded() -> Limits {
-    Limits { call_ticks: u64::MAX, call_wall: Duration::from_secs(3600), ..Limits::default() }
-}
-
 // N5: a hot reload swaps the VM in; the one it replaces must stop, not carry on writing.
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_hot_reload_retires_the_vm_it_replaces() {
-    let rig = rig_with(unbounded());
+    let rig = rig();
     let v1 = format!(
         "{MANIFEST}\napp.tool {{ name = \"spin\", run = function() while true do app.kv:get(\"k\") end end }}"
     );

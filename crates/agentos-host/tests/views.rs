@@ -5,7 +5,6 @@
 
 mod common;
 
-use agentos_domain::Permission;
 use agentos_host::startup::prepare_data_dir;
 use common::{
     browser, built_app, call, claude, connect_agent, next_notification, notification_where, notify, path_of,
@@ -23,8 +22,7 @@ async fn host_with(tmp: &Path, apps: &[&str]) -> Running {
     .await;
     for app in apps {
         let refs = [("app.lua", built_app(app))];
-        let url =
-            publish_package(&tmp.join(format!("pkg-{app}")), app, "app.lua", &refs, vec![Permission::Data]);
+        let url = publish_package(&tmp.join(format!("pkg-{app}")), app, "app.lua", &refs);
         r.host.service.install_from_url(&url).await.unwrap();
     }
     r

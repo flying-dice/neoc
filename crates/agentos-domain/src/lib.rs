@@ -1,6 +1,6 @@
 //! The innermost ring of the hexagon: the pure domain model.
 //!
-//! App ids, app refs and manifests (with checksum verification), permissions, agent identity, tools,
+//! App ids, app refs and manifests (with checksum verification), tool grants, agent identity, tools,
 //! notifications, the view tree and the protocol messages. No I/O, no runtime, no framework: the only
 //! external crates are `serde`, `serde_json`, `sha2` and `thiserror` (plus `ts-rs` and `schemars`
 //! behind the derive-only `codegen` feature). `scripts/check-deps.ts` and `deny.toml` enforce that.
@@ -26,7 +26,7 @@ pub mod tool_schema;
 pub mod ui;
 
 pub use actor::{Actor, ActorKind};
-pub use agent::{AgentId, AgentIdentity, Capabilities, Permission};
+pub use agent::{AgentId, AgentIdentity, ToolGrant};
 pub use app::{
     resolve_package_url, resolve_url, source_label, AppId, AppRef, FileRef, Manifest, MigrationSpec,
     Registry, Requires, HOST_API,

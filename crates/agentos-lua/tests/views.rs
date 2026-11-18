@@ -9,11 +9,8 @@ use agentos_application::{
     ports::{AppData, AppPackage, AppRuntime, LoadedApp, RenderOutput, ViewEffect, ViewEventCall},
     PortError,
 };
-use agentos_domain::{
-    ui::{diff, protocol::Command, Node, Op},
-    Capabilities,
-};
-use agentos_lua::{Limits, LuaRuntime};
+use agentos_domain::ui::{diff, protocol::Command, Node, Op};
+use agentos_lua::LuaRuntime;
 use agentos_sqlite::AppDb;
 use common::{agent_ctx, built_app, db, id};
 use serde_json::{json, Map, Value};
@@ -40,7 +37,7 @@ fn runtime(shell: Arc<agentos_application::testing::RecordingShell>) -> LuaRunti
             Ok(())
         }
     }
-    LuaRuntime::new(Arc::new(Quiet), shell, Limits::default())
+    LuaRuntime::new(Arc::new(Quiet), shell)
 }
 
 impl Rig {
@@ -53,7 +50,7 @@ impl Rig {
 async fn load(app: &str, package: AppPackage) -> (Rig, LoadedApp) {
     let rig = Rig::new();
     let data: Arc<dyn AppData> = rig.db.clone();
-    let loaded = rig.runtime.load(&id(app), package, data, Capabilities::all()).await.unwrap();
+    let loaded = rig.runtime.load(&id(app), package, data).await.unwrap();
     (rig, loaded)
 }
 
@@ -416,7 +413,7 @@ async fn a_toast_action_runs_the_apps_closure_once() {
     let rig = Rig::new();
     let package = common::package(TOASTER, &[]);
     let data: Arc<dyn AppData> = rig.db.clone();
-    rig.runtime.load(&id("toaster"), package, data, Capabilities::all()).await.unwrap();
+    rig.runtime.load(&id("toaster"), package, data).await.unwrap();
     let out = open(&rig, "toaster", "v1").await;
     assert!(tap(&rig, "toaster", "v1", &out, "add").await);
 

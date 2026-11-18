@@ -44,7 +44,6 @@ apps/<id>/
   "main": "app.luau",
   "icon": "plus",
   "tint": "orange",
-  "permissions": ["data"],
   "requires": { "host": ">=1.0" }
 }
 ```
@@ -55,13 +54,12 @@ apps/<id>/
 | `name`, `version` | `version` is `major.minor.patch` digits (`0.1.0`); bump it to ship a change. |
 | `main` | the Luau entry file (default `app.luau`). |
 | `icon`, `tint`, `description` | what Discover and the add-by-URL preview show *before* the app runs. `icon` is a symbol name, `tint` a palette role. |
-| `permissions` | any of `data`, `notify`, `shell`, `agents`. Nothing else is granted (see "Security"). |
 | `requires.host` | the host API range the app needs (checked against the host at install). |
 | `migrations` | optional list of `{ version, name, file }` SQL files; most apps call `db:migrate` in Luau instead. |
 
 `app.json` and the `app.manifest { ... }` call in the entry must agree on `id`, `icon` and `tint`: `bun run build:apps`
-fails when they differ. `app.manifest` additionally carries the window (`w`, `h`, `minW`, `minH`) and may repeat
-`permissions`.
+fails when they differ. `app.manifest` additionally carries the window (`w`, `h`, `minW`, `minH`). Apps have no
+permissions: a `permissions` key in `app.json` or in `app.manifest` (from before they were removed) is ignored.
 
 ### App refs, registries and install
 
@@ -84,7 +82,7 @@ for an app with no relative `require`; an app with modules is shifted by the siz
   when it exists; `registries` in `agentos.toml` (or `AGENTOS_REGISTRIES`) adds more. Discover lists what they offer.
 - **An app is installed from an app ref URL** (`file://`, `http://`, `https://`): the host fetches it, verifies every
   file's sha256, runs the migrations, loads the app in its VM and publishes its tools. Discover previews an app ref
-  first (manifest, source host, permissions) without running anything, then asks for confirmation. `install` in
+  first (manifest, source host) without running anything, then asks for confirmation. `install` in
   `agentos.toml` makes sure listed app refs are installed at every start.
 - **Lifecycle:** install, enable, disable (VM unloaded, tools withdrawn, data kept), delete data, uninstall. At start
   the host re-fetches and re-verifies every installed app. An app that fails to load is marked failed and the rest
@@ -113,17 +111,17 @@ them in strict mode.
 
 | Call | What it does |
 |---|---|
-| `app.manifest { id, name, icon, tint, window = { w, h, minW, minH }, permissions }` | identity and the window's preferred and **minimum** size. Call it first. |
+| `app.manifest { id, name, icon, tint, window = { w, h, minW, minH } }` | identity and the window's preferred and **minimum** size. Call it first. |
 | `app.window(name, { title, size, client, state, render, onOpen, onClose })` | declare a window kind. `render(w)` returns the view tree. |
 | `app.state(initial)` | shared in-memory state for the whole app; reads in `render` are tracked, assignments re-render the windows that read them. Lost on restart: persist what matters with `app.kv` or `app.db`. |
-| `app.kv:get(key)`, `:set(key, value)`, `:delete(key)` | small durable key/value store (needs `data`) |
-| `app.db` | `migrate`, `exec`, `all`, `one`, `tx`, and the live sources `query`, `row`, `scalar` (needs `data`) |
+| `app.kv:get(key)`, `:set(key, value)`, `:delete(key)` | small durable key/value store |
+| `app.db` | `migrate`, `exec`, `all`, `one`, `tx`, and the live sources `query`, `row`, `scalar` |
 | `app.tool { ... }` (alias `app.tools.register`) | declare an agent tool |
 | `app.t.string / integer / number / boolean / array / object / enum` | input schema builders for tools |
-| `app.notify { title, body, at, actions }` | a notification (needs `notify`) |
+| `app.notify { title, body, at, actions }` | a notification |
 | `app:openWindow(name, params)`, `app:windows(name)` | bring a declared window forward (an undeclared name raises), or iterate the open instances |
-| `app.thread()` | declare a chat-thread source for `ChatTranscript` (needs the `agents` permission; a literal agent must be on the roster) |
-| `app.agents:list()` | the agent contacts, as `{ id, name, avatar, role }` (needs `agents`) |
+| `app.thread()` | declare a chat-thread source for `ChatTranscript` (a literal agent must be on the roster) |
+| `app.agents:list()` | the agent contacts, as `{ id, name, avatar, role }` |
 | `app.shell.badge / command / deepLink` | Dock badge, menu commands, deep links (needs `shell`; declarations the shell does not act on yet) |
 | `app.timer.at / every`, `app.log(message)`, `app.id` | host-scheduled timers, logging, the app's id |
 
@@ -237,13 +235,13 @@ app.tool {
 
 ## Notifications and shell
 
-`app.notify { title = "...", body = "...", actions = {...} }` (or `app:notify { ... }`) needs the `notify` permission.
+`app.notify { title = "...", body = "...", actions = {...} }` (or `app:notify { ... }`) raises a notification.
 `app.shell.badge(value)`, `app.shell.command { id, title, shortcut, run }` and `app.shell.deepLink(pattern, handler)`
-need `shell`; they are declarations the shell does not act on yet. `w:toast { ... }` is the in-window message.
+are declarations the shell does not act on yet. `w:toast { ... }` is the in-window message.
 
 ## Agents and chats
 
-An app with the `agents` permission can read the roster with `app.agents:list()` (`{ id, name, avatar, role }`: never
+An app can read the roster with `app.agents:list()` (`{ id, name, avatar, role }`: never
 grants, tokens or launch commands). It shows a chat with a thread source:
 
 ```lua
@@ -260,44 +258,45 @@ SQLite (`apps/agents/app.luau`).
 
 ## Security
 
-- **Sandbox.** One Lua 5.1 VM per app, and one **environment table** per app (its globals are its own; two apps share
-  nothing). The base functions are an allow-list: no `load`, `loadstring`, `dofile`, `loadfile`, `getfenv`, `setfenv`,
-  `newproxy`, `module`, `collectgarbage`, `print`, no `string.dump`, no `io`, `os`, `debug` or `package`, and `require`
-  loads only `@agentos/app` and `@agentos/ui`; no filesystem, no network. Chunks load as text only (Lua 5.1 bytecode is
-  unverified). `string`, `table`, `math`, `coroutine`, `bit` and `utf8` are **read-only**: assigning to one, `rawset` on
-  one, `setmetatable` on one and `getmetatable("")` (the shared string metatable is locked) all fail, so an app cannot
-  change what other code in its VM sees. `math.random` has a generator of its own per VM, seeded by the host (the C
-  library's is one state shared by every app, which `math.randomseed` could steer). A **memory limit** (16 MiB by default) and a **CPU budget** per call
-  (`Limits::cpu_ticks`, 500 000 ticks of 100 VM instructions each, a fraction of a second on an idle machine, so a
-  loaded host does not trip it; a 10 s wall-clock backstop, `cpu_wall`, catches the rest; sticky, and `pcall`, `xpcall` and
-  `coroutine.resume` raise a stop again if they catch it, so nothing can swallow it; the budget also binds inside
-  coroutines; time waiting on the host does not count) kill a runaway app, not
-  the host. **Pattern matching cannot hang the host:** the C pattern matcher cannot be interrupted, so `string.find`,
-  `match`, `gmatch` and `gsub` (and `string.rep`) run in host code that charges the same CPU budget, stops at a recursion
-  depth of 200 (`pattern too complex`) and charges what it builds to a byte budget shared with the Lua heap (a `gsub`
-  inside a `gsub` callback cannot outgrow the memory limit). The library functions whose work is one instruction
-  (`string.upper`, `format`, `sub`, `table.concat`, `insert`, ...) charge the CPU budget by the size of their input or
-  output, and `table.sort` is a counted Lua merge sort (O(n log n), stable, its comparison may call the host). A **per-call budget** that host calls do not refill
-  (2 500 000 ticks, 30 s including host waits) stops a loop of host calls; at most 32 effects (notifications, windows,
-  shell commands) per call; values leaving Lua are capped at 100 000 nodes and 4 MiB and may not contain cycles (view
-  trees: 10 000 nodes, depth 64). Queries return at most 10 000 rows and 16 MiB; BLOBs come out as base64 text. A
-  blocking host call has its own timeout. SQL `ATTACH` is denied and a statement past its wall-clock budget is
-  interrupted.
+- **Apps are isolated from each other, not from the machine.** One Lua 5.1 VM per app, and one **environment table**
+  per app (its globals are its own; two apps share nothing, not even the module tables below). The base functions are
+  an allow-list: no `load`, `loadstring`, `dofile`, `loadfile`, `getfenv`, `setfenv`, `newproxy`, `module`,
+  `collectgarbage`, `print`, no `string.dump`, no `io`, `os`, `debug` or `package`. Chunks load as text only (Lua 5.1
+  bytecode is unverified). `string`, `table`, `math`, `coroutine`, `bit` and `utf8` are **read-only**: assigning to
+  one, `rawset` on one, `setmetatable` on one and `getmetatable("")` (the shared string metatable is locked) all fail,
+  so an app cannot change what other code in its VM sees. `math.random` has a generator of its own per VM, seeded by
+  the host. The functions themselves are Lua's own (C `string` and `table`, including `table.sort` and the pattern
+  matcher).
+- **Every library module is yours, with no permission to ask for.** Next to `require("@agentos/app")` and
+  `require("@agentos/ui")`, an app can `require("std:fs")`, `require("lib:json")`, `require("vnd:hyper")` and the rest
+  of `agentos-luavm`'s modules, spelled as neoc spells them: `std:` (collections, env, fs, io, net, task, thread, time),
+  `lib:` (archive, args, base64, cache, chrono, compress, crypto, csv, diff, glob, hash, hex, hmac, html, http, ini,
+  json, log, mime, pkey, random, regex, semver, template, tempfile, text, unicode, url, vcr) and `vnd:` (hyper,
+  jsonschema, quick_xml, rusqlite, serde_json, serde_yaml, sqlx_mysql, sqlx_postgres, toml). Not offered: `lib:test`,
+  `lib:compile`, `std:workers`. Files, the network, servers, background tasks and worker threads are all available;
+  `vnd:hyper` speaks `http://` and `https://` (the operating system's certificate store, or `ca_pem` for your own
+  CA). `lib:log` goes to the host's log with the app id. The host has no permission model for apps and no CPU, memory
+  or time limit: an app that loops forever costs the host a thread until it is unloaded, and that is accepted.
+- **What an app starts is the app's.** Tasks (`std:task`), servers (`vnd:hyper`, `lib:http`), their connections and
+  `std:thread` workers are aborted and their listeners closed when the app is unloaded, disabled, uninstalled or
+  replaced (a replacement can bind the port the old version had). A callback that comes from inside the VM, a request
+  to your own server or the next slice of a task, runs as one call at a time with your tools and events: between two
+  waits (`task.wait`, the network, a worker) it is atomic, and a wait lets the others in. Do not wait inside `db:tx`
+  (it raises), and do not make `app.state` changes from a background callback and expect a view to refresh before the
+  next event.
+- **Still enforced.** Values leaving Lua are capped at 100 000 nodes and 4 MiB and may not contain cycles (view trees:
+  10 000 nodes, depth 64): a cyclic table is an error, not a crash. Queries return at most 10 000 rows and 16 MiB;
+  BLOBs come out as base64 text. SQL `ATTACH` is denied. `readOnly` tools cannot write (see above).
 - **Lua 5.1 limits to write around.** A host call (`app.db:*`, `app.kv:*`) may be made inside `pcall`, inside a
   coroutine and in any handler, but not where Lua 5.1 cannot yield: a `string.gsub` callback,
   a metamethod or the iterator function of a `for ... in` (it fails with "attempt to yield across metamethod/C-call
-  boundary"). `return app.db:all(...)` (a tail call) loses the line number in an error message. `table.insert(t, pos, v)` with a
-  `pos` outside `1..#t + 1` is an error (position out of bounds), and `math.random` of a bound that is not a finite
-  number (`1e300`, `NaN`, an infinity) is an error; `table.sort` never raises "invalid order function for sorting" (an
-  inconsistent comparison gives some order of the same elements). `pairs` and `next` of
-  a library table (`pairs(string)`) see nothing. An error raised by a host function (`app.db`, `app.kv`, and the
-  string functions `find`, `match`, `gmatch`, `gsub`, `rep`, and `math.random`, which the host implements) reaches a
-  `pcall` as an error object, not a plain string: write `tostring(err)` before concatenating or matching it.
-- **Permissions** are what `app.json` declares and the user confirmed at install; the host checks them at each call
-  (`permission denied: app.notify needs the notify permission in the package manifest`), so an app cannot grant itself
-  more by editing its manifest call.
+  boundary"). `return app.db:all(...)` (a tail call) loses the line number in an error message. `math.random` of a
+  bound that is not a finite number (`1e300`, `NaN`, an infinity) is an error. `pairs` and `next` of
+  a library table (`pairs(string)`) see nothing. An error raised by a host function (`app.db`, `app.kv`, and
+  `math.random`, which the host implements) reaches a `pcall` as an error object, not a plain string: write
+  `tostring(err)` before concatenating or matching it.
 - **Supply chain.** The host verifies the sha256 of every file in an app ref before loading it. That guards against
-  tampering in transit, not against a malicious author: the add-by-URL preview shows the source and permissions and asks
+  tampering in transit, not against a malicious author: the add-by-URL preview shows the source and asks
   first, and an app's tools reach every agent granted to that app.
 - **Agents are untrusted callers, and so is what they write.** Tool input is validated against the declared schema;
   `readOnly` is enforced by the data layer; strings an agent or a tool returns reach the client as text, never HTML.
@@ -309,7 +308,7 @@ SQLite (`apps/agents/app.luau`).
 ## Adding an app
 
 1. **Create the package.** Copy `apps/calculator` to `apps/<id>` and edit `app.json` (id, name, version `0.1.0`,
-   description, icon, tint, the smallest `permissions` list that works). Rewrite `app.luau`, starting with
+   description, icon, tint). Rewrite `app.luau`, starting with
    `--!strict`, the two `require`s and `app.manifest { ... }`.
 2. **Set the window.** `window = { w, h, minW, minH }`. The minimum is the smallest size at which every control is
    fully visible and at least 44 pt (the Calculator's 320x500 is justified by the keypad: say why in a comment when
@@ -320,7 +319,7 @@ SQLite (`apps/agents/app.luau`).
 4. **Make it clean.** `bun run lint:luau` (strict `luau-lsp analyze` against the generated definitions) and
    `bun run lint:stylua` pass; `bun run format` fixes formatting. Fix the types, do not cast them away.
 5. **Test the logic and tools in Rust.** Add a test beside `crates/agentos-lua/tests/calculator_app.rs` that loads the
-   shipped package under the real runtime, calls its tools (`call_tool`) and asserts results, permission denials and
+   shipped package under the real runtime, calls its tools (`call_tool`) and asserts results and
    `readOnly`. A host-level test (`crates/agentos-host/tests/agents_app.rs`) is for what needs the data layer, views or
    agents. Run `cargo nextest run -p agentos-lua`.
 6. **Write `JOURNEYS.md`** (4 to 8 journeys: id, who and what they want, start state, an observable "Done when"; never
@@ -344,7 +343,6 @@ SQLite (`apps/agents/app.luau`).
 
 - `bun run lint:luau` and `lint:stylua` (types and format of every app), `bun run lint:testids` (test ids in the
   kit and the client), `bun run codegen:check` (generated types match the Rust schema).
-- In the host, always: app ids, manifests and app refs are validated and checksum-verified at install; permissions are
-  checked at each capability call; tool input is validated against the schema; `readOnly` blocks writes.
+- In the host, always: app ids, manifests and app refs are validated and checksum-verified at install; tool input is validated against the schema; `readOnly` blocks writes.
 - Missing a capability? Extend the host API (domain type and schema, application port and use case, the Luau adapter,
   codegen, tests), never a side channel. That is a platform change: call it out in the MR.

@@ -15,6 +15,11 @@
 //!   afterwards, so a `while true do task.wait(1) end` loop does not stop the app, and a script can call its
 //!   own listener from a task. Between two waits a call is atomic.
 //!
+//!   A `std:task` coroutine is the one call that does not start at its beginning: `task.spawn` runs its first
+//!   slice inside the spawning call and the rest later, from whichever wait that slice stopped at. Its
+//!   continuation therefore starts *detached* ([`resumed`]): it holds nothing until the wait it was stopped
+//!   at ends (an [`idle`] wait, or a host call, which calls [`hold`]) and takes its turn then.
+//!
 //! Without a [`CallEntry`] (an engine that is not an app's, like a `std:thread` worker's or a test's) the
 //! callbacks run directly and [`idle`] is a plain `.await`.
 
@@ -41,6 +46,7 @@ pub struct Life {
 struct LifeInner {
     closed: AtomicBool,
     tasks: Mutex<Vec<AbortHandle>>,
+    on_shutdown: Mutex<Vec<Box<dyn FnOnce() + Send>>>,
     closed_tx: watch::Sender<bool>,
 }
 
@@ -54,7 +60,14 @@ impl Life {
     #[must_use]
     pub fn new() -> Self {
         let (closed_tx, _) = watch::channel(false);
-        Self { inner: Arc::new(LifeInner { closed: AtomicBool::new(false), tasks: Mutex::new(vec![]), closed_tx }) }
+        Self {
+            inner: Arc::new(LifeInner {
+                closed: AtomicBool::new(false),
+                tasks: Mutex::new(vec![]),
+                on_shutdown: Mutex::new(vec![]),
+                closed_tx,
+            }),
+        }
     }
 
     /// The registry of this engine (made on first use). Workers a script starts share their parent's.
@@ -92,16 +105,42 @@ impl Life {
         handle
     }
 
-    /// Abort everything registered and refuse anything new. Idempotent.
-    pub fn shutdown(&self) {
-        let tasks = {
+    /// Run `release` when [`Life::shutdown`] runs (at once when it already has): for what a script holds that
+    /// dropping the tasks does not free, because a Lua object holds it too (a listener's socket).
+    pub fn on_shutdown(&self, release: impl FnOnce() + Send + 'static) {
+        let mut releases = self.inner.on_shutdown.lock();
+        if self.inner.closed.load(Ordering::SeqCst) {
+            drop(releases);
+            release();
+        } else {
+            releases.push(Box::new(release));
+        }
+    }
+
+    /// Abort everything registered and run the releases, but stay open: the script keeps running and may start
+    /// new work. A replacement version that wants the old one's port is loaded after this.
+    pub fn stop_background(&self) {
+        let (tasks, releases) = {
             let mut tasks = self.inner.tasks.lock();
-            self.inner.closed.store(true, Ordering::SeqCst);
-            std::mem::take(&mut *tasks)
+            let mut releases = self.inner.on_shutdown.lock();
+            (std::mem::take(&mut *tasks), std::mem::take(&mut *releases))
         };
         for task in tasks {
             task.abort();
         }
+        for release in releases {
+            release();
+        }
+    }
+
+    /// Abort everything registered, run the releases and refuse anything new. Idempotent.
+    pub fn shutdown(&self) {
+        {
+            let _tasks = self.inner.tasks.lock();
+            let _releases = self.inner.on_shutdown.lock();
+            self.inner.closed.store(true, Ordering::SeqCst);
+        }
+        self.stop_background();
         self.inner.closed_tx.send_replace(true);
     }
 
@@ -126,6 +165,9 @@ impl Life {
 
 /// A call's turn in the VM, held until it is dropped.
 pub trait Baton: Send + 'static {
+    /// Does this call hold the VM right now? (A parked or detached call does not.)
+    fn holding(&self) -> bool;
+
     /// The holder starts a wait that does not use the VM: set the call's own state aside and let others in.
     /// An error means the call cannot wait right now (it says why) and keeps the baton.
     ///
@@ -133,7 +175,7 @@ pub trait Baton: Send + 'static {
     /// The reason the call must not park.
     fn park(&mut self) -> Result<(), String>;
 
-    /// The wait is over: queue for the VM again, and take the call's state back.
+    /// Queue for the VM (when this call does not hold it), and take the call's state back.
     fn unpark(&mut self) -> BoxFuture<'_, ()>;
 }
 
@@ -141,6 +183,9 @@ pub trait Baton: Send + 'static {
 pub trait CallEntry: Send + Sync + 'static {
     /// Wait for the VM to be free and take it.
     fn enter(&self) -> BoxFuture<'static, Box<dyn Baton>>;
+
+    /// A call that exists but holds nothing yet: it takes its turn at its first [`idle`] or [`hold`].
+    fn detached(&self) -> Box<dyn Baton>;
 }
 
 struct Entry(Arc<dyn CallEntry>);
@@ -179,6 +224,23 @@ pub async fn inbound<F: Future>(lua: &Lua, future: F) -> F::Output {
     }
 }
 
+/// A coroutine's continuation, which starts where its first slice stopped (see the module docs): it runs as
+/// a call that holds nothing until the wait it stopped at ends. Without a [`CallEntry`] it just runs.
+pub async fn resumed<F: Future>(lua: &Lua, future: F) -> F::Output {
+    let detached = lua.app_data_ref::<Entry>().map(|entry| entry.0.detached());
+    match detached {
+        Some(baton) => scoped(baton, future).await,
+        None => future.await,
+    }
+}
+
+/// Run the synchronous first slice of a coroutine (`task.spawn`) inside the spawning call, but *not as* that
+/// call: a wait it starts keeps a detached baton of its own (see [`resumed`]), so the spawner keeps its turn.
+pub fn first_slice<R>(lua: &Lua, slice: impl FnOnce() -> R) -> R {
+    let detached = lua.app_data_ref::<Entry>().map(|entry| entry.0.detached());
+    HELD.sync_scope(RefCell::new(detached), slice)
+}
+
 /// Wait for `future`, which does not use the VM, without holding the VM: the running call hands its baton
 /// back for the wait and queues for it again afterwards. A plain `.await` when this is not a call.
 ///
@@ -187,14 +249,27 @@ pub async fn inbound<F: Future>(lua: &Lua, future: F) -> F::Output {
 pub async fn idle<F: Future>(future: F) -> mlua::Result<F::Output> {
     let held = HELD.try_with(|slot| slot.borrow_mut().take()).ok().flatten();
     let Some(mut baton) = held else { return Ok(future.await) };
-    if let Err(why) = baton.park() {
-        let _ = HELD.try_with(|slot| *slot.borrow_mut() = Some(baton));
-        return Err(mlua::Error::runtime(why));
+    if baton.holding() {
+        if let Err(why) = baton.park() {
+            let _ = HELD.try_with(|slot| *slot.borrow_mut() = Some(baton));
+            return Err(mlua::Error::runtime(why));
+        }
     }
     let out = future.await;
     baton.unpark().await;
     let _ = HELD.try_with(|slot| *slot.borrow_mut() = Some(baton));
     Ok(out)
+}
+
+/// Make sure the running call holds the VM before it goes on: a host call that uses the VM's state (the
+/// database) calls this first. Only a detached coroutine continuation does not hold it yet (see [`resumed`]).
+pub async fn hold() {
+    let held = HELD.try_with(|slot| slot.borrow_mut().take()).ok().flatten();
+    let Some(mut baton) = held else { return };
+    if !baton.holding() {
+        baton.unpark().await;
+    }
+    let _ = HELD.try_with(|slot| *slot.borrow_mut() = Some(baton));
 }
 
 /// [`idle`] for a wait whose own result is an `mlua::Result` (every async host function's is).
@@ -233,6 +308,9 @@ mod tests {
     }
 
     impl Baton for CountingBaton {
+        fn holding(&self) -> bool {
+            self.held.is_some()
+        }
         fn park(&mut self) -> Result<(), String> {
             self.inside.fetch_sub(1, Ordering::SeqCst);
             self.held = None;
@@ -240,8 +318,10 @@ mod tests {
         }
         fn unpark(&mut self) -> BoxFuture<'_, ()> {
             Box::pin(async move {
-                self.held = Some(self.gate.clone().lock_owned().await);
-                self.arrive();
+                if self.held.is_none() {
+                    self.held = Some(self.gate.clone().lock_owned().await);
+                    self.arrive();
+                }
             })
         }
     }
@@ -255,6 +335,14 @@ mod tests {
     }
 
     impl CallEntry for Counting {
+        fn detached(&self) -> Box<dyn Baton> {
+            Box::new(CountingBaton {
+                gate: self.gate.clone(),
+                held: None,
+                inside: self.inside.clone(),
+                most: self.most.clone(),
+            })
+        }
         fn enter(&self) -> BoxFuture<'static, Box<dyn Baton>> {
             let (gate, inside, most) = (self.gate.clone(), self.inside.clone(), self.most.clone());
             Box::pin(async move {
@@ -282,6 +370,10 @@ mod tests {
 
         let late = life.spawn(std::future::pending::<()>());
         assert!(late.await.expect_err("aborted at once").is_cancelled());
+        let released = Arc::new(AtomicBool::new(false));
+        let flag = released.clone();
+        life.on_shutdown(move || flag.store(true, Ordering::SeqCst));
+        assert!(released.load(Ordering::SeqCst), "a release registered after shutdown runs at once");
         tokio::time::timeout(Duration::from_secs(1), life.closed()).await.expect("closed resolves");
     }
 
@@ -314,6 +406,46 @@ mod tests {
         }
         assert_eq!(most.load(Ordering::SeqCst), 1, "one call at a time");
         assert!(started.elapsed() < Duration::from_millis(350), "the waits ran side by side");
+        assert_eq!(inside.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn a_detached_continuation_holds_nothing_until_its_wait_ends_and_the_spawner_keeps_its_turn() {
+        let lua = Lua::new();
+        let (inside, most) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+        set_entry(
+            &lua,
+            Arc::new(Counting {
+                gate: Arc::new(tokio::sync::Mutex::new(())),
+                inside: inside.clone(),
+                most: most.clone(),
+            }),
+        );
+        // the spawner's call holds the VM; the slice it runs starts a wait (the future is created and polled
+        // once inside the slice) and the continuation finishes it later, outside the spawner's call
+        let mut continuation = None;
+        inbound(&lua, async {
+            let mut wait = Box::pin(idle(tokio::time::sleep(Duration::from_millis(80))));
+            first_slice(&lua, || {
+                let waker = futures::task::noop_waker();
+                let mut cx = std::task::Context::from_waker(&waker);
+                assert!(std::future::Future::poll(wait.as_mut(), &mut cx).is_pending());
+            });
+            assert_eq!(inside.load(Ordering::SeqCst), 1, "the spawner still holds its turn");
+            let lua = lua.clone();
+            continuation = Some(tokio::spawn(async move {
+                resumed(&lua, async move {
+                    wait.await.expect("idle");
+                    hold().await;
+                })
+                .await;
+            }));
+        })
+        .await;
+        // the spawner's call is over; the continuation takes its turn only when its wait ended, and gives it
+        // back when it is dropped
+        continuation.expect("spawned").await.expect("continuation");
+        assert_eq!(most.load(Ordering::SeqCst), 1, "never two inside at once");
         assert_eq!(inside.load(Ordering::SeqCst), 0);
     }
 

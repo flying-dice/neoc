@@ -82,9 +82,12 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "vnd:hyper")?;
 
-    m.set("get", lua.create_async_function(|lua, args: (String, Option<Table>)| {
-        crate::lua::lifecycle::idle_result(get(lua, args))
-    })?)?;
+    m.set(
+        "get",
+        lua.create_async_function(|lua, args: (String, Option<Table>)| {
+            crate::lua::lifecycle::idle_result(get(lua, args))
+        })?,
+    )?;
     m.record_fn(
         "get",
         &[("url", "string"), ("opts", "LuaValue")],
@@ -92,7 +95,10 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "Perform an HTTP or HTTPS GET request, returning a response table `{ status, headers, body }`. `opts` may carry `ca_pem`.",
     );
 
-    m.set("post", lua.create_async_function(|lua, opts: Table| crate::lua::lifecycle::idle_result(post(lua, opts)))?)?;
+    m.set(
+        "post",
+        lua.create_async_function(|lua, opts: Table| crate::lua::lifecycle::idle_result(post(lua, opts)))?,
+    )?;
     m.record_fn(
         "post",
         &[("opts", "LuaValue")],
@@ -100,7 +106,10 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "Perform an HTTP or HTTPS POST request given `{ url, body?, headers?, ca_pem? }`.",
     );
 
-    m.set("request", lua.create_async_function(|lua, opts: Table| crate::lua::lifecycle::idle_result(request(lua, opts)))?)?;
+    m.set(
+        "request",
+        lua.create_async_function(|lua, opts: Table| crate::lua::lifecycle::idle_result(request(lua, opts)))?,
+    )?;
     m.record_fn(
         "request",
         &[("opts", "LuaValue")],

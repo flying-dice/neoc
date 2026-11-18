@@ -78,10 +78,11 @@ The generic specs run axe (WCAG 2.1 AA) in light and dark on every story and app
 - **Rust hygiene.** No `unwrap`, `expect`, `panic!` or `unsafe` outside tests (clippy denies them; a local `allow` needs a
   stated reason). External input (JSON-RPC params, tool arguments, app output, ACP messages, app refs) is parsed into typed
   values and errors are typed (`DomainError`, `PortError`, `AppError`); `anyhow` stays in the host binary.
-- **Luau sandbox and permissions.** A new `app.*` capability checks the app's declared permission in the host and is typed
-  in the generated definitions; nothing gives an app the filesystem, network, another app's data, or unbounded time or
-  memory; SQL `ATTACH` stays denied; a VM, connection or watcher an adapter opens is released on unload. An app's
-  `app.json` asks for the smallest `permissions` that works. A tool declared `readOnly` really writes nothing (the data
+- **App isolation (no permissions, no budgets).** A new `app.*` capability is typed in the generated definitions;
+  nothing gives an app another app's data or state (VMs, environments and module tables are per app); SQL `ATTACH`
+  stays denied; a VM, connection, watcher, listener, task or worker an adapter or a library module opens is
+  registered with the app's `Life` and released on unload or replace. A Lua callback that nobody called (a request
+  handler, a task slice) runs through the VM's call queue. A tool declared `readOnly` really writes nothing (the data
   layer enforces it; check the tool's code agrees), and one that writes isn't marked `readOnly`.
 - **Agents.** Tool calls carry the agent's identity and are checked against its grants before the VM runs (deny by
   default); `/mcp` accepts only per-agent bearer tokens (a device session is not one); tokens are stored hashed and shown
@@ -112,9 +113,9 @@ one missing row means **STAYS IN MR**.
 | Requirement | Evidence |
 |---|---|
 | Window size | `app.manifest.window` has `w`/`h` and `minW`/`minH`, with a comment saying why when the layout needs more than 320x240; the `desktop` project's resize check passes |
-| Package | `app.json` is valid and agrees with `app.manifest` (id, icon, tint), `permissions` are the smallest that work, `version` bumped for a change to a released app; `bun run build:apps` builds it, and it installs from Discover, opens, works and uninstalls cleanly on a real host (`bun run dev`) |
+| Package | `app.json` is valid and agrees with `app.manifest` (id, icon, tint), `version` bumped for a change to a released app; `bun run build:apps` builds it, and it installs from Discover, opens, works and uninstalls cleanly on a real host (`bun run dev`) |
 | Types and format | `bun run lint:luau` and `bun run lint:stylua` pass (not skipped) and the app is `--!strict` |
-| Tests | the app's logic and tools are covered from Rust (`crates/agentos-lua/tests`, or `crates/agentos-host/tests` for views, data and agents), including permission and `readOnly` behaviour |
+| Tests | the app's logic and tools are covered from Rust (`crates/agentos-lua/tests`, or `crates/agentos-host/tests` for views, data and agents), including `readOnly` behaviour |
 | States | every screen and state is reached by a journey or a JSON-tree story (section 2), green in the stories, desktop and journeys projects |
 | Journeys | `JOURNEYS.md` with 4 to 8 journeys (goal, start state, observable "Done when"), each with a passing spec of the same id |
 | Verified | the PR's "Manual verification" section (`verify-change`) covers light and dark, the minimum and large windows, Split View / Slide Over and keyboard |
@@ -134,9 +135,9 @@ Gate: lint ✓ · typecheck ✓ · test ✓ · e2e ✓ (local, on <sha>)
 Readiness: <app>: window ✓ · package ✓ · types ✓ · tests ✓ · states ✓ · journeys ✓ · verified ✗ · researched ✗ (no docs/ux/<app>/)
 
 ### Findings
-1. **Blocker**, `crates/agentos-lua/src/api/misc.rs:153`: `app.agents:list` runs without checking the `agents` permission.
-   Failure: an app that never asked for it can read the agent roster.
-   Fix: `need(s.caps.agents, "agents", "app.agents:list")?` first, plus a test that an app without the permission is refused.
+1. **Blocker**, `crates/agentos-lua/src/api/misc.rs:153`: `app.agents:list` returns the agents' launch commands.
+   Failure: an app can read what only the host may see.
+   Fix: return `{ id, name, avatar, role }` only, plus a test that the roster rows carry nothing else.
 2. **Major**, …
 
 ### Not checked
