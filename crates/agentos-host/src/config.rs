@@ -9,6 +9,7 @@
 //! | `registries`                  | `AGENTOS_REGISTRIES` (comma list)    | none                                |
 //! | `allowed_hosts`               | `AGENTOS_ALLOWED_HOSTS` (comma list) | none                                |
 //! | `dev_client_port`             | `AGENTOS_DEV_CLIENT_PORT`            | none                                |
+//! | `dev_reload`                  | `AGENTOS_DEV_RELOAD`                 | off: rebuild an app's VM when its `file://` bundle changes |
 //! | `secure_cookies`              | `AGENTOS_SECURE_COOKIES`             | true when TLS is configured         |
 //! | `[tls] cert`, `[tls] key`     | `AGENTOS_TLS_CERT`, `AGENTOS_TLS_KEY`| TLS off                             |
 //!
@@ -37,6 +38,7 @@ struct FileSettings {
     registries: Option<Vec<String>>,
     allowed_hosts: Option<Vec<String>>,
     dev_client_port: Option<u16>,
+    dev_reload: Option<bool>,
     secure_cookies: Option<bool>,
     tls: Option<FileTls>,
 }
@@ -76,6 +78,8 @@ pub struct Settings {
     pub allowed_hosts: Vec<String>,
     /// A dev client (Vite) allowed to talk to the host from this port.
     pub dev_client_port: Option<u16>,
+    /// Dev: watch the `file://` app bundles and rebuild an app's VM (keeping its database) when one changes.
+    pub dev_reload: bool,
     pub secure_cookies: bool,
     pub tls: Option<TlsFiles>,
 }
@@ -131,6 +135,11 @@ impl Settings {
             }),
             _ => bail!("AGENTOS_TLS_CERT and AGENTOS_TLS_KEY must be set together"),
         };
+        let flag = |v: String| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on");
+        let dev_reload = match env("AGENTOS_DEV_RELOAD").filter(|v| !v.is_empty()) {
+            Some(v) => flag(v),
+            None => file.dev_reload.unwrap_or(false),
+        };
         let secure_cookies = match env("AGENTOS_SECURE_COOKIES").filter(|v| !v.is_empty()) {
             Some(v) => matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"),
             None => file.secure_cookies.unwrap_or(tls.is_some()),
@@ -144,6 +153,7 @@ impl Settings {
             registries: list("AGENTOS_REGISTRIES").or(file.registries).unwrap_or_default(),
             allowed_hosts: list("AGENTOS_ALLOWED_HOSTS").or(file.allowed_hosts).unwrap_or_default(),
             dev_client_port,
+            dev_reload,
             secure_cookies,
             tls,
         })

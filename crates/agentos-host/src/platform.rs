@@ -1,7 +1,13 @@
 //! The operating-system implementations of the small infrastructure ports: wall clock and secure randomness.
 
-use agentos_application::ports::{Clock, RandomSource};
-use std::time::{SystemTime, UNIX_EPOCH};
+use agentos_application::ports::{Background, Clock, MenuCommand, RandomSource, Shell, TaskHandle};
+use agentos_domain::AppId;
+use async_trait::async_trait;
+use std::{
+    future::Future,
+    pin::Pin,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 pub struct SystemClock;
 
@@ -37,4 +43,42 @@ pub fn random_hex(random: &dyn RandomSource, bytes: usize) -> String {
         let _ = write!(s, "{b:02x}");
         s
     })
+}
+
+/// Runs background work (the live-source pumps) on the tokio runtime; dropping the handle aborts the task.
+pub struct TokioBackground;
+
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+impl TaskHandle for AbortOnDrop {}
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+impl Background for TokioBackground {
+    fn spawn(
+        &self,
+        _name: &'static str,
+        task: Pin<Box<dyn Future<Output = ()> + Send>>,
+    ) -> Box<dyn TaskHandle> {
+        Box::new(AbortOnDrop(tokio::spawn(task)))
+    }
+}
+
+/// The desktop shell is not built yet: what apps ask of it (Dock badge, menu commands, deep links) is
+/// accepted, logged, and dropped. The `app.shell` API shape is already final.
+pub struct LogShell;
+
+#[async_trait]
+impl Shell for LogShell {
+    async fn set_badge(&self, app: &AppId, badge: Option<String>) {
+        tracing::debug!(%app, ?badge, "shell: badge (no shell yet)");
+    }
+    async fn set_menu_commands(&self, app: &AppId, commands: Vec<MenuCommand>) {
+        tracing::debug!(%app, commands = commands.len(), "shell: menu commands (no shell yet)");
+    }
+    async fn set_deep_links(&self, app: &AppId, patterns: Vec<String>) {
+        tracing::debug!(%app, ?patterns, "shell: deep links (no shell yet)");
+    }
 }

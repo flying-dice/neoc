@@ -24,6 +24,7 @@ use rmcp::{
     model::{
         CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ListToolsResult,
         PaginatedRequestParams, ProtocolVersion, ServerCapabilities, ServerConfig, SubscriptionFilter, Tool,
+        ToolAnnotations,
     },
     service::{NotificationContext, RequestContext, SubscriptionContext},
     transport::streamable_http_server::{
@@ -90,7 +91,14 @@ struct McpHandler {
 fn to_tool(app: &AppId, t: &ToolSpec) -> Option<Tool> {
     let name = QualifiedToolName::new(app.clone(), &t.name).ok()?.to_string();
     let schema = t.input_schema.as_object().cloned().unwrap_or_default();
-    Some(Tool::new(name, t.description.clone(), Arc::new(schema)))
+    let mut tool = Tool::new(name, t.description.clone(), Arc::new(schema));
+    if let Some(title) = &t.title {
+        tool = tool.with_title(title.clone());
+    }
+    if t.read_only {
+        tool = tool.with_annotations(ToolAnnotations::new().read_only(true));
+    }
+    Some(tool)
 }
 
 impl ServerHandler for McpHandler {

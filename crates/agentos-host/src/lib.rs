@@ -27,10 +27,10 @@ use agentos_acp::{AcpConnector, AgentLaunch};
 use agentos_agui::{agui_router, AgUiEvent, Role, RunAgentInput, RunHandler};
 use agentos_application::{
     ports::{
-        AgentDirectory, AppRuntime, Clock, DataStore, DeviceRegistry, EventSink, Fetcher, RandomSource,
-        ToolRegistry,
+        AgentDirectory, AppRuntime, Clock, DataStore, DeviceRegistry, EventSink, Fetcher, InstalledAppStore,
+        RandomSource, ToolRegistry,
     },
-    AppService, DeviceService, PairingPolicy,
+    AppService, DeviceService, PairingPolicy, Ports,
 };
 use agentos_domain::{AgentId, AgentIdentity};
 use agentos_fetch::UrlFetcher;
@@ -40,7 +40,7 @@ use agentos_http::{
 };
 use agentos_luau::{Limits, LuauRuntime};
 use agentos_mcp::{mcp_router, McpState};
-use agentos_sqlite::{SqliteDataStore, SqliteDeviceRegistry};
+use agentos_sqlite::{SqliteDataStore, SqliteSystemDb};
 use axum::{middleware::from_fn_with_state, Router};
 use futures_util::{stream, stream::BoxStream, StreamExt};
 use std::{collections::HashMap, net::IpAddr, path::PathBuf, sync::Arc};
@@ -150,9 +150,14 @@ pub fn open_devices(
     random: Arc<dyn RandomSource>,
     policy: PairingPolicy,
 ) -> anyhow::Result<Arc<DeviceService>> {
-    let registry: Arc<dyn DeviceRegistry> =
-        Arc::new(SqliteDeviceRegistry::open(data_dir.map(|d| d.join("system.db")).as_deref())?);
+    let registry: Arc<dyn DeviceRegistry> = open_system(data_dir)?;
     Ok(Arc::new(DeviceService::new(registry, clock, random, policy)))
+}
+
+/// The system database (`<data>/system.db`): paired devices and the installed apps. In memory when
+/// there is no data directory.
+pub fn open_system(data_dir: Option<&std::path::Path>) -> anyhow::Result<Arc<SqliteSystemDb>> {
+    Ok(Arc::new(SqliteSystemDb::open(data_dir.map(|d| d.join("system.db")).as_deref())?))
 }
 
 pub fn build(cfg: HostConfig) -> anyhow::Result<Host> {
@@ -164,14 +169,28 @@ pub fn build(cfg: HostConfig) -> anyhow::Result<Host> {
     let fetcher: Arc<dyn Fetcher> = Arc::new(UrlFetcher::new(8 * 1024 * 1024)?);
     let data: Arc<dyn DataStore> =
         Arc::new(SqliteDataStore::new(cfg.data_dir.as_ref().map(|d| d.join("apps"))));
-    let runtime: Arc<dyn AppRuntime> = Arc::new(LuauRuntime::new(hub.clone(), Limits::default()));
+    let runtime: Arc<dyn AppRuntime> =
+        Arc::new(LuauRuntime::new(hub.clone(), Arc::new(platform::LogShell), Limits::default()));
     let tools: Arc<dyn ToolRegistry> = mcp_state.clone();
     let events: Arc<dyn EventSink> = hub.clone();
     let agents = Arc::new(AcpConnector::new(cfg.acp));
-    let devices = open_devices(cfg.data_dir.as_deref(), cfg.clock, cfg.random, cfg.pairing)?;
+    let system = open_system(cfg.data_dir.as_deref())?;
+    let installed: Arc<dyn InstalledAppStore> = system.clone();
+    let registry: Arc<dyn DeviceRegistry> = system;
+    let devices = Arc::new(DeviceService::new(registry, cfg.clock.clone(), cfg.random, cfg.pairing));
 
     // application
-    let service = Arc::new(AppService::new(fetcher, data, runtime, tools, events, agents));
+    let service = Arc::new(AppService::new(Ports {
+        fetcher,
+        data,
+        runtime,
+        tools,
+        events,
+        agents,
+        installed,
+        clock: cfg.clock,
+        background: Arc::new(platform::TokioBackground),
+    }));
     hub.bind(service.clone(), devices.clone());
 
     // the Origin/Host guard knows the machine's own network identity

@@ -16,6 +16,7 @@ agentos-acp = { workspace = true }
 agentos-agui = { workspace = true }
 agentos-http = { workspace = true }
 anyhow = { workspace = true }          # anyhow is allowed ONLY here (binary)
+async-trait = { workspace = true }
 axum = { workspace = true }
 axum-server = { workspace = true }     # TLS termination is wiring, so it lives here
 futures-util = { workspace = true }

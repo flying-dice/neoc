@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
 use agentos_application::{
     ports::AgentDirectory,
-    testing::{FakeAgents, Fakes, StaticDirectory},
+    testing::{Fakes, StaticDirectory},
     AppService,
 };
 use agentos_domain::{AgentId, AgentIdentity, AppId, Permission};
@@ -32,14 +32,7 @@ async fn harness() -> Harness {
     let fakes = Fakes::new();
     let state = Arc::new(McpState::default());
     // the REAL mcp adapter is the ToolRegistry; everything else is an in-memory fake
-    let svc = Arc::new(AppService::new(
-        fakes.fetcher.clone(),
-        fakes.store.clone(),
-        fakes.runtime.clone(),
-        state.clone(),
-        fakes.events.clone(),
-        Arc::new(FakeAgents::default()),
-    ));
+    let svc = Arc::new(fakes.service_with_tools(state.clone()));
     let notes = AppId::parse("notes").unwrap();
     let dir: Arc<dyn AgentDirectory> = Arc::new(StaticDirectory(vec![
         (

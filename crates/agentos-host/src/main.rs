@@ -16,7 +16,7 @@ use agentos_host::{
     open_devices,
     platform::{random_hex, OsRandom, SystemClock},
     serve::{serve, termination_signal},
-    startup::{install_registries, prepare_data_dir, write_mcp_json},
+    startup::{prepare_data_dir, spawn_revision_purge, start_apps, watch_for_reload, write_mcp_json},
     HostConfig,
 };
 use agentos_http::{system_hostname, system_interface_ips};
@@ -129,7 +129,13 @@ async fn run(settings: Settings, cwd: &Path) -> anyhow::Result<()> {
     config.agents = vec![(mcp_token.clone(), local_agent)];
 
     let host = build(config)?;
-    install_registries(&host.service, &settings.registries).await;
+    start_apps(&host.service, &settings.registries).await;
+    spawn_revision_purge(host.service.clone(), host.shutdown.clone());
+    if settings.dev_reload {
+        for dir in watch_for_reload(&host.service, &host.shutdown) {
+            tracing::info!(dir = %dir.display(), "dev reload: watching");
+        }
+    }
 
     let local_host = if settings.bind.is_unspecified() || settings.bind.is_loopback() {
         "127.0.0.1".to_owned()

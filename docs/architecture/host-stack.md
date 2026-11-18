@@ -187,6 +187,7 @@ Defaults, then `agentos.toml`, then environment variables. The file is `--config
 | `registries` | `AGENTOS_REGISTRIES` (comma list) | none: app-ref URLs installed at start |
 | `allowed_hosts` | `AGENTOS_ALLOWED_HOSTS` (comma list) | none |
 | `dev_client_port` | `AGENTOS_DEV_CLIENT_PORT` | none: also accept the Vite dev server on this port |
+| `dev_reload` | `AGENTOS_DEV_RELOAD` | off: watch the `file://` app bundles and rebuild an app's VM (database kept) when one changes |
 | `secure_cookies` | `AGENTOS_SECURE_COOKIES` | on when TLS is configured |
 | `[tls] cert`, `key` | `AGENTOS_TLS_CERT`, `AGENTOS_TLS_KEY` | TLS off |
 
@@ -205,3 +206,33 @@ fixture (and the generated `ui.luau`) with `luau-lsp analyze` against the genera
 (`negative/*.luau`, lines marked `-- expect-error`) must be rejected, so a broken definitions file cannot pass
 silently. `lint:luau` and `lint:stylua` skip with a message when `luau-lsp` or
 `stylua` is not installed.
+
+## Apps: lifecycle, data and the Luau API (wave A4)
+
+- **Installed apps persist.** `system.db` records every install (`installed_apps`: id, app-ref URL, version,
+  enabled). At start `AppService::restore_installed` re-fetches each app from its URL (re-verifying checksums) and
+  loads it; the configured `registries` are then applied on top (missing ones installed, failed ones retried). An
+  app that cannot load is marked **failed** (and announced as `app.failed`), the others start. Uninstall forgets
+  the record; shutdown keeps it.
+- **Lifecycle over `/rpc`:** `app.install`, `app.uninstall {app, purge?}`, `app.list`, `app.enable`,
+  `app.disable` (VM unloaded, tools retracted, data kept), `app.deleteData` (purge, then reload on an empty
+  database), `app.reload` (dev: rebuild the VM from source, keep the database; the old version keeps running if the
+  new one does not load).
+- **The app API** is typed in `types/generated/agentos.d.luau` (generated from `crates/agentos-codegen/src/luau/app_api.luau.tpl`): `app.manifest`, `app.db` (`migrate`, `exec`,
+  `all`, `one`, `tx`, and the sources `query` / `row` / `scalar`), `app.kv`, `app.state`, `app.tools.register`
+  with `app.t` input builders, `app.notify`, `app.shell`, `app.window`.
+  `require` is bundle-only (`./x`, `../x`, `@agentos/app`, host modules).
+- **Live sources** (`agentos-application::live`): the SQLite authorizer reports every table a prepared query reads,
+  `commit_hook` batches become `ChangeBatch`es (coalesced per frame), and `LiveSources::refresh` re-runs the
+  affected subscriptions in one read transaction and diffs them (ordered window keys + changed rows by content hash).
+- **Two-way writes** (`AppService::write_field`): `baseRev` check, three-way merge of text
+  (`agentos_domain::merge3`: non-overlapping edits compose, overlapping edits go to the human), human wins for
+  scalars, the replaced value kept as a revision for 30 days (`_ui_revisions`) with an undo (`restore_revision`).
+- **SQLite gotchas found:** the update hook is blind to `WITHOUT ROWID` tables and `REPLACE` conflict deletes (tables
+  an authorized statement writes are published too); a transaction holds an async write gate so nothing interleaves
+  with it; a statement past its wall-clock budget is interrupted by the progress handler.
+- **Luau gotchas found:** the interrupt also fires when mlua resumes the coroutine to poll an await, so the CPU
+  clock is paused while the app waits on the host (and a kill lands when the call returns); a Rust future that is
+  aborted mid-await is only dropped at the next GC, so no lock or transaction is held across an await (a call that
+  was cut off cannot wedge the next one); `string` coercion makes `raw_get::<String>(5)` succeed for a number, so
+  check the variant.

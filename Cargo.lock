@@ -138,6 +138,7 @@ dependencies = [
  "agentos-mcp",
  "agentos-sqlite",
  "anyhow",
+ "async-trait",
  "axum",
  "axum-server",
  "futures-util",

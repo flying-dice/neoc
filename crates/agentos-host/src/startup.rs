@@ -3,7 +3,12 @@
 use agentos_application::AppService;
 use anyhow::Context;
 use serde_json::json;
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
+use tokio_util::sync::CancellationToken;
 
 /// Write `<data>/mcp.json` (mode 0600) so local MCP clients can find `/mcp` and its bearer token, in
 /// the shape MCP clients take as a server entry: `{ "url": ..., "headers": { "Authorization": ... } }`.
@@ -51,15 +56,82 @@ pub fn prepare_data_dir(data_dir: &Path) -> anyhow::Result<()> {
     builder.create(data_dir.join("apps")).with_context(|| format!("creating {}", data_dir.display()))
 }
 
-/// Install every configured registry entry (an app-ref URL). A failure is logged and skipped: one broken
-/// URL must not keep the host from starting.
-pub async fn install_registries(service: &AppService, urls: &[String]) {
-    for url in urls {
-        match service.install_from_url(url).await {
-            Ok(app) => tracing::info!(%app, %url, "installed app"),
-            Err(e) => tracing::warn!(%url, error = %e, "could not install app from registry"),
+/// Bring the apps up: load every app the system database remembers (an app that cannot load is marked
+/// failed, the rest start), then install the configured registry entries that are not installed yet. A
+/// failure is logged and skipped: one broken app or URL must not keep the host from starting.
+pub async fn start_apps(service: &AppService, registries: &[String]) {
+    match service.restore_installed().await {
+        Ok(apps) => {
+            for a in apps {
+                tracing::info!(app = %a.id, status = ?a.status, "restored app");
+            }
         }
+        Err(e) => tracing::warn!(error = %e, "could not read the installed apps"),
     }
+    service.sync_registries(registries).await;
+    let removed = service.purge_expired_revisions().await;
+    if removed > 0 {
+        tracing::info!(removed, "purged revisions older than 30 days");
+    }
+}
+
+/// Keep expired revisions from piling up in a long-running host: purge once an hour until `stop` fires.
+pub fn spawn_revision_purge(service: Arc<AppService>, stop: CancellationToken) {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_secs(3600));
+        tick.tick().await; // the first tick is immediate: start-up already purged
+        loop {
+            tokio::select! {
+                () = stop.cancelled() => return,
+                _ = tick.tick() => {
+                    service.purge_expired_revisions().await;
+                }
+            }
+        }
+    });
+}
+
+/// The directory a `file://` app-ref URL lives in (what a dev watcher watches).
+fn file_url_dir(url: &str) -> Option<PathBuf> {
+    let path = url.strip_prefix("file://")?;
+    Path::new(path).parent().map(Path::to_path_buf)
+}
+
+/// Dev hot reload: for every installed app whose bundle is a `file://` app ref, watch its folder and
+/// rebuild the app's VM (database kept) when a file in it changes. Returns what it is watching.
+pub fn watch_for_reload(service: &Arc<AppService>, stop: &CancellationToken) -> Vec<PathBuf> {
+    let mut watching = Vec::new();
+    for app in service.apps() {
+        let Some(dir) = file_url_dir(&app.source_url) else { continue };
+        let watcher = match agentos_luau::reload::watch_dir(&dir) {
+            Ok(w) => w,
+            Err(e) => {
+                tracing::warn!(app = %app.id, dir = %dir.display(), error = %e, "cannot watch for reload");
+                continue;
+            }
+        };
+        watching.push(dir);
+        let (service, stop, id) = (service.clone(), stop.clone(), app.id);
+        tokio::spawn(async move {
+            // the whole watcher moves in (not just its channel): dropping it would stop the watch
+            let mut watcher = watcher;
+            loop {
+                tokio::select! {
+                    () = stop.cancelled() => return,
+                    change = agentos_luau::reload::next_change(&mut watcher.rx, Duration::from_millis(200)) => {
+                        if change.is_none() {
+                            return;
+                        }
+                        match service.reload(&id).await {
+                            Ok(()) => tracing::info!(app = %id, "reloaded"),
+                            Err(e) => tracing::warn!(app = %id, error = %e, "reload failed; the running version stays"),
+                        }
+                    }
+                }
+            }
+        });
+    }
+    watching
 }
 
 #[cfg(all(test, unix))]

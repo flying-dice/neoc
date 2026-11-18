@@ -5,20 +5,26 @@
 
 mod common;
 
-use agentos_domain::{AgentId, AgentIdentity, AppId, AppRef, FileRef, Manifest, MigrationSpec, Permission};
-use agentos_host::startup::prepare_data_dir;
-use common::{connect_rpc, next_json, pair, start, Socket};
+use agentos_application::{
+    data::Params,
+    live::{SourceId, SourceUpdate},
+    testing::CollectingSink,
+    AppStatus, BindingKind, Resolution, WriteRequest,
+};
+use agentos_domain::{Actor, AgentId, AgentIdentity, AppId, AppRef, FileRef, Manifest, Permission};
+use agentos_host::startup::{prepare_data_dir, start_apps};
+use common::{connect_rpc, next_json, pair, start, Running, Socket};
 use futures_util::SinkExt;
 use rmcp::{
     model::CallToolRequestParams,
-    service::NotificationContext,
+    service::{NotificationContext, RunningService},
     transport::{streamable_http_client::StreamableHttpClientTransportConfig, StreamableHttpClientTransport},
     ClientHandler, RoleClient, ServiceExt,
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -27,32 +33,33 @@ use std::{
 };
 use tokio_tungstenite::tungstenite::Message;
 
-fn publish_notes_app(root: &Path) -> String {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/notes");
+/// Publish the fixture app under `root` as an app ref with the id `id`; returns the `file://` URL of the ref.
+fn publish_app(root: &Path, id: &str) -> String {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/notes/app.luau");
+    let luau = std::fs::read_to_string(src).unwrap().replace("\"notes\"", &format!("\"{id}\""));
     std::fs::create_dir_all(root).unwrap();
-    let mut files = vec![];
-    for name in ["main.luau", "001_init.sql"] {
-        let bytes = std::fs::read(src.join(name)).unwrap();
-        std::fs::write(root.join(name), &bytes).unwrap();
-        files.push(FileRef {
-            path: name.into(),
-            url: format!("file://{}/{name}", root.display()),
-            sha256: format!("{:x}", Sha256::digest(&bytes)),
-        });
-    }
+    std::fs::write(root.join("app.luau"), &luau).unwrap();
     let r = AppRef {
         manifest: Manifest {
-            id: AppId::parse("notes").unwrap(),
-            name: "Notes".into(),
+            id: AppId::parse(id).unwrap(),
+            name: id.into(),
             version: "1.0.0".into(),
-            main: "main.luau".into(),
+            main: "app.luau".into(),
             permissions: vec![Permission::Data, Permission::Notify],
-            migrations: vec![MigrationSpec { version: 1, name: "init".into(), file: "001_init.sql".into() }],
+            migrations: vec![],
         },
-        files,
+        files: vec![FileRef {
+            path: "app.luau".into(),
+            url: format!("file://{}/app.luau", root.display()),
+            sha256: format!("{:x}", Sha256::digest(luau.as_bytes())),
+        }],
     };
     std::fs::write(root.join("app-ref.json"), serde_json::to_vec(&r).unwrap()).unwrap();
     format!("file://{}/app-ref.json", root.display())
+}
+
+fn publish_notes_app(root: &Path) -> String {
+    publish_app(root, "notes")
 }
 
 #[derive(Clone, Default)]
@@ -61,6 +68,50 @@ impl ClientHandler for Counting {
     async fn on_tool_list_changed(&self, _: NotificationContext<RoleClient>) {
         self.0.fetch_add(1, Ordering::SeqCst);
     }
+}
+
+type Agent = RunningService<RoleClient, Counting>;
+
+async fn connect_agent(addr: std::net::SocketAddr, token: &str) -> (Agent, Counting) {
+    let counter = Counting::default();
+    let transport = StreamableHttpClientTransport::from_config(
+        StreamableHttpClientTransportConfig::with_uri(format!("http://{addr}/mcp")).auth_header(token),
+    );
+    (counter.clone().serve(transport).await.unwrap(), counter)
+}
+
+async fn tool_names(agent: &Agent) -> Vec<String> {
+    agent.peer().list_tools(None).await.unwrap().tools.iter().map(|t| t.name.to_string()).collect()
+}
+
+async fn call(agent: &Agent, tool: &str, args: Value) -> rmcp::model::CallToolResult {
+    let args = args.as_object().unwrap().clone();
+    agent.peer().call_tool(CallToolRequestParams::new(tool.to_owned()).with_arguments(args)).await.unwrap()
+}
+
+fn text_of(out: &rmcp::model::CallToolResult) -> String {
+    format!("{:?}", out.content)
+}
+
+async fn wait_until(what: &str, mut ok: impl FnMut() -> bool) {
+    for _ in 0..200 {
+        if ok() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    panic!("timed out waiting for {what}");
+}
+
+fn claude() -> (String, AgentIdentity) {
+    (
+        "tok-claude".into(),
+        AgentIdentity {
+            id: AgentId("claude".into()),
+            name: "Claude".into(),
+            grants: vec![Permission::CallAnyTool],
+        },
+    )
 }
 
 /// WS client that keeps notifications that arrive while it waits for a response (they can overtake it).
@@ -94,23 +145,25 @@ async fn next_notification(ws: &mut Ws, method: &str) -> Value {
     }
 }
 
+async fn browser(r: &Running) -> Ws {
+    let cookie = pair(r, "Safari on iPad").await;
+    let origin = format!("http://127.0.0.1:{}", r.addr.port());
+    Ws { raw: connect_rpc(r.addr, Some(&cookie), Some(&origin)).await.unwrap(), backlog: vec![] }
+}
+
+fn temp(name: &str) -> PathBuf {
+    std::env::temp_dir().join(format!("host-{name}-{}", std::process::id()))
+}
+
 #[tokio::test]
 #[allow(clippy::too_many_lines)] // one journey, read top to bottom
 async fn install_over_rpc_then_use_from_mcp_and_ui_and_uninstall() {
-    let tmp = std::env::temp_dir().join(format!("host-e2e-{}", std::process::id()));
+    let tmp = temp("e2e");
     let app_ref_url = publish_notes_app(&tmp.join("pkg"));
     prepare_data_dir(&tmp.join("data")).unwrap();
-
     let r = start(|c| {
         c.data_dir = Some(tmp.join("data"));
-        c.agents = vec![(
-            "tok-claude".into(),
-            AgentIdentity {
-                id: AgentId("claude".into()),
-                name: "Claude".into(),
-                grants: vec![Permission::CallAnyTool],
-            },
-        )];
+        c.agents = vec![claude()];
     })
     .await;
     let addr = r.addr;
@@ -123,35 +176,106 @@ async fn install_over_rpc_then_use_from_mcp_and_ui_and_uninstall() {
     let installed = rpc(&mut ws, 1, "app.install", json!({"url": app_ref_url})).await;
     assert_eq!(installed["result"]["app"], "notes", "{installed}");
     assert_eq!(next_notification(&mut ws, "app.installed").await["app"], "notes");
+    let listed = rpc(&mut ws, 2, "app.list", json!({})).await;
+    assert_eq!(listed["result"]["apps"][0]["state"], "running", "{listed}");
+    assert_eq!(listed["result"]["apps"][0]["name"], "Notes", "the name the app declared");
 
-    // --- an agent connects on /mcp with its own bearer token and sees the tool
-    let counter = Counting::default();
-    let transport = StreamableHttpClientTransport::from_config(
-        StreamableHttpClientTransportConfig::with_uri(format!("http://{addr}/mcp")).auth_header("tok-claude"),
+    // --- an agent connects on /mcp with its own bearer token and sees the tools
+    let (agent, _) = connect_agent(addr, "tok-claude").await;
+    assert_eq!(
+        tool_names(&agent).await,
+        vec!["notes__add_note", "notes__notes.append", "notes__notes.search"]
     );
-    let agent = counter.clone().serve(transport).await.unwrap();
-    let names: Vec<String> =
-        agent.peer().list_tools(None).await.unwrap().tools.iter().map(|t| t.name.to_string()).collect();
-    assert_eq!(names, vec!["notes__add_note"]);
+    let tools = agent.peer().list_tools(None).await.unwrap().tools;
+    let search = tools.iter().find(|t| t.name == "notes__notes.search").unwrap();
+    assert_eq!(search.annotations.as_ref().and_then(|a| a.read_only_hint), Some(true));
+    assert_eq!(search.title.as_deref(), Some("Search Notes"));
+    assert_eq!(search.input_schema["required"], json!(["query"]), "the schema the app.t builders compiled");
 
-    // --- the agent calls the tool: Luau runs, SQLite writes, app.notify reaches the UI over /rpc
-    let args = json!({"body": "from the agent"}).as_object().unwrap().clone();
-    let out = agent
-        .peer()
-        .call_tool(CallToolRequestParams::new("notes__add_note").with_arguments(args))
-        .await
-        .unwrap();
+    // --- an open view subscribes to the app's live sources (the view layer does this per window)
+    let notes = AppId::parse("notes").unwrap();
+    let live = r.host.service.live(&notes).unwrap();
+    let sink = Arc::new(CollectingSink::default());
+    let (_, list) = live.subscribe(&SourceId("s1".into()), Params::None, None, sink.clone()).await.unwrap();
+    assert!(matches!(&list, SourceUpdate::Rows(d) if d.keys.is_empty() && d.total == Some(0)));
+    let (_, count) = live.subscribe(&SourceId("s2".into()), Params::None, None, sink.clone()).await.unwrap();
+    assert_eq!(count, SourceUpdate::Scalar(json!(0)));
+
+    // --- the agent calls a tool: Luau runs as that agent, SQLite writes, app.notify reaches the UI, and the
+    //     live sources push their deltas with no UI code anywhere
+    let out = call(&agent, "notes__add_note", json!({"body": "from the agent"})).await;
     assert_ne!(out.is_error, Some(true), "{out:?}");
     let n = next_notification(&mut ws, "notify").await;
     assert_eq!(
         (n["app"].as_str(), n["title"].as_str(), n["body"].as_str()),
         (Some("notes"), Some("Note added"), Some("from the agent"))
     );
+    wait_until("the list and count deltas", || sink.peek().len() >= 2).await;
+    let updates = sink.take();
+    let rows = updates
+        .iter()
+        .find_map(|(_, u)| if let SourceUpdate::Rows(d) = u { Some(d) } else { None })
+        .expect("a rows delta");
+    assert_eq!(rows.keys, vec![json!(1)]);
+    assert_eq!(rows.changed[0].1["title"], "from the agent");
+    assert!(updates.iter().any(|(_, u)| *u == SourceUpdate::Scalar(json!(1))));
+
+    // --- a note is open in a view; the agent appends to it while the human types
+    let (_, open) = live
+        .subscribe(&SourceId("s3".into()), Params::named([("id", json!(1))]), None, sink.clone())
+        .await
+        .unwrap();
+    let SourceUpdate::Row(open) = open else { panic!("row") };
+    assert_eq!(open.rev, Some(json!(0)));
+    let out = call(&agent, "notes__notes.append", json!({"id": 1, "text": "- buy oat milk"})).await;
+    assert_ne!(out.is_error, Some(true), "{out:?}");
+    wait_until("the open note's delta", || {
+        sink.peek().iter().any(|(_, u)| matches!(u, SourceUpdate::Row(r) if r.rev == Some(json!(1))))
+    })
+    .await;
+    sink.take();
+
+    // the human edited "from the agent" -> "From the agent" at rev 0 (their last sent value): the host merges
+    let ack = r
+        .host
+        .service
+        .write_field(
+            &notes,
+            WriteRequest {
+                source: SourceId("s3".into()),
+                params: Params::named([("id", json!(1))]),
+                key: json!(1),
+                field: "body".into(),
+                value: json!("From the agent"),
+                base_rev: Some(json!(0)),
+                binding: BindingKind::Text { base: Some("from the agent".into()) },
+                actor: Actor::user("You"),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(ack.resolution, Resolution::Merged);
+    assert_eq!(ack.value, json!("From the agent\n- buy oat milk"));
+    assert_eq!(ack.rev, Some(json!(2)));
+    wait_until("the merged note", || {
+        sink.peek()
+            .iter()
+            .any(|(_, u)| matches!(u, SourceUpdate::Row(r) if r.row.as_ref().is_some_and(|row| row["author"] == "You")))
+    })
+    .await;
+
+    // --- the agent's bad calls are tool errors, not host failures
+    let out = call(&agent, "notes__notes.append", json!({"id": 99, "text": "x"})).await;
+    assert_eq!(out.is_error, Some(true));
+    assert!(text_of(&out).contains("No note with id 99"), "{out:?}");
+    let out = call(&agent, "notes__notes.append", json!({"id": "x", "text": "x"})).await;
+    assert_eq!(out.is_error, Some(true));
+    assert!(text_of(&out).contains("invalid input"), "{out:?}");
 
     // --- the user clicks "add" in the UI: ui.event -> Luau handler -> new view tree pushed back
     let reply = rpc(
         &mut ws,
-        2,
+        3,
         "ui.event",
         json!({"app":"notes","event":{"target":"add-btn","name":"add","data":{"body":"from the user"}}}),
     )
@@ -159,30 +283,26 @@ async fn install_over_rpc_then_use_from_mcp_and_ui_and_uninstall() {
     assert!(reply.get("error").is_none(), "{reply}");
     let tree = next_notification(&mut ws, "ui.tree").await;
     assert_eq!(tree["root"]["children"][0]["text"], "Notes: 2");
-    let labels: Vec<&str> = tree["root"]["children"][1]["items"]
+    let labels: Vec<String> = tree["root"]["children"][1]["items"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|i| i["label"].as_str().unwrap())
+        .map(|i| i["label"].as_str().unwrap().to_owned())
         .collect();
-    assert_eq!(labels, vec!["from the agent", "from the user"]);
+    assert_eq!(labels, vec!["From the agent\n- buy oat milk".to_owned(), "from the user".to_owned()]);
 
     // --- bad requests are JSON-RPC errors, not hangs
-    let reply = rpc(&mut ws, 3, "ui.event", json!({"app":"ghost","event":{"target":"x","name":"y"}})).await;
+    let reply = rpc(&mut ws, 4, "ui.event", json!({"app":"ghost","event":{"target":"x","name":"y"}})).await;
     assert_eq!(reply["error"]["code"], -32002, "{reply}");
 
     // --- uninstall: the tool disappears for the agent (list_changed), VM + registry cleaned up
+    let (agent2, counter) = connect_agent(addr, "tok-claude").await;
     let before = counter.0.load(Ordering::SeqCst);
-    let reply = rpc(&mut ws, 4, "app.uninstall", json!({"app":"notes"})).await;
+    let reply = rpc(&mut ws, 5, "app.uninstall", json!({"app":"notes"})).await;
     assert!(reply.get("error").is_none(), "{reply}");
-    for _ in 0..100 {
-        if counter.0.load(Ordering::SeqCst) > before {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    assert!(counter.0.load(Ordering::SeqCst) > before, "tools/list_changed after uninstall");
+    wait_until("tools/list_changed", || counter.0.load(Ordering::SeqCst) > before).await;
     assert!(agent.peer().list_tools(None).await.unwrap().tools.is_empty());
+    assert!(r.host.service.apps().is_empty());
 
     // --- /agui streams for a paired device
     let sse = reqwest::Client::new()
@@ -198,14 +318,168 @@ async fn install_over_rpc_then_use_from_mcp_and_ui_and_uninstall() {
     assert!(sse.contains("RUN_STARTED") && sse.contains("RUN_FINISHED"));
 
     agent.cancel().await.unwrap();
-    r.host.service.uninstall(&AppId::parse("notes").unwrap(), false).await.unwrap_err(); // already gone
+    agent2.cancel().await.unwrap();
+    r.host.service.uninstall(&notes, false).await.unwrap_err(); // already gone
+    r.stop().await;
+    let _ = std::fs::remove_dir_all(tmp);
+}
+
+#[tokio::test]
+async fn installed_apps_come_back_after_a_restart_with_their_data() {
+    let tmp = temp("restart");
+    let url = publish_notes_app(&tmp.join("pkg"));
+    prepare_data_dir(&tmp.join("data")).unwrap();
+    let configure = |c: &mut agentos_host::HostConfig| {
+        c.data_dir = Some(tmp.join("data"));
+        c.agents = vec![claude()];
+    };
+
+    let first = start(configure).await;
+    first.host.service.install_from_url(&url).await.unwrap();
+    let (agent, _) = connect_agent(first.addr, "tok-claude").await;
+    call(&agent, "notes__add_note", json!({"body": "survives"})).await;
+    agent.cancel().await.unwrap();
+    first.host.service.shutdown().await; // what the binary does on SIGTERM
+    first.stop().await;
+
+    // a new process: nothing installed in memory, the system database remembers
+    let second = start(configure).await;
+    assert!(second.host.service.apps().is_empty());
+    start_apps(&second.host.service, &[]).await;
+    let apps = second.host.service.apps();
+    assert_eq!((apps.len(), &apps[0].status), (1, &AppStatus::Running));
+    let (agent, _) = connect_agent(second.addr, "tok-claude").await;
+    assert_eq!(tool_names(&agent).await.len(), 3);
+    let found = call(&agent, "notes__notes.search", json!({"query": "surv"})).await;
+    assert!(text_of(&found).contains("survives"), "the data was kept: {found:?}");
+
+    // registries are applied on top: the same URL is not installed twice
+    start_apps(&second.host.service, &[url]).await;
+    assert_eq!(second.host.service.apps().len(), 1);
+    agent.cancel().await.unwrap();
+    second.stop().await;
+    let _ = std::fs::remove_dir_all(tmp);
+}
+
+#[tokio::test]
+async fn disable_blocks_agents_keeps_data_and_enable_and_delete_data_work_over_rpc() {
+    let tmp = temp("disable");
+    let url = publish_notes_app(&tmp.join("pkg"));
+    prepare_data_dir(&tmp.join("data")).unwrap();
+    let r = start(|c| {
+        c.data_dir = Some(tmp.join("data"));
+        c.agents = vec![claude()];
+    })
+    .await;
+    r.host.service.install_from_url(&url).await.unwrap();
+    let mut ws = browser(&r).await;
+    let (agent, counter) = connect_agent(r.addr, "tok-claude").await;
+    call(&agent, "notes__add_note", json!({"body": "kept"})).await;
+
+    let before = counter.0.load(Ordering::SeqCst);
+    assert!(rpc(&mut ws, 1, "app.disable", json!({"app": "notes"})).await.get("error").is_none());
+    assert_eq!(next_notification(&mut ws, "app.disabled").await["app"], "notes");
+    wait_until("list_changed", || counter.0.load(Ordering::SeqCst) > before).await;
+    assert!(tool_names(&agent).await.is_empty(), "agent access is blocked");
+    let out = call(&agent, "notes__add_note", json!({"body": "nope"})).await;
+    assert_eq!(out.is_error, Some(true), "a stale tool name cannot reach a disabled app");
+    let listed = rpc(&mut ws, 2, "app.list", json!({})).await;
+    assert_eq!(listed["result"]["apps"][0]["state"], "disabled");
+
+    assert!(rpc(&mut ws, 3, "app.enable", json!({"app": "notes"})).await.get("error").is_none());
+    assert_eq!(tool_names(&agent).await.len(), 3);
+    let found = call(&agent, "notes__notes.search", json!({"query": "kept"})).await;
+    assert!(text_of(&found).contains("kept"), "data survived the disable: {found:?}");
+
+    assert!(rpc(&mut ws, 4, "app.deleteData", json!({"app": "notes"})).await.get("error").is_none());
+    let found = call(&agent, "notes__notes.search", json!({"query": "kept"})).await;
+    assert!(!text_of(&found).contains("kept"), "the data is gone: {found:?}");
+    assert_eq!(tool_names(&agent).await.len(), 3, "and the app is back, on an empty database");
+    let err = rpc(&mut ws, 5, "app.enable", json!({"app": "ghost"})).await;
+    assert_eq!(err["error"]["code"], -32002);
+
+    agent.cancel().await.unwrap();
+    r.stop().await;
+    let _ = std::fs::remove_dir_all(tmp);
+}
+
+#[tokio::test]
+async fn an_app_whose_bundle_broke_is_marked_failed_and_the_others_start() {
+    let tmp = temp("failed");
+    let good = publish_app(&tmp.join("pkg-notes"), "notes");
+    let bad = publish_app(&tmp.join("pkg-todo"), "todo");
+    prepare_data_dir(&tmp.join("data")).unwrap();
+    let configure = |c: &mut agentos_host::HostConfig| {
+        c.data_dir = Some(tmp.join("data"));
+        c.agents = vec![claude()];
+    };
+    let first = start(configure).await;
+    first.host.service.install_from_url(&good).await.unwrap();
+    first.host.service.install_from_url(&bad).await.unwrap();
+    first.host.service.shutdown().await;
+    first.stop().await;
+
+    // the bundle is edited on disk without rebuilding the app ref: its checksum no longer matches
+    std::fs::write(tmp.join("pkg-todo/app.luau"), "error('edited by hand')").unwrap();
+
+    let second = start(configure).await;
+    start_apps(&second.host.service, &[]).await;
+    let status = |id: &str| second.host.service.status(&AppId::parse(id).unwrap()).unwrap();
+    assert_eq!(status("notes"), AppStatus::Running);
+    assert!(matches!(status("todo"), AppStatus::Failed(m) if m.contains("checksum")), "{:?}", status("todo"));
+    let (agent, _) = connect_agent(second.addr, "tok-claude").await;
+    assert_eq!(
+        tool_names(&agent).await,
+        vec!["notes__add_note", "notes__notes.append", "notes__notes.search"]
+    );
+    agent.cancel().await.unwrap();
+    second.stop().await;
+    let _ = std::fs::remove_dir_all(tmp);
+}
+
+#[tokio::test]
+async fn dev_reload_rebuilds_the_vm_when_the_bundle_changes_and_keeps_the_data() {
+    let tmp = temp("reload");
+    let pkg = tmp.join("pkg");
+    let url = publish_notes_app(&pkg);
+    prepare_data_dir(&tmp.join("data")).unwrap();
+    let r = start(|c| {
+        c.data_dir = Some(tmp.join("data"));
+        c.agents = vec![claude()];
+    })
+    .await;
+    r.host.service.install_from_url(&url).await.unwrap();
+    let stop = r.host.shutdown.clone();
+    let watching = agentos_host::startup::watch_for_reload(&r.host.service, &stop);
+    assert_eq!(watching.len(), 1);
+    let (agent, counter) = connect_agent(r.addr, "tok-claude").await;
+    call(&agent, "notes__add_note", json!({"body": "before"})).await;
+    tokio::time::sleep(Duration::from_millis(300)).await; // let the watcher settle
+
+    // "rebuild" the bundle: a new tool, a new checksum
+    let before = counter.0.load(Ordering::SeqCst);
+    let luau = std::fs::read_to_string(pkg.join("app.luau")).unwrap();
+    let v2 =
+        format!("{luau}\napp.tools.register({{ name = \"extra\", run = function() return \"v2\" end }})\n");
+    std::fs::write(pkg.join("app.luau"), &v2).unwrap();
+    let mut app_ref: AppRef =
+        serde_json::from_slice(&std::fs::read(pkg.join("app-ref.json")).unwrap()).unwrap();
+    app_ref.files[0].sha256 = format!("{:x}", Sha256::digest(v2.as_bytes()));
+    std::fs::write(pkg.join("app-ref.json"), serde_json::to_vec(&app_ref).unwrap()).unwrap();
+
+    wait_until("the reloaded tool list", || counter.0.load(Ordering::SeqCst) > before).await;
+    assert!(tool_names(&agent).await.contains(&"notes__extra".to_owned()));
+    let found = call(&agent, "notes__notes.search", json!({"query": "before"})).await;
+    assert!(text_of(&found).contains("before"), "the database was kept: {found:?}");
+
+    agent.cancel().await.unwrap();
     r.stop().await;
     let _ = std::fs::remove_dir_all(tmp);
 }
 
 #[tokio::test]
 async fn shutdown_unloads_installed_apps_and_retracts_their_tools() {
-    let tmp = std::env::temp_dir().join(format!("host-shutdown-{}", std::process::id()));
+    let tmp = temp("shutdown");
     let app_ref_url = publish_notes_app(&tmp.join("pkg"));
     prepare_data_dir(&tmp.join("data")).unwrap();
     let r = start(|c| c.data_dir = Some(tmp.join("data"))).await;

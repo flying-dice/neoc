@@ -5,7 +5,7 @@
 use crate::rpc::{RpcHandler, RpcPeer};
 use agentos_application::{
     ports::{EventSink, Notifier, PortResult, ServerEvent},
-    AppError, AppService, DeviceService, PortError,
+    AppError, AppService, AppStatus, DeviceService, PortError,
 };
 use agentos_domain::{
     protocol::{DispatchUiEvent, RpcError, UiTree},
@@ -96,6 +96,7 @@ fn rpc_err(e: &AppError) -> RpcError {
         AppError::Port(PortError::NotFound(_)) | AppError::NotInstalled(_) => -32002,
         AppError::Port(_) => -32003,
         AppError::AlreadyInstalled(_) => -32004,
+        AppError::NotRunning { .. } => -32005,
     };
     RpcError { code, message: e.to_string(), data: None }
 }
@@ -119,6 +120,10 @@ struct InstallParams {
 #[derive(Deserialize)]
 struct RevokeParams {
     id: DeviceId,
+}
+#[derive(Deserialize)]
+struct AppParams {
+    app: AppId,
 }
 #[derive(Deserialize)]
 struct UninstallParams {
@@ -149,6 +154,32 @@ impl RpcHandler for RpcHub {
                 app.uninstall(&p.app, p.purge).await.map_err(|e| rpc_err(&e))?;
                 Ok(Value::Null)
             }
+            "app.list" => {
+                let apps: Vec<Value> = app
+                    .apps()
+                    .into_iter()
+                    .map(|a| {
+                        let (state, message) = match &a.status {
+                            AppStatus::Running => ("running", None),
+                            AppStatus::Disabled => ("disabled", None),
+                            AppStatus::Failed(m) => ("failed", Some(m.clone())),
+                        };
+                        json!({ "id": a.id, "name": a.name, "version": a.version, "state": state, "message": message })
+                    })
+                    .collect();
+                Ok(json!({ "apps": apps }))
+            }
+            "app.enable" | "app.disable" | "app.deleteData" | "app.reload" => {
+                let p: AppParams = serde_json::from_value(params).map_err(|e| bad_params(&e))?;
+                match method {
+                    "app.enable" => app.enable(&p.app).await,
+                    "app.disable" => app.disable(&p.app).await,
+                    "app.deleteData" => app.delete_data(&p.app).await,
+                    _ => app.reload(&p.app).await,
+                }
+                .map_err(|e| rpc_err(&e))?;
+                Ok(Value::Null)
+            }
             "ui.event" => {
                 let p: DispatchUiEvent = serde_json::from_value(params).map_err(|e| bad_params(&e))?;
                 app.dispatch_ui_event(&p.app, p.event).await.map_err(|e| rpc_err(&e))?;
@@ -165,6 +196,11 @@ impl EventSink for RpcHub {
         match event {
             ServerEvent::AppInstalled(app) => self.broadcast("app.installed", &json!({ "app": app })),
             ServerEvent::AppUninstalled(app) => self.broadcast("app.uninstalled", &json!({ "app": app })),
+            ServerEvent::AppEnabled(app) => self.broadcast("app.enabled", &json!({ "app": app })),
+            ServerEvent::AppDisabled(app) => self.broadcast("app.disabled", &json!({ "app": app })),
+            ServerEvent::AppFailed { app, message } => {
+                self.broadcast("app.failed", &json!({ "app": app, "message": message }));
+            }
             ServerEvent::UiTree { app, root } => {
                 if let Ok(v) = serde_json::to_value(UiTree { app, root }) {
                     self.broadcast("ui.tree", &v);
