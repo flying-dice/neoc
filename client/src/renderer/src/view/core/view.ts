@@ -140,6 +140,11 @@ export class ViewCore {
   private readonly report: (error: unknown) => void
   private readonly stateRevs = new Map<string, number>()
   private openParams: ViewOpenParams | null = null
+
+  /** The app this window belongs to (set by `open`): what scopes the app's chat threads. */
+  get app(): string | undefined {
+    return this.openParams?.app
+  }
   private seq = 0
   private noticeId = 0
   /** The notices that expire: how long they get, and the running timer (none while held). */

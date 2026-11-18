@@ -409,7 +409,9 @@ runs no query, is never subscribed, and sends no `data.patch`: the client opens 
 Ref changes the client re-asks with `source.set`; the host answers `{kind:"value", value:null}`.) The `send` and
 `stop` events also reach the app (`e.payload.text`), so it can title the chat. An app with the `agents` permission can
 read the roster with `app.agents:list()` (`{id, name, avatar?, role}`, never grants, tokens or commands). `app.thread()`
-needs the `agents` permission; a literal `agent` must be on the roster.
+needs the `agents` permission; a literal `agent` must be on the roster. Thread ids are scoped to the app: the renderer opens an
+app's thread on `/agui` as `<app>:<id>` (the app chooses `id`, the renderer adds the prefix), so no app can name another
+app's chat.
 
 **`readOnly` is enforced.** A tool declared `readOnly = true` runs with app writes blocked. The app's database handle
 is `AppData::read_only()`: SQLite `PRAGMA query_only` for each statement (checked when the statement runs, so a statement

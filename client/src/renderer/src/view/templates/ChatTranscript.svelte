@@ -13,7 +13,7 @@
   import { ChatThread, Composer, SessionBar } from '@agentos/ui/organisms'
   import { useView } from '../context'
   import { liveActivityId, toBlocks } from '../kit/agui/blocks'
-  import { ChatSession, type ChatState } from '../kit/agui/session'
+  import { ChatSession, scopedThread, type ChatState } from '../kit/agui/session'
   import { chatOptionsOf } from '../kit/chatOptions'
   import { bool, commonOf, str } from '../props'
   import type { AdapterProps } from '../registry'
@@ -26,7 +26,9 @@
   const common = $derived(commonOf(ctx, node, path, scope))
   const sourceId = $derived(typeof node.props?.thread === 'string' ? node.props.thread : undefined)
   const decl = $derived(sourceId ? view.sources.declaration(sourceId) : undefined)
-  const threadId = $derived(str(view.evaluate(decl?.params?.thread, scope)))
+  // An app names its threads in its own namespace (`<app>:<id>`): the id comes from the app (often a row of its
+  // data), and the renderer, not the app, puts the prefix on, so no app can open or read another app's chat.
+  const threadId = $derived(scopedThread(view.app, str(view.evaluate(decl?.params?.thread, scope))))
   const agentId = $derived(str(view.evaluate(decl?.params?.agent, scope)))
   const placeholderProp = $derived(str(p('placeholder')))
   const showComposer = $derived(p('composer') === undefined ? true : bool(p('composer')))

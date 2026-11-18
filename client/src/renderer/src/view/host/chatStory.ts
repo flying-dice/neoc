@@ -7,6 +7,7 @@ import { memoryStorage } from '../core/clientState'
 import { Session } from '../core/session'
 import type { ViewCore } from '../core/view'
 import { registerChat } from '../kit/chat'
+import { scopedThread } from '../kit/agui/session'
 import { parseThreadState, type ThreadState } from '../kit/agui/schema'
 import { registerStarterKit } from '../kit'
 import { createRegistry, type ComponentRegistry } from '../registry'
@@ -15,6 +16,8 @@ import { ChatApp, type ChatAppOptions } from './chatApp'
 import { FakeAgui, type FakeAguiOptions, type RunScript } from './fakeAgui'
 import { FakeHost } from './fakeHost'
 import { createMemoryLink } from './wire'
+
+const STORY_APP = 'agents'
 
 /** What the agent offers in a new chat: a mode, a model, an effort, commands and a little context used. */
 export const demoState = (): ThreadState =>
@@ -84,9 +87,15 @@ export interface ChatStoryHandle {
   dispose(): void
 }
 
+/** The story app is `agents`; the `/agui` id of its thread `id` (default `thread-1`), as the renderer scopes it. */
+export const storyThread = (id = 'thread-1'): string => scopedThread(STORY_APP, id) ?? id
+/** The `/agui` path of the story thread, encoded the way the session requests it. */
+export const storyThreadPath = (id?: string): string => `/agui/threads/${encodeURIComponent(storyThread(id))}`
+
 export async function openChatStory(scenario: ChatScenario = {}): Promise<ChatStoryHandle> {
   const agui = new FakeAgui({ state: demoState(), ...scenario.agui })
-  const thread = agui.thread(scenario.thread ?? 'thread-1', scenario.agent ?? 'claude')
+  // the renderer scopes an app's thread ids (`agents:thread-1`), so the fake host holds the scoped id
+  const thread = agui.thread(storyThread(scenario.thread), scenario.agent ?? 'claude')
   thread.messages = scenario.history ?? []
   thread.interrupts = scenario.interrupts ?? []
   if (scenario.openError) {
@@ -111,7 +120,7 @@ export async function openChatStory(scenario: ChatScenario = {}): Promise<ChatSt
   session.start()
   const registry = registerChat(registerStarterKit(createRegistry()), { fetch: agui.fetch })
   const view = await session.openView({
-    app: 'agents',
+    app: STORY_APP,
     window: 'main',
     windowId: 'w1',
     size: { w: 480, h: 720 }

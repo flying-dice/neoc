@@ -53,6 +53,15 @@ export type ChatItem =
       answer?: string
     }
 
+/**
+ * The `/agui` thread id for an app's thread: `<app>:<id>`. The app chooses `id`; the renderer adds the prefix, so one
+ * app can never name another app's thread. With no app (a story, a test) or no id, the id is returned as given.
+ */
+export function scopedThread(app: string | undefined, id: string | undefined): string | undefined {
+  if (!id || !app) return id
+  return `${app}:${id}`
+}
+
 export interface ChatState {
   threadId: string
   agentId: string
