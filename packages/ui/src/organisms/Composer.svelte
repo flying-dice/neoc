@@ -95,16 +95,26 @@
     <!-- Key presses bubble up from the text field: Arrow, Tab and Escape drive the slash-command list. -->
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <form class="composer" data-testid={testid} onsubmit={submit} onkeydown={keydown}>
-      {#if open}
-        <ul class="commands" id={listId} role="listbox" aria-label="Slash commands" data-testid={listId}>
+      {#if commands.length}
+        <!-- Always in the DOM (hidden while closed): the input's `aria-controls` must name an element that exists. -->
+        <ul
+          class="commands"
+          id={listId}
+          role="listbox"
+          aria-label="Slash commands"
+          hidden={!open}
+          data-testid={listId}
+        >
           {#each matches as c, i (c.name)}
             <li role="presentation">
               <button
                 type="button"
                 role="option"
+                id="{listId}-{c.name}"
                 class="command"
                 class:active={i === active}
                 aria-selected={i === active}
+                tabindex="-1"
                 data-testid="{testid}-command-{c.name}"
                 onclick={() => pick(c)}
               >
@@ -131,9 +141,11 @@
           bind:value
           {placeholder}
           aria-label={placeholder}
-          aria-controls={open ? listId : undefined}
-          aria-expanded={open ? true : undefined}
           role={commands.length ? 'combobox' : undefined}
+          aria-controls={commands.length ? listId : undefined}
+          aria-expanded={commands.length ? open : undefined}
+          aria-autocomplete={commands.length ? 'list' : undefined}
+          aria-activedescendant={open ? `${listId}-${matches[Math.min(active, matches.length - 1)].name}` : undefined}
           {disabled}
         />
       </label>
@@ -184,6 +196,9 @@
     border-radius: 17px;
     box-shadow: inset 0 0 0 1px var(--separator-opaque);
     background: var(--bg-elevated);
+  }
+  .commands[hidden] {
+    display: none;
   }
   .commands {
     position: absolute;
