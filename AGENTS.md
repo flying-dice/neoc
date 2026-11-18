@@ -97,7 +97,9 @@ Also: atomic layers (`lint:atomic`, in `packages/ui` and `client/src`) and test 
 | Before pushing | `clean-code-review`, then `pre-commit` (loops until clean; `refactor` clears markers) |
 | Every MR, and before calling a branch ready | `agentos-code-review` (verdict: READY TO MERGE or STAYS IN MR) |
 | Any change to what a person sees or does | `verify-change` |
-| Designing or redesigning an app | `app-design` (journeys, the `ux-research` panel, conformance, iterate) |
+| Before building a new app (or re-scoping one) | `prebuild-synthetic-ux` (personas, riskiest assumptions, key journeys and stories → `docs/ux/<app>/discovery.md`) |
+| Designing or redesigning an app | `app-design` (discovery, journeys, usability review, the `ux-research` panel, conformance, iterate) |
+| Reviewing the usability of something built | `postbuild-synthetic-usability` (task walkthroughs on the real host, heuristics and WCAG → `docs/ux/<app>/review-<n>.md`) |
 
 ## Commands
 

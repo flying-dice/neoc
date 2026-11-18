@@ -8,13 +8,21 @@ description: Use when designing, redesigning or polishing any AgentOS app (a new
 Every app goes through the same loop, from its first screen to every later redesign:
 
 ```
- journeys ──▶ build / change ──▶ automated checks ──▶ research round ──▶ amend the design ─┐
-    ▲                              (green first)       (panel + score)                      │
-    └──────────────────────────────── until the exit criteria hold ◀───────────────────────┘
+ discovery ──▶ journeys ──▶ build / change ──▶ automated checks ──▶ usability review ──▶ research round ──▶ amend ─┐
+ (new apps)        ▲                              (green first)      (one agent)         (panel + score)          │
+                   └──────────────────────────────── until the exit criteria hold ◀──────────────────────────────┘
 ```
 
 The styleguide is `docs/design/DESIGN_LANGUAGE.md` (iPadOS virtual desktop, flat design). The testing setup is
 `docs/TESTING.md`. Read both before the first round.
+
+## 0. Discovery (new apps and re-scopes)
+
+Before building a new app, or changing what an existing one is for, run the **`prebuild-synthetic-ux`** skill on its
+issue. It writes `docs/ux/<app>/discovery.md`: constrained personas (including an agent that uses the app's tools),
+the riskiest assumptions with the cheapest tests, and key journeys and user stories. Its key journeys seed
+`JOURNEYS.md` (section 1, without the steps); its Must stories are the first PR's scope. Skip it for a polish pass on
+an app whose purpose is not changing.
 
 ## 1. Key user journeys
 
@@ -41,7 +49,11 @@ bun run test:e2e        # stories (axe, overflow, snapshots) + desktop (every ap
 When a snapshot changes on purpose, update it (`bun run test:e2e:update`), then **open the changed PNGs and
 look at them** (`node e2e/tools/contact-sheet.mjs out.png a.png b.png …` puts several in one image).
 
-## 3. A research round
+## 3. Usability review, then a research round
+
+First run the **`postbuild-synthetic-usability`** skill against the running app (one agent; it writes
+`docs/ux/<app>/review-<n>.md`). Fix its blocker and major defects, back to step 2, then spend the panel's time.
+
 
 Run the real host with the app installed and the built client, then run the saved workflow
 (`docs/TESTING.md`, "Driving the real shell"):

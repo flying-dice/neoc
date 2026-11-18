@@ -125,4 +125,6 @@ Attach or link the screenshots that show the checked states. Say plainly what yo
 ## 6. Design changes go through the panel
 
 If the change is a design change to an app (new screens, a redesign, a new interaction), the `app-design` skill
-applies as well: update the app's journeys and run a `ux-research` round before calling it done.
+applies as well: update the app's journeys and run a `ux-research` round before calling it done. For a UI change too
+small for a round, run the `postbuild-synthetic-usability` skill on the changed screens and fix what it marks as a
+blocker or major defect.
