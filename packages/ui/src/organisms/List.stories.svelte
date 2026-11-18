@@ -146,11 +146,13 @@
     const names = (): string[] => canvas.getAllByRole('listitem').map((el) => el.textContent?.replace(/Reorder.*$/, '').trim() ?? '')
     await waitFor(() => expect(names()).toEqual(['Milk', 'Eggs', 'Bread', 'Cheese']))
     canvas.getByTestId('order-Milk-face').focus()
+    await waitFor(() => expect(canvas.getByTestId('order-Milk-face')).toHaveFocus())
     await userEvent.keyboard('{Alt>}{ArrowDown}{/Alt}')
     await waitFor(() => expect(names()).toEqual(['Eggs', 'Milk', 'Bread', 'Cheese']))
     await expect(await canvas.findByText('Milk moved to position 2 of 4')).toBeInTheDocument()
     // The handle moves a row with the arrow keys too.
     canvas.getByTestId('order-Cheese-handle').focus()
+    await waitFor(() => expect(canvas.getByTestId('order-Cheese-handle')).toHaveFocus())
     await userEvent.keyboard('{ArrowUp}')
     await waitFor(() => expect(names()).toEqual(['Eggs', 'Milk', 'Cheese', 'Bread']))
   }}
