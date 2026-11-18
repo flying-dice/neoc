@@ -76,7 +76,7 @@ Kit **1.0**, protocol **1**. Every app describes its views with these components
 | [`TokenField`](#tokenfield) | Controls | 2 | 1.0 | placeholder |
 | [`Banner`](#banner) | Presentation | 2 | 1.0 | placeholder |
 | [`Link`](#link) | Navigation | 2 | 1.0 | placeholder |
-| [`ChatTranscript`](#chattranscript) | Advanced | 2 | 1.0 | placeholder |
+| [`ChatTranscript`](#chattranscript) | Advanced | 2 | 1.0 | interactive |
 | [`CalendarGrid`](#calendargrid) | Advanced | 2 | 1.0 | placeholder |
 | [`Preview`](#preview) | Advanced | 2 | 1.0 | placeholder |
 | [`Canvas`](#canvas) | Advanced | 3 | 1.0 | placeholder |
@@ -1218,24 +1218,22 @@ Tier 3 · since 1.0
 
 ### ChatTranscript
 
-Placeholder. A chat bound to an AG-UI thread source, with a composer.
+An agent chat bound to a `thread` source: streaming messages, reasoning (collapsed), a one-line summary of each turn's activity (counts, not tool lists), permission prompts (allow once, always, deny), errors, the session bar (mode, model and effort, slash commands, context usage) and a composer with a stop button. The thread's data arrives over `/agui`, not through `data.patch`: the source only names the thread and the agent.
 
-Tier 2 · since 1.0
+Tier 2 · since 1.0 · interactive (needs an explicit `key`)
 
-*Placeholder: props, events and slots are not final; any prop is accepted.*
+Accessibility: role `log`. 
 
 | Prop | Type | Required | Default | Notes |
 |---|---|---|---|---|
-| `thread` | source |  |  |  |
+| `thread` | source | yes |  | A `thread` source: `params` are the thread id (`thread`) and the agent (`agent`). |
+| `placeholder` | string |  |  | The composer's placeholder. |
+| `composer` | boolean |  | `true` | `false` shows the transcript without a composer. |
 
 | Event | Luau prop | Payload | Notes |
 |---|---|---|---|
-| `send` | `onSend` | none |  |
-| `stop` | `onStop` | none |  |
-
-| Slot | Luau key | Notes |
-|---|---|---|
-| *(default)* | positional | positional entries: any number of nodes |
+| `send` | `onSend` | `text: string` | The person sent a message (informational: the client already sent it to the agent). |
+| `stop` | `onStop` | none | The person stopped the running turn. |
 
 ### CalendarGrid
 

@@ -58,6 +58,9 @@ dependencies = [
  "agentos-application",
  "agentos-domain",
  "async-trait",
+ "parking_lot",
+ "serde",
+ "serde_json",
  "thiserror",
  "tokio",
  "tokio-util",
@@ -67,13 +70,13 @@ dependencies = [
 name = "agentos-agui"
 version = "0.1.0"
 dependencies = [
+ "agentos-application",
+ "agentos-domain",
  "axum",
  "futures-util",
- "reqwest",
  "serde",
  "serde_json",
  "tokio",
- "tokio-stream",
 ]
 
 [[package]]

@@ -14,7 +14,7 @@
 
 use crate::{
     error::PortError,
-    ports::{AgentDirectory, AgentStore, RandomSource, ToolRegistry},
+    ports::{AgentCard, AgentDirectory, AgentRoster, AgentStore, RandomSource, ToolRegistry},
 };
 use agentos_domain::{
     hash_token, same_hash, Agent, AgentId, AgentIdentity, AgentRuntime, ApprovalPolicy, DomainError, Grants,
@@ -294,5 +294,14 @@ impl AgentDirectory for AgentService {
             }
         }
         found.and_then(|id| roster.agents.get(id)).map(Agent::identity)
+    }
+}
+
+impl AgentRoster for AgentService {
+    fn cards(&self) -> Vec<AgentCard> {
+        self.list()
+            .into_iter()
+            .map(|a| AgentCard { id: a.id, name: a.name, avatar: a.avatar, role: a.role })
+            .collect()
     }
 }

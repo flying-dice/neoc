@@ -16,7 +16,7 @@ use crate::{
 use agentos_application::{
     data::DataTx,
     live::{SourceDef, SourceId},
-    ports::{AppData, AppPackage, CallContext, MenuCommand, ViewEffect},
+    ports::{AgentCard, AgentRoster, AppData, AppPackage, CallContext, MenuCommand, ViewEffect},
 };
 use agentos_domain::{time, tool_schema, AppDecl, AppId, Capabilities, Notification, ToolSpec};
 use mlua::{Function, Lua, Table, Value as LuaValue, VmState};
@@ -81,17 +81,42 @@ impl Default for Limits {
 }
 
 /// How a VM is built.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct VmConfig {
     pub capabilities: Capabilities,
     pub limits: Limits,
     /// Luau source of host modules `require("@agentos/<name>")` can load besides `@agentos/app`
     /// (the generated `@agentos/ui` constructors), by module name.
     pub host_modules: Arc<HashMap<String, Vec<u8>>>,
+    /// The agent contacts `app.agents:list()` shows (empty unless the host gives a roster).
+    pub roster: Arc<dyn AgentRoster>,
 }
+
+impl std::fmt::Debug for VmConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VmConfig")
+            .field("capabilities", &self.capabilities)
+            .field("limits", &self.limits)
+            .finish_non_exhaustive()
+    }
+}
+
+/// No agents: what an app sees when the host has no roster (tests of other things).
+struct NoRoster;
+impl AgentRoster for NoRoster {
+    fn cards(&self) -> Vec<AgentCard> {
+        vec![]
+    }
+}
+
 impl Default for VmConfig {
     fn default() -> Self {
-        Self { capabilities: Capabilities::all(), limits: Limits::default(), host_modules: Arc::default() }
+        Self {
+            capabilities: Capabilities::all(),
+            limits: Limits::default(),
+            host_modules: Arc::default(),
+            roster: Arc::new(NoRoster),
+        }
     }
 }
 
@@ -128,6 +153,7 @@ pub(crate) struct Shared {
     pub slice: Slice,
     pub limits: Limits,
     pub host_modules: Arc<HashMap<String, Vec<u8>>>,
+    pub roster: Arc<dyn AgentRoster>,
     pub tracker: SharedTracker,
     pub tools: Mutex<Vec<ToolDecl>>,
     pub handlers: Mutex<HashMap<String, Function>>,
@@ -234,7 +260,7 @@ impl AppVm {
         db: Arc<dyn AppData>,
         config: VmConfig,
     ) -> Result<Self> {
-        let VmConfig { capabilities, limits, host_modules } = config;
+        let VmConfig { capabilities, limits, host_modules, roster } = config;
         let lua = Lua::new();
         let slice = Slice::new();
         let shared = Arc::new(Shared {
@@ -245,6 +271,7 @@ impl AppVm {
             slice: slice.clone(),
             limits: limits.clone(),
             host_modules,
+            roster,
             tracker: Arc::new(Mutex::new(Tracker::default())),
             tools: Mutex::default(),
             handlers: Mutex::default(),

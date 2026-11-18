@@ -43,7 +43,7 @@ async fn the_package_carries_every_luau_module_and_the_granted_capabilities() {
     assert_eq!(package.entry, "main.luau");
     assert_eq!(package.files.keys().collect::<Vec<_>>(), vec!["lib/calc.luau", "main.luau"]);
     let caps = f.runtime.capabilities("calc").unwrap();
-    assert_eq!(caps, Capabilities { data: true, notify: true, shell: false });
+    assert_eq!(caps, Capabilities { data: true, notify: true, shell: false, agents: false });
 }
 
 #[tokio::test]

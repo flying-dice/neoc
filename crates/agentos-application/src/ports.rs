@@ -254,6 +254,20 @@ pub trait AgentConnector: Send + Sync {
     async fn stop_all(&self);
 }
 
+/// What an app may know of an agent contact: enough to show it, nothing it could act on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentCard {
+    pub id: AgentId,
+    pub name: String,
+    pub avatar: Option<String>,
+    pub role: String,
+}
+
+/// The agent roster as apps see it (`app.agents:list()`).
+pub trait AgentRoster: Send + Sync {
+    fn cards(&self) -> Vec<AgentCard>;
+}
+
 /// The agent contacts: who they are and the hash of their persistent MCP token. Only hashes of secrets cross
 /// this port.
 #[async_trait]

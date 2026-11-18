@@ -21,7 +21,7 @@ use crate::{
     vm::Shared,
 };
 use agentos_application::{
-    data::{ExecOutcome, Params, SqlMigration},
+    data::{ExecOutcome, Params, QueryInfo, SqlMigration},
     live::{Conflict, SourceDef, SourceId, SourceKind, TotalMode},
 };
 use mlua::{Function, Lua, Table, Value as LuaValue};
@@ -113,7 +113,12 @@ async fn declare(
     def.validate().map_err(|e| mlua::Error::runtime(format!("source {id}: {e}")))?;
     let params = def.info.named_params.clone();
     sh.sources.lock().push(def);
+    source_factory(sh, lua, id, params)
+}
 
+/// The function an app calls to get a handle on a declared source: `notes { folder = 1 }`. Every param the
+/// declaration names must be given, and no other.
+fn source_factory(sh: &Sh, lua: &Lua, id: String, params: Vec<String>) -> mlua::Result<Function> {
     let sh = sh.clone();
     lua.create_function(move |lua, given: Option<Table>| {
         let values = lua.create_table()?;
@@ -138,7 +143,29 @@ async fn declare(
     })
 }
 
+/// `app.thread()`: declare a chat thread source for `ChatTranscript { thread = chat { thread = id, agent = id } }`.
+/// It runs no query (the thread's data is `/agui`) and needs no capability: it only names a thread and its agent.
+fn declare_thread(sh: &Sh, lua: &Lua) -> mlua::Result<Function> {
+    let id = {
+        let sources = sh.sources.lock();
+        format!("s{}", sources.len() + 1)
+    };
+    let params = vec!["thread".to_owned(), "agent".to_owned()];
+    let info = QueryInfo {
+        tables: std::collections::BTreeSet::new(),
+        columns: vec![],
+        named_params: params.clone(),
+        read_only: true,
+    };
+    let def = SourceDef { id: SourceId(id.clone()), kind: SourceKind::Thread, sql: String::new(), info };
+    def.validate().map_err(|e| mlua::Error::runtime(format!("source {id}: {e}")))?;
+    sh.sources.lock().push(def);
+    source_factory(sh, lua, id, params)
+}
+
 pub(super) fn install(lua: &Lua, sh: &Sh, app: &Table) -> mlua::Result<()> {
+    let thread_sh = sh.clone();
+    app.set("thread", lua.create_function(move |lua, _: mlua::MultiValue| declare_thread(&thread_sh, lua))?)?;
     let db = lua.create_table()?;
     install_statements(lua, sh, &db)?;
     install_sources(lua, sh, &db)?;

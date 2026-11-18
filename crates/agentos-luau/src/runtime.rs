@@ -10,8 +10,8 @@ use crate::{
 use agentos_application::{
     live::SourceId,
     ports::{
-        AppData, AppPackage, AppRuntime, CallContext, LoadedApp, Notifier, PortResult, RenderOutput, Shell,
-        ViewEffect, ViewEventCall,
+        AgentRoster, AppData, AppPackage, AppRuntime, CallContext, LoadedApp, Notifier, PortResult,
+        RenderOutput, Shell, ViewEffect, ViewEventCall,
     },
     PortError,
 };
@@ -30,6 +30,7 @@ pub struct LuauRuntime {
     shell: Arc<dyn Shell>,
     limits: Limits,
     host_modules: HashMap<String, Vec<u8>>,
+    roster: Option<Arc<dyn AgentRoster>>,
     /// `app:openWindow(...)` requests, until the view layer takes them.
     open_requests: Mutex<Vec<(AppId, String, Value)>>,
 }
@@ -43,6 +44,7 @@ impl LuauRuntime {
             shell,
             limits,
             host_modules,
+            roster: None,
             open_requests: Mutex::default(),
         }
     }
@@ -51,6 +53,13 @@ impl LuauRuntime {
     #[must_use]
     pub fn with_host_module(mut self, name: &str, source: impl Into<Vec<u8>>) -> Self {
         self.host_modules.insert(name.to_owned(), source.into());
+        self
+    }
+
+    /// The agent contacts apps with the `agents` permission can list.
+    #[must_use]
+    pub fn with_roster(mut self, roster: Arc<dyn AgentRoster>) -> Self {
+        self.roster = Some(roster);
         self
     }
 
@@ -107,6 +116,7 @@ impl AppRuntime for LuauRuntime {
             capabilities,
             limits: self.limits.clone(),
             host_modules: Arc::new(self.host_modules.clone()),
+            roster: self.roster.clone().unwrap_or_else(|| VmConfig::default().roster),
         };
         let vm = AppVm::load(app, package, data, config).await.map_err(|e| port_error(app, e))?;
         let decl = vm.decl().ok_or_else(|| {

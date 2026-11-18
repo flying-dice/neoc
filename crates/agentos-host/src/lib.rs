@@ -27,8 +27,8 @@ use agentos_acp::AcpConnector;
 use agentos_agui::agui_router;
 use agentos_application::{
     ports::{
-        AgentConnector, AgentDirectory, AgentStore, AppRuntime, Clock, DataStore, DeviceRegistry, EventSink,
-        Fetcher, InstalledAppStore, RandomSource, ThreadStore, ToolRegistry,
+        AgentConnector, AgentDirectory, AppRuntime, Clock, DataStore, DeviceRegistry, EventSink, Fetcher,
+        InstalledAppStore, RandomSource, ThreadStore, ToolRegistry,
     },
     AgentService, AppService, ChatPorts, ChatService, DeviceService, PairingPolicy, Ports, ViewService,
 };
@@ -142,18 +142,23 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
     let fetcher: Arc<dyn Fetcher> = Arc::new(UrlFetcher::new(8 * 1024 * 1024)?);
     let data: Arc<dyn DataStore> =
         Arc::new(SqliteDataStore::new(cfg.data_dir.as_ref().map(|d| d.join("apps"))));
-    let runtime: Arc<dyn AppRuntime> =
-        Arc::new(LuauRuntime::new(hub.clone(), Arc::new(platform::LogShell), Limits::default()));
+    let system = open_system(cfg.data_dir.as_deref())?;
+    let random = cfg.random;
+    // the roster is also the MCP adapter's directory, tells it when an agent's tool list changes, and is what
+    // apps with the `agents` permission list
+    let roster = Arc::new(AgentService::new(system.clone(), mcp_state.clone(), random.clone()));
+    roster.load().await?;
+    let runtime: Arc<dyn AppRuntime> = Arc::new(
+        LuauRuntime::new(hub.clone(), Arc::new(platform::LogShell), Limits::default())
+            .with_roster(roster.clone()),
+    );
     let tools: Arc<dyn ToolRegistry> = mcp_state.clone();
     let events: Arc<dyn EventSink> = hub.clone();
     let connector: Arc<dyn AgentConnector> =
         cfg.connector.unwrap_or_else(|| Arc::new(AcpConnector::new(cfg.agent_cwd)));
-    let system = open_system(cfg.data_dir.as_deref())?;
     let installed: Arc<dyn InstalledAppStore> = system.clone();
-    let agent_store: Arc<dyn AgentStore> = system.clone();
     let thread_store: Arc<dyn ThreadStore> = system.clone();
     let registry: Arc<dyn DeviceRegistry> = system;
-    let random = cfg.random;
     let devices = Arc::new(DeviceService::new(registry, cfg.clock.clone(), random.clone(), cfg.pairing));
 
     // application
@@ -167,9 +172,6 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
         clock: cfg.clock.clone(),
         background: Arc::new(platform::TokioBackground),
     }));
-    // the roster is also the MCP adapter's directory; it tells the adapter when an agent's tool list changes
-    let roster = Arc::new(AgentService::new(agent_store, mcp_state.clone(), random.clone()));
-    roster.load().await?;
     for (token, agent) in cfg.agents {
         roster.ensure(agent, Some(&token)).await?;
     }
