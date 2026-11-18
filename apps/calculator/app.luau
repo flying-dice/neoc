@@ -15,8 +15,11 @@ app.manifest {
 }
 
 -- One calculator for the whole app, however many windows are open.
+-- `entry` is the text being typed; once a result is in (`fresh`) the number lives in `value`, so a result is never
+-- parsed back from its own display text.
 local s = app.state {
   entry = "0",
+  value = 0,
   acc = 0,
   hasAcc = false,
   pending = "",
@@ -31,7 +34,17 @@ local SYMBOL = { ["+"] = "+", ["-"] = "−", ["*"] = "×", ["/"] = "÷" }
 
 local function apply(a: number, op: string, b: number): number
   s.caption = `{calc.format(a)} {SYMBOL[op]} {calc.format(b)}`
-  return calc.evaluate(`{a} {op} ({b})`) -- raises on division by zero
+  return calc.combine(a, op, b) -- raises on division by zero
+end
+
+-- The number on the display: the result once one is in, else what has been typed.
+local function current(): number
+  return if s.fresh then s.value else tonumber(s.entry) :: number
+end
+
+-- Show a number (a result, or a value an agent put there); the next digit starts a new entry.
+local function show(value: number)
+  s.value, s.fresh = value, true
 end
 
 local function digit(d: string)
@@ -47,22 +60,23 @@ local function digit(d: string)
 end
 
 local function operator(op: string)
-  local value = tonumber(s.entry) :: number
+  local value = current()
   if s.hasAcc and s.pending ~= "" and not s.fresh then
     s.acc = apply(s.acc, s.pending, value)
-    s.entry = tostring(s.acc)
+    show(s.acc)
   else
     s.acc, s.hasAcc = value, true
+    show(value)
   end
-  s.pending, s.fresh = op, true
+  s.pending = op
 end
 
 local function equals()
   if not s.hasAcc or s.pending == "" then
     return
   end
-  s.entry = tostring(apply(s.acc, s.pending, tonumber(s.entry) :: number))
-  s.hasAcc, s.pending, s.fresh = false, "", true
+  show(apply(s.acc, s.pending, current()))
+  s.hasAcc, s.pending = false, ""
 end
 
 local function clear() -- "C" clears what is being typed; "AC" (nothing typed) clears everything
@@ -71,7 +85,7 @@ local function clear() -- "C" clears what is being typed; "AC" (nothing typed) c
   else
     s.entry, s.hasAcc, s.pending, s.caption = "0", false, "", ""
   end
-  s.err, s.fresh = false, true
+  s.err, s.value, s.fresh = false, 0, true
 end
 
 local actions: { [string]: (string?) -> () } = {
@@ -80,14 +94,19 @@ local actions: { [string]: (string?) -> () } = {
   equals = equals,
   clear = clear,
   negate = function()
-    s.entry = if s.entry:sub(1, 1) == "-" then s.entry:sub(2) elseif s.entry == "0" then "0" else "-" .. s.entry
+    if s.fresh then
+      s.value = if s.value == 0 then 0 else -s.value -- never "-0"
+    else
+      s.entry = if s.entry:sub(1, 1) == "-" then s.entry:sub(2) elseif s.entry == "0" then "0" else "-" .. s.entry
+    end
   end,
   percent = function()
-    s.entry = tostring((tonumber(s.entry) :: number) / 100)
+    show(calc.combine(current(), "/", 100))
   end,
   backspace = function()
     if not s.fresh then
-      s.entry = if #s.entry > 1 and s.entry ~= "-0" then s.entry:sub(1, -2) else "0"
+      local rest = s.entry:sub(1, -2)
+      s.entry = if rest == "" or rest == "-" or rest == "-0" then "0" else rest
     end
   end,
 }
@@ -184,7 +203,7 @@ end
 app.window("main", {
   title = "Calculator",
   render = function(w)
-    local display = if s.err then "Error" else calc.formatEntry(s.entry)
+    local display = if s.err then "Error" elseif s.fresh then calc.format(s.value) else calc.formatEntry(s.entry)
     return ui.Scope {
       scheme = "dark",
       background = "primary", -- the instrument canvas: black body
@@ -270,7 +289,8 @@ app.tool {
   run = function(input)
     local result = calc.evaluate(input.expression)
     record(input.expression, result)
-    s.entry, s.caption, s.hasAcc, s.pending, s.fresh, s.err = tostring(result), input.expression, false, "", true, false
+    show(result)
+    s.caption, s.hasAcc, s.pending, s.err = input.expression, false, "", false
     app:openWindow("main") -- every open Calculator window re-renders by itself
     return { shown = calc.format(result) }
   end,
