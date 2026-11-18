@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { cellPlacement, gridTemplate, spannedAspect } from './grid'
+import { cellPlacement, gridTemplate } from './grid'
 
 describe('gridTemplate', () => {
   test('a count is that many equal columns that may shrink', () => {
@@ -40,21 +40,5 @@ describe('cellPlacement', () => {
     expect(cellPlacement({ span: 0, colStart: -1, rowStart: 'x' })).toEqual({ column: undefined, row: undefined, span: 1 })
     expect(cellPlacement({ span: 500 }).column).toBe('auto / span 24')
     expect(cellPlacement({})).toEqual({ column: undefined, row: undefined, span: 1 })
-  })
-})
-
-describe('spannedAspect', () => {
-  test('a cell that spans columns scales the aspect by the span, so it keeps the row height', () => {
-    expect(spannedAspect(1, 1)).toBe(1)
-    expect(spannedAspect(1, 2)).toBe(2) // the Calculator's wide "0" key: 2:1
-    expect(spannedAspect(1.4, 3)).toBeCloseTo(4.2)
-  })
-
-  test('no aspect on the grid, no aspect on the cell; a bad span counts as one', () => {
-    expect(spannedAspect(undefined, 2)).toBeUndefined()
-    expect(spannedAspect(0, 2)).toBeUndefined()
-    expect(spannedAspect(1, undefined)).toBe(1)
-    expect(spannedAspect(1, 0)).toBe(1)
-    expect(spannedAspect(1, 99)).toBe(24)
   })
 })

@@ -128,12 +128,34 @@ local KEYS: { any } = {
   digitKey("2"),
   digitKey("3"),
   opKey("add", "+", "+", "Plus"),
-  { id = "0", name = "0", label = "0", kind = "digit", arg = "0", face = "digit", shortcut = "0", span = 2 },
+  {
+    id = "0",
+    name = "0",
+    label = "0",
+    kind = "digit",
+    arg = "0",
+    face = "digit",
+    shortcut = "0",
+    span = 2,
+    wide = true,
+  },
   { id = "dot", name = "Decimal point", label = ".", kind = "digit", arg = ".", face = "digit", shortcut = "." },
   { id = "eq", name = "Equals", label = "=", kind = "equals", face = "operator", shortcut = "enter" },
 }
 local FILL: { [string]: "gray4" | "gray2" | "orange" } =
   { digit = "gray4", ["function"] = "gray2", operator = "orange" } -- semantic palette, auto-contrast text
+
+-- iPadOS sets the wide "0" with its label over the first circle, not centred in the capsule
+local function wideLabel(k: any)
+  return ui.HStack {
+    key = "label",
+    frame = "fill",
+    align = "center",
+    padding = { left = 7 },
+    ui.Text { key = "text", k.label, style = "headline" },
+    ui.Spacer { key = "rest" },
+  }
+end
 
 local function keyView(k: any)
   local title, name = k.label, k.name
@@ -144,7 +166,7 @@ local function keyView(k: any)
   end
   return ui.Button {
     key = "key-" .. k.id,
-    title = title,
+    title = if k.wide then nil else title,
     label = name,
     shape = "circle",
     size = "fill",
@@ -155,6 +177,7 @@ local function keyView(k: any)
     onTap = function()
       press(k.kind, k.arg)
     end,
+    if k.wide then { wideLabel(k) } else {},
   }
 end
 
@@ -168,37 +191,40 @@ app.window("main", {
       frame = "fill",
       ui.VStack {
         frame = "fill",
+        align = "center",
         spacing = 2,
         padding = 3,
         ui.Spacer {},
-        ui.Text {
-          key = "caption",
-          s.caption,
-          style = "body",
-          foreground = "secondary",
-          align = "trailing",
-          lines = 1,
-        },
-        ui.Text {
-          key = "display",
-          display,
-          label = "Result",
-          style = "display",
-          fit = true,
-          align = "trailing",
-          lines = 1,
-          live = "polite",
-        },
-        -- round keys: square cells, at most 320 pt wide, so the keypad is the same size in a wide window and always fits
-        -- round keys: square cells, a fixed 296 pt wide (the narrowest window's content), centred: the keypad is the
-        -- same size in any window and always fits
-        ui.Grid {
-          columns = 4,
-          spacing = 2,
-          cellAspect = 1,
-          align = "center",
+        -- one column, a fixed 296 pt wide (the narrowest window's content) and centred: the display's right edge is
+        -- the keypad's right edge, and the keypad is the same size in any window and always fits. Round keys:
+        -- square cells.
+        ui.VStack {
           frame = { idealW = 296, maxW = 296 },
-          ui.each(KEYS, keyView),
+          spacing = 2,
+          ui.Text {
+            key = "caption",
+            s.caption,
+            style = "body",
+            foreground = "secondary",
+            align = "trailing",
+            lines = 1,
+          },
+          ui.Text {
+            key = "display",
+            display,
+            label = "Result",
+            style = "display",
+            fit = true,
+            align = "trailing",
+            lines = 1,
+            live = "polite",
+          },
+          ui.Grid {
+            columns = 4,
+            spacing = 2,
+            cellAspect = 1,
+            ui.each(KEYS, keyView),
+          },
         },
         ui.Shortcut {
           key = "backspace",

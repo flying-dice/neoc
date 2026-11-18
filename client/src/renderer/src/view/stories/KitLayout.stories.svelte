@@ -7,6 +7,7 @@
   import { openAppStory, until, type StoryHandle } from '../host/storyKit'
   import {
     galleryApp,
+    keypadApp,
     listStyleApp,
     longListApp,
     reorderApp,
@@ -35,7 +36,8 @@
     split3: () => splitApp(3),
     split2: () => splitApp(2),
     stack: stackApp,
-    gallery: galleryApp
+    gallery: galleryApp,
+    keypad: keypadApp
   }
   const open = (
     scenario: string,
@@ -365,6 +367,33 @@
     await userEvent.click(canvas.getByRole('tab', { name: /Empty/ }))
     await expect(await canvas.findByText('No messages')).toBeVisible()
     await expect(canvas.getByRole('button', { name: 'Compose' })).toBeVisible()
+  }}
+/>
+
+<!-- Fill buttons and a spanning cell: circular keys that fill their square cells, a "0" of two columns and the gap, and a display aligned to the keypad. -->
+<Story
+  name="Keypad, fill buttons and a spanning cell"
+  args={{ scenario: 'keypad', width: 340, height: 300 }}
+  play={async ({ canvas }) => {
+    const key = (name: string): HTMLElement => canvas.getByRole('button', { name })
+    const box = (name: string): DOMRect => key(name).getBoundingClientRect()
+    const seven = box('7')
+    const gap = box('8').left - seven.right
+    for (const name of ['7', '9', '÷', '.', '=']) {
+      const b = box(name)
+      await expect(Math.abs(b.width - b.height)).toBeLessThan(1) // a circle, not a pill
+      await expect(Math.abs(b.width - seven.width)).toBeLessThan(1)
+      await expect(parseFloat(getComputedStyle(key(name)).borderRadius)).toBeGreaterThanOrEqual(b.height / 2)
+    }
+    const zero = box('0')
+    await expect(Math.abs(zero.width - (2 * seven.width + gap))).toBeLessThan(1) // two columns and the gap between
+    await expect(Math.abs(zero.height - seven.height)).toBeLessThan(1) // the row keeps its height
+    await expect(Math.abs(zero.left - box('4').left)).toBeLessThan(1)
+    const label = canvas.getByTestId('keypad-zero-label')
+    await expect(label.getBoundingClientRect().left - zero.left).toBeLessThan(zero.height / 2) // over the first circle, not centred
+    const display = canvas.getByTestId('keypad-display').getBoundingClientRect()
+    await expect(Math.abs(display.right - box('=').right)).toBeLessThan(1)
+    await expect(Math.abs(display.left - seven.left)).toBeLessThan(1)
   }}
 />
 

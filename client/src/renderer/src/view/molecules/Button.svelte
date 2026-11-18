@@ -92,8 +92,7 @@
 <Button
   testid={common.testid}
   {variant}
-  size={size === 'fill' ? 'large' : size}
-  block={size === 'fill'}
+  {size}
   capsule={shape === 'capsule' || shape === 'circle'}
   square={shape === 'circle'}
   destructive={role === 'destructive'}

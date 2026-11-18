@@ -66,7 +66,7 @@ export {
   type Parts
 } from './datepicker'
 export { initials, safeImageSrc } from './avatar'
-export { gridTemplate, cellPlacement, spannedAspect, type GridTrack } from './logic/grid'
+export { gridTemplate, cellPlacement, type GridTrack } from './logic/grid'
 export {
   HeightIndex,
   visibleRange,

@@ -1,7 +1,7 @@
 <!--
   @atom Grid — a grid of equally sized cells. `columns` / `rows` are CSS track lists (see `gridTemplate`);
-  Give each `GridCell` its aspect (width / height; `spannedAspect` scales the grid's `cellAspect` by the span) to make
-  cells a fixed ratio, and place children in `GridCell`s to span or pin them.
+  Give each `GridCell` the grid's `cellAspect` (width / height of one cell) and its `span` to make cells a fixed ratio
+  (a spanning cell keeps the row's height), and place children in `GridCell`s to span or pin them.
   Optional test id: `testid`.
 -->
 <script lang="ts">
@@ -28,6 +28,7 @@
   style:grid-template-rows={rows}
   style:row-gap="{rowGap}px"
   style:column-gap="{colGap}px"
+  style:--grid-col-gap="{colGap}px"
   {style}
 >
   {@render children()}
