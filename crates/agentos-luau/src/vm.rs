@@ -7,7 +7,7 @@
 
 use crate::{
     api,
-    budget::{Allowance, Slice},
+    budget::{Allowance, CpuBudget},
     convert::{json_to_lua, lua_to_json},
     error::{ScriptError, ToolFailure},
     state::{DepKey, SharedTracker, Tracker},
@@ -184,7 +184,7 @@ pub(crate) struct Shared {
     pub caps: Capabilities,
     pub package: AppPackage,
     pub db: Arc<dyn AppData>,
-    pub slice: Slice,
+    pub budget: CpuBudget,
     pub limits: Limits,
     pub host_modules: Arc<HashMap<String, Vec<u8>>>,
     pub roster: Arc<dyn AgentRoster>,
@@ -216,6 +216,9 @@ pub(crate) struct Shared {
     pub read_only: Arc<AtomicBool>,
     /// Effects queued by the running call, against `limits.max_effects` (reset when a call starts).
     pub effects_in_call: AtomicUsize,
+    /// How many of the app's own coroutines are running right now (see [`COROUTINE_GUARD`]); a host call
+    /// raises while this is not zero. Reset when a call starts.
+    pub coroutines_running: AtomicUsize,
 }
 
 impl Shared {
@@ -258,8 +261,11 @@ impl Shared {
         Ok(())
     }
 
-    /// Queue what a window asked of its view (counted against the cap).
+    /// Queue what a window asked of its view (counted against the cap). A window context outlives the call
+    /// that rendered it (an app can keep `w` in a variable), so this is refused inside a `readOnly` tool like
+    /// every other change to the world.
     pub fn push_view_effect(&self, what: &str, view: &str, effect: ViewEffect) -> mlua::Result<()> {
+        self.writable(what)?;
         self.spend_effect(what)?;
         self.view_effects.lock().push((view.to_owned(), effect));
         Ok(())
@@ -299,6 +305,36 @@ impl Shared {
     }
 }
 
+/// Luau run before the sandbox freezes the standard library: `coroutine.resume` and `coroutine.wrap` tell the
+/// host while the app's own coroutine runs.
+///
+/// A host call (`app.kv:get`, `db:exec`) is an async function. Called from inside a coroutine the app resumed
+/// itself it cannot wait for the host: it hands the app a pending marker, and the host future stays alive in the
+/// suspended coroutine. That future can hold the database's write gate, and the "waiting on the host" state it
+/// set switched the CPU budget off for the code that went on running. Such a call is refused instead; the
+/// function that resumes the coroutine can make the host call itself.
+const COROUTINE_GUARD: &str = r"
+local enter, leave = ...
+local resume, create = coroutine.resume, coroutine.create
+local function guarded(co, ...)
+    enter()
+    local results = table.pack(resume(co, ...))
+    leave()
+    return table.unpack(results, 1, results.n)
+end
+coroutine.resume = guarded
+coroutine.wrap = function(f)
+    local co = create(f)
+    return function(...)
+        local results = table.pack(guarded(co, ...))
+        if not results[1] then
+            error(results[2], 0)
+        end
+        return table.unpack(results, 2, results.n)
+    end
+end
+";
+
 /// Marks the VM as running a `readOnly` tool until dropped (the call's gate is held for that whole time).
 struct ReadOnlyCall<'a>(Option<&'a Shared>);
 
@@ -319,11 +355,26 @@ impl Drop for ReadOnlyCall<'_> {
     }
 }
 
+/// A top-level call in progress: it holds the VM's gate. Ending it, or abandoning it (its caller gave up), rolls
+/// back a transaction it left open, so the database's write gate is free the moment the call is over rather than
+/// when some later call happens to start.
+pub(crate) struct CallGuard<'a> {
+    shared: &'a Shared,
+    _gate: tokio::sync::MutexGuard<'a, ()>,
+}
+
+impl Drop for CallGuard<'_> {
+    fn drop(&mut self) {
+        // before the gate is released (fields drop after this body): dropping the transaction rolls it back
+        drop(self.shared.tx.lock().take());
+    }
+}
+
 pub struct AppVm {
     pub app: AppId,
     lua: Lua,
     shared: Arc<Shared>,
-    /// Serialises calls: one runs at a time, so `db:tx`, the CPU slice and state tracking are unambiguous.
+    /// Serialises calls: one runs at a time, so `db:tx`, the CPU budget and state tracking are unambiguous.
     gate: tokio::sync::Mutex<()>,
 }
 
@@ -331,6 +382,21 @@ impl Drop for AppVm {
     fn drop(&mut self) {
         self.shared.release();
     }
+}
+
+/// Install [`COROUTINE_GUARD`]: `enter` / `leave` count the app's own coroutines that are running.
+fn guard_coroutines(lua: &Lua, shared: &Arc<Shared>) -> mlua::Result<()> {
+    let (on, off) = (shared.clone(), shared.clone());
+    let enter = lua.create_function(move |_, ()| {
+        on.coroutines_running.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    })?;
+    let leave = lua.create_function(move |_, ()| {
+        // saturating: a new call may have reset the count under a coroutine that was resumed across calls
+        let _ = off.coroutines_running.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1));
+        Ok(())
+    })?;
+    lua.load(COROUTINE_GUARD).set_name("=agentos/coroutine").call::<()>((enter, leave))
 }
 
 fn script(e: &mlua::Error) -> VmError {
@@ -350,14 +416,14 @@ impl AppVm {
     ) -> Result<Self> {
         let VmConfig { capabilities, limits, host_modules, roster } = config;
         let lua = Lua::new();
-        let slice = Slice::new();
+        let budget = CpuBudget::new();
         let read_only = Arc::new(AtomicBool::new(false));
         let shared = Arc::new(Shared {
             app: app.clone(),
             caps: capabilities,
             package,
             db,
-            slice: slice.clone(),
+            budget: budget.clone(),
             limits: limits.clone(),
             host_modules,
             roster,
@@ -381,6 +447,7 @@ impl AppVm {
             tx: Mutex::new(None),
             read_only,
             effects_in_call: AtomicUsize::new(0),
+            coroutines_running: AtomicUsize::new(0),
         });
         let load_err =
             |e: &mlua::Error| VmError::Load { app: app.to_string(), error: ScriptError::from_lua(e) };
@@ -394,11 +461,12 @@ impl AppVm {
             lua.globals().set(escape, LuaValue::Nil).map_err(|e| load_err(&e))?;
         }
         api::install(&lua, &shared).map_err(|e| load_err(&e))?;
+        guard_coroutines(&lua, &shared).map_err(|e| load_err(&e))?;
 
         // Interrupt: runs at function calls and loop back-edges. Returning Err aborts the running chunk;
         // the kill is sticky so a `pcall` cannot swallow it.
         let allowance = limits.allowance();
-        lua.set_interrupt(move |_| match slice.exceeded(allowance) {
+        lua.set_interrupt(move |_| match budget.exceeded(allowance) {
             Some(stop) => Err(mlua::Error::runtime(stop.message())),
             None => Ok(VmState::Continue),
         });
@@ -426,8 +494,6 @@ impl AppVm {
         Ok(vm)
     }
 
-    /// Start a top-level call: wait for the previous one, fresh CPU slice, and discard a transaction a
-    /// cancelled call left open (dropping it rolls it back and frees the database).
     pub(crate) fn shared(&self) -> &Arc<Shared> {
         &self.shared
     }
@@ -436,16 +502,18 @@ impl AppVm {
         &self.lua
     }
 
-    pub(crate) async fn enter_call(&self) -> tokio::sync::MutexGuard<'_, ()> {
+    pub(crate) async fn enter_call(&self) -> CallGuard<'_> {
         self.enter().await
     }
 
-    async fn enter(&self) -> tokio::sync::MutexGuard<'_, ()> {
-        let guard = self.gate.lock().await;
-        self.shared.slice.begin();
+    /// Start a top-level call: wait for the previous one, then fresh CPU budgets and a fresh effect count. The
+    /// returned guard ends the call (see [`CallGuard`]).
+    async fn enter(&self) -> CallGuard<'_> {
+        let gate = self.gate.lock().await;
+        self.shared.budget.begin();
         self.shared.effects_in_call.store(0, Ordering::Relaxed);
-        drop(self.shared.tx.lock().take());
-        guard
+        self.shared.coroutines_running.store(0, Ordering::Relaxed);
+        CallGuard { shared: &self.shared, _gate: gate }
     }
 
     // ---- what the app declared ------------------------------------------------------------------------
@@ -595,7 +663,12 @@ impl AppVm {
     /// call it is waiting on is abandoned), and nothing new runs. Call this before dropping the last `Arc`,
     /// so a runaway call cannot keep the VM alive after an uninstall.
     pub fn retire(&self) {
-        self.shared.slice.retire();
+        self.shared.budget.retirement().retire();
+    }
+
+    /// The app was unloaded or replaced: nothing it is still running may change the world.
+    pub fn is_retired(&self) -> bool {
+        self.shared.budget.retirement().is_retired()
     }
 
     /// Unload: release every Rust-held reference to Luau values, then the VM. Returns the heap size freed.

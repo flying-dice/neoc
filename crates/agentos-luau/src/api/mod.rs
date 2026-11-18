@@ -23,7 +23,10 @@ use crate::{
 };
 use agentos_application::PortError;
 use mlua::Lua;
-use std::{future::Future, sync::Arc};
+use std::{
+    future::Future,
+    sync::{atomic::Ordering, Arc},
+};
 
 pub(crate) fn install(lua: &Lua, sh: &Arc<Shared>) -> mlua::Result<()> {
     let app = lua.create_table()?;
@@ -42,28 +45,44 @@ pub(crate) fn install(lua: &Lua, sh: &Arc<Shared>) -> mlua::Result<()> {
 /// spent waiting on the host is not app CPU), but the call's own budget does not: every host call is
 /// charged against it, and one is refused (or abandoned while it waits) once the call's budget is spent or
 /// the app was unloaded.
+///
+/// A host call that finished is reported as finished, even when the call's budget ran out while it ran: the
+/// app learns that its `commit` went through, and the next interrupt or host call stops it. (Raising here
+/// would tell the app a transaction failed that is in the database.)
+///
+/// Refused inside the app's own coroutine, which cannot wait for the host (see `vm::COROUTINE_GUARD`).
 pub(crate) async fn host<T>(
     sh: &Shared,
     call: impl Future<Output = Result<T, PortError>>,
 ) -> mlua::Result<T> {
     let allowance = sh.limits.allowance();
     let stopped = |stop: Stop| mlua::Error::runtime(stop.message());
-    sh.slice.charge_host_call(allowance).map_err(stopped)?;
-    let limit = sh.limits.host_call_timeout.min(sh.slice.call_wall_left(allowance));
-    sh.slice.pause();
+    if sh.coroutines_running.load(Ordering::SeqCst) > 0 {
+        return Err(mlua::Error::runtime(
+            "a host call cannot be made inside a coroutine: make it from the function that resumes the coroutine",
+        ));
+    }
+    sh.budget.charge_host_call(allowance).map_err(stopped)?;
+    let limit = sh.limits.host_call_timeout.min(sh.budget.call_wall_left(allowance));
+    let waiting = sh.budget.wait_for_host();
     let result = tokio::select! {
         timed = tokio::time::timeout(limit, call) => Some(timed),
-        () = sh.slice.retired() => None,
+        () = sh.budget.retirement().retired() => None,
     };
-    sh.slice.resume();
-    sh.slice.check_after_host_call(allowance).map_err(stopped)?;
+    drop(waiting);
+    let budget_left = sh.budget.check_after_host_call(allowance);
     match result {
         Some(Ok(Ok(v))) => Ok(v),
-        Some(Ok(Err(e))) => Err(mlua::Error::external(e)),
-        Some(Err(_)) => {
-            Err(mlua::Error::runtime(format!("a host call took longer than {limit:?} and was abandoned")))
+        failed => {
+            budget_left.map_err(stopped)?;
+            match failed {
+                Some(Ok(Err(e))) => Err(mlua::Error::external(e)),
+                Some(Err(_)) => Err(mlua::Error::runtime(format!(
+                    "a host call took longer than {limit:?} and was abandoned"
+                ))),
+                _ => Err(stopped(Stop::Unloaded)),
+            }
         }
-        None => Err(stopped(Stop::Unloaded)),
     }
 }
 
@@ -96,4 +115,52 @@ pub(crate) fn push_shell(sh: &Shared, effect: ShellEffect) {
         Effect::Notify(_) | Effect::OpenWindow { .. } => true,
     });
     effects.push(Effect::Shell(effect));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::host;
+    use crate::vm::{AppVm, Limits, VmConfig};
+    use agentos_application::ports::AppPackage;
+    use agentos_domain::AppId;
+    use agentos_sqlite::AppDb;
+    use std::{collections::BTreeMap, sync::Arc, time::Duration};
+
+    async fn vm_with(limits: Limits) -> AppVm {
+        let files = BTreeMap::from([("app.luau".to_owned(), b"app.on('x', function() end)".to_vec())]);
+        let package = AppPackage { entry: "app.luau".into(), files };
+        let config = VmConfig { limits, ..VmConfig::default() };
+        let db = Arc::new(AppDb::open(None, &[]).expect("in-memory database"));
+        AppVm::load(&AppId::parse("probe").expect("id"), package, db, config).await.expect("loads")
+    }
+
+    #[tokio::test]
+    async fn a_host_call_that_finished_is_reported_even_when_the_calls_wall_clock_ran_out_meanwhile() {
+        let vm = vm_with(Limits { call_wall: Duration::from_millis(100), ..Limits::default() }).await;
+        let sh = vm.shared().clone();
+        sh.budget.begin();
+        // finishes (blocking its thread) after the call's deadline, without ever yielding to the timeout
+        let committed = host(&sh, async {
+            std::thread::sleep(Duration::from_millis(250));
+            Ok(7)
+        })
+        .await;
+        assert_eq!(committed.expect("the host call went through: the app is told so"), 7);
+        // and the app is stopped by what comes next
+        let next = host(&sh, async { Ok(8) }).await.expect_err("the call's budget is spent");
+        assert!(next.to_string().contains("cpu budget exceeded"), "{next}");
+    }
+
+    #[tokio::test]
+    async fn a_host_call_that_failed_after_the_deadline_reports_the_budget_not_its_own_error() {
+        let vm = vm_with(Limits { call_wall: Duration::from_millis(100), ..Limits::default() }).await;
+        let sh = vm.shared().clone();
+        sh.budget.begin();
+        let failed: mlua::Result<()> = host(&sh, async {
+            std::thread::sleep(Duration::from_millis(250));
+            Err(agentos_application::PortError::Rejected("late".into()))
+        })
+        .await;
+        assert!(failed.expect_err("an error").to_string().contains("cpu budget exceeded"));
+    }
 }
