@@ -11,6 +11,7 @@ import Stack from './molecules/Stack.svelte'
 import Text from './molecules/Text.svelte'
 import TextField from './molecules/TextField.svelte'
 import Toggle from './molecules/Toggle.svelte'
+import { registerChat } from './kit/chat'
 import Row from './organisms/Row.svelte'
 import Screen from './pages/Screen.svelte'
 import { ComponentRegistry, createRegistry } from './registry'
@@ -31,6 +32,7 @@ export function registerStarterKit(registry: ComponentRegistry): ComponentRegist
     .register('ForEach', { component: ForEach, since: '1.0' })
     .register('Row', { component: Row, since: '1.0' })
     .register('Screen', { component: Screen, since: '1.0' })
+  registerChat(registry)
   return registerControls(registry)
 }
 
