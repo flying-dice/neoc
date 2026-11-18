@@ -1,4 +1,5 @@
-//! JSON Schema (draft 2020-12 as emitted by schemars 1.x) -> Luau `export type` declarations.
+//! JSON Schema (draft 2020-12 as emitted by schemars 1.x) -> Luau `export type` declarations. Types and fields are
+//! emitted in alphabetical order so the output is the same whichever crates enable serde_json's `preserve_order`.
 
 use serde_json::Value;
 use std::{collections::BTreeSet, fmt::Write as _};
@@ -6,7 +7,9 @@ use std::{collections::BTreeSet, fmt::Write as _};
 pub fn schema_to_luau(root_name: &str, schema: &Value, seen: &mut BTreeSet<String>) -> String {
     let mut out = String::new();
     if let Some(defs) = schema.get("$defs").and_then(Value::as_object) {
-        for (n, d) in defs {
+        // sorted: the output must not depend on whether serde_json preserves insertion order in this build
+        let sorted: std::collections::BTreeMap<_, _> = defs.iter().collect();
+        for (n, d) in sorted {
             if seen.insert(n.clone()) {
                 let _ = write!(out, "export type {n} = {}\n\n", ty(d, root_name));
             }
@@ -69,8 +72,9 @@ fn object(s: &Value, root: &str) -> String {
         .map(|a| a.iter().filter_map(Value::as_str).collect())
         .unwrap_or_default();
     if let Some(props) = s.get("properties").and_then(Value::as_object) {
-        let fields: Vec<String> = props
-            .iter()
+        let sorted: std::collections::BTreeMap<_, _> = props.iter().collect();
+        let fields: Vec<String> = sorted
+            .into_iter()
             .map(|(k, v)| {
                 let t = ty(v, root);
                 if required.contains(&k.as_str()) && !t.contains("nil") {
