@@ -1,10 +1,12 @@
 /**
- * Agents key user journeys AG1 to AG7 (../JOURNEYS.md; each test's id is the journey's id), end to end: the real shell, the real host, the Luau Agents app, and an
- * ACP agent on the host's roster that is a script, not a model (`crates/agentos-acp/src/bin/fake_agent.rs`; the
- * prompt text picks what it does). The conversation streams over AG-UI, the permission prompt is an AG-UI
+ * Agents key user journeys AG1 to AG7 (../JOURNEYS.md; a test's id is its journey's id), end to end: the real
+ * shell, the real host, the Luau Agents app, and an ACP agent on the host's roster that is a script, not a model
+ * (`crates/agentos-acp/src/bin/fake_agent.rs`; the prompt text picks what it does). The conversation streams over AG-UI, the permission prompt is an AG-UI
  * interrupt, the Agents app only lists agents and chats.
  *
- * The chats live on the shared host, so each test starts its own chat and finds it by what it said.
+ * The chats live on the shared host, so each test starts its own chat and finds it by what it said. The Agents window
+ * reopens on the chat it last had open and that is remembered on the host, so these tests run one after another
+ * (`--repeat-each` needs `--workers=1`: two copies at once would reopen each other's chat).
  */
 import type { Page } from '@playwright/test'
 import { chooseLayout, expect, expectNoOverflow, openDesktop, resizeWindow, test, windowOf } from '../../../e2e/fixtures'
@@ -31,6 +33,8 @@ async function say(page: Page, text: string): Promise<void> {
   await input.press('Enter')
 }
 
+test.describe.configure({ mode: 'serial' })
+
 test.describe('Agents journeys', () => {
   test('AG1: open Agents from the Dock and see who is there', async ({ page }) => {
     await openDesktop(page)
@@ -39,7 +43,6 @@ test.describe('Agents journeys', () => {
     await expect(page.getByTestId('agents-view')).toBeVisible()
     await expect(page.getByTestId('agents-roster-agents-agent-scripted')).toContainText('Scripted agent')
     await expect(page.getByTestId('agents-roster-agents-agent-scripted')).toContainText('Answers by script, for tests')
-    await expect(page.getByTestId('agents-no-chat')).toBeVisible()
     // the desktop widget lists the same agents
     await page.getByTestId('dock-discover').click()
     await expect(page.getByTestId('widget-agent-activity-agent-scripted')).toBeVisible()
@@ -59,16 +62,19 @@ test.describe('Agents journeys', () => {
   test('AG3: the agent asks permission; the answer resumes the turn', async ({ page }) => {
     await openAgents(page)
     await newChat(page)
+    // the agent numbers its prompts (perm-0, perm-1, ...) for as long as the host runs: match on the shape, not the number
+    const prompt = page.getByTestId(new RegExp(`^${thread}-permission-permission-perm-\\d+$`))
+    const allow = page.getByTestId(new RegExp(`^${thread}-permission-permission-perm-\\d+-allow$`))
+    const deny = page.getByTestId(new RegExp(`^${thread}-permission-permission-perm-\\d+-deny$`))
     await say(page, 'ask')
-    const prompt = page.getByTestId(`${thread}-permission-permission-perm-0`)
-    const allow = prompt.getByTestId(`${thread}-permission-permission-perm-0-allow`)
     await expect(prompt).toBeVisible()
-    // a reload does not lose an unanswered prompt
+    await expect(deny).toBeVisible()
+    // a reload does not lose an unanswered prompt (the window reopens on the chat it had open)
     await openAgents(page)
     await expect(allow).toBeVisible()
     await allow.click()
     await expect(page.getByTestId(thread)).toContainText('Answer: selected')
-    // and an answered one does not come back
+    // and an answered prompt does not come back
     await openAgents(page)
     await expect(page.getByTestId(thread)).toContainText('Answer: selected')
     await expect(allow).toHaveCount(0)
