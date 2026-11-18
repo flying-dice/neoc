@@ -28,7 +28,7 @@ impl QualifiedToolName {
     pub fn new(app: AppId, tool: &str) -> Result<Self, DomainError> {
         let ok = !tool.is_empty()
             && tool.len() <= 48
-            && tool.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_');
+            && tool.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'));
         if ok {
             Ok(Self { app, tool: tool.to_owned() })
         } else {
@@ -62,5 +62,8 @@ mod tests {
         assert_eq!(q.to_string(), "notes__add_note");
         assert!(QualifiedToolName::parse("nodelimiter").is_err());
         assert!(QualifiedToolName::parse("notes__bad name").is_err());
+        let dotted = QualifiedToolName::parse("notes__notes.append").unwrap();
+        assert_eq!((dotted.app().as_str(), dotted.tool()), ("notes", "notes.append"));
+        assert!(QualifiedToolName::parse("notes__a/b").is_err());
     }
 }

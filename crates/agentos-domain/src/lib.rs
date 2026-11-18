@@ -17,6 +17,7 @@ pub mod protocol;
 pub mod revision;
 pub mod time;
 pub mod tool;
+pub mod tool_schema;
 pub mod ui;
 
 pub use actor::{Actor, ActorKind};
