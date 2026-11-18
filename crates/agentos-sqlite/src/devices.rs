@@ -7,10 +7,10 @@
 
 use crate::{AppDb, DbError, Migration};
 use agentos_application::{
-    ports::{DeviceRegistry, PortResult},
+    ports::{DeviceRegistry, InstalledApp, InstalledAppStore, PortResult},
     PortError,
 };
-use agentos_domain::{Device, DeviceId};
+use agentos_domain::{AppId, Device, DeviceId};
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::path::Path;
@@ -28,15 +28,92 @@ CREATE TABLE sessions(
     last_seen  INTEGER NOT NULL
 );";
 
-pub struct SqliteDeviceRegistry {
+/// Which apps are installed, where from, and whether they are enabled: restored at every start.
+const INSTALLED_APPS: &str = "
+CREATE TABLE installed_apps(
+    id           TEXT PRIMARY KEY,
+    source_url   TEXT NOT NULL,
+    version      TEXT NOT NULL,
+    enabled      INTEGER NOT NULL DEFAULT 1,
+    installed_at INTEGER NOT NULL
+);";
+
+/// The system database behind both `DeviceRegistry` and `InstalledAppStore`. The host and the CLI open the
+/// same file, so they must agree on the migration list: it lives here.
+pub struct SqliteSystemDb {
     db: AppDb,
 }
 
-impl SqliteDeviceRegistry {
+/// The old name, from when the system database held only devices.
+pub type SqliteDeviceRegistry = SqliteSystemDb;
+
+impl SqliteSystemDb {
     /// Open (or create) the system database. `path = None` is in memory (tests).
     pub fn open(path: Option<&Path>) -> Result<Self, DbError> {
-        let db = AppDb::open(path, &[Migration::new(1, "devices", SCHEMA)])?;
+        let db = AppDb::open_system(
+            path,
+            &[Migration::new(1, "devices", SCHEMA), Migration::new(2, "installed_apps", INSTALLED_APPS)],
+        )?;
         Ok(Self { db })
+    }
+}
+
+fn to_installed(row: &Value) -> Option<InstalledApp> {
+    Some(InstalledApp {
+        id: AppId::parse(row["id"].as_str()?).ok()?,
+        source_url: row["source_url"].as_str()?.to_owned(),
+        version: row["version"].as_str()?.to_owned(),
+        enabled: row["enabled"].as_i64()? != 0,
+        installed_at_ms: row["installed_at"].as_u64()?,
+    })
+}
+
+#[async_trait]
+impl InstalledAppStore for SqliteSystemDb {
+    async fn save(&self, app: &InstalledApp) -> PortResult<()> {
+        self.db
+            .exec(
+                "INSERT OR REPLACE INTO installed_apps(id, source_url, version, enabled, installed_at) \
+                 VALUES(?1, ?2, ?3, ?4, ?5)"
+                    .into(),
+                vec![
+                    json!(app.id.as_str()),
+                    json!(app.source_url),
+                    json!(app.version),
+                    json!(i64::from(app.enabled)),
+                    sql_ms(app.installed_at_ms),
+                ],
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn remove(&self, id: &AppId) -> PortResult<()> {
+        self.db.exec("DELETE FROM installed_apps WHERE id = ?1".into(), vec![json!(id.as_str())]).await?;
+        Ok(())
+    }
+
+    async fn set_enabled(&self, id: &AppId, enabled: bool) -> PortResult<()> {
+        self.db
+            .exec(
+                "UPDATE installed_apps SET enabled = ?2 WHERE id = ?1".into(),
+                vec![json!(id.as_str()), json!(i64::from(enabled))],
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn list(&self) -> PortResult<Vec<InstalledApp>> {
+        let rows = self
+            .db
+            .query(
+                "SELECT id, source_url, version, enabled, installed_at FROM installed_apps ORDER BY installed_at, id"
+                    .into(),
+                vec![],
+            )
+            .await?;
+        // a row that no longer parses (an id the rules since forbade) is skipped, not fatal
+        Ok(rows.iter().filter_map(to_installed).collect())
     }
 }
 
@@ -55,7 +132,7 @@ fn sql_ms(ms: u64) -> Value {
 }
 
 #[async_trait]
-impl DeviceRegistry for SqliteDeviceRegistry {
+impl DeviceRegistry for SqliteSystemDb {
     async fn add_pairing_code(&self, code_hash: &str, expires_at_ms: u64) -> PortResult<()> {
         self.db
             .exec(
