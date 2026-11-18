@@ -217,9 +217,9 @@ async fn a_read_only_tool_needs_no_prompt_under_the_default_policy_but_a_writing
     let url = publish_package(
         &temp("notes-policy").join("pkg"),
         "notes",
-        "app.luau",
+        "app.lua",
         &[(
-            "app.luau",
+            "app.lua",
             br#"app.manifest { id = "notes", name = "Notes", icon = "gear", permissions = {} }
 app.tool { name = "search", readOnly = true, run = function() return {} end }
 app.tool { name = "append", run = function() return {} end }"#
@@ -243,9 +243,9 @@ async fn a_read_only_tool_of_an_app_the_agent_is_not_granted_still_asks() {
     let url = publish_package(
         &temp("notes-ungranted").join("pkg"),
         "notes",
-        "app.luau",
+        "app.lua",
         &[(
-            "app.luau",
+            "app.lua",
             br#"app.manifest { id = "notes", name = "Notes", icon = "gear", permissions = {} }
 app.tool { name = "search", readOnly = true, run = function() return {} end }"#
                 .to_vec(),

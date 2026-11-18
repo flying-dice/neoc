@@ -314,3 +314,44 @@ pub async fn notification_where(ws: &mut Ws, method: &str, ok: impl Fn(&Value) -
         ws.backlog.push(m);
     }
 }
+
+/// The Lua 5.1 text of a Luau entry file, built with the product's own pipeline (`scripts/lua51.ts`: darklua
+/// with `.darklua.json`), so these tests run what `bun run build:apps` ships. Needs bun and darklua.
+pub fn build_lua(entry: &std::path::Path) -> Vec<u8> {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let out = std::env::temp_dir().join(format!("agentos-host-test-{}-{}.lua", std::process::id(), nonce()));
+    let run = std::process::Command::new("bun")
+        .arg("scripts/lua51-build.ts")
+        .arg(entry)
+        .arg(&out)
+        .current_dir(&root)
+        .output()
+        .expect("bun is needed to build the apps these tests run (https://bun.sh)");
+    assert!(
+        run.status.success(),
+        "building {} failed (is darklua 0.18.0 installed? see scripts/lua51.ts):\n{}{}",
+        entry.display(),
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let bytes = std::fs::read(&out).unwrap();
+    let _ = std::fs::remove_file(out);
+    bytes
+}
+
+fn nonce() -> usize {
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
+/// The built Lua 5.1 file of the shipped app `apps/<id>` (or, when the repo has none, the codegen example).
+pub fn built_app(app: &str) -> Vec<u8> {
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let shipped = manifest.join("../../apps").join(app);
+    let dir = if shipped.join("app.json").exists() {
+        shipped
+    } else {
+        manifest.join("../agentos-codegen/tests/fixtures").join(app)
+    };
+    build_lua(&dir.join("app.luau"))
+}

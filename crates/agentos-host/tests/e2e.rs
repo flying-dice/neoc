@@ -30,13 +30,17 @@ fn publish_app(root: &Path, id: &str) -> String {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/notes/app.luau");
     let luau = std::fs::read_to_string(src).unwrap().replace("\"notes\"", &format!("\"{id}\""));
     std::fs::create_dir_all(root).unwrap();
-    std::fs::write(root.join("app.luau"), &luau).unwrap();
+    // the fixture is Luau: build it to the one Lua 5.1 file an app ref ships
+    std::fs::write(root.join("source.luau"), &luau).unwrap();
+    let luau = String::from_utf8(common::build_lua(&root.join("source.luau"))).unwrap();
+    std::fs::remove_file(root.join("source.luau")).unwrap();
+    std::fs::write(root.join("app.lua"), &luau).unwrap();
     let r = AppRef {
         manifest: Manifest {
             id: AppId::parse(id).unwrap(),
             name: id.into(),
             version: "1.0.0".into(),
-            main: "app.luau".into(),
+            main: "app.lua".into(),
             permissions: vec![Permission::Data, Permission::Notify],
             migrations: vec![],
             icon: None,
@@ -45,8 +49,8 @@ fn publish_app(root: &Path, id: &str) -> String {
             requires: None,
         },
         files: vec![FileRef {
-            path: "app.luau".into(),
-            url: format!("file://{}/app.luau", root.display()),
+            path: "app.lua".into(),
+            url: format!("file://{}/app.lua", root.display()),
             sha256: format!("{:x}", Sha256::digest(luau.as_bytes())),
         }],
     };
@@ -297,7 +301,7 @@ async fn an_app_whose_bundle_broke_is_marked_failed_and_the_others_start() {
     first.stop().await;
 
     // the bundle is edited on disk without rebuilding the app ref: its checksum no longer matches
-    std::fs::write(tmp.join("pkg-todo/app.luau"), "error('edited by hand')").unwrap();
+    std::fs::write(tmp.join("pkg-todo/app.lua"), "error('edited by hand')").unwrap();
 
     let second = start(configure).await;
     start_apps(&second.host.service, &[]).await;
@@ -332,10 +336,10 @@ async fn dev_reload_rebuilds_the_vm_when_the_bundle_changes_and_keeps_the_data()
 
     // "rebuild" the bundle: a new tool, a new checksum
     let before = counter.0.load(Ordering::SeqCst);
-    let luau = std::fs::read_to_string(pkg.join("app.luau")).unwrap();
+    let luau = std::fs::read_to_string(pkg.join("app.lua")).unwrap();
     let v2 =
         format!("{luau}\napp.tools.register({{ name = \"extra\", run = function() return \"v2\" end }})\n");
-    std::fs::write(pkg.join("app.luau"), &v2).unwrap();
+    std::fs::write(pkg.join("app.lua"), &v2).unwrap();
     let mut app_ref: AppRef =
         serde_json::from_slice(&std::fs::read(pkg.join("app-ref.json")).unwrap()).unwrap();
     app_ref.files[0].sha256 = format!("{:x}", Sha256::digest(v2.as_bytes()));

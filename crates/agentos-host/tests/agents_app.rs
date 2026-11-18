@@ -10,19 +10,17 @@ use common::{
     temp, Running, Ws,
 };
 use serde_json::{json, Value};
-use std::path::Path;
 
 async fn host_with_agents_app() -> Running {
     let mut fake = launchable("fake", "Fake", Grants::default());
     fake.role = "A scripted agent".into();
     fake.avatar = Some("bolt".into());
     let r = start(|c| c.agents = vec![("tok-fake".into(), fake)]).await;
-    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/agents/app.luau");
     let url = publish_package(
         &temp("agents-app").join("pkg"),
         "agents",
-        "app.luau",
-        &[("app.luau", std::fs::read(source).unwrap())],
+        "app.lua",
+        &[("app.lua", common::built_app("agents"))],
         vec![Permission::Data, Permission::Agents],
     );
     r.host.service.install_from_url(&url).await.unwrap();
@@ -175,8 +173,8 @@ app.tool { name = "peek", run = function() return app.agents:list() end }"#;
     let url = publish_package(
         &temp("nosy").join("pkg"),
         "nosy",
-        "app.luau",
-        &[("app.luau", source.to_vec())],
+        "app.lua",
+        &[("app.lua", source.to_vec())],
         vec![],
     );
     r.host.service.install_from_url(&url).await.unwrap();

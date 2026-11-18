@@ -98,8 +98,8 @@ pub async fn install_ledger(r: &Running) {
     let url = publish_package(
         &temp("ledger").join("pkg"),
         "ledger",
-        "app.luau",
-        &[("app.luau", LEDGER.as_bytes().to_vec())],
+        "app.lua",
+        &[("app.lua", LEDGER.as_bytes().to_vec())],
         vec![Permission::Data],
     );
     r.host.service.install_from_url(&url).await.unwrap();

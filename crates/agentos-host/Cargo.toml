@@ -8,6 +8,7 @@ publish.workspace = true
 [dependencies]
 agentos-domain = { workspace = true }
 agentos-application = { workspace = true }
+agentos-luau = { workspace = true }
 agentos-sqlite = { workspace = true }
 agentos-fetch = { workspace = true }
 agentos-mcp = { workspace = true }

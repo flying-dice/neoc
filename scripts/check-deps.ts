@@ -8,7 +8,8 @@
  *   domain      -> nothing internal; external: serde, serde_json, sha2, thiserror (+ ts-rs, schemars)
  *   application -> domain; external: async-trait, futures-channel, parking_lot, serde_json, sha2, thiserror, tracing
  *   adapters    -> application, domain; never each other
- *   luavm       -> nothing internal (the Lua VM library; only the Lua adapter may depend on it)
+ *   luau        -> application, domain, luavm (the one adapter that may use the Lua VM library)
+ *   luavm       -> nothing internal (the Lua VM library; only the luau adapter may depend on it)
  *   host        -> everything
  *
  * A crate that is not in INTERNAL fails the gate, so a new crate has to be placed in the hexagon on purpose.
@@ -24,10 +25,10 @@ import { spawnSync } from 'node:child_process'
 const INTERNAL: Record<string, string[]> = {
   'agentos-domain': [],
   'agentos-application': ['agentos-domain'],
-  // The Lua 5.1 VM: a library, not an adapter. It depends on no agentos crate. Only the Lua adapter may
-  // depend on it, and that adapter does not exist yet: nothing is allowed to (not even the host).
-  // TODO(lua51): when the adapter is rewritten on top of it, re-add 'agentos-luau' (or its successor) here
-  // with ['agentos-domain', 'agentos-application', 'agentos-luavm'], and put it back in the host's list.
+  // The Lua adapter runs apps (Luau, built to Lua 5.1) on top of the Lua VM library below.
+  'agentos-luau': ['agentos-domain', 'agentos-application', 'agentos-luavm'],
+  // The Lua 5.1 VM: a support library, not an adapter. It depends on no agentos crate, and only the Lua
+  // adapter may depend on it (the one place a script engine is wired to a port), so the VM stays swappable.
   'agentos-luavm': [],
   'agentos-sqlite': ['agentos-domain', 'agentos-application'],
   'agentos-fetch': ['agentos-application'],
@@ -39,6 +40,7 @@ const INTERNAL: Record<string, string[]> = {
   'agentos-host': [
     'agentos-domain',
     'agentos-application',
+    'agentos-luau',
     'agentos-sqlite',
     'agentos-fetch',
     'agentos-mcp',

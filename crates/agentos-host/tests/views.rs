@@ -8,35 +8,23 @@ mod common;
 use agentos_domain::Permission;
 use agentos_host::startup::prepare_data_dir;
 use common::{
-    browser, call, claude, connect_agent, next_notification, notification_where, notify, path_of,
+    browser, built_app, call, claude, connect_agent, next_notification, notification_where, notify, path_of,
     publish_package, rpc, start, temp, text_of, wait_until, Running, Ws,
 };
 use serde_json::{json, Value};
 use std::path::Path;
 
-/// An app's file: the shipped app when the repo has one (the Calculator), else the codegen example (Notes).
-fn fixture(app: &str, name: &str) -> (String, Vec<u8>) {
-    let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps").join(app);
-    let dir = if shipped.join("app.json").exists() {
-        shipped
-    } else {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../agentos-codegen/tests/fixtures").join(app)
-    };
-    (name.to_owned(), std::fs::read(dir.join(name)).unwrap())
-}
-
-async fn host_with(tmp: &Path, apps: &[(&str, &[&str])]) -> Running {
+async fn host_with(tmp: &Path, apps: &[&str]) -> Running {
     prepare_data_dir(&tmp.join("data")).unwrap();
     let r = start(|c| {
         c.data_dir = Some(tmp.join("data"));
         c.agents = vec![claude()];
     })
     .await;
-    for (app, files) in apps {
-        let files: Vec<(String, Vec<u8>)> = files.iter().map(|f| fixture(app, f)).collect();
-        let refs: Vec<(&str, Vec<u8>)> = files.iter().map(|(n, b)| (n.as_str(), b.clone())).collect();
+    for app in apps {
+        let refs = [("app.lua", built_app(app))];
         let url =
-            publish_package(&tmp.join(format!("pkg-{app}")), app, "app.luau", &refs, vec![Permission::Data]);
+            publish_package(&tmp.join(format!("pkg-{app}")), app, "app.lua", &refs, vec![Permission::Data]);
         r.host.service.install_from_url(&url).await.unwrap();
     }
     r
@@ -83,7 +71,7 @@ fn ops_setting(params: &Value, prop: &str, value: &Value) -> bool {
 #[allow(clippy::too_many_lines)] // one journey, read top to bottom
 async fn notes_the_human_types_an_agent_appends_and_the_open_view_follows() {
     let tmp = temp("notes-view");
-    let r = host_with(&tmp, &[("notes", &["app.luau"])]).await;
+    let r = host_with(&tmp, &["notes"]).await;
     let mut ws = browser(&r).await;
     hello(&mut ws).await;
 
@@ -260,7 +248,7 @@ async fn notes_the_human_types_an_agent_appends_and_the_open_view_follows() {
 #[tokio::test]
 async fn the_calculator_answers_a_key_with_ops_before_the_ack_and_follows_the_agent() {
     let tmp = temp("calc-view");
-    let r = host_with(&tmp, &[("calculator", &["app.luau", "calc.luau"])]).await;
+    let r = host_with(&tmp, &["calculator"]).await;
     let mut ws = browser(&r).await;
     hello(&mut ws).await;
     let first = open(&mut ws, 2, "calculator").await;
@@ -324,7 +312,7 @@ async fn the_calculator_answers_a_key_with_ops_before_the_ack_and_follows_the_ag
 #[tokio::test]
 async fn a_view_in_another_connection_cannot_be_driven() {
     let tmp = temp("views-owner");
-    let r = host_with(&tmp, &[("calculator", &["app.luau", "calc.luau"])]).await;
+    let r = host_with(&tmp, &["calculator"]).await;
     let mut a = browser(&r).await;
     let mut b = browser(&r).await;
     let view = open(&mut a, 1, "calculator").await;
@@ -337,7 +325,7 @@ async fn a_view_in_another_connection_cannot_be_driven() {
 #[tokio::test]
 async fn app_management_describes_installed_and_available_apps() {
     let tmp = temp("app-api");
-    let r = host_with(&tmp, &[("calculator", &["app.luau", "calc.luau"])]).await;
+    let r = host_with(&tmp, &["calculator"]).await;
     let mut ws = browser(&r).await;
 
     let list = rpc(&mut ws, 1, "app.list", json!({})).await;
