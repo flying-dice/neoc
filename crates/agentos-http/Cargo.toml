@@ -23,6 +23,7 @@ tower-http = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+agentos-application = { workspace = true, features = ["testing"] }
 tokio-tungstenite = { workspace = true }
 
 [lints]
