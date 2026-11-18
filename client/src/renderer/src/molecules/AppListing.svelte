@@ -1,8 +1,8 @@
 <!--
   @molecule AppListing — an installable Luau app in Discover: icon, name, version and where it comes from, its
-  state, and what you can do (GET / OPEN / ENABLE, Disable, Remove). Atoms: IconTile, Icon, Text, Button,
+  state, and what you can do (GET / OPEN / ENABLE, Disable while it runs, Remove). Atoms: IconTile, Icon, Text, Button,
   ActivityIndicator.
-  Test ids: `testid` on the listing, `${testid}-get` (the main button), `${testid}-toggle` (Disable / Enable),
+  Test ids: `testid` on the listing, `${testid}-get` (the main button), `${testid}-toggle` (Disable, only while the app runs),
   `${testid}-remove`, `${testid}-state`.
 -->
 <script lang="ts">
@@ -85,13 +85,13 @@
           aria-label="{label.toLowerCase()} {name}"
           onclick={onget}>{label}</Button
         >
-        {#if ontoggle && state && state !== 'failed'}
+        {#if ontoggle && state === 'running'}
           <Button
             testid="{testid}-toggle"
             variant="plain"
             size="small"
-            aria-label="{state === 'running' ? 'Disable' : 'Enable'} {name}"
-            onclick={ontoggle}>{state === 'running' ? 'Disable' : 'Enable'}</Button
+            aria-label="Disable {name}"
+            onclick={ontoggle}>Disable</Button
           >
         {/if}
         {#if onremove && state}

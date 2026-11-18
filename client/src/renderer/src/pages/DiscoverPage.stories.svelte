@@ -88,7 +88,8 @@
     await expect(await canvas.findByTestId('discover-app-notes-state')).toHaveTextContent(
       'Disabled'
     )
-    await expect(canvas.getByTestId('discover-app-notes-toggle')).toHaveTextContent('Enable')
+    await expect(canvas.getByTestId('discover-app-notes-get')).toHaveTextContent('ENABLE')
+    await expect(canvas.queryByTestId('discover-app-notes-toggle')).toBeNull()
   }}
 />
 

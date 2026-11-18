@@ -9,6 +9,7 @@
   import DevicesPane from '../templates/DevicesPane.svelte'
   import { settings, accents, type Theme } from '../lib/settings.svelte'
   import { host } from '../lib/host.svelte'
+  import { devices } from '../lib/devices.svelte'
 
   type Pane = 'general' | 'appearance' | 'devices' | 'agents' | 'notifications' | 'privacy'
 
@@ -342,6 +343,31 @@
     { label: 'Reset', style: 'destructive' }
   ]}
 />
+
+{#if devices.asked}
+  <Alert
+    testid="settings-device-revoke-alert"
+    bind:open={
+      () => devices.asked !== null,
+      (open) => {
+        if (!open) devices.asked = null
+      }
+    }
+    title="Revoke {devices.asked.name}?"
+    message="It will be signed out of AgentOS and must pair again to come back."
+    actions={[
+      { label: 'Cancel', style: 'cancel' },
+      {
+        label: 'Revoke',
+        style: 'destructive',
+        onclick: () => {
+          const device = devices.asked
+          if (device) void devices.revoke(device)
+        }
+      }
+    ]}
+  />
+{/if}
 
 <style>
   .pane {
