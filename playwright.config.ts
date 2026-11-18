@@ -39,7 +39,7 @@ export default defineConfig({
   projects: [
     { name: 'stories', testMatch: 'e2e/stories.spec.ts', use: { baseURL: STORYBOOKS } },
     { name: 'desktop', testMatch: 'e2e/desktop.spec.ts', use: { baseURL: DESKTOP } },
-    { name: 'apps', testMatch: '{apps/*,packages/*,client}/e2e/**/*.spec.ts', use: { baseURL: DESKTOP } }
+    { name: 'apps', testMatch: ['{apps,packages}/*/e2e/**/*.spec.ts', 'client/e2e/**/*.spec.ts'], use: { baseURL: DESKTOP } }
   ],
   webServer: [
     {
