@@ -540,15 +540,20 @@ impl ChatService {
                 return Err(ChatError::Agent(e.to_string()));
             }
         };
-        let mut inner = thread.inner.lock();
-        if inner.session_id.is_some() {
+        let raced = {
+            let mut inner = thread.inner.lock();
+            if inner.session_id.is_some() {
+                true
+            } else {
+                inner.session_id = Some(opened.session_id.clone());
+                inner.state.session = opened.session;
+                false
+            }
+        };
+        if raced {
             // a concurrent ensure won the race: drop the extra session
-            drop(inner);
             self.p.connector.close_session(&agent.id, &opened.session_id).await;
-            return Ok(());
         }
-        inner.session_id = Some(opened.session_id);
-        inner.state.session = opened.session;
         Ok(())
     }
 
@@ -626,22 +631,37 @@ impl ChatService {
     }
 
     /// Answer the open interrupts and stream the rest of the suspended turn.
-    async fn resume(self: &Arc<Self>, thread: &Arc<Thread>, input: &RunAgentInput) -> RunEvents {
+    async fn resume(&self, thread: &Arc<Thread>, input: &RunAgentInput) -> RunEvents {
+        // the thread is locked only in the synchronous part: a guard must not be held across an await
+        let rx = match Self::take_resume(thread, input) {
+            Ok(rx) => rx,
+            Err(refusal) => return refusal,
+        };
+        // the suspended turn task picks the rest up once the connector delivers the answers
+        for entry in &input.resume {
+            self.p.connector.answer_permission(&entry.interrupt_id, entry.answer()).await;
+        }
+        rx
+    }
+
+    /// Validate a resume against the open interrupts and switch the turn over to a new stream. `Err` is the
+    /// stream of a run that only reports why it was refused.
+    fn take_resume(thread: &Arc<Thread>, input: &RunAgentInput) -> Result<RunEvents, RunEvents> {
         let mut inner = thread.inner.lock();
         let open: Vec<String> = inner.pending.iter().map(|i| i.id.clone()).collect();
         let answered: Vec<&str> = input.resume.iter().map(|r| r.interrupt_id.as_str()).collect();
         if open.is_empty() || inner.run.is_none() {
-            return refused(input, "there is nothing to resume on this thread", "nothing_to_resume");
+            return Err(refused(input, "there is nothing to resume on this thread", "nothing_to_resume"));
         }
         if let Some(unknown) = answered.iter().find(|a| !open.iter().any(|o| o == *a)) {
-            return refused(input, &format!("unknown interrupt `{unknown}`"), "unknown_interrupt");
+            return Err(refused(input, &format!("unknown interrupt `{unknown}`"), "unknown_interrupt"));
         }
         if let Some(missing) = open.iter().find(|o| !answered.contains(&o.as_str())) {
-            return refused(
+            return Err(refused(
                 input,
                 &format!("the resume does not answer interrupt `{missing}`"),
                 "partial_resume",
-            );
+            ));
         }
         let (tx, rx) = unbounded();
         if let Some(run) = &mut inner.run {
@@ -650,12 +670,7 @@ impl ChatService {
         }
         inner.pending.clear();
         Self::start_events(&mut inner, &thread.id, &input.run_id);
-        drop(inner);
-        // the suspended turn task picks the rest up once the connector delivers the answers
-        for entry in &input.resume {
-            self.p.connector.answer_permission(&entry.interrupt_id, entry.answer()).await;
-        }
-        rx
+        Ok(rx)
     }
 
     /// Cancel the thread's turn: `session/cancel`, and every open permission request resolves as cancelled.
@@ -687,12 +702,11 @@ impl ChatService {
     /// interrupt is left suspended for a resume.
     pub async fn client_gone(&self, thread_id: &str, run_id: &str) {
         let Ok(Some(thread)) = self.thread(thread_id).await else { return };
-        let still_streaming = {
+        let unanswered_run = {
             let inner = thread.inner.lock();
-            inner.pending.is_empty()
-                && inner.run.as_ref().is_some_and(|r| r.run_id == run_id && r.tx.is_some())
+            inner.pending.is_empty() && inner.run.as_ref().is_some_and(|r| r.run_id == run_id)
         };
-        if still_streaming {
+        if unanswered_run {
             self.cancel_thread(&thread).await;
         }
     }
