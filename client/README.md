@@ -2,7 +2,7 @@
 
 The AgentOS client: an installable PWA (Vite + Svelte 5) that is the iPadOS-style shell. It talks to the Rust host
 (`crates/agentos-host`) over one WebSocket with JSON-RPC 2.0 (`/rpc`), pairs through `/session` and `/pair`, and renders
-the windows of the Luau apps installed on the host with the managed renderer below. It runs no app code.
+the windows of the Lua apps installed on the host with the managed renderer below. It runs no app code.
 
 ```sh
 bun run dev        # from the repo root: builds the apps, runs the host on :7400 and this on :5173 (pair with the code the host prints)
@@ -39,7 +39,7 @@ pages/                  PairingPage, DiscoverPage (apps: install, enable, disabl
 `test/svelte-modules.ts` is the preload that compiles them. Components are not loaded there; their behaviour is a story
 with a play function.
 
-Agents is not a page here: it is the Luau app `apps/agents`, rendered like any installed app, with `ChatTranscript`
+Agents is not a page here: it is the Lua app `apps/agents`, rendered like any installed app, with `ChatTranscript`
 streaming over AG-UI (`/agui`).
 
 ## The managed renderer (`src/view`)

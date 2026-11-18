@@ -1,6 +1,6 @@
 ---
 name: verify-change
-description: Use before finishing, opening or merging ANY AgentOS change that alters what a person sees or does (kit components in packages/ui, renderer adapters and the shell in client/, Luau app windows, window management, menus, dialogs, layout, theming, agent tools that move the UI, host changes that change a view or protocol message). Run the real shell and the real Rust host headless, exercise the change, look at the screenshots against the intended result and the design language, and write down what was checked and how. Passing unit tests is not enough.
+description: Use before finishing, opening or merging ANY AgentOS change that alters what a person sees or does (kit components in packages/ui, renderer adapters and the shell in client/, Lua app windows, window management, menus, dialogs, layout, theming, agent tools that move the UI, host changes that change a view or protocol message). Run the real shell and the real Rust host headless, exercise the change, look at the screenshots against the intended result and the design language, and write down what was checked and how. Passing unit tests is not enough.
 ---
 
 # Verify a change in the real UI before it lands
@@ -10,7 +10,7 @@ off in a small window, or that dark mode turned a title black on a dark bar. So 
 runs the real shell, uses the changed behaviour, looks at the screenshots and says what it checked.** There are
 no exceptions for "small" kit changes: a kit change touches every app.
 
-Everything runs headless against the **real Rust host**: the shell in Chromium, the Luau apps on the host, one paired
+Everything runs headless against the **real Rust host**: the shell in Chromium, the Lua apps on the host, one paired
 browser. The e2e run starts its own host on port 7410 (`AGENTOS_PORT_BASE` + 10; set the base to run beside another worktree), so it never collides with
 a host you have running on 7400. See `docs/TESTING.md`.
 
@@ -28,7 +28,7 @@ List **every place the change shows up**. For a kit component, find its renderer
 ## 2. Run the checks that cover it
 
 ```sh
-bun run lint            # atomic layers, test ids, clippy, crate direction, luau-lsp, StyLua, codegen:check
+bun run lint            # atomic layers, test ids, clippy, crate direction, lua-language-server, StyLua, codegen:check
 bun run typecheck       # includes the required `testid` props on kit components
 bun run test            # cargo nextest, then the client, kit and types unit tests
 bun run test:e2e        # builds every Storybook, starts the real host, then:
@@ -86,7 +86,7 @@ Cover the matrix for each changed behaviour:
 
 If you add behaviour, add to the checks so they keep it covered: a story (with a `play` function for an
 interaction), a journey test, or a stricter generic check in `e2e/fixtures.ts`. Locators are `getByTestId` only.
-If an element you need has no test id, that's a bug: add one following `docs/TESTING.md` (a Luau node needs a `key`).
+If an element you need has no test id, that's a bug: add one following `docs/TESTING.md` (a Lua node needs a `key`).
 
 ## 4. Look at every screenshot
 

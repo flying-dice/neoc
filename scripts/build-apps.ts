@@ -1,17 +1,17 @@
 #!/usr/bin/env bun
 /**
- * Build the Luau app packages under apps/ (every folder with an `app.json`) into app refs.
+ * Build the Lua app packages under apps/ (every folder with an `app.json`) into app refs.
  *
  *   bun run build:apps [ids…] [--out <dir>] [--root <dir>]...
  *
  * For each app this writes, under <out>/<id>/<version>/ (default out: dist/apps):
  *   app-ref.json   { manifest, files: [{ path, url, sha256 }] }, file URLs relative to the app ref
- *   app.lua        the app as ONE Lua 5.1 file: the Luau entry (app.json `main`, app.luau) and the modules it
- *                  requires, bundled and stripped by darklua (.darklua.json); `@agentos/app` and `@agentos/ui`
- *                  stay runtime `require` calls, the host provides them (with lua/prelude.luau, the Lua 5.1
- *                  polyfills for the Luau standard library, built to types/generated/prelude.lua)
+ *   app.lua        the app as ONE Lua 5.1 file: the entry (app.json `main`, app.lua) and the modules it
+ *                  requires, bundled by darklua (.darklua.json); `@agentos/app` and `@agentos/ui` stay runtime
+ *                  `require` calls, the host provides them (with types/generated/prelude.lua, a few standard-library
+ *                  polyfills from lua/prelude.lua)
  *   <migrations>   the SQL migrations app.json lists, copied as they are
- * The ref's `manifest.main` names the bundled `.lua` file (the entry the host loads); the Luau sources are not shipped.
+ * The ref's `manifest.main` names the bundled `.lua` file (the entry the host loads); the separate source modules are not shipped.
  * darklua is required (pinned, see scripts/lua51.ts): the build fails with an install message without it.
  * `--root <dir>` also builds the packages under <dir>/* (the e2e harness builds a test-only app that way).
  * and one <out>/registry.json listing every app's app ref: { "apps": ["calculator/0.1.0/app-ref.json", ...] }.
@@ -20,7 +20,7 @@
  * with `dev_reload` it rebuilds an app's VM when its files change, so `bun run build:apps` is the dev loop.
  *
  * `app.json` is the package manifest (id, name, version, main, permissions, icon, tint, description,
- * requires, migrations); the build checks it against the `app.manifest { ... }` the app declares in Luau, so
+ * requires, migrations); the build checks it against the `app.manifest { ... }` the app declares in Lua, so
  * the two cannot disagree about the id, icon or tint.
  */
 import { createHash } from 'node:crypto'
@@ -43,7 +43,7 @@ const PackageManifest = z.object({
   name: z.string().min(1).max(60),
   version: z.string().regex(/^\d+\.\d+\.\d+$/),
   description: z.string().optional(),
-  main: z.string().default('app.luau'),
+  main: z.string().default('app.lua'),
   icon: z.string().optional(),
   tint: z.string().optional(),
   permissions: z.array(Capability).default([]),
@@ -74,9 +74,9 @@ for (const dir of appDirs) {
   const manifest = PackageManifest.parse(JSON.parse(readFileSync(join(dir, 'app.json'), 'utf8')))
   const source = readFileSync(join(dir, manifest.main), 'utf8')
   for (const field of ['id', 'icon', 'tint'] as const) {
-    const inLuau = declared(source, field)
-    if (inLuau !== undefined && inLuau !== manifest[field]) {
-      console.error(`✗ ${manifest.id}: app.json ${field} "${manifest[field]}" differs from app.manifest ${field} "${inLuau}"`)
+    const inLua = declared(source, field)
+    if (inLua !== undefined && inLua !== manifest[field]) {
+      console.error(`✗ ${manifest.id}: app.json ${field} "${manifest[field]}" differs from app.manifest ${field} "${inLua}"`)
       process.exit(1)
     }
   }
@@ -84,7 +84,7 @@ for (const dir of appDirs) {
   rmSync(target, { recursive: true, force: true })
   mkdirSync(target, { recursive: true })
   const sha256 = (bytes: string | Buffer): string => createHash('sha256').update(bytes).digest('hex')
-  const entry = manifest.main.replace(/\.luau$/, '.lua')
+  const entry = manifest.main
   let bundle: string
   try {
     bundle = toLua51(darklua, join(dir, manifest.main))

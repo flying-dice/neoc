@@ -383,7 +383,7 @@ export type ComponentMeta = {
   since: string
   group: string
   interactive: boolean
-  /** The prop a positional Luau argument sets. */
+  /** The prop a positional Lua argument sets. */
   positional: string | null
   role: string
   name: { oneOf: string[]; children: boolean } | { altOrDecorative: true } | null

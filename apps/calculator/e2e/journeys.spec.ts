@@ -1,6 +1,6 @@
 /**
  * Calculator key user journeys, end to end: the real shell in the browser, the real Rust host, the Calculator as
- * the Luau app it ships as. Journeys are listed in ../JOURNEYS.md; the design research panel walks the same ones.
+ * the Lua app it ships as. Journeys are listed in ../JOURNEYS.md; the design research panel walks the same ones.
  *
  * The host has one calculator however many windows are open, so these run one after another and each starts by
  * clearing it.

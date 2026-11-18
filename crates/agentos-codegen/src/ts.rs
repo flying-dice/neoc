@@ -359,7 +359,7 @@ fn meta_table() -> String {
     let mut out = String::new();
     out.push_str(
         "export type ComponentMeta = {\n  tier: 1 | 2 | 3\n  since: string\n  group: string\n  interactive: boolean\n  \
-         /** The prop a positional Luau argument sets. */\n  positional: string | null\n  role: string\n  \
+         /** The prop a positional Lua argument sets. */\n  positional: string | null\n  role: string\n  \
          name: { oneOf: string[]; children: boolean } | { altOrDecorative: true } | null\n  \
          /** Two-way props and how the host merges a write. */\n  bindings: { [prop: string]: 'text' | 'scalar' | 'collection' }\n  \
          events: string[]\n  slots: string[]\n  children: 'none' | 'any' | number\n  \

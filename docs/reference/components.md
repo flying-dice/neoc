@@ -7,11 +7,11 @@ Kit **1.0**, protocol **1**. Every app describes its views with these components
 
 ## Conventions
 
-- **Luau**: `ui.X { positional, prop = value, slotName = node, onEvent = handler }`. Positional entries are children, or the component's *positional prop* (shown below). Constructors return plain node tables.
+- **Lua**: `ui.X { positional, prop = value, slotName = node, onEvent = handler }`. Positional entries are children, or the component's *positional prop* (shown below). Constructors return plain node tables.
 - **Values**: a prop is a literal, a **ref** (`w.client.search`, a source field, `r.title` in a row template) or a call of the closed expression set (`ui.concat`, `ui.when`, `ui.fmt.*`, see [Expressions](#expressions)).
 - **Bindings** (`Binding`): two-way props. Pass a ref the control also writes (`w.client.x`, `source:bind("field")`), never a plain value.
 - **Keys**: interactive nodes need an explicit `key`; test ids derive from keys (`app-key-key-...`), skipping auto keys (`_0`), slot names and the window root. A row template contributes `row-<rowKey>`.
-- **Handlers**: a Luau function, a `ui.act.*` action (runs on the client), or a list mixing both. Nothing executable crosses the wire.
+- **Handlers**: a Lua function, a `ui.act.*` action (runs on the client), or a list mixing both. Nothing executable crosses the wire.
 - **Tiers**: Tier 1 is final. Tier 2 and 3 are **placeholders**: the name exists, any prop is accepted, the schema is written when the first app that needs it is designed.
 
 ## Index
@@ -107,7 +107,7 @@ Tier 1 · since 1.0
 | `justify` | `start` \| `center` \| `end` \| `between` \| `around` |  |  |  |
 | `wrap` | boolean |  |  | Horizontal stacks only: flow onto new lines. |
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 
@@ -121,7 +121,7 @@ Tier 1 · since 1.0
 |---|---|---|---|---|
 | `align` | `topLeading` \| `top` \| `topTrailing` \| `leading` \| `center` \| `trailing` \| `bottomLeading` \| `bottom` \| `bottomTrailing` |  |  |  |
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 
@@ -140,7 +140,7 @@ Tier 1 · since 1.0
 | `colSpacing` | spacing 0..8 |  |  |  |
 | `cellAspect` | number |  |  | Cell width / height. |
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 
@@ -159,12 +159,12 @@ Tier 1 · since 1.0
 | `snap` | boolean |  |  |  |
 | `refresh` | boolean |  |  | Enables pull to refresh. |
 
-| Event | Luau prop | Payload | Notes |
+| Event | Lua prop | Payload | Notes |
 |---|---|---|---|
 | `scroll` | `onScroll` | `x: number`, `y: number` | Throttled. |
 | `refresh` | `onRefresh` | none |  |
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 
@@ -192,7 +192,7 @@ A transparent container with no layout. Holds presentation nodes and passes ever
 
 Tier 1 · since 1.0
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 
@@ -206,7 +206,7 @@ Tier 1 · since 1.0
 |---|---|---|---|---|
 | `breakpoint` | number |  | `560` | Container width in px. |
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | `compact` | `compact` | required |
 | `regular` | `regular` | required |
@@ -222,7 +222,7 @@ Tier 1 · since 1.0
 | `scheme` | `light` \| `dark` |  |  |  |
 | `tint` | [`PaletteToken`](#palettetoken) |  |  |  |
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 
@@ -236,7 +236,7 @@ Tier 1 · since 1.0
 |---|---|---|---|---|
 | `when` | boolean | yes |  |  |
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 | `otherwise` | `otherwise` |  |
@@ -252,7 +252,7 @@ Tier 1 · since 1.0
 | `source` | source | yes |  |  |
 | `key` | string |  |  | The row field used as the key (default: the source key). |
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | `row` | `row` | required; at most 1; The row template; `row.*` refs are in scope. |
 
@@ -267,7 +267,7 @@ Tier 1 · since 1.0
 | `size` | `small` \| `medium` \| `large` \| `auto` |  |  |  |
 | `surface` | `solid` \| `material` |  |  |  |
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 
@@ -291,12 +291,12 @@ Accessibility: role `main`.
 | `refresh` | boolean |  |  |  |
 | `background` | `plain` \| `grouped` |  |  |  |
 
-| Event | Luau prop | Payload | Notes |
+| Event | Lua prop | Payload | Notes |
 |---|---|---|---|
 | `searchSubmit` | `onSearchSubmit` | none |  |
 | `refresh` | `onRefresh` | none |  |
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 | `toolbar.leading` | `toolbar = { leading = ... }` |  |
@@ -318,11 +318,11 @@ Tier 1 · since 1.0
 | `path` | Binding (collection) of list of [`Route`](#route) |  |  |  |
 | `rootKey` | string |  |  |  |
 
-| Event | Luau prop | Payload | Notes |
+| Event | Lua prop | Payload | Notes |
 |---|---|---|---|
 | `pathChange` | `onPathChange` | `path: any` |  |
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | `root` | `root` | required; at most 1 |
 | `dest:` | `dest.<name>` | `dest:<route name>`: a destination template; `route.*` refs are in scope. |
@@ -340,7 +340,7 @@ Accessibility: role `link`. **Accessible name required**: set `title` or `label`
 | `to` | [`Route`](#route) | yes |  |  |
 | `title` | string |  |  |  |
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 
@@ -358,7 +358,7 @@ Tier 1 · since 1.0
 | `preferredCompact` | `sidebar` \| `content` \| `detail` |  |  |  |
 | `style` | `balanced` \| `prominentDetail` |  |  |  |
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | `sidebar` | `sidebar` |  |
 | `content` | `content` |  |
@@ -377,7 +377,7 @@ Accessibility: role `tablist`.
 | `selection` | Binding (scalar) of any |  |  | The `tag` of the selected tab. |
 | `style` | `bottom` \| `top` \| `sidebar` \| `page` |  |  |  |
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 
@@ -389,7 +389,7 @@ Tier 2 · since 1.0
 
 *Placeholder: props, events and slots are not final; any prop is accepted.*
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 
@@ -401,7 +401,7 @@ Tier 3 · since 1.0
 
 *Placeholder: props, events and slots are not final; any prop is accepted.*
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 
@@ -413,7 +413,7 @@ Tier 3 · since 1.0
 
 *Placeholder: props, events and slots are not final; any prop is accepted.*
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 
@@ -440,7 +440,7 @@ Accessibility: role `list`.
 | `hasMore` | boolean |  |  |  |
 | `anchor` | `start` \| `end` |  |  | `end` for chat-style lists that stick to the bottom. |
 
-| Event | Luau prop | Payload | Notes |
+| Event | Lua prop | Payload | Notes |
 |---|---|---|---|
 | `tap` | `onTap` | `key: any` |  |
 | `move` | `onMove` | `key: any`, `beforeKey?: any` |  |
@@ -449,7 +449,7 @@ Accessibility: role `list`.
 | `loadMore` | `onLoadMore` | none |  |
 | `selectionChange` | `onSelectionChange` | `keys: any` |  |
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 | `row` | `row` | at most 1; The row template for `source`. |
@@ -470,7 +470,7 @@ Tier 1 · since 1.0
 | `collapsible` | boolean |  |  |  |
 | `expanded` | Binding (scalar) of boolean |  |  |  |
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 | `header` | `header` |  |
@@ -495,11 +495,11 @@ Accessibility: role `listitem`. **Accessible name required**: set `title` or `la
 | `chevron` | boolean |  |  |  |
 | `role` | `normal` \| `destructive` \| `action` |  |  |  |
 
-| Event | Luau prop | Payload | Notes |
+| Event | Lua prop | Payload | Notes |
 |---|---|---|---|
 | `tap` | `onTap` | none |  |
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 | `leading` | `leading` |  |
@@ -515,7 +515,7 @@ Tier 1 · since 1.0
 
 Accessibility: role `form`. 
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 
@@ -531,7 +531,7 @@ Accessibility: **Accessible name required**: set `label`.
 |---|---|---|---|---|
 | `value` | string |  |  |  |
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 
@@ -547,7 +547,7 @@ Accessibility: role `group`. **Accessible name required**: set `label`.
 |---|---|---|---|---|
 | `expanded` | Binding (scalar) of boolean |  |  |  |
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 | `label` | `label` | at most 1 |
@@ -565,12 +565,12 @@ Tier 2 · since 1.0
 | `source` | source |  |  |  |
 | `columns` | any |  |  |  |
 
-| Event | Luau prop | Payload | Notes |
+| Event | Lua prop | Payload | Notes |
 |---|---|---|---|
 | `sort` | `onSort` | none |  |
 | `tap` | `onTap` | none |  |
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 
@@ -582,7 +582,7 @@ Tier 2 · since 1.0
 
 *Placeholder: props, events and slots are not final; any prop is accepted.*
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 
@@ -594,7 +594,7 @@ Tier 2 · since 1.0
 
 *Placeholder: props, events and slots are not final; any prop is accepted.*
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 
@@ -606,7 +606,7 @@ Tier 2 · since 1.0
 
 *Placeholder: props, events and slots are not final; any prop is accepted.*
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 
@@ -622,7 +622,7 @@ Tier 1 · since 1.0 · interactive (needs an explicit `key`)
 |---|---|---|---|---|
 | `shortcut` | string | yes |  |  |
 
-| Event | Luau prop | Payload | Notes |
+| Event | Lua prop | Payload | Notes |
 |---|---|---|---|
 | `trigger` | `onTrigger` | none |  |
 
@@ -646,12 +646,12 @@ Accessibility: role `button`. **Accessible name required**: set `title` or `labe
 | `selected` | boolean |  |  | Pressed state (`aria-pressed`). |
 | `loading` | boolean |  |  |  |
 
-| Event | Luau prop | Payload | Notes |
+| Event | Lua prop | Payload | Notes |
 |---|---|---|---|
 | `tap` | `onTap` | none |  |
 | `longPress` | `onLongPress` | none |  |
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 
@@ -669,11 +669,11 @@ Accessibility: role `switch`. **Accessible name required**: set `title` or `labe
 | `title` | string |  |  |  |
 | `style` | `switch` \| `checkbox` \| `button` |  |  |  |
 
-| Event | Luau prop | Payload | Notes |
+| Event | Lua prop | Payload | Notes |
 |---|---|---|---|
 | `change` | `onChange` | `value: boolean` |  |
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: at most 1 |
 | `label` | `label` | at most 1 |
@@ -696,7 +696,7 @@ Accessibility: role `slider`. **Accessible name required**: set `label`.
 | `minLabel` | string |  |  |  |
 | `maxLabel` | string |  |  |  |
 
-| Event | Luau prop | Payload | Notes |
+| Event | Lua prop | Payload | Notes |
 |---|---|---|---|
 | `editingChange` | `onEditingChange` | `editing: boolean` |  |
 
@@ -716,7 +716,7 @@ Accessibility: role `spinbutton`. **Accessible name required**: set `title` or `
 | `step` | number |  | `1` |  |
 | `title` | string |  |  |  |
 
-| Event | Luau prop | Payload | Notes |
+| Event | Lua prop | Payload | Notes |
 |---|---|---|---|
 | `change` | `onChange` | `value: any` |  |
 
@@ -735,11 +735,11 @@ Accessibility: role `combobox`. **Accessible name required**: set `label`.
 | `style` | `menu` \| `segmented` \| `wheel` \| `inline` \| `navigation` |  | `"menu"` |  |
 | `multiple` | boolean |  |  |  |
 
-| Event | Luau prop | Payload | Notes |
+| Event | Lua prop | Payload | Notes |
 |---|---|---|---|
 | `change` | `onChange` | `value: any` |  |
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | `option:` | `option.<name>` | `option:<value>`: custom option content. |
 
@@ -760,7 +760,7 @@ Accessibility: role `group`. **Accessible name required**: set `label`.
 | `max` | string |  |  |  |
 | `step` | integer |  |  |  |
 
-| Event | Luau prop | Payload | Notes |
+| Event | Lua prop | Payload | Notes |
 |---|---|---|---|
 | `change` | `onChange` | `value: any` |  |
 
@@ -779,7 +779,7 @@ Accessibility: role `group`. **Accessible name required**: set `label`.
 | `custom` | boolean |  |  | Allow any `#rrggbb`. |
 | `opacity` | boolean |  |  |  |
 
-| Event | Luau prop | Payload | Notes |
+| Event | Lua prop | Payload | Notes |
 |---|---|---|---|
 | `change` | `onChange` | `value: any` |  |
 
@@ -804,12 +804,12 @@ Accessibility: role `textbox`. **Accessible name required**: set `label` or `pla
 | `sync` | string |  | `"debounce:300"` | When the value is written back: `change`, `blur`, `submit` or `debounce:<ms>`. |
 | `mask` | string |  |  |  |
 
-| Event | Luau prop | Payload | Notes |
+| Event | Lua prop | Payload | Notes |
 |---|---|---|---|
 | `submit` | `onSubmit` | `value: string` |  |
 | `focusChange` | `onFocusChange` | `focused: boolean` |  |
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | `prefix` | `prefix` | at most 1 |
 | `suffix` | `suffix` | at most 1 |
@@ -828,7 +828,7 @@ Accessibility: role `textbox`. **Accessible name required**: set `label` or `pla
 | `placeholder` | string |  |  |  |
 | `sync` | string |  | `"submit"` | When the value is written back: `change`, `blur`, `submit` or `debounce:<ms>`. |
 
-| Event | Luau prop | Payload | Notes |
+| Event | Lua prop | Payload | Notes |
 |---|---|---|---|
 | `submit` | `onSubmit` | `value: string` |  |
 
@@ -850,7 +850,7 @@ Accessibility: role `textbox`. **Accessible name required**: set `label` or `pla
 | `selection` | Binding (scalar) of any |  |  | Out-binding `{from, to}`. |
 | `spellcheck` | boolean |  |  |  |
 
-| Event | Luau prop | Payload | Notes |
+| Event | Lua prop | Payload | Notes |
 |---|---|---|---|
 | `focusChange` | `onFocusChange` | `focused: boolean` |  |
 
@@ -869,7 +869,7 @@ Accessibility: role `searchbox`. **Accessible name required**: set `label` or `p
 | `scopes` | list of string |  |  |  |
 | `suggestions` | source |  |  |  |
 
-| Event | Luau prop | Payload | Notes |
+| Event | Lua prop | Payload | Notes |
 |---|---|---|---|
 | `submit` | `onSubmit` | `value: string` |  |
 | `cancel` | `onCancel` | none |  |
@@ -882,7 +882,7 @@ Tier 2 · since 1.0
 
 *Placeholder: props, events and slots are not final; any prop is accepted.*
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 
@@ -894,7 +894,7 @@ Tier 3 · since 1.0
 
 *Placeholder: props, events and slots are not final; any prop is accepted.*
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 
@@ -916,11 +916,11 @@ Accessibility: role `dialog`.
 | `detents` | list of `small` \| `medium` \| `large` |  |  |  |
 | `dismissible` | boolean |  |  |  |
 
-| Event | Luau prop | Payload | Notes |
+| Event | Lua prop | Payload | Notes |
 |---|---|---|---|
 | `dismiss` | `onDismiss` | none |  |
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 
@@ -939,11 +939,11 @@ Accessibility: role `dialog`.
 | `edge` | `top` \| `bottom` \| `leading` \| `trailing` |  |  |  |
 | `arrow` | boolean |  |  |  |
 
-| Event | Luau prop | Payload | Notes |
+| Event | Lua prop | Payload | Notes |
 |---|---|---|---|
 | `dismiss` | `onDismiss` | none |  |
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 
@@ -962,11 +962,11 @@ Accessibility: role `alertdialog`.
 | `message` | string |  |  |  |
 | `fields` | list of [`AlertField`](#alertfield) |  |  |  |
 
-| Event | Luau prop | Payload | Notes |
+| Event | Lua prop | Payload | Notes |
 |---|---|---|---|
 | `dismiss` | `onDismiss` | none |  |
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | `actions` | `actions` | Buttons: `role`, preferred. |
 
@@ -985,11 +985,11 @@ Accessibility: role `dialog`.
 | `message` | string |  |  |  |
 | `anchor` | string |  |  |  |
 
-| Event | Luau prop | Payload | Notes |
+| Event | Lua prop | Payload | Notes |
 |---|---|---|---|
 | `dismiss` | `onDismiss` | none |  |
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | `actions` | `actions` |  |
 
@@ -1006,11 +1006,11 @@ Accessibility: role `menu`. **Accessible name required**: set `title` or `label`
 | `title` | string |  |  |  |
 | `icon` | string |  |  |  |
 
-| Event | Luau prop | Payload | Notes |
+| Event | Lua prop | Payload | Notes |
 |---|---|---|---|
 | `primaryAction` | `onPrimaryAction` | none | Tapping the menu itself, when it has a primary action. |
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 
@@ -1022,7 +1022,7 @@ Tier 2 · since 1.0
 
 *Placeholder: props, events and slots are not final; any prop is accepted.*
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 
@@ -1158,11 +1158,11 @@ Tier 1 · since 1.0
 | `title` | string | yes |  |  |
 | `message` | string |  |  |  |
 
-| Event | Luau prop | Payload | Notes |
+| Event | Lua prop | Payload | Notes |
 |---|---|---|---|
 | `action` | `onAction` | none |  |
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | `action` | `action` | at most 1; A call-to-action button. |
 
@@ -1174,7 +1174,7 @@ Tier 2 · since 1.0
 
 *Placeholder: props, events and slots are not final; any prop is accepted.*
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 
@@ -1186,7 +1186,7 @@ Tier 2 · since 1.0
 
 *Placeholder: props, events and slots are not final; any prop is accepted.*
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 
@@ -1198,7 +1198,7 @@ Tier 3 · since 1.0
 
 *Placeholder: props, events and slots are not final; any prop is accepted.*
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 
@@ -1210,7 +1210,7 @@ Tier 3 · since 1.0
 
 *Placeholder: props, events and slots are not final; any prop is accepted.*
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 
@@ -1230,7 +1230,7 @@ Accessibility: role `log`.
 | `placeholder` | string |  |  | The composer's placeholder. |
 | `composer` | boolean |  | `true` | `false` shows the transcript without a composer. |
 
-| Event | Luau prop | Payload | Notes |
+| Event | Lua prop | Payload | Notes |
 |---|---|---|---|
 | `send` | `onSend` | `text: string` | The person sent a message (informational: the client already sent it to the agent). |
 | `stop` | `onStop` | none | The person stopped the running turn. |
@@ -1243,7 +1243,7 @@ Tier 2 · since 1.0
 
 *Placeholder: props, events and slots are not final; any prop is accepted.*
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 
@@ -1255,7 +1255,7 @@ Tier 2 · since 1.0
 
 *Placeholder: props, events and slots are not final; any prop is accepted.*
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 
@@ -1267,7 +1267,7 @@ Tier 3 · since 1.0
 
 *Placeholder: props, events and slots are not final; any prop is accepted.*
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 
@@ -1279,7 +1279,7 @@ Tier 3 · since 1.0
 
 *Placeholder: props, events and slots are not final; any prop is accepted.*
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 
@@ -1291,7 +1291,7 @@ Tier 3 · since 1.0
 
 *Placeholder: props, events and slots are not final; any prop is accepted.*
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 
@@ -1303,7 +1303,7 @@ Tier 3 · since 1.0
 
 *Placeholder: props, events and slots are not final; any prop is accepted.*
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | *(default)* | positional | positional entries: any number of nodes |
 
@@ -1336,13 +1336,13 @@ Every node accepts these. A component's own prop of the same name overrides the 
 | `rowStart` | integer |  |  | Grid child: start row. |
 | `colStart` | integer |  |  | Grid child: start column. |
 
-| Event | Luau prop | Payload | Notes |
+| Event | Lua prop | Payload | Notes |
 |---|---|---|---|
 | `appear` | `onAppear` | none |  |
 | `disappear` | `onDisappear` | none |  |
 | `drop` | `onDrop` | `type: string`, `payload?: any`, `target: any` |  |
 
-| Slot | Luau key | Notes |
+| Slot | Lua key | Notes |
 |---|---|---|
 | `contextMenu` | `contextMenu` | Menu items for long-press / right-click. |
 | `fallback` | `fallback` | Rendered by a client whose kit predates the component. |
@@ -1478,7 +1478,7 @@ Every node accepts these. A component's own prop of the same name overrides the 
 
 A prop value is a literal, a ref, or a call of this closed set. Pure, presentation-only, no loops, no recursion, no I/O: it cannot hang or exfiltrate and costs at most its node count. Anything else is computed on the host.
 
-| Wire name | Luau | Arguments | Notes |
+| Wire name | Lua | Arguments | Notes |
 |---|---|---|---|
 | `not` | `ui.negate` | 1 | Boolean negation. |
 | `and` | `ui.all` | 1+ | True when every argument is truthy. |

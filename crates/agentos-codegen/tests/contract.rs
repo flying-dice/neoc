@@ -1,10 +1,10 @@
 //! Contract tests: drift between the Rust schema and any generated consumer is a build failure.
 //!
 //! * the committed generated files are exactly what the generator writes now;
-//! * every component, expression function and client action is covered by the Luau and TypeScript output;
-//! * the Calculator and Notes examples from `ui-system.md` §4.3 and §4.4 (fixtures, type-checked by
-//!   `bun run lint:luau`) are **run** against the real generated `ui.luau` with the `luau` runner, and the trees
-//!   they render validate against the schema. Without `luau` installed the committed trees are validated instead.
+//! * every component, expression function and client action is covered by the Lua and TypeScript output;
+//! * the Calculator and Notes examples from `ui-system.md` §4.3 and §4.4 (checked by `bun run lint:lua`) are
+//!   **run** against the real generated `ui.lua` with a `lua` interpreter (5.1 or newer), and the trees they
+//!   render validate against the schema. Without `lua` installed the committed trees are validated instead.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
 
 use std::{
@@ -45,67 +45,85 @@ fn generation_is_deterministic() {
     assert_eq!(agentos_codegen::generate(), agentos_codegen::generate());
 }
 
-// ---- Luau output ------------------------------------------------------------------------------------------
+// ---- Lua output -------------------------------------------------------------------------------------------
 
 #[test]
-fn ui_luau_has_a_constructor_for_every_component_and_sugar() {
-    let luau = agentos_codegen::ui_module();
+fn ui_lua_has_a_constructor_for_every_component_and_sugar() {
+    let lua = agentos_codegen::ui_module();
+    let defs = agentos_codegen::ui_module_definitions();
     for c in CATALOGUE {
-        assert!(
-            luau.contains(&format!("function ui.{}(props: {}Props): Node", c.name, c.name)),
-            "{}",
-            c.name
-        );
-        assert!(luau.contains(&format!("export type {}Props = {{", c.name)), "{}", c.name);
+        assert!(lua.contains(&format!("function ui.{}(props)", c.name)), "{}", c.name);
+        assert!(defs.contains(&format!("---@class {}Props\n", c.name)), "{}", c.name);
+        assert!(defs.contains(&format!("function ui.{}(props) end", c.name)), "{}", c.name);
     }
     for (sugar, _) in STACK_SUGAR {
-        assert!(luau.contains(&format!("function ui.{sugar}(props: StackProps): Node")), "{sugar}");
+        assert!(lua.contains(&format!("function ui.{sugar}(props)")), "{sugar}");
+        assert!(defs.contains(&format!("function ui.{sugar}(props) end")), "{sugar}");
     }
 }
 
 #[test]
-fn ui_luau_has_a_helper_for_every_expression_function() {
-    let luau = agentos_codegen::ui_module();
+fn ui_lua_has_a_helper_for_every_expression_function() {
+    let lua = agentos_codegen::ui_module();
     for f in Func::ALL {
         let wire = format!("call(\"{}\"", f.name());
-        assert!(luau.contains(&wire), "no ui helper calls `{}`", f.name());
+        assert!(lua.contains(&wire), "no ui helper calls `{}`", f.name());
     }
     for keyword_safe in ["ui.all", "ui.any", "ui.negate", "ui.when", "ui.concat", "ui.isEmpty", "ui.coalesce"]
     {
-        assert!(luau.contains(&format!("function {keyword_safe}(")), "{keyword_safe}");
+        assert!(lua.contains(&format!("function {keyword_safe}(")), "{keyword_safe}");
     }
-    assert!(luau.contains("function fmt.relative("));
+    assert!(lua.contains("function fmt.relative("));
 }
 
 #[test]
 fn ui_act_covers_exactly_the_domain_actions() {
     let wire: Vec<&str> = agentos_codegen::ACTION_BUILDERS.iter().map(|(_, wire)| *wire).collect();
     assert_eq!(wire, Action::NAMES);
-    let luau = agentos_codegen::ui_module();
+    let lua = agentos_codegen::ui_module();
+    let defs = agentos_codegen::ui_module_definitions();
     for (builder, wire) in agentos_codegen::ACTION_BUILDERS {
-        assert!(luau.contains(&format!("function act.{builder}(")), "act.{builder}");
-        assert!(luau.contains(&format!("[\"do\"] = \"{wire}\"")), "{wire}");
+        assert!(lua.contains(&format!("function act.{builder}(")), "act.{builder}");
+        assert!(defs.contains(&format!("function act.{builder}(")), "act.{builder} definition");
+        assert!(lua.contains(&format!("[\"do\"] = \"{wire}\"")), "{wire}");
+    }
+}
+
+#[test]
+fn ui_lua_is_plain_lua_5_1() {
+    let lua = agentos_codegen::ui_module();
+    assert!(!lua.contains("---@"), "the runtime module carries no annotations: they live in the definitions");
+    let code: String =
+        lua.lines().filter(|line| !line.trim_start().starts_with("--")).collect::<Vec<_>>().join("\n");
+    for luau_only in ["export type", ":: ", " += ", " ..= ", "continue", "`"] {
+        assert!(!code.contains(luau_only), "Luau-only syntax `{luau_only}` in ui.lua");
     }
 }
 
 #[test]
 fn the_definitions_declare_the_app_global_and_the_client_decl() {
-    let defs = agentos_codegen::definitions();
-    assert!(defs.contains("declare app: AppApi"));
-    assert!(defs.contains("type ClientDecl = {"), "ClientDecl comes from the JSON Schema of the Rust type");
-    assert!(defs.contains("type Persist = \"none\" | \"session\" | \"app\""));
+    let defs = agentos_codegen::agentos_definitions();
+    assert!(defs.starts_with("---@meta\n"));
+    assert!(defs.contains("---@class AppApi"));
+    assert!(defs.contains("\napp = nil\n"), "the global `app`");
     assert!(
-        !defs.lines().any(|line| line.trim_start().starts_with("declare class")),
-        "luau-lsp 1.70 rejects `declare class`"
+        defs.contains("---@alias ClientDecl {"),
+        "ClientDecl comes from the JSON Schema of the Rust type"
     );
+    assert!(defs.contains("---@alias Persist \"none\"|\"session\"|\"app\""));
+    assert_eq!(agentos_codegen::app_module_definitions().lines().last(), Some("return app"));
 }
 
 #[test]
-fn core_types_are_identical_in_the_definitions_and_the_module() {
-    let module = agentos_codegen::ui_module();
-    let defs = agentos_codegen::definitions();
-    for line in ["type Ref<T> = {", "type Handler<P> =", "type Child = Node | { Node }", "type Action = {"] {
-        assert!(defs.contains(line) && module.contains(&format!("export {line}")), "{line}");
+fn the_module_definitions_use_the_shared_core_types() {
+    let core = agentos_codegen::agentos_definitions();
+    let module = agentos_codegen::ui_module_definitions();
+    assert!(module.starts_with("---@meta\n"));
+    for ty in ["Ref<T>", "Expr<T>", "Handler<P>", "Child", "Action", "Node"] {
+        assert!(core.contains(&format!("{ty} ")) || core.contains(&format!("{ty}\n")), "{ty} is defined");
+    }
+    for used in ["Expr<", "Handler<", "Child"] {
+        assert!(module.contains(used), "{used} is used by the props");
     }
 }
 
@@ -185,9 +203,14 @@ fn committed(app: &str) -> Value {
         .unwrap()
 }
 
-/// Run an example app's `main` window with the `luau` runner against the generated `ui.luau`. `None` when the
-/// runner is not installed.
-/// Where an example app's Luau lives: the real app under `apps/<app>` when the repo has one (the Calculator), so the
+/// A Lua interpreter (5.1 or newer) on PATH, or `None`.
+fn lua_binary() -> Option<&'static str> {
+    ["lua5.1", "lua", "lua5.4", "lua5.3", "luajit"]
+        .into_iter()
+        .find(|name| Command::new(name).arg("-v").output().is_ok_and(|out| out.status.success()))
+}
+
+/// Where an example app's Lua lives: the real app under `apps/<app>` when the repo has one (the Calculator), so the
 /// contract is checked against what ships, else a fixture (Notes, which exists only as an example).
 fn source_of(app: &str) -> std::path::PathBuf {
     let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps").join(app);
@@ -198,38 +221,32 @@ fn source_of(app: &str) -> std::path::PathBuf {
     }
 }
 
-fn run_luau(app: &str) -> Option<Value> {
-    let work = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("luau-{app}"));
+/// The generated `ui.lua`, written where the interpreter can read it.
+fn write_ui(work: &Path) -> PathBuf {
+    let ui = work.join("ui.lua");
+    fs::write(&ui, agentos_codegen::ui_module()).unwrap();
+    ui
+}
+
+/// Run an example app's `main` window with a `lua` interpreter against the generated `ui.lua`. `None` when no
+/// interpreter is installed.
+fn run_lua(app: &str) -> Option<Value> {
+    let lua = lua_binary()?;
+    let work = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("lua-{app}"));
     let _ = fs::remove_dir_all(&work);
-    fs::create_dir_all(work.join("mods")).unwrap();
-    fs::write(work.join(".luaurc"), r#"{ "aliases": { "agentos": "./mods" } }"#).unwrap();
-    fs::write(work.join("mods/ui.luau"), agentos_codegen::ui_module()).unwrap();
-    fs::copy(fixtures().join("stub/app.luau"), work.join("mods/app.luau")).unwrap();
-    fs::copy(fixtures().join("stub/harness.luau"), work.join("harness.luau")).unwrap();
-    for entry in fs::read_dir(source_of(app)).unwrap() {
-        let entry = entry.unwrap();
-        if entry.path().extension().is_none_or(|e| e != "luau") {
-            continue; // an app folder also holds its manifest, journeys and e2e specs
-        }
-        fs::create_dir_all(work.join(app)).unwrap();
-        let target = work.join(app).join(entry.file_name());
-        if entry.file_name() == "app.luau" {
-            // an app's entry is a script; `require` wants a module, so it returns a value here
-            fs::write(target, fs::read_to_string(entry.path()).unwrap() + "\nreturn true\n").unwrap();
-        } else {
-            fs::copy(entry.path(), target).unwrap();
-        }
-    }
-    let output = Command::new("luau")
+    fs::create_dir_all(&work).unwrap();
+    let ui = write_ui(&work);
+    let output = Command::new(lua)
         .current_dir(&work)
-        .arg("harness.luau")
-        .arg("-a")
-        .arg(format!("./{app}"))
+        .arg(fixtures().join("stub/harness.lua"))
+        .arg(&ui)
+        .arg(fixtures().join("stub/app.lua"))
+        .arg(source_of(app))
         .output()
         .ok()?;
     assert!(
         output.status.success(),
-        "luau failed for {app}:\n{}{}",
+        "{lua} failed for {app}:\n{}{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
@@ -266,7 +283,7 @@ fn the_examples_run_against_the_generated_constructors_and_render_valid_trees() 
     let bless = std::env::var_os("UPDATE_FIXTURES").is_some();
     let mut ran = 0;
     for app in ["calculator", "notes"] {
-        if let Some(fresh) = run_luau(app) {
+        if let Some(fresh) = run_lua(app) {
             ran += 1;
             check_tree(app, &parse(&fresh));
             let path = fixtures().join("trees").join(format!("{app}.json"));
@@ -277,7 +294,7 @@ fn the_examples_run_against_the_generated_constructors_and_render_valid_trees() 
                 assert_eq!(
                     fresh,
                     committed(app),
-                    "{app}: the tree the Luau example renders changed; review it, then run \
+                    "{app}: the tree the Lua example renders changed; review it, then run \
                      `UPDATE_FIXTURES=1 cargo test -p agentos-codegen` to re-bless tests/fixtures/trees/{app}.json"
                 );
             }
@@ -285,23 +302,27 @@ fn the_examples_run_against_the_generated_constructors_and_render_valid_trees() 
     }
     if ran == 0 {
         eprintln!(
-            "skipped running the examples: `luau` is not installed (the committed trees are validated below)"
+            "skipped running the examples: no `lua` interpreter is installed (the committed trees are validated below)"
         );
     }
 }
 
 #[test]
 fn the_constructors_behave_as_documented() {
-    let work = Path::new(env!("CARGO_TARGET_TMPDIR")).join("luau-constructors");
-    let _ = fs::remove_dir_all(&work);
-    fs::create_dir_all(work.join("mods")).unwrap();
-    fs::write(work.join(".luaurc"), r#"{ "aliases": { "agentos": "./mods" } }"#).unwrap();
-    fs::write(work.join("mods/ui.luau"), agentos_codegen::ui_module()).unwrap();
-    fs::copy(fixtures().join("stub/constructors.luau"), work.join("constructors.luau")).unwrap();
-    let Ok(output) = Command::new("luau").current_dir(&work).arg("constructors.luau").output() else {
-        eprintln!("skipped: `luau` is not installed");
+    let Some(lua) = lua_binary() else {
+        eprintln!("skipped: no `lua` interpreter is installed");
         return;
     };
+    let work = Path::new(env!("CARGO_TARGET_TMPDIR")).join("lua-constructors");
+    let _ = fs::remove_dir_all(&work);
+    fs::create_dir_all(&work).unwrap();
+    let ui = write_ui(&work);
+    let output = Command::new(lua)
+        .current_dir(&work)
+        .arg(fixtures().join("stub/constructors.lua"))
+        .arg(&ui)
+        .output()
+        .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         output.status.success() && stdout.trim() == "ok",

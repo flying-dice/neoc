@@ -27,13 +27,13 @@ use std::{
 
 /// Publish the fixture app under `root` as an app ref with the id `id`; returns the `file://` URL of the ref.
 fn publish_app(root: &Path, id: &str) -> String {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/notes/app.luau");
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/notes/app.lua");
     let luau = std::fs::read_to_string(src).unwrap().replace("\"notes\"", &format!("\"{id}\""));
     std::fs::create_dir_all(root).unwrap();
-    // the fixture is Luau: build it to the one Lua 5.1 file an app ref ships
-    std::fs::write(root.join("source.luau"), &luau).unwrap();
-    let luau = String::from_utf8(common::build_lua(&root.join("source.luau"))).unwrap();
-    std::fs::remove_file(root.join("source.luau")).unwrap();
+    // build the fixture with the app pipeline: the one Lua 5.1 file an app ref ships
+    std::fs::write(root.join("source.lua"), &luau).unwrap();
+    let luau = String::from_utf8(common::build_lua(&root.join("source.lua"))).unwrap();
+    std::fs::remove_file(root.join("source.lua")).unwrap();
     std::fs::write(root.join("app.lua"), &luau).unwrap();
     let r = AppRef {
         manifest: Manifest {

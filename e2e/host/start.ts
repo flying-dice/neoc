@@ -33,7 +33,7 @@ run('cargo', ['build', '-q', '-p', 'agentos-acp', '--bin', 'fake_agent']) // the
 // Notes: the codegen fixture, packaged for the registry like any app
 const extra = join(DIR, 'extra-apps/notes')
 mkdirSync(extra, { recursive: true })
-cpSync(join(ROOT, 'crates/agentos-codegen/tests/fixtures/notes/app.luau'), join(extra, 'app.luau'))
+cpSync(join(ROOT, 'crates/agentos-codegen/tests/fixtures/notes/app.lua'), join(extra, 'app.lua'))
 writeFileSync(
   join(extra, 'app.json'),
   JSON.stringify({

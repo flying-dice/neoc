@@ -1,7 +1,6 @@
---!nocheck
--- Runs the generated `ui.luau` constructors and asserts what the docs promise. Executed by the codegen contract
--- test with the `luau` runner (`ui.luau` is copied next to it under the `@agentos` alias); prints `ok`.
-local ui = require("@agentos/ui")
+-- Runs the generated `ui.lua` constructors and asserts what the docs promise. Executed by the codegen contract
+-- test with a `lua` runner: `lua constructors.lua <ui.lua>`; prints `ok`.
+local ui = assert(loadfile((...)))()
 
 local function check(condition, message)
   assert(condition, message)
@@ -13,13 +12,13 @@ local function fails(body, fragment)
   check(string.find(tostring(err), fragment, 1, true) ~= nil, "error was: " .. tostring(err))
 end
 
--- positional entries are children, nil and nested lists are flattened, children get auto keys
+-- positional entries are children, a trailing nil and nested lists are flattened, children get auto keys
 local stack = ui.VStack {
   key = "s",
   spacing = 2,
   ui.Text { "a" },
-  nil,
   { ui.Text { "b" }, ui.Text { "c", key = "named" } },
+  nil,
 }
 check(stack.type == "Stack" and stack.key == "s", "VStack is a Stack")
 check(stack.props.axis == "v" and stack.props.spacing == 2, "VStack sets axis")
@@ -107,7 +106,7 @@ check(ui.act.set("client.q", 2).ref == "client.q", "act.set takes a path")
 check(ui.act.seq({ set, ui.act.toggle(ref) }).actions[2]["do"] == "toggle", "act.seq")
 check(ui.act.push({ name = "note", id = 7 }).route.id == 7, "act.push")
 check(ui.act.emit("done", { x = 1 }).payload.x == 1, "act.emit")
-for _, name in { "pop", "popToRoot" } do
+for _, name in ipairs { "pop", "popToRoot" } do
   check(ui.act[name]()["do"] ~= nil, name)
 end
 

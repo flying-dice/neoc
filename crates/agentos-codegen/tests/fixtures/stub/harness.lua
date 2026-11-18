@@ -1,8 +1,14 @@
---!nocheck
--- Runs one fixture app's window and prints what the host would send in `view.open`, as JSON:
---   luau harness.luau <app dir> [window]
--- The Luau closures in `on` become what the wire carries (`true`, or the client actions with an `emit` for each
--- function), and the source and client declarations come from the stub host.
+-- Runs one example app's `main` window and prints what the host would send in `view.open`, as JSON:
+--   lua harness.lua <ui.lua> <stub app.lua> <app dir>
+-- The generated `ui.lua` is `@agentos/ui` and the stub is `@agentos/app` (the app's own `./modules` resolve inside
+-- its folder). The Lua closures in `on` become what the wire carries (`true`, or the client actions with an `emit`
+-- for each function), and the source and client declarations come from the stub host. Any Lua 5.1+ runs it.
+local uiPath, stubPath, dir = ...
+unpack = unpack or table.unpack
+
+package.path = dir .. "/?.lua;" .. package.path
+package.preload["@agentos/ui"] = assert(loadfile(uiPath))
+package.preload["@agentos/app"] = assert(loadfile(stubPath))
 local app = require("@agentos/app")
 
 local OBJECT = {}
@@ -28,12 +34,12 @@ local function encode(value, out)
     local isObject = getmetatable(value) == OBJECT or (next(value) ~= nil and #value == 0)
     if isObject then
       local keys = {}
-      for key in value do
+      for key in pairs(value) do
         table.insert(keys, key)
       end
       table.sort(keys)
       table.insert(out, "{")
-      for i, key in keys do
+      for i, key in ipairs(keys) do
         if i > 1 then
           table.insert(out, ",")
         end
@@ -64,7 +70,7 @@ local function wireHandler(handler)
   end
   local wire = {}
   local sendsToApp = false
-  for _, item in handler do
+  for _, item in ipairs(handler) do
     if type(item) == "function" then
       sendsToApp = true
     else
@@ -81,21 +87,21 @@ local function wireNode(node)
   local copy = { type = node.type, key = node.key, props = node.props }
   if node.on then
     copy.on = {}
-    for event, handler in node.on do
+    for event, handler in pairs(node.on) do
       copy.on[event] = wireHandler(handler)
     end
   end
   if node.children then
     copy.children = {}
-    for _, child in node.children do
+    for _, child in ipairs(node.children) do
       table.insert(copy.children, wireNode(child))
     end
   end
   if node.slots then
     copy.slots = {}
-    for name, list in node.slots do
+    for name, list in pairs(node.slots) do
       copy.slots[name] = {}
-      for _, child in list do
+      for _, child in ipairs(list) do
         table.insert(copy.slots[name], wireNode(child))
       end
     end
@@ -103,16 +109,15 @@ local function wireNode(node)
   return copy
 end
 
-local dir = ...
-require(dir .. "/app")
+dofile(dir .. "/app.lua")
 local tree, clientDecls, sources = app.__render("main")
 
 local decls = {}
-for name, decl in clientDecls do
+for name, decl in pairs(clientDecls) do
   decls[name] = { init = decl.init, persist = decl.persist, sync = decl.sync }
 end
 local sourceDecls = {}
-for id, source in sources do
+for id, source in pairs(sources) do
   sourceDecls[id] = {
     kind = source.kind,
     key = source.key,

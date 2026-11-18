@@ -1,8 +1,8 @@
 /**
- * The Lua 5.1 build of the Luau apps (scripts/lua51.ts, .darklua.json, lua/prelude.luau):
- *  - always: the sources avoid what darklua cannot lower (generalized iteration) and what the prelude does not
- *    provide, every app bundles into one file whose only requires are `@agentos/*`, non-ASCII text survives as
- *    decimal byte escapes, and the polyfills agree with a native Lua 5.3+ when one is installed;
+ * Apps as plain Lua 5.1 (scripts/lua51.ts, .darklua.json, lua/prelude.lua):
+ *  - always: the sources stay plain Lua 5.1 (no Luau syntax) and use only what Lua 5.1 and the prelude provide,
+ *    every app bundles into one file whose only requires are `@agentos/*`, non-ASCII text survives the bundle
+ *    untouched, and the polyfills agree with a native Lua 5.3+ when one is installed;
  *  - with a real Lua 5.1 (`lua5.1`, `lua-5.1`, `lua51`, or `lua` when it is 5.1; override with LUA51=<path>): the
  *    prelude, ui.lua and every app bundle load and their top levels run. Without one these tests skip with a message.
  */
@@ -12,25 +12,25 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { DARKLUA_VERSION, findDarklua, root, toLua51, utf8Escapes } from './lua51'
+import { DARKLUA_VERSION, findDarklua, root, toLua51 } from './lua51'
 
 const SKIP_DIRS = ['node_modules/', 'target/', '.claude/', '/tests/', '/e2e/', '/negative/', 'dist/']
 
-function luauSources(patterns: string[]): string[] {
+function luaSources(patterns: string[]): string[] {
   const found: string[] = []
   for (const pattern of patterns) {
     for (const file of new Glob(pattern).scanSync({ cwd: root })) {
-      if (!SKIP_DIRS.some((dir) => `/${file}`.includes(dir)) && !file.endsWith('.d.luau')) found.push(file)
+      if (!SKIP_DIRS.some((dir) => `/${file}`.includes(dir))) found.push(file)
     }
   }
   return found.sort()
 }
 
-const shipped = luauSources(['apps/**/*.luau', 'lua/*.luau', 'types/generated/ui.luau'])
+const shipped = luaSources(['apps/**/*.lua', 'lua/*.lua', 'types/generated/ui.lua'])
 const apps = [...new Glob('apps/*/app.json').scanSync({ cwd: root })].sort()
 
 function entryOf(manifest: string): string {
-  const main = (JSON.parse(readFileSync(join(root, manifest), 'utf8')) as { main?: string }).main ?? 'app.luau'
+  const main = (JSON.parse(readFileSync(join(root, manifest), 'utf8')) as { main?: string }).main ?? 'app.lua'
   return join(root, dirname(manifest), main)
 }
 
@@ -42,34 +42,24 @@ function code(file: string): string {
     .join('\n')
 }
 
-describe('Luau sources that must lower to Lua 5.1', () => {
+describe('Lua sources stay plain Lua 5.1', () => {
   test('there are sources to check', () => {
     expect(shipped.length).toBeGreaterThan(3)
   })
 
   for (const file of shipped) {
-    test(`${file} avoids what neither darklua nor the prelude provides`, () => {
+    test(`${file} avoids Luau syntax and library members Lua 5.1 and the prelude lack`, () => {
       const source = code(file)
-      // `for k, v in tbl do` (generalized iteration) has no darklua rule: write pairs(tbl) or ipairs(tbl)
+      // Luau-only syntax: compound assignment, `continue`, interpolated strings, type casts, type declarations
+      expect(source.match(/\+=|-=|\.\.=|\bcontinue\b|`|\bexport type\b|\)\s*::\s*\w/)?.[0]).toBeUndefined()
+      // `for k, v in tbl do` (generalized iteration) is Luau: write pairs(tbl) or ipairs(tbl)
       expect(source.match(/^\s*for\s+[\w, ]+\s+in\s+[\w.[\]]+\s+do\b/m)?.[0]).toBeUndefined()
-      // Luau-only library members the prelude does not provide
+      // Library members neither Lua 5.1 nor the prelude provide
       const unprovided =
         /\b(?:table\.(?:find|freeze|isfrozen|create|clear)|math\.(?:clamp|round|sign|noise|lerp)|string\.split|bit32\.\w+|buffer\.\w+|task\.(?:spawn|wait|defer|delay))\b/
       expect(source.match(unprovided)?.[0]).toBeUndefined()
     })
   }
-})
-
-describe('utf8Escapes', () => {
-  test('writes a non-ASCII character as the decimal escapes of its UTF-8 bytes', () => {
-    expect(utf8Escapes(String.raw`x = '\u{d7}\u{20ac}\u{1f600}'`)).toBe(
-      String.raw`x = '\195\151\226\130\172\240\159\152\128'`
-    )
-  })
-
-  test('leaves an escaped backslash before u{ alone', () => {
-    expect(utf8Escapes(String.raw`'\\u{41}'`)).toBe(String.raw`'\\u{41}'`)
-  })
 })
 
 describe('darklua', () => {
@@ -79,12 +69,6 @@ describe('darklua', () => {
   })
   if (!darklua) return
 
-  test('strips types and lowers the Luau-only syntax', () => {
-    const out = toLua51(darklua, join(root, 'types/generated/ui.luau'))
-    expect(out).not.toMatch(/\bcontinue\b|`|\+=|\.\.=|::|\bexport type\b|\\u\{/)
-    expect(out).not.toMatch(/:\s*(?:number|string|boolean|any)\b\s*[,)=]/)
-  })
-
   for (const manifest of apps) {
     const dir = dirname(manifest)
     test(`${dir} bundles into one file that requires only @agentos modules`, () => {
@@ -92,9 +76,16 @@ describe('darklua', () => {
       const required = [...out.matchAll(/\brequire\s*\(\s*(['"])(.*?)\1\s*\)/g)].map((m) => m[2])
       expect(required.length).toBeGreaterThan(0)
       expect(required.filter((name) => !name?.startsWith('@agentos/'))).toEqual([])
-      expect(out).not.toMatch(/\bcontinue\b|`|\+=|::|\\u\{/)
+      // darklua's own bundle prelude must not leave Luau syntax behind
+      expect(out).not.toMatch(/::|\\u\{/)
     })
   }
+
+  test('keeps non-ASCII text as it is written (Lua 5.1 reads raw UTF-8 bytes in a string)', () => {
+    const out = toLua51(darklua, join(root, 'apps/calculator/app.lua'))
+    expect(out).toContain('"×"')
+    expect(out).not.toMatch(/\\u\{/)
+  })
 })
 
 function interpreter(accept: (version: string) => boolean): string | undefined {

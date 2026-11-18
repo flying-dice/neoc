@@ -353,5 +353,5 @@ pub fn built_app(app: &str) -> Vec<u8> {
     } else {
         manifest.join("../agentos-codegen/tests/fixtures").join(app)
     };
-    build_lua(&dir.join("app.luau"))
+    build_lua(&dir.join("app.lua"))
 }

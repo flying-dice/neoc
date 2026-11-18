@@ -62,7 +62,7 @@ Journeys and stories are a starting backlog shaped by hypotheses, not validated 
 
 ## In AgentOS
 
-Run this before the first line of a **new app** (a Luau app in `apps/<app>/`, or a new built-in shell page), and before
+Run this before the first line of a **new app** (a Lua app in `apps/<app>/`, or a new built-in shell page), and before
 a redesign that changes what an app is for. It is step 0 of the `app-design` loop.
 
 - **The brief** is the app's GitHub issue plus what the platform gives every app (`apps/README.md`: windows and view

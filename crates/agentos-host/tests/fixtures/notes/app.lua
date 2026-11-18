@@ -1,7 +1,5 @@
---!strict
 -- Sample app for the host end-to-end tests: a small Notes data model with live sources, a two-way bound
 -- row and agent tools (no window: the view journeys use the Notes and Calculator of the spec).
--- Type-checked by `bun run lint:luau`.
 local app = require("@agentos/app")
 local t = app.t
 local db = app.db
@@ -34,7 +32,7 @@ local noteCount = db:scalar("select count(*) from notes")
 local note = db:row("select id, body, rev, updated_at, author from notes where id = :id", {
   key = "id",
   rev = "rev",
-  write = function(id: number, field: string, value: any, ctx)
+  write = function(id, field, value, ctx)
     assert(field == "body", "only the body is two-way bound")
     db:exec(
       "update notes set body = :v, rev = rev + 1, updated_at = :now, author = :who where id = :id",
@@ -72,7 +70,7 @@ app.tools.register {
       { text = input.text, id = input.id, now = ctx.now, who = ctx.actor.name }
     )
     if r.changes == 0 then
-      return ctx:fail(`No note with id {input.id}`)
+      return ctx:fail("No note with id " .. input.id)
     end
     return { id = input.id }
   end,

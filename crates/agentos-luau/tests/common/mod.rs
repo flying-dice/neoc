@@ -104,5 +104,5 @@ pub fn built_app(app: &str) -> AppPackage {
     } else {
         manifest.join("../agentos-codegen/tests/fixtures").join(app)
     };
-    built_package(&dir.join("app.luau"))
+    built_package(&dir.join("app.lua"))
 }

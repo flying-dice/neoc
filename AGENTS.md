@@ -6,15 +6,15 @@ AgentOS is an iPadOS-style virtual desktop for agents. It has three parts:
   data, serves the client, and speaks JSON-RPC 2.0 over WebSocket at `/rpc`, AG-UI over HTTP + SSE at `/agui` (agent
   chats), MCP at `/mcp` (the tools agents call) and ACP to the agent processes it launches. It binds the LAN and every
   client must pair as a device first.
-- **The apps** (`apps/<id>/`): server-side code **authored in Luau** (`app.json` + `*.luau`, type-checked strict) and
-  **run as Lua 5.1**: `bun run build:apps` turns an app into one bundled `app.lua` with darklua, and the host runs that
+- **The apps** (`apps/<id>/`): server-side code **authored in plain Lua 5.1** (`app.json` + `*.lua`, checked by
+  lua-language-server against generated LuaCATS definitions): `bun run build:apps` bundles an app into one `app.lua` with darklua, and the host runs that
   in one sandboxed VM per app, loaded from an app ref over `file://`, `http://` or `https://`. An app holds its state,
   data, tools, notifications and UI description. Examples: `apps/calculator`, `apps/agents`.
 - **The client** (`client/`): a managed Vite + Svelte 5 PWA. It renders the view trees the host sends with the kit in
   `packages/ui` (atomic layers) through adapters in `client/src/view/`, holds client-managed state, and
   runs **no app code**.
 
-Bun workspaces cover `client` and `packages/*` (an app is Luau, `app.json` + `*.luau`, not a Bun package); Cargo covers
+Bun workspaces cover `client` and `packages/*` (an app is Lua, `app.json` + `*.lua`, not a Bun package); Cargo covers
 `crates/*`.
 
 The direction is a self-hosted home lab: apps can provide LAN services such as DNS, DHCP and container-backed services,
@@ -26,9 +26,9 @@ so AgentOS can stand in for the services people run on a home NAS.
 |---|---|
 | The platform: shape, crates, decisions | `docs/architecture/ARCHITECTURE.md` |
 | The host: ports, adapters, pairing, config, `/agui`, tool permissions | `docs/architecture/host-stack.md` |
-| The server-driven UI: view protocol, bindings, state, the Luau authoring API | `docs/architecture/ui-system.md`, `docs/reference/components.md` (generated) |
+| The server-driven UI: view protocol, bindings, state, the Lua authoring API | `docs/architecture/ui-system.md`, `docs/reference/components.md` (generated) |
 | The client: shell, renderer, adding a component | `client/README.md` |
-| Writing an app: manifest, `app.*` API, security, adding an app | `apps/README.md`, `types/generated/agentos.d.luau` (the typed API) |
+| Writing an app: manifest, `app.*` API, security, adding an app | `apps/README.md`, `types/generated/luals/` (the generated LuaCATS definitions of the API) |
 | Tests, test ids, headless runs | `docs/TESTING.md` |
 | Design language, WCAG AA, §11 checklist | `docs/design/DESIGN_LANGUAGE.md` |
 
@@ -63,7 +63,7 @@ A change is done when all of these hold:
    adapters, the host end to end), `bun test` for client and kit logic, a story per new screen or state (a kit
    component's own story, or a JSON-tree story on a fake host for a renderer or shell state), a journey spec per new
    or changed journey. Changed snapshots were looked at.
-3. Every interactive element has a `data-testid` (kit components take a required `testid` prop; a Luau app's
+3. Every interactive element has a `data-testid` (kit components take a required `testid` prop; a Lua app's
    interactive nodes have a `key`); it works by keyboard, in light and dark, and at the app's minimum window.
 4. UI changes carry a `verify-change` "Manual verification" record in the PR.
 5. For a new app or a change people will notice in one: the readiness gate in `agentos-code-review` §6 holds,
@@ -113,7 +113,7 @@ Also: atomic layers (`lint:atomic`, in `packages/ui` and `client/src`) and test 
 
 | When | Skill |
 |---|---|
-| Writing or changing code (Rust, Luau, Svelte/TypeScript) | `coding-styleguide` |
+| Writing or changing code (Rust, Lua, Svelte/TypeScript) | `coding-styleguide` |
 | Before pushing | `clean-code-review`, then `pre-commit` (loops until clean; `refactor` clears markers) |
 | Every MR, and before calling a branch ready | `agentos-code-review` (verdict: READY TO MERGE or STAYS IN MR) |
 | Any change to what a person sees or does | `verify-change` |
@@ -130,11 +130,11 @@ bun run build           # build the client (client/dist)
 bun run host            # cargo run -p agentos-host: serves client/dist, /rpc, /agui, /mcp on :7400
 bun run host pair       # print a fresh device pairing code (every client must pair; see host-stack.md)
 bun start               # the same host, release build
-bun run lint            # conflict markers + atomic layers + test ids + boundaries + rust + luau + stylua + codegen:check + package eslint
+bun run lint            # conflict markers + atomic layers + test ids + boundaries + rust + lua + stylua + codegen:check + package eslint
 bun run lint:conflicts  # leftover merge-conflict markers in tracked files (runs first)
 bun run lint:rust       # cargo fmt --check, clippy -D warnings, lint:deps (crate direction), cargo deny
-bun run lint:luau       # luau-lsp analyze of every app against types/generated (strict, plus a negative fixture)
-bun run lint:stylua     # StyLua check (skipped with a message when luau-lsp or stylua is not installed)
+bun run lint:lua        # lua-language-server --check of every app against types/generated/luals (plus negative fixtures)
+bun run lint:stylua     # StyLua check (skipped with a message when stylua is not installed)
 bun run typecheck       # cargo check --workspace --all-targets + tsc on types/ + svelte-check in each package
 bun run test            # cargo nextest run --workspace + bun test (types, scripts, client, kit)
 bun run format          # prettier + cargo fmt + StyLua
@@ -150,7 +150,7 @@ bun scripts/design-audit.ts <page>  # static styleguide audit of a built-in shel
 Visual baselines (`e2e/__screenshots__`) are macOS-only, so run `test:e2e` on a Mac. There is no hosted CI: the
 `pre-commit` skill runs the gate and `agentos-code-review` checks it. Needed tools: Rust (the pinned toolchain),
 `cargo-nextest`, `cargo-deny`, Bun, `darklua` 0.18.0 (`cargo install darklua --version 0.18.0 --locked`; building the
-apps and `bun run codegen` fail without it, they never skip) and, for the Luau checks, `luau-lsp` and `stylua`. A real
+apps fail without it, they never skip) and, for the Lua checks, `lua-language-server` 3.19.2 (`brew install lua-language-server`) and `stylua`. A real
 Lua 5.1 interpreter (`lua5.1` on PATH or `LUA51=<path>`) is optional: with it `bun test scripts` also loads the
 bundled apps.
 
@@ -161,6 +161,6 @@ with a `window` min size (and a comment when the layout needs more than 320x240)
 `e2e/journeys.spec.ts`, and a Rust test of its logic and tools next to the others in `crates/agentos-luau/tests`.
 The generic `desktop` project opens every `apps/*/app.json` in the real shell (sizes, layouts, light and dark, axe,
 snapshots) with no extra code; each screen and state beyond the landing view is reached by a journey, or, when a
-journey can't reach it cheaply, shown by a JSON-tree story in the client Storybook. The app is `luau-lsp`-strict and
+journey can't reach it cheaply, shown by a JSON-tree story in the client Storybook. The app is `lint:lua` and
 StyLua clean from the first commit. Then design it with `app-design` until the exit criteria hold; until then it
 stays in its MR.
