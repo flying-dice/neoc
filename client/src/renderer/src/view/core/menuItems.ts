@@ -9,13 +9,7 @@ import { icons, type IconName, type MenuItem } from '@agentos/ui'
 import type { Json, Node } from '../protocol'
 import { parseShortcut } from './shortcuts'
 import { childPath } from './tree'
-import {
-  choose,
-  optionsFromRows,
-  parseOptions,
-  selectedKeys,
-  type PickerOption
-} from './options'
+import { choose, optionsFromRows, parseOptions, selectedKeys, type PickerOption } from './options'
 import type { Scope, ViewCore } from './view'
 
 const text = (v: unknown): string => (v === undefined || v === null ? '' : String(v))
