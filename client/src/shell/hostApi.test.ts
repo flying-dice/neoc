@@ -3,10 +3,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { ago, iconOf, tintBackground } from './hostApi'
 
-const generated = readFileSync(
-  join(import.meta.dir, '../../../types/generated/agentos.ts'),
-  'utf8'
-)
+const generated = readFileSync(join(import.meta.dir, '../../../types/generated/agentos.ts'), 'utf8')
 
 /** The field names of `export type <name> = { ... }` in the generated TypeScript (these types are flat). */
 function fieldsOf(name: string): string[] {
