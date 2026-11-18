@@ -58,12 +58,12 @@ async function until(check: () => boolean, label = 'condition'): Promise<void> {
 const kinds = (chat: ChatSession): string[] => chat.getState().items.map((i) => i.kind)
 
 describe('thread ids are scoped to the app that names them', () => {
-  test('an app\'s thread id gets the app as a prefix, so two apps naming the same id get different threads', () => {
+  test("an app's thread id gets the app as a prefix, so two apps naming the same id get different threads", () => {
     expect(scopedThread('agents', 't1')).toBe('agents:t1')
     expect(scopedThread('notes', 't1')).not.toBe(scopedThread('agents', 't1'))
   })
 
-  test('an app cannot reach another app\'s thread by putting the other prefix in its id', () => {
+  test("an app cannot reach another app's thread by putting the other prefix in its id", () => {
     // the prefix is always the opener's: "notes" naming "agents:t1" gets notes:agents:t1, never agents:t1
     expect(scopedThread('notes', 'agents:t1')).toBe('notes:agents:t1')
   })

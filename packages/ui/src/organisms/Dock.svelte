@@ -14,18 +14,14 @@
     /** Shown after a divider, like iPadOS suggested & recent apps. */
     recents?: DockApp[]
     iconSize?: number
-    /** `ipados`: floating, roomy tray. `macos`: compact tray, tooltips, running dots. */
-    variant?: 'ipados' | 'macos'
     onselect?: (id: string) => void
   }
 
-  let { testid, apps, recents = [], iconSize, variant = 'ipados', onselect }: Props = $props()
-  const size = $derived(iconSize ?? (variant === 'macos' ? 50 : 58))
-  const mac = $derived(variant === 'macos')
+  let { testid, apps, recents = [], iconSize = 58, onselect }: Props = $props()
 </script>
 
-<Material thickness="thin" radius={mac ? '18px' : 'var(--radius-dock)'} class="ios-dock">
-  <div class="tray {variant}" data-testid={testid}>
+<Material thickness="thin" radius="var(--radius-dock)" class="ios-dock">
+  <div class="tray" data-testid={testid}>
     {#each apps as app (app.id)}
       <AppIcon
         testid="{testid}-{app.id}"
@@ -34,9 +30,8 @@
         background={app.background}
         badge={app.badge}
         running={app.running}
-        size={size}
+        size={iconSize}
         showLabel={false}
-        tooltip={mac}
         onclick={() => onselect?.(app.id)}
       />
     {/each}
@@ -50,10 +45,9 @@
           background={app.background}
           badge={app.badge}
           running={app.running}
-          size={size}
+          size={iconSize}
           showLabel={false}
-          tooltip={mac}
-          onclick={() => onselect?.(app.id)}
+            onclick={() => onselect?.(app.id)}
         />
       {/each}
     {/if}
@@ -70,18 +64,6 @@
     box-shadow:
       inset 0 0 0 0.5px rgb(255 255 255 / 0.25),
       0 10px 30px rgb(0 0 0 / 0.18);
-  }
-  .tray.macos {
-    gap: 8px;
-    padding: 5px 7px 9px;
-    border-radius: 18px;
-  }
-  .macos :global(.running) {
-    bottom: -7px;
-    width: 4px;
-    height: 4px;
-    background: var(--label);
-    opacity: 0.6;
   }
   .divider {
     align-self: stretch;

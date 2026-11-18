@@ -2,7 +2,7 @@
  * Avatar and Image helpers: initials from a name, a stable fallback colour for a name, and which image sources
  * the kit will load at all. An image URL is app-supplied (untrusted): only `https:` and same-origin paths load.
  */
-import { PALETTE_TOKENS, type PaletteToken } from './contrast'
+import type { PaletteToken } from './contrast'
 
 /** Two letters at most: the first letters of the first and last words ("Ada Lovelace" -> "AL", "Ada" -> "A"). */
 export function initials(name: string): string {
@@ -34,9 +34,6 @@ export function colorForName(name: string): PaletteToken {
   for (const ch of name) h = ((h << 5) + h + (ch.codePointAt(0) ?? 0)) | 0
   return AUTO[Math.abs(h) % AUTO.length]!
 }
-
-export const isKnownToken = (v: string): v is PaletteToken =>
-  (PALETTE_TOKENS as readonly string[]).includes(v)
 
 /** An image source the kit may load: an https URL, or a same-origin absolute path. Everything else is refused. */
 export function safeImageSrc(src: unknown): string | null {

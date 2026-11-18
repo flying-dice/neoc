@@ -404,7 +404,6 @@
     >
       <Menu
         testid="{baseId}-context-menu"
-        variant="ios"
         label="{label} actions"
         {items}
         autofocus

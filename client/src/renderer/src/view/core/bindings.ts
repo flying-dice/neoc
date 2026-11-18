@@ -24,7 +24,7 @@
  * Scalar controls are human-wins: the host returns the user's value, and a value that changed elsewhere in the
  * meantime is overwritten (the host keeps it in the revision ring).
  */
-import type { Json, ResumeDraft, RowKey, WriteResolution, WriteResult } from '../protocol'
+import type { Json, ResumeDraft, RowKey, WriteResult } from '../protocol'
 import { isConnectionError } from '../rpc/peer'
 import { bindingKey, type BindingTarget, type ViewStore } from './store'
 import { rebase } from './textMerge'
@@ -65,7 +65,6 @@ export type WriteAck = WriteResult
  *  - replaced: an overlap resolved to the user's value (`undo` names the revision that lost);
  *  - rejected: the host refused the write (`conflict = "reject"` sources).
  */
-export type Resolution = WriteResolution
 
 export const sameJson = (a: Json | undefined, b: Json | undefined): boolean =>
   a === b || JSON.stringify(a) === JSON.stringify(b)

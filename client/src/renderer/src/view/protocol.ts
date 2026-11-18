@@ -46,7 +46,6 @@ export type Row = { [field: string]: Json }
 export type StateValue = G.StateValue
 
 export type SourceDecl = G.SourceDecl
-export type SourceKind = SourceDecl['kind']
 export type ClientDecl = G.ClientDecl
 export type SourcePatch = G.SourcePatch
 export type RowsPatch = Extract<SourcePatch, { kind: 'rows' }>
@@ -57,16 +56,12 @@ export type ViewSnapshot = G.ViewSnapshot
 export type WindowSize = G.Size
 export type ResumeDraft = G.Draft
 export type ViewOpenParams = G.ViewOpen
-export type SessionHelloParams = G.SessionHello
 export type SessionHelloResult = G.SessionWelcome
 export type ViewEventParams = G.ViewEvent
 export type ViewEventResult = G.EventAck
-export type StateSetParams = G.StateSet
-export type RowSetParams = G.RowSet
 /** The ack of a two-way write: the authoritative value and revision (spec 3.4 rule 6). */
 export type WriteResult = G.WriteAck
 export type WriteResolution = G.WriteResolution
-export type RowRestoreParams = G.RowRestore
 export type SourceSetParams = G.SourceSet
 
 type Entry<K extends 'request' | 'notification', D extends 'clientToHost' | 'hostToClient'> = {
@@ -106,12 +101,10 @@ export const AppErrorCode = {
 } as const
 
 export type RequestMethod = keyof RequestMethods
-export type HostNotificationMethod = keyof HostNotifications
 
 // ── Host management: the shell's own calls (`app.*`, `agents.*`, `host.devices.*`) ─────────────────────────
 
 export type HostAppState = G.AppState
-export type HostAppWindow = G.AppWindow
 export type HostAppSummary = G.AppSummary
 export type HostInstalledInfo = G.InstalledInfo
 export type HostAppPreview = G.AppPreview

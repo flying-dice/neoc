@@ -10,7 +10,6 @@ import type {
   HostAppPreview,
   HostAppState,
   HostAppSummary,
-  HostAppWindow,
   HostCatalog,
   HostDeviceRow,
   HostInstalledInfo
@@ -20,7 +19,6 @@ import type {
 // `view/protocol.ts`, the renderer's one door to `types/generated`) under the names the shell uses, so a wire
 // change is a compile error there and here, and nowhere else.
 export type AppState = HostAppState
-export type AppWindowDecl = HostAppWindow
 export type AppSummary = HostAppSummary
 export type InstalledInfo = HostInstalledInfo
 export type AppPreview = HostAppPreview

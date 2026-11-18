@@ -4,7 +4,12 @@
   import AppWindow from '@agentos/storybook/AppWindow.svelte'
   import ViewHost from '../organisms/ViewHost.svelte'
   import type { FakeRun } from '../host/fakeAgui'
-  import { openChatStory, storyThreadPath, type ChatScenario, type ChatStoryHandle } from '../host/chatStory'
+  import {
+    openChatStory,
+    storyThreadPath,
+    type ChatScenario,
+    type ChatStoryHandle
+  } from '../host/chatStory'
   import { until } from '../host/storyKit'
 
   /** A control's hit area, in CSS pixels: every touch target is at least 44 x 44. */
@@ -211,9 +216,7 @@
     await waitFor(() => expect(canvas.getByText(/This will/)).toBeVisible())
     await userEvent.click(await chat(canvas, 'composer-stop'))
     const { agui, app } = await story()
-    await waitFor(() =>
-      expect(agui.callsTo('POST', `${storyThreadPath()}/cancel`)).toHaveLength(1)
-    )
+    await waitFor(() => expect(agui.callsTo('POST', `${storyThreadPath()}/cancel`)).toHaveLength(1))
     await waitFor(() => expect(canvas.queryByTestId('agents-chat-composer-stop')).toBeNull())
     await expect(app.events.map((e) => e.event)).toEqual(['send', 'stop'])
   }}

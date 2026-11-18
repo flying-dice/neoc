@@ -74,10 +74,6 @@ impl ScriptedData {
         all.retain(|(k, _)| k != sql_fragment);
         all.push((sql_fragment.to_owned(), rows));
     }
-    /// The tables `analyze` reports (default: `notes`).
-    pub fn set_tables(&self, tables: &[&str]) {
-        *self.0.tables.lock().unwrap() = tables.iter().map(|t| (*t).to_owned()).collect();
-    }
     /// Every query fails with this message while it is non-empty.
     pub fn fail_queries(&self, message: &str) {
         message.clone_into(&mut self.0.fail.lock().unwrap());

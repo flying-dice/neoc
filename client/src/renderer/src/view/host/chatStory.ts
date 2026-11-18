@@ -90,7 +90,8 @@ export interface ChatStoryHandle {
 /** The story app is `agents`; the `/agui` id of its thread `id` (default `thread-1`), as the renderer scopes it. */
 export const storyThread = (id = 'thread-1'): string => scopedThread(STORY_APP, id) ?? id
 /** The `/agui` path of the story thread, encoded the way the session requests it. */
-export const storyThreadPath = (id?: string): string => `/agui/threads/${encodeURIComponent(storyThread(id))}`
+export const storyThreadPath = (id?: string): string =>
+  `/agui/threads/${encodeURIComponent(storyThread(id))}`
 
 export async function openChatStory(scenario: ChatScenario = {}): Promise<ChatStoryHandle> {
   const agui = new FakeAgui({ state: demoState(), ...scenario.agui })

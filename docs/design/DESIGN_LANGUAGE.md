@@ -160,7 +160,7 @@ Exactly these shadows, by plane:
 | Element | Behaviour |
 |---|---|
 | **Wallpaper** | full-bleed, behind everything. |
-| **Status bar** (28 px) | time and date leading, indicators trailing, white text over the wallpaper. Also the window drag region on macOS hosts. |
+| **Status bar** (28 px) | time and date leading, indicators trailing, white text over the wallpaper. |
 | **Recent-apps strip** | left edge, 150 px, one thumbnail per stage (app group). Hides when a window overlaps it or the stage is full screen, and peeks back when the pointer rests on the left edge. |
 | **Stage** | the area for the current app group. Windows float, cascade from the centre, and never open under the strip or the Dock. |
 | **Window** | `--radius-xl`, elevated background, focused/unfocused shadow, a "···" multitasking handle centred at the top, a corner-arc resize affordance bottom right. Minimum 320x240. |
@@ -209,10 +209,8 @@ Every control is reachable with Tab, shows the shared `:focus-visible` ring, wor
 
 ## 10. Not part of this language
 
-The kit still contains macOS-style experiments: `MacWindow`, `MenuBar`, `MenuBarExtras`, `TrafficLights`,
-`MacSplitViewTemplate`, `HybridDesktopTemplate` and the Dock's `macos` variant. They are not used by the desktop
-and new UI must not use them. Also out: Liquid Glass (refraction, specular edges), Windows/Material Design patterns
-(FABs, ripples, hamburger menus), skeuomorphism.
+macOS chrome (traffic lights, a menu bar, pull-down menus, a compact Dock), Liquid Glass (refraction, specular
+edges), Windows/Material Design patterns (FABs, ripples, hamburger menus) and skeuomorphism.
 
 ## 11. Review checklist
 

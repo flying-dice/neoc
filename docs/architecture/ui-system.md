@@ -216,8 +216,8 @@ they may be children of any container (typically in a `Group` at the root).
 
 Existing kit components the renderer maps onto: `Text`, `Button`, `IconButton`, `Icon`, `Badge`, `Toggle`, `Slider`,
 `IconSlider`, `SegmentedControl`, `TextInput`, `TextFieldRow`, `SearchField`, `ProgressBar`, `ActivityIndicator`, `Card`,
-`ListRow`, `ListSection`, `SidebarItem`, `NavigationBar`, `BackButton`, `TabBar`, `TabBarItem`, `Sheet`, `Alert`, `Menu`,
-`SplitViewTemplate`, `ScreenTemplate`, `Scrim`, `Grabber`, `Material`. Promoted from the desktop app: `AgentAvatar`,
+`ListRow`, `ListSection`, `NavigationBar`, `BackButton`, `TabBar`, `TabBarItem`, `Sheet`, `Alert`, `Menu`,
+`SplitViewTemplate`, `ScreenTemplate`, `Scrim`, `Grabber`, `Material`. Promoted from the desktop app: `Avatar`,
 `RichText`, `MessageBubble`, `TurnActivity`, `PermissionCard`, `Composer`.
 
 **New kit work** (each follows atomic layers, takes `testid`, has a story per state): layout atoms (`Stack`, `Grid`,

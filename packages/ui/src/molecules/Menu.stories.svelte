@@ -36,11 +36,7 @@
 </script>
 
 <Story name="iPadOS menu" asChild>
-  <Menu testid="menu" label="Actions" variant="ios" {items} />
-</Story>
-
-<Story name="macOS menu" asChild>
-  <Menu testid="menu" label="Actions" variant="mac" {items} />
+  <Menu testid="menu" label="Actions" {items} />
 </Story>
 
 <Story
@@ -69,7 +65,7 @@
     await waitFor(() => expect(close).toHaveBeenCalled())
   }}
 >
-  <Menu testid="menu" label="Actions" variant="ios" {items} autofocus onselect={() => undefined} onclose={close} />
+  <Menu testid="menu" label="Actions" {items} autofocus onselect={() => undefined} onclose={close} />
 </Story>
 
 <Story
@@ -87,24 +83,14 @@
     await expect(canvas.getByTestId('menu-move-to')).toHaveFocus()
   }}
 >
-  <Menu testid="menu" label="Actions" variant="ios" {items} />
-</Story>
-
-<Story name="Mac submenu flyout" asChild
-  play={async ({ canvasElement }) => {
-    const canvas = within(canvasElement)
-    await userEvent.hover(canvas.getByTestId('menu-move-to'))
-    await waitFor(() => expect(canvas.getByTestId('menu-inbox')).toBeVisible())
-  }}
->
-  <div style="padding:0 230px 90px 0"><Menu testid="menu" label="Actions" variant="mac" {items} /></div>
+  <Menu testid="menu" label="Actions" {items} />
 </Story>
 
 <Story name="Checkmark options" asChild>
   <Menu
     testid="menu"
     label="View"
-    variant="ios"
+   
     items={[
       { label: 'Show completed', checked: true },
       { label: 'Show subtasks', checked: false },

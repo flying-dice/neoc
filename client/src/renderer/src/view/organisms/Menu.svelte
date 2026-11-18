@@ -82,7 +82,6 @@
   >
     <Menu
       testid="{common.testid}-menu"
-      variant="ios"
       label={name}
       {items}
       autofocus

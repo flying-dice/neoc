@@ -86,11 +86,9 @@ export const threadStateSchema = z.object({
   plan: z.array(planEntrySchema).nullish()
 })
 
-export type Setting = z.infer<typeof settingSchema>
 export type Mode = z.infer<typeof modeSchema>
 export type Command = z.infer<typeof commandSchema>
 export type Usage = z.infer<typeof usageSchema>
-export type PlanEntry = z.infer<typeof planEntrySchema>
 export type SessionState = z.infer<typeof sessionSchema>
 export type ThreadState = z.infer<typeof threadStateSchema>
 

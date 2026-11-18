@@ -87,7 +87,11 @@ describe('the catalog', () => {
       sha256: 'ab'.repeat(32)
     }
     expect(catalogSchema.parse({ apps: [entry], errors: [] }).apps[0].sha256).toBe('ab'.repeat(32))
-    expect(() => catalogSchema.parse({ apps: [{ ...entry, sha256: undefined }], errors: [] })).toThrow()
-    expect(() => catalogSchema.parse({ apps: [{ ...entry, sha256: 'nope' }], errors: [] })).toThrow()
+    expect(() =>
+      catalogSchema.parse({ apps: [{ ...entry, sha256: undefined }], errors: [] })
+    ).toThrow()
+    expect(() =>
+      catalogSchema.parse({ apps: [{ ...entry, sha256: 'nope' }], errors: [] })
+    ).toThrow()
   })
 })

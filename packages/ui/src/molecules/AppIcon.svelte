@@ -16,8 +16,6 @@
     badge?: number
     /** Small dot beneath the icon marking a running app. */
     running?: boolean
-    /** macOS-style name bubble above the icon on hover (for label-less docks). */
-    tooltip?: boolean
     onclick?: () => void
   }
 
@@ -30,7 +28,6 @@
     showLabel = true,
     badge,
     running = false,
-    tooltip = false,
     onclick
   }: Props = $props()
 </script>
@@ -45,7 +42,6 @@
   </span>
   {#if showLabel}<span class="label">{name}</span>{#if badge}<span class="sr-only">, {badge} new</span>{/if}{/if}
   {#if running}<span class="running" aria-label="Running"></span>{/if}
-  {#if tooltip}<span class="tooltip" aria-hidden="true">{name}</span>{/if}
 </button>
 
 <style>
@@ -83,27 +79,6 @@
     font: 400 12px/14px var(--font-text);
     color: #fff;
     text-shadow: 0 1px 2px rgb(0 0 0 / 0.35);
-  }
-  .tooltip {
-    position: absolute;
-    bottom: calc(100% + 14px);
-    left: 50%;
-    transform: translateX(-50%);
-    padding: 3px 10px;
-    border-radius: 6px;
-    background: var(--material-thick);
-    -webkit-backdrop-filter: var(--material-blur);
-    backdrop-filter: var(--material-blur);
-    box-shadow: 0 0 0 0.5px var(--separator), 0 4px 12px rgb(0 0 0 / 0.15);
-    color: var(--label);
-    font: 400 13px/16px var(--font-text);
-    white-space: nowrap;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity var(--duration-fast);
-  }
-  .ios-app-icon:hover .tooltip {
-    opacity: 1;
   }
   .running {
     position: absolute;
