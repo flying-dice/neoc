@@ -1,6 +1,6 @@
 # AgentOS architecture: Rust host, Luau apps, managed client
 
-Status: **proposed** (awaiting approval). Detail lives in two companion documents, both backed by working prototypes:
+Status: **approved** (2026-11-18). LAN binding with device pairing (see `host-stack.md`). Detail lives in two companion documents, both backed by working prototypes:
 
 - [`host-stack.md`](host-stack.md): the Rust host. 11 crates in the hexagonal layout below, 42 tests passing, end to end
   from a Luau app installed over `/rpc` to its tool called over MCP.
@@ -167,6 +167,7 @@ docs/, .claude/skills/     rewritten for Rust and Luau (coding style, review, te
 | 12 | Conflict revisions | Kept 30 days; "undo agent change" is a shell feature, later |
 | 13 | Client/kit version skew | The host serves its own client, so skew is rare: `Unsupported` placeholder plus per-node `fallback` |
 | 14 | Compact breakpoint | `DESIGN_LANGUAGE.md` wins (700 px sidebar collapse); one constant in the kit |
+| 15 | CRDT (Loro) for document content | Deferred (user, 2026-11-18). Text edits use the 3-way merge; the source design stays open to a later `db:doc` kind backed by Loro |
 
 ## 7. Build plan
 
