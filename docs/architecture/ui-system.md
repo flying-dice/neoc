@@ -1,8 +1,12 @@
 # AgentOS server-driven UI: component kit, view protocol, bindings, Luau API
 
-Status: design proposal for the Rust + Luau re-platform. Companion prototype: `proto/` (renderer + host stub, runs
-headless, see `proto/README.md`). Written against the current repo: `packages/ui`, `docs/design/DESIGN_LANGUAGE.md`,
-`docs/TESTING.md`, `apps/calculator`, `apps/desktop/src/renderer/src`, issues #5 to #18.
+Status: the design the platform is built on, and still its reference for the view protocol, bindings, state and the
+Luau authoring API. It is implemented: the host in `crates/` (`agentos-domain` holds the schema and the protocol,
+`agentos-luau` the app API), the renderer in `client/src/renderer/src/view` and the kit in `packages/ui`. Where the
+code and this text differ, the code wins: the generated `types/generated/agentos.d.luau` and
+`docs/reference/components.md` are the exact catalogue. Sections 6 to 8 record the original type-pipeline proposal,
+the prototype and the build plan; each opens with what was actually built. Sources of truth beside it:
+`docs/architecture/ARCHITECTURE.md`, `docs/TESTING.md`, `docs/design/DESIGN_LANGUAGE.md`, `apps/README.md`.
 
 Keywords MUST/SHOULD/MAY are used in the RFC 2119 sense. "Host" = the Rust process, "app" = one Luau VM,
 "client" = the Vite + Svelte PWA, "view" = one window's UI instance.
@@ -51,9 +55,9 @@ Rules that fall out of the decided architecture:
 4. **The client is replaceable**: all it needs is the catalogue schema and this protocol. The prototype's
    `ViewCore` (framework-free) is that contract in code; Svelte adapters are the only framework-bound part.
 
-Repo placement (proposal): `packages/ui` stays the kit (atomic layers, `testid` required). New
-`packages/renderer` holds `core/` (this protocol's client half) and `adapters/` (wire props -> kit components).
-Adapters import only `@agentos/ui` and `svelte`, mirroring the app boundary rule in `AGENTS.md`.
+Repo placement (as built): `packages/ui` is the kit (atomic layers, `testid` required). The renderer lives in the client,
+`client/src/renderer/src/view`: `core/` is this protocol's client half and `atoms/ molecules/ organisms/ templates/ pages/`
+are the adapters (wire props -> kit components). Adapters import only `@agentos/ui` and `svelte`.
 
 ---
 
@@ -278,7 +282,7 @@ interface Node {
 }
 ```
 
-(`proto/src/core/protocol.ts` is this, executable.)
+(`client/src/renderer/src/view/protocol.ts` is this, executable: it re-exports the types generated from the Rust schema.)
 
 **Addressing.** A node's **path** is the keys from the window root, `/`-joined, with a `@slot` segment when the
 node sits in a named slot: `main/list/@row/item/delete`. Paths are stable across renders because keys are.
@@ -536,7 +540,7 @@ A literal object that happens to contain `$ref` or `$fn` as its own key is writt
 upper lower`, and `fmt.number fmt.currency fmt.percent fmt.bytes fmt.date fmt.time fmt.dateTime fmt.relative
 fmt.plural fmt.list`. No loops, no recursion, no user functions, no I/O: it cannot hang or exfiltrate, it has a total
 cost bound (nodes in the expression), and it is the same on every client. Anything beyond it is computed on the host
-(3.6). (Prototype: `proto/src/core/expr.ts`; an unknown function evaluates to `undefined`, never throws.)
+(3.6). (Implemented in `client/src/renderer/src/view/core/expr.ts`; an unknown function evaluates to `undefined`, never throws.)
 
 Refs resolve **reactively** on the client: adapters call `view.evaluate(expr, scope)` inside `$derived`, which reads
 Svelte `$state` proxies, so Svelte tracks exactly which store entries a prop depends on and re-renders only that
@@ -1392,7 +1396,7 @@ enforcement to the **tree validator** (host, on every tree emitted, plus dev-tim
 
 ### 5.4 Test ids
 
-Rule (implemented in `proto/src/renderer/context.ts`, tested): **`testid = app + "-" + the explicit keys on the path`**,
+Rule (implemented in `client/src/renderer/src/view/core/testid.ts`, tested): **`testid = app + "-" + the explicit keys on the path`**,
 joined with `-`. The window root, **auto keys** (`_0`) and **slot names** are skipped (wrapping a node in a stack, or moving it into
 a toolbar slot, never renames it); a row template contributes `row-<rowKey>` (the item's stable id, never its index
 or text). An explicit `testid` prop overrides.
@@ -1415,15 +1419,23 @@ unless the app sets `testid`).
 
 ## 6. The type pipeline
 
-**Recommendation: schema first. One component schema -> four generated outputs, committed, with a no-diff check.**
+**As built: Rust first, not the YAML below.** The component schema is Rust (`crates/agentos-domain`, the `ui` module:
+types plus the component catalogue tables); `agentos-codegen` turns it into `types/generated/agentos.ts` (protocol types
+and the runtime `COMPONENTS` table), `agentos.d.luau`, `ui.luau`, `app.luau` and `docs/reference/components.md`.
+`bun run codegen` writes them and `bun run codegen:check` (part of `bun run lint`) fails when they are stale; there is no
+`gen:ui` or `schema:diff` command. The diagram below is the real flow; from "Authoring format" on, the text is the
+original schema-first proposal (YAML authoring), kept to explain the shape of the outputs: its paths and command names
+are not the real ones.
+
+One component schema, generated outputs that are committed, and a no-diff check (the proposal asked for exactly this):
 
 ```
-schema/components/*.yaml  (+ schema/defs.yaml: tokens, Action, Expr, Source decls, event payloads)
-        │   bun run gen:ui      (one Bun script; no Rust toolchain needed to regenerate TS/Luau/docs)
-        ├─▶ dist/kit.schema.json     JSON Schema 2020-12 bundle (+ x-agentos metadata)  ──▶  Rust (build.rs include_str!)
-        ├─▶ packages/renderer/src/gen/{types.ts, components.ts}       TS types + runtime component table
-        ├─▶ sdk/luau/{ui.d.luau, ui.luau}                              Luau type definitions + constructors
-        └─▶ docs/ui/catalogue.md + stories/*.stories.svelte            reference docs + one story per example
+crates/agentos-domain, ui module   (Rust types + the component catalogue: tokens, Action, Expr, Source decls, event payloads)
+        │   bun run codegen     (cargo run -p agentos-codegen; `bun run codegen:check` is the no-diff check)
+        ├─▶ types/generated/agentos.ts        protocol types + the runtime COMPONENTS table  ──▶  client/src/renderer/src/view/protocol.ts
+        ├─▶ types/generated/agentos.d.luau    the `app` API types (luau-lsp)
+        ├─▶ types/generated/{ui,app}.luau     constructors (the Luau runtime's `@agentos/ui`) and the `@agentos/app` shim
+        └─▶ docs/reference/components.md      the component reference
 ```
 
 **Authoring format.** YAML whose property types are JSON Schema fragments, plus `x-agentos` metadata that no plain
@@ -1474,7 +1486,7 @@ declare ui: { TextField: (props: TextFieldProps) -> Node, --[[ ... ]] }
 `ui.luau` is generated too: defaults, positional mapping, a11y checks, auto-keys, `fallback` slots for post-1.0 components.
 
 **Generated TypeScript**: `NodeOf<'TextField'>` types, the `Action`/`Expr`/`Op`/`Source*` protocol types (today hand-written in
-`proto/src/core/protocol.ts`), and a runtime `COMPONENTS` table (`interactive`, `bindings`, `events`, `since`) the renderer uses
+`client/src/renderer/src/view/protocol.ts`, now re-exporting the generated types), and a runtime `COMPONENTS` table (`interactive`, `bindings`, `events`, `since`) the renderer uses
 for `Unsupported` decisions and the binding-writability check.
 
 **Rust**: `build.rs` embeds `kit.schema.json`; the host validates every emitted tree and every event payload against it
@@ -1486,7 +1498,7 @@ release). The host never needs per-component Rust structs: nodes are JSON values
 1. every schema component has an adapter, a generated story per example and an axe pass; every adapter prop appears in the schema;
 2. Luau constructor snapshots: `ui.X {...}` of each example equals the schema's example node;
 3. golden trees: Luau fixture app -> JSON -> `ViewCore` -> rendered DOM -> axe, for both example apps here;
-4. `bun run schema:diff <git-ref>` classifies changes (additive/deprecation/breaking) and fails on breaking within a major;
+4. (not built: `schema:diff <git-ref>` was to classify changes as additive, deprecation or breaking, and fail on breaking within a major; today `bun run codegen:check` only catches an unregenerated file);
 5. the kit's `bun scripts/design-audit.ts` runs on every adapter.
 
 **Why not the alternatives.** *Rust-first* (`schemars` + `ts-rs`/`specta`): attractive because validation equals the types, but
@@ -1498,6 +1510,9 @@ layer and keep the same four outputs.
 ---
 
 ## 7. The prototype (`proto/`)
+
+Historical: `proto/` was the spike that proved the renderer core. It was removed once `client/src/renderer/src/view`
+(`ViewCore` in `core/`, tested under `bun test`) replaced it, so the commands and file names below no longer exist.
 
 Vite + Svelte 5, importing the real `@agentos/ui` atoms from the repo path (read-only), the host as a TypeScript stub on an
 in-memory JSON-RPC wire (messages really serialised). `proto/README.md` has the run commands; summary:
@@ -1525,12 +1540,15 @@ Finding from building it: the unit that must be pure and framework-free is **`Vi
 
 ## 8. Plan and open questions
 
+Historical: the original plan, written before the build. Milestone names and package paths (`packages/renderer`,
+`gen:ui`) are not the real ones; `docs/architecture/ARCHITECTURE.md` has the waves as built.
+
 ### 8.1 Build order
 
 | Milestone | Scope | Exit |
 |---|---|---|
-| **M0 Schema and conformance** | schema format, `gen:ui`, validator, protocol crate, golden fixtures | the two example apps' trees validate; generated TS/Luau compile |
-| **M1 Core + Calculator** | Rust `ViewInstance` (render, reconcile, ops), Luau `ui` + tracked state, `packages/renderer` (`ViewCore` productionised), Tier 1 layout/text/button/grid | Calculator ported, journeys green, p95 key -> pixels <= 30 ms |
+| **M0 Schema and conformance** | schema format, `codegen`, validator, protocol crate, golden fixtures | the two example apps' trees validate; generated TS/Luau compile |
+| **M1 Core + Calculator** | Rust `ViewInstance` (render, reconcile, ops), Luau `ui` + tracked state, the client renderer (`ViewCore` productionised), Tier 1 layout/text/button/grid | Calculator ported, journeys green, p95 key -> pixels <= 30 ms |
 | **M2 Data + Notes** | sources, live queries, drafts/merge, client state + persistence, `TextEditor`, `Markdown`, `List` windowing, `SplitView` x3, `Alert`, `Screen` search | Notes ported incl. `notes.append` live; reconnect and host-restart tests |
 | **M3 Rest of Tier 1** | navigation, presentations, DnD, pickers, `Form`, swipe/reorder/multi-select; Tasks, Reminders, Contacts, Settings | each app passes the `agentos-code-review` readiness gate |
 | **M4 Tier 2** | `Table`, `ChatTranscript`, `CalendarGrid`, `Outline`, `LazyGrid`; Agents, Calendar, Files, Books | |
