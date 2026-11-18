@@ -1,0 +1,102 @@
+import { describe, expect, test } from 'bun:test'
+import { createRpcPeer, isConnectionError, RpcError, RpcErrorCode, type RpcPeer } from './peer'
+
+/** Two peers wired back to back (frames are real strings). */
+function pair(handlers: { a?: Parameters<typeof createRpcPeer>[0]; b?: Parameters<typeof createRpcPeer>[0] } = {}) {
+  const frames: string[] = []
+  let a: RpcPeer
+  let b: RpcPeer
+  a = createRpcPeer({ ...handlers.a, send: (m) => (frames.push(m), queueMicrotask(() => b.receive(m))) })
+  b = createRpcPeer({ ...handlers.b, send: (m) => (frames.push(m), queueMicrotask(() => a.receive(m))) })
+  return { a, b, frames }
+}
+
+describe('json-rpc peer (by-name params)', () => {
+  test('a request carries a params object and resolves with the result', async () => {
+    const { a, frames } = pair({ b: { send: () => undefined, onRequest: (m, p) => ({ method: m, echoed: p }) } })
+    const result = await a.request('view.sync', { viewId: 'v1' })
+    expect(result).toEqual({ method: 'view.sync', echoed: { viewId: 'v1' } })
+    expect(JSON.parse(frames[0])).toMatchObject({ jsonrpc: '2.0', method: 'view.sync', params: { viewId: 'v1' } })
+  })
+
+  test('a thrown RpcError keeps its code and data; other errors become InternalError', async () => {
+    const { a } = pair({
+      b: {
+        send: () => undefined,
+        onRequest: (method) => {
+          if (method === 'app') throw new RpcError(-32010, 'No such note', { id: 7 })
+          throw new Error('boom')
+        }
+      }
+    })
+    const app = await a.request('app').catch((e: RpcError) => e)
+    expect(app).toBeInstanceOf(RpcError)
+    expect(app).toMatchObject({ code: -32010, message: 'No such note', data: { id: 7 } })
+    const other = await a.request('other').catch((e: RpcError) => e)
+    expect(other).toMatchObject({ code: RpcErrorCode.InternalError, message: 'boom' })
+  })
+
+  test('an unhandled method answers MethodNotFound', async () => {
+    const { a } = pair()
+    const e = await a.request('nope').catch((x: RpcError) => x)
+    expect(e).toMatchObject({ code: RpcErrorCode.MethodNotFound })
+  })
+
+  test('notifications have no id, reach the other side, and handler errors are reported not thrown', async () => {
+    const seen: unknown[] = []
+    const errors: unknown[] = []
+    const { a, frames } = pair({
+      b: {
+        send: () => undefined,
+        onNotification: (m, p) => {
+          seen.push([m, p])
+          throw new Error('handler failed')
+        },
+        onError: (e) => errors.push(e)
+      }
+    })
+    a.notify('view.visibility', { viewId: 'v1', visible: false })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(seen).toEqual([['view.visibility', { viewId: 'v1', visible: false }]])
+    expect(JSON.parse(frames[0])).not.toHaveProperty('id')
+    expect(errors).toHaveLength(1)
+  })
+
+  test('array params are refused: this protocol is by-name', async () => {
+    const out: string[] = []
+    const peer = createRpcPeer({ send: (m) => out.push(m), onRequest: () => 'ok' })
+    peer.receive(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'x', params: [1, 2] }))
+    await Promise.resolve()
+    expect(JSON.parse(out[0]).error.code).toBe(RpcErrorCode.InvalidParams)
+  })
+
+  test('garbage frames are answered with ParseError / InvalidRequest and never throw', () => {
+    const out: string[] = []
+    const peer = createRpcPeer({ send: (m) => out.push(m) })
+    peer.receive('not json')
+    peer.receive(JSON.stringify({ hello: 'world' }))
+    expect(out.map((m) => JSON.parse(m).error.code)).toEqual([RpcErrorCode.ParseError, RpcErrorCode.InvalidRequest])
+  })
+
+  test('close rejects in-flight requests with ConnectionClosed and refuses new ones', async () => {
+    const peer = createRpcPeer({ send: () => undefined })
+    const inflight = peer.request('slow').catch((e: RpcError) => e)
+    peer.close()
+    expect(await inflight).toMatchObject({ code: RpcErrorCode.ConnectionClosed })
+    expect(isConnectionError(await inflight)).toBe(true)
+    expect(await peer.request('again').catch((e: RpcError) => e)).toMatchObject({ code: RpcErrorCode.ConnectionClosed })
+  })
+
+  test('a request times out with Timeout, which counts as a connection error', async () => {
+    const peer = createRpcPeer({ send: () => undefined, timeoutMs: 5 })
+    const e = await peer.request('hang').catch((x: RpcError) => x)
+    expect(e).toMatchObject({ code: RpcErrorCode.Timeout })
+    expect(isConnectionError(e)).toBe(true)
+  })
+
+  test('application errors are not connection errors', () => {
+    expect(isConnectionError(new RpcError(-32010, 'nope'))).toBe(false)
+    expect(isConnectionError(new Error('x'))).toBe(false)
+  })
+})

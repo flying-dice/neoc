@@ -66,7 +66,7 @@ const BROWSER = ['client/src/', 'packages/ui/src/', 'packages/sdk/src/']
 const SDK_BUN_ONLY = ['packages/sdk/src/build/']
 /** Server-only SDK entry points that browser code must not import. */
 const SERVER_ONLY_SDK = ['@agentos/sdk/host/server', '@agentos/sdk/app/server', '@agentos/sdk/build']
-const WEBSOCKET_ALLOWED = ['packages/sdk/src/host/ws-bridge.ts']
+const WEBSOCKET_ALLOWED = ['packages/sdk/src/host/ws-bridge.ts', 'client/src/renderer/src/view/rpc/websocket.ts'] // the managed renderer's reconnecting JSON-RPC transport
 const BUN_SERVE_ALLOWED = ['apps/server/src/server.ts']
 
 const under = (rel: string, prefixes: string[]): boolean => prefixes.some((p) => (p.endsWith('/') ? rel.startsWith(p) : rel === p))
