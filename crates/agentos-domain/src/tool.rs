@@ -8,8 +8,13 @@ use std::fmt;
 pub struct ToolSpec {
     pub name: String,
     #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
     pub description: String,
     pub input_schema: Value,
+    /// The tool does not change data (`readOnly = true` in Luau): shown to agents as a hint.
+    #[serde(default)]
+    pub read_only: bool,
 }
 
 /// How tools are exposed over MCP: `<app>__<tool>` (MCP tool names allow `[a-zA-Z0-9_-]`).

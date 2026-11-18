@@ -15,6 +15,66 @@ pub enum Permission {
     Notify,
     /// App may use its SQLite database.
     Data,
+    /// App may use the shell: Dock badge, menu commands, deep links.
+    Shell,
+}
+
+impl Permission {
+    /// The capability name an app declares in `app.manifest { permissions }`.
+    #[must_use]
+    pub fn capability_name(&self) -> Option<&'static str> {
+        match self {
+            Self::Data => Some("data"),
+            Self::Notify => Some("notify"),
+            Self::Shell => Some("shell"),
+            Self::CallTools(_) | Self::CallAnyTool => None,
+        }
+    }
+
+    /// Parse a capability name (`data`, `notify`, `shell`).
+    #[must_use]
+    pub fn capability(name: &str) -> Option<Self> {
+        match name {
+            "data" => Some(Self::Data),
+            "notify" => Some(Self::Notify),
+            "shell" => Some(Self::Shell),
+            _ => None,
+        }
+    }
+}
+
+/// What the host lets an app's VM do, from the grants in its package manifest.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Capabilities {
+    pub data: bool,
+    pub notify: bool,
+    pub shell: bool,
+}
+
+impl Capabilities {
+    #[must_use]
+    pub fn from_grants(grants: &[Permission]) -> Self {
+        Self {
+            data: grants.contains(&Permission::Data),
+            notify: grants.contains(&Permission::Notify),
+            shell: grants.contains(&Permission::Shell),
+        }
+    }
+
+    /// The grants these capabilities stand for.
+    #[must_use]
+    pub fn grants(self) -> Vec<Permission> {
+        [(self.data, Permission::Data), (self.notify, Permission::Notify), (self.shell, Permission::Shell)]
+            .into_iter()
+            .filter_map(|(on, p)| on.then_some(p))
+            .collect()
+    }
+
+    /// Everything (tests and tools that don't gate).
+    #[must_use]
+    pub fn all() -> Self {
+        Self { data: true, notify: true, shell: true }
+    }
 }
 
 /// Per-agent identity resolved from the MCP bearer token; the unit of attribution and permission.

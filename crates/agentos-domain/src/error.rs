@@ -12,4 +12,6 @@ pub enum DomainError {
     PermissionDenied { agent: String, action: String },
     #[error("migrations must be numbered 1..N without gaps")]
     MigrationOrder,
+    #[error("invalid app.manifest: {0}")]
+    InvalidManifest(String),
 }
