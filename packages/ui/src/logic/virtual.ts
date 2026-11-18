@@ -158,18 +158,17 @@ export function anchorOf<K>(keys: readonly K[], from: number, firstVisible: numb
 }
 
 /**
- * How far to move the scroller so the anchor row stays where it was, or null when it did not move or left the
- * window. `previousOffset` is the anchor's `offsetOf` before the change.
+ * How far to move the scroller so the anchor row stays where it was: the distance its row index moved, at the
+ * current heights. Null when it did not move or left the window.
  */
 export function anchorShift<K>(
   anchor: Anchor<K>,
   keys: readonly K[],
   from: number,
-  heights: HeightIndex,
-  previousOffset: number
+  heights: HeightIndex
 ): number | null {
   const at = keys.indexOf(anchor.key)
   if (at < 0) return null
-  const delta = heights.offsetOf(from + at) - previousOffset
+  const delta = heights.offsetOf(from + at) - heights.offsetOf(anchor.index)
   return delta === 0 ? null : delta
 }

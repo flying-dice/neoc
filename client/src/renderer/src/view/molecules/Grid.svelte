@@ -3,7 +3,7 @@
   `cellAspect`. A child's `span`, `rowStart` and `colStart` place it. Atoms: Grid, GridCell, Children.
 -->
 <script lang="ts">
-  import { cellPlacement, gridTemplate } from '@agentos/ui'
+  import { cellPlacement, gridTemplate, spannedAspect } from '@agentos/ui'
   import { Grid, GridCell } from '@agentos/ui/atoms'
   import Children from '../atoms/Children.svelte'
   import { useView } from '../context'
@@ -17,7 +17,9 @@
 
   const common = $derived(commonOf(ctx, node, path, scope))
   const spacing = $derived(p('spacing') === undefined ? 0 : unit(p('spacing')))
-  const aspect = $derived(Number(p('cellAspect')))
+  const cellAspect = $derived(
+    Number.isFinite(Number(p('cellAspect'))) ? Number(p('cellAspect')) : undefined
+  )
   const placed = $derived(
     (node.children ?? []).map((child) => ({
       child,
@@ -36,11 +38,10 @@
   rows={gridTemplate(p('rows'))}
   rowGap={p('rowSpacing') === undefined ? spacing : unit(p('rowSpacing'))}
   colGap={p('colSpacing') === undefined ? spacing : unit(p('colSpacing'))}
-  cellAspect={Number.isFinite(aspect) && aspect > 0 ? aspect : undefined}
   style={joinStyle(common.style, surfaceStyle(ctx, node, scope))}
 >
   {#each placed as { child, at } (child.key)}
-    <GridCell column={at.column} row={at.row}>
+    <GridCell column={at.column} row={at.row} aspect={spannedAspect(cellAspect, at.span)}>
       <Children nodes={[child]} {path} {scope} />
     </GridCell>
   {/each}

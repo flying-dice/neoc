@@ -1,6 +1,7 @@
 <!--
   @atom Grid — a grid of equally sized cells. `columns` / `rows` are CSS track lists (see `gridTemplate`);
-  `cellAspect` (width / height) makes every cell a fixed ratio. Place children in `GridCell`s to span or pin them.
+  Give each `GridCell` its aspect (width / height; `spannedAspect` scales the grid's `cellAspect` by the span) to make
+  cells a fixed ratio, and place children in `GridCell`s to span or pin them.
   Optional test id: `testid`.
 -->
 <script lang="ts">
@@ -13,13 +14,11 @@
     /** Gaps in px. */
     rowGap?: number
     colGap?: number
-    /** Cell width / height. */
-    cellAspect?: number
     style?: string
     children: Snippet
   }
 
-  let { testid, columns, rows, rowGap = 0, colGap = 0, cellAspect, style, children }: Props = $props()
+  let { testid, columns, rows, rowGap = 0, colGap = 0, style, children }: Props = $props()
 </script>
 
 <div
@@ -29,7 +28,6 @@
   style:grid-template-rows={rows}
   style:row-gap="{rowGap}px"
   style:column-gap="{colGap}px"
-  style:--cell-aspect={cellAspect && cellAspect > 0 ? String(cellAspect) : undefined}
   {style}
 >
   {@render children()}

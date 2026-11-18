@@ -204,7 +204,7 @@
   {#if children}
     <span class="custom">{@render children()}</span>
   {:else}
-    <span class="text" aria-hidden={managed && tappable ? 'true' : undefined}>
+    <span class="text" aria-hidden={managed && !option && tappable ? 'true' : undefined}>
       <span class="title" class:destructive class:action>{title}</span>
       {#if subtitle}<span class="subtitle">{subtitle}</span>{/if}
     </span>
@@ -214,7 +214,7 @@
 {#snippet accessory()}
   <span class="accessory">
     {#if value}<span class="value">{value}</span>{/if}
-    {#if trailing}<span class="trail">{@render trailing()}</span>{/if}
+    {#if trailing}{@render trailing()}{/if}
     {#if chevron}
       <span class="chevron" aria-hidden="true"><Icon name="chevron.right" size={14} weight={2.6} /></span>
     {/if}
@@ -492,6 +492,7 @@
     min-height: var(--row-height);
     padding-left: var(--row-inset);
     background: var(--list-row-bg, var(--bg-elevated));
+    border-radius: var(--list-row-radius, 0);
     transition: transform var(--duration-fast) var(--ease-ios);
     touch-action: pan-y;
     z-index: 1;

@@ -32,9 +32,7 @@
     icon: IconName | undefined
     badge: number | string | undefined
   } {
-    let label = str(
-      view.evaluate(tab.props?.label, scope) ?? view.evaluate(tab.props?.title, scope)
-    )
+    let label = ''
     let icon: IconName | undefined
     let badge: number | string | undefined
     for (const item of tab.slots?.tabItem ?? []) {
@@ -49,6 +47,7 @@
       const glyph = get('icon') ?? get('name')
       if (typeof glyph === 'string' && glyph in icons) icon = glyph as IconName
     }
+    label ||= str(view.evaluate(tab.props?.title, scope) ?? view.evaluate(tab.props?.label, scope))
     return { label: label || tab.key, icon, badge }
   }
 

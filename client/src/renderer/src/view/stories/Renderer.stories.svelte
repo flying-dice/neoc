@@ -108,21 +108,25 @@
   }}
 />
 
-<!-- A list of 300 sources rows in windows of 20: the first window, then the next page; agent adds send one row. -->
+<!-- 300 rows in windows of 20: past 200 the list is virtualized. A few rows are in the DOM; scrolling far asks the host for the window; an agent adding a note sends one row. -->
 <Story
   name="Windowed list"
   args={{ scenario: { notes: { extra: 298, page: 20 } } }}
-  play={async ({ canvas }) => {
+  play={async ({ canvas, canvasElement }) => {
     await canvas.findByTestId('notes-count')
     await waitFor(() => expect(canvas.getByTestId('notes-count')).toHaveTextContent('300 notes'))
-    const { view } = await story()
-    await waitFor(() => expect(canvas.getAllByTestId(/^notes-list-row-\d+-item$/)).toHaveLength(20))
-    view.sources.loadMore('notes')
-    await waitFor(() => expect(canvas.getAllByTestId(/^notes-list-row-\d+-item$/)).toHaveLength(40))
+    const rows = (): number => canvas.queryAllByTestId(/^notes-list-row-\d+-item$/).length
+    await waitFor(() => expect(rows()).toBeGreaterThan(3))
+    await expect(rows()).toBeLessThan(40) // not 300
+    const scroller = canvasElement.querySelector<HTMLElement>('.scroll')!
+    scroller.scrollTop = scroller.scrollHeight
+    await canvas.findByText('Note 3', undefined, { timeout: 4000 }) // the oldest row, a window the host sent on demand
+    await expect(rows()).toBeLessThan(40)
     const { harness } = await story()
     harness.app.agentAddNote(harness.host, 'Newest note')
     await waitFor(() => expect(canvas.getByTestId('notes-count')).toHaveTextContent('301 notes'))
-    await waitFor(() => expect(canvas.getByText('Newest note')).toBeVisible())
+    scroller.scrollTop = 0
+    await waitFor(() => expect(canvas.getByText('Newest note')).toBeVisible(), { timeout: 4000 })
   }}
 />
 

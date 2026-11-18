@@ -4,12 +4,17 @@
   selectable), ONE tab stop with arrow-key navigation (roving tabindex; Home, End, Page Up and Down; type to
   select), reordering (drag a row's handle, or `Alt+Arrow` on a row) and the polite live region that announces a
   move. Rows (`ListRow` with a `role`) and `ListSection`s go in `children`; virtualization is `VirtualRows`.
-  Test ids: `testid` on the container, `${testid}-announcer` on the live region.
+  With `onrefresh`: pull to refresh and a keyboard "Refresh" button. Atoms: ActivityIndicator. Molecules: RefreshKey.
+  Test ids: `testid` on the container, `${testid}-announcer` on the live region, `${testid}-refresh` on the button.
 
   Keys are strings here (the DOM's `data-row-key`); the caller maps them back to its row keys.
 -->
 <script lang="ts">
   import { onMount, setContext, tick, type Snippet } from 'svelte'
+  import ActivityIndicator from '../atoms/ActivityIndicator.svelte'
+  import RefreshKey from '../molecules/RefreshKey.svelte'
+  import { PULL_THRESHOLD } from '../logic/gestures'
+  import { pullToRefresh } from '../logic/pullToRefresh'
   import { LIST_CONTEXT, type ListStyle } from '../logic/listContext'
   import { listKeyAction, TypeaheadBuffer, typeaheadMatch } from '../logic/listKeys'
   import { insertionIndex } from '../logic/reorder'
@@ -28,6 +33,8 @@
     onmove?: (key: string, before: string | null) => void
     /** Home or End on a list with rows outside the DOM: scroll there; return true when you did. */
     onedge?: (edge: 'start' | 'end') => boolean
+    /** Pull to refresh (touch) and a keyboard "Refresh" button; the spinner runs until this resolves. */
+    onrefresh?: () => void | Promise<void>
     /** Said once by the live region (a move, a refresh). */
     announcement?: string
     /** Inline layout style from the caller. */
@@ -44,6 +51,7 @@
     onreorder,
     onmove,
     onedge,
+    onrefresh,
     announcement = '',
     css,
     children
@@ -60,6 +68,17 @@
   })
 
   let root: HTMLElement | undefined = $state()
+  let pulled = $state(0)
+  let refreshing = $state(false)
+  async function refresh(): Promise<void> {
+    if (refreshing || !onrefresh) return
+    refreshing = true
+    try {
+      await onrefresh()
+    } finally {
+      refreshing = false
+    }
+  }
   const typeahead = new TypeaheadBuffer()
 
   const focusables = (): HTMLElement[] =>
@@ -105,12 +124,25 @@
     )
   }
 
+  /**
+   * Home / End of a list with rows outside the DOM: the owner scrolls there, then focus follows once the row at that
+   * end exists (its `aria-posinset` says so), which can take a window from the host.
+   */
   async function edge(to: 'start' | 'end'): Promise<void> {
     if (!onedge?.(to)) return
     await tick()
-    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
-    const els = focusables()
-    ;(to === 'start' ? els[0] : els.at(-1))?.focus()
+    for (let frame = 0; frame < 90; frame++) {
+      await new Promise((r) => requestAnimationFrame(r))
+      const els = focusables()
+      const el = to === 'start' ? els[0] : els.at(-1)
+      const item = el?.closest<HTMLElement>('[aria-posinset]')
+      const there =
+        item &&
+        (to === 'start'
+          ? item.getAttribute('aria-posinset') === '1'
+          : item.getAttribute('aria-posinset') === item.getAttribute('aria-setsize'))
+      if (el && there) return void el.focus()
+    }
   }
 
   function keydown(e: KeyboardEvent): void {
@@ -257,8 +289,27 @@
   }
 </script>
 
-<!-- svelte-ignore a11y_no_noninteractive_element_interactions (the list is the keyboard owner of its rows) -->
 <div
+  class="wrap"
+  aria-busy={refreshing || undefined}
+  use:pullToRefresh={{
+    enabled: !!onrefresh,
+    onrefresh: refresh,
+    scroller: () => (root ? scrollParent(root) : null),
+    onchange: (d, r) => {
+      pulled = d
+      refreshing = r
+    }
+  }}
+>
+  {#if onrefresh}
+    <RefreshKey testid="{testid}-refresh" onclick={refresh} disabled={refreshing} />
+    <div class="pull" style:height="{refreshing ? PULL_THRESHOLD : Math.min(pulled, PULL_THRESHOLD)}px" aria-hidden="true">
+      {#if refreshing || pulled > 8}<ActivityIndicator label="Refreshing" />{/if}
+    </div>
+  {/if}
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions (the list is the keyboard owner of its rows) -->
+  <div
   class="ios-list {style}"
   class:sidebar={style === 'sidebar'}
   data-testid={testid}
@@ -275,10 +326,26 @@
   style={css}
 >
   {@render children()}
+  </div>
 </div>
 <div class="sr-only" role="status" aria-live="polite" data-testid="{testid}-announcer">{announcement}</div>
 
 <style>
+  .wrap {
+    min-width: 0;
+  }
+  .pull {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    transition: height var(--duration-fast) var(--ease-ios);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pull {
+      transition: none;
+    }
+  }
   .ios-list {
     --list-inset: 16px;
     min-width: 0;

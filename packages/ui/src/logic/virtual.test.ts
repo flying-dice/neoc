@@ -120,15 +120,14 @@ describe('scroll anchoring', () => {
     const keys = ['a', 'b', 'c', 'd']
     const anchor = anchorOf(keys, 0, 2)!
     expect(anchor).toEqual({ key: 'c', index: 2 })
-    const previous = heights.offsetOf(2)
-    const shift = anchorShift(anchor, ['new', 'a', 'b', 'c', 'd'], 0, heights, previous)
+    const shift = anchorShift(anchor, ['new', 'a', 'b', 'c', 'd'], 0, heights)
     expect(shift).toBe(44)
   })
 
   test('no shift when the anchor did not move, or left the window', () => {
     const heights = new HeightIndex(100, 44)
     const anchor = { key: 'c', index: 2 }
-    expect(anchorShift(anchor, ['a', 'b', 'c'], 0, heights, 88)).toBeNull()
-    expect(anchorShift(anchor, ['x', 'y'], 0, heights, 88)).toBeNull()
+    expect(anchorShift(anchor, ['a', 'b', 'c'], 0, heights)).toBeNull()
+    expect(anchorShift(anchor, ['x', 'y'], 0, heights)).toBeNull()
   })
 })

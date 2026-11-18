@@ -12,8 +12,7 @@
     reorderApp,
     splitApp,
     stackApp,
-    swipeApp,
-    type ListStyle
+    swipeApp
   } from './kitTrees'
 
   /** The scenario on screen, for its play function (the host side: events received, rows to change). */
@@ -22,8 +21,6 @@
     await until(() => latest !== null, 'the story session')
     return latest!
   }
-
-  const STYLES: ListStyle[] = ['plain', 'inset', 'insetGrouped', 'grouped', 'sidebar']
 
   const SCENARIOS: Record<string, () => TreeApp> = {
     'style:plain': () => listStyleApp('plain'),
@@ -79,22 +76,81 @@
 {/snippet}
 
 <!-- List styles: the same two sections in each of the five styles; a selected row; chevron, value and destructive rows. -->
-{#each STYLES as style (style)}
-  <Story
-    name={`List, ${style}`}
-    args={{ scenario: `style:${style}` }}
-    play={async ({ canvas, userEvent }) => {
-      const list = await canvas.findByTestId('demo-list')
-      await expect(list).toHaveAttribute('role', 'listbox') // a selection makes it a listbox of options
-      const wifi = await canvas.findByTestId('demo-list-network-wifi')
-      await expect(wifi).toHaveAttribute('aria-selected', 'true')
-      const vpn = canvas.getByRole('option', { name: /VPN/ })
-      await userEvent.click(vpn)
-      await waitFor(() => expect(vpn).toHaveAttribute('aria-selected', 'true'))
-      await expect(wifi).toHaveAttribute('aria-selected', 'false')
-    }}
-  />
-{/each}
+
+<Story
+  name="List, plain"
+  args={{ scenario: 'style:plain' }}
+  play={async ({ canvas, userEvent }) => {
+    const list = await canvas.findByTestId('demo-list')
+    await expect(list).toHaveAttribute('role', 'listbox') // a selection makes it a listbox of options
+    const wifi = await canvas.findByTestId('demo-list-network-wifi')
+    await expect(wifi).toHaveAttribute('aria-selected', 'true')
+    const vpn = canvas.getByRole('option', { name: /VPN/ })
+    await userEvent.click(vpn)
+    await waitFor(() => expect(vpn).toHaveAttribute('aria-selected', 'true'))
+    await expect(wifi).toHaveAttribute('aria-selected', 'false')
+  }}
+/>
+
+<Story
+  name="List, inset"
+  args={{ scenario: 'style:inset' }}
+  play={async ({ canvas, userEvent }) => {
+    const list = await canvas.findByTestId('demo-list')
+    await expect(list).toHaveAttribute('role', 'listbox') // a selection makes it a listbox of options
+    const wifi = await canvas.findByTestId('demo-list-network-wifi')
+    await expect(wifi).toHaveAttribute('aria-selected', 'true')
+    const vpn = canvas.getByRole('option', { name: /VPN/ })
+    await userEvent.click(vpn)
+    await waitFor(() => expect(vpn).toHaveAttribute('aria-selected', 'true'))
+    await expect(wifi).toHaveAttribute('aria-selected', 'false')
+  }}
+/>
+
+<Story
+  name="List, insetGrouped"
+  args={{ scenario: 'style:insetGrouped' }}
+  play={async ({ canvas, userEvent }) => {
+    const list = await canvas.findByTestId('demo-list')
+    await expect(list).toHaveAttribute('role', 'listbox') // a selection makes it a listbox of options
+    const wifi = await canvas.findByTestId('demo-list-network-wifi')
+    await expect(wifi).toHaveAttribute('aria-selected', 'true')
+    const vpn = canvas.getByRole('option', { name: /VPN/ })
+    await userEvent.click(vpn)
+    await waitFor(() => expect(vpn).toHaveAttribute('aria-selected', 'true'))
+    await expect(wifi).toHaveAttribute('aria-selected', 'false')
+  }}
+/>
+
+<Story
+  name="List, grouped"
+  args={{ scenario: 'style:grouped' }}
+  play={async ({ canvas, userEvent }) => {
+    const list = await canvas.findByTestId('demo-list')
+    await expect(list).toHaveAttribute('role', 'listbox') // a selection makes it a listbox of options
+    const wifi = await canvas.findByTestId('demo-list-network-wifi')
+    await expect(wifi).toHaveAttribute('aria-selected', 'true')
+    const vpn = canvas.getByRole('option', { name: /VPN/ })
+    await userEvent.click(vpn)
+    await waitFor(() => expect(vpn).toHaveAttribute('aria-selected', 'true'))
+    await expect(wifi).toHaveAttribute('aria-selected', 'false')
+  }}
+/>
+
+<Story
+  name="List, sidebar"
+  args={{ scenario: 'style:sidebar' }}
+  play={async ({ canvas, userEvent }) => {
+    const list = await canvas.findByTestId('demo-list')
+    await expect(list).toHaveAttribute('role', 'listbox') // a selection makes it a listbox of options
+    const wifi = await canvas.findByTestId('demo-list-network-wifi')
+    await expect(wifi).toHaveAttribute('aria-selected', 'true')
+    const vpn = canvas.getByRole('option', { name: /VPN/ })
+    await userEvent.click(vpn)
+    await waitFor(() => expect(vpn).toHaveAttribute('aria-selected', 'true'))
+    await expect(wifi).toHaveAttribute('aria-selected', 'false')
+  }}
+/>
 
 <!-- Five thousand rows: a few dozen are in the DOM, the scrollbar is honest, the host sends windows, Home/End work. -->
 <Story
@@ -114,7 +170,7 @@
     // Scroll far down: placeholders hold the geometry, then the host's window arrives.
     const scroller = canvasElement.querySelector<HTMLElement>('.scroll')!
     scroller.scrollTop = 120_000
-    await canvas.findByText(/^Item 2[0-9]{3}$/, undefined, { timeout: 4000 })
+    await canvas.findAllByText(/^Item 2[0-9]{3}$/, undefined, { timeout: 4000 })
     await waitFor(() =>
       expect(harness.host.received.some((r) => r.method === 'source.set')).toBe(true)
     )
@@ -124,9 +180,16 @@
     const some = canvasElement.querySelector<HTMLElement>('[data-row-focus]')!
     some.focus()
     await userEvent.keyboard('{End}')
-    await canvas.findByText('Item 5000', undefined, { timeout: 4000 })
+    await waitFor(
+      () => expect(canvasElement.querySelector('[data-row-key="5000"]')).toHaveFocus(),
+      {
+        timeout: 4000
+      }
+    )
     await userEvent.keyboard('{Home}')
-    await canvas.findByText('Item 1', undefined, { timeout: 4000 })
+    await waitFor(() => expect(canvasElement.querySelector('[data-row-key="1"]')).toHaveFocus(), {
+      timeout: 4000
+    })
   }}
 />
 
@@ -201,6 +264,12 @@
   name="Split view, three columns"
   args={{ width: 1000, height: 560, scenario: 'split3' }}
   play={async ({ canvas, userEvent }) => {
+    // The stories spec also opens this at the smallest window, where the split is collapsed to one column.
+    const wide = canvas.getByTestId('app-window').clientWidth >= 700
+    if (!wide) {
+      await expect(await canvas.findByRole('option', { name: /Notes/ })).toBeVisible()
+      return
+    }
     const nav = await canvas.findByRole('navigation')
     await expect(within(nav).getByRole('option', { name: /Notes/ })).toHaveAttribute(
       'aria-selected',
@@ -226,7 +295,9 @@
   args={{ width: 760, height: 480, scenario: 'split2' }}
   play={async ({ canvas }) => {
     await expect(await canvas.findByRole('navigation')).toBeVisible()
-    await expect(canvas.getByRole('main')).toBeVisible()
+    // At the smallest window the split is one column: the sidebar alone.
+    if (canvas.getByTestId('app-window').clientWidth >= 700)
+      await expect(canvas.getByRole('main')).toBeVisible()
   }}
 />
 
@@ -235,12 +306,18 @@
   name="Split view, collapsed"
   args={{ width: 480, height: 560, scenario: 'split3' }}
   play={async ({ canvas, userEvent }) => {
+    // The stories spec also opens this at 1024 px, where nothing collapses: both columns are simply there.
+    if (canvas.getByTestId('app-window').clientWidth >= 700) {
+      await expect(await canvas.findByRole('navigation')).toBeVisible()
+      await expect(canvas.getByRole('main')).toBeVisible()
+      return
+    }
     const folder = await canvas.findByRole('option', { name: /Notes/ })
-    await expect(canvas.queryByRole('main')).toBeNull() // only the sidebar is showing
+    await waitFor(() => expect(canvas.queryByRole('main')).toBeNull()) // only the sidebar is showing
     await userEvent.click(folder)
     const note = await canvas.findByRole('option', { name: /Groceries/ })
     await userEvent.click(note)
-    await expect(await canvas.findByText('id 1')).toBeVisible()
+    await waitFor(async () => expect(await canvas.findByText('id 1')).toBeVisible())
     // The detail's back button is named after the screen it returns to.
     const back = await canvas.findByRole('button', { name: /NOTES/ })
     await userEvent.click(back)
@@ -258,11 +335,11 @@
     await userEvent.click(await canvas.findByTestId(tap('demo-inbox-list-row-2-link')))
     await expect(await canvas.findByRole('heading', { name: 'Ideas' })).toBeVisible()
     await expect(await canvas.findByText('Note id 2')).toBeVisible()
-    const back = await canvas.findByRole('button', { name: /Inbox/ })
+    const back = await canvas.findByRole('button', { name: 'Inbox' })
     // Push again from inside the screen (a nav.push action), then all the way back with popToRoot.
     await userEvent.click(await canvas.findByRole('button', { name: 'Open related note' }))
     await expect(await canvas.findByRole('heading', { name: 'Related' })).toBeVisible()
-    await expect(await canvas.findByRole('button', { name: /Ideas/ })).toBeVisible()
+    await expect(await canvas.findByRole('button', { name: 'Ideas' })).toBeVisible()
     await userEvent.click(await canvas.findByRole('button', { name: 'Back to Inbox' }))
     await waitFor(() => expect(canvas.queryByText('Note id 99')).toBeNull(), { timeout: 3000 })
     await expect(await canvas.findByRole('heading', { name: 'Inbox' })).toBeVisible()
@@ -276,7 +353,7 @@
   args={{ scenario: 'gallery', width: 520, height: 720 }}
   play={async ({ canvas, userEvent }) => {
     await expect(await canvas.findByText('Spans two columns')).toBeVisible()
-    await expect(canvas.getByText('Regular layout (420 px and over)')).toBeVisible()
+    await expect(canvas.getByText(/(Regular|Compact) layout/)).toBeVisible()
     await expect(canvas.getByText('A dark scope inside a light window')).toBeVisible()
     await userEvent.click(canvas.getByRole('tab', { name: 'Form' }))
     await expect(await canvas.findByRole('form', { name: 'Preferences' })).toBeVisible()

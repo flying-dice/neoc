@@ -59,7 +59,7 @@ export {
   type Parts
 } from './datepicker'
 export { initials, safeImageSrc } from './avatar'
-export { gridTemplate, cellPlacement, type GridTrack } from './logic/grid'
+export { gridTemplate, cellPlacement, spannedAspect, type GridTrack } from './logic/grid'
 export {
   HeightIndex,
   visibleRange,
@@ -82,6 +82,3 @@ export {
 } from './logic/reorder'
 export { listKeyAction, tabKeyIndex, typeaheadMatch, TypeaheadBuffer, type ListAction } from './logic/listKeys'
 export type { ListStyle } from './logic/listContext'
-export { pullToRefresh, type PullOptions } from './logic/pullToRefresh'
-export { PULL_THRESHOLD } from './logic/gestures'
-export { scrollParent } from './logic/dom'

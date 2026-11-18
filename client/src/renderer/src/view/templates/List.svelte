@@ -9,9 +9,9 @@
      placeholders hold the geometry of rows the host has not sent yet, and scrolling asks the host for the window.
    - Reorder: drag a row's handle, or `Alt+Arrow` on a row, reports `onMove {key, beforeKey}`; the row sits in its
      new place at once and settles when the host answers.
-   - Pull to refresh (touch, or the keyboard "Refresh" button) runs the app's `onRefresh`; the spinner shows until it
-     answers. Infinite load widens the source window, or reports `onLoadMore` when `hasMore`.
-  Organisms: List, ListSection, VirtualRows. Molecules: FormCell, RefreshKey, ListRow. Atoms: ActivityIndicator, Children.
+   - Pull to refresh (touch, or the keyboard "Refresh" button, both in the kit list) runs the app's `onRefresh`; the
+     spinner shows until it answers. Infinite load widens the source window, or reports `onLoadMore` when `hasMore`.
+  Organisms: List, ListSection, VirtualRows. Molecules: FormCell, ListRow. Atoms: ActivityIndicator, Children.
 -->
 <script lang="ts">
   import {
@@ -19,13 +19,11 @@
     moveAnnouncement,
     moveBefore,
     moveBy,
-    pullToRefresh,
-    scrollParent,
     windowFor,
     type RowRange
   } from '@agentos/ui'
   import { ActivityIndicator } from '@agentos/ui/atoms'
-  import { ListRow, RefreshKey } from '@agentos/ui/molecules'
+  import { ListRow } from '@agentos/ui/molecules'
   import { List as KitList, ListSection, VirtualRows } from '@agentos/ui/organisms'
   import Children from '../atoms/Children.svelte'
   import FormCell from '../molecules/FormCell.svelte'
@@ -239,20 +237,8 @@
     return () => io.disconnect()
   })
 
-  // ── pull to refresh ──
+  // ── pull to refresh: the kit list runs the gesture and the spinner; the app's answer ends it ──
   const refreshable = $derived(node.on?.refresh !== undefined)
-  let root: HTMLElement | undefined = $state()
-  let pulled = $state(0)
-  let refreshing = $state(false)
-  async function refresh(): Promise<void> {
-    if (refreshing) return
-    refreshing = true
-    try {
-      await view.fire(node, path, 'refresh', scope)
-    } finally {
-      refreshing = false
-    }
-  }
 
   // ── what rows see ──
   provideList({
@@ -285,10 +271,15 @@
 
 {#snippet plainRows(seg: Rows)}
   {@const data = dataOf(seg.source)}
+  {@const keys = seg === main ? order : (data?.keys ?? [])}
+  {@const groupBy = seg === main ? str(p('groupBy')) : ''}
   {#if data}
-    {#each seg === main ? order : data.keys as key (key)}
+    {#each keys as key, i (key)}
       {@const row = data.rows[String(key)]}
       {#if row}
+        {#if groupBy && (i === 0 || String(data.rows[String(keys[i - 1])]?.[groupBy]) !== String(row[groupBy]))}
+          <div class="group-head" role="presentation">{str(row[groupBy])}</div>
+        {/if}
         <Children
           nodes={seg.template}
           path={seg.at}
@@ -355,25 +346,9 @@
   class="list"
   role={variant === 'form' && label ? 'form' : undefined}
   aria-label={variant === 'form' ? label : undefined}
-  bind:this={root}
   style={joinStyle(common.style, surfaceStyle(ctx, node, scope))}
-  aria-busy={loading || refreshing || undefined}
-  use:pullToRefresh={{
-    enabled: refreshable,
-    onrefresh: refresh,
-    scroller: () => (root ? scrollParent(root) : null),
-    onchange: (d, r) => {
-      pulled = d
-      refreshing = r
-    }
-  }}
+  aria-busy={loading || undefined}
 >
-  {#if refreshable}
-    <RefreshKey testid="{common.testid}-refresh" onclick={refresh} disabled={refreshing} />
-    <div class="pull" style:height="{refreshing ? 48 : Math.min(pulled, 48)}px" aria-hidden="true">
-      {#if refreshing || pulled > 8}<ActivityIndicator label="Refreshing" />{/if}
-    </div>
-  {/if}
   <Children nodes={node.slots?.header} {path} slotName="header" {scope} />
   <KitList
     testid={common.testid}
@@ -384,6 +359,8 @@
     onreorder={reorder}
     onmove={dropped}
     onedge={edge}
+    css={p('separators') === false ? '--list-separator: transparent' : undefined}
+    onrefresh={refreshable ? () => view.fire(node, path, 'refresh', scope) : undefined}
     {announcement}
   >
     {#each blocks as block (block.kind === 'section' ? block.node.key : `loose-${block.id}`)}
@@ -411,22 +388,19 @@
   .list {
     min-width: 0;
   }
-  .pull {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden;
-    transition: height var(--duration-fast) var(--ease-ios);
+  /* `groupBy`: a header where the grouping field changes (rows arrive ordered by it). */
+  .group-head {
+    padding: 12px var(--row-inset) 6px;
+    font: var(--type-footnote);
+    letter-spacing: var(--tracking-footnote);
+    text-transform: uppercase;
+    color: var(--label-secondary);
+    background: var(--list-row-bg, var(--bg-grouped-elevated-secondary));
   }
   .more {
     display: flex;
     justify-content: center;
     min-height: 1px;
     padding: 8px 0;
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .pull {
-      transition: none;
-    }
   }
 </style>

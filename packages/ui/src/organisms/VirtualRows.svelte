@@ -8,7 +8,7 @@
 -->
 <script lang="ts">
   import { tick, untrack, type Snippet } from 'svelte'
-  import { offsetInScroller, perFrame, scrollParent } from '../logic/dom'
+  import { offsetInScroller, outerClip, perFrame, scrollParent } from '../logic/dom'
   import { anchorOf, anchorShift, HeightIndex, visibleRange, type Anchor, type RowRange } from '../logic/virtual'
 
   interface Props {
@@ -52,20 +52,18 @@
   // ── find the scroller and follow it ──
   $effect(() => {
     if (!host) return undefined
-    const found = scrollParent(host)
+    const found = scrollParent(host, false, true)
     self = found === null
     const el = found ?? host
     scroller = el
-    let clip: HTMLElement | null = null
-    if (self) {
-      for (let n = host.parentElement; n && !clip; n = n.parentElement)
-        if (getComputedStyle(n).overflowY === 'hidden') clip = n
-    }
+    const clip = self ? outerClip(host) : null
     const read = perFrame((): void => {
       if (self && clip && host)
         selfHeight = Math.max(120, Math.floor(clip.getBoundingClientRect().bottom - host.getBoundingClientRect().top))
       scrollTop = el.scrollTop
-      viewportHeight = el.clientHeight
+      // A list that scrolls itself is only as tall as its space; until that is known, never more than the screen
+      // (an unbounded box would be as tall as all its rows, and every one of them would render).
+      viewportHeight = self ? Math.min(el.clientHeight, selfHeight || window.innerHeight) : el.clientHeight
       listOffset = el === host ? 0 : offsetInScroller(host!, el)
     })
     read()
@@ -109,19 +107,28 @@
   })
 
   // ── scroll anchoring: hold the first visible row still while rows change above it ──
-  let held: { anchor: Anchor<string | number>; offset: number } | null = null
+  // `held` is the first visible row as of the last frame; when the rows the caller holds change, the scroller moves
+  // by however far that row moved, so an insert above the viewport does not shift what is being read.
+  let held: Anchor<string | number> | null = null
+  const note = (): void => {
+    const first = heights.indexAt(Math.max(0, scrollTop - listOffset))
+    held = anchorOf(keys, from, first)
+  }
+  $effect(() => {
+    if (!scroller) return
+    void scrollTop // refresh the anchor as the user scrolls
+    untrack(note)
+  })
   $effect.pre(() => {
-    const now = { keys, from }
-    if (held && scroller && scrollTop > 0) {
-      const shift = anchorShift(held.anchor, now.keys, now.from, heights, held.offset)
-      if (shift !== null) {
-        const el = scroller
-        void tick().then(() => (el.scrollTop += shift))
-      }
-    }
-    const first = untrack(() => heights.indexAt(Math.max(0, scrollTop - listOffset)))
-    const anchor = anchorOf(now.keys, now.from, first)
-    held = anchor ? { anchor, offset: untrack(() => heights.offsetOf(anchor.index)) } : null
+    const nextKeys = keys
+    const nextFrom = from
+    untrack(() => {
+      if (!held || !scroller || scrollTop <= 0) return
+      const shift = anchorShift(held, nextKeys, nextFrom, heights)
+      if (shift === null) return
+      const el = scroller
+      void tick().then(() => (el.scrollTop += shift))
+    })
   })
 
   /** Bring row `index` to the top of the viewport (rows outside the DOM are reached by scrolling to them). */
@@ -154,11 +161,14 @@
   /* No scrolling ancestor: the list scrolls itself, filling the space it is given. */
   .self {
     min-height: 0;
+    max-height: 100vh; /* never unbounded, not even before its space is measured */
     overflow-y: auto;
     overscroll-behavior: contain;
   }
   .rows {
     min-width: 0;
+    /* The list anchors the scroll position itself (by row key); the browser doing it too would fight the windows. */
+    overflow-anchor: none;
   }
   .vrow {
     min-width: 0;

@@ -53,11 +53,11 @@
 <section class="ios-list-section {kind}" class:sidebar={kind === 'sidebar'} data-testid={testid}>
   {#if header}
     {#if collapsible}
-      <h3 class="header collapsible" id="{uid}-header">
+      <h3 class="header collapsible" id="{uid}-header" role={list?.selectable ? 'presentation' : undefined}>
         <SectionHeader testid="{testid ?? uid}-header" title={header} {expanded} ontoggle={toggle} />
       </h3>
     {:else}
-      <h3 class="header" id="{uid}-header">{header}</h3>
+      <h3 class="header" id="{uid}-header" role={list?.selectable ? 'presentation' : undefined}>{header}</h3>
     {/if}
   {/if}
   {#if expanded}
@@ -65,7 +65,7 @@
       {@render children()}
     </div>
   {/if}
-  {#if footer}<p class="footer">{footer}</p>{/if}
+  {#if footer}<p class="footer" role={list?.selectable ? 'presentation' : undefined}>{footer}</p>{/if}
 </section>
 
 <style>
@@ -151,5 +151,6 @@
     overflow: visible;
     --list-separator: transparent;
     --list-row-radius: var(--radius-md);
+    --list-row-bg: transparent;
   }
 </style>
