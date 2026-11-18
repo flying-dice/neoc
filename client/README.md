@@ -23,6 +23,10 @@ lib/apps.svelte.ts      the app registry the window manager reads: built-in page
                         window size and minimum from `app.manifest`); the Dock order
 lib/windowManager.svelte.ts   Stage Manager windows (floating, full screen, split, Slide Over); a window has an app and a window kind
 shell/channel.ts        the host's own methods and notifications (app.*, host.*, window.open) on the session's transport
+shell/results.ts        zod schemas for what the host answers the shell (app.list, agents.list, host.devices.list, ...): a
+                        malformed answer is an error state on the page, never a crash
+shell/links.ts          opening a link the person confirmed (web in a new tab, mailto to the mail client); the
+                        confirmation itself is ViewHost's (view/core/link.ts describes the link: host and full URL)
 shell/pairing.ts        GET /session, POST /pair and their messages (wrong code, rate limit, unreachable)
 shell/hostApi.ts        the wire types of app.* / host.devices.* (mirror of types/generated/agentos.ts, tested for drift)
 shell/fakeHost.ts       a fake of those methods for stories
@@ -30,6 +34,10 @@ organisms/ViewWindow    an installed app's window: view.open on mount, view.clos
 pages/                  PairingPage, DiscoverPage (apps: install, enable, disable, remove, add by URL), SettingsPage
                         (Devices), and the built-in Files, Terminal and UI Kit pages
 ```
+
+`bun test` (in `client/`) also runs the shell's rune modules (`*.svelte.ts`: `lib/host`, `lib/apps`, `lib/windowManager`):
+`test/svelte-modules.ts` is the preload that compiles them. Components are not loaded there; their behaviour is a story
+with a play function.
 
 Agents is not a page here: it is the Luau app `apps/agents`, rendered like any installed app, with `ChatTranscript`
 streaming over AG-UI (`/agui`).

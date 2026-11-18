@@ -329,6 +329,9 @@
     await waitFor(() => expect(canvas.getByTestId('kit-link-confirm-action-open')).toHaveFocus())
     await userEvent.keyboard('{Enter}')
     await waitFor(() => expect(links).toEqual(['https://evil.example/login?next=1']))
+    // leave it asking, for the snapshot
+    await userEvent.click(link)
+    await expect(await canvas.findByTestId('kit-link-confirm')).toBeVisible()
   }}
 />
 
@@ -344,6 +347,8 @@
     await expect(canvas.getByTestId('kit-link-confirm-host')).toHaveTextContent('team@example.org')
     await userEvent.click(canvas.getByTestId('kit-link-confirm-action-open'))
     await waitFor(() => expect(links).toEqual(['mailto:team@example.org']))
+    await userEvent.click(canvas.getByTestId('kit-doc-link-1')) // leave it asking, for the snapshot
+    await expect(await canvas.findByTestId('kit-link-confirm')).toBeVisible()
   }}
 />
 
@@ -363,6 +368,10 @@
     await userEvent.click(canvas.getByTestId('kit-link-confirm-action-cancel'))
     await waitFor(() => expect(canvas.queryByTestId('kit-link-confirm')).toBeNull())
     await expect(links).toEqual([])
+    const long =
+      'https://app.example/help?topic=a-rather-long-address-that-must-wrap-inside-the-dialog-and-never-overflow-it'
+    view.command({ cmd: 'openUrl', args: { url: long } } as never)
+    await expect(await canvas.findByTestId('kit-link-confirm-url')).toHaveTextContent(long) // left asking, for the snapshot
   }}
 />
 
