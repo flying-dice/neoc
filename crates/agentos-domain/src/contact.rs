@@ -76,7 +76,8 @@ pub enum ApprovalPolicy {
     Ask,
     /// Allow a tool its app declared `readOnly` (it cannot write: that is enforced) when the request is exactly
     /// `mcp__agentos__<app>__<tool>`, the tool exists, the agent is granted the app and the agent's kind for the
-    /// call is not execute, edit, delete, move or unknown. Ask for everything else.
+    /// call is `read`, `search` or `fetch` (any other kind, or none, asks). It answers with allow-once, never a
+    /// standing allow. Ask for everything else.
     #[default]
     AutoReadOnly,
     /// Never ask: **every** permission request is allowed, whatever it is for (a shell command, a file edit, a

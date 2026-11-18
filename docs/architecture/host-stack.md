@@ -361,7 +361,8 @@ host restart (a new one starts with the next prompt; the transcript stays).
 explicit "all apps" option. `approval` (`ask` | `auto_read_only` | `allow_all`, default `auto_read_only`) says what the
 host does with an agent's ACP permission requests: `ask` prompts always. `auto_read_only` skips the prompt only when
 the permission title is exactly `mcp__agentos__<app>__<tool>`, that tool exists and is declared `readOnly`, the agent is
-granted its app, and the request's kind is not execute, edit, delete, move or one the host does not know; anything else
+granted its app, and the request's kind is one of `read`, `search` or `fetch` (an allowlist: `execute`, `edit`, `delete`,
+move, `think`, `other`, an unknown kind or no kind at all asks), and it answers with allow-once, never a standing allow; anything else
 (shell, edits, other apps' tools) prompts. `allow_all` (`AllowEverything` in code) never prompts and approves *every*
 request, Bash and edits included; grants still bound which app tools the agent sees. An option kind the host does not
 know is never chosen automatically. Open risk: the title and kind are the agent's own text, so an agent could title a

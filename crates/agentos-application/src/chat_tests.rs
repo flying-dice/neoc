@@ -300,7 +300,7 @@ fn permission(title: &str) -> PermissionRequest {
         request_id: "perm-1".into(),
         tool_call_id: Some("tc-1".into()),
         title: title.into(),
-        kind: Some(ToolKind::Other),
+        kind: Some(ToolKind::Read),
         options: vec![
             PermissionOption {
                 option_id: "once".into(),
@@ -669,12 +669,41 @@ async fn auto_approval_needs_the_exact_title_of_a_granted_read_only_tool() {
 }
 
 #[tokio::test]
-async fn a_kind_that_can_run_or_change_things_asks_even_for_a_read_only_title() {
+async fn only_a_read_only_kind_skips_the_prompt_for_a_read_only_title() {
     let r = notes_rig(Grants::apps([AppId::parse("notes").unwrap()])).await;
-    for kind in [ToolKind::Execute, ToolKind::Edit, ToolKind::Delete, ToolKind::Move, ToolKind::Unknown] {
+    for kind in [ToolKind::Read, ToolKind::Search, ToolKind::Fetch] {
+        let request = PermissionRequest { kind: Some(kind), ..permission("mcp__agentos__notes__search") };
+        assert!(auto_approved(&r, request).await, "{kind:?} may be auto-approved");
+    }
+    for kind in [
+        ToolKind::Execute,
+        ToolKind::Edit,
+        ToolKind::Delete,
+        ToolKind::Move,
+        ToolKind::Think,
+        ToolKind::SwitchMode,
+        ToolKind::Other,
+        ToolKind::Unknown,
+    ] {
         let request = PermissionRequest { kind: Some(kind), ..permission("mcp__agentos__notes__search") };
         assert!(!auto_approved(&r, request).await, "{kind:?} must ask");
     }
+    let undeclared = PermissionRequest { kind: None, ..permission("mcp__agentos__notes__search") };
+    assert!(!auto_approved(&r, undeclared).await, "a request that declares no kind must ask");
+}
+
+#[tokio::test]
+async fn auto_read_only_never_picks_a_standing_allow() {
+    let r = notes_rig(Grants::apps([AppId::parse("notes").unwrap()])).await;
+    // an agent that only offers "always allow" (and a reject) is asked: a standing allow is the person's to give
+    let mut request = permission("mcp__agentos__notes__search");
+    request.options.retain(|o| o.kind != PermissionKind::AllowOnce);
+    assert!(request.options.iter().any(|o| o.kind == PermissionKind::AllowAlways));
+    assert!(!auto_approved(&r, request).await, "only allow-once is picked on the agent's behalf");
+    // and when both are offered, it is the once
+    let both = permission("mcp__agentos__notes__search");
+    assert!(auto_approved(&r, both).await);
+    assert_eq!(r.connector.auto.lock().last().map(String::as_str), Some("once"));
 }
 
 #[tokio::test]

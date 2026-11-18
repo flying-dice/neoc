@@ -186,7 +186,8 @@ impl PermissionKind {
     }
 }
 
-/// What an agent says a tool call does (ACP `ToolKind`). The agent's word, so it is only used to withhold trust.
+/// What an agent says a tool call does (ACP `ToolKind`). The agent's word, so it can only narrow trust: a kind
+/// outside the read-only allowlist ([`ToolKind::is_read_only`]) is never auto-approved.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolKind {
@@ -223,11 +224,12 @@ impl ToolKind {
         }
     }
 
-    /// Whether a call of this kind may change something outside the app (run a command, edit, delete or move a
-    /// file) or is a kind the host cannot judge: such a call is never auto-approved as a read-only app tool.
+    /// Whether a call of this kind reads and changes nothing: an allowlist (`read`, `search`, `fetch`). Every
+    /// other kind (`execute`, `edit`, `delete`, `move`, `think`, `switch_mode`, `other`, one the host does not
+    /// know) is not judged read-only, so such a call is never auto-approved as a read-only app tool.
     #[must_use]
-    pub fn is_unsafe_for_auto_approval(self) -> bool {
-        matches!(self, Self::Execute | Self::Edit | Self::Delete | Self::Move | Self::Unknown)
+    pub fn is_read_only(self) -> bool {
+        matches!(self, Self::Read | Self::Search | Self::Fetch)
     }
 }
 
@@ -259,10 +261,11 @@ impl PermissionRequest {
         crate::QualifiedToolName::parse(rest).ok()
     }
 
-    /// Whether the agent's declared kind rules out auto-approving this as a read-only app tool.
+    /// Whether the agent's declared kind is one of the read-only kinds: a request that declares none (or any
+    /// other kind) is not auto-approved as a read-only app tool.
     #[must_use]
-    pub fn kind_forbids_auto_approval(&self) -> bool {
-        self.kind.is_some_and(ToolKind::is_unsafe_for_auto_approval)
+    pub fn kind_allows_auto_approval(&self) -> bool {
+        self.kind.is_some_and(ToolKind::is_read_only)
     }
 }
 
@@ -669,14 +672,24 @@ mod tests {
     }
 
     #[test]
-    fn a_kind_that_can_change_things_or_is_unknown_forbids_auto_approval() {
+    fn only_the_read_only_kinds_allow_auto_approval() {
         let with = |kind| PermissionRequest { kind, ..request() };
-        for kind in [ToolKind::Execute, ToolKind::Edit, ToolKind::Delete, ToolKind::Move, ToolKind::Unknown] {
-            assert!(with(Some(kind)).kind_forbids_auto_approval(), "{kind:?}");
+        for kind in [ToolKind::Read, ToolKind::Search, ToolKind::Fetch] {
+            assert!(with(Some(kind)).kind_allows_auto_approval(), "{kind:?}");
         }
-        for kind in [None, Some(ToolKind::Other), Some(ToolKind::Read), Some(ToolKind::Search)] {
-            assert!(!with(kind).kind_forbids_auto_approval(), "{kind:?}");
+        for kind in [
+            ToolKind::Execute,
+            ToolKind::Edit,
+            ToolKind::Delete,
+            ToolKind::Move,
+            ToolKind::Think,
+            ToolKind::SwitchMode,
+            ToolKind::Other,
+            ToolKind::Unknown,
+        ] {
+            assert!(!with(Some(kind)).kind_allows_auto_approval(), "{kind:?}");
         }
+        assert!(!with(None).kind_allows_auto_approval(), "no declared kind is not a read-only kind");
         assert_eq!(ToolKind::parse("execute"), ToolKind::Execute);
         assert_eq!(ToolKind::parse("brand_new_kind"), ToolKind::Unknown);
     }
