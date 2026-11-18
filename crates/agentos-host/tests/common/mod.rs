@@ -14,7 +14,7 @@ use tokio_tungstenite::{
 };
 use tokio_util::sync::CancellationToken;
 
-use agentos_domain::{AgentId, AgentIdentity, Permission};
+use agentos_domain::{Agent as Contact, AgentId, AgentRuntime, ApprovalPolicy, Grants, Permission};
 use rmcp::{
     model::CallToolRequestParams,
     service::{NotificationContext, RunningService},
@@ -67,7 +67,7 @@ pub async fn start_with_tls(
     let mut cfg = HostConfig::new(addr.port());
     cfg.clock = clock.clone() as Arc<dyn Clock>;
     configure(&mut cfg);
-    let host = build(cfg).unwrap();
+    let host = build(cfg).await.unwrap();
     let shutdown = host.shutdown.clone();
     let router = host.router.clone();
     let token = shutdown.clone();
@@ -167,15 +167,21 @@ pub async fn wait_until(what: &str, mut ok: impl FnMut() -> bool) {
     panic!("timed out waiting for {what}");
 }
 
-pub fn claude() -> (String, AgentIdentity) {
-    (
-        "tok-claude".into(),
-        AgentIdentity {
-            id: AgentId("claude".into()),
-            name: "Claude".into(),
-            grants: vec![Permission::CallAnyTool],
-        },
-    )
+/// A test agent with a fixed MCP token. `grants` default to everything: tests that care say otherwise.
+pub fn agent_with(id: &str, name: &str, grants: Grants) -> Contact {
+    Contact {
+        id: AgentId(id.into()),
+        name: name.into(),
+        avatar: None,
+        role: String::new(),
+        runtime: AgentRuntime::default(),
+        grants,
+        approval: ApprovalPolicy::default(),
+    }
+}
+
+pub fn claude() -> (String, Contact) {
+    ("tok-claude".into(), agent_with("claude", "Claude", Grants::allow_all()))
 }
 
 /// WS client that keeps notifications that arrive while it waits for a response (they can overtake it).

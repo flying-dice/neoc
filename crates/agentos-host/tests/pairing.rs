@@ -4,7 +4,7 @@
 
 mod common;
 
-use agentos_domain::{AgentId, AgentIdentity, Permission};
+use agentos_domain::Grants;
 use agentos_host::Interfaces;
 use common::{connect_rpc, next_json, pair, start, Running};
 use futures_util::{SinkExt, StreamExt};
@@ -46,15 +46,8 @@ fn agui_body() -> Value {
     json!({"threadId":"t","runId":"r"})
 }
 
-fn local_agent() -> (String, AgentIdentity) {
-    (
-        "agent-token".into(),
-        AgentIdentity {
-            id: AgentId("local".into()),
-            name: "Local".into(),
-            grants: vec![Permission::CallAnyTool],
-        },
-    )
+fn local_agent() -> (String, agentos_domain::Agent) {
+    ("agent-token".into(), common::agent_with("local", "Local", Grants::allow_all()))
 }
 
 #[tokio::test]
@@ -157,8 +150,8 @@ async fn unpaired_requests_are_refused_on_rpc_and_agui_even_from_loopback() {
     let cookie = pair(&r, "Mac").await;
     assert!(connect_rpc(r.addr, Some(&cookie), None).await.is_ok());
     let agui = http().post(r.url("/agui")).header("cookie", &cookie).json(&agui_body()).send().await.unwrap();
-    assert_eq!(agui.status(), 200);
-    assert!(agui.text().await.unwrap().contains("RUN_STARTED"));
+    assert_eq!(agui.status(), 404, "past the guard: the thread does not exist");
+    assert!(agui.json::<Value>().await.unwrap()["error"].as_str().unwrap().contains("no thread"));
     r.stop().await;
 }
 
