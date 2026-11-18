@@ -59,14 +59,13 @@ test.describe('Discover journeys', () => {
     await expect(page.getByTestId('discover-add-error')).toBeVisible()
     await expect(page.getByTestId('discover-add-preview-card')).toHaveCount(0)
 
-    // a real app ref: what it is, where it comes from, what it asks for
+    // a real app ref: what it is and where it comes from
     await page.getByTestId('discover-add-url').fill(NOTES_APP_REF)
     await page.getByTestId('discover-add-preview').click()
     const card = page.getByTestId('discover-add-preview-card')
     await expect(card).toContainText('Notes')
     await expect(card).toContainText('Version 0.1.0')
     await expect(card).toContainText('from this computer')
-    await expect(card).toContainText('data, notify')
     await expect(page.getByTestId('dock-notes')).toHaveCount(0) // previewing installs nothing
 
     // the confirmation says what installing means; cancelling leaves things as they were

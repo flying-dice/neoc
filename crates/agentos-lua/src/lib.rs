@@ -1,8 +1,9 @@
-//! Driven adapter: sandboxed Luau (mlua) behind the `AppRuntime` port.
+//! Driven adapter: Lua 5.1 apps (mlua, on `agentos-luavm`) behind the `AppRuntime` port.
 //!
-//! One sandboxed Luau VM per app, with the host-provided `app` capability table (see [`api`]), a bundle-only
-//! `require`, a memory limit, a CPU budget counted in VM interrupts (deterministic, with a wall-clock
-//! backstop), a wall-clock timeout on host calls, tracked `app.state`, and errors reported with the app's file and line.
+//! One VM per app, with the host-provided `app` table (see [`api`]), a `require` for `@agentos/app`, `@agentos/ui`
+//! and every `std:`/`lib:`/`vnd:` module of the VM library, tracked `app.state`, one call at a time per VM
+//! (including the callbacks the app's own servers and tasks make), and errors reported with the app's file and
+//! line. Nothing is budgeted and there are no permissions; what an app starts is stopped when it is unloaded.
 
 mod api;
 mod convert;
