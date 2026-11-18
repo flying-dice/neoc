@@ -78,8 +78,10 @@
   play={async ({ canvasElement }) => {
     const canvas = within(canvasElement)
     await userEvent.click(canvas.getByTestId('menu-move-to'))
-    await waitFor(() => expect(canvas.getByTestId('menu-inbox')).toBeVisible())
+    // Opening moves focus into the submenu a frame later: wait for it before pressing keys.
+    await waitFor(() => expect(canvas.getByTestId('menu-inbox')).toHaveFocus())
     await userEvent.keyboard('{ArrowDown}')
+    await expect(canvas.getByTestId('menu-archive')).toHaveFocus()
     await userEvent.keyboard('{ArrowLeft}')
     await waitFor(() => expect(canvas.queryByTestId('menu-inbox')).toBeNull())
     await expect(canvas.getByTestId('menu-move-to')).toHaveFocus()

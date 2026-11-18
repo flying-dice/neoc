@@ -207,8 +207,9 @@
     padding: 0;
     background: none;
     font-size: 0.88em;
-    white-space: pre;
-    overflow-wrap: normal;
+    /* Code wraps rather than scrolling sideways (a window is never wider than its content: DESIGN_LANGUAGE 8). */
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
   blockquote {
     padding-inline-start: 12px;
@@ -257,10 +258,11 @@
   table {
     border-collapse: collapse;
     font: var(--type-subheadline);
-    min-width: 100%;
+    width: 100%;
   }
   th,
   td {
+    overflow-wrap: anywhere;
     padding: 6px 10px;
     border: var(--hairline) solid var(--separator);
     text-align: start;
