@@ -109,8 +109,8 @@ them in strict mode.
 | `app.tool { ... }` (alias `app.tools.register`) | declare an agent tool |
 | `app.t.string / integer / number / boolean / array / object / enum` | input schema builders for tools |
 | `app.notify { title, body, at, actions }` | a notification (needs `notify`) |
-| `app:openWindow(name, params)`, `app:windows(name)` | bring a window forward, or iterate the open instances |
-| `app.thread()` | declare a chat-thread source for `ChatTranscript` |
+| `app:openWindow(name, params)`, `app:windows(name)` | bring a declared window forward (an undeclared name raises), or iterate the open instances |
+| `app.thread()` | declare a chat-thread source for `ChatTranscript` (needs the `agents` permission; a literal agent must be on the roster) |
 | `app.agents:list()` | the agent contacts, as `{ id, name, avatar, role }` (needs `agents`) |
 | `app.shell.badge / command / deepLink` | Dock badge, menu commands, deep links (needs `shell`; declarations the shell does not act on yet) |
 | `app.timer.at / every`, `app.log(message)`, `app.id` | host-scheduled timers, logging, the app's id |
@@ -214,7 +214,8 @@ app.tool {
 - **`ctx`:** `ctx.actor` (`{ kind = "user" | "agent", name }`), `ctx.now`, `ctx:fail(message)` to report a problem to the
   caller. Raising an error does the same with the error's message.
 - **`readOnly = true` is enforced, not a hint.** The tool runs with app writes blocked: `db:exec`, writes in `db:tx`,
-  DDL, `app.kv:set/delete` and `db:migrate` raise. In return, an agent whose approval policy is `auto_read_only` (the
+  DDL, `app.kv:set/delete` and `db:migrate` raise, and so do assigning `app.state`, `app.notify`, `app.shell.*` and
+  `openWindow` (a window's `onOpen` could write). In return, an agent whose approval policy is `auto_read_only` (the
   default) may run it without a permission prompt. A tool that must write (the Calculator's `calculate` records
   history) is not `readOnly`.
 - **Who can call it:** an agent sees and may call only the tools of the apps it was granted (deny by default; see
@@ -251,7 +252,11 @@ SQLite (`apps/agents/app.luau`).
   filesystem `require`, no network. A **memory limit** (16 MiB by default) and a **CPU budget** per call (`Limits::cpu_ticks`, 5 000 000
   VM interrupts, about 250 ms of Luau on an idle machine, so a loaded host does not trip it; a 10 s wall-clock
   backstop, `cpu_wall`, catches the rest; sticky so `pcall` cannot swallow it; time waiting on the host does not count) kill a
-  runaway app, not the host. A blocking host call has its own timeout. SQL `ATTACH` is denied and a statement past
+  runaway app, not the host. A **per-call budget** that host calls do not refill (25 000 000 ticks, 30 s including host
+  waits) stops a loop of host calls; at most 32 effects (notifications, windows, shell commands) per call; values
+  leaving Luau are capped at 100 000 nodes and 4 MiB and may not contain cycles (view trees: 10 000 nodes, depth 64).
+  Queries return at most 10 000 rows and 16 MiB; BLOBs come out as base64 text. `loadstring`, `getfenv` and
+  `setfenv` are not available. A blocking host call has its own timeout. SQL `ATTACH` is denied and a statement past
   its wall-clock budget is interrupted.
 - **Permissions** are what `app.json` declares and the user confirmed at install; the host checks them at each call
   (`permission denied: app.notify needs the notify permission in the package manifest`), so an app cannot grant itself

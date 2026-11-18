@@ -15,7 +15,7 @@ The spikes were restructured into the proposed hexagonal layout (section "Worksp
 Features `luau, async, serialize, send`. Proven (all in `tests/vm.rs`, 9 tests):
 - **One VM per app**, `lua.sandbox(true)` (builtins readonly, per-app globals; `io`/`os.execute`/`dofile`/`debug.getregistry` absent; two VMs have independent globals).
 - **Memory limit** `set_memory_limit` (4 MiB test: bomb dies with `memory error`, VM stays usable).
-- **CPU budget** via `set_interrupt`, counted in interrupts (Lua calls and loop iterations; 5 million by default, about 250 ms on an idle machine) rather than wall-clock time, so a loaded machine cannot trip an honest call; a generous wall-clock backstop (10 s) sits behind it. `while true do end` dies at the budget. The kill flag is *sticky*, so `while true do pcall(...) end` cannot swallow it. The budget resets when a host `await` returns (waiting on SQLite is not app CPU). Luau's own pattern matcher polls the interrupt: a backtracking `string.find` dies at the budget too.
+- **CPU budget** via `set_interrupt`, counted in interrupts (Lua calls and loop iterations; 5 million by default, about 250 ms on an idle machine) rather than wall-clock time, so a loaded machine cannot trip an honest call; a generous wall-clock backstop (10 s) sits behind it. `while true do end` dies at the budget. The kill flag is *sticky*, so `while true do pcall(...) end` cannot swallow it. The slice resets when a host `await` returns (waiting on SQLite is not app CPU), but a **per-call budget** never does: `Limits::call_ticks` (25 million, five slices; each host call is also charged `HOST_CALL_TICKS` = 1 000) and `call_wall` (30 s, host waits included), so `while true do app.kv:get("k") end` dies too. Unloading an app *retires* its VM: a sticky kill flag checked by the interrupt and by every host call, so a runaway call in flight stops and the VM is freed. Effects per call are capped (`max_effects` = 32), and values crossing out of Luau are walked once with a node, byte and cycle budget (`convert::MAX_NODES` 100 000, `MAX_BYTES` 4 MiB; view trees use the domain's `MAX_NODES` 10 000 and `MAX_DEPTH` 64), so a cyclic or self-sharing table is an error, not a stack overflow or a giant allocation. `loadstring`, `getfenv` and `setfenv` are removed. Luau's own pattern matcher polls the interrupt: a backtracking `string.find` dies at the budget too.
 - **Capability table** `app.data.query/exec` (async fn on the blocking pool), `app.tools.register{}`, `app.notify{}`, `app.state.get/set`, `app.on(event, fn)`. Rust→Luau event call with a JSON table works (`serde` feature; `emit()`/`call_tool()`).
 - **Source from bytes** (`lua.load(&[u8]).set_name("=app/main.luau")`; syntax errors report `app/main.luau:1`).
 - **Unload frees**: drop Rust-held `Function`s, then the `Lua`. 300 VMs created, dropped, re-created: RSS growth 80 KiB total, so memory is reused.
@@ -142,11 +142,17 @@ Every client route needs a paired device, **including from loopback**: there is 
    (plus `Secure` over TLS) and `{"device": {...}}`. The database stores only the SHA-256 of the token and of the
    code, with the device name, creation time and last-seen time.
 4. `/rpc` and `/agui` (and any route added later: protected is the default) require that cookie, else `401`.
-5. Wrong codes are rate limited: after 5 attempts in a minute, `429` with `Retry-After`, even for the right code;
-   10 wrong guesses in 10 minutes destroy every outstanding code.
+5. Wrong codes are rate limited per client address (an IPv6 address counts as its /64): after 5 attempts in a minute,
+   `429` with `Retry-After`, even for the right code, and 20 a minute across all clients; one noisy client cannot
+   stall the others. 10 wrong guesses in 10 minutes destroy every outstanding code. Over TLS the cookie is
+   `__Host-agentos_session` (Secure, `Path=/`, no Domain) and only that name is accepted.
 6. Sessions have no expiry; they last until revoked. The JSON-RPC methods `host.devices.list` (`{devices:[{id, name,
    createdAt, lastSeenAt, current}]}`) and `host.devices.revoke` (`{id}`) back Settings > Devices. Revoking a
-   device hangs up its sockets and ends its session.
+   device hangs up its sockets, ends its open `/agui` event streams and ends its session.
+7. `/rpc` limits: params are a typed struct per method (`deny_unknown_fields`; a mistake is `-32602`, never a silent
+   default), at most 64 requests in flight per connection (then `-32000` at once), frames up to `MAX_MESSAGE_BYTES`
+   (1 MiB). The Origin/Host guard reads `Host`, or the URI authority over HTTP/2, and refuses when both are present
+   and differ.
 
 `/mcp` is separate: per-agent bearer tokens only. A paired session is not an MCP credential and an MCP token is
 not a session. For local MCP clients the host writes `<data>/mcp.json` (mode 0600,
@@ -218,6 +224,8 @@ silently. `lint:luau` and `lint:stylua` skip with a message when `luau-lsp` or
   app that cannot load is marked **failed** (and announced as `app.failed`), the others start. Uninstall forgets
   the record; shutdown keeps it.
 - **Browsing and previewing:** `app.available` lists what the configured `registries` offer (`{apps: [AppPreview], errors}`; a registry that cannot be read is an error line, the rest still list); `app.preview {url}` reads one app ref **without installing or running anything** (manifest, source host, permissions, whether the id is installed). `app.list` returns each installed app with its state, `icon`, `tint`, `description`, `source` and, while it runs, its `window` (`w`, `h`, `minW`, `minH`) from `app.manifest`. Types: `crates/agentos-domain/src/api.rs`. Package manifests carry optional `icon`, `tint`, `description` and `requires: {host: ">=1.0"}` (checked against `HOST_API`); an app ref's file URLs may be relative to it.
+- **Install is what was reviewed.** `app.preview` returns the app ref's `sha256`; `app.install {url, sha256}` installs only that ref (a changed ref is refused: preview it again). The install record keeps the approved permissions and the ref digest: a later load (restart, `app.reload`, enable, restore) refuses a ref that now serves another app id, and one that asks for more permissions than were approved (the app is marked failed with a message; installing it again shows the new permissions). Package files must stay on the ref's scheme and origin (no `..`, no absolute path, no foreign host or `file://` from a remote ref). Fetches read in chunks up to a cap and refuse non-regular files; redirects stay on the same origin; a remote ref cannot reach private, link-local or metadata addresses. Caps: 2 MiB per file, 8 MiB per package, 256 files.
+- **Query caps:** at most 10 000 rows and 16 MiB per result, SQLite values up to 8 MiB (`SQLITE_LIMIT_LENGTH`); BLOBs leave the database as base64 text.
 - **Lifecycle over `/rpc`:** `app.install`, `app.uninstall {app, purge?}`, `app.list`, `app.enable`,
   `app.disable` (VM unloaded, tools retracted, data kept), `app.deleteData` (purge, then reload on an empty
   database), `app.reload` (dev: rebuild the VM from source, keep the database; the old version keeps running if the
@@ -351,8 +359,13 @@ host restart (a new one starts with the next prompt; the transcript stays).
 **Agents and tokens.** `Agent {id, name, avatar?, role, runtime:{command, args, env}, grants, approval}`. Grants are
 **deny by default**: `{"apps": []}` means no tools; `{"apps": ["notes"]}` is an allow-list; `{"all": true}` is the
 explicit "all apps" option. `approval` (`ask` | `auto_read_only` | `allow_all`, default `auto_read_only`) says what the
-host does with an agent's ACP permission requests about AgentOS tools: `auto_read_only` allows a request for a tool the
-app declared `readOnly` and prompts for the rest, `ask` prompts always, `allow_all` never prompts. A persistent
+host does with an agent's ACP permission requests: `ask` prompts always. `auto_read_only` skips the prompt only when
+the permission title is exactly `mcp__agentos__<app>__<tool>`, that tool exists and is declared `readOnly`, the agent is
+granted its app, and the request's kind is not execute, edit, delete, move or one the host does not know; anything else
+(shell, edits, other apps' tools) prompts. `allow_all` (`AllowEverything` in code) never prompts and approves *every*
+request, Bash and edits included; grants still bound which app tools the agent sees. An option kind the host does not
+know is never chosen automatically. Open risk: the title and kind are the agent's own text, so an agent could title a
+shell call exactly like a granted read-only tool; the exact-match rule narrows this but ACP carries nothing stronger. A persistent
 **MCP bearer token** is stored hashed (SHA-256; shown once, at `agents.create` and `agents.token.rotate`), for agents the
 host does not launch (an agent without a `runtime.command` is such an external client: it has an identity, grants and a
 token, and the host never starts it). A host-launched agent gets a **fresh random token for every session** (one per
@@ -366,7 +379,7 @@ goes to that agent's sessions when its grants change or an app it may use is pub
 
 | method | params | result |
 |---|---|---|
-| `agents.list` | none | `{agents: Agent[]}` (no tokens) |
+| `agents.list` | none | `{agents: AgentRow[]}`: no tokens, and the runtime as `{command, args, envKeys}` (env values never leave the host) |
 | `agents.create` | `{id?, name, avatar?, role?, runtime:{command, args?, env?}, grants?, approval?}` | `{agent, token}` (`id` defaults to a slug of the name) |
 | `agents.update` | `{id, name?, avatar? (null clears), role?, runtime?, approval?}` | `{agent}` |
 | `agents.delete` | `{id}` | `null`; its tokens and sessions' access die with it |
@@ -374,7 +387,9 @@ goes to that agent's sessions when its grants change or an app it may use is pub
 | `agents.token.rotate` | `{id}` | `{token}`; the old persistent token stops working |
 
 Errors: `-32602` bad params, `-32001` invalid agent, `-32002` no such agent, `-32004` id taken. Every change also
-broadcasts `agents.changed {id}` to the paired clients.
+broadcasts `agents.changed {id}` to the paired clients. Deleting an agent, or changing its command, args or env, stops
+its ACP process; each agent's process starts under its own lock and `initialize` times out after 30 s, so one hung
+agent holds up only itself.
 
 **Configuration.** `agentos.toml` may list `[[agents]]` (an `Agent`: `id`, `name`, `role`, `avatar`, `[agents.runtime]`
 `command`/`args`/`env`, `[agents.grants]` `all`/`apps`, `approval`). They seed the roster: an entry is added when no
@@ -393,14 +408,16 @@ where `local chat = app.thread()`. A `thread` source declares only the thread an
 runs no query, is never subscribed, and sends no `data.patch`: the client opens the thread on `/agui`. (When a param
 Ref changes the client re-asks with `source.set`; the host answers `{kind:"value", value:null}`.) The `send` and
 `stop` events also reach the app (`e.payload.text`), so it can title the chat. An app with the `agents` permission can
-read the roster with `app.agents:list()` (`{id, name, avatar?, role}`, never grants, tokens or commands).
+read the roster with `app.agents:list()` (`{id, name, avatar?, role}`, never grants, tokens or commands). `app.thread()`
+needs the `agents` permission; a literal `agent` must be on the roster.
 
 **`readOnly` is enforced.** A tool declared `readOnly = true` runs with app writes blocked. The app's database handle
 is `AppData::read_only()`: SQLite `PRAGMA query_only` for each statement (checked when the statement runs, so a statement
 cached while writable cannot sneak a write through; the authorizer refuses app SQL that tries to lift it), so
 `db:exec`, writes in `db:tx`, DDL and a write smuggled through `db:all ... returning` all fail. `app.kv:set`/`delete` and
-`db:migrate` raise with a message that says why. `app.state`, `app.notify` and `app:openWindow` are not data and are not
-blocked. A tool that must write is not `readOnly`: the spec Calculator's `calculate` no longer records history (only
+`db:migrate` raise with a message that says why. A `readOnly` call also cannot assign `app.state`, `app.notify`, open a window (whose `onOpen` could write) or
+drive the shell (`app.shell.*`), and the flag travels through the `AppRuntime` port, not only the Luau adapter.
+`openWindow` accepts only windows the app declared. A tool that must write is not `readOnly`: the spec Calculator's `calculate` no longer records history (only
 `show_on_calculator` does).
 
 **Tool names** are local identifiers `[a-z][a-z0-9_]*` (no dots); the MCP name is `<appId>__<tool>`.
