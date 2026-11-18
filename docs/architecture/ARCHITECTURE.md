@@ -145,7 +145,7 @@ types/                     generated: TypeScript for the client, .d.luau for app
 docs/, .claude/skills/     rewritten for Rust and Luau (coding style, review, testing)
 ```
 
-- **Removed:** `apps/server` (TypeScript), app client bundles, `SHARED_MODULES`, the memory host and web mode.
+- **Removed (done, wave B4):** `apps/server` (TypeScript), `packages/sdk`, app client bundles and `bundles/`, `SHARED_MODULES`, the memory host and web mode.
 - **Testing:** client tests run against the real host, which starts in milliseconds; the test harness runs Luau
   apps headless in the host.
 

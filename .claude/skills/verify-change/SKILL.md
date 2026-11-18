@@ -11,7 +11,7 @@ runs the real shell, uses the changed behaviour, looks at the screenshots and sa
 no exceptions for "small" kit changes: a kit change touches every app.
 
 Everything runs headless against the **real Rust host**: the shell in Chromium, the Luau apps on the host, one paired
-browser. The e2e run starts its own host on port 7410 (planned: derived from `AGENTOS_PORT_BASE`), so it never collides with
+browser. The e2e run starts its own host on port 7410 (`AGENTOS_PORT_BASE` + 10; set the base to run beside another worktree), so it never collides with
 a host you have running on 7400. See `docs/TESTING.md`.
 
 ## 1. Write down the intended result first
@@ -54,8 +54,7 @@ AGENTOS_DATA=$(mktemp -d) AGENTOS_PORT=7420 \
   AGENTOS_INSTALL="file://$PWD/dist/apps/calculator/0.1.0/app-ref.json,file://$PWD/dist/apps/agents/0.1.0/app-ref.json" \
   bun run host                                            # prints "Pairing code: K7QM-3XHR"; leave it running (run_in_background)
 node e2e/tools/session.mjs start me --url "http://127.0.0.1:7420/?theme=dark"
-node e2e/tools/session.mjs fill me "Pairing code" K7QM-3XHR      # every device pairs first, even on loopback
-node e2e/tools/session.mjs click me "Pair"
+node e2e/tools/session.mjs pair me K7QM-3XHR      # every device pairs first, even on loopback (fills "Pairing code", clicks "Pair")
 node e2e/tools/session.mjs look me                # screenshot path (open it with Read) + accessibility tree
 node e2e/tools/session.mjs click me "Calculator"  # the Dock; labels match accessible names first
 node e2e/tools/session.mjs press me Tab

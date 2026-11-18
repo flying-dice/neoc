@@ -248,8 +248,9 @@ SQLite (`apps/agents/app.luau`).
 ## Security
 
 - **Sandbox.** One Luau VM per app, `sandbox(true)`: builtins read-only, no `io`, `os.execute`, `dofile` or `debug`, no
-  filesystem `require`, no network. A **memory limit** (16 MiB by default) and a **CPU budget** per call (250 ms,
-  enforced from the VM interrupt, sticky so `pcall` cannot swallow it; time waiting on the host does not count) kill a
+  filesystem `require`, no network. A **memory limit** (16 MiB by default) and a **CPU budget** per call (`Limits::cpu_ticks`, 5 000 000
+  VM interrupts, about 250 ms of Luau on an idle machine, so a loaded host does not trip it; a 10 s wall-clock
+  backstop, `cpu_wall`, catches the rest; sticky so `pcall` cannot swallow it; time waiting on the host does not count) kill a
   runaway app, not the host. A blocking host call has its own timeout. SQL `ATTACH` is denied and a statement past
   its wall-clock budget is interrupted.
 - **Permissions** are what `app.json` declares and the user confirmed at install; the host checks them at each call

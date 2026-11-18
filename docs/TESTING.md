@@ -83,8 +83,9 @@ a fake host) and `packages/ui` (each kit component and its states). Stories are 
    (`cargo build -p agentos-acp --bin fake_agent`) and the apps into a **test registry** (`bun scripts/build-apps.ts`:
    every `apps/*/app.json`, plus Notes, the codegen fixture, as a second app the Discover journeys install and remove
    without disturbing the Calculator);
-2. writes `agentos.toml` for it: port **7410** (never the default 7400, so a host you have running is untouched; from
-   `e2e/host/config.ts`, planned to derive from one env var, `AGENTOS_PORT_BASE`, with the Storybook port), loopback
+2. writes `agentos.toml` for it: port **7410** (never the default 7400, so a host you have running is untouched). All e2e ports come from
+   one env var, `AGENTOS_PORT_BASE` (`scripts/ports.ts`; default 6100): the Storybook server is the base and the e2e
+   host is base + 10. Set it (e.g. `AGENTOS_PORT_BASE=9100`) to run e2e in a second worktree at the same time; loopback
    only, a fresh data directory under `test-results/host/`, the test registry as `registries`, the Calculator and
    Agents as `install` (Notes is only offered), and one agent on the roster;
 3. runs `agentos-host` in the foreground; Playwright stops it with SIGTERM.
@@ -170,8 +171,7 @@ AGENTOS_DATA=$(mktemp -d) AGENTOS_PORT=7420 \
   AGENTOS_INSTALL="file://$PWD/dist/apps/calculator/0.1.0/app-ref.json,file://$PWD/dist/apps/agents/0.1.0/app-ref.json" \
   bun run host                                            # prints the URL and "Pairing code: K7QM-3XHR"
 node e2e/tools/session.mjs start me --url http://127.0.0.1:7420/ [--theme dark] [--width 1280 --height 800]
-node e2e/tools/session.mjs fill me "Pairing code" K7QM-3XHR      # the first screen
-node e2e/tools/session.mjs click me "Pair"
+node e2e/tools/session.mjs pair me K7QM-3XHR      # the first screen (fills "Pairing code", clicks "Pair")
 node e2e/tools/session.mjs look me                        # screenshot path (open it with Read) + accessibility tree
 node e2e/tools/session.mjs click me "<label>" | --at x,y   # by accessible name, then visible text
 node e2e/tools/session.mjs type me "text"; press me Tab; drag me x1,y1 x2,y2; scroll me 0,400; resize me 1024 768

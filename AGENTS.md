@@ -80,6 +80,12 @@ A change is done when all of these hold:
 - Release what you open: the host registers and unregisters apps at runtime, so an adapter's resources (VMs, DB
   handles, watchers, agent processes) are dropped on unload.
 
+Enforced by `bun run lint:boundaries` (`scripts/check-boundaries.ts`) on the client and the kit: no relative import
+leaves its package (the client never reaches into `crates/`), the client and kit import only `@agentos/ui` (stories
+also `@agentos/storybook`), no Node or Bun builtins in browser code, `new WebSocket` only in
+`client/src/renderer/src/view/rpc/websocket.ts`, and no `{@html}`, `innerHTML`, `outerHTML`, `insertAdjacentHTML` or
+`document.write`.
+
 Also: atomic layers (`lint:atomic`, in `packages/ui` and `client/src`) and test ids from the first commit
 (`lint:testids`).
 
@@ -102,14 +108,16 @@ bun run build           # build the client (client/dist)
 bun run host            # cargo run -p agentos-host: serves client/dist, /rpc, /agui, /mcp on :7400
 bun run host pair       # print a fresh device pairing code (every client must pair; see host-stack.md)
 bun start               # the same host, release build
-bun run lint            # atomic layers + test ids + conflict markers + rust + luau + stylua + codegen:check + package eslint
+bun run lint            # conflict markers + atomic layers + test ids + boundaries + rust + luau + stylua + codegen:check + package eslint
+bun run lint:conflicts  # leftover merge-conflict markers in tracked files (runs first)
 bun run lint:rust       # cargo fmt --check, clippy -D warnings, lint:deps (crate direction), cargo deny
 bun run lint:luau       # luau-lsp analyze of every app against types/generated (strict, plus a negative fixture)
 bun run lint:stylua     # StyLua check (skipped with a message when luau-lsp or stylua is not installed)
 bun run typecheck       # cargo check --workspace --all-targets + tsc on types/ + svelte-check in each package
-bun run test            # cargo nextest run --workspace + bun test (types, client, kit)
+bun run test            # cargo nextest run --workspace + bun test (types, scripts, client, kit)
 bun run format          # prettier + cargo fmt + StyLua
 bun run test:e2e        # all Storybooks + desktop + journeys, headless, against the real host
+                        # AGENTOS_PORT_BASE=9100 for a second worktree (Storybook = base, e2e host = base + 10)
 bun run test:e2e:update # rebaseline snapshots (then look at them)
 bun run storybooks list # every Storybook (client, packages/ui); each package: bun run storybook
 bun run codegen         # regenerate types/generated/* and docs/reference/components.md from the Rust schema
