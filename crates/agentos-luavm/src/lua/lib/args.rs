@@ -1,0 +1,756 @@
+//! CLI argument parsing — `lib:args`. Backed by `clap`.
+//!
+//! Public surface:
+//! - `args.parse(argv: { string }, config) -> (parsed, err)`
+//! - `args.help(config) -> (string, err)`
+//!
+//! Behaviour follows clap defaults — booleans are presence-only, error wording
+//! is clap's, help formatting tracks clap's renderer version.
+
+use clap::{error::ErrorKind, value_parser, Arg, ArgAction, ArgMatches, Command};
+use mlua::{Lua, Table, Value};
+
+use crate::lua::facade::Module;
+
+// ---------------------------------------------------------------------------
+// Config types
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FlagType {
+    Boolean,
+    String,
+    Number,
+}
+
+impl FlagType {
+    fn name(self) -> &'static str {
+        match self {
+            FlagType::Boolean => "boolean",
+            FlagType::String => "string",
+            FlagType::Number => "number",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct FlagSpec {
+    name: String,
+    short: Option<char>,
+    ty: FlagType,
+    default: Option<DefaultValue>,
+    required: bool,
+    multiple: bool,
+    desc: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+enum DefaultValue {
+    String(String),
+    Number(f64),
+}
+
+#[derive(Clone, Debug)]
+struct CommandSpec {
+    name: String,
+    description: Option<String>,
+    flags: Vec<FlagSpec>,
+    subcommands: Vec<CommandSpec>,
+}
+
+// ---------------------------------------------------------------------------
+// Lua entry points
+// ---------------------------------------------------------------------------
+
+pub fn module(lua: &Lua) -> mlua::Result<Table> {
+    Ok(declare(lua)?.into_table())
+}
+
+/// Declares the `lib:args` surface through the facade. Both functions are
+/// fallible: `parse` returns the parsed-config table, `help` the rendered help
+/// text. The `(value, error)` shape, the `args.parse` / `args.help` error
+/// prefixes, and the `lua::lib::args` spans are byte-identical to the
+/// hand-written registration this replaces.
+pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
+    let mut m = Module::new(lua, "lib:args")?;
+    m.try_func(
+        "parse",
+        &[("argv", "LuaValue"), ("config", "LuaValue")],
+        "Parse `argv` against `config`, returning the parsed-flags table (or, on `--help`/`-h`, a `{ help = true, help_text = ... }` table).",
+        |lua, (argv_tbl, config_tbl): (Table, Table)| parse(lua, &argv_tbl, &config_tbl),
+    )?
+    .try_func(
+        "help",
+        &[("config", "LuaValue")],
+        "Render `config`'s help text without parsing any arguments.",
+        |_, config_tbl: Table| help(&config_tbl),
+    )?;
+    Ok(m)
+}
+
+fn parse(lua: &Lua, argv_tbl: &Table, config_tbl: &Table) -> Result<Table, String> {
+    let argv = read_argv(argv_tbl)?;
+    let spec = read_command(config_tbl, true)?;
+    let cmd = build_command(&spec);
+    match cmd.try_get_matches_from(argv) {
+        Ok(matches) => build_parsed_table(lua, &spec, &matches).map_err(|e| e.to_string()),
+        Err(err)
+            if matches!(
+                err.kind(),
+                ErrorKind::DisplayHelp | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+            ) =>
+        {
+            let text = err.render().to_string();
+            build_help_table(lua, &text).map_err(|e| e.to_string())
+        }
+        Err(err) => Err(err.to_string()),
+    }
+}
+
+fn help(config_tbl: &Table) -> Result<String, String> {
+    let spec = read_command(config_tbl, true)?;
+    let mut cmd = build_command(&spec);
+    Ok(cmd.render_help().to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Config marshalling — Lua table → CommandSpec
+// ---------------------------------------------------------------------------
+
+fn read_argv(t: &Table) -> Result<Vec<String>, String> {
+    let mut out = Vec::with_capacity(t.raw_len());
+    for entry in t.clone().sequence_values::<mlua::LuaString>() {
+        let s = entry.map_err(|e| format!("argv must be a string array: {e}"))?;
+        let s = s.to_str().map_err(|e| format!("argv contains non-utf8: {e}"))?;
+        out.push(s.to_string());
+    }
+    Ok(out)
+}
+
+fn read_command(t: &Table, top_level: bool) -> Result<CommandSpec, String> {
+    let name = match t.get::<Option<String>>("name").map_err(stringify)? {
+        Some(n) if !n.is_empty() => n,
+        _ if top_level => return Err("config.name is required".into()),
+        _ => String::new(),
+    };
+    let description = t.get::<Option<String>>("description").map_err(stringify)?;
+    let flags = match t.get::<Option<Value>>("flags").map_err(stringify)? {
+        Some(Value::Nil) | None => Vec::new(),
+        Some(Value::Table(ft)) => read_flags(&ft, &name)?,
+        Some(_) => return Err(format!("{}: flags must be a table", err_ctx(&name))),
+    };
+    let subcommands = match t.get::<Option<Value>>("subcommands").map_err(stringify)? {
+        Some(Value::Nil) | None => Vec::new(),
+        Some(Value::Table(st)) => read_subcommands(&st, &name)?,
+        Some(_) => return Err(format!("{}: subcommands must be a table", err_ctx(&name))),
+    };
+    Ok(CommandSpec { name, description, flags, subcommands })
+}
+
+fn read_flags(t: &Table, ctx: &str) -> Result<Vec<FlagSpec>, String> {
+    if t.raw_len() > 0 {
+        let mut out = Vec::new();
+        for entry in t.clone().sequence_values::<Table>() {
+            let entry = entry.map_err(|e| format!("{}: {e}", err_ctx(ctx)))?;
+            out.push(read_flag_entry(&entry, None, ctx)?);
+        }
+        return Ok(out);
+    }
+    let mut out: Vec<FlagSpec> = Vec::new();
+    for pair in t.clone().pairs::<String, Table>() {
+        let (name, body) = pair.map_err(|e| format!("{}: {e}", err_ctx(ctx)))?;
+        out.push(read_flag_entry(&body, Some(name), ctx)?);
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(out)
+}
+
+fn read_flag_entry(body: &Table, name_override: Option<String>, ctx: &str) -> Result<FlagSpec, String> {
+    let name = match name_override {
+        Some(n) => n,
+        None => body
+            .get::<Option<String>>("name")
+            .map_err(stringify)?
+            .ok_or_else(|| format!("{}: flag entry missing 'name'", err_ctx(ctx)))?,
+    };
+    if name.is_empty() {
+        return Err(format!("{}: flag name is empty", err_ctx(ctx)));
+    }
+
+    let ty_str = body
+        .get::<Option<String>>("type")
+        .map_err(stringify)?
+        .ok_or_else(|| format!("{}: flag '--{}' missing 'type'", err_ctx(ctx), name))?;
+    let ty = match ty_str.as_str() {
+        "boolean" => FlagType::Boolean,
+        "string" => FlagType::String,
+        "number" => FlagType::Number,
+        other => {
+            return Err(format!(
+                "{}: flag '--{}' has invalid type '{}' (expected boolean, string, or number)",
+                err_ctx(ctx),
+                name,
+                other
+            ));
+        }
+    };
+
+    let short = match body.get::<Option<String>>("short").map_err(stringify)? {
+        None => None,
+        Some(s) => {
+            let mut chars = s.chars();
+            match (chars.next(), chars.next()) {
+                (Some(c), None) => Some(c),
+                _ => {
+                    return Err(format!(
+                        "{}: flag '--{}' short alias '{}' must be a single character",
+                        err_ctx(ctx),
+                        name,
+                        s
+                    ));
+                }
+            }
+        }
+    };
+
+    let required = body.get::<Option<bool>>("required").map_err(stringify)?.unwrap_or(false);
+    let multiple = body.get::<Option<bool>>("multiple").map_err(stringify)?.unwrap_or(false);
+    if multiple && ty == FlagType::Boolean {
+        return Err(format!("{}: flag '--{}' cannot be both boolean and multiple", err_ctx(ctx), name));
+    }
+
+    let default = read_default(body, ty, &name, ctx)?;
+    let desc = body.get::<Option<String>>("desc").map_err(stringify)?;
+
+    Ok(FlagSpec { name, short, ty, default, required, multiple, desc })
+}
+
+fn read_default(body: &Table, ty: FlagType, name: &str, ctx: &str) -> Result<Option<DefaultValue>, String> {
+    match body.get::<Value>("default").map_err(stringify)? {
+        Value::Nil => Ok(None),
+        // Boolean defaults are ignored — clap booleans are presence-only,
+        // so the absent value is always `false` (the action's natural default).
+        Value::Boolean(_) if ty == FlagType::Boolean => Ok(None),
+        Value::String(s) if ty == FlagType::String => {
+            Ok(Some(DefaultValue::String(s.to_str().map_err(stringify)?.to_string())))
+        }
+        Value::Integer(i) if ty == FlagType::Number => Ok(Some(DefaultValue::Number(i as f64))),
+        Value::Number(n) if ty == FlagType::Number => Ok(Some(DefaultValue::Number(n))),
+        _ => Err(format!("{}: flag '--{}' default does not match type '{}'", err_ctx(ctx), name, ty.name())),
+    }
+}
+
+fn read_subcommands(t: &Table, ctx: &str) -> Result<Vec<CommandSpec>, String> {
+    let mut out = Vec::new();
+    for pair in t.clone().pairs::<String, Table>() {
+        let (name, body) = pair.map_err(|e| format!("{}: subcommands: {e}", err_ctx(ctx)))?;
+        if name.is_empty() || name.starts_with('-') {
+            return Err(format!(
+                "{}: subcommand name '{}' invalid (must be non-empty, no leading '-')",
+                err_ctx(ctx),
+                name
+            ));
+        }
+        let mut sub = read_command(&body, false)?;
+        sub.name = name;
+        if !sub.subcommands.is_empty() {
+            return Err(format!(
+                "{}: subcommand '{}' cannot declare nested subcommands (single-depth only)",
+                err_ctx(ctx),
+                sub.name
+            ));
+        }
+        out.push(sub);
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(out)
+}
+
+fn err_ctx(ctx: &str) -> &str {
+    if ctx.is_empty() {
+        "config"
+    } else {
+        ctx
+    }
+}
+
+fn stringify<E: std::fmt::Display>(e: E) -> String {
+    e.to_string()
+}
+
+// ---------------------------------------------------------------------------
+// Build clap::Command from CommandSpec
+// ---------------------------------------------------------------------------
+
+fn build_command(spec: &CommandSpec) -> Command {
+    let mut cmd = Command::new(spec.name.clone()).no_binary_name(true);
+    if let Some(desc) = &spec.description {
+        cmd = cmd.about(desc.clone());
+    }
+
+    for flag in &spec.flags {
+        cmd = cmd.arg(build_arg(flag));
+    }
+
+    if spec.subcommands.is_empty() {
+        cmd = cmd.arg(Arg::new("__positional").index(1).num_args(0..).action(ArgAction::Append)).arg(
+            Arg::new("__rest")
+                .index(2)
+                .num_args(0..)
+                .action(ArgAction::Append)
+                .last(true)
+                .allow_hyphen_values(true),
+        );
+    } else {
+        cmd = cmd.subcommand_required(true);
+        for sub in &spec.subcommands {
+            cmd = cmd.subcommand(build_command(sub));
+        }
+    }
+
+    cmd
+}
+
+fn build_arg(flag: &FlagSpec) -> Arg {
+    let mut arg = Arg::new(flag.name.clone()).long(flag.name.clone());
+    if let Some(c) = flag.short {
+        arg = arg.short(c);
+    }
+    if let Some(desc) = &flag.desc {
+        arg = arg.help(desc.clone());
+    }
+
+    match flag.ty {
+        FlagType::Boolean => {
+            arg = arg.action(ArgAction::SetTrue);
+        }
+        FlagType::String => {
+            arg = arg.num_args(1).action(if flag.multiple { ArgAction::Append } else { ArgAction::Set });
+            if flag.required {
+                arg = arg.required(true);
+            }
+            if let Some(DefaultValue::String(s)) = &flag.default {
+                arg = arg.default_value(s.clone());
+            }
+        }
+        FlagType::Number => {
+            arg = arg
+                .num_args(1)
+                .action(if flag.multiple { ArgAction::Append } else { ArgAction::Set })
+                .value_parser(value_parser!(f64))
+                .allow_hyphen_values(true);
+            if flag.required {
+                arg = arg.required(true);
+            }
+            if let Some(DefaultValue::Number(n)) = &flag.default {
+                arg = arg.default_value(n.to_string());
+            }
+        }
+    }
+
+    arg
+}
+
+// ---------------------------------------------------------------------------
+// Map ArgMatches → Lua table
+// ---------------------------------------------------------------------------
+
+fn build_parsed_table(lua: &Lua, spec: &CommandSpec, matches: &ArgMatches) -> mlua::Result<Table> {
+    let t = lua.create_table()?;
+
+    for flag in &spec.flags {
+        let val = flag_value_to_lua(lua, flag, matches)?;
+        t.set(flag.name.clone(), val)?;
+    }
+
+    let (positional, rest) = if spec.subcommands.is_empty() {
+        let p: Vec<String> =
+            matches.get_many::<String>("__positional").map(|m| m.cloned().collect()).unwrap_or_default();
+        let r: Vec<String> =
+            matches.get_many::<String>("__rest").map(|m| m.cloned().collect()).unwrap_or_default();
+        (p, r)
+    } else {
+        (Vec::new(), Vec::new())
+    };
+    t.set("positional", strings_to_table(lua, &positional)?)?;
+    t.set("rest", strings_to_table(lua, &rest)?)?;
+
+    if let Some((sub_name, sub_matches)) = matches.subcommand() {
+        let sub_spec = spec.subcommands.iter().find(|s| s.name == sub_name).ok_or_else(|| {
+            mlua::Error::external(format!("args.parse: subcommand '{sub_name}' not found in spec"))
+        })?;
+        let sub_table = build_parsed_table(lua, sub_spec, sub_matches)?;
+        t.set("subcommand", sub_name.to_string())?;
+        t.set(sub_name.to_string(), sub_table)?;
+    }
+
+    Ok(t)
+}
+
+fn flag_value_to_lua(lua: &Lua, flag: &FlagSpec, matches: &ArgMatches) -> mlua::Result<Value> {
+    match flag.ty {
+        FlagType::Boolean => Ok(Value::Boolean(matches.get_flag(&flag.name))),
+        FlagType::String => {
+            if flag.multiple {
+                let items: Vec<String> =
+                    matches.get_many::<String>(&flag.name).map(|m| m.cloned().collect()).unwrap_or_default();
+                Ok(Value::Table(strings_to_table(lua, &items)?))
+            } else {
+                match matches.get_one::<String>(&flag.name) {
+                    Some(s) => Ok(Value::String(lua.create_string(s)?)),
+                    None => Ok(Value::Nil),
+                }
+            }
+        }
+        FlagType::Number => {
+            if flag.multiple {
+                let items: Vec<f64> =
+                    matches.get_many::<f64>(&flag.name).map(|m| m.copied().collect()).unwrap_or_default();
+                let t = lua.create_table()?;
+                for (i, n) in items.iter().enumerate() {
+                    t.set(i + 1, *n)?;
+                }
+                Ok(Value::Table(t))
+            } else {
+                match matches.get_one::<f64>(&flag.name) {
+                    Some(n) => Ok(Value::Number(*n)),
+                    None => Ok(Value::Nil),
+                }
+            }
+        }
+    }
+}
+
+fn strings_to_table(lua: &Lua, v: &[String]) -> mlua::Result<Table> {
+    let t = lua.create_table()?;
+    for (i, s) in v.iter().enumerate() {
+        t.set(i + 1, s.clone())?;
+    }
+    Ok(t)
+}
+
+fn build_help_table(lua: &Lua, help_text: &str) -> mlua::Result<Table> {
+    let t = lua.create_table()?;
+    t.set("positional", lua.create_table()?)?;
+    t.set("rest", lua.create_table()?)?;
+    t.set("help", true)?;
+    t.set("help_text", help_text)?;
+    Ok(t)
+}
+
+// ---------------------------------------------------------------------------
+// Benches — focused on the public surface, gated behind the `bench` feature
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "bench")]
+pub fn benches(c: &mut criterion::Criterion) {
+    use mlua::Lua;
+
+    let lua = Lua::new();
+    let args_tbl = module(&lua).expect("module construct");
+    lua.globals().set("args", args_tbl).expect("globals set");
+
+    c.bench_function("lib::args::parse_simple", |b| {
+        b.iter(|| {
+            let _: (mlua::Value, mlua::Value) = lua
+                .load(
+                    r#"return args.parse(
+                        {"--verbose", "--out", "file", "extra"},
+                        { name = "t", flags = {
+                            verbose = { type = "boolean" },
+                            out = { type = "string" },
+                        } }
+                    )"#,
+                )
+                .eval()
+                .expect("eval simple");
+        });
+    });
+
+    c.bench_function("lib::args::parse_subcommand", |b| {
+        b.iter(|| {
+            let _: (mlua::Value, mlua::Value) = lua
+                .load(
+                    r#"return args.parse(
+                        {"build", "--release", "input.txt"},
+                        { name = "t", subcommands = {
+                            build = { flags = { release = { type = "boolean" } } },
+                            test  = { flags = {} },
+                        } }
+                    )"#,
+                )
+                .eval()
+                .expect("eval subcommand");
+        });
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mlua::Lua;
+
+    fn lua_with_args() -> Lua {
+        let lua = Lua::new();
+        let args_tbl = module(&lua).expect("module construct");
+        lua.globals().set("args", args_tbl).expect("globals set args");
+        lua
+    }
+
+    fn parse_call(lua: &Lua, src: &str) -> (mlua::Value, mlua::Value) {
+        lua.load(src).eval().expect("eval parse_call")
+    }
+
+    #[test]
+    fn boolean_flag_presence_sets_true() {
+        let lua = lua_with_args();
+        let (parsed, err) = parse_call(
+            &lua,
+            r#"return args.parse({"--verbose"}, { name = "t", flags = { verbose = { type = "boolean" } } })"#,
+        );
+        assert!(matches!(err, mlua::Value::Nil));
+        let t = parsed.as_table().unwrap();
+        assert!(t.get::<bool>("verbose").unwrap());
+    }
+
+    #[test]
+    fn boolean_flag_absent_is_false() {
+        let lua = lua_with_args();
+        let (parsed, err) = parse_call(
+            &lua,
+            r#"return args.parse({}, { name = "t", flags = { verbose = { type = "boolean" } } })"#,
+        );
+        assert!(matches!(err, mlua::Value::Nil));
+        let t = parsed.as_table().unwrap();
+        assert!(!t.get::<bool>("verbose").unwrap());
+    }
+
+    #[test]
+    fn string_flag_collected_with_space_form() {
+        let lua = lua_with_args();
+        let (parsed, _) = parse_call(
+            &lua,
+            r#"return args.parse({"--out", "file.txt"}, { name = "t", flags = { out = { type = "string" } } })"#,
+        );
+        let t = parsed.as_table().unwrap();
+        assert_eq!(t.get::<String>("out").unwrap(), "file.txt");
+    }
+
+    #[test]
+    fn string_flag_collected_with_equals_form() {
+        let lua = lua_with_args();
+        let (parsed, _) = parse_call(
+            &lua,
+            r#"return args.parse({"--out=file.txt"}, { name = "t", flags = { out = { type = "string" } } })"#,
+        );
+        let t = parsed.as_table().unwrap();
+        assert_eq!(t.get::<String>("out").unwrap(), "file.txt");
+    }
+
+    #[test]
+    fn number_flag_coerces() {
+        let lua = lua_with_args();
+        let (parsed, _) = parse_call(
+            &lua,
+            r#"return args.parse({"--count", "42"}, { name = "t", flags = { count = { type = "number" } } })"#,
+        );
+        let t = parsed.as_table().unwrap();
+        assert_eq!(t.get::<f64>("count").unwrap(), 42.0);
+    }
+
+    #[test]
+    fn short_alias() {
+        let lua = lua_with_args();
+        let (parsed, _) = parse_call(
+            &lua,
+            r#"return args.parse({"-v"}, { name = "t", flags = { verbose = { type = "boolean", short = "v" } } })"#,
+        );
+        let t = parsed.as_table().unwrap();
+        assert!(t.get::<bool>("verbose").unwrap());
+    }
+
+    #[test]
+    fn required_flag_missing_errors() {
+        let lua = lua_with_args();
+        let (parsed, err) = parse_call(
+            &lua,
+            r#"return args.parse({}, { name = "t", flags = { out = { type = "string", required = true } } })"#,
+        );
+        assert!(matches!(parsed, mlua::Value::Nil));
+        assert!(matches!(err, mlua::Value::String(_)));
+    }
+
+    #[test]
+    fn default_applied_when_absent() {
+        let lua = lua_with_args();
+        let (parsed, _) = parse_call(
+            &lua,
+            r#"return args.parse({}, { name = "t", flags = { out = { type = "string", default = "stdout" } } })"#,
+        );
+        let t = parsed.as_table().unwrap();
+        assert_eq!(t.get::<String>("out").unwrap(), "stdout");
+    }
+
+    #[test]
+    fn multiple_strings_collected() {
+        let lua = lua_with_args();
+        let (parsed, _) = parse_call(
+            &lua,
+            r#"return args.parse({"--inc", "a", "--inc", "b"}, { name = "t", flags = { inc = { type = "string", multiple = true } } })"#,
+        );
+        let t = parsed.as_table().unwrap();
+        let inc: Table = t.get("inc").unwrap();
+        assert_eq!(inc.get::<String>(1).unwrap(), "a");
+        assert_eq!(inc.get::<String>(2).unwrap(), "b");
+    }
+
+    #[test]
+    fn positional_collected() {
+        let lua = lua_with_args();
+        let (parsed, _) = parse_call(&lua, r#"return args.parse({"a", "b"}, { name = "t", flags = {} })"#);
+        let t = parsed.as_table().unwrap();
+        let p: Table = t.get("positional").unwrap();
+        assert_eq!(p.get::<String>(1).unwrap(), "a");
+        assert_eq!(p.get::<String>(2).unwrap(), "b");
+    }
+
+    #[test]
+    fn rest_collected_after_double_dash() {
+        let lua = lua_with_args();
+        let (parsed, _) =
+            parse_call(&lua, r#"return args.parse({"x", "--", "--y", "z"}, { name = "t", flags = {} })"#);
+        let t = parsed.as_table().unwrap();
+        let p: Table = t.get("positional").unwrap();
+        let r: Table = t.get("rest").unwrap();
+        assert_eq!(p.get::<String>(1).unwrap(), "x");
+        assert_eq!(r.get::<String>(1).unwrap(), "--y");
+        assert_eq!(r.get::<String>(2).unwrap(), "z");
+    }
+
+    #[test]
+    fn rest_always_emitted_even_when_empty() {
+        let lua = lua_with_args();
+        let (parsed, _) = parse_call(&lua, r#"return args.parse({}, { name = "t", flags = {} })"#);
+        let t = parsed.as_table().unwrap();
+        let r: Table = t.get("rest").unwrap();
+        assert_eq!(r.raw_len(), 0);
+        let p: Table = t.get("positional").unwrap();
+        assert_eq!(p.raw_len(), 0);
+    }
+
+    #[test]
+    fn subcommand_routed() {
+        let lua = lua_with_args();
+        let (parsed, _) = parse_call(
+            &lua,
+            r#"return args.parse(
+                {"build", "--release"},
+                { name = "t", subcommands = {
+                    build = { flags = { release = { type = "boolean" } } },
+                    test  = { flags = {} },
+                } }
+            )"#,
+        );
+        let t = parsed.as_table().unwrap();
+        assert_eq!(t.get::<String>("subcommand").unwrap(), "build");
+        let sub: Table = t.get("build").unwrap();
+        assert!(sub.get::<bool>("release").unwrap());
+    }
+
+    #[test]
+    fn missing_subcommand_errors() {
+        let lua = lua_with_args();
+        let (parsed, err) = parse_call(
+            &lua,
+            r#"return args.parse({}, { name = "t", subcommands = { build = { flags = {} } } })"#,
+        );
+        assert!(matches!(parsed, mlua::Value::Nil));
+        assert!(matches!(err, mlua::Value::String(_)));
+    }
+
+    #[test]
+    fn help_short_circuit() {
+        let lua = lua_with_args();
+        let (parsed, _) = parse_call(
+            &lua,
+            r#"return args.parse({"--help"}, { name = "t", description = "tool", flags = {} })"#,
+        );
+        let t = parsed.as_table().unwrap();
+        assert!(t.get::<bool>("help").unwrap());
+        let text: String = t.get("help_text").unwrap();
+        assert!(text.contains("tool"));
+    }
+
+    #[test]
+    fn help_skips_required_validation() {
+        let lua = lua_with_args();
+        let (parsed, _) = parse_call(
+            &lua,
+            r#"return args.parse({"--help"}, { name = "t", flags = { out = { type = "string", required = true } } })"#,
+        );
+        let t = parsed.as_table().unwrap();
+        assert!(t.get::<bool>("help").unwrap());
+    }
+
+    #[test]
+    fn config_missing_name_rejected() {
+        let lua = lua_with_args();
+        let (parsed, err) = parse_call(&lua, r"return args.parse({}, { flags = {} })");
+        assert!(matches!(parsed, mlua::Value::Nil));
+        let e = err.as_string().unwrap().to_str().unwrap().to_string();
+        assert!(e.contains("name is required"));
+    }
+
+    #[test]
+    fn config_unknown_flag_type_rejected() {
+        let lua = lua_with_args();
+        let (parsed, err) =
+            parse_call(&lua, r#"return args.parse({}, { name = "t", flags = { x = { type = "object" } } })"#);
+        assert!(matches!(parsed, mlua::Value::Nil));
+        let e = err.as_string().unwrap().to_str().unwrap().to_string();
+        assert!(e.contains("invalid type 'object'"));
+    }
+
+    #[test]
+    fn config_multiple_on_boolean_rejected() {
+        let lua = lua_with_args();
+        let (parsed, err) = parse_call(
+            &lua,
+            r#"return args.parse({}, { name = "t", flags = { v = { type = "boolean", multiple = true } } })"#,
+        );
+        assert!(matches!(parsed, mlua::Value::Nil));
+        let e = err.as_string().unwrap().to_str().unwrap().to_string();
+        assert!(e.contains("cannot be both boolean and multiple"));
+    }
+
+    #[test]
+    fn config_nested_subcommand_rejected() {
+        let lua = lua_with_args();
+        let (parsed, err) = parse_call(
+            &lua,
+            r#"return args.parse({}, { name = "t", subcommands = {
+                build = { flags = {}, subcommands = { x = { flags = {} } } }
+            } })"#,
+        );
+        assert!(matches!(parsed, mlua::Value::Nil));
+        let e = err.as_string().unwrap().to_str().unwrap().to_string();
+        assert!(e.contains("nested subcommands"));
+    }
+
+    #[test]
+    fn help_function_renders() {
+        let lua = lua_with_args();
+        let (text, err) = parse_call(
+            &lua,
+            r#"return args.help({ name = "tool", description = "do work", flags = { v = { type = "boolean" } } })"#,
+        );
+        assert!(matches!(err, mlua::Value::Nil));
+        let s = text.as_string().unwrap().to_str().unwrap().to_string();
+        assert!(s.contains("tool"));
+        assert!(s.contains("--v"));
+    }
+}

@@ -9,8 +9,10 @@ exclude-dev = true   # dev-dependencies (test clients) are not part of the shipp
 multiple-versions = "allow"
 # `wrappers` = only these crates may depend on the banned crate directly.
 deny = [
-  { crate = "mlua", wrappers = ["agentos-luau"], reason = "Luau lives in the luau adapter" },
-  { crate = "rusqlite", wrappers = ["agentos-sqlite"], reason = "SQLite lives in the sqlite adapter" },
+  # TODO(lua51): when the Lua adapter is rewritten on agentos-luavm, add it (agentos-luau) here too.
+  { crate = "mlua", wrappers = ["agentos-luavm"], reason = "Lua 5.1 lives in the luavm crate" },
+  # luavm exposes SQLite to scripts as `vnd:rusqlite`
+  { crate = "rusqlite", wrappers = ["agentos-sqlite", "agentos-luavm"], reason = "SQLite lives in the sqlite adapter (and the Lua VM's vnd:rusqlite module)" },
   { crate = "rmcp", wrappers = ["agentos-mcp"], reason = "MCP lives in the mcp adapter" },
   { crate = "agent-client-protocol", wrappers = ["agentos-acp"], reason = "ACP lives in the acp adapter" },
   { crate = "axum", wrappers = ["agentos-http", "agentos-mcp", "agentos-agui", "agentos-host"], reason = "HTTP stack in driving adapters and the host" },
@@ -41,6 +43,9 @@ allow = [
   "BSL-1.0",
   "0BSD",
   "Unlicense",
+  # MIT with the attribution clause removed: strictly more permissive than MIT. borrow-or-share, via
+  # jsonschema (agentos-luavm's vnd:jsonschema).
+  "MIT-0",
 ]
 
 [advisories]
@@ -48,6 +53,10 @@ allow = [
 # use it. Revisit when rmcp or schemars drop it.
 ignore = [
   { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained (not vulnerable); transitive via rmcp and schemars" },
+  # `vnd:serde_yaml` (agentos-luavm) wraps serde_yaml 0.9, which sits on unsafe-libyaml. Archived upstream with
+  # no known vulnerability, and no successor under the same crate name (a vnd module is named after its
+  # crate). Revisit when the module moves to a maintained YAML crate.
+  { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml is unmaintained (not vulnerable); behind serde_yaml 0.9 for the vnd:serde_yaml module" },
 ]
 
 [sources]

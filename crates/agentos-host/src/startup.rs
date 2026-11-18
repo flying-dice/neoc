@@ -99,39 +99,14 @@ fn file_url_dir(url: &str) -> Option<PathBuf> {
 
 /// Dev hot reload: for every installed app whose bundle is a `file://` app ref, watch its folder and
 /// rebuild the app's VM (database kept) when a file in it changes. Returns what it is watching.
-pub fn watch_for_reload(service: &Arc<AppService>, stop: &CancellationToken) -> Vec<PathBuf> {
-    let mut watching = Vec::new();
-    for app in service.apps() {
-        let Some(dir) = file_url_dir(&app.source_url) else { continue };
-        let watcher = match agentos_luau::reload::watch_dir(&dir) {
-            Ok(w) => w,
-            Err(e) => {
-                tracing::warn!(app = %app.id, dir = %dir.display(), error = %e, "cannot watch for reload");
-                continue;
-            }
-        };
-        watching.push(dir);
-        let (service, stop, id) = (service.clone(), stop.clone(), app.id);
-        tokio::spawn(async move {
-            // the whole watcher moves in (not just its channel): dropping it would stop the watch
-            let mut watcher = watcher;
-            loop {
-                tokio::select! {
-                    () = stop.cancelled() => return,
-                    change = agentos_luau::reload::next_change(&mut watcher.rx, Duration::from_millis(200)) => {
-                        if change.is_none() {
-                            return;
-                        }
-                        match service.reload(&id).await {
-                            Ok(()) => tracing::info!(app = %id, "reloaded"),
-                            Err(e) => tracing::warn!(app = %id, error = %e, "reload failed; the running version stays"),
-                        }
-                    }
-                }
-            }
-        });
+///
+/// TODO(lua51): adapter swap. The directory watcher lived in the Luau adapter (`agentos_luau::reload`);
+/// until the Lua 5.1 adapter brings it back there is nothing to watch, so this watches nothing.
+pub fn watch_for_reload(service: &Arc<AppService>, _stop: &CancellationToken) -> Vec<PathBuf> {
+    if service.apps().iter().any(|app| file_url_dir(&app.source_url).is_some()) {
+        tracing::warn!("dev hot reload is unavailable until the Lua 5.1 app adapter is wired in");
     }
-    watching
+    Vec::new()
 }
 
 #[cfg(all(test, unix))]

@@ -22,6 +22,7 @@ pub mod net;
 pub mod platform;
 pub mod serve;
 pub mod startup;
+mod unavailable_runtime;
 
 use agentos_acp::AcpConnector;
 use agentos_agui::{agui_router_with, DeviceStreams};
@@ -39,7 +40,6 @@ use agentos_http::{
     origin_guard, require_session, rpc_router, session_router, static_router, HostGuard, RpcHub,
     SessionConfig,
 };
-use agentos_luau::{Limits, LuauRuntime};
 use agentos_mcp::{mcp_router, McpState};
 use agentos_sqlite::{SqliteDataStore, SqliteSystemDb};
 use axum::{middleware::from_fn_with_state, Router};
@@ -167,8 +167,9 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
     // apps with the `agents` permission list
     let contacts = Arc::new(AgentService::new(system.clone(), mcp_state.clone(), random.clone(), processes));
     contacts.load().await?;
-    let runtime: Arc<dyn AppRuntime> =
-        Arc::new(LuauRuntime::new(hub.clone(), hub.clone(), Limits::default()).with_roster(contacts.clone()));
+    // TODO(lua51): adapter swap. The Luau adapter is out of the build; until the Lua 5.1 adapter on
+    // `agentos-luavm` replaces this, every app load fails with a typed error instead of running code.
+    let runtime: Arc<dyn AppRuntime> = Arc::new(unavailable_runtime::UnavailableRuntime);
     let tools: Arc<dyn ToolRegistry> = mcp_state.clone();
     let events: Arc<dyn EventSink> = hub.clone();
     let installed: Arc<dyn InstalledAppStore> = system.clone();
