@@ -7,7 +7,7 @@ use crate::error::PortError;
 use agentos_domain::{Revision, StoredRevision};
 use async_trait::async_trait;
 use serde_json::Value;
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, sync::Arc};
 
 pub type PortResult<T> = Result<T, PortError>;
 
@@ -127,6 +127,9 @@ pub trait AppData: Send + Sync {
     async fn begin(&self) -> PortResult<Box<dyn DataTx>>;
     /// A fresh subscription to commit-time change batches.
     fn changes(&self) -> Box<dyn ChangeFeed>;
+    /// A handle on the same database through which nothing can be written: every statement that would
+    /// change data or schema fails, and so does `migrate`. A tool declared `readOnly` runs through this.
+    fn read_only(&self) -> Arc<dyn AppData>;
 
     // ---- client state that survives closing a window (`persist = "app"`; `_ui_state`) ----
     /// The stored values of a window kind, by name.

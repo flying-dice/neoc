@@ -233,6 +233,9 @@ impl AppData for ScriptedData {
     fn changes(&self) -> Box<dyn ChangeFeed> {
         self.feed()
     }
+    fn read_only(&self) -> Arc<dyn AppData> {
+        Arc::new(ReadOnlyData(self.clone()))
+    }
     async fn ui_state(&self, window: &str) -> PortResult<serde_json::Map<String, Value>> {
         Ok(self.0.ui_state.lock().unwrap().get(window).cloned().unwrap_or_default())
     }
@@ -271,6 +274,76 @@ impl AppData for ScriptedData {
         let before = all.len();
         all.retain(|r| r.revision.recorded_at_ms >= cutoff_ms);
         Ok(u64::try_from(before - all.len()).unwrap_or(0))
+    }
+}
+
+/// The read-only face of a [`ScriptedData`]: reads pass through, every write is refused.
+struct ReadOnlyData(ScriptedData);
+
+fn refused<T>() -> PortResult<T> {
+    Err(PortError::Rejected("attempt to write a readonly database".into()))
+}
+
+struct ReadOnlyTx(ScriptedTx);
+#[async_trait]
+impl DataTx for ReadOnlyTx {
+    async fn query(&mut self, sql: String, params: Params) -> PortResult<Vec<Value>> {
+        self.0.query(sql, params).await
+    }
+    async fn exec(&mut self, _sql: String, _params: Params) -> PortResult<ExecOutcome> {
+        refused()
+    }
+    async fn commit(self: Box<Self>) -> PortResult<()> {
+        Ok(())
+    }
+    async fn rollback(self: Box<Self>) -> PortResult<()> {
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl AppData for ReadOnlyData {
+    async fn migrate(&self, _migrations: Vec<SqlMigration>) -> PortResult<()> {
+        refused()
+    }
+    async fn query(&self, sql: String, params: Params) -> PortResult<Vec<Value>> {
+        self.0.query(sql, params).await
+    }
+    async fn exec(&self, _sql: String, _params: Params) -> PortResult<ExecOutcome> {
+        refused()
+    }
+    async fn analyze(&self, sql: String) -> PortResult<QueryInfo> {
+        self.0.analyze(sql).await
+    }
+    async fn begin(&self) -> PortResult<Box<dyn DataTx>> {
+        Ok(Box::new(ReadOnlyTx(ScriptedTx(self.0.clone()))))
+    }
+    fn changes(&self) -> Box<dyn ChangeFeed> {
+        self.0.feed()
+    }
+    fn read_only(&self) -> Arc<dyn AppData> {
+        Arc::new(ReadOnlyData(self.0.clone()))
+    }
+    async fn ui_state(&self, window: &str) -> PortResult<serde_json::Map<String, Value>> {
+        self.0.ui_state(window).await
+    }
+    async fn set_ui_state(&self, _window: &str, _entries: serde_json::Map<String, Value>) -> PortResult<()> {
+        refused()
+    }
+    async fn clear_ui_state(&self) -> PortResult<()> {
+        refused()
+    }
+    async fn record_revision(&self, _revision: Revision) -> PortResult<i64> {
+        refused()
+    }
+    async fn revision(&self, id: i64) -> PortResult<Option<StoredRevision>> {
+        self.0.revision(id).await
+    }
+    async fn revisions(&self, source: &str, key: &Value, field: &str) -> PortResult<Vec<StoredRevision>> {
+        self.0.revisions(source, key, field).await
+    }
+    async fn purge_revisions(&self, _cutoff_ms: u64) -> PortResult<u64> {
+        refused()
     }
 }
 

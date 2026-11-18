@@ -466,3 +466,40 @@ async fn purge_deletes_the_database_files() {
     assert!(!dir.join("notes.db").exists());
     let _ = std::fs::remove_dir_all(dir);
 }
+
+// ---- read-only handles ----------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_read_only_handle_reads_and_refuses_every_write_while_the_writable_one_keeps_working() {
+    use agentos_application::data::{AppData, Params};
+    let db = shop();
+    AppData::exec(&db, "INSERT INTO notes(body) VALUES ('a')".into(), Params::None).await.unwrap();
+    let ro = AppData::read_only(&db);
+
+    let rows = ro.query("SELECT body FROM notes".into(), Params::None).await.unwrap();
+    assert_eq!(rows.len(), 1);
+    for sql in [
+        "INSERT INTO notes(body) VALUES ('b')",
+        "UPDATE notes SET body = 'z'",
+        "DELETE FROM notes",
+        "CREATE TABLE t(a)",
+        "DROP TABLE tags",
+    ] {
+        let err = ro.exec(sql.into(), Params::None).await.unwrap_err().to_string().to_lowercase();
+        assert!(err.contains("readonly") || err.contains("read-only"), "{sql}: {err}");
+    }
+    // a write smuggled through the read path, and the pragma that would lift the guard
+    assert!(ro
+        .query("INSERT INTO notes(body) VALUES ('c') RETURNING id".into(), Params::None)
+        .await
+        .is_err());
+    assert!(ro.query("PRAGMA query_only = 0".into(), Params::None).await.is_err());
+    assert!(ro.migrate(vec![]).await.is_err());
+    let mut tx = ro.begin().await.unwrap();
+    assert!(tx.exec("DELETE FROM notes".into(), Params::None).await.is_err());
+    tx.rollback().await.unwrap();
+
+    assert_eq!(db.query("SELECT body FROM notes".into(), vec![]).await.unwrap().len(), 1, "nothing changed");
+    AppData::exec(&db, "INSERT INTO notes(body) VALUES ('d')".into(), Params::None).await.unwrap();
+    assert_eq!(db.query("SELECT body FROM notes".into(), vec![]).await.unwrap().len(), 2);
+}

@@ -20,6 +20,7 @@ impl From<DbError> for PortError {
             | DbError::MigrationChanged { .. }
             | DbError::MigrationOrder(_)
             | DbError::BadParams(_)
+            | DbError::ReadOnly
             | DbError::Timeout(_) => PortError::Rejected(e.to_string()),
             DbError::Join(_) => PortError::Internal(e.to_string()),
         }
@@ -64,6 +65,9 @@ impl AppData for AppDb {
     }
     fn changes(&self) -> Box<dyn ChangeFeed> {
         Box::new(SqliteFeed::new(self))
+    }
+    fn read_only(&self) -> Arc<dyn AppData> {
+        Arc::new(AppDb { shared: self.shared.clone(), read_only: true })
     }
 
     async fn ui_state(&self, window: &str) -> PortResult<serde_json::Map<String, Value>> {

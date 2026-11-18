@@ -24,7 +24,10 @@ use parking_lot::Mutex;
 use serde_json::Value;
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::Duration,
 };
 
@@ -148,9 +151,21 @@ pub(crate) struct Shared {
     /// The open `db:tx(fn)` transaction, if any. A statement takes it out while it runs and puts it back, so
     /// no lock is held across an await and a call that was cut off cannot wedge the next one.
     pub tx: Mutex<Option<Box<dyn DataTx>>>,
+    /// The running tool is declared `readOnly`: its database handle refuses writes and `app.kv` /
+    /// `db:migrate` raise. Set only while that tool's call holds the VM's gate.
+    pub read_only: AtomicBool,
 }
 
 impl Shared {
+    /// The database as the running call may use it: a read-only handle inside a `readOnly` tool.
+    pub fn database(&self) -> Arc<dyn AppData> {
+        if self.read_only.load(Ordering::SeqCst) {
+            self.db.read_only()
+        } else {
+            self.db.clone()
+        }
+    }
+
     pub fn chunk_name(&self, path: &str) -> String {
         format!("={}/{path}", self.app)
     }
@@ -167,6 +182,26 @@ impl Shared {
         self.views.lock().clear();
         *self.app_table.lock() = None;
         *self.fail.lock() = None;
+    }
+}
+
+/// Marks the VM as running a `readOnly` tool until dropped (the call's gate is held for that whole time).
+struct ReadOnlyCall<'a>(Option<&'a Shared>);
+
+impl<'a> ReadOnlyCall<'a> {
+    fn enter(shared: &'a Shared, read_only: bool) -> Self {
+        if read_only {
+            shared.read_only.store(true, Ordering::SeqCst);
+        }
+        Self(read_only.then_some(shared))
+    }
+}
+
+impl Drop for ReadOnlyCall<'_> {
+    fn drop(&mut self) {
+        if let Some(shared) = self.0 {
+            shared.read_only.store(false, Ordering::SeqCst);
+        }
     }
 }
 
@@ -228,6 +263,7 @@ impl AppVm {
             render_scope: Mutex::default(),
             view_effects: Mutex::default(),
             tx: Mutex::new(None),
+            read_only: AtomicBool::new(false),
         });
         let load_err =
             |e: &mlua::Error| VmError::Load { app: app.to_string(), error: ScriptError::from_lua(e) };
@@ -337,16 +373,17 @@ impl AppVm {
 
     /// `app.tools.register`'s `run(input, ctx)`. Arguments are validated against the tool's schema first.
     pub async fn call_tool(&self, name: &str, args: Value, ctx: &CallContext) -> Result<Value> {
-        let (schema, run) = {
+        let (schema, run, read_only) = {
             let tools = self.shared.tools.lock();
             let t = tools
                 .iter()
                 .find(|t| t.spec.name == name)
                 .ok_or_else(|| VmError::NoSuchTool(name.to_owned()))?;
-            (t.spec.input_schema.clone(), t.run.clone())
+            (t.spec.input_schema.clone(), t.run.clone(), t.spec.read_only)
         };
         let input = tool_schema::validate_args(&schema, &args).map_err(VmError::InvalidInput)?;
         let _call = self.enter().await;
+        let _read_only = ReadOnlyCall::enter(&self.shared, read_only);
         let convert = |e: mlua::Error| VmError::Convert(e.to_string());
         let arg = json_to_lua(&self.lua, &input).map_err(convert)?;
         let ctx = self.ctx_table(ctx).map_err(convert)?;

@@ -161,7 +161,7 @@ async fn the_shared_state_reaches_every_open_window_and_the_agent_tool_drives_it
     // app:openWindow("main") became a request for the shell
     assert_eq!(rig.runtime.take_open_requests()[0].1, "main");
 
-    // the read-only tools: arithmetic, and history through app.kv
+    // the read-only tools: arithmetic (writes nothing: it is readOnly), and history through app.kv
     let r = rig
         .runtime
         .call_tool(&id("calculator"), "calculate", json!({"expression": "(12.5 + 7) * 3"}), agent_ctx(0))
@@ -170,7 +170,11 @@ async fn the_shared_state_reaches_every_open_window_and_the_agent_tool_drives_it
     assert_eq!(r["result"], json!(58.5));
     let h =
         rig.runtime.call_tool(&id("calculator"), "history", json!({"limit": 5}), agent_ctx(0)).await.unwrap();
-    assert_eq!(h["entries"].as_array().unwrap().len(), 2, "show_on_calculator and calculate both recorded");
+    assert_eq!(
+        h["entries"].as_array().unwrap().len(),
+        1,
+        "only show_on_calculator recorded: calculate is readOnly"
+    );
     let bad = rig
         .runtime
         .call_tool(&id("calculator"), "calculate", json!({"expression": "1 / 0"}), agent_ctx(0))

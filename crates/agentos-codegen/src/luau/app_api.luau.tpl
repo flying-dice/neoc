@@ -138,11 +138,13 @@ type ToolContext = {
 }
 
 type ToolDef = {
+	-- a local identifier: [a-z][a-z0-9_]* (agents see it as `<appId>__<name>`)
 	name: string,
 	title: string?,
 	description: string?,
 	input: { [string]: Schema }?,
-	-- a hint to agents that the tool does not change data
+	-- enforced: the tool runs with app writes blocked (db writes, app.kv set/delete, db:migrate raise) and an agent may
+	-- run it without a permission prompt
 	readOnly: boolean?,
 	run: (input: any, ctx: ToolContext) -> any,
 }

@@ -249,7 +249,7 @@ app.window("main", {
 -- ── Agent tools ────────────────────────────────────────────────────────────
 
 app.tool {
-  name = "notes.search",
+  name = "search",
   title = "Search Notes",
   readOnly = true,
   description = "Find notes whose text contains the query. Returns id, title and a preview.",
@@ -264,10 +264,10 @@ app.tool {
 }
 
 app.tool {
-  name = "notes.append",
+  name = "append",
   title = "Append to Note",
   description = "Append text (Markdown) on a new line at the end of a note. If the note is open the user sees it appear live.",
-  input = { id = t.integer { description = "Note id from notes.search" }, text = t.string {} },
+  input = { id = t.integer { description = "Note id from search" }, text = t.string {} },
   run = function(input, ctx)
     local r = db:exec(
       [[

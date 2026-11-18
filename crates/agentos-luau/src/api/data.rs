@@ -35,6 +35,17 @@ impl Shared {
         need(self.caps.data, "data", what)
     }
 
+    /// A tool declared `readOnly` may not write: the host's read-only handle would refuse the statement too,
+    /// this gives the app an error that says why.
+    fn writable(&self, what: &str) -> mlua::Result<()> {
+        if self.read_only.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(mlua::Error::runtime(format!(
+                "{what} is not allowed in a tool declared readOnly: a readOnly tool cannot write"
+            )));
+        }
+        Ok(())
+    }
+
     /// A read: through the open transaction when there is one.
     async fn run_query(&self, sql: String, params: Params) -> mlua::Result<Vec<Value>> {
         let open = self.tx.lock().take();
@@ -44,7 +55,7 @@ impl Shared {
                 *self.tx.lock() = Some(t);
                 out
             }
-            None => host(self, self.db.query(sql, params)).await,
+            None => host(self, self.database().query(sql, params)).await,
         }
     }
 
@@ -57,7 +68,7 @@ impl Shared {
                 *self.tx.lock() = Some(t);
                 out
             }
-            None => host(self, self.db.exec(sql, params)).await,
+            None => host(self, self.database().exec(sql, params)).await,
         }
     }
 }
@@ -146,6 +157,7 @@ fn install_statements(lua: &Lua, sh: &Sh, db: &Table) -> mlua::Result<()> {
             let s = s.clone();
             async move {
                 s.data("db:migrate")?;
+                s.writable("db:migrate")?;
                 check_effects_allowed(&s, "db:migrate")?;
                 let len = steps.raw_len();
                 let mut migrations = Vec::with_capacity(len);
@@ -179,6 +191,7 @@ fn install_statements(lua: &Lua, sh: &Sh, db: &Table) -> mlua::Result<()> {
             let s = s.clone();
             async move {
                 s.data("db:exec")?;
+                s.writable("db:exec")?;
                 check_effects_allowed(&s, "db:exec")?;
                 let out = s.run_exec(sql, lua_to_params(params)?).await?;
                 json_to_lua(&lua, &json!({"changes": out.changes, "last_insert_id": out.last_insert_id}))
@@ -228,7 +241,7 @@ fn install_statements(lua: &Lua, sh: &Sh, db: &Table) -> mlua::Result<()> {
                 if s.tx.lock().is_some() {
                     return Err(mlua::Error::runtime("db:tx cannot be nested"));
                 }
-                let tx = host(&s, s.db.begin()).await?;
+                let tx = host(&s, s.database().begin()).await?;
                 *s.tx.lock() = Some(tx);
                 let result = body.call_async::<mlua::MultiValue>(()).await;
                 let tx = s.tx.lock().take();
@@ -398,6 +411,7 @@ fn install_kv(lua: &Lua, sh: &Sh, app: &Table) -> mlua::Result<()> {
             let s = s.clone();
             async move {
                 s.data("app.kv:set")?;
+                s.writable("app.kv:set")?;
                 check_effects_allowed(&s, "app.kv:set")?;
                 let json = lua_to_json(&value)?;
                 if json.is_null() {
@@ -421,6 +435,7 @@ fn install_kv(lua: &Lua, sh: &Sh, app: &Table) -> mlua::Result<()> {
             let s = s.clone();
             async move {
                 s.data("app.kv:delete")?;
+                s.writable("app.kv:delete")?;
                 check_effects_allowed(&s, "app.kv:delete")?;
                 s.run_exec("delete from _kv where key = :k".into(), Params::named([("k", json!(key))]))
                     .await?;
