@@ -28,6 +28,8 @@ export type Catalog = HostCatalog
 /** One agent on the host's roster (`agents.list`): no tokens, and only the names of its environment variables. */
 export type AgentRow = HostAgentRow
 export type AgentList = HostAgentList
+/** What the shell shows of an agent (the roster row also carries its launch command and grants, which the shell never reads). */
+export type AgentSummary = Pick<HostAgentRow, 'id' | 'name' | 'avatar' | 'role'>
 export type DeviceRow = HostDeviceRow
 
 /** The calls the shell makes. The real one is the session's `call`; stories and tests pass a fake. */

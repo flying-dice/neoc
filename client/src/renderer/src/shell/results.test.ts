@@ -75,4 +75,19 @@ describe('the catalog', () => {
     const catalog = catalogSchema.parse({ apps: [], errors: ['bad', 'bad', 'worse', 'bad'] })
     expect(catalog.errors).toEqual(['bad', 'worse'])
   })
+
+  test('a catalog entry carries the digest the install is pinned to, and a malformed one is refused', () => {
+    const entry = {
+      url: 'file:///r/notes/app-ref.json',
+      id: 'notes',
+      name: 'Notes',
+      version: '1.0.0',
+      permissions: ['data'],
+      source: 'this computer',
+      sha256: 'ab'.repeat(32)
+    }
+    expect(catalogSchema.parse({ apps: [entry], errors: [] }).apps[0].sha256).toBe('ab'.repeat(32))
+    expect(() => catalogSchema.parse({ apps: [{ ...entry, sha256: undefined }], errors: [] })).toThrow()
+    expect(() => catalogSchema.parse({ apps: [{ ...entry, sha256: 'nope' }], errors: [] })).toThrow()
+  })
 })

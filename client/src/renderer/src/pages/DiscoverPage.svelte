@@ -37,6 +37,8 @@
     message?: string
     /** The app-ref URL to install from (not installed yet). */
     url?: string
+    /** Its digest as the catalog listed it, so the install is exactly the ref that was shown. */
+    sha256?: string
   }
 
   // The Agents app is an ordinary installed app: its entry points show only while it is running.
@@ -79,7 +81,8 @@
     description: a.description,
     icon: a.icon,
     tint: a.tint,
-    url: a.url
+    url: a.url,
+    sha256: a.sha256
   })
 
   const listings = $derived<Listing[]>(
@@ -109,7 +112,7 @@
     const call = (method: string, params: Record<string, unknown>): Promise<unknown> =>
       host.api.call(method, params)
     let done = false
-    if (l.url) done = await run(l.id, () => call('app.install', { url: l.url }))
+    if (l.url) done = await run(l.id, () => call('app.install', { url: l.url, sha256: l.sha256 }))
     else if (l.state === 'running') done = true
     else if (l.state === 'disabled') done = await run(l.id, () => call('app.enable', { app: l.id }))
     else if (l.state === 'failed') done = await run(l.id, () => call('app.reload', { app: l.id }))
@@ -148,7 +151,7 @@
   async function confirmInstall(): Promise<void> {
     const p = preview
     if (!p) return
-    if (await run(p.url, () => host.api.call('app.install', { url: p.url }))) {
+    if (await run(p.url, () => host.api.call('app.install', { url: p.url, sha256: p.sha256 }))) {
       preview = null
       addUrl = ''
       wm.open(p.id)

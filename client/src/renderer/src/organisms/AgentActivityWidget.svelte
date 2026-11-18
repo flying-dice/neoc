@@ -8,11 +8,11 @@
 <script lang="ts">
   import { Card, Text } from '@agentos/ui/atoms'
   import AgentAvatar from '../molecules/AgentAvatar.svelte'
-  import { iconOf, type AgentRow } from '../shell/hostApi'
+  import { iconOf, type AgentSummary } from '../shell/hostApi'
 
   interface Props {
     testid: string
-    agents: AgentRow[]
+    agents: AgentSummary[]
     /** Bring the Agents app forward; leave it out when the host has no such app. */
     onopen?: () => void
   }
@@ -21,7 +21,7 @@
   const shown = $derived(agents.slice(0, 3))
 </script>
 
-{#snippet agentRow(agent: AgentRow)}
+{#snippet agentRow(agent: AgentSummary)}
   <AgentAvatar icon={iconOf(agent.avatar ?? 'sparkles')} color="var(--ios-purple)" size={30} />
   <span class="meta">
     <Text style="subheadline" weight="semibold" truncate>{agent.name}</Text>

@@ -5,7 +5,7 @@ import type { Transport } from '../view/rpc/transport'
 import { createWebSocketTransport, defaultRpcUrl } from '../view/rpc/websocket'
 import { reactiveStore } from '../view/store.svelte'
 import { createHostChannel, HostError, type HostChannel } from '../shell/channel'
-import type { AgentRow, AppSummary, Catalog, HostApi } from '../shell/hostApi'
+import type { AgentSummary, AppSummary, Catalog, HostApi } from '../shell/hostApi'
 import { isPaired, pairDevice, type PairResult } from '../shell/pairing'
 import { agentListSchema, appListSchema, callParsed, catalogSchema } from '../shell/results'
 import { setInstalledApps } from './apps.svelte'
@@ -74,7 +74,7 @@ export class Host {
   /** Every installed app, whatever its state (the Dock shows the running ones). */
   apps = $state<AppSummary[]>([])
   /** The agents on the host's roster (the desktop widget). */
-  agents = $state<AgentRow[]>([])
+  agents = $state<AgentSummary[]>([])
   /** The last `app.list` / `agents.list` failure (a host that is down, or answers in a shape the shell does not know). */
   appsError = $state<string | null>(null)
   agentsError = $state<string | null>(null)

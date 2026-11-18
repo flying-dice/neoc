@@ -8,7 +8,7 @@
  * (an agent's runtime `env`) does not travel further than this module.
  */
 import { z } from 'zod'
-import type { AgentRow, AppPreview, AppSummary, Catalog, DeviceRow, HostApi } from './hostApi'
+import type { AgentSummary, AppPreview, AppSummary, Catalog, DeviceRow, HostApi } from './hostApi'
 
 /** The host's answer was not what `method` promises. */
 export class ResultError extends Error {
@@ -50,7 +50,9 @@ export const appPreviewSchema = z.object({
   description: text.optional(),
   permissions: z.array(text),
   source: text,
-  installed: z.object({ version: text, state: appStateSchema }).optional()
+  installed: z.object({ version: text, state: appStateSchema }).optional(),
+  /** The app ref's digest as previewed: `app.install` sends it back so only that ref installs. */
+  sha256: z.string().regex(/^[0-9a-f]{64}$/i)
 }) satisfies z.ZodType<AppPreview>
 
 /** Registry problems are keyed by their text in the page: the same problem twice must show once. */
@@ -68,7 +70,7 @@ export const agentListSchema = z.object({
       name: text,
       avatar: text.optional(),
       role: text
-    }) satisfies z.ZodType<AgentRow>
+    }) satisfies z.ZodType<AgentSummary>
   )
 })
 
