@@ -404,6 +404,7 @@ fn build_w(
         "set",
         lua.create_function(
             move |_, (_this, name, value, force): (LuaValue, String, LuaValue, Option<bool>)| {
+                s.writable("w.client:set")?; // before the mirror changes, not only before the effect is queued
                 let json = lua_to_json(&value)?;
                 m.raw_set(name.as_str(), value)?;
                 if let Some(opening) = s.views.lock().get_mut(&v).and_then(|i| i.opening.as_mut()) {
@@ -425,6 +426,7 @@ fn build_w(
     method(
         "toast",
         lua.create_function(move |_, (_this, opts): (LuaValue, Table)| {
+            s.writable("w:toast")?; // before the action closure is kept
             let (mut toast, action) = toast_of(&opts)?;
             if let Some((title, tap)) = action {
                 if let Some(instance) = s.views.lock().get_mut(&v) {

