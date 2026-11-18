@@ -17,6 +17,8 @@
     destructive?: boolean
     disabled?: boolean
     block?: boolean
+    /** A 44 x 44 pt hit area around the drawn button (see Button). */
+    hit?: boolean
     onclick?: () => void
   }
 
@@ -32,6 +34,7 @@
     destructive = false,
     disabled = false,
     block = false,
+    hit = false,
     onclick
   }: Props = $props()
 
@@ -47,6 +50,7 @@
   {destructive}
   {disabled}
   {block}
+  {hit}
   square={!title}
   aria-label={title ? undefined : label}
   {onclick}

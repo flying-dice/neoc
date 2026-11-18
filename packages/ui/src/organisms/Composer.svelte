@@ -132,6 +132,7 @@
         variant="gray"
         size="small"
         capsule
+        hit
         disabled
       />
       <label class="field">
@@ -157,6 +158,7 @@
           variant="filled"
           size="small"
           capsule
+          hit
           onclick={() => onstop?.()}
         />
       {:else}
@@ -167,6 +169,7 @@
           variant="filled"
           size="small"
           capsule
+          hit
           disabled={!value.trim() || disabled}
           onclick={send}
         />

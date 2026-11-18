@@ -1,4 +1,4 @@
-<!-- @molecule AgentListing — store-style listing: icon, name, blurb, GET / OPEN / UPDATE pill, optional Remove.
+<!-- @molecule AgentListing — store-style listing: icon, name, blurb, GET / OPEN / UPDATE pill (or none), optional Remove.
   Atoms: IconTile, Icon, Text, Button, ActivityIndicator.
   Test ids: `testid` on the listing, `${testid}-get` on the main button, `${testid}-remove` on Remove. -->
 <script lang="ts">
@@ -13,7 +13,8 @@
     background: string
     /** Shorthand for action="open" vs "get". */
     installed?: boolean
-    action?: 'get' | 'open' | 'update'
+    /** `none` shows the listing without a button (nothing to do with it). */
+    action?: 'get' | 'open' | 'update' | 'none'
     busy?: boolean
     onget?: () => void
     /** Shows a Remove button (installed apps). */
@@ -33,10 +34,9 @@
     onremove
   }: Props = $props()
 
+  const kind = $derived(action ?? (installed ? 'open' : 'get'))
   const label = $derived(
-    ({ get: 'GET', open: 'OPEN', update: 'UPDATE' } as const)[
-      action ?? (installed ? 'open' : 'get')
-    ]
+    kind === 'none' ? '' : ({ get: 'GET', open: 'OPEN', update: 'UPDATE' } as const)[kind]
   )
 </script>
 
@@ -50,7 +50,7 @@
     <span class="cta">
       {#if busy}
         <ActivityIndicator label="Working on {name}" />
-      {:else}
+      {:else if kind !== 'none'}
         <Button
           testid="{testid}-get"
           variant="gray"

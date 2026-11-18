@@ -19,6 +19,11 @@
     capsule?: boolean
     /** Square button sized for a single glyph. */
     square?: boolean
+    /**
+     * A 44 x 44 pt hit area around a smaller drawn button: the box is padded out with a transparent border and the
+     * fill stops at the padding edge, so the button looks as before but is as easy to hit as a native one.
+     */
+    hit?: boolean
     /** Any CSS colour; defaults to the inherited --tint. */
     tint?: string
     /**
@@ -37,6 +42,7 @@
     size = 'medium',
     capsule = false,
     square = false,
+    hit = false,
     tint,
     fill,
     destructive = false,
@@ -58,6 +64,7 @@
   class="ios-button {variant} {size} {klass}"
   class:capsule
   class:square
+  class:hit
   class:block
   style:--btn-tint={color}
   style:--btn-fill={fillColor ?? (tint && !destructive ? tint : undefined)}
@@ -143,6 +150,37 @@
   }
   .square.large {
     width: 50px;
+  }
+
+  /* The hit area: min 44 pt, the drawn size (28 / 34) kept inside it. */
+  .hit {
+    --_h: 28px;
+    box-sizing: border-box;
+    min-height: 44px;
+    border-block: calc((44px - var(--_h)) / 2) solid transparent;
+    background-clip: padding-box;
+  }
+  .hit.medium {
+    --_h: 34px;
+  }
+  .hit.large {
+    --_h: 50px;
+    border-block-width: 0;
+  }
+  .hit.square {
+    min-width: 44px;
+    border-inline: calc((44px - var(--_w, 28px)) / 2) solid transparent;
+  }
+  .hit.square.medium {
+    --_w: 34px;
+  }
+  .hit.square.small,
+  .hit.square.medium {
+    width: 44px;
+  }
+  .hit.square.large {
+    width: 50px;
+    border-inline-width: 0;
   }
 
   .filled {

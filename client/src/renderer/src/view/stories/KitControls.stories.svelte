@@ -19,6 +19,13 @@
     toast: trees.toast
   }
 
+  /** A control's hit area, in CSS pixels: every touch target is at least 44 x 44. */
+  const expectHitArea = async (el: HTMLElement): Promise<void> => {
+    const box = el.getBoundingClientRect()
+    await expect(box.width).toBeGreaterThanOrEqual(44)
+    await expect(box.height).toBeGreaterThanOrEqual(44)
+  }
+
   /** The session of the story on screen, for its play function (the host side of the scenario). */
   let latest: Promise<KitStoryHandle> | null = null
   const open = (name: string): Promise<KitStoryHandle> => {
@@ -255,6 +262,7 @@
   play={async ({ canvas, userEvent }) => {
     const { host } = await story()
     const trigger = await canvas.findByTestId('kit-actions')
+    await expectHitArea(trigger)
     await userEvent.click(trigger)
     await waitFor(async () => expect(await canvas.findByTestId('kit-actions-menu')).toBeVisible())
     await userEvent.click(canvas.getByTestId('kit-actions-menu-pin'))

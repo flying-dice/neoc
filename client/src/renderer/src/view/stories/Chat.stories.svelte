@@ -7,6 +7,13 @@
   import { openChatStory, type ChatScenario, type ChatStoryHandle } from '../host/chatStory'
   import { until } from '../host/storyKit'
 
+  /** A control's hit area, in CSS pixels: every touch target is at least 44 x 44. */
+  const expectHitArea = async (el: HTMLElement): Promise<void> => {
+    const box = el.getBoundingClientRect()
+    await expect(box.width).toBeGreaterThanOrEqual(44)
+    await expect(box.height).toBeGreaterThanOrEqual(44)
+  }
+
   /** The session of the story on screen, for its play function (the host side of the scenario). */
   let latest: Promise<ChatStoryHandle> | null = null
   const open = (scenario: ChatScenario): Promise<ChatStoryHandle> => {
@@ -133,6 +140,8 @@
     await waitFor(() => expect(canvas.getByText('Ask Claude')).toBeVisible())
     const model = await chat(canvas, 'session-config-model')
     await expect(model).toHaveValue('large')
+    for (const part of ['composer-attach', 'composer-send'])
+      await expectHitArea(await chat(canvas, part))
     await expect(await chat(canvas, 'session-mode')).toHaveValue('default')
     await expect(await chat(canvas, 'session-usage')).toBeVisible()
     await userEvent.selectOptions(await chat(canvas, 'session-config-effort'), 'high')
@@ -164,6 +173,7 @@
     await say(canvas, userEvent, 'Hi there')
     await waitFor(() => expect(canvas.getByText('Hi there')).toBeVisible())
     await expect(await chat(canvas, 'composer-stop')).toBeVisible()
+    await expectHitArea(await chat(canvas, 'composer-stop'))
     // the log is busy while the reply streams, so a screen reader reads the finished message once
     await expect(canvas.getByTestId('agents-chat-thread')).toHaveAttribute('aria-busy', 'true')
     await waitFor(() =>
