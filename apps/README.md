@@ -1,3 +1,7 @@
+> **Heads-up (wave B2).** Apps are Luau packages now (`apps/<id>/app.json` + `app.luau`, built into app refs by
+> `bun run build:apps`; see `docs/architecture/host-stack.md` and `apps/calculator`). This document still describes the
+> TypeScript app model and the Bun server, which wave B4 removes together with `packages/sdk`'s app contract.
+
 # Building AgentOS apps
 
 AgentOS is two programs and a set of apps:

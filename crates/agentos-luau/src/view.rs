@@ -18,7 +18,7 @@ use agentos_application::{
 };
 use agentos_domain::ui::{
     bindings::{bound_fields, writable_by_source},
-    protocol::{Command, Toast},
+    protocol::{Command, Toast, ToastAction},
     source::{ConflictPolicy, SourceDecl, TotalMode as WireTotal, ViewDecls},
     validate::{validate_with, Context, Severity},
     Action, ClientDecl, Handler, Node,
@@ -40,6 +40,9 @@ pub(crate) struct ViewInstance {
     pub decls: BTreeMap<String, ClientDecl>,
     /// `path#event` -> the closures of the last accepted render.
     pub handlers: HashMap<String, Vec<Function>>,
+    /// The `onTap` closures of `w:toast` action buttons by toast id (`$toast/<id>`), each run once.
+    pub toast_actions: Vec<(String, Function)>,
+    pub toast_seq: u32,
     pub deps: BTreeSet<DepKey>,
     pub render_seq: u64,
     /// Values `w.client:set` wrote while the window was opening (they go into the first snapshot).
@@ -300,20 +303,38 @@ fn text_of(v: &LuaValue) -> mlua::Result<String> {
     }
 }
 
-fn toast_of(opts: &Table) -> mlua::Result<Toast> {
-    let Value::Object(o) = lua_to_json(&LuaValue::Table(opts.clone()))? else {
-        return Err(mlua::Error::runtime("w:toast { text = ... } takes named options"));
+/// The event path prefix of a toast's action button (`$toast/<id>`): never a node path, since keys cannot
+/// start with `$`.
+const TOAST_PATH: &str = "$toast/";
+
+/// How many toast actions a window keeps (the oldest are forgotten: a toast is gone long before).
+const MAX_TOAST_ACTIONS: usize = 32;
+
+/// `w:toast { text, icon?, kind?, duration?, action? = { title, onTap } }`: the toast, and the closure its
+/// action button runs (kept by the instance under the id the toast carries).
+fn toast_of(opts: &Table) -> mlua::Result<(Toast, Option<(String, Function)>)> {
+    let text: String =
+        opts.get::<Option<String>>("text")?.ok_or_else(|| mlua::Error::runtime("w:toast needs `text`"))?;
+    let action = match opts.get::<Option<Table>>("action")? {
+        None => None,
+        Some(a) => {
+            let title: String = a
+                .get::<Option<String>>("title")?
+                .ok_or_else(|| mlua::Error::runtime("w:toast action needs `title`"))?;
+            let tap: Function = a
+                .get::<Option<Function>>("onTap")?
+                .ok_or_else(|| mlua::Error::runtime("w:toast action needs `onTap`"))?;
+            Some((title, tap))
+        }
     };
-    let text =
-        o.get("text").and_then(Value::as_str).ok_or_else(|| mlua::Error::runtime("w:toast needs `text`"))?;
-    let action = o.get("action").and_then(|a| a.get("title")).and_then(Value::as_str).map(str::to_owned);
-    Ok(Toast {
-        text: text.to_owned(),
-        icon: o.get("icon").and_then(Value::as_str).map(str::to_owned),
-        kind: o.get("kind").and_then(Value::as_str).map(str::to_owned),
-        action,
-        duration: o.get("duration").and_then(Value::as_u64).and_then(|d| u32::try_from(d).ok()),
-    })
+    let toast = Toast {
+        text,
+        icon: opts.get::<Option<String>>("icon")?,
+        kind: opts.get::<Option<String>>("kind")?,
+        action: None,
+        duration: opts.get::<Option<u32>>("duration")?,
+    };
+    Ok((toast, action))
 }
 
 #[allow(clippy::too_many_lines, clippy::many_single_char_names)] // a flat table of window methods (s, v, m: shared, view, mirror)
@@ -364,7 +385,19 @@ fn build_w(
     method(
         "toast",
         lua.create_function(move |_, (_this, opts): (LuaValue, Table)| {
-            command(&s, &v, Command::Toast(toast_of(&opts)?));
+            let (mut toast, action) = toast_of(&opts)?;
+            if let Some((title, tap)) = action {
+                if let Some(instance) = s.views.lock().get_mut(&v) {
+                    instance.toast_seq += 1;
+                    let id = format!("t{}", instance.toast_seq);
+                    instance.toast_actions.push((id.clone(), tap));
+                    if instance.toast_actions.len() > MAX_TOAST_ACTIONS {
+                        instance.toast_actions.remove(0);
+                    }
+                    toast.action = Some(ToastAction { title, id });
+                }
+            }
+            command(&s, &v, Command::Toast(toast));
             Ok(())
         })?,
     )?;
@@ -467,6 +500,8 @@ impl AppVm {
                 mirror,
                 decls,
                 handlers: HashMap::new(),
+                toast_actions: Vec::new(),
+                toast_seq: 0,
                 deps: BTreeSet::new(),
                 render_seq: 0,
                 opening: Some(Map::new()),
@@ -579,9 +614,17 @@ impl AppVm {
     ) -> Result<bool> {
         let sh = self.shared().clone();
         let closures = {
-            let views = sh.views.lock();
-            let i = views.get(view).ok_or_else(|| VmError::NoSuchView(view.to_owned()))?;
-            i.handlers.get(&format!("{}#{}", call.path, call.event)).cloned()
+            let mut views = sh.views.lock();
+            let i = views.get_mut(view).ok_or_else(|| VmError::NoSuchView(view.to_owned()))?;
+            match call.path.strip_prefix(TOAST_PATH) {
+                // a toast's action button: its closure runs once
+                Some(id) => i
+                    .toast_actions
+                    .iter()
+                    .position(|(t, _)| t == id)
+                    .map(|n| vec![i.toast_actions.remove(n).1]),
+                None => i.handlers.get(&format!("{}#{}", call.path, call.event)).cloned(),
+            }
         };
         let Some(closures) = closures else { return Ok(false) };
         let _call = self.enter_call().await;

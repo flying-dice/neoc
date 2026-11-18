@@ -142,7 +142,9 @@
 <div class="ios-tabview {style}" style={css}>
   {#if style === 'top' || style === 'sidebar'}{@render tabButtons()}{/if}
   {#if style === 'page'}
-    <div class="pages" bind:this={pages}>
+    <!-- a scroll-snap pager must be reachable by keyboard (axe: scrollable-region-focusable) -->
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+    <div class="pages" bind:this={pages} tabindex="0" role="group" aria-label="Pages">
       {#each tabs as tab (tab.id)}
         <div
           class="panel slide"

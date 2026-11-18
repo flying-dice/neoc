@@ -59,6 +59,8 @@ pub struct HostConfig {
     pub secure_cookies: bool,
     /// The machine's own addresses and hostname for the Origin/Host guard; `None` = ask the OS.
     pub interfaces: Option<Interfaces>,
+    /// The catalog Discover browses (`app.available`): registry files or app refs, by URL.
+    pub registries: Vec<String>,
     /// Agents to add to the roster at start if they are not there yet, each with a fixed persistent MCP
     /// bearer token (tests; the binary seeds from `agentos.toml` and mints tokens at runtime).
     pub agents: Vec<(String, Agent)>,
@@ -92,6 +94,7 @@ impl HostConfig {
             allowed_hosts: vec![],
             secure_cookies: false,
             interfaces: None,
+            registries: vec![],
             agents: vec![],
             mcp_url: Some(format!("http://127.0.0.1:{port}/mcp")),
             agent_cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
@@ -148,10 +151,8 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
     // apps with the `agents` permission list
     let contacts = Arc::new(AgentService::new(system.clone(), mcp_state.clone(), random.clone()));
     contacts.load().await?;
-    let runtime: Arc<dyn AppRuntime> = Arc::new(
-        LuauRuntime::new(hub.clone(), Arc::new(platform::LogShell), Limits::default())
-            .with_roster(contacts.clone()),
-    );
+    let runtime: Arc<dyn AppRuntime> =
+        Arc::new(LuauRuntime::new(hub.clone(), hub.clone(), Limits::default()).with_roster(contacts.clone()));
     let tools: Arc<dyn ToolRegistry> = mcp_state.clone();
     let events: Arc<dyn EventSink> = hub.clone();
     let connector: Arc<dyn AgentConnector> =
@@ -171,6 +172,7 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
         installed,
         clock: cfg.clock.clone(),
         background: Arc::new(platform::TokioBackground),
+        registries: cfg.registries,
     }));
     for (token, agent) in cfg.agents {
         contacts.ensure(agent, Some(&token)).await?;

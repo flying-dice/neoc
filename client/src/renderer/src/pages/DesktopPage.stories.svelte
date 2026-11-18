@@ -31,6 +31,6 @@
     windowManager.open('files')
     const files = windowManager.windows.find((w) => w.appId === 'files')!
     windowManager.setLayout(files.id, 'split-left')
-    windowManager.open('calculator')
+    windowManager.open('settings')
   }}
 />

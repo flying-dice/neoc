@@ -1,17 +1,38 @@
 # @agentos/client
 
-The AgentOS client: an installable PWA (Vite + Svelte 5) that is the iPadOS-style shell. It talks to the Bun server
-(`apps/server`) over one WebSocket with JSON-RPC 2.0 (`@agentos/sdk/host/client`), and loads installed apps' client
-bundles from the server.
+The AgentOS client: an installable PWA (Vite + Svelte 5) that is the iPadOS-style shell. It talks to the Rust host
+(`crates/agentos-host`) over one WebSocket with JSON-RPC 2.0 (`/rpc`), pairs through `/session` and `/pair`, and renders
+the windows of the Luau apps installed on the host with the managed renderer below. It runs no app code.
 
 ```sh
-bun run dev        # with the server: from the repo root, `bun run dev` (server :7400 + this on :5173)
-bun run dev:web    # web mode on :6200: the shell on the in-memory host, repo apps from source, no server
-bun run build      # → dist/ (served by the server in production)
+bun run dev        # from the repo root: builds the apps, runs the host on :7400 and this on :5173 (pair with the code the host prints)
+bun run build      # → dist/ (the host serves it: `bun run host`)
 ```
 
-Entry points: `src/renderer/index.html` → `src/boot.ts` (real server) and `src/renderer/web.html` → `src/web/main.ts`
-(in-memory host). See `apps/README.md` for building apps and `docs/TESTING.md` for tests.
+Entry point: `src/renderer/index.html` → `src/boot.ts`. See `docs/TESTING.md` for tests and `docs/architecture/host-stack.md`
+for the host.
+
+## The shell (`src/renderer/src`)
+
+```
+boot.ts                 start: GET /session, then the pairing screen or one Session; exposes window.__agentos (tests)
+App.svelte              composition root: pairing gate, built-in pages, ViewWindow for installed apps
+lib/host.svelte.ts      the host connection: phase (checking, unpaired, connecting, ready), the one Session, the app list,
+                        window.open requests, re-pairing after a revoke
+lib/apps.svelte.ts      the app registry the window manager reads: built-in pages + running installed apps (icon, tint,
+                        window size and minimum from `app.manifest`); the Dock order
+lib/windowManager.svelte.ts   Stage Manager windows (floating, full screen, split, Slide Over); a window has an app and a window kind
+shell/channel.ts        the host's own methods and notifications (app.*, host.*, window.open) on the session's transport
+shell/pairing.ts        GET /session, POST /pair and their messages (wrong code, rate limit, unreachable)
+shell/hostApi.ts        the wire types of app.* / host.devices.* (mirror of types/generated/agentos.ts, tested for drift)
+shell/fakeHost.ts       a fake of those methods for stories
+organisms/ViewWindow    an installed app's window: view.open on mount, view.close on destroy, <ViewHost> in between
+pages/                  PairingPage, DiscoverPage (apps: install, enable, disable, remove, add by URL), SettingsPage
+                        (Devices), and the built-in Files, Terminal, UI Kit and Agents pages
+```
+
+The Agents page (and `lib/agents.svelte.ts`) still reads the old SDK bridge and is out of the Dock until wave B3
+replaces it with the AG-UI Agents app.
 
 ## The managed renderer (`src/renderer/src/view`)
 

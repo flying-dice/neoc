@@ -1,6 +1,6 @@
 ---
 name: verify-change
-description: Use before finishing, opening or merging ANY AgentOS change that alters what a person sees or does (kit components in packages/ui, app pages, the desktop shell, window management, menus, dialogs, layout, theming, agent tools that move the UI). Run the real renderer headless in web mode, exercise the change, look at the screenshots against the intended result and the design language, and write down what was checked and how. Passing unit tests is not enough.
+description: Use before finishing, opening or merging ANY AgentOS change that alters what a person sees or does (kit components in packages/ui, app pages, the desktop shell, window management, menus, dialogs, layout, theming, agent tools that move the UI). Run the real shell and host headless, exercise the change, look at the screenshots against the intended result and the design language, and write down what was checked and how. Passing unit tests is not enough.
 ---
 
 # Verify a change in the real UI before it lands
@@ -10,9 +10,8 @@ off in a small window, or that dark mode turned a title black on a dark bar. So 
 runs the real renderer, uses the changed behaviour, looks at the screenshots and says what it checked.** There are
 no exceptions for "small" kit changes: a kit change touches every app.
 
-Everything runs headless with **no Bun server**. Web mode (`client`, `web.html`) runs the
-real desktop renderer on the in-memory host from `@agentos/sdk/testing`, which runs the real app server modules and
-a scripted Claude. See `docs/TESTING.md`.
+Everything runs headless against the **real Rust host** (port 7410 for the e2e run, so it never collides with a host
+you have running on 7400): the shell in Chromium, the Luau apps on the host, one paired browser. See `docs/TESTING.md`.
 
 ## 1. Write down the intended result first
 
@@ -29,25 +28,25 @@ List **every place the change shows up**. For a kit component, find its users:
 ```sh
 bun run lint            # atomic layers + test ids (every interactive element has data-testid)
 bun run typecheck       # includes the required `testid` props on kit components
-bun test                # unit tests (src/shared logic)
+bun run test            # cargo nextest, the client unit tests, the TS server tests
 bun run test:e2e        # builds every Storybook, then:
                         #   stories  every story: axe light+dark, overflow, snapshots, min/large window
-                        #   desktop  every app: Dock, floating light/dark, resize, full screen/split/slide over, iPad & large screens
-                        #   apps     each app's key journeys (apps/<app>/e2e)
+                        #   desktop  every app on the real host: Dock, floating light/dark, resize, full screen/split/slide over, iPad & large screens
+                        #   journeys each app's and the shell's key journeys (apps/<app>/e2e, client/e2e, e2e/*.journeys.spec.ts)
 ```
 
-Run a slice with `npx playwright test --project=desktop --grep calculator`.
+Run a slice with `npx playwright test --project=desktop --grep calculator   # starts the host itself`.
 
 When a change is intended to alter visuals, update the baselines (`bun run test:e2e:update`) and then go to step 4.
 **A snapshot update with no look at the images is not verification.**
 
 ## 3. Exercise it like a person
 
-Cover what the automated suite can't see yet. Drive web mode yourself:
+Cover what the automated suite can't see yet. Run the host and drive the shell yourself:
 
 ```sh
-bun run dev:web                                   # http://localhost:6200/web.html
-node e2e/tools/session.mjs start me --url "http://localhost:6200/web.html?open=settings&theme=dark"
+bun run build && bun run build:apps && bun run host   # prints a pairing code; the desktop is http://127.0.0.1:7400
+node e2e/tools/session.mjs start me --url "http://127.0.0.1:7400/?theme=dark"   # pair with the code on the first screen
 node e2e/tools/session.mjs look me                # screenshot path + accessibility tree
 node e2e/tools/session.mjs click me "Display & Appearance"
 node e2e/tools/session.mjs press me Tab
@@ -56,8 +55,9 @@ node e2e/tools/session.mjs resize me 1024 768
 node e2e/tools/session.mjs stop me
 ```
 
-URL params: `open=<app,app>`, `theme=light|dark`, `scenario=<name>` (`client/src/renderer/src/web/scenarios.ts`),
-`delay=<ms>` for streamed agent replies. `window.__agentos` exposes the host and the stores.
+URL param: `theme=light|dark`. `window.__agentos` exposes the shell's host state, window manager and app registry
+(`wm.open('settings')`). An agent putting a result on an app is `callTool` in `e2e/host/pair.ts` (MCP, the token in
+`<data>/mcp.json`).
 
 Cover the matrix for each changed behaviour:
 
@@ -100,7 +100,7 @@ Put this in the PR description (or your final message when there's no PR):
 ```md
 ## Manual verification
 
-Ran the renderer headless in web mode (Chromium, 1280x800, plus 1024x768 and 1600x1000) and checked:
+Ran the shell on the real host headless (Chromium, 1280x800, plus 1024x768 and 1600x1000) and checked:
 
 - [x] Settings, dark: the nav bar title is white on the dark bar (screenshot 1)
 - [x] Calculator at its 320x480 minimum: every key ≥ 44 px, display fits (screenshot 2)

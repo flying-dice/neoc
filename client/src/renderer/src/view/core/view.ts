@@ -413,7 +413,7 @@ export class ViewCore {
     const c = p as { viewId: string } & ViewCommand
     switch (c.cmd) {
       case 'toast': {
-        const args = c.args as typeof c.args & { action?: string }
+        const args = c.args
         return this.notice(
           args.kind === 'error' ? 'error' : args.kind === 'success' ? 'success' : 'info',
           args.text,
@@ -453,7 +453,7 @@ export class ViewCore {
     kind: NoticeKind,
     text: string,
     durationMs = NOTICE_MS,
-    extra: { icon?: string; action?: string; undo?: Notice['undo'] } = {}
+    extra: { icon?: string; action?: Notice['action']; undo?: Notice['undo'] } = {}
   ): void {
     const id = ++this.noticeId
     const notice: Notice = { id, kind, text }
@@ -464,11 +464,14 @@ export class ViewCore {
     if (durationMs > 0) this.timers.setTimeout(() => this.dismissNotice(id), durationMs)
   }
 
-  /** The action button of a toast was tapped: report the `toast` event of the view (addressed at its root) and dismiss. */
+  /**
+   * The action button of a toast was tapped: dismiss it and report the tap as `view.event` on `$toast/<id>`, where
+   * the host keeps the app's `onTap` closure (it runs once).
+   */
   toastAction(id: number): void {
-    const root = this.store.tree?.key
+    const action = this.store.notices.find((n) => n.id === id)?.action
     this.dismissNotice(id)
-    if (root !== undefined) void this.emit(root, 'toast')
+    if (action) void this.emit(`$toast/${action.id}`, 'tap')
   }
 
   /**

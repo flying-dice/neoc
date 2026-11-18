@@ -280,13 +280,77 @@ async fn a_reload_that_does_not_load_keeps_the_running_version() {
 }
 
 #[tokio::test]
-async fn sync_registries_installs_the_missing_and_skips_the_known() {
+async fn ensure_installed_installs_the_missing_and_skips_the_known() {
     let f = Fakes::new();
     let a = f.add_app("notes", &[("a", "x")]);
     let b = f.add_app("todo", &[("b", "x")]);
     let svc = f.service();
-    svc.sync_registries(std::slice::from_ref(&a)).await;
-    svc.sync_registries(&[a, b, "mem://missing/app-ref.json".into()]).await;
+    svc.ensure_installed(std::slice::from_ref(&a)).await;
+    svc.ensure_installed(&[a, b, "mem://missing/app-ref.json".into()]).await;
     assert_eq!(svc.installed_apps().iter().map(AppId::as_str).collect::<Vec<_>>(), vec!["notes", "todo"]);
     assert_eq!(f.runtime.loads("notes"), 1, "an installed app is not reinstalled");
+}
+
+#[tokio::test]
+async fn preview_reads_the_app_ref_only_and_says_whether_it_is_installed() {
+    let f = Fakes::new();
+    let url = f.add_app("notes", &[("add_note", "x")]);
+    let svc = f.service();
+    let before = svc.preview(&url).await.unwrap();
+    assert_eq!(
+        (before.id.as_str(), before.name.as_str(), before.version.as_str()),
+        ("notes", "notes", "1.0.0")
+    );
+    assert_eq!(before.source, "notes", "the host part of mem://notes/...");
+    assert!(before.installed.is_none());
+    assert_eq!(f.runtime.loads("notes"), 0, "nothing ran");
+    assert!(f.installed.records().is_empty(), "nothing was installed");
+
+    svc.install_from_url(&url).await.unwrap();
+    let after = svc.preview(&url).await.unwrap();
+    let installed = after.installed.unwrap();
+    assert_eq!(
+        (installed.version.as_str(), installed.state),
+        ("1.0.0", agentos_domain::api::AppState::Running)
+    );
+    assert!(svc.preview("mem://missing/app-ref.json").await.is_err());
+}
+
+#[tokio::test]
+async fn the_catalog_lists_registry_apps_and_reports_what_it_could_not_read() {
+    let f = Fakes::new();
+    let notes = f.add_app("notes", &[("a", "x")]);
+    f.add_app("todo", &[("b", "x")]);
+    f.add_registry(
+        "mem://registry/registry.json",
+        &[&notes, "mem://todo/app-ref.json", "mem://gone/app-ref.json"],
+    );
+    let svc = f.service_with_registries(vec![
+        "mem://registry/registry.json".into(),
+        "mem://todo/app-ref.json".into(), // an app ref is a registry of one (and a duplicate here)
+        "mem://nowhere/registry.json".into(),
+    ]);
+    svc.install_from_url(&notes).await.unwrap();
+    let catalog = svc.catalog().await;
+    let ids: Vec<&str> = catalog.apps.iter().map(|a| a.id.as_str()).collect();
+    assert_eq!(ids, ["notes", "todo"], "listed once each, in registry order");
+    assert!(catalog.apps[0].installed.is_some() && catalog.apps[1].installed.is_none());
+    assert_eq!(catalog.errors.len(), 2, "{:?}", catalog.errors);
+    assert!(
+        catalog.errors.iter().any(|e| e.contains("gone"))
+            && catalog.errors.iter().any(|e| e.contains("nowhere"))
+    );
+}
+
+#[tokio::test]
+async fn a_package_that_needs_a_newer_host_is_refused_at_preview_and_install() {
+    let f = Fakes::new();
+    let url = f.add_app("notes", &[("a", "x")]);
+    let mut r: agentos_domain::AppRef =
+        serde_json::from_slice(&f.fetcher.0.lock().unwrap()[&url].clone()).unwrap();
+    r.manifest.requires = Some(agentos_domain::Requires { host: Some(">=9.0".into()) });
+    f.fetcher.0.lock().unwrap().insert(url.clone(), serde_json::to_vec(&r).unwrap());
+    let svc = f.service();
+    assert!(svc.preview(&url).await.unwrap_err().to_string().contains("host API"));
+    assert!(svc.install_from_url(&url).await.is_err());
 }

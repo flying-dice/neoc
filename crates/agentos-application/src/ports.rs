@@ -333,7 +333,7 @@ pub trait InstalledAppStore: Send + Sync {
     async fn list(&self) -> PortResult<Vec<InstalledApp>>;
 }
 
-// ---- shell (stub) -------------------------------------------------------------------------------
+// ---- shell -------------------------------------------------------------------------------------
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MenuCommand {
@@ -342,10 +342,13 @@ pub struct MenuCommand {
     pub shortcut: Option<String>,
 }
 
-/// What an app asks of the desktop shell (`app.shell` in Luau). The shell does not implement it yet: the
-/// API shape is fixed so apps can be written against it.
+/// What an app asks of the desktop shell: `app:openWindow` (an agent's tool bringing an app forward) is
+/// delivered to the clients; the Dock badge, menu commands and deep links of `app.shell` are accepted and
+/// dropped until the shell shows them (the API shape is fixed so apps can be written against it).
 #[async_trait]
 pub trait Shell: Send + Sync {
+    /// `app:openWindow(name, params)`: the connected shells open the window or bring the app's forward.
+    async fn open_window(&self, app: &AppId, window: &str, params: Map<String, Value>);
     async fn set_badge(&self, app: &AppId, badge: Option<String>);
     async fn set_menu_commands(&self, app: &AppId, commands: Vec<MenuCommand>);
     async fn set_deep_links(&self, app: &AppId, patterns: Vec<String>);

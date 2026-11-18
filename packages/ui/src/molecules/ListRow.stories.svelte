@@ -89,6 +89,7 @@
 <Story
   name="Swipe actions, open"
   asChild
+  tags={['overflow-ok']}
   parameters={{ controls: { disable: true } }}
   play={async ({ canvas }) => {
     await waitFor(() => expect(canvas.getAllByTestId('swipe-delete')[0]).toBeVisible())
@@ -111,7 +112,7 @@
 </Story>
 
 <Story name="Narrow, long text truncates" asChild parameters={{ controls: { disable: true } }}>
-  <div style="width:280px;background:var(--bg-elevated);border-radius:10px;overflow:hidden">
+  <div role="list" style="width:280px;background:var(--bg-elevated);border-radius:10px;overflow:hidden">
     <ListRow testid="long" title="A very long title that cannot fit in a narrow window at all" subtitle="And a long subtitle that is cut with an ellipsis too" role="listitem" chevron {onclick} />
   </div>
 </Story>

@@ -3,6 +3,9 @@
 
 use std::fmt::Write as _;
 
+use agentos_domain::api::{
+    AppList, AppPreview, AppState, AppSummary, AppWindow, Catalog, DeviceList, DeviceRow, InstalledInfo,
+};
 use agentos_domain::ui::{
     components::{CATALOGUE, COMMON_EVENTS, COMMON_PROPS, COMMON_SLOTS},
     expr::Func,
@@ -10,9 +13,9 @@ use agentos_domain::ui::{
     protocol::{
         ClientSet, ClientState, Command, DataPatch, Draft, Empty, EventAck, Op, Range, ResumeView,
         RowRestore, RowSet, SessionHello, SessionResume, SessionWelcome, Size, SourcePatch, SourceSet,
-        StateSet, StateValue, TextSplice, ThemeSet, ThreadAppend, Toast, Undo, ViewClosed, ViewCommand,
-        ViewError, ViewEvent, ViewOpen, ViewOps, ViewRef, ViewResize, ViewResume, ViewSnapshot, ViewTree,
-        ViewVisibility, WriteAck, WriteResolution, METHODS,
+        StateSet, StateValue, TextSplice, ThemeSet, ThreadAppend, Toast, ToastAction, Undo, ViewClosed,
+        ViewCommand, ViewError, ViewEvent, ViewOpen, ViewOps, ViewRef, ViewResize, ViewResume, ViewSnapshot,
+        ViewTree, ViewVisibility, WindowOpen, WriteAck, WriteResolution, METHODS,
     },
     source::{ClientDecl, ConflictPolicy, Persist, SourceDecl, SyncMode, TotalMode},
     spec::{
@@ -122,11 +125,22 @@ fn protocol() -> String {
     add(ClientSet::decl(&cfg));
     add(Command::decl(&cfg));
     add(Toast::decl(&cfg));
+    add(ToastAction::decl(&cfg));
     add(ViewCommand::decl(&cfg));
     add(ViewError::decl(&cfg));
     add(ViewClosed::decl(&cfg));
     add(ThemeSet::decl(&cfg));
+    add(WindowOpen::decl(&cfg));
     add(Empty::decl(&cfg));
+    add(AppState::decl(&cfg));
+    add(AppWindow::decl(&cfg));
+    add(AppSummary::decl(&cfg));
+    add(AppList::decl(&cfg));
+    add(InstalledInfo::decl(&cfg));
+    add(AppPreview::decl(&cfg));
+    add(Catalog::decl(&cfg));
+    add(DeviceRow::decl(&cfg));
+    add(DeviceList::decl(&cfg));
     add(rpc_error());
     out
 }

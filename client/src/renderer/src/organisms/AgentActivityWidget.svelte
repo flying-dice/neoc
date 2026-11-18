@@ -1,59 +1,53 @@
 <!--
-  @organism AgentActivityWidget — medium widget showing live agent conversations.
-  Atoms: Card, Text, ActivityIndicator. Molecules: AgentAvatar.
-  Test ids: `testid` on the widget, `${testid}-conversation-${id}` per row,
-  `${testid}-new` on the "Ask Claude" row shown when there are none.
+  @organism AgentActivityWidget — medium widget listing the agents on this host (the host's roster); tapping a row
+  opens the Agents app. Atoms: Card, Text. Molecules: AgentAvatar.
+  Test ids: `testid` on the widget, `${testid}-agent-${id}` per row, `${testid}-open` on the row shown when
+  there are none.
 -->
 <script lang="ts">
-  import { Card, Text, ActivityIndicator } from '@agentos/ui/atoms'
+  import { Card, Text } from '@agentos/ui/atoms'
   import AgentAvatar from '../molecules/AgentAvatar.svelte'
-  import { lookOf, type Conversation } from '../lib/agents.svelte'
+  import { iconOf, type AgentRow } from '../shell/hostApi'
 
   interface Props {
     testid: string
-    conversations: Conversation[]
-    onselect?: (id: string) => void
-    onnew?: () => void
+    agents: AgentRow[]
+    onopen?: () => void
   }
 
-  let { testid, conversations, onselect, onnew }: Props = $props()
-  const recent = $derived(conversations.slice(0, 3))
-  const active = $derived(
-    conversations.filter((c) => c.status === 'running' || c.status === 'waiting').length
-  )
+  let { testid, agents, onopen }: Props = $props()
+  const shown = $derived(agents.slice(0, 3))
 </script>
 
 <Card {testid} size="medium" surface="material" padding="14px 16px">
   <div class="head">
     <Text style="footnote" weight="semibold" color="secondary">AGENTS</Text>
-    <Text style="footnote" color="secondary">{active} active</Text>
+    <Text style="footnote" color="secondary">{agents.length} on this host</Text>
   </div>
   <div class="rows">
-    {#each recent as c (c.id)}
+    {#each shown as agent (agent.id)}
       <button
         type="button"
         class="row"
-        data-testid="{testid}-conversation-{c.id}"
-        onclick={() => onselect?.(c.id)}
+        data-testid="{testid}-agent-{agent.id}"
+        onclick={() => onopen?.()}
       >
-        <AgentAvatar icon={lookOf(c.agentId).icon} color={lookOf(c.agentId).color} size={30} />
+        <AgentAvatar
+          icon={iconOf(agent.avatar ?? 'sparkles')}
+          color="var(--ios-purple)"
+          size={30}
+        />
         <span class="meta">
-          <Text style="subheadline" weight="semibold" truncate>{c.title}</Text>
+          <Text style="subheadline" weight="semibold" truncate>{agent.name}</Text>
+          <Text style="caption1" color="secondary" truncate>{agent.role || 'Chat with it'}</Text>
         </span>
-        {#if c.status === 'running' || c.status === 'starting'}
-          <ActivityIndicator />
-        {:else if c.status === 'waiting'}
-          <Text style="caption1" color="secondary">Needs input</Text>
-        {:else if c.status === 'error'}
-          <Text style="caption1" color="destructive">Error</Text>
-        {/if}
       </button>
     {:else}
-      <button type="button" class="row" data-testid="{testid}-new" onclick={onnew}>
-        <AgentAvatar icon={lookOf('claude').icon} color={lookOf('claude').color} size={30} />
+      <button type="button" class="row" data-testid="{testid}-open" onclick={() => onopen?.()}>
+        <AgentAvatar icon="sparkles" color="var(--ios-gray)" size={30} />
         <span class="meta">
-          <Text style="subheadline" weight="semibold">Ask Claude</Text>
-          <Text style="caption1" color="secondary">Agents can use your apps</Text>
+          <Text style="subheadline" weight="semibold">No agents yet</Text>
+          <Text style="caption1" color="secondary">Add one to agentos.toml</Text>
         </span>
       </button>
     {/each}

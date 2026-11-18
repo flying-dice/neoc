@@ -84,7 +84,8 @@ for (const book of books) {
         for (const theme of THEMES) {
           await test.step(theme, async () => {
             await gotoStory(page, book, story.id, theme)
-            await expectNoOverflow(root)
+            // a story that shows a deliberately clipped state (a swiped-open row) tags itself `overflow-ok`
+            if (!story.tags.includes('overflow-ok')) await expectNoOverflow(root)
             await expectAccessible(page, testInfo, { include: '#storybook-root' })
             await expect(page).toHaveScreenshot([book, `${story.id}-${theme.toLowerCase()}.png`], { fullPage: true })
           })
@@ -95,7 +96,7 @@ for (const book of books) {
             await test.step(`window ${size.width}x${size.height}`, async () => {
               await gotoStory(page, book, story.id, 'Light', size)
               const frame = page.getByTestId('app-window')
-              await expectNoOverflow(frame)
+              if (!story.tags.includes('overflow-ok')) await expectNoOverflow(frame)
               await expect(frame).toHaveScreenshot([book, `${story.id}-${size.name}.png`])
             })
           }

@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "version": "1.0.0",
-  "description": "The AgentOS client: an installable PWA shell (Vite + Svelte) that talks to the Bun server over WebSocket JSON-RPC",
+  "description": "The AgentOS client: an installable PWA shell (Vite + Svelte) that talks to the Rust host over WebSocket JSON-RPC",
   "author": "AgentOS",
   "homepage": "https://electron-vite.org",
   "scripts": {
@@ -16,15 +16,11 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "dev:web": "vite --port 6200",
-    "build:web": "vite build",
-    "preview:web": "vite preview --port 6200",
     "storybook": "storybook dev -p 6008 --no-open",
     "build-storybook": "storybook build -o storybook-static --quiet"
   },
   "dependencies": {
     "@ag-ui/core": "1.0.5",
-    "@agentos/sdk": "workspace:*",
     "@agentos/ui": "workspace:*",
     "zod": "4.6.7"
   },

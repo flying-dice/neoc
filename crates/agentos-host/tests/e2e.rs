@@ -39,6 +39,10 @@ fn publish_app(root: &Path, id: &str) -> String {
             main: "app.luau".into(),
             permissions: vec![Permission::Data, Permission::Notify],
             migrations: vec![],
+            icon: None,
+            tint: None,
+            description: None,
+            requires: None,
         },
         files: vec![FileRef {
             path: "app.luau".into(),

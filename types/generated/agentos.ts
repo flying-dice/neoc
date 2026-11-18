@@ -201,13 +201,23 @@ export type Toast = { text: string, icon?: string,
  */
 kind?: string, 
 /**
- * The label of an action button; tapping it reports the `toast` event of the view.
+ * An action button. Tapping it sends `view.event` with `path` `$toast/<id>` and `event` `tap`: the host
+ * keeps the app's `onTap` closure for that id and runs it once.
  */
-action?: string, 
+action?: ToastAction, 
 /**
  * Milliseconds.
  */
 duration?: number, };
+export type ToastAction = { 
+/**
+ * The button's label.
+ */
+title: string, 
+/**
+ * Names the host's closure: the event path is `$toast/<id>`.
+ */
+id: string, };
 export type ViewCommand = { viewId: string, } & ({ "cmd": "toast", "args": Toast } | { "cmd": "focus", "args": { key: string, } } | { "cmd": "scrollTo", "args": { key?: string, row?: JsonValue, } } | { "cmd": "announce", "args": { text: string, } } | { "cmd": "copy", "args": { text: string, } } | { "cmd": "openUrl", "args": { url: string, } } | { "cmd": "haptic" } | { "cmd": "closeWindow" });
 export type ViewError = { viewId: string, message: string, 
 /**
@@ -216,7 +226,69 @@ export type ViewError = { viewId: string, message: string,
 dev?: string, };
 export type ViewClosed = { viewId: string, reason: string, };
 export type ThemeSet = { scheme: string, tint: string, textScale: number, reduceMotion: boolean, reduceTransparency: boolean, increaseContrast: boolean, };
+export type WindowOpen = { app: string, 
+/**
+ * The window kind (`"main"`).
+ */
+window: string, 
+/**
+ * The deep link `onOpen(w, params)` receives.
+ */
+params?: { [key in string]: JsonValue }, };
 export type Empty = Record<symbol, never>;
+export type AppState = "running" | "disabled" | "failed";
+export type AppWindow = { w: number, h: number, minW: number, minH: number, };
+export type AppSummary = { id: string, name: string, version: string, state: AppState, 
+/**
+ * Why the app failed, when `state` is `failed`.
+ */
+message?: string, 
+/**
+ * A symbol name for the Dock and the library.
+ */
+icon?: string, 
+/**
+ * A palette role for the icon.
+ */
+tint?: string, description?: string, 
+/**
+ * The default window and its minimum size (only while the app runs: the app declares it).
+ */
+window?: AppWindow, 
+/**
+ * Where it was installed from, for people to read ("this computer", "apps.example.org").
+ */
+source: string, };
+export type AppList = { apps: Array<AppSummary>, };
+export type InstalledInfo = { version: string, state: AppState, };
+export type AppPreview = { 
+/**
+ * The app-ref URL to hand to `app.install`.
+ */
+url: string, id: string, name: string, version: string, icon?: string, tint?: string, description?: string, 
+/**
+ * What the app asks to use: `data`, `notify`, `shell`.
+ */
+permissions: Array<string>, 
+/**
+ * The host the app ref comes from ("this computer" for a file).
+ */
+source: string, 
+/**
+ * Set when this app id is already installed on this host.
+ */
+installed?: InstalledInfo, };
+export type Catalog = { apps: Array<AppPreview>, 
+/**
+ * A registry or app ref that could not be read, one line each.
+ */
+errors: Array<string>, };
+export type DeviceRow = { id: string, name: string, createdAt: number, lastSeenAt: number, 
+/**
+ * This is the device asking.
+ */
+current: boolean, };
+export type DeviceList = { devices: Array<DeviceRow>, };
 export type RpcError = { code: number, message: string, data?: JsonValue }
 
 // ---------------------------------------------------------------------------------------------
@@ -1576,10 +1648,11 @@ export interface Methods {
   'view.error': { kind: 'notification'; direction: 'hostToClient'; params: ViewError; result: never }
   'view.closed': { kind: 'notification'; direction: 'hostToClient'; params: ViewClosed; result: never }
   'theme.set': { kind: 'notification'; direction: 'hostToClient'; params: ThemeSet; result: never }
+  'window.open': { kind: 'notification'; direction: 'hostToClient'; params: WindowOpen; result: never }
 }
 
 export type MethodName = keyof Methods
 
 /** Method names by direction, for dispatch tables. */
 export const CLIENT_METHODS = ['session.hello', 'view.open', 'view.sync', 'view.event', 'state.set', 'row.set', 'row.restore', 'source.set', 'view.close', 'client.state', 'view.resize', 'view.visibility', 'session.bye'] as const
-export const HOST_METHODS = ['view.tree', 'view.ops', 'data.patch', 'client.set', 'view.command', 'view.error', 'view.closed', 'theme.set'] as const
+export const HOST_METHODS = ['view.tree', 'view.ops', 'data.patch', 'client.set', 'view.command', 'view.error', 'view.closed', 'theme.set', 'window.open'] as const

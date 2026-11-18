@@ -1,4 +1,4 @@
-use crate::{error::DomainError, Permission};
+use crate::{error::DomainError, KitRequirement, Permission};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fmt;
@@ -64,17 +64,79 @@ pub struct Manifest {
     pub permissions: Vec<Permission>,
     #[serde(default)]
     pub migrations: Vec<MigrationSpec>,
+    /// What a registry or the "add by URL" preview shows without running the app: a symbol name for the icon.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    /// A palette role (`orange`, `blue`, ...): the icon's tint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tint: Option<String>,
+    /// One or two sentences about the app.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// What the host must provide for the app to run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requires: Option<Requires>,
+}
+
+/// The host API version this build serves (`major.minor`). Packages state the range they need in
+/// [`Requires::host`]; a newer major is a breaking change, so it never satisfies an older requirement.
+pub const HOST_API: (u32, u32) = (1, 0);
+
+/// `requires` in the package manifest.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Requires {
+    /// `">=1.0"`: the host API range.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
 }
 
 impl Manifest {
+    /// Self-consistency of the package manifest (before anything is fetched).
     pub fn validate(&self) -> Result<(), DomainError> {
         let in_order = self.migrations.iter().enumerate().all(|(i, m)| m.version as usize == i + 1);
-        if in_order {
-            Ok(())
-        } else {
-            Err(DomainError::MigrationOrder)
+        if !in_order {
+            return Err(DomainError::MigrationOrder);
         }
+        if let Some(host) = self.requires.as_ref().and_then(|r| r.host.as_deref()) {
+            let need = KitRequirement::parse(host)?;
+            if !need.satisfied_by(HOST_API.0, HOST_API.1) {
+                return Err(DomainError::UnsupportedHost {
+                    needs: host.to_owned(),
+                    has: format!("{}.{}", HOST_API.0, HOST_API.1),
+                });
+            }
+        }
+        Ok(())
     }
+}
+
+/// Where an app ref came from, for people to read: the host of an `http(s)` URL, `this computer` for a
+/// `file://` one.
+#[must_use]
+pub fn source_label(url: &str) -> String {
+    match url.split_once("://") {
+        Some(("file", _)) => "this computer".to_owned(),
+        Some((_, rest)) => rest.split(['/', '?', '#']).next().unwrap_or(rest).to_owned(),
+        None => url.to_owned(),
+    }
+}
+
+/// `file` resolved against the URL of the document that names it: absolute URLs stay as they are, a
+/// relative one is looked up next to the document (`dir/app-ref.json` + `app.luau` = `dir/app.luau`).
+#[must_use]
+pub fn resolve_url(base: &str, file: &str) -> String {
+    if file.contains("://") {
+        return file.to_owned();
+    }
+    let dir = base.rsplit_once('/').map_or(base, |(dir, _)| dir);
+    format!("{dir}/{}", file.trim_start_matches("./"))
+}
+
+/// A registry file: the app refs it offers, by URL (relative URLs resolve against the registry's own).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Registry {
+    pub apps: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -93,6 +155,15 @@ pub struct AppRef {
 }
 
 impl AppRef {
+    /// The same app ref with every relative file URL resolved against `base` (the URL it was loaded from).
+    #[must_use]
+    pub fn resolved(mut self, base: &str) -> Self {
+        for file in &mut self.files {
+            file.url = resolve_url(base, &file.url);
+        }
+        self
+    }
+
     pub fn file(&self, path: &str) -> Result<&FileRef, DomainError> {
         self.files.iter().find(|f| f.path == path).ok_or_else(|| DomainError::MissingFile(path.to_owned()))
     }
@@ -132,6 +203,10 @@ mod tests {
                 main: "main.luau".into(),
                 permissions: vec![],
                 migrations: vec![],
+                icon: None,
+                tint: None,
+                description: None,
+                requires: None,
             },
             files: vec![FileRef {
                 path: "main.luau".into(),
@@ -146,6 +221,36 @@ mod tests {
     }
 
     #[test]
+    fn host_requirements_are_checked_against_the_host_api() {
+        let mut m = Manifest {
+            id: AppId::parse("notes").unwrap(),
+            name: "n".into(),
+            version: "1".into(),
+            main: "m".into(),
+            permissions: vec![],
+            migrations: vec![],
+            icon: None,
+            tint: None,
+            description: None,
+            requires: Some(Requires { host: Some(">=1.0".into()) }),
+        };
+        assert!(m.validate().is_ok());
+        m.requires = Some(Requires { host: Some(">=2.0".into()) });
+        assert!(matches!(m.validate(), Err(DomainError::UnsupportedHost { .. })));
+        m.requires = Some(Requires { host: Some("soon".into()) });
+        assert!(m.validate().is_err(), "unparseable");
+    }
+
+    #[test]
+    fn urls_resolve_next_to_the_document_that_names_them() {
+        assert_eq!(resolve_url("file:///r/calc/app-ref.json", "app.luau"), "file:///r/calc/app.luau");
+        assert_eq!(resolve_url("https://x.org/a/ref.json", "./b/c.luau"), "https://x.org/a/b/c.luau");
+        assert_eq!(resolve_url("file:///r/ref.json", "https://y.org/z"), "https://y.org/z");
+        assert_eq!(source_label("https://apps.example.org:8443/x/ref.json"), "apps.example.org:8443");
+        assert_eq!(source_label("file:///r/ref.json"), "this computer");
+    }
+
+    #[test]
     fn migration_order_is_validated() {
         let mut m = Manifest {
             id: AppId::parse("notes").unwrap(),
@@ -154,6 +259,10 @@ mod tests {
             main: "m".into(),
             permissions: vec![],
             migrations: vec![MigrationSpec { version: 2, name: "x".into(), file: "x".into() }],
+            icon: None,
+            tint: None,
+            description: None,
+            requires: None,
         };
         assert_eq!(m.validate(), Err(DomainError::MigrationOrder));
         m.migrations[0].version = 1;

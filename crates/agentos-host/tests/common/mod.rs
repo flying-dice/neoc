@@ -257,6 +257,10 @@ pub fn publish_package(
             main: main.into(),
             permissions: grants,
             migrations: vec![],
+            icon: None,
+            tint: None,
+            description: None,
+            requires: None,
         },
         files: refs,
     };

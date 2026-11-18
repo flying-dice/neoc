@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path'
 import { bundleDescriptorSchema } from '../bundle'
 import { buildAppBundle, PublishedVersionError } from './index'
 
-const calculator = resolve(import.meta.dir, '../../../../apps/calculator')
+const calculator = resolve(import.meta.dir, '../../../../apps/server/test-fixtures/calculator')
 let outDir: string
 
 beforeEach(async () => {

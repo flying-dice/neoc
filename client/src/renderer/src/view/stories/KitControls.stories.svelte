@@ -181,6 +181,7 @@
 <!-- A sheet: focus moves in and stays, the window behind is inert, Escape closes, focus returns to the opener. -->
 <Story
   name="Sheet"
+  tags={['overflow-ok']}
   args={{ scenario: 'presentations' }}
   play={async ({ canvas, userEvent }) => {
     const opener = await canvas.findByTestId('kit-open-sheet')

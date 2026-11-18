@@ -1,8 +1,6 @@
 //! The operating-system implementations of the small infrastructure ports: wall clock and secure randomness.
 
-use agentos_application::ports::{Background, Clock, MenuCommand, RandomSource, Shell, TaskHandle};
-use agentos_domain::AppId;
-use async_trait::async_trait;
+use agentos_application::ports::{Background, Clock, RandomSource, TaskHandle};
 use std::{
     future::Future,
     pin::Pin,
@@ -63,22 +61,5 @@ impl Background for TokioBackground {
         task: Pin<Box<dyn Future<Output = ()> + Send>>,
     ) -> Box<dyn TaskHandle> {
         Box::new(AbortOnDrop(tokio::spawn(task)))
-    }
-}
-
-/// The desktop shell is not built yet: what apps ask of it (Dock badge, menu commands, deep links) is
-/// accepted, logged, and dropped. The `app.shell` API shape is already final.
-pub struct LogShell;
-
-#[async_trait]
-impl Shell for LogShell {
-    async fn set_badge(&self, app: &AppId, badge: Option<String>) {
-        tracing::debug!(%app, ?badge, "shell: badge (no shell yet)");
-    }
-    async fn set_menu_commands(&self, app: &AppId, commands: Vec<MenuCommand>) {
-        tracing::debug!(%app, commands = commands.len(), "shell: menu commands (no shell yet)");
-    }
-    async fn set_deep_links(&self, app: &AppId, patterns: Vec<String>) {
-        tracing::debug!(%app, ?patterns, "shell: deep links (no shell yet)");
     }
 }

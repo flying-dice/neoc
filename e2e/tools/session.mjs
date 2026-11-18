@@ -3,7 +3,7 @@
  * A persistent, headless browser session that an agent drives one command at
  * a time, the way a person uses the app: look at the screen, click what they
  * can see by its label, type, press keys, drag. Used by the UX research panel
- * (.claude/skills/app-design) against web mode (http://localhost:6200/web.html).
+ * (.claude/skills/app-design) against a running host (`bun run host`: http://127.0.0.1:7400, paired first).
  *
  *   node e2e/tools/session.mjs start  <name> [--url URL] [--width 1280] [--height 800] [--theme light|dark]
  *   node e2e/tools/session.mjs look   <name>              screenshot path + accessibility tree
@@ -32,7 +32,7 @@ import { join, resolve } from 'node:path'
 
 const ROOT = resolve(import.meta.dirname, '../..')
 const dirOf = (name) => join(ROOT, 'test-results', 'sessions', name)
-const DEFAULT_URL = 'http://localhost:6200/web.html'
+const DEFAULT_URL = 'http://127.0.0.1:7400/'
 
 const [command, name, ...rest] = process.argv.slice(2)
 const flag = (key, fallback) => {
@@ -204,7 +204,7 @@ if (command === '__serve') {
   child.unref()
   for (let i = 0; i < 100 && !existsSync(join(dir, 'port')); i++) await new Promise((r) => setTimeout(r, 100))
   if (!existsSync(join(dir, 'port'))) {
-    console.error(`session "${name}" did not start (is web mode running at ${DEFAULT_URL}?)`)
+    console.error(`session "${name}" did not start (is the host running at ${DEFAULT_URL}?)`)
     process.exit(1)
   }
   console.log(`session "${name}" started. Next: node e2e/tools/session.mjs look ${name}`)

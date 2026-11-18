@@ -1,19 +1,23 @@
 <!-- @page SettingsPage — iPadOS Settings-style system preferences. -->
 <script lang="ts">
   import type { IconName } from '@agentos/ui'
-  import { hostBridge } from '@agentos/sdk/host/client'
   import { Icon, IconTile, Toggle, SegmentedControl } from '@agentos/ui/atoms'
   import { ListRow, SearchField, IconSlider, Alert } from '@agentos/ui/molecules'
   import { ListSection, NavigationBar } from '@agentos/ui/organisms'
   import { SplitViewTemplate, ScreenTemplate } from '@agentos/ui/templates'
   import ColorSwatch from '../atoms/ColorSwatch.svelte'
+  import DevicesPane from '../templates/DevicesPane.svelte'
   import { settings, accents, type Theme } from '../lib/settings.svelte'
+  import { host } from '../lib/host.svelte'
+  import { devices } from '../lib/devices.svelte'
+  import { iconOf } from '../shell/hostApi'
 
-  type Pane = 'general' | 'appearance' | 'agents' | 'notifications' | 'privacy'
+  type Pane = 'general' | 'appearance' | 'devices' | 'agents' | 'notifications' | 'privacy'
 
   const panes: { id: Pane; title: string; icon: IconName; color: string }[] = [
     { id: 'general', title: 'General', icon: 'gear', color: 'var(--ios-gray)' },
     { id: 'appearance', title: 'Display & Appearance', icon: 'sun', color: 'var(--ios-blue)' },
+    { id: 'devices', title: 'Devices', icon: 'globe', color: 'var(--ios-green)' },
     { id: 'agents', title: 'Agents', icon: 'sparkles', color: 'var(--ios-purple)' },
     { id: 'notifications', title: 'Notifications', icon: 'bell', color: 'var(--ios-red)' },
     { id: 'privacy', title: 'Privacy & Security', icon: 'lock', color: 'var(--ios-blue)' }
@@ -29,20 +33,9 @@
   // Local demo state
   let launchAtLogin = $state(true)
   let backgroundAgents = $state(true)
-  let model = $state('claude-opus-5-5')
-  let autonomy = $state<'ask' | 'edit' | 'full'>('ask')
-  let webAccess = $state(true)
-  let shellAccess = $state(false)
   let notify = $state({ allow: true, sounds: true, badges: true, summary: false })
-  let confirmReset = $state(false)
-
-  const models = [
-    { id: 'claude-opus-5-5', name: 'Claude Opus 5.5', note: 'Most capable' },
-    { id: 'claude-sonnet-5-5', name: 'Claude Sonnet 5.5', note: 'Balanced' },
-    { id: 'claude-haiku-5-5', name: 'Claude Haiku 5.5', note: 'Fastest' }
-  ]
-
-  const versions = hostBridge()?.versions ?? {}
+  const hostVersion = $derived(host.session?.host?.hostVersion ?? '—')
+  const browser = navigator.userAgent.match(/(Chrome|Firefox|Version)\/([\d.]+)/)?.[2] ?? '—'
 </script>
 
 <SplitViewTemplate sidebarWidth={300}>
@@ -89,16 +82,8 @@
             <ListSection header="About">
               <ListRow testid="settings-about-name" title="Name" value="AgentOS" />
               <ListRow testid="settings-about-version" title="Version" value="0.1.0" />
-              <ListRow
-                testid="settings-about-electron"
-                title="Electron"
-                value={versions.electron ?? '—'}
-              />
-              <ListRow
-                testid="settings-about-chromium"
-                title="Chromium"
-                value={versions.chrome ?? '—'}
-              />
+              <ListRow testid="settings-about-host" title="Host" value={hostVersion} />
+              <ListRow testid="settings-about-browser" title="Browser" value={browser} />
             </ListSection>
             <ListSection footer="Background agents keep running when their window is closed.">
               <ListRow testid="settings-launch-at-login-row" title="Launch at Login">
@@ -174,77 +159,24 @@
                 {/snippet}
               </ListRow>
             </ListSection>
+          {:else if pane === 'devices'}
+            <DevicesPane />
           {:else if pane === 'agents'}
-            <ListSection header="Default Model">
-              {#each models as m (m.id)}
-                <ListRow
-                  testid="settings-model-{m.id}"
-                  title={m.name}
-                  subtitle={m.note}
-                  onclick={() => (model = m.id)}
-                >
-                  {#snippet trailing()}
-                    {#if model === m.id}<Icon
-                        name="checkmark"
-                        size={18}
-                        weight={2.6}
-                        color="var(--tint)"
-                      />{/if}
-                  {/snippet}
-                </ListRow>
-              {/each}
-            </ListSection>
             <ListSection
-              header="Autonomy"
-              footer="Controls how much an agent can do before asking you for approval."
+              header="Agents on this host"
+              footer="An agent can use only the apps it is granted. Add or change agents in agentos.toml, or with agents.create; chat with them in the Agents app."
             >
-              <div class="segment-row">
-                <SegmentedControl
-                  testid="settings-autonomy"
-                  block
-                  label="Autonomy"
-                  bind:value={autonomy}
-                  segments={[
-                    { value: 'ask', label: 'Ask First' },
-                    { value: 'edit', label: 'Auto-Edit' },
-                    { value: 'full', label: 'Full Auto' }
-                  ]}
+              {#each host.agents as agent (agent.id)}
+                <ListRow
+                  testid="settings-agent-{agent.id}"
+                  title={agent.name}
+                  subtitle={agent.role || undefined}
+                  icon={iconOf(agent.avatar ?? 'sparkles')}
+                  iconColor="var(--ios-purple)"
                 />
-              </div>
-            </ListSection>
-            <ListSection header="Capabilities">
-              <ListRow
-                testid="settings-web-access-row"
-                title="Web Access"
-                icon="globe"
-                iconColor="var(--ios-blue)"
-              >
-                {#snippet trailing()}<Toggle
-                    testid="settings-web-access"
-                    bind:checked={webAccess}
-                    label="Web Access"
-                  />{/snippet}
-              </ListRow>
-              <ListRow
-                testid="settings-shell-access-row"
-                title="Shell Access"
-                icon="terminal"
-                iconColor="var(--ios-gray)"
-              >
-                {#snippet trailing()}<Toggle
-                    testid="settings-shell-access"
-                    bind:checked={shellAccess}
-                    label="Shell Access"
-                  />{/snippet}
-              </ListRow>
-            </ListSection>
-            <ListSection>
-              <ListRow
-                testid="settings-reset-agents"
-                title="Reset All Agents"
-                destructive
-                onclick={() => (confirmReset = true)}
-              />
+              {:else}
+                <ListRow testid="settings-agents-empty" title="No agents yet" />
+              {/each}
             </ListSection>
           {:else if pane === 'notifications'}
             <ListSection>
@@ -335,16 +267,30 @@
   {/snippet}
 </SplitViewTemplate>
 
-<Alert
-  testid="settings-reset-alert"
-  bind:open={confirmReset}
-  title="Reset All Agents?"
-  message="This stops every running agent and clears their memory. This can't be undone."
-  actions={[
-    { label: 'Cancel', style: 'cancel' },
-    { label: 'Reset', style: 'destructive' }
-  ]}
-/>
+{#if devices.asked}
+  <Alert
+    testid="settings-device-revoke-alert"
+    bind:open={
+      () => devices.asked !== null,
+      (open) => {
+        if (!open) devices.asked = null
+      }
+    }
+    title="Revoke {devices.asked.name}?"
+    message="It will be signed out of AgentOS and must pair again to come back."
+    actions={[
+      { label: 'Cancel', style: 'cancel' },
+      {
+        label: 'Revoke',
+        style: 'destructive',
+        onclick: () => {
+          const device = devices.asked
+          if (device) void devices.revoke(device)
+        }
+      }
+    ]}
+  />
+{/if}
 
 <style>
   .pane {
@@ -357,8 +303,7 @@
     gap: 10px;
     padding: 4px 0;
   }
-  .slider-row,
-  .segment-row {
+  .slider-row {
     padding: 8px 16px;
   }
 </style>

@@ -684,7 +684,10 @@ impl ViewService {
             for (id, effect) in effects {
                 let view = self.views.lock().get(&id).cloned();
                 if let Some(view) = view {
-                    Self::deliver_effect(&view, effect);
+                    let persisted = Self::deliver_effect(&view, effect);
+                    if let Some((name, value)) = persisted {
+                        self.persist_client_value(&view, name, value).await;
+                    }
                 }
             }
         }
@@ -693,23 +696,47 @@ impl ViewService {
         }
     }
 
-    fn deliver_effect(view: &View, effect: ViewEffect) {
+    /// Send what a window asked for to its client. A `w.client:set` of a `persist = "app"` value is also
+    /// returned, to be stored: the client only mirrors values the person changed, so a value the app chose
+    /// (the chat it just opened) would otherwise be forgotten when the window closes.
+    fn deliver_effect(view: &View, effect: ViewEffect) -> Option<(String, Value)> {
         match effect {
             ViewEffect::Command(command) => {
                 view.send(HostNotification::Command(ViewCommand { view_id: view.id.clone(), command }));
+                None
             }
             ViewEffect::ClientSet { path, value, force } => {
-                view.st
-                    .lock()
-                    .client
-                    .insert(path.split('.').next().unwrap_or(&path).to_owned(), value.clone());
+                let name = path.split('.').next().unwrap_or(&path).to_owned();
+                let persisted = {
+                    let mut st = view.st.lock();
+                    st.client.insert(name.clone(), value.clone());
+                    let app_scoped = path == name
+                        && st
+                            .decls
+                            .get(&name)
+                            .is_some_and(|d| d.persist == agentos_domain::ui::source::Persist::App);
+                    app_scoped.then(|| (name, value.clone()))
+                };
                 view.send(HostNotification::ClientSet(agentos_domain::ui::protocol::ClientSet {
                     view_id: view.id.clone(),
                     path,
                     value,
                     force: force.then_some(true),
                 }));
+                persisted
             }
+        }
+    }
+
+    async fn persist_client_value(&self, view: &View, name: String, value: Value) {
+        match self.app.data_of(&view.app) {
+            Ok(data) => {
+                let one = Map::from_iter([(name, value)]);
+                if let Err(e) = data.set_ui_state(&view.window, one).await {
+                    tracing::warn!(view = %view.id, error = %e, "saving window state failed");
+                }
+            }
+            Err(e) => tracing::debug!(error = %e, "no database to save window state in"),
         }
     }
 

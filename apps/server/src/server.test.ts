@@ -100,7 +100,7 @@ function serveDir(dir: string, redirectTo?: string): { origin: string; seen: See
 beforeAll(async () => {
   tmp = await mkdtemp(join(tmpdir(), 'agentos-server-'))
   bundlesDir = join(tmp, 'bundles')
-  await buildAppBundle({ appDir: join(repo, 'apps/calculator'), outDir: bundlesDir })
+  await buildAppBundle({ appDir: join(repo, 'apps/server/test-fixtures/calculator'), outDir: bundlesDir })
 })
 
 afterAll(() => rm(tmp, { recursive: true, force: true }))

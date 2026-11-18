@@ -66,6 +66,7 @@ app.window("main", {
     local c = w.client
     local current = thread { id = c.threadId }
     local roster = app.agents:list()
+    local chatList = threads {}
 
     local function startChat(agentId: string, agentName: string)
       local made = db:exec("insert into threads(agent_id, agent_name) values (:a, :n)", { a = agentId, n = agentName })
@@ -120,7 +121,7 @@ app.window("main", {
           }
         )
       end
-      newChat = ui.Menu { key = "new-chat", icon = "square.and.pencil", title = "New chat", table.unpack(items) }
+      newChat = ui.Menu { key = "new-chat", icon = "square.and.pencil", label = "New chat", table.unpack(items) }
     end
 
     return ui.SplitView {
@@ -129,29 +130,49 @@ app.window("main", {
       sidebar = ui.Screen {
         title = "Agents",
         toolbar = { trailing = newChat },
-        ui.List {
-          key = "sidebar",
-          style = "sidebar",
-          selection = c.threadId,
-          empty = ui.EmptyState {
-            icon = "sparkles",
-            title = "No agents",
-            message = "Add an agent to agentos.toml, or with agents.create, to start a chat.",
+        -- two lists: a selectable list may hold only selectable rows, and the agents are actions, not selections
+        ui.VStack {
+          spacing = 0,
+          ui.List {
+            key = "roster",
+            style = "sidebar",
+            label = "Agents",
+            empty = ui.EmptyState {
+              icon = "sparkles",
+              title = "No agents",
+              message = "Add an agent to agentos.toml, or with agents.create, to start a chat.",
+            },
+            ui.Section { key = "agents", header = "Agents", table.unpack(agentRows) },
           },
-          ui.Section { key = "agents", header = "Agents", table.unpack(agentRows) },
-          ui.Section {
-            key = "chats",
-            header = "Chats",
-            ui.ForEach {
-              source = threads {},
-              row = function(r)
-                return ui.Row {
-                  tag = r.id,
-                  icon = "bubble.left",
-                  title = r.title,
-                  subtitle = ui.concat(r.agent_name, "  ", ui.fmt.relative(r.updated_at)),
-                }
-              end,
+          -- an empty selectable list is not valid ARIA: show the list only once there is a chat
+          ui.Show {
+            when = ui.gt((chatList :: any).total, 0),
+            ui.List {
+              key = "sidebar",
+              style = "sidebar",
+              label = "Chats",
+              selection = c.threadId,
+              ui.Section {
+                key = "chats",
+                header = "Chats",
+                ui.ForEach {
+                  source = chatList,
+                  row = function(r)
+                    return ui.Row {
+                      tag = r.id,
+                      icon = "bubble.left",
+                      title = r.title,
+                      subtitle = ui.concat(r.agent_name, "  ", ui.fmt.relative(r.updated_at)),
+                    }
+                  end,
+                },
+              },
+            },
+            otherwise = ui.EmptyState {
+              key = "no-chats",
+              icon = "bubble.left",
+              title = "No chats yet",
+              message = "Pick an agent above.",
             },
           },
         },

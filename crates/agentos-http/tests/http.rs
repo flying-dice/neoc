@@ -16,6 +16,12 @@ impl RpcHandler for H {
     async fn request(&self, peer: &RpcPeer, method: &str, params: Value) -> Result<Value, RpcError> {
         match method {
             "ping" => Ok(json!({"pong": params})),
+            // the first of a burst is the slowest: unordered handling would answer it last
+            "view.event" | "app.slow" => {
+                let n = params["n"].as_u64().unwrap_or(0);
+                tokio::time::sleep(Duration::from_millis(60 / (n + 1))).await;
+                Ok(json!({"n": n}))
+            }
             // server -> client request inside a client request (bidirectional on ONE socket)
             "ask_client" => {
                 let r = peer
@@ -133,4 +139,61 @@ async fn reqwest_get(addr: std::net::SocketAddr, path: &str) -> String {
     let mut out = String::new();
     s.read_to_string(&mut out).await.unwrap();
     out.split("\r\n\r\n").nth(1).unwrap_or("").to_owned()
+}
+
+#[tokio::test]
+async fn view_requests_are_handled_in_the_order_they_were_sent_and_others_are_not_held_up() {
+    let dir = std::env::temp_dir().join(format!("static-order-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("index.html"), "x").unwrap();
+    let (addr, server) = start(&dir).await;
+    let (mut ws, _) =
+        connect_async(req(addr, Some(&format!("http://127.0.0.1:{}", addr.port())))).await.unwrap();
+    let send = |m: RpcMessage| serde_json::to_string(&m).unwrap();
+    for n in 0..5u64 {
+        ws.send(Message::text(send(RpcMessage::request(
+            i64::try_from(n).unwrap(),
+            "view.event",
+            json!({"n": n}),
+        ))))
+        .await
+        .unwrap();
+    }
+    let mut order = vec![];
+    while order.len() < 5 {
+        let Message::Text(t) =
+            tokio::time::timeout(Duration::from_secs(3), ws.next()).await.unwrap().unwrap().unwrap()
+        else {
+            continue;
+        };
+        if let RpcMessage::Response { result, .. } = serde_json::from_str::<RpcMessage>(&t).unwrap() {
+            order.push(result["n"].as_u64().unwrap());
+        }
+    }
+    assert_eq!(order, [0, 1, 2, 3, 4], "keystrokes must not overtake one another");
+
+    // the same burst of a non-view method is concurrent: the fast ones answer first
+    for n in 0..3u64 {
+        ws.send(Message::text(send(RpcMessage::request(
+            10 + i64::try_from(n).unwrap(),
+            "app.slow",
+            json!({"n": n}),
+        ))))
+        .await
+        .unwrap();
+    }
+    let mut order = vec![];
+    while order.len() < 3 {
+        let Message::Text(t) =
+            tokio::time::timeout(Duration::from_secs(3), ws.next()).await.unwrap().unwrap().unwrap()
+        else {
+            continue;
+        };
+        if let RpcMessage::Response { result, .. } = serde_json::from_str::<RpcMessage>(&t).unwrap() {
+            order.push(result["n"].as_u64().unwrap());
+        }
+    }
+    assert_eq!(order, [2, 1, 0], "app management is not serialised");
+    server.abort();
+    let _ = std::fs::remove_dir_all(dir);
 }

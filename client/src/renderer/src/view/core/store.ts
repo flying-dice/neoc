@@ -39,8 +39,8 @@ export interface Notice {
   text: string
   /** A kit icon name for the leading glyph (default by kind). */
   icon?: string
-  /** The label of the action button: tapping it reports the `toast` event of the view. */
-  action?: string
+  /** The action button: tapping it sends `view.event` on `$toast/<id>` (the host runs the app's `onTap`). */
+  action?: { title: string; id: string }
   /** The notice offers "Undo": bring back the row field value that a write replaced (`row.restore`). */
   undo?: { source: string; key: RowKey; field: string; revisionId: number }
 }

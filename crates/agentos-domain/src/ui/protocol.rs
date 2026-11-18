@@ -474,14 +474,23 @@ wire! {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[cfg_attr(feature = "codegen", ts(optional))]
         pub kind: Option<String>,
-        /// The label of an action button; tapping it reports the `toast` event of the view.
+        /// An action button. Tapping it sends `view.event` with `path` `$toast/<id>` and `event` `tap`: the host
+        /// keeps the app's `onTap` closure for that id and runs it once.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[cfg_attr(feature = "codegen", ts(optional))]
-        pub action: Option<String>,
+        pub action: Option<ToastAction>,
         /// Milliseconds.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[cfg_attr(feature = "codegen", ts(optional))]
         pub duration: Option<u32>,
+    }
+
+    /// The action button of a toast.
+    pub struct ToastAction {
+        /// The button's label.
+        pub title: String,
+        /// Names the host's closure: the event path is `$toast/<id>`.
+        pub id: String,
     }
 
     /// `view.command` params: `{viewId, cmd, args}`.
@@ -508,6 +517,18 @@ wire! {
     pub struct ViewClosed {
         pub view_id: String,
         pub reason: String,
+    }
+
+    /// `window.open`: an app asked for a window (`app:openWindow`, e.g. from an agent's tool call). Not tied to
+    /// a view: the shell opens the window, or brings the app's open one forward, then does `view.open`.
+    pub struct WindowOpen {
+        pub app: String,
+        /// The window kind (`"main"`).
+        pub window: String,
+        /// The deep link `onOpen(w, params)` receives.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "codegen", ts(optional))]
+        pub params: Option<Map<String, Value>>,
     }
 
     /// `theme.set`: session-wide, not per view.
@@ -631,6 +652,11 @@ pub const METHODS: &[MethodSpec] = &[
     from_host("view.error", "ViewError", "A render or validation failure; the last good tree stays."),
     from_host("view.closed", "ViewClosed", "The instance is gone."),
     from_host("theme.set", "ThemeSet", "The host theme."),
+    from_host(
+        "window.open",
+        "WindowOpen",
+        "An app asked for a window (`app:openWindow`): open it, or bring it forward.",
+    ),
 ];
 
 /// The method called `name`.
@@ -783,6 +809,7 @@ pub enum HostNotification {
     Error(ViewError),
     Closed(ViewClosed),
     Theme(ThemeSet),
+    WindowOpen(WindowOpen),
 }
 
 impl HostNotification {
@@ -801,6 +828,7 @@ impl HostNotification {
             Self::Error(p) => ("view.error", value(p)),
             Self::Closed(p) => ("view.closed", value(p)),
             Self::Theme(p) => ("theme.set", value(p)),
+            Self::WindowOpen(p) => ("window.open", value(p)),
         }
     }
 
@@ -825,6 +853,7 @@ impl HostNotification {
             "view.error" => Self::Error(parse(method, params)?),
             "view.closed" => Self::Closed(parse(method, params)?),
             "theme.set" => Self::Theme(parse(method, params)?),
+            "window.open" => Self::WindowOpen(parse(method, params)?),
             other => return Err(ParseError::UnknownMethod(other.to_owned())),
         })
     }

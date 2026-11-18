@@ -4,15 +4,18 @@
   import AppWindow from '@agentos/storybook/AppWindow.svelte'
   import SettingsPage from './SettingsPage.svelte'
   import { apps } from '../lib/apps.svelte'
+  import { host } from '../lib/host.svelte'
+  import { createFakeHost, FAKE_CALCULATOR } from '../shell/fakeHost'
 
   const app = apps.settings
 
-  /** Settings: every pane, and the destructive-action alert. */
+  /** Settings: every pane, the agents on the host, the paired devices, and the revoke alert. */
   const { Story } = defineMeta({
     title: 'Apps/Settings',
     component: SettingsPage,
     tags: ['app'],
     args: { width: app.width, height: app.height },
+    beforeEach: () => host.useFake(createFakeHost(), [FAKE_CALCULATOR]),
     render: template
   })
 </script>
@@ -33,8 +36,10 @@
 
 <Story
   name="Agents"
-  play={async ({ canvas, userEvent }) =>
-    userEvent.click(canvas.getByTestId('settings-pane-agents'))}
+  play={async ({ canvas, userEvent }) => {
+    await userEvent.click(canvas.getByTestId('settings-pane-agents'))
+    await expect(await canvas.findByTestId('settings-agent-scripted')).toBeVisible()
+  }}
 />
 
 <Story
@@ -53,18 +58,39 @@
 />
 
 <Story
-  name="Reset agents alert"
-  play={async ({ canvas, userEvent }) => {
-    await userEvent.click(canvas.getByTestId('settings-pane-agents'))
-    await userEvent.click(canvas.getByTestId('settings-reset-agents'))
-    await expect(canvas.getByTestId('settings-reset-alert')).toBeVisible()
-  }}
-/>
-
-<Story
   name="Search"
   play={async ({ canvas, userEvent }) => {
     await userEvent.type(canvas.getByTestId('settings-search'), 'priv')
     await expect(canvas.queryByTestId('settings-pane-general')).toBeNull()
+  }}
+/>
+
+<Story
+  name="Devices"
+  play={async ({ canvas, userEvent }) => {
+    await userEvent.click(canvas.getByTestId('settings-pane-devices'))
+    await expect(await canvas.findByTestId('settings-device-d1')).toHaveTextContent('This device')
+    await expect(canvas.queryByTestId('settings-device-d1-revoke')).toBeNull()
+    await expect(canvas.getByTestId('settings-device-d2-revoke')).toBeVisible()
+  }}
+/>
+
+<Story
+  name="Revoke device alert"
+  play={async ({ canvas, userEvent }) => {
+    await userEvent.click(canvas.getByTestId('settings-pane-devices'))
+    await userEvent.click(await canvas.findByTestId('settings-device-d2-revoke'))
+    await expect(canvas.getByTestId('settings-device-revoke-alert')).toBeVisible()
+  }}
+/>
+
+<Story
+  name="Device revoked"
+  play={async ({ canvas, userEvent }) => {
+    await userEvent.click(canvas.getByTestId('settings-pane-devices'))
+    await userEvent.click(await canvas.findByTestId('settings-device-d2-revoke'))
+    await userEvent.click(canvas.getByTestId('settings-device-revoke-alert-action-revoke'))
+    await expect(canvas.queryByTestId('settings-device-d2')).toBeNull()
+    await expect(canvas.getByTestId('settings-device-d3')).toBeVisible()
   }}
 />
