@@ -1,7 +1,7 @@
 # TypeScript and Svelte 5 in AgentOS (client, kit, scripts)
 
 Applies to `client/` (the shell and the managed renderer), `packages/ui` (the kit), `packages/storybook`, `types/` tests and
-`scripts/`. App code is Luau (`luau.md`), the host is Rust (`rust.md`). The client **renders view trees and runs no app
+`scripts/`. App code is Lua (`lua.md`), the host is Rust (`rust.md`). The client **renders view trees and runs no app
 code**: nothing in it knows what the Calculator is.
 
 ## TypeScript

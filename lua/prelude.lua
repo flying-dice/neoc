@@ -1,63 +1,62 @@
---!strict
--- The Lua 5.1 prelude. Apps and `@agentos/ui` are authored in typed Luau and shipped as plain Lua 5.1 (see
--- `.darklua.json`), so the few Luau standard-library members they use that Lua 5.1 lacks are provided here:
--- `typeof`, `table.clone`, `table.move`, `table.pack`, `table.unpack` and the `utf8` library.
+-- The Lua 5.1 prelude. Apps are plain Lua 5.1, which lacks a few standard-library members that Lua 5.3 has and
+-- that apps want, so they are provided here: `typeof` (the same as `type`), `table.clone`, `table.move`,
+-- `table.pack`, `table.unpack` and the `utf8` library.
 --
 -- The host runs this file once per app, before any app chunk or `@agentos/ui`, and passes the table those chunks
--- will run in as the chunk's `...` argument (`types/generated/prelude.lua`, built by `bun run codegen`). It
+-- will run in as the chunk's `...` argument (`types/generated/prelude.lua`, copied by `bun run codegen`). It
 -- installs into that table rather than reaching for `getfenv()`, which an app's sandbox does not have. Nothing
--- is overwritten: a member the interpreter already has is left alone, so this is a no-op on Luau and on Lua 5.3+.
+-- is overwritten: a member the interpreter already has is left alone, so this is a no-op on Lua 5.3+.
 --
--- The `utf8` functions follow Lua 5.3's strict semantics (which Luau shares): they reject overlong forms,
--- surrogates and code points above U+10FFFF. Apps must not use Luau-only members that are not listed here
--- (`table.find`, `math.clamp`, `bit32`, `buffer`, ...): `scripts/lua51.test.ts` fails when one appears.
+-- The `utf8` functions follow Lua 5.3's strict semantics: they reject overlong forms, surrogates and code points
+-- above U+10FFFF. Apps must not use members that are not listed here and that Lua 5.1 lacks (`table.find`,
+-- `math.clamp`, `bit32`, `buffer`, ...): `scripts/lua51.test.ts` fails when one appears.
 
-local env: { [string]: any } = ...
+local env = ...
 
-local function define(library: { [string]: any }, name: string, value: any)
+local function define(library, name, value)
   if rawget(library, name) == nil then
     library[name] = value
   end
 end
 
--- Luau's `typeof` tells userdata types apart; the host hands apps none, so it is `type`.
+-- `typeof` (as in Luau) tells userdata types apart; the host hands apps none, so it is `type`.
 define(env, "typeof", type)
 
-local function argError(position: number, name: string, message: string): never
-  return error(`bad argument #{position} to '{name}' ({message})`, 3)
+local function argError(position, name, message)
+  return error("bad argument #" .. position .. " to '" .. name .. "' (" .. message .. ")", 3)
 end
 
-local function checkInteger(position: number, name: string, value: any, default: number?): number
+local function checkInteger(position, name, value, default)
   if value == nil and default ~= nil then
     return default
   end
   local number = tonumber(value)
   if number == nil then
-    argError(position, name, `number expected, got {type(value)}`)
+    argError(position, name, "number expected, got " .. type(value))
   end
-  local integer = number :: number
-  if math.floor(integer) ~= integer then
+  ---@cast number number
+  if math.floor(number) ~= number then
     argError(position, name, "number has no integer representation")
   end
-  return integer
+  return number
 end
 
 -- ── table ────────────────────────────────────────────────────────────────
 
-local tableLibrary: { [string]: any } = env.table
+local tableLibrary = env.table
 
 define(tableLibrary, "unpack", env.unpack)
 
-define(tableLibrary, "pack", function(...: any): { [any]: any }
+define(tableLibrary, "pack", function(...)
   return { n = select("#", ...), ... }
 end)
 
 -- A shallow copy that keeps the metatable.
-define(tableLibrary, "clone", function(source: any): any
+define(tableLibrary, "clone", function(source)
   if type(source) ~= "table" then
-    argError(1, "clone", `table expected, got {type(source)}`)
+    argError(1, "clone", "table expected, got " .. type(source))
   end
-  local copy: { [any]: any } = {}
+  local copy = {}
   for key, value in pairs(source) do
     copy[key] = value
   end
@@ -69,11 +68,14 @@ define(tableLibrary, "clone", function(source: any): any
 end)
 
 -- Copies `source[first..last]` to `target[to..]` (Lua 5.3 `table.move`; the ranges may overlap).
-define(tableLibrary, "move", function(source: any, first: any, last: any, to: any, target: any?): any
+define(tableLibrary, "move", function(source, first, last, to, target)
   local from = checkInteger(2, "move", first)
   local upTo = checkInteger(3, "move", last)
   local destination = checkInteger(4, "move", to)
-  local into: any = if target == nil then source else target
+  local into = target
+  if into == nil then
+    into = source
+  end
   if upTo >= from then
     if destination > upTo or destination <= from or into ~= source then
       for offset = 0, upTo - from do
@@ -90,7 +92,7 @@ end)
 
 -- ── utf8 ─────────────────────────────────────────────────────────────────
 
-local utf8Library: { [string]: any } = {}
+local utf8Library = {}
 
 -- The bytes of "[\0-\x7F\xC2-\xF4][\x80-\xBF]*", written the Lua 5.1 way (`%z` for NUL), without byte escapes
 -- that no source tool would keep intact.
@@ -108,20 +110,19 @@ local MAX_CODE_POINT = 0x10FFFF
 -- The smallest code point each sequence length may encode (shorter encodings of it are overlong).
 local LOWEST = { [1] = 0x80, [2] = 0x800, [3] = 0x10000 }
 
-local function isContinuation(text: string, position: number): boolean
+local function isContinuation(text, position)
   local byte = string.byte(text, position)
   return byte ~= nil and byte >= 128 and byte <= 191
 end
 
 -- Decodes the code point starting at byte `position` (which must exist): its value and the position after it,
 -- or nil when the bytes there are not valid UTF-8.
-local function decode(text: string, position: number): (number?, number)
-  local lead = string.byte(text, position) :: number
+local function decode(text, position)
+  local lead = string.byte(text, position)
   if lead < 128 then
     return lead, position + 1
   end
-  local extra: number
-  local code: number
+  local extra, code
   if lead >= 240 and lead < 248 then
     extra, code = 3, lead - 240
   elseif lead >= 224 and lead < 240 then
@@ -135,7 +136,7 @@ local function decode(text: string, position: number): (number?, number)
     if not isContinuation(text, position + step) then
       return nil, position
     end
-    code = code * 64 + (string.byte(text, position + step) :: number) - 128
+    code = code * 64 + string.byte(text, position + step) - 128
   end
   if code < LOWEST[extra] or code > MAX_CODE_POINT or (code >= 0xD800 and code <= 0xDFFF) then
     return nil, position
@@ -144,7 +145,7 @@ local function decode(text: string, position: number): (number?, number)
 end
 
 -- A relative position (negative counts from the end) as an absolute one; 0 when it falls off the front.
-local function absolute(position: number, length: number): number
+local function absolute(position, length)
   if position >= 0 then
     return position
   elseif -position > length then
@@ -153,7 +154,7 @@ local function absolute(position: number, length: number): number
   return length + position + 1
 end
 
-define(utf8Library, "len", function(text: any, first: any, last: any): (number?, number?)
+define(utf8Library, "len", function(text, first, last)
   local source = tostring(text)
   local length = #source
   local from = absolute(checkInteger(2, "len", first, 1), length)
@@ -171,23 +172,26 @@ define(utf8Library, "len", function(text: any, first: any, last: any): (number?,
       return nil, from
     end
     from = following
-    count += 1
+    count = count + 1
   end
   return count
 end)
 
-define(utf8Library, "offset", function(text: any, count: any, start: any): number?
+define(utf8Library, "offset", function(text, count, start)
   local source = tostring(text)
   local length = #source
   local remaining = checkInteger(2, "offset", count)
-  local fallback = if remaining > 0 then 1 else length + 1
+  local fallback = length + 1
+  if remaining > 0 then
+    fallback = 1
+  end
   local position = absolute(checkInteger(3, "offset", start, fallback), length)
   if position < 1 or position - 1 > length then
     argError(3, "offset", "position out of bounds")
   end
   if remaining == 0 then
     while position > 1 and isContinuation(source, position) do
-      position -= 1
+      position = position - 1
     end
     return position
   end
@@ -197,17 +201,17 @@ define(utf8Library, "offset", function(text: any, count: any, start: any): numbe
   if remaining < 0 then
     while remaining < 0 and position > 1 do
       repeat
-        position -= 1
+        position = position - 1
       until position <= 1 or not isContinuation(source, position)
-      remaining += 1
+      remaining = remaining + 1
     end
   else
-    remaining -= 1
+    remaining = remaining - 1
     while remaining > 0 and position <= length do
       repeat
-        position += 1
+        position = position + 1
       until not isContinuation(source, position)
-      remaining -= 1
+      remaining = remaining - 1
     end
   end
   if remaining == 0 then
@@ -216,7 +220,7 @@ define(utf8Library, "offset", function(text: any, count: any, start: any): numbe
   return nil
 end)
 
-define(utf8Library, "codepoint", function(text: any, first: any, last: any): ...number
+define(utf8Library, "codepoint", function(text, first, last)
   local source = tostring(text)
   local length = #source
   local from = absolute(checkInteger(2, "codepoint", first, 1), length)
@@ -227,24 +231,24 @@ define(utf8Library, "codepoint", function(text: any, first: any, last: any): ...
   if upTo > length then
     argError(3, "codepoint", "out of bounds")
   end
-  local codes: { number } = {}
+  local codes = {}
   while from <= upTo do
     local code, following = decode(source, from)
     if code == nil then
       error("invalid UTF-8 code", 2)
     end
-    table.insert(codes, code :: number)
+    table.insert(codes, code)
     from = following
   end
   return env.unpack(codes)
 end)
 
-define(utf8Library, "codes", function(text: any): (any, string, number)
+define(utf8Library, "codes", function(text)
   local source = tostring(text)
-  local function step(subject: string, previous: number): (number?, number?)
+  local function step(subject, previous)
     local position = previous + 1
     while isContinuation(subject, position) do
-      position += 1
+      position = position + 1
     end
     if position > #subject then
       return nil, nil
@@ -258,7 +262,7 @@ define(utf8Library, "codes", function(text: any): (any, string, number)
   return step, source, 0
 end)
 
-local function encode(code: number): string
+local function encode(code)
   if code < 128 then
     return string.char(code)
   elseif code < 0x800 then
@@ -274,8 +278,8 @@ local function encode(code: number): string
   )
 end
 
-define(utf8Library, "char", function(...: any): string
-  local pieces: { string } = {}
+define(utf8Library, "char", function(...)
+  local pieces = {}
   for index = 1, select("#", ...) do
     local code = checkInteger(index, "char", (select(index, ...)))
     if code < 0 or code > MAX_CODE_POINT then

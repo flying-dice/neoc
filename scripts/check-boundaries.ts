@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Enforces the TypeScript boundaries that are left now that apps are Luau and the host is Rust
+ * Enforces the TypeScript boundaries that are left now that apps are Lua and the host is Rust
  * (AGENTS.md -> "Boundaries"). The TypeScript here is the client (client/), the UI kit (packages/ui), the
  * shared Storybook setup (packages/storybook) and the specs.
  *

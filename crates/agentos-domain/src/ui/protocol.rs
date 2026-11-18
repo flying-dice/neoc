@@ -506,7 +506,7 @@ wire! {
     pub struct ViewError {
         pub view_id: String,
         pub message: String,
-        /// Dev builds: the Luau trace.
+        /// Dev builds: the Lua trace.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[cfg_attr(feature = "codegen", ts(optional))]
         pub dev: Option<String>,

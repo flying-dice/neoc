@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
-//! The `AppRuntime` port over the real Luau adapter and the real SQLite adapter: live sources fed by a tool,
+//! The `AppRuntime` port over the real Lua adapter and the real SQLite adapter: live sources fed by a tool,
 //! effects forwarded to ports, a failing app isolated.
 
 mod common;

@@ -51,7 +51,7 @@ fn groups() -> Vec<Group> {
 
 fn conventions() -> String {
     "## Conventions\n\n\
-- **Luau**: `ui.X { positional, prop = value, slotName = node, onEvent = handler }`. Positional entries are children, \
+- **Lua**: `ui.X { positional, prop = value, slotName = node, onEvent = handler }`. Positional entries are children, \
 or the component's *positional prop* (shown below). Constructors return plain node tables.\n\
 - **Values**: a prop is a literal, a **ref** (`w.client.search`, a source field, `r.title` in a row template) or a call \
 of the closed expression set (`ui.concat`, `ui.when`, `ui.fmt.*`, see [Expressions](#expressions)).\n\
@@ -59,7 +59,7 @@ of the closed expression set (`ui.concat`, `ui.when`, `ui.fmt.*`, see [Expressio
 never a plain value.\n\
 - **Keys**: interactive nodes need an explicit `key`; test ids derive from keys (`app-key-key-...`), skipping auto keys \
 (`_0`), slot names and the window root. A row template contributes `row-<rowKey>`.\n\
-- **Handlers**: a Luau function, a `ui.act.*` action (runs on the client), or a list mixing both. Nothing executable \
+- **Handlers**: a Lua function, a `ui.act.*` action (runs on the client), or a list mixing both. Nothing executable \
 crosses the wire.\n\
 - **Tiers**: Tier 1 is final. Tier 2 and 3 are **placeholders**: the name exists, any prop is accepted, the schema is \
 written when the first app that needs it is designed.\n\n"
@@ -210,7 +210,7 @@ fn payload_label(fields: &[PropSpec]) -> String {
 }
 
 fn events_table(events: &[EventSpec]) -> String {
-    let mut out = String::from("| Event | Luau prop | Payload | Notes |\n|---|---|---|---|\n");
+    let mut out = String::from("| Event | Lua prop | Payload | Notes |\n|---|---|---|---|\n");
     for e in events {
         let _ = writeln!(
             out,
@@ -226,7 +226,7 @@ fn events_table(events: &[EventSpec]) -> String {
 }
 
 fn slots_table(c: &ComponentSpec) -> String {
-    let mut out = String::from("| Slot | Luau key | Notes |\n|---|---|---|\n");
+    let mut out = String::from("| Slot | Lua key | Notes |\n|---|---|---|\n");
     let children = match c.children {
         Children::None => None,
         Children::Any => Some("positional entries: any number of nodes".to_owned()),
@@ -243,7 +243,7 @@ fn slots_table(c: &ComponentSpec) -> String {
 }
 
 fn slot_row(s: &SlotSpec) -> String {
-    let luau = if s.prefix {
+    let lua = if s.prefix {
         format!("`{}.<name>`", s.name.trim_end_matches(':'))
     } else if let Some((group, sub)) = s.name.split_once('.') {
         format!("`{group} = {{ {sub} = ... }}`")
@@ -260,7 +260,7 @@ fn slot_row(s: &SlotSpec) -> String {
     if !s.doc.is_empty() {
         notes.push(s.doc.to_owned());
     }
-    format!("| `{}` | {} | {} |\n", s.name, luau, notes.join("; "))
+    format!("| `{}` | {} | {} |\n", s.name, lua, notes.join("; "))
 }
 
 fn common() -> String {
@@ -271,7 +271,7 @@ fn common() -> String {
     }
     out.push('\n');
     out.push_str(&events_table(COMMON_EVENTS));
-    out.push_str("| Slot | Luau key | Notes |\n|---|---|---|\n");
+    out.push_str("| Slot | Lua key | Notes |\n|---|---|---|\n");
     for s in COMMON_SLOTS {
         out.push_str(&slot_row(s));
     }
@@ -306,9 +306,9 @@ fn expressions() -> String {
         "## Expressions\n\nA prop value is a literal, a ref, or a call of this closed set. Pure, presentation-only, no loops, no \
 recursion, no I/O: it cannot hang or exfiltrate and costs at most its node count. Anything else is computed on the host.\n\n",
     );
-    out.push_str("| Wire name | Luau | Arguments | Notes |\n|---|---|---|---|\n");
+    out.push_str("| Wire name | Lua | Arguments | Notes |\n|---|---|---|---|\n");
     for f in Func::ALL {
-        let luau = match f {
+        let lua = match f {
             Func::And => "ui.all".to_owned(),
             Func::Or => "ui.any".to_owned(),
             Func::Not => "ui.negate".to_owned(),
@@ -322,7 +322,7 @@ recursion, no I/O: it cannot hang or exfiltrate and costs at most its node count
             Some(max) => format!("{}..{max}", a.min),
             None => format!("{}+", a.min),
         };
-        let _ = writeln!(out, "| `{}` | `{luau}` | {args} | {} |", f.name(), f.doc());
+        let _ = writeln!(out, "| `{}` | `{lua}` | {args} | {} |", f.name(), f.doc());
     }
     out.push('\n');
     let env: Vec<String> = ENV_NAMES.iter().map(|n| format!("`env.{n}`")).collect();

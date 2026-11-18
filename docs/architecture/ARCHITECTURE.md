@@ -1,10 +1,10 @@
-# AgentOS architecture: Rust host, Luau apps run as Lua 5.1, managed client
+# AgentOS architecture: Rust host, Lua 5.1 apps, managed client
 
 Status: **approved** (2026-11-18). LAN binding with device pairing (see `host-stack.md`). Detail lives in two companion documents, both backed by working prototypes:
 
 - [`host-stack.md`](host-stack.md): the Rust host. 11 crates in the hexagonal layout below, 42 tests passing, end to end
-  from a Luau app installed over `/rpc` to its tool called over MCP.
-- [`ui-system.md`](ui-system.md): the server-driven UI. The component catalogue, view protocol, bindings, the Luau API
+  from a Lua app installed over `/rpc` to its tool called over MCP.
+- [`ui-system.md`](ui-system.md): the server-driven UI. The component catalogue, view protocol, bindings, the Lua API
   with Calculator and Notes written in full, and a Svelte renderer prototype with 28 tests passing.
 
 This replaces the Bun/TypeScript server, the app client bundles and the shared-module mechanism.
@@ -18,7 +18,7 @@ This replaces the Bun/TypeScript server, the app client bundles and the shared-m
  │ renderer: view trees → kit (Svelte)  │◀──── /rpc ────▶│   install, dispatch event, tool call,     │
  │ client-managed state, drafts         │                │   agent run, notifications                │
  │ no app code, ever                    │ AG-UI / SSE    │ adapters:                                 │
- │ agent chats ◀────────────────────────┼──── /agui ─────│   luau (one sandboxed Lua 5.1 VM per app) │
+ │ agent chats ◀────────────────────────┼──── /agui ─────│   lua (one Lua 5.1 VM per app, on luavm)  │
  └──────────────────────────────────────┘                │   sqlite (per-app DB, live queries)       │
                                                          │   mcp /mcp ◀── agents (per-agent tokens)  │
   built app packages ── app refs ── registries            │   acp ──▶ agent processes (stdio)         │
@@ -26,10 +26,10 @@ This replaces the Bun/TypeScript server, the app client bundles and the shared-m
                                                          └───────────────────────────────────────────┘
 ```
 
-- **Apps are entirely server side, authored in Luau and run as Lua 5.1.** They hold their state, data, tools,
-  notifications and UI description. The client runs no app code. Luau is the authoring language (strict types,
-  `luau-lsp`); `bun run build:apps` builds an app into one bundled Lua 5.1 file (darklua), and that file is what the
-  host loads and runs.
+- **Apps are entirely server side, written in plain Lua 5.1.** They hold their state, data, tools,
+  notifications and UI description. The client runs no app code. Lua 5.1 is the authoring language (checked by
+  lua-language-server against generated LuaCATS definitions); `bun run build:apps` bundles an app's modules into one
+  Lua 5.1 file (darklua), and that file is what the host loads and runs.
 - **The client is a managed renderer.** It renders view trees with the kit, holds client-managed state (drafts,
   selection, scroll, navigation) for instant response, and sends events back.
 - **Transports:**
@@ -55,7 +55,7 @@ crates/
   agentos-agui          adapter: AG-UI events and the SSE endpoint, mapped from ACP
   agentos-fetch         adapter: app refs and registries over file/http/https, sha256 checks
   agentos-http          adapter: axum, the /rpc peer, Origin/Host guard, static client, event hub
-  agentos-codegen       adapter: schema → TypeScript types, Luau .d.luau, docs
+  agentos-codegen       adapter: schema → TypeScript types, the Lua `ui` module, LuaCATS definitions, docs
   agentos-host          composition root binary (wiring only)
 ```
 
@@ -85,9 +85,9 @@ crates/
 
 ## 3. Apps
 
-- **Package:** a Luau package `apps/<id>/`: `app.luau` (the entry), modules, `JOURNEYS.md` and e2e. It is built into one
-  `app.lua` (the entry and its modules bundled by darklua, types stripped, Luau-only syntax lowered); that file is
-  what the app ref lists and the host runs. App logic is tested from Rust integration tests that load the real package (`crates/agentos-lua/tests/calculator_app.rs`, `crates/agentos-host/tests/agents_app.rs`); an in-package `tests/*.luau` harness is planned, not built.
+- **Package:** a Lua package `apps/<id>/`: `app.lua` (the entry), modules, `JOURNEYS.md` and e2e. It is built into one
+  `app.lua` (the entry and its modules bundled by darklua); that file is
+  what the app ref lists and the host runs. App logic is tested from Rust integration tests that load the real package (`crates/agentos-lua/tests/calculator_app.rs`, `crates/agentos-host/tests/agents_app.rs`); an in-package `tests/*.lua` harness is planned, not built.
   Built into an app ref: manifest, file URLs and sha256s, and `requires` (host API range).
 - **Registries:** a list of app-ref URLs. The default registry is the build's unpacked apps folder over `file://`.
   Users can also add an app by URL; the host shows a preview, then a confirmation that it runs on this host and its
@@ -102,7 +102,7 @@ crates/
   - what an app starts (tasks, servers, workers) is aborted and its listeners are closed when it is unloaded or
     replaced; callbacks that come from inside the VM take their turn in the app's one-call-at-a-time queue;
   - SQL `ATTACH` denied, a `readOnly` tool cannot write, a cyclic or huge value handed back to the host is an error.
-- **App API** (typed with generated `.d.luau`):
+- **App API** (described by generated LuaCATS definitions, `types/generated/luals/`):
   - **Window and UI:** `app.manifest`, `app.window(name, { client = …, render = fn })`, `ui.*` constructors.
   - **Data:** `db:migrate`, `db:query` / `db:row` (live sources), `db:exec`.
   - **Everything else:** `app.state`, `app.tools.register`, `app.notify`, and `app.shell` (Dock badge, menu commands,
@@ -140,9 +140,9 @@ crates/
   The host owns tokens and theme. Accessibility (labels, roles, focus, keyboard, WCAG AA) is built into the kit.
   Test ids derive from node keys.
 - **Type pipeline: Rust first.** The component schema lives in `agentos-domain` as Rust types plus metadata (events,
-  slots, accessibility rules, tier). `agentos-codegen` emits the TypeScript types for the renderer, the Luau
-  `.d.luau` and constructors for app authors, and docs. Contract tests fail the build on drift. One toolchain, and
-  R1 proved the ts-rs → TypeScript and schemars → Luau path.
+  slots, accessibility rules, tier). `agentos-codegen` emits the TypeScript types for the renderer, the Lua
+  `ui` module and the LuaCATS definitions for app authors, and docs. Contract tests fail the build on drift. One
+  toolchain, and R1 proved the ts-rs → TypeScript and schemars → Lua definitions path.
 
 ## 5. Repo layout after the move
 
@@ -150,14 +150,14 @@ crates/
 Cargo.toml, crates/        the host (above)
 client/                    the managed client: shell + renderer (was apps/desktop), Vite + Svelte 5
 packages/ui/               the kit: Svelte components implementing the schema, tokens, stories (Storybook on Vite)
-apps/<id>/                 Luau app packages only
-types/                     generated: TypeScript for the client, .d.luau for apps
-docs/, .claude/skills/     rewritten for Rust and Luau (coding style, review, testing)
+apps/<id>/                 Lua app packages only
+types/                     generated: TypeScript for the client, the Lua `ui` module and LuaCATS for apps
+docs/, .claude/skills/     rewritten for Rust and Lua (coding style, review, testing)
 ```
 
 - **Removed (done, wave B4):** `apps/server` (TypeScript), `packages/sdk`, app client bundles and `bundles/`, `SHARED_MODULES`, the memory host and web mode.
 - **Testing:** client tests run against the real host, which starts in milliseconds; the test harness builds the
-  Luau apps to Lua 5.1 and runs them headless in the host.
+  Lua apps and runs them headless in the host.
 
 ## 6. Decisions on the open questions
 
@@ -186,8 +186,8 @@ before the next starts.
 
 | Wave | Work (one worktree each) |
 |---|---|
-| A | **A1** Import the spike workspace into `crates/`, gate scripts (`fmt`, `clippy`, `nextest`, `check-deps`, `deny`), and a host that serves the client<br>**A2** Schema and codegen pipeline (Rust → TS, `.d.luau`, docs)<br>**A3** Renderer core in `client/`: tree, ops, data patches, events, refs and expressions, client state<br>**A4** Luau app API: windows, render, sources and live queries, two-way bindings and merge, tools, notify |
-| B | **B1** Kit tier 1 components implementing the schema, with stories<br>**B2** Calculator in Luau as the acceptance app, plus the e2e harness against the real host<br>**B3** ACP streaming → AG-UI, the Agents app with `ChatTranscript`, and per-agent identity and permissions<br>**B4** Docs and skills rewritten for Rust and Luau; remove the TypeScript server |
+| A | **A1** Import the spike workspace into `crates/`, gate scripts (`fmt`, `clippy`, `nextest`, `check-deps`, `deny`), and a host that serves the client<br>**A2** Schema and codegen pipeline (Rust → TS, LuaCATS, docs)<br>**A3** Renderer core in `client/`: tree, ops, data patches, events, refs and expressions, client state<br>**A4** Lua app API: windows, render, sources and live queries, two-way bindings and merge, tools, notify |
+| B | **B1** Kit tier 1 components implementing the schema, with stories<br>**B2** Calculator in Lua as the acceptance app, plus the e2e harness against the real host<br>**B3** ACP streaming → AG-UI, the Agents app with `ChatTranscript`, and per-agent identity and permissions<br>**B4** Docs and skills rewritten for Rust and Lua; remove the TypeScript server |
 | C+ | The issue backlog, re-expressed on this platform:<br>foundations (#2 data, mostly A4; #3 notifications; App Store #4),<br>then app waves (Contacts, Notes, Tasks, Reminders → Calendar, Settings, Skills, Agents, Files, Books, Diagrams → Coder, Reviewer).<br>Browser deferred. |
 
 Every app keeps the existing merge policy: stories, journeys, the full gate, a `verify-change` record, and a UX

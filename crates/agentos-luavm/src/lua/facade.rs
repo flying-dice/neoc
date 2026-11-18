@@ -7,7 +7,7 @@
 //!
 //! The header syntax (`extern { mod ... }`, `Result<T, E>`, `Option<T>`) is the declaration dialect of
 //! `neoc`, where this VM was written, and the comments below call its types "neoc types". Nothing in this
-//! repo reads the headers yet (the generated Luau typings come from the Rust schema), so they exist
+//! repo reads the headers yet (the generated LuaCATS typings come from the Rust schema), so they exist
 //! for the module-surface tests in `modules.rs`.
 //!
 //! Three things the facade preserves byte-for-byte versus the hand-written

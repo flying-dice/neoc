@@ -3,9 +3,9 @@
  * `bun run dev`: the host on :7400 (watching the built apps and reloading them), the client on :5173 through
  * Vite with hot reload, and the apps built into dist/apps (the host's default registry).
  *
- * Open http://127.0.0.1:5173 and pair with the code the host prints. Apps are authored in Luau and the host runs
- * the Lua 5.1 build of them (darklua, see scripts/lua51.ts), which only this script can make: it watches
- * `apps/**` (`*.luau`, `app.json`, the migrations) and re-runs `build:apps` when one changes. The host watches
+ * Open http://127.0.0.1:5173 and pair with the code the host prints. Apps are written in Lua and the host runs
+ * the bundled build of them (darklua, see scripts/lua51.ts), which only this script can make: it watches
+ * `apps/**` (`*.lua`, `app.json`, the migrations) and re-runs `build:apps` when one changes. The host watches
  * the built refs under dist/apps (`app.lua`, `app-ref.json`) and rebuilds the app's VM, keeping its data.
  */
 import { spawn, spawnSync } from 'node:child_process'
@@ -17,8 +17,8 @@ const root = resolve(import.meta.dir, '..')
 const built = spawnSync('bun', ['scripts/build-apps.ts'], { cwd: root, stdio: 'inherit' })
 if (built.status !== 0) process.exit(built.status ?? 1)
 
-/** What an app is built from: its Luau, its manifest and its SQL migrations. */
-const SOURCE = /\.(luau|sql)$|(^|\/)app\.json$/
+/** What an app is built from: its Lua, its manifest and its SQL migrations. */
+const SOURCE = /\.(lua|sql)$|(^|\/)app\.json$/
 let timer: ReturnType<typeof setTimeout> | undefined
 let building = false
 let queued = false

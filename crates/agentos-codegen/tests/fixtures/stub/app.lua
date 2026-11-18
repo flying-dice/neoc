@@ -1,8 +1,7 @@
---!nocheck
 -- A stand-in for the host's native `@agentos/app` module, just enough to load an app and render a window:
--- the codegen contract test runs the Calculator and Notes fixtures against the real generated `ui.luau` with it,
+-- the codegen contract test runs the Calculator and Notes examples against the real generated `ui.lua` with it,
 -- then validates the tree in Rust. It mimics what the host does (refs for client state, source handles, the
--- row proxy is in ui.luau itself); the real implementation lives in agentos-luau.
+-- row proxy is in ui.lua itself); the real implementation lives in agentos-lua.
 local stub = { windows = {}, sources = {}, tools = {}, store = {}, manifest = nil }
 
 local function isDollar(key)
@@ -32,7 +31,7 @@ end
 
 local count = 0
 local function declare(kind, options, params)
-  count += 1
+  count = count + 1
   local id = "s" .. count
   stub.sources[id] = { kind = kind, key = options and options.key, page = options and options.page, params = params }
   return handle(kind, id)

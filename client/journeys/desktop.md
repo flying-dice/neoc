@@ -21,5 +21,5 @@ Notes for the people running these:
 - The strip hides itself while a window covers it: rest the pointer on the left edge to bring it back.
 - The multitasking menu is the "···" at the top of each window (Full Screen, Split View left or right, Slide Over, Floating,
   Minimise, Close). Dragging the title bar moves a floating window.
-- Nothing here depends on which Luau apps are installed beyond the Calculator and the Agents app the e2e host installs;
+- Nothing here depends on which Lua apps are installed beyond the Calculator and the Agents app the e2e host installs;
   the desktop hides an app's Dock icon when it is not installed.

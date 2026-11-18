@@ -1,6 +1,6 @@
 /**
  * Runtime contract: the trees the Calculator and Notes examples render (committed under the codegen fixtures,
- * produced by running the Luau against the generated `ui.luau`) only use components, props, slots and events the
+ * produced by running the Lua against the generated `ui.lua`) only use components, props, slots and events the
  * generated `COMPONENTS` table knows, and the table agrees with the protocol constants.
  */
 import { describe, expect, test } from 'bun:test'

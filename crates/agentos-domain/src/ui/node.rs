@@ -177,7 +177,7 @@ pub enum Action {
 }
 
 impl Action {
-    /// Every action's wire name, in declaration order. The Luau `ui.act` builders must cover exactly these.
+    /// Every action's wire name, in declaration order. The Lua `ui.act` builders must cover exactly these.
     pub const NAMES: [&'static str; 10] =
         ["set", "toggle", "nav.push", "nav.pop", "nav.popToRoot", "focus", "scrollTo", "copy", "emit", "seq"];
 
@@ -199,7 +199,7 @@ impl Action {
     }
 }
 
-/// An auto key (`_0`, `_1`, ...) is assigned by the Luau constructors to nodes the author left un-keyed.
+/// An auto key (`_0`, `_1`, ...) is assigned by the Lua constructors to nodes the author left un-keyed.
 #[must_use]
 pub fn is_auto_key(key: &str) -> bool {
     key.strip_prefix('_').is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))

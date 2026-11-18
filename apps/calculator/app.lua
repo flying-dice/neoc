@@ -1,6 +1,5 @@
---!strict
--- The Calculator: a keypad window and three agent tools. `bun run lint:luau` type-checks it against the
--- generated definitions; `bun run build:apps` packages it (with app.json) into an app ref.
+-- The Calculator: a keypad window and three agent tools. `bun run build:apps` packages it (with app.json) into
+-- an app ref.
 local app = require("@agentos/app")
 local ui = require("@agentos/ui")
 local calc = require("./calc")
@@ -30,36 +29,43 @@ local s = app.state {
 
 local SYMBOL = { ["+"] = "+", ["-"] = "−", ["*"] = "×", ["/"] = "÷" }
 
--- ── Logic (pure Luau; no UI in here) ──────────────────────────────────────
+-- ── Logic (pure Lua; no UI in here) ──────────────────────────────────────
 
-local function apply(a: number, op: string, b: number): number
-  s.caption = `{calc.format(a)} {SYMBOL[op]} {calc.format(b)}`
+local function apply(a, op, b)
+  s.caption = calc.format(a) .. " " .. SYMBOL[op] .. " " .. calc.format(b)
   return calc.combine(a, op, b) -- raises on division by zero
 end
 
 -- The number on the display: the result once one is in, else what has been typed.
-local function current(): number
-  return if s.fresh then s.value else tonumber(s.entry) :: number
+local function current()
+  if s.fresh then
+    return s.value
+  end
+  return tonumber(s.entry)
 end
 
 -- Show a number (a result, or a value an agent put there); the next digit starts a new entry.
-local function show(value: number)
+local function show(value)
   s.value, s.fresh = value, true
 end
 
-local function digit(d: string)
+local function digit(d)
   if s.fresh then
-    s.entry, s.fresh = (if d == "." then "0." else d), false
+    s.entry, s.fresh = (d == "." and "0." or d), false
   elseif d == "." then
     if not string.find(s.entry, ".", 1, true) then
-      s.entry ..= "."
+      s.entry = s.entry .. "."
     end
   elseif #string.gsub(s.entry, "[-.]", "") < 9 then
-    s.entry = if s.entry == "0" then d else s.entry .. d
+    if s.entry == "0" then
+      s.entry = d
+    else
+      s.entry = s.entry .. d
+    end
   end
 end
 
-local function operator(op: string)
+local function operator(op)
   local value = current()
   if s.hasAcc and s.pending ~= "" and not s.fresh then
     s.acc = apply(s.acc, s.pending, value)
@@ -88,16 +94,22 @@ local function clear() -- "C" clears what is being typed; "AC" (nothing typed) c
   s.err, s.value, s.fresh = false, 0, true
 end
 
-local actions: { [string]: (string?) -> () } = {
+local actions = {
   digit = digit,
   operator = operator,
   equals = equals,
   clear = clear,
   negate = function()
     if s.fresh then
-      s.value = if s.value == 0 then 0 else -s.value -- never "-0"
-    else
-      s.entry = if s.entry:sub(1, 1) == "-" then s.entry:sub(2) elseif s.entry == "0" then "0" else "-" .. s.entry
+      if s.value == 0 then
+        s.value = 0 -- never "-0"
+      else
+        s.value = -s.value
+      end
+    elseif s.entry:sub(1, 1) == "-" then
+      s.entry = s.entry:sub(2)
+    elseif s.entry ~= "0" then
+      s.entry = "-" .. s.entry
     end
   end,
   percent = function()
@@ -106,12 +118,16 @@ local actions: { [string]: (string?) -> () } = {
   backspace = function()
     if not s.fresh then
       local rest = s.entry:sub(1, -2)
-      s.entry = if rest == "" or rest == "-" or rest == "-0" then "0" else rest
+      if rest == "" or rest == "-" or rest == "-0" then
+        s.entry = "0"
+      else
+        s.entry = rest
+      end
     end
   end,
 }
 
-local function press(kind: string, arg: string?)
+local function press(kind, arg)
   if s.err and kind ~= "clear" then
     return
   end
@@ -122,15 +138,15 @@ end
 
 -- ── View ─────────────────────────────────────────────────────────────────
 
-local function digitKey(d: string)
+local function digitKey(d)
   return { id = d, name = d, label = d, kind = "digit", arg = d, face = "digit", shortcut = d }
 end
-local function opKey(id: string, symbol: string, arg: string, name: string)
+local function opKey(id, symbol, arg, name)
   return { id = id, name = name, label = symbol, kind = "operator", arg = arg, face = "operator", shortcut = arg }
 end
 
--- type fix: the keys are heterogeneous tables (not every key has a shortcut or a span)
-local KEYS: { any } = {
+-- the keys are heterogeneous tables (not every key has a shortcut or a span)
+local KEYS = {
   { id = "clear", name = "Clear", label = "AC", kind = "clear", face = "function", shortcut = "escape" },
   { id = "negate", name = "Plus minus", label = "±", kind = "negate", face = "function" },
   { id = "percent", name = "Percent", label = "%", kind = "percent", face = "function", shortcut = "%" },
@@ -161,11 +177,10 @@ local KEYS: { any } = {
   { id = "dot", name = "Decimal point", label = ".", kind = "digit", arg = ".", face = "digit", shortcut = "." },
   { id = "eq", name = "Equals", label = "=", kind = "equals", face = "operator", shortcut = "enter" },
 }
-local FILL: { [string]: "gray4" | "gray2" | "orange" } =
-  { digit = "gray4", ["function"] = "gray2", operator = "orange" } -- semantic palette, auto-contrast text
+local FILL = { digit = "gray4", ["function"] = "gray2", operator = "orange" } -- semantic palette, auto-contrast text
 
 -- iPadOS sets the wide "0" with its label over the first circle, not centred in the capsule
-local function wideLabel(k: any)
+local function wideLabel(k)
   return ui.HStack {
     key = "label",
     frame = "fill",
@@ -176,7 +191,7 @@ local function wideLabel(k: any)
   }
 end
 
-local function keyView(k: any)
+local function keyView(k)
   local title, name = k.label, k.name
   if k.id == "clear" and s.entry ~= "0" and not s.fresh then
     title, name = "C", "C, clear entry" -- the accessible name keeps the visible text (WCAG 2.5.3)
@@ -185,7 +200,7 @@ local function keyView(k: any)
   end
   return ui.Button {
     key = "key-" .. k.id,
-    title = if k.wide then nil else title,
+    title = not k.wide and title or nil,
     label = name,
     shape = "circle",
     size = "fill",
@@ -196,14 +211,21 @@ local function keyView(k: any)
     onTap = function()
       press(k.kind, k.arg)
     end,
-    if k.wide then { wideLabel(k) } else {},
+    k.wide and { wideLabel(k) } or {},
   }
 end
 
 app.window("main", {
   title = "Calculator",
-  render = function(w)
-    local display = if s.err then "Error" elseif s.fresh then calc.format(s.value) else calc.formatEntry(s.entry)
+  render = function(_)
+    local display
+    if s.err then
+      display = "Error"
+    elseif s.fresh then
+      display = calc.format(s.value)
+    else
+      display = calc.formatEntry(s.entry)
+    end
     return ui.Scope {
       scheme = "dark",
       background = "primary", -- the instrument canvas: black body
@@ -259,7 +281,7 @@ app.window("main", {
 
 -- ── Agent tools ──────────────────────────────────────────────────────────
 
-local function record(expression: string, result: number)
+local function record(expression, result)
   local h = app.kv:get("history") or {}
   table.insert(h, 1, { expression = expression, result = result })
   while #h > 50 do
@@ -304,6 +326,10 @@ app.tool {
   input = { limit = t.integer { default = 10, min = 1, max = 50 } },
   run = function(input)
     local h = app.kv:get("history") or {}
-    return { entries = table.move(h, 1, math.min(#h, input.limit), 1, {}) }
+    local entries = {}
+    for i = 1, math.min(#h, input.limit) do
+      entries[i] = h[i]
+    end
+    return { entries = entries }
   end,
 }

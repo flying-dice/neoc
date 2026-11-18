@@ -1,6 +1,6 @@
 /**
  * Agents key user journeys AG1 to AG7 (../JOURNEYS.md; a test's id is its journey's id), end to end: the real
- * shell, the real host, the Luau Agents app, and an ACP agent on the host's roster that is a script, not a model
+ * shell, the real host, the Lua Agents app, and an ACP agent on the host's roster that is a script, not a model
  * (`crates/agentos-acp/src/bin/fake_agent.rs`; the prompt text picks what it does). The conversation streams over AG-UI, the permission prompt is an AG-UI
  * interrupt, the Agents app only lists agents and chats.
  *

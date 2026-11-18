@@ -8,8 +8,8 @@
  *   domain      -> nothing internal; external: serde, serde_json, sha2, thiserror (+ ts-rs, schemars)
  *   application -> domain; external: async-trait, futures-channel, parking_lot, serde_json, sha2, thiserror, tracing
  *   adapters    -> application, domain; never each other
- *   luau        -> application, domain, luavm (the one adapter that may use the Lua VM library)
- *   luavm       -> nothing internal (the Lua VM library; only the luau adapter may depend on it)
+ *   lua         -> application, domain, luavm (the one adapter that may use the Lua VM library)
+ *   luavm       -> nothing internal (the Lua VM library; only the lua adapter may depend on it)
  *   host        -> everything
  *
  * A crate that is not in INTERNAL fails the gate, so a new crate has to be placed in the hexagon on purpose.
@@ -25,7 +25,7 @@ import { spawnSync } from 'node:child_process'
 const INTERNAL: Record<string, string[]> = {
   'agentos-domain': [],
   'agentos-application': ['agentos-domain'],
-  // The Lua adapter runs apps (Luau, built to Lua 5.1) on top of the Lua VM library below.
+  // The Lua adapter runs apps (plain Lua 5.1) on top of the Lua VM library below.
   'agentos-lua': ['agentos-domain', 'agentos-application', 'agentos-luavm'],
   // The Lua 5.1 VM: a support library, not an adapter. It depends on no agentos crate, and only the Lua
   // adapter may depend on it (the one place a script engine is wired to a port), so the VM stays swappable.

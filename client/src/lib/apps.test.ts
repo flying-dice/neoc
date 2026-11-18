@@ -49,7 +49,7 @@ describe('setInstalledApps', () => {
     setInstalledApps([
       summary('calculator', { window: { w: 340, h: 560, minW: 320, minH: 500 }, tint: 'orange' }),
       summary('notes', { state: 'disabled' }),
-      summary('broken', { state: 'failed', message: 'bad luau' })
+      summary('broken', { state: 'failed', message: 'bad lua' })
     ])
     expect(
       Object.keys(apps).filter(
@@ -63,7 +63,7 @@ describe('setInstalledApps', () => {
       minHeight: 500
     })
     expect(installedApp('notes')?.state).toBe('disabled')
-    expect(installedApp('broken')?.message).toBe('bad luau')
+    expect(installedApp('broken')?.message).toBe('bad lua')
   })
 
   test('an app that declared no window gets the defaults, and an unknown icon a generic one', () => {

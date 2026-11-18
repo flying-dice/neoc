@@ -1,6 +1,6 @@
 //! The data ports: one app's database, its transactions and its commit-time change feed.
 //!
-//! Everything a Luau `db:*` call needs is expressed here, so the use cases (live sources, write-back) are
+//! Everything a Lua `db:*` call needs is expressed here, so the use cases (live sources, write-back) are
 //! testable with in-memory fakes and the SQLite adapter is one implementation among possible others.
 
 use crate::error::PortError;
@@ -115,7 +115,7 @@ pub trait DataTx: Send {
     async fn rollback(self: Box<Self>) -> PortResult<()>;
 }
 
-/// A single app's database (what `db:*` in Luau is backed by).
+/// A single app's database (what `db:*` in Lua is backed by).
 #[async_trait]
 pub trait AppData: Send + Sync {
     /// Apply pending migrations in order (`db:migrate`): recorded, checksummed, idempotent.

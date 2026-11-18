@@ -1,16 +1,16 @@
-# Luau apps in AgentOS (`apps/<id>/*.luau`)
+# Lua apps in AgentOS (`apps/<id>/*.lua`)
 
-An app is server-side Luau in a sandbox. Its contract is the `app` table typed in `types/generated/agentos.d.luau` and
-the `ui` constructors in `types/generated/ui.luau` (both generated: never edit them). `apps/calculator` and `apps/agents`
-are the models; the API is described in `apps/README.md`.
+An app is server-side **plain Lua 5.1** in its own VM (no permissions, no budgets): no Luau syntax (no `+=`, `continue`, backtick strings, `if`
+expressions, `for k, v in t do`, type annotations in signatures). Its contract is the `app` table and the `ui` constructors,
+described by the LuaCATS definitions in `types/generated/luals/` (generated: never edit them; `ui.lua` next to them is the
+runtime module). `apps/calculator` and `apps/agents` are the models; the API is described in `apps/README.md`.
 
-Gates: `bun run lint:luau` (strict `luau-lsp analyze` against the generated definitions, plus the `negative/` fixtures),
+Gates: `bun run lint:lua` (`lua-language-server --check` against the generated definitions, plus the `negative/` fixtures),
 `bun run lint:stylua`, `bun run format`.
 
 ## File shape
 
 ```lua
---!strict
 -- One line on what the app is and where its state lives.
 local app = require("@agentos/app")
 local ui = require("@agentos/ui")
@@ -21,18 +21,17 @@ app.manifest { id = "calculator", name = "Calculator", icon = "plus", tint = "or
   window = { w = 340, h = 560, minW = 320, minH = 500 } }   -- say why the minimum is above 320x240
 ```
 
-- Always `--!strict`. Annotate function parameters and returns (`local function apply(a: number, op: string, b: number): number`),
-  and type tables that are not obvious (`{ [string]: (string?) -> () }`). Fix a type error, don't cast it away: a `::`
-  cast needs an invariant established just above it (the Calculator's `tonumber(s.entry) :: number`, where `entry` is
-  only ever set to a numeric string), or a one-line comment saying why the checker can't see it
-  (`local KEYS: { any } = ...  -- heterogeneous tables`).
+- Annotations are optional LuaCATS comments (`---@param`, `---@return`, `---@type`, `---@cast`); write one where it helps a
+  reader or the checker (a `tonumber(...)` the code knows is a number: `---@cast rounded number`). Fix what
+  lua-language-server reports, don't silence it: a `---@cast` needs an invariant established just above it, or a one-line
+  comment saying why the checker can't see it. Don't write annotations that only repeat the obvious.
 - `app.json` and `app.manifest` agree on `id`, `icon` and `tint` (the build checks).
 - Only `app`, `ui` and the package's own modules exist: no `io`, `os`, `debug`, no filesystem `require`, no network.
   Don't reach for globals; the sandbox removes them.
 
 ## Structure
 
-- **Logic is plain Luau functions with no UI in them** (`calc.luau`: `evaluate`, `format`), so it is testable from Rust and
+- **Logic is plain Lua functions with no UI in them** (`calc.lua`: `evaluate`, `format`), so it is testable from Rust and
   readable on its own. State that must be shared by every window is one `app.state { ... }` table; anything that must
   survive a restart goes to `app.kv` or `app.db`.
 - **`render` is pure.** It reads state and returns a tree. No `app.db:exec`, no `app:openWindow`, no state assignment in it
@@ -47,8 +46,8 @@ app.manifest { id = "calculator", name = "Calculator", icon = "plus", tint = "or
   Say why a tool is not `readOnly` in a comment.
 - **SQL:** named `:params`, never string concatenation of values; numbered `db:migrate` steps, never edited after release
   (add a new number); a windowed `db:query` ends its `order by` with the key.
-- **Permissions:** declare the smallest list in `app.json`. An app that uses `app.notify`, `app.agents` or `app.shell` needs
-  `notify`, `agents`, `shell`; `app.db` and `app.kv` need `data`.
+- **No permissions:** `app.json` and `app.manifest` carry none; an app may use `app.*` and every `std:`/`lib:`/`vnd:` module.
+  What it starts (tasks, servers, workers) belongs to it and is released on unload.
 
 ## The view style
 
@@ -63,27 +62,28 @@ ui.Grid { columns = 4, spacing = 2, ui.each(KEYS, keyView) }
   raw colours, sizes or CSS. Check the component's props in `docs/reference/components.md`.
 - Icon-only controls need a `label`; an `Image` needs `alt` or `decorative = true`; the accessible name keeps the visible
   text (WCAG 2.5.3).
-- `and`, `or`, `not` are Luau keywords: in a tree use `ui.all`, `ui.any`, `ui.negate`, and `ui.when(cond, a, b)` for a value.
+- `and`, `or`, `not` are Lua keywords: in a tree use `ui.all`, `ui.any`, `ui.negate`, and `ui.when(cond, a, b)` for a value.
   A Ref has no value on the host: `tostring(ref)` and `"x" .. ref` raise, use `ui.concat`. Pass a list of nodes with
-  `table.unpack(items)` or `ui.each`.
+  `unpack(items)` or `ui.each`. Write `cond and a or b` only when `a` can't be `false` or `nil`.
 - A Binding prop (`TextField.text`, `List.selection`) takes a Ref (`w.client.x`, a source field), never a plain value; the
-  type checker rejects the plain value.
+  checker flags the plain value.
 - Declare client state in the window (`client = { threadId = { init = "", persist = "app" } }`) for selection and similar UI
   state, rather than keeping it in `app.state`.
 
 ## Formatting (StyLua)
 
-`stylua.toml`: `syntax = "Luau"`, 120 columns, 2-space indent, Unix line endings, `quote_style = "AutoPreferDouble"`,
+`stylua.toml`: `syntax = "Lua51"`, 120 columns, 2-space indent, Unix line endings, `quote_style = "AutoPreferDouble"`,
 `call_parentheses = "NoSingleTable"` (so `ui.VStack { ... }` stays a table call), no collapsed simple statements. Run
-`bun run format`; don't hand-format against it. Use string interpolation (`` `{a} {op}` ``) over `..` for text, and `if ... then ... else`
-expressions for simple choices.
+`bun run format`; don't hand-format against it. Build text with `..`; an
+`if` statement beats a nested `and`/`or` chain.
 
 ## Comments
 
-Say why, not what: the reason for a minimum window size, a type fix, an invariant, a host rule that surprised you
+Say why, not what: the reason for a minimum window size, a cast, an invariant, a host rule that surprised you
 (`-- below 500 tall the keypad no longer fits`). A section divider line (`-- ── View ──`) is fine. No commented-out code.
 
 ## Negative fixtures
 
-To prove a type rule holds, add a file under a `negative/` folder (see `crates/agentos-lua/tests/negative/`) with
-`-- expect-error` on each line that must be rejected; `lint:luau` demands exactly those lines are flagged.
+To prove a type rule holds, add a file under a `negative/` folder (see `scripts/fixtures/negative/`) with
+`-- expect-error` on each line that must be flagged; `lint:lua` demands exactly those lines are flagged. (lua-language-server
+checks the types of values and the shape of tables, but not an unknown key in a table literal.)

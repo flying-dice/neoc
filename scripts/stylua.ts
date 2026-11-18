@@ -1,13 +1,13 @@
 #!/usr/bin/env bun
 /**
- * Luau formatting with StyLua (config: stylua.toml, ignores: .styluaignore), the Luau counterpart of
+ * Lua formatting with StyLua (config: stylua.toml, syntax Lua51, ignores: .styluaignore), the Lua counterpart of
  * `cargo fmt`.
  *
- *   bun scripts/stylua.ts check    exit 1 if any .luau file is not formatted (part of `bun run lint`)
+ *   bun scripts/stylua.ts check    exit 1 if any .lua file is not formatted (part of `bun run lint`)
  *   bun scripts/stylua.ts format   rewrite the files in place (part of `bun run format`)
  *
  * `stylua` is found on PATH or at ~/.cargo/bin/stylua. When it is missing the script SKIPS with a message
- * and exits 0, like `lint:luau` does for luau-lsp.
+ * and exits 0, like the rest of the optional tooling.
  */
 import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
@@ -30,7 +30,7 @@ function findStylua(): string | undefined {
 
 const stylua = findStylua()
 if (!stylua) {
-  console.log(`stylua ${mode} SKIPPED: stylua not found (cargo install stylua --features luau, or put it on PATH)`)
+  console.log(`stylua ${mode} SKIPPED: stylua not found (cargo install stylua --features lua51, or put it on PATH)`)
   process.exit(0)
 }
 
@@ -38,7 +38,7 @@ if (!stylua) {
 const args = ['--search-parent-directories', ...(mode === 'check' ? ['--check'] : []), '.']
 const run = spawnSync(stylua, args, { cwd: root, stdio: 'inherit' })
 if (run.status !== 0) {
-  if (mode === 'check') console.error('stylua: Luau files need formatting: run `bun run format`')
+  if (mode === 'check') console.error('stylua: Lua files need formatting: run `bun run format`')
   process.exit(run.status ?? 1)
 }
 console.log(`stylua ${mode} OK`)

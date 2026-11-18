@@ -5,7 +5,7 @@ use agentos_domain::DomainError;
 pub enum PortError {
     #[error("not found: {0}")]
     NotFound(String),
-    /// The app (or caller) did something wrong: bad SQL, Lua error, budget exceeded.
+    /// The app (or caller) did something wrong: bad SQL, a Lua error.
     #[error("rejected: {0}")]
     Rejected(String),
     #[error("internal: {0}")]

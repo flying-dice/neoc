@@ -18,8 +18,8 @@ use parking_lot::RwLock;
 use serde_json::{Map, Value};
 use std::{collections::HashMap, sync::Arc};
 
-/// The generated constructors (Lua 5.1 build of `ui.luau`) every app gets as `require("@agentos/ui")`.
-/// Lua 5.1 source of `@agentos/ui` (hosts and tests that build a [`VmConfig`] by hand register it as `ui`).
+/// The generated constructors (`types/generated/ui.lua`) every app gets as `require("@agentos/ui")`. Lua 5.1 source of
+/// `@agentos/ui` (hosts and tests that build a [`VmConfig`] by hand register it as `ui`).
 pub const UI_MODULE: &str = include_str!("../../../types/generated/ui.lua");
 
 pub struct LuaRuntime {

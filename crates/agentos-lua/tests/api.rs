@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
-//! The `app` API from Luau: manifest, require, db, kv, sources, tools, state, notify, shell.
+//! The `app` API from Lua: manifest, require, db, kv, sources, tools, state, notify, shell.
 
 mod common;
 

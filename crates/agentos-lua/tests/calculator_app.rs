@@ -110,7 +110,7 @@ async fn calculate_writes_history_so_it_is_not_read_only() {
 #[tokio::test]
 async fn only_the_tools_that_change_nothing_are_marked_read_only() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/calculator");
-    let source = std::fs::read_to_string(dir.join("app.luau")).unwrap();
+    let source = std::fs::read_to_string(dir.join("app.lua")).unwrap();
     // `calculate` and `show_on_calculator` write app.kv / app.state; `history` only reads
     let marked: Vec<&str> = source
         .split("app.tool {")

@@ -308,7 +308,7 @@ pub async fn notification_where(ws: &mut Ws, method: &str, ok: impl Fn(&Value) -
     }
 }
 
-/// The Lua 5.1 text of a Luau entry file, built with the product's own pipeline (`scripts/lua51.ts`: darklua
+/// The bundled Lua 5.1 text of an app entry file, built with the product's own pipeline (`scripts/lua51.ts`: darklua
 /// with `.darklua.json`), so these tests run what `bun run build:apps` ships. Needs bun and darklua.
 pub fn build_lua(entry: &std::path::Path) -> Vec<u8> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -346,5 +346,5 @@ pub fn built_app(app: &str) -> Vec<u8> {
     } else {
         manifest.join("../agentos-codegen/tests/fixtures").join(app)
     };
-    build_lua(&dir.join("app.luau"))
+    build_lua(&dir.join("app.lua"))
 }

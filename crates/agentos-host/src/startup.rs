@@ -100,7 +100,7 @@ fn file_url_dir(url: &str) -> Option<PathBuf> {
 /// Dev hot reload: for every installed app whose bundle is a `file://` app ref, watch its folder and
 /// rebuild the app's VM (database kept) when a file in it changes. Returns what it is watching.
 ///
-/// The host never builds an app (Luau -> Lua 5.1 is `bun run build:apps`, which `bun run dev` re-runs when a
+/// The host never builds an app (bundling an app is `bun run build:apps`, which `bun run dev` re-runs when a
 /// source changes): what it watches is the built ref folder, `app.lua` and the app ref.
 pub fn watch_for_reload(service: &Arc<AppService>, stop: &CancellationToken) -> Vec<PathBuf> {
     let mut watching = Vec::new();

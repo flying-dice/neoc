@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
-//! End-to-end: the REAL adapters (luau, sqlite, fetch, mcp, agui, http) wired by the composition root,
+//! End-to-end: the REAL adapters (lua, sqlite, fetch, mcp, agui, http) wired by the composition root,
 //! driven from the outside like the real clients: a paired browser (`/rpc`, `/agui`) and an agent
 //! with its own bearer token (`/mcp`).
 
@@ -27,14 +27,14 @@ use std::{
 
 /// Publish the fixture app under `root` as an app ref with the id `id`; returns the `file://` URL of the ref.
 fn publish_app(root: &Path, id: &str) -> String {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/notes/app.luau");
-    let luau = std::fs::read_to_string(src).unwrap().replace("\"notes\"", &format!("\"{id}\""));
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/notes/app.lua");
+    let lua = std::fs::read_to_string(src).unwrap().replace("\"notes\"", &format!("\"{id}\""));
     std::fs::create_dir_all(root).unwrap();
-    // the fixture is Luau: build it to the one Lua 5.1 file an app ref ships
-    std::fs::write(root.join("source.luau"), &luau).unwrap();
-    let luau = String::from_utf8(common::build_lua(&root.join("source.luau"))).unwrap();
-    std::fs::remove_file(root.join("source.luau")).unwrap();
-    std::fs::write(root.join("app.lua"), &luau).unwrap();
+    // build the fixture with the app pipeline: the one Lua 5.1 file an app ref ships
+    std::fs::write(root.join("source.lua"), &lua).unwrap();
+    let lua = String::from_utf8(common::build_lua(&root.join("source.lua"))).unwrap();
+    std::fs::remove_file(root.join("source.lua")).unwrap();
+    std::fs::write(root.join("app.lua"), &lua).unwrap();
     let r = AppRef {
         manifest: Manifest {
             id: AppId::parse(id).unwrap(),
@@ -50,7 +50,7 @@ fn publish_app(root: &Path, id: &str) -> String {
         files: vec![FileRef {
             path: "app.lua".into(),
             url: format!("file://{}/app.lua", root.display()),
-            sha256: format!("{:x}", Sha256::digest(luau.as_bytes())),
+            sha256: format!("{:x}", Sha256::digest(lua.as_bytes())),
         }],
     };
     std::fs::write(root.join("app-ref.json"), serde_json::to_vec(&r).unwrap()).unwrap();
@@ -106,7 +106,7 @@ async fn install_over_rpc_then_use_from_mcp_and_ui_and_uninstall() {
     let (_, count) = live.subscribe(&SourceId("s2".into()), Params::None, None, sink.clone()).await.unwrap();
     assert_eq!(count, SourceUpdate::Scalar(json!(0)));
 
-    // --- the agent calls a tool: Luau runs as that agent, SQLite writes, app.notify reaches the UI, and the
+    // --- the agent calls a tool: Lua runs as that agent, SQLite writes, app.notify reaches the UI, and the
     //     live sources push their deltas with no UI code anywhere
     let out = call(&agent, "notes__add_note", json!({"body": "from the agent"})).await;
     assert_ne!(out.is_error, Some(true), "{out:?}");
@@ -335,9 +335,9 @@ async fn dev_reload_rebuilds_the_vm_when_the_bundle_changes_and_keeps_the_data()
 
     // "rebuild" the bundle: a new tool, a new checksum
     let before = counter.0.load(Ordering::SeqCst);
-    let luau = std::fs::read_to_string(pkg.join("app.lua")).unwrap();
+    let lua = std::fs::read_to_string(pkg.join("app.lua")).unwrap();
     let v2 =
-        format!("{luau}\napp.tools.register({{ name = \"extra\", run = function() return \"v2\" end }})\n");
+        format!("{lua}\napp.tools.register({{ name = \"extra\", run = function() return \"v2\" end }})\n");
     std::fs::write(pkg.join("app.lua"), &v2).unwrap();
     let mut app_ref: AppRef =
         serde_json::from_slice(&std::fs::read(pkg.join("app-ref.json")).unwrap()).unwrap();

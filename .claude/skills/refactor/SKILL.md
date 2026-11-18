@@ -5,7 +5,7 @@ description: Clear one AgentOS clean-code TODO marker per pass (left by clean-co
 
 # Refactor: one marker per pass
 
-1. List markers: `grep -rnE "TODO: clean-code -" crates apps packages client scripts e2e` (Rust, Luau, TypeScript and Svelte
+1. List markers: `grep -rnE "TODO: clean-code -" crates apps packages client scripts e2e` (Rust, Lua, TypeScript and Svelte
    all use the same `TODO: clean-code - <score> - <PRINCIPLE>` text).
 2. Pick the highest score (ties: the one in the current diff first).
 3. Fix it and remove the marker. Behaviour stays the same, so the existing tests are the safety net: if the code
@@ -14,7 +14,7 @@ description: Clear one AgentOS clean-code TODO marker per pass (left by clean-co
 4. If the fix would change a public contract, stop. That is a design change for an MR of its own, not a refactor:
    report it and leave the marker. Contracts are: a port trait in `agentos-application`, a domain or schema type that
    feeds codegen (`types/generated`), a JSON-RPC method, view message or AG-UI event, anything in the `app` API
-   (`types/generated/agentos.d.luau`), a tool's name or input, an app's `app.json`, a kit component's props or test ids.
+   (`types/generated/luals/`), a tool's name or input, an app's `app.json`, a kit component's props or test ids.
 5. Run `bun run lint && bun run typecheck && bun run test`, plus `bun run test:e2e` if anything rendered changed.
 6. Report the file, what changed and the score cleared. Stop.
 

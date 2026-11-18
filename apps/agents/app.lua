@@ -1,4 +1,3 @@
---!strict
 -- Agents: chats with the agents on this host. The sidebar lists the agents (from the host's roster) and the
 -- chats (SQLite, newest first); the detail is a `ChatTranscript` bound to the selected chat.
 --
@@ -16,7 +15,6 @@ app.manifest {
   tint = "orange",
   -- 480x420 leaves room for a few messages; the layout itself holds down to 320x280 (one column below 700 wide)
   window = { w = 960, h = 640, minW = 480, minH = 420 },
-  permissions = { "data", "agents" },
 }
 
 db:migrate {
@@ -44,12 +42,15 @@ local chat = app.thread()
 local TITLE_MAX = 48
 
 -- the first message names the chat; later messages only move it to the top
-local function titleOf(text: string): string
+local function titleOf(text)
   local line = string.gsub(string.match(text, "^%s*([^\n]*)") or "", "%s+$", "")
-  if utf8.len(line) == nil or (utf8.len(line) :: number) <= TITLE_MAX then
-    return if line == "" then "New chat" else line
+  if utf8.len(line) == nil or utf8.len(line) <= TITLE_MAX then
+    if line == "" then
+      return "New chat"
+    end
+    return line
   end
-  local cut = (utf8.offset(line, TITLE_MAX) :: number) - 1
+  local cut = utf8.offset(line, TITLE_MAX) - 1
   return string.sub(line, 1, cut) .. "…"
 end
 
@@ -69,7 +70,7 @@ app.window("main", {
     local roster = app.agents:list()
     local chatList = threads {}
 
-    local function startChat(agentId: string, agentName: string)
+    local function startChat(agentId, agentName)
       local made = db:exec("insert into threads(agent_id, agent_name) values (:a, :n)", { a = agentId, n = agentName })
       local row = db:one("select id from threads where rowid = :r", { r = made.last_insert_id })
       if row then
@@ -77,15 +78,15 @@ app.window("main", {
       end
     end
 
-    local agentRows: { ui.Node } = {}
+    local agentRows = {}
     for _, agent in ipairs(roster) do
       table.insert(
         agentRows,
         ui.Row {
-          key = `agent-{agent.id}`,
+          key = "agent-" .. agent.id,
           icon = agent.avatar or "sparkles",
           title = agent.name,
-          subtitle = if agent.role == "" then "New chat" else agent.role,
+          subtitle = agent.role == "" and "New chat" or agent.role,
           chevron = false,
           onTap = function()
             startChat(agent.id, agent.name)
@@ -95,7 +96,7 @@ app.window("main", {
     end
 
     -- one agent: the button starts the chat; several: it opens a menu of them
-    local newChat: ui.Node?
+    local newChat
     if #roster == 1 then
       local only = roster[1]
       newChat = ui.Button {
@@ -108,12 +109,12 @@ app.window("main", {
         end,
       }
     elseif #roster > 1 then
-      local items: { ui.Node } = {}
+      local items = {}
       for _, agent in ipairs(roster) do
         table.insert(
           items,
           ui.Button {
-            key = `new-chat-{agent.id}`,
+            key = "new-chat-" .. agent.id,
             title = agent.name,
             icon = agent.avatar or "sparkles",
             onTap = function()
@@ -122,7 +123,7 @@ app.window("main", {
           }
         )
       end
-      newChat = ui.Menu { key = "new-chat", icon = "square.and.pencil", label = "New chat", table.unpack(items) }
+      newChat = ui.Menu { key = "new-chat", icon = "square.and.pencil", label = "New chat", unpack(items) }
     end
 
     return ui.SplitView {
@@ -143,11 +144,11 @@ app.window("main", {
               title = "No agents",
               message = "Add an agent to agentos.toml, or with agents.create, to start a chat.",
             },
-            ui.Section { key = "agents", header = "Agents", table.unpack(agentRows) },
+            ui.Section { key = "agents", header = "Agents", unpack(agentRows) },
           },
           -- an empty selectable list is not valid ARIA: show the list only once there is a chat
           ui.Show {
-            when = ui.gt((chatList :: any).total, 0),
+            when = ui.gt(chatList.total, 0),
             ui.List {
               key = "sidebar",
               style = "sidebar",

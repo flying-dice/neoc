@@ -1,17 +1,16 @@
 /**
- * Luau -> Lua 5.1 with darklua (config: .darklua.json), shared by `build-apps.ts` and `codegen-lua.ts`.
+ * Bundling a Lua 5.1 app with darklua (config: .darklua.json), shared by `build-apps.ts` and `lua51-build.ts`.
  *
- * Apps and `@agentos/ui` are authored in typed Luau and shipped as plain Lua 5.1: darklua strips the types,
- * rewrites the Luau-only syntax and bundles an app's relative `require`s into one chunk. `@agentos/*` requires
- * stay as runtime `require` calls (the host provides those modules). The Luau standard-library members Lua 5.1
- * lacks come from `lua/prelude.luau`.
+ * Apps are plain Lua 5.1 and are shipped as plain Lua 5.1: darklua only bundles an app's relative `require`s into
+ * one chunk (and strips comments). `@agentos/*` requires stay as runtime `require` calls (the host provides those
+ * modules). Nothing is lowered, so an app is exactly the Lua it is written in.
  *
  * The generator is `retain_lines` (with `remove_comments`), so line numbers in an error from the VM point at the
- * source: a file keeps every statement on its Luau line (`@agentos/ui` and the prelude are line for line the
- * generated Luau; an app with no relative require is line for line its `app.luau`). Bundling a module hoists it to
- * the top of the file: the module's lines move down by a small constant (+2 for `calc.luau`) and the entry's by
- * the size of the modules before it (+183 for the Calculator). The `readable` generator reformats every line and
- * gives no such mapping.
+ * source: a file keeps every statement on its line (an app with no relative require is line for line its
+ * `app.lua`). Bundling a module hoists it to the top of the file: the module's lines move down by a small
+ * constant (+2 for `calc.lua`) and the entry's by the size of the modules before it. The `readable` generator
+ * reformats every line and gives no such mapping. (`remove_types` is on only because darklua's own bundle
+ * prelude carries a type annotation.)
  *
  * Unlike the lint tools, building cannot skip when darklua is missing: the output is what the host runs.
  */
@@ -40,7 +39,7 @@ export function requireDarklua(): string {
   const darklua = findDarklua()
   if (!darklua) {
     console.error(
-      `darklua not found. It turns the Luau apps into Lua 5.1; install the pinned version:\n` +
+      `darklua not found. It bundles the Lua apps; install the pinned version:\n` +
         `  cargo install darklua --version ${DARKLUA_VERSION} --locked\n` +
         `(or put darklua ${DARKLUA_VERSION} on PATH, e.g. brew install darklua)`
     )
@@ -58,20 +57,7 @@ export function requireDarklua(): string {
 }
 
 /**
- * darklua writes a non-ASCII character in a string as `\u{...}`, which Lua 5.1 reads as the letter `u` and
- * a brace. Rewrite each one to the decimal byte escapes of its UTF-8 encoding. The match consumes `\\` pairs
- * first so an escaped backslash before a `u{` is left alone.
- */
-export function utf8Escapes(lua: string): string {
-  return lua.replace(/\\(\\|u\{([0-9a-fA-F]+)\})/g, (whole, _escape: string, hex: string | undefined) => {
-    if (hex === undefined) return whole
-    const bytes = Buffer.from(String.fromCodePoint(Number.parseInt(hex, 16)), 'utf8')
-    return [...bytes].map((byte) => `\\${String(byte).padStart(3, '0')}`).join('')
-  })
-}
-
-/**
- * The Lua 5.1 text of the Luau file `entry`, with its relative requires bundled in.
+ * The Lua 5.1 text of the Lua file `entry`, with its relative requires bundled in.
  * Throws with darklua's message when the file does not process.
  */
 export function toLua51(darklua: string, entry: string): string {
@@ -80,7 +66,7 @@ export function toLua51(darklua: string, entry: string): string {
     const output = join(scratch, 'out.lua')
     const run = spawnSync(darklua, ['process', '--config', CONFIG, entry, output], { cwd: root, encoding: 'utf8' })
     if (run.status !== 0) throw new Error(`${run.stderr}${run.stdout}`.trim() || `darklua exited ${run.status}`)
-    return utf8Escapes(readFileSync(output, 'utf8'))
+    return readFileSync(output, 'utf8')
   } finally {
     rmSync(scratch, { recursive: true, force: true })
   }

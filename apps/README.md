@@ -1,6 +1,6 @@
 # Building AgentOS apps
 
-An AgentOS app is a **server-side package, authored in Luau and run as Lua 5.1**, that runs inside the Rust host. It holds its state, data, tools,
+An AgentOS app is a **server-side package, written in plain Lua 5.1**, that runs inside the Rust host. It holds its state, data, tools,
 notifications and a description of its UI. It ships no client code: the managed client renders the view trees the app
 produces and sends events back.
 
@@ -17,8 +17,8 @@ produces and sends events back.
 
 The reference apps are `apps/calculator` (a keypad window, shared state, three agent tools) and `apps/agents` (a
 SQLite-backed chat list around the `ChatTranscript` component). Read them next to this page. The architecture is in
-`docs/architecture/` (`host-stack.md` for the host, `ui-system.md` for the UI protocol and the Luau API); the typed API
-is `types/generated/agentos.d.luau`; the components are listed in `docs/reference/components.md`. The last two are
+`docs/architecture/` (`host-stack.md` for the host, `ui-system.md` for the UI protocol and the Lua API); the generated
+LuaCATS definitions of the API are in `types/generated/luals/`; the components are listed in `docs/reference/components.md`. The last two are
 generated from the Rust schema (`bun run codegen`): never edit them.
 
 ## The package
@@ -26,8 +26,8 @@ generated from the Rust schema (`bun run codegen`): never edit them.
 ```
 apps/<id>/
   app.json         the package manifest (below)
-  app.luau         the entry (`main` in app.json): declares the manifest, windows, tools, data
-  *.luau           modules the entry loads with require("./calc") (calc.luau in the Calculator)
+  app.lua          the entry (`main` in app.json): declares the manifest, windows, tools, data
+  *.lua            modules the entry loads with require("./calc") (calc.lua in the Calculator)
   JOURNEYS.md      4 to 8 key user journeys
   e2e/journeys.spec.ts   their automated twins
   tests/, negative/, e2e/   never shipped: the build leaves these folders out of the package
@@ -41,7 +41,7 @@ apps/<id>/
   "name": "Calculator",
   "version": "0.1.0",
   "description": "Arithmetic for you and your agents: type or tap a sum, or let an agent put a result on it.",
-  "main": "app.luau",
+  "main": "app.lua",
   "icon": "plus",
   "tint": "orange",
   "requires": { "host": ">=1.0" }
@@ -52,10 +52,10 @@ apps/<id>/
 |---|---|
 | `id` | 3 to 40 characters: lowercase letters, digits, dashes, not starting with a dash. Namespaces the app's data and its tools (`<id>__<tool>`). |
 | `name`, `version` | `version` is `major.minor.patch` digits (`0.1.0`); bump it to ship a change. |
-| `main` | the Luau entry file (default `app.luau`). |
+| `main` | the Lua entry file (default `app.lua`). |
 | `icon`, `tint`, `description` | what Discover and the add-by-URL preview show *before* the app runs. `icon` is a symbol name, `tint` a palette role. |
 | `requires.host` | the host API range the app needs (checked against the host at install). |
-| `migrations` | optional list of `{ version, name, file }` SQL files; most apps call `db:migrate` in Luau instead. |
+| `migrations` | optional list of `{ version, name, file }` SQL files; most apps call `db:migrate` in Lua instead. |
 
 `app.json` and the `app.manifest { ... }` call in the entry must agree on `id`, `icon` and `tint`: `bun run build:apps`
 fails when they differ. `app.manifest` additionally carries the window (`w`, `h`, `minW`, `minH`). Apps have no
@@ -66,17 +66,17 @@ permissions: a `permissions` key in `app.json` or in `app.manifest` (from before
 `bun run build:apps` (`scripts/build-apps.ts`) turns every `apps/*/app.json` into an **app ref** under
 `dist/apps/<id>/<version>/`: `app-ref.json` (`{ manifest, files: [{ path, url, sha256 }] }`, file URLs relative to it)
 plus the app as **one bundled Lua 5.1 file** (`app.lua`) and its migrations, and one `dist/apps/registry.json`
-(`{ "apps": ["calculator/0.1.0/app-ref.json", ...] }`). Apps are authored in typed Luau but run as Lua 5.1:
-[darklua](https://github.com/seaofvoices/darklua) (`.darklua.json`) strips the types, lowers the Luau-only syntax
-(`+=`, backtick strings, `if` expressions, `continue`) and inlines the package's relative `require`s;
-`require("@agentos/app")` and `require("@agentos/ui")` stay runtime calls. The ref's `manifest.main` is the bundled
-file; the `.luau` sources are not shipped. Two things to know when writing an app: iterate with `pairs(t)` / `ipairs(t)`
-(not `for k, v in t do`: darklua cannot lower it), and use only the Luau library members `lua/prelude.luau` provides
-on Lua 5.1 (`typeof`, `table.clone`, `table.move`, `table.pack`, `table.unpack`, `utf8.*`); `bun test scripts` fails
-on `table.find`, `math.clamp`, `bit32`, `buffer` and the like. `darklua` 0.18.0 must be installed (see AGENTS.md).
-The bundle keeps each statement on its Luau line (`retain_lines`), so an error at `app.lua:N` is line N of `app.luau`
-for an app with no relative `require`; an app with modules is shifted by the size of the modules bundled before it
-(the Calculator: `calc.luau` +2, `app.luau` +183).
+(`{ "apps": ["calculator/0.1.0/app-ref.json", ...] }`). Apps are plain Lua 5.1 and run as written:
+[darklua](https://github.com/seaofvoices/darklua) (`.darklua.json`) only bundles: it inlines the package's relative
+`require`s into the one file and strips comments; `require("@agentos/app")` and `require("@agentos/ui")` stay runtime
+calls. The ref's `manifest.main` is the bundled file; the separate source modules are not shipped. Two things to know
+when writing an app: write Lua 5.1 (`unpack`, `string.gsub`, `x = x + 1`, `a and b or c`: no `+=`, `continue`,
+backtick strings, `if` expressions or `for k, v in t do`), and use only the library members Lua 5.1 and
+`lua/prelude.lua` provide (the prelude adds `typeof`, `table.clone`, `table.move`, `table.pack`, `table.unpack` and
+`utf8.*`); `bun test scripts` fails on Luau syntax and on `table.find`, `math.clamp`, `bit32`, `buffer` and the like.
+`darklua` 0.18.0 must be installed (see AGENTS.md). The bundle keeps each statement on its source line
+(`retain_lines`), so an error at `app.lua:N` is line N of `app.lua` for an app with no relative `require`; an app with
+modules is shifted by the size of the modules bundled before it (the Calculator: `calc.lua` +2, `app.lua` +183).
 
 - **A registry** is a list of app-ref URLs. The host's default registry is `dist/apps/registry.json` over `file://`
   when it exists; `registries` in `agentos.toml` (or `AGENTOS_REGISTRIES`) adds more. Discover lists what they offer.
@@ -88,7 +88,7 @@ for an app with no relative `require`; an app with modules is shifted by the siz
   the host re-fetches and re-verifies every installed app. An app that fails to load is marked failed and the rest
   start. All of it is in `docs/architecture/host-stack.md` ("Apps: lifecycle").
 - **Dev loop:** `bun run dev` builds the apps, starts the host with `dev_reload` and Vite, and **watches `apps/**`**
-  (`*.luau`, `app.json`, migrations): save a file and it re-runs `build:apps`; the host (which cannot run darklua)
+  (`*.lua`, `app.json`, migrations): save a file and it re-runs `build:apps`; the host (which cannot run darklua)
   watches the built refs under `dist/apps`, rebuilds that app's VM and keeps its database (the old version keeps
   running if the new one does not load).
 
@@ -97,7 +97,6 @@ for an app with no relative `require`; an app with modules is shifted by the siz
 An app file starts like this (the Calculator):
 
 ```lua
---!strict
 local app = require("@agentos/app")   -- the host module; also a global named `app`
 local ui = require("@agentos/ui")     -- component constructors and helpers, generated from the component schema
 local calc = require("./calc")        -- a module of this package: inlined into the bundle at build time
@@ -106,8 +105,11 @@ local calc = require("./calc")        -- a module of this package: inlined into 
 In the source, `require` accepts `./x`, `../x` (bundled into the one built file when the app is built), `@agentos/app`
 and `@agentos/ui`. At run time the built file can `require` only `@agentos/app` and `@agentos/ui`: nothing else, and never
 the filesystem (`require("./x")` in a running app is an error that says so). The
-definitions in `types/generated/agentos.d.luau` are the contract; `bun run lint:luau` type-checks every app against
-them in strict mode.
+LuaCATS definitions in `types/generated/luals/` (generated, `---@meta`) are the contract: lua-language-server reads
+them through `.luarc.json` (so an editor with the Lua extension knows `app`, `ui.*` and `require("@agentos/ui")`), and
+`bun run lint:lua` checks every app against them. Annotations in app code (`---@param`, `---@type`) are optional;
+write one where it helps a reader or silences a false alarm. Other modules (`require("lib:json")` and the like) are
+not described yet: they resolve to `any`.
 
 | Call | What it does |
 |---|---|
@@ -155,7 +157,7 @@ app.window("main", {
 - **The tree is data.** The VM turns the constructors' tables into a wire tree and validates it (every interactive
   node needs an explicit `key`; icon-only controls need a `label`; an `Image` needs `alt` or `decorative = true`).
   Handlers stay closures in the VM, keyed by path and event; only the key path crosses the wire.
-- **Handlers** are a Luau function `function(e) ... end` (`e.key`, `e.row`, `e.value`, `e.payload`, `e.actor`), a
+- **Handlers** are a Lua function `function(e) ... end` (`e.key`, `e.row`, `e.value`, `e.payload`, `e.actor`), a
   client action (`ui.act.set / toggle / push / pop / popToRoot / focus / scrollTo / copy / emit / seq`) that runs on the
   client with no round trip, or a list mixing both.
 - **`w`**: `w.id`, `w.params`; `w.state` (per-window server state); `w.client` (Refs to client state); `w.env` (Refs:
@@ -254,7 +256,7 @@ A thread source declares only the thread and the agent (literals or Refs); it ru
 client opens the conversation on `/agui` (AG-UI over SSE, mapped from the agent's ACP session), so messages, tool calls,
 permission prompts and the agent's settings live with the host, and the app never sees them. The `send` and `stop`
 events also reach the app (`e.payload.text`), which is how the Agents app titles a chat and keeps its chat list in
-SQLite (`apps/agents/app.luau`).
+SQLite (`apps/agents/app.lua`).
 
 ## Security
 
@@ -308,16 +310,15 @@ SQLite (`apps/agents/app.luau`).
 ## Adding an app
 
 1. **Create the package.** Copy `apps/calculator` to `apps/<id>` and edit `app.json` (id, name, version `0.1.0`,
-   description, icon, tint). Rewrite `app.luau`, starting with
-   `--!strict`, the two `require`s and `app.manifest { ... }`.
+   description, icon, tint). Rewrite `app.lua`, starting with the two `require`s and `app.manifest { ... }`.
 2. **Set the window.** `window = { w, h, minW, minH }`. The minimum is the smallest size at which every control is
    fully visible and at least 44 pt (the Calculator's 320x500 is justified by the keypad: say why in a comment when
    it is more than 320x240). The host clamps the window to it.
-3. **Write the logic as plain Luau functions** (the Calculator's `calc.luau`), the view as `render`, and the tools.
+3. **Write the logic as plain Lua functions** (the Calculator's `calc.lua`), the view as `render`, and the tools.
    Every interactive node gets a `key`; every tool gets a described schema and a `readOnly` that is true when the tool
    does not write.
-4. **Make it clean.** `bun run lint:luau` (strict `luau-lsp analyze` against the generated definitions) and
-   `bun run lint:stylua` pass; `bun run format` fixes formatting. Fix the types, do not cast them away.
+4. **Make it clean.** `bun run lint:lua` (`lua-language-server --check` against the generated definitions) and
+   `bun run lint:stylua` pass; `bun run format` fixes formatting. Fix what the checker reports, do not silence it.
 5. **Test the logic and tools in Rust.** Add a test beside `crates/agentos-lua/tests/calculator_app.rs` that loads the
    shipped package under the real runtime, calls its tools (`call_tool`) and asserts results and
    `readOnly`. A host-level test (`crates/agentos-host/tests/agents_app.rs`) is for what needs the data layer, views or
@@ -341,8 +342,8 @@ SQLite (`apps/agents/app.luau`).
 
 ## Rules that are enforced
 
-- `bun run lint:luau` and `lint:stylua` (types and format of every app), `bun run lint:testids` (test ids in the
+- `bun run lint:lua` and `lint:stylua` (types and format of every app), `bun run lint:testids` (test ids in the
   kit and the client), `bun run codegen:check` (generated types match the Rust schema).
 - In the host, always: app ids, manifests and app refs are validated and checksum-verified at install; tool input is validated against the schema; `readOnly` blocks writes.
-- Missing a capability? Extend the host API (domain type and schema, application port and use case, the Luau adapter,
+- Missing a capability? Extend the host API (domain type and schema, application port and use case, the Lua adapter,
   codegen, tests), never a side channel. That is a platform change: call it out in the MR.

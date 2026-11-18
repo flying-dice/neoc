@@ -1,7 +1,7 @@
 /**
  * A fake app that serves one fixed view tree with some state paths: what the kit stories (and tests) need to render
  * "JSON trees through the registry". Events from the client are recorded (`events`) and can be answered by a
- * handler that drives the host side: set state, push a toast. It is not a Luau runtime; the tree never changes
+ * handler that drives the host side: set state, push a toast. It is not a Lua runtime; the tree never changes
  * unless the handler sends ops.
  */
 import type { ClientDecl, Json, Node, ViewEventParams } from '../protocol'

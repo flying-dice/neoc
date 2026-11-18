@@ -1,4 +1,4 @@
-//! Dev hot reload: watch an app's directory; when a Luau (or manifest) file changes, signal the host,
+//! Dev hot reload: watch an app's directory; when a Lua (or manifest) file changes, signal the host,
 //! which rebuilds the VM from source and swaps it in (the database is kept; the old VM is dropped).
 
 use notify::{recommended_watcher, Event, EventKind, RecursiveMode, Watcher};
@@ -14,7 +14,7 @@ fn is_app_file(p: &Path) -> bool {
     p.extension().is_some_and(|e| e == "lua" || e == "json")
 }
 
-/// Watch `dir` recursively. Each change to a `.luau` or `.json` file sends one `()`; consumers debounce.
+/// Watch `dir` recursively. Each change to a `.lua` or `.json` file sends one `()`; consumers debounce.
 pub fn watch_dir(dir: &Path) -> notify::Result<AppWatcher> {
     let (tx, rx) = mpsc::unbounded_channel();
     let mut w = recommended_watcher(move |res: notify::Result<Event>| {

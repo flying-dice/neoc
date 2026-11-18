@@ -40,7 +40,7 @@ fn has_location(message: &str) -> bool {
     rest.split_once(':').is_some_and(|(line, _)| !line.is_empty() && line.bytes().all(|b| b.is_ascii_digit()))
 }
 
-/// The first `file.lua:LINE` frame of a Luau traceback.
+/// The first `file.lua:LINE` frame of a Lua traceback.
 fn first_frame(traceback: &str) -> Option<String> {
     traceback.lines().find_map(|l| {
         let l = l.trim();

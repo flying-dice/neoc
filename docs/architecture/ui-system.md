@@ -1,14 +1,14 @@
-# AgentOS server-driven UI: component kit, view protocol, bindings, Luau API
+# AgentOS server-driven UI: component kit, view protocol, bindings, Lua API
 
 Status: the design the platform is built on, and still its reference for the view protocol, bindings, state and the
-Luau authoring API. It is implemented: the host in `crates/` (`agentos-domain` holds the schema and the protocol,
+Lua authoring API. It is implemented: the host in `crates/` (`agentos-domain` holds the schema and the protocol,
 `agentos-lua` the app API), the renderer in `client/src/view` and the kit in `packages/ui`. Where the
-code and this text differ, the code wins: the generated `types/generated/agentos.d.luau` and
+code and this text differ, the code wins: the generated `types/generated/luals/` (LuaCATS) and
 `docs/reference/components.md` are the exact catalogue. Sections 6 to 8 record the original type-pipeline proposal,
 the prototype and the build plan; each opens with what was actually built. Sources of truth beside it:
 `docs/architecture/ARCHITECTURE.md`, `docs/TESTING.md`, `docs/design/DESIGN_LANGUAGE.md`, `apps/README.md`.
 
-Keywords MUST/SHOULD/MAY are used in the RFC 2119 sense. "Host" = the Rust process, "app" = one Luau VM,
+Keywords MUST/SHOULD/MAY are used in the RFC 2119 sense. "Host" = the Rust process, "app" = one Lua VM,
 "client" = the Vite + Svelte PWA, "view" = one window's UI instance.
 
 ---
@@ -17,22 +17,22 @@ Keywords MUST/SHOULD/MAY are used in the RFC 2119 sense. "Host" = the Rust proce
 
 | Question | Decision | Why (short) |
 |---|---|---|
-| Who owns what | Host owns truth (SQLite, Luau state). Client owns **interaction** (drafts, selection, navigation, scroll, focus, sheets, sort). | Typing, scrolling and navigation must never wait for a round trip; data must never be wrong on the client. |
+| Who owns what | Host owns truth (SQLite, Lua state). Client owns **interaction** (drafts, selection, navigation, scroll, focus, sheets, sort). | Typing, scrolling and navigation must never wait for a round trip; data must never be wrong on the client. |
 | Wire format | JSON-RPC 2.0 over the existing WebSocket. Three message classes: `view.tree` (full), `view.ops` (**keyed structural ops**), `data.patch` (**per-binding value updates**). | Structure changes rarely; data changes constantly. Keep them on separate, individually cheap channels. |
 | Patch strategy | **Keyed reconciliation** (React/Flutter style: host diffs, emits `set/insert/remove/move/replace` addressed by key path) for structure. **Not JSON Patch.** Values never travel as tree edits: they flow through bindings. | Stable keys survive reorders and keep client-side state (scroll, focus, drafts) attached to the right node; ops are idempotent; JSON Patch addresses by array index and breaks under reorder. |
 | Binding model | **Refs + a closed expression language** in the tree (`{"$ref":"client.search"}`, `{"$fn":"fmt.date",...}`); **sources** (live SQLite queries) declared separately; list rows are a **template sent once** plus **row data**. Two-way for props typed `Binding`. | The tree stays small and static; values are resolved on the client reactively (Svelte runes); no app code or expression VM on the client. |
-| State tiers | ephemeral UI (implicit, client) / **client-managed** (declared, client authoritative) / **app state** (Luau, host authoritative) / **data** (SQLite, host authoritative, live). | Matches SwiftUI `@State` / `@Binding` / `@Observable` and LiveView + JS commands, with the line drawn explicitly. |
+| State tiers | ephemeral UI (implicit, client) / **client-managed** (declared, client authoritative) / **app state** (Lua, host authoritative) / **data** (SQLite, host authoritative, live). | Matches SwiftUI `@State` / `@Binding` / `@Observable` and LiveView + JS commands, with the line drawn explicitly. |
 | Conflicts | Dirty field **shields itself** from remote changes; write-back carries `baseRev`; host **3-way merges text on the base it last sent**, scalars are human-wins; the losing side is kept as a revision. | An agent appending to a note while the user types must lose nothing and never move the caret. |
-| Luau API | **Table-call constructors** (`ui.VStack { spacing = 2, child, child }`) that return plain node tables; handlers are Luau functions (never serialised: referenced by key path); **both** layers exist: constructors are sugar over the plain-table wire form, raw tables are accepted and validated identically. No chained modifiers. | Native Luau idiom (Roact/Fusion), fully typeable in `--!strict`, JSON-shaped, diffable. |
+| Lua API | **Table-call constructors** (`ui.VStack { spacing = 2, child, child }`) that return plain node tables; handlers are Lua functions (never serialised: referenced by key path); **both** layers exist: constructors are sugar over the plain-table wire form, raw tables are accepted and validated identically. No chained modifiers. | Native Lua idiom (Roact/Fusion), described by generated LuaCATS types, JSON-shaped, diffable. |
 | Styling | Apps can **not** style. Only semantic props from closed token sets (spacing units, text styles, tints, surfaces, radii, sizes in pt). No CSS, raw colours, fonts, shadows. Data colours (labels, canvas fills) are *content*, auto-contrasted. | Design language, WCAG AA, dark mode, Reduce Transparency and re-theming all stay host-controlled and guaranteed. |
-| Type pipeline | One **component schema** (YAML with JSON Schema fragments + `x-agentos` metadata) -> Rust validator tables, TS types + renderer contract tests, Luau `.d.luau` + constructors, docs + stories. | The catalogue has metadata (events, slots, a11y rules, `since`, tier) that plain Rust or TS types do not express; one file, four outputs, drift is a build failure. |
+| Type pipeline | One **component schema** (YAML with JSON Schema fragments + `x-agentos` metadata) -> Rust validator tables, TS types + renderer contract tests, Lua `ui` module + LuaCATS definitions, docs + stories. | The catalogue has metadata (events, slots, a11y rules, `since`, tier) that plain Rust or TS types do not express; one file, four outputs, drift is a build failure. |
 
 ---
 
 ### 0.1 Architecture
 
 ```
- Luau VM (one per app)                Rust host                              Client (Vite + Svelte 5 PWA)
+ Lua VM (one per app)                Rust host                              Client (Vite + Svelte 5 PWA)
  ┌─────────────────────┐     ┌──────────────────────────────┐        ┌───────────────────────────────┐
  │ render(w) -> tree   │────▶│ ViewInstance (per window)    │  tree  │ ViewCore (per window)         │
  │ handlers (closures) │◀────│  tree + rev, handler table   │───────▶│  store: tree, state, client,  │
@@ -185,7 +185,7 @@ they may be children of any container (typically in a `Group` at the root).
 
 | Component | Props | Slots | Kit mapping | Tier |
 |---|---|---|---|---|
-| `Text` | `text` (positional in Luau), `style largeTitle|title1..3|headline|body|callout|subheadline|footnote|caption1|caption2|display`, `weight`, `foreground`, `align leading|center|trailing`, `lines n|0`, `truncation tail|middle|head`, `selectable`, `digits tabular`, `fit` (shrink to box; `display` only), `heading 1..6`, `live off|polite|assertive` | | `Text` | 1 |
+| `Text` | `text` (positional in Lua), `style largeTitle|title1..3|headline|body|callout|subheadline|footnote|caption1|caption2|display`, `weight`, `foreground`, `align leading|center|trailing`, `lines n|0`, `truncation tail|middle|head`, `selectable`, `digits tabular`, `fit` (shrink to box; `display` only), `heading 1..6`, `live off|polite|assertive` | | `Text` | 1 |
 | `Label` | `title`, `icon`, `display titleAndIcon|titleOnly|iconOnly` | | new | 1 |
 | `Icon` | `name` (kit icon set), `size`, `weight`, `tint` | | `Icon` | 1 |
 | `Image` | `src {url}` (https), `fit fit|fill`, `size`, `corner`, `alt` (required unless `decorative`), `placeholder` | | new | 1 |
@@ -208,7 +208,7 @@ they may be children of any container (typically in a `Group` at the root).
 | `DiffView` | Reviewer (#17), Coder git view | `diff` Source (files -> hunks -> lines), `comments` Source (anchored threads), `mode unified|split`, `whitespace`, `selection` | `onComment{file,line,side,text}`, `onReply{thread,text}`, `onResolve{thread,state keep|resolve|drop}`, `onExpand{file,hunk,dir}` (lazy context) | Same highlighter as `CodeEditor`; comment composer reuses `TextEditor`; threads reuse `Avatar` + `Markdown` | 3 |
 | `ChatTranscript` | Agents (#7), Books chat (#14) | `thread` Source (**kind `thread`**, below), `anchor end`, `agents` (contact map), `typing`, `composer` on/off | `onSend{text,attachments}`, `onStop`, `onRetry{id}`, `onLoadOlder`, `onPermission{id,choice}`, `onOpenArtifact{ref}` | Rows are AG-UI messages `{id, role, parts[]}`; AG-UI events map 1:1 to source ops (3.3). Built from `MessageBubble`, `RichText`, `TurnActivity`, `PermissionCard`, `Composer` (all in the desktop app today) promoted to kit organisms | 2 |
 | `CalendarGrid` | Calendar (#8), Reminders date | `mode month|week|day`, `date` Binding (anchor), `range` Binding **out** (visible start/end, used as a source param), `events` Source `{id,start,end,allDay,title,tint,owner}`, `weekStart`, `hours`, `selection`, `nowIndicator` | `onSelectDate`, `onCreate{start,end}` (drag to create), `onMove{id,start,end}`, `onResize{id,end}`, `onTap{id}` | New. Month grid doubles as `DatePicker graphical`. Times are `instant`/`date` typed (3.6) | 2 |
-| `TerminalView` | Terminal (exists in desktop) | `stream` Source (bytes) | `onData`, `onResize` | xterm.js; only if Terminal becomes a Luau app | 3 |
+| `TerminalView` | Terminal (exists in desktop) | `stream` Source (bytes) | `onData`, `onResize` | xterm.js; only if Terminal becomes a Lua app | 3 |
 | `Preview` | Files quick look (#15) | `file` | | host-rendered preview by mime | 3 |
 | `WebView` | Browser (#12) | `tabs` ... | | **Open question** (section 8): iframe sandbox vs host-driven remote browser | ? |
 
@@ -288,13 +288,13 @@ interface Node {
 node sits in a named slot: `main/list/@row/item/delete`. Paths are stable across renders because keys are.
 Rules (validated by the host on every tree it emits, so a bad app fails in its own tests, not in the client):
 
-- keys are unique per (parent, slot); auto keys `_0`, `_1`, ... are assigned to un-keyed nodes by the Luau
+- keys are unique per (parent, slot); auto keys `_0`, `_1`, ... are assigned to un-keyed nodes by the Lua
   constructors and are only legal on **non-interactive nodes outside dynamic containers**;
 - a row template's root and its descendants are keyed once; instances are addressed `path + rowKey`;
 - limits: depth <= 64, nodes <= 10 000 per view, message <= 1 MB, ops per batch <= 1 000.
 
 **Events are declarations, not closures.** The tree says *which* events a node reports (`"on": {"tap": true}`);
-the Luau closure stays on the host in the instance's handler table keyed `path#event`, and is replaced on every
+the Lua closure stays on the host in the instance's handler table keyed `path#event`, and is replaced on every
 render (so it always sees current state). Nothing executable ever crosses the wire.
 
 ### 2.2 Full tree, then keyed ops
@@ -315,7 +315,7 @@ round trip to a complete window). After that the host sends **ops** addressed by
 that cannot be applied (`no node at path`) makes the client call `view.sync` for a **full snapshot** and replace its
 tree, keeping drafts and local state. Resync is the only recovery path; the protocol never guesses.
 
-**How the host produces ops.** `render(w)` (Luau) returns a tree; the host reconciles it against the instance's
+**How the host produces ops.** `render(w)` (Lua) returns a tree; the host reconciles it against the instance's
 previous tree React-style: same `(type,key)` -> recurse and diff props; sibling key sequences are diffed with an
 LIS-based minimal-moves pass; new keys -> `insert`, missing keys -> `remove`, same key new type -> `replace`.
 Render is triggered by *tracked state reads* (3.1) and coalesced to one render per view per frame; ops from one
@@ -336,7 +336,7 @@ The key observation: **values change thousands of times more often than structur
 row updates, live query refreshes: all `data.patch`. Structure (a sheet appears, an empty state toggles, a tab is
 added) is `view.ops`. Separating them means the common path never runs the reconciler and never touches the tree.
 
-**Latency budget** (host on localhost, p95): event on the wire 0.5 ms; Luau handler 1 to 3 ms; render + diff for
+**Latency budget** (host on localhost, p95): event on the wire 0.5 ms; Lua handler 1 to 3 ms; render + diff for
 <= 500 nodes 3 ms; coalescing up to one frame (8 ms average, only when changes are bursty; a lone change flushes
 immediately); client apply <= 2 ms; paint. Target **event -> pixels <= 30 ms** on the same machine. Everything the
 user does continuously (typing, scrolling, drag, sheet, navigation, selection) never waits on any of this (3.5).
@@ -382,7 +382,7 @@ idempotent. `text` sources use `splice` and `thread` sources use `append` (3.3).
 - `seq` is per-view monotonic: used to dedupe on reconnect and to key optimistic undo logs. Events are **not**
   auto-retried after a reconnect (a tap is not idempotent); drafts and state writes are (3.4).
 - Handler errors come back as JSON-RPC errors (`-32010 AppError`, message safe to show) and the client shows them as a
-  toast (dev: with the Luau stack).
+  toast (dev: with the Lua stack).
 - The handler receives `e = {key, row, value, payload, actor}`: `row` is the host's last-sent snapshot of that row (so
   re-read by key if you need the latest), `actor` is the human at this client.
 - **Before sending, the client flushes every dirty draft and waits for its ack** (`ViewCore.emit` -> `settle()`): the
@@ -402,7 +402,7 @@ idempotent. `text` sources use `splice` and `thread` sources use `append` (3.3).
   and tree. A write to shared state re-renders every instance that read it.
 - `params` carry a deep link (`{noteId: 12}`): the window's `onOpen(w, params)` seeds client state before the first tree.
 - A render that errors keeps the **last good tree** and sends `view.error {message}`; the window shows an inline error
-  banner (dev: with Luau trace). A crashing or killed VM sends `view.closed {reason}` to all its instances.
+  banner (dev: with Lua trace). A crashing or killed VM sends `view.closed {reason}` to all its instances.
 - **Visibility**: `view.visibility {viewId, visible:false}` (minimised, other stage) pauses pushes; the host keeps the
   dirty set and sends a single coalesced catch-up (or a full `view.tree` if the op log has rolled) on show.
 - **Resize**: `view.resize {viewId, size, sizeClass}` is a *notification*, sent debounced, only if the app reads
@@ -458,7 +458,7 @@ Two independent numbers, both announced in `session.hello`:
   Each schema entry records `since` and `deprecated`; deprecations live for two minors.
 
 When the client does not know a `type` (kit older than the app expects) it renders `Unsupported` (labelled, a11y
-`role=note`). Nodes MAY carry a `fallback` slot; the generated Luau constructors for components added after kit 1.0 fill
+`role=note`). Nodes MAY carry a `fallback` slot; the generated Lua constructors for components added after kit 1.0 fill
 it automatically (`Gauge` -> `ProgressView`), so a new app degrades on an old client instead of showing holes.
 Apps declare `kit = ">=1.2"` in `app.manifest`; the host checks it at install against the running client kit.
 
@@ -479,7 +479,7 @@ h->c  response {ok:true}
 
 ```
 agent -> host  MCP tools/call notes.append {id:7, text:"- buy oat milk"}
-h              Luau run(): db:exec("update notes set body = body || ... rev = rev + 1 ... where id = 7")
+h              Lua run(): db:exec("update notes set body = body || ... rev = rev + 1 ... where id = 7")
 h              sqlite commit hook: tables {notes} dirty -> live queries on `notes`: s_notes (list), s_note (row)
 h->c  data.patch {sources:{
         s_notes:{kind:"rows", total:214, keys:[7,41,...], rows:{"7":{id:7,title:"Groceries",preview:"milk ...",updated_at:...}}},
@@ -493,7 +493,7 @@ h->c  response {rev:11, value:"Milk\n- buy oat milk", conflict:false}
 c     adopts the merged value, caret mapped through the diff, scroll untouched
 ```
 
-No Luau view code ran for the agent's change: the bindings did the work.
+No Lua view code ran for the agent's change: the bindings did the work.
 
 
 ---
@@ -510,10 +510,10 @@ resolved on the host; the two meet at well-defined seams (sources, two-way bindi
 |---|---|---|---|---|---|---|
 | **Ephemeral UI** | scroll offset, caret/selection range, focus, hover/pressed, IME composition, row swipe-open, text typed but not yet committed | client | the adapter / `UiMemory` keyed by node path | the user | never (unless a control declares `onScroll`, `selection` out-binding) | 0 |
 | **Client-managed** (declared) | open sheet/alert/popover, navigation stack, selected tab, sidebar selection, list selection, search text, sort order, expanded sections, calendar anchor date | **client** | `store.client` (`$state`) | the user, client actions, or the app via `client.set` | mirrored to the host when declared `sync`/`persist` (3.5); read by sources as **params** | 0 |
-| **App state** | Calculator accumulator, a form's validated draft, "is syncing" flag | **host** | Luau tables: `app.state` (shared by all windows), `w.state` (per window) | handlers, tools | `data.patch.state` for refs; **tracked reads** in `render` for structure | 1 RTT |
+| **App state** | Calculator accumulator, a form's validated draft, "is syncing" flag | **host** | Lua tables: `app.state` (shared by all windows), `w.state` (per window) | handlers, tools | `data.patch.state` for refs; **tracked reads** in `render` for structure | 1 RTT |
 | **Data** | notes, tasks, contacts, messages | **host** | per-app SQLite | handlers, **agent tools**, anything | live **sources** (3.3) | 1 RTT + query |
 
-How the Luau side distinguishes them (4.2): `w.client.x` is a **Ref** (the host has no authoritative value),
+How the Lua side distinguishes them (4.2): `w.client.x` is a **Ref** (the host has no authoritative value),
 `w.state.x` is a **value** (read in render = tracked dependency), `db:query{...}` is a **Source**.
 
 The rule of thumb for app authors: *if the user is mid-gesture or the value is only about how the screen is
@@ -594,7 +594,7 @@ Template-scoped sources (inside a `NavigationStack` destination) are instantiate
 
 1. At prepare time the host records the **tables each query reads** (SQLite authorizer callback: `SQLITE_READ` rows;
    catches joins, subselects, views).
-2. Any write on the app's connection (a Luau handler, an `app.tool`, a migration, a background job) ends in a commit.
+2. Any write on the app's connection (a Lua handler, an `app.tool`, a migration, a background job) ends in a commit.
    The `commit_hook` hands the set of dirty tables (collected by `update_hook`) to the live-query scheduler.
 3. Within one frame (16 ms, coalescing bursts, up to 50 ms under load) the scheduler re-runs, **in one read
    transaction** (consistent snapshot across list, detail and counts), every subscribed source of every open view
@@ -682,7 +682,7 @@ writes it); it only affects the host through the source params (debounce 150 to 
 
 ### 3.5 Client-managed state, client actions, what survives what
 
-**Declaration** (Luau, 4.2): `client = { name = {init, persist, sync} }`.
+**Declaration** (Lua, 4.2): `client = { name = {init, persist, sync} }`.
 
 | Option | Values | Meaning |
 |---|---|---|
@@ -744,7 +744,7 @@ route and mode survive a host restart without the app doing anything.
 |---|---|---|
 | Dates, times, numbers, currency, percent, bytes, plurals, lists, relative time | **client** (`fmt.*` via `Intl`) | uses the *viewer's* locale and time zone (two devices see their own), no per-locale strings on the host, relative time ticks from a shared clock (`env.now`, minute resolution) with zero messages |
 | Presentation logic: conditionals, concatenation, "n selected", button enabled from form validity, empty-state text | **client** `Expr` | no round trip, no flicker |
-| Business/semantic computation: totals, permissions, search ranking, calculator arithmetic, anything an agent or notification must also read | **host** (Luau or SQL, incl. generated columns/views) | single source of truth, testable, agent-visible |
+| Business/semantic computation: totals, permissions, search ranking, calculator arithmetic, anything an agent or notification must also read | **host** (Lua or SQL, incl. generated columns/views) | single source of truth, testable, agent-visible |
 | Sorting, filtering, searching, grouping of data that does not fit in a window | **host** (source params) | only the host has the rows |
 | Filtering a small static collection (settings panes, < ~500 rows already resident) | client `List.filter` (tier 2) | avoids a source for trivia |
 | Strings given to agents, notifications, logs | **host** | the client is not involved |
@@ -765,7 +765,7 @@ correctly (the classic reminders/calendar bug is formatting a floating date in t
   keep the geometry.
 - **Host query**: the source's SQL is wrapped `select * from (<sql>) limit :n offset :from` and `select count(*) from
   (<sql>)` (`total: "exact"|"estimate"|"none"`; `estimate` skips the count for huge tables). Windowed sources MUST have a
-  total order (`order by ..., <key>`); the Luau `db:query` rejects a windowed query without one.
+  total order (`order by ..., <key>`); the Lua `db:query` rejects a windowed query without one.
 - **Live updates re-run only the subscribed windows** and the count: 2 to 3 small queries, never the table. A row that
   moves out of the window is a `drop`.
 - **Scroll anchoring**: the client anchors on the **key** of the first visible row, so inserts above the viewport
@@ -805,7 +805,7 @@ text** (3.4).
 
 ---
 
-## 4. The Luau authoring API
+## 4. The Lua authoring API
 
 ### 4.1 Style: table-call constructors over a plain-table wire form
 
@@ -813,9 +813,9 @@ Three options were weighed.
 
 | Option | Example | Verdict |
 |---|---|---|
-| SwiftUI-style chained modifiers | `ui.Text("Hi"):font("title"):foreground("secondary")` | Reads well, but in Luau every modifier returns the generic node type, so per-component props cannot be type-checked or autocompleted; errors point at the chain; and it hides the data shape. Rejected. |
+| SwiftUI-style chained modifiers | `ui.Text("Hi"):font("title"):foreground("secondary")` | Reads well, but in Lua every modifier returns the generic node type, so per-component props cannot be checked or autocompleted; errors point at the chain; and it hides the data shape. Rejected. |
 | Plain tables + reconciler | `{ type = "Text", props = { text = "Hi" } }` | Maximally simple and exactly the wire form, but noisy, no autocomplete, typos become runtime errors. Kept **as the escape hatch** (generated UI, JSON from a database). |
-| **Table-call constructors (chosen)** | `ui.Text { "Hi", style = "title" }` | Luau-native (`f{...}` call sugar; Roblox's Roact and Fusion use the same idiom), JSON-shaped, fully typeable from generated `.d.luau` in `--!strict` with `luau-lsp`, children are just positional entries, slots are just named keys, diffs and snapshots are readable. |
+| **Table-call constructors (chosen)** | `ui.Text { "Hi", style = "title" }` | Lua-native (`f{...}` call sugar; Roblox's Roact and Fusion use the same idiom), JSON-shaped, checkable against the generated LuaCATS definitions with lua-language-server, children are just positional entries, slots are just named keys, diffs and snapshots are readable. |
 
 So: **both layers exist**. Constructors are thin: they validate, auto-key, capture the caller's `file:line` (dev only, for
 error messages) and return the **plain node table** of 2.1. `render` may return raw tables too; they pass through the same
@@ -825,13 +825,13 @@ validator. There are no modifiers: universal props (padding, frame, background, 
 
 - `ui.X { a, b, key = "k", prop = v, slotName = ..., onTap = fn }`: positional entries are children (or the text/title for
   `Text`, `Label`, `Button`, `Row`), named keys are props, slots, and handlers. Arrays and `nil` in child position are
-  flattened/skipped; `ui.each(list, fn)` maps a Luau list to children.
-- A **handler** is a Luau function (reported by key path, never serialised), a client **Action** (`ui.act.*`), or a
+  flattened/skipped; `ui.each(list, fn)` maps a Lua list to children.
+- A **handler** is a Lua function (reported by key path, never serialised), a client **Action** (`ui.act.*`), or a
   list mixing both.
 - `ui.Text { s.display }` reading **app state in render** registers a dependency: the host re-runs `render` when it
   changes and sends the minimal `set` op. `w.client.x` / `source.field` / `r.field` are **Refs** (values the host does not
   own): they resolve on the client and cost no re-render.
-- `and`, `or`, `not` are Luau keywords, so the expression helpers are `ui.all`, `ui.any`, `ui.negate`.
+- `and`, `or`, `not` are Lua keywords, so the expression helpers are `ui.all`, `ui.any`, `ui.negate`.
 
 ### 4.2 API reference
 
@@ -879,19 +879,20 @@ return Refs (`r.title` -> `row.title`). `tostring(ref)` and `"x" .. ref` raise "
 **Rules the host enforces.** `render` is pure (db writes and `app:*` calls raise inside render); one render per view
 per frame; a CPU time slice per call (counted by the VM's count hook); interactive nodes need explicit keys;
 icon-only controls need a `label`; every `Image` needs `alt` or `decorative = true`; only whitelisted props exist.
-Errors carry the Luau `file:line` of the constructor call (dev builds).
+Errors carry the Lua `file:line` of the constructor call (dev builds).
 
-**Typing.** The component schema (section 6) generates `ui.d.luau`; in `--!strict` a misspelled prop, a wrong enum value, a
-`Binding` prop given a plain value, or an unknown slot is a `luau-analyze` error (wired into `bun run lint`), not a runtime surprise.
+**Typing.** The component schema (section 6) generates LuaCATS definitions (`types/generated/luals/@agentos/ui.lua`); a wrong
+enum value, a `Binding` prop given a plain value, a missing required prop or a wrong slot type is a lua-language-server
+diagnostic (`bun run lint:lua`, wired into `bun run lint`), not a runtime surprise. An unknown prop name is still caught only
+at run time (LuaLS does not check a table literal for extra fields).
 
 ### 4.3 Example 1: Calculator
 
-`calc.luau` is a straight port of `apps/calculator/src/shared/evaluate.ts` (`evaluate(expr): number` raising on
+`calc.lua` is a straight port of `apps/calculator/src/shared/evaluate.ts` (`evaluate(expr)` returning a number, raising on
 bad input, `format(n)`, `formatEntry(text)`); the app is below. State is **shared** (`app.state`): one calculator
 however many windows are open, and the agent tool can drive it.
 
 ```lua
---!strict
 local app  = require("@agentos/app")
 local ui   = require("@agentos/ui")
 local calc = require("./calc")
@@ -909,25 +910,25 @@ local s = app.state {
 
 local SYMBOL = { ["+"] = "+", ["-"] = "−", ["*"] = "×", ["/"] = "÷" }
 
--- ── Logic (pure Luau; no UI in here) ──────────────────────────────────────
+-- ── Logic (pure Lua; no UI in here) ──────────────────────────────────────
 
-local function apply(a: number, op: string, b: number): number
-  s.caption = `{calc.format(a)} {SYMBOL[op]} {calc.format(b)}`
-  return calc.evaluate(`{a} {op} ({b})`)                -- raises on division by zero
+local function apply(a, op, b)
+  s.caption = calc.format(a) .. " " .. SYMBOL[op] .. " " .. calc.format(b)
+  return calc.evaluate(a .. " " .. op .. " (" .. b .. ")")  -- raises on division by zero
 end
 
-local function digit(d: string)
+local function digit(d)
   if s.fresh then
-    s.entry, s.fresh = (if d == "." then "0." else d), false
+    s.entry, s.fresh = (d == "." and "0." or d), false
   elseif d == "." then
     if not string.find(s.entry, ".", 1, true) then s.entry ..= "." end
   elseif #string.gsub(s.entry, "[-.]", "") < 9 then
-    s.entry = if s.entry == "0" then d else s.entry .. d
+    s.entry = s.entry == "0" and d or s.entry .. d
   end
 end
 
-local function operator(op: string)
-  local value = tonumber(s.entry) :: number
+local function operator(op)
+  local value = tonumber(s.entry)
   if s.hasAcc and s.pending ~= "" and not s.fresh then
     s.acc = apply(s.acc, s.pending, value)
     s.entry = tostring(s.acc)
@@ -939,7 +940,7 @@ end
 
 local function equals()
   if not s.hasAcc or s.pending == "" then return end
-  s.entry = tostring(apply(s.acc, s.pending, tonumber(s.entry) :: number))
+  s.entry = tostring(apply(s.acc, s.pending, tonumber(s.entry)))
   s.hasAcc, s.pending, s.fresh = false, "", true
 end
 
@@ -952,18 +953,18 @@ local function clear()    -- "C" clears what is being typed; "AC" (nothing typed
   s.err, s.fresh = false, true
 end
 
-local actions: { [string]: (string?) -> () } = {
+local actions = {
   digit = digit, operator = operator, equals = equals, clear = clear,
   negate = function()
-    s.entry = if s.entry:sub(1, 1) == "-" then s.entry:sub(2) elseif s.entry == "0" then "0" else "-" .. s.entry
+    if s.entry:sub(1, 1) == "-" then s.entry = s.entry:sub(2) elseif s.entry ~= "0" then s.entry = "-" .. s.entry end
   end,
-  percent = function() s.entry = tostring((tonumber(s.entry) :: number) / 100) end,
+  percent = function() s.entry = tostring(tonumber(s.entry) / 100) end,
   backspace = function()
-    if not s.fresh then s.entry = if #s.entry > 1 and s.entry ~= "-0" then s.entry:sub(1, -2) else "0" end
+    if not s.fresh then s.entry = (#s.entry > 1 and s.entry ~= "-0") and s.entry:sub(1, -2) or "0" end
   end,
 }
 
-local function press(kind: string, arg: string?)
+local function press(kind, arg)
   if s.err and kind ~= "clear" then return end
   if not pcall(actions[kind], arg) then
     s.err, s.hasAcc, s.pending, s.fresh = true, false, "", true
@@ -972,7 +973,7 @@ end
 
 -- ── View ─────────────────────────────────────────────────────────────────
 
-local function digitKey(d: string)
+local function digitKey(d)
   return { id = d, name = d, label = d, kind = "digit", arg = d, face = "digit", shortcut = d }
 end
 local function opKey(id, symbol, arg, name)
@@ -1009,7 +1010,7 @@ end
 app.window("main", {
   title = "Calculator",
   render = function(w)
-    local display = if s.err then "Error" else calc.formatEntry(s.entry)
+    local display = s.err and "Error" or calc.formatEntry(s.entry)
     return ui.Scope { scheme = "dark", background = "primary",    -- the instrument canvas: black body
       ui.VStack { spacing = 2, padding = 3,
         ui.Spacer {},
@@ -1025,7 +1026,7 @@ app.window("main", {
 
 -- ── Agent tools ──────────────────────────────────────────────────────────
 
-local function record(expression: string, result: number)
+local function record(expression, result)
   local h = app.kv:get("history") or {}
   table.insert(h, 1, { expression = expression, result = result })
   while #h > 50 do table.remove(h) end
@@ -1068,7 +1069,7 @@ app.tool {
 }
 ```
 
-What this shows: all state and logic are ordinary Luau; the view is a pure function of `s`; no event plumbing for
+What this shows: all state and logic are ordinary Lua; the view is a pure function of `s`; no event plumbing for
 the agent tool (compare the current app's `ctx.emit('display', ...)` + a client `api.on` listener); the palette is
 semantic (`fill = "gray4"`), and the "black body" is `Scope { scheme = "dark" }`, not a hex. Pressing a key is one event
 and one `set` op or two (2.8-A). The keypad costs a server round trip per key; on a local host that is far below a frame, see open question 1 for remote hosts.
@@ -1079,7 +1080,6 @@ Folders sidebar, a notes list bound to a query with search, an editor with a two
 preview, a delete confirmation `Alert`, and an agent tool `notes.append` that updates the open view live.
 
 ```lua
---!strict
 local app = require("@agentos/app")
 local ui  = require("@agentos/ui")
 local t   = app.t
@@ -1136,8 +1136,8 @@ local note = db:row([[select id, body, rev, updated_at, author from notes where 
   end,
 })
 
-local function newNote(folder: number, who: string): number
-  local target = if folder == 0 then 1 else folder
+local function newNote(folder, who)
+  local target = folder == 0 and 1 or folder
   return db:exec("insert into notes(folder_id, author) values (:f, :who)", { f = target, who = who }).last_insert_id
 end
 
@@ -1317,11 +1317,11 @@ notes or 5 000. Test ids that fall out: `notes-folders-row-3`, `notes-new-note`,
   e2e specs: `local v = test.mount(app, "main"); v:tap("calculator-key-7"); v:expectText("calculator-display", "7")`;
   `v:type("notes-body", "hi")`; `v:tree()` for snapshots (the tree is JSON). Tool tests call `app.tool` directly against a
   temp SQLite and assert the resulting `data.patch` for an open view.
-- **Sandbox.** One Lua 5.1 VM per app (apps are authored in strict Luau and built to Lua 5.1), no `os`/`io`/`debug`,
+- **Sandbox.** One Lua 5.1 VM per app (apps are plain Lua 5.1; darklua only bundles their modules), no `os`/`io`/`debug`,
   no `require` at run time beyond `@agentos/app` and `@agentos/ui` (modules are bundled at build time), count-hook
   time slices, memory cap, per-app SQLite file, and capabilities (network,
   files, notifications) gated by `app.manifest.permissions` and the Settings permission model.
-- **Dev loop**: saving a `.luau` file hot-reloads the VM; each open instance re-renders against the new code and the
+- **Dev loop**: saving a `.lua` file hot-reloads the VM; each open instance re-renders against the new code and the
   host sends the minimal ops (state is kept when the schema of `app.state` allows).
 
 
@@ -1380,7 +1380,7 @@ window is being resized.
 ### 5.3 Accessibility
 
 The kit already targets WCAG 2.1 AA with axe in every story and desktop spec; SDUI keeps that target and moves most
-enforcement to the **tree validator** (host, on every tree emitted, plus dev-time `luau-analyze` rules):
+enforcement to the **tree validator** (host, on every tree emitted, plus dev-time lint rules):
 
 | Requirement | How it is met |
 |---|---|
@@ -1422,7 +1422,7 @@ unless the app sets `testid`).
 
 **As built: Rust first, not the YAML below.** The component schema is Rust (`crates/agentos-domain`, the `ui` module:
 types plus the component catalogue tables); `agentos-codegen` turns it into `types/generated/agentos.ts` (protocol types
-and the runtime `COMPONENTS` table), `agentos.d.luau`, `ui.luau`, `app.luau` and `docs/reference/components.md`.
+and the runtime `COMPONENTS` table), `ui.lua`, the LuaCATS definitions under `types/generated/luals/` and `docs/reference/components.md`.
 `bun run codegen` writes them and `bun run codegen:check` (part of `bun run lint`) fails when they are stale; there is no
 `gen:ui` or `schema:diff` command. The diagram below is the real flow; from "Authoring format" on, the text is the
 original schema-first proposal (YAML authoring), kept to explain the shape of the outputs: its paths and command names
@@ -1434,8 +1434,8 @@ One component schema, generated outputs that are committed, and a no-diff check 
 crates/agentos-domain, ui module   (Rust types + the component catalogue: tokens, Action, Expr, Source decls, event payloads)
         │   bun run codegen     (cargo run -p agentos-codegen; `bun run codegen:check` is the no-diff check)
         ├─▶ types/generated/agentos.ts        protocol types + the runtime COMPONENTS table  ──▶  client/src/view/protocol.ts
-        ├─▶ types/generated/agentos.d.luau    the `app` API types (luau-lsp)
-        ├─▶ types/generated/{ui,app}.luau     constructors (the Luau runtime's `@agentos/ui`) and the `@agentos/app` shim
+        ├─▶ types/generated/ui.lua            constructors (the Lua runtime's `@agentos/ui`)
+        ├─▶ types/generated/luals/            LuaCATS: `agentos.lua` (the `app` API and shared types), `@agentos/ui.lua`, `@agentos/app.lua`
         └─▶ docs/reference/components.md      the component reference
 ```
 
@@ -1467,24 +1467,25 @@ examples:
 maps: { adapter: TextField, kit: "@agentos/ui/molecules#TextFieldRow" }
 ```
 
-**Generated Luau** (`ui.d.luau`): every prop, enum, `Binding` (typed `Ref<T>`, so a plain value in a `Binding` prop is a type error),
+**Generated LuaCATS** (`luals/@agentos/ui.lua`): every prop, enum, `Binding` (typed `Ref<T>`, so a plain value in a `Binding` prop is a diagnostic),
 slot and event payload:
 
 ```lua
-export type TextFieldProps = {
-  key: string,                                   -- interactive nodes need an explicit key
-  text: Ref<string>,                             -- binding
-  placeholder: Expr<string>?,
-  kind: ("text" | "email" | "url" | "number" | "tel" | "search")?,
-  validate: Validation?, sync: SyncPolicy?,
-  prefix: Node?, suffix: Node?,
-  onSubmit: ((e: { value: string }) -> ())?,
-  [string]: never,                                -- unknown props are errors
-}
-declare ui: { TextField: (props: TextFieldProps) -> Node, --[[ ... ]] }
+---@class TextFieldProps
+---@field key string                              interactive nodes need an explicit key
+---@field text Ref<string>                        binding
+---@field placeholder Expr<string>?
+---@field kind Expr<"text"|"email"|"url"|"number"|"tel"|"search">?
+---@field validate Validation?
+---@field sync Expr<string>?
+---@field onSubmit Handler<{ value: string }>?
+
+---@param props TextFieldProps
+---@return Node
+function ui.TextField(props) end
 ```
 
-`ui.luau` is generated too: defaults, positional mapping, a11y checks, auto-keys, `fallback` slots for post-1.0 components.
+`ui.lua` is generated too: defaults, positional mapping, a11y checks, auto-keys, `fallback` slots for post-1.0 components.
 
 **Generated TypeScript**: `NodeOf<'TextField'>` types, the `Action`/`Expr`/`Op`/`Source*` protocol types (today hand-written in
 `client/src/view/protocol.ts`, now re-exporting the generated types), and a runtime `COMPONENTS` table (`interactive`, `bindings`, `events`, `since`) the renderer uses
@@ -1497,13 +1498,13 @@ release). The host never needs per-component Rust structs: nodes are JSON values
 **Contract tests (the "drift is a build failure" part)**, run by the repo's gate (`pre-commit` / `test`):
 
 1. every schema component has an adapter, a generated story per example and an axe pass; every adapter prop appears in the schema;
-2. Luau constructor snapshots: `ui.X {...}` of each example equals the schema's example node;
-3. golden trees: Luau fixture app -> JSON -> `ViewCore` -> rendered DOM -> axe, for both example apps here;
+2. Lua constructor snapshots: `ui.X {...}` of each example equals the schema's example node;
+3. golden trees: Lua fixture app -> JSON -> `ViewCore` -> rendered DOM -> axe, for both example apps here;
 4. (not built: `schema:diff <git-ref>` was to classify changes as additive, deprecation or breaking, and fail on breaking within a major; today `bun run codegen:check` only catches an unregenerated file);
 5. the kit's `bun scripts/design-audit.ts` runs on every adapter.
 
 **Why not the alternatives.** *Rust-first* (`schemars` + `ts-rs`/`specta`): attractive because validation equals the types, but
-events/slots/a11y/`since`/docs need a proc-macro layer, Luau generation is custom either way, and every kit author (Svelte
+events/slots/a11y/`since`/docs need a proc-macro layer, Lua generation is custom either way, and every kit author (Svelte
 developers) would have to edit Rust to add a prop. *Protobuf*: poor fit for JSON trees with open-ended `Expr` values. *TypeSpec* is a
 reasonable alternative authoring syntax with a JSON Schema emitter; if the team prefers a typed DSL over YAML, swap the authoring
 layer and keep the same four outputs.
@@ -1532,7 +1533,7 @@ node e2e/run.mjs                # headless Chromium e2e (starts and stops its ow
 | Two-way binding: instant draft, one debounced write, `maxWait`, dirty-field shield, host 3-way merge, ack adoption, flush before events | `view.test.ts`, `merge.test.ts`, e2e (agent `notes.append` while typing) |
 | Client state as source params; client actions without round trips; row deltas | `view.test.ts`, e2e |
 
-Deliberately not built: windowing, `row.set`, navigation, presentations, persistence/reconnect, Luau, the other components.
+Deliberately not built: windowing, `row.set`, navigation, presentations, persistence/reconnect, Lua, the other components.
 Finding from building it: the unit that must be pure and framework-free is **`ViewCore`** with injected storage (so Svelte
 `$state` proxies make every mutation fine-grained and plain objects make it testable under `bun test`); adapters stay tiny
 (10 to 40 lines each).
@@ -1548,8 +1549,8 @@ Historical: the original plan, written before the build. Milestone names and pac
 
 | Milestone | Scope | Exit |
 |---|---|---|
-| **M0 Schema and conformance** | schema format, `codegen`, validator, protocol crate, golden fixtures | the two example apps' trees validate; generated TS/Luau compile |
-| **M1 Core + Calculator** | Rust `ViewInstance` (render, reconcile, ops), Luau `ui` + tracked state, the client renderer (`ViewCore` productionised), Tier 1 layout/text/button/grid | Calculator ported, journeys green, p95 key -> pixels <= 30 ms |
+| **M0 Schema and conformance** | schema format, `codegen`, validator, protocol crate, golden fixtures | the two example apps' trees validate; generated TS/Lua compile |
+| **M1 Core + Calculator** | Rust `ViewInstance` (render, reconcile, ops), Lua `ui` + tracked state, the client renderer (`ViewCore` productionised), Tier 1 layout/text/button/grid | Calculator ported, journeys green, p95 key -> pixels <= 30 ms |
 | **M2 Data + Notes** | sources, live queries, drafts/merge, client state + persistence, `TextEditor`, `Markdown`, `List` windowing, `SplitView` x3, `Alert`, `Screen` search | Notes ported incl. `notes.append` live; reconnect and host-restart tests |
 | **M3 Rest of Tier 1** | navigation, presentations, DnD, pickers, `Form`, swipe/reorder/multi-select; Tasks, Reminders, Contacts, Settings | each app passes the `agentos-code-review` readiness gate |
 | **M4 Tier 2** | `Table`, `ChatTranscript`, `CalendarGrid`, `Outline`, `LazyGrid`; Agents, Calendar, Files, Books | |
@@ -1563,7 +1564,7 @@ a host-side tree test, and a journey spec per app journey, i.e. the existing def
 1. **Remote hosts.** Is a host that is not on the same machine (VPS, another device) a supported topology? Every
    server-side event costs one round trip; typing, navigation and sheets do not (client-managed), but Calculator-class keypads
    do. If remote matters, options: accept it; allow a tiny **client-side action macro** for pure UI logic; or compile a
-   Luau subset to run on the client (large scope). The design above assumes local or LAN.
+   Lua subset to run on the client (large scope). The design above assumes local or LAN.
 2. **Host-side persistence of client UI state** (`persist = "app"`: selection, route, mode in `_ui_state`): acceptable
    as app data (backed up/synced with the app's SQLite)? Should the user be able to clear it per app in Settings?
 3. **Several human clients on one window** (laptop plus tablet on the same view): the conflict contract covers one human

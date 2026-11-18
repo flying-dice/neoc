@@ -8,7 +8,7 @@ tested where it lives, in Rust, with fakes for the ports.
 |---|---|---|---|
 | Rust | domain, use cases (against port fakes), adapters, the host end to end | `crates/*/src`, `crates/*/tests` | `cargo nextest run --workspace` |
 | Client and kit unit | the renderer core (peer, expressions, ops, drafts, sources, offline), the shell's channel, kit logic | `*.test.ts` next to the code | `bun run test` (runs `bun test` in `client/` and `packages/ui`, and `bun test types`) |
-| Luau types and format | every app and fixture type-checks strictly against the generated API; StyLua formatting | `scripts/lint-luau.ts`, `scripts/stylua.ts` | `bun run lint:luau`, `bun run lint:stylua` |
+| Lua check and format | every app and fixture checks clean with lua-language-server against the generated LuaCATS API; StyLua formatting | `scripts/lint-lua.ts`, `scripts/stylua.ts` | `bun run lint:lua`, `bun run lint:stylua` |
 | Stories | every screen and state of the shell, the renderer and the kit, in isolation | `client/` and `packages/ui` Storybooks (`*.stories.svelte`) | `bun run storybook` in the package |
 | Story checks | every story: renders, axe WCAG 2.1 AA, visual snapshot light and dark, no overflow | `e2e/stories.spec.ts` (generic: new stories are picked up) | `bun run test:e2e --project=stories` |
 | Desktop | the real shell on the real host: every app from the Dock, resize, every layout, axe, snapshots | `e2e/desktop.spec.ts` (generic over built-in pages and `apps/*/app.json`) | `bun run test:e2e --project=desktop` |
@@ -28,10 +28,10 @@ snapshots deliberately with `bun run test:e2e:update`, then open the changed PNG
 - **Adapters**: integration tests in `crates/<adapter>/tests/`, through the real library (the Lua 5.1 sandbox and
   module set, SQLite migrations and live queries, MCP with an `rmcp` client, ACP against the scripted agent, `/rpc` with a
   WebSocket client, fetch against a local server). The shipped apps are tested here too: `crates/agentos-lua/tests/calculator_app.rs`
-  builds `apps/calculator` with darklua and runs the bundle under the real runtime. The Luau apps and fixtures the Rust
+  builds `apps/calculator` with darklua and runs the bundle under the real runtime. The Lua apps and fixtures the Rust
   tests run are built with the product's own pipeline (`scripts/lua51-build.ts`, which `crates/agentos-lua/tests/common`
   and `crates/agentos-host/tests/common` call, so `bun` and `darklua` must be installed); inline snippets in those tests
-  are plain Lua 5.1, not Luau. `crates/agentos-lua/tests/lua51.rs` holds what is specific to running on Lua 5.1: the
+  are plain Lua 5.1. `crates/agentos-lua/tests/lua51.rs` holds what is specific to running on Lua 5.1: the
   sandbox and read-only libraries and host calls under `pcall` and in coroutines; `modules.rs` holds the modules and
   the lifecycle: every `std:`/`lib:`/`vnd:` module can be required, a request handler and a task take their turn in
   the VM's one-call-at-a-time queue, an unloaded or replaced app's listener port is free again and its tasks and
@@ -57,23 +57,25 @@ under `bun test` too, through the preload in `client/bunfig.toml` (`client/test/
 `bun run codegen:check` fails when `types/generated/*` or
 `docs/reference/components.md` are stale against the Rust schema; `bun run codegen` regenerates them.
 
-## Luau apps
+## Lua apps
 
-- **Types:** `bun run lint:luau` runs `luau-lsp analyze` over every `.luau` file (apps, codegen fixtures, the generated
-  `ui.luau`) against `types/generated/agentos.d.luau`, resolving `@agentos/app` and `@agentos/ui` through the root
-  `.luaurc`. Files in `negative/` folders mark lines with `-- expect-error`; the check demands exactly those lines
-  are rejected, so a broken definitions file cannot pass silently.
-- **Format:** `bun run lint:stylua` (`stylua.toml`, `.styluaignore`); `bun run format` rewrites. Both lints print a
-  `SKIPPED` message when `luau-lsp` (PATH or `~/.local/bin`) or `stylua` (PATH or `~/.cargo/bin`) is not installed:
-  install them, a skipped lint is not a pass.
+- **Check:** `bun run lint:lua` runs `lua-language-server --check` (pinned: 3.19.2, in `scripts/lint-lua.ts`) over
+  every `.lua` file `.luarc.json` does not ignore (apps, `lua/prelude.lua`, the codegen example app), against the
+  generated LuaCATS definitions in `types/generated/luals/` (`agentos.lua` for the global `app`, `@agentos/ui.lua` and
+  `@agentos/app.lua` for the two `require`s; LuaLS finds them by file path through the library setting). Files in
+  `negative/` folders (`scripts/fixtures/negative/`) mark lines with `-- expect-error`; the check demands exactly those
+  lines are flagged, so a broken definitions file cannot pass silently.
+- **Format:** `bun run lint:stylua` (`stylua.toml`, syntax `Lua51`; `.styluaignore`); `bun run format` rewrites.
+  Both lints print a `SKIPPED` message when `lua-language-server` (PATH or `~/.local/bin`) or `stylua` (PATH or
+  `~/.cargo/bin`) is not installed: install them, a skipped lint is not a pass.
 - **Lua 5.1 build:** apps run as plain Lua 5.1 (`scripts/lua51.ts`, `.darklua.json`; see `apps/README.md`).
   `darklua` 0.18.0 is required and **never skipped** (`cargo install darklua --version 0.18.0 --locked`):
-  `bun run build:apps` and `bun run codegen` fail with that message without it. `bun test scripts`
-  (`scripts/lua51.test.ts`) checks the sources avoid what neither darklua nor `lua/prelude.luau` supports, that each
+  `bun run build:apps` fails with that message without it. `bun test scripts`
+  (`scripts/lua51.test.ts`) checks the sources stay plain Lua 5.1 (no Luau syntax, no library members Lua 5.1 and `lua/prelude.lua` lack), that each
   app bundles into one file requiring only `@agentos/*`, and (with a native Lua 5.3+ on PATH) that the prelude's
   `utf8`/`table.move` polyfills agree with the native ones. With a real Lua 5.1 (`lua5.1` on PATH, or `LUA51=<path>`)
   it also loads the prelude, `ui.lua` and every bundle; without one those tests print `SKIPPED` (a skip is not a
-  pass: install `lua5.1`). `bun run codegen:check` also fails when `types/generated/ui.lua` or `prelude.lua` is stale.
+  pass: install `lua5.1`). `bun run codegen:check` also fails when `types/generated/ui.lua`, `luals/*` or `prelude.lua` is stale.
 - **Logic and tools:** tested from Rust against the shipped package (see "Rust"); views and journeys against the real
   host (below).
 
@@ -89,7 +91,7 @@ a fake host) and `packages/ui` (each kit component and its states). Stories are 
 - **Renderer states** run against the fake hosts in `client/src/view/host/` (`TreeApp`, `KitApp`,
   `ChatApp`, the fake AG-UI): a tree, ops applied, a two-way binding, a windowed list, a conflict, offline, reconnect.
 - A story that shows a deliberately clipped state tags itself `overflow-ok`. Stories tagged `app` (an app screen inside the
-  `AppWindow` frame) also run at a minimum and a large window; Luau apps have no Storybook of their own, because the
+  `AppWindow` frame) also run at a minimum and a large window; Lua apps have no Storybook of their own, because the
   `desktop` project already opens every installed app at those sizes in the real shell.
 - The real host is exercised only by the Playwright desktop and journey projects.
 
@@ -144,7 +146,7 @@ first commit. `bun run lint:testids` fails the build for raw Svelte elements and
 - kebab-case: `<scope>-<thing>[-<qualifier>]`.
 - **Scope** is the app id for anything inside an app, and the shell part for the desktop (`dock`, `status-bar`,
   `stage-strip`, `window-<appId>`, `pairing`).
-- **A Luau app's window** gets its ids from node keys: `<appId>-<explicit keys on the path>` (`calculator-key-7`,
+- **A Lua app's window** gets its ids from node keys: `<appId>-<explicit keys on the path>` (`calculator-key-7`,
   `calculator-display`; `client/src/view/core/testid.ts`). Set a `key` on every interactive node; the host
   rejects an interactive node without one. Auto keys, slot names and the window root are skipped, so wrapping a node in a
   stack never renames it; a row template contributes `row-<rowKey>`.
@@ -227,5 +229,5 @@ Sessions live in `test-results/sessions/<name>/`. `window.__agentos` exposes the
 ## Static audits
 
 `bun scripts/design-audit.ts <page>` checks a built-in shell page's styles (and the components it imports) against the
-design tokens. Luau apps carry no CSS: apps pick semantic tokens only, so their conformance is checked by the generic
+design tokens. Lua apps carry no CSS: apps pick semantic tokens only, so their conformance is checked by the generic
 axe and overflow specs, the baselines and a live look (see the `app-design` skill).

@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
-//! The Agents app (`apps/agents`, Luau) on the real host: its window lists the roster and the chats, starts a
+//! The Agents app (`apps/agents`, Lua) on the real host: its window lists the roster and the chats, starts a
 //! chat, binds `ChatTranscript` to a thread source, and titles the chat from the first message.
 
 mod common;

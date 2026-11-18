@@ -1,7 +1,5 @@
---!strict
--- Notes from docs/architecture/ui-system.md §4.4, verbatim apart from the type fixes noted inline:
--- `bun run lint:luau` type-checks it against the generated definitions, and the codegen contract test runs it
--- (against the real `ui.luau`) and validates the tree it renders.
+-- Notes from docs/architecture/ui-system.md §4.4. The codegen contract test runs it (against the real
+-- `ui.lua`) and validates the tree it renders.
 local app = require("@agentos/app")
 local ui = require("@agentos/ui")
 local t = app.t
@@ -69,8 +67,8 @@ local note = db:row([[select id, body, rev, updated_at, author from notes where 
   end,
 })
 
-local function newNote(folder: number, who: string): number
-  local target = if folder == 0 then 1 else folder
+local function newNote(folder, who)
+  local target = folder == 0 and 1 or folder
   return db:exec("insert into notes(folder_id, author) values (:f, :who)", { f = target, who = who }).last_insert_id
 end
 
@@ -276,7 +274,7 @@ app.tool {
       { text = input.text, id = input.id, now = ctx.now, who = ctx.actor.name }
     )
     if r.changes == 0 then
-      return ctx:fail(`No note with id {input.id}`)
+      return ctx:fail("No note with id " .. input.id)
     end
     return { id = input.id }
   end,

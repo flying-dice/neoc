@@ -1,4 +1,4 @@
-//! What an app declares about itself in Luau with `app.manifest { ... }`, validated here (pure).
+//! What an app declares about itself in Lua with `app.manifest { ... }`, validated here (pure).
 //!
 //! This is distinct from the package [`crate::Manifest`] in the app ref (registry level: files, checksums,
 //! version). The two must agree on the id.

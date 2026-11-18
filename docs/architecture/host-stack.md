@@ -11,8 +11,8 @@ The spikes were restructured into the proposed hexagonal layout (section "Worksp
 
 ## Answers per question
 
-### 1. Apps: authored in Luau, run as Lua 5.1 on `mlua 0.12.2` (vendored PUC Lua 5.1) — `crates/agentos-lua` on `crates/agentos-luavm`
-Apps are written in Luau (`--!strict`, checked by `luau-lsp` against the generated definitions) and **run as standard Lua 5.1**: `bun run build:apps` runs darklua (`.darklua.json`, pinned 0.18.0) over each app, which strips the types, lowers the Luau-only syntax and **bundles the app's relative `require`s into one `app.lua`**. An app ref lists that one file (plus its SQL migrations); `manifest.main` is `app.lua`, and the host refuses a `main` that does not end in `.lua`. `@agentos/app` and `@agentos/ui` stay runtime `require`s. The Luau standard-library members Lua 5.1 lacks (`typeof`, `table.clone`/`move`/`pack`/`unpack`, `utf8`) are polyfilled by `lua/prelude.luau` (built to `types/generated/prelude.lua`), which the host runs in each app's environment before the app. `types/generated/ui.lua` is the Lua 5.1 build of `ui.luau`.
+### 1. Apps: plain Lua 5.1 on `mlua 0.12.2` (vendored PUC Lua 5.1) — `crates/agentos-lua` on `crates/agentos-luavm`
+Apps are written in plain Lua 5.1 (checked by lua-language-server against the generated LuaCATS definitions in `types/generated/luals/`) and **run as written**: `bun run build:apps` runs darklua (`.darklua.json`, pinned 0.18.0) over each app, which only **bundles the app's relative `require`s into one `app.lua`**. An app ref lists that one file (plus its SQL migrations); `manifest.main` is `app.lua`, and the host refuses a `main` that does not end in `.lua`. `@agentos/app` and `@agentos/ui` stay runtime `require`s. The standard-library members Lua 5.3 has and Lua 5.1 lacks (`typeof`, `table.clone`/`move`/`pack`/`unpack`, `utf8`) are polyfilled by `lua/prelude.lua` (copied to `types/generated/prelude.lua`), which the host runs in each app's environment before the app. `types/generated/ui.lua` is the generated `@agentos/ui` module (plain Lua 5.1, written by `agentos-codegen`).
 
 `agentos-luavm` is the VM library (mlua with `lua51, vendored, async, serialize, send, macros`; no dependency on any other agentos crate; a support library, not an adapter) and `agentos-lua` is the adapter that implements `AppRuntime` on it, reaching mlua only through luavm's re-export. The VM crate also holds the neoc module registry (`std:`, `lib:`, `vnd:`, `lua::modules`): **apps get all of it** through `require("std:fs")`, `require("lib:json")`, `require("vnd:hyper")` (the adapter's `require` builds a module in the app's VM on first use and caches it, so an app has its own table of each and two apps never share one), next to `@agentos/app` and `@agentos/ui`. Left out on purpose: `lib:test` (a test harness that prints to stdout), `lib:compile` (builds standalone executables) and `std:workers` (a process-wide shutdown signal); `vnd:testcontainers_modules` exists only with the off-by-default `testcontainers` cargo feature. The adapter builds the engine with `make_bare_engine` plus `install_runtime_state` (the `std:task` scheduler and the app's `Life`, below) and sends `lib:log` lines to the host's tracing with the app id (`lib::log::set_log_sink`); no module writes to the daemon's stdout.
 
@@ -24,10 +24,10 @@ Apps are written in Luau (`--!strict`, checked by `luau-lsp` against the generat
 - **HTTPS in `vnd:hyper`.** The client speaks `https://` through `tokio-rustls` (aws-lc-rs, the provider reqwest uses elsewhere in the host) with the platform certificate verifier (`rustls-platform-verifier`, the operating system's trust store). A service with its own CA or a self-signed certificate passes `ca_pem = "<PEM>"` in the options of `get`, `post` or `request`; exactly those certificates are then trusted for that request. Tested against a local TLS server with a generated certificate (accepted with its `ca_pem`; refused without it, and with another server's).
 - **Async host calls on Lua 5.1.** mlua's `create_async_function` yields to the executor; 5.1 cannot yield across `pcall`, a metamethod or a C function, so luavm installs a **yield-safe `pcall`/`xpcall`** (a coroutine per protected call) and, in each app environment, `coroutine.resume`/`wrap` that pass an async host call made inside a coroutine of the app's own out to the executor (and let a cancelled call end without running app code again). The `app.state`, window `state`/`client`/`env` and source-handle proxies are plain synchronous Rust functions, so they never yield. What still cannot yield: a `string.gsub` callback, a metamethod, a `for ... in` iterator function: a host call there fails with Lua's own "attempt to yield across metamethod/C-call boundary" and its future stays in the dead coroutine until the garbage collector frees it (a dead coroutine the app keeps referring to keeps it, and the database lock it may hold, until the app lets go). A host call in tail position (`return app.db:all(...)`) loses the app's line in an error, because 5.1 drops the frame of a tail call.
 - **Capability table** `app.db`, `app.kv`, `app.tools.register{}`, `app.notify{}`, `app.state{}`, `app.on(event, fn)` (see `apps/README.md`). Rust→Lua event call with a JSON table works (`emit()`/`call_tool()`).
-- **Source from bytes** (`lua.load(&[u8]).set_name("=app/app.lua")`; errors report `app/app.lua:12`). Line numbers refer to the bundle; the generator is `retain_lines`, which keeps each statement on its Luau line: line for line for an app with no relative `require`, and shifted by a constant (the size of the bundled modules before it) for an app with modules.
+- **Source from bytes** (`lua.load(&[u8]).set_name("=app/app.lua")`; errors report `app/app.lua:12`). Line numbers refer to the bundle; the generator is `retain_lines`, which keeps each statement on its source line: line for line for an app with no relative `require`, and shifted by a constant (the size of the bundled modules before it) for an app with modules.
 - **Unload frees**: abort what the app spawned and close its sockets (`AppVm::shutdown`), drop Rust-held `Function`s, then the `Lua`.
 - **Gotchas found:** (a) the polyfills run in the app's environment, so the prelude installs into the chunk's `...` argument, never `getfenv()`. (b) `to_value` maps JSON null to a truthy lightuserdata: use `SerializeOptions::serialize_none_to_null(false)`. (c) `send` makes `Lua: Send+Sync` (mutex inside), which is what lets tokio multi-thread run VMs; one VM executes one call at a time (an app is single-threaded by design). (d) mlua `lua51` and `luau` cannot coexist in one build (Cargo unifies features), so the VM is Lua 5.1 everywhere.
-- **Dev loop and hot reload:** the host cannot run darklua. `bun run dev` watches `apps/**` (`*.luau`, `app.json`, migrations) and re-runs `build:apps`; the host's `notify` watcher watches the built app-ref folders under `dist/apps` (`.lua`/`.json`) → debounce → build a new VM → swap → old VM dropped (`crates/agentos-lua/src/reload.rs`; the DB is kept; only the VM is rebuilt).
+- **Dev loop and hot reload:** the host cannot run darklua. `bun run dev` watches `apps/**` (`*.lua`, `app.json`, migrations) and re-runs `build:apps`; the host's `notify` watcher watches the built app-ref folders under `dist/apps` (`.lua`/`.json`) → debounce → build a new VM → swap → old VM dropped (`crates/agentos-lua/src/reload.rs`; the DB is kept; only the VM is rebuilt).
 - **Not remeasured on 5.1:** the VM create and dispatch numbers of the Luau spike (0.14 ms, 524 KiB per VM, 1.8 µs per event); a plain Lua 5.1 state is smaller, and the module tables are built per VM on first `require`, so a VM that requires nothing pays nothing.
 
 ### 2. SQLite — recommend **`rusqlite 0.43.0` (bundled SQLite 3.54.1)** — `crates/agentos-sqlite`
@@ -57,14 +57,14 @@ Apps are written in Luau (`--!strict`, checked by `luau-lsp` against the generat
 - **JSON-RPC: hand-rolled peer** (~120 lines, `rpc.rs`; envelope types live in the domain). Recommended over `jsonrpsee 0.26.1`: we need the *server* to issue requests to the client and await the answer on the same socket. The test does exactly that (client request → handler calls `peer.request("client/echo")` → client answers → original response), plus notifications both ways, per-request tasks (no deadlock), pending-request cleanup on disconnect. jsonrpsee's server model is request/response + subscriptions (not tested here; from its docs).
 - Gotcha found by the e2e: a notification emitted *during* a request can arrive before its response; clients must not assume order.
 
-### 7. Shared types — **`ts-rs 12.0.1` (TS) + `schemars 1.2.3` (JSON Schema) + a 70-line Luau emitter** — `crates/agentos-codegen`
-- Domain types derive `TS`/`JsonSchema` behind a `codegen` feature (derive-only, no I/O). `cargo run -p agentos-codegen --example generate` writes `generated/{types.ts, ui.luau, schemas.json}`. ts-rs honours serde attributes (`tag`, `rename_all`): `UiNode` comes out as the discriminated union `{ "type": "stack", … } | { "type": "button", … }`. The Luau emitter walks the JSON Schema (`oneOf`, `$ref`, recursive `#`, optional fields) into `export type`s; **test: the generated Luau passes `luau-analyze` and a wrongly-shaped node (`txt =` for `text =`) is a type error**.
+### 7. Shared types — **`ts-rs 12.0.1` (TS) + `schemars 1.2.3` (JSON Schema) + a Lua (LuaCATS) emitter** — `crates/agentos-codegen`
+- Domain types derive `TS`/`JsonSchema` behind a `codegen` feature (derive-only, no I/O). `cargo run -p agentos-codegen --example generate` writes `generated/{types.ts, ui.lua, schemas.json}`. ts-rs honours serde attributes (`tag`, `rename_all`): `UiNode` comes out as the discriminated union `{ "type": "stack", … } | { "type": "button", … }`. The Lua emitter walks the JSON Schema (`oneOf`, `$ref`, recursive `#`, optional fields) into LuaCATS `---@class` definitions; **test: a wrongly-shaped node (`txt =` for `text =`) is flagged by lua-language-server (the negative fixtures in `scripts/fixtures/negative/`)**.
 - `specta 2.0.0-rc.28` / `specta-typescript 0.0.15` are still pre-release: not chosen. Rough edges: ts-rs warns on `#[serde(try_from)]` (we override with `ts(type="string")`); `#[serde(default)]` fields need `#[ts(optional)]` to become optional in TS.
-- **Superseded by wave A2:** the component schema is Rust data in `agentos-domain` (`ui` module) and `agentos-codegen` emits `types/generated/{agentos.ts, agentos.d.luau, ui.luau, app.luau}` and `docs/reference/components.md`; see `docs/reference/components.md` and the `agentos-codegen` crate docs.
+- **Superseded by wave A2:** the component schema is Rust data in `agentos-domain` (`ui` module) and `agentos-codegen` emits `types/generated/{agentos.ts, ui.lua}`, the LuaCATS definitions in `types/generated/luals/` and `docs/reference/components.md`; see `docs/reference/components.md` and the `agentos-codegen` crate docs.
 
 ### 8. Distribution
-- **Binary:** host, release, `opt-level="z"`, LTO, `codegen-units=1`, `strip`, `panic=abort`: **5.5 MiB** with Luau, bundled SQLite, rustls, axum, rmcp, ACP, notify. ~50 s release build on this machine. Opt-level 3 is 25-40% faster on VM creation/dispatch (0.14 vs 0.19 ms, 1.8 vs 3.1 µs); ship level 3 unless size matters (Luau's C++ is compiled by `cc` with the profile's opt-level, so `z` also affects VM speed).
-- **Cross-compile:** pure crates `cargo check --target x86_64-unknown-linux-gnu` fine. Anything with C/C++ (Luau, SQLite, `aws-lc-sys` for rustls) fails without a cross C toolchain (`cc-rs: failed to find x86_64-linux-gnu-gcc`). Recommend **`cargo-zigbuild`** (or build natively per OS in release CI); the Docker daemon wasn't running, so Linux builds were **not verified**. macOS: native arm64 built; x86_64-apple-darwin is just `rustup target add` (same SDK). `bundled` SQLite + Luau mean no system libs to link.
+- **Binary:** host, release, `opt-level="z"`, LTO, `codegen-units=1`, `strip`, `panic=abort`: **5.5 MiB** (measured in the Luau spike; the VM is Lua 5.1 now), bundled SQLite, rustls, axum, rmcp, ACP, notify. ~50 s release build on this machine. Opt-level 3 is 25-40% faster on VM creation/dispatch (0.14 vs 0.19 ms, 1.8 vs 3.1 µs); ship level 3 unless size matters (the Luau spike's C++ VM was compiled by `cc` with the profile's opt-level, so `z` also affects VM speed).
+- **Cross-compile:** pure crates `cargo check --target x86_64-unknown-linux-gnu` fine. Anything with C/C++ (Lua 5.1, SQLite, `aws-lc-sys` for rustls) fails without a cross C toolchain (`cc-rs: failed to find x86_64-linux-gnu-gcc`). Recommend **`cargo-zigbuild`** (or build natively per OS in release CI); the Docker daemon wasn't running, so Linux builds were **not verified**. macOS: native arm64 built; x86_64-apple-darwin is just `rustup target add` (same SDK). `bundled` SQLite + vendored Lua mean no system libs to link.
 - **Dev hot reload:** see section 1 (proven).
 
 ## Recommended crate list (versions resolved in `Cargo.lock`)
@@ -79,7 +79,7 @@ Apps are written in Luau (`--!strict`, checked by `luau-lsp` against the generat
    agentos-http  (/rpc WS, guard, static, RpcHub)   agentos-lua   (AppRuntime) --> agentos-luavm (Lua 5.1 VM lib)
    agentos-mcp   (/mcp, ToolRegistry)               agentos-sqlite (DataStore, AppData)
    agentos-agui  (/agui SSE)                        agentos-fetch  (Fetcher: file/http/https)
-   agentos-acp   (AgentConnector, ACP client)       agentos-codegen (dev-time: TS + Luau + schemas)
+   agentos-acp   (AgentConnector, ACP client)       agentos-codegen (dev-time: TS + Lua + schemas)
                       \                                  /
                        agentos-application   ports (traits) + use cases (AppService), in-memory fakes (`testing`)
                                   |
@@ -92,19 +92,19 @@ Apps are written in Luau (`--!strict`, checked by `luau-lsp` against the generat
 |---|---|---|
 | `domain` | the model above; unit tests without any framework | serde, serde_json, sha2, thiserror (+ ts-rs/schemars behind `codegen`) |
 | `application` | **ports**: `AppRuntime, DataStore/AppData, ToolRegistry, Notifier, EventSink, AgentConnector, AgentDirectory, Clock, Fetcher`. **Use cases** (`AppService`): install-from-url (fetch → sha256 verify → migrations → load → publish tools → announce), uninstall(+purge), dispatch UI event, tool call with permission check, start agent run. Runtime-free (tokio is a dev-dependency only) | domain, async-trait, parking_lot, thiserror |
-| `luau`, `sqlite`, `fetch`, `mcp`, `acp`, `agui`, `http`, `codegen` | one adapter each | application, domain (never another adapter; dev-deps may) |
+| `lua`, `sqlite`, `fetch`, `mcp`, `acp`, `agui`, `http`, `codegen` | one adapter each | application, domain (never another adapter; dev-deps may) |
 | `luavm` | support library, not an adapter: the sandboxed Lua 5.1 VM (mlua, vendored), its environment, the module registry and the lifecycle of what apps spawn. Depends on no agentos crate | external crates only; **only `lua` may depend on it** (`check-deps`, `deny.toml`) |
 | `host` | build adapters, hand each to its port, mount routers, bind 127.0.0.1, graceful shutdown | everything |
 
 - A `ports` crate split (adapters depend on traits only, not use cases) is cheap if `application` grows; driving adapters (`http`, `mcp`) legitimately need the use cases.
-- Add later: `sdk` (the `agentos.d.luau` + stubs shipped to app authors), `registry` (a list of app-ref URLs, pure).
+- Add later: `sdk` (the LuaCATS definitions in `types/generated/luals/` + stubs shipped to app authors), `registry` (a list of app-ref URLs, pure).
 - **Error types per layer:** `DomainError` → `PortError` (what adapters return; each adapter maps its errors with `From`) → `AppError` (use cases; wraps both) → JSON-RPC code / MCP `isError` at the edge. `anyhow` only in `main`.
 - **Workspace config (in `Cargo.toml`):** `[workspace.package]`, `[workspace.dependencies]` with pinned versions, `[workspace.lints]`: clippy `pedantic` warn, `unwrap_used`/`expect_used`/`panic` deny, `unsafe_code = "forbid"`; `clippy.toml` with `allow-unwrap-in-tests`; `rustfmt.toml`. (Integration-test helper fns need a one-line `#![allow(clippy::unwrap_used)]` in each `tests/*.rs`; the in-memory fakes carry one `allow`.)
-- **Dependency direction enforcement — recommend a `cargo metadata` gate (built as `scripts/check-deps.ts`)** (60 lines over `cargo metadata`): an explicit per-crate allow-list of internal edges, an allow-list of external crates for `domain`/`application`, and a framework deny-list (tokio, axum, mlua, rusqlite, reqwest, rmcp…) for the core. Proven: passes now; adding `application → luau` fails with `internal edge not allowed`. Keep `cargo-deny` too (`deny.toml`: `bans` with `wrappers` pins each framework to its adapter, plus licenses/advisories/sources). Crate edges alone aren't enough (a stray `use tokio` in `application` would compile if the dep were present), hence the gate.
-- **Test strategy per layer** (all demonstrated): domain = plain unit tests (7); application = use cases against in-memory port fakes, no mocking library (4: install/verify/tamper-no-state-change/uninstall/permission-before-VM); adapters = integration tests through the real library (luau: sandbox/limits/async/hot reload; sqlite; mcp with an rmcp client; acp against a fake agent + the real adapter; http with a WS client; fetch against a local server); end-to-end = `agentos-host/tests/e2e.rs` driving `/rpc` + `/mcp` + `/agui` of the real wiring. Run with `cargo nextest run --workspace` (0.5 s).
+- **Dependency direction enforcement — recommend a `cargo metadata` gate (built as `scripts/check-deps.ts`)** (60 lines over `cargo metadata`): an explicit per-crate allow-list of internal edges, an allow-list of external crates for `domain`/`application`, and a framework deny-list (tokio, axum, mlua, rusqlite, reqwest, rmcp…) for the core. Proven: passes now; adding `application → lua` fails with `internal edge not allowed`. Keep `cargo-deny` too (`deny.toml`: `bans` with `wrappers` pins each framework to its adapter, plus licenses/advisories/sources). Crate edges alone aren't enough (a stray `use tokio` in `application` would compile if the dep were present), hence the gate.
+- **Test strategy per layer** (all demonstrated): domain = plain unit tests (7); application = use cases against in-memory port fakes, no mocking library (4: install/verify/tamper-no-state-change/uninstall); adapters = integration tests through the real library (lua: sandbox/modules/lifecycle/async/hot reload; sqlite; mcp with an rmcp client; acp against a fake agent + the real adapter; http with a WS client; fetch against a local server); end-to-end = `agentos-host/tests/e2e.rs` driving `/rpc` + `/mcp` + `/agui` of the real wiring. Run with `cargo nextest run --workspace` (0.5 s).
 
 ## Open risks
-1. **Luau type tooling unverified** (luau-lsp + `.d.luau`, see §1). `luau-analyze` works for strict checking but needs definitions inlined unless luau-lsp is used.
+1. **App typing is lint-only.** Apps are plain Lua 5.1; lua-language-server checks them against the generated LuaCATS definitions (`bun run lint:lua`) but nothing is checked at run time beyond what the host validates at its edge. LuaLS does not flag an unknown key in a table literal.
 2. **Nothing bounds an app's CPU, memory or time** (a decision for a homelab host: see "No permissions, no budgets"). A runaway app costs the host a worker thread until it is unloaded. SQLite has `busy_timeout` (2 s) and the progress handler for its own statements; there is no per-call timeout.
 3. **Memory per VM ~0.5 MiB** baseline and one gate per VM: fine for dozens of apps; measure real apps. CPU fairness relies on tokio's multi-thread pool.
 4. **rmcp / ACP / MCP spec churn** (rmcp 3.x already carries two protocol generations; ACP crate is at 5.x with a draft v2). Pin, re-run the adapter tests on each bump, keep each behind its port. Claude-side MCP clients today speak 2025-x (sessions); both are served.
@@ -112,7 +112,7 @@ Apps are written in Luau (`--!strict`, checked by `luau-lsp` against the generat
 6. **Auth on `/rpc`: closed by device pairing** (see "Pairing" below). Every client route needs a paired device's session cookie, from loopback too, so another local user or process cannot connect without a code; the Origin/Host guard still stops cross-site pages and DNS rebinding. What is left: a pairing code is shown to whoever can read the host's terminal, and sessions never expire (revoke them in Settings > Devices).
 7. **ACP→AG-UI mapping** (prompt streaming, permission requests, tool-call events) is the largest unproven piece; the transport pieces on both sides are proven.
 8. **Linux/Windows builds unverified** (needs zigbuild/CI); `x86_64-pc-windows-gnu` target is installed but untried; `notify` and process spawning differ per OS.
-9. **Luau ergonomics:** no `require` of files yet (bundle-only `require` to build), no debugger, error spans only as `app/app.lua:line` (the bundle's line, which `retain_lines` keeps equal to the Luau line for an app without modules).
+9. **Lua ergonomics:** no debugger, error spans only as `app/app.lua:line` (the bundle's line, which `retain_lines` keeps equal to the source line for an app without modules).
 10. **Sandbox findings from the second Luau code review, as the Lua 5.1 port left them.** Fixed in the port: effects an
     unloaded or replaced app queued are dropped, not flushed; a `readOnly` call can no longer use `app.on`,
     `app.window`, `app.tools.register`, `app.thread` or the shell and window methods (`lua::vm::Shared::writable`).
@@ -128,7 +128,7 @@ Apps are written in Luau (`--!strict`, checked by `luau-lsp` against the generat
       source, they do not write.
 
 ## What I did not do / failed
-- Did not run `luau-lsp` (download executed under a policy block; I deleted it). Did not run Docker/Linux builds (daemon down). Did not test `jsonrpsee` (reasoned from docs). Did not test `https://` fetches (no network test; reqwest+rustls is compiled and works for `http://`).
+- Did not run Docker/Linux builds (daemon down). Did not test `jsonrpsee` (reasoned from docs). Did not test `https://` fetches (no network test; reqwest+rustls is compiled and works for `http://`).
 - No file in `/Users/jonathanturnock/Projects/AgentOS` was modified; no processes left running.
 
 ## Running the host
@@ -226,15 +226,14 @@ API only and logs a warning.
 ### The gate
 
 `bun run lint` (adds `cargo fmt --check`, clippy with `-D warnings`, `scripts/check-deps.ts`, `cargo deny check`,
-`lint:luau`, `lint:stylua`, `codegen:check`), `bun run typecheck` (adds `cargo check --workspace --all-targets` and
+`lint:lua`, `lint:stylua`, `codegen:check`), `bun run typecheck` (adds `cargo check --workspace --all-targets` and
 `tsc -p types`), `bun run test` (adds `cargo nextest run --workspace` and `bun test types`), `bun run format` (adds
 `cargo fmt` and StyLua). `codegen:check` fails when the committed `types/generated/*` and `docs/reference/components.md`
-are stale against the Rust schema (`bun run codegen` regenerates them). `lint:luau` type-checks every Luau app and
-fixture (and the generated `ui.luau`) with `luau-lsp analyze` against the generated
-`types/generated/agentos.d.luau`, resolving `require("@agentos/ui")` through the root `.luaurc`; a negative fixture
-(`negative/*.luau`, lines marked `-- expect-error`) must be rejected, so a broken definitions file cannot pass
-silently. `lint:luau` and `lint:stylua` skip with a message when `luau-lsp` or
-`stylua` is not installed.
+are stale against the Rust schema (`bun run codegen` regenerates them). `lint:lua` runs `lua-language-server --check` (pinned 3.19.2) over every Lua app and fixture against the generated
+LuaCATS definitions in `types/generated/luals/`, which LuaLS finds through `.luarc.json`'s library setting and resolves
+`require("@agentos/ui")` to by file path; negative fixtures (`scripts/fixtures/negative/*.lua`, lines marked
+`-- expect-error`) must be flagged, so a broken definitions file cannot pass silently. `lint:lua` and `lint:stylua`
+skip with a message when `lua-language-server` or `stylua` is not installed.
 
 ## Apps: lifecycle, data and the app API (wave A4)
 
@@ -250,7 +249,7 @@ silently. `lint:luau` and `lint:stylua` skip with a message when `luau-lsp` or
   `app.disable` (VM unloaded, tools retracted, data kept), `app.deleteData` (purge, then reload on an empty
   database), `app.reload` (dev: rebuild the VM from source, keep the database; the old version keeps running if the
   new one does not load).
-- **The app API** is typed in `types/generated/agentos.d.luau` (generated from `crates/agentos-codegen/src/luau/app_api.luau.tpl`): `app.manifest`, `app.db` (`migrate`, `exec`,
+- **The app API** is described in `types/generated/luals/agentos.lua` (LuaCATS, generated from `crates/agentos-codegen/src/lua/app_api.lua.tpl`): `app.manifest`, `app.db` (`migrate`, `exec`,
   `all`, `one`, `tx`, and the sources `query` / `row` / `scalar`), `app.kv`, `app.state`, `app.tools.register`
   with `app.t` input builders, `app.notify`, `app.shell`, `app.window`.
   `require` at run time knows only `@agentos/app` and `@agentos/ui`: an app's own modules (`./x`, `../x`) are bundled into its one `app.lua` when it is built.
@@ -274,7 +273,7 @@ silently. `lint:luau` and `lint:stylua` skip with a message when `luau-lsp` or
 - **A window is a view instance.** `app.window(name, { client, state, render, onOpen, onClose })` declares a kind;
   `view.open` creates an instance with its own `w` (per-window `w.state`, `w.client` Refs and `:get`/`:set`, `w.env`
   Refs, `w:toast/focus/scrollTo/announce/copy/close`). `render(w)` runs as a pure, tracked scope: state it reads is
-  the instance's dependency set, and a write inside it raises. The Luau node tree (from the generated
+  the instance's dependency set, and a write inside it raises. The Lua node tree (from the generated
   `@agentos/ui`) becomes the wire tree, **handlers stay closures in the VM keyed `path#event`**, and the tree is
   validated (`validate_with`, with the view's client and source declarations) before it leaves the VM.
 - **Sources per render.** A source factory called in `render` returns a handle `{["$source"] = id}` (any other field
@@ -439,7 +438,7 @@ is `AppData::read_only()`: SQLite `PRAGMA query_only` for each statement (checke
 cached while writable cannot sneak a write through; the authorizer refuses app SQL that tries to lift it), so
 `db:exec`, writes in `db:tx`, DDL and a write smuggled through `db:all ... returning` all fail. `app.kv:set`/`delete` and
 `db:migrate` raise with a message that says why. A `readOnly` call also cannot assign `app.state`, `app.notify`, open a window (whose `onOpen` could write) or
-drive the shell (`app.shell.*`), and the flag travels through the `AppRuntime` port, not only the Luau adapter.
+drive the shell (`app.shell.*`), and the flag travels through the `AppRuntime` port, not only the Lua adapter.
 `openWindow` accepts only windows the app declared. A tool that must write is not `readOnly`: the Calculator's `calculate` records the sum in its history, so it is not
 `readOnly` (its `history` tool is).
 

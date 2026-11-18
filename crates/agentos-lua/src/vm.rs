@@ -43,7 +43,7 @@ use std::{
 };
 use tokio::sync::Notify;
 
-/// The Lua 5.1 polyfills of the Luau standard library (`lua/prelude.luau`, built by `bun run codegen`): run
+/// The Lua 5.1 polyfills of the Lua 5.3 standard-library members 5.1 lacks (`lua/prelude.lua`, copied by `bun run codegen`): run
 /// once in each app's environment before the app.
 const PRELUDE: &str = include_str!("../../../types/generated/prelude.lua");
 

@@ -2,7 +2,7 @@
 //! carries (tier, `since`, accessibility rules, the positional argument, interactivity).
 //!
 //! These tables are the single source for the validator ([`super::validate`]), the TypeScript types, the
-//! Luau definitions and constructors, and the reference docs (`agentos-codegen`). They are `const` data, so
+//! Lua definitions and constructors, and the reference docs (`agentos-codegen`). They are `const` data, so
 //! the catalogue costs nothing at run time and cannot be mutated.
 
 use super::version::KitVersion;
@@ -164,7 +164,7 @@ impl SlotSpec {
     }
 }
 
-/// An event a component reports. The wire name is `tap`; the Luau prop is `onTap`.
+/// An event a component reports. The wire name is `tap`; the Lua prop is `onTap`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EventSpec {
     pub name: &'static str,
@@ -186,7 +186,7 @@ impl EventSpec {
         Self { doc: text, ..self }
     }
 
-    /// The Luau handler prop (`onTap`).
+    /// The Lua handler prop (`onTap`).
     #[must_use]
     pub fn prop_name(&self) -> String {
         handler_prop(self.name)

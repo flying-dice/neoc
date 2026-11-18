@@ -49,7 +49,7 @@ pub fn user_ctx(now_ms: u64) -> CallContext {
     CallContext { actor: Actor::user("You"), now_ms }
 }
 
-/// The Lua 5.1 text of a Luau entry file, built with the product's own pipeline (`scripts/lua51.ts`: darklua
+/// The bundled Lua 5.1 text of an app entry file, built with the product's own pipeline (`scripts/lua51.ts`: darklua
 /// with `.darklua.json`), so these tests run what `bun run build:apps` ships. Needs bun and darklua.
 pub fn build_lua(entry: &Path) -> Vec<u8> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -79,8 +79,8 @@ fn nonce() -> u64 {
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
-/// An app package of the one built file: `entry` is a Luau file (`apps/calculator/app.luau`, a codegen
-/// fixture), built and bundled.
+/// An app package of the one built file: `entry` is a Lua file (`apps/calculator/app.lua`, a codegen
+/// fixture), bundled.
 pub fn built_package(entry: &Path) -> AppPackage {
     let files = BTreeMap::from([("app.lua".to_owned(), build_lua(entry))]);
     AppPackage { entry: "app.lua".into(), files }
@@ -95,5 +95,5 @@ pub fn built_app(app: &str) -> AppPackage {
     } else {
         manifest.join("../agentos-codegen/tests/fixtures").join(app)
     };
-    built_package(&dir.join("app.luau"))
+    built_package(&dir.join("app.lua"))
 }

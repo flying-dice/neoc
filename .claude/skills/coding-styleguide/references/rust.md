@@ -10,7 +10,7 @@ The host is a Cargo workspace (`Cargo.toml`, `rust-toolchain.toml`, edition 2021
 |---|---|---|
 | `agentos-domain` | the pure model: ids, app refs and manifests, tool grants, agent identity, tools, notifications, the view tree and component schema, protocol messages, `merge3`. Unit tests. | `serde`, `serde_json`, `sha2`, `thiserror`; `ts-rs` and `schemars` only behind the derive-only `codegen` feature |
 | `agentos-application` | **ports** (traits) and **use cases** (`AppService`, `ChatService`, `DeviceService`, live sources, write-back), plus in-memory fakes in `testing`. Runtime-free: tokio is a dev-dependency. | `agentos-domain`, `async-trait`, `parking_lot`, `thiserror`, `tracing`, small runtime-free crates |
-| adapters (`luau`, `sqlite`, `fetch`, `acp`, `agui`, `http`, `mcp`) | one port or one protocol each | application and domain; **never another adapter** (dev-dependencies may) |
+| adapters (`lua`, `sqlite`, `fetch`, `acp`, `agui`, `http`, `mcp`) | one port or one protocol each | application and domain; **never another adapter** (dev-dependencies may) |
 | `agentos-codegen` | dev-time generation from the domain schema; not linked into the host | domain |
 | `agentos-host` | composition root: build, wire, mount, bind, shut down. No business logic. | everything; the only crate with `anyhow` |
 
@@ -20,7 +20,7 @@ Rules of thumb:
   use case, not an adapter. An adapter translates (SQLite rows, mlua values, HTTP, ACP messages) and holds no policy.
 - A new need from the outside world is a **port** in `agentos-application::ports` first, with a fake in `testing`, then an
   adapter. A driving adapter (`http`, `mcp`, `agui`) calls use cases, never reaches an adapter.
-- A framework crate appears only in its adapter (`deny.toml` pins it with `wrappers`): mlua in `luau`, rusqlite in
+- A framework crate appears only in its adapter (`deny.toml` pins it with `wrappers`): mlua in `lua` (via `luavm`), rusqlite in
   `sqlite`, rmcp in `mcp`, agent-client-protocol in `acp`, axum in the driving adapters and the host. A new crate must
   be added to `scripts/check-deps.ts` on purpose.
 - Dependencies are declared once in `[workspace.dependencies]` with pins for the fast movers (`rmcp`, `agent-client-protocol`,

@@ -16,7 +16,7 @@ pub const TEXT: ComponentSpec = ComponentSpec::new(
     "Text in one of the closed text styles. Never `{@html}`: markup is not interpreted.",
 )
 .props(props![
-    PropSpec::new("text", PropType::Str).req().doc("Positional in Luau: `ui.Text { \"Hi\" }`."),
+    PropSpec::new("text", PropType::Str).req().doc("Positional in Lua: `ui.Text { \"Hi\" }`."),
     prop!("style", PropType::Enum(&TEXT_STYLE)).default("\"body\""),
     prop!("weight", en!("regular", "medium", "semibold", "bold")),
     prop!("design", en!("default", "rounded", "mono")),

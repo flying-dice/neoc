@@ -1,9 +1,9 @@
 //! Server-driven UI: the component schema, the expression language, sources and client state, the view
-//! protocol, a validator and a keyed diff. Apps describe views (in Luau); the managed client renders them with
+//! protocol, a validator and a keyed diff. Apps describe views (in Lua); the managed client renders them with
 //! the kit and sends events back. `docs/architecture/ui-system.md` is the spec.
 //!
 //! This is the **single source** of the type pipeline: `agentos-codegen` reads these types and tables and emits
-//! the client's TypeScript, the app authors' Luau definitions and constructors, and the component reference.
+//! the client's TypeScript, the app authors' Lua definitions and constructors, and the component reference.
 //!
 //! | Module | What it holds |
 //! |---|---|

@@ -221,7 +221,7 @@ id: string, };
 export type ViewCommand = { viewId: string, } & ({ "cmd": "toast", "args": Toast } | { "cmd": "focus", "args": { key: string, } } | { "cmd": "scrollTo", "args": { key?: string, row?: JsonValue, } } | { "cmd": "announce", "args": { text: string, } } | { "cmd": "copy", "args": { text: string, } } | { "cmd": "openUrl", "args": { url: string, } } | { "cmd": "haptic" } | { "cmd": "closeWindow" });
 export type ViewError = { viewId: string, message: string, 
 /**
- * Dev builds: the Luau trace.
+ * Dev builds: the Lua trace.
  */
 dev?: string, };
 export type ViewClosed = { viewId: string, reason: string, };
@@ -379,7 +379,7 @@ export type ComponentMeta = {
   since: string
   group: string
   interactive: boolean
-  /** The prop a positional Luau argument sets. */
+  /** The prop a positional Lua argument sets. */
   positional: string | null
   role: string
   name: { oneOf: string[]; children: boolean } | { altOrDecorative: true } | null
@@ -465,7 +465,7 @@ export const COMPONENTS = {
   Inspector: { tier: 3, since: '1.0', group: 'Navigation', interactive: false, positional: null, role: '', name: null, bindings: {  }, events: ['appear', 'disappear', 'drop'], slots: ['contextMenu', 'fallback', 'tabItem'], children: 'any', openProps: true },
 } as const satisfies Record<ComponentName, ComponentMeta>
 
-/** Lays children out along one axis. `VStack` and `HStack` are `axis` sugar in the Luau constructors. (Tier 1, since 1.0) */
+/** Lays children out along one axis. `VStack` and `HStack` are `axis` sugar in the Lua constructors. (Tier 1, since 1.0) */
 export type StackProps = Omit<CommonProps, 'align'> & {
   axis?: Expr<'v' | 'h'>
   spacing?: Expr<Spacing>
@@ -1104,7 +1104,7 @@ export type MenuNode = {
 
 /** Text in one of the closed text styles. Never `{@html}`: markup is not interpreted. (Tier 1, since 1.0) */
 export type TextProps = Omit<CommonProps, 'align' | 'foreground'> & {
-  /** Positional in Luau: `ui.Text { "Hi" }`. */
+  /** Positional in Lua: `ui.Text { "Hi" }`. */
   text: Expr<string>
   style?: Expr<TextStyle>
   weight?: Expr<'regular' | 'medium' | 'semibold' | 'bold'>

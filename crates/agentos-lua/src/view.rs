@@ -1,8 +1,8 @@
-//! Windows: one view instance per open window, rendered from Luau into the wire tree.
+//! Windows: one view instance per open window, rendered from Lua into the wire tree.
 //!
 //! `app.window(name, { client = ..., render = function(w) ... end })` declares a window kind. Opening one
 //! creates an instance with its own `w` (per-window state, client-state Refs, env Refs, one-shot commands);
-//! `render(w)` runs as a pure, tracked scope (state it reads becomes the instance's dependencies); the Luau node
+//! `render(w)` runs as a pure, tracked scope (state it reads becomes the instance's dependencies); the Lua node
 //! tree is converted to the wire form (closures stay here, addressed by `path#event`), validated against the
 //! component schema, and handed to the view service, which diffs it against what the client has.
 
@@ -118,14 +118,14 @@ pub(crate) fn make_handle(lua: &Lua, sh: &Shared, def: &str, params: &Table) -> 
     ref_proxy(lua, handle, format!("src.{id}."))
 }
 
-// ---- Luau tree -> wire tree --------------------------------------------------------------------------------
+// ---- Lua tree -> wire tree --------------------------------------------------------------------------------
 
 fn bad(path: &str, why: impl std::fmt::Display) -> VmError {
     VmError::Convert(format!("{path}: {why}"))
 }
 
 /// What converting one rendered tree has used, against what a view may hold. The domain validates the
-/// finished tree, but a Luau tree is untrusted until it is converted: one that contains itself, or is
+/// finished tree, but a Lua tree is untrusted until it is converted: one that contains itself, or is
 /// shared at every level, would overflow the stack or the memory before validation ever saw it.
 struct Wire {
     /// The closures of the handlers met so far, by `path#event`.
@@ -266,7 +266,7 @@ fn wire_node_inside(t: &Table, path: &str, wire: &mut Wire, depth: usize) -> Res
     Ok(node)
 }
 
-/// The wire tree of a rendered Luau tree, and the closures of its handlers by `path#event`. The root's key is
+/// The wire tree of a rendered Lua tree, and the closures of its handlers by `path#event`. The root's key is
 /// the window name.
 pub(crate) fn wire_tree(root: &Table, window: &str) -> Result<(Node, HashMap<String, Vec<Function>>)> {
     root.set("key", window).map_err(|e| bad(window, e))?;

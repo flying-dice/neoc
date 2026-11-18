@@ -3,7 +3,7 @@
 Each journey is a goal, not a script: research participants must work out *how* themselves. Automated versions
 live in `e2e/journeys.spec.ts` with the same ids (each test checks its row's "Done when"). They run against the real Rust host (`bun run host`, with the
 registry from `bun run build:apps`, so the Calculator is offered in Discover; the e2e host installs it at start),
-in a paired browser. The Calculator is a Luau app: it runs on the host, its window is a view the client renders, and
+in a paired browser. The Calculator is a Lua app: it runs on the host, its window is a view the client renders, and
 there is one calculator however many windows are open.
 
 | Id | Who / goal | Starts at | Done when |

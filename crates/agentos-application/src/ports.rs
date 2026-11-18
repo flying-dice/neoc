@@ -29,7 +29,7 @@ pub struct AppPackage {
     pub files: BTreeMap<String, Vec<u8>>,
 }
 
-/// Who is calling and when: `ctx.actor` and `ctx.now` in Luau.
+/// Who is calling and when: `ctx.actor` and `ctx.now` in Lua.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CallContext {
     pub actor: Actor,

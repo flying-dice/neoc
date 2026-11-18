@@ -1,4 +1,4 @@
-//! Luau <-> JSON, written by hand (not serde) so the rules are the ones apps need:
+//! Lua <-> JSON, written by hand (not serde) so the rules are the ones apps need:
 //!
 //! - whole numbers become JSON integers (`{ id = 7 }` binds as `7`, not `7.0`);
 //! - JSON `null` and a Lua `nil` are the same thing (never the truthy `null` lightuserdata);
@@ -6,7 +6,7 @@
 //! - functions, userdata, cycles and non-finite numbers are errors, with the path to the offender;
 //! - the result is bounded: a [`Walk`] counts nodes and bytes as it goes, so a table that is shared at every
 //!   level (`for i = 1, 30 do t = { t, t } end`, 2^30 paths to the leaves) or a huge string repeated is an
-//!   error instead of gigabytes of JSON outside the Luau memory limit.
+//!   error instead of gigabytes of JSON that no Lua table accounts for.
 
 use agentos_application::data::Params;
 use agentos_luavm::mlua;
@@ -20,8 +20,8 @@ const MAX_DEPTH: usize = 32;
 /// or window argument of a hundred thousand values is already far past anything a person or an agent reads.
 pub const MAX_NODES: usize = 100_000;
 
-/// Most bytes of string content and object keys one conversion may produce: 4 MiB, beside the Luau heap
-/// limit (16 MiB) that already bounds what the app can build.
+/// Most bytes of string content and object keys one conversion may produce: 4 MiB: a value
+/// handed back to the host is far past anything a person or an agent reads before it gets here.
 pub const MAX_BYTES: usize = 4 * 1024 * 1024;
 
 /// What a conversion has used so far, and the tables it is inside of right now. One `Walk` can span many
@@ -194,7 +194,7 @@ pub fn json_to_lua(lua: &Lua, v: &Value) -> mlua::Result<LuaValue> {
     })
 }
 
-/// SQL parameters from Luau: `nil` (none), `{ a, b }` (positional) or `{ name = v }` (named binds).
+/// SQL parameters from Lua: `nil` (none), `{ a, b }` (positional) or `{ name = v }` (named binds).
 pub fn lua_to_params(v: Option<LuaValue>) -> mlua::Result<Params> {
     let Some(v) = v else { return Ok(Params::None) };
     match lua_to_json(&v)? {

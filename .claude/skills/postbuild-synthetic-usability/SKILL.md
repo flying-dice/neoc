@@ -49,7 +49,7 @@ a screenshot: drive it.
 - **Setup** (`docs/TESTING.md`, "Driving the real shell"): `bun run build && bun run build:apps`, start a host with the
   app installed, pair, then use `node e2e/tools/session.mjs` (`start`, `pair`, `look`, `click`, `type`, `press`,
   `resize`). `look` gives a screenshot and the accessibility tree, so keyboard order, focus, roles and names *can* be
-  checked here: check them rather than writing "could not verify". Read the app's tree in `apps/<app>/app.luau` for
+  checked here: check them rather than writing "could not verify". Read the app's tree in `apps/<app>/app.lua` for
   labels, keys and states the screens do not reach.
 - **Tasks** are the app's journeys (`apps/<app>/JOURNEYS.md` or `client/journeys/<id>.md`); each **Done when** is the
   pass condition for the walkthrough. Walk every one, plus the matrix `verify-change` lists (light and dark, the
@@ -59,7 +59,7 @@ a screenshot: drive it.
   the scripted agent where the journey involves it.
 - **Lenses:** Nielsen and WCAG 2.2 AA as written above, plus `docs/design/DESIGN_LANGUAGE.md` (§11 checklist) and
   [CONFORMANCE.md](../app-design/CONFORMANCE.md) when a score is wanted. Cite evidence by screenshot path or by
-  `file:line` in `app.luau` / the kit.
+  `file:line` in `app.lua` / the kit.
 - **Write it to** `docs/ux/<app>/review-<n>.md`. Blocker and major *defects* are fixed before the next `ux-research`
   round (that panel is expensive; this review is one agent). A *defect* found here gets a regression check where one is
   possible: a journey assertion, a story with a play function, or a stricter generic check in `e2e/fixtures.ts`.

@@ -31,7 +31,7 @@ pub const STACK: ComponentSpec = ComponentSpec::new(
     "Stack",
     Group::Layout,
     Tier::One,
-    "Lays children out along one axis. `VStack` and `HStack` are `axis` sugar in the Luau constructors.",
+    "Lays children out along one axis. `VStack` and `HStack` are `axis` sugar in the Lua constructors.",
 )
 .props(props![
     prop!("axis", en!("v", "h")).default("\"v\""),

@@ -34,7 +34,7 @@ function builtinAppIds(): string[] {
   return [...block.matchAll(/^ {2}([a-z][a-z0-9-]*): \{/gm)].map((m) => m[1])
 }
 
-/** Luau app packages (apps/<dir>/app.json): the host installs the ones in the test registry at start. */
+/** Lua app packages (apps/<dir>/app.json): the host installs the ones in the test registry at start. */
 function installedAppIds(): string[] {
   return readdirSync(join(ROOT, 'apps'))
     .map((dir) => join(ROOT, 'apps', dir, 'app.json'))

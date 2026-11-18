@@ -10,7 +10,7 @@
  *    from client refs, `source.set`;
  *  - events handed to the app, and "agent writes" (`setState`, `refreshSources`) that reach every open view.
  *
- * It is not a fake Luau runtime: an app here is a TypeScript `FakeApp` that returns trees and answers events.
+ * It is not a fake Lua runtime: an app here is a TypeScript `FakeApp` that returns trees and answers events.
  */
 import { merge3 } from '../core/textMerge'
 import { messageOf } from '../errors'

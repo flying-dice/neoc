@@ -1,6 +1,6 @@
 ---
 name: app-design
-description: Use when designing, redesigning or polishing any AgentOS app (a new Luau app, a built-in shell page, or the desktop shell), or when asked how good an app's UX or design is. Runs the iterative UX process for that app: key user journeys, a user-research panel of Haiku, Sonnet and Opus participants who use the real app headless on the real host, a styleguide conformance score, then design changes, repeated until the exit criteria hold.
+description: Use when designing, redesigning or polishing any AgentOS app (a new Lua app, a built-in shell page, or the desktop shell), or when asked how good an app's UX or design is. Runs the iterative UX process for that app: key user journeys, a user-research panel of Haiku, Sonnet and Opus participants who use the real app headless on the real host, a styleguide conformance score, then design changes, repeated until the exit criteria hold.
 ---
 
 # Designing an AgentOS app
@@ -29,7 +29,7 @@ an app whose purpose is not changing.
 Each app has 4 to 8 key journeys. They are what people come to the app to do, plus the hard cases: errors, small
 windows, keyboard-only use, agents driving the app.
 
-- Luau apps: `apps/<app>/JOURNEYS.md`. Built-in shell pages and the shell: `client/journeys/<id>.md`.
+- Lua apps: `apps/<app>/JOURNEYS.md`. Built-in shell pages and the shell: `client/journeys/<id>.md`.
 - Each row is an id (letter + number), who and what they want, a start state (what is open and installed; the only URL
   parameter is `theme=light|dark`), and an observable **Done when**. Never write steps: participants must find the way
   themselves.
@@ -84,7 +84,7 @@ Work through the change list in priority order:
 
 - Fix root causes in the kit (`packages/ui`), the renderer adapters (`client/src/view`), the component schema
   (Rust, then `bun run codegen`) or the tokens, not one screen at a time. A kit change reaches every app, so run the whole
-  e2e suite afterwards. A Luau app changes its tree, keys, labels, copy and window size only: it never styles.
+  e2e suite afterwards. A Lua app changes its tree, keys, labels, copy and window size only: it never styles.
 - If a finding shows the **styleguide** is wrong, change `DESIGN_LANGUAGE.md` deliberately in the same change and
   say so in the round report. Never quietly diverge from it.
 - Every fixed finding gets a regression check where one is possible: a journey assertion, a story with a play

@@ -1,7 +1,7 @@
 <!--
   Composition root — the only component allowed outside an atomic layer.
   It gates the shell on pairing, applies system settings, and maps app ids to built-in pages or to the windows
-  of the Luau apps installed on the host.
+  of the Lua apps installed on the host.
 -->
 <script lang="ts">
   import DesktopPage from './pages/DesktopPage.svelte'

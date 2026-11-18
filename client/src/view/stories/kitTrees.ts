@@ -1,5 +1,5 @@
 /**
- * The JSON view trees of the "Renderer/Kit — layout" stories: what a Luau app's `render` would send, written out. Each
+ * The JSON view trees of the "Renderer/Kit — layout" stories: what a Lua app's `render` would send, written out. Each
  * builder returns a `TreeApp` (the fake host app) so a story can open it and its play function can drive the host.
  */
 import type { Node, Row, RowKey } from '../protocol'

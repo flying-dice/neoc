@@ -1,6 +1,6 @@
 ---
 name: clean-code-review
-description: Clean-code audit of an AgentOS change (the current diff or a branch) against SRP, DRY, naming, coupling, dead code, KISS, BOUNDARY (the crate ports, the Luau sandbox, the protocol and the atomic layers) and PANIC (unwrap and panics in Rust, unvalidated JSON-RPC params, unchecked casts, non-null assertions, agent or tool input). Fixes what this session introduced and tags the rest as scored TODO markers. Use after implementing a change and before the pre-commit skill; agentos-code-review delegates its clean-code pass here.
+description: Clean-code audit of an AgentOS change (the current diff or a branch) against SRP, DRY, naming, coupling, dead code, KISS, BOUNDARY (the crate ports, the Lua sandbox, the protocol and the atomic layers) and PANIC (unwrap and panics in Rust, unvalidated JSON-RPC params, unchecked casts, non-null assertions, agent or tool input). Fixes what this session introduced and tags the rest as scored TODO markers. Use after implementing a change and before the pre-commit skill; agentos-code-review delegates its clean-code pass here.
 ---
 
 # Clean-code review
@@ -10,7 +10,7 @@ description: Clean-code audit of an AgentOS change (the current diff or a branch
 Review the changed files (`git diff main...HEAD`, plus uncommitted work) and the code they touch directly. Skip
 test boilerplate, framework-required shapes (Storybook CSF, Playwright fixtures, generated files under `types/generated`
 and `docs/reference`) and pre-existing issues outside the diff. Lint already covers formatting, clippy, the crate-direction
-check, atomic layers, test ids and Luau types; don't report what `bun run lint` reports.
+check, atomic layers, test ids and Lua types; don't report what `bun run lint` reports.
 
 More than 50 changed lines or more than 3 files: run one sub-agent per principle group (1 to 3, 4 to 6, 7, 8), each
 given the diff and the file list, not your conclusions. Otherwise one inline pass.
@@ -18,7 +18,7 @@ given the diff and the file list, not your conclusions. Otherwise one inline pas
 ## Principles
 
 1. **SRP**: a function, use case or component doing two jobs; an adapter holding policy that belongs in a use case or the
-   domain; a Luau `render` or handler holding logic that belongs in a plain function (testable from Rust); a Svelte page
+   domain; a Lua `render` or handler holding logic that belongs in a plain function (testable from Rust); a Svelte page
    mixing RPC, parsing and layout instead of using the renderer core.
 2. **DRY**: copy-pasted blocks, constants or near-identical components, especially a renderer adapter or an app
    re-implementing a control the kit has or should have; a wire shape written by hand that the Rust schema generates.
@@ -26,7 +26,7 @@ given the diff and the file list, not your conclusions. Otherwise one inline pas
    the conventions (`<appId>__<tool>`, `[a-z][a-z0-9_]*` local tool names, `docs/TESTING.md` test ids from keys); error
    variants that describe the mechanism instead of the failure.
 4. **COUPLING**: concrete dependencies built inline instead of injected through a port (a `Clock`, `Fetcher`, `Notifier`
-   created inside a use case); global or module-level mutable state (Rust `static`s, Luau globals, a Svelte module outside
+   created inside a use case); global or module-level mutable state (Rust `static`s, Lua globals, a Svelte module outside
    a `*.svelte.ts` store); a use case that knows an adapter's types.
 5. **DEAD**: unused functions, ports, enum variants, props, handlers, tools or stories; unreachable branches;
    commented-out code.
@@ -51,11 +51,11 @@ given the diff and the file list, not your conclusions. Otherwise one inline pas
 8. **PANIC**: a reachable crash or silent corruption from outside input.
    - **Rust:** `unwrap`, `expect`, `panic!`, `unreachable!`, indexing or slicing that can fail, `as` numeric casts that
      truncate, arithmetic that can overflow, a lock held across `.await`; on input from JSON-RPC params, tool arguments, app
-     (Luau) output, ACP messages from an agent process, app-ref contents, SQL rows from an older version, files, the network.
+     (Lua) output, ACP messages from an agent process, app-ref contents, SQL rows from an older version, files, the network.
    - **JSON-RPC params:** a method that reads `params` without parsing it into a typed message (by-name params, `-32602` on a
      bad shape).
-   - **Luau:** an unchecked `:: T` cast over data from `app.kv`, a db row, a tool input or `e.payload`; a runaway loop or
-     unbounded table that the CPU and memory budgets are the only defence for; SQL built by string concatenation.
+   - **Lua:** a value from `app.kv`, a db row, a tool input or `e.payload` used without checking its shape (LuaLS
+     `---@type` annotations are not a check); SQL built by string concatenation.
    - **TypeScript and Svelte:** `as T` over `unknown` (RPC and AG-UI payloads, `JSON.parse`, stored client state); a non-null
      `!`; indexing assumed defined; a throw inside a subscription or `$effect` that nothing catches; a fallible promise fired
      with `void` and no catch; `{@html}` or `innerHTML` with agent or tool text.

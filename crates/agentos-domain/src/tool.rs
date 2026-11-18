@@ -12,7 +12,7 @@ pub struct ToolSpec {
     #[serde(default)]
     pub description: String,
     pub input_schema: Value,
-    /// The tool does not change data (`readOnly = true` in Luau): shown to agents as a hint.
+    /// The tool does not change data (`readOnly = true` in Lua): shown to agents as a hint.
     #[serde(default)]
     pub read_only: bool,
 }

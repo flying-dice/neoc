@@ -3,7 +3,7 @@
   "name": "Calculator",
   "version": "0.1.1",
   "description": "Arithmetic for you and your agents: type or tap a sum, or let an agent put a result on it.",
-  "main": "app.luau",
+  "main": "app.lua",
   "icon": "plus",
   "tint": "orange",
   "requires": { "host": ">=1.0" }

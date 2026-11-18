@@ -1,6 +1,6 @@
 //! Live sources (ui-system.md §3.3, §3.7): parameterised, windowed, live reads of an app's data.
 //!
-//! A [`SourceDef`] is what Luau's `db:query` / `db:row` / `db:scalar` declared. A view *subscribes* to one
+//! A [`SourceDef`] is what Lua's `db:query` / `db:row` / `db:scalar` declared. A view *subscribes* to one
 //! with params and a window and gets a snapshot; afterwards every commit that touches a table the query
 //! reads re-runs the subscription (in one read transaction, so the list, the detail and the counts agree)
 //! and the result is diffed against what that subscriber last received: the ordered window keys plus only

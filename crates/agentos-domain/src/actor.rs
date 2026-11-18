@@ -1,4 +1,4 @@
-//! Who is acting: the human at a client, or an agent. Attribution for writes (`ctx.actor` in Luau),
+//! Who is acting: the human at a client, or an agent. Attribution for writes (`ctx.actor` in Lua),
 //! revisions and notifications.
 
 use crate::AgentIdentity;

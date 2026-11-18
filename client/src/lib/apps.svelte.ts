@@ -4,7 +4,7 @@ import { iconOf, tintBackground, type AppSummary } from '../shell/hostApi'
 /** Apps whose pages still ship with the shell. */
 export type BuiltinAppId = 'discover' | 'settings' | 'files' | 'gallery' | 'terminal'
 
-/** Built-in ids plus the ids of the Luau apps installed on the host. */
+/** Built-in ids plus the ids of the Lua apps installed on the host. */
 export type AppId = string
 
 export interface AppDefinition {
@@ -114,7 +114,7 @@ export function appOf(id: AppId): AppDefinition | undefined {
 }
 
 /**
- * The Luau app that the desktop's Agents widget and Discover's "Open Agents" bring forward. It is an ordinary
+ * The Lua app that the desktop's Agents widget and Discover's "Open Agents" bring forward. It is an ordinary
  * installed app (a host may not have it, or it may be disabled), so every entry point checks `appOf` first.
  */
 export const AGENTS_APP_ID: AppId = 'agents'
