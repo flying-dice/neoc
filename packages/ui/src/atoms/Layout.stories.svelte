@@ -13,7 +13,7 @@
   import Stack from './Stack.svelte'
   import Text from './Text.svelte'
   import ZStack from './ZStack.svelte'
-  import { gridTemplate, spannedAspect } from '../logic/grid'
+  import { gridTemplate } from '../logic/grid'
 
   const { Story } = defineMeta({
     title: 'Atoms/Layout',
@@ -61,18 +61,18 @@
   play={async ({ canvas }) => {
     const single = canvas.getByTestId('cell-A').getBoundingClientRect()
     const wide = canvas.getByTestId('cell-wide').getBoundingClientRect()
-    // Two cells wide, one row tall: the same height as a single cell (within the gap).
-    await expect(Math.abs(wide.height - single.height)).toBeLessThan(6)
+    // Two cells wide, one row tall: exactly the height of a single cell, gap or not.
+    await expect(Math.abs(wide.height - single.height)).toBeLessThan(1)
     await expect(wide.width).toBeGreaterThan(single.width * 1.9)
   }}
 >
   <div style="max-width:360px">
     <Grid testid="grid" columns={gridTemplate(3)} rowGap={8} colGap={8}>
       {#each ['A', 'B', 'C'] as c (c)}
-        <GridCell aspect={spannedAspect(1.4, 1)}><Card testid="cell-{c}" padding="8px">{c}</Card></GridCell>
+        <GridCell aspect={1.4}><Card testid="cell-{c}" padding="8px">{c}</Card></GridCell>
       {/each}
-      <GridCell column="1 / span 2" aspect={spannedAspect(1.4, 2)}><Card testid="cell-wide" padding="8px">Spans two</Card></GridCell>
-      <GridCell column="3" aspect={spannedAspect(1.4, 1)}><Card testid="cell-last" padding="8px">Pinned to 3</Card></GridCell>
+      <GridCell column="1 / span 2" span={2} aspect={1.4}><Card testid="cell-wide" padding="8px">Spans two</Card></GridCell>
+      <GridCell column="3" aspect={1.4}><Card testid="cell-last" padding="8px">Pinned to 3</Card></GridCell>
     </Grid>
   </div>
 </Story>

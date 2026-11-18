@@ -6,7 +6,18 @@ mod common;
 use agentos_luau::{reload, VmError};
 use common::{agent_ctx, db, load, package, quick, try_load, try_load_with};
 use serde_json::json;
-use std::time::{Duration, Instant};
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::{Duration, Instant},
+};
+
+/// A CPU budget of about 100 ms of an idle machine (the interpreter does roughly 20 million interrupts a second).
+const TWO_MILLION: u64 = 2_000_000;
+/// "Killed at the budget, not by the backstop": far below the 10 s wall-clock backstop even on a busy machine.
+const PROMPTLY: Duration = Duration::from_secs(5);
 
 #[tokio::test]
 async fn sandbox_blocks_escape_hatches_and_global_mutation() {
@@ -38,9 +49,9 @@ async fn sandbox_blocks_escape_hatches_and_global_mutation() {
 #[tokio::test]
 async fn cpu_budget_kills_infinite_loops_even_through_pcall() {
     let t = Instant::now();
-    let err = try_load_with("spin", "while true do end", db(), quick(100)).await.err().unwrap();
+    let err = try_load_with("spin", "while true do end", db(), quick(TWO_MILLION)).await.err().unwrap();
     assert!(err.to_string().contains("cpu budget exceeded"), "{err}");
-    assert!(t.elapsed() < Duration::from_secs(2));
+    assert!(t.elapsed() < PROMPTLY);
     // in a handler, with pcall trying to swallow the abort
     let src = r#"
         app.on("evil", function()
@@ -48,11 +59,11 @@ async fn cpu_budget_kills_infinite_loops_even_through_pcall() {
         end)
         app.on("ok", function() return 42 end)
     "#;
-    let vm = try_load_with("spin2", src, db(), quick(100)).await.unwrap();
+    let vm = try_load_with("spin2", src, db(), quick(TWO_MILLION)).await.unwrap();
     let t = Instant::now();
     let err = vm.emit("evil", json!(null)).await.unwrap_err();
     assert!(matches!(err, VmError::Script(_)));
-    assert!(t.elapsed() < Duration::from_secs(2));
+    assert!(t.elapsed() < PROMPTLY);
     // the VM is still usable for the next call (budget resets per call)
     assert_eq!(vm.emit("ok", json!(null)).await.unwrap(), json!(42));
 }
@@ -76,7 +87,7 @@ async fn memory_limit_stops_allocation_bombs() {
     assert_eq!(vm.emit("ok", json!(null)).await.unwrap(), json!(1));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn host_awaits_do_not_eat_the_cpu_budget_and_a_spinning_vm_does_not_stall_another() {
     // 5 sequential DB awaits inside one handler with a tiny cpu slice: fine, the slice resets per await
     let src = r#"
@@ -85,17 +96,79 @@ async fn host_awaits_do_not_eat_the_cpu_budget_and_a_spinning_vm_does_not_stall_
             for i = 1, 5 do n = n + #app.db:all("SELECT 1 AS x") end
             return n
         end)"#;
-    let vm = try_load_with("aaa", src, db(), quick(50)).await.unwrap();
+    let vm = try_load_with("aaa", src, db(), quick(50_000)).await.unwrap();
     assert_eq!(vm.emit("go", json!(null)).await.unwrap(), json!(5));
-    let spin = try_load_with("spin", r#"app.on("spin", function() while true do end end)"#, db(), quick(300))
-        .await
-        .unwrap();
-    let t = tokio::spawn(async move { spin.emit("spin", json!(null)).await });
+    // a second VM spins for a good while (10 million interrupts) on another worker thread
+    let spin =
+        try_load_with("spin", r#"app.on("spin", function() while true do end end)"#, db(), quick(10_000_000))
+            .await
+            .unwrap();
+    let spinner = tokio::spawn(async move { spin.emit("spin", json!(null)).await });
     tokio::time::sleep(Duration::from_millis(50)).await;
-    let t0 = Instant::now();
     assert_eq!(vm.emit("go", json!(null)).await.unwrap(), json!(5));
-    assert!(t0.elapsed() < Duration::from_millis(250));
-    assert!(t.await.unwrap().is_err());
+    assert!(!spinner.is_finished(), "the other VM was still spinning while this one answered");
+    assert!(spinner.await.unwrap().is_err());
+}
+
+/// Busy OS threads, twice as many as cores: the machine is as loaded as a parallel test run makes it.
+struct Load {
+    stop: Arc<AtomicBool>,
+    threads: Vec<std::thread::JoinHandle<()>>,
+}
+
+impl Load {
+    fn start() -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let cores = std::thread::available_parallelism().map_or(4, std::num::NonZero::get);
+        let threads = (0..cores * 2)
+            .map(|_| {
+                let stop = stop.clone();
+                std::thread::spawn(move || {
+                    while !stop.load(Ordering::Relaxed) {
+                        std::hint::spin_loop();
+                    }
+                })
+            })
+            .collect();
+        Self { stop, threads }
+    }
+}
+
+impl Drop for Load {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        for t in self.threads.drain(..) {
+            let _ = t.join();
+        }
+    }
+}
+
+/// The budget counts interrupts, not wall-clock time: an honest call stays inside it however loaded the
+/// machine is, and a runaway one is still killed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_cpu_budget_is_not_tripped_by_a_loaded_host() {
+    let src = r#"
+        app.on("honest", function() local n = 0 for i = 1, 1e6 do n = n + 1 end return n end)
+        app.on("runaway", function() local n = 0 for i = 1, 1e9 do n = n + 1 end return n end)"#;
+    let vm = try_load_with("loaded", src, db(), quick(3_000_000)).await.unwrap();
+    let _load = Load::start();
+    for _ in 0..5 {
+        assert_eq!(vm.emit("honest", json!(null)).await.unwrap(), json!(1_000_000));
+        tokio::time::sleep(Duration::from_millis(40)).await; // idle time between calls costs nothing either
+    }
+    let err = vm.emit("runaway", json!(null)).await.unwrap_err();
+    assert!(err.to_string().contains("cpu budget exceeded"), "{err}");
+}
+
+#[tokio::test]
+async fn the_wall_clock_backstop_still_ends_a_call_that_runs_too_long() {
+    let limits = agentos_luau::Limits {
+        cpu_ticks: u64::MAX,
+        cpu_wall: Duration::from_millis(200),
+        ..Default::default()
+    };
+    let err = try_load_with("slow", "while true do end", db(), limits).await.err().unwrap();
+    assert!(err.to_string().contains("cpu budget exceeded"), "{err}");
 }
 
 /// Luau's own pattern matcher polls the interrupt, so a catastrophic-backtracking `string.find` is stopped
@@ -107,11 +180,11 @@ async fn backtracking_pattern_is_stopped_by_the_cpu_budget() {
             local s = string.rep("a", 3000)
             return string.find(s, "a*a*a*a*a*a*a*a*b") == nil
         end)"#;
-    let vm = try_load_with("rex", src, db(), quick(100)).await.unwrap();
+    let vm = try_load_with("rex", src, db(), quick(TWO_MILLION)).await.unwrap();
     let t = Instant::now();
     let err = vm.emit("regex", json!(null)).await.unwrap_err();
     assert!(err.to_string().contains("cpu budget exceeded"), "{err}");
-    assert!(t.elapsed() < Duration::from_secs(1));
+    assert!(t.elapsed() < PROMPTLY);
 }
 
 #[tokio::test]

@@ -105,7 +105,7 @@ async fn run(settings: Settings, cwd: &Path) -> anyhow::Result<()> {
     match &client_dir {
         Some(dir) => tracing::info!(dir = %dir.display(), "serving the client"),
         None => {
-            tracing::warn!("no built client found (client/dist, apps/desktop/dist): serving the API only");
+            tracing::warn!("no built client found (client/dist): serving the API only");
         }
     }
 

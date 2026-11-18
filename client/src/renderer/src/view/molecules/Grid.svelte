@@ -3,7 +3,7 @@
   `cellAspect`. A child's `span`, `rowStart` and `colStart` place it. Atoms: Grid, GridCell, Children.
 -->
 <script lang="ts">
-  import { cellPlacement, gridTemplate, spannedAspect } from '@agentos/ui'
+  import { cellPlacement, gridTemplate } from '@agentos/ui'
   import { Grid, GridCell } from '@agentos/ui/atoms'
   import Children from '../atoms/Children.svelte'
   import { useView } from '../context'
@@ -41,7 +41,7 @@
   style={joinStyle(common.style, surfaceStyle(ctx, node, scope))}
 >
   {#each placed as { child, at } (child.key)}
-    <GridCell column={at.column} row={at.row} aspect={spannedAspect(cellAspect, at.span)}>
+    <GridCell column={at.column} row={at.row} span={at.span} aspect={cellAspect}>
       <Children nodes={[child]} {path} {scope} />
     </GridCell>
   {/each}

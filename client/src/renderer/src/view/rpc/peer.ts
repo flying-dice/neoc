@@ -1,8 +1,7 @@
 /**
  * A transport-agnostic JSON-RPC 2.0 peer with **by-name params objects** (spec 2, "Transport"). Both ends of
  * the socket run one: each side sends requests (awaited) and notifications (fire-and-forget) and handles the
- * other side's. It replaces the positional-array peer in `packages/sdk/src/rpc` for the view protocol: the
- * framing, ids, timeouts and error codes are the same; `params` is always an object.
+ * other side's. `params` is always an object.
  */
 
 export type JsonRpcId = number | string

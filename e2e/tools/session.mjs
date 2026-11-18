@@ -3,9 +3,12 @@
  * A persistent, headless browser session that an agent drives one command at
  * a time, the way a person uses the app: look at the screen, click what they
  * can see by its label, type, press keys, drag. Used by the UX research panel
- * (.claude/skills/app-design) against a running host (`bun run host`: http://127.0.0.1:7400, paired first).
+ * (.claude/skills/app-design) against a running host. Default URL: the e2e host (AGENTOS_PORT_BASE + 10, see
+ * scripts/ports.ts) when AGENTOS_PORT_BASE is set, else a host you run yourself (`bun run host`: 127.0.0.1:7400).
+ * A new session is not paired: run `pair` first.
  *
  *   node e2e/tools/session.mjs start  <name> [--url URL] [--width 1280] [--height 800] [--theme light|dark]
+ *   node e2e/tools/session.mjs pair   <name> [code]       fill "Pairing code", click "Pair" (no code: ask the host for one)
  *   node e2e/tools/session.mjs look   <name>              screenshot path + accessibility tree
  *   node e2e/tools/session.mjs click  <name> "<label>" [--role button] [--nth 0]
  *   node e2e/tools/session.mjs click  <name> --at 640,400
@@ -25,14 +28,29 @@
  * screenshot path (open it with the Read tool) and the accessibility tree.
  * Sessions live in test-results/sessions/<name>/.
  */
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { join, resolve } from 'node:path'
 
 const ROOT = resolve(import.meta.dirname, '../..')
 const dirOf = (name) => join(ROOT, 'test-results', 'sessions', name)
-const DEFAULT_URL = 'http://127.0.0.1:7400/'
+
+/** The e2e host's port is AGENTOS_PORT_BASE + 10 (scripts/ports.ts); a host you run yourself is on 7400. */
+const E2E_CONFIG = join(ROOT, 'test-results/host/agentos.toml')
+const E2E_HOST_BIN = join(ROOT, 'target/debug/agentos-host')
+const PORT_BASE = process.env.AGENTOS_PORT_BASE
+const DEFAULT_URL = `http://127.0.0.1:${PORT_BASE ? Number(PORT_BASE) + 10 : 7400}/`
+
+/** A fresh pairing code from the host this session talks to: the e2e host's own config when it is the e2e one. */
+function issuePairingCode() {
+  const e2e = PORT_BASE && existsSync(E2E_CONFIG) && existsSync(E2E_HOST_BIN)
+  const [cmd, args] = e2e ? [E2E_HOST_BIN, ['pair', '--config', E2E_CONFIG]] : ['cargo', ['run', '-q', '-p', 'agentos-host', '--', 'pair']]
+  const run = spawnSync(cmd, args, { cwd: ROOT, encoding: 'utf8' })
+  const code = run.stdout.match(/Pairing code:\s+([A-Z0-9]{4}-[A-Z0-9]{4})/)?.[1]
+  if (!code) throw new Error(`\`${cmd} ${args.join(' ')}\` printed no pairing code:\n${run.stdout}${run.stderr}`)
+  return code
+}
 
 const [command, name, ...rest] = process.argv.slice(2)
 const flag = (key, fallback) => {
@@ -133,6 +151,14 @@ if (command === '__serve') {
       await settle()
       return `filled "${label}" with "${text}"`
     },
+    async pair({ code }) {
+      const { el: field } = await find('Pairing code')
+      await field.fill(code ?? issuePairingCode())
+      await (await find('Pair', 'button')).el.click()
+      await page.getByTestId('pairing').waitFor({ state: 'detached', timeout: 10_000 }).catch(() => {})
+      await settle()
+      return (await page.getByTestId('pairing').count()) ? 'the pairing screen is still showing (wrong or used code?); use `look`' : 'paired'
+    },
     async press({ key }) {
       await page.keyboard.press(key)
       await settle()
@@ -226,6 +252,9 @@ if (command === '__serve') {
       break
     case 'fill':
       Object.assign(params, { label: rest[0], text: rest[1] })
+      break
+    case 'pair':
+      params.code = rest[0]
       break
     case 'press':
       params.key = rest[0]

@@ -13,7 +13,8 @@
     /** Accessible description (read after the name). */
     'aria-description'?: string
     variant?: 'filled' | 'tinted' | 'gray' | 'plain'
-    size?: 'small' | 'medium' | 'large'
+    /** `fill` takes the whole box its parent gives it (a grid cell, a stretched stack slot), at least 44 pt tall. */
+    size?: 'small' | 'medium' | 'large' | 'fill'
     /** Capsule (pill) corners instead of rounded rect. */
     capsule?: boolean
     /** Square button sized for a single glyph. */
@@ -114,6 +115,17 @@
     font-weight: 600;
     letter-spacing: var(--tracking-body);
     min-height: 50px;
+    padding: 0 20px;
+    border-radius: 12px;
+  }
+  .fill {
+    display: flex;
+    width: 100%;
+    height: 100%;
+    font: var(--type-body);
+    font-weight: 600;
+    letter-spacing: var(--tracking-body);
+    min-height: 44px;
     padding: 0 20px;
     border-radius: 12px;
   }

@@ -536,3 +536,79 @@ export function galleryApp(): TreeApp {
   }
   return new TreeApp({ client: { tab: { init: 'layout' }, more: { init: false } }, tree: tabs })
 }
+
+/**
+ * A mini calculator keypad, the shape of the Calculator app: fill Buttons (`size: fill`, `shape: circle`) in a Grid
+ * of square cells, a "0" that spans two columns with its label at the leading edge, and a display whose right edge is
+ * the keypad's. One 200 pt column, centred; small enough to fit the smallest window.
+ */
+export function keypadApp(): TreeApp {
+  const key = (id: string, title: string, fill: string): Node => ({
+    type: 'Button',
+    key: id,
+    props: { title, shape: 'circle', size: 'fill', fill }
+  })
+  const wide: Node = {
+    type: 'Button',
+    key: 'zero',
+    props: { label: '0', shape: 'circle', size: 'fill', fill: 'gray4', span: 2 },
+    children: [
+      {
+        type: 'Stack',
+        key: 'label',
+        props: { axis: 'h', frame: 'fill', align: 'center', padding: { left: 3 } },
+        children: [
+          text('zero-text', '0', { style: 'headline', testid: 'keypad-zero-label' }),
+          { type: 'Spacer', key: 'rest' }
+        ]
+      }
+    ]
+  }
+  return new TreeApp({
+    tree: {
+      type: 'Scope',
+      key: 'scope',
+      props: { scheme: 'dark', background: 'primary', frame: 'fill' },
+      children: [
+        {
+          type: 'Stack',
+          key: 'screen',
+          props: { frame: 'fill', align: 'center', spacing: 2, padding: 3 },
+          children: [
+            { type: 'Spacer', key: 'top' },
+            {
+              type: 'Stack',
+              key: 'column',
+              props: { frame: { idealW: 200, maxW: 200 }, spacing: 2 },
+              children: [
+                text('display', '1,234', {
+                  style: 'title1',
+                  align: 'trailing',
+                  testid: 'keypad-display'
+                }),
+                {
+                  type: 'Grid',
+                  key: 'keys',
+                  props: { columns: 4, spacing: 2, cellAspect: 1 },
+                  children: [
+                    key('seven', '7', 'gray4'),
+                    key('eight', '8', 'gray4'),
+                    key('nine', '9', 'gray4'),
+                    key('divide', '÷', 'orange'),
+                    key('four', '4', 'gray4'),
+                    key('five', '5', 'gray4'),
+                    key('six', '6', 'gray4'),
+                    key('times', '×', 'orange'),
+                    wide,
+                    key('dot', '.', 'gray4'),
+                    key('equals', '=', 'orange')
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  })
+}

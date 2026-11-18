@@ -1,7 +1,6 @@
 <!--
   Story frame for app content: the same surface, radius, shadow and insets as
-  a desktop Window, on the desktop wallpaper, at an exact content size. Pass
-  `api` to provide the app's SDK API (from `appApiFor(createMemoryHost(…))`).
+  a desktop Window, on the desktop wallpaper, at an exact content size.
 
   Test ids: `app-window` (the frame) — the stories spec measures overflow
   against it and runs resize checks on stories tagged `app` through the
@@ -9,7 +8,6 @@
 -->
 <script lang="ts">
   import type { Snippet } from 'svelte'
-  import { provideAppApi, type AppClientApi } from '@agentos/sdk/app/client'
 
   interface Props {
     /** Window title, used as the frame's accessible name. */
@@ -19,14 +17,10 @@
     /** The app's minimum window size (from its manifest); width/height are clamped to it, like a real Window. */
     minWidth?: number
     minHeight?: number
-    api?: AppClientApi
     children: Snippet
   }
 
-  let { title, width = 720, height = 520, minWidth = 320, minHeight = 240, api, children }: Props = $props()
-
-  // svelte-ignore state_referenced_locally
-  if (api) provideAppApi(api)
+  let { title, width = 720, height = 520, minWidth = 320, minHeight = 240, children }: Props = $props()
 </script>
 
 <div class="wallpaper">

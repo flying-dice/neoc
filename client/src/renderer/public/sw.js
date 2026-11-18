@@ -1,7 +1,7 @@
 /**
  * AgentOS service worker: makes the shell installable and opens it offline.
  *  • Navigations: network first, falling back to the cached shell.
- *  • Hashed build assets and app bundles (immutable URLs): cache first.
+ *  • Hashed build assets (immutable URLs): cache first.
  *  • Never touches /rpc (WebSocket), /mcp (always live).
  */
 const CACHE = 'agentos-shell-v1'
@@ -34,7 +34,7 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(fetch(event.request).catch(() => caches.match('/index.html')))
     return
   }
-  if (url.pathname.startsWith('/assets/') || url.pathname.startsWith('/bundles/')) {
+  if (url.pathname.startsWith('/assets/')) {
     event.respondWith(
       caches.match(event.request).then(
         (hit) =>

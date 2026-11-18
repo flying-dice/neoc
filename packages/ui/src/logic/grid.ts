@@ -48,14 +48,3 @@ export function cellPlacement(c: { span?: unknown; rowStart?: unknown; colStart?
     span: span ?? 1
   }
 }
-
-/**
- * The aspect ratio (width / height) of a cell that spans `span` columns, given the grid's `cellAspect` for one cell:
- * it is `span` cells wide and one row tall, so its ratio is scaled by the span (a span-2 cell of a square grid is 2:1,
- * and keeps the row height). Undefined when the grid sets no aspect.
- */
-export function spannedAspect(cellAspect: number | undefined, span: number | undefined): number | undefined {
-  if (cellAspect === undefined || !(cellAspect > 0)) return undefined
-  const n = typeof span === 'number' && span >= 1 ? Math.min(Math.floor(span), 24) : 1
-  return cellAspect * n
-}

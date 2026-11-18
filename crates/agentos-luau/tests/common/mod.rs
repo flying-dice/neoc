@@ -5,7 +5,7 @@ use agentos_application::ports::{AppData, AppPackage, CallContext};
 use agentos_domain::{Actor, AppId, Capabilities};
 use agentos_luau::{AppVm, Limits, VmConfig};
 use agentos_sqlite::AppDb;
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, sync::Arc};
 
 pub fn db() -> Arc<AppDb> {
     Arc::new(AppDb::open(None, &[]).unwrap())
@@ -46,8 +46,8 @@ pub async fn load(src: &str) -> AppVm {
     try_load("probe", src).await.unwrap()
 }
 
-pub fn quick(cpu_ms: u64) -> Limits {
-    Limits { cpu_slice: Duration::from_millis(cpu_ms), ..Limits::default() }
+pub fn quick(cpu_ticks: u64) -> Limits {
+    Limits { cpu_ticks, ..Limits::default() }
 }
 
 pub fn agent_ctx(now_ms: u64) -> CallContext {

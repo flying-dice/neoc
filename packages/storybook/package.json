@@ -17,7 +17,6 @@
     "typecheck": "svelte-check --tsconfig ./tsconfig.json"
   },
   "dependencies": {
-    "@agentos/sdk": "workspace:*",
     "@agentos/ui": "workspace:*"
   },
   "peerDependencies": {

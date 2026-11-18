@@ -6,15 +6,16 @@
  *   journeys  each app's and the shell's key user journeys (apps/<app>/e2e, client/e2e, e2e/*.journeys.spec.ts)
  *
  * The desktop and the journeys run against the real Rust host (`e2e/host/start.ts`: a cargo build, a fresh data
- * directory, a test registry, port 7410). One browser is paired once (`e2e/host/global-setup.ts`) and every spec
+ * directory, a test registry, port 7410, or AGENTOS_PORT_BASE + 10: see scripts/ports.ts). One browser is paired once (`e2e/host/global-setup.ts`) and every spec
  * shares it, except the pairing journeys, which start unpaired.
  */
 import { defineConfig } from '@playwright/test'
 import { ORIGIN, STATE } from './e2e/host/config'
+import { STORYBOOKS_PORT } from './scripts/ports'
 
 /** This checkout. Agent worktrees live under `<root>/.claude/` and carry copies of every spec: skip those. */
 const ROOT = import.meta.dirname
-const STORYBOOKS = 'http://localhost:6100'
+const STORYBOOKS = `http://localhost:${STORYBOOKS_PORT}`
 
 export default defineConfig({
   testDir: '.',
