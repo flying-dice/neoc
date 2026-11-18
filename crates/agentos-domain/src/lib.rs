@@ -7,7 +7,9 @@
 
 pub mod actor;
 pub mod agent;
+pub mod agui;
 pub mod app;
+pub mod contact;
 pub mod decl;
 pub mod device;
 pub mod error;
@@ -15,6 +17,7 @@ pub mod merge;
 pub mod notification;
 pub mod protocol;
 pub mod revision;
+pub mod thread;
 pub mod time;
 pub mod tool;
 pub mod tool_schema;
@@ -23,6 +26,7 @@ pub mod ui;
 pub use actor::{Actor, ActorKind};
 pub use agent::{AgentId, AgentIdentity, Capabilities, Permission};
 pub use app::{AppId, AppRef, FileRef, Manifest, MigrationSpec};
+pub use contact::{hash_token, same_hash, Agent, AgentRuntime, ApprovalPolicy, Grants};
 pub use decl::{AppDecl, KitRequirement, WindowDecl};
 pub use device::{Device, DeviceId};
 pub use error::DomainError;

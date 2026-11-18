@@ -14,4 +14,6 @@ pub enum DomainError {
     MigrationOrder,
     #[error("invalid app.manifest: {0}")]
     InvalidManifest(String),
+    #[error("invalid agent: {0}")]
+    InvalidAgent(String),
 }
