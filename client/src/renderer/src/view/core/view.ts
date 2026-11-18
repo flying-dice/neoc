@@ -539,7 +539,7 @@ export class ViewCore {
       const [id, field] = rest
       const data = this.store.sources[id]
       const key = data?.kind === 'row' ? data.row?.[this.sources.keyField(id)] : undefined
-      const writable = this.sources.declaration(id)?.writable
+      const writable = this.sources.writable(id)
       if (key !== undefined && key !== null && (!writable || writable.includes(field)))
         return { kind: 'row', source: id, key: key as RowKey, field }
     }

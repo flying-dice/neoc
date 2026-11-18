@@ -294,7 +294,7 @@ export class FakeHost {
     view.sources.clear()
     for (const [id, spec] of Object.entries(this.app.sources)) {
       sources[id] = spec.decl
-      const range = { from: 0, to: spec.decl.page ?? 60 }
+      const range = { from: 0, to: (spec.decl.kind === 'rows' ? spec.decl.page : undefined) ?? 60 }
       view.sources.set(id, { params: this.paramsFor(view, spec), range, sent: new Map() })
       data[id] = this.patchFor(view, id, true)
     }
@@ -373,7 +373,8 @@ export class FakeHost {
     const st = view.sources.get(p.source)!
     if (p.params) st.params = p.params
     if (p.range) st.range = p.range
-    else if (p.params) st.range = { from: 0, to: spec.decl.page ?? 60 }
+    else if (p.params)
+      st.range = { from: 0, to: (spec.decl.kind === 'rows' ? spec.decl.page : undefined) ?? 60 }
     return this.patchFor(view, p.source)
   }
 

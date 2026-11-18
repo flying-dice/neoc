@@ -24,7 +24,7 @@
  * Scalar controls are human-wins: the host returns the user's value, and a value that changed elsewhere in the
  * meantime is overwritten (the host keeps it in the revision ring).
  */
-import type { Json } from '../protocol'
+import type { Json, ResumeDraft } from '../protocol'
 import { isConnectionError } from '../rpc/peer'
 import { bindingKey, type BindingTarget, type ViewStore } from './store'
 import { rebase } from './textMerge'
@@ -273,10 +273,22 @@ export class Bindings {
   }
 
   /** What is still unacknowledged, for `view.open {resume}` (spec 2.5). */
-  pending(): ({ baseRev: number } & BindingTarget)[] {
+  pending(): ResumeDraft[] {
     return [...this.entries.values()]
       .filter((e) => e.dirty)
-      .map((e) => ({ ...e.target, baseRev: e.baseRev }))
+      .map((e) => {
+        const value = this.d.store.drafts[bindingKey(e.target)] ?? null
+        return e.target.kind === 'state'
+          ? { kind: 'state', path: e.target.path, value, baseRev: e.baseRev }
+          : {
+              kind: 'row',
+              source: e.target.source,
+              key: e.target.key,
+              field: e.target.field,
+              value,
+              baseRev: e.baseRev
+            }
+      })
   }
 
   // ── The ack ────────────────────────────────────────────────────────────

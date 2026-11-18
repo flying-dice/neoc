@@ -118,7 +118,9 @@ describe('drafts and write-back', () => {
     m.bindings.edit(m.target, 'queued', { mode: 'change' })
     await m.timers.advance(5000)
     expect(m.sent).toHaveLength(0)
-    expect(m.bindings.pending()).toEqual([{ kind: 'state', path: 'body', baseRev: 1 }])
+    expect(m.bindings.pending()).toEqual([
+      { kind: 'state', path: 'body', value: 'queued', baseRev: 1 }
+    ])
     m.setOnline(true)
     await m.bindings.replay()
     expect(m.sent).toEqual([{ value: 'queued', baseRev: 1 }])
