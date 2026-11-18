@@ -1,6 +1,6 @@
 --!strict
--- A port of apps/calculator/src/shared/evaluate.ts: a safe arithmetic evaluator (no loadstring), `format` for
--- results and `formatEntry` for the number being typed.
+-- A safe arithmetic evaluator (a small shunting-yard parser: nothing is ever compiled from the text, and the
+-- sandbox has no `loadstring`), `format` for results and `formatEntry` for the number being typed.
 local calc = {}
 
 type Token = { kind: string, value: string, number: number }
@@ -133,12 +133,30 @@ local function group(digits: string): string
   return (string.gsub(string.reverse(spaced), "^,", ""))
 end
 
+-- Fixed notation with at most 9 significant digits and no trailing zeros. Not `%.9g`: that switches to
+-- exponent form ("5e-05", "1e+09") between 1e-6 and 1e-4 and when rounding reaches 1e9, which has no integer
+-- part to group.
+local function fixed(value: number): string
+  local decimals = math.max(0, 8 - math.floor(math.log10(math.abs(value))))
+  local text = string.format(`%.{decimals}f`, value)
+  if string.find(text, ".", 1, true) then
+    text = string.gsub(text, "0+$", "")
+    text = string.gsub(text, "%.$", "")
+  end
+  return text
+end
+
 -- Format a result for the display: grouping, at most 9 significant digits.
 function calc.format(value: number): string
   if value ~= value or math.abs(value) == math.huge then
     return "Error"
   end
-  if math.abs(value) >= 1e9 or (math.abs(value) < 1e-6 and value ~= 0) then
+  if value == 0 then
+    return "0"
+  end
+  -- 999999999.6 is under 1e9 but shows as 1e9 once rounded to 9 digits
+  local rounded = tonumber(string.format("%.9g", value)) :: number
+  if math.abs(rounded) >= 1e9 or math.abs(value) < 1e-6 then
     local mantissa, exponent = string.match(string.format("%.8e", value), "^(.-)e([+-]%d+)$")
     local trimmed = string.gsub(mantissa :: string, "%.?0+$", "")
     -- "%e" pads the exponent to two digits ("e-07") and signs it ("e+12"): show "e-7" and "e12"
@@ -146,7 +164,7 @@ function calc.format(value: number): string
     local power = `{if sign == "-" then "-" else ""}{tonumber(digits :: string) :: number}`
     return `{trimmed}e{power}`
   end
-  local text = string.format("%.9g", value)
+  local text = fixed(value)
   local sign, integer, fraction = string.match(text, "^(-?)(%d+)%.?(%d*)$")
   local grouped = group(integer :: string)
   return if fraction ~= "" then `{sign}{grouped}.{fraction}` else `{sign}{grouped}`
