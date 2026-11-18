@@ -3,7 +3,7 @@
 
 mod common;
 
-use agentos_domain::Grants;
+use agentos_domain::{AppId, Grants};
 use common::{
     agents::{event_types, launchable, resume_body, run_body, sse_events},
     pair, publish_package, start, temp, Running,
@@ -19,9 +19,11 @@ struct Chat {
 
 impl Chat {
     async fn start() -> Self {
-        let r =
-            start(|c| c.agents = vec![("tok-fake".into(), launchable("fake", "Fake", Grants::default()))])
-                .await;
+        Self::start_granted(Grants::default()).await
+    }
+
+    async fn start_granted(grants: Grants) -> Self {
+        let r = start(|c| c.agents = vec![("tok-fake".into(), launchable("fake", "Fake", grants))]).await;
         let cookie = pair(&r, "Safari on iPad").await;
         Self { r, cookie, http: reqwest::Client::new() }
     }
@@ -209,7 +211,8 @@ async fn a_permission_request_interrupts_the_run_and_the_resume_finishes_the_tur
 
 #[tokio::test]
 async fn a_read_only_tool_needs_no_prompt_under_the_default_policy_but_a_writing_one_does() {
-    let c = Chat::start().await;
+    // the agent is granted the notes app: the prompt is only skipped for a tool it may call
+    let c = Chat::start_granted(Grants::apps([AppId::parse("notes").unwrap()])).await;
     // the scripted agent asks about notes__search (readOnly) and notes__append: install an app that has both
     let url = publish_package(
         &temp("notes-policy").join("pkg"),
@@ -231,6 +234,58 @@ app.tool { name = "append", run = function() return {} end }"#
     assert!(text_of(&read).ends_with("Answer: selected allow"), "answered for the agent: {}", text_of(&read));
     let write = c.run(run_body("t1", "r2", "ask-write", "fake")).await;
     assert_eq!(write.last().unwrap()["outcome"]["type"], "interrupt", "the writing tool asks the person");
+    c.r.stop().await;
+}
+
+#[tokio::test]
+async fn a_read_only_tool_of_an_app_the_agent_is_not_granted_still_asks() {
+    let c = Chat::start().await; // no grants
+    let url = publish_package(
+        &temp("notes-ungranted").join("pkg"),
+        "notes",
+        "app.luau",
+        &[(
+            "app.luau",
+            br#"app.manifest { id = "notes", name = "Notes", icon = "gear", permissions = {} }
+app.tool { name = "search", readOnly = true, run = function() return {} end }"#
+                .to_vec(),
+        )],
+        vec![],
+    );
+    c.r.host.service.install_from_url(&url).await.unwrap();
+    c.ensure("t1").await;
+    let read = c.run(run_body("t1", "r1", "ask", "fake")).await;
+    assert_eq!(read.last().unwrap()["outcome"]["type"], "interrupt", "{read:?}");
+    c.r.stop().await;
+}
+
+#[tokio::test]
+async fn revoking_a_device_ends_its_open_event_streams() {
+    let c = Chat::start().await;
+    c.ensure("t1").await;
+    let device = {
+        let res = c.http.get(c.r.url("/session")).header("cookie", &c.cookie).send().await.unwrap();
+        res.json::<Value>().await.unwrap()["device"]["id"].as_str().unwrap().to_owned()
+    };
+    let (http, url, cookie) = (c.http.clone(), c.r.url("/agui"), c.cookie.clone());
+    let body = run_body("t1", "r1", "slow", "fake");
+    let streaming = tokio::spawn(async move {
+        let res = http.post(url).header("cookie", cookie).json(&body).send().await.unwrap();
+        sse_events(&res.text().await.unwrap())
+    });
+    for _ in 0..200 {
+        if c.thread("t1").await["running"] == true {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    c.r.devices().revoke(&agentos_domain::DeviceId(device)).await.unwrap();
+    // the "slow" turn would stream until cancelled: the stream ends because the device is gone
+    let events = tokio::time::timeout(Duration::from_secs(10), streaming)
+        .await
+        .expect("the stream of a revoked device ends")
+        .unwrap();
+    assert!(events.iter().all(|e| e["type"] != "RUN_FINISHED"), "cut off, not finished: {events:?}");
     c.r.stop().await;
 }
 

@@ -26,7 +26,7 @@ pub async fn serve(
         shutdown.cancelled().await;
         on_shutdown.graceful_shutdown(Some(SHUTDOWN_GRACE));
     });
-    let make_service = router.into_make_service();
+    let make_service = router.into_make_service_with_connect_info::<SocketAddr>();
     match tls {
         None => axum_server::from_tcp(listener)?.handle(handle).serve(make_service).await?,
         Some(files) => {

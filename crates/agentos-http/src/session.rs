@@ -16,16 +16,16 @@
 use agentos_application::{DeviceService, PairError};
 use agentos_domain::device::device_name_from_user_agent;
 use axum::{
-    extract::{DefaultBodyLimit, Request, State},
+    extract::{ConnectInfo, DefaultBodyLimit, Request, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
     routing::{get, post},
-    Json, Router,
+    Extension, Json, Router,
 };
 use serde::Deserialize;
 use serde_json::json;
-use std::sync::Arc;
+use std::{net::SocketAddr, sync::Arc};
 
 /// Name of the session cookie.
 pub const SESSION_COOKIE: &str = "agentos_session";
@@ -58,6 +58,7 @@ pub fn session_router(config: SessionConfig) -> Router {
 
 async fn pair(
     State(config): State<SessionConfig>,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
     headers: HeaderMap,
     body: Result<Json<PairBody>, axum::extract::rejection::JsonRejection>,
 ) -> Response {
@@ -70,7 +71,8 @@ async fn pair(
         let ua = headers.get(header::USER_AGENT).and_then(|v| v.to_str().ok()).unwrap_or_default();
         device_name_from_user_agent(ua)
     });
-    match config.devices.pair(&body.code, &name).await {
+    let client = peer.map(|Extension(ConnectInfo(addr))| addr.ip());
+    match config.devices.pair(client, &body.code, &name).await {
         Ok(paired) => {
             let cookie = set_cookie(&paired.token, config.secure_cookies);
             no_store((

@@ -17,36 +17,74 @@
 pub use agentos_domain::agui::{AgUiEvent, ReasoningRole, Role, RunAgentInput, RunOutcome};
 
 use agentos_application::{ChatError, ChatService, RunEvents};
-use agentos_domain::thread::{json_of, SettingsChange};
+use agentos_domain::{
+    thread::{json_of, SettingsChange},
+    Device, DeviceId,
+};
 use axum::{
     body::Bytes,
-    extract::{Path, State},
+    extract::{FromRef, Path, State},
     http::StatusCode,
     response::{
         sse::{Event, KeepAlive, Sse},
         IntoResponse, Response,
     },
     routing::{get, post},
-    Json, Router,
+    Extension, Json, Router,
 };
 use futures_util::{Stream, StreamExt};
+use parking_lot::Mutex;
 use serde::Deserialize;
 use serde_json::json;
 use std::{
+    collections::HashMap,
     convert::Infallible,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
 };
+use tokio_util::sync::CancellationToken;
+
+/// The open run streams by device, so that revoking a device can end them: a revoked session must not keep
+/// receiving what an agent says.
+#[derive(Default)]
+pub struct DeviceStreams {
+    open: Mutex<HashMap<DeviceId, CancellationToken>>,
+}
+
+impl DeviceStreams {
+    /// A token that is cancelled when `device` is revoked.
+    fn token_for(&self, device: &DeviceId) -> CancellationToken {
+        self.open.lock().entry(device.clone()).or_default().child_token()
+    }
+
+    /// End every stream of this device (it was revoked).
+    pub fn revoke(&self, device: &DeviceId) {
+        if let Some(token) = self.open.lock().remove(device) {
+            token.cancel();
+        }
+    }
+}
+
+#[derive(Clone, FromRef)]
+struct AguiState {
+    chat: Arc<ChatService>,
+    streams: Arc<DeviceStreams>,
+}
 
 pub fn agui_router(chat: Arc<ChatService>) -> Router {
+    agui_router_with(chat, Arc::default())
+}
+
+/// As [`agui_router`], with the registry the host calls [`DeviceStreams::revoke`] on when a device is revoked.
+pub fn agui_router_with(chat: Arc<ChatService>, streams: Arc<DeviceStreams>) -> Router {
     Router::new()
         .route("/agui", post(run))
         .route("/agui/threads", post(ensure_thread))
         .route("/agui/threads/{id}", get(thread))
         .route("/agui/threads/{id}/cancel", post(cancel))
         .route("/agui/threads/{id}/settings", post(settings))
-        .with_state(chat)
+        .with_state(AguiState { chat, streams })
 }
 
 fn failure(status: StatusCode, message: &str) -> Response {
@@ -91,8 +129,13 @@ impl Drop for RunStream {
     }
 }
 
-#[axum::debug_handler]
-async fn run(State(chat): State<Arc<ChatService>>, body: Bytes) -> Response {
+#[axum::debug_handler(state = AguiState)]
+async fn run(
+    State(chat): State<Arc<ChatService>>,
+    State(streams): State<Arc<DeviceStreams>>,
+    device: Option<Extension<Device>>,
+    body: Bytes,
+) -> Response {
     let input: RunAgentInput = match parse(&body, "RunAgentInput") {
         Ok(i) => i,
         Err(why) => return failure(StatusCode::UNPROCESSABLE_ENTITY, &why),
@@ -102,11 +145,14 @@ async fn run(State(chat): State<Arc<ChatService>>, body: Bytes) -> Response {
         Ok(events) => events,
         Err(e) => return chat_failure(&e),
     };
-    let stream = RunStream { events, chat, thread_id, run_id }.map(|e| {
-        let data = serde_json::to_string(&e)
-            .unwrap_or_else(|_| r#"{"type":"RUN_ERROR","message":"could not encode an event"}"#.into());
-        Ok::<_, Infallible>(Event::default().data(data))
-    });
+    // a stream of a revoked device ends here; dropping it lets the chat service cancel a run nothing waits on
+    let revoked = device.map(|Extension(d)| streams.token_for(&d.id)).unwrap_or_default();
+    let stream =
+        RunStream { events, chat, thread_id, run_id }.take_until(revoked.cancelled_owned()).map(|e| {
+            let data = serde_json::to_string(&e)
+                .unwrap_or_else(|_| r#"{"type":"RUN_ERROR","message":"could not encode an event"}"#.into());
+            Ok::<_, Infallible>(Event::default().data(data))
+        });
     Sse::new(stream).keep_alive(KeepAlive::default()).into_response()
 }
 

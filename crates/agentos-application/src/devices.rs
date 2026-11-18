@@ -2,7 +2,8 @@
 //!
 //! The host prints a short-lived **pairing code**; a client posts it and receives a **session token**
 //! (a random secret) in exchange. Only SHA-256 hashes of codes and tokens are stored. Codes are
-//! single-use, expire, and wrong guesses are rate limited and eventually burn every outstanding code.
+//! single-use, expire, and wrong guesses are rate limited (per client address, under a ceiling for all
+//! clients together) and eventually burn every outstanding code.
 //! There is no trusted-network shortcut: loopback clients pair like everyone else.
 
 use crate::{
@@ -12,7 +13,11 @@ use crate::{
 };
 use agentos_domain::{hash_token, Device, DeviceId};
 use parking_lot::Mutex;
-use std::{collections::VecDeque, sync::Arc};
+use std::{
+    collections::{HashMap, VecDeque},
+    net::{IpAddr, Ipv6Addr},
+    sync::Arc,
+};
 
 /// 31 symbols with no `0 O 1 I L`: safe to read aloud and to type from a screen.
 const ALPHABET: &[u8; 31] = b"23456789ABCDEFGHJKMNPQRSTUVWXYZ";
@@ -26,8 +31,12 @@ const TOUCH_INTERVAL_MS: u64 = 60_000;
 pub struct PairingPolicy {
     /// How long a code stays valid.
     pub code_ttl_ms: u64,
-    /// Attempts allowed inside `attempt_window_ms` before the next one is refused with `RateLimited`.
+    /// Attempts one client address gets inside `attempt_window_ms` before its next one is refused with
+    /// `RateLimited`. One noisy client cannot stall the others.
     pub max_attempts: usize,
+    /// Attempts all clients together get inside the window: the ceiling that bounds a guesser who has many
+    /// addresses.
+    pub max_attempts_total: usize,
     pub attempt_window_ms: u64,
     /// Wrong guesses (inside `burn_window_ms`) after which every outstanding code is destroyed.
     pub burn_after_failures: usize,
@@ -39,6 +48,7 @@ impl Default for PairingPolicy {
         Self {
             code_ttl_ms: 10 * 60_000,
             max_attempts: 5,
+            max_attempts_total: 20,
             attempt_window_ms: 60_000,
             burn_after_failures: 10,
             burn_window_ms: 10 * 60_000,
@@ -72,6 +82,27 @@ pub enum PairError {
     Port(#[from] PortError),
 }
 
+/// Who is guessing: the client's address (an IPv6 one by its /64, so a whole subnet is one client), or
+/// `None` when the transport cannot say.
+type Client = Option<IpAddr>;
+
+fn client_of(address: Option<IpAddr>) -> Client {
+    match address {
+        Some(IpAddr::V6(v6)) => Some(match v6.to_ipv4_mapped() {
+            Some(v4) => IpAddr::V4(v4),
+            None => IpAddr::V6(Ipv6Addr::from(u128::from(v6) & (u128::MAX << 64))),
+        }),
+        other => other,
+    }
+}
+
+/// Recent pairing attempts: per client, and all together.
+#[derive(Default)]
+struct Attempts {
+    per_client: HashMap<Client, VecDeque<u64>>,
+    all: VecDeque<u64>,
+}
+
 pub struct DeviceService {
     registry: Arc<dyn DeviceRegistry>,
     clock: Arc<dyn Clock>,
@@ -79,9 +110,13 @@ pub struct DeviceService {
     policy: PairingPolicy,
     /// Timestamps (unix ms) of recent attempts, oldest first. In memory: a restart is a fresh window,
     /// but the codes themselves expire on their own.
-    attempts: Mutex<VecDeque<u64>>,
+    attempts: Mutex<Attempts>,
     failures: Mutex<VecDeque<u64>>,
+    /// Told when a device is revoked, so whatever it has open (sockets, event streams) can be closed.
+    revoked: Mutex<Vec<RevokedListener>>,
 }
+
+type RevokedListener = Arc<dyn Fn(&DeviceId) + Send + Sync>;
 
 impl DeviceService {
     pub fn new(
@@ -90,7 +125,20 @@ impl DeviceService {
         random: Arc<dyn RandomSource>,
         policy: PairingPolicy,
     ) -> Self {
-        Self { registry, clock, random, policy, attempts: Mutex::default(), failures: Mutex::default() }
+        Self {
+            registry,
+            clock,
+            random,
+            policy,
+            attempts: Mutex::default(),
+            failures: Mutex::default(),
+            revoked: Mutex::default(),
+        }
+    }
+
+    /// Call `listener` with the device's id every time a device is revoked (by anyone, any way).
+    pub fn on_revoked(&self, listener: impl Fn(&DeviceId) + Send + Sync + 'static) {
+        self.revoked.lock().push(Arc::new(listener));
     }
 
     /// Issue a new pairing code (shown at the host: terminal or CLI). Older codes stay valid until they
@@ -106,11 +154,18 @@ impl DeviceService {
         })
     }
 
-    /// Exchange a pairing code for a session. `device_name` is what the client calls itself.
-    pub async fn pair(&self, code: &str, device_name: &str) -> Result<PairedDevice, PairError> {
+    /// Exchange a pairing code for a session. `device_name` is what the client calls itself; `client` is the
+    /// address it connects from (what the attempt limit is counted against), `None` if unknown.
+    pub async fn pair(
+        &self,
+        client: Option<IpAddr>,
+        code: &str,
+        device_name: &str,
+    ) -> Result<PairedDevice, PairError> {
         let now = self.clock.now_unix_ms();
+        let client = client_of(client);
         // count the attempt BEFORE checking the code, so concurrent guesses cannot slip past the limit
-        self.reserve_attempt(now)?;
+        self.reserve_attempt(client, now)?;
 
         let normalised = normalise_code(code);
         let valid = match &normalised {
@@ -121,7 +176,7 @@ impl DeviceService {
             self.record_failure(now).await?;
             return Err(PairError::InvalidCode);
         }
-        self.release_attempt(now);
+        self.release_attempt(client, now);
 
         let token = self.random_token();
         let device = Device {
@@ -163,31 +218,57 @@ impl DeviceService {
     /// Revoke a device's session. `NotFound` if it is not paired.
     pub async fn revoke(&self, id: &DeviceId) -> Result<(), PortError> {
         if self.registry.revoke_device(id).await? {
+            let listeners: Vec<RevokedListener> = self.revoked.lock().clone();
+            for listener in listeners {
+                listener(id);
+            }
             Ok(())
         } else {
             Err(PortError::NotFound(format!("device {}", id.0)))
         }
     }
 
-    fn reserve_attempt(&self, now: u64) -> Result<(), PairError> {
+    fn reserve_attempt(&self, client: Client, now: u64) -> Result<(), PairError> {
+        let window = self.policy.attempt_window_ms;
+        let expired = |queue: &mut VecDeque<u64>| {
+            while queue.front().is_some_and(|t| now.saturating_sub(*t) >= window) {
+                queue.pop_front();
+            }
+        };
         let mut attempts = self.attempts.lock();
-        while attempts.front().is_some_and(|t| now.saturating_sub(*t) >= self.policy.attempt_window_ms) {
-            attempts.pop_front();
-        }
-        if attempts.len() >= self.policy.max_attempts {
-            let oldest = attempts.front().copied().unwrap_or(now);
-            let wait_ms = (oldest + self.policy.attempt_window_ms).saturating_sub(now);
+        let Attempts { per_client, all } = &mut *attempts;
+        expired(all);
+        // a client with nothing recent is forgotten, so the map stays as small as the traffic
+        per_client.retain(|_, queue| {
+            expired(queue);
+            !queue.is_empty()
+        });
+        let mine = per_client.entry(client).or_default();
+        let (limit, queue) = if mine.len() >= self.policy.max_attempts {
+            (true, &*mine)
+        } else {
+            (all.len() >= self.policy.max_attempts_total, &*all)
+        };
+        if limit {
+            let oldest = queue.front().copied().unwrap_or(now);
+            let wait_ms = (oldest + window).saturating_sub(now);
             return Err(PairError::RateLimited { retry_after_secs: wait_ms.div_ceil(1000).max(1) });
         }
-        attempts.push_back(now);
+        mine.push_back(now);
+        all.push_back(now);
         Ok(())
     }
 
     /// A correct code does not count against the limit.
-    fn release_attempt(&self, now: u64) {
+    fn release_attempt(&self, client: Client, now: u64) {
         let mut attempts = self.attempts.lock();
-        if let Some(i) = attempts.iter().rposition(|t| *t == now) {
-            attempts.remove(i);
+        if let Some(queue) = attempts.per_client.get_mut(&client) {
+            if let Some(i) = queue.iter().rposition(|t| *t == now) {
+                queue.remove(i);
+            }
+        }
+        if let Some(i) = attempts.all.iter().rposition(|t| *t == now) {
+            attempts.all.remove(i);
         }
     }
 
@@ -279,13 +360,13 @@ mod tests {
         assert_eq!(code.code.len(), 9, "ABCD-EFGH");
         assert_eq!(code.expires_at_ms, 1_000_000 + 600_000);
 
-        let paired = r.svc.pair(&code.code.to_lowercase(), "  Safari on iPad ").await.unwrap();
+        let paired = r.svc.pair(None, &code.code.to_lowercase(), "  Safari on iPad ").await.unwrap();
         assert_eq!(paired.device.name, "Safari on iPad");
         assert_eq!(r.svc.authenticate(&paired.token).await, Some(paired.device.clone()));
         assert_eq!(r.svc.authenticate("not-a-session").await, None);
 
         // single use
-        assert_eq!(r.svc.pair(&code.code, "again").await, Err(PairError::InvalidCode));
+        assert_eq!(r.svc.pair(None, &code.code, "again").await, Err(PairError::InvalidCode));
         assert_eq!(r.svc.list().await.unwrap(), vec![paired.device]);
     }
 
@@ -293,7 +374,7 @@ mod tests {
     async fn only_hashes_are_stored() {
         let r = rig();
         let code = r.svc.issue_pairing_code().await.unwrap();
-        let paired = r.svc.pair(&code.code, "d").await.unwrap();
+        let paired = r.svc.pair(None, &code.code, "d").await.unwrap();
         let stored = r.registry.dump();
         assert!(!stored.contains(&paired.token), "the session token must not be stored");
         assert!(!stored.contains(&code.code.replace('-', "")), "the pairing code must not be stored");
@@ -306,8 +387,8 @@ mod tests {
         r.clock.advance(599_000);
         let again = r.svc.issue_pairing_code().await.unwrap();
         r.clock.advance(2_000); // first code is now 601 s old, the second 2 s
-        assert_eq!(r.svc.pair(&code.code, "late").await, Err(PairError::InvalidCode));
-        assert!(r.svc.pair(&again.code, "on time").await.is_ok());
+        assert_eq!(r.svc.pair(None, &code.code, "late").await, Err(PairError::InvalidCode));
+        assert!(r.svc.pair(None, &again.code, "on time").await.is_ok());
     }
 
     #[tokio::test]
@@ -315,15 +396,61 @@ mod tests {
         let r = rig();
         let code = r.svc.issue_pairing_code().await.unwrap();
         for _ in 0..5 {
-            assert_eq!(r.svc.pair("AAAA-AAAA", "x").await, Err(PairError::InvalidCode));
+            assert_eq!(r.svc.pair(None, "AAAA-AAAA", "x").await, Err(PairError::InvalidCode));
         }
         // the sixth attempt is refused outright, even with the right code
         assert!(matches!(
-            r.svc.pair(&code.code, "x").await,
+            r.svc.pair(None, &code.code, "x").await,
             Err(PairError::RateLimited { retry_after_secs }) if (1..=60).contains(&retry_after_secs)
         ));
         r.clock.advance(61_000);
-        assert!(r.svc.pair(&code.code, "x").await.is_ok(), "the window slid past the failures");
+        assert!(r.svc.pair(None, &code.code, "x").await.is_ok(), "the window slid past the failures");
+    }
+
+    fn ip(s: &str) -> Option<IpAddr> {
+        Some(s.parse().unwrap())
+    }
+
+    #[tokio::test]
+    async fn one_noisy_client_cannot_stall_everyone_else() {
+        let r = rig();
+        let code = r.svc.issue_pairing_code().await.unwrap();
+        for _ in 0..5 {
+            assert_eq!(r.svc.pair(ip("192.168.1.50"), "AAAA-AAAA", "x").await, Err(PairError::InvalidCode));
+        }
+        assert!(
+            matches!(
+                r.svc.pair(ip("192.168.1.50"), "AAAA-AAAA", "x").await,
+                Err(PairError::RateLimited { .. })
+            ),
+            "the guesser is limited"
+        );
+        // another address pairs with the right code at once
+        assert!(r.svc.pair(ip("192.168.1.60"), &code.code, "iPad").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn all_clients_together_stay_under_a_ceiling() {
+        let r = rig();
+        let total = PairingPolicy::default().max_attempts_total;
+        // that many different addresses guess once each (the wrong guesses burn the codes issued so far)
+        for n in 0..total {
+            let _ = r.svc.pair(ip(&format!("10.0.0.{n}")), "AAAA-AAAA", "x").await;
+        }
+        let code = r.svc.issue_pairing_code().await.unwrap();
+        let late = r.svc.pair(ip("10.0.1.1"), &code.code, "x").await;
+        assert!(matches!(late, Err(PairError::RateLimited { .. })), "{late:?}");
+        r.clock.advance(61_000);
+        assert!(r.svc.pair(ip("10.0.1.1"), &code.code, "x").await.is_ok());
+    }
+
+    #[test]
+    fn an_ipv6_client_is_its_64_and_a_mapped_address_is_its_ipv4() {
+        let key = |s: &str| client_of(ip(s));
+        assert_eq!(key("2001:db8:1:2:aaaa::1"), key("2001:db8:1:2:bbbb::9"), "one /64, one client");
+        assert_ne!(key("2001:db8:1:2::1"), key("2001:db8:1:3::1"));
+        assert_eq!(key("::ffff:192.168.1.5"), key("192.168.1.5"));
+        assert_eq!(client_of(None), None);
     }
 
     #[tokio::test]
@@ -332,18 +459,18 @@ mod tests {
         let code = r.svc.issue_pairing_code().await.unwrap();
         for _ in 0..2 {
             for _ in 0..5 {
-                let _ = r.svc.pair("AAAA-AAAA", "x").await;
+                let _ = r.svc.pair(None, "AAAA-AAAA", "x").await;
             }
             r.clock.advance(61_000);
         }
-        assert_eq!(r.svc.pair(&code.code, "x").await, Err(PairError::InvalidCode), "burned");
+        assert_eq!(r.svc.pair(None, &code.code, "x").await, Err(PairError::InvalidCode), "burned");
     }
 
     #[tokio::test]
     async fn malformed_codes_count_as_failures() {
         let r = rig();
         for bad in ["", "short", "ABCD-EFG0", "ÅÄÖÅ-ÄÖÅÄ"] {
-            assert_eq!(r.svc.pair(bad, "x").await, Err(PairError::InvalidCode), "{bad}");
+            assert_eq!(r.svc.pair(None, bad, "x").await, Err(PairError::InvalidCode), "{bad}");
         }
     }
 
@@ -351,7 +478,7 @@ mod tests {
     async fn revoking_a_device_ends_its_session() {
         let r = rig();
         let code = r.svc.issue_pairing_code().await.unwrap();
-        let paired = r.svc.pair(&code.code, "d").await.unwrap();
+        let paired = r.svc.pair(None, &code.code, "d").await.unwrap();
         r.svc.revoke(&paired.device.id).await.unwrap();
         assert_eq!(r.svc.authenticate(&paired.token).await, None);
         assert!(r.svc.list().await.unwrap().is_empty());
@@ -359,10 +486,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn revoking_tells_the_listeners_which_device_and_a_failed_revoke_tells_nobody() {
+        let r = rig();
+        let told = Arc::new(Mutex::new(Vec::<String>::new()));
+        let sink = told.clone();
+        r.svc.on_revoked(move |id| sink.lock().push(id.0.clone()));
+        let code = r.svc.issue_pairing_code().await.unwrap();
+        let paired = r.svc.pair(None, &code.code, "d").await.unwrap();
+        assert!(r.svc.revoke(&DeviceId("nobody".into())).await.is_err());
+        assert!(told.lock().is_empty());
+        r.svc.revoke(&paired.device.id).await.unwrap();
+        assert_eq!(*told.lock(), [paired.device.id.0.clone()]);
+    }
+
+    #[tokio::test]
     async fn last_seen_is_refreshed_at_most_once_a_minute() {
         let r = rig();
         let code = r.svc.issue_pairing_code().await.unwrap();
-        let paired = r.svc.pair(&code.code, "d").await.unwrap();
+        let paired = r.svc.pair(None, &code.code, "d").await.unwrap();
         r.clock.advance(10_000);
         assert_eq!(r.svc.authenticate(&paired.token).await.unwrap().last_seen_at, 1_000_000);
         r.clock.advance(60_000);

@@ -24,7 +24,7 @@ pub mod serve;
 pub mod startup;
 
 use agentos_acp::AcpConnector;
-use agentos_agui::agui_router;
+use agentos_agui::{agui_router_with, DeviceStreams};
 use agentos_application::{
     ports::{
         AgentConnector, AgentDirectory, AppRuntime, Clock, DataStore, DeviceRegistry, EventSink, Fetcher,
@@ -218,8 +218,12 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
 
     // driving adapters. Everything a client may call is in `protected`; the few public routes are
     // listed below it, and /mcp has its own per-agent bearer authentication.
+    // revoking a device ends its open /agui streams (its /rpc sockets are closed by the hub)
+    let streams = Arc::new(DeviceStreams::default());
+    let to_end = streams.clone();
+    devices.on_revoked(move |device| to_end.revoke(device));
     let protected = rpc_router(hub)
-        .merge(agui_router(chat.clone()))
+        .merge(agui_router_with(chat.clone(), streams))
         .layer(from_fn_with_state(devices.clone(), require_session));
     let public =
         session_router(SessionConfig { devices: devices.clone(), secure_cookies: cfg.secure_cookies });
