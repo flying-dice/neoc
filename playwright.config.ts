@@ -14,7 +14,8 @@ const DESKTOP = 'http://localhost:6200'
 
 export default defineConfig({
   testDir: '.',
-  testIgnore: ['**/node_modules/**'],
+  // Agent worktrees (.claude/worktrees) carry their own node_modules and copies of every spec.
+  testIgnore: ['**/node_modules/**', '.claude/**'],
   snapshotPathTemplate: '{testFileDir}/__screenshots__/{testFileName}/{arg}-{platform}{ext}',
   outputDir: 'test-results/output',
   fullyParallel: true,
