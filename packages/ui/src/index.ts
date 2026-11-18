@@ -31,7 +31,15 @@ export {
   onColor,
   type PaletteToken
 } from './contrast'
-export { parseMarkdown, safeHref, type Block, type Inline, type MarkdownOptions } from './markdown'
+export {
+  optionsFromExtensions,
+  parseMarkdown,
+  plainText,
+  safeHref,
+  type Block,
+  type Inline,
+  type MarkdownOptions
+} from './markdown'
 export { isContextMenuKey, moveIndex, nextEnabled, typeAhead } from './keys'
 export { place, placeAtPoint, type Edge, type Placement, type Rect } from './floating'
 export { normaliseDetents, type Detent } from './sheet'

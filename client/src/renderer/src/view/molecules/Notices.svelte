@@ -1,46 +1,45 @@
 <!--
   @molecule Notices — the window's toasts: errors from handlers, "your edit replaced a change made elsewhere",
-  `view.command toast`. Errors are `alert`s, the rest polite `status` messages. Each can be dismissed; they also
-  expire on their own. Atoms: Button, Icon, Text.
+  `view.command toast`. Each is a kit Toast: a glyph (the toast's own `icon`, else one by kind), the text, an action
+  button when the host gave one (tapping it reports the `toast` event), and a dismiss button. Errors are `alert`s,
+  the rest polite `status` messages. They expire on their own. Atoms: Toast, Icon.
 -->
 <script lang="ts">
-  import { Button, Icon, Text } from '@agentos/ui/atoms'
+  import { Icon, Toast } from '@agentos/ui/atoms'
+  import { icons, type IconName } from '@agentos/ui'
   import type { Notice } from '../core/store'
 
   interface Props {
     testid: string
     notices: Notice[]
     ondismiss: (id: number) => void
+    onaction?: (id: number) => void
   }
 
-  let { testid, notices, ondismiss }: Props = $props()
+  let { testid, notices, ondismiss, onaction }: Props = $props()
+
+  const glyph = (n: Notice): IconName =>
+    n.icon && n.icon in icons
+      ? (n.icon as IconName)
+      : n.kind === 'error' || n.kind === 'conflict'
+        ? 'exclamationmark.triangle'
+        : n.kind === 'success'
+          ? 'checkmark'
+          : 'info.circle'
 </script>
 
 <div class="notices" data-testid={testid}>
   {#each notices as notice (notice.id)}
-    <div
-      class="notice {notice.kind}"
-      role={notice.kind === 'error' ? 'alert' : 'status'}
-      data-testid="{testid}-{notice.id}"
+    <Toast
+      testid="{testid}-{notice.id}"
+      kind={notice.kind}
+      text={notice.text}
+      action={notice.action}
+      onaction={() => onaction?.(notice.id)}
+      ondismiss={() => ondismiss(notice.id)}
     >
-      <Icon
-        name={notice.kind === 'error' || notice.kind === 'conflict'
-          ? 'exclamationmark.triangle'
-          : 'checkmark'}
-        size={16}
-        weight={2.4}
-      />
-      <span class="text"><Text style="subheadline" color="inherit">{notice.text}</Text></span>
-      <Button
-        testid="{testid}-{notice.id}-dismiss"
-        variant="plain"
-        size="small"
-        aria-label="Dismiss"
-        onclick={() => ondismiss(notice.id)}
-      >
-        <Icon name="xmark" size={14} weight={2.6} />
-      </Button>
-    </div>
+      {#snippet icon()}<Icon name={glyph(notice)} size={18} weight={2.4} />{/snippet}
+    </Toast>
   {/each}
 </div>
 
@@ -48,6 +47,7 @@
   .notices {
     position: absolute;
     inset: auto 12px 12px;
+    z-index: 1200;
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -55,28 +55,5 @@
   }
   .notices:empty {
     display: none;
-  }
-  .notice {
-    pointer-events: auto;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 8px 8px 8px 14px;
-    border-radius: var(--radius-md);
-    background: var(--bg-elevated);
-    color: var(--label);
-    box-shadow: var(--shadow-popover);
-    border: var(--hairline) solid var(--separator);
-  }
-  .error {
-    color: var(--ios-red);
-  }
-  .conflict {
-    color: var(--ios-orange);
-  }
-  .text {
-    flex: 1;
-    min-width: 0;
-    color: var(--label);
   }
 </style>

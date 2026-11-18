@@ -15,10 +15,11 @@ import Row from './organisms/Row.svelte'
 import Screen from './pages/Screen.svelte'
 import { ComponentRegistry, createRegistry } from './registry'
 import List from './templates/List.svelte'
+import { registerControls } from './kit/controls'
 
 /** Register the starter set on a registry (so a story or test can start from it and add its own). */
 export function registerStarterKit(registry: ComponentRegistry): ComponentRegistry {
-  return registry
+  registry
     .register('Stack', { component: Stack, since: '1.0' })
     .register('Group', { component: Group, since: '1.0' })
     .register('Show', { component: Show, since: '1.0' })
@@ -30,6 +31,7 @@ export function registerStarterKit(registry: ComponentRegistry): ComponentRegist
     .register('ForEach', { component: ForEach, since: '1.0' })
     .register('Row', { component: Row, since: '1.0' })
     .register('Screen', { component: Screen, since: '1.0' })
+  return registerControls(registry)
 }
 
 /** The registry a window uses unless it is given another. */
