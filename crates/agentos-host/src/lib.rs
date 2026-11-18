@@ -222,11 +222,11 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
     let streams = Arc::new(DeviceStreams::default());
     let to_end = streams.clone();
     devices.on_revoked(move |device| to_end.revoke(device));
+    let session = SessionConfig { devices: devices.clone(), secure_cookies: cfg.secure_cookies };
     let protected = rpc_router(hub)
         .merge(agui_router_with(chat.clone(), streams))
-        .layer(from_fn_with_state(devices.clone(), require_session));
-    let public =
-        session_router(SessionConfig { devices: devices.clone(), secure_cookies: cfg.secure_cookies });
+        .layer(from_fn_with_state(session.clone(), require_session));
+    let public = session_router(session);
     let directory: Arc<dyn AgentDirectory> = contacts.clone();
     let mcp = mcp_router(mcp_state, service.clone(), directory, shutdown.child_token());
 

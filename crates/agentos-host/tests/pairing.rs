@@ -379,6 +379,24 @@ async fn over_tls_the_session_cookie_is_secure() {
     assert_eq!(res.status(), 200);
     let cookie = res.headers().get("set-cookie").unwrap().to_str().unwrap().to_owned();
     assert!(cookie.ends_with("; Secure") && cookie.contains("HttpOnly"), "{cookie}");
+    assert!(cookie.starts_with("__Host-agentos_session="), "the __Host- prefix with TLS: {cookie}");
+    // the browser sends it back under that name, and the host honours it (and only it)
+    let sent = cookie.split(';').next().unwrap().to_owned();
+    let paired =
+        client.get(format!("https://{}/session", r.addr)).header("cookie", &sent).send().await.unwrap();
+    assert_eq!(paired.json::<serde_json::Value>().await.unwrap()["paired"], true);
+    let value = sent.split_once('=').unwrap().1;
+    let tossed = client
+        .get(format!("https://{}/session", r.addr))
+        .header("cookie", format!("agentos_session={value}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        tossed.json::<serde_json::Value>().await.unwrap()["paired"],
+        false,
+        "unprefixed name over TLS"
+    );
     r.stop().await;
     let _ = std::fs::remove_dir_all(dir);
 }
