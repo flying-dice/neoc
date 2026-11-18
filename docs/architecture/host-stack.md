@@ -102,7 +102,7 @@ Features `luau, async, serialize, send`. Proven (all in `tests/vm.rs`, 9 tests):
 3. **Memory per VM ~0.5 MiB** baseline and one global mutex per VM: fine for dozens of apps; measure real apps. Per-VM *CPU fairness* relies on tokio's multi-thread pool (tested: a spinning VM didn't stall another app).
 4. **rmcp / ACP / MCP spec churn** (rmcp 3.x already carries two protocol generations; ACP crate is at 5.x with a draft v2). Pin, re-run the adapter tests on each bump, keep each behind its port. Claude-side MCP clients today speak 2025-x (sessions); both are served.
 5. **Notification ordering** on `/rpc` (notifications can overtake responses) must be part of the client contract.
-6. **Auth on `/rpc`:** Origin+Host guard stops cross-site pages, but any local process can still connect; add a per-launch token (cookie or query) if the threat model includes other local users/processes.
+6. **Auth on `/rpc`: closed by device pairing** (see "Pairing" below). Every client route needs a paired device's session cookie, from loopback too, so another local user or process cannot connect without a code; the Origin/Host guard still stops cross-site pages and DNS rebinding. What is left: a pairing code is shown to whoever can read the host's terminal, and sessions never expire (revoke them in Settings > Devices).
 7. **ACP→AG-UI mapping** (prompt streaming, permission requests, tool-call events) is the largest unproven piece; the transport pieces on both sides are proven.
 8. **Linux/Windows builds unverified** (needs zigbuild/CI); `x86_64-pc-windows-gnu` target is installed but untried; `notify` and process spawning differ per OS.
 9. **Luau ergonomics:** no `require` of files yet (bundle-only `require` to build), no debugger, error spans only as `app/main.luau:line`.
@@ -145,7 +145,7 @@ Every client route needs a paired device, **including from loopback**: there is 
 5. Wrong codes are rate limited: after 5 attempts in a minute, `429` with `Retry-After`, even for the right code;
    10 wrong guesses in 10 minutes destroy every outstanding code.
 6. Sessions have no expiry; they last until revoked. The JSON-RPC methods `host.devices.list` (`{devices:[{id, name,
-   createdAt, lastSeenAt, current}]}`) and `host.devices.revoke` (`{id}`) back a future Settings screen. Revoking a
+   createdAt, lastSeenAt, current}]}`) and `host.devices.revoke` (`{id}`) back Settings > Devices. Revoking a
    device hangs up its sockets and ends its session.
 
 `/mcp` is separate: per-agent bearer tokens only. A paired session is not an MCP credential and an MCP token is

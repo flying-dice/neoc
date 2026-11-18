@@ -41,8 +41,9 @@ structure; this renders view trees with the `@agentos/ui` kit, holds client-mana
 code**. The shell's `ViewWindow` organism hosts it for every installed app.
 
 ```
-protocol.ts      every wire type (view.tree/ops, data.patch, requests, actions). Hand-written; wave A2 replaces it
-                 with types generated from the Rust schema. The only module that declares a wire shape.
+protocol.ts      every wire type (view.tree/ops, data.patch, requests, actions): re-exported from the types generated
+                 from the Rust schema (`types/generated/agentos.ts`, `bun run codegen`). The only module that
+                 reaches the generated file.
 rpc/             peer.ts  JSON-RPC 2.0 peer, by-name params          websocket.ts  /rpc transport, backoff + jitter
 core/            framework-free, plain objects under bun test; Svelte hands it a $state store
   view.ts          ViewCore: one window. open/sync/resume, ops (base/rev, gap -> view.sync), refs, events, actions

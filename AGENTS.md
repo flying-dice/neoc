@@ -13,7 +13,7 @@ AgentOS is an iPadOS-style virtual desktop for agents. It has three parts:
   `packages/ui` (atomic layers) through adapters in `client/src/renderer/src/view/`, holds client-managed state, and
   runs **no app code**.
 
-Bun workspaces cover `client`, `apps/*` and `packages/*`; Cargo covers `crates/*`.
+Bun workspaces cover `client` and `packages/*` (the `apps/*` glob matches no package: an app is Luau, `app.json` + `*.luau`, not a Bun package); Cargo covers `crates/*`.
 
 ## Sources of truth
 

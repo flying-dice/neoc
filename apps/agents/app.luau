@@ -14,6 +14,7 @@ app.manifest {
   name = "Agents",
   icon = "sparkles",
   tint = "orange",
+  -- 480x420 leaves room for a few messages; the layout itself holds down to 320x280 (one column below 700 wide)
   window = { w = 960, h = 640, minW = 480, minH = 420 },
   permissions = { "data", "agents" },
 }
