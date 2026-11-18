@@ -1,14 +1,14 @@
 --!strict
-app.tools.register({
+app.tools.register {
   name = "add_note",
   description = "Add a note",
   input_schema = { type = "object", properties = { body = { type = "string" } }, required = { "body" } },
   handler = function(args: { body: string }): { id: number }
     local r = app.data.exec("INSERT INTO notes(body) VALUES(?)", { args.body })
-    app.notify({ title = "Note added", body = args.body })
+    app.notify { title = "Note added", body = args.body }
     return { id = r.last_insert_rowid }
   end,
-})
+}
 
 local function view(): any
   local rows = app.data.query("SELECT id, body FROM notes ORDER BY id")
