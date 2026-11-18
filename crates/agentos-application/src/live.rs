@@ -230,6 +230,7 @@ fn rows_delta(
     from: u64,
     rows: Vec<Value>,
     key: &str,
+    force: bool,
 ) -> PortResult<(RowsState, Option<RowsDelta>)> {
     let mut keys = Vec::with_capacity(rows.len());
     let mut hashes = HashMap::with_capacity(rows.len());
@@ -254,7 +255,8 @@ fn rows_delta(
     let dropped: Vec<Value> = prev
         .map(|p| p.keys.iter().filter(|k| !hashes.contains_key(&key_string(k))).cloned().collect())
         .unwrap_or_default();
-    let unchanged = prev.is_some_and(|p| p.keys == keys && p.total == total && p.from == from)
+    let unchanged = !force
+        && prev.is_some_and(|p| p.keys == keys && p.total == total && p.from == from)
         && changed.is_empty()
         && dropped.is_empty();
     let state = RowsState { total, from, keys: keys.clone(), hashes };
@@ -362,6 +364,7 @@ fn compute(
     prev: Option<&SourceState>,
     from: u64,
     fetched: Fetched,
+    force: bool,
 ) -> PortResult<(SourceState, Option<SourceUpdate>)> {
     match (fetched, &def.kind) {
         (Fetched::Rows { total, rows }, SourceKind::Rows { key, .. }) => {
@@ -369,17 +372,17 @@ fn compute(
                 Some(SourceState::Rows(r)) => Some(r),
                 _ => None,
             };
-            let (state, delta) = rows_delta(prev, total, from, rows, key)?;
+            let (state, delta) = rows_delta(prev, total, from, rows, key, force)?;
             Ok((SourceState::Rows(state), delta.map(SourceUpdate::Rows)))
         }
         (Fetched::Row(row), SourceKind::Row { rev, .. }) => {
             let Some(row) = row else {
-                let update = (!matches!(prev, Some(SourceState::RowMissing)))
+                let update = (force || !matches!(prev, Some(SourceState::RowMissing)))
                     .then_some(SourceUpdate::Row(RowDelta { row: None, rev: None }));
                 return Ok((SourceState::RowMissing, update));
             };
             let hash = content_hash(&row);
-            let same = matches!(prev, Some(SourceState::Row(h)) if *h == hash);
+            let same = !force && matches!(prev, Some(SourceState::Row(h)) if *h == hash);
             let rev = rev.as_ref().and_then(|c| row.get(c)).cloned();
             Ok((
                 SourceState::Row(hash),
@@ -387,7 +390,7 @@ fn compute(
             ))
         }
         (Fetched::Scalar(value), SourceKind::Scalar) => {
-            let same = matches!(prev, Some(SourceState::Scalar(v)) if *v == value);
+            let same = !force && matches!(prev, Some(SourceState::Scalar(v)) if *v == value);
             Ok((SourceState::Scalar(value.clone()), (!same).then_some(SourceUpdate::Scalar(value))))
         }
         _ => Err(PortError::Internal("source kind and fetch result disagree".into())),
@@ -450,7 +453,7 @@ impl LiveSources {
         Self::check_params(&def, &params)?;
         let window = window.unwrap_or_else(|| def.default_window());
         let fetched = fetch(&mut Reader::Data(self.data.as_ref()), &def, &params, window).await?;
-        let (state, update) = compute(&def, None, window.from, fetched)?;
+        let (state, update) = compute(&def, None, window.from, fetched, true)?;
         let id = {
             let mut n = self.next.lock();
             let id = SubscriptionId(*n);
@@ -469,6 +472,35 @@ impl LiveSources {
         params: Option<Params>,
         window: Option<Window>,
     ) -> PortResult<Option<SourceUpdate>> {
+        self.update_inner(id, params, window, false).await
+    }
+
+    /// Like [`LiveSources::update`], but always answers: an unchanged window comes back as a delta with
+    /// the keys and no rows (the client asked, so it gets a reply).
+    pub async fn update_always(
+        &self,
+        id: SubscriptionId,
+        params: Option<Params>,
+        window: Option<Window>,
+    ) -> PortResult<SourceUpdate> {
+        self.update_inner(id, params, window, true)
+            .await?
+            .ok_or_else(|| PortError::Internal("a forced update always answers".into()))
+    }
+
+    /// The params a subscription currently runs with (they select the row of a row source).
+    #[must_use]
+    pub fn params_of(&self, id: SubscriptionId) -> Option<Params> {
+        self.subs.lock().get(&id).map(|s| s.params.clone())
+    }
+
+    async fn update_inner(
+        &self,
+        id: SubscriptionId,
+        params: Option<Params>,
+        window: Option<Window>,
+        force: bool,
+    ) -> PortResult<Option<SourceUpdate>> {
         let (def, params, window, prev, epoch) = {
             let mut subs = self.subs.lock();
             let sub =
@@ -486,7 +518,7 @@ impl LiveSources {
             )
         };
         let fetched = fetch(&mut Reader::Data(self.data.as_ref()), &def, &params, window).await?;
-        let (state, update) = compute(&def, prev.as_ref(), window.from, fetched)?;
+        let (state, update) = compute(&def, prev.as_ref(), window.from, fetched, force)?;
         if let Some(sub) = self.subs.lock().get_mut(&id) {
             if sub.epoch == epoch {
                 sub.params = params;
@@ -537,7 +569,7 @@ impl LiveSources {
         }
         let mut deliveries = Vec::new();
         for (Job { id, def, window, prev, epoch, .. }, result) in affected.into_iter().zip(results) {
-            let outcome = result.and_then(|f| compute(&def, prev.as_ref(), window.from, f));
+            let outcome = result.and_then(|f| compute(&def, prev.as_ref(), window.from, f, false));
             let mut subs = self.subs.lock();
             let Some(sub) = subs.get_mut(&id) else { continue };
             if sub.epoch != epoch {
@@ -629,21 +661,22 @@ mod tests {
     #[test]
     fn the_first_delta_sends_every_row_and_a_repeat_sends_nothing() {
         let rows = vec![note(1, "a"), note(2, "b")];
-        let (state, delta) = rows_delta(None, Some(2), 0, rows.clone(), "id").unwrap();
+        let (state, delta) = rows_delta(None, Some(2), 0, rows.clone(), "id", false).unwrap();
         let delta = delta.unwrap();
         assert_eq!(delta.keys, vec![json!(1), json!(2)]);
         assert_eq!(delta.changed.len(), 2);
         assert!(delta.dropped.is_empty());
-        assert!(rows_delta(Some(&state), Some(2), 0, rows, "id").unwrap().1.is_none());
+        assert!(rows_delta(Some(&state), Some(2), 0, rows, "id", false).unwrap().1.is_none());
     }
 
     #[test]
     fn only_changed_rows_inserts_moves_and_removals_are_described() {
         let (state, _) =
-            rows_delta(None, Some(3), 0, vec![note(1, "a"), note(2, "b"), note(3, "c")], "id").unwrap();
+            rows_delta(None, Some(3), 0, vec![note(1, "a"), note(2, "b"), note(3, "c")], "id", false)
+                .unwrap();
         // 2 edited, 3 removed, 4 inserted at the front, 1 untouched but moved
         let (_, delta) =
-            rows_delta(Some(&state), Some(3), 0, vec![note(4, "d"), note(2, "B"), note(1, "a")], "id")
+            rows_delta(Some(&state), Some(3), 0, vec![note(4, "d"), note(2, "B"), note(1, "a")], "id", false)
                 .unwrap();
         let d = delta.unwrap();
         assert_eq!(d.keys, vec![json!(4), json!(2), json!(1)], "the window is the new order");
@@ -657,24 +690,27 @@ mod tests {
 
     #[test]
     fn a_reorder_alone_is_a_delta_with_no_rows() {
-        let (state, _) = rows_delta(None, None, 0, vec![note(1, "a"), note(2, "b")], "id").unwrap();
-        let d = rows_delta(Some(&state), None, 0, vec![note(2, "b"), note(1, "a")], "id").unwrap().1.unwrap();
+        let (state, _) = rows_delta(None, None, 0, vec![note(1, "a"), note(2, "b")], "id", false).unwrap();
+        let d = rows_delta(Some(&state), None, 0, vec![note(2, "b"), note(1, "a")], "id", false)
+            .unwrap()
+            .1
+            .unwrap();
         assert!(d.changed.is_empty() && d.dropped.is_empty());
         assert_eq!(d.keys, vec![json!(2), json!(1)]);
     }
 
     #[test]
     fn a_total_change_alone_is_reported() {
-        let (state, _) = rows_delta(None, Some(5), 0, vec![note(1, "a")], "id").unwrap();
-        let d = rows_delta(Some(&state), Some(6), 0, vec![note(1, "a")], "id").unwrap().1.unwrap();
+        let (state, _) = rows_delta(None, Some(5), 0, vec![note(1, "a")], "id", false).unwrap();
+        let d = rows_delta(Some(&state), Some(6), 0, vec![note(1, "a")], "id", false).unwrap().1.unwrap();
         assert_eq!(d.total, Some(6));
         assert!(d.changed.is_empty());
     }
 
     #[test]
     fn duplicate_or_missing_keys_are_errors_not_silent_corruption() {
-        assert!(rows_delta(None, None, 0, vec![note(1, "a"), note(1, "b")], "id").is_err());
-        assert!(rows_delta(None, None, 0, vec![json!({"title": "no key"})], "id").is_err());
+        assert!(rows_delta(None, None, 0, vec![note(1, "a"), note(1, "b")], "id", false).is_err());
+        assert!(rows_delta(None, None, 0, vec![json!({"title": "no key"})], "id", false).is_err());
     }
 
     #[tokio::test]

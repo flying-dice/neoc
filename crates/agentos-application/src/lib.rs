@@ -21,6 +21,9 @@ mod services_tests;
 #[allow(clippy::unwrap_used, clippy::missing_panics_doc)]
 // in-memory fakes: a poisoned lock should just panic
 pub mod testing;
+pub mod views;
+#[cfg(test)]
+mod views_tests;
 pub mod writeback;
 #[cfg(test)]
 mod writeback_tests;
@@ -29,4 +32,5 @@ pub use devices::{DeviceService, PairError, PairedDevice, PairingCode, PairingPo
 pub use error::{AppError, PortError};
 pub use live::{LiveSources, SourceDef, SourceId, SourceKind, SourceUpdate, SubscriptionId, Window};
 pub use services::{AppInfo, AppService, AppStatus, Ports};
+pub use views::{ViewError, ViewService, ViewSink};
 pub use writeback::{BindingKind, Resolution, WriteAck, WriteRequest};

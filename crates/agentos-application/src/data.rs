@@ -128,6 +128,14 @@ pub trait AppData: Send + Sync {
     /// A fresh subscription to commit-time change batches.
     fn changes(&self) -> Box<dyn ChangeFeed>;
 
+    // ---- client state that survives closing a window (`persist = "app"`; `_ui_state`) ----
+    /// The stored values of a window kind, by name.
+    async fn ui_state(&self, window: &str) -> PortResult<serde_json::Map<String, Value>>;
+    /// Store (insert or replace) values of a window kind.
+    async fn set_ui_state(&self, window: &str, entries: serde_json::Map<String, Value>) -> PortResult<()>;
+    /// Forget everything stored for every window (Settings: "clear saved window state").
+    async fn clear_ui_state(&self) -> PortResult<()>;
+
     // ---- revisions: what a human's write replaced (kept 30 days) ----
     /// Keep a value; returns its id.
     async fn record_revision(&self, revision: Revision) -> PortResult<i64>;

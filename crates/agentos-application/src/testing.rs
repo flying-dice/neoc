@@ -6,13 +6,14 @@ use crate::{
         AgentConnector, AgentDirectory, AppData, AppPackage, AppRuntime, Background, CallContext,
         ChangeBatch, ChangeFeed, Clock, DataStore, DataTx, DeviceRegistry, EventSink, ExecOutcome, Fetcher,
         InstalledApp, InstalledAppStore, LoadedApp, MenuCommand, Params, PortResult, QueryInfo, RandomSource,
-        RunId, ServerEvent, Shell, SqlMigration, TaskHandle, ToolRegistry,
+        RenderOutput, RunId, ServerEvent, Shell, SourceBinding, SqlMigration, TaskHandle, ToolRegistry,
+        ViewEffect, ViewEventCall,
     },
     services::{AppService, Ports},
     PortError,
 };
 use agentos_domain::{
-    ui::{UiEvent, UiNode},
+    ui::{ClientDecl, Node},
     AgentId, AppId, AppRef, Capabilities, Device, DeviceId, FileRef, Manifest, MigrationSpec, Revision,
     StoredRevision, ToolSpec,
 };
@@ -20,7 +21,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     future::Future,
     pin::Pin,
     sync::{
@@ -58,6 +59,7 @@ struct Inner {
     execs: Mutex<Vec<(String, Params)>>,
     feed: Mutex<FeedState>,
     revs: Mutex<Vec<StoredRevision>>,
+    ui_state: Mutex<HashMap<String, serde_json::Map<String, Value>>>,
 }
 
 /// A scripted database: rows are registered per SQL fragment and returned for any statement containing it
@@ -231,6 +233,17 @@ impl AppData for ScriptedData {
     fn changes(&self) -> Box<dyn ChangeFeed> {
         self.feed()
     }
+    async fn ui_state(&self, window: &str) -> PortResult<serde_json::Map<String, Value>> {
+        Ok(self.0.ui_state.lock().unwrap().get(window).cloned().unwrap_or_default())
+    }
+    async fn set_ui_state(&self, window: &str, entries: serde_json::Map<String, Value>) -> PortResult<()> {
+        self.0.ui_state.lock().unwrap().entry(window.to_owned()).or_default().extend(entries);
+        Ok(())
+    }
+    async fn clear_ui_state(&self) -> PortResult<()> {
+        self.0.ui_state.lock().unwrap().clear();
+        Ok(())
+    }
     async fn record_revision(&self, revision: Revision) -> PortResult<i64> {
         let mut all = self.0.revs.lock().unwrap();
         let id = i64::try_from(all.len()).unwrap_or(0) + 1;
@@ -314,6 +327,8 @@ impl DataStore for MemStore {
 
 // ---- runtime --------------------------------------------------------------------------------------
 
+/// (view, window, params, restored values) of a window the fake runtime opened.
+pub type OpenedView = (String, String, serde_json::Map<String, Value>, serde_json::Map<String, Value>);
 /// (source, key, field, value, context) of a write-back the fake runtime ran.
 pub type WriteRecord = (String, Value, String, Value, CallContext);
 type WriteHook = Box<dyn Fn(&str, &Value, &str, &Value) + Send>;
@@ -329,6 +344,24 @@ pub struct FakeRuntime {
     fail_load: Mutex<HashSet<String>>,
     writes: Mutex<Vec<WriteRecord>>,
     on_write: Mutex<Option<WriteHook>>,
+    view: Mutex<ViewScript>,
+}
+
+/// What the fake runtime renders and records for windows.
+#[derive(Default)]
+struct ViewScript {
+    tree: Option<Node>,
+    sources: BTreeMap<String, SourceBinding>,
+    decls: BTreeMap<String, ClientDecl>,
+    seq: u64,
+    fail_render: Option<String>,
+    stale: HashSet<String>,
+    dirty: Vec<String>,
+    effects: Vec<(String, ViewEffect)>,
+    opened: Vec<OpenedView>,
+    events: Vec<(String, ViewEventCall)>,
+    closed: Vec<String>,
+    client_values: Vec<(String, serde_json::Map<String, Value>)>,
 }
 impl FakeRuntime {
     pub fn loaded(&self) -> Vec<String> {
@@ -362,6 +395,60 @@ impl FakeRuntime {
         } else {
             set.remove(app);
         }
+    }
+    /// What every window renders next (open and re-render).
+    pub fn set_render(
+        &self,
+        tree: Node,
+        sources: BTreeMap<String, SourceBinding>,
+        decls: BTreeMap<String, ClientDecl>,
+    ) {
+        let mut v = self.view.lock().unwrap();
+        v.tree = Some(tree);
+        v.sources = sources;
+        v.decls = decls;
+    }
+    /// The next renders fail with this message.
+    pub fn fail_render(&self, message: Option<&str>) {
+        self.view.lock().unwrap().fail_render = message.map(str::to_owned);
+    }
+    /// `path#event` handlers that no longer exist (the event is stale).
+    pub fn set_stale(&self, handler: &str) {
+        self.view.lock().unwrap().stale.insert(handler.to_owned());
+    }
+    /// The next `dirty_views` call reports this view.
+    pub fn mark_dirty(&self, view: &str) {
+        self.view.lock().unwrap().dirty.push(view.to_owned());
+    }
+    pub fn push_effect(&self, view: &str, effect: ViewEffect) {
+        self.view.lock().unwrap().effects.push((view.to_owned(), effect));
+    }
+    pub fn opened_views(&self) -> Vec<OpenedView> {
+        self.view.lock().unwrap().opened.clone()
+    }
+    pub fn view_events(&self) -> Vec<(String, ViewEventCall)> {
+        self.view.lock().unwrap().events.clone()
+    }
+    pub fn closed_views(&self) -> Vec<String> {
+        self.view.lock().unwrap().closed.clone()
+    }
+    pub fn client_values(&self) -> Vec<(String, serde_json::Map<String, Value>)> {
+        self.view.lock().unwrap().client_values.clone()
+    }
+    fn render(&self) -> PortResult<RenderOutput> {
+        let mut v = self.view.lock().unwrap();
+        if let Some(message) = &v.fail_render {
+            return Err(PortError::Rejected(message.clone()));
+        }
+        let tree = v.tree.clone().ok_or_else(|| PortError::NotFound("no render scripted".into()))?;
+        v.seq += 1;
+        Ok(RenderOutput {
+            tree,
+            client_decls: v.decls.clone(),
+            sources: v.sources.clone(),
+            client: serde_json::Map::new(),
+            seq: v.seq,
+        })
     }
     pub fn writes(&self) -> Vec<WriteRecord> {
         self.writes.lock().unwrap().clone()
@@ -426,8 +513,55 @@ impl AppRuntime for FakeRuntime {
         self.writes.lock().unwrap().push((source.0.clone(), key, field.to_owned(), value, ctx));
         Ok(())
     }
-    async fn dispatch_event(&self, _: &AppId, e: UiEvent) -> PortResult<Option<UiNode>> {
-        Ok(Some(UiNode::Text { text: e.name }))
+    async fn windows(&self, _: &AppId) -> PortResult<Vec<String>> {
+        Ok(vec!["main".into()])
+    }
+    async fn open_view(
+        &self,
+        _: &AppId,
+        view: &str,
+        window: &str,
+        params: serde_json::Map<String, Value>,
+        restored: serde_json::Map<String, Value>,
+    ) -> PortResult<RenderOutput> {
+        let mut out = self.render()?;
+        restored.clone_into(&mut out.client);
+        self.view.lock().unwrap().opened.push((view.to_owned(), window.to_owned(), params, restored));
+        Ok(out)
+    }
+    async fn render_view(&self, _: &AppId, _: &str) -> PortResult<RenderOutput> {
+        self.render()
+    }
+    async fn dispatch_view_event(
+        &self,
+        _: &AppId,
+        view: &str,
+        call: ViewEventCall,
+        _: CallContext,
+    ) -> PortResult<bool> {
+        let mut v = self.view.lock().unwrap();
+        let stale = v.stale.contains(&format!("{}#{}", call.path, call.event));
+        v.events.push((view.to_owned(), call));
+        Ok(!stale)
+    }
+    async fn set_client_values(
+        &self,
+        _: &AppId,
+        view: &str,
+        values: serde_json::Map<String, Value>,
+    ) -> PortResult<()> {
+        self.view.lock().unwrap().client_values.push((view.to_owned(), values));
+        Ok(())
+    }
+    async fn close_view(&self, _: &AppId, view: &str) -> PortResult<()> {
+        self.view.lock().unwrap().closed.push(view.to_owned());
+        Ok(())
+    }
+    async fn dirty_views(&self, _: &AppId) -> PortResult<Vec<String>> {
+        Ok(std::mem::take(&mut self.view.lock().unwrap().dirty))
+    }
+    async fn take_view_effects(&self, _: &AppId) -> PortResult<Vec<(String, ViewEffect)>> {
+        Ok(std::mem::take(&mut self.view.lock().unwrap().effects))
     }
 }
 
@@ -563,6 +697,23 @@ impl Shell for RecordingShell {
     }
     async fn set_deep_links(&self, app: &AppId, patterns: Vec<String>) {
         self.links.lock().unwrap().push((app.to_string(), patterns));
+    }
+}
+
+/// Collects what a view sends to its client.
+#[derive(Default)]
+pub struct RecordingViewSink(Mutex<Vec<agentos_domain::ui::protocol::HostNotification>>);
+impl RecordingViewSink {
+    pub fn take(&self) -> Vec<agentos_domain::ui::protocol::HostNotification> {
+        std::mem::take(&mut *self.0.lock().unwrap())
+    }
+    pub fn methods(&self) -> Vec<&'static str> {
+        self.0.lock().unwrap().iter().map(|n| n.to_rpc().0).collect()
+    }
+}
+impl crate::views::ViewSink for RecordingViewSink {
+    fn send(&self, notification: agentos_domain::ui::protocol::HostNotification) {
+        self.0.lock().unwrap().push(notification);
     }
 }
 

@@ -8,16 +8,16 @@ use crate::{
     data::Params,
     live::{pump_changes, LiveSources},
     ports::{
-        AgentConnector, AppData, AppPackage, AppRuntime, Background, CallContext, Clock, DataStore,
-        EventSink, Fetcher, InstalledApp, InstalledAppStore, RunId, ServerEvent, SqlMigration, TaskHandle,
-        ToolRegistry,
+        AgentConnector, AppData, AppObserver, AppPackage, AppRuntime, Background, CallContext, Clock,
+        DataStore, EventSink, Fetcher, InstalledApp, InstalledAppStore, RunId, ServerEvent, SqlMigration,
+        TaskHandle, ToolRegistry,
     },
     writeback::{self, WriteAck, WriteRequest},
     AppError, PortError,
 };
 use agentos_domain::{
-    ui::UiEvent, Actor, AgentId, AgentIdentity, AppId, AppRef, Capabilities, QualifiedToolName, Revision,
-    StoredRevision, ToolSpec,
+    Actor, AgentId, AgentIdentity, AppId, AppRef, Capabilities, QualifiedToolName, Revision, StoredRevision,
+    ToolSpec,
 };
 use parking_lot::Mutex;
 use serde_json::Value;
@@ -83,6 +83,7 @@ struct AppEntry {
 pub struct AppService {
     p: Ports,
     apps: Mutex<HashMap<AppId, AppEntry>>,
+    observers: Mutex<Vec<Arc<dyn AppObserver>>>,
 }
 
 /// Package files that are Luau source: the entry and every module `require` may reach.
@@ -93,7 +94,39 @@ fn is_luau(path: &str) -> bool {
 impl AppService {
     #[must_use]
     pub fn new(ports: Ports) -> Self {
-        Self { p: ports, apps: Mutex::default() }
+        Self { p: ports, apps: Mutex::default(), observers: Mutex::default() }
+    }
+
+    /// Register something that follows what apps do (the view service).
+    pub fn add_observer(&self, observer: Arc<dyn AppObserver>) {
+        self.observers.lock().push(observer);
+    }
+
+    fn observers(&self) -> Vec<Arc<dyn AppObserver>> {
+        self.observers.lock().clone()
+    }
+
+    async fn announce_stopping(&self, app: &AppId, reason: &str) {
+        for o in self.observers() {
+            o.stopping(app, reason).await;
+        }
+    }
+
+    /// The app's database handle (the view service reads and writes client state through it).
+    pub fn data_of(&self, app: &AppId) -> Result<Arc<dyn AppData>, AppError> {
+        self.with_active(app, |a| a.data.clone())
+    }
+
+    /// The runtime, for the view service.
+    #[must_use]
+    pub fn runtime(&self) -> Arc<dyn AppRuntime> {
+        self.p.runtime.clone()
+    }
+
+    /// The service's clock reading, in Unix milliseconds.
+    #[must_use]
+    pub fn now_ms(&self) -> u64 {
+        self.p.clock.now_unix_ms()
     }
 
     // ---- install / uninstall ------------------------------------------------------------------------
@@ -136,6 +169,7 @@ impl AppService {
     }
 
     pub async fn uninstall(&self, app: &AppId, purge_data: bool) -> Result<(), AppError> {
+        self.announce_stopping(app, "uninstalled").await;
         let entry = self.apps.lock().remove(app).ok_or_else(|| AppError::NotInstalled(app.to_string()))?;
         if let Some(active) = entry.active {
             self.deactivate(app, active).await;
@@ -209,6 +243,7 @@ impl AppService {
 
     /// Hide the app from agents and unload its VM. Its data is kept.
     pub async fn disable(&self, app: &AppId) -> Result<(), AppError> {
+        self.announce_stopping(app, "disabled").await;
         let active = {
             let mut apps = self.apps.lock();
             let entry = apps.get_mut(app).ok_or_else(|| AppError::NotInstalled(app.to_string()))?;
@@ -258,6 +293,7 @@ impl AppService {
 
     /// Erase the app's data. A running app is reloaded on an empty database (its migrations run again).
     pub async fn delete_data(&self, app: &AppId) -> Result<(), AppError> {
+        self.announce_stopping(app, "data deleted").await;
         let (was_running, source, active) = {
             let mut apps = self.apps.lock();
             let entry = apps.get_mut(app).ok_or_else(|| AppError::NotInstalled(app.to_string()))?;
@@ -301,6 +337,7 @@ impl AppService {
         };
         match self.load_from_source(&source, data).await {
             Ok(active) => {
+                self.announce_stopping(app, "reloaded").await;
                 let mut apps = self.apps.lock();
                 if let Some(entry) = apps.get_mut(app) {
                     entry.name.clone_from(&active.name);
@@ -320,14 +357,6 @@ impl AppService {
 
     // ---- running apps -------------------------------------------------------------------------------
 
-    pub async fn dispatch_ui_event(&self, app: &AppId, event: UiEvent) -> Result<(), AppError> {
-        self.require_running(app)?;
-        if let Some(root) = self.p.runtime.dispatch_event(app, event).await? {
-            self.p.events.emit(ServerEvent::UiTree { app: app.clone(), root }).await;
-        }
-        Ok(())
-    }
-
     /// MCP `tools/call`: authorize the calling agent, then run the tool in the app's VM as that agent.
     pub async fn call_tool(
         &self,
@@ -338,7 +367,12 @@ impl AppService {
         caller.authorize_tool_call(name)?;
         self.require_running(name.app())?;
         let ctx = CallContext { actor: Actor::from(caller), now_ms: self.p.clock.now_unix_ms() };
-        Ok(self.p.runtime.call_tool(name.app(), name.tool(), args, ctx).await?)
+        let out = self.p.runtime.call_tool(name.app(), name.tool(), args, ctx).await;
+        // a tool may have changed state or data (even when it then failed): open views follow
+        for o in self.observers() {
+            o.mutated(name.app()).await;
+        }
+        Ok(out?)
     }
 
     /// The app's live sources (views subscribe through this).
@@ -450,6 +484,10 @@ impl AppService {
     /// processes. Nothing is purged or forgotten and clients are not told the apps were uninstalled: they
     /// are coming back with the host.
     pub async fn shutdown(&self) {
+        let ids: Vec<AppId> = self.apps.lock().keys().cloned().collect();
+        for app in &ids {
+            self.announce_stopping(app, "shutting down").await;
+        }
         let entries: Vec<(AppId, Option<Active>)> =
             self.apps.lock().drain().map(|(id, e)| (id, e.active)).collect();
         for (app, active) in entries {

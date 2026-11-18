@@ -2,11 +2,11 @@
 
 use crate::live::{SourceDef, SourceId};
 use agentos_domain::{
-    ui::{UiEvent, UiNode},
+    ui::{protocol::Command, ClientDecl, Node, SourceDecl},
     Actor, AgentId, AppDecl, AppId, Capabilities, Device, DeviceId, Notification, ToolSpec,
 };
 use async_trait::async_trait;
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc};
 
 pub use crate::data::{
@@ -41,6 +41,48 @@ pub struct LoadedApp {
     pub sources: Vec<SourceDef>,
 }
 
+/// A source a render used: which declaration it is an instance of, and what the client is told about it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SourceBinding {
+    pub def: SourceId,
+    pub decl: SourceDecl,
+}
+
+/// What rendering a window produced.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RenderOutput {
+    /// The validated wire tree (handlers are `true` or client actions; the closures stay in the VM).
+    pub tree: Node,
+    pub client_decls: BTreeMap<String, ClientDecl>,
+    /// By source id as it appears in the tree.
+    pub sources: BTreeMap<String, SourceBinding>,
+    /// Client-managed values that differ from their declared `init`: restored from the host's copy or the
+    /// client's, seeded by `onOpen` or by deep-link params. Only filled by `open_view`.
+    pub client: Map<String, Value>,
+    /// Orders renders of one view: a result older than one already applied is dropped.
+    pub seq: u64,
+}
+
+/// A user event on a node.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ViewEventCall {
+    pub path: String,
+    pub event: String,
+    pub row_key: Option<Value>,
+    /// The host's last-sent snapshot of that row (`e.row`).
+    pub row: Option<Value>,
+    pub payload: Option<Value>,
+}
+
+/// What a window's code asked of its view during a call.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ViewEffect {
+    /// `w:toast`, `w:focus`, `w:scrollTo`, `w:announce`, `w:copy`, `w:close`.
+    Command(Command),
+    /// `w.client:set(name, value)`.
+    ClientSet { path: String, value: Value, force: bool },
+}
+
 #[async_trait]
 pub trait AppRuntime: Send + Sync {
     /// Compile + run the package's entry with only the capabilities the host hands over. Loading an app
@@ -64,8 +106,45 @@ pub trait AppRuntime: Send + Sync {
         value: Value,
         ctx: CallContext,
     ) -> PortResult<()>;
-    /// Deliver a UI event; returns the new view tree if the app produced one.
-    async fn dispatch_event(&self, app: &AppId, event: UiEvent) -> PortResult<Option<UiNode>>;
+
+    // ---- windows: one view instance per open window ----
+    /// The window kinds the app declared.
+    async fn windows(&self, app: &AppId) -> PortResult<Vec<String>>;
+    /// Create the instance, run `onOpen`, render. `restored` holds stored client values by name.
+    async fn open_view(
+        &self,
+        app: &AppId,
+        view: &str,
+        window: &str,
+        params: Map<String, Value>,
+        restored: Map<String, Value>,
+    ) -> PortResult<RenderOutput>;
+    /// Render again (state or data it read changed). A render that fails keeps the last good tree.
+    async fn render_view(&self, app: &AppId, view: &str) -> PortResult<RenderOutput>;
+    /// Run the handlers of `path#event`. `false`: no such handler any more (stale).
+    async fn dispatch_view_event(
+        &self,
+        app: &AppId,
+        view: &str,
+        call: ViewEventCall,
+        ctx: CallContext,
+    ) -> PortResult<bool>;
+    /// The client mirrored synced or persisted entries (`w.client:get`).
+    async fn set_client_values(&self, app: &AppId, view: &str, values: Map<String, Value>) -> PortResult<()>;
+    async fn close_view(&self, app: &AppId, view: &str) -> PortResult<()>;
+    /// Views whose last render read state that has since changed.
+    async fn dirty_views(&self, app: &AppId) -> PortResult<Vec<String>>;
+    /// What views asked for since the last call (toasts, `client.set`), by view.
+    async fn take_view_effects(&self, app: &AppId) -> PortResult<Vec<(String, ViewEffect)>>;
+}
+
+/// Told when an app changed data or went away, so open views can follow. The view service implements it.
+#[async_trait]
+pub trait AppObserver: Send + Sync {
+    /// A tool call (or anything else outside a view event) may have changed state or data.
+    async fn mutated(&self, app: &AppId);
+    /// The app is about to stop (disable, delete data, reload, uninstall, shutdown).
+    async fn stopping(&self, app: &AppId, reason: &str);
 }
 
 // ---- tools / notifications / clients --------------------------------------------------------
@@ -93,10 +172,6 @@ pub enum ServerEvent {
     AppFailed {
         app: AppId,
         message: String,
-    },
-    UiTree {
-        app: AppId,
-        root: UiNode,
     },
     Notification(Notification),
 }
