@@ -5,14 +5,14 @@
  *   1. builds the client (client/dist) and the host (cargo), and the apps into a test registry:
  *      the repo's apps plus Notes (the codegen fixture), a second app the Discover journeys install and remove
  *      so they never disturb the Calculator the other specs use;
- *   2. writes agentos.toml (port 7410, loopback, a fresh data directory, the test registry; the Calculator is
- *      installed at start, Notes is only offered);
+ *   2. writes agentos.toml (port 7410, loopback, a fresh data directory, the test registry; the Calculator and
+ *      Agents are installed at start, Notes is only offered; one scripted ACP agent is on the roster);
  *   3. runs agentos-host in the foreground, forwarding SIGTERM so the host shuts down gracefully.
  */
 import { spawn, spawnSync } from 'node:child_process'
 import { cpSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { CONFIG, DATA, DIR, HOST_BIN, PORT, REGISTRY, ROOT } from './config'
+import { CONFIG, DATA, DIR, FAKE_AGENT, HOST_BIN, PORT, REGISTRY, ROOT } from './config'
 
 const run = (cmd: string, args: string[]): void => {
   const r = spawnSync(cmd, args, { cwd: ROOT, stdio: 'inherit' })
@@ -24,6 +24,7 @@ mkdirSync(DIR, { recursive: true })
 
 run('bun', ['run', '--filter', '@agentos/client', 'build'])
 run('cargo', ['build', '-q', '-p', 'agentos-host'])
+run('cargo', ['build', '-q', '-p', 'agentos-acp', '--bin', 'fake_agent']) // the scripted agent the Agents journeys talk to
 
 // Notes: the codegen fixture, packaged for the registry like any app
 const extra = join(DIR, 'extra-apps/notes')
@@ -52,7 +53,18 @@ writeFileSync(
     `port = ${PORT}`,
     `client_dir = "${join(ROOT, 'client/dist')}"`,
     `registries = ["file://${REGISTRY}"]`,
-    `install = ["file://${join(DIR, 'registry/calculator/0.1.0/app-ref.json')}"]`,
+    `install = [${['calculator', 'agents'].map((id) => `"file://${join(DIR, `registry/${id}/0.1.0/app-ref.json`)}"`).join(', ')}]`,
+    // one agent, no model: the scripted ACP agent (crates/agentos-acp/src/bin/fake_agent.rs) answers by prompt
+    '[[agents]]',
+    'id = "scripted"',
+    'name = "Scripted agent"',
+    'role = "Answers by script, for tests"',
+    'avatar = "bolt"',
+    'approval = "ask"',
+    '[agents.runtime]',
+    `command = "${FAKE_AGENT}"`,
+    '[agents.grants]',
+    'apps = ["calculator"]',
     ''
   ].join('\n')
 )

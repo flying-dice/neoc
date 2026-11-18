@@ -3,8 +3,7 @@
   "include": [
     "src/renderer/src/env.d.ts",
     "src/renderer/src/**/*",
-    "src/renderer/src/**/*.svelte",
-    "../packages/sdk/src/host/bridge.ts"
+    "src/renderer/src/**/*.svelte"
   ],
   "compilerOptions": {
     "verbatimModuleSyntax": true,

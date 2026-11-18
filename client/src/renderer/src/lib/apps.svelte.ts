@@ -2,7 +2,7 @@ import type { IconName } from '@agentos/ui'
 import { iconOf, tintBackground, type AppSummary } from '../shell/hostApi'
 
 /** Apps whose pages still ship with the shell. */
-export type BuiltinAppId = 'discover' | 'agents' | 'settings' | 'files' | 'gallery' | 'terminal'
+export type BuiltinAppId = 'discover' | 'settings' | 'files' | 'gallery' | 'terminal'
 
 /** Built-in ids plus the ids of the Luau apps installed on the host. */
 export type AppId = string
@@ -37,16 +37,6 @@ const builtinApps: Record<BuiltinAppId, AppDefinition> = {
     minWidth: MIN_WIDTH,
     minHeight: MIN_HEIGHT,
     vibrant: true
-  },
-  agents: {
-    id: 'agents',
-    name: 'Agents',
-    icon: 'sparkles',
-    background: 'linear-gradient(180deg, #a78bfa 0%, #6d28d9 100%)',
-    width: 920,
-    height: 600,
-    minWidth: MIN_WIDTH,
-    minHeight: MIN_HEIGHT
   },
   settings: {
     id: 'settings',
@@ -151,8 +141,7 @@ export function setInstalledApps(list: AppSummary[]): void {
 }
 
 /**
- * Dock: the built-ins, then the running installed apps, then Settings. The Agents page is not here: the host's
- * agents arrive with the AG-UI Agents app (it is still reachable from the desktop widget).
+ * Dock: the built-ins, then the running installed apps (the Agents app among them), then Settings.
  */
 export function dockOrder(): AppId[] {
   return [

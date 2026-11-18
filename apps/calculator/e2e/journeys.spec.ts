@@ -112,7 +112,7 @@ test.describe('Calculator journeys', () => {
     await resizeWindow(page, 'calculator', 100, 100)
     const win = (await windowOf(page, 'calculator').boundingBox())!
     expect(Math.round(win.width), 'the manifest minimum width').toBe(320)
-    expect(Math.round(win.height), 'the manifest minimum height').toBe(480)
+    expect(Math.round(win.height), 'the manifest minimum height').toBe(500)
     await expectNoOverflow(page.getByTestId('window-calculator-content'))
     for (const k of ['5', 'add', '5', 'eq']) {
       const box = (await page.getByTestId(key(k)).boundingBox())!

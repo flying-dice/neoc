@@ -148,6 +148,21 @@ async fn serve_socket(socket: WebSocket, handler: Arc<dyn RpcHandler>, device: O
 
     handler.connected(peer.clone()).await;
 
+    // The view protocol is ordered: a person's keystrokes are `view.event`s with increasing `seq`, and the host
+    // drops one that arrives after a later one as a replay. Those requests run one at a time, in arrival
+    // order; everything else (app management, anything that may call back into the client) runs concurrently.
+    let (ordered_tx, mut ordered_rx) = mpsc::unbounded_channel::<(RpcId, String, Value)>();
+    let ordered = {
+        let (h, p, tx) = (handler.clone(), peer.clone(), tx.clone());
+        tokio::spawn(async move {
+            while let Some(job) = ordered_rx.recv().await {
+                if tx.send(answer(&*h, &p, job).await).is_err() {
+                    break;
+                }
+            }
+        })
+    };
+
     loop {
         let frame = tokio::select! {
             () = peer.closed.cancelled() => break,
@@ -167,18 +182,13 @@ async fn serve_socket(socket: WebSocket, handler: Arc<dyn RpcHandler>, device: O
                 let _ = tx.send(RpcMessage::err(None, -32700, "parse error"));
             }
             Ok(RpcMessage::Request { id, method, params, .. }) => {
-                let (h, p, tx) = (handler.clone(), peer.clone(), tx.clone());
-                tokio::spawn(async move {
-                    let reply = match h.request(&p, &method, params).await {
-                        Ok(v) => RpcMessage::ok(id, v),
-                        Err(e) => RpcMessage::Error {
-                            jsonrpc: agentos_domain::protocol::Version::V2,
-                            id: Some(id),
-                            error: e,
-                        },
-                    };
-                    let _ = tx.send(reply);
-                });
+                let job = (id, method, params);
+                if is_ordered(&job.1) {
+                    let _ = ordered_tx.send(job); // one at a time, in the order sent
+                } else {
+                    let (h, p, tx) = (handler.clone(), peer.clone(), tx.clone());
+                    tokio::spawn(async move { tx.send(answer(&*h, &p, job).await).ok() });
+                }
             }
             Ok(RpcMessage::Notification { method, params, .. }) => {
                 // in order, before the next frame is read: `client.state` is FIFO ahead of a later event
@@ -199,5 +209,24 @@ async fn serve_socket(socket: WebSocket, handler: Arc<dyn RpcHandler>, device: O
     }
     peer.pending.lock().clear(); // wakes every in-flight server->client request with Closed
     handler.disconnected(&peer).await;
+    ordered.abort();
     writer.abort();
+}
+
+/// Requests that must be handled in the order the client sent them (the view protocol).
+fn is_ordered(method: &str) -> bool {
+    ["view.", "row.", "state.", "source."].iter().any(|p| method.starts_with(p))
+}
+
+async fn answer(
+    handler: &dyn RpcHandler,
+    peer: &RpcPeer,
+    (id, method, params): (RpcId, String, Value),
+) -> RpcMessage {
+    match handler.request(peer, &method, params).await {
+        Ok(v) => RpcMessage::ok(id, v),
+        Err(e) => {
+            RpcMessage::Error { jsonrpc: agentos_domain::protocol::Version::V2, id: Some(id), error: e }
+        }
+    }
 }

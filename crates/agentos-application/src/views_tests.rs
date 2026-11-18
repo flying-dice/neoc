@@ -224,6 +224,9 @@ async fn an_event_runs_the_handler_then_the_views_follow_with_ops_before_the_ans
     assert_eq!(ops.ops.len(), 1, "one set op: {:?}", ops.ops);
     let HostNotification::ClientSet(client_set) = &sent[2] else { panic!("client.set") };
     assert_eq!((client_set.path.as_str(), client_set.force), ("noteId", Some(true)));
+    // a value the app itself chose for a `persist = "app"` name is stored too (the client mirrors only the person's own changes)
+    let stored = crate::ports::AppData::ui_state(&r.data, "main").await.unwrap();
+    assert_eq!(stored.get("noteId"), Some(&json!(2)));
 
     let calls = r.f.runtime.view_events();
     assert_eq!(

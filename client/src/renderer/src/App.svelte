@@ -6,7 +6,6 @@
 <script lang="ts">
   import DesktopPage from './pages/DesktopPage.svelte'
   import DiscoverPage from './pages/DiscoverPage.svelte'
-  import AgentsPage from './pages/AgentsPage.svelte'
   import SettingsPage from './pages/SettingsPage.svelte'
   import FilesPage from './pages/FilesPage.svelte'
   import GalleryPage from './pages/GalleryPage.svelte'
@@ -49,8 +48,6 @@
 {#snippet windowContent(win: WindowState)}
   {#if win.appId === 'discover'}
     <DiscoverPage />
-  {:else if win.appId === 'agents'}
-    <AgentsPage />
   {:else if win.appId === 'settings'}
     <SettingsPage />
   {:else if win.appId === 'files'}

@@ -618,7 +618,12 @@ export const toast: KitAppOptions = {
     if (event.event === 'tap')
       view.command({
         cmd: 'toast',
-        args: { text: 'Note deleted', kind: 'success', action: 'Undo', duration: 0 }
+        args: {
+          text: 'Note deleted',
+          kind: 'success',
+          action: { title: 'Undo', id: 't1' },
+          duration: 0
+        }
       } as never)
     if (event.event === 'toast') host.setState('last', 'undo tapped')
   }

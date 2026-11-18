@@ -76,41 +76,6 @@ describe('the shell channel', () => {
     expect(seenBySession).toHaveLength(1)
   })
 
-  test('a toast with an action is the shell’s; a plain toast stays the renderer’s', () => {
-    const wire = fakeTransport()
-    const channel = createHostChannel(wire.transport)
-    const seenBySession: string[] = []
-    channel.transport.onMessage((m) => seenBySession.push(m))
-    const toasts: unknown[] = []
-    channel.onToast((t) => toasts.push(t))
-    wire.receive({
-      jsonrpc: '2.0',
-      method: 'view.command',
-      params: {
-        viewId: 'v1',
-        cmd: 'toast',
-        args: { text: 'Added', action: { title: 'Undo', id: 't1' } }
-      }
-    })
-    expect(toasts).toEqual([
-      {
-        viewId: 'v1',
-        text: 'Added',
-        kind: undefined,
-        duration: undefined,
-        action: { title: 'Undo', id: 't1' }
-      }
-    ])
-    expect(seenBySession).toEqual([])
-    wire.receive({
-      jsonrpc: '2.0',
-      method: 'view.command',
-      params: { viewId: 'v1', cmd: 'toast', args: { text: 'Saved' } }
-    })
-    expect(seenBySession).toHaveLength(1)
-    expect(toasts).toHaveLength(1)
-  })
-
   test('requests in flight fail when the connection closes', async () => {
     const wire = fakeTransport()
     const channel = createHostChannel(wire.transport)

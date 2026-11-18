@@ -6,7 +6,7 @@ import {
   type ViewCore
 } from '../view'
 import { createHostChannel, HostError, type HostChannel } from '../shell/channel'
-import type { AppSummary, Catalog, HostApi } from '../shell/hostApi'
+import type { AgentRow, AppSummary, Catalog, HostApi } from '../shell/hostApi'
 import { isPaired, pairDevice, type PairResult } from '../shell/pairing'
 import { setInstalledApps } from './apps.svelte'
 
@@ -44,6 +44,8 @@ class Host {
   connection = $state<'connecting' | 'online' | 'offline' | 'incompatible'>('connecting')
   /** Every installed app, whatever its state (the Dock shows the running ones). */
   apps = $state<AppSummary[]>([])
+  /** The agents on the host's roster (the desktop widget). */
+  agents = $state<AgentRow[]>([])
   session: Session | null = null
   private channel: HostChannel | null = null
   private fake: HostApi | null = null
@@ -104,6 +106,7 @@ class Host {
       if (state === 'online') {
         this.phase = 'ready'
         void this.refresh()
+        void this.refreshAgents()
       } else if (state === 'offline') void this.verifyPairing()
     })
     channel.onNotification((method, params) => this.onNotification(method, params))
@@ -137,6 +140,7 @@ class Host {
       }
       for (const l of [...this.windowRequests]) l(request)
     } else if (LIST_CHANGED.has(method)) void this.refresh()
+    else if (method === 'agents.changed') void this.refreshAgents()
   }
 
   /** The shell opens a window when an app asks (an agent's tool bringing it forward). */
@@ -165,6 +169,14 @@ class Host {
     return this.refreshing
   }
 
+  private async refreshAgents(): Promise<void> {
+    try {
+      this.agents = (await this.api.call<{ agents: AgentRow[] }>('agents.list')).agents
+    } catch (e) {
+      console.warn('[agentos] agents.list:', e)
+    }
+  }
+
   private setApps(apps: AppSummary[]): void {
     this.apps = apps
     setInstalledApps(apps)
@@ -184,16 +196,13 @@ class Host {
     return this.session?.closeView(view) ?? Promise.resolve()
   }
 
-  onToast(listener: Parameters<HostChannel['onToast']>[0]): () => void {
-    return this.channel?.onToast(listener) ?? (() => {})
-  }
-
   /** Stories and tests: serve the shell from a fake instead of a host. */
   useFake(api: HostApi, apps: AppSummary[] = []): void {
     this.fake = api
     this.phase = 'ready'
     this.connection = 'online'
     this.setApps(apps)
+    void this.refreshAgents()
   }
 }
 

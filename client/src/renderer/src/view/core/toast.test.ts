@@ -5,12 +5,18 @@ import type { ViewCommand } from '../protocol'
 const wait = (ms = 20): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
 describe('toast with an action', () => {
-  test('the host sends text, icon and an action label; the notice keeps them', async () => {
+  test('the host sends text, icon and an action ({title, id}); the notice keeps them', async () => {
     const h = createHarness({ latencyMs: 0 })
     const view = await h.openNotes()
     h.host.allViews()[0]!.command({
       cmd: 'toast',
-      args: { text: 'Note deleted', kind: 'success', icon: 'trash', action: 'Undo', duration: 0 }
+      args: {
+        text: 'Note deleted',
+        kind: 'success',
+        icon: 'trash',
+        action: { title: 'Undo', id: 't1' },
+        duration: 0
+      }
     } as unknown as ViewCommand)
     await wait()
     expect(view.store.notices).toHaveLength(1)
@@ -18,16 +24,16 @@ describe('toast with an action', () => {
       kind: 'success',
       text: 'Note deleted',
       icon: 'trash',
-      action: 'Undo'
+      action: { title: 'Undo', id: 't1' }
     })
   })
 
-  test('tapping the action reports the `toast` event of the view and dismisses the toast', async () => {
+  test('tapping the action reports `tap` on `$toast/<id>` and dismisses the toast', async () => {
     const h = createHarness({ latencyMs: 0 })
     const view = await h.openNotes()
     h.host.allViews()[0]!.command({
       cmd: 'toast',
-      args: { text: 'Gone', action: 'Undo', duration: 0 }
+      args: { text: 'Gone', action: { title: 'Undo', id: 't7' }, duration: 0 }
     } as unknown as ViewCommand)
     await wait()
     const id = view.store.notices[0]!.id
@@ -35,7 +41,7 @@ describe('toast with an action', () => {
     await wait()
     expect(view.store.notices.some((n) => n.id === id)).toBe(false)
     const event = h.host.received.find((r) => r.method === 'view.event')
-    expect(event?.params).toMatchObject({ event: 'toast', path: 'main' })
+    expect(event?.params).toMatchObject({ event: 'tap', path: '$toast/t7' })
   })
 
   test('a toast without an action has none, and an unknown icon is still stored for the renderer to ignore', async () => {

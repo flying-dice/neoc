@@ -19,7 +19,6 @@
   import { apps, dockOrder, dockRecents, type AppId } from '../lib/apps.svelte'
   import { windowManager as wm, type WindowState } from '../lib/windowManager.svelte'
   import { host } from '../lib/host.svelte'
-  import { agentStore } from '../lib/agents.svelte'
 
   interface Props {
     windowContent: Snippet<[WindowState]>
@@ -37,7 +36,6 @@
 
   // The link to the host: say so in the status bar while it's down.
   const connection = $derived(host.connection)
-  const waiting = $derived(agentStore.waitingCount)
 
   function toDock(id: AppId): DockApp {
     const app = apps[id]
@@ -46,8 +44,7 @@
       name: app.name,
       icon: app.icon,
       background: app.background,
-      running: wm.isOpen(id),
-      badge: id === 'agents' && waiting ? waiting : undefined
+      running: wm.isOpen(id)
     }
   }
 
@@ -113,15 +110,8 @@
         <ClockWidget testid="widget-clock" />
         <AgentActivityWidget
           testid="widget-agent-activity"
-          conversations={agentStore.conversations}
-          onselect={(id) => {
-            agentStore.selectedId = id
-            wm.open('agents')
-          }}
-          onnew={() => {
-            agentStore.newConversation()
-            wm.open('agents')
-          }}
+          agents={host.agents}
+          onopen={() => wm.open('agents')}
         />
       </div>
 

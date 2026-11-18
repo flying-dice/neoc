@@ -36,7 +36,7 @@
       testid="{testid}-{notice.id}"
       kind={notice.kind}
       text={notice.text}
-      action={notice.undo ? 'Undo' : notice.action}
+      action={notice.undo ? 'Undo' : notice.action?.title}
       onaction={() => (notice.undo ? onundo?.(notice.id) : onaction?.(notice.id))}
       ondismiss={() => ondismiss(notice.id)}
     >

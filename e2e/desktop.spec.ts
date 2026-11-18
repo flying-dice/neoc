@@ -27,14 +27,11 @@ import type { Page } from '@playwright/test'
 
 const ROOT = join(import.meta.dirname, '..')
 
-/** Built-in pages that are not in the Dock until wave B3 (the AG-UI Agents app) replaces them. */
-const NOT_IN_THE_DOCK = ['agents']
-
 /** Built-in app ids, read from the `builtinApps` registry in apps.svelte.ts. */
 function builtinAppIds(): string[] {
   const source = readFileSync(join(ROOT, 'client/src/renderer/src/lib/apps.svelte.ts'), 'utf8')
   const block = source.slice(source.indexOf('const builtinApps'), source.indexOf('const isBuiltin'))
-  return [...block.matchAll(/^ {2}([a-z][a-z0-9-]*): \{/gm)].map((m) => m[1]).filter((id) => !NOT_IN_THE_DOCK.includes(id))
+  return [...block.matchAll(/^ {2}([a-z][a-z0-9-]*): \{/gm)].map((m) => m[1])
 }
 
 /** Luau app packages (apps/<dir>/app.json): the host installs the ones in the test registry at start. */

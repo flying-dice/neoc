@@ -50,6 +50,14 @@ export interface Catalog {
   errors: string[]
 }
 
+/** One agent on the host's roster (`agents.list`; grants and tokens never come with it). */
+export interface AgentRow {
+  id: string
+  name: string
+  avatar?: string
+  role: string
+}
+
 export interface DeviceRow {
   id: string
   name: string

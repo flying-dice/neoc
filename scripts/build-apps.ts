@@ -31,7 +31,7 @@ const only = args.filter(
   (a, i) => !a.startsWith('--') && i !== outFlag + 1 && args[i - 1] !== '--root'
 )
 
-const Capability = z.enum(['data', 'notify', 'shell'])
+const Capability = z.enum(['data', 'notify', 'shell', 'agents'])
 const PackageManifest = z.object({
   id: z.string().regex(/^[a-z0-9][a-z0-9-]{2,39}$/),
   name: z.string().min(1).max(60),

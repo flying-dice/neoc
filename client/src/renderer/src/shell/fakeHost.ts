@@ -5,7 +5,7 @@
  * by the Playwright journeys.
  */
 import { HostError } from './channel'
-import type { AppPreview, AppSummary, Catalog, DeviceRow, HostApi } from './hostApi'
+import type { AgentRow, AppPreview, AppSummary, Catalog, DeviceRow, HostApi } from './hostApi'
 
 export const FAKE_CALCULATOR: AppSummary = {
   id: 'calculator',
@@ -15,7 +15,7 @@ export const FAKE_CALCULATOR: AppSummary = {
   icon: 'plus',
   tint: 'orange',
   description: 'Arithmetic for you and your agents.',
-  window: { w: 340, h: 560, minW: 320, minH: 480 },
+  window: { w: 340, h: 560, minW: 320, minH: 500 },
   source: 'this computer'
 }
 
@@ -44,6 +44,13 @@ const asPreview = (a: AppSummary, url: string): AppPreview => ({
   installed: { version: a.version, state: a.state }
 })
 
+export const FAKE_AGENT: AgentRow = {
+  id: 'scripted',
+  name: 'Scripted agent',
+  role: 'Answers by script, for tests',
+  avatar: 'bolt'
+}
+
 export function fakeDevices(now = Date.now()): DeviceRow[] {
   return [
     { id: 'd1', name: 'Safari on iPad', createdAt: now - 9e8, lastSeenAt: now, current: true },
@@ -67,6 +74,7 @@ export function fakeDevices(now = Date.now()): DeviceRow[] {
 export interface FakeHost extends HostApi {
   apps: AppSummary[]
   devices: DeviceRow[]
+  agents: AgentRow[]
   /** Methods called, in order, with their params. */
   calls: [string, Record<string, unknown>][]
   /** Push a host notification to the shell (`window.open`, `app.installed`, ...). */
@@ -74,12 +82,18 @@ export interface FakeHost extends HostApi {
 }
 
 export function createFakeHost(
-  options: { apps?: AppSummary[]; devices?: DeviceRow[]; registryErrors?: string[] } = {}
+  options: {
+    apps?: AppSummary[]
+    devices?: DeviceRow[]
+    agents?: AgentRow[]
+    registryErrors?: string[]
+  } = {}
 ): FakeHost {
   const listeners = new Set<(method: string, params: Record<string, unknown>) => void>()
   const fake: FakeHost = {
     apps: [...(options.apps ?? [FAKE_CALCULATOR])],
     devices: [...(options.devices ?? fakeDevices())],
+    agents: [...(options.agents ?? [FAKE_AGENT])],
     calls: [],
     emit: (method, params = {}) => listeners.forEach((l) => l(method, params)),
     onNotification(listener) {
@@ -149,6 +163,8 @@ export function createFakeHost(
         case 'app.reload':
           app().state = 'running'
           return null as T
+        case 'agents.list':
+          return { agents: fake.agents } as T
         case 'host.devices.list':
           return { devices: fake.devices } as T
         case 'host.devices.revoke':

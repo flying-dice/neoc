@@ -9,7 +9,7 @@
 
   const app = apps.settings
 
-  /** Settings: every pane, the paired devices, and the destructive-action alerts. */
+  /** Settings: every pane, the agents on the host, the paired devices, and the revoke alert. */
   const { Story } = defineMeta({
     title: 'Apps/Settings',
     component: SettingsPage,
@@ -36,8 +36,10 @@
 
 <Story
   name="Agents"
-  play={async ({ canvas, userEvent }) =>
-    userEvent.click(canvas.getByTestId('settings-pane-agents'))}
+  play={async ({ canvas, userEvent }) => {
+    await userEvent.click(canvas.getByTestId('settings-pane-agents'))
+    await expect(await canvas.findByTestId('settings-agent-scripted')).toBeVisible()
+  }}
 />
 
 <Story
@@ -53,15 +55,6 @@
   name="Privacy & Security"
   play={async ({ canvas, userEvent }) =>
     userEvent.click(canvas.getByTestId('settings-pane-privacy'))}
-/>
-
-<Story
-  name="Reset agents alert"
-  play={async ({ canvas, userEvent }) => {
-    await userEvent.click(canvas.getByTestId('settings-pane-agents'))
-    await userEvent.click(canvas.getByTestId('settings-reset-agents'))
-    await expect(canvas.getByTestId('settings-reset-alert')).toBeVisible()
-  }}
 />
 
 <Story

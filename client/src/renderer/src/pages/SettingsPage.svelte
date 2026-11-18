@@ -10,6 +10,7 @@
   import { settings, accents, type Theme } from '../lib/settings.svelte'
   import { host } from '../lib/host.svelte'
   import { devices } from '../lib/devices.svelte'
+  import { iconOf } from '../shell/hostApi'
 
   type Pane = 'general' | 'appearance' | 'devices' | 'agents' | 'notifications' | 'privacy'
 
@@ -32,19 +33,7 @@
   // Local demo state
   let launchAtLogin = $state(true)
   let backgroundAgents = $state(true)
-  let model = $state('claude-opus-5-5')
-  let autonomy = $state<'ask' | 'edit' | 'full'>('ask')
-  let webAccess = $state(true)
-  let shellAccess = $state(false)
   let notify = $state({ allow: true, sounds: true, badges: true, summary: false })
-  let confirmReset = $state(false)
-
-  const models = [
-    { id: 'claude-opus-5-5', name: 'Claude Opus 5.5', note: 'Most capable' },
-    { id: 'claude-sonnet-5-5', name: 'Claude Sonnet 5.5', note: 'Balanced' },
-    { id: 'claude-haiku-5-5', name: 'Claude Haiku 5.5', note: 'Fastest' }
-  ]
-
   const hostVersion = $derived(host.session?.host?.hostVersion ?? '—')
   const browser = navigator.userAgent.match(/(Chrome|Firefox|Version)\/([\d.]+)/)?.[2] ?? '—'
 </script>
@@ -173,76 +162,21 @@
           {:else if pane === 'devices'}
             <DevicesPane />
           {:else if pane === 'agents'}
-            <ListSection header="Default Model">
-              {#each models as m (m.id)}
-                <ListRow
-                  testid="settings-model-{m.id}"
-                  title={m.name}
-                  subtitle={m.note}
-                  onclick={() => (model = m.id)}
-                >
-                  {#snippet trailing()}
-                    {#if model === m.id}<Icon
-                        name="checkmark"
-                        size={18}
-                        weight={2.6}
-                        color="var(--tint)"
-                      />{/if}
-                  {/snippet}
-                </ListRow>
-              {/each}
-            </ListSection>
             <ListSection
-              header="Autonomy"
-              footer="Controls how much an agent can do before asking you for approval."
+              header="Agents on this host"
+              footer="An agent can use only the apps it is granted. Add or change agents in agentos.toml, or with agents.create; chat with them in the Agents app."
             >
-              <div class="segment-row">
-                <SegmentedControl
-                  testid="settings-autonomy"
-                  block
-                  label="Autonomy"
-                  bind:value={autonomy}
-                  segments={[
-                    { value: 'ask', label: 'Ask First' },
-                    { value: 'edit', label: 'Auto-Edit' },
-                    { value: 'full', label: 'Full Auto' }
-                  ]}
+              {#each host.agents as agent (agent.id)}
+                <ListRow
+                  testid="settings-agent-{agent.id}"
+                  title={agent.name}
+                  subtitle={agent.role || undefined}
+                  icon={iconOf(agent.avatar ?? 'sparkles')}
+                  iconColor="var(--ios-purple)"
                 />
-              </div>
-            </ListSection>
-            <ListSection header="Capabilities">
-              <ListRow
-                testid="settings-web-access-row"
-                title="Web Access"
-                icon="globe"
-                iconColor="var(--ios-blue)"
-              >
-                {#snippet trailing()}<Toggle
-                    testid="settings-web-access"
-                    bind:checked={webAccess}
-                    label="Web Access"
-                  />{/snippet}
-              </ListRow>
-              <ListRow
-                testid="settings-shell-access-row"
-                title="Shell Access"
-                icon="terminal"
-                iconColor="var(--ios-gray)"
-              >
-                {#snippet trailing()}<Toggle
-                    testid="settings-shell-access"
-                    bind:checked={shellAccess}
-                    label="Shell Access"
-                  />{/snippet}
-              </ListRow>
-            </ListSection>
-            <ListSection>
-              <ListRow
-                testid="settings-reset-agents"
-                title="Reset All Agents"
-                destructive
-                onclick={() => (confirmReset = true)}
-              />
+              {:else}
+                <ListRow testid="settings-agents-empty" title="No agents yet" />
+              {/each}
             </ListSection>
           {:else if pane === 'notifications'}
             <ListSection>
@@ -333,17 +267,6 @@
   {/snippet}
 </SplitViewTemplate>
 
-<Alert
-  testid="settings-reset-alert"
-  bind:open={confirmReset}
-  title="Reset All Agents?"
-  message="This stops every running agent and clears their memory. This can't be undone."
-  actions={[
-    { label: 'Cancel', style: 'cancel' },
-    { label: 'Reset', style: 'destructive' }
-  ]}
-/>
-
 {#if devices.asked}
   <Alert
     testid="settings-device-revoke-alert"
@@ -380,8 +303,7 @@
     gap: 10px;
     padding: 4px 0;
   }
-  .slider-row,
-  .segment-row {
+  .slider-row {
     padding: 8px 16px;
   }
 </style>

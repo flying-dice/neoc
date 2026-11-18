@@ -11,7 +11,7 @@ app.manifest {
   name = "Calculator",
   icon = "plus",
   tint = "orange",
-  window = { w = 340, h = 560, minW = 320, minH = 480 }, -- below 480 tall the keys fall under 44 px
+  window = { w = 340, h = 560, minW = 320, minH = 500 }, -- below 500 tall the keypad no longer fits
 }
 
 -- One calculator for the whole app, however many windows are open.

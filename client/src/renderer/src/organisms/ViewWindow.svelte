@@ -1,7 +1,7 @@
 <!--
   @organism ViewWindow — an installed app's window: opens a view instance on the host (`view.open`) when the
   shell window mounts, renders it with the managed renderer, and closes it (`view.close`) when the window goes.
-  The app runs on the host; nothing of it runs here. Molecules: ActionToasts. Atoms: ActivityIndicator, Button,
+  The app runs on the host; nothing of it runs here. Atoms: ActivityIndicator, Button,
   Text.
   Test ids: `${appId}-opening` while it opens, `${appId}-failed` (+ `-retry`) when it cannot, and the renderer's
   `${appId}-view` once it is open.
@@ -10,7 +10,6 @@
   import { onDestroy } from 'svelte'
   import { ActivityIndicator, Button, Text } from '@agentos/ui/atoms'
   import { ViewHost, type protocol, type ViewCore } from '../view'
-  import ActionToasts, { type ActionToast } from '../molecules/ActionToasts.svelte'
   import { host } from '../lib/host.svelte'
   import { installedApp } from '../lib/apps.svelte'
 
@@ -28,9 +27,7 @@
   let box: HTMLElement | undefined = $state()
   let view = $state<ViewCore | null>(null)
   let failure = $state<string | null>(null)
-  let toasts = $state<ActionToast[]>([])
   let attempt = $state(0)
-  let toastId = 0
   let destroyed = false
 
   const name = $derived(installedApp(appId)?.name ?? appId)
@@ -59,26 +56,6 @@
       })
   })
 
-  // Toasts with an action button belong to the view that raised them.
-  $effect(() =>
-    host.onToast((t) => {
-      if (!view || t.viewId !== view.viewId) return
-      const toast: ActionToast = { id: ++toastId, text: t.text, action: t.action }
-      toasts.push(toast)
-      setTimeout(() => dismiss(toast), t.duration ?? 6000)
-    })
-  )
-
-  function dismiss(toast: ActionToast): void {
-    const i = toasts.findIndex((t) => t.id === toast.id)
-    if (i >= 0) toasts.splice(i, 1)
-  }
-
-  function act(toast: ActionToast): void {
-    dismiss(toast)
-    void view?.emit(`$toast/${toast.action.id}`, 'tap')
-  }
-
   /** Only web links leave the shell, and never with the shell as opener. */
   function openUrl(url: string): void {
     if (/^https?:\/\//i.test(url)) window.open(url, '_blank', 'noopener,noreferrer')
@@ -93,7 +70,6 @@
 <div class="frame" bind:this={box}>
   {#if view}
     <ViewHost {view} app={appId} onretry={() => host.retry()} onopenurl={openUrl} {onclosewindow} />
-    <ActionToasts testid="{appId}-toast" {toasts} onaction={act} ondismiss={dismiss} />
   {:else if failure}
     <div class="state" role="alert" data-testid="{appId}-failed">
       <Text style="headline">Couldn’t open {name}</Text>
