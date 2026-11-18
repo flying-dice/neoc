@@ -18,12 +18,10 @@ quick-xml = { version = "0.42", features = ["serialize"] }
 tracing = { workspace = true }
 tracing-core = "0.1"
 tracing-subscriber = { workspace = true, features = ["json"] }
-tokio = { workspace = true, features = ["net", "io-util", "signal"] }
+tokio = { workspace = true, features = ["net", "io-util"] }
 mlua = { workspace = true }
 parking_lot = { workspace = true }
 regex = "1"
-# Linear-time substring search for the budgeted `string.find` (lua::patterns).
-memchr = "2"
 base64 = "0.22"
 # Zero-dep hex, backs `lib:hex` alongside the base64 crate.
 hex = "0.4"
@@ -81,6 +79,9 @@ globset = "0.4"
 hyper = { version = "1", features = ["client", "server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
+# TLS for the `vnd:hyper` client: rustls, as the host's own reqwest client, with the platform certificate verifier.
+tokio-rustls = "0.26"
+rustls-platform-verifier = "0.7"
 bytes = "1"
 # sqlx is async-only and used for `vnd:sqlx_mysql` / `vnd:sqlx_postgres`, where the work is network IO.
 # The `sqlite` feature is off: sqlx-sqlite's libsqlite3-sys would clash (`links = "sqlite3"`) with the
@@ -114,6 +115,8 @@ optional = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
+# a self-signed certificate for the `vnd:hyper` TLS tests
+rcgen = "0.14"
 
 [features]
 # `vnd:testcontainers_modules` and the Docker-backed tests.

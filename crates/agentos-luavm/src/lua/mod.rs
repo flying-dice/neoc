@@ -8,12 +8,10 @@
 //! `require` registry that ties them together.
 pub mod app_env;
 pub mod bit;
-pub mod charged;
 pub mod facade;
-pub mod host_bytes;
 pub mod lib;
+pub mod lifecycle;
 pub mod modules;
-pub mod patterns;
 pub mod sandbox;
 pub mod std;
 pub mod tracing_layer;

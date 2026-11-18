@@ -42,6 +42,7 @@ use tokio::sync::Mutex;
 use tracing::instrument;
 
 use crate::lua::facade::Module;
+use crate::lua::lifecycle::idle_result;
 use crate::lua::sandbox::{from_err, ok};
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
@@ -66,7 +67,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "vnd:testcontainers_modules")?;
 
-    m.set("mysql", lua.create_async_function(|lua, (): ()| start_mysql(lua))?)?;
+    m.set("mysql", lua.create_async_function(|lua, (): ()| idle_result(start_mysql(lua)))?)?;
     m.record_fn(
         "mysql",
         &[],
@@ -74,7 +75,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "Start a MySQL container with default settings, returning a handle once it is ready to accept connections.",
     );
 
-    m.set("postgres", lua.create_async_function(|lua, (): ()| start_postgres(lua))?)?;
+    m.set("postgres", lua.create_async_function(|lua, (): ()| idle_result(start_postgres(lua)))?)?;
     m.record_fn(
         "postgres",
         &[],
@@ -82,7 +83,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "Start a Postgres container with default settings, returning a handle once it is ready.",
     );
 
-    m.set("generic", lua.create_async_function(|lua, opts: Table| start_generic(lua, opts))?)?;
+    m.set("generic", lua.create_async_function(|lua, opts: Table| idle_result(start_generic(lua, opts)))?)?;
     m.record_fn(
         "generic",
         &[("opts", "LuaValue")],
@@ -201,7 +202,7 @@ where
         methods.add_method("port", |_, this, (): ()| Ok(i32::from(this.port)));
         methods.add_async_method("stop", |_, this, (): ()| {
             let inner = this.inner.clone();
-            async move { stop_container(inner).await }
+            idle_result(async move { stop_container(inner).await })
         });
     }
 }
@@ -372,7 +373,7 @@ impl UserData for GenericContainer {
         });
         methods.add_async_method("stop", |_, this, (): ()| {
             let inner = this.inner.clone();
-            async move { stop_container(inner).await }
+            idle_result(async move { stop_container(inner).await })
         });
     }
 }

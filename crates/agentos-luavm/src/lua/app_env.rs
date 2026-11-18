@@ -9,7 +9,7 @@
 //!   `newproxy`, `collectgarbage`, `module`, `require`, `print` and no `io`/`os`/`debug`/`package`;
 //! - the **libraries** (`string`, `table`, `math`, `coroutine`, `bit`) are private copies (`coroutine.resume`
 //!   and `wrap` are versions that let an async host call run inside a coroutine of the script's own, see
-//!   `async_coroutines.lua`; `table.sort` is the counted one of `sort.lua`), so the host may add
+//!   `async_coroutines.lua`), so the host may add
 //!   to them (the prelude's `table.clone`, `utf8`) before [`freeze`], and the script can never reach the
 //!   engine's own shared tables;
 //! - [`freeze`] then replaces every library in the environment with an empty read-only proxy whose
@@ -79,19 +79,10 @@ pub fn new_env(lua: &Lua) -> mlua::Result<Table> {
         env.raw_set(*name, copy(lua, &library)?)?;
     }
     install_private_random(lua, &env.raw_get::<Table>("math")?)?;
-    install_counted_sort(lua, &env.raw_get::<Table>("table")?)?;
     let coroutine: Table = env.raw_get("coroutine")?;
     install_async_coroutines(lua, &coroutine, &globals.raw_get::<Table>("coroutine")?)?;
     env.raw_set("_G", env.clone())?;
     Ok(env)
-}
-
-/// Replace `table.sort` in the script's copy of `table` with the Lua implementation of `sort.lua`: the C one is
-/// a single VM instruction, so the CPU budget cannot count inside it and a quadratic input outruns every wall.
-fn install_counted_sort(lua: &Lua, table: &Table) -> mlua::Result<()> {
-    let sort: mlua::Function =
-        lua.load(include_str!("sort.lua")).set_name("=sort").set_mode(mlua::chunk::ChunkMode::Text).eval()?;
-    table.raw_set("sort", sort)
 }
 
 /// `math.random` and `math.randomseed` over a generator of the script's own. The C library's `rand` is one
@@ -180,7 +171,7 @@ fn install_async_coroutines(lua: &Lua, copy: &Table, raw: &Table) -> mlua::Resul
         .load(include_str!("async_coroutines.lua"))
         .set_name("=async_coroutines")
         .set_mode(mlua::chunk::ChunkMode::Text)
-        .call((pending, raw.clone(), crate::lua::sandbox::killed_function(lua)?))?;
+        .call((pending, raw.clone()))?;
     copy.raw_set("resume", wrappers.raw_get::<Value>("resume")?)?;
     copy.raw_set("wrap", wrappers.raw_get::<Value>("wrap")?)
 }
@@ -273,201 +264,9 @@ mod tests {
         }
     }
 
-    /// `table.sort` of the script's environment next to the C one (as `c_sort`).
-    fn sort_rig() -> Rig {
+    #[test]
+    fn pcall_xpcall_and_resume_catch_errors_and_nest() {
         let rig = Rig::new();
-        let c_sort: Value = rig.lua.load("return table.sort").eval().unwrap();
-        rig.env.raw_set("c_sort", c_sort).unwrap();
-        rig
-    }
-
-    #[test]
-    fn table_sort_sorts_like_the_c_one_for_every_size_and_comparison() {
-        let rig = sort_rig();
-        let out = rig.string(
-            "local seed = 7
-             local function rnd(n) seed = (seed * 1103515245 + 12345) % 2147483648 return seed % n + 1 end
-             local bad = {}
-             local function same(a, b) for i = 1, #a do if a[i] ~= b[i] then return false end end return #a == #b end
-             for _, n in ipairs { 0, 1, 2, 3, 7, 8, 9, 15, 16, 17, 31, 64, 100, 257, 1000 } do
-               for _, spread in ipairs { 2, 10, 1000000 } do
-                 local a, b, c, d = {}, {}, {}, {}
-                 for i = 1, n do local v = rnd(spread) a[i], b[i], c[i], d[i] = v, v, v, v end
-                 c_sort(a) table.sort(b)
-                 if not same(a, b) then bad[#bad + 1] = 'default n=' .. n .. ' spread=' .. spread end
-                 local function desc(x, y) return x > y end
-                 c_sort(c, desc) table.sort(d, desc)
-                 if not same(c, d) then bad[#bad + 1] = 'desc n=' .. n .. ' spread=' .. spread end
-               end
-             end
-             local words = { 'pear', 'apple', 'fig', 'banana', 'cherry', 'apple' }
-             table.sort(words)
-             if table.concat(words, ',') ~= 'apple,apple,banana,cherry,fig,pear' then bad[#bad + 1] = 'strings' end
-             return table.concat(bad, ';')",
-        );
-        assert_eq!(out, "");
-    }
-
-    #[test]
-    fn table_sort_is_stable_and_never_hangs_on_an_inconsistent_comparison() {
-        let rig = sort_rig();
-        let out = rig.string(
-            "local t = {}
-             for i = 1, 200 do t[i] = { key = i % 5, order = i } end
-             table.sort(t, function(a, b) return a.key < b.key end)
-             for i = 2, #t do
-               if t[i - 1].key == t[i].key and t[i - 1].order > t[i].order then return 'unstable at ' .. i end
-             end
-             -- a comparison that is not an order at all: some order of the same elements, no error, no hang
-             local u = {}
-             for i = 1, 300 do u[i] = i end
-             table.sort(u, function() return true end)
-             table.sort(u, function() return false end)
-             table.sort(u, function(a, b) return (a + b) % 3 == 0 end)
-             local sum = 0
-             for i = 1, #u do sum = sum + u[i] end
-             return #u == 300 and sum == 300 * 301 / 2 and 'ok' or 'lost elements'",
-        );
-        assert_eq!(out, "ok");
-    }
-
-    #[test]
-    fn table_sort_reports_the_same_errors_as_the_c_one() {
-        let rig = sort_rig();
-        for call in [
-            "table.sort({ 3, 'x', 1 })",
-            "table.sort({ 3, {}, 1 })",
-            "table.sort({ 1, 2, nil, 4, 3 })",
-            "table.sort(nil)",
-            "table.sort('abc')",
-            "table.sort({ 2, 1 }, 'nope')",
-            "table.sort({ 2, 1 }, function() error('boom', 0) end)",
-        ] {
-            let both = rig.string(&format!(
-                "local a, ea = pcall(function() {call} end)
-                 local b, eb = pcall(function() {} end)
-                 return tostring(a) .. '/' .. tostring(b)",
-                call.replace("table.sort", "c_sort")
-            ));
-            assert_eq!(both, "false/false", "{call}");
-        }
-        let message = rig.string("local ok, e = pcall(table.sort, { 3, 'x', 1 }) return tostring(e)");
-        assert!(message.contains("attempt to compare"), "{message}");
-        let message = rig.string("local ok, e = pcall(table.sort, { 2, 1 }, 'nope') return tostring(e)");
-        assert!(message.contains("bad argument #2 to 'sort'"), "{message}");
-        // sorting leaves a table it could not sort as it was
-        assert_eq!(
-            rig.string("local t = { 3, 'x', 1 } pcall(table.sort, t) return tostring(t[1]) .. t[2] .. t[3]"),
-            "3x1"
-        );
-    }
-
-    #[test]
-    fn table_sort_is_counted_by_the_count_hook_and_n_log_n_whatever_the_input() {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        let rig = sort_rig();
-        let ticks = std::sync::Arc::new(AtomicU64::new(0));
-        let counter = ticks.clone();
-        rig.lua
-            .set_global_hook(mlua::HookTriggers::new().every_nth_instruction(100), move |_, _| {
-                counter.fetch_add(1, Ordering::Relaxed);
-                Ok(mlua::VmState::Continue)
-            })
-            .unwrap();
-        let cost = |setup: &str| -> u64 {
-            ticks.store(0, Ordering::Relaxed);
-            rig.run(&format!("local t = {{}} for i = 1, 20000 do t[i] = {setup} end table.sort(t)")).unwrap();
-            ticks.load(Ordering::Relaxed)
-        };
-        let before_c = {
-            ticks.store(0, Ordering::Relaxed);
-            rig.run("local t = {} for i = 1, 20000 do t[i] = (i * 7919) % 20011 end c_sort(t)").unwrap();
-            ticks.load(Ordering::Relaxed)
-        };
-        let random = cost("(i * 7919) % 20011");
-        let sorted = cost("i");
-        let reversed = cost("20001 - i");
-        let equal = cost("5");
-        assert!(
-            random > before_c * 20,
-            "the C sort costs {before_c} ticks, this one {random}: it is counted"
-        );
-        // 20000 * log2(20000) ~ 286k comparisons, a few instructions each: tens of thousands of ticks, not millions
-        for (name, ticks) in
-            [("random", random), ("sorted", sorted), ("reversed", reversed), ("equal", equal)]
-        {
-            assert!(ticks < 60_000, "{name}: {ticks} ticks");
-        }
-    }
-
-    #[test]
-    fn a_table_sort_comparison_may_yield() {
-        let rig = Rig::new();
-        let out = rig.string(
-            "local co = coroutine.create(function()
-               local t = { 3, 1, 2 }
-               table.sort(t, function(a, b) coroutine.yield('asking') return a < b end)
-               return table.concat(t, ',')
-             end)
-             local asked = 0
-             local ok, v = coroutine.resume(co)
-             while coroutine.status(co) == 'suspended' do asked = asked + 1 ok, v = coroutine.resume(co) end
-             return tostring(ok) .. ':' .. tostring(v) .. ':' .. (asked > 0 and 'yielded' or 'never')",
-        );
-        assert_eq!(out, "true:1,2,3:yielded");
-    }
-
-    /// A rig whose script can call `stop()`: it marks the script as stopped for good and raises, as the CPU
-    /// budget's count hook does. Returns the flag as well.
-    fn stoppable() -> (Rig, std::sync::Arc<std::sync::atomic::AtomicBool>) {
-        use std::sync::atomic::{AtomicBool, Ordering};
-        let rig = Rig::new();
-        let stopped = std::sync::Arc::new(AtomicBool::new(false));
-        let check = stopped.clone();
-        crate::lua::sandbox::set_watchdog(
-            &rig.lua,
-            crate::lua::sandbox::Watchdog {
-                stopped: std::sync::Arc::new(move || check.load(Ordering::SeqCst)),
-                orphaned: std::sync::Arc::new(|| false),
-            },
-        );
-        let flag = stopped.clone();
-        let stop = rig
-            .lua
-            .create_function(move |_, ()| -> mlua::Result<()> {
-                flag.store(true, Ordering::SeqCst);
-                Err(mlua::Error::runtime("cpu budget exceeded"))
-            })
-            .unwrap();
-        rig.env.raw_set("stop", stop).unwrap();
-        (rig, stopped)
-    }
-
-    #[test]
-    fn a_stop_is_raised_again_by_pcall_and_xpcall_whatever_the_handler_does() {
-        for source in [
-            "pcall(stop) return 'swallowed'",
-            "pcall(function() stop() end) return 'swallowed'",
-            "xpcall(stop, function() return 'handled' end) return 'swallowed'",
-            "xpcall(stop, stop) return 'swallowed'",
-            "xpcall(stop, function() error('again') end) return 'swallowed'",
-            "pcall(function() pcall(function() pcall(stop) end) end) return 'swallowed'",
-            "pcall(function() xpcall(function() pcall(stop) return 1 end, function() return 2 end) end) return 'swallowed'",
-            "local co = coroutine.wrap(function() pcall(stop) return 'swallowed' end) return co()",
-            "local ok = coroutine.resume(coroutine.create(function() stop() end)) return 'swallowed'",
-            "local ok = coroutine.resume(coroutine.create(function() pcall(stop) end)) return 'swallowed'",
-        ] {
-            let (rig, stopped) = stoppable();
-            let result = rig.run(source);
-            let err = result.expect_err(source).to_string();
-            assert!(err.contains("cpu budget exceeded"), "{source}: {err}");
-            assert!(stopped.load(std::sync::atomic::Ordering::SeqCst));
-        }
-    }
-
-    #[test]
-    fn without_a_stop_pcall_xpcall_and_resume_still_catch_ordinary_errors() {
-        let (rig, _) = stoppable();
         let out = rig.string(
             "local a = pcall(error, 'x')
              local b, c = xpcall(function() error('y', 0) end, function(e) return 'h:' .. e end)

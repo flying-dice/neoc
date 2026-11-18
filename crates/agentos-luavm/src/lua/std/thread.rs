@@ -44,7 +44,9 @@ use tokio::sync::{mpsc, Mutex};
 use tracing::instrument;
 
 use crate::lua::facade::Module;
-use crate::lua::sandbox::{from_err, load_source, make_engine, ok};
+use crate::lua::lib::log::{set_log_sink, LogSink};
+use crate::lua::lifecycle::{idle_result, Life};
+use crate::lua::sandbox::{from_err, load_source, make_engine_in, ok};
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
     Ok(declare(lua)?.into_table())
@@ -293,7 +295,6 @@ struct SpawnConfig {
     name: String,
     args: serde_json::Value,
     shared: Vec<SharedEntry>,
-    runtime: tokio::runtime::Handle,
 }
 
 /// Parse and validate every `spawn` option, failing fast with a stringified
@@ -303,14 +304,13 @@ fn prepare_spawn(opts: &Table) -> Result<SpawnConfig, String> {
     let name = opts.get::<Option<String>>("name").ok().flatten().unwrap_or(default_name);
     let args = read_args(opts)?;
     let shared = read_shared(opts)?;
-    let runtime =
-        tokio::runtime::Handle::try_current().map_err(|_| "no tokio runtime in scope".to_string())?;
-    Ok(SpawnConfig { source, name, args, shared, runtime })
+    tokio::runtime::Handle::try_current().map_err(|_| "no tokio runtime in scope".to_string())?;
+    Ok(SpawnConfig { source, name, args, shared })
 }
 
 #[instrument(name = "thread.spawn", target = "lua::lib::thread", skip_all)]
 fn spawn(lua: &Lua, opts: Table) -> mlua::Result<(Value, Value)> {
-    let SpawnConfig { source, name, args, shared, runtime } = match prepare_spawn(&opts) {
+    let SpawnConfig { source, name, args, shared } = match prepare_spawn(&opts) {
         Ok(c) => c,
         Err(e) => return from_err(lua, "thread.spawn", e),
     };
@@ -321,7 +321,11 @@ fn spawn(lua: &Lua, opts: Table) -> mlua::Result<(Value, Value)> {
     let (w2p_tx, w2p_rx) = mpsc::unbounded_channel::<serde_json::Value>();
     let worker_channel = Channel { tx: w2p_tx, rx: Arc::new(Mutex::new(p2w_rx)) };
 
-    let join = runtime.spawn(run_worker(name, source, args, worker_channel, shared));
+    // registered with the app that started it: unloading the app aborts the worker, whose VM, listeners and
+    // pools go with it. A worker's own tasks and servers join the same registry.
+    let life = Life::of(lua);
+    let log_sink = lua.app_data_ref::<LogSink>().map(|sink| sink.0.clone());
+    let join = life.spawn(run_worker(name, source, args, worker_channel, shared, life.clone(), log_sink));
     let abort = join.abort_handle();
 
     ok(
@@ -382,8 +386,15 @@ async fn run_worker(
     args: serde_json::Value,
     parent_channel: Channel,
     shared: Vec<SharedEntry>,
+    life: Life,
+    log_sink: Option<std::sync::Arc<dyn Fn(&str, &str) + Send + Sync>>,
 ) -> mlua::Result<serde_json::Value> {
-    let lua = make_engine()?;
+    // the worker gets the same module set as its parent, spawns into the parent's registry and logs where
+    // the parent logs
+    let lua = make_engine_in(life)?;
+    if let Some(sink) = log_sink {
+        set_log_sink(&lua, sink);
+    }
 
     // Inject `parent` on the worker's `std:thread` module table so the
     // worker can talk back via `(require("std:thread")).parent`. We pull
@@ -437,15 +448,15 @@ impl UserData for WorkerHandle {
 
         methods.add_async_method("receive", |lua, this, (): ()| {
             let inner = this.inner.clone();
-            async move {
+            idle_result(async move {
                 let received = inner.rx.lock().await.recv().await;
                 handle_recv_result(&lua, received, "thread.receive: worker has exited")
-            }
+            })
         });
 
         methods.add_async_method("await", |lua, this, (): ()| {
             let inner = this.inner.clone();
-            async move {
+            idle_result(async move {
                 let join = {
                     let mut guard = inner.join.lock().await;
                     match guard.take() {
@@ -459,7 +470,7 @@ impl UserData for WorkerHandle {
                     Err(e) if e.is_cancelled() => from_err(&lua, "thread.await", "terminated"),
                     Err(e) => from_err(&lua, "thread.await", e),
                 }
-            }
+            })
         });
 
         methods.add_method("terminate", |_, this, (): ()| {
@@ -486,10 +497,10 @@ impl UserData for Channel {
 
         methods.add_async_method("receive", |lua, this, (): ()| {
             let rx = this.rx.clone();
-            async move {
+            idle_result(async move {
                 let received = rx.lock().await.recv().await;
                 handle_recv_result(&lua, received, "channel.receive: peer has exited")
-            }
+            })
         });
     }
 }

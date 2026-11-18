@@ -32,6 +32,7 @@ use sqlx::{Column, Row, TypeInfo, ValueRef};
 use tracing::instrument;
 
 use crate::lua::facade::Module;
+use crate::lua::lifecycle::idle_result;
 use crate::lua::sandbox::{from_err, i64_to_lua, ok};
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
@@ -53,7 +54,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "vnd:sqlx_postgres")?;
 
-    m.set("open", lua.create_async_function(|lua, url: String| open(lua, url))?)?;
+    m.set("open", lua.create_async_function(|lua, url: String| idle_result(open(lua, url)))?)?;
     m.record_fn(
         "open",
         &[("url", "string")],
@@ -112,7 +113,7 @@ impl UserData for Database {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_async_method("execute", |lua, this, args: MultiValue| {
             let pool = this.pool.clone();
-            async move {
+            idle_result(async move {
                 let op = "sqlx_postgres.execute";
                 let (sql, params) = match prepare(args, &pool) {
                     Ok(v) => v,
@@ -126,12 +127,12 @@ impl UserData for Database {
                     Ok(r) => ok(&lua, r.rows_affected() as i64),
                     Err(e) => from_err(&lua, op, e),
                 }
-            }
+            })
         });
 
         methods.add_async_method("query", |lua, this, args: MultiValue| {
             let pool = this.pool.clone();
-            async move {
+            idle_result(async move {
                 let op = "sqlx_postgres.query";
                 let (sql, params) = match prepare(args, &pool) {
                     Ok(v) => v,
@@ -151,12 +152,12 @@ impl UserData for Database {
                     }
                     Err(e) => from_err(&lua, op, e),
                 }
-            }
+            })
         });
 
         methods.add_async_method("query_one", |lua, this, args: MultiValue| {
             let pool = this.pool.clone();
-            async move {
+            idle_result(async move {
                 let op = "sqlx_postgres.query_one";
                 let (sql, params) = match prepare(args, &pool) {
                     Ok(v) => v,
@@ -171,15 +172,15 @@ impl UserData for Database {
                     Ok(None) => ok(&lua, Value::Nil),
                     Err(e) => from_err(&lua, op, e),
                 }
-            }
+            })
         });
 
         methods.add_async_method("close", |_, this, (): ()| {
             let pool = this.pool.clone();
-            async move {
+            idle_result(async move {
                 pool.close().await;
                 Ok(())
-            }
+            })
         });
     }
 }

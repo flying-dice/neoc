@@ -22,6 +22,7 @@ use std::time::{Duration as StdDuration, Instant as StdInstant};
 use mlua::{AnyUserData, Lua, MetaMethod, Table, UserData, UserDataMethods, Value};
 
 use crate::lua::facade::Module;
+use crate::lua::lifecycle::idle_result;
 use crate::lua::sandbox::{err, ok};
 
 // ---------------------------------------------------------------------------
@@ -445,7 +446,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     // detect overruns.
     m.set(
         "sleep",
-        lua.create_async_function(|_, d: AnyUserData| async move {
+        lua.create_async_function(|_, d: AnyUserData| idle_result(async move {
             let target = d
                 .borrow::<DurationHandle>()
                 .map_err(|_| mlua::Error::external("time.sleep: expected Duration argument"))?
@@ -453,7 +454,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             let start = StdInstant::now();
             tokio::time::sleep(target).await;
             Ok(DurationHandle(start.elapsed()))
-        })?,
+        }))?,
     )?;
     m.record_fn(
         "sleep",

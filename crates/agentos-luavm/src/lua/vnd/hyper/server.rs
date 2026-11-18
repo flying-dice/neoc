@@ -21,7 +21,7 @@ use tracing::instrument;
 
 use crate::lua::sandbox::{from_err, ok};
 use crate::lua::std::net::Listener;
-use crate::lua::std::workers::ShutdownSignal;
+use crate::lua::lifecycle::{idle, Life};
 
 use super::invoke_lua_handler;
 
@@ -79,14 +79,14 @@ impl ServerHandle {
             unreachable!("state was checked to be Idle");
         };
 
-        let handle = Handle::try_current()
-            .map_err(|_| mlua::Error::external("hyper.serve: no tokio runtime in scope"))?;
+        Handle::try_current().map_err(|_| mlua::Error::external("hyper.serve: no tokio runtime in scope"))?;
 
         let (tx, rx) = oneshot::channel::<()>();
         let (done_tx, done_rx) = tokio::sync::watch::channel(false);
         let inner = self.inner.clone();
         let lua_handle: Lua = lua.clone();
-        handle.spawn(run_server(lua_handle, listener, inner, rx, done_tx));
+        // registered with the app: unloading it aborts the accept loop and drops the listener (frees the port)
+        Life::of(lua).spawn(run_server(lua_handle, listener, inner, rx, done_tx));
 
         *state = ServerState::Listening { addr, shutdown: Some(tx), done: done_rx };
         Ok(())
@@ -113,13 +113,12 @@ impl UserData for ServerHandle {
             Ok(())
         });
 
-        // Block until the server stops accepting connections — either because
-        // close() was called, or because the process-wide shutdown signal
-        // fires (CLI installs a Ctrl-C handler that calls
-        // `workers.shutdown_signal():fire()`). On signal, wait() triggers a
-        // local graceful shutdown so the run_server loop drains cleanly.
-        methods.add_async_method("wait", |_, this, (): ()| {
+        // Block until the server stops accepting connections: `close()` was called, or the app is being
+        // unloaded (the app's lifecycle closes). The wait does not hold the VM, so the server's own handlers
+        // (and the rest of the app) keep running while a script sits in `server:wait()`.
+        methods.add_async_method("wait", |lua, this, (): ()| {
             let inner = this.inner.clone();
+            let life = Life::of(&lua);
             async move {
                 let mut done = {
                     let state = inner.state.lock();
@@ -134,24 +133,13 @@ impl UserData for ServerHandle {
                 if *done.borrow() {
                     return Ok(());
                 }
-                let signal = ShutdownSignal::current();
-                tokio::select! {
-                    _ = done.changed() => {},
-                    () = signal.wait() => {
-                        // Drop the lock before awaiting — clippy
-                        // (correctly) flags lock guards held across awaits.
-                        {
-                            let mut state = inner.state.lock();
-                            if let ServerState::Listening { shutdown, .. } = &mut *state {
-                                if let Some(tx) = shutdown.take() {
-                                    let _ = tx.send(());
-                                }
-                            }
-                        }
-                        let _ = done.changed().await;
+                idle(async {
+                    tokio::select! {
+                        _ = done.changed() => {},
+                        () = life.closed() => {},
                     }
-                }
-                Ok(())
+                })
+                .await
             }
         });
     }
@@ -195,11 +183,10 @@ async fn run_server(
     mut shutdown_rx: oneshot::Receiver<()>,
     done_tx: tokio::sync::watch::Sender<bool>,
 ) {
-    let signal = ShutdownSignal::current();
+    let life = Life::of(&lua);
     loop {
         tokio::select! {
             _ = &mut shutdown_rx => break,
-            () = signal.wait() => break,
             accept = listener.accept() => {
                 let stream = match accept {
                     Ok((s, _)) => s,
@@ -207,7 +194,7 @@ async fn run_server(
                 };
                 let inner = inner.clone();
                 let lua = lua.clone();
-                tokio::spawn(async move {
+                life.spawn(async move {
                     let io = TokioIo::new(stream);
                     let svc = service_fn(move |req: HyperRequest<Incoming>| {
                         let inner = inner.clone();

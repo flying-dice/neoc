@@ -297,14 +297,14 @@ impl<'l> Module<'l> {
     ) -> mlua::Result<&mut Self>
     where
         A: FromLuaMulti + 'static,
-        R: DeclType + IntoLuaMulti,
+        R: DeclType + IntoLuaMulti + Send,
         Fut: Future<Output = mlua::Result<R>> + Send + 'static,
     {
         let span = dyn_span(&self.target(), &format!("{}.{}", module_stem(&self.name), name));
         let func = self.lua.create_async_function(move |lua, a: A| {
             let fut = f(lua, a);
             let span = span.clone();
-            async move { fut.instrument(span).await }
+            async move { crate::lua::lifecycle::idle_result(fut.instrument(span)).await }
         })?;
         self.table.set(name, func)?;
         self.entries.push(Entry {
@@ -335,8 +335,8 @@ impl<'l> Module<'l> {
     ) -> mlua::Result<&mut Self>
     where
         A: FromLuaMulti + 'static,
-        T: DeclType + IntoLua,
-        E: std::fmt::Display,
+        T: DeclType + IntoLua + Send,
+        E: std::fmt::Display + Send,
         Fut: Future<Output = Result<T, E>> + Send + 'static,
     {
         let prefix = format!("{}.{}", module_stem(&self.name), name);
@@ -346,7 +346,7 @@ impl<'l> Module<'l> {
             let span = span.clone();
             let prefix = prefix.clone();
             async move {
-                match fut.instrument(span).await {
+                match crate::lua::lifecycle::idle(fut.instrument(span)).await? {
                     Ok(v) => ok(&lua, v),
                     Err(e) => from_err(&lua, &prefix, e),
                 }

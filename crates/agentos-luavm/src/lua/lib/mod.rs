@@ -1,7 +1,7 @@
 //! `lib:*` modules — blessed gap-fillers and our own custom code.
 //!
 //! Either plugs a hole Rust std doesn't cover (`lib:base64`) or is something
-//! we wrote (`lib:test`, `lib:vcr`). Modules expose a
+//! we wrote (`lib:vcr`). Modules expose a
 //! `pub fn module(lua: &Lua) -> Result<Table>` and are wired into the
 //! `require` registry by `crate::lua::modules::install`.
 
@@ -10,7 +10,6 @@ pub mod args;
 pub mod base64;
 pub mod cache;
 pub mod chrono;
-pub mod compile;
 pub mod compress;
 pub mod crypto;
 pub mod csv;
@@ -31,7 +30,6 @@ pub mod regex;
 pub mod semver;
 pub mod tempfile;
 pub mod template;
-pub mod test;
 pub mod text;
 pub mod unicode;
 pub mod url;

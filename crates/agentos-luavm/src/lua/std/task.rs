@@ -7,9 +7,11 @@
 //! with `:cancel()`, `:is_finished()`, and `:await()` methods.
 //!
 //! Per-VM scheduling: each Lua engine gets its own `Scheduler` via `set_app_data`.
-//! Spawned coroutines run as separate tokio tasks on the same executor; the Lua
-//! VM's internal mutex provides cooperative serialisation without blocking OS
-//! threads.
+//! Spawned coroutines run as separate tokio tasks on the same executor, registered
+//! with the engine's [`Life`] (so unloading the app aborts them). When the embedder
+//! serialises calls into the VM (see `lifecycle`), a task's slices are calls like any
+//! other: it takes its turn before it runs and hands the turn back while it waits in
+//! `task.wait`; otherwise the Lua VM's internal mutex serialises the slices.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -20,6 +22,8 @@ use parking_lot::Mutex;
 use tokio::sync::Notify;
 
 use crate::lua::facade::Module;
+use crate::lua::lifecycle::{has_entry, inbound, Life};
+use crate::lua::lifecycle::idle_result;
 
 // ---------------------------------------------------------------------------
 // Task outcome — stored once the task reaches a terminal state
@@ -101,7 +105,7 @@ impl UserData for TaskHandle {
         methods.add_async_method("await", |lua, this, ()| {
             let inner = this.inner.clone();
             inner.awaited.store(true, Ordering::Relaxed);
-            async move {
+            idle_result(async move {
                 // Enable the notification listener BEFORE checking outcome to
                 // guarantee we don't miss a notification that fires between
                 // the check and the await.
@@ -124,7 +128,7 @@ impl UserData for TaskHandle {
                     Some(outcome) => outcome_to_multi(&lua, outcome),
                     None => Err(mlua::Error::external("task.await: notified but no outcome was recorded")),
                 }
-            }
+            })
         });
     }
 }
@@ -148,16 +152,17 @@ fn outcome_to_multi(lua: &Lua, outcome: &TaskOutcome) -> mlua::Result<MultiValue
 // ---------------------------------------------------------------------------
 
 pub struct Scheduler {
-    set: Mutex<tokio::task::JoinSet<()>>,
+    life: Life,
     prev_defer: Mutex<Option<Arc<TaskInner>>>,
     tasks: Mutex<Vec<Arc<TaskInner>>>,
     had_errors: AtomicBool,
 }
 
 impl Scheduler {
-    pub fn new() -> Self {
+    /// A scheduler whose tasks register with `life`.
+    pub fn with_life(life: Life) -> Self {
         Self {
-            set: Mutex::new(tokio::task::JoinSet::new()),
+            life,
             prev_defer: Mutex::new(None),
             tasks: Mutex::new(Vec::new()),
             had_errors: AtomicBool::new(false),
@@ -168,29 +173,17 @@ impl Scheduler {
         &self,
         future: impl std::future::Future<Output = ()> + Send + 'static,
     ) -> tokio::task::AbortHandle {
-        self.set.lock().spawn(future)
+        self.life.spawn(future).abort_handle()
     }
 
     fn track(&self, inner: &Arc<TaskInner>) {
         self.tasks.lock().push(inner.clone());
     }
 
-    /// Clean up in-flight tasks after the main script exits.
-    ///
-    /// Lua async operations (`task.wait`, etc.) cannot be driven after the
-    /// main `exec_async` context returns — their `AsyncThread` streams
-    /// block inside the Lua VM lock and never yield. Neither
-    /// `tokio::time::timeout` nor `JoinSet::abort_all` can interrupt a
-    /// task that is synchronously blocked. Dropping the `JoinSet` flags
-    /// them for abort and detaches; the tokio runtime cleans them up on
-    /// shutdown.
-    ///
-    /// After dropping, reports un-awaited task errors to stderr.
+    /// Clean up in-flight tasks after the main script exits: abort everything registered with the
+    /// engine's [`Life`] and report un-awaited task errors through tracing.
     pub fn wait_all(&self) {
-        let _set = {
-            let mut guard = self.set.lock();
-            std::mem::take(&mut *guard)
-        };
+        self.life.shutdown();
 
         let tasks = std::mem::take(&mut *self.tasks.lock());
         for inner in &tasks {
@@ -207,12 +200,6 @@ impl Scheduler {
 
     pub fn had_task_errors(&self) -> bool {
         self.had_errors.load(Ordering::Relaxed)
-    }
-}
-
-impl Default for Scheduler {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -309,8 +296,9 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
                 Ok(vals) => {
                     if matches!(thread.status(), ThreadStatus::Resumable) {
                         let inner_clone = inner.clone();
+                        let lua = lua.clone();
                         let abort = scheduler.spawn_task(async move {
-                            let outcome = drive_thread(thread, MultiValue::new()).await;
+                            let outcome = inbound(&lua, drive_thread(thread, MultiValue::new())).await;
                             inner_clone.complete(outcome);
                         });
                         *inner.abort.lock() = Some(abort);
@@ -349,6 +337,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
             let prev = scheduler.prev_defer.lock().clone();
             let inner_clone = inner.clone();
+            let lua = lua.clone();
             let abort = scheduler.spawn_task(async move {
                 if let Some(prev_inner) = prev {
                     let notify = prev_inner.notify.clone();
@@ -360,21 +349,28 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
                     }
                 }
 
-                // Probe the Lua VM lock before checking cancellation.
-                // thread.status() acquires the ReentrantMutex — it blocks
-                // until the current synchronous Lua batch yields. Since
-                // cancel() runs synchronously before the yield, is_finished()
-                // is guaranteed to reflect it once status() returns.
-                tokio::task::block_in_place(|| {
-                    let _ = thread.status();
-                });
-
-                if inner_clone.is_finished() {
-                    return;
+                // Without a call entry: probe the Lua VM lock before checking cancellation.
+                // thread.status() acquires the ReentrantMutex — it blocks until the current
+                // synchronous Lua batch yields. Since cancel() runs synchronously before the
+                // yield, is_finished() is guaranteed to reflect it once status() returns.
+                if !has_entry(&lua) {
+                    tokio::task::block_in_place(|| {
+                        let _ = thread.status();
+                    });
                 }
 
-                let outcome = drive_thread(thread, args).await;
-                inner_clone.complete(outcome);
+                // With one, the turn is taken first (the spawner's call has ended by then) and
+                // cancellation is checked inside it.
+                let outcome = inbound(&lua, async {
+                    if inner_clone.is_finished() {
+                        return None;
+                    }
+                    Some(drive_thread(thread, args).await)
+                })
+                .await;
+                if let Some(outcome) = outcome {
+                    inner_clone.complete(outcome);
+                }
             });
 
             *inner.abort.lock() = Some(abort);
@@ -404,9 +400,10 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             scheduler.track(&inner);
 
             let inner_clone = inner.clone();
+            let lua = lua.clone();
             let abort = scheduler.spawn_task(async move {
                 tokio::time::sleep(std::time::Duration::from_secs_f64(secs)).await;
-                let outcome = drive_thread(thread, args).await;
+                let outcome = inbound(&lua, drive_thread(thread, args)).await;
                 inner_clone.complete(outcome);
             });
 
@@ -426,12 +423,12 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     // Negative values are clamped to 0. Returns elapsed time as a float.
     m.set(
         "wait",
-        lua.create_async_function(|_, secs: f64| async move {
+        lua.create_async_function(|_, secs: f64| idle_result(async move {
             let secs = secs.max(0.0);
             let start = tokio::time::Instant::now();
             tokio::time::sleep(std::time::Duration::from_secs_f64(secs)).await;
             Ok(start.elapsed().as_secs_f64())
-        })?,
+        }))?,
     )?;
     m.record_fn(
         "wait",

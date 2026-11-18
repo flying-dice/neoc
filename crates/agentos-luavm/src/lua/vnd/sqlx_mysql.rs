@@ -36,6 +36,7 @@ use tracing::instrument;
 use tracing::log::LevelFilter;
 
 use crate::lua::facade::Module;
+use crate::lua::lifecycle::idle_result;
 use crate::lua::sandbox::{from_err, i64_to_lua, ok};
 
 /// sqlx caches prepared statements per connection up to this many entries.
@@ -62,7 +63,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "vnd:sqlx_mysql")?;
 
-    m.set("open", lua.create_async_function(|lua, url: String| open(lua, url))?)?;
+    m.set("open", lua.create_async_function(|lua, url: String| idle_result(open(lua, url)))?)?;
     m.record_fn(
         "open",
         &[("url", "string")],
@@ -155,13 +156,13 @@ macro_rules! db_op {
     ($methods:expr, $name:literal, $op:literal, $run:ident) => {
         $methods.add_async_method($name, |lua, this, args: MultiValue| {
             let pool = this.pool.clone();
-            async move {
+            idle_result(async move {
                 let (sql, params) = match split_sql_args(args) {
                     Ok(v) => v,
                     Err(e) => return from_err(&lua, $op, e),
                 };
                 $run(&lua, &pool, $op, &sql, params).await
-            }
+            })
         });
     };
 }
@@ -171,10 +172,10 @@ macro_rules! stmt_op {
         $methods.add_async_method($name, |lua, this, args: MultiValue| {
             let sql = this.sql.clone();
             let pool = this.pool.clone();
-            async move {
+            idle_result(async move {
                 let params = args.into_iter().collect();
                 $run(&lua, &pool, $op, &sql, params).await
-            }
+            })
         });
     };
 }
@@ -191,10 +192,10 @@ impl UserData for Database {
 
         methods.add_async_method("close", |_, this, (): ()| {
             let pool = this.pool.clone();
-            async move {
+            idle_result(async move {
                 pool.close().await;
                 Ok(())
-            }
+            })
         });
     }
 }

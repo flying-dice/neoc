@@ -14,6 +14,7 @@ use tokio::net::TcpListener;
 use walkdir::WalkDir;
 
 use crate::lua::facade::Module;
+use crate::lua::lifecycle::Life;
 
 const MAX_HEADER_LINE: u64 = 8192;
 const MAX_HEADERS: usize = 100;
@@ -42,7 +43,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     m.async_func(
         "serve_static",
         &[("glob_pattern", "string"), ("opts", "LuaValue?")],
-        "Serve the files matching `glob_pattern` over HTTP/1.1; `opts.host` / `opts.port` set the bind address (default `0.0.0.0:8080`). Blocks until Ctrl-C.",
+        "Serve the files matching `glob_pattern` over HTTP/1.1; `opts.host` / `opts.port` set the bind address (default `0.0.0.0:8080`). Blocks until the app is unloaded.",
         |lua, args: (String, Option<Table>)| serve_static(lua, args),
     )?;
     Ok(m)
@@ -55,7 +56,7 @@ fn opt_field<T: FromLua>(opts: &Option<Table>, key: &str) -> Option<T> {
     opts.as_ref().and_then(|o| o.get::<Option<T>>(key).ok().flatten())
 }
 
-async fn serve_static(_lua: Lua, (glob_pattern, opts): (String, Option<Table>)) -> mlua::Result<()> {
+async fn serve_static(lua: Lua, (glob_pattern, opts): (String, Option<Table>)) -> mlua::Result<()> {
     let port: u16 = opt_field(&opts, "port").unwrap_or(8080);
     let host: String = opt_field(&opts, "host").unwrap_or_else(|| "0.0.0.0".to_string());
 
@@ -71,25 +72,23 @@ async fn serve_static(_lua: Lua, (glob_pattern, opts): (String, Option<Table>)) 
 
     tracing::info!("http static server on http://{addr} ({} files)", files.len());
 
+    // runs until the app is unloaded (its lifecycle closes), which drops the listener and ends the call
+    let life = Life::of(&lua);
     tokio::select! {
-        () = serve_loop(listener, files, index) => {},
-        result = tokio::signal::ctrl_c() => {
-            if let Err(e) = result {
-                tracing::error!("signal error: {e}");
-            }
-        },
+        () = serve_loop(listener, files, index, life.clone()) => {},
+        () = life.closed() => {},
     }
 
     Ok(())
 }
 
-async fn serve_loop(listener: TcpListener, files: Arc<FileMap>, index: Arc<String>) {
+async fn serve_loop(listener: TcpListener, files: Arc<FileMap>, index: Arc<String>, life: Life) {
     loop {
         match listener.accept().await {
             Ok((stream, _peer)) => {
                 let files = files.clone();
                 let index = index.clone();
-                tokio::spawn(async move {
+                life.spawn(async move {
                     if let Err(e) = handle_connection(stream, &files, &index).await {
                         tracing::debug!("connection error: {e}");
                     }

@@ -1,7 +1,7 @@
 //! HTTP client and server — `vnd:hyper`, backed by hyper.
 //!
 //! ## Client
-//! HTTP-only (no TLS). URLs must be `http://...`. Client functions are
+//! `http://` and `https://` (rustls; see `client`). Client functions are
 //! async on the Lua side: calls yield the calling coroutine until the
 //! response is ready, so other coroutines on the same engine (e.g. a
 //! request handler installed via `serve`) keep running concurrently.
@@ -82,28 +82,30 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "vnd:hyper")?;
 
-    m.set("get", lua.create_async_function(|lua, url: String| get(lua, url))?)?;
+    m.set("get", lua.create_async_function(|lua, args: (String, Option<Table>)| {
+        crate::lua::lifecycle::idle_result(get(lua, args))
+    })?)?;
     m.record_fn(
         "get",
-        &[("url", "string")],
+        &[("url", "string"), ("opts", "LuaValue")],
         "Result<LuaValue, string>",
-        "Perform an HTTP GET request, returning a response table `{ status, headers, body }`.",
+        "Perform an HTTP or HTTPS GET request, returning a response table `{ status, headers, body }`. `opts` may carry `ca_pem`.",
     );
 
-    m.set("post", lua.create_async_function(|lua, opts: Table| post(lua, opts))?)?;
+    m.set("post", lua.create_async_function(|lua, opts: Table| crate::lua::lifecycle::idle_result(post(lua, opts)))?)?;
     m.record_fn(
         "post",
         &[("opts", "LuaValue")],
         "Result<LuaValue, string>",
-        "Perform an HTTP POST request given `{ url, body?, headers? }`.",
+        "Perform an HTTP or HTTPS POST request given `{ url, body?, headers?, ca_pem? }`.",
     );
 
-    m.set("request", lua.create_async_function(|lua, opts: Table| request(lua, opts))?)?;
+    m.set("request", lua.create_async_function(|lua, opts: Table| crate::lua::lifecycle::idle_result(request(lua, opts)))?)?;
     m.record_fn(
         "request",
         &[("opts", "LuaValue")],
         "Result<LuaValue, string>",
-        "Perform an HTTP request with an arbitrary method given `{ method, url, body?, headers? }`.",
+        "Perform an HTTP or HTTPS request with an arbitrary method given `{ method, url, body?, headers?, ca_pem? }`.",
     );
 
     m.set("serve", lua.create_function(serve)?)?;
@@ -126,7 +128,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
                 "wait",
                 &[],
                 "()",
-                "Block until the server stops accepting connections (`:close()` or process shutdown signal).",
+                "Block until the server stops accepting connections (`:close()` or the app being unloaded).",
             );
     });
 
@@ -270,7 +272,8 @@ async fn invoke_lua_handler(
     let result: mlua::Result<HandlerResponse> = async {
         let req_ud = self::Request::from_parts(method, path, req_headers, body);
         let handler: Function = lua.registry_value(handler_key)?;
-        let raw: Value = handler.call_async(req_ud).await?;
+        // the handler is a call into the VM like any other: it waits for its turn (see `lifecycle`)
+        let raw: Value = crate::lua::lifecycle::inbound(lua, handler.call_async(req_ud)).await?;
         decode_handler_response(raw)
     }
     .await;
