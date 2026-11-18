@@ -43,6 +43,8 @@ export interface AppPreview {
   permissions: string[]
   source: string
   installed?: InstalledInfo
+  /** SHA-256 of the app-ref document as previewed; `app.install` pins to it. */
+  sha256: string
 }
 
 export interface Catalog {

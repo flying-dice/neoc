@@ -45,7 +45,8 @@ describe('hostApi mirrors the generated wire types', () => {
       'description',
       'permissions',
       'source',
-      'installed'
+      'installed',
+      'sha256'
     ],
     InstalledInfo: ['version', 'state'],
     Catalog: ['apps', 'errors'],
