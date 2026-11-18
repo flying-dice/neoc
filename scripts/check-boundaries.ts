@@ -17,8 +17,8 @@
  *     no Node or Bun builtins, and no server-only SDK entry points.
  *  5. All client ↔ server traffic is the SDK protocol: `new WebSocket` only in the SDK bridge,
  *     Bun.serve / upgrade only in the server entry.
- *  6. @agentos/sdk/testing only in test support, Storybook and web mode; @agentos/app-* in the
- *     desktop client only in web mode (source loaders); packages/ui imports no other @agentos package;
+ *  6. @agentos/sdk/testing only in test support and Storybook (web mode is gone); @agentos/app-* never in the
+ *     desktop client; packages/ui imports no other @agentos package;
  *     nothing imports electron (AgentOS is a PWA + Bun server).
  *  7. No {@html}, innerHTML, outerHTML, insertAdjacentHTML or document.write: agent and tool
  *     output is untrusted. HTML_ALLOWED lists the reviewed exceptions.

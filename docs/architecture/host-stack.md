@@ -184,7 +184,8 @@ Defaults, then `agentos.toml`, then environment variables. The file is `--config
 | `bind` | `AGENTOS_BIND` | `0.0.0.0` |
 | `port` | `AGENTOS_PORT` | `7400` (`0` picks a free port) |
 | `client_dir` | `AGENTOS_CLIENT_DIR` | `client/dist`, else `apps/desktop/dist`; none built = API only |
-| `registries` | `AGENTOS_REGISTRIES` (comma list) | none: app-ref URLs installed at start |
+| `registries` | `AGENTOS_REGISTRIES` (comma list) | the catalog Discover browses: registry files (`{"apps": ["<id>/<version>/app-ref.json"]}`, relative URLs resolve against the registry) or app refs, by URL; default `dist/apps/registry.json` (what `bun run build:apps` writes) over `file://` when it exists |
+| `install` | `AGENTOS_INSTALL` (comma list) | none: app-ref URLs the host makes sure are installed at every start |
 | `allowed_hosts` | `AGENTOS_ALLOWED_HOSTS` (comma list) | none |
 | `dev_client_port` | `AGENTOS_DEV_CLIENT_PORT` | none: also accept the Vite dev server on this port |
 | `dev_reload` | `AGENTOS_DEV_RELOAD` | off: watch the `file://` app bundles and rebuild an app's VM (database kept) when one changes |
@@ -214,6 +215,7 @@ silently. `lint:luau` and `lint:stylua` skip with a message when `luau-lsp` or
   loads it; the configured `registries` are then applied on top (missing ones installed, failed ones retried). An
   app that cannot load is marked **failed** (and announced as `app.failed`), the others start. Uninstall forgets
   the record; shutdown keeps it.
+- **Browsing and previewing:** `app.available` lists what the configured `registries` offer (`{apps: [AppPreview], errors}`; a registry that cannot be read is an error line, the rest still list); `app.preview {url}` reads one app ref **without installing or running anything** (manifest, source host, permissions, whether the id is installed). `app.list` returns each installed app with its state, `icon`, `tint`, `description`, `source` and, while it runs, its `window` (`w`, `h`, `minW`, `minH`) from `app.manifest`. Types: `crates/agentos-domain/src/api.rs`. Package manifests carry optional `icon`, `tint`, `description` and `requires: {host: ">=1.0"}` (checked against `HOST_API`); an app ref's file URLs may be relative to it.
 - **Lifecycle over `/rpc`:** `app.install`, `app.uninstall {app, purge?}`, `app.list`, `app.enable`,
   `app.disable` (VM unloaded, tools retracted, data kept), `app.deleteData` (purge, then reload on an empty
   database), `app.reload` (dev: rebuild the VM from source, keep the database; the old version keeps running if the
@@ -260,8 +262,14 @@ silently. `lint:luau` and `lint:stylua` skip with a message when `luau-lsp` or
   8); the ack carries `resolution` (`accepted` / `merged` / `replaced` / `rejected`) and, when a value was replaced,
   `undo {revisionId, lost}` that `row.restore` puts back. `persist = "app"` client values are stored in `_ui_state`
   and come back in the next `view.open`.
+- **Opening windows and toast actions.** `app:openWindow(name, params?)` (an agent's tool bringing an app forward) goes
+  through the `Shell` port to every connected client as the host notification `window.open {app, window, params?}`: the
+  shell opens the window or raises the app's open one, then does `view.open`. A toast's action is
+  `w:toast { text, action = { title, onTap } }`: the wire toast carries `action: {title, id}`, the VM keeps the closure
+  (the last 32 per window, each run once), and the client reports the tap as `view.event` on path `$toast/<id>`,
+  event `tap`.
 - **Gaps.** `state.set` (two-way bound window state) answers an error: app/window state is read as values in render,
-  so there is no `state.*` ref to bind; `app:openWindow` has no host-to-client message yet (the requests queue for the
-  shell); `view.resize` / `view.visibility` are accepted and ignored; a toast action's `onTap` is not routed back;
-  renders are not coalesced per frame; host restart has no grace period (a reconnect opens fresh instances that
-  adopt the client's persisted values).
+  so there is no `state.*` ref to bind; `view.resize` / `view.visibility` are accepted and ignored; renders are not
+  coalesced per frame; host restart has no grace period (a reconnect opens fresh instances that adopt the client's
+  persisted values); `window.open` goes to every connected client, not only the most recently active one, and a
+  repeat for an app whose window is already open raises it without passing the new `params`.

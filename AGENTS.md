@@ -61,7 +61,7 @@ bun run dev             # server on :7400 + client on :5173 (builds dist/bundles
 bun run build:apps      # dev build of app bundles → dist/bundles (mutable; the dev server hot-reloads them)
 bun run release:apps    # release build → bundles/ (immutable, committed); bump the app's version to change a released app
 bun run build && bun start   # production: the server serves the built PWA on :7400
-bun run dev:web         # the desktop in a browser on the in-memory host (http://localhost:6200/web.html)
+bun run host            # the Rust host on :7400 (pairing code on stdout); needs `bun run build` and `bun run build:apps` first
 bun run host            # the Rust host (cargo run -p agentos-host): serves the client, /rpc, /agui, /mcp on :7400
 bun run host pair       # print a fresh device pairing code (every client must pair; see docs/architecture/host-stack.md)
 bun run lint            # atomic layers + test ids + boundaries + eslint + cargo fmt/clippy/deny + crate deps + luau-lsp + stylua

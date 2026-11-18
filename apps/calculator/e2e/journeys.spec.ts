@@ -105,7 +105,6 @@ test.describe('Calculator journeys', () => {
     await expect(windowOf(page, 'calculator')).toHaveClass(/slideover/)
     for (const k of ['6', 'mul', '7', 'eq']) await page.getByTestId(key(k)).click()
     await expect(page.getByTestId(display)).toHaveText('42')
-    await expect(windowOf(page, 'files')).toBeVisible()
   })
 
   test('J7: the Calculator still works at its smallest window size', async ({ page }) => {

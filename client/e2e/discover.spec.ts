@@ -25,6 +25,7 @@ test.describe('Discover journeys', () => {
     await expect(windowOf(page, 'notes')).toBeVisible()
     await expect(page.getByTestId('notes-view')).toBeVisible()
     await expect(page.getByTestId('dock-notes')).toBeVisible()
+    await page.getByTestId('dock-discover').click() // opening Notes put Discover in the strip: bring it back
     await expect(page.getByTestId('discover-app-notes-get')).toHaveText('OPEN')
 
     // disable: the host unloads it, its window closes and it leaves the Dock, but it stays in Discover
@@ -38,6 +39,7 @@ test.describe('Discover journeys', () => {
     await page.getByTestId('discover-app-notes-get').click()
     await expect(page.getByTestId('notes-view')).toBeVisible()
     await expect(page.getByTestId('dock-notes')).toBeVisible()
+    await page.getByTestId('dock-discover').click()
 
     // remove: window and Dock icon go, and the registry offers it again
     await page.getByTestId('discover-app-notes-remove').click()
@@ -80,9 +82,10 @@ test.describe('Discover journeys', () => {
     await page.getByTestId('discover-install-confirm-action-install').click()
     await expect(page.getByTestId('notes-view')).toBeVisible()
     await expect(page.getByTestId('dock-notes')).toBeVisible()
-    await expect(page.getByTestId('discover-add-preview-card')).toHaveCount(0)
 
     // clean up for the next journey
+    await page.getByTestId('dock-discover').click()
+    await expect(page.getByTestId('discover-add-preview-card')).toHaveCount(0)
     await page.getByTestId('discover-app-notes-remove').click()
     await expect(page.getByTestId('dock-notes')).toHaveCount(0)
   })
