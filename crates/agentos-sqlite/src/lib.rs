@@ -13,6 +13,9 @@
 //! - **interrupt**: a progress handler aborts a statement that runs past its wall-clock budget;
 //! - `ATTACH` is denied.
 
+mod agents;
+#[cfg(test)]
+mod agents_tests;
 mod devices;
 mod feed;
 mod ports;
