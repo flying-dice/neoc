@@ -34,7 +34,9 @@ if (!stylua) {
   process.exit(0)
 }
 
-const run = spawnSync(stylua, [...(mode === 'check' ? ['--check'] : []), '.'], { cwd: root, stdio: 'inherit' })
+// the nearest stylua.toml wins: crates/agentos-codegen/tests/fixtures/ keeps the table-call idiom (`ui.VStack { ... }`)
+const args = ['--search-parent-directories', ...(mode === 'check' ? ['--check'] : []), '.']
+const run = spawnSync(stylua, args, { cwd: root, stdio: 'inherit' })
 if (run.status !== 0) {
   if (mode === 'check') console.error('stylua: Luau files need formatting: run `bun run format`')
   process.exit(run.status ?? 1)

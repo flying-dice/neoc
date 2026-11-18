@@ -71,6 +71,8 @@ bun run format          # prettier + cargo fmt + stylua
 bun run test:e2e        # all Storybooks + desktop + journeys, headless (test:e2e:update to rebaseline)
 bun run storybooks list # every app's Storybook (each package: bun run storybook)
 bun scripts/design-audit.ts <app>   # static styleguide audit
+bun run codegen         # regenerate types/generated/* and docs/reference/components.md from the Rust schema
+bun run codegen:check   # fails when they are stale (part of bun run lint)
 ```
 
 Visual baselines (`e2e/__screenshots__`) are macOS-only, so run `test:e2e` on a Mac. There is no hosted CI: the

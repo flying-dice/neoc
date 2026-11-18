@@ -52,7 +52,7 @@ Features `luau, async, serialize, send`. Proven (all in `tests/vm.rs`, 9 tests):
 ### 7. Shared types — **`ts-rs 12.0.1` (TS) + `schemars 1.2.3` (JSON Schema) + a 70-line Luau emitter** — `crates/agentos-codegen`
 - Domain types derive `TS`/`JsonSchema` behind a `codegen` feature (derive-only, no I/O). `cargo run -p agentos-codegen --example generate` writes `generated/{types.ts, ui.luau, schemas.json}`. ts-rs honours serde attributes (`tag`, `rename_all`): `UiNode` comes out as the discriminated union `{ "type": "stack", … } | { "type": "button", … }`. The Luau emitter walks the JSON Schema (`oneOf`, `$ref`, recursive `#`, optional fields) into `export type`s; **test: the generated Luau passes `luau-analyze` and a wrongly-shaped node (`txt =` for `text =`) is a type error**.
 - `specta 2.0.0-rc.28` / `specta-typescript 0.0.15` are still pre-release: not chosen. Rough edges: ts-rs warns on `#[serde(try_from)]` (we override with `ts(type="string")`); `#[serde(default)]` fields need `#[ts(optional)]` to become optional in TS.
-- The app-API capability types (`app.data.query` …) stay a hand-written `agentos.d.luau` in the SDK crate that `require`s the generated shapes.
+- **Superseded by wave A2:** the component schema is Rust data in `agentos-domain` (`ui` module) and `agentos-codegen` emits `types/generated/{agentos.ts, agentos.d.luau, ui.luau, app.luau}` and `docs/reference/components.md`; see `docs/reference/components.md` and the `agentos-codegen` crate docs.
 
 ### 8. Distribution
 - **Binary:** host, release, `opt-level="z"`, LTO, `codegen-units=1`, `strip`, `panic=abort`: **5.5 MiB** with Luau, bundled SQLite, rustls, axum, rmcp, ACP, notify. ~50 s release build on this machine. Opt-level 3 is 25-40% faster on VM creation/dispatch (0.14 vs 0.19 ms, 1.8 vs 3.1 µs); ship level 3 unless size matters (Luau's C++ is compiled by `cc` with the profile's opt-level, so `z` also affects VM speed).
@@ -196,9 +196,12 @@ An explicit `client_dir` that is not built is an error; the default quietly fall
 ### The gate
 
 `bun run lint` (adds `cargo fmt --check`, clippy with `-D warnings`, `scripts/check-deps.ts`, `cargo deny check`,
-`lint:luau`, `lint:stylua`), `bun run typecheck` (adds `cargo check --workspace --all-targets`), `bun run test`
-(adds `cargo nextest run --workspace`), `bun run format` (adds `cargo fmt` and StyLua). `lint:luau` type-checks
-every Luau app and fixture with `luau-lsp analyze` against `crates/agentos-luau/types/agentos.d.luau`, and a
-negative fixture (`tests/negative/*.luau`, lines marked `-- expect-error`) must be rejected, so a broken
-definitions file cannot pass silently. `lint:luau` and `lint:stylua` skip with a message when `luau-lsp` or
+`lint:luau`, `lint:stylua`, `codegen:check`), `bun run typecheck` (adds `cargo check --workspace --all-targets` and
+`tsc -p types`), `bun run test` (adds `cargo nextest run --workspace` and `bun test types`), `bun run format` (adds
+`cargo fmt` and StyLua). `codegen:check` fails when the committed `types/generated/*` and `docs/reference/components.md`
+are stale against the Rust schema (`bun run codegen` regenerates them). `lint:luau` type-checks every Luau app and
+fixture (and the generated `ui.luau`) with `luau-lsp analyze` against the generated
+`types/generated/agentos.d.luau`, resolving `require("@agentos/ui")` through the root `.luaurc`; a negative fixture
+(`negative/*.luau`, lines marked `-- expect-error`) must be rejected, so a broken definitions file cannot pass
+silently. `lint:luau` and `lint:stylua` skip with a message when `luau-lsp` or
 `stylua` is not installed.

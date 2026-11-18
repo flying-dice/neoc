@@ -1,0 +1,357 @@
+//! Contract tests: drift between the Rust schema and any generated consumer is a build failure.
+//!
+//! * the committed generated files are exactly what the generator writes now;
+//! * every component, expression function and client action is covered by the Luau and TypeScript output;
+//! * the Calculator and Notes examples from `ui-system.md` §4.3 and §4.4 (fixtures, type-checked by
+//!   `bun run lint:luau`) are **run** against the real generated `ui.luau` with the `luau` runner, and the trees
+//!   they render validate against the schema. Without `luau` installed the committed trees are validated instead.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
+
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
+
+use agentos_domain::ui::{
+    components::{lookup, CATALOGUE, STACK_SUGAR},
+    expr::Func,
+    node::{derive_test_id, Action, Node},
+    protocol::METHODS,
+    source::{ClientDecl, SourceDecl},
+    validate::{is_valid, validate_with, Context, Severity},
+    ViewDecls,
+};
+use serde_json::Value;
+
+fn root() -> &'static Path {
+    agentos_codegen::repo_root()
+}
+
+fn fixtures() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
+}
+
+// ---- the generated files ----------------------------------------------------------------------------------
+
+#[test]
+fn the_committed_generated_files_are_up_to_date() {
+    let stale = agentos_codegen::stale(root());
+    assert!(stale.is_empty(), "run `bun run codegen`: stale {stale:?}");
+}
+
+#[test]
+fn generation_is_deterministic() {
+    assert_eq!(agentos_codegen::generate(), agentos_codegen::generate());
+}
+
+// ---- Luau output ------------------------------------------------------------------------------------------
+
+#[test]
+fn ui_luau_has_a_constructor_for_every_component_and_sugar() {
+    let luau = agentos_codegen::ui_module();
+    for c in CATALOGUE {
+        assert!(
+            luau.contains(&format!("function ui.{}(props: {}Props): Node", c.name, c.name)),
+            "{}",
+            c.name
+        );
+        assert!(luau.contains(&format!("export type {}Props = {{", c.name)), "{}", c.name);
+    }
+    for (sugar, _) in STACK_SUGAR {
+        assert!(luau.contains(&format!("function ui.{sugar}(props: StackProps): Node")), "{sugar}");
+    }
+}
+
+#[test]
+fn ui_luau_has_a_helper_for_every_expression_function() {
+    let luau = agentos_codegen::ui_module();
+    for f in Func::ALL {
+        let wire = format!("call(\"{}\"", f.name());
+        assert!(luau.contains(&wire), "no ui helper calls `{}`", f.name());
+    }
+    for keyword_safe in ["ui.all", "ui.any", "ui.negate", "ui.when", "ui.concat", "ui.isEmpty", "ui.coalesce"]
+    {
+        assert!(luau.contains(&format!("function {keyword_safe}(")), "{keyword_safe}");
+    }
+    assert!(luau.contains("function fmt.relative("));
+}
+
+#[test]
+fn ui_act_covers_exactly_the_domain_actions() {
+    let wire: Vec<&str> = agentos_codegen::ACTION_BUILDERS.iter().map(|(_, wire)| *wire).collect();
+    assert_eq!(wire, Action::NAMES);
+    let luau = agentos_codegen::ui_module();
+    for (builder, wire) in agentos_codegen::ACTION_BUILDERS {
+        assert!(luau.contains(&format!("function act.{builder}(")), "act.{builder}");
+        assert!(luau.contains(&format!("[\"do\"] = \"{wire}\"")), "{wire}");
+    }
+}
+
+#[test]
+fn the_definitions_declare_the_app_global_and_the_client_decl() {
+    let defs = agentos_codegen::definitions();
+    assert!(defs.contains("declare app: AppApi"));
+    assert!(defs.contains("type ClientDecl = {"), "ClientDecl comes from the JSON Schema of the Rust type");
+    assert!(defs.contains("type Persist = \"none\" | \"session\" | \"app\""));
+    assert!(
+        !defs.lines().any(|line| line.trim_start().starts_with("declare class")),
+        "luau-lsp 1.70 rejects `declare class`"
+    );
+}
+
+#[test]
+fn core_types_are_identical_in_the_definitions_and_the_module() {
+    let module = agentos_codegen::ui_module();
+    let defs = agentos_codegen::definitions();
+    for line in ["type Ref<T> = {", "type Handler<P> =", "type Child = Node | { Node }", "type Action = {"] {
+        assert!(defs.contains(line) && module.contains(&format!("export {line}")), "{line}");
+    }
+}
+
+// ---- TypeScript output ------------------------------------------------------------------------------------
+
+#[test]
+fn typescript_declares_every_component_protocol_type_and_method() {
+    let ts = agentos_codegen::typescript();
+    for c in CATALOGUE {
+        assert!(ts.contains(&format!("export type {}Props", c.name)), "{}", c.name);
+        assert!(ts.contains(&format!("export type {}Node = {{", c.name)), "{}", c.name);
+        assert!(ts.contains(&format!("  {}: {{ tier: {}", c.name, c.tier as u8)), "{} in COMPONENTS", c.name);
+    }
+    for ty in [
+        "Node",
+        "Handler",
+        "Action",
+        "Op",
+        "SourceDecl",
+        "ClientDecl",
+        "SourcePatch",
+        "ViewSnapshot",
+        "ViewOps",
+        "ViewTree",
+        "DataPatch",
+        "ViewEvent",
+        "WriteAck",
+        "SessionHello",
+        "Command",
+    ] {
+        assert!(ts.contains(&format!("export type {ty} =")), "{ty}");
+    }
+    for m in METHODS {
+        assert!(ts.contains(&format!("'{}': {{ kind:", m.name)), "{}", m.name);
+    }
+    for f in Func::ALL {
+        assert!(ts.contains(&format!("'{}': {{ min:", f.name())), "{}", f.name());
+    }
+}
+
+#[test]
+fn the_reference_documents_every_component() {
+    let docs = fs::read_to_string(root().join("docs/reference/components.md")).unwrap();
+    for c in CATALOGUE {
+        assert!(docs.contains(&format!("### {}\n", c.name)), "{}", c.name);
+    }
+    assert!(docs.contains("Accessible name required"));
+}
+
+// ---- the example apps -------------------------------------------------------------------------------------
+
+/// What the stub host sends for `view.open`, minus the snapshot envelope.
+struct Rendered {
+    tree: Node,
+    decls: ViewDecls,
+}
+
+fn parse(json: &Value) -> Rendered {
+    let tree: Node = serde_json::from_value(json["tree"].clone()).unwrap_or_else(|e| panic!("tree: {e}"));
+    let mut decls = ViewDecls::default();
+    for (name, decl) in json["client"].as_object().unwrap() {
+        let decl: ClientDecl =
+            serde_json::from_value(decl.clone()).unwrap_or_else(|e| panic!("client {name}: {e}"));
+        decls.client.insert(name.clone(), decl);
+    }
+    for (id, decl) in json["sources"].as_object().unwrap() {
+        let decl: SourceDecl =
+            serde_json::from_value(decl.clone()).unwrap_or_else(|e| panic!("source {id}: {e}"));
+        decls.sources.insert(id.clone(), decl);
+    }
+    Rendered { tree, decls }
+}
+
+fn committed(app: &str) -> Value {
+    let path = fixtures().join("trees").join(format!("{app}.json"));
+    serde_json::from_str(&fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display())))
+        .unwrap()
+}
+
+/// Run an example app's `main` window with the `luau` runner against the generated `ui.luau`. `None` when the
+/// runner is not installed.
+fn run_luau(app: &str) -> Option<Value> {
+    let work = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("luau-{app}"));
+    let _ = fs::remove_dir_all(&work);
+    fs::create_dir_all(work.join("mods")).unwrap();
+    fs::write(work.join(".luaurc"), r#"{ "aliases": { "agentos": "./mods" } }"#).unwrap();
+    fs::write(work.join("mods/ui.luau"), agentos_codegen::ui_module()).unwrap();
+    fs::copy(fixtures().join("stub/app.luau"), work.join("mods/app.luau")).unwrap();
+    fs::copy(fixtures().join("stub/harness.luau"), work.join("harness.luau")).unwrap();
+    for entry in fs::read_dir(fixtures().join(app)).unwrap() {
+        let entry = entry.unwrap();
+        fs::create_dir_all(work.join(app)).unwrap();
+        let target = work.join(app).join(entry.file_name());
+        if entry.file_name() == "app.luau" {
+            // an app's entry is a script; `require` wants a module, so it returns a value here
+            fs::write(target, fs::read_to_string(entry.path()).unwrap() + "\nreturn true\n").unwrap();
+        } else {
+            fs::copy(entry.path(), target).unwrap();
+        }
+    }
+    let output = Command::new("luau")
+        .current_dir(&work)
+        .arg("harness.luau")
+        .arg("-a")
+        .arg(format!("./{app}"))
+        .output()
+        .ok()?;
+    assert!(
+        output.status.success(),
+        "luau failed for {app}:\n{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Some(
+        serde_json::from_slice(&output.stdout)
+            .unwrap_or_else(|e| panic!("{app}: {e}\n{}", String::from_utf8_lossy(&output.stdout))),
+    )
+}
+
+fn check_tree(app: &str, rendered: &Rendered) {
+    let context = Context::from_decls(&rendered.decls);
+    let findings = validate_with(&rendered.tree, &context);
+    let errors: Vec<String> =
+        findings.iter().filter(|v| v.severity == Severity::Error).map(ToString::to_string).collect();
+    assert!(errors.is_empty(), "{app} renders an invalid tree:\n{}", errors.join("\n"));
+    assert!(is_valid(&findings));
+    assert!(rendered.tree.count() > 5, "{app} should render a real tree");
+}
+
+fn ids(app: &str, node: &Node, path: &str, out: &mut Vec<String>) {
+    if let Some(id) = derive_test_id(app, path, None) {
+        out.push(id);
+    }
+    for (slot, children) in node.containers() {
+        for child in children {
+            let child_path = agentos_domain::ui::node::join_path(path, slot, &child.key);
+            ids(app, child, &child_path, out);
+        }
+    }
+}
+
+#[test]
+fn the_examples_run_against_the_generated_constructors_and_render_valid_trees() {
+    let bless = std::env::var_os("UPDATE_FIXTURES").is_some();
+    let mut ran = 0;
+    for app in ["calculator", "notes"] {
+        if let Some(fresh) = run_luau(app) {
+            ran += 1;
+            check_tree(app, &parse(&fresh));
+            let path = fixtures().join("trees").join(format!("{app}.json"));
+            if bless {
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                fs::write(&path, serde_json::to_string_pretty(&fresh).unwrap() + "\n").unwrap();
+            } else {
+                assert_eq!(
+                    fresh,
+                    committed(app),
+                    "{app}: the tree the Luau example renders changed; review it, then run \
+                     `UPDATE_FIXTURES=1 cargo test -p agentos-codegen` to re-bless tests/fixtures/trees/{app}.json"
+                );
+            }
+        }
+    }
+    if ran == 0 {
+        eprintln!(
+            "skipped running the examples: `luau` is not installed (the committed trees are validated below)"
+        );
+    }
+}
+
+#[test]
+fn the_constructors_behave_as_documented() {
+    let work = Path::new(env!("CARGO_TARGET_TMPDIR")).join("luau-constructors");
+    let _ = fs::remove_dir_all(&work);
+    fs::create_dir_all(work.join("mods")).unwrap();
+    fs::write(work.join(".luaurc"), r#"{ "aliases": { "agentos": "./mods" } }"#).unwrap();
+    fs::write(work.join("mods/ui.luau"), agentos_codegen::ui_module()).unwrap();
+    fs::copy(fixtures().join("stub/constructors.luau"), work.join("constructors.luau")).unwrap();
+    let Ok(output) = Command::new("luau").current_dir(&work).arg("constructors.luau").output() else {
+        eprintln!("skipped: `luau` is not installed");
+        return;
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.trim() == "ok",
+        "{stdout}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn the_committed_example_trees_validate() {
+    for app in ["calculator", "notes"] {
+        check_tree(app, &parse(&committed(app)));
+    }
+}
+
+#[test]
+fn the_calculator_tree_has_the_documented_shape_and_ids() {
+    let rendered = parse(&committed("calculator"));
+    let mut found = Vec::new();
+    ids("calculator", &rendered.tree, &rendered.tree.key, &mut found);
+    for expected in [
+        "calculator-key-7",
+        "calculator-key-clear",
+        "calculator-display",
+        "calculator-caption",
+        "calculator-backspace",
+    ] {
+        assert!(found.iter().any(|id| id == expected), "{expected} in {found:?}");
+    }
+    let keys = found.iter().filter(|id| id.starts_with("calculator-key-")).count();
+    assert_eq!(keys, 19, "the keypad");
+    // the keys are grid children with a column span, the display is a live region
+    let stack = &rendered.tree.children[0];
+    let grid = &stack.children[3];
+    assert_eq!(grid.type_, "Grid");
+    assert_eq!(grid.children.len(), 19);
+    let zero = grid.children.iter().find(|k| k.key == "key-0").unwrap();
+    assert_eq!(zero.props["span"], 2);
+    let display = &stack.children[2];
+    assert_eq!(display.props["live"], "polite");
+    assert!(lookup(&display.type_).is_some());
+}
+
+#[test]
+fn the_notes_tree_has_the_documented_sources_bindings_and_ids() {
+    let rendered = parse(&committed("notes"));
+    // three sources, declared once; the SQL never reaches the tree
+    assert_eq!(rendered.decls.sources.len(), 3);
+    assert!(
+        matches!(rendered.decls.sources["s1"], SourceDecl::Row { .. }),
+        "`note` is declared first in render"
+    );
+    assert!(matches!(rendered.decls.sources["s3"], SourceDecl::Rows { page: Some(60), .. }));
+    assert!(serde_json::to_string(&rendered.tree).unwrap().find("select ").is_none(), "no SQL in the tree");
+    // persisted client state
+    assert_eq!(rendered.decls.client["folder"].persist, agentos_domain::ui::source::Persist::App);
+    // the two-way text binding, and the ids the spec lists (§4.5)
+    let text = serde_json::to_string(&rendered.tree).unwrap();
+    assert!(text.contains(r#""text":{"$ref":"src.s1.body"}"#), "TextEditor is bound to the row source field");
+    let mut found = Vec::new();
+    ids("notes", &rendered.tree, &rendered.tree.key, &mut found);
+    for expected in
+        ["notes-folders", "notes-notes", "notes-body", "notes-confirm-delete-confirm", "notes-new-note"]
+    {
+        assert!(found.iter().any(|id| id == expected), "{expected} in {found:?}");
+    }
+}
