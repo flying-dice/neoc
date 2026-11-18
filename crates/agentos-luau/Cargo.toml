@@ -20,6 +20,8 @@ tracing = { workspace = true }
 [dev-dependencies]
 # adapter integration tests run apps against the REAL sqlite adapter (dev-only edge, not a runtime one)
 agentos-sqlite = { path = "../agentos-sqlite" }
+agentos-application = { workspace = true, features = ["testing"] }
+serde_json = { workspace = true }
 
 [lints]
 workspace = true
