@@ -265,3 +265,95 @@ silently. `lint:luau` and `lint:stylua` skip with a message when `luau-lsp` or
   shell); `view.resize` / `view.visibility` are accepted and ignored; a toast action's `onTap` is not routed back;
   renders are not coalesced per frame; host restart has no grace period (a reconnect opens fresh instances that
   adopt the client's persisted values).
+
+## Agents over AG-UI, identity and permissions (wave B3)
+
+Agents are **contacts** in `system.db`. The host launches each over ACP (stdio), keeps the process alive, and exposes
+its chats to the client over AG-UI (`/agui`, HTTP + SSE, behind the device-session guard). ACP never reaches the
+browser: `agentos-acp` maps ACP to the domain's `AgentEvent`, the application's `ChatService` folds those into a thread
+(history, state, interrupts) and into AG-UI events, `agentos-agui` is the HTTP/SSE edge.
+
+### The `/agui` contract
+
+All routes need a paired device (`401` otherwise). Errors before a stream starts are JSON `{"error": "..."}`: `422` for a
+body that is not a `RunAgentInput`, `404` unknown agent or thread, `409` a run is already in progress on the thread,
+`502` the agent process could not start.
+
+| route | purpose |
+|---|---|
+| `POST /agui/threads` `{threadId, agentId}` | Ensure a thread: start the agent process if needed, `session/new` (with the agent's own MCP token), idempotent for the same ids. Returns a `ThreadSnapshot`. |
+| `GET /agui/threads/{id}` | The `ThreadSnapshot`: `{threadId, agentId, running, state, messages, interrupts}`. |
+| `POST /agui` | A run: `RunAgentInput` (`threadId`, `runId`, `messages`, `state`, `tools`, `context`, `forwardedProps`, optional `resume`). The **last `user` message** is the prompt (the ACP session holds the context); `forwardedProps.agentId` creates the thread if `POST /agui/threads` was not called. Answers `text/event-stream`, one `data: <event json>` frame per AG-UI event. |
+| `POST /agui/threads/{id}/cancel` | ACP `session/cancel` (also resolves a pending permission as cancelled). `204`. A client that drops the SSE connection mid-run cancels the same way. |
+| `POST /agui/threads/{id}/settings` | `{"mode": "<id>"}` or `{"config": {"id": "<option id>", "value": <string or bool>}}`: ACP `session/set_mode` / `session/set_config_option`. Answers the new `ThreadState`; a running stream also gets a `STATE_DELTA`. |
+
+**Events** (names and fields as docs.ag-ui.com; `camelCase`). One run is `RUN_STARTED`, a `STATE_SNAPSHOT`, the turn's
+events, then `RUN_FINISHED` or `RUN_ERROR`.
+
+| ACP | AG-UI |
+|---|---|
+| `session/prompt` accepted, finished with a stop reason | `RUN_STARTED` ... `RUN_FINISHED {outcome:{type:"success"}}` (`result: {stopReason}`) |
+| prompt failed, agent exited, a `refusal` stop | `RUN_ERROR {message, code}` (`agent_exited`, `prompt_failed`, `refusal`) |
+| `agent_message_chunk` | `TEXT_MESSAGE_START {role:"assistant"}`, `TEXT_MESSAGE_CONTENT`, `TEXT_MESSAGE_END` (a message spans consecutive chunks) |
+| `agent_thought_chunk` | `REASONING_START`, `REASONING_MESSAGE_START {role:"reasoning"}`, `REASONING_MESSAGE_CONTENT`, `REASONING_MESSAGE_END`, `REASONING_END` |
+| `tool_call` | `TOOL_CALL_START {toolCallName: title}`, `TOOL_CALL_ARGS` (raw input as JSON text, if any), `TOOL_CALL_END`, and a `CUSTOM agentos.tool` |
+| `tool_call_update` | `CUSTOM agentos.tool {toolCallId, title, kind, status}` (`pending`, `in_progress`, `completed`, `failed`); on `completed`/`failed` with text output, `TOOL_CALL_RESULT` |
+| `plan` | `STATE_DELTA` replacing `/plan` |
+| `current_mode_update`, `config_option_update`, `available_commands_update`, `usage_update`, `session_info_update` | `STATE_DELTA` (RFC 6902 `replace`/`add`) under `/session/...` |
+| `session/request_permission` | the run ends: `RUN_FINISHED {outcome:{type:"interrupt", interrupts:[...]}}` (AG-UI interrupts) |
+| user-visible host errors (not ACP) | `RUN_ERROR` |
+
+**Permission requests are AG-UI interrupts.** ACP's `session/request_permission` blocks the agent mid-turn. The host
+ends the current run with `RUN_FINISHED {outcome:{type:"interrupt", interrupts:[Interrupt]}}` and keeps the ACP turn
+suspended (up to 10 minutes, `expiresAt`, then it resolves as cancelled). The interrupt is
+`{id, reason:"tool_call", message: <tool title>, toolCallId?, expiresAt, responseSchema:{type:"object", properties:
+{optionId:{type:"string", enum:[...]}}, required:["optionId"]}, metadata:{"agentos:options":[{optionId, name, kind}],
+"agentos:tool":{title, kind}}}` where `kind` is ACP's `allow_once`, `allow_always`, `reject_once` or `reject_always`.
+The client answers with a **new run on the same thread** whose input has `resume:[{interruptId, status:"resolved",
+payload:{optionId}}]` (or `status:"cancelled"` to deny) and no new user message; that run streams the rest of the
+turn (`RUN_STARTED` again, ...). A reload re-offers pending interrupts through `GET /agui/threads/{id}`. A new user
+message while interrupts are pending, a resume that misses an interrupt, an unknown id: `RUN_ERROR`.
+
+**State** (what AG-UI does not define, typed in `agentos_domain::thread`, zod-validated in the client): `ThreadState =
+{ session: SessionState, plan: PlanEntry[] | null }`.
+
+```jsonc
+"session": {
+  "agent":   { "name": "claude-agent-acp", "version": "0.108.0" } | null,
+  "title":   "string" | null,
+  "toolsConnected": true,                       // the agent got /mcp (HTTP MCP capability)
+  "modes":   { "current": "default", "available": [{ "id", "name", "description"? }] } | null,
+  "config":  [ { "id": "model", "name": "Model", "description"?, "category"?: "model" | "thought_level" | "mode" | string,
+                 "kind": "select", "current": "opus", "options": [{ "value", "name", "description"? }] },
+               { "id", "name", "kind": "boolean", "current": true } ],
+  "commands": [{ "name": "compact", "description": "...", "hint"?: "..." }],   // slash commands: send "/name args" as the user message
+  "usage":   { "used": 12000, "size": 200000, "cost"?: { "amount": 0.12, "currency": "USD" } } | null
+}
+```
+
+**Thread history** (`ThreadSnapshot.messages`, AG-UI messages in order): `{id, role:"user", content}`; `{id,
+role:"assistant", content}` (a text segment); `{id, role:"reasoning", content}`; a tool call is an assistant message
+`{id, role:"assistant", toolCalls:[{id, type:"function", function:{name, arguments}}], agentos:{title, kind,
+status}}` followed by `{id, role:"tool", toolCallId, content}` once it has output; a failed run is `{id, role:"system",
+content, agentos:{error:true}}`. History lives in `system.db` (`thread_messages`); the ACP session does not survive a
+host restart (a new one starts with the next prompt; the transcript stays).
+
+**Agents and tokens.** `Agent {id, name, avatar?, role, runtime:{command, args, env}, grants, approval}`. Grants are
+**deny by default**: `{"apps": []}` means no tools; `{"apps": ["notes"]}` is an allow-list; `{"all": true}` is the
+explicit "all apps" option. `approval` (`ask` | `auto_read_only` | `allow_all`, default `auto_read_only`) says what the
+host does with an agent's ACP permission requests about AgentOS tools: `auto_read_only` allows a request for a tool the
+app declared `readOnly` and prompts for the rest, `ask` prompts always, `allow_all` never prompts. A persistent
+**MCP bearer token** is stored hashed (SHA-256; shown once, at `agents.create` and `agents.token.rotate`), for agents the
+host does not launch. A host-launched agent gets a **fresh random token per process launch**, kept only as a hash in
+memory and handed to the agent in `session/new`: every `tools/call` is attributed (`ctx.actor = {kind="agent", id,
+name}`) and checked against that agent's grants. `tools/list` is filtered to the agent's granted apps; `tools/list_changed`
+goes to that agent's sessions when its grants change or an app it may use is published or retracted.
+
+`/rpc` methods (for a future Contacts/Settings UI): `agents.list`, `agents.create`, `agents.update`, `agents.delete`,
+`agents.grants.set`, `agents.token.rotate`.
+
+**`readOnly` is enforced.** A tool declared `readOnly = true` runs with app writes blocked: the app's SQLite handle runs
+with writes denied (`app.db:exec`, `db:tx` writes, DDL, and a write smuggled through `db:all ... returning` all fail),
+`app.kv` `set`/`delete` raise, and `app.db:migrate` raises. A tool that must write is not `readOnly`.
+
+**Tool names** are local identifiers `[a-z][a-z0-9_]*` (no dots); the MCP name is `<appId>__<tool>`.
