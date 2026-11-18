@@ -160,11 +160,22 @@ seq: number, path: string, rowKey?: JsonValue, event: string, payload?: JsonValu
 export type EventAck = { ok: boolean, reason?: string, };
 export type StateSet = { viewId: string, path: string, value: JsonValue, baseRev: number, };
 export type RowSet = { viewId: string, source: string, key: JsonValue, field: string, value: JsonValue, baseRev: number, };
-export type WriteAck = { rev: number, value: JsonValue, 
+export type WriteResolution = "accepted" | "merged" | "replaced" | "rejected";
+export type Undo = { revisionId: number, 
+/**
+ * The value that was replaced (the agent's text, the previous scalar).
+ */
+lost: JsonValue, };
+export type WriteAck = { rev: number, value: JsonValue, resolution: WriteResolution, 
 /**
  * `true` when the write overlapped a newer change (the human won, or the write was rejected).
  */
-conflict?: boolean, };
+conflict?: boolean, 
+/**
+ * Present when `resolution` is `replaced`.
+ */
+undo?: Undo, };
+export type RowRestore = { viewId: string, source: string, key: JsonValue, revisionId: number, };
 export type Range = { from: number, to: number, };
 export type SourceSet = { viewId: string, source: string, params?: { [key in string]: JsonValue }, range?: Range, anchor?: string, };
 export type ClientState = { viewId: string, set: { [key in string]: JsonValue }, };
@@ -172,7 +183,12 @@ export type ViewResize = { viewId: string, size: Size, sizeClass: string, };
 export type ViewVisibility = { viewId: string, visible: boolean, };
 export type ViewTree = { viewId: string, rev: number, tree: Node, };
 export type ViewOps = { viewId: string, base: number, rev: number, ops: Array<Op>, };
-export type DataPatch = { viewId: string, state?: { [key in string]: StateValue }, sources?: { [key in string]: SourcePatch }, };
+export type DataPatch = { viewId: string, state?: { [key in string]: StateValue }, sources?: { [key in string]: SourcePatch }, 
+/**
+ * Sources a re-render started to use (they were not in the snapshot): declared here, with their first
+ * window in `sources`, before the ops that reference them.
+ */
+declare?: { [key in string]: SourceDecl }, };
 export type ClientSet = { viewId: string, path: string, value: JsonValue, 
 /**
  * Overrides the user's value even on a focused text control.
@@ -1539,6 +1555,7 @@ export interface Methods {
   'view.event': { kind: 'request'; direction: 'clientToHost'; params: ViewEvent; result: EventAck }
   'state.set': { kind: 'request'; direction: 'clientToHost'; params: StateSet; result: WriteAck }
   'row.set': { kind: 'request'; direction: 'clientToHost'; params: RowSet; result: WriteAck }
+  'row.restore': { kind: 'request'; direction: 'clientToHost'; params: RowRestore; result: WriteAck }
   'source.set': { kind: 'request'; direction: 'clientToHost'; params: SourceSet; result: SourcePatch }
   'view.close': { kind: 'request'; direction: 'clientToHost'; params: ViewRef; result: null }
   'client.state': { kind: 'notification'; direction: 'clientToHost'; params: ClientState; result: never }
@@ -1558,5 +1575,5 @@ export interface Methods {
 export type MethodName = keyof Methods
 
 /** Method names by direction, for dispatch tables. */
-export const CLIENT_METHODS = ['session.hello', 'view.open', 'view.sync', 'view.event', 'state.set', 'row.set', 'source.set', 'view.close', 'client.state', 'view.resize', 'view.visibility', 'session.bye'] as const
+export const CLIENT_METHODS = ['session.hello', 'view.open', 'view.sync', 'view.event', 'state.set', 'row.set', 'row.restore', 'source.set', 'view.close', 'client.state', 'view.resize', 'view.visibility', 'session.bye'] as const
 export const HOST_METHODS = ['view.tree', 'view.ops', 'data.patch', 'client.set', 'view.command', 'view.error', 'view.closed', 'theme.set'] as const

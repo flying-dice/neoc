@@ -298,14 +298,50 @@ wire! {
         pub base_rev: u32,
     }
 
+    /// What the host did with a two-way write: the client needs it to tell a merge from a refusal.
+    #[serde(rename_all = "camelCase")]
+    pub enum WriteResolution {
+        /// Based on the current revision: written as sent.
+        Accepted,
+        /// Based on an older revision; the edits composed and nothing was lost.
+        Merged,
+        /// The human's value replaced a newer one; the replaced value is kept (see `undo`).
+        Replaced,
+        /// A strict source refused a stale write: the client adopts `value` and shows the error state.
+        Rejected,
+    }
+
+    /// What a client needs to offer Undo for a write that replaced something: the lost value and the kept
+    /// revision it can ask the host to restore (`row.restore`).
+    #[serde(rename_all = "camelCase")]
+    pub struct Undo {
+        pub revision_id: u32,
+        /// The value that was replaced (the agent's text, the previous scalar).
+        pub lost: Value,
+    }
+
     /// The ack of a write: the authoritative value (it may differ from what was sent after a merge).
     pub struct WriteAck {
         pub rev: u32,
         pub value: Value,
+        pub resolution: WriteResolution,
         /// `true` when the write overlapped a newer change (the human won, or the write was rejected).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[cfg_attr(feature = "codegen", ts(optional))]
         pub conflict: Option<bool>,
+        /// Present when `resolution` is `replaced`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "codegen", ts(optional))]
+        pub undo: Option<Undo>,
+    }
+
+    /// `row.restore` params: Undo, put a kept revision back (the human wins; what it replaces is kept in turn).
+    #[serde(rename_all = "camelCase")]
+    pub struct RowRestore {
+        pub view_id: String,
+        pub source: String,
+        pub key: Value,
+        pub revision_id: u32,
     }
 
     pub struct Range {
@@ -390,6 +426,11 @@ wire! {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[cfg_attr(feature = "codegen", ts(optional))]
         pub sources: Option<BTreeMap<String, SourcePatch>>,
+        /// Sources a re-render started to use (they were not in the snapshot): declared here, with their first
+        /// window in `sources`, before the ops that reference them.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "codegen", ts(optional))]
+        pub declare: Option<BTreeMap<String, SourceDecl>>,
     }
 
     /// `client.set`: the app drives client-managed state (open this note, push this route).
@@ -571,6 +612,7 @@ pub const METHODS: &[MethodSpec] = &[
     ),
     request("state.set", "StateSet", "WriteAck", "Two-way write to a server state path."),
     request("row.set", "RowSet", "WriteAck", "Two-way write to a field of a bound row."),
+    request("row.restore", "RowRestore", "WriteAck", "Undo: restore a kept revision of a bound field."),
     request("source.set", "SourceSet", "SourcePatch", "Change a source's params and/or its visible window."),
     request("view.close", "ViewRef", "null", "Flush drafts, then destroy the instance."),
     from_client("client.state", "ClientState", "Mirror of synced and persisted client entries."),
@@ -664,6 +706,7 @@ pub enum ClientRequest {
     ViewEvent(ViewEvent),
     StateSet(StateSet),
     RowSet(RowSet),
+    RowRestore(RowRestore),
     SourceSet(SourceSet),
     ViewClose(ViewRef),
 }
@@ -681,6 +724,7 @@ impl ClientRequest {
             "view.event" => Self::ViewEvent(parse(method, params)?),
             "state.set" => Self::StateSet(parse(method, params)?),
             "row.set" => Self::RowSet(parse(method, params)?),
+            "row.restore" => Self::RowRestore(parse(method, params)?),
             "source.set" => Self::SourceSet(parse(method, params)?),
             "view.close" => Self::ViewClose(parse(method, params)?),
             other => return Err(ParseError::UnknownMethod(other.to_owned())),
@@ -696,6 +740,7 @@ impl ClientRequest {
             Self::ViewEvent(_) => "view.event",
             Self::StateSet(_) => "state.set",
             Self::RowSet(_) => "row.set",
+            Self::RowRestore(_) => "row.restore",
             Self::SourceSet(_) => "source.set",
             Self::ViewClose(_) => "view.close",
         }

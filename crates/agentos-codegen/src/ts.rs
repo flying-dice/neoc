@@ -8,10 +8,11 @@ use agentos_domain::ui::{
     expr::Func,
     node::{Action, Handler, Node},
     protocol::{
-        ClientSet, ClientState, Command, DataPatch, Draft, Empty, EventAck, Op, Range, ResumeView, RowSet,
-        SessionHello, SessionResume, SessionWelcome, Size, SourcePatch, SourceSet, StateSet, StateValue,
-        TextSplice, ThemeSet, ThreadAppend, Toast, ViewClosed, ViewCommand, ViewError, ViewEvent, ViewOpen,
-        ViewOps, ViewRef, ViewResize, ViewResume, ViewSnapshot, ViewTree, ViewVisibility, WriteAck, METHODS,
+        ClientSet, ClientState, Command, DataPatch, Draft, Empty, EventAck, Op, Range, ResumeView,
+        RowRestore, RowSet, SessionHello, SessionResume, SessionWelcome, Size, SourcePatch, SourceSet,
+        StateSet, StateValue, TextSplice, ThemeSet, ThreadAppend, Toast, Undo, ViewClosed, ViewCommand,
+        ViewError, ViewEvent, ViewOpen, ViewOps, ViewRef, ViewResize, ViewResume, ViewSnapshot, ViewTree,
+        ViewVisibility, WriteAck, WriteResolution, METHODS,
     },
     source::{ClientDecl, ConflictPolicy, Persist, SourceDecl, SyncMode, TotalMode},
     spec::{
@@ -106,7 +107,10 @@ fn protocol() -> String {
     add(EventAck::decl(&cfg));
     add(StateSet::decl(&cfg));
     add(RowSet::decl(&cfg));
+    add(WriteResolution::decl(&cfg));
+    add(Undo::decl(&cfg));
     add(WriteAck::decl(&cfg));
+    add(RowRestore::decl(&cfg));
     add(Range::decl(&cfg));
     add(SourceSet::decl(&cfg));
     add(ClientState::decl(&cfg));

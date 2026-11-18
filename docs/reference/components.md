@@ -1527,6 +1527,7 @@ JSON-RPC 2.0 over `/rpc`, by-name params objects.
 | `view.event` | client to host | request | `ViewEvent` | `EventAck` | A user event. The ack arrives after every op and patch it caused. |
 | `state.set` | client to host | request | `StateSet` | `WriteAck` | Two-way write to a server state path. |
 | `row.set` | client to host | request | `RowSet` | `WriteAck` | Two-way write to a field of a bound row. |
+| `row.restore` | client to host | request | `RowRestore` | `WriteAck` | Undo: restore a kept revision of a bound field. |
 | `source.set` | client to host | request | `SourceSet` | `SourcePatch` | Change a source's params and/or its visible window. |
 | `view.close` | client to host | request | `ViewRef` | `null` | Flush drafts, then destroy the instance. |
 | `client.state` | client to host | notification | `ClientState` |  | Mirror of synced and persisted client entries. |

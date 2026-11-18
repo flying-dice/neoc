@@ -11,7 +11,7 @@ type Fn = { ["$fn"]: string, args: { any } }
 type Expr<T> = T | Ref<T> | Fn
 type Source = { ["$source"]: string }
 type RowRefs = { [string]: Ref<any> }
-type Actor = { name: string, kind: ("human" | "agent") }
+type Actor = { name: string, kind: ("user" | "agent") }
 type EventArg<P> = { key: any, row: any, value: any, payload: P, actor: Actor }
 type Action = { ["do"]: string, [string]: any }
 type Handler<P> = ((e: EventArg<P>) -> ()) | Action | { Action | ((e: EventArg<P>) -> ()) }
@@ -36,7 +36,7 @@ type ClientDecl = { init: (any)?, persist: (Persist)?, sync: (SyncMode)?, type: 
 
 -- ── The `app` module ────────────────────────────────────────────────────────────────────────────────────────
 -- `local app = require("@agentos/app")` in app code. The host provides it natively (one VM per app); it is also a
--- global named `app` for the legacy entry points. Plain table types, not `declare class`: the `class` keyword
+-- global named `app`. Plain table types, not `declare class`: the `class` keyword
 -- changed meaning in newer Luau releases, while aliases parse the same in every luau-lsp version.
 
 type Json = any
@@ -107,6 +107,7 @@ type ExecResult = { changes: number, last_insert_id: number }
 
 type SqlParams = { [string]: any }
 
+-- `key` defaults to "id". A windowed query (`page`) needs a total order: end its `order by` with the key.
 type QueryOptions = { key: string?, page: number?, total: ("exact" | "estimate" | "none")? }
 
 type WriteContext = { now: string, actor: Actor }
@@ -116,6 +117,8 @@ type RowOptions = {
 	rev: string?,
 	write: ((key: any, field: string, value: any, ctx: WriteContext) -> ())?,
 	conflict: ("merge" | "reject")?,
+	-- the fields a two-way binding may write (default: any)
+	writable: { string }?,
 }
 
 -- A live source handle. The SQL never leaves the host; the tree carries only the source id.
@@ -134,13 +137,23 @@ type Db = {
 	exec: (self: Db, sql: string, params: SqlParams?) -> ExecResult,
 	all: (self: Db, sql: string, params: SqlParams?) -> { { [string]: any } },
 	one: (self: Db, sql: string, params: SqlParams?) -> { [string]: any }?,
-	tx: (self: Db, body: () -> ()) -> (),
+	-- the statements inside commit together or not at all; open views see one consistent change
+	tx: <T...>(self: Db, body: () -> T...) -> T...,
 	query: (self: Db, sql: string, options: QueryOptions?) -> (params: SqlParams?) -> RowsSource,
 	row: (self: Db, sql: string, options: RowOptions?) -> (params: SqlParams?) -> RowSource,
 	scalar: (self: Db, sql: string) -> (params: SqlParams?) -> ScalarSource,
 }
 
-type SchemaOptions = { description: string?, default: any?, min: number?, max: number? }
+-- A field is required unless it is `optional` or has a `default`.
+type SchemaOptions = {
+	description: string?,
+	default: any?,
+	min: number?,
+	max: number?,
+	minLength: number?,
+	maxLength: number?,
+	optional: boolean?,
+}
 
 type Schema = { __schema: string }
 
@@ -165,6 +178,7 @@ type ToolDef = {
 	title: string?,
 	description: string?,
 	input: { [string]: Schema }?,
+	-- a hint to agents that the tool does not change data
 	readOnly: boolean?,
 	run: (input: any, ctx: ToolContext) -> any,
 }
@@ -176,47 +190,38 @@ type Timers = {
 	every: (seconds: number, body: () -> ()) -> (),
 }
 
--- ── Legacy (agentos-luau before wave A4): removed when the host drops `app.data`, `app.tools`, `app.on` ─────────
-type LegacyExec = { changes: number, last_insert_rowid: number }
+type MenuCommand = { id: string, title: string, shortcut: string?, run: () -> () }
 
-type LegacyData = {
-	query: (sql: string, params: { Json }?) -> { { [string]: Json } },
-	exec: (sql: string, params: { Json }?) -> LegacyExec,
+-- The desktop shell's side of the app: declarations only until the shell implements them.
+type Shell = {
+	-- a string, a number (0 clears) or nil
+	badge: (value: (string | number)?) -> (),
+	command: (def: MenuCommand) -> (),
+	-- e.g. "note/:id"
+	deepLink: (pattern: string, handler: (params: { [string]: string }) -> ()) -> (),
 }
 
-type LegacyToolDef = {
-	name: string,
-	description: string?,
-	input_schema: { [string]: Json },
-	handler: (args: any) -> any,
-}
-
-type LegacyTools = { register: (def: LegacyToolDef) -> () }
-
-type LegacyState = {
-	get: (key: string) -> Json,
-	set: (key: string, value: Json) -> (),
-}
+type ToolRegistry = { register: (def: ToolDef) -> () }
 
 type AppApi = {
 	manifest: (manifest: Manifest) -> (),
 	window: (name: string, spec: WindowSpec) -> (),
 	-- shared, in-memory server state: reads in render are tracked, assignments schedule a re-render
-	state: (<T>(initial: T) -> T) & LegacyState,
+	state: <T>(initial: T) -> T,
 	kv: KvApi,
 	db: Db,
 	tool: (def: ToolDef) -> (),
 	t: SchemaBuilders,
 	openWindow: (self: AppApi, name: string, params: { [string]: any }?) -> (),
 	windows: (self: AppApi, name: string) -> { WindowContext },
-	notify: ((notification: { title: string, body: string? }) -> ()) & ((self: AppApi, notification: Notification) -> ()),
+	-- `app.notify { ... }` or `app:notify { ... }`
+	notify: ((notification: Notification) -> ()) & ((self: AppApi, notification: Notification) -> ()),
+	shell: Shell,
 	timer: Timers,
 	log: (message: string) -> (),
-	-- legacy
 	id: string,
-	data: LegacyData,
-	tools: LegacyTools,
-	on: (event: string, handler: (payload: any) -> any) -> (),
+	-- the same as `app.tool`
+	tools: ToolRegistry,
 }
 
 declare app: AppApi

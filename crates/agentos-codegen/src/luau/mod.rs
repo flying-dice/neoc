@@ -24,7 +24,7 @@ pub(crate) const CORE: &str = r#"{E}type Ref<T> = { ["$ref"]: string, __phantom:
 {E}type Expr<T> = T | Ref<T> | Fn
 {E}type Source = { ["$source"]: string }
 {E}type RowRefs = { [string]: Ref<any> }
-{E}type Actor = { name: string, kind: ("human" | "agent") }
+{E}type Actor = { name: string, kind: ("user" | "agent") }
 {E}type EventArg<P> = { key: any, row: any, value: any, payload: P, actor: Actor }
 {E}type Action = { ["do"]: string, [string]: any }
 {E}type Handler<P> = ((e: EventArg<P>) -> ()) | Action | { Action | ((e: EventArg<P>) -> ()) }

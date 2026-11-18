@@ -132,8 +132,31 @@ fn write_backs_carry_base_rev_and_acks_carry_conflicts() {
         &json!({ "viewId": "v1", "path": "draft.title", "value": "x", "baseRev": 3 }),
     );
     round_trip(
-        &WriteAck { rev: 11, value: json!("Milk\n- buy oat milk"), conflict: Some(false) },
-        &json!({ "rev": 11, "value": "Milk\n- buy oat milk", "conflict": false }),
+        &WriteAck {
+            rev: 11,
+            value: json!("Milk\n- buy oat milk"),
+            resolution: WriteResolution::Merged,
+            conflict: Some(false),
+            undo: None,
+        },
+        &json!({ "rev": 11, "value": "Milk\n- buy oat milk", "resolution": "merged", "conflict": false }),
+    );
+    round_trip(
+        &WriteAck {
+            rev: 12,
+            value: json!("Mine"),
+            resolution: WriteResolution::Replaced,
+            conflict: Some(true),
+            undo: Some(Undo { revision_id: 4, lost: json!("Theirs") }),
+        },
+        &json!({
+            "rev": 12, "value": "Mine", "resolution": "replaced", "conflict": true,
+            "undo": { "revisionId": 4, "lost": "Theirs" }
+        }),
+    );
+    round_trip(
+        &RowRestore { view_id: "v1".into(), source: "s_note".into(), key: json!(7), revision_id: 4 },
+        &json!({ "viewId": "v1", "source": "s_note", "key": 7, "revisionId": 4 }),
     );
 }
 
@@ -169,6 +192,7 @@ fn data_patches() {
             )]
             .into(),
         ),
+        declare: None,
     };
     let wire = serde_json::to_value(&patch).unwrap();
     assert_eq!(wire["state"]["state.display"], json!({ "v": "7", "r": 3 }));
@@ -333,7 +357,7 @@ fn the_method_table_has_unique_namespaced_names() {
         assert!(m.name.contains('.'), "{} is not namespaced", m.name);
         assert_eq!(m.result.is_some(), m.kind == MethodKind::Request, "{}", m.name);
     }
-    assert_eq!(METHODS.iter().filter(|m| m.kind == MethodKind::Request).count(), 8);
+    assert_eq!(METHODS.iter().filter(|m| m.kind == MethodKind::Request).count(), 9);
     assert_eq!(method("view.ops").map(|m| m.direction), Some(Direction::HostToClient));
     assert!(method("nope").is_none());
 }
@@ -350,6 +374,7 @@ fn sample(method: &str) -> Value {
         "row.set" => {
             json!({ "viewId": "v1", "source": "s", "key": 1, "field": "f", "value": 1, "baseRev": 0 })
         }
+        "row.restore" => json!({ "viewId": "v1", "source": "s", "key": 1, "revisionId": 1 }),
         "source.set" => json!({ "viewId": "v1", "source": "s" }),
         "client.state" => json!({ "viewId": "v1", "set": {} }),
         "view.resize" => json!({ "viewId": "v1", "size": { "w": 1, "h": 1 }, "sizeClass": "compact" }),

@@ -1,8 +1,6 @@
 //! The JSON-RPC 2.0 envelope of the `/rpc` socket. The view protocol's methods and messages live in
-//! [`crate::ui::protocol`]; the three typed params at the bottom are the spike's, kept until wave A4.
+//! [`crate::ui::protocol`].
 
-use crate::ui::{UiEvent, UiNode, UiPatch};
-use crate::AppId;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -73,27 +71,6 @@ impl RpcMessage {
             error: RpcError { code, message: message.into(), data: None },
         }
     }
-}
-
-// --- the spike's typed params (client <-> host), replaced by `ui::protocol` in wave A4 ---
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
-pub struct DispatchUiEvent {
-    pub app: AppId,
-    pub event: UiEvent,
-}
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
-pub struct UiTree {
-    pub app: AppId,
-    pub root: UiNode,
-}
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
-pub struct UiPatches {
-    pub app: AppId,
-    pub patches: Vec<UiPatch>,
 }
 
 #[cfg(test)]
