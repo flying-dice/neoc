@@ -94,7 +94,7 @@ pub struct Requires {
 impl Manifest {
     /// Self-consistency of the package manifest (before anything is fetched).
     pub fn validate(&self) -> Result<(), DomainError> {
-        if !self.main.ends_with(".lua") {
+        if std::path::Path::new(&self.main).extension().is_none_or(|e| e != "lua") {
             return Err(DomainError::InvalidManifest(format!(
                 "main must be the built Lua 5.1 file (ending in `.lua`), not `{}`; build the app with `bun run build:apps`",
                 self.main

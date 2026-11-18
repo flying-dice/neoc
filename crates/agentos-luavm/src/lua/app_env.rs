@@ -23,7 +23,10 @@
 //! The string metatable is a different matter: it is shared by every string in the engine, and
 //! [`make_bare_engine`](crate::lua::sandbox::make_bare_engine) locks it.
 
+use std::sync::Arc;
+
 use mlua::{Lua, Table, Value};
+use parking_lot::Mutex;
 
 /// Base functions a script gets, copied from the engine's globals (after `pcall`/`xpcall` were replaced
 /// by their yield-safe versions). `rawset` is installed by [`freeze`], not copied.
@@ -75,10 +78,61 @@ pub fn new_env(lua: &Lua) -> mlua::Result<Table> {
         let library: Table = globals.raw_get(*name)?;
         env.raw_set(*name, copy(lua, &library)?)?;
     }
+    install_private_random(lua, &env.raw_get::<Table>("math")?)?;
     let coroutine: Table = env.raw_get("coroutine")?;
     install_async_coroutines(lua, &coroutine, &globals.raw_get::<Table>("coroutine")?)?;
     env.raw_set("_G", env.clone())?;
     Ok(env)
+}
+
+/// `math.random` and `math.randomseed` over a generator of the script's own. The C library's `rand` is one
+/// state shared by every VM in the process: one script's `math.randomseed(42)` would make every other script's
+/// numbers predictable, and an unseeded state gives the same numbers on every start. Seeded from the operating
+/// system, xorshift64*; not for secrets (scripts get no source of those).
+fn install_private_random(lua: &Lua, math: &Table) -> mlua::Result<()> {
+    let mut seed = [0u8; 8];
+    getrandom::fill(&mut seed)
+        .map_err(|e| mlua::Error::runtime(format!("operating system random source failed: {e}")))?;
+    let state = Arc::new(Mutex::new(splitmix(u64::from_le_bytes(seed))));
+    let next = |state: &Mutex<u64>| {
+        let mut x = state.lock();
+        *x ^= *x >> 12;
+        *x ^= *x << 25;
+        *x ^= *x >> 27;
+        x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+    };
+    let source = state.clone();
+    let random = lua.create_function(move |_, (m, n): (Option<f64>, Option<f64>)| {
+        let bits = next(&source);
+        let (low, high) = match (m, n) {
+            (None, _) => return Ok((bits >> 11) as f64 / (1u64 << 53) as f64), // [0, 1)
+            (Some(upper), None) => (1.0, upper.trunc()),
+            (Some(lower), Some(upper)) => (lower.trunc(), upper.trunc()),
+        };
+        if low > high {
+            let position = if n.is_some() { 2 } else { 1 };
+            return Err(mlua::Error::runtime(format!(
+                "bad argument #{position} to 'random' (interval is empty)"
+            )));
+        }
+        // the span of [low, high] as an exact integer, and a draw reduced into it (the bias is below 2^-32)
+        let span = (high - low) as u128 + 1;
+        Ok(low + (u128::from(bits) % span) as f64)
+    })?;
+    let reseed = lua.create_function(move |_, seed: f64| {
+        *state.lock() = splitmix(seed.to_bits());
+        Ok(())
+    })?;
+    math.raw_set("random", random)?;
+    math.raw_set("randomseed", reseed)
+}
+
+/// A well-mixed non-zero xorshift state from any 64 bits.
+fn splitmix(x: u64) -> u64 {
+    let mut z = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    (z ^ (z >> 31)) | 1
 }
 
 /// Replace `resume` and `wrap` in the script's copy of `coroutine` with versions that let an async host call
@@ -310,6 +364,39 @@ mod tests {
             .expect_err("bytecode")
             .to_string();
         assert!(err.contains("binary"), "{err}");
+    }
+
+    #[test]
+    fn math_random_is_private_to_each_environment() {
+        let a = Rig::new();
+        let b = Rig::new();
+        // the same seed gives the same run, and seeding another script's generator changes nothing here
+        a.run("math.randomseed(42)").unwrap();
+        let first = a.string("return tostring(math.random(1, 1000000))");
+        a.run("math.randomseed(42)").unwrap();
+        b.run("math.randomseed(7)").unwrap();
+        assert_eq!(a.string("return tostring(math.random(1, 1000000))"), first);
+        // unseeded environments differ (a shared or fixed seed would repeat)
+        let draw = || Rig::new().string("return tostring(math.random(1, 1e15))");
+        assert_ne!(draw(), draw());
+    }
+
+    #[test]
+    fn math_random_has_the_lua_5_1_shape() {
+        let rig = Rig::new();
+        let out = rig.string(
+            "local lo, hi = 1, 0
+             for _ = 1, 2000 do
+               local f = math.random() if f < 0 or f >= 1 then return 'float ' .. f end
+               local a = math.random(6) if a < 1 or a > 6 or a ~= math.floor(a) then return 'one ' .. a end
+               local b = math.random(-3, 3) if b < -3 or b > 3 or b ~= math.floor(b) then return 'two ' .. b end
+               if b == -3 then lo = 0 elseif b == 3 then hi = 1 end
+             end
+             local ok1, e1 = pcall(math.random, 0)
+             local ok2, e2 = pcall(math.random, 5, 1)
+             return (lo == 0 and hi == 1 and 'edges' or 'no edges') .. tostring(ok1) .. tostring(ok2) .. tostring(e1) .. tostring(e2)",
+        );
+        assert!(out.starts_with("edgesfalsefalse") && out.contains("interval is empty"), "{out}");
     }
 
     #[test]

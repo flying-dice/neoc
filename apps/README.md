@@ -1,13 +1,13 @@
 # Building AgentOS apps
 
-An AgentOS app is a **server-side Luau package** that runs inside the Rust host. It holds its state, data, tools,
+An AgentOS app is a **server-side package, authored in Luau and run as Lua 5.1**, that runs inside the Rust host. It holds its state, data, tools,
 notifications and a description of its UI. It ships no client code: the managed client renders the view trees the app
 produces and sends events back.
 
 ```
  Browser: managed client                         Rust host (crates/agentos-host)
  ┌──────────────────────────────┐  JSON-RPC/WS   ┌─────────────────────────────────────────┐
- │ shell: windows, Dock         │◀──── /rpc ────▶│ one sandboxed Luau VM per app           │
+ │ shell: windows, Dock         │◀──── /rpc ────▶│ one sandboxed Lua 5.1 VM per app        │
  │ renderer: view trees → kit   │                │   app.window → view tree → client       │
  │ client state, drafts         │  AG-UI / SSE   │   app.db / app.kv  (per-app SQLite)     │
  │ no app code, ever            │◀──── /agui ────│   app.tool ──▶ /mcp ◀── agents          │
@@ -76,6 +76,9 @@ file; the `.luau` sources are not shipped. Two things to know when writing an ap
 (not `for k, v in t do`: darklua cannot lower it), and use only the Luau library members `lua/prelude.luau` provides
 on Lua 5.1 (`typeof`, `table.clone`, `table.move`, `table.pack`, `table.unpack`, `utf8.*`); `bun test scripts` fails
 on `table.find`, `math.clamp`, `bit32`, `buffer` and the like. `darklua` 0.18.0 must be installed (see AGENTS.md).
+The bundle keeps each statement on its Luau line (`retain_lines`), so an error at `app.lua:N` is line N of `app.luau`
+for an app with no relative `require`; an app with modules is shifted by the size of the modules bundled before it
+(the Calculator: `calc.luau` +2, `app.luau` +183).
 
 - **A registry** is a list of app-ref URLs. The host's default registry is `dist/apps/registry.json` over `file://`
   when it exists; `registries` in `agentos.toml` (or `AGENTOS_REGISTRIES`) adds more. Discover lists what they offer.
@@ -86,9 +89,10 @@ on `table.find`, `math.clamp`, `bit32`, `buffer` and the like. `darklua` 0.18.0 
 - **Lifecycle:** install, enable, disable (VM unloaded, tools withdrawn, data kept), delete data, uninstall. At start
   the host re-fetches and re-verifies every installed app. An app that fails to load is marked failed and the rest
   start. All of it is in `docs/architecture/host-stack.md` ("Apps: lifecycle").
-- **Dev loop:** `bun run dev` builds the apps, starts the host with `dev_reload` and Vite. Save a `.luau` file, run
-  `bun run build:apps`: the host rebuilds that app's VM and keeps its database (the old version keeps running if the new
-  one does not load).
+- **Dev loop:** `bun run dev` builds the apps, starts the host with `dev_reload` and Vite, and **watches `apps/**`**
+  (`*.luau`, `app.json`, migrations): save a file and it re-runs `build:apps`; the host (which cannot run darklua)
+  watches the built refs under `dist/apps`, rebuilds that app's VM and keeps its database (the old version keeps
+  running if the new one does not load).
 
 ## The `app` API
 
@@ -98,10 +102,12 @@ An app file starts like this (the Calculator):
 --!strict
 local app = require("@agentos/app")   -- the host module; also a global named `app`
 local ui = require("@agentos/ui")     -- component constructors and helpers, generated from the component schema
-local calc = require("./calc")        -- a module of this package: require is bundle-only
+local calc = require("./calc")        -- a module of this package: inlined into the bundle at build time
 ```
 
-`require` accepts `./x`, `../x`, `@agentos/app` and `@agentos/ui`: nothing else, and never the filesystem. The
+In the source, `require` accepts `./x`, `../x` (bundled into the one built file when the app is built), `@agentos/app`
+and `@agentos/ui`. At run time the built file can `require` only `@agentos/app` and `@agentos/ui`: nothing else, and never
+the filesystem (`require("./x")` in a running app is an error that says so). The
 definitions in `types/generated/agentos.d.luau` are the contract; `bun run lint:luau` type-checks every app against
 them in strict mode.
 
@@ -254,16 +260,32 @@ SQLite (`apps/agents/app.luau`).
 
 ## Security
 
-- **Sandbox.** One Luau VM per app, `sandbox(true)`: builtins read-only, no `io`, `os.execute`, `dofile` or `debug`, no
-  filesystem `require`, no network. A **memory limit** (16 MiB by default) and a **CPU budget** per call (`Limits::cpu_ticks`, 5 000 000
-  VM interrupts, about 250 ms of Luau on an idle machine, so a loaded host does not trip it; a 10 s wall-clock
-  backstop, `cpu_wall`, catches the rest; sticky so `pcall` cannot swallow it; time waiting on the host does not count) kill a
-  runaway app, not the host. A **per-call budget** that host calls do not refill (25 000 000 ticks, 30 s including host
-  waits) stops a loop of host calls; at most 32 effects (notifications, windows, shell commands) per call; values
-  leaving Luau are capped at 100 000 nodes and 4 MiB and may not contain cycles (view trees: 10 000 nodes, depth 64).
-  Queries return at most 10 000 rows and 16 MiB; BLOBs come out as base64 text. `loadstring`, `getfenv` and
-  `setfenv` are not available. A blocking host call has its own timeout. SQL `ATTACH` is denied and a statement past
-  its wall-clock budget is interrupted.
+- **Sandbox.** One Lua 5.1 VM per app, and one **environment table** per app (its globals are its own; two apps share
+  nothing). The base functions are an allow-list: no `load`, `loadstring`, `dofile`, `loadfile`, `getfenv`, `setfenv`,
+  `newproxy`, `module`, `collectgarbage`, `print`, no `string.dump`, no `io`, `os`, `debug` or `package`, and `require`
+  loads only `@agentos/app` and `@agentos/ui`; no filesystem, no network. Chunks load as text only (Lua 5.1 bytecode is
+  unverified). `string`, `table`, `math`, `coroutine`, `bit` and `utf8` are **read-only**: assigning to one, `rawset` on
+  one, `setmetatable` on one and `getmetatable("")` (the shared string metatable is locked) all fail, so an app cannot
+  change what other code in its VM sees. `math.random` has a generator of its own per VM, seeded by the host (the C
+  library's is one state shared by every app, which `math.randomseed` could steer). A **memory limit** (16 MiB by default) and a **CPU budget** per call
+  (`Limits::cpu_ticks`, 500 000 ticks of 100 VM instructions each, a fraction of a second on an idle machine, so a
+  loaded host does not trip it; a 10 s wall-clock backstop, `cpu_wall`, catches the rest; sticky so `pcall` cannot
+  swallow it; the budget also binds inside coroutines; time waiting on the host does not count) kill a runaway app, not
+  the host. **Pattern matching cannot hang the host:** the C pattern matcher cannot be interrupted, so `string.find`,
+  `match`, `gmatch` and `gsub` (and `string.rep`) run in host code that charges the same CPU budget, stops at a recursion
+  depth of 200 (`pattern too complex`) and caps what it builds. A **per-call budget** that host calls do not refill
+  (2 500 000 ticks, 30 s including host waits) stops a loop of host calls; at most 32 effects (notifications, windows,
+  shell commands) per call; values leaving Lua are capped at 100 000 nodes and 4 MiB and may not contain cycles (view
+  trees: 10 000 nodes, depth 64). Queries return at most 10 000 rows and 16 MiB; BLOBs come out as base64 text. A
+  blocking host call has its own timeout. SQL `ATTACH` is denied and a statement past its wall-clock budget is
+  interrupted.
+- **Lua 5.1 limits to write around.** A host call (`app.db:*`, `app.kv:*`) may be made inside `pcall`, inside a
+  coroutine and in any handler, but not where Lua 5.1 cannot yield: a `table.sort` comparator, a `string.gsub` callback,
+  a metamethod or the iterator function of a `for ... in` (it fails with "attempt to yield across metamethod/C-call
+  boundary"). `return app.db:all(...)` (a tail call) loses the line number in an error message. `pairs` and `next` of
+  a library table (`pairs(string)`) see nothing. An error raised by a host function (`app.db`, `app.kv`, and the
+  string functions `find`, `match`, `gmatch`, `gsub`, `rep`, and `math.random`, which the host implements) reaches a
+  `pcall` as an error object, not a plain string: write `tostring(err)` before concatenating or matching it.
 - **Permissions** are what `app.json` declares and the user confirmed at install; the host checks them at each call
   (`permission denied: app.notify needs the notify permission in the package manifest`), so an app cannot grant itself
   more by editing its manifest call.

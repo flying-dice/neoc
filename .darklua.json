@@ -1,10 +1,13 @@
 {
-  "generator": "readable",
+  "generator": "retain_lines",
   "bundle": {
     "require_mode": "path",
-    "excludes": ["@agentos/*"]
+    "excludes": [
+      "@agentos/*"
+    ]
   },
   "rules": [
+    "remove_comments",
     "remove_types",
     "remove_attribute",
     "remove_interpolated_string",

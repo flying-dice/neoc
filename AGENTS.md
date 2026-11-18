@@ -6,9 +6,10 @@ AgentOS is an iPadOS-style virtual desktop for agents. It has three parts:
   data, serves the client, and speaks JSON-RPC 2.0 over WebSocket at `/rpc`, AG-UI over HTTP + SSE at `/agui` (agent
   chats), MCP at `/mcp` (the tools agents call) and ACP to the agent processes it launches. It binds the LAN and every
   client must pair as a device first.
-- **The apps** (`apps/<id>/`): server-side **Luau** (`app.json` + `*.luau`), one sandboxed VM per app, loaded from an
-  app ref over `file://`, `http://` or `https://`. An app holds its state, data, tools, notifications and UI
-  description. Examples: `apps/calculator`, `apps/agents`.
+- **The apps** (`apps/<id>/`): server-side code **authored in Luau** (`app.json` + `*.luau`, type-checked strict) and
+  **run as Lua 5.1**: `bun run build:apps` turns an app into one bundled `app.lua` with darklua, and the host runs that
+  in one sandboxed VM per app, loaded from an app ref over `file://`, `http://` or `https://`. An app holds its state,
+  data, tools, notifications and UI description. Examples: `apps/calculator`, `apps/agents`.
 - **The client** (`client/`): a managed Vite + Svelte 5 PWA. It renders the view trees the host sends with the kit in
   `packages/ui` (atomic layers) through adapters in `client/src/view/`, holds client-managed state, and
   runs **no app code**.
@@ -73,17 +74,21 @@ A change is done when all of these hold:
 - **Crate dependency direction** (hexagonal; inward only): `agentos-domain` is pure and depends on no other crate;
   `agentos-application` (ports and use cases) depends on domain; each adapter (`luau`, `sqlite`, `mcp`, `acp`, `agui`,
   `fetch`, `http`, `codegen`) depends on application and domain and **never on another adapter**; `agentos-host` is the
-  composition root and the only crate that sees them all. Enforced by `bun run lint:deps` (`scripts/check-deps.ts`,
+  composition root and the only crate that sees them all. `agentos-luavm` is a support library, not an adapter: the
+  sandboxed Lua 5.1 VM (mlua, vendored), depending on no other crate here. Only the `luau` adapter may depend on it (it
+  reaches mlua through luavm's re-export, so mlua stays in one crate). Enforced by `bun run lint:deps` (`scripts/check-deps.ts`,
   an allow-list over `cargo metadata`) and `cargo deny check` (`deny.toml`: each framework crate is pinned to its
   adapter). A new crate must be placed in the allow-list on purpose.
 - **Rust hygiene** (`[workspace.lints]`): clippy pedantic with `-D warnings`; `unsafe_code` is forbidden;
   `unwrap`, `expect` and `panic!` are denied outside tests; `thiserror` in library crates, `anyhow` only in the host
   binary.
-- **The Luau sandbox is the app boundary.** An app reaches the host only through the `app` table
-  (`types/generated/agentos.d.luau`); it has no filesystem, no network, no `io`/`os`/`debug`, and `require` loads only
-  files of its own package. Its capabilities come from the `permissions` in its `app.json` (`data`, `notify`, `shell`,
-  `agents`) and are enforced in the host, not trusted from the app. Memory, CPU and host-call time are budgeted; SQL
-  `ATTACH` is denied. A tool declared `readOnly` really cannot write.
+- **The Lua sandbox is the app boundary.** An app is written in Luau and runs as Lua 5.1 in its own environment
+  table. It reaches the host only through the `app` table (`types/generated/agentos.d.luau`); it has no filesystem, no
+  network, no `io`/`os`/`debug`, no `load*`/`getfenv`/`setfenv`, its standard libraries are read-only, and `require`
+  loads only `@agentos/app` and `@agentos/ui` (everything else is bundled in at build time). Its capabilities come from
+  the `permissions` in its `app.json` (`data`, `notify`, `shell`, `agents`) and are enforced in the host, not trusted
+  from the app. Memory, CPU (a VM count hook, plus host-side pattern matching that is charged to the same budget) and
+  host-call time are budgeted; SQL `ATTACH` is denied. A tool declared `readOnly` really cannot write.
 - **The client runs no app code.** The renderer draws view trees and sends events; nothing executable crosses the
   wire. Kit knowledge of apps, and app knowledge in the client, are both bugs.
 - **Agent and tool output is untrusted:** render it as text. No `{@html}` or `innerHTML` for it (the only `{@html}` is

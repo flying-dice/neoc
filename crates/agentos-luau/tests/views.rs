@@ -17,7 +17,7 @@ use agentos_luau::{Limits, LuauRuntime};
 use agentos_sqlite::AppDb;
 use common::{agent_ctx, built_app, db, id};
 use serde_json::{json, Map, Value};
-use std::{collections::BTreeMap, path::Path, sync::Arc};
+use std::{path::Path, sync::Arc};
 
 fn obj(pairs: &[(&str, Value)]) -> Map<String, Value> {
     pairs.iter().map(|(k, v)| ((*k).to_owned(), v.clone())).collect()

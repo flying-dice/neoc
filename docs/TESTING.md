@@ -25,10 +25,16 @@ snapshots deliberately with `bun run test:e2e:update`, then open the changed PNG
 - **Domain** (`agentos-domain`): plain unit tests, no framework, no I/O.
 - **Application** (`agentos-application`): use cases tested against the in-memory port fakes in `agentos_application::testing`
   (`ManualClock`, `RecordingShell`, ...). Tests sit beside the code in `*_tests.rs`. No mocking library: write a fake.
-- **Adapters**: integration tests in `crates/<adapter>/tests/`, through the real library (Luau sandbox and limits,
-  SQLite migrations and live queries, MCP with an `rmcp` client, ACP against the scripted agent, `/rpc` with a
+- **Adapters**: integration tests in `crates/<adapter>/tests/`, through the real library (the Lua 5.1 sandbox and
+  limits, SQLite migrations and live queries, MCP with an `rmcp` client, ACP against the scripted agent, `/rpc` with a
   WebSocket client, fetch against a local server). The shipped apps are tested here too: `crates/agentos-luau/tests/calculator_app.rs`
-  loads `apps/calculator` under the real runtime and calls its tools.
+  builds `apps/calculator` with darklua and runs the bundle under the real runtime. The Luau apps and fixtures the Rust
+  tests run are built with the product's own pipeline (`scripts/lua51-build.ts`, which `crates/agentos-luau/tests/common`
+  and `crates/agentos-host/tests/common` call, so `bun` and `darklua` must be installed); inline snippets in those tests
+  are plain Lua 5.1, not Luau. `crates/agentos-luau/tests/lua51.rs` holds what is specific to running on Lua 5.1: the
+  sandbox and read-only libraries, the count hook in coroutines and async threads, the budgeted pattern functions, the
+  memory limit, and host calls under `pcall` and in coroutines. `agentos-luavm` has its own unit tests (the string
+  functions are compared with the C implementation on generated cases).
 - **Host** (`agentos-host/tests`): the real wiring on an ephemeral loopback port (`tests/common`), driven like a
   browser or an agent would: `/rpc`, `/agui`, `/mcp`, pairing, the Agents app.
 - Tests may use `unwrap`, `expect` and `panic!` (`clippy.toml`); an integration-test file with helpers carries

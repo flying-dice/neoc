@@ -14,49 +14,49 @@
 local select, unpack, type = select, unpack, type
 local raw_pcall = pcall
 local create, resume, yield, status, running =
-	coroutine.create, coroutine.resume, coroutine.yield, coroutine.status, coroutine.running
+  coroutine.create, coroutine.resume, coroutine.yield, coroutine.status, coroutine.running
 
 local function pack(...)
-	return { n = select("#", ...), ... }
+  return { n = select("#", ...), ... }
 end
 
 -- Resume `co` until it finishes or fails; `r` is the packed result of its first resume.
 local function drive(co, handler, r)
-	while true do
-		if not r[1] then
-			if handler then
-				local ok, shaped = raw_pcall(handler, r[2])
-				-- an erroring handler is "error in error handling", as in the built-in
-				return false, ok and shaped or "error in error handling"
-			end
-			return false, r[2]
-		end
-		if status(co) == "dead" then
-			return true, unpack(r, 2, r.n)
-		end
-		if not running() then
-			return false, "attempt to yield from outside a coroutine"
-		end
-		-- the protected function yielded: yield the same values outward, resume it with the answer
-		r = pack(resume(co, yield(unpack(r, 2, r.n))))
-	end
+  while true do
+    if not r[1] then
+      if handler then
+        local ok, shaped = raw_pcall(handler, r[2])
+        -- an erroring handler is "error in error handling", as in the built-in
+        return false, ok and shaped or "error in error handling"
+      end
+      return false, r[2]
+    end
+    if status(co) == "dead" then
+      return true, unpack(r, 2, r.n)
+    end
+    if not running() then
+      return false, "attempt to yield from outside a coroutine"
+    end
+    -- the protected function yielded: yield the same values outward, resume it with the answer
+    r = pack(resume(co, yield(unpack(r, 2, r.n))))
+  end
 end
 
 local function protected(f)
-	-- a closure, because `coroutine.create` only accepts Lua functions and `f` may be a host function
-	return create(function(...)
-		return f(...)
-	end)
+  -- a closure, because `coroutine.create` only accepts Lua functions and `f` may be a host function
+  return create(function(...)
+    return f(...)
+  end)
 end
 
 local function yieldable_pcall(f, ...)
-	local co = protected(f)
-	return drive(co, nil, pack(resume(co, ...)))
+  local co = protected(f)
+  return drive(co, nil, pack(resume(co, ...)))
 end
 
 local function yieldable_xpcall(f, handler, ...)
-	local co = protected(f)
-	return drive(co, handler, pack(resume(co, ...)))
+  local co = protected(f)
+  return drive(co, handler, pack(resume(co, ...)))
 end
 
 _G.pcall = yieldable_pcall

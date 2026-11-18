@@ -7,22 +7,26 @@ Everything below was built and run in this workspace (`rust-spike/`, rustc 1.98.
 The spikes were restructured into the proposed hexagonal layout (section "Workspace layout"), so the layout is proven by compiling code, not only drawn.
 ~3.5k lines of code in 11 crates; the host binary is 5.5 MiB (release, stripped).
 
-**Verdict: the stack works end to end. Recommend it as decided.** One test (`crates/agentos-host/tests/e2e.rs`) installs a Luau app from a `file://` app ref over `/rpc`, calls its tool from an `rmcp` client with a per-agent bearer token, shows `app.notify` reaching the UI socket, round-trips a UI event to a new view tree, uninstalls, and sees `tools/list_changed`.
+**Verdict: the stack works end to end. Recommend it as decided.** One test (`crates/agentos-host/tests/e2e.rs`) installs a Lua 5.1 app from a `file://` app ref over `/rpc`, calls its tool from an `rmcp` client with a per-agent bearer token, shows `app.notify` reaching the UI socket, round-trips a UI event to a new view tree, uninstalls, and sees `tools/list_changed`.
 
 ## Answers per question
 
-### 1. Luau via `mlua 0.12.2` (Luau 0.740, `luau0-src 0.22`) — `crates/agentos-luau`, tests `tests/vm.rs`
-Features `luau, async, serialize, send`. Proven (all in `tests/vm.rs`, 9 tests):
-- **One VM per app**, `lua.sandbox(true)` (builtins readonly, per-app globals; `io`/`os.execute`/`dofile`/`debug.getregistry` absent; two VMs have independent globals).
-- **Memory limit** `set_memory_limit` (4 MiB test: bomb dies with `memory error`, VM stays usable).
-- **CPU budget** via `set_interrupt`, counted in interrupts (Lua calls and loop iterations; 5 million by default, about 250 ms on an idle machine) rather than wall-clock time, so a loaded machine cannot trip an honest call; a generous wall-clock backstop (10 s) sits behind it. `while true do end` dies at the budget. The kill flag is *sticky*, so `while true do pcall(...) end` cannot swallow it. The slice resets when a host `await` returns (waiting on SQLite is not app CPU), but a **per-call budget** never does: `Limits::call_ticks` (25 million, five slices; each host call is also charged `HOST_CALL_TICKS` = 1 000) and `call_wall` (30 s, host waits included), so `while true do app.kv:get("k") end` dies too. Unloading an app *retires* its VM: a sticky kill flag checked by the interrupt and by every host call, so a runaway call in flight stops and the VM is freed. Effects per call are capped (`max_effects` = 32), and values crossing out of Luau are walked once with a node, byte and cycle budget (`convert::MAX_NODES` 100 000, `MAX_BYTES` 4 MiB; view trees use the domain's `MAX_NODES` 10 000 and `MAX_DEPTH` 64), so a cyclic or self-sharing table is an error, not a stack overflow or a giant allocation. `loadstring`, `getfenv` and `setfenv` are removed. Luau's own pattern matcher polls the interrupt: a backtracking `string.find` dies at the budget too.
-- **Capability table** `app.data.query/exec` (async fn on the blocking pool), `app.tools.register{}`, `app.notify{}`, `app.state.get/set`, `app.on(event, fn)`. Rust→Luau event call with a JSON table works (`serde` feature; `emit()`/`call_tool()`).
-- **Source from bytes** (`lua.load(&[u8]).set_name("=app/main.luau")`; syntax errors report `app/main.luau:1`).
-- **Unload frees**: drop Rust-held `Function`s, then the `Lua`. 300 VMs created, dropped, re-created: RSS growth 80 KiB total, so memory is reused.
-- **Numbers** (`cargo run --release -p agentos-luau --example bench`): VM create + sandbox + API + run main chunk **0.14 ms (opt-level 3) / 0.19 ms (`z`)**; **~524 KiB Luau heap per VM** (mostly the stdlib; 100 apps ≈ 52 MB); event dispatch **1.8 µs (opt 3) / 3.1 µs (`z`)**; per-app in-memory SQLite open+migrate 0.04 ms.
-- **`--!strict` annotations run** (Luau strips them at compile). Type *checking* is a separate tool: `luau-analyze` (Homebrew 0.718) checked a strict file against an API written as type aliases and flagged wrong field types, unknown members and number→string (`apps/strict_demo.luau`). **Type-definition files:** `types/agentos.d.luau` (`declare class …; declare app: AppApi`) is the shipping format; luau-lsp consumes it via `--definitions` / `luau-lsp.types.definitionFiles`. **Not verified here:** the Homebrew `luau-analyze` has no `--definitions` flag, and my attempt to download and run the `luau-lsp` release binary was blocked by the permission policy, so the `.d.luau` file is written but unchecked. First task in the real project: run luau-lsp against it.
-- **Gotchas found:** (a) mlua registers a *filesystem* `require` on Luau: set `require = nil` before `sandbox(true)` and provide a bundle-only one. (b) `to_value` maps JSON null to a truthy lightuserdata: use `SerializeOptions::serialize_none_to_null(false)`. (c) Install `app` *before* `sandbox(true)`. (d) `send` makes `Lua: Send+Sync` (mutex inside), which is what lets tokio multi-thread run VMs; one VM executes one call at a time (an app is single-threaded by design).
-- **Hot reload:** `notify 8.2` watcher → debounce → build a new VM → swap → old VM dropped (`src/reload.rs`, test passes with FSEvents). In the real host this is a `reload(app)` use case triggered by a dev-mode driving adapter (DB is kept; only the VM is rebuilt).
+### 1. Apps: authored in Luau, run as Lua 5.1 on `mlua 0.12.2` (vendored PUC Lua 5.1) — `crates/agentos-luau` on `crates/agentos-luavm`
+Apps are written in Luau (`--!strict`, checked by `luau-lsp` against the generated definitions) and **run as standard Lua 5.1**: `bun run build:apps` runs darklua (`.darklua.json`, pinned 0.18.0) over each app, which strips the types, lowers the Luau-only syntax and **bundles the app's relative `require`s into one `app.lua`**. An app ref lists that one file (plus its SQL migrations); `manifest.main` is `app.lua`, and the host refuses a `main` that does not end in `.lua`. `@agentos/app` and `@agentos/ui` stay runtime `require`s. The Luau standard-library members Lua 5.1 lacks (`typeof`, `table.clone`/`move`/`pack`/`unpack`, `utf8`) are polyfilled by `lua/prelude.luau` (built to `types/generated/prelude.lua`), which the host runs in each app's environment before the app. `types/generated/ui.lua` is the Lua 5.1 build of `ui.luau`.
+
+`agentos-luavm` is the VM library (mlua with `lua51, vendored, async, serialize, send, macros`; no dependency on any other agentos crate; a support library, not an adapter) and `agentos-luau` is the adapter that implements `AppRuntime` on it, reaching mlua only through luavm's re-export. The VM crate also holds the neoc module registry (`std:`, `lib:`, `vnd:`); **apps get none of it**: the adapter builds a bare engine (`make_bare_engine`), and `modules::install_allowed` is the seam for offering a subset later.
+
+- **One VM per app** (a Lua 5.1 state), and **one environment table per app** (`lua::app_env`): the base functions are an allow-list (no `load`, `loadstring`, `dofile`, `loadfile`, `getfenv`, `setfenv`, `newproxy`, `module`, `collectgarbage`, `gcinfo`, `print`, `string.dump`, `string.gfind`; no `io`/`os`/`debug`/`package`); `string`, `table`, `math`, `coroutine`, `bit` and the prelude's `utf8` are private copies sealed behind **read-only proxies** (an empty table with `__index`/`__newindex`/`__metatable`; `rawset` is replaced by a guard that refuses them), so writing to a library, `setmetatable` on one, `rawset` on one and `getmetatable("")` all fail and the engine's own tables are unreachable. The shared **string metatable is locked** (`__metatable`), so `getmetatable("").__index` is not a way to the real `string`. Chunks load in text mode only (Lua 5.1 bytecode is unverified and escapes any sandbox). Two VMs have independent globals. `math.random`/`randomseed` are per-environment generators seeded from the OS (the C library's is one state shared by every VM in the process). Known limits of a proxy: `pairs(string)` is empty (5.1 has no `__pairs`), and `table.insert(string, x)` writes only to the app's own proxy.
+- **Memory limit** `set_memory_limit` (16 MiB default; the host-side `gsub` and `rep` are capped by the same number because a Rust buffer is outside the Lua heap). A bomb dies with a memory error in the main thread, in a coroutine and in every allocator we tried; the VM stays usable.
+- **CPU budget** by a **count hook** (`Lua::set_global_hook`, every `HOOK_INSTRUCTIONS` = 100 VM instructions = one *tick*), counted in ticks rather than wall-clock time so a loaded machine cannot trip an honest call; a generous wall-clock backstop (10 s) sits behind it. Defaults: 500 000 ticks per slice (about 0.3 to 0.5 s of an idle machine), `call_ticks` 2.5 million (five slices; each host call is also charged `HOST_CALL_TICKS` = 100) and `call_wall` (30 s, host waits included), so `while true do app.kv:get("k") end` dies too. The kill flag is *sticky*, so `while true do pcall(...) end` cannot swallow it, and the hook runs on every coroutine (mlua threads inherit the global hook; coroutines the app creates inherit it from their creator) and on the async thread a call continues on after a host await (all tested). The slice resets when a host `await` returns (waiting on SQLite is not app CPU). Unloading an app *retires* its VM: a sticky kill flag checked by the hook and by every host call, so a runaway call in flight stops and the VM is freed. Effects per call are capped (`max_effects` = 32), and values crossing out of Lua are walked once with a node, byte and cycle budget (`convert::MAX_NODES` 100 000, `MAX_BYTES` 4 MiB; view trees use the domain's `MAX_NODES` 10 000 and `MAX_DEPTH` 64).
+- **Pattern matching is host code.** PUC Lua's matcher is C that never polls the hook (`string.find(string.rep("a", 1e5), ".-.-.-.-b")` would run for hours in one instruction) and 5.1 has no recursion limit in it (a pattern of 100 000 `a*` items overflows the C stack). `lua::patterns` replaces `string.find`, `match`, `gmatch`, `gsub` and `rep` with a safe-Rust port of `lstrlib.c` that **charges the same slice** (one tick per 64 matcher steps; the kill is the same sticky one), stops at recursion depth 200 (`pattern too complex`) and caps the output of `gsub` and `rep`. It is compared with the real C functions on tens of thousands of generated subjects and patterns (`patterns_tests.rs`), and the method form (`s:find(p)`) reaches it because it replaces the entries of the table the string metatable indexes.
+- **Async host calls on Lua 5.1.** mlua's `create_async_function` yields to the executor; 5.1 cannot yield across `pcall`, a metamethod or a C function, so luavm installs a **yield-safe `pcall`/`xpcall`** (a coroutine per protected call) and, in each app environment, `coroutine.resume`/`wrap` that pass an async host call made inside a coroutine of the app's own out to the executor (and let a cancelled call end without running app code again). The `app.state`, window `state`/`client`/`env` and source-handle proxies are plain synchronous Rust functions, so they never yield. What still cannot yield: a `table.sort` comparator, a `string.gsub` callback, a metamethod, a `for ... in` iterator function: a host call there fails with Lua's own "attempt to yield across metamethod/C-call boundary". A host call in tail position (`return app.db:all(...)`) loses the app's line in an error, because 5.1 drops the frame of a tail call.
+- **Capability table** `app.db`, `app.kv`, `app.tools.register{}`, `app.notify{}`, `app.state{}`, `app.on(event, fn)` (see `apps/README.md`). Rust→Lua event call with a JSON table works (`emit()`/`call_tool()`).
+- **Source from bytes** (`lua.load(&[u8]).set_name("=app/app.lua")`; errors report `app/app.lua:12`). Line numbers refer to the bundle; the generator is `retain_lines`, which keeps each statement on its Luau line: line for line for an app with no relative `require`, and shifted by a constant (the size of the bundled modules before it) for an app with modules.
+- **Unload frees**: drop Rust-held `Function`s, then the `Lua`.
+- **Gotchas found:** (a) the polyfills run in the app's environment, so the prelude installs into the chunk's `...` argument, never `getfenv()`. (b) `to_value` maps JSON null to a truthy lightuserdata: use `SerializeOptions::serialize_none_to_null(false)`. (c) `send` makes `Lua: Send+Sync` (mutex inside), which is what lets tokio multi-thread run VMs; one VM executes one call at a time (an app is single-threaded by design). (d) mlua `lua51` and `luau` cannot coexist in one build (Cargo unifies features), so the VM is Lua 5.1 everywhere.
+- **Dev loop and hot reload:** the host cannot run darklua. `bun run dev` watches `apps/**` (`*.luau`, `app.json`, migrations) and re-runs `build:apps`; the host's `notify` watcher watches the built app-ref folders under `dist/apps` (`.lua`/`.json`) → debounce → build a new VM → swap → old VM dropped (`crates/agentos-luau/src/reload.rs`; the DB is kept; only the VM is rebuilt).
+- **Not remeasured on 5.1:** the VM create and dispatch numbers of the Luau spike (0.14 ms, 524 KiB per VM, 1.8 µs per event); a plain Lua 5.1 state is smaller, but the neoc module registry that `make_engine` builds is not part of an app VM.
 
 ### 2. SQLite — recommend **`rusqlite 0.43.0` (bundled SQLite 3.54.1)** — `crates/agentos-sqlite`
 - Design proven (7 tests): one `Connection` per app behind a mutex, all work in `spawn_blocking`; migrations numbered 1..N, each in its own transaction, recorded in `_migrations(version,name,checksum,applied_at)`, idempotent, incremental on app upgrade, **checksum-tamper detected**, failing migration leaves nothing; **authorizer denies `ATTACH`/`DETACH`** (an app's SQL can't escape its file).
@@ -62,7 +66,7 @@ Features `luau, async, serialize, send`. Proven (all in `tests/vm.rs`, 9 tests):
 - **Dev hot reload:** see section 1 (proven).
 
 ## Recommended crate list (versions resolved in `Cargo.lock`)
-`tokio 1.54.1` · `axum 0.8.9` (ws, macros) · `tower-http 0.6.11` (fs) · `mlua 0.12.2` (luau, async, serialize, send) · `rusqlite 0.43.0` (bundled, hooks) · `rmcp 3.11.0` · `agent-client-protocol 5.3.0` (process, stdio) · `reqwest 0.13.5` (rustls) · `serde 1`/`serde_json 1.0.154` · `ts-rs 12.0.1` · `schemars 1.2.3` · `notify 8.2.2` · `thiserror 2` (libs) · `anyhow 1` (host binary only) · `async-trait 0.1` · `parking_lot 0.12` (no lock poisoning ⇒ no `unwrap`) · `sha2 0.10` · `tokio-util 0.7` · `tokio-stream`/`futures-util`. Dev: `tokio-tungstenite 0.30`, `cargo-nextest`, `cargo-deny`. Hand-rolled: JSON-RPC peer, AG-UI events. Not used: sqlx (probe only), jsonrpsee, specta.
+`tokio 1.54.1` · `axum 0.8.9` (ws, macros) · `tower-http 0.6.11` (fs) · `mlua 0.12.2` (lua51, vendored, async, serialize, send, macros; in `agentos-luavm` only) · `rusqlite 0.43.0` (bundled, hooks) · `rmcp 3.11.0` · `agent-client-protocol 5.3.0` (process, stdio) · `reqwest 0.13.5` (rustls) · `serde 1`/`serde_json 1.0.154` · `ts-rs 12.0.1` · `schemars 1.2.3` · `notify 8.2.2` · `thiserror 2` (libs) · `anyhow 1` (host binary only) · `async-trait 0.1` · `parking_lot 0.12` (no lock poisoning ⇒ no `unwrap`) · `sha2 0.10` · `tokio-util 0.7` · `tokio-stream`/`futures-util`. Dev: `tokio-tungstenite 0.30`, `cargo-nextest`, `cargo-deny`. Hand-rolled: JSON-RPC peer, AG-UI events. Not used: sqlx (probe only), jsonrpsee, specta.
 
 ## Workspace layout (hexagonal; each adapter is its own crate depending inward only)
 
@@ -70,7 +74,7 @@ Features `luau, async, serialize, send`. Proven (all in `tests/vm.rs`, 9 tests):
                        agentos-host  (bin; wiring only; the ONLY place anyhow + every adapter appear)
                                   |
    driving adapters               |                         driven adapters
-   agentos-http  (/rpc WS, guard, static, RpcHub)   agentos-luau   (AppRuntime)
+   agentos-http  (/rpc WS, guard, static, RpcHub)   agentos-luau   (AppRuntime) --> agentos-luavm (Lua 5.1 VM lib)
    agentos-mcp   (/mcp, ToolRegistry)               agentos-sqlite (DataStore, AppData)
    agentos-agui  (/agui SSE)                        agentos-fetch  (Fetcher: file/http/https)
    agentos-acp   (AgentConnector, ACP client)       agentos-codegen (dev-time: TS + Luau + schemas)
@@ -87,6 +91,7 @@ Features `luau, async, serialize, send`. Proven (all in `tests/vm.rs`, 9 tests):
 | `domain` | the model above; unit tests without any framework | serde, serde_json, sha2, thiserror (+ ts-rs/schemars behind `codegen`) |
 | `application` | **ports**: `AppRuntime, DataStore/AppData, ToolRegistry, Notifier, EventSink, AgentConnector, AgentDirectory, Clock, Fetcher`. **Use cases** (`AppService`): install-from-url (fetch → sha256 verify → migrations → load → publish tools → announce), uninstall(+purge), dispatch UI event, tool call with permission check, start agent run. Runtime-free (tokio is a dev-dependency only) | domain, async-trait, parking_lot, thiserror |
 | `luau`, `sqlite`, `fetch`, `mcp`, `acp`, `agui`, `http`, `codegen` | one adapter each | application, domain (never another adapter; dev-deps may) |
+| `luavm` | support library, not an adapter: the sandboxed Lua 5.1 VM (mlua, vendored), its environment, budgeted string functions and module registry. Depends on no agentos crate | external crates only; **only `luau` may depend on it** (`check-deps`, `deny.toml`) |
 | `host` | build adapters, hand each to its port, mount routers, bind 127.0.0.1, graceful shutdown | everything |
 
 - A `ports` crate split (adapters depend on traits only, not use cases) is cheap if `application` grows; driving adapters (`http`, `mcp`) legitimately need the use cases.
@@ -98,25 +103,27 @@ Features `luau, async, serialize, send`. Proven (all in `tests/vm.rs`, 9 tests):
 
 ## Open risks
 1. **Luau type tooling unverified** (luau-lsp + `.d.luau`, see §1). `luau-analyze` works for strict checking but needs definitions inlined unless luau-lsp is used.
-2. **Hard CPU kill:** the interrupt covers Luau code and pattern matching; a *host* function that blocks (our SQLite call with a huge query) isn't covered by the Luau budget. SQLite needs `progress_handler`/`interrupt()` and `busy_timeout` (set: 2 s) plus a per-call wall-clock timeout in the runtime adapter; not built.
+2. **Hard CPU kill:** the count hook covers Lua code, and the host-side pattern matcher is charged to the same budget; a *host* function that blocks (our SQLite call with a huge query) isn't covered by the Luau budget. SQLite needs `progress_handler`/`interrupt()` and `busy_timeout` (set: 2 s) plus a per-call wall-clock timeout in the runtime adapter; not built.
 3. **Memory per VM ~0.5 MiB** baseline and one global mutex per VM: fine for dozens of apps; measure real apps. Per-VM *CPU fairness* relies on tokio's multi-thread pool (tested: a spinning VM didn't stall another app).
 4. **rmcp / ACP / MCP spec churn** (rmcp 3.x already carries two protocol generations; ACP crate is at 5.x with a draft v2). Pin, re-run the adapter tests on each bump, keep each behind its port. Claude-side MCP clients today speak 2025-x (sessions); both are served.
 5. **Notification ordering** on `/rpc` (notifications can overtake responses) must be part of the client contract.
 6. **Auth on `/rpc`: closed by device pairing** (see "Pairing" below). Every client route needs a paired device's session cookie, from loopback too, so another local user or process cannot connect without a code; the Origin/Host guard still stops cross-site pages and DNS rebinding. What is left: a pairing code is shown to whoever can read the host's terminal, and sessions never expire (revoke them in Settings > Devices).
 7. **ACP→AG-UI mapping** (prompt streaming, permission requests, tool-call events) is the largest unproven piece; the transport pieces on both sides are proven.
 8. **Linux/Windows builds unverified** (needs zigbuild/CI); `x86_64-pc-windows-gnu` target is installed but untried; `notify` and process spawning differ per OS.
-9. **Luau ergonomics:** no `require` of files yet (bundle-only `require` to build), no debugger, error spans only as `app/main.luau:line`.
-10. **Luau is being replaced by Lua 5.1** (decided 2026-11-18), so these sandbox findings from the second code review
-    are left open on purpose and carry over to the port (it needs its own budget design: Lua 5.1 has hooks, not Luau
-    interrupts):
-    - a view tree's type, key, prop, slot and event names are copied per node with no byte charge, so a shared tree
-      with very long names can exhaust host memory before the node limit trips (`agentos-luau/src/view.rs`);
-    - `lua_to_json` formats child paths eagerly, so a huge key can make one conversion take seconds while it holds the
-      VM gate (`convert.rs`);
-    - effects queued by an unloaded or replaced app are still flushed;
-    - a `readOnly` tool can still call `app.on`, `app.window`, `app.tools.register` and the `db:query` / `row` /
-      `scalar` source constructors and `app.thread` at runtime (they declare, they do not write data);
-    - string bytes are counted before `to_string_lossy`, so invalid UTF-8 is undercounted.
+9. **Luau ergonomics:** no `require` of files yet (bundle-only `require` to build), no debugger, error spans only as `app/app.lua:line` (the bundle's line, which `retain_lines` keeps equal to the Luau line for an app without modules).
+10. **Sandbox findings from the second Luau code review, as the Lua 5.1 port left them.** Fixed in the port: effects an
+    unloaded or replaced app queued are dropped, not flushed; a `readOnly` call can no longer use `app.on`,
+    `app.window`, `app.tools.register`, `app.thread` or the shell and window methods (`lua::vm::Shared::writable`).
+    Still open, and now deliberate because the port has no budgets (see "No permissions, no budgets"):
+    - a view tree's type, key, prop, slot and event names are copied per node with no byte charge (the tree is
+      bounded by node count and depth, and prop values by the shared `Walk`), so a tree with very long names can use
+      host memory before the node limit trips (`agentos-lua/src/view.rs`);
+    - `lua_to_json` formats child paths eagerly, so a huge key can make one conversion slow while it holds the VM
+      gate (`convert.rs`);
+    - string bytes are counted before `to_string_lossy`, so invalid UTF-8 (each bad byte becomes a 3-byte U+FFFD)
+      is undercounted;
+    - the `app.db` source constructors (`query`, `row`, `scalar`) still work in a `readOnly` call: they declare a
+      source, they do not write.
 
 ## What I did not do / failed
 - Did not run `luau-lsp` (download executed under a policy block; I deleted it). Did not run Docker/Linux builds (daemon down). Did not test `jsonrpsee` (reasoned from docs). Did not test `https://` fetches (no network test; reqwest+rustls is compiled and works for `http://`).
@@ -227,7 +234,7 @@ fixture (and the generated `ui.luau`) with `luau-lsp analyze` against the genera
 silently. `lint:luau` and `lint:stylua` skip with a message when `luau-lsp` or
 `stylua` is not installed.
 
-## Apps: lifecycle, data and the Luau API (wave A4)
+## Apps: lifecycle, data and the app API (wave A4)
 
 - **Installed apps persist.** `system.db` records every install (`installed_apps`: id, app-ref URL, version,
   enabled). At start `AppService::restore_installed` re-fetches each app from its URL (re-verifying checksums) and
@@ -244,7 +251,7 @@ silently. `lint:luau` and `lint:stylua` skip with a message when `luau-lsp` or
 - **The app API** is typed in `types/generated/agentos.d.luau` (generated from `crates/agentos-codegen/src/luau/app_api.luau.tpl`): `app.manifest`, `app.db` (`migrate`, `exec`,
   `all`, `one`, `tx`, and the sources `query` / `row` / `scalar`), `app.kv`, `app.state`, `app.tools.register`
   with `app.t` input builders, `app.notify`, `app.shell`, `app.window`.
-  `require` is bundle-only (`./x`, `../x`, `@agentos/app`, host modules).
+  `require` at run time knows only `@agentos/app` and `@agentos/ui`: an app's own modules (`./x`, `../x`) are bundled into its one `app.lua` when it is built.
 - **Live sources** (`agentos-application::live`): the SQLite authorizer reports every table a prepared query reads,
   `commit_hook` batches become `ChangeBatch`es (coalesced per frame), and `LiveSources::refresh` re-runs the
   affected subscriptions in one read transaction and diffs them (ordered window keys + changed rows by content hash).
@@ -254,7 +261,7 @@ silently. `lint:luau` and `lint:stylua` skip with a message when `luau-lsp` or
 - **SQLite gotchas found:** the update hook is blind to `WITHOUT ROWID` tables and `REPLACE` conflict deletes (tables
   an authorized statement writes are published too); a transaction holds an async write gate so nothing interleaves
   with it; a statement past its wall-clock budget is interrupted by the progress handler.
-- **Luau gotchas found:** the interrupt also fires when mlua resumes the coroutine to poll an await, so the CPU
+- **Lua gotchas found:** the count hook also fires when mlua resumes the coroutine to poll an await, so the CPU
   clock is paused while the app waits on the host (and a kill lands when the call returns); a Rust future that is
   aborted mid-await is only dropped at the next GC, so no lock or transaction is held across an await (a call that
   was cut off cannot wedge the next one); `string` coercion makes `raw_get::<String>(5)` succeed for a number, so

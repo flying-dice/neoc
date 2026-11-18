@@ -1,4 +1,4 @@
-# AgentOS architecture: Rust host, Luau apps, managed client
+# AgentOS architecture: Rust host, Luau apps run as Lua 5.1, managed client
 
 Status: **approved** (2026-11-18). LAN binding with device pairing (see `host-stack.md`). Detail lives in two companion documents, both backed by working prototypes:
 
@@ -18,16 +18,18 @@ This replaces the Bun/TypeScript server, the app client bundles and the shared-m
  │ renderer: view trees → kit (Svelte)  │◀──── /rpc ────▶│   install, dispatch event, tool call,     │
  │ client-managed state, drafts         │                │   agent run, notifications                │
  │ no app code, ever                    │ AG-UI / SSE    │ adapters:                                 │
- │ agent chats ◀────────────────────────┼──── /agui ─────│   luau (one sandboxed VM per app)         │
+ │ agent chats ◀────────────────────────┼──── /agui ─────│   luau (one sandboxed Lua 5.1 VM per app) │
  └──────────────────────────────────────┘                │   sqlite (per-app DB, live queries)       │
                                                          │   mcp /mcp ◀── agents (per-agent tokens)  │
-  Luau app packages ── app refs ── registries            │   acp ──▶ agent processes (stdio)         │
+  built app packages ── app refs ── registries            │   acp ──▶ agent processes (stdio)         │
   (file:// http:// https://)  ──────────────────────────▶│   fetch, http, codegen                    │
                                                          └───────────────────────────────────────────┘
 ```
 
-- **Apps are entirely server side, in Luau.** They hold their state, data, tools, notifications and UI description.
-  The client runs no app code.
+- **Apps are entirely server side, authored in Luau and run as Lua 5.1.** They hold their state, data, tools,
+  notifications and UI description. The client runs no app code. Luau is the authoring language (strict types,
+  `luau-lsp`); `bun run build:apps` builds an app into one bundled Lua 5.1 file (darklua), and that file is what the
+  host loads and runs.
 - **The client is a managed renderer.** It renders view trees with the kit, holds client-managed state (drafts,
   selection, scroll, navigation) for instant response, and sends events back.
 - **Transports:**
@@ -43,7 +45,9 @@ crates/
   agentos-domain        pure model, no I/O: app ids, app refs, manifests, permissions, agent identity, tools,
                         notifications, view tree and component schema, protocol messages
   agentos-application   ports (traits) and use cases; in-memory fakes for tests; no frameworks
-  agentos-luau          adapter: mlua/Luau runtime, the app API modules, sandbox, budgets
+  agentos-luau          adapter: runs apps as sandboxed Lua 5.1: the app API modules, budgets, views
+  agentos-luavm         support library (not an adapter): the Lua 5.1 VM on mlua, the per-app environment, the
+                        budgeted string functions; depends on no other crate, only `luau` may depend on it
   agentos-sqlite        adapter: per-app rusqlite DBs, migrations, live queries via commit hooks
   agentos-mcp           adapter: rmcp server, dynamic tool list, per-agent bearer identity
   agentos-acp           adapter: agent-client-protocol client, agent processes
@@ -69,7 +73,7 @@ crates/
   - `cargo nextest`.
 - **Crates** (versions in `host-stack.md`):
   - runtime: tokio, axum;
-  - Luau: mlua (`luau`, `async`, `serialize`, `send`);
+  - Lua 5.1: mlua (`lua51`, `vendored`, `async`, `serialize`, `send`), in `agentos-luavm` only;
   - SQLite: rusqlite (bundled);
   - protocols: rmcp, agent-client-protocol;
   - fetch: reqwest (rustls);
@@ -80,16 +84,22 @@ crates/
 
 ## 3. Apps
 
-- **Package:** a Luau package `apps/<id>/`: `app.luau` (the entry), modules, `JOURNEYS.md` and e2e. App logic is tested from Rust integration tests that load the real package (`crates/agentos-luau/tests/calculator_app.rs`, `crates/agentos-host/tests/agents_app.rs`); an in-package `tests/*.luau` harness is planned, not built.
+- **Package:** a Luau package `apps/<id>/`: `app.luau` (the entry), modules, `JOURNEYS.md` and e2e. It is built into one
+  `app.lua` (the entry and its modules bundled by darklua, types stripped, Luau-only syntax lowered); that file is
+  what the app ref lists and the host runs. App logic is tested from Rust integration tests that load the real package (`crates/agentos-luau/tests/calculator_app.rs`, `crates/agentos-host/tests/agents_app.rs`); an in-package `tests/*.luau` harness is planned, not built.
   Built into an app ref: manifest, file URLs and sha256s, and `requires` (host API range).
 - **Registries:** a list of app-ref URLs. The default registry is the build's unpacked apps folder over `file://`.
   Users can also add an app by URL; the host shows a preview, then a confirmation that it runs on this host and its
   tools reach agents. A later installer bundles host, client and apps.
-- **Sandbox:**
-  - one VM per app, created in about 0.15 ms and using about 0.5 MB;
-  - `sandbox(true)`, with no filesystem `require` (bundle-only modules);
+- **Sandbox** (details in `host-stack.md` §1):
+  - one Lua 5.1 VM per app and one environment table per app: an allow-list of base functions, no `load*`,
+    `getfenv`/`setfenv`, `io`/`os`/`debug`, read-only standard libraries, text-only chunks, a locked string
+    metatable;
+  - `require` knows only `@agentos/app` and `@agentos/ui` (an app's own modules are bundled at build time);
   - a memory limit;
-  - a CPU budget via interrupt (a runaway loop is killed; waiting on the host doesn't count);
+  - a CPU budget by the VM's count hook (a runaway loop is killed, also inside coroutines and `pcall`; waiting on the
+    host doesn't count), and the pattern-matching string functions run in host code charged to the same budget,
+    because the C matcher cannot be interrupted;
   - SQL `ATTACH` denied.
   - Blocking host calls get their own timeouts.
 - **App API** (typed with generated `.d.luau`):
@@ -146,8 +156,8 @@ docs/, .claude/skills/     rewritten for Rust and Luau (coding style, review, te
 ```
 
 - **Removed (done, wave B4):** `apps/server` (TypeScript), `packages/sdk`, app client bundles and `bundles/`, `SHARED_MODULES`, the memory host and web mode.
-- **Testing:** client tests run against the real host, which starts in milliseconds; the test harness runs Luau
-  apps headless in the host.
+- **Testing:** client tests run against the real host, which starts in milliseconds; the test harness builds the
+  Luau apps to Lua 5.1 and runs them headless in the host.
 
 ## 6. Decisions on the open questions
 

@@ -6,7 +6,7 @@ mod common;
 use agentos_application::{live::SourceKind, ports::MenuCommand};
 use agentos_domain::{Capabilities, Notification};
 use agentos_luau::{AppVm, Effect, ShellEffect, VmConfig, VmError};
-use common::{agent_ctx, config, db, id, load, package, try_load, user_ctx};
+use common::{agent_ctx, db, id, load, package, try_load, user_ctx};
 use serde_json::{json, Value};
 use std::sync::Arc;
 

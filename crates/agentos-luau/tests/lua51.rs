@@ -9,7 +9,10 @@ mod common;
 use agentos_luau::VmError;
 use common::{agent_ctx, db, load, quick, try_load, try_load_with};
 use serde_json::{json, Value};
-use std::time::{Duration, Instant};
+use std::{
+    fmt::Write as _,
+    time::{Duration, Instant},
+};
 
 /// "Killed at the budget, not by the wall-clock backstop": far below the backstop even on a busy machine.
 const PROMPTLY: Duration = Duration::from_secs(8);
@@ -58,12 +61,16 @@ async fn text_only_loading_binary_chunks_never_run() {
         entry: "app.lua".into(),
         files: [("app.lua".to_owned(), bytecode)].into(),
     };
-    let err =
-        agentos_luau::AppVm::load(&common::id("probe"), package, db(), common::config(Default::default()))
-            .await
-            .err()
-            .unwrap()
-            .to_string();
+    let err = agentos_luau::AppVm::load(
+        &common::id("probe"),
+        package,
+        db(),
+        common::config(agentos_luau::Limits::default()),
+    )
+    .await
+    .err()
+    .unwrap()
+    .to_string();
     assert!(err.contains("binary"), "{err}");
 }
 
@@ -94,7 +101,7 @@ async fn the_standard_libraries_are_read_only_in_every_spelling() {
     ];
     let mut src = String::from("local results = {}\n");
     for (i, attempt) in attempts.iter().enumerate() {
-        src.push_str(&format!("results[{}] = pcall(function() {attempt} end)\n", i + 1));
+        let _ = writeln!(src, "results[{}] = pcall(function() {attempt} end)", i + 1);
     }
     src.push_str(
         r#"

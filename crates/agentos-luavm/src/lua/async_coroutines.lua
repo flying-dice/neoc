@@ -23,41 +23,41 @@ local select, unpack, error, type = select, unpack, error, type
 local create, resume, yield, status = raw.create, raw.resume, raw.yield, raw.status
 
 local function pack(...)
-	return { n = select("#", ...), ... }
+  return { n = select("#", ...), ... }
 end
 
 -- Resume `co` with the packed result `r` of its latest resume until it finishes, fails, or yields a value of
 -- its own. Returns the packed `resume` result.
 local function drive(co, r)
-	while r[1] and r.n == 2 and r[2] == pending and status(co) == "suspended" do
-		local signal = yield(pending)
-		if signal ~= nil then
-			resume(co, signal) -- the executor is dropping this call: let the inner future go
-			while true do
-				yield()
-			end
-		end
-		r = pack(resume(co))
-	end
-	return r
+  while r[1] and r.n == 2 and r[2] == pending and status(co) == "suspended" do
+    local signal = yield(pending)
+    if signal ~= nil then
+      resume(co, signal) -- the executor is dropping this call: let the inner future go
+      while true do
+        yield()
+      end
+    end
+    r = pack(resume(co))
+  end
+  return r
 end
 
 local M = {}
 
 function M.resume(co, ...)
-	local r = drive(co, pack(resume(co, ...)))
-	return unpack(r, 1, r.n)
+  local r = drive(co, pack(resume(co, ...)))
+  return unpack(r, 1, r.n)
 end
 
 function M.wrap(f)
-	local co = create(f)
-	return function(...)
-		local r = drive(co, pack(resume(co, ...)))
-		if not r[1] then
-			error(r[2], 0)
-		end
-		return unpack(r, 2, r.n)
-	end
+  local co = create(f)
+  return function(...)
+    local r = drive(co, pack(resume(co, ...)))
+    if not r[1] then
+      error(r[2], 0)
+    end
+    return unpack(r, 2, r.n)
+  end
 end
 
 return M

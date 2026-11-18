@@ -84,7 +84,7 @@ impl<'a> Matcher<'a> {
 
     fn step(&mut self) -> mlua::Result<()> {
         self.steps += 1;
-        if self.steps % STEP_BLOCK == 0 {
+        if self.steps.is_multiple_of(STEP_BLOCK) {
             (self.charge)(1)?;
         }
         Ok(())
@@ -625,9 +625,7 @@ fn add_template(
 ) -> mlua::Result<()> {
     let mut i = 0;
     while i < template.len() {
-        if template[i] != L_ESC {
-            out.push(template[i]);
-        } else {
+        if template[i] == L_ESC {
             i += 1; // skip the escape
             let c = template.get(i).copied().unwrap_or(0);
             if !c.is_ascii_digit() {
@@ -645,6 +643,8 @@ fn add_template(
                     }
                 }
             }
+        } else {
+            out.push(template[i]);
         }
         i += 1;
     }

@@ -6,6 +6,13 @@
  * stay as runtime `require` calls (the host provides those modules). The Luau standard-library members Lua 5.1
  * lacks come from `lua/prelude.luau`.
  *
+ * The generator is `retain_lines` (with `remove_comments`), so line numbers in an error from the VM point at the
+ * source: a file keeps every statement on its Luau line (`@agentos/ui` and the prelude are line for line the
+ * generated Luau; an app with no relative require is line for line its `app.luau`). Bundling a module hoists it to
+ * the top of the file: the module's lines move down by a small constant (+2 for `calc.luau`) and the entry's by
+ * the size of the modules before it (+183 for the Calculator). The `readable` generator reformats every line and
+ * gives no such mapping.
+ *
  * Unlike the lint tools, building cannot skip when darklua is missing: the output is what the host runs.
  */
 import { spawnSync } from 'node:child_process'

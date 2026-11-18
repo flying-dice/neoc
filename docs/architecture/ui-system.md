@@ -877,7 +877,7 @@ return Refs (`r.title` -> `row.title`). `tostring(ref)` and `"x" .. ref` raise "
 **Handler argument** `e`: `e.key` (row key), `e.row` (host's last-sent row), `e.value`, `e.payload`, `e.actor`.
 
 **Rules the host enforces.** `render` is pure (db writes and `app:*` calls raise inside render); one render per view
-per frame; a Luau time slice per call (default 50 ms via the VM interrupt); interactive nodes need explicit keys;
+per frame; a CPU time slice per call (counted by the VM's count hook); interactive nodes need explicit keys;
 icon-only controls need a `label`; every `Image` needs `alt` or `decorative = true`; only whitelisted props exist.
 Errors carry the Luau `file:line` of the constructor call (dev builds).
 
@@ -1317,8 +1317,9 @@ notes or 5 000. Test ids that fall out: `notes-folders-row-3`, `notes-new-note`,
   e2e specs: `local v = test.mount(app, "main"); v:tap("calculator-key-7"); v:expectText("calculator-display", "7")`;
   `v:type("notes-body", "hi")`; `v:tree()` for snapshots (the tree is JSON). Tool tests call `app.tool` directly against a
   temp SQLite and assert the resulting `data.patch` for an open view.
-- **Sandbox.** One Luau VM per app, `--!strict` encouraged, no `os`/`io`/`debug`, no `require` outside the app bundle
-  and the three host modules, interrupt-based time slices, memory cap, per-app SQLite file, and capabilities (network,
+- **Sandbox.** One Lua 5.1 VM per app (apps are authored in strict Luau and built to Lua 5.1), no `os`/`io`/`debug`,
+  no `require` at run time beyond `@agentos/app` and `@agentos/ui` (modules are bundled at build time), count-hook
+  time slices, memory cap, per-app SQLite file, and capabilities (network,
   files, notifications) gated by `app.manifest.permissions` and the Settings permission model.
 - **Dev loop**: saving a `.luau` file hot-reloads the VM; each open instance re-renders against the new code and the
   host sends the minimal ops (state is kept when the schema of `app.state` allows).
