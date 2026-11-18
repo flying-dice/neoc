@@ -16,11 +16,13 @@ use crate::{
 };
 use agentos_domain::{
     api::{AppPreview, Catalog, InstalledInfo},
-    resolve_url, source_label, Actor, AgentIdentity, AppDecl, AppId, AppRef, Capabilities, Manifest,
-    QualifiedToolName, Registry, Revision, StoredRevision, ToolSpec, WindowDecl,
+    resolve_url, source_label, Actor, AgentIdentity, AppDecl, AppId, AppRef, Capabilities, DomainError,
+    Manifest, PackageBudget, Permission, QualifiedToolName, Registry, Revision, StoredRevision, ToolSpec,
+    WindowDecl,
 };
 use parking_lot::Mutex;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::{collections::HashMap, sync::Arc};
 
 /// Every collaborator of [`AppService`].
@@ -121,6 +123,69 @@ pub struct AppService {
     observers: Mutex<Vec<Arc<dyn AppObserver>>>,
 }
 
+/// An app ref as fetched: the parsed document and the SHA-256 (hex) of the bytes it came from, which is what
+/// a preview shows and an install must match.
+struct FetchedRef {
+    app_ref: AppRef,
+    sha256: String,
+}
+
+/// What an install record keeps of a load: the version, the digest of the app ref and the permissions the
+/// manifest then asked for (which the check against the record has just shown to be approved).
+struct Approval {
+    version: String,
+    ref_sha256: String,
+    permissions: Vec<Permission>,
+}
+
+impl Approval {
+    fn of(fetched: &FetchedRef) -> Self {
+        let m = &fetched.app_ref.manifest;
+        Self {
+            version: m.version.clone(),
+            ref_sha256: fetched.sha256.clone(),
+            permissions: m.permissions.clone(),
+        }
+    }
+
+    /// Record this approval; whether the record changed.
+    fn apply(self, record: &mut InstalledApp) -> bool {
+        let changed = record.version != self.version
+            || record.ref_sha256 != self.ref_sha256
+            || record.permissions != self.permissions;
+        record.version = self.version;
+        record.ref_sha256 = self.ref_sha256;
+        record.permissions = self.permissions;
+        changed
+    }
+}
+
+/// A reloaded app ref must still be the app that was installed and must not ask for more than was approved:
+/// the id is what names the app's database, and permissions are what the person agreed to.
+fn check_against_record(record: &InstalledApp, manifest: &Manifest) -> Result<(), DomainError> {
+    if manifest.id != record.id {
+        return Err(DomainError::AppIdChanged {
+            installed: record.id.to_string(),
+            served: manifest.id.to_string(),
+        });
+    }
+    if record.ref_sha256.is_empty() {
+        return Ok(()); // installed before approvals were kept: the load that follows records them
+    }
+    let mut added: Vec<String> = Vec::new();
+    for p in manifest.permissions.iter().filter(|p| !record.permissions.contains(p)) {
+        let name = p.capability_name().map_or_else(|| format!("{p:?}"), str::to_owned);
+        if !added.contains(&name) {
+            added.push(name);
+        }
+    }
+    if added.is_empty() {
+        Ok(())
+    } else {
+        Err(DomainError::PermissionsGrew { app: record.id.to_string(), added })
+    }
+}
+
 /// Package files that are Luau source: the entry and every module `require` may reach.
 fn is_luau(path: &str) -> bool {
     std::path::Path::new(path).extension().is_some_and(|e| e.eq_ignore_ascii_case("luau"))
@@ -168,12 +233,28 @@ impl AppService {
 
     /// Install from an app-ref URL (file://, http://, https://: the Fetcher adapter decides how).
     pub async fn install_from_url(&self, app_ref_url: &str) -> Result<AppId, AppError> {
-        let app_ref = self.fetch_app_ref(app_ref_url).await?;
-        self.install(&app_ref, app_ref_url).await
+        let fetched = self.fetch_app_ref(app_ref_url).await?;
+        self.install(fetched, app_ref_url).await
     }
 
-    /// Install an app ref obtained from `source_url` and remember it across restarts.
-    pub async fn install(&self, app_ref: &AppRef, source_url: &str) -> Result<AppId, AppError> {
+    /// Install what [`AppService::preview`] showed: the app ref at `app_ref_url` must still have the
+    /// `sha256` the preview reported, else nothing is installed (the person approved that one, not this).
+    pub async fn install_previewed(&self, app_ref_url: &str, sha256: &str) -> Result<AppId, AppError> {
+        let fetched = self.fetch_app_ref(app_ref_url).await?;
+        if !fetched.sha256.eq_ignore_ascii_case(sha256) {
+            return Err(DomainError::RefChanged {
+                expected: sha256.to_ascii_lowercase(),
+                actual: fetched.sha256,
+            }
+            .into());
+        }
+        self.install(fetched, app_ref_url).await
+    }
+
+    /// Install an app ref obtained from `source_url`, recording what was approved, and remember it across
+    /// restarts.
+    async fn install(&self, fetched: FetchedRef, source_url: &str) -> Result<AppId, AppError> {
+        let app_ref = &fetched.app_ref;
         let m = &app_ref.manifest;
         m.validate()?;
         if let Some(existing) = self.apps.lock().get(&m.id) {
@@ -189,6 +270,8 @@ impl AppService {
             version: m.version.clone(),
             enabled: true,
             installed_at_ms: self.p.clock.now_unix_ms(),
+            permissions: m.permissions.clone(),
+            ref_sha256: fetched.sha256.clone(),
         };
         if let Err(e) = self.p.installed.save(&record).await {
             self.deactivate(&m.id, active).await;
@@ -222,14 +305,19 @@ impl AppService {
     /// Load every app the system database remembers. A disabled app stays unloaded; one that cannot load
     /// is marked failed (and announced) while the rest start normally.
     pub async fn restore_installed(&self) -> Result<Vec<AppInfo>, AppError> {
-        for record in self.p.installed.list().await? {
+        for mut record in self.p.installed.list().await? {
             let id = record.id.clone();
             if self.apps.lock().contains_key(&id) {
                 continue;
             }
             let (status, active, name, display) = if record.enabled {
-                match self.load_from_source(&record.source_url, None).await {
-                    Ok(active) => {
+                match self.load_from_record(&record, None).await {
+                    Ok((active, approval)) => {
+                        if approval.apply(&mut record) {
+                            if let Err(e) = self.p.installed.save(&record).await {
+                                tracing::warn!(app = %id, error = %e, "could not record the reloaded app ref");
+                            }
+                        }
                         let (name, display) = (active.name.clone(), active.display.clone());
                         (AppStatus::Running, Some(active), name, display)
                     }
@@ -301,17 +389,18 @@ impl AppService {
 
     /// Load a disabled (or failed) app again from where it was installed.
     pub async fn enable(&self, app: &AppId) -> Result<(), AppError> {
-        let source = {
+        let record = {
             let apps = self.apps.lock();
             let entry = apps.get(app).ok_or_else(|| AppError::NotInstalled(app.to_string()))?;
             if entry.status == AppStatus::Running {
                 return Ok(());
             }
-            entry.record.source_url.clone()
+            entry.record.clone()
         };
-        match self.load_from_source(&source, None).await {
-            Ok(active) => {
+        match self.load_from_record(&record, None).await {
+            Ok((active, approval)) => {
                 self.p.installed.set_enabled(app, true).await?;
+                self.remember(app, approval).await;
                 if let Some(entry) = self.apps.lock().get_mut(app) {
                     entry.name.clone_from(&active.name);
                     entry.display = active.display.clone();
@@ -332,10 +421,10 @@ impl AppService {
     /// Erase the app's data. A running app is reloaded on an empty database (its migrations run again).
     pub async fn delete_data(&self, app: &AppId) -> Result<(), AppError> {
         self.announce_stopping(app, "data deleted").await;
-        let (was_running, source, active) = {
+        let (was_running, record, active) = {
             let mut apps = self.apps.lock();
             let entry = apps.get_mut(app).ok_or_else(|| AppError::NotInstalled(app.to_string()))?;
-            (entry.status == AppStatus::Running, entry.record.source_url.clone(), entry.active.take())
+            (entry.status == AppStatus::Running, entry.record.clone(), entry.active.take())
         };
         if let Some(active) = active {
             self.deactivate(app, active).await;
@@ -344,8 +433,9 @@ impl AppService {
         if !was_running {
             return Ok(());
         }
-        match self.load_from_source(&source, None).await {
-            Ok(active) => {
+        match self.load_from_record(&record, None).await {
+            Ok((active, approval)) => {
+                self.remember(app, approval).await;
                 if let Some(entry) = self.apps.lock().get_mut(app) {
                     entry.active = Some(active);
                 }
@@ -361,21 +451,22 @@ impl AppService {
     /// Dev hot reload: rebuild the app from its source, keeping its database. If the new code does not
     /// load, the running version keeps serving and the error is returned.
     pub async fn reload(&self, app: &AppId) -> Result<(), AppError> {
-        let (source, data, running) = {
+        let (record, data, running) = {
             let apps = self.apps.lock();
             let entry = apps.get(app).ok_or_else(|| AppError::NotInstalled(app.to_string()))?;
             if entry.status == AppStatus::Disabled {
                 return Err(AppError::NotRunning { app: app.to_string(), state: entry.status.describe() });
             }
             (
-                entry.record.source_url.clone(),
+                entry.record.clone(),
                 entry.active.as_ref().map(|a| a.data.clone()),
                 entry.status == AppStatus::Running,
             )
         };
-        match self.load_from_source(&source, data).await {
-            Ok(active) => {
+        match self.load_from_record(&record, data).await {
+            Ok((active, approval)) => {
                 self.announce_stopping(app, "reloaded").await;
+                self.remember(app, approval).await;
                 let mut apps = self.apps.lock();
                 if let Some(entry) = apps.get_mut(app) {
                     entry.name.clone_from(&active.name);
@@ -571,18 +662,38 @@ impl AppService {
         self.p.events.emit(ServerEvent::AppFailed { app: app.clone(), message: error.to_string() }).await;
     }
 
-    async fn fetch_app_ref(&self, url: &str) -> Result<AppRef, AppError> {
+    /// Fetch `url` and refuse a document over the domain's file size cap.
+    async fn fetch_capped(&self, url: &str) -> Result<Vec<u8>, AppError> {
         let bytes = self.p.fetcher.fetch(url).await?;
+        PackageBudget::default().charge(url, bytes.len())?;
+        Ok(bytes)
+    }
+
+    async fn fetch_app_ref(&self, url: &str) -> Result<FetchedRef, AppError> {
+        let bytes = self.fetch_capped(url).await?;
         let app_ref: AppRef = serde_json::from_slice(&bytes)
             .map_err(|e| AppError::Port(PortError::Rejected(format!("bad app ref at {url}: {e}"))))?;
-        Ok(app_ref.resolved(url))
+        Ok(FetchedRef { app_ref: app_ref.resolved(url)?, sha256: format!("{:x}", Sha256::digest(&bytes)) })
+    }
+
+    /// Keep the version, digest and permissions of the app ref that just loaded in the app's install record.
+    async fn remember(&self, app: &AppId, approval: Approval) {
+        let updated = {
+            let mut apps = self.apps.lock();
+            apps.get_mut(app).and_then(|e| approval.apply(&mut e.record).then(|| e.record.clone()))
+        };
+        if let Some(record) = updated {
+            if let Err(e) = self.p.installed.save(&record).await {
+                tracing::warn!(%app, error = %e, "could not record the reloaded app ref");
+            }
+        }
     }
 
     /// The name and presentation of an app that is not running, from its package manifest (best effort: an
     /// unreachable source leaves the defaults).
     async fn package_display(&self, record: &InstalledApp) -> (String, Display) {
         match self.fetch_app_ref(&record.source_url).await {
-            Ok(r) => (r.manifest.name.clone(), Display::of(&r.manifest, None)),
+            Ok(f) => (f.app_ref.manifest.name.clone(), Display::of(&f.app_ref.manifest, None)),
             Err(_) => (record.id.to_string(), Display::default()),
         }
     }
@@ -592,13 +703,13 @@ impl AppService {
     /// What an app ref is, without installing it or running anything: its manifest, where it comes from and
     /// whether this host already has the app. Nothing but the app ref itself is fetched.
     pub async fn preview(&self, app_ref_url: &str) -> Result<AppPreview, AppError> {
-        let app_ref = self.fetch_app_ref(app_ref_url).await?;
-        app_ref.manifest.validate()?;
-        Ok(self.preview_of(&app_ref, app_ref_url))
+        let fetched = self.fetch_app_ref(app_ref_url).await?;
+        fetched.app_ref.manifest.validate()?;
+        Ok(self.preview_of(&fetched, app_ref_url))
     }
 
-    fn preview_of(&self, app_ref: &AppRef, url: &str) -> AppPreview {
-        let m = &app_ref.manifest;
+    fn preview_of(&self, fetched: &FetchedRef, url: &str) -> AppPreview {
+        let m = &fetched.app_ref.manifest;
         let installed = self
             .apps
             .lock()
@@ -606,6 +717,7 @@ impl AppService {
             .map(|e| InstalledInfo { version: e.record.version.clone(), state: e.status.to_wire() });
         AppPreview {
             url: url.to_owned(),
+            sha256: fetched.sha256.clone(),
             id: m.id.to_string(),
             name: m.name.clone(),
             version: m.version.clone(),
@@ -635,13 +747,15 @@ impl AppService {
         }
         for url in urls {
             match self.fetch_app_ref(&url).await {
-                Ok(app_ref) if app_ref.manifest.validate().is_ok() => {
-                    if !catalog.apps.iter().any(|a| a.id == app_ref.manifest.id.as_str()) {
-                        catalog.apps.push(self.preview_of(&app_ref, &url));
+                Ok(fetched) if fetched.app_ref.manifest.validate().is_ok() => {
+                    if !catalog.apps.iter().any(|a| a.id == fetched.app_ref.manifest.id.as_str()) {
+                        catalog.apps.push(self.preview_of(&fetched, &url));
                     }
                 }
-                Ok(app_ref) => {
-                    catalog.errors.push(format!("{url}: {} needs a newer host", app_ref.manifest.name));
+                Ok(fetched) => {
+                    catalog
+                        .errors
+                        .push(format!("{url}: {} needs a newer host", fetched.app_ref.manifest.name));
                 }
                 Err(e) => catalog.errors.push(format!("{url}: {e}")),
             }
@@ -652,7 +766,7 @@ impl AppService {
     /// The app-ref URLs a registry URL stands for: the apps of a registry file, or the URL itself when it is
     /// an app ref.
     async fn registry_entries(&self, url: &str) -> Result<Vec<String>, AppError> {
-        let bytes = self.p.fetcher.fetch(url).await?;
+        let bytes = self.fetch_capped(url).await?;
         if let Ok(registry) = serde_json::from_slice::<Registry>(&bytes) {
             return Ok(registry.apps.iter().map(|a| resolve_url(url, a)).collect());
         }
@@ -662,9 +776,18 @@ impl AppService {
         Err(PortError::Rejected("not a registry file or an app ref".into()).into())
     }
 
-    async fn load_from_source(&self, url: &str, reuse: Option<Arc<dyn AppData>>) -> Result<Active, AppError> {
-        let app_ref = self.fetch_app_ref(url).await?;
-        self.activate(&app_ref, reuse).await
+    /// Load an installed app again from where it was installed. What the source serves now must still be
+    /// that app and must not ask for more permissions than were approved; the returned approval is what the
+    /// record keeps of this load.
+    async fn load_from_record(
+        &self,
+        record: &InstalledApp,
+        reuse: Option<Arc<dyn AppData>>,
+    ) -> Result<(Active, Approval), AppError> {
+        let fetched = self.fetch_app_ref(&record.source_url).await?;
+        check_against_record(record, &fetched.app_ref.manifest)?;
+        let active = self.activate(&fetched.app_ref, reuse).await?;
+        Ok((active, Approval::of(&fetched)))
     }
 
     /// Fetch and verify the package, open the database, run the app, publish its tools and start serving
@@ -672,16 +795,19 @@ impl AppService {
     async fn activate(&self, app_ref: &AppRef, reuse: Option<Arc<dyn AppData>>) -> Result<Active, AppError> {
         let m = &app_ref.manifest;
         m.validate()?;
+        let mut budget = PackageBudget::default();
         let mut package = AppPackage { entry: m.main.clone(), ..AppPackage::default() };
         for file in app_ref.files.iter().filter(|f| is_luau(&f.path)) {
-            package.files.insert(file.path.clone(), self.fetch_verified(app_ref, &file.path).await?);
+            package
+                .files
+                .insert(file.path.clone(), self.fetch_verified(app_ref, &file.path, &mut budget).await?);
         }
         if !package.files.contains_key(&m.main) {
             return Err(agentos_domain::DomainError::MissingFile(m.main.clone()).into());
         }
         let mut migrations = Vec::new();
         for spec in &m.migrations {
-            let sql = String::from_utf8(self.fetch_verified(app_ref, &spec.file).await?)
+            let sql = String::from_utf8(self.fetch_verified(app_ref, &spec.file, &mut budget).await?)
                 .map_err(|_| PortError::Rejected(format!("{} is not UTF-8", spec.file)))?;
             migrations.push(SqlMigration { version: spec.version, name: spec.name.clone(), sql });
         }
@@ -717,9 +843,15 @@ impl AppService {
         }
     }
 
-    async fn fetch_verified(&self, app_ref: &AppRef, path: &str) -> Result<Vec<u8>, AppError> {
+    async fn fetch_verified(
+        &self,
+        app_ref: &AppRef,
+        path: &str,
+        budget: &mut PackageBudget,
+    ) -> Result<Vec<u8>, AppError> {
         let url = &app_ref.file(path)?.url;
         let bytes = self.p.fetcher.fetch(url).await?;
+        budget.charge(path, bytes.len())?;
         app_ref.verify(path, &bytes)?;
         Ok(bytes)
     }

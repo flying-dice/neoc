@@ -83,6 +83,9 @@ wire! {
     pub struct AppPreview {
         /// The app-ref URL to hand to `app.install`.
         pub url: String,
+        /// SHA-256 (hex) of the app-ref document this preview was made from: hand it back to `app.install`
+        /// so that what is installed is what was previewed.
+        pub sha256: String,
         pub id: String,
         pub name: String,
         pub version: String,

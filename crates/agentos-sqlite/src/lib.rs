@@ -11,13 +11,18 @@
 //!   discards; tables written are also recorded from the authorizer, so changes the hook cannot see
 //!   (`WITHOUT ROWID` tables, `REPLACE` conflict deletes, DDL) still reach live queries;
 //! - **interrupt**: a progress handler aborts a statement that runs past its wall-clock budget;
-//! - `ATTACH` is denied.
+//! - `ATTACH` is denied;
+//! - **limits**: one value (string, blob, row) is at most [`MAX_VALUE_BYTES`] (`SQLITE_LIMIT_LENGTH`), and a
+//!   query returns at most [`MAX_QUERY_ROWS`] rows and [`MAX_QUERY_BYTES`] bytes, else it fails with a clear
+//!   error instead of exhausting the host. A blob column reaches the caller as standard base64 text.
 
 mod agents;
 #[cfg(test)]
 mod agents_tests;
 mod devices;
 mod feed;
+#[cfg(test)]
+mod limits_tests;
 mod ports;
 mod tx;
 
@@ -30,6 +35,7 @@ use agentos_application::data::{Params, QueryInfo};
 use parking_lot::Mutex;
 use rusqlite::{
     hooks::{Action, AuthAction, Authorization},
+    limits::Limit,
     types::ValueRef,
     Connection, Statement,
 };
@@ -63,6 +69,10 @@ pub enum DbError {
     BadParams(String),
     #[error("attempt to write through a read-only handle")]
     ReadOnly,
+    #[error("the query returned more than {MAX_QUERY_ROWS} rows; narrow it with WHERE or LIMIT")]
+    TooManyRows,
+    #[error("the query result is larger than {MAX_QUERY_BYTES} bytes; select fewer rows or columns")]
+    ResultTooLarge,
 }
 
 /// An app-declared migration (comes from the app manifest or `db:migrate`).
@@ -118,6 +128,14 @@ CREATE TABLE IF NOT EXISTS _ui_revisions(
 CREATE INDEX IF NOT EXISTS _ui_revisions_by_field ON _ui_revisions(source, key, field, id);
 CREATE INDEX IF NOT EXISTS _ui_revisions_by_age ON _ui_revisions(recorded_at);";
 
+/// The largest string, blob or row SQLite will build (`SQLITE_LIMIT_LENGTH`; its default is 1 GB, which
+/// `zeroblob(500000000)` would happily allocate).
+pub const MAX_VALUE_BYTES: i32 = 8 * 1024 * 1024;
+/// Rows one query may return.
+pub const MAX_QUERY_ROWS: usize = 10_000;
+/// Bytes one query result may hold, as it reaches the caller (blobs counted as base64).
+pub const MAX_QUERY_BYTES: usize = 16 * 1024 * 1024;
+
 /// Default wall-clock budget of one statement.
 pub const DEFAULT_STATEMENT_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -167,6 +185,7 @@ impl AppDb {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.busy_timeout(Duration::from_secs(2))?;
+        conn.set_limit(Limit::SQLITE_LIMIT_LENGTH, MAX_VALUE_BYTES)?;
         apply_migrations(&mut conn, migrations)?;
         if app_tables {
             conn.execute_batch(APP_TABLES)?;
@@ -469,12 +488,21 @@ pub(crate) fn run_query(
     let _armed = Armed::new(s);
     let mut rows = stmt.raw_query();
     let mut out = Vec::new();
+    let mut bytes = 0usize;
     loop {
         match rows.next() {
             Ok(Some(row)) => {
+                if out.len() >= MAX_QUERY_ROWS {
+                    return Err(DbError::TooManyRows);
+                }
                 let mut obj = Map::new();
                 for (i, n) in names.iter().enumerate() {
-                    obj.insert(n.clone(), value_ref_to_json(row.get_ref(i)?));
+                    let v = row.get_ref(i)?;
+                    bytes = bytes.saturating_add(n.len()).saturating_add(json_size(v));
+                    if bytes > MAX_QUERY_BYTES {
+                        return Err(DbError::ResultTooLarge);
+                    }
+                    obj.insert(n.clone(), value_ref_to_json(v));
                 }
                 out.push(Value::Object(obj));
             }
@@ -524,14 +552,40 @@ fn to_sql_params(params: &[Value]) -> Vec<rusqlite::types::Value> {
     params.iter().map(to_sql_value).collect()
 }
 
+/// What a value takes once it is JSON (counted before it is built, so a huge one is refused cheaply).
+fn json_size(v: ValueRef<'_>) -> usize {
+    match v {
+        ValueRef::Null => 4,
+        ValueRef::Integer(_) | ValueRef::Real(_) => 24,
+        ValueRef::Text(t) => t.len(),
+        ValueRef::Blob(b) => b.len().div_ceil(3).saturating_mul(4),
+    }
+}
+
 fn value_ref_to_json(v: ValueRef<'_>) -> Value {
     match v {
         ValueRef::Null => Value::Null,
         ValueRef::Integer(i) => json!(i),
         ValueRef::Real(f) => json!(f),
         ValueRef::Text(t) => Value::String(String::from_utf8_lossy(t).into_owned()),
-        ValueRef::Blob(b) => json!(b.to_vec()),
+        ValueRef::Blob(b) => Value::String(base64(b)),
     }
+}
+
+/// Standard base64 (RFC 4648, padded): how a BLOB column leaves the database. A JSON array of byte numbers
+/// is ~4x larger and, as Lua values, ~16x.
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let sextet = |n: u32, shift: u32| char::from(ALPHABET[(n >> shift & 63) as usize]);
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = chunk.iter().enumerate().fold(0u32, |n, (i, b)| n | u32::from(*b) << (16 - 8 * i));
+        out.push(sextet(n, 18));
+        out.push(sextet(n, 12));
+        out.push(if chunk.len() > 1 { sextet(n, 6) } else { '=' });
+        out.push(if chunk.len() > 2 { sextet(n, 0) } else { '=' });
+    }
+    out
 }
 
 fn apply_migrations(conn: &mut Connection, migrations: &[Migration]) -> Result<(), DbError> {

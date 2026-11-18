@@ -10,12 +10,11 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-/// Defaults the host applies to a windowed source (spec §3.7).
+/// Budgets of a view's sources (spec §3.7). The window size lives with the sources that serve it
+/// (`agentos-application` `live::MAX_WINDOW`) and the row and byte caps of a query with the database adapter
+/// (`agentos-sqlite` `MAX_QUERY_ROWS` / `MAX_QUERY_BYTES`).
 pub mod budgets {
-    pub const DEFAULT_PAGE: u32 = 60;
     pub const MAX_SOURCES_PER_VIEW: usize = 16;
-    pub const MAX_WINDOW_ROWS: usize = 500;
-    pub const MAX_ROW_BYTES: usize = 4 * 1024;
 }
 
 /// How `rows` sources report their total.

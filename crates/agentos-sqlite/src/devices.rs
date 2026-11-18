@@ -38,6 +38,12 @@ CREATE TABLE installed_apps(
     installed_at INTEGER NOT NULL
 );";
 
+/// What was approved at install (permissions as JSON) and the digest of the app ref that was loaded. Rows from
+/// before get an empty digest, which the host reads as "adopt what the manifest asks for on the next load".
+const INSTALLED_APPS_APPROVALS: &str = "
+ALTER TABLE installed_apps ADD COLUMN permissions TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE installed_apps ADD COLUMN ref_sha256 TEXT NOT NULL DEFAULT '';";
+
 /// The system database behind both `DeviceRegistry` and `InstalledAppStore`. The host and the CLI open the
 /// same file, so they must agree on the migration list: it lives here.
 pub struct SqliteSystemDb {
@@ -57,6 +63,7 @@ impl SqliteSystemDb {
                 Migration::new(2, "installed_apps", INSTALLED_APPS),
                 Migration::new(3, "agents", crate::agents::AGENTS),
                 Migration::new(4, "threads", crate::agents::THREADS),
+                Migration::new(5, "installed_apps_approvals", INSTALLED_APPS_APPROVALS),
             ],
         )?;
         Ok(Self { db })
@@ -70,6 +77,8 @@ fn to_installed(row: &Value) -> Option<InstalledApp> {
         version: row["version"].as_str()?.to_owned(),
         enabled: row["enabled"].as_i64()? != 0,
         installed_at_ms: row["installed_at"].as_u64()?,
+        permissions: serde_json::from_str(row["permissions"].as_str()?).ok()?,
+        ref_sha256: row["ref_sha256"].as_str()?.to_owned(),
     })
 }
 
@@ -78,8 +87,8 @@ impl InstalledAppStore for SqliteSystemDb {
     async fn save(&self, app: &InstalledApp) -> PortResult<()> {
         self.db
             .exec(
-                "INSERT OR REPLACE INTO installed_apps(id, source_url, version, enabled, installed_at) \
-                 VALUES(?1, ?2, ?3, ?4, ?5)"
+                "INSERT OR REPLACE INTO installed_apps(id, source_url, version, enabled, installed_at, \
+                 permissions, ref_sha256) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)"
                     .into(),
                 vec![
                     json!(app.id.as_str()),
@@ -87,6 +96,9 @@ impl InstalledAppStore for SqliteSystemDb {
                     json!(app.version),
                     json!(i64::from(app.enabled)),
                     sql_ms(app.installed_at_ms),
+                    json!(serde_json::to_string(&app.permissions)
+                        .map_err(|e| PortError::Internal(e.to_string()))?),
+                    json!(app.ref_sha256),
                 ],
             )
             .await?;
@@ -112,7 +124,8 @@ impl InstalledAppStore for SqliteSystemDb {
         let rows = self
             .db
             .query(
-                "SELECT id, source_url, version, enabled, installed_at FROM installed_apps ORDER BY installed_at, id"
+                "SELECT id, source_url, version, enabled, installed_at, permissions, ref_sha256 \
+                 FROM installed_apps ORDER BY installed_at, id"
                     .into(),
                 vec![],
             )
@@ -234,6 +247,36 @@ mod tests {
             created_at: created,
             last_seen_at: created,
         }
+    }
+
+    #[tokio::test]
+    async fn an_install_record_from_before_approvals_were_kept_reads_with_none() {
+        let dir = std::env::temp_dir().join(format!("system-legacy-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("system.db");
+        let old = AppDb::open_system(
+            Some(&path),
+            &[
+                Migration::new(1, "devices", SCHEMA),
+                Migration::new(2, "installed_apps", INSTALLED_APPS),
+                Migration::new(3, "agents", crate::agents::AGENTS),
+                Migration::new(4, "threads", crate::agents::THREADS),
+            ],
+        )
+        .unwrap();
+        old.exec(
+            "INSERT INTO installed_apps(id, source_url, version, enabled, installed_at) \
+             VALUES('notes', 'file:///x/app-ref.json', '1.0.0', 1, 7)"
+                .into(),
+            vec![],
+        )
+        .await
+        .unwrap();
+        drop(old);
+        let listed = SqliteSystemDb::open(Some(&path)).unwrap().list().await.unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!((listed[0].permissions.clone(), listed[0].ref_sha256.as_str()), (vec![], ""));
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[tokio::test]

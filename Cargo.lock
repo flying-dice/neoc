@@ -124,6 +124,7 @@ dependencies = [
  "agentos-application",
  "async-trait",
  "axum",
+ "futures-util",
  "reqwest",
  "tokio",
  "tower-http",

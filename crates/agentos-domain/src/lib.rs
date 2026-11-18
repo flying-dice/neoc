@@ -14,6 +14,7 @@ pub mod contact;
 pub mod decl;
 pub mod device;
 pub mod error;
+pub mod limits;
 pub mod merge;
 pub mod notification;
 pub mod protocol;
@@ -27,12 +28,14 @@ pub mod ui;
 pub use actor::{Actor, ActorKind};
 pub use agent::{AgentId, AgentIdentity, Capabilities, Permission};
 pub use app::{
-    resolve_url, source_label, AppId, AppRef, FileRef, Manifest, MigrationSpec, Registry, Requires, HOST_API,
+    resolve_package_url, resolve_url, source_label, AppId, AppRef, FileRef, Manifest, MigrationSpec,
+    Registry, Requires, HOST_API,
 };
 pub use contact::{hash_token, same_hash, Agent, AgentRuntime, ApprovalPolicy, Grants};
 pub use decl::{AppDecl, KitRequirement, WindowDecl};
 pub use device::{Device, DeviceId};
 pub use error::DomainError;
+pub use limits::PackageBudget;
 pub use merge::{merge3, Merge};
 pub use notification::Notification;
 pub use revision::{Revision, RevisionReason, StoredRevision, REVISION_RETENTION_MS};

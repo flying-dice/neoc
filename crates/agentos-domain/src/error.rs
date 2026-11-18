@@ -18,4 +18,14 @@ pub enum DomainError {
     UnsupportedHost { needs: String, has: String },
     #[error("invalid agent: {0}")]
     InvalidAgent(String),
+    #[error("the app ref now serves app `{served}`, it was installed as `{installed}`")]
+    AppIdChanged { installed: String, served: String },
+    #[error("app `{app}` now asks for permissions it was not approved for ({}); install it again to review them", .added.join(", "))]
+    PermissionsGrew { app: String, added: Vec<String> },
+    #[error("the app ref changed since it was previewed (sha256 {actual}, previewed {expected}); preview it again")]
+    RefChanged { expected: String, actual: String },
+    #[error("package file url `{url}` is refused: {reason}")]
+    UnsafeFileUrl { url: String, reason: String },
+    #[error("app package is too large: {0}")]
+    PackageTooLarge(String),
 }

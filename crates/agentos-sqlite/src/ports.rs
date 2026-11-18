@@ -21,6 +21,8 @@ impl From<DbError> for PortError {
             | DbError::MigrationOrder(_)
             | DbError::BadParams(_)
             | DbError::ReadOnly
+            | DbError::TooManyRows
+            | DbError::ResultTooLarge
             | DbError::Timeout(_) => PortError::Rejected(e.to_string()),
             DbError::Join(_) => PortError::Internal(e.to_string()),
         }

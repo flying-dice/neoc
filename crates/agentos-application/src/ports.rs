@@ -7,7 +7,8 @@ use agentos_domain::{
         ThreadMessage,
     },
     ui::{protocol::Command, ClientDecl, Node, SourceDecl},
-    Actor, Agent, AgentId, AppDecl, AppId, Capabilities, Device, DeviceId, Notification, ToolSpec,
+    Actor, Agent, AgentId, AppDecl, AppId, Capabilities, Device, DeviceId, Notification, Permission,
+    ToolSpec,
 };
 use async_trait::async_trait;
 use serde_json::{Map, Value};
@@ -322,6 +323,12 @@ pub struct InstalledApp {
     pub version: String,
     pub enabled: bool,
     pub installed_at_ms: u64,
+    /// What the person approved at install: the manifest's permissions then. A reload whose manifest asks
+    /// for more is refused until the app is installed again (and so approved again).
+    pub permissions: Vec<Permission>,
+    /// SHA-256 (hex) of the app-ref document that was installed or last loaded. Empty on a record from
+    /// before this was kept: the next load adopts what the manifest asks for.
+    pub ref_sha256: String,
 }
 
 #[async_trait]
