@@ -11,13 +11,14 @@ use crate::{
     convert::{json_to_lua, lua_to_json},
     error::{ScriptError, ToolFailure},
     state::{DepKey, SharedTracker, Tracker},
+    view::{RenderScope, ViewInstance},
 };
 use agentos_application::{
     data::DataTx,
     live::{SourceDef, SourceId},
-    ports::{AppData, AppPackage, CallContext, MenuCommand},
+    ports::{AppData, AppPackage, CallContext, MenuCommand, ViewEffect},
 };
-use agentos_domain::{time, tool_schema, Actor, AppDecl, AppId, Capabilities, Notification, ToolSpec};
+use agentos_domain::{time, tool_schema, AppDecl, AppId, Capabilities, Notification, ToolSpec};
 use mlua::{Function, Lua, Table, Value as LuaValue, VmState};
 use parking_lot::Mutex;
 use serde_json::Value;
@@ -42,6 +43,13 @@ pub enum VmError {
     NoSuchTool(String),
     #[error("no such source `{0}`, or it has no write callback")]
     NoSuchWriter(String),
+    #[error("no such window `{0}`")]
+    NoSuchWindow(String),
+    #[error("no such view `{0}`")]
+    NoSuchView(String),
+    /// A window rendered a tree that fails the component schema.
+    #[error("the rendered tree is invalid:\n{}", .0.join("\n"))]
+    InvalidTree(Vec<String>),
     /// The caller's arguments do not fit the tool's input schema.
     #[error("invalid input: {0}")]
     InvalidInput(String),
@@ -131,6 +139,12 @@ pub(crate) struct Shared {
     pub loading: Mutex<HashSet<String>>,
     pub app_table: Mutex<Option<Table>>,
     pub fail: Mutex<Option<Function>>,
+    /// Open windows by view id.
+    pub views: Mutex<HashMap<String, ViewInstance>>,
+    /// The source handles of the render in progress.
+    pub render_scope: Mutex<Option<RenderScope>>,
+    /// What windows asked for during a call (toasts, `client.set`).
+    pub view_effects: Mutex<Vec<(String, ViewEffect)>>,
     /// The open `db:tx(fn)` transaction, if any. A statement takes it out while it runs and puts it back, so
     /// no lock is held across an await and a call that was cut off cannot wedge the next one.
     pub tx: Mutex<Option<Box<dyn DataTx>>>,
@@ -150,6 +164,7 @@ impl Shared {
         self.commands.lock().clear();
         self.deep_links.lock().clear();
         self.modules.lock().clear();
+        self.views.lock().clear();
         *self.app_table.lock() = None;
         *self.fail.lock() = None;
     }
@@ -209,6 +224,9 @@ impl AppVm {
             loading: Mutex::default(),
             app_table: Mutex::default(),
             fail: Mutex::default(),
+            views: Mutex::default(),
+            render_scope: Mutex::default(),
+            view_effects: Mutex::default(),
             tx: Mutex::new(None),
         });
         let load_err =
@@ -255,6 +273,18 @@ impl AppVm {
 
     /// Start a top-level call: wait for the previous one, fresh CPU slice, and discard a transaction a
     /// cancelled call left open (dropping it rolls it back and frees the database).
+    pub(crate) fn shared(&self) -> &Arc<Shared> {
+        &self.shared
+    }
+
+    pub(crate) fn lua(&self) -> &Lua {
+        &self.lua
+    }
+
+    pub(crate) async fn enter_call(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.enter().await
+    }
+
     async fn enter(&self) -> tokio::sync::MutexGuard<'_, ()> {
         let guard = self.gate.lock().await;
         self.shared.slice.begin();
@@ -400,11 +430,5 @@ impl AppVm {
         let used = self.lua.used_memory();
         self.shared.release();
         used
-    }
-
-    /// An actor for host-originated calls (tests and background work).
-    #[must_use]
-    pub fn host_context(now_ms: u64) -> CallContext {
-        CallContext { actor: Actor::user("You"), now_ms }
     }
 }

@@ -30,7 +30,7 @@ const RENAMES: &[(&str, &str)] = &[
     ("optional", OPTIONAL_KEY),
 ];
 
-fn fragment(kind: &str, opts: Option<&Table>) -> mlua::Result<Value> {
+fn fragment(kind: &str, opts: Option<&Table>) -> mlua::Result<Map<String, Value>> {
     let mut out = Map::new();
     out.insert("type".into(), Value::String(kind.into()));
     if let Some(opts) = opts {
@@ -48,58 +48,68 @@ fn fragment(kind: &str, opts: Option<&Table>) -> mlua::Result<Value> {
                 Some((_, to)) => {
                     out.insert((*to).to_owned(), value);
                 }
-                None if key == "items" && kind == "array" => {
-                    out.insert(key, value);
-                }
-                None if key == "fields" && kind == "object" => {
-                    let fields = value.as_object().cloned().unwrap_or_default();
-                    let compiled = compile_fields(&fields).map_err(mlua::Error::runtime)?;
-                    if let Value::Object(c) = compiled {
-                        out.extend(c);
-                    }
-                }
                 None => return Err(mlua::Error::runtime(format!("t.{kind}: unknown option `{key}`"))),
             }
         }
     }
-    if kind == "object" && !out.contains_key("properties") {
-        out.insert("properties".into(), Value::Object(Map::new()));
-    }
-    Ok(Value::Object(out))
+    Ok(out)
+}
+
+fn as_schema(m: Map<String, Value>) -> Value {
+    Value::Object(m)
 }
 
 pub(super) fn builders(lua: &Lua) -> mlua::Result<Table> {
     let t = lua.create_table()?;
-    for kind in ["string", "integer", "number", "boolean", "array", "object"] {
+    for kind in ["string", "integer", "number", "boolean"] {
         t.set(
             kind,
             lua.create_function(move |lua, opts: Option<Table>| {
-                let value = fragment(kind, opts.as_ref())?;
-                json_to_lua(lua, &value)
+                json_to_lua(lua, &as_schema(fragment(kind, opts.as_ref())?))
             })?,
         )?;
     }
-    // t.enum { "a", "b", description = "..." }: the positional entries are the allowed values
+    // t.array(items, options?)
+    t.set(
+        "array",
+        lua.create_function(|lua, (items, opts): (Table, Option<Table>)| {
+            let mut out = fragment("array", opts.as_ref())?;
+            out.insert("items".into(), lua_to_json(&LuaValue::Table(items))?);
+            json_to_lua(lua, &as_schema(out))
+        })?,
+    )?;
+    // t.object(fields, options?): the fields compile like a tool's `input`
+    t.set(
+        "object",
+        lua.create_function(|lua, (fields, opts): (Table, Option<Table>)| {
+            let mut out = fragment("object", opts.as_ref())?;
+            let fields = match lua_to_json(&LuaValue::Table(fields))? {
+                Value::Object(m) => m,
+                _ => Map::new(),
+            };
+            if let Value::Object(compiled) = compile_fields(&fields).map_err(mlua::Error::runtime)? {
+                out.extend(compiled);
+            }
+            json_to_lua(lua, &as_schema(out))
+        })?,
+    )?;
+    // t.enum({ "a", "b" }, options?)
     t.set(
         "enum",
-        lua.create_function(|lua, opts: Table| {
-            let mut out = Map::new();
+        lua.create_function(|lua, (values, opts): (Table, Option<Table>)| {
             let mut options = Vec::new();
-            for v in opts.sequence_values::<LuaValue>() {
+            for v in values.sequence_values::<LuaValue>() {
                 options.push(lua_to_json(&v?)?);
             }
             if options.is_empty() {
-                return Err(mlua::Error::runtime("t.enum needs at least one value: t.enum { \"a\", \"b\" }"));
+                return Err(mlua::Error::runtime(
+                    "t.enum needs at least one value: t.enum({ \"a\", \"b\" })",
+                ));
             }
+            let mut out = fragment("enum", opts.as_ref())?;
+            out.remove("type");
             out.insert("enum".into(), Value::Array(options));
-            for (key, to) in RENAMES {
-                if let Ok(v) = opts.get::<LuaValue>(*key) {
-                    if !v.is_nil() {
-                        out.insert((*to).to_owned(), lua_to_json(&v)?);
-                    }
-                }
-            }
-            json_to_lua(lua, &Value::Object(out))
+            json_to_lua(lua, &as_schema(out))
         })?,
     )?;
     Ok(t)
@@ -128,19 +138,18 @@ mod tests {
             json!({"type": "string", "x-optional": true})
         );
         assert_eq!(
-            eval("return t.array { items = t.number {} }"),
+            eval("return t.array(t.number {})"),
             json!({"type": "array", "items": {"type": "number"}})
         );
         assert_eq!(
-            eval("return t.enum { 'a', 'b', description = 'mode' }"),
+            eval("return t.enum({ 'a', 'b' }, { description = 'mode' })"),
             json!({"enum": ["a", "b"], "description": "mode"})
         );
     }
 
     #[test]
     fn nested_objects_compile_their_fields() {
-        let v =
-            eval("return t.object { fields = { id = t.integer {}, note = t.string { optional = true } } }");
+        let v = eval("return t.object({ id = t.integer {}, note = t.string { optional = true } })");
         assert_eq!(v["required"], json!(["id"]));
         assert_eq!(v["properties"]["note"], json!({"type": "string"}));
     }
@@ -151,6 +160,6 @@ mod tests {
         lua.globals().set("t", builders(&lua).unwrap()).unwrap();
         let e = lua.load("return t.string { descripton = 'x' }").eval::<LuaValue>().unwrap_err().to_string();
         assert!(e.contains("unknown option `descripton`"), "{e}");
-        assert!(lua.load("return t.enum {}").eval::<LuaValue>().is_err());
+        assert!(lua.load("return t.enum({})").eval::<LuaValue>().is_err());
     }
 }

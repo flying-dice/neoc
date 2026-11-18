@@ -273,7 +273,7 @@ async fn sources_are_prepared_validated_and_listed_with_their_dependencies() {
         local n = db:scalar('select count(*) from notes')
         app.on('handles', function()
             local h = list {{ folder = 1, q = '' }}
-            return {{ folders = folders {{}}.source, list = h.source, folder = h.params.folder, note = note {{ id = 3 }}.source, n = n().source }}
+            return {{ folders = folders {{}}['$source'], list = h['$source'], note = note {{ id = 3 }}['$source'], n = n()['$source'], field = note {{ id = 3 }}.body['$ref'], bound = note {{ id = 3 }}:bind('body')['$ref'], dollar = h['$nothing'] }}
         end)"
     ));
     let vm = load(&src).await;
@@ -286,7 +286,7 @@ async fn sources_are_prepared_validated_and_listed_with_their_dependencies() {
     assert!(matches!(defs[3].kind, SourceKind::Scalar));
     assert_eq!(
         vm.emit("handles", json!(null)).await.unwrap(),
-        json!({"folders": "s1", "list": "s2", "folder": 1, "note": "s3", "n": "s4"})
+        json!({"folders": "s1", "list": "s2", "note": "s3", "n": "s4", "field": "src.s3.body", "bound": "src.s3.body"})
     );
 }
 
@@ -315,12 +315,12 @@ async fn source_handles_check_their_params() {
     let src = app(&format!(
         "{NOTES_DB}
         local note = db:row('select id, body from notes where id = :id', {{ key = 'id' }})
-        app.on('ok', function() return note {{ id = 1 }}.params.id end)
+        app.on('ok', function() return note {{ id = 1 }}['$source'] end)
         app.on('missing', function() return note {{}} end)
         app.on('extra', function() return note {{ id = 1, other = 2 }} end)"
     ));
     let vm = load(&src).await;
-    assert_eq!(vm.emit("ok", json!(null)).await.unwrap(), json!(1));
+    assert_eq!(vm.emit("ok", json!(null)).await.unwrap(), json!("s1"));
     assert!(vm.emit("missing", json!(null)).await.unwrap_err().to_string().contains("needs param `id`"));
     let e = vm.emit("extra", json!(null)).await.unwrap_err().to_string();
     assert!(e.contains("has no param `other`") && e.contains("probe/app.luau:"), "{e}");

@@ -65,11 +65,19 @@ pub(crate) fn state_constructor(lua: &Lua, tracker: SharedTracker) -> mlua::Resu
             (_, Some(t)) | (LuaValue::Table(t), None) => t,
             _ => lua.create_table()?,
         };
-        let id = {
-            let mut t = tracker.lock();
-            t.next_state += 1;
-            t.next_state
-        };
+        make_state(lua, &tracker, &initial)
+    })
+}
+
+/// A tracked state proxy over a copy of `initial` (`app.state`, and each window's `w.state`).
+pub(crate) fn make_state(lua: &Lua, tracker: &SharedTracker, initial: &Table) -> mlua::Result<Table> {
+    let tracker = tracker.clone();
+    let id = {
+        let mut t = tracker.lock();
+        t.next_state += 1;
+        t.next_state
+    };
+    {
         let data = lua.create_table()?;
         for pair in initial.pairs::<LuaValue, LuaValue>() {
             let (k, v) = pair?;
@@ -111,5 +119,5 @@ pub(crate) fn state_constructor(lua: &Lua, tracker: SharedTracker) -> mlua::Resu
         let proxy = lua.create_table()?;
         proxy.set_metatable(Some(meta))?;
         Ok(proxy)
-    })
+    }
 }

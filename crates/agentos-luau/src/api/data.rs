@@ -103,8 +103,8 @@ async fn declare(
     let params = def.info.named_params.clone();
     sh.sources.lock().push(def);
 
+    let sh = sh.clone();
     lua.create_function(move |lua, given: Option<Table>| {
-        let handle = lua.create_table()?;
         let values = lua.create_table()?;
         if let Some(given) = &given {
             for pair in given.pairs::<String, LuaValue>() {
@@ -123,9 +123,7 @@ async fn declare(
                 return Err(mlua::Error::runtime(format!("source {id} needs param `{p}`")));
             }
         }
-        handle.set("source", id.as_str())?;
-        handle.set("params", values)?;
-        Ok(handle)
+        crate::view::make_handle(lua, &sh, &id, &values)
     })
 }
 
@@ -308,11 +306,11 @@ fn install_sources(lua: &Lua, sh: &Sh, db: &Table) -> mlua::Result<()> {
                     .ok_or_else(|| mlua::Error::runtime("db:row needs { key = \"<unique column>\" }"))?;
                 let rev = opt_string(&opts, "rev")?;
                 let conflict = match opt_string(&opts, "conflict")?.as_deref() {
-                    None | Some("human") => Conflict::HumanWins,
+                    None | Some("merge") => Conflict::HumanWins,
                     Some("reject") => Conflict::Reject,
                     Some(other) => {
                         return Err(mlua::Error::runtime(format!(
-                            "conflict must be \"human\" or \"reject\", got `{other}`"
+                            "conflict must be \"merge\" or \"reject\", got `{other}`"
                         )))
                     }
                 };

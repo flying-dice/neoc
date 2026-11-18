@@ -12,6 +12,7 @@ pub mod reload;
 mod require;
 mod runtime;
 mod state;
+mod view;
 mod vm;
 
 pub use convert::{json_to_lua, lua_to_json};

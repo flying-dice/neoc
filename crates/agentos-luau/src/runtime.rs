@@ -9,17 +9,20 @@ use crate::{
 };
 use agentos_application::{
     live::SourceId,
-    ports::{AppData, AppPackage, AppRuntime, CallContext, LoadedApp, Notifier, PortResult, Shell},
+    ports::{
+        AppData, AppPackage, AppRuntime, CallContext, LoadedApp, Notifier, PortResult, RenderOutput, Shell,
+        ViewEffect, ViewEventCall,
+    },
     PortError,
 };
-use agentos_domain::{
-    ui::{UiEvent, UiNode},
-    AppId, Capabilities,
-};
+use agentos_domain::{AppId, Capabilities};
 use async_trait::async_trait;
 use parking_lot::{Mutex, RwLock};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::{collections::HashMap, sync::Arc};
+
+/// The generated constructors every app gets as `require("@agentos/ui")`.
+const UI_MODULE: &str = include_str!("../../../types/generated/ui.luau");
 
 pub struct LuauRuntime {
     vms: RwLock<HashMap<AppId, Arc<AppVm>>>,
@@ -33,12 +36,13 @@ pub struct LuauRuntime {
 
 impl LuauRuntime {
     pub fn new(notifier: Arc<dyn Notifier>, shell: Arc<dyn Shell>, limits: Limits) -> Self {
+        let host_modules = HashMap::from([("ui".to_owned(), UI_MODULE.as_bytes().to_vec())]);
         Self {
             vms: RwLock::default(),
             notifier,
             shell,
             limits,
-            host_modules: HashMap::new(),
+            host_modules,
             open_requests: Mutex::default(),
         }
     }
@@ -78,8 +82,10 @@ impl LuauRuntime {
 
 fn port_error(app: &AppId, e: VmError) -> PortError {
     match e {
-        VmError::NoSuchTool(t) => PortError::NotFound(t),
-        VmError::NoSuchWriter(s) => PortError::NotFound(s),
+        VmError::NoSuchTool(t)
+        | VmError::NoSuchWriter(t)
+        | VmError::NoSuchWindow(t)
+        | VmError::NoSuchView(t) => PortError::NotFound(t),
         VmError::Script(ref script) | VmError::Load { error: ref script, .. } => {
             tracing::warn!(%app, error = %script, traceback = script.traceback.as_deref().unwrap_or(""), "app code failed");
             PortError::Rejected(e.to_string())
@@ -145,16 +151,60 @@ impl AppRuntime for LuauRuntime {
         out
     }
 
-    async fn dispatch_event(&self, app: &AppId, event: UiEvent) -> PortResult<Option<UiNode>> {
+    async fn windows(&self, app: &AppId) -> PortResult<Vec<String>> {
+        Ok(self.vm(app)?.windows())
+    }
+
+    async fn open_view(
+        &self,
+        app: &AppId,
+        view: &str,
+        window: &str,
+        params: Map<String, Value>,
+        restored: Map<String, Value>,
+    ) -> PortResult<RenderOutput> {
         let vm = self.vm(app)?;
-        let payload = serde_json::to_value(&event).map_err(|e| PortError::Internal(e.to_string()))?;
-        let out = vm.emit("ui:event", payload).await.map_err(|e| port_error(app, e))?;
+        let out = vm.open_view(view, window, params, restored).await.map_err(|e| port_error(app, e));
         self.flush_effects(app, &vm).await?;
-        if out.is_null() {
-            return Ok(None);
-        }
-        serde_json::from_value(out)
-            .map(Some)
-            .map_err(|e| PortError::Rejected(format!("app returned an invalid view: {e}")))
+        out
+    }
+
+    async fn render_view(&self, app: &AppId, view: &str) -> PortResult<RenderOutput> {
+        let vm = self.vm(app)?;
+        let out = vm.render_view(view).await.map_err(|e| port_error(app, e));
+        self.flush_effects(app, &vm).await?;
+        out
+    }
+
+    async fn dispatch_view_event(
+        &self,
+        app: &AppId,
+        view: &str,
+        call: ViewEventCall,
+        ctx: CallContext,
+    ) -> PortResult<bool> {
+        let vm = self.vm(app)?;
+        let out = vm.dispatch_view_event(view, call, &ctx).await.map_err(|e| port_error(app, e));
+        self.flush_effects(app, &vm).await?;
+        out
+    }
+
+    async fn set_client_values(&self, app: &AppId, view: &str, values: Map<String, Value>) -> PortResult<()> {
+        self.vm(app)?.set_client_values(view, &values).map_err(|e| port_error(app, e))
+    }
+
+    async fn close_view(&self, app: &AppId, view: &str) -> PortResult<()> {
+        let vm = self.vm(app)?;
+        let out = vm.close_view(view).await.map_err(|e| port_error(app, e));
+        self.flush_effects(app, &vm).await?;
+        out
+    }
+
+    async fn dirty_views(&self, app: &AppId) -> PortResult<Vec<String>> {
+        Ok(self.vm(app)?.dirty_views())
+    }
+
+    async fn take_view_effects(&self, app: &AppId) -> PortResult<Vec<(String, ViewEffect)>> {
+        Ok(self.vm(app)?.take_view_effects())
     }
 }
