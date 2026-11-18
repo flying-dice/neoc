@@ -21,12 +21,12 @@
   const withUnknownShapes = async (): Promise<void> => {
     const base = createFakeHost()
     const api: HostApi = {
-      call: <T,>(method: string, params: Record<string, unknown> = {}): Promise<T> =>
+      call: (method: string, params: Record<string, unknown> = {}): Promise<unknown> =>
         method === 'app.list'
-          ? Promise.resolve({ apps: null } as T)
+          ? Promise.resolve({ apps: null })
           : method === 'app.available'
-            ? Promise.resolve({ apps: 5, errors: 'none' } as T)
-            : base.call<T>(method, params),
+            ? Promise.resolve({ apps: 5, errors: 'none' })
+            : base.call(method, params),
       onNotification: (listener) => base.onNotification(listener)
     }
     host.useFake(api, [FAKE_CALCULATOR])

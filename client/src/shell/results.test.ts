@@ -10,7 +10,7 @@ import {
 import type { HostApi } from './hostApi'
 
 const apiAnswering = (result: unknown): HostApi => ({
-  call: <T>() => Promise.resolve(result as T),
+  call: () => Promise.resolve(result),
   onNotification: () => () => undefined
 })
 

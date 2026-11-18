@@ -7,6 +7,7 @@
  * (and so from the generated types) a type error. Unknown fields are dropped, so a field the shell never reads
  * (an agent's runtime `env`) does not travel further than this module.
  */
+import { uniqueBy } from '@agentos/ui'
 import { z } from 'zod'
 import type { AgentSummary, AppPreview, AppSummary, Catalog, DeviceRow, HostApi } from './hostApi'
 
@@ -55,12 +56,10 @@ export const appPreviewSchema = z.object({
   sha256: z.string().regex(/^[0-9a-f]{64}$/i)
 }) satisfies z.ZodType<AppPreview>
 
-/** Registry problems are keyed by their text in the page: the same problem twice must show once. */
-export const unique = (items: readonly string[]): string[] => [...new Set(items)]
-
 export const catalogSchema = z.object({
   apps: z.array(appPreviewSchema),
-  errors: z.array(text).transform(unique)
+  // registry problems are keyed by their text in the page: the same problem twice must show once
+  errors: z.array(text).transform(uniqueBy((error) => error))
 }) satisfies z.ZodType<Catalog>
 
 export const agentListSchema = z.object({
@@ -93,7 +92,7 @@ export async function callParsed<S extends z.ZodType>(
   params: Record<string, unknown>,
   schema: S
 ): Promise<z.infer<S>> {
-  const result = await api.call<unknown>(method, params)
+  const result = await api.call(method, params)
   const parsed = schema.safeParse(result)
   if (parsed.success) return parsed.data
   const issue = parsed.error.issues[0]

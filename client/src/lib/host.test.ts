@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- test helpers infer their return types */
 import { beforeEach, describe, expect, test } from 'bun:test'
 import { Host, type HostDeps } from './host.svelte'
-import { appOf, setInstalledApps } from './apps.svelte'
+import { appOf, dockOrder, setInstalledApps } from './apps.svelte'
 import { HostError } from '../shell/channel'
 import type { PairResult } from '../shell/pairing'
 import type { AppSummary } from '../shell/hostApi'
@@ -198,6 +198,9 @@ describe('verifyPairing (a revoked device goes back to the pairing screen)', () 
     expect(s.host.phase).toBe('unpaired')
     expect(s.host.session).toBeNull()
     expect(s.host.apps).toEqual([])
+    // the shell's registry (windows, Dock) is emptied with it, not only the host's own list
+    expect(appOf('calculator')).toBeUndefined()
+    expect(dockOrder()).not.toContain('calculator')
   })
 
   test('a drop with the device still paired keeps reconnecting', async () => {

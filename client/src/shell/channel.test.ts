@@ -34,7 +34,7 @@ describe('the shell channel', () => {
     const seenBySession: string[] = []
     channel.transport.onMessage((m) => seenBySession.push(m))
 
-    const reply = channel.call<{ apps: number[] }>('app.list')
+    const reply = channel.call('app.list')
     expect(JSON.parse(wire.sent[0])).toMatchObject({ id: 's1', method: 'app.list', params: {} })
     wire.receive({ jsonrpc: '2.0', id: 's1', result: { apps: [1] } })
     expect(await reply).toEqual({ apps: [1] })

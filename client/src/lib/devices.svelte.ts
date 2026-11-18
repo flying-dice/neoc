@@ -1,4 +1,5 @@
 import type { DeviceRow } from '../shell/hostApi'
+import { messageOf } from '../view/errors'
 import { callParsed, deviceListSchema } from '../shell/results'
 import { host } from './host.svelte'
 
@@ -15,7 +16,7 @@ class Devices {
       this.list = (await callParsed(host.api, 'host.devices.list', {}, deviceListSchema)).devices
       this.error = null
     } catch (e) {
-      this.error = e instanceof Error ? e.message : String(e)
+      this.error = messageOf(e)
     } finally {
       this.loaded = true
     }
@@ -25,7 +26,7 @@ class Devices {
     try {
       await host.api.call('host.devices.revoke', { id: device.id })
     } catch (e) {
-      this.error = e instanceof Error ? e.message : String(e)
+      this.error = messageOf(e)
     }
     await this.load()
   }

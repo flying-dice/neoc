@@ -118,7 +118,7 @@ export function createFakeHost(
       listeners.add(listener)
       return () => void listeners.delete(listener)
     },
-    async call<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+    async call(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
       fake.calls.push([method, params])
       const app = (): AppSummary => {
         const found = fake.apps.find((a) => a.id === params.app)
@@ -127,7 +127,7 @@ export function createFakeHost(
       }
       switch (method) {
         case 'app.list':
-          return { apps: fake.apps } as T
+          return { apps: fake.apps }
         case 'app.available': {
           const offered = [
             NOTES,
@@ -139,7 +139,7 @@ export function createFakeHost(
               ? { ...p, installed: { version: installed.version, state: installed.state } }
               : p
           })
-          return { apps, errors: options.registryErrors ?? [] } satisfies Catalog as T
+          return { apps, errors: options.registryErrors ?? [] } satisfies Catalog
         }
         case 'app.preview': {
           const url = String(params.url)
@@ -152,7 +152,7 @@ export function createFakeHost(
             ...(installed
               ? { installed: { version: installed.version, state: installed.state } }
               : {})
-          } as T
+          }
         }
         case 'app.install': {
           if (fake.apps.some((a) => a.id === NOTES.id))
@@ -163,31 +163,31 @@ export function createFakeHost(
             window: { w: 960, h: 640, minW: 480, minH: 360 }
           } as AppSummary)
           fake.emit('app.installed', { app: NOTES.id })
-          return { app: NOTES.id } as T
+          return { app: NOTES.id }
         }
         case 'app.uninstall': {
           app()
           fake.apps = fake.apps.filter((a) => a.id !== params.app)
           fake.emit('app.uninstalled', { app: params.app })
-          return null as T
+          return null
         }
         case 'app.enable':
         case 'app.disable': {
           const target = app()
           target.state = method === 'app.enable' ? 'running' : 'disabled'
           fake.emit(method === 'app.enable' ? 'app.enabled' : 'app.disabled', { app: target.id })
-          return null as T
+          return null
         }
         case 'app.reload':
           app().state = 'running'
-          return null as T
+          return null
         case 'agents.list':
-          return { agents: fake.agents } as T
+          return { agents: fake.agents }
         case 'host.devices.list':
-          return { devices: fake.devices } as T
+          return { devices: fake.devices }
         case 'host.devices.revoke':
           fake.devices = fake.devices.filter((d) => d.id !== params.id)
-          return null as T
+          return null
         default:
           throw new HostError(-32601, `method \`${method}\` not found`)
       }

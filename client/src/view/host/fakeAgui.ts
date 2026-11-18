@@ -9,6 +9,7 @@
 import { EventType } from '@ag-ui/core'
 import type { Interrupt, ResumeEntry, RunAgentInput } from '@ag-ui/core'
 import { applyPatch } from '../kit/agui/jsonPatch'
+import { messageOf } from '../errors'
 import type { FetchLike } from '../kit/agui/session'
 import type { ThreadState } from '../kit/agui/schema'
 import { emptyThreadState, threadStateSchema } from '../kit/agui/schema'
@@ -381,7 +382,7 @@ export class FakeAgui {
     const script = input.resume ? (this.onResume ?? this.onRun) : this.onRun
     queueMicrotask(() => {
       void Promise.resolve(script(run)).catch((e: unknown) =>
-        run.error(e instanceof Error ? e.message : String(e))
+        run.error(messageOf(e))
       )
     })
     return new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } })

@@ -30,6 +30,7 @@ import type {
   WindowSize
 } from '../protocol'
 import { AppErrorCode } from '../protocol'
+import { messageOf } from '../errors'
 import { isConnectionError, RpcError } from '../rpc/peer'
 import {
   Bindings,
@@ -232,7 +233,7 @@ export class ViewCore {
       this.load(await this.link.request('view.open', params), false)
     } catch (error) {
       this.store.phase = 'failed'
-      this.store.error = error instanceof Error ? error.message : String(error)
+      this.store.error = messageOf(error)
       throw error
     }
   }
@@ -295,7 +296,7 @@ export class ViewCore {
       await this.resume()
     } catch (error) {
       if (isConnectionError(error)) return // the reconnect path will resume it
-      this.store.closed = error instanceof Error ? error.message : String(error)
+      this.store.closed = messageOf(error)
       this.store.phase = 'closed'
       this.report(error)
     }

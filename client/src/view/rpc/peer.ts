@@ -3,6 +3,7 @@
  * the socket run one: each side sends requests (awaited) and notifications (fire-and-forget) and handles the
  * other side's. `params` is always an object.
  */
+import { messageOf } from '../errors'
 
 export type JsonRpcId = number | string
 export type Params = Record<string, unknown>
@@ -81,7 +82,7 @@ const defaultToRpcError = (error: unknown): JsonRpcErrorObject =>
     ? { code: error.code, message: error.message, data: error.data }
     : {
         code: RpcErrorCode.InternalError,
-        message: error instanceof Error ? error.message : String(error)
+        message: messageOf(error)
       }
 
 interface Pending {

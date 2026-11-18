@@ -19,7 +19,7 @@ export interface HostChannel {
   /** Hand this to the `Session`: it never sees the shell's responses. */
   readonly transport: Transport
   /** A host-management request (`app.list`, ...). Rejects with the host's message on a JSON-RPC error. */
-  call<T>(method: string, params?: Params): Promise<T>
+  call(method: string, params?: Params): Promise<unknown>
   /** Host notifications that no window owns. */
   onNotification(listener: (method: string, params: Params) => void): () => void
 }
@@ -102,8 +102,8 @@ export function createHostChannel(base: Transport, timeoutMs = 30_000): HostChan
 
   return {
     transport,
-    call<T>(method: string, params: Params = {}): Promise<T> {
-      return peer.request<T>(method, params).catch((e: unknown) => {
+    call(method: string, params: Params = {}): Promise<unknown> {
+      return peer.request<unknown>(method, params).catch((e: unknown) => {
         throw asHostError(e)
       })
     },

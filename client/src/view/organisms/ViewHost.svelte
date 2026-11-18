@@ -3,8 +3,9 @@
   root node through the component registry and owns the window-level behaviour: dim and banner while offline
   (inputs still take drafts), toasts and live announcements, the inline error banner (the last good tree stays),
   window-scoped keyboard shortcuts, size class and the minute clock for `env.*`. A link the window asks to open
-  (Markdown link, `openUrl`) never opens on its own: a confirmation shows the host and the full address first, and
-  `onopenurl` runs only when the person says Open.
+  (Markdown link, `openUrl`) never opens on its own: a confirmation shows the host and the full address first
+  (focus starts on Cancel, and the address is in the dialog's description), and `onopenurl` runs only when the
+  person says Open. While a confirmation shows, further links are ignored.
   Molecules: Node, Notices, ConnectionBanner, Alert. Atoms: Text.
   Test ids: `${app}-view`, `-tree`, `-view-error`, `-view-closed`, `-offline`, `-notice`, `-announcer`, and the link
   confirmation `${app}-link-confirm` (`-host`, `-url`, `-action-open`, `-action-cancel`).
@@ -51,10 +52,13 @@
     retry: untrack(() => onretry)
   })
 
-  // Links wait for the person's say-so: the text of a link says nothing about where it goes.
+  // Links wait for the person's say-so: the text of a link says nothing about where it goes. One confirmation
+  // shows at a time and the destination it names never changes under the person's finger: a link asked for while
+  // it is showing is dropped (an app that pushes links can neither swap the address before Open nor stack dialogs).
   let link = $state<ExternalLink | null>(null)
   let linkOpen = $state(false)
   function askToOpen(url: string): void {
+    if (linkOpen) return
     const next = describeLink(url)
     if (!next) return // not a web or mail link: nothing to confirm, nothing to open
     link = next
@@ -168,6 +172,7 @@
     <Alert
       testid="{app}-link-confirm"
       bind:open={linkOpen}
+      initialFocus="cancel"
       title={target.kind === 'web' ? 'Open this link?' : 'Write to this address?'}
       message={target.kind === 'web'
         ? 'It opens a page outside AgentOS, in your browser.'

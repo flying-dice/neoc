@@ -13,6 +13,7 @@
   import { host } from '../lib/host.svelte'
   import { installedApp } from '../lib/apps.svelte'
   import { openExternal } from '../shell/links'
+  import { messageOf } from '../view/errors'
 
   interface Props {
     appId: string
@@ -53,7 +54,7 @@
         view = opened
       })
       .catch((e: unknown) => {
-        failure = e instanceof Error ? e.message : String(e)
+        failure = messageOf(e)
       })
   })
 

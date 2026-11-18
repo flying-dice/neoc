@@ -13,6 +13,7 @@
  * It is not a fake Luau runtime: an app here is a TypeScript `FakeApp` that returns trees and answers events.
  */
 import { merge3 } from '../core/textMerge'
+import { messageOf } from '../errors'
 import type {
   ClientDecl,
   DataPatch,
@@ -237,7 +238,7 @@ export class FakeHost {
         } catch (error) {
           throw new RpcError(
             AppErrorCode.AppError,
-            error instanceof Error ? error.message : String(error)
+            messageOf(error)
           )
         }
         return { ok: true }

@@ -15,6 +15,7 @@
   import { windowManager as wm } from '../lib/windowManager.svelte'
   import { AGENTS_APP_ID, appOf } from '../lib/apps.svelte'
   import { host } from '../lib/host.svelte'
+  import { messageOf } from '../view/errors'
   import { appPreviewSchema, callParsed } from '../shell/results'
   import {
     iconOf,
@@ -48,8 +49,6 @@
   let catalog = $state<Catalog>({ apps: [], errors: [] })
   let busy = $state<Record<string, boolean>>({})
   let storeError = $state<string | null>(null)
-
-  const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
   async function loadCatalog(): Promise<void> {
     try {
