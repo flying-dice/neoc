@@ -53,7 +53,10 @@ const nameOf = (path: string): string => path.split('.')[0]
 function setIn(root: Json, path: string[], value: Json): Json {
   if (path.length === 0) return value
   const base = root !== null && typeof root === 'object' && !Array.isArray(root) ? root : {}
-  return { ...base, [path[0]]: setIn((base as Record<string, Json>)[path[0]] ?? null, path.slice(1), value) }
+  return {
+    ...base,
+    [path[0]]: setIn((base as Record<string, Json>)[path[0]] ?? null, path.slice(1), value)
+  }
 }
 
 export class ClientState {
@@ -90,7 +93,9 @@ export class ClientState {
   private writeSession(): void {
     if (!this.d.storage) return
     const out: Record<string, Json> = {}
-    for (const [name, decl] of Object.entries(this.decls)) if (decl.persist === 'session' && name in this.d.store.client) out[name] = this.d.store.client[name]
+    for (const [name, decl] of Object.entries(this.decls))
+      if (decl.persist === 'session' && name in this.d.store.client)
+        out[name] = this.d.store.client[name]
     try {
       this.d.storage.setItem(this.storageKey, JSON.stringify(out))
     } catch {
@@ -105,9 +110,15 @@ export class ClientState {
     const { client } = this.d.store
     for (const [name, decl] of Object.entries(decls)) {
       if (name in client) continue
-      client[name] = name in restored ? restored[name] : decl.persist === 'session' && name in session ? session[name] : decl.init
+      client[name] =
+        name in restored
+          ? restored[name]
+          : decl.persist === 'session' && name in session
+            ? session[name]
+            : decl.init
     }
-    for (const [name, value] of Object.entries(restored)) if (!(name in client) && !(name in decls)) client[name] = value
+    for (const [name, value] of Object.entries(restored))
+      if (!(name in client) && !(name in decls)) client[name] = value
   }
 
   /** Values to hand the host on resume: what a restarted host adopts (spec 3.5 reconnect). */
@@ -115,7 +126,8 @@ export class ClientState {
     const out: Record<string, Json> = {}
     for (const [name, decl] of Object.entries(this.decls)) {
       const persisted = decl.persist === 'session' || decl.persist === 'app'
-      if ((persisted || this.effectiveSync(name) !== 'none') && name in this.d.store.client) out[name] = this.d.store.client[name]
+      if ((persisted || this.effectiveSync(name) !== 'none') && name in this.d.store.client)
+        out[name] = this.d.store.client[name]
     }
     return out
   }
@@ -131,7 +143,12 @@ export class ClientState {
   /** `client.set` from the app. Returns false when a focused text control kept its own value. */
   hostSet(path: string, value: Json, force = false): boolean {
     const name = nameOf(path)
-    if (!force && this.focused.has(name) && JSON.stringify(this.d.store.client[name]) !== JSON.stringify(value)) return false
+    if (
+      !force &&
+      this.focused.has(name) &&
+      JSON.stringify(this.d.store.client[name]) !== JSON.stringify(value)
+    )
+      return false
     this.assign(path, value)
     this.d.onChange()
     return true

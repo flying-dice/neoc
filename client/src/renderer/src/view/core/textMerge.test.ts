@@ -16,7 +16,10 @@ describe('merge3 (the host rule the client reproduces when it rebases)', () => {
     expect(merge3('a', 'b', 'b')).toEqual({ value: 'b', conflict: false })
   })
   test('non-overlapping hunks compose', () => {
-    expect(merge3('milk', 'milk\n- oat milk', 'Milk')).toEqual({ value: 'Milk\n- oat milk', conflict: false })
+    expect(merge3('milk', 'milk\n- oat milk', 'Milk')).toEqual({
+      value: 'Milk\n- oat milk',
+      conflict: false
+    })
   })
   test('two insertions at the same point compose, theirs first', () => {
     expect(merge3('', '+agent', 'user')).toEqual({ value: '+agentuser', conflict: false })

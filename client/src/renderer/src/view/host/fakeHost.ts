@@ -83,7 +83,10 @@ export class FakeView {
   conn: FakeConnection | null = null
   client: Record<string, Json> = {}
   /** Per source: the params and window the view asked for, and the rows it already has (by content hash). */
-  sources = new Map<string, { params: Record<string, Json>; range: { from: number; to: number }; sent: Map<string, string> }>()
+  sources = new Map<
+    string,
+    { params: Record<string, Json>; range: { from: number; to: number }; sent: Map<string, string> }
+  >()
   windowId = ''
   /** Entries a restarted host adopted from the client's persisted values (they travel back in the snapshot). */
   adopted = new Set<string>()
@@ -156,7 +159,12 @@ export class FakeHost {
     this.entries.clear()
     this.rowRings.clear()
     for (const [path, spec] of Object.entries(this.app.state)) {
-      this.entries.set(path, { value: spec.value, rev: 1, merge: spec.merge, ring: { values: new Map([[1, spec.value]]) } })
+      this.entries.set(path, {
+        value: spec.value,
+        rev: 1,
+        merge: spec.merge,
+        ring: { values: new Map([[1, spec.value]]) }
+      })
     }
   }
 
@@ -180,7 +188,13 @@ export class FakeHost {
     switch (method) {
       case 'session.hello': {
         const resume = params.resume as { sessionId?: string } | undefined
-        return { proto: PROTO, kit: KIT, hostVersion: 'fake-0.1', sessionId: this.sessionId, resumed: resume?.sessionId === this.sessionId }
+        return {
+          proto: PROTO,
+          kit: KIT,
+          hostVersion: 'fake-0.1',
+          sessionId: this.sessionId,
+          resumed: resume?.sessionId === this.sessionId
+        }
       }
       case 'view.open':
         return this.open(conn, params)
@@ -190,17 +204,33 @@ export class FakeHost {
         this.views.delete(this.view(params).id)
         return null
       case 'state.set':
-        return this.stateSet(this.view(params), params as { path: string; value: Json; baseRev: number })
+        return this.stateSet(
+          this.view(params),
+          params as { path: string; value: Json; baseRev: number }
+        )
       case 'row.set':
-        return this.rowSet(this.view(params), params as { source: string; key: RowKey; field: string; value: Json; baseRev: number })
+        return this.rowSet(
+          this.view(params),
+          params as { source: string; key: RowKey; field: string; value: Json; baseRev: number }
+        )
       case 'source.set':
-        return this.sourceSet(this.view(params), params as { source: string; params?: Record<string, Json>; range?: { from: number; to: number } })
+        return this.sourceSet(
+          this.view(params),
+          params as {
+            source: string
+            params?: Record<string, Json>
+            range?: { from: number; to: number }
+          }
+        )
       case 'view.event': {
         const view = this.view(params)
         try {
           await this.app.onEvent?.(view, params as unknown as ViewEventParams)
         } catch (error) {
-          throw new RpcError(AppErrorCode.AppError, error instanceof Error ? error.message : String(error))
+          throw new RpcError(
+            AppErrorCode.AppError,
+            error instanceof Error ? error.message : String(error)
+          )
         }
         return { ok: true }
       }
@@ -211,7 +241,8 @@ export class FakeHost {
 
   handleNotification(_conn: FakeConnection, method: string, params: Params): void {
     this.received.push({ method, params })
-    if (method === 'client.state') Object.assign(this.view(params).client, params.set as Record<string, Json>)
+    if (method === 'client.state')
+      Object.assign(this.view(params).client, params.set as Record<string, Json>)
   }
 
   private view(params: Params): FakeView {
@@ -250,7 +281,9 @@ export class FakeHost {
   }
 
   private paramsFor(view: FakeView, spec: SourceSpec): Record<string, Json> {
-    return Object.fromEntries(Object.entries(spec.decl.params ?? {}).map(([k, e]) => [k, this.evalParam(view, e)]))
+    return Object.fromEntries(
+      Object.entries(spec.decl.params ?? {}).map(([k, e]) => [k, this.evalParam(view, e)])
+    )
   }
 
   private snapshot(view: FakeView): ViewSnapshot {
@@ -273,7 +306,11 @@ export class FakeHost {
       tree: this.app.tree(view),
       state,
       // Only what the host restores: `persist = "app"` entries and values adopted on resume.
-      client: Object.fromEntries(Object.entries(view.client).filter(([name]) => this.app.clientDecls[name]?.persist === 'app' || view.adopted.has(name))),
+      client: Object.fromEntries(
+        Object.entries(view.client).filter(
+          ([name]) => this.app.clientDecls[name]?.persist === 'app' || view.adopted.has(name)
+        )
+      ),
       clientDecls: this.app.clientDecls,
       sources,
       data
@@ -306,7 +343,14 @@ export class FakeHost {
     }
     const drop = [...st.sent.keys()].filter((k) => !seen.has(k))
     for (const k of drop) st.sent.delete(k)
-    return { kind: 'rows', total: result.length, from: st.range.from, keys: window.map((r) => r[keyField] as RowKey), rows, drop }
+    return {
+      kind: 'rows',
+      total: result.length,
+      from: st.range.from,
+      keys: window.map((r) => r[keyField] as RowKey),
+      rows,
+      drop
+    }
   }
 
   /** Remember what a row looked like at its revision: the merge base of a later write (the ring of spec 3.4). */
@@ -320,7 +364,10 @@ export class FakeHost {
     }
   }
 
-  private sourceSet(view: FakeView, p: { source: string; params?: Record<string, Json>; range?: { from: number; to: number } }): SourcePatch {
+  private sourceSet(
+    view: FakeView,
+    p: { source: string; params?: Record<string, Json>; range?: { from: number; to: number } }
+  ): SourcePatch {
     const spec = this.app.sources[p.source]
     if (!spec) throw new RpcError(-32602, `no such source ${p.source}`)
     const st = view.sources.get(p.source)!
@@ -348,7 +395,9 @@ export class FakeHost {
     e.rev++
     e.value = value
     this.remember(e.ring, e.rev, value)
-    for (const view of this.views.values()) if (view !== exceptView) view.push('data.patch', { state: { [path]: { v: value, r: e.rev } } })
+    for (const view of this.views.values())
+      if (view !== exceptView)
+        view.push('data.patch', { state: { [path]: { v: value, r: e.rev } } })
     return e.rev
   }
 
@@ -362,7 +411,14 @@ export class FakeHost {
   }
 
   /** Decide a write against the current value: the host's rule, by binding type. */
-  private resolve(merge: MergeMode, ring: Ring, current: { value: Json; rev: number }, baseRev: number, mine: Json, path: string): { value: Json; conflict: boolean; write: boolean } {
+  private resolve(
+    merge: MergeMode,
+    ring: Ring,
+    current: { value: Json; rev: number },
+    baseRev: number,
+    mine: Json,
+    path: string
+  ): { value: Json; conflict: boolean; write: boolean } {
     if (baseRev === current.rev) return { value: mine, conflict: false, write: true }
     if (merge === 'reject') return { value: current.value, conflict: true, write: false }
     if (merge === 'text' && typeof mine === 'string' && typeof current.value === 'string') {
@@ -383,22 +439,37 @@ export class FakeHost {
       e.rev++
       e.value = r.value
       this.remember(e.ring, e.rev, r.value)
-      for (const other of this.views.values()) if (other !== view) other.push('data.patch', { state: { [p.path]: { v: r.value, r: e.rev } } })
+      for (const other of this.views.values())
+        if (other !== view)
+          other.push('data.patch', { state: { [p.path]: { v: r.value, r: e.rev } } })
     }
     return { rev: e.rev, value: r.value, ...(r.conflict ? { conflict: true } : {}) }
   }
 
-  private rowSet(view: FakeView, p: { source: string; key: RowKey; field: string; value: Json; baseRev: number }): WriteResult {
+  private rowSet(
+    view: FakeView,
+    p: { source: string; key: RowKey; field: string; value: Json; baseRev: number }
+  ): WriteResult {
     const spec = this.app.sources[p.source]
     if (!spec?.write) throw new RpcError(-32602, `source ${p.source} is not writable`)
     const st = view.sources.get(p.source)!
-    const row = spec.decl.kind === 'row' ? (spec as RowSourceSpec).get(st.params) : (spec as RowsSourceSpec).find?.(p.key) ?? null
+    const row =
+      spec.decl.kind === 'row'
+        ? (spec as RowSourceSpec).get(st.params)
+        : ((spec as RowsSourceSpec).find?.(p.key) ?? null)
     if (!row) throw new RpcError(-32602, `no row ${String(p.key)}`)
     const ringKey = `${p.source}:${String(p.key)}:${p.field}`
     const ring = this.rowRings.get(ringKey) ?? { values: new Map<number, Json>() }
     this.rowRings.set(ringKey, ring)
     const rev = typeof row.rev === 'number' ? row.rev : 0
-    const r = this.resolve(spec.merge ?? 'scalar', ring, { value: row[p.field] ?? null, rev }, p.baseRev, p.value, ringKey)
+    const r = this.resolve(
+      spec.merge ?? 'scalar',
+      ring,
+      { value: row[p.field] ?? null, rev },
+      p.baseRev,
+      p.value,
+      ringKey
+    )
     let newRev = rev
     if (r.write) {
       newRev = spec.write(p.key, p.field, r.value)

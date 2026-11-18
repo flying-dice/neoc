@@ -100,11 +100,22 @@ export interface ClientDecl {
 }
 
 export type SourcePatch =
-  | { kind: 'rows'; total: number; from?: number; keys: RowKey[]; rows?: Record<string, Row>; drop?: RowKey[] }
+  | {
+      kind: 'rows'
+      total: number
+      from?: number
+      keys: RowKey[]
+      rows?: Record<string, Row>
+      drop?: RowKey[]
+    }
   | { kind: 'row'; rev: number; row: Row | null }
   | { kind: 'value'; value: Json }
   | { kind: 'text'; rev: number; length: number; value?: string }
-  | { kind: 'thread'; rows?: Record<string, Row>; append?: { id: RowKey; path: string; text: string }[] }
+  | {
+      kind: 'thread'
+      rows?: Record<string, Row>
+      append?: { id: RowKey; path: string; text: string }[]
+    }
 
 export interface ViewSnapshot {
   viewId: string
@@ -227,7 +238,10 @@ export interface DataPatch {
 }
 
 export type ViewCommand =
-  | { cmd: 'toast'; args: { text: string; icon?: string; kind?: 'info' | 'success' | 'error'; duration?: number } }
+  | {
+      cmd: 'toast'
+      args: { text: string; icon?: string; kind?: 'info' | 'success' | 'error'; duration?: number }
+    }
   | { cmd: 'focus'; args: { key: string } }
   | { cmd: 'scrollTo'; args: { key?: string; row?: RowKey } }
   | { cmd: 'announce'; args: { text: string } }

@@ -48,7 +48,9 @@ export class FakeTimers implements Timers {
     const target = this.clock + ms
     await turn()
     for (;;) {
-      const next = this.queue.filter((t) => t.at <= target).sort((a, b) => a.at - b.at || a.id - b.id)[0]
+      const next = this.queue
+        .filter((t) => t.at <= target)
+        .sort((a, b) => a.at - b.at || a.id - b.id)[0]
       if (!next) break
       this.queue = this.queue.filter((t) => t !== next)
       this.clock = Math.max(this.clock, next.at)

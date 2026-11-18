@@ -1,6 +1,13 @@
+/* eslint-disable @typescript-eslint/explicit-function-return-type -- test helpers infer their return types */
 import { describe, expect, test } from 'bun:test'
 import { FakeTimers } from '../host/clock'
-import { backoffDelay, createWebSocketTransport, defaultRpcUrl, type Backoff, type SocketLike } from './websocket'
+import {
+  backoffDelay,
+  createWebSocketTransport,
+  defaultRpcUrl,
+  type Backoff,
+  type SocketLike
+} from './websocket'
 import type { TransportStatus } from './transport'
 
 class FakeSocket implements SocketLike {
@@ -52,7 +59,9 @@ function setup() {
 
 describe('backoff', () => {
   test('doubles from the base and caps at the max', () => {
-    expect([0, 1, 2, 3, 4, 5].map((n) => backoffDelay(n, backoff, () => 0))).toEqual([100, 200, 400, 800, 1000, 1000])
+    expect([0, 1, 2, 3, 4, 5].map((n) => backoffDelay(n, backoff, () => 0))).toEqual([
+      100, 200, 400, 800, 1000, 1000
+    ])
   })
   test('jitter only ever shortens the delay, within its fraction', () => {
     const j: Backoff = { ...backoff, jitter: 0.5 }
@@ -61,7 +70,9 @@ describe('backoff', () => {
   })
   test('the rpc url follows the page protocol', () => {
     expect(defaultRpcUrl({ protocol: 'https:', host: 'a.b:7000' })).toBe('wss://a.b:7000/rpc')
-    expect(defaultRpcUrl({ protocol: 'http:', host: 'localhost:5173' })).toBe('ws://localhost:5173/rpc')
+    expect(defaultRpcUrl({ protocol: 'http:', host: 'localhost:5173' })).toBe(
+      'ws://localhost:5173/rpc'
+    )
   })
 })
 

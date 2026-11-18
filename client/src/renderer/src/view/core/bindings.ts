@@ -72,7 +72,8 @@ export interface WriteAck {
  */
 export type Resolution = 'accepted' | 'merged' | 'replaced' | 'rejected'
 
-export const sameJson = (a: Json | undefined, b: Json | undefined): boolean => a === b || JSON.stringify(a) === JSON.stringify(b)
+export const sameJson = (a: Json | undefined, b: Json | undefined): boolean =>
+  a === b || JSON.stringify(a) === JSON.stringify(b)
 
 export function classifyAck(sent: Json, ack: WriteAck): Resolution {
   const same = sameJson(sent, ack.value)
@@ -199,7 +200,10 @@ export class Bindings {
       case 'debounce': {
         const now = this.timers.now()
         e.firstEditAt ??= now
-        const wait = Math.max(0, Math.min(e.policy.debounceMs, e.policy.maxWaitMs - (now - e.firstEditAt)))
+        const wait = Math.max(
+          0,
+          Math.min(e.policy.debounceMs, e.policy.maxWaitMs - (now - e.firstEditAt))
+        )
         e.timer = this.timers.setTimeout(() => void this.flush(e.key), wait)
         return
       }
@@ -270,7 +274,9 @@ export class Bindings {
 
   /** What is still unacknowledged, for `view.open {resume}` (spec 2.5). */
   pending(): ({ baseRev: number } & BindingTarget)[] {
-    return [...this.entries.values()].filter((e) => e.dirty).map((e) => ({ ...e.target, baseRev: e.baseRev }))
+    return [...this.entries.values()]
+      .filter((e) => e.dirty)
+      .map((e) => ({ ...e.target, baseRev: e.baseRev }))
   }
 
   // ── The ack ────────────────────────────────────────────────────────────
@@ -292,14 +298,16 @@ export class Bindings {
     if (typedMore) {
       // The user kept typing in flight: the draft stays, rebased on the ack so neither side's content is lost.
       const draft = store.drafts[e.key]
-      if (typeof sent === 'string' && typeof ack.value === 'string' && typeof draft === 'string') store.drafts[e.key] = rebase(sent, ack.value, draft)
+      if (typeof sent === 'string' && typeof ack.value === 'string' && typeof draft === 'string')
+        store.drafts[e.key] = rebase(sent, ack.value, draft)
     } else {
       const before = store.drafts[e.key] ?? sent
       delete store.drafts[e.key]
       delete store.dirty[e.key]
       e.dirty = false
       const after = this.d.read(e.target)?.value ?? ack.value
-      if (!sameJson(before, after)) for (const l of this.listeners.get(e.key) ?? []) l({ before, after })
+      if (!sameJson(before, after))
+        for (const l of this.listeners.get(e.key) ?? []) l({ before, after })
     }
 
     switch (resolution) {
@@ -322,35 +330,53 @@ export class Bindings {
   // ── Remote changes ─────────────────────────────────────────────────────
 
   /**
-   * The host pushed a value for a target (`data.patch.state`, a snapshot, a row patch whose row the caller has
-   * already written into the store). A dirty field shields itself: the server value updates, the draft keeps
-   * showing, and `baseRev` stays put until the ack.
+   * The host pushed a value for a target (`data.patch.state`, or a snapshot on open, resync and resume). A dirty
+   * field shields itself: the server value updates, the draft keeps showing, and `baseRev` stays put until the ack.
+   * A snapshot is authoritative even at a lower revision (a restarted host starts its revisions over); a live patch
+   * that is not newer than what we hold is stale or an echo of our own write and is ignored.
    */
-  remote(target: BindingTarget, value: Json, rev: number, apply = true): void {
-    const key = bindingKey(target)
-    const e = this.entries.get(key)
+  remote(
+    target: BindingTarget,
+    value: Json,
+    rev: number,
+    mode: 'patch' | 'snapshot' = 'patch'
+  ): void {
+    const e = this.entries.get(bindingKey(target))
+    const snapshot = mode === 'snapshot'
     if (!e) {
-      if (apply) this.d.adopt(target, value, rev)
+      const known = this.d.read(target)
+      if (!snapshot && known && rev <= known.rev) return
+      this.d.adopt(target, value, rev)
       return
     }
     if (e.dirty || e.inflight) {
-      if (rev > e.latestRev) {
-        if (apply) this.d.adopt(target, value, rev)
+      if (snapshot || rev > e.latestRev) {
+        this.d.adopt(target, value, rev)
         e.latestRev = rev
       }
       return
     }
-    if (rev <= e.baseRev) return // stale, or an echo of our own write
-    if (apply) this.d.adopt(target, value, rev)
+    if (!snapshot && rev <= e.baseRev) return
+    this.d.adopt(target, value, rev)
     e.baseValue = value
     e.baseRev = rev
     e.latestRev = rev
   }
 
   /** A row patch arrived (already applied): track revisions for every binding on that row. */
-  remoteRow(source: string, rowKey: string | number, row: Record<string, Json> | null, rev: number): void {
+  remoteRow(
+    source: string,
+    rowKey: string | number,
+    row: Record<string, Json> | null,
+    rev: number
+  ): void {
     for (const e of this.entries.values()) {
-      if (e.target.kind !== 'row' || e.target.source !== source || String(e.target.key) !== String(rowKey)) continue
+      if (
+        e.target.kind !== 'row' ||
+        e.target.source !== source ||
+        String(e.target.key) !== String(rowKey)
+      )
+        continue
       const field = row?.[e.target.field] ?? null
       if (e.dirty || e.inflight) e.latestRev = Math.max(e.latestRev, rev)
       else if (rev > e.baseRev || !sameJson(e.baseValue, field)) {

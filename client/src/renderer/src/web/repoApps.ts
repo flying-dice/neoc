@@ -15,10 +15,21 @@ import type { AppServerModule } from '@agentos/sdk/app/server'
 import type { MemoryApp } from '@agentos/sdk/testing'
 import { registerSourceLoader } from '../lib/appLoaders'
 
-const manifests = import.meta.glob<{ default: AppManifest }>('../../../../../apps/*/src/manifest.ts', { eager: true })
-const mocks = import.meta.glob<{ default: AppServerModule }>('../../../../../apps/*/src/mock/server.ts', { eager: true })
-const servers = import.meta.glob<{ default: AppServerModule }>('../../../../../apps/*/src/server/index.ts', { eager: true })
-const clients = import.meta.glob<{ default: AppClientModule }>('../../../../../apps/*/src/client/index.ts')
+const manifests = import.meta.glob<{ default: AppManifest }>(
+  '../../../../../apps/*/src/manifest.ts',
+  { eager: true }
+)
+const mocks = import.meta.glob<{ default: AppServerModule }>(
+  '../../../../../apps/*/src/mock/server.ts',
+  { eager: true }
+)
+const servers = import.meta.glob<{ default: AppServerModule }>(
+  '../../../../../apps/*/src/server/index.ts',
+  { eager: true }
+)
+const clients = import.meta.glob<{ default: AppClientModule }>(
+  '../../../../../apps/*/src/client/index.ts'
+)
 
 const dirOf = (manifestPath: string): string => manifestPath.slice(0, -'/src/manifest.ts'.length)
 
@@ -28,6 +39,9 @@ export function repoApps(): MemoryApp[] {
     const dir = dirOf(path)
     const client = clients[`${dir}/src/client/index.ts`]
     if (client) registerSourceLoader(manifest.id, client)
-    return { manifest, server: (mocks[`${dir}/src/mock/server.ts`] ?? servers[`${dir}/src/server/index.ts`])?.default }
+    return {
+      manifest,
+      server: (mocks[`${dir}/src/mock/server.ts`] ?? servers[`${dir}/src/server/index.ts`])?.default
+    }
   })
 }

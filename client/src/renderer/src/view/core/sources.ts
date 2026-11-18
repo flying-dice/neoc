@@ -76,9 +76,14 @@ export class Sources {
    * Install declarations and the first data windows (open, resync, resume). On a resume, sources whose params
    * changed while offline are re-queried after the snapshot lands.
    */
-  load(decls: Record<string, SourceDecl>, data: Record<string, SourcePatch>, resumed: boolean): void {
+  load(
+    decls: Record<string, SourceDecl>,
+    data: Record<string, SourcePatch>,
+    resumed: boolean
+  ): void {
     this.decls = decls
-    for (const id of Object.keys(this.d.store.sources)) if (!(id in decls)) delete this.d.store.sources[id]
+    for (const id of Object.keys(this.d.store.sources))
+      if (!(id in decls)) delete this.d.store.sources[id]
     for (const [id, patch] of Object.entries(data)) this.apply(id, patch)
     for (const id of Object.keys(decls)) {
       if (!resumed || !this.lastParams.has(id)) this.lastParams.set(id, this.paramsKey(id))
@@ -94,7 +99,8 @@ export class Sources {
       case 'row': {
         store.sources[id] = { kind: 'row', row: patch.row, rev: patch.rev }
         const key = patch.row?.[this.keyField(id)]
-        if (key !== undefined && key !== null) this.d.onRow?.(id, key as RowKey, patch.row, patch.rev)
+        if (key !== undefined && key !== null)
+          this.d.onRow?.(id, key as RowKey, patch.row, patch.rev)
         return
       }
       case 'value':
@@ -105,7 +111,9 @@ export class Sources {
       default:
         if (!this.warned.has(id)) {
           this.warned.add(id)
-          this.d.onError(new Error(`source "${id}": kind "${patch.kind}" is not supported by this client`))
+          this.d.onError(
+            new Error(`source "${id}": kind "${patch.kind}" is not supported by this client`)
+          )
         }
     }
   }
@@ -114,7 +122,14 @@ export class Sources {
     const { store } = this.d
     let data = store.sources[id]
     if (data?.kind !== 'rows') {
-      store.sources[id] = { kind: 'rows', total: patch.total, from: patch.from ?? 0, keys: patch.keys, rows: {}, loading: false }
+      store.sources[id] = {
+        kind: 'rows',
+        total: patch.total,
+        from: patch.from ?? 0,
+        keys: patch.keys,
+        rows: {},
+        loading: false
+      }
       data = store.sources[id]
     }
     const rows = data as RowsData
@@ -150,7 +165,8 @@ export class Sources {
   private paramsOf(id: string): Record<string, Json> {
     const decl = this.decls[id]
     const out: Record<string, Json> = {}
-    for (const [name, expr] of Object.entries(decl?.params ?? {})) out[name] = (this.d.evaluate(expr) ?? null) as Json
+    for (const [name, expr] of Object.entries(decl?.params ?? {}))
+      out[name] = (this.d.evaluate(expr) ?? null) as Json
     return out
   }
   private paramsKey = (id: string): string => JSON.stringify(this.paramsOf(id))
@@ -251,7 +267,8 @@ export class Sources {
   }
 
   dispose(): void {
-    for (const t of [...this.paramTimers.values(), ...this.rangeTimers.values()]) this.timers.clearTimeout(t)
+    for (const t of [...this.paramTimers.values(), ...this.rangeTimers.values()])
+      this.timers.clearTimeout(t)
     this.paramTimers.clear()
     this.rangeTimers.clear()
     this.pendingRange.clear()

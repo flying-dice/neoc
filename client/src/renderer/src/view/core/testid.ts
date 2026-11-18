@@ -11,7 +11,12 @@
  *   main/list/@row/item/delete, row 7      notes-list-row-7-item-delete   (the row container: notes-list-row-7)
  *   main/confirm-delete/@actions/confirm   notes-confirm-delete-confirm
  */
-export function testid(app: string, path: string, rowKey?: string | number, override?: unknown): string {
+export function testid(
+  app: string,
+  path: string,
+  rowKey?: string | number,
+  override?: unknown
+): string {
   if (typeof override === 'string' && override) return override
   const out: string[] = []
   for (const seg of path.split('/').slice(1)) {
@@ -24,4 +29,5 @@ export function testid(app: string, path: string, rowKey?: string | number, over
 }
 
 /** The id of the row container a `ForEach` renders for `rowKey` under the node at `path`. */
-export const rowTestid = (app: string, path: string, rowKey: string | number): string => testid(app, `${path}/@row`, rowKey)
+export const rowTestid = (app: string, path: string, rowKey: string | number): string =>
+  testid(app, `${path}/@row`, rowKey)

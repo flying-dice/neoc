@@ -21,7 +21,8 @@ export const MAX_NODES = 10_000
 export const childPath = (parentPath: string, key: string, slot?: string): string =>
   slot ? `${parentPath}/@${slot}/${key}` : `${parentPath}/${key}`
 
-const listOf = (node: Node, slot?: string): Node[] => (slot ? ((node.slots ??= {})[slot] ??= []) : (node.children ??= []))
+const listOf = (node: Node, slot?: string): Node[] =>
+  slot ? ((node.slots ??= {})[slot] ??= []) : (node.children ??= [])
 
 /** Resolve a path to its node and the sibling list that holds it (null for the root). */
 export function locate(root: Node, path: string): { node: Node; list: Node[] | null } | null {
@@ -106,7 +107,8 @@ export function applyOp(root: Node, op: Op): void {
       const parent = locate(root, op.parent)
       if (!parent) throw new OpError(`no parent at ${op.parent}`)
       const list = listOf(parent.node, op.slot)
-      if (list.some((n) => n.key === op.node.key)) throw new OpError(`duplicate key "${op.node.key}"`)
+      if (list.some((n) => n.key === op.node.key))
+        throw new OpError(`duplicate key "${op.node.key}"`)
       const at = op.before === null ? list.length : list.findIndex((n) => n.key === op.before)
       if (at < 0) throw new OpError(`no sibling "${op.before}"`)
       list.splice(at, 0, op.node)

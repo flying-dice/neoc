@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/explicit-function-return-type -- test helpers infer their return types */
 import { describe, expect, test } from 'bun:test'
 import { FakeTimers } from '../host/clock'
 import { createHarness } from '../host/harness'
@@ -10,7 +11,11 @@ async function setup() {
   const timers = new FakeTimers()
   const themes: ThemeSet[] = []
   const errors: unknown[] = []
-  const h = createHarness({ timers, onTheme: (t) => themes.push(t), onError: (e) => errors.push(e) })
+  const h = createHarness({
+    timers,
+    onTheme: (t) => themes.push(t),
+    onError: (e) => errors.push(e)
+  })
   const view = await h.openNotes()
   const received = (method: string) => h.host.received.filter((r) => r.method === method)
   return { h, view, timers, themes, errors, received, store: view.store }
@@ -52,7 +57,10 @@ describe('going offline', () => {
     await timers.settle()
     const res = await view.emit('main/_0/actions/save', 'tap')
     expect(res).toEqual({ ok: false, reason: 'offline' })
-    expect(view.store.notices.at(-1)).toMatchObject({ kind: 'error', text: 'You are offline. That action was not sent.' })
+    expect(view.store.notices.at(-1)).toMatchObject({
+      kind: 'error',
+      text: 'You are offline. That action was not sent.'
+    })
     h.link.setReachable(true)
     await timers.advance(5000)
     expect(received('view.event')).toHaveLength(0) // never replayed
@@ -93,9 +101,13 @@ describe('reconnect with backoff and resync', () => {
     expect(view.store.link).toBe('online')
     expect(view.viewId).toBe(viewId) // the host was alive: same instance
     expect(h.session.host?.resumed).toBe(true)
-    const hello = received('session.hello').at(-1)!.params as { resume: { sessionId: string; views: { viewId: string }[] } }
+    const hello = received('session.hello').at(-1)!.params as {
+      resume: { sessionId: string; views: { viewId: string }[] }
+    }
     expect(hello.resume).toMatchObject({ sessionId: 's1', views: [{ viewId }] })
-    const open = received('view.open').at(-1)!.params as { resume: { viewId: string; drafts: unknown[] } }
+    const open = received('view.open').at(-1)!.params as {
+      resume: { viewId: string; drafts: unknown[] }
+    }
     expect(open.resume.viewId).toBe(viewId)
     expect(open.resume.drafts).toEqual([{ kind: 'state', path: 'body', baseRev: 1 }])
     // The draft replays with the baseRev it was typed on; the host merges on that base.
@@ -126,7 +138,10 @@ describe('reconnect with backoff and resync', () => {
     expect(received('source.set')).toHaveLength(0)
     h.link.setReachable(true)
     await timers.advance(5000)
-    expect(received('source.set').at(-1)!.params).toMatchObject({ source: 'notes', params: { q: 'idea' } })
+    expect(received('source.set').at(-1)!.params).toMatchObject({
+      source: 'notes',
+      params: { q: 'idea' }
+    })
     expect((view.store.sources.notes as RowsData).keys).toEqual([2])
   })
 
@@ -156,7 +171,9 @@ describe('reconnect with backoff and resync', () => {
     expect(h.session.host?.resumed).toBe(false) // a new session
     expect(view.viewId).not.toBe(old)
     expect(view.store.client).toMatchObject({ search: 'grocer', noteId: 2 }) // selection survives without app code
-    expect(received('view.open').at(-1)!.params).toMatchObject({ resume: { client: { search: 'grocer', noteId: 2 } } })
+    expect(received('view.open').at(-1)!.params).toMatchObject({
+      resume: { client: { search: 'grocer', noteId: 2 } }
+    })
     // Notifications route to the new id.
     h.app.agentAddNote(h.host, 'After restart')
     await timers.settle()
@@ -188,11 +205,22 @@ describe('the handshake and routing', () => {
     link.onConnection((c) => {
       c.onMessage((m) => {
         const req = JSON.parse(m) as { id: number }
-        c.send(JSON.stringify({ jsonrpc: '2.0', id: req.id, result: { proto: 0, kit: '0.1', hostVersion: 'ancient', sessionId: 'x', resumed: false } }))
+        c.send(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: req.id,
+            result: { proto: 0, kit: '0.1', hostVersion: 'ancient', sessionId: 'x', resumed: false }
+          })
+        )
       })
       c.onClose(() => undefined)
     })
-    const session = new Session({ transport: link.transport, locale: 'en', timeZone: 'UTC', timers })
+    const session = new Session({
+      transport: link.transport,
+      locale: 'en',
+      timeZone: 'UTC',
+      timers
+    })
     session.start()
     await timers.settle()
     expect(session.state).toBe('incompatible')
@@ -201,7 +229,14 @@ describe('the handshake and routing', () => {
 
   test('theme.set is session-wide', async () => {
     const { h, themes, timers } = await setup()
-    const theme: ThemeSet = { scheme: 'dark', tint: 'blue', textScale: 110, reduceMotion: false, reduceTransparency: true, increaseContrast: false }
+    const theme: ThemeSet = {
+      scheme: 'dark',
+      tint: 'blue',
+      textScale: 110,
+      reduceMotion: false,
+      reduceTransparency: true,
+      increaseContrast: false
+    }
     h.host.allViews()[0].conn!.peer.notify('theme.set', theme as unknown as Record<string, unknown>)
     await timers.settle()
     expect(themes).toEqual([theme])

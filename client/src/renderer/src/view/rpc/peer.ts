@@ -40,7 +40,8 @@ export class RpcError extends Error {
 
 /** True for the failure modes that mean "the socket is not there": the caller queues instead of failing. */
 export const isConnectionError = (e: unknown): boolean =>
-  e instanceof RpcError && (e.code === RpcErrorCode.ConnectionClosed || e.code === RpcErrorCode.Timeout)
+  e instanceof RpcError &&
+  (e.code === RpcErrorCode.ConnectionClosed || e.code === RpcErrorCode.Timeout)
 
 export interface RpcPeerOptions {
   /** Deliver one serialized message to the other side. */
@@ -66,12 +67,16 @@ export interface RpcPeer {
   close(reason?: string): void
 }
 
-const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
+const isObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v)
 
 const defaultToRpcError = (error: unknown): JsonRpcErrorObject =>
   error instanceof RpcError
     ? { code: error.code, message: error.message, data: error.data }
-    : { code: RpcErrorCode.InternalError, message: error instanceof Error ? error.message : String(error) }
+    : {
+        code: RpcErrorCode.InternalError,
+        message: error instanceof Error ? error.message : String(error)
+      }
 
 interface Pending {
   resolve(v: unknown): void
@@ -94,7 +99,8 @@ export function createRpcPeer(options: RpcPeerOptions): RpcPeer {
     write({ jsonrpc: '2.0', id, error: { code, message } })
 
   const respond = async (id: JsonRpcId, method: string, params: Params): Promise<void> => {
-    if (!options.onRequest) return fail(id, RpcErrorCode.MethodNotFound, `Unknown method "${method}"`)
+    if (!options.onRequest)
+      return fail(id, RpcErrorCode.MethodNotFound, `Unknown method "${method}"`)
     try {
       const result = await options.onRequest(method, params)
       write({ jsonrpc: '2.0', id, result: result === undefined ? null : result })
@@ -117,7 +123,8 @@ export function createRpcPeer(options: RpcPeerOptions): RpcPeer {
 
   return {
     request<T>(method: string, params: Params = {}): Promise<T> {
-      if (closed) return Promise.reject(new RpcError(RpcErrorCode.ConnectionClosed, 'Connection closed'))
+      if (closed)
+        return Promise.reject(new RpcError(RpcErrorCode.ConnectionClosed, 'Connection closed'))
       const id = nextId++
       return new Promise<T>((resolve, reject) => {
         const entry: Pending = { resolve: resolve as (v: unknown) => void, reject }
@@ -143,12 +150,14 @@ export function createRpcPeer(options: RpcPeerOptions): RpcPeer {
       } catch {
         return fail(null, RpcErrorCode.ParseError, 'Parse error')
       }
-      if (!isObject(message) || message.jsonrpc !== '2.0') return fail(null, RpcErrorCode.InvalidRequest, 'Invalid request')
+      if (!isObject(message) || message.jsonrpc !== '2.0')
+        return fail(null, RpcErrorCode.InvalidRequest, 'Invalid request')
       const hasId = typeof message.id === 'number' || typeof message.id === 'string'
       if (typeof message.method === 'string') {
         const params = message.params === undefined ? {} : message.params
         if (!isObject(params)) {
-          if (hasId) fail(message.id as JsonRpcId, RpcErrorCode.InvalidParams, 'params must be an object')
+          if (hasId)
+            fail(message.id as JsonRpcId, RpcErrorCode.InvalidParams, 'params must be an object')
           return
         }
         if (hasId) void respond(message.id as JsonRpcId, message.method, params)

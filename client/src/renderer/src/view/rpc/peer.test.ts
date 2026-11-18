@@ -1,22 +1,41 @@
+/* eslint-disable @typescript-eslint/explicit-function-return-type -- test helpers infer their return types */
 import { describe, expect, test } from 'bun:test'
 import { createRpcPeer, isConnectionError, RpcError, RpcErrorCode, type RpcPeer } from './peer'
 
 /** Two peers wired back to back (frames are real strings). */
-function pair(handlers: { a?: Parameters<typeof createRpcPeer>[0]; b?: Parameters<typeof createRpcPeer>[0] } = {}) {
+function pair(
+  handlers: {
+    a?: Parameters<typeof createRpcPeer>[0]
+    b?: Parameters<typeof createRpcPeer>[0]
+  } = {}
+) {
   const frames: string[] = []
-  let a: RpcPeer
-  let b: RpcPeer
-  a = createRpcPeer({ ...handlers.a, send: (m) => (frames.push(m), queueMicrotask(() => b.receive(m))) })
-  b = createRpcPeer({ ...handlers.b, send: (m) => (frames.push(m), queueMicrotask(() => a.receive(m))) })
+  const ends: { a?: RpcPeer; b?: RpcPeer } = {}
+  const a = createRpcPeer({
+    ...handlers.a,
+    send: (m) => (frames.push(m), queueMicrotask(() => ends.b?.receive(m)))
+  })
+  const b = createRpcPeer({
+    ...handlers.b,
+    send: (m) => (frames.push(m), queueMicrotask(() => ends.a?.receive(m)))
+  })
+  ends.a = a
+  ends.b = b
   return { a, b, frames }
 }
 
 describe('json-rpc peer (by-name params)', () => {
   test('a request carries a params object and resolves with the result', async () => {
-    const { a, frames } = pair({ b: { send: () => undefined, onRequest: (m, p) => ({ method: m, echoed: p }) } })
+    const { a, frames } = pair({
+      b: { send: () => undefined, onRequest: (m, p) => ({ method: m, echoed: p }) }
+    })
     const result = await a.request('view.sync', { viewId: 'v1' })
     expect(result).toEqual({ method: 'view.sync', echoed: { viewId: 'v1' } })
-    expect(JSON.parse(frames[0])).toMatchObject({ jsonrpc: '2.0', method: 'view.sync', params: { viewId: 'v1' } })
+    expect(JSON.parse(frames[0])).toMatchObject({
+      jsonrpc: '2.0',
+      method: 'view.sync',
+      params: { viewId: 'v1' }
+    })
   })
 
   test('a thrown RpcError keeps its code and data; other errors become InternalError', async () => {
@@ -76,7 +95,10 @@ describe('json-rpc peer (by-name params)', () => {
     const peer = createRpcPeer({ send: (m) => out.push(m) })
     peer.receive('not json')
     peer.receive(JSON.stringify({ hello: 'world' }))
-    expect(out.map((m) => JSON.parse(m).error.code)).toEqual([RpcErrorCode.ParseError, RpcErrorCode.InvalidRequest])
+    expect(out.map((m) => JSON.parse(m).error.code)).toEqual([
+      RpcErrorCode.ParseError,
+      RpcErrorCode.InvalidRequest
+    ])
   })
 
   test('close rejects in-flight requests with ConnectionClosed and refuses new ones', async () => {
@@ -85,7 +107,9 @@ describe('json-rpc peer (by-name params)', () => {
     peer.close()
     expect(await inflight).toMatchObject({ code: RpcErrorCode.ConnectionClosed })
     expect(isConnectionError(await inflight)).toBe(true)
-    expect(await peer.request('again').catch((e: RpcError) => e)).toMatchObject({ code: RpcErrorCode.ConnectionClosed })
+    expect(await peer.request('again').catch((e: RpcError) => e)).toMatchObject({
+      code: RpcErrorCode.ConnectionClosed
+    })
   })
 
   test('a request times out with Timeout, which counts as a connection error', async () => {

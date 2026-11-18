@@ -1,12 +1,31 @@
 import { describe, expect, test } from 'bun:test'
 import { parseShortcut, ShortcutRegistry, type KeyEventLike } from './shortcuts'
 
-const key = (k: string, mods: Partial<KeyEventLike> = {}): KeyEventLike => ({ key: k, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, ...mods })
+const key = (k: string, mods: Partial<KeyEventLike> = {}): KeyEventLike => ({
+  key: k,
+  metaKey: false,
+  ctrlKey: false,
+  altKey: false,
+  shiftKey: false,
+  ...mods
+})
 
 describe('shortcut parsing', () => {
   test('modifiers and aliases', () => {
-    expect(parseShortcut('cmd+n')).toEqual({ key: 'n', cmd: true, ctrl: false, alt: false, shift: false })
-    expect(parseShortcut('Shift+Option+Return')).toEqual({ key: 'enter', cmd: false, ctrl: false, alt: true, shift: true })
+    expect(parseShortcut('cmd+n')).toEqual({
+      key: 'n',
+      cmd: true,
+      ctrl: false,
+      alt: false,
+      shift: false
+    })
+    expect(parseShortcut('Shift+Option+Return')).toEqual({
+      key: 'enter',
+      cmd: false,
+      ctrl: false,
+      alt: true,
+      shift: true
+    })
     expect(parseShortcut('esc')?.key).toBe('escape')
     expect(parseShortcut('')).toBeNull()
     expect(parseShortcut('hyper+x')).toBeNull()
@@ -36,7 +55,11 @@ describe('the window shortcut registry', () => {
   test('unregistering, disabled shortcuts and the command list', () => {
     const r = new ShortcutRegistry()
     let on = false
-    const off = r.register('escape', () => undefined, () => on)
+    const off = r.register(
+      'escape',
+      () => undefined,
+      () => on
+    )
     expect(r.list()).toEqual(['escape'])
     expect(r.dispatch(key('Escape'), { apple: true, editable: false })).toBe(false)
     on = true
@@ -48,7 +71,11 @@ describe('the window shortcut registry', () => {
   test('modifiers must match exactly', () => {
     const r = new ShortcutRegistry()
     r.register('cmd+n', () => undefined)
-    expect(r.dispatch(key('n', { metaKey: true, shiftKey: true }), { apple: true, editable: false })).toBe(true) // printable keys ignore shift
-    expect(r.dispatch(key('n', { metaKey: true, altKey: true }), { apple: true, editable: false })).toBe(false)
+    expect(
+      r.dispatch(key('n', { metaKey: true, shiftKey: true }), { apple: true, editable: false })
+    ).toBe(true) // printable keys ignore shift
+    expect(
+      r.dispatch(key('n', { metaKey: true, altKey: true }), { apple: true, editable: false })
+    ).toBe(false)
   })
 })

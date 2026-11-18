@@ -6,7 +6,9 @@ describe('test ids derive from explicit keys (spec 5.4)', () => {
     expect(testid('calculator', 'main/_0/_1/_2/key-7')).toBe('calculator-key-7')
     expect(testid('notes', 'main/actions/save')).toBe('notes-actions-save')
     expect(testid('notes', 'main/list/@row/item/delete', 7)).toBe('notes-list-row-7-item-delete')
-    expect(testid('notes', 'main/confirm-delete/@actions/confirm')).toBe('notes-confirm-delete-confirm')
+    expect(testid('notes', 'main/confirm-delete/@actions/confirm')).toBe(
+      'notes-confirm-delete-confirm'
+    )
   })
   test('auto keys and slot names never rename a node', () => {
     expect(testid('notes', 'main/_0/_1/@toolbar.trailing/new-note')).toBe('notes-new-note')

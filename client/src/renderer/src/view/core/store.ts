@@ -116,8 +116,7 @@ export type StoreFactory = () => ViewStore
 
 /** What a two-way binding writes: a server state path, or a field of a bound row (spec 3.2 write table). */
 export type BindingTarget =
-  | { kind: 'state'; path: string }
-  | { kind: 'row'; source: string; key: RowKey; field: string }
+  { kind: 'state'; path: string } | { kind: 'row'; source: string; key: RowKey; field: string }
 
 /** The stable key a target has in `drafts`, `dirty` and `fieldErrors`. */
 export const bindingKey = (t: BindingTarget): string =>

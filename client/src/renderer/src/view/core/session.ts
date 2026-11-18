@@ -44,7 +44,15 @@ export interface SessionOptions {
   requestTimeoutMs?: number
 }
 
-const HOST_NOTIFICATIONS: readonly string[] = ['view.tree', 'view.ops', 'data.patch', 'client.set', 'view.command', 'view.error', 'view.closed']
+const HOST_NOTIFICATIONS: readonly string[] = [
+  'view.tree',
+  'view.ops',
+  'data.patch',
+  'client.set',
+  'view.command',
+  'view.error',
+  'view.closed'
+]
 
 export class Session implements ViewLink {
   state: SessionState = 'connecting'
@@ -125,7 +133,12 @@ export class Session implements ViewLink {
     })
     this.peer = peer
     try {
-      const resume = this.sessionId ? { sessionId: this.sessionId, views: [...this.views].map(([viewId, v]) => ({ viewId, rev: v.store.rev })) } : undefined
+      const resume = this.sessionId
+        ? {
+            sessionId: this.sessionId,
+            views: [...this.views].map(([viewId, v]) => ({ viewId, rev: v.store.rev }))
+          }
+        : undefined
       const hello = await peer.request<SessionHelloResult>('session.hello', {
         proto: PROTO,
         kit: KIT,
@@ -146,7 +159,12 @@ export class Session implements ViewLink {
       this.setState('online')
       await Promise.all([...this.all].map((view) => this.resumeView(view, peer)))
     } catch (error) {
-      if (this.peer === peer && error instanceof RpcError && error.code !== RpcErrorCode.ConnectionClosed && error.code !== RpcErrorCode.Timeout) {
+      if (
+        this.peer === peer &&
+        error instanceof RpcError &&
+        error.code !== RpcErrorCode.ConnectionClosed &&
+        error.code !== RpcErrorCode.Timeout
+      ) {
         this.o.onError?.(error)
         this.setState('incompatible') // the host refused the handshake: "reload the app"
       }
@@ -172,7 +190,10 @@ export class Session implements ViewLink {
 
   // ── ViewLink ───────────────────────────────────────────────────────────
 
-  request<M extends RequestMethod>(method: M, params: RequestMethods[M]['params']): Promise<RequestMethods[M]['result']> {
+  request<M extends RequestMethod>(
+    method: M,
+    params: RequestMethods[M]['params']
+  ): Promise<RequestMethods[M]['result']> {
     const peer = this.peer
     if (!peer || (!this.ready && method !== 'session.hello' && method !== 'view.open'))
       return Promise.reject(new RpcError(RpcErrorCode.ConnectionClosed, 'Not connected'))
@@ -186,7 +207,10 @@ export class Session implements ViewLink {
   // ── Views ──────────────────────────────────────────────────────────────
 
   /** Open a view instance for a window. Waits for the connection if it is not up yet. */
-  async openView(params: Omit<ViewOpenParams, 'resume'>, opts: { effects?: ViewEffects } = {}): Promise<ViewCore> {
+  async openView(
+    params: Omit<ViewOpenParams, 'resume'>,
+    opts: { effects?: ViewEffects } = {}
+  ): Promise<ViewCore> {
     const view = new ViewCore({
       link: this,
       windowId: params.windowId,

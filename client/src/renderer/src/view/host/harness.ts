@@ -31,13 +31,21 @@ export interface Harness {
   session: Session
   storage: KeyValueStorage
   /** Open the Notes window (waits for the connection). */
-  openNotes(opts?: { windowId?: string; size?: { w: number; h: number }; effects?: ViewEffects }): Promise<ViewCore>
+  openNotes(opts?: {
+    windowId?: string
+    size?: { w: number; h: number }
+    effects?: ViewEffects
+  }): Promise<ViewCore>
 }
 
 export function createHarness(options: HarnessOptions = {}): Harness {
   const app = new NotesApp(options.notes)
   const host = new FakeHost(app)
-  const link = createMemoryLink({ latencyMs: options.latencyMs, timers: options.timers, onMessage: options.onMessage })
+  const link = createMemoryLink({
+    latencyMs: options.latencyMs,
+    timers: options.timers,
+    onMessage: options.onMessage
+  })
   link.onConnection((c) => host.accept(c))
   const storage = options.storage ?? memoryStorage()
   const session = new Session({

@@ -49,7 +49,11 @@ export function merge3(base: string, theirs: string, mine: string): MergeResult 
   if (overlap) return { value: mine, conflict: true }
   const [first, second] = t.at < m.at ? [t, m] : [m, t]
   const value =
-    base.slice(0, first.at) + first.ins + base.slice(first.at + first.del, second.at) + second.ins + base.slice(second.at + second.del)
+    base.slice(0, first.at) +
+    first.ins +
+    base.slice(first.at + first.del, second.at) +
+    second.ins +
+    base.slice(second.at + second.del)
   return { value, conflict: false }
 }
 

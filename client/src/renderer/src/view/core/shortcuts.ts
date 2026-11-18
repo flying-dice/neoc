@@ -43,7 +43,13 @@ export function parseShortcut(spec: string): Combo | null {
     .filter(Boolean)
   const key = parts.pop()
   if (!key) return null
-  const combo: Combo = { key: ALIASES[key] ?? key, cmd: false, ctrl: false, alt: false, shift: false }
+  const combo: Combo = {
+    key: ALIASES[key] ?? key,
+    cmd: false,
+    ctrl: false,
+    alt: false,
+    shift: false
+  }
   for (const raw of parts) {
     const mod = ALIASES[raw] ?? raw
     if (mod === 'cmd' || mod === 'ctrl' || mod === 'alt' || mod === 'shift') combo[mod] = true
@@ -103,4 +109,14 @@ export class ShortcutRegistry {
     }
     return false
   }
+}
+
+/** `aria-keyshortcuts` for a spec: `cmd+n` -> `Meta+N`. */
+export function ariaShortcut(spec: string): string | undefined {
+  const c = parseShortcut(spec)
+  if (!c) return undefined
+  const key = c.key.length === 1 ? c.key.toUpperCase() : c.key[0].toUpperCase() + c.key.slice(1)
+  return [c.cmd && 'Meta', c.ctrl && 'Control', c.alt && 'Alt', c.shift && 'Shift', key]
+    .filter(Boolean)
+    .join('+')
 }

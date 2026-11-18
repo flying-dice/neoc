@@ -31,18 +31,35 @@ import type {
 } from '../protocol'
 import { AppErrorCode } from '../protocol'
 import { isConnectionError, RpcError } from '../rpc/peer'
-import { Bindings, parseSync, SCALAR_SYNC, TEXT_SYNC, type AdoptListener, type SyncPolicy } from './bindings'
+import {
+  Bindings,
+  parseSync,
+  SCALAR_SYNC,
+  TEXT_SYNC,
+  type AdoptListener,
+  type SyncPolicy
+} from './bindings'
 import { ClientState, type KeyValueStorage } from './clientState'
 import { dig, evaluate, isRef, type FormatEnv } from './expr'
 import { Sources } from './sources'
-import { bindingKey, plainStore, type BindingTarget, type NoticeKind, type StoreFactory, type ViewStore } from './store'
+import {
+  bindingKey,
+  plainStore,
+  type BindingTarget,
+  type NoticeKind,
+  type StoreFactory,
+  type ViewStore
+} from './store'
 import { ShortcutRegistry } from './shortcuts'
 import { realTimers, type Timers } from './timers'
 import { applyOps, findByKey, MAX_DEPTH, MAX_NODES, measure, OpError } from './tree'
 
 /** What the view needs from the session: requests, notifications and whether the socket is up. */
 export interface ViewLink {
-  request<M extends RequestMethod>(method: M, params: RequestMethods[M]['params']): Promise<RequestMethods[M]['result']>
+  request<M extends RequestMethod>(
+    method: M,
+    params: RequestMethods[M]['params']
+  ): Promise<RequestMethods[M]['result']>
   notify<M extends keyof ClientNotifications>(method: M, params: ClientNotifications[M]): void
   readonly online: boolean
 }
@@ -93,7 +110,8 @@ export interface Binding {
   onAdopt(listener: AdoptListener): () => void
 }
 
-export type EmitResult = ViewEventResult | { ok: false; reason: 'offline' | 'error'; message?: string }
+export type EmitResult =
+  ViewEventResult | { ok: false; reason: 'offline' | 'error'; message?: string }
 
 const RESIZE_DEBOUNCE_MS = 150
 const NOTICE_MS = 6_000
@@ -107,7 +125,7 @@ export class ViewCore {
   private readonly clientState: ClientState
   private readonly link: ViewLink
   private readonly timers: Timers
-  private readonly effects: ViewEffects
+  private effects: ViewEffects
   private readonly report: (error: unknown) => void
   private readonly stateRevs = new Map<string, number>()
   private openParams: ViewOpenParams | null = null
@@ -146,8 +164,20 @@ export class ViewCore {
       online: () => this.link.online,
       send: (target, value, baseRev) =>
         target.kind === 'state'
-          ? this.link.request('state.set', { viewId: this.viewId, path: target.path, value, baseRev })
-          : this.link.request('row.set', { viewId: this.viewId, source: target.source, key: target.key, field: target.field, value, baseRev }),
+          ? this.link.request('state.set', {
+              viewId: this.viewId,
+              path: target.path,
+              value,
+              baseRev
+            })
+          : this.link.request('row.set', {
+              viewId: this.viewId,
+              source: target.source,
+              key: target.key,
+              field: target.field,
+              value,
+              baseRev
+            }),
       read: (t) => this.readServer(t),
       adopt: (t, v, r) => this.adoptServer(t, v, r),
       notify: (kind, text) => this.notice(kind === 'conflict' ? 'conflict' : kind, text),
@@ -193,7 +223,8 @@ export class ViewCore {
   load(snap: ViewSnapshot, resumed: boolean): void {
     const { store } = this
     const { nodes, depth } = measure(snap.tree)
-    if (nodes > MAX_NODES || depth > MAX_DEPTH) this.report(new Error(`tree exceeds the protocol limits (${nodes} nodes, depth ${depth})`))
+    if (nodes > MAX_NODES || depth > MAX_DEPTH)
+      this.report(new Error(`tree exceeds the protocol limits (${nodes} nodes, depth ${depth})`))
     if (snap.viewId !== this.viewId) {
       const previous = this.viewId
       this.viewId = snap.viewId
@@ -202,7 +233,8 @@ export class ViewCore {
     store.tree = snap.tree
     store.rev = snap.rev
     this.clientState.load(snap.clientDecls, snap.client)
-    for (const [path, { v, r }] of Object.entries(snap.state ?? {})) this.bindings.remote({ kind: 'state', path }, v, r)
+    for (const [path, { v, r }] of Object.entries(snap.state ?? {}))
+      this.bindings.remote({ kind: 'state', path }, v, r, 'snapshot')
     this.sources.load(snap.sources, snap.data, resumed)
     store.phase = 'ready'
     store.error = null
@@ -229,9 +261,19 @@ export class ViewCore {
     if (!open) return
     const snap = await this.link.request('view.open', {
       ...open,
-      resume: { viewId: this.viewId, rev: this.store.rev, client: this.clientState.snapshot(), drafts: this.bindings.pending() }
+      resume: {
+        viewId: this.viewId,
+        rev: this.store.rev,
+        client: this.clientState.snapshot(),
+        drafts: this.bindings.pending()
+      }
     })
     this.load(snap, true)
+  }
+
+  /** Replace the DOM effects (the host component installs them once it has a root element). */
+  setEffects(effects: ViewEffects): void {
+    this.effects = effects
   }
 
   /** The link went up or down (the session calls this around the resume). */
@@ -267,7 +309,8 @@ export class ViewCore {
   }
 
   setVisible(visible: boolean): void {
-    if (this.link.online && this.viewId) this.link.notify('view.visibility', { viewId: this.viewId, visible })
+    if (this.link.online && this.viewId)
+      this.link.notify('view.visibility', { viewId: this.viewId, visible })
   }
 
   /** The window was resized: `Adaptive` / size classes switch locally; the host is told debounced. */
@@ -277,7 +320,8 @@ export class ViewCore {
     this.store.env.heightClass = size.h < 560 ? 'compact' : 'regular'
     this.timers.clearTimeout(this.resizeTimer)
     this.resizeTimer = this.timers.setTimeout(() => {
-      if (this.link.online && this.viewId) this.link.notify('view.resize', { viewId: this.viewId, size, sizeClass })
+      if (this.link.online && this.viewId)
+        this.link.notify('view.resize', { viewId: this.viewId, size, sizeClass })
     }, RESIZE_DEBOUNCE_MS)
   }
 
@@ -327,7 +371,8 @@ export class ViewCore {
   }
 
   private applyData(p: DataPatch): void {
-    for (const [path, { v, r }] of Object.entries(p.state ?? {})) this.bindings.remote({ kind: 'state', path }, v, r)
+    for (const [path, { v, r }] of Object.entries(p.state ?? {}))
+      this.bindings.remote({ kind: 'state', path }, v, r)
     for (const [id, patch] of Object.entries(p.sources ?? {})) this.sources.apply(id, patch)
     this.sources.sync()
   }
@@ -336,15 +381,23 @@ export class ViewCore {
     const c = p as { viewId: string } & ViewCommand
     switch (c.cmd) {
       case 'toast':
-        return this.notice(c.args.kind === 'error' ? 'error' : c.args.kind === 'success' ? 'success' : 'info', c.args.text, c.args.duration)
+        return this.notice(
+          c.args.kind === 'error' ? 'error' : c.args.kind === 'success' ? 'success' : 'info',
+          c.args.text,
+          c.args.duration
+        )
       case 'announce':
         this.store.announcement = c.args.text
         return
       case 'focus':
         return this.withPath(c.args.key, (path) => this.effects.focus?.(path))
       case 'scrollTo':
-        if (c.args.key !== undefined) return this.withPath(c.args.key, (path) => this.effects.scrollTo?.(path))
-        return void (c.args.row !== undefined && this.report(new Error('scrollTo {row} needs a windowed list (wave B)')))
+        if (c.args.key !== undefined)
+          return this.withPath(c.args.key, (path) => this.effects.scrollTo?.(path))
+        return void (
+          c.args.row !== undefined &&
+          this.report(new Error('scrollTo {row} needs a windowed list (wave B)'))
+        )
       case 'copy':
         return this.effects.copy?.(c.args.text)
       case 'openUrl':
@@ -378,7 +431,8 @@ export class ViewCore {
   private statePath(rest: string[]): { path: string; tail: string[] } {
     for (let i = rest.length; i > 0; i--) {
       const path = rest.slice(0, i).join('.')
-      if (bindingKey({ kind: 'state', path }) in this.store.drafts || path in this.store.state) return { path, tail: rest.slice(i) }
+      if (bindingKey({ kind: 'state', path }) in this.store.drafts || path in this.store.state)
+        return { path, tail: rest.slice(i) }
     }
     return { path: rest.join('.'), tail: [] }
   }
@@ -396,7 +450,10 @@ export class ViewCore {
         return dig(store.client[rest[0]], rest.slice(1))
       case 'row': {
         if (!scope.row) return undefined
-        const draft = scope.source !== undefined && scope.rowKey !== undefined ? this.draftOf({ kind: 'row', source: scope.source, key: scope.rowKey, field: rest[0] }) : undefined
+        const draft =
+          scope.source !== undefined && scope.rowKey !== undefined
+            ? this.draftOf({ kind: 'row', source: scope.source, key: scope.rowKey, field: rest[0] })
+            : undefined
         return dig(draft !== undefined ? { [rest[0]]: draft } : scope.row, rest)
       }
       case 'src':
@@ -417,7 +474,10 @@ export class ViewCore {
       case 'row': {
         if (field === undefined) return data.row
         const key = data.row?.[this.sources.keyField(id)]
-        const draft = key === undefined || key === null ? undefined : this.draftOf({ kind: 'row', source: id, key: key as RowKey, field })
+        const draft =
+          key === undefined || key === null
+            ? undefined
+            : this.draftOf({ kind: 'row', source: id, key: key as RowKey, field })
         return dig(draft !== undefined ? draft : data.row?.[field], tail)
       }
       case 'rows':
@@ -444,13 +504,15 @@ export class ViewCore {
   target(ref: string, scope: Scope = {}): BindingTarget | null {
     const [ns, ...rest] = ref.split('.')
     if (ns === 'state' && rest.length) return { kind: 'state', path: this.statePath(rest).path }
-    if (ns === 'row' && rest.length && scope.source !== undefined && scope.rowKey !== undefined) return { kind: 'row', source: scope.source, key: scope.rowKey, field: rest[0] }
+    if (ns === 'row' && rest.length && scope.source !== undefined && scope.rowKey !== undefined)
+      return { kind: 'row', source: scope.source, key: scope.rowKey, field: rest[0] }
     if (ns === 'src' && rest.length >= 2) {
       const [id, field] = rest
       const data = this.store.sources[id]
       const key = data?.kind === 'row' ? data.row?.[this.sources.keyField(id)] : undefined
       const writable = this.sources.declaration(id)?.writable
-      if (key !== undefined && key !== null && (!writable || writable.includes(field))) return { kind: 'row', source: id, key: key as RowKey, field }
+      if (key !== undefined && key !== null && (!writable || writable.includes(field)))
+        return { kind: 'row', source: id, key: key as RowKey, field }
     }
     return null
   }
@@ -494,7 +556,12 @@ export class ViewCore {
       get error() {
         return self.store.fieldErrors[key]
       },
-      set: (value, policy) => this.bindings.edit(target, value, policy ?? (typeof value === 'string' ? TEXT_SYNC : SCALAR_SYNC)),
+      set: (value, policy) =>
+        this.bindings.edit(
+          target,
+          value,
+          policy ?? (typeof value === 'string' ? TEXT_SYNC : SCALAR_SYNC)
+        ),
       commit: () => this.bindings.commit(target),
       setComposing: (composing) => this.bindings.setComposing(target, composing),
       setFocused: () => undefined,
@@ -515,12 +582,18 @@ export class ViewCore {
   }
 
   private readServer(t: BindingTarget): { value: Json; rev: number } | undefined {
-    if (t.kind === 'state') return t.path in this.store.state ? { value: this.store.state[t.path], rev: this.stateRevs.get(t.path) ?? 0 } : undefined
+    if (t.kind === 'state')
+      return t.path in this.store.state
+        ? { value: this.store.state[t.path], rev: this.stateRevs.get(t.path) ?? 0 }
+        : undefined
     const data = this.store.sources[t.source]
-    if (data?.kind === 'row') return data.row ? { value: data.row[t.field] ?? null, rev: data.rev } : undefined
+    if (data?.kind === 'row')
+      return data.row ? { value: data.row[t.field] ?? null, rev: data.rev } : undefined
     if (data?.kind === 'rows') {
       const row = data.rows[String(t.key)]
-      return row ? { value: row[t.field] ?? null, rev: typeof row.rev === 'number' ? row.rev : 0 } : undefined
+      return row
+        ? { value: row[t.field] ?? null, rev: typeof row.rev === 'number' ? row.rev : 0 }
+        : undefined
     }
     return undefined
   }
@@ -567,7 +640,14 @@ export class ViewCore {
       case 'toggle':
         return this.optimistic(a.ref, !this.resolve(a.ref, scope), ctx)
       case 'emit': {
-        const payload = a.payload ? (Object.fromEntries(Object.entries(a.payload).map(([k, e]) => [k, (this.evaluate(e, scope) ?? null) as Json])) as Json) : undefined
+        const payload = a.payload
+          ? (Object.fromEntries(
+              Object.entries(a.payload).map(([k, e]) => [
+                k,
+                (this.evaluate(e, scope) ?? null) as Json
+              ])
+            ) as Json)
+          : undefined
         ctx.sent.push(this.emit(ctx.path, a.event ?? ctx.event, scope.rowKey, payload))
         return
       }
@@ -585,7 +665,11 @@ export class ViewCore {
       case 'nav.popToRoot':
         if (!this.warned.has(a.do)) {
           this.warned.add(a.do)
-          this.report(new Error(`action ${a.do} needs NavigationStack, which this client does not register yet`))
+          this.report(
+            new Error(
+              `action ${a.do} needs NavigationStack, which this client does not register yet`
+            )
+          )
         }
     }
   }
@@ -598,11 +682,15 @@ export class ViewCore {
   }
 
   /** The event's response was an error: restore the before values, unless a newer value replaced them already. */
-  private async restoreOnError(sent: Promise<EmitResult>[], undo: { ref: string; before: unknown; after: unknown; scope: Scope }[]): Promise<void> {
+  private async restoreOnError(
+    sent: Promise<EmitResult>[],
+    undo: { ref: string; before: unknown; after: unknown; scope: Scope }[]
+  ): Promise<void> {
     const results = await Promise.all(sent)
     if (!results.some((r) => !r.ok && (r.reason === 'error' || r.reason === 'offline'))) return
     for (const u of undo.reverse()) {
-      if (JSON.stringify(this.resolve(u.ref, u.scope)) === JSON.stringify(u.after)) this.write(u.ref, u.before as Json, u.scope)
+      if (JSON.stringify(this.resolve(u.ref, u.scope)) === JSON.stringify(u.after))
+        this.write(u.ref, u.before as Json, u.scope)
     }
   }
 
@@ -618,13 +706,24 @@ export class ViewCore {
     try {
       await this.bindings.settle()
       this.clientState.flushMirror()
-      return await this.link.request('view.event', { viewId: this.viewId, rev: this.store.rev, seq: ++this.seq, path, rowKey, event, payload })
+      return await this.link.request('view.event', {
+        viewId: this.viewId,
+        rev: this.store.rev,
+        seq: ++this.seq,
+        path,
+        rowKey,
+        event,
+        payload
+      })
     } catch (error) {
       if (isConnectionError(error)) {
         this.notice('error', 'The connection dropped. That action was not sent.')
         return { ok: false, reason: 'offline' }
       }
-      const message = error instanceof RpcError && error.code === AppErrorCode.AppError ? error.message : 'Something went wrong.'
+      const message =
+        error instanceof RpcError && error.code === AppErrorCode.AppError
+          ? error.message
+          : 'Something went wrong.'
       this.notice('error', message)
       this.report(error)
       return { ok: false, reason: 'error', message }

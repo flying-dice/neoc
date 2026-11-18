@@ -52,18 +52,28 @@ function toDate(v: unknown): { date: Date; floating: boolean } | null {
   if (typeof v === 'number') return { date: new Date(v), floating: false }
   if (typeof v !== 'string') return null
   if (DATE_ONLY.test(v)) return { date: new Date(`${v}T00:00:00Z`), floating: true }
-  if (TIME_ONLY.test(v)) return { date: new Date(`1970-01-01T${v.length === 5 ? `${v}:00` : v}Z`), floating: true }
+  if (TIME_ONLY.test(v))
+    return { date: new Date(`1970-01-01T${v.length === 5 ? `${v}:00` : v}Z`), floating: true }
   const date = new Date(v)
   return Number.isNaN(date.getTime()) ? null : { date, floating: false }
 }
 
 type DateStyle = 'short' | 'medium' | 'long' | 'full'
-const dateStyle = (v: unknown): DateStyle => (v === 'short' || v === 'long' || v === 'full' ? v : 'medium')
+const dateStyle = (v: unknown): DateStyle =>
+  v === 'short' || v === 'long' || v === 'full' ? v : 'medium'
 
-function formatDate(v: unknown, env: FormatEnv, options: (style: DateStyle) => Intl.DateTimeFormatOptions, style: unknown): string {
+function formatDate(
+  v: unknown,
+  env: FormatEnv,
+  options: (style: DateStyle) => Intl.DateTimeFormatOptions,
+  style: unknown
+): string {
   const d = toDate(v)
   if (!d) return ''
-  return new Intl.DateTimeFormat(env.locale, { ...options(dateStyle(style)), timeZone: d.floating ? 'UTC' : env.timeZone }).format(d.date)
+  return new Intl.DateTimeFormat(env.locale, {
+    ...options(dateStyle(style)),
+    timeZone: d.floating ? 'UTC' : env.timeZone
+  }).format(d.date)
 }
 
 const BYTE_UNITS = ['byte', 'kilobyte', 'megabyte', 'gigabyte', 'terabyte', 'petabyte'] as const
@@ -76,7 +86,12 @@ function formatBytes(value: unknown, env: FormatEnv): string {
     n /= 1000
     unit++
   }
-  return new Intl.NumberFormat(env.locale, { style: 'unit', unit: BYTE_UNITS[unit], unitDisplay: 'short', maximumFractionDigits: unit === 0 ? 0 : 1 }).format(n)
+  return new Intl.NumberFormat(env.locale, {
+    style: 'unit',
+    unit: BYTE_UNITS[unit],
+    unitDisplay: 'short',
+    maximumFractionDigits: unit === 0 ? 0 : 1
+  }).format(n)
 }
 
 /** Money travels as `{amount: integer minor units, currency}` (spec 3.6); a bare number is major units. */
@@ -85,11 +100,17 @@ function formatCurrency(value: unknown, currency: unknown, env: FormatEnv): stri
   let code = currency
   if (isObject(value) && typeof value.amount === 'number') {
     code = value.currency
-    const digits = new Intl.NumberFormat(env.locale, { style: 'currency', currency: str(code) }).resolvedOptions().maximumFractionDigits ?? 2
+    const digits =
+      new Intl.NumberFormat(env.locale, {
+        style: 'currency',
+        currency: str(code)
+      }).resolvedOptions().maximumFractionDigits ?? 2
     amount = value.amount / 10 ** digits
   }
   if (typeof code !== 'string') return ''
-  return new Intl.NumberFormat(env.locale, { style: 'currency', currency: code }).format(num(amount))
+  return new Intl.NumberFormat(env.locale, { style: 'currency', currency: code }).format(
+    num(amount)
+  )
 }
 
 const RELATIVE_UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
@@ -106,7 +127,8 @@ function formatRelative(value: unknown, env: FormatEnv): string {
   if (!d) return ''
   const diff = d.date.getTime() - env.now
   const rtf = new Intl.RelativeTimeFormat(env.locale, { numeric: 'auto' })
-  for (const [unit, ms] of RELATIVE_UNITS) if (Math.abs(diff) >= ms) return rtf.format(Math.trunc(diff / ms), unit)
+  for (const [unit, ms] of RELATIVE_UNITS)
+    if (Math.abs(diff) >= ms) return rtf.format(Math.trunc(diff / ms), unit)
   return rtf.format(0, 'minute')
 }
 
@@ -140,14 +162,27 @@ export const FUNCTIONS: Record<string, Impl> = {
   upper: ([a]) => str(a).toUpperCase(),
   lower: ([a]) => str(a).toLowerCase(),
   'fmt.number': ([v, opts], env) =>
-    new Intl.NumberFormat(env.locale, isObject(opts) ? (opts as Intl.NumberFormatOptions) : {}).format(num(v)),
+    new Intl.NumberFormat(
+      env.locale,
+      isObject(opts) ? (opts as Intl.NumberFormatOptions) : {}
+    ).format(num(v)),
   'fmt.currency': ([v, currency], env) => formatCurrency(v, currency, env),
   'fmt.percent': ([v, digits], env) =>
-    new Intl.NumberFormat(env.locale, { style: 'percent', maximumFractionDigits: typeof digits === 'number' ? digits : 0 }).format(num(v)),
+    new Intl.NumberFormat(env.locale, {
+      style: 'percent',
+      maximumFractionDigits: typeof digits === 'number' ? digits : 0
+    }).format(num(v)),
   'fmt.bytes': ([v], env) => formatBytes(v, env),
   'fmt.date': ([v, style], env) => formatDate(v, env, (s) => ({ dateStyle: s }), style),
-  'fmt.time': ([v, style], env) => formatDate(v, env, (s) => ({ timeStyle: s === 'full' || s === 'long' ? 'medium' : 'short' }), style),
-  'fmt.dateTime': ([v, style], env) => formatDate(v, env, (s) => ({ dateStyle: s, timeStyle: 'short' }), style),
+  'fmt.time': ([v, style], env) =>
+    formatDate(
+      v,
+      env,
+      (s) => ({ timeStyle: s === 'full' || s === 'long' ? 'medium' : 'short' }),
+      style
+    ),
+  'fmt.dateTime': ([v, style], env) =>
+    formatDate(v, env, (s) => ({ dateStyle: s, timeStyle: 'short' }), style),
   'fmt.relative': ([v], env) => formatRelative(v, env),
   'fmt.plural': ([n, forms], env) => formatPlural(n, forms, env),
   'fmt.list': ([items, style], env) => formatList(items, style, env)
@@ -178,7 +213,11 @@ export const FUNCTION_NAMES: readonly string[] = [...Object.keys(FUNCTIONS), ...
 class Budget extends Error {}
 
 /** Evaluate an expression. `resolve` maps a ref string to its current value (and is where reactivity is tracked). */
-export function evaluate(expr: Expr | undefined, resolve: (ref: string) => unknown, env: FormatEnv): unknown {
+export function evaluate(
+  expr: Expr | undefined,
+  resolve: (ref: string) => unknown,
+  env: FormatEnv
+): unknown {
   let remaining = MAX_EXPR_NODES
   const run = (e: Expr | undefined): unknown => {
     if (e === undefined) return undefined
@@ -199,7 +238,8 @@ export function evaluate(expr: Expr | undefined, resolve: (ref: string) => unkno
       }
     }
     if (Array.isArray(e)) return e.map(run) as Json[]
-    if (typeof e === 'object' && e !== null) return Object.fromEntries(Object.entries(e).map(([k, v]) => [k, run(v as Expr)]))
+    if (typeof e === 'object' && e !== null)
+      return Object.fromEntries(Object.entries(e).map(([k, v]) => [k, run(v as Expr)]))
     return e
   }
   try {

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/explicit-function-return-type -- test helpers infer their return types */
 import { describe, expect, test } from 'bun:test'
 import { FakeTimers } from '../host/clock'
 import { createHarness, type HarnessOptions } from '../host/harness'
@@ -17,8 +18,10 @@ async function setup(options: HarnessOptions = {}) {
 }
 
 const text = (v: Node | undefined) => v?.props?.text
-const node = (view: { store: { tree: Node | null } }, path: string): Node => locate(view.store.tree as Node, path)!.node
-const rows = (view: { store: { sources: Record<string, unknown> } }, id = 'notes') => view.store.sources[id] as RowsData
+const node = (view: { store: { tree: Node | null } }, path: string): Node =>
+  locate(view.store.tree as Node, path)!.node
+const rows = (view: { store: { sources: Record<string, unknown> } }, id = 'notes') =>
+  view.store.sources[id] as RowsData
 
 describe('view.open', () => {
   test('one round trip: tree, state, client state, source declarations and the first window', async () => {
@@ -31,13 +34,20 @@ describe('view.open', () => {
     expect(store.state.body).toBe('')
     expect(rows(view)).toMatchObject({ kind: 'rows', total: 5, from: 0 })
     expect(rows(view).keys).toEqual([5, 4, 3, 2, 1])
-    expect(view.evaluate({ $fn: 'concat', args: [{ $ref: 'src.notes.total' }, ' notes'] })).toBe('5 notes')
+    expect(view.evaluate({ $fn: 'concat', args: [{ $ref: 'src.notes.total' }, ' notes'] })).toBe(
+      '5 notes'
+    )
     expect(view.resolve('src.note.body')).toBe('milk, eggs') // a single-row source parameterised by client.noteId
   })
 
   test('the handshake carries the version, locale and zone', async () => {
     const { h } = await setup()
-    expect(h.host.received[0].params).toMatchObject({ proto: 1, kit: '1.0', locale: 'en-GB', timeZone: 'UTC' })
+    expect(h.host.received[0].params).toMatchObject({
+      proto: 1,
+      kit: '1.0',
+      locale: 'en-GB',
+      timeZone: 'UTC'
+    })
     expect(h.session.host).toMatchObject({ proto: 1, hostVersion: 'fake-0.1', resumed: false })
   })
 })
@@ -49,7 +59,17 @@ describe('keyed ops: structure, versioned', () => {
     expect(res).toEqual({ ok: true })
     expect(node(view, 'main/_0/status').props?.text).toBe('Deleted all notes') // the UI already reflects it
     expect(locate(view.store.tree as Node, 'main/_0/empty-state')).not.toBeNull()
-    expect(view.store.tree!.children![0].children!.map((c) => c.key)).toEqual(['count', 'list', 'empty-state', 'body', 'note-body', 'approved', 'actions', 'status'])
+    expect(view.store.tree!.children![0].children!.map((c) => c.key)).toEqual([
+      'count',
+      'list',
+      'empty-state',
+      'body',
+      'note-body',
+      'pinned',
+      'approved',
+      'actions',
+      'status'
+    ])
     expect(rows(view).total).toBe(0)
     h.app.agentAddNote(h.host, 'Back')
     await Promise.resolve()
@@ -67,7 +87,12 @@ describe('keyed ops: structure, versioned', () => {
 
   test('a gap (base != rev) makes the client ask for the full tree, and nothing is guessed', async () => {
     const { view, timers, received } = await setup()
-    view.notify('view.ops', { viewId: view.viewId, base: 99, rev: 100, ops: [{ op: 'set', path: 'main/_0/status', props: { text: 'lost' } }] })
+    view.notify('view.ops', {
+      viewId: view.viewId,
+      base: 99,
+      rev: 100,
+      ops: [{ op: 'set', path: 'main/_0/status', props: { text: 'lost' } }]
+    })
     await timers.settle()
     expect(received('view.sync')).toHaveLength(1)
     expect(node(view, 'main/_0/status').props?.text).toBe('Ready') // the lost op was not applied
@@ -77,7 +102,12 @@ describe('keyed ops: structure, versioned', () => {
     const { view, timers, received } = await setup()
     view.write('state.body', 'half-typed')
     const ops: Op[] = [{ op: 'set', path: 'main/ghost', props: {} }]
-    view.notify('view.ops', { viewId: view.viewId, base: view.store.rev, rev: view.store.rev + 1, ops })
+    view.notify('view.ops', {
+      viewId: view.viewId,
+      base: view.store.rev,
+      rev: view.store.rev + 1,
+      ops
+    })
     await timers.settle()
     expect(received('view.sync')).toHaveLength(1)
     expect(view.resolve('state.body')).toBe('half-typed')
@@ -85,7 +115,8 @@ describe('keyed ops: structure, versioned', () => {
 
   test('several gaps in a row share one view.sync', async () => {
     const { view, timers, received } = await setup()
-    for (let i = 0; i < 3; i++) view.notify('view.ops', { viewId: view.viewId, base: 50 + i, rev: 51 + i, ops: [] })
+    for (let i = 0; i < 3; i++)
+      view.notify('view.ops', { viewId: view.viewId, base: 50 + i, rev: 51 + i, ops: [] })
     await timers.settle()
     expect(received('view.sync')).toHaveLength(1)
   })
@@ -95,7 +126,11 @@ describe('keyed ops: structure, versioned', () => {
     view.notify('view.error', { viewId: view.viewId, message: 'render failed' })
     expect(view.store.error).toBe('render failed')
     expect(view.store.tree).not.toBeNull()
-    view.notify('view.tree', { viewId: view.viewId, rev: 9, tree: { type: 'Text', key: 'main', props: { text: 'fresh' } } })
+    view.notify('view.tree', {
+      viewId: view.viewId,
+      rev: 9,
+      tree: { type: 'Text', key: 'main', props: { text: 'fresh' } }
+    })
     expect(view.store.rev).toBe(9)
     expect(view.store.error).toBeNull()
     expect(text(view.store.tree!)).toBe('fresh')
@@ -120,7 +155,11 @@ describe('two-way text binding: drafts, shielding, merge (spec 3.4)', () => {
     expect(received('state.set')).toHaveLength(0)
     await timers.advance(1)
     expect(received('state.set')).toHaveLength(1)
-    expect(received('state.set')[0].params).toMatchObject({ path: 'body', value: 'hello', baseRev: 1 })
+    expect(received('state.set')[0].params).toMatchObject({
+      path: 'body',
+      value: 'hello',
+      baseRev: 1
+    })
     expect(h.host.stateValue('body')).toBe('hello')
     expect(view.store.dirty['state:body']).toBeUndefined()
     expect(view.store.drafts['state:body']).toBeUndefined()
@@ -177,7 +216,9 @@ describe('two-way text binding: drafts, shielding, merge (spec 3.4)', () => {
     await timers.advance(300)
     expect(h.host.stateValue('body')).toBe('buy soy')
     expect(view.resolve('state.body')).toBe('buy soy')
-    expect(view.store.notices.map((n) => [n.kind, n.text])).toEqual([['conflict', 'Your edit replaced a change made elsewhere.']])
+    expect(view.store.notices.map((n) => [n.kind, n.text])).toEqual([
+      ['conflict', 'Your edit replaced a change made elsewhere.']
+    ])
     expect(h.host.overwritten).toEqual([{ path: 'body', theirs: 'buy tea', mine: 'buy soy' }]) // kept as a revision
   })
 
@@ -248,7 +289,13 @@ describe('scalar bindings: human wins; strict sources refuse', () => {
     view.write('row.pinned', true, scope)
     expect(view.resolve('row.pinned', scope)).toBe(true) // optimistic overlay
     await timers.advance(0)
-    expect(received('row.set')[0].params).toMatchObject({ source: 'notes', key: 2, field: 'pinned', value: true, baseRev: 1 })
+    expect(received('row.set')[0].params).toMatchObject({
+      source: 'notes',
+      key: 2,
+      field: 'pinned',
+      value: true,
+      baseRev: 1
+    })
     expect(h.app.notes.find((n) => n.id === 2)!.pinned).toBe(true)
     expect(rows(view).rows['2'].pinned).toBe(true)
     expect(view.store.dirty['row:notes:2:pinned']).toBeUndefined()
@@ -278,14 +325,24 @@ describe('row bindings: src.<id>.<field> writes through row.set', () => {
     await timers.settle()
     expect(view.resolve('src.note.body')).toBe('Milk, eggs') // shielded
     await timers.advance(300)
-    expect(received('row.set')[0].params).toMatchObject({ source: 'note', key: 1, field: 'body', baseRev: 1 })
+    expect(received('row.set')[0].params).toMatchObject({
+      source: 'note',
+      key: 1,
+      field: 'body',
+      baseRev: 1
+    })
     expect(h.app.notes[0].body).toBe('Milk, eggs\n- oat milk') // merged on the base the host had sent
     expect(view.resolve('src.note.body')).toBe('Milk, eggs\n- oat milk')
   })
 
   test('only writable fields are bindable', async () => {
     const { view } = await setup()
-    expect(view.target('src.note.body')).toEqual({ kind: 'row', source: 'note', key: 1, field: 'body' })
+    expect(view.target('src.note.body')).toEqual({
+      kind: 'row',
+      source: 'note',
+      key: 1,
+      field: 'body'
+    })
     expect(view.target('src.note.rev')).toBeNull()
     expect(view.target('env.now')).toBeNull()
     expect(view.bindingOf({ $ref: 'route.id' })).toBeNull()
@@ -305,7 +362,11 @@ describe('sources: params are refs, windows, row deltas', () => {
     expect(received('source.set')).toHaveLength(0)
     await timers.advance(1)
     expect(received('source.set')).toHaveLength(1)
-    expect(received('source.set')[0].params).toMatchObject({ source: 'notes', params: { q: 'gro' }, range: { from: 0, to: 60 } })
+    expect(received('source.set')[0].params).toMatchObject({
+      source: 'notes',
+      params: { q: 'gro' },
+      range: { from: 0, to: 60 }
+    })
     expect(rows(view)).toMatchObject({ total: 1, keys: [1] })
     expect(rows(view).rows).not.toHaveProperty('2')
   })
@@ -341,7 +402,9 @@ describe('sources: params are refs, windows, row deltas', () => {
     await timers.settle()
     expect(rows(view).total).toBe(3)
     expect(rows(view).keys[0]).toBe(3)
-    const patches = h.link.log.filter((m) => m.dir === 'h2c' && m.text.includes('data.patch') && m.text.includes('"notes"'))
+    const patches = h.link.log.filter(
+      (m) => m.dir === 'h2c' && m.text.includes('data.patch') && m.text.includes('"notes"')
+    )
     const last = JSON.parse(patches[patches.length - 1].text).params.sources.notes
     expect(Object.keys(last.rows)).toEqual(['3']) // the two unchanged rows were not re-sent
     expect(JSON.stringify(rows(view).rows)).not.toBe(before)
@@ -361,7 +424,9 @@ describe('sources: params are refs, windows, row deltas', () => {
     expect(received('source.set')[0].params.range).toEqual({ from: 0, to: 40 })
     expect(rows(view).keys).toHaveLength(40)
     // The second reply carried only the 20 rows the client did not have.
-    const reply = h.link.log.filter((m) => m.dir === 'h2c' && m.text.includes('"result"') && m.text.includes('"keys"'))
+    const reply = h.link.log.filter(
+      (m) => m.dir === 'h2c' && m.text.includes('"result"') && m.text.includes('"keys"')
+    )
     expect(Object.keys(JSON.parse(reply[reply.length - 1].text).result.rows)).toHaveLength(20)
   })
 
@@ -437,9 +502,16 @@ describe('events and actions (spec 2.4, 3.5)', () => {
     const { view, received, h } = await setup()
     view.write('state.body', 'Buy milk')
     await view.emit('main/_0/actions/save', 'tap')
-    const order = h.host.received.map((r) => r.method).filter((m) => m === 'state.set' || m === 'view.event')
+    const order = h.host.received
+      .map((r) => r.method)
+      .filter((m) => m === 'state.set' || m === 'view.event')
     expect(order).toEqual(['state.set', 'view.event']) // the app sees the edit before the event
-    expect(received('view.event')[0].params).toMatchObject({ path: 'main/_0/actions/save', event: 'tap', seq: 1, viewId: view.viewId })
+    expect(received('view.event')[0].params).toMatchObject({
+      path: 'main/_0/actions/save',
+      event: 'tap',
+      seq: 1,
+      viewId: view.viewId
+    })
     expect(h.app.notes.at(-1)!.title).toBe('Buy milk')
     expect(view.resolve('state.body')).toBe('') // the host cleared it: a server-driven change on a clean field
   })
@@ -469,7 +541,16 @@ describe('events and actions (spec 2.4, 3.5)', () => {
 
   test('optimistic client effects are restored when the event fails, unless a newer value replaced them', async () => {
     const { view } = await setup()
-    const open: Node = { type: 'Button', key: 'x', on: { tap: [{ do: 'set', ref: 'client.search', value: 'optimistic' }, { do: 'emit', event: 'boom' }] } }
+    const open: Node = {
+      type: 'Button',
+      key: 'x',
+      on: {
+        tap: [
+          { do: 'set', ref: 'client.search', value: 'optimistic' },
+          { do: 'emit', event: 'boom' }
+        ]
+      }
+    }
     view.fire(open, 'main/_0/actions/nope', 'tap')
     expect(view.store.client.search).toBe('optimistic') // instant
     await new Promise((r) => setTimeout(r, 5))
@@ -485,7 +566,21 @@ describe('events and actions (spec 2.4, 3.5)', () => {
     const timers = new FakeTimers()
     const h = createHarness({ timers })
     const view = await h.openNotes({ effects: { copy: (t) => copied.push(t) } })
-    const n: Node = { type: 'Button', key: 'x', on: { tap: [{ do: 'seq', actions: [{ do: 'toggle', ref: 'client.flag' }, { do: 'copy', text: { $fn: 'concat', args: ['id ', { $ref: 'row.id' }] } }] }] } }
+    const n: Node = {
+      type: 'Button',
+      key: 'x',
+      on: {
+        tap: [
+          {
+            do: 'seq',
+            actions: [
+              { do: 'toggle', ref: 'client.flag' },
+              { do: 'copy', text: { $fn: 'concat', args: ['id ', { $ref: 'row.id' }] } }
+            ]
+          }
+        ]
+      }
+    }
     view.store.client.flag = false
     view.fire(n, 'main/x', 'tap', { row: { id: 9 }, rowKey: 9 })
     expect(view.store.client.flag).toBe(true)

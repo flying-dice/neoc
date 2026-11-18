@@ -16,7 +16,11 @@ export interface Backoff {
 export const DEFAULT_BACKOFF: Backoff = { baseMs: 500, maxMs: 15_000, factor: 2, jitter: 0.25 }
 
 /** Delay before reconnect attempt number `attempt` (0 = the first retry). */
-export function backoffDelay(attempt: number, backoff: Backoff = DEFAULT_BACKOFF, random: () => number = Math.random): number {
+export function backoffDelay(
+  attempt: number,
+  backoff: Backoff = DEFAULT_BACKOFF,
+  random: () => number = Math.random
+): number {
   const raw = Math.min(backoff.maxMs, backoff.baseMs * backoff.factor ** attempt)
   return Math.round(raw * (1 - backoff.jitter * random()))
 }
@@ -51,7 +55,8 @@ export function defaultRpcUrl(location: Pick<Location, 'protocol' | 'host'>): st
 
 export function createWebSocketTransport(options: WebSocketTransportOptions): Transport {
   const backoff = options.backoff ?? DEFAULT_BACKOFF
-  const createSocket = options.createSocket ?? ((url: string) => new WebSocket(url) as unknown as SocketLike)
+  const createSocket =
+    options.createSocket ?? ((url: string) => new WebSocket(url) as unknown as SocketLike)
   const random = options.random ?? Math.random
   const setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms))
   const clearTimer = options.clearTimer ?? ((t) => clearTimeout(t))

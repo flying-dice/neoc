@@ -2,8 +2,18 @@ import { describe, expect, test } from 'bun:test'
 import type { Expr } from '../protocol'
 import { evaluate, FUNCTION_NAMES, MAX_EXPR_NODES, type FormatEnv } from './expr'
 
-const env: FormatEnv = { locale: 'en-GB', timeZone: 'Europe/London', now: Date.UTC(2026, 10, 18, 12, 0, 0) }
-const scope: Record<string, unknown> = { 'client.search': 'gro', 'src.s.total': 3, 'row.title': 'Plan', 'state.n': 0, 'row.tags': ['a', 'b', 'c'] }
+const env: FormatEnv = {
+  locale: 'en-GB',
+  timeZone: 'Europe/London',
+  now: Date.UTC(2026, 10, 18, 12, 0, 0)
+}
+const scope: Record<string, unknown> = {
+  'client.search': 'gro',
+  'src.s.total': 3,
+  'row.title': 'Plan',
+  'state.n': 0,
+  'row.tags': ['a', 'b', 'c']
+}
 const run = (e: Expr): unknown => evaluate(e, (r) => scope[r], env)
 const fn = (name: string, ...args: Expr[]): Expr => ({ $fn: name, args })
 
@@ -67,7 +77,9 @@ describe('the closed function set', () => {
     expect([...FUNCTION_NAMES].sort()).toEqual(
       [
         ...'not and or eq ne lt gt add sub if coalesce concat len isEmpty upper lower'.split(' '),
-        ...'fmt.number fmt.currency fmt.percent fmt.bytes fmt.date fmt.time fmt.dateTime fmt.relative fmt.plural fmt.list'.split(' ')
+        ...'fmt.number fmt.currency fmt.percent fmt.bytes fmt.date fmt.time fmt.dateTime fmt.relative fmt.plural fmt.list'.split(
+          ' '
+        )
       ].sort()
     )
   })
@@ -88,7 +100,10 @@ describe('fmt.* uses the viewer locale and zone', () => {
   test('an instant is formatted in the viewer zone; a floating date is not shifted', () => {
     const london = evaluate(fn('fmt.time', '2026-07-01T23:30:00Z'), () => undefined, env)
     expect(london).toBe('00:30') // BST: the same instant, the viewer's wall clock
-    const date = evaluate(fn('fmt.date', '2026-11-18', 'short'), () => undefined, { ...env, timeZone: 'Pacific/Auckland' })
+    const date = evaluate(fn('fmt.date', '2026-11-18', 'short'), () => undefined, {
+      ...env,
+      timeZone: 'Pacific/Auckland'
+    })
     expect(date).toBe('18/11/2026') // a due date stays the 18th everywhere
   })
   test('relative times tick from env.now', () => {
@@ -97,8 +112,12 @@ describe('fmt.* uses the viewer locale and zone', () => {
     expect(run(fn('fmt.relative', '2026-11-18T12:00:00Z'))).toBe('this minute')
   })
   test('plural and list', () => {
-    expect(run(fn('fmt.plural', 1, { $lit: { one: '{n} note', other: '{n} notes' } }))).toBe('1 note')
-    expect(run(fn('fmt.plural', 1200, { $lit: { one: '{n} note', other: '{n} notes' } }))).toBe('1,200 notes')
+    expect(run(fn('fmt.plural', 1, { $lit: { one: '{n} note', other: '{n} notes' } }))).toBe(
+      '1 note'
+    )
+    expect(run(fn('fmt.plural', 1200, { $lit: { one: '{n} note', other: '{n} notes' } }))).toBe(
+      '1,200 notes'
+    )
     expect(run(fn('fmt.list', ['a', 'b', 'c']))).toBe('a, b and c')
   })
 })

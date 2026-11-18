@@ -74,10 +74,12 @@ export function createMemoryLink(options: MemoryLinkOptions = {}): MemoryLink {
       queueMicrotask(() => {
         if (!reachable || !accept) return this.finish()
         this.readyState = 1
+        // eslint-disable-next-line @typescript-eslint/no-this-alias -- the link tracks its live socket
         current = this
         connections++
         accept({
-          send: (m) => deliver('h2c', m, () => this.readyState === 1 && this.onmessage?.({ data: m })),
+          send: (m) =>
+            deliver('h2c', m, () => this.readyState === 1 && this.onmessage?.({ data: m })),
           onMessage: (l) => void (this.serverMessage = l),
           onClose: (l) => void (this.serverClose = l),
           close: () => this.finish()

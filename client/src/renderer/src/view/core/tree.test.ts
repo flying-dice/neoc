@@ -11,7 +11,16 @@ const tree = (): Node => ({
     {
       type: 'List',
       key: 'list',
-      slots: { row: [{ type: 'Row', key: 'item', props: { title: { $ref: 'row.title' } }, children: [{ type: 'Button', key: 'del', on: { tap: true } }] }] }
+      slots: {
+        row: [
+          {
+            type: 'Row',
+            key: 'item',
+            props: { title: { $ref: 'row.title' } },
+            children: [{ type: 'Button', key: 'del', on: { tap: true } }]
+          }
+        ]
+      }
     }
   ]
 })
@@ -58,14 +67,36 @@ describe('ops', () => {
     applyOp(t, { op: 'insert', parent: 'main', before: 'b', node: { type: 'Text', key: 'x' } })
     applyOp(t, { op: 'insert', parent: 'main', before: null, node: { type: 'Text', key: 'z' } })
     expect(keys(t)).toEqual(['a', 'x', 'b', 'list', 'z'])
-    applyOp(t, { op: 'insert', parent: 'main/list', slot: 'empty', before: null, node: { type: 'Text', key: 'none' } })
+    applyOp(t, {
+      op: 'insert',
+      parent: 'main/list',
+      slot: 'empty',
+      before: null,
+      node: { type: 'Text', key: 'none' }
+    })
     expect(locate(t, 'main/list/@empty/none')).not.toBeNull()
   })
   test('insert with a duplicate key or a missing sibling is an OpError', () => {
     const t = tree()
-    expect(() => applyOp(t, { op: 'insert', parent: 'main', before: null, node: { type: 'Text', key: 'a' } })).toThrow(OpError)
-    expect(() => applyOp(t, { op: 'insert', parent: 'main', before: 'ghost', node: { type: 'Text', key: 'q' } })).toThrow(OpError)
-    expect(() => applyOp(t, { op: 'insert', parent: 'main/ghost', before: null, node: { type: 'Text', key: 'q' } })).toThrow(OpError)
+    expect(() =>
+      applyOp(t, { op: 'insert', parent: 'main', before: null, node: { type: 'Text', key: 'a' } })
+    ).toThrow(OpError)
+    expect(() =>
+      applyOp(t, {
+        op: 'insert',
+        parent: 'main',
+        before: 'ghost',
+        node: { type: 'Text', key: 'q' }
+      })
+    ).toThrow(OpError)
+    expect(() =>
+      applyOp(t, {
+        op: 'insert',
+        parent: 'main/ghost',
+        before: null,
+        node: { type: 'Text', key: 'q' }
+      })
+    ).toThrow(OpError)
   })
   test('remove is idempotent', () => {
     const t = tree()
@@ -86,7 +117,9 @@ describe('ops', () => {
     const t = tree()
     applyOp(t, { op: 'replace', path: 'main/b', node: { type: 'Button', key: 'b' } })
     expect(t.children![1].type).toBe('Button')
-    expect(() => applyOp(t, { op: 'replace', path: 'main', node: { type: 'Stack', key: 'main' } })).toThrow(OpError)
+    expect(() =>
+      applyOp(t, { op: 'replace', path: 'main', node: { type: 'Stack', key: 'main' } })
+    ).toThrow(OpError)
   })
   test('a set on a missing path is an OpError (the view resyncs)', () => {
     expect(() => applyOps(tree(), [{ op: 'set', path: 'main/ghost', props: {} }])).toThrow(OpError)
