@@ -123,4 +123,37 @@ describe('json-rpc peer (by-name params)', () => {
     expect(isConnectionError(new RpcError(-32010, 'nope'))).toBe(false)
     expect(isConnectionError(new Error('x'))).toBe(false)
   })
+
+  test('an id prefix keeps two peers on one connection apart', async () => {
+    const sent: string[] = []
+    const peer = createRpcPeer({ send: (m) => void sent.push(m), idPrefix: 's' })
+    const reply = peer.request('app.list')
+    expect(JSON.parse(sent[0]).id).toBe('s1')
+    peer.receive(JSON.stringify({ jsonrpc: '2.0', id: 's1', result: { ok: true } }))
+    expect(await reply).toEqual({ ok: true })
+  })
+
+  test('failPending rejects what is in flight but the peer keeps working (the socket may come back)', async () => {
+    const sent: string[] = []
+    const peer = createRpcPeer({ send: (m) => void sent.push(m) })
+    const inflight = peer.request('a').catch((e: RpcError) => e)
+    peer.failPending('dropped')
+    expect(await inflight).toMatchObject({ code: RpcErrorCode.ConnectionClosed, message: 'dropped' })
+    const again = peer.request('b')
+    peer.receive(JSON.stringify({ jsonrpc: '2.0', id: 2, result: 1 }))
+    expect(await again).toBe(1)
+  })
+
+  test('a transport that refuses the frame rejects the request at once and leaves nothing pending', async () => {
+    const peer = createRpcPeer({
+      send: () => {
+        throw new Error('not open')
+      },
+      timeoutMs: 20
+    })
+    const e = await peer.request('x').catch((x: RpcError) => x)
+    expect(e).toMatchObject({ code: RpcErrorCode.ConnectionClosed, message: 'not open' })
+    // the late timer must not fire a second rejection or throw
+    await new Promise((r) => setTimeout(r, 40))
+  })
 })
