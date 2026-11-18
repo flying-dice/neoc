@@ -1,4 +1,5 @@
-//! JSON-RPC 2.0 envelope + the method names/params of the `/rpc` client protocol.
+//! The JSON-RPC 2.0 envelope of the `/rpc` socket. The view protocol's methods and messages live in
+//! [`crate::ui::protocol`]; the three typed params at the bottom are the spike's, kept until wave A4.
 
 use crate::ui::{UiEvent, UiNode, UiPatch};
 use crate::AppId;
@@ -74,7 +75,7 @@ impl RpcMessage {
     }
 }
 
-// --- typed params of the app protocol (client <-> host) ---
+// --- the spike's typed params (client <-> host), replaced by `ui::protocol` in wave A4 ---
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]

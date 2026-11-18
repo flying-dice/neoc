@@ -1,5 +1,6 @@
-//! Server-driven UI: the app describes views; the managed client renders them with the kit and
-//! sends events back. These types are the single source for the TS types (ts-rs) and the Luau defs.
+//! The spike's first UI tree (`UiNode`, `UiPatch`, `UiEvent`): still what `agentos-application`, `agentos-luau`
+//! and `agentos-http` speak until wave A4 moves them to the schema in the parent module (`Node`, `Op`, the view
+//! protocol). Nothing new uses these; they are not part of the generated client types.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
