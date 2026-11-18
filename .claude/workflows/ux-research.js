@@ -1,7 +1,7 @@
 export const meta = {
   name: 'ux-research',
   description: 'One UX research round for an AgentOS app: Haiku, Sonnet and Opus participants use it for real, a styleguide conformance audit scores it, and a synthesis writes the round report and change list',
-  whenToUse: 'Every design round of an AgentOS app (see .claude/skills/app-design). Args: { app, round, previous? }. Web mode must be serving on http://localhost:6200.',
+  whenToUse: 'Every design round of an AgentOS app (see .claude/skills/app-design). Args: { app, round, previous?, baseUrl?, dataDir? }. The real host must be serving the built client (default http://127.0.0.1:7400/, see docs/TESTING.md, Driving the real shell) with the app installed.',
   phases: [
     { title: 'Panel', detail: 'three participants (Haiku, Sonnet, Opus) walk every key journey in the real app' },
     { title: 'Audit', detail: 'styleguide conformance score against docs/design/DESIGN_LANGUAGE.md' },
@@ -14,9 +14,10 @@ const app = args && args.app
 if (!app) throw new Error('ux-research needs args.app, e.g. { app: "calculator", round: 1 }')
 const round = (args && args.round) || 1
 const previous = args && args.previous // path to the previous round's report, if any
-const base = (args && args.baseUrl) || 'http://localhost:6200/web.html'
+const base = (args && args.baseUrl) || 'http://127.0.0.1:7400/'
+const dataDir = (args && args.dataDir) || '' // the host's AGENTOS_DATA, if it is not the default ~/.agentos
 
-const journeysPath = `apps/${app}/JOURNEYS.md (module apps) or client/journeys/${app}.md (built-in apps and the desktop shell)`
+const journeysPath = `apps/${app}/JOURNEYS.md (Luau apps) or client/journeys/${app}.md (built-in pages and the desktop shell)`
 const reportPath = `docs/ux/${app}/round-${round}.md`
 
 // ── Participants ────────────────────────────────────────────────────────
@@ -93,12 +94,17 @@ The goals are in ${journeysPath}, for the app "${app}".
 
 How you use the app: a browser session driven from the shell (run \`node e2e/tools/session.mjs\` with no args for
 help). Your session name is "${p.id}-r${round}". For each journey:
-  1. node e2e/tools/session.mjs start ${p.id}-r${round} --url "${base}<start params from the journey>"
-     (add --theme dark / --width / --height if your persona would; Alex uses dark mode and a 1024x768 screen)
+  1. node e2e/tools/session.mjs start ${p.id}-r${round} --url "${base}"
+     (add --theme dark / --width / --height if your persona would; Alex uses dark mode and a 1024x768 screen).
+     The first screen asks to pair this device. That is setup, not part of the study: get a code with
+     \`${dataDir ? `AGENTOS_DATA=${dataDir} ` : ''}bun run host pair\` (it prints "Pairing code: XXXX-XXXX"), then
+     \`fill\` the "Pairing code" field with it and \`click\` "Pair". Start each journey from the state its "Starts at"
+     column describes, using the Dock and the shell like anyone would; there are no deep links.
   2. Loop: \`look\` (then open the screenshot with the Read tool — LOOK at it, as a person would), decide, act
      (click "<label you can see>", type, press, drag, resize…). Think aloud in your notes.
   3. Give up when this person would (Sam gives up quickly). That is a valid, useful result: outcome "failed".
-  4. Stop the session (\`stop\`) before the next journey.
+  4. One session stays paired, so reuse it for every journey (close the windows, or \`goto\` the URL again, to reset
+     between journeys); \`stop\` it after the last one.
 
 Report every point of friction as a finding with a screenshot path as evidence: anything confusing, slow,
 unlabelled, cut off, hidden behind something, inconsistent with iPadOS, low-contrast, or broken. Severity:
@@ -145,11 +151,14 @@ styleguide in docs/design/DESIGN_LANGUAGE.md, using the rubric in .claude/skills
 (categories, weights, and what earns each score are defined there — follow it exactly, do not invent categories).
 
 Evidence to gather (all of it, before scoring):
-  • \`bun scripts/design-audit.ts ${app}\` — static token/flat/spacing findings in the app's components.
+  • \`bun scripts/design-audit.ts ${app}\` — static token/flat/spacing findings, for a built-in shell page. A Luau app
+    has no CSS of its own (it picks semantic tokens only), so the script does not apply: audit what the kit renders for
+    its tree, and its props, keys and labels in apps/${app}/app.luau.
   • The visual baselines: e2e/__screenshots__/stories.spec.ts/** and e2e/__screenshots__/desktop.spec.ts/** files
     for this app (light, dark, min, large, fullscreen, split, slideover, screen sizes). Open them with Read and look.
-  • A live look in web mode: node e2e/tools/session.mjs start audit-r${round} --url "${base}?open=${app}"
-    (then look, resize the screen to 1024 768, try dark with --theme dark in a new session, Tab through controls).
+  • A live look on the real host: node e2e/tools/session.mjs start audit-r${round} --url "${base}" (pair it as in
+    docs/TESTING.md, open the app from the Dock, then look, resize the screen to 1024 768, try dark with --theme dark in a
+    new session, Tab through controls).
   • The automated results: \`npx playwright test --project=stories --project=desktop --grep "${app}" --reporter=line\`
     (axe, overflow and snapshot checks). Do NOT pass --update-snapshots.
 

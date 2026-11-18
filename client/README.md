@@ -28,17 +28,17 @@ shell/hostApi.ts        the wire types of app.* / host.devices.* (mirror of type
 shell/fakeHost.ts       a fake of those methods for stories
 organisms/ViewWindow    an installed app's window: view.open on mount, view.close on destroy, <ViewHost> in between
 pages/                  PairingPage, DiscoverPage (apps: install, enable, disable, remove, add by URL), SettingsPage
-                        (Devices), and the built-in Files, Terminal, UI Kit and Agents pages
+                        (Devices), and the built-in Files, Terminal and UI Kit pages
 ```
 
-The Agents page (and `lib/agents.svelte.ts`) still reads the old SDK bridge and is out of the Dock until wave B3
-replaces it with the AG-UI Agents app.
+Agents is not a page here: it is the Luau app `apps/agents`, rendered like any installed app, with `ChatTranscript`
+streaming over AG-UI (`/agui`).
 
 ## The managed renderer (`src/renderer/src/view`)
 
 The client half of the server-driven UI (`docs/architecture/ui-system.md`, sections 2 and 3). The host owns truth and
 structure; this renders view trees with the `@agentos/ui` kit, holds client-managed state and drafts, and runs **no app
-code**. The shell (windows, Dock, Stage Manager, built-in pages) does not use it yet: wave B2 connects the two.
+code**. The shell's `ViewWindow` organism hosts it for every installed app.
 
 ```
 protocol.ts      every wire type (view.tree/ops, data.patch, requests, actions). Hand-written; wave A2 replaces it

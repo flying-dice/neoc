@@ -3,8 +3,8 @@
 The Luau Agents app (`app.luau`) on the host. The conversation itself streams over AG-UI (`ChatTranscript`); the
 app only lists agents and chats. Host-level checks live in `crates/agentos-host/tests/agents_app.rs`
 (roster in the sidebar, the thread source, starting a chat, titling it); the transcript and session bar are
-covered by the "Renderer/Chat transcript" stories and `client/.../kit/agui/*.test.ts`. A Playwright journey spec for
-these waits for the e2e harness against the real host (B2).
+covered by the "Renderer/Chat transcript" stories and `client/.../kit/agui/*.test.ts`. The journeys are automated in
+`e2e/journeys.spec.ts` against the real host, with the scripted ACP agent (`docs/TESTING.md`).
 
 Node keys: `new-chat` (or `new-chat-<agentId>` in the menu), `agent-<agentId>`, `sidebar`, `chat`. Test ids derive from
 the key path; inside the chat they are `<chat id>-thread`, `-session-mode`, `-session-config-<id>`, `-session-commands`,
