@@ -16,7 +16,7 @@ const round = (args && args.round) || 1
 const previous = args && args.previous // path to the previous round's report, if any
 const base = (args && args.baseUrl) || 'http://localhost:6200/web.html'
 
-const journeysPath = `apps/${app}/JOURNEYS.md (module apps) or apps/desktop/journeys/${app}.md (built-in apps and the desktop shell)`
+const journeysPath = `apps/${app}/JOURNEYS.md (module apps) or client/journeys/${app}.md (built-in apps and the desktop shell)`
 const reportPath = `docs/ux/${app}/round-${round}.md`
 
 // ── Participants ────────────────────────────────────────────────────────

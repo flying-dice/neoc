@@ -3,12 +3,13 @@
   "private": true,
   "type": "module",
   "workspaces": [
+    "client",
     "apps/*",
     "packages/*"
   ],
   "scripts": {
-    "dev": "bun run build:apps && bun run --filter @agentos/server --filter @agentos/desktop dev",
-    "build": "bun run --filter @agentos/desktop build",
+    "dev": "bun run build:apps && bun run --filter @agentos/server --filter @agentos/client dev",
+    "build": "bun run --filter @agentos/client build",
     "start": "bun run --filter @agentos/server start",
     "build:apps": "bun scripts/build-apps.ts",
     "release:apps": "bun scripts/build-apps.ts --release",
@@ -27,7 +28,7 @@
     "test:e2e": "bun scripts/storybooks.ts build && playwright test",
     "test:e2e:update": "bun scripts/storybooks.ts build && playwright test --update-snapshots",
     "storybooks": "bun scripts/storybooks.ts",
-    "dev:web": "bun run --filter @agentos/desktop dev:web"
+    "dev:web": "bun run --filter @agentos/client dev:web"
   },
   "trustedDependencies": [
     "esbuild"

@@ -37,8 +37,23 @@
         "zod": "^4.0.0",
       },
     },
-    "apps/desktop": {
-      "name": "@agentos/desktop",
+    "apps/server": {
+      "name": "@agentos/server",
+      "version": "0.1.0",
+      "dependencies": {
+        "@agentclientprotocol/claude-agent-acp": "0.108.0",
+        "@agentclientprotocol/sdk": "2.7.0",
+        "@agentos/sdk": "workspace:*",
+        "@modelcontextprotocol/sdk": "1.32.2",
+        "zod": "4.6.7",
+      },
+      "devDependencies": {
+        "@types/bun": "^1.4.4",
+        "typescript": "^5.9.3",
+      },
+    },
+    "client": {
+      "name": "@agentos/client",
       "version": "1.0.0",
       "dependencies": {
         "@agentos/sdk": "workspace:*",
@@ -66,21 +81,6 @@
         "svelte-check": "^4.7.6",
         "typescript": "^5.9.3",
         "vite": "^8.3.4",
-      },
-    },
-    "apps/server": {
-      "name": "@agentos/server",
-      "version": "0.1.0",
-      "dependencies": {
-        "@agentclientprotocol/claude-agent-acp": "0.108.0",
-        "@agentclientprotocol/sdk": "2.7.0",
-        "@agentos/sdk": "workspace:*",
-        "@modelcontextprotocol/sdk": "1.32.2",
-        "zod": "4.6.7",
-      },
-      "devDependencies": {
-        "@types/bun": "^1.4.4",
-        "typescript": "^5.9.3",
       },
     },
     "packages/sdk": {
@@ -159,7 +159,7 @@
 
     "@agentos/app-calculator": ["@agentos/app-calculator@workspace:apps/calculator"],
 
-    "@agentos/desktop": ["@agentos/desktop@workspace:apps/desktop"],
+    "@agentos/client": ["@agentos/client@workspace:client"],
 
     "@agentos/sdk": ["@agentos/sdk@workspace:packages/sdk"],
 

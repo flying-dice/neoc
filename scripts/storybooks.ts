@@ -25,9 +25,11 @@ interface Storybook {
 
 async function discover(): Promise<Storybook[]> {
   const found: Storybook[] = []
-  for await (const main of new Glob('{apps,packages}/*/.storybook/main.ts').scan({ cwd: ROOT, dot: true })) {
-    const dir = join(ROOT, main, '..', '..')
-    found.push({ name: basename(dir), dir })
+  for (const pattern of ['{apps,packages}/*/.storybook/main.ts', 'client/.storybook/main.ts']) {
+    for await (const main of new Glob(pattern).scan({ cwd: ROOT, dot: true })) {
+      const dir = join(ROOT, main, '..', '..')
+      found.push({ name: basename(dir), dir })
+    }
   }
   return found.sort((a, b) => a.name.localeCompare(b.name))
 }

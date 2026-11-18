@@ -55,11 +55,11 @@ or key handler, or one with an interactive `role` must carry `data-testid`.
 - `appApiFor(host, appId)`: the scoped `AppClientApi` an app component gets, for stories.
 
 An app's server module runs in the page here, so it must be browser-safe, or the app provides a stand-in at
-`src/mock/server.ts` (web mode and Storybook pick it up automatically; see `apps/desktop/src/renderer/src/web/repoApps.ts`).
+`src/mock/server.ts` (web mode and Storybook pick it up automatically; see `client/src/renderer/src/web/repoApps.ts`).
 
 ## Web mode
 
-`apps/desktop` builds a second client entry, `web.html`, that installs the memory host as `window.agentos`, runs
+`client` builds a second client entry, `web.html`, that installs the memory host as `window.agentos`, runs
 every repo app from source and starts the real shell. URL parameters set up a scenario:
 
 | Param | Example | Effect |
@@ -68,7 +68,7 @@ every repo app from source and starts the real shell. URL parameters set up a sc
 | `theme` | `theme=dark` | force light/dark |
 | `scenario` | `scenario=agents-busy` | seed agent conversations |
 
-`bun run --filter @agentos/desktop dev:web` serves it for manual poking. Playwright starts it itself.
+`bun run --filter @agentos/client dev:web` serves it for manual poking. Playwright starts it itself.
 
 ## Deterministic screenshots
 

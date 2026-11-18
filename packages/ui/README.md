@@ -10,7 +10,7 @@ AgentOS UI kit — the iOS / iPadOS 16–17 design language (before Liquid Glass
 | **molecules** | atoms | `ListRow`, `AppIcon`, `SearchField`, `IconButton`, `Alert`, `Sheet` |
 | **organisms** | atoms, molecules | `NavigationBar`, `TabBar`, `ListSection`, `StatusBar`, `Dock`, `Window` |
 | **templates** | atoms → organisms (layout only, regions are snippets) | `DesktopTemplate`, `SplitViewTemplate`, `ScreenTemplate` |
-| **pages** | anything below (live in apps, not here) | `apps/desktop/src/renderer/src/pages/*` |
+| **pages** | anything below (live in apps, not here) | `client/src/renderer/src/pages/*` |
 
 Rules, enforced by `bun run lint:atomic` (`scripts/check-atomic.ts`):
 

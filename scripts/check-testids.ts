@@ -18,7 +18,7 @@ import { Glob } from 'bun'
 import { join, resolve } from 'node:path'
 
 const ROOT = resolve(import.meta.dir, '..')
-const SOURCE_GLOBS = ['packages/*/src/**/*.svelte', 'apps/*/src/**/*.svelte']
+const SOURCE_GLOBS = ['packages/*/src/**/*.svelte', 'apps/*/src/**/*.svelte', 'client/src/**/*.svelte']
 
 const INTERACTIVE_TAGS = new Set(['button', 'a', 'input', 'select', 'textarea'])
 const HANDLER_RE = /(?:^|\s)(?:on(?:click|pointerdown|pointerup|keydown|dblclick)\s*=|\{on(?:click|pointerdown|pointerup|keydown|dblclick)\})/

@@ -1,6 +1,6 @@
 # Working on AgentOS
 
-AgentOS is an iPadOS-style virtual desktop for agents: a Bun server (`apps/server`), a PWA client (`apps/desktop`),
+AgentOS is an iPadOS-style virtual desktop for agents: a Bun server (`apps/server`), a PWA client (`client`),
 app modules released as bundles and installed from the server's known-apps list
 (`apps/<app>`), the app SDK (`packages/sdk`) and the UI kit (`packages/ui`). Bun workspaces.
 

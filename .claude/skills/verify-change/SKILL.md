@@ -10,7 +10,7 @@ off in a small window, or that dark mode turned a title black on a dark bar. So 
 runs the real renderer, uses the changed behaviour, looks at the screenshots and says what it checked.** There are
 no exceptions for "small" kit changes: a kit change touches every app.
 
-Everything runs headless with **no Bun server**. Web mode (`apps/desktop`, `web.html`) runs the
+Everything runs headless with **no Bun server**. Web mode (`client`, `web.html`) runs the
 real desktop renderer on the in-memory host from `@agentos/sdk/testing`, which runs the real app server modules and
 a scripted Claude. See `docs/TESTING.md`.
 
@@ -56,7 +56,7 @@ node e2e/tools/session.mjs resize me 1024 768
 node e2e/tools/session.mjs stop me
 ```
 
-URL params: `open=<app,app>`, `theme=light|dark`, `scenario=<name>` (`apps/desktop/src/renderer/src/web/scenarios.ts`),
+URL params: `open=<app,app>`, `theme=light|dark`, `scenario=<name>` (`client/src/renderer/src/web/scenarios.ts`),
 `delay=<ms>` for streamed agent replies. `window.__agentos` exposes the host and the stores.
 
 Cover the matrix for each changed behaviour:

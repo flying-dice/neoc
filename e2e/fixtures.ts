@@ -1,7 +1,7 @@
 /**
  * Shared Playwright fixtures and checks for AgentOS UI tests.
  *
- *   import { test, expect, openDesktop, expectAccessible, expectNoOverflow } from '../../../e2e/fixtures'
+ *   import { test, expect, openDesktop, expectAccessible, expectNoOverflow } from '../../e2e/fixtures'
  *
  * Every test gets a frozen clock (9:41) and fails on console errors or
  * uncaught exceptions. Locate things with `getByTestId` only.

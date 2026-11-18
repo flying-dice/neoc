@@ -39,7 +39,7 @@ export default defineConfig({
   projects: [
     { name: 'stories', testMatch: 'e2e/stories.spec.ts', use: { baseURL: STORYBOOKS } },
     { name: 'desktop', testMatch: 'e2e/desktop.spec.ts', use: { baseURL: DESKTOP } },
-    { name: 'apps', testMatch: '{apps,packages}/*/e2e/**/*.spec.ts', use: { baseURL: DESKTOP } }
+    { name: 'apps', testMatch: ['{apps,packages}/*/e2e/**/*.spec.ts', 'client/e2e/**/*.spec.ts'], use: { baseURL: DESKTOP } }
   ],
   webServer: [
     {
@@ -49,7 +49,7 @@ export default defineConfig({
       timeout: 600_000
     },
     {
-      command: 'bun run --filter @agentos/desktop build:web && bun run --filter @agentos/desktop preview:web',
+      command: 'bun run --filter @agentos/client build:web && bun run --filter @agentos/client preview:web',
       url: `${DESKTOP}/web.html`,
       reuseExistingServer: !process.env.CI,
       timeout: 180_000
