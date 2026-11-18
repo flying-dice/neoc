@@ -5,7 +5,7 @@
  *   bun scripts/storybooks.ts list     names, one per line
  *   bun scripts/storybooks.ts build    build them all (storybook-static/)
  *   bun scripts/storybooks.ts serve    serve them all on one port (building missing ones first):
- *                                      http://localhost:6100/<name>/  and  /storybooks.json
+ *                                      http://localhost:6100/<name>/ (AGENTOS_PORT_BASE moves it)  and  /storybooks.json
  *
  * `bun run test:e2e` builds first, so the stories spec can read each
  * storybook-static/index.json; new apps are picked up automatically.
@@ -14,9 +14,9 @@
 import { existsSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 import { Glob } from 'bun'
+import { STORYBOOKS_PORT } from './ports'
 
 const ROOT = resolve(import.meta.dir, '..')
-const PORT = Number(process.env.STORYBOOKS_PORT ?? 6100)
 
 interface Storybook {
   name: string
@@ -56,7 +56,7 @@ async function build(books: Storybook[]): Promise<void> {
 function serve(books: Storybook[]): void {
   const byName = new Map(books.map((b) => [b.name, join(b.dir, 'storybook-static')]))
   Bun.serve({
-    port: PORT,
+    port: STORYBOOKS_PORT,
     async fetch(req) {
       const { pathname } = new URL(req.url)
       if (pathname === '/storybooks.json') return Response.json(books.map((b) => b.name))
@@ -70,7 +70,7 @@ function serve(books: Storybook[]): void {
       return (await f.exists()) ? new Response(f) : new Response('Not found', { status: 404 })
     }
   })
-  console.log(`Serving ${books.map((b) => b.name).join(', ')} on http://localhost:${PORT}`)
+  console.log(`Serving ${books.map((b) => b.name).join(', ')} on http://localhost:${STORYBOOKS_PORT}`)
 }
 
 const books = await discover()

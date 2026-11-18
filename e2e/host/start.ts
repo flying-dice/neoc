@@ -5,7 +5,7 @@
  *   1. builds the client (client/dist) and the host (cargo), and the apps into a test registry:
  *      the repo's apps plus Notes (the codegen fixture), a second app the Discover journeys install and remove
  *      so they never disturb the Calculator the other specs use;
- *   2. writes agentos.toml (port 7410, loopback, a fresh data directory, the test registry; the Calculator and
+ *   2. writes agentos.toml (port 7410 or AGENTOS_PORT_BASE + 10, loopback, a fresh data directory, the test registry; the Calculator and
  *      Agents are installed at start, Notes is only offered; one scripted ACP agent is on the roster);
  *   3. runs agentos-host in the foreground, forwarding SIGTERM so the host shuts down gracefully.
  */
