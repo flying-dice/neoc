@@ -109,7 +109,9 @@ describe('reconnect with backoff and resync', () => {
       resume: { viewId: string; drafts: unknown[] }
     }
     expect(open.resume.viewId).toBe(viewId)
-    expect(open.resume.drafts).toEqual([{ kind: 'state', path: 'body', baseRev: 1 }])
+    expect(open.resume.drafts).toEqual([
+      { kind: 'state', path: 'body', value: 'draft', baseRev: 1 }
+    ])
     // The draft replays with the baseRev it was typed on; the host merges on that base.
     expect(received('state.set').at(-1)!.params).toMatchObject({ value: 'draft', baseRev: 1 })
     expect(h.host.stateValue('body')).toBe('+agentdraft')

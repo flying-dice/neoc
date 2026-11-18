@@ -13,7 +13,16 @@
  * `text` and `thread` sources (CodeEditor documents, chat transcripts) are tier 2/3 and not implemented here:
  * their patches are reported and ignored.
  */
-import type { Expr, Json, Row, RowKey, SourceDecl, SourcePatch, SourceSetParams } from '../protocol'
+import type {
+  Expr,
+  Json,
+  Row,
+  RowKey,
+  RowsPatch,
+  SourceDecl,
+  SourcePatch,
+  SourceSetParams
+} from '../protocol'
 import { isConnectionError } from '../rpc/peer'
 import type { RowsData, ViewStore } from './store'
 import { realTimers, type TimerHandle, type Timers } from './timers'
@@ -42,6 +51,12 @@ interface Range {
   to: number
 }
 
+/** Wire values are untyped JSON; a row is an object, a key is a string or a number. */
+const asRow = (v: Json): Row | null =>
+  v !== null && typeof v === 'object' && !Array.isArray(v) ? v : null
+const asKeys = (keys: Json[]): RowKey[] =>
+  keys.filter((k): k is RowKey => typeof k === 'string' || typeof k === 'number')
+
 export class Sources {
   private decls: Record<string, SourceDecl> = {}
   private lastParams = new Map<string, string>()
@@ -62,12 +77,20 @@ export class Sources {
     return this.decls[id]
   }
   page(id: string): number {
-    return this.decls[id]?.page ?? DEFAULT_PAGE
+    const decl = this.decls[id]
+    return decl?.kind === 'rows' ? (decl.page ?? DEFAULT_PAGE) : DEFAULT_PAGE
   }
 
   /** The row key field of a source (`key`, default `id`). */
   keyField(id: string): string {
-    return this.decls[id]?.key ?? 'id'
+    const decl = this.decls[id]
+    return decl && 'key' in decl ? decl.key : 'id'
+  }
+
+  /** The fields a `row` source lets the client write (all of them when it does not say). */
+  writable(id: string): string[] | undefined {
+    const decl = this.decls[id]
+    return decl?.kind === 'row' ? decl.writable : undefined
   }
 
   // ── Install and patch ──────────────────────────────────────────────────
@@ -92,15 +115,33 @@ export class Sources {
     if (resumed) this.refreshStale()
   }
 
+  /**
+   * Sources a re-render started to use: declared here (with their first window arriving in the same patch's
+   * `sources`, before the ops that reference them). A declaration already known is replaced.
+   */
+  declare(decls: Record<string, SourceDecl>): void {
+    for (const [id, decl] of Object.entries(decls)) {
+      this.decls[id] = decl
+      this.ranges.delete(id)
+      this.lastParams.delete(id)
+      this.seqs.delete(id)
+    }
+    // Params are read once the declaration is in place; the first window in the patch is the answer for them.
+    for (const id of Object.keys(decls)) {
+      this.lastParams.set(id, this.paramsKey(id))
+      this.ranges.set(id, { from: 0, to: this.page(id) })
+    }
+  }
+
   /** A `data.patch` for a source (or a reply to `source.set`). */
   apply(id: string, patch: SourcePatch): void {
     const { store } = this.d
     switch (patch.kind) {
       case 'row': {
-        store.sources[id] = { kind: 'row', row: patch.row, rev: patch.rev }
-        const key = patch.row?.[this.keyField(id)]
-        if (key !== undefined && key !== null)
-          this.d.onRow?.(id, key as RowKey, patch.row, patch.rev)
+        const row = asRow(patch.row)
+        store.sources[id] = { kind: 'row', row, rev: patch.rev }
+        const key = row?.[this.keyField(id)]
+        if (key !== undefined && key !== null) this.d.onRow?.(id, key as RowKey, row, patch.rev)
         return
       }
       case 'value':
@@ -118,7 +159,7 @@ export class Sources {
     }
   }
 
-  private applyRows(id: string, patch: Extract<SourcePatch, { kind: 'rows' }>): void {
+  private applyRows(id: string, patch: RowsPatch): void {
     const { store } = this.d
     let data = store.sources[id]
     if (data?.kind !== 'rows') {
@@ -126,19 +167,21 @@ export class Sources {
         kind: 'rows',
         total: patch.total,
         from: patch.from ?? 0,
-        keys: patch.keys,
+        keys: asKeys(patch.keys),
         rows: {},
         loading: false
       }
       data = store.sources[id]
     }
     const rows = data as RowsData
-    for (const [k, row] of Object.entries(patch.rows ?? {})) {
+    for (const [k, value] of Object.entries(patch.rows ?? {})) {
+      const row = asRow(value)
+      if (!row) continue
       rows.rows[k] = row
       this.d.onRow?.(id, k, row, typeof row.rev === 'number' ? row.rev : 0)
     }
     for (const k of patch.drop ?? []) delete rows.rows[String(k)]
-    rows.keys = patch.keys
+    rows.keys = asKeys(patch.keys)
     rows.total = patch.total
     rows.from = patch.from ?? rows.from
     rows.loading = false
@@ -177,7 +220,7 @@ export class Sources {
    * collapses them into one `source.set`.
    */
   sync(): void {
-    for (const id of Object.keys(this.decls)) {
+    for (const [id, decl] of Object.entries(this.decls)) {
       const key = this.paramsKey(id)
       if (key === this.lastParams.get(id)) continue
       this.lastParams.set(id, key)
@@ -186,7 +229,10 @@ export class Sources {
       this.timers.clearTimeout(this.paramTimers.get(id))
       this.paramTimers.set(
         id,
-        this.timers.setTimeout(() => void this.run(id), this.decls[id].debounce ?? 250)
+        this.timers.setTimeout(
+          () => void this.run(id),
+          (decl.kind === 'rows' ? decl.debounce : undefined) ?? 250
+        )
       )
     }
   }

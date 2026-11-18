@@ -9,7 +9,7 @@ import { plainStore } from '../core/store'
 import type { Timers } from '../core/timers'
 import type { ViewCore, ViewEffects } from '../core/view'
 import type { ThemeSet } from '../protocol'
-import { FakeHost } from './fakeHost'
+import { FakeHost, type FakeApp } from './fakeHost'
 import { NotesApp, type NotesOptions } from './notesApp'
 import { createMemoryLink, type MemoryLink, type WireMessage } from './wire'
 
@@ -24,13 +24,13 @@ export interface HarnessOptions {
   onError?: (e: unknown) => void
 }
 
-export interface Harness {
-  app: NotesApp
+export interface Harness<A extends FakeApp = NotesApp> {
+  app: A
   host: FakeHost
   link: MemoryLink
   session: Session
   storage: KeyValueStorage
-  /** Open the Notes window (waits for the connection). */
+  /** Open the app's main window (waits for the connection). */
   openNotes(opts?: {
     windowId?: string
     size?: { w: number; h: number }
@@ -39,7 +39,14 @@ export interface Harness {
 }
 
 export function createHarness(options: HarnessOptions = {}): Harness {
-  const app = new NotesApp(options.notes)
+  return createAppHarness(new NotesApp(options.notes), options)
+}
+
+/** The same wiring for any fake app (a `TreeApp` serving a story's JSON tree). */
+export function createAppHarness<A extends FakeApp>(
+  app: A,
+  options: HarnessOptions = {}
+): Harness<A> {
   const host = new FakeHost(app)
   const link = createMemoryLink({
     latencyMs: options.latencyMs,
@@ -66,6 +73,6 @@ export function createHarness(options: HarnessOptions = {}): Harness {
     session,
     storage,
     openNotes: ({ windowId = 'w1', size = { w: 480, h: 720 }, effects } = {}) =>
-      session.openView({ app: 'notes', window: 'main', windowId, size }, { effects })
+      session.openView({ app: app.id, window: 'main', windowId, size }, { effects })
   }
 }

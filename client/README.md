@@ -31,11 +31,16 @@ core/            framework-free, plain objects under bun test; Svelte hands it a
   sources.ts       rows windows, row deltas, params as refs (re-query), loadMore, offline refresh
   clientState.ts   declared client state: init, persist (session/app), mirror to the host, client.set
   session.ts       one connection, many views: hello, routing by viewId, resume on reconnect
-registry.ts      type -> adapter component (the extension point)       kit.ts  the starter kit registered by default
-atoms/ molecules/ organisms/ templates/ pages/    Node, ViewHost and the adapters (Stack, Text, Button, TextField,
-                 Toggle, List/ForEach/Row, Screen, Show, Group), one atomic layer each
+registry.ts      type -> adapter component (the extension point)       kit.ts  the kit registered by default
+kit/layout.ts    registerLayout: the layout, navigation and collection adapters (wave B1a), one `register` per component
+atoms/ molecules/ organisms/ templates/ pages/    Node, ViewHost and the adapters, one atomic layer each: layout (Stack,
+                 ZStack, Grid, ScrollView, Spacer, Divider, Group, Adaptive, Scope, Show, ForEach, Card), navigation
+                 (Screen, NavigationStack, NavigationLink, SplitView, TabView), collections (List, Section, Row, Form,
+                 LabeledContent, DisclosureGroup, EmptyState) and the starter Text, Button, TextField, Toggle
+  core/nav.ts      navigation as client state: stack operations, reconcile (screens follow the path), the registry
+                   that routes nav.push / nav.pop / nav.popToRoot to the stack containing the acting node
 host/            test support only: a TypeScript fake host on an in-memory wire, a demo "Notes-lite" app, a manual clock
-stories/         Storybook "Renderer/Notes window"
+stories/         Storybook "Renderer/Notes window" and "Renderer/Kit — layout" (JSON trees on the generic TreeApp fake host)
 ```
 
 **Data flow.** `Session` owns the socket and handshakes (`session.hello`). `session.openView` sends `view.open` and gets
@@ -57,6 +62,7 @@ writes queued, and refuses events (a tap is not idempotent). On reconnect: `sess
 `view.open {resume}` per window; the snapshot goes through the same shielding as live patches and queued drafts replay on
 their original `baseRev`. A restarted host gets a fresh instance seeded with the client's persisted values.
 
+<<<<<<< HEAD
 **Tier-1 controls, presentation and display** (wave B1b, `kit/controls.ts`): Shortcut, Button, Toggle, Slider, Stepper,
 Picker, DatePicker, ColorPicker, TextField, SecureField, TextEditor, SearchField (controls); Sheet, Popover, Alert,
 ConfirmationDialog, Menu (presentation: portal nodes mounted in the window root, content inert behind a modal, focus
@@ -66,6 +72,15 @@ props: right-click, long press and Shift+F10 open the context menu; dragging is 
 "Move to" submenu as the non-pointer paths. Text controls share `kit/textControl.svelte.ts` (draft shown first, caret
 kept through an adopted merge). Toasts are kit Toasts; a toast `action` reports the `toast` event of the view.
 Stories: "Renderer/Kit - controls" (JSON trees in `host/kitTrees.ts` on a `KitApp` fake host).
+=======
+**Lists, navigation and layout** (wave B1a). A `List` is a group of lists (a `listbox` of `option`s when it has a
+selection) with one tab stop and arrow keys; rows are `listitem`s with an invisible full-row tap button, so interactive
+trailing content is never nested in a button. Past 200 rows the source rows are virtualized (a few dozen DOM rows,
+placeholders for rows the host has not sent, `source.set` for the window). Swipe actions, drag and `Alt+Arrow` reorder,
+pull to refresh and the "Refresh" keyboard button are in the kit (`packages/ui`). A `NavigationStack` keeps its path as
+client state (a `path` Binding, so it can persist); each screen gets a back button named after the previous screen
+through its `NavLevel`; a `SplitView` below 700 px is the same flow across its columns.
+>>>>>>> 6f2128e (Kit stories, virtualization and layout fixes)
 
 **Adding a component** (wave B1): write an adapter under the right atomic layer that takes `AdapterProps`, reads props
 through `useView().view`, renders children with `<Children>`, passes `commonOf(...).testid` to the kit component, then

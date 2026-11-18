@@ -2,7 +2,6 @@
 import { describe, expect, test } from 'bun:test'
 import {
   Bindings,
-  classifyAck,
   parseSync,
   SCALAR_SYNC,
   TEXT_SYNC,
@@ -33,17 +32,6 @@ describe('sync policy', () => {
   })
 })
 
-describe('how the ack is read', () => {
-  test('accepted, merged, replaced and rejected', () => {
-    expect(classifyAck('a', { rev: 2, value: 'a' })).toBe('accepted')
-    expect(classifyAck('a', { rev: 2, value: 'a\nb' })).toBe('merged')
-    expect(classifyAck('a', { rev: 2, value: 'a', conflict: true })).toBe('replaced')
-    expect(classifyAck('a', { rev: 2, value: 'b', conflict: true })).toBe('rejected')
-    expect(classifyAck(true, { rev: 2, value: true })).toBe('accepted')
-    expect(classifyAck({ x: 1 }, { rev: 2, value: { x: 1 } })).toBe('accepted')
-  })
-})
-
 /** The state machine alone, with a scripted host: no session, no tree. */
 function machine(initial = 'base') {
   const timers = new FakeTimers()
@@ -56,7 +44,8 @@ function machine(initial = 'base') {
   const sent: { value: unknown; baseRev: number }[] = []
   let reply: (value: unknown, baseRev: number) => WriteAck | Promise<WriteAck> = (value) => ({
     rev: ++revision,
-    value: value as string
+    value: value as string,
+    resolution: 'accepted'
   })
   const notices: string[] = []
   const deps: BindingsDeps = {
@@ -118,7 +107,9 @@ describe('drafts and write-back', () => {
     m.bindings.edit(m.target, 'queued', { mode: 'change' })
     await m.timers.advance(5000)
     expect(m.sent).toHaveLength(0)
-    expect(m.bindings.pending()).toEqual([{ kind: 'state', path: 'body', baseRev: 1 }])
+    expect(m.bindings.pending()).toEqual([
+      { kind: 'state', path: 'body', value: 'queued', baseRev: 1 }
+    ])
     m.setOnline(true)
     await m.bindings.replay()
     expect(m.sent).toEqual([{ value: 'queued', baseRev: 1 }])
@@ -164,13 +155,13 @@ describe('shielding and the base revision', () => {
     const m = machine()
     m.reply(async (value) => {
       m.bindings.remote(m.target, 'newer remote', 10) // lands while the write is in flight
-      return { rev: 5, value: value as string }
+      return { rev: 5, value: value as string, resolution: 'accepted' }
     })
     m.bindings.edit(m.target, 'mine', { mode: 'change' })
     await m.timers.settle()
     expect(m.store.drafts[m.key]).toBeUndefined()
     expect(m.store.state.body).toBe('newer remote')
-    m.reply((value) => ({ rev: 11, value: value as string }))
+    m.reply((value) => ({ rev: 11, value: value as string, resolution: 'accepted' }))
     m.bindings.edit(m.target, 'next', { mode: 'change' })
     await m.timers.settle()
     expect(m.sent.at(-1)).toEqual({ value: 'next', baseRev: 10 }) // based on what the person was looking at
@@ -190,7 +181,7 @@ describe('what the ack does to the screen', () => {
     const m = machine('')
     const changes: unknown[] = []
     m.bindings.onAdopt(m.target, (c) => changes.push(c))
-    m.reply((value) => ({ rev: 2, value: `agent: ${String(value)}` }))
+    m.reply((value) => ({ rev: 2, value: `agent: ${String(value)}`, resolution: 'merged' }))
     m.bindings.edit(m.target, 'typed', { mode: 'change' })
     await m.timers.settle()
     expect(m.store.state.body).toBe('agent: typed')
@@ -200,7 +191,12 @@ describe('what the ack does to the screen', () => {
 
   test('an overlap that replaced a change made elsewhere raises a conflict notice, not an announcement', async () => {
     const m = machine('')
-    m.reply((value) => ({ rev: 2, value: value as string, conflict: true }))
+    m.reply((value) => ({
+      rev: 2,
+      value: value as string,
+      conflict: true,
+      resolution: 'replaced'
+    }))
     m.bindings.edit(m.target, 'mine', { mode: 'change' })
     await m.timers.settle()
     expect(m.notices).toEqual(['Your edit replaced a change made elsewhere.'])
@@ -208,7 +204,7 @@ describe('what the ack does to the screen', () => {
 
   test('a refusal adopts the server value and puts the field in its error state', async () => {
     const m = machine('server')
-    m.reply(() => ({ rev: 4, value: 'server', conflict: true }))
+    m.reply(() => ({ rev: 4, value: 'server', conflict: true, resolution: 'rejected' }))
     m.bindings.edit(m.target, 'mine', { mode: 'change' })
     await m.timers.settle()
     expect(m.store.state.body).toBe('server')
@@ -223,13 +219,13 @@ describe('what the ack does to the screen', () => {
     m.reply(
       (value) =>
         new Promise<WriteAck>((resolve) => {
-          release = () => resolve({ rev: 2, value: `A:${String(value)}` })
+          release = () => resolve({ rev: 2, value: `A:${String(value)}`, resolution: 'merged' })
         })
     )
     m.bindings.edit(m.target, 'ab', { mode: 'change' })
     await m.timers.settle()
     m.bindings.edit(m.target, 'abc', { mode: 'blur' }) // typed while 'ab' was in flight
-    m.reply((value) => ({ rev: 3, value: value as string }))
+    m.reply((value) => ({ rev: 3, value: value as string, resolution: 'accepted' }))
     release()
     await m.timers.settle()
     expect(m.store.drafts[m.key]).toBe('A:abc') // the host's merged content and the new keystroke, both kept

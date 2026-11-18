@@ -142,6 +142,7 @@
     notices={store.notices}
     ondismiss={(id) => view.dismissNotice(id)}
     onaction={(id) => view.toastAction(id)}
+    onundo={(id) => void view.undo(id)}
   />
   <div class="sr-only" role="status" aria-live="polite" data-testid="{app}-announcer">
     {store.announcement}

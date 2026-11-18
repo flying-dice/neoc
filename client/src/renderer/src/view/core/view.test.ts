@@ -144,6 +144,43 @@ describe('keyed ops: structure, versioned', () => {
   })
 })
 
+describe('host lifecycle notifications', () => {
+  test('view.closed "reloaded" (a dev hot reload) reopens the same window, drafts kept', async () => {
+    const { view, timers, received } = await setup()
+    view.write('state.body', 'half typed')
+    view.notify('view.closed', { viewId: view.viewId, reason: 'reloaded' })
+    await timers.settle()
+    expect(received('view.open')).toHaveLength(2)
+    expect(received('view.open')[1].params).toMatchObject({
+      resume: { drafts: [{ kind: 'state', path: 'body', value: 'half typed' }] }
+    })
+    expect(view.store.phase).toBe('ready')
+    expect(view.store.closed).toBeNull()
+    expect(view.resolve('state.body')).toBe('half typed')
+  })
+
+  test('data.patch declare registers a source a re-render started to use, before its first window', async () => {
+    const { view } = await setup()
+    view.notify('data.patch', {
+      viewId: view.viewId,
+      declare: { extra: { kind: 'rows', key: 'id', page: 10, params: {} } },
+      sources: {
+        extra: {
+          kind: 'rows',
+          total: 2,
+          from: 0,
+          keys: [1, 2],
+          rows: { '1': { id: 1 }, '2': { id: 2 } }
+        }
+      }
+    })
+    expect(view.sources.declaration('extra')).toMatchObject({ kind: 'rows', page: 10 })
+    expect(view.sources.page('extra')).toBe(10)
+    expect(rows(view, 'extra')).toMatchObject({ total: 2, keys: [1, 2] })
+    expect(view.sources.keyField('extra')).toBe('id')
+  })
+})
+
 describe('two-way text binding: drafts, shielding, merge (spec 3.4)', () => {
   test('typing shows at once; the write-back is debounced into one state.set with baseRev', async () => {
     const { view, timers, received, h } = await setup()
@@ -333,6 +370,27 @@ describe('row bindings: src.<id>.<field> writes through row.set', () => {
     })
     expect(h.app.notes[0].body).toBe('Milk, eggs\n- oat milk') // merged on the base the host had sent
     expect(view.resolve('src.note.body')).toBe('Milk, eggs\n- oat milk')
+  })
+
+  test('a row write that replaced an agent change offers Undo; row.restore brings the lost value back', async () => {
+    const { view, timers, received, h } = await setup()
+    view.write('src.note.body', 'soy, eggs')
+    h.app.notes[0].body = 'tea, eggs' // an agent rewrote the same words
+    h.app.notes[0].rev++
+    h.host.refreshSources()
+    await timers.settle()
+    await timers.advance(300)
+    expect(h.app.notes[0].body).toBe('soy, eggs') // the human wins
+    const notice = view.store.notices.find((n) => n.kind === 'conflict')!
+    expect(notice.undo).toMatchObject({ source: 'note', key: 1, field: 'body' })
+    const done = view.undo(notice.id)
+    await timers.settle()
+    await done
+    expect(received('row.restore')).toHaveLength(1)
+    expect(received('row.restore')[0].params).toMatchObject({ source: 'note', key: 1 })
+    expect(h.app.notes[0].body).toBe('tea, eggs')
+    expect(view.resolve('src.note.body')).toBe('tea, eggs')
+    expect(view.store.notices.some((n) => n.id === notice.id)).toBe(false)
   })
 
   test('only writable fields are bindable', async () => {

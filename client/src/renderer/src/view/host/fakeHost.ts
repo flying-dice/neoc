@@ -27,6 +27,7 @@ import type {
   ViewCommand,
   ViewEventParams,
   ViewSnapshot,
+  WriteResolution,
   WriteResult
 } from '../protocol'
 import { AppErrorCode, KIT, PROTO } from '../protocol'
@@ -146,6 +147,8 @@ export class FakeHost {
   private views = new Map<string, FakeView>()
   private entries = new Map<string, { value: Json; rev: number; merge: MergeMode; ring: Ring }>()
   private rowRings = new Map<string, Ring>()
+  private revisions = new Map<number, { source: string; key: RowKey; field: string; value: Json }>()
+  private nextRevision = 1
   private nextView = 1
   private sessionId = 's1'
   /** Everything the host received, for assertions. */
@@ -160,6 +163,7 @@ export class FakeHost {
   private seed(): void {
     this.entries.clear()
     this.rowRings.clear()
+    this.revisions.clear()
     for (const [path, spec] of Object.entries(this.app.state)) {
       this.entries.set(path, {
         value: spec.value,
@@ -210,6 +214,8 @@ export class FakeHost {
           this.view(params),
           params as { path: string; value: Json; baseRev: number }
         )
+      case 'row.restore':
+        return this.rowRestore(params as { source: string; key: RowKey; revisionId: number })
       case 'row.set':
         return this.rowSet(
           this.view(params),
@@ -296,7 +302,7 @@ export class FakeHost {
     view.sources.clear()
     for (const [id, spec] of Object.entries(this.app.sources)) {
       sources[id] = spec.decl
-      const range = { from: 0, to: spec.decl.page ?? 60 }
+      const range = { from: 0, to: (spec.decl.kind === 'rows' ? spec.decl.page : undefined) ?? 60 }
       view.sources.set(id, { params: this.paramsFor(view, spec), range, sent: new Map() })
       data[id] = this.patchFor(view, id, true)
     }
@@ -376,7 +382,8 @@ export class FakeHost {
     const st = view.sources.get(p.source)!
     if (p.params) st.params = p.params
     if (p.range) st.range = p.range
-    else if (p.params) st.range = { from: 0, to: spec.decl.page ?? 60 }
+    else if (p.params)
+      st.range = { from: 0, to: (spec.decl.kind === 'rows' ? spec.decl.page : undefined) ?? 60 }
     return this.patchFor(view, p.source)
   }
 
@@ -421,17 +428,23 @@ export class FakeHost {
     baseRev: number,
     mine: Json,
     path: string
-  ): { value: Json; conflict: boolean; write: boolean } {
-    if (baseRev === current.rev) return { value: mine, conflict: false, write: true }
-    if (merge === 'reject') return { value: current.value, conflict: true, write: false }
+  ): { value: Json; resolution: WriteResolution; write: boolean; lost?: Json } {
+    if (baseRev === current.rev) return { value: mine, resolution: 'accepted', write: true }
+    if (merge === 'reject') return { value: current.value, resolution: 'rejected', write: false }
     if (merge === 'text' && typeof mine === 'string' && typeof current.value === 'string') {
       const base = ring.values.get(baseRev)
       const m = merge3(typeof base === 'string' ? base : current.value, current.value, mine)
-      if (m.conflict) this.overwritten.push({ path, theirs: current.value, mine })
-      return { value: m.value, conflict: m.conflict, write: true }
+      if (m.conflict) {
+        this.overwritten.push({ path, theirs: current.value, mine })
+        return { value: m.text, resolution: 'replaced', write: true, lost: current.value }
+      }
+      return { value: m.text, resolution: m.text === mine ? 'accepted' : 'merged', write: true }
     }
-    this.overwritten.push({ path, theirs: current.value, mine }) // scalar: the human wins; the old value is kept as a revision
-    return { value: mine, conflict: false, write: true }
+    if (JSON.stringify(current.value) === JSON.stringify(mine))
+      return { value: mine, resolution: 'accepted', write: true }
+    // scalar: the human wins; the old value is kept as a revision
+    this.overwritten.push({ path, theirs: current.value, mine })
+    return { value: mine, resolution: 'replaced', write: true, lost: current.value }
   }
 
   private stateSet(view: FakeView, p: { path: string; value: Json; baseRev: number }): WriteResult {
@@ -446,7 +459,12 @@ export class FakeHost {
         if (other !== view)
           other.push('data.patch', { state: { [p.path]: { v: r.value, r: e.rev } } })
     }
-    return { rev: e.rev, value: r.value, ...(r.conflict ? { conflict: true } : {}) }
+    return {
+      rev: e.rev,
+      value: r.value,
+      resolution: r.resolution,
+      ...(r.resolution === 'replaced' || r.resolution === 'rejected' ? { conflict: true } : {})
+    }
   }
 
   private rowSet(
@@ -479,7 +497,35 @@ export class FakeHost {
       this.remember(ring, newRev, r.value)
       this.refreshSources()
     }
-    return { rev: newRev, value: r.value, ...(r.conflict ? { conflict: true } : {}) }
+    const undo =
+      r.resolution === 'replaced' && r.lost !== undefined ? this.keepRevision(p, r.lost) : undefined
+    return {
+      rev: newRev,
+      value: r.value,
+      resolution: r.resolution,
+      ...(r.resolution === 'replaced' || r.resolution === 'rejected' ? { conflict: true } : {}),
+      ...(undo ? { undo } : {})
+    }
+  }
+
+  /** The value a human-wins write replaced, kept so `row.restore` can bring it back (spec 3.4 rule 8). */
+  private keepRevision(
+    p: { source: string; key: RowKey; field: string },
+    lost: Json
+  ): { revisionId: number; lost: Json } {
+    const revisionId = this.nextRevision++
+    this.revisions.set(revisionId, { source: p.source, key: p.key, field: p.field, value: lost })
+    return { revisionId, lost }
+  }
+
+  private rowRestore(p: { source: string; key: RowKey; revisionId: number }): WriteResult {
+    const kept = this.revisions.get(p.revisionId)
+    const spec = this.app.sources[p.source]
+    if (!kept || !spec?.write || kept.source !== p.source || String(kept.key) !== String(p.key))
+      throw new RpcError(-32602, `no revision ${p.revisionId}`)
+    const rev = spec.write(p.key, kept.field, kept.value)
+    this.refreshSources()
+    return { rev, value: kept.value, resolution: 'accepted' }
   }
 
   // ── Helpers for apps and tests ─────────────────────────────────────────
