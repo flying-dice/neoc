@@ -383,7 +383,9 @@
       const b = box(name)
       await expect(Math.abs(b.width - b.height)).toBeLessThan(1) // a circle, not a pill
       await expect(Math.abs(b.width - seven.width)).toBeLessThan(1)
-      await expect(parseFloat(getComputedStyle(key(name)).borderRadius)).toBeGreaterThanOrEqual(b.height / 2)
+      await expect(parseFloat(getComputedStyle(key(name)).borderRadius)).toBeGreaterThanOrEqual(
+        b.height / 2
+      )
     }
     const zero = box('0')
     await expect(Math.abs(zero.width - (2 * seven.width + gap))).toBeLessThan(1) // two columns and the gap between

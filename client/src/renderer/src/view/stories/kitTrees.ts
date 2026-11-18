@@ -557,7 +557,10 @@ export function keypadApp(): TreeApp {
         type: 'Stack',
         key: 'label',
         props: { axis: 'h', frame: 'fill', align: 'center', padding: { left: 3 } },
-        children: [text('zero-text', '0', { style: 'headline', testid: 'keypad-zero-label' }), { type: 'Spacer', key: 'rest' }]
+        children: [
+          text('zero-text', '0', { style: 'headline', testid: 'keypad-zero-label' }),
+          { type: 'Spacer', key: 'rest' }
+        ]
       }
     ]
   }
@@ -578,7 +581,11 @@ export function keypadApp(): TreeApp {
               key: 'column',
               props: { frame: { idealW: 200, maxW: 200 }, spacing: 2 },
               children: [
-                text('display', '1,234', { style: 'title1', align: 'trailing', testid: 'keypad-display' }),
+                text('display', '1,234', {
+                  style: 'title1',
+                  align: 'trailing',
+                  testid: 'keypad-display'
+                }),
                 {
                   type: 'Grid',
                   key: 'keys',
