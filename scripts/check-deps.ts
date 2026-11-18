@@ -6,7 +6,7 @@
  * against an explicit allow-list:
  *
  *   domain      -> nothing internal; external: serde, serde_json, sha2, thiserror (+ ts-rs, schemars)
- *   application -> domain; external: async-trait, parking_lot, serde_json, sha2, thiserror, tracing
+ *   application -> domain; external: async-trait, futures-channel, parking_lot, serde_json, sha2, thiserror, tracing
  *   adapters    -> application, domain; never each other
  *   host        -> everything
  *
@@ -28,7 +28,7 @@ const INTERNAL: Record<string, string[]> = {
   'agentos-fetch': ['agentos-application'],
   'agentos-mcp': ['agentos-domain', 'agentos-application'],
   'agentos-acp': ['agentos-domain', 'agentos-application'],
-  'agentos-agui': [],
+  'agentos-agui': ['agentos-domain', 'agentos-application'],
   'agentos-http': ['agentos-domain', 'agentos-application'],
   'agentos-codegen': ['agentos-domain'],
   'agentos-host': [
@@ -47,7 +47,7 @@ const INTERNAL: Record<string, string[]> = {
 /** Crates whose EXTERNAL dependencies are restricted too (the pure core). */
 const CORE_EXTERNAL: Record<string, Set<string>> = {
   'agentos-domain': new Set(['serde', 'serde_json', 'sha2', 'thiserror', 'ts-rs', 'schemars']),
-  'agentos-application': new Set(['async-trait', 'parking_lot', 'serde_json', 'sha2', 'thiserror', 'tracing'])
+  'agentos-application': new Set(['async-trait', 'futures-channel', 'parking_lot', 'serde_json', 'sha2', 'thiserror', 'tracing'])
 }
 
 /** Framework and runtime crates that never appear in the core, whatever the tables above say. */

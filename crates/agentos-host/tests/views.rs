@@ -131,7 +131,7 @@ async fn notes_the_human_types_an_agent_appends_and_the_open_view_follows() {
 
     // --- an agent appends to the note over MCP while the window is open: no UI code anywhere
     let (agent, _) = connect_agent(r.addr, "tok-claude").await;
-    let out = call(&agent, "notes__notes.append", json!({"id": 1, "text": "- buy oat milk"})).await;
+    let out = call(&agent, "notes__append", json!({"id": 1, "text": "- buy oat milk"})).await;
     assert_ne!(out.is_error, Some(true), "{out:?}");
     let patch = notification_where(&mut ws, "data.patch", |p| p["sources"]["s3"]["rev"] == 2).await;
     assert_eq!(patch["sources"]["s3"]["row"]["body"], "milk\n- buy oat milk");

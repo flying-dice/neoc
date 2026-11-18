@@ -1,11 +1,13 @@
 <!--
   @molecule Stack — VStack / HStack (`axis`). Spacing and padding are token units of 4 pt (0 to 8); apps never pass
-  CSS. Atoms: Children.
+  CSS. Atoms: Stack, Children.
 -->
 <script lang="ts">
+  import { Stack } from '@agentos/ui/atoms'
   import Children from '../atoms/Children.svelte'
   import { useView } from '../context'
   import { commonOf, oneOf, unit } from '../props'
+  import { joinStyle, surfaceStyle } from '../style'
   import type { AdapterProps } from '../registry'
 
   let { node, path, scope }: AdapterProps = $props()
@@ -13,46 +15,18 @@
   const p = (name: string): unknown => ctx.view.evaluate(node.props?.[name], scope)
 
   const common = $derived(commonOf(ctx, node, path, scope))
-  const axis = $derived(p('axis') === 'h' ? 'row' : 'column')
-  const spacing = $derived(unit(p('spacing')))
-  const align = $derived(
-    oneOf(p('align'), ['start', 'center', 'end', 'stretch'] as const, 'stretch')
-  )
-  const justify = $derived(
-    oneOf(p('justify'), ['start', 'center', 'end', 'between', 'around'] as const, 'start')
-  )
-  const wrap = $derived(p('wrap') === true && axis === 'row')
-
-  const ALIGN = {
-    start: 'flex-start',
-    center: 'center',
-    end: 'flex-end',
-    stretch: 'stretch'
-  } as const
-  const JUSTIFY = {
-    start: 'flex-start',
-    center: 'center',
-    end: 'flex-end',
-    between: 'space-between',
-    around: 'space-around'
-  } as const
+  const style = $derived(joinStyle(common.style, surfaceStyle(ctx, node, scope)))
 </script>
 
-<div
-  class="stack"
-  style:flex-direction={axis}
-  style:gap="{spacing}px"
-  style:align-items={ALIGN[align]}
-  style:justify-content={JUSTIFY[justify]}
-  style:flex-wrap={wrap ? 'wrap' : 'nowrap'}
-  style={common.style}
+<Stack
+  testid={common.testid}
+  axis={p('axis') === 'h' ? 'h' : 'v'}
+  spacing={unit(p('spacing'))}
+  align={oneOf(p('align'), ['start', 'center', 'end', 'stretch'] as const, 'stretch')}
+  justify={oneOf(p('justify'), ['start', 'center', 'end', 'between', 'around'] as const, 'start')}
+  wrap={p('wrap') === true}
+  label={common.label}
+  {style}
 >
   <Children nodes={node.children} {path} {scope} />
-</div>
-
-<style>
-  .stack {
-    display: flex;
-    min-width: 0;
-  }
-</style>
+</Stack>

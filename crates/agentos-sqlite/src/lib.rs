@@ -13,6 +13,9 @@
 //! - **interrupt**: a progress handler aborts a statement that runs past its wall-clock budget;
 //! - `ATTACH` is denied.
 
+mod agents;
+#[cfg(test)]
+mod agents_tests;
 mod devices;
 mod feed;
 mod ports;
@@ -37,7 +40,7 @@ use std::{
     collections::BTreeSet,
     path::Path,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
     },
     time::{Duration, Instant},
@@ -58,6 +61,8 @@ pub enum DbError {
     Timeout(Duration),
     #[error("{0}")]
     BadParams(String),
+    #[error("attempt to write through a read-only handle")]
+    ReadOnly,
 }
 
 /// An app-declared migration (comes from the app manifest or `db:migrate`).
@@ -127,11 +132,15 @@ struct Shared {
     deadline: Arc<AtomicU64>,
     base: Instant,
     timeout: Duration,
+    /// Raised while the adapter itself flips `query_only` (the authorizer refuses app SQL doing it).
+    privileged: Arc<AtomicBool>,
 }
 
 #[derive(Clone)]
 pub struct AppDb {
     shared: Arc<Shared>,
+    /// Every statement through this handle runs with `PRAGMA query_only`: nothing it does changes data or schema.
+    read_only: bool,
 }
 
 impl AppDb {
@@ -170,9 +179,18 @@ impl AppDb {
         // The authorizer sandboxes the app's SQL (no ATTACH: it would escape the per-app file) and, while a
         // collector is armed, records every table the statement reads and writes.
         let c = collector.clone();
+        let privileged = Arc::new(AtomicBool::new(false));
+        let host_pragma = privileged.clone();
         conn.authorizer(Some(move |ctx: rusqlite::hooks::AuthContext<'_>| {
             match ctx.action {
                 AuthAction::Attach { .. } | AuthAction::Detach { .. } => return Authorization::Deny,
+                // a read-only handle must stay read-only: app SQL may not lift `query_only`
+                AuthAction::Pragma { pragma_name, .. }
+                    if pragma_name.eq_ignore_ascii_case("query_only")
+                        && !host_pragma.load(Ordering::SeqCst) =>
+                {
+                    return Authorization::Deny
+                }
                 AuthAction::Read { table_name, .. } => note(&c, table_name, false),
                 AuthAction::Insert { table_name }
                 | AuthAction::Update { table_name, .. }
@@ -217,6 +235,7 @@ impl AppDb {
         conn.rollback_hook(Some(move || p3.lock().clear()))?;
 
         Ok(Self {
+            read_only: false,
             shared: Arc::new(Shared {
                 conn: Mutex::new(conn),
                 gate: Arc::default(),
@@ -226,6 +245,7 @@ impl AppDb {
                 deadline,
                 base,
                 timeout,
+                privileged,
             }),
         })
     }
@@ -246,12 +266,14 @@ impl AppDb {
 
     pub(crate) async fn query_with(&self, sql: String, params: Params) -> Result<Vec<Value>, DbError> {
         let _gate = self.shared.gate.lock().await;
-        self.blocking(move |s| run_query(s, &sql, &params)).await
+        let read_only = self.read_only;
+        self.blocking(move |s| run_query(s, &sql, &params, read_only)).await
     }
 
     pub(crate) async fn exec_with(&self, sql: String, params: Params) -> Result<ExecResult, DbError> {
         let _gate = self.shared.gate.lock().await;
-        self.blocking(move |s| run_exec(s, &sql, &params)).await
+        let read_only = self.read_only;
+        self.blocking(move |s| run_exec(s, &sql, &params, read_only)).await
     }
 
     /// Run `work` on the blocking pool with the connection locked.
@@ -269,6 +291,9 @@ impl AppDb {
 
     /// Apply pending migrations in order (incremental; a changed applied migration is an error).
     pub async fn migrate(&self, migrations: Vec<Migration>) -> Result<(), DbError> {
+        if self.read_only {
+            return Err(DbError::ReadOnly);
+        }
         let _gate = self.shared.gate.lock().await;
         self.blocking(move |s| apply_migrations(&mut s.conn.lock(), &migrations)).await
     }
@@ -401,8 +426,43 @@ fn map_run_error(s: &Shared, e: rusqlite::Error) -> DbError {
     }
 }
 
-pub(crate) fn run_query(s: &Shared, sql: &str, params: &Params) -> Result<Vec<Value>, DbError> {
+/// `PRAGMA query_only` for as long as it lives: SQLite refuses every write, including DDL, at execution time
+/// (so a statement cached while writable cannot sneak one through). Held under the connection lock.
+struct QueryOnly<'a> {
+    conn: Option<&'a Connection>,
+    privileged: &'a AtomicBool,
+}
+
+impl<'a> QueryOnly<'a> {
+    fn new(s: &'a Shared, conn: &'a Connection, enabled: bool) -> Result<Self, DbError> {
+        if enabled {
+            s.privileged.store(true, Ordering::SeqCst);
+            let set = conn.pragma_update(None, "query_only", true);
+            s.privileged.store(false, Ordering::SeqCst);
+            set?;
+        }
+        Ok(Self { conn: enabled.then_some(conn), privileged: &s.privileged })
+    }
+}
+
+impl Drop for QueryOnly<'_> {
+    fn drop(&mut self) {
+        if let Some(conn) = self.conn {
+            self.privileged.store(true, Ordering::SeqCst);
+            let _ = conn.pragma_update(None, "query_only", false);
+            self.privileged.store(false, Ordering::SeqCst);
+        }
+    }
+}
+
+pub(crate) fn run_query(
+    s: &Shared,
+    sql: &str,
+    params: &Params,
+    read_only: bool,
+) -> Result<Vec<Value>, DbError> {
     let conn = s.conn.lock();
+    let _read_only = QueryOnly::new(s, &conn, read_only)?;
     let mut stmt = conn.prepare_cached(sql)?;
     let names: Vec<String> = stmt.column_names().map(str::to_owned).collect();
     bind(&mut stmt, params)?;
@@ -424,8 +484,14 @@ pub(crate) fn run_query(s: &Shared, sql: &str, params: &Params) -> Result<Vec<Va
     }
 }
 
-pub(crate) fn run_exec(s: &Shared, sql: &str, params: &Params) -> Result<ExecResult, DbError> {
+pub(crate) fn run_exec(
+    s: &Shared,
+    sql: &str,
+    params: &Params,
+    read_only: bool,
+) -> Result<ExecResult, DbError> {
     let conn = s.conn.lock();
+    let _read_only = QueryOnly::new(s, &conn, read_only)?;
     let (prepared, collected) = prepare_collecting(s, &conn, sql);
     let mut stmt = prepared?;
     bind(&mut stmt, params)?;

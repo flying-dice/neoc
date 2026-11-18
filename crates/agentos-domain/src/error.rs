@@ -16,4 +16,6 @@ pub enum DomainError {
     InvalidManifest(String),
     #[error("this app needs host API {needs}, this host provides {has}")]
     UnsupportedHost { needs: String, has: String },
+    #[error("invalid agent: {0}")]
+    InvalidAgent(String),
 }

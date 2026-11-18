@@ -5,16 +5,17 @@
  */
 import type { ViewCore } from '../core/view'
 import { reactiveStore } from '../store.svelte'
-import { createHarness, type Harness } from './harness'
-import type { NotesOptions } from './notesApp'
+import type { FakeApp } from './fakeHost'
+import { createAppHarness, createHarness, type Harness } from './harness'
+import type { NotesApp, NotesOptions } from './notesApp'
 
 export interface StoryScenario {
   notes?: NotesOptions
   latencyMs?: number
 }
 
-export interface StoryHandle {
-  harness: Harness
+export interface StoryHandle<A extends FakeApp = NotesApp> {
+  harness: Harness<A>
   view: ViewCore
   /** Stop reconnecting and drop the session (the story unmounted). */
   dispose(): void
@@ -37,4 +38,14 @@ export async function until(check: () => boolean, label: string, timeoutMs = 400
     if (Date.now() - start > timeoutMs) throw new Error(`timed out waiting for ${label}`)
     await new Promise((r) => setTimeout(r, 20))
   }
+}
+
+/** Open a story window on any fake app (a `TreeApp`): the same session, real timers and the reactive store. */
+export async function openAppStory<A extends FakeApp>(
+  app: A,
+  size?: { w: number; h: number }
+): Promise<StoryHandle<A>> {
+  const harness = createAppHarness(app, { createStore: reactiveStore, onError: () => undefined })
+  const view = await harness.openNotes({ size })
+  return { harness, view, dispose: () => harness.session.stop() }
 }

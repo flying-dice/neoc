@@ -217,8 +217,8 @@ app.tool {
   description = "Evaluate an arithmetic expression exactly. Supports + - * / % ^, parentheses, unary minus and decimals.",
   input = { expression = t.string { description = 'Arithmetic expression, e.g. "(12.5 + 7) * 3"' } },
   run = function(input)
+    -- readOnly: no history entry here (a readOnly tool cannot write; `show_on_calculator` records)
     local result = calc.evaluate(input.expression)
-    record(input.expression, result)
     return { expression = input.expression, result = result, display = calc.format(result) }
   end,
 }

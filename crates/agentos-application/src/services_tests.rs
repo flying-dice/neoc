@@ -43,7 +43,7 @@ async fn the_package_carries_every_luau_module_and_the_granted_capabilities() {
     assert_eq!(package.entry, "main.luau");
     assert_eq!(package.files.keys().collect::<Vec<_>>(), vec!["lib/calc.luau", "main.luau"]);
     let caps = f.runtime.capabilities("calc").unwrap();
-    assert_eq!(caps, Capabilities { data: true, notify: true, shell: false });
+    assert_eq!(caps, Capabilities { data: true, notify: true, shell: false, agents: false });
 }
 
 #[tokio::test]
@@ -85,7 +85,7 @@ async fn uninstall_retracts_tools_unloads_vm_forgets_the_record_and_optionally_p
 }
 
 #[tokio::test]
-async fn shutdown_unloads_every_app_keeps_data_and_records_and_stops_agents() {
+async fn shutdown_unloads_every_app_keeps_data_and_records() {
     let f = Fakes::new();
     let svc = f.service();
     svc.install_from_url(&f.add_app("notes", &[("add_note", "x")])).await.unwrap();
@@ -97,7 +97,6 @@ async fn shutdown_unloads_every_app_keeps_data_and_records_and_stops_agents() {
     assert!(f.runtime.loaded().is_empty());
     assert!(!f.store.purged("notes"), "shutdown keeps app data");
     assert_eq!(f.installed.records().len(), 2, "and remembers the installs");
-    assert_eq!(f.agents.stop_calls(), 1);
     assert!(f.events.take().is_empty(), "clients are not told the apps were uninstalled");
     assert!(svc.installed_apps().is_empty());
     assert_eq!(f.background.alive(), 0);

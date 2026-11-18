@@ -47,11 +47,13 @@ impl Drop for SqliteTx {
 #[async_trait]
 impl DataTx for SqliteTx {
     async fn query(&mut self, sql: String, params: Params) -> PortResult<Vec<Value>> {
-        Ok(self.db.blocking(move |s| run_query(s, &sql, &params)).await?)
+        let read_only = self.db.read_only;
+        Ok(self.db.blocking(move |s| run_query(s, &sql, &params, read_only)).await?)
     }
 
     async fn exec(&mut self, sql: String, params: Params) -> PortResult<ExecOutcome> {
-        let r = self.db.blocking(move |s| run_exec(s, &sql, &params)).await?;
+        let read_only = self.db.read_only;
+        let r = self.db.blocking(move |s| run_exec(s, &sql, &params, read_only)).await?;
         Ok(ExecOutcome { changes: r.changes as u64, last_insert_id: r.last_insert_rowid })
     }
 

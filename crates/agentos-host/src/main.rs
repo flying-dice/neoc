@@ -8,7 +8,7 @@
 //! Logging is `tracing` with `RUST_LOG` (default `info`).
 
 use agentos_application::PairingPolicy;
-use agentos_domain::{AgentId, AgentIdentity, Permission};
+use agentos_domain::{Agent, AgentId, AgentRuntime, ApprovalPolicy, Grants};
 use agentos_host::{
     build,
     config::Settings,
@@ -115,10 +115,15 @@ async fn run(settings: Settings, cwd: &Path) -> anyhow::Result<()> {
 
     // /mcp: one bearer token for local MCP clients, regenerated on every start
     let mcp_token = random_hex(&OsRandom, 24);
-    let local_agent = AgentIdentity {
+    let local_agent = Agent {
         id: AgentId("local".into()),
-        name: "Local agent".into(),
-        grants: vec![Permission::CallAnyTool],
+        name: "Local MCP client".into(),
+        avatar: None,
+        role: "Your own MCP client, through <data>/mcp.json".into(),
+        runtime: AgentRuntime::default(),
+        // the one seeded exception to deny-by-default: this is the token the person's own tools use
+        grants: Grants::allow_all(),
+        approval: ApprovalPolicy::default(),
     };
     let mut config = HostConfig::new(port);
     config.data_dir = Some(settings.data_dir.clone());
@@ -128,8 +133,15 @@ async fn run(settings: Settings, cwd: &Path) -> anyhow::Result<()> {
     config.registries = settings.catalog(cwd);
     config.secure_cookies = settings.secure_cookies;
     config.agents = vec![(mcp_token.clone(), local_agent)];
+    config.mcp_url = Some(format!("{}://127.0.0.1:{port}/mcp", settings.scheme()));
 
-    let host = build(config)?;
+    let host = build(config).await?;
+    for agent in settings.agents.clone() {
+        let id = agent.id.clone();
+        if let Err(e) = host.agents.ensure(agent, None).await {
+            tracing::warn!(agent = %id.0, error = %e, "could not add the configured agent");
+        }
+    }
     start_apps(&host.service, &settings.install).await;
     spawn_revision_purge(host.service.clone(), host.shutdown.clone());
     if settings.dev_reload {
@@ -163,6 +175,7 @@ async fn run(settings: Settings, cwd: &Path) -> anyhow::Result<()> {
     serve(listener, host.router, settings.tls.as_ref(), host.shutdown.clone()).await?;
 
     host.service.shutdown().await;
+    host.chat.shutdown().await;
     tracing::info!("stopped");
     Ok(())
 }

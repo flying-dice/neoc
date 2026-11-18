@@ -61,7 +61,7 @@ app.tools.register {
 }
 
 app.tools.register {
-  name = "notes.append",
+  name = "append",
   title = "Append to Note",
   description = "Append text on a new line at the end of a note",
   input = { id = t.integer { description = "Note id" }, text = t.string {} },
@@ -79,7 +79,7 @@ app.tools.register {
 }
 
 app.tools.register {
-  name = "notes.search",
+  name = "search",
   title = "Search Notes",
   readOnly = true,
   description = "Find notes whose text contains the query",

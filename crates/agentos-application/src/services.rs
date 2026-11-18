@@ -8,16 +8,15 @@ use crate::{
     data::Params,
     live::{pump_changes, LiveSources},
     ports::{
-        AgentConnector, AppData, AppObserver, AppPackage, AppRuntime, Background, CallContext, Clock,
-        DataStore, EventSink, Fetcher, InstalledApp, InstalledAppStore, RunId, ServerEvent, SqlMigration,
-        TaskHandle, ToolRegistry,
+        AppData, AppObserver, AppPackage, AppRuntime, Background, CallContext, Clock, DataStore, EventSink,
+        Fetcher, InstalledApp, InstalledAppStore, ServerEvent, SqlMigration, TaskHandle, ToolRegistry,
     },
     writeback::{self, WriteAck, WriteRequest},
     AppError, PortError,
 };
 use agentos_domain::{
     api::{AppPreview, Catalog, InstalledInfo},
-    resolve_url, source_label, Actor, AgentId, AgentIdentity, AppDecl, AppId, AppRef, Capabilities, Manifest,
+    resolve_url, source_label, Actor, AgentIdentity, AppDecl, AppId, AppRef, Capabilities, Manifest,
     QualifiedToolName, Registry, Revision, StoredRevision, ToolSpec, WindowDecl,
 };
 use parking_lot::Mutex;
@@ -31,7 +30,6 @@ pub struct Ports {
     pub runtime: Arc<dyn AppRuntime>,
     pub tools: Arc<dyn ToolRegistry>,
     pub events: Arc<dyn EventSink>,
-    pub agents: Arc<dyn AgentConnector>,
     pub installed: Arc<dyn InstalledAppStore>,
     pub clock: Arc<dyn Clock>,
     pub background: Arc<dyn Background>,
@@ -421,6 +419,14 @@ impl AppService {
         self.with_active(app, |a| a.live.clone())
     }
 
+    /// Whether the app's tool is declared `readOnly`; `None` when the app is not running or has no such tool.
+    #[must_use]
+    pub fn tool_is_read_only(&self, tool: &QualifiedToolName) -> Option<bool> {
+        self.with_active(tool.app(), |a| a.tools.iter().find(|t| t.name == tool.tool()).map(|t| t.read_only))
+            .ok()
+            .flatten()
+    }
+
     /// The tools the app currently publishes.
     pub fn tools(&self, app: &AppId) -> Result<Vec<ToolSpec>, AppError> {
         self.with_active(app, |a| a.tools.clone())
@@ -522,8 +528,7 @@ impl AppService {
 
     // ---- shutdown -----------------------------------------------------------------------------------
 
-    /// Host shutdown: retract every app's tools, unload its VM (data is kept) and stop the agent
-    /// processes. Nothing is purged or forgotten and clients are not told the apps were uninstalled: they
+    /// Host shutdown: retract every app's tools and unload its VM (data is kept). Nothing is purged or forgotten and clients are not told the apps were uninstalled: they
     /// are coming back with the host.
     pub async fn shutdown(&self) {
         let ids: Vec<AppId> = self.apps.lock().keys().cloned().collect();
@@ -537,11 +542,6 @@ impl AppService {
                 self.deactivate(&app, active).await;
             }
         }
-        self.p.agents.stop_all().await;
-    }
-
-    pub async fn start_agent_run(&self, agent: &AgentId, prompt: &str) -> Result<RunId, AppError> {
-        Ok(self.p.agents.start_run(agent, prompt).await?)
     }
 
     // ---- internals ----------------------------------------------------------------------------------

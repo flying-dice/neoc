@@ -37,6 +37,12 @@ export interface Notice {
   id: number
   kind: NoticeKind
   text: string
+  /** A kit icon name for the leading glyph (default by kind). */
+  icon?: string
+  /** The label of the action button: tapping it reports the `toast` event of the view. */
+  action?: string
+  /** The notice offers "Undo": bring back the row field value that a write replaced (`row.restore`). */
+  undo?: { source: string; key: RowKey; field: string; revisionId: number }
 }
 
 /** `env.*` refs: the viewer's environment (spec 3.2). */

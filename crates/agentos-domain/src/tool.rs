@@ -17,7 +17,7 @@ pub struct ToolSpec {
     pub read_only: bool,
 }
 
-/// How tools are exposed over MCP: `<app>__<tool>` (MCP tool names allow `[a-zA-Z0-9_-]`).
+/// How tools are exposed over MCP: `<app>__<tool>`; the tool is a local identifier `[a-z][a-z0-9_]*`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct QualifiedToolName {
     app: AppId,
@@ -26,14 +26,20 @@ pub struct QualifiedToolName {
 
 impl QualifiedToolName {
     pub fn new(app: AppId, tool: &str) -> Result<Self, DomainError> {
-        let ok = !tool.is_empty()
-            && tool.len() <= 48
-            && tool.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'));
-        if ok {
+        if Self::is_valid_tool_name(tool) {
             Ok(Self { app, tool: tool.to_owned() })
         } else {
             Err(DomainError::InvalidToolName(tool.to_owned()))
         }
+    }
+    /// A tool name is a local identifier: `[a-z][a-z0-9_]*`, at most 48 characters. The app id (which cannot
+    /// contain `_`) and `__` make the MCP name unambiguous; dots and dashes are not allowed.
+    #[must_use]
+    pub fn is_valid_tool_name(tool: &str) -> bool {
+        let mut bytes = tool.bytes();
+        tool.len() <= 48
+            && bytes.next().is_some_and(|b| b.is_ascii_lowercase())
+            && bytes.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
     }
     pub fn parse(s: &str) -> Result<Self, DomainError> {
         let (app, tool) = s.split_once("__").ok_or_else(|| DomainError::InvalidToolName(s.to_owned()))?;
@@ -62,8 +68,12 @@ mod tests {
         assert_eq!(q.to_string(), "notes__add_note");
         assert!(QualifiedToolName::parse("nodelimiter").is_err());
         assert!(QualifiedToolName::parse("notes__bad name").is_err());
-        let dotted = QualifiedToolName::parse("notes__notes.append").unwrap();
-        assert_eq!((dotted.app().as_str(), dotted.tool()), ("notes", "notes.append"));
         assert!(QualifiedToolName::parse("notes__a/b").is_err());
+        for bad in ["notes__notes.append", "notes__Append", "notes__1st", "notes__a-b", "notes__", "notes__é"]
+        {
+            assert!(QualifiedToolName::parse(bad).is_err(), "{bad} must be rejected");
+        }
+        let ok = QualifiedToolName::parse("notes__append_text2").unwrap();
+        assert_eq!((ok.app().as_str(), ok.tool()), ("notes", "append_text2"));
     }
 }

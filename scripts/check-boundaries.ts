@@ -256,7 +256,9 @@ async function checkImport(rel: string, imp: Import, abs: string): Promise<void>
     const pkg = rel.startsWith('client/') ? 'client' : rel.split('/').slice(0, 2).join('/')
     const target = relative(ROOT, resolve(dirname(abs), spec)).split(sep).join('/')
     const escapes = target !== pkg && !target.startsWith(pkg + '/')
-    if (escapes && !(test && target.startsWith('e2e/')))
+    // The renderer's protocol.ts re-exports the types generated from the Rust schema: the one file it may reach.
+    const generated = rel === 'client/src/renderer/src/view/protocol.ts' && target.startsWith('types/generated/')
+    if (escapes && !generated && !(test && target.startsWith('e2e/')))
       report(rel, imp.line, `relative import '${spec}' leaves ${pkg}: cross packages only through their published entry points`)
   }
 

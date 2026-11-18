@@ -368,7 +368,7 @@ async fn db_row(vm: &AppVm) -> Value {
 const TOOLS: &str = r#"
     local t = app.t
     app.tools.register {
-      name = "notes.search", title = "Search Notes", readOnly = true,
+      name = "search", title = "Search Notes", readOnly = true,
       description = "Find notes",
       input = { query = t.string { description = "text" }, limit = t.integer { default = 10, min = 1, max = 50 }, folder = t.string { optional = true } },
       run = function(input, ctx) return { q = input.query, n = input.limit, folder = input.folder, who = ctx.actor.name, kind = ctx.actor.kind, id = ctx.actor.id, now = ctx.now } end,
@@ -386,14 +386,14 @@ const TOOLS: &str = r#"
 async fn tools_are_registered_with_a_compiled_schema_and_run_as_the_calling_actor() {
     let vm = load(&app(TOOLS)).await;
     let tools = vm.tools();
-    let search = tools.iter().find(|t| t.name == "notes.search").unwrap();
+    let search = tools.iter().find(|t| t.name == "search").unwrap();
     assert_eq!(search.title.as_deref(), Some("Search Notes"));
     assert!(search.read_only);
     assert_eq!(search.input_schema["required"], json!(["query"]));
     assert_eq!(search.input_schema["properties"]["limit"]["maximum"], 50);
     assert!(!tools.iter().find(|t| t.name == "fails").unwrap().read_only);
 
-    let out = call(&vm, "notes.search", json!({"query": "milk"})).await.unwrap();
+    let out = call(&vm, "search", json!({"query": "milk"})).await.unwrap();
     assert_eq!(
         out,
         json!({"q": "milk", "n": 10, "who": "Claude", "kind": "agent", "id": "claude", "now": "2025-11-18T09:12:00.000Z"}),
@@ -412,7 +412,7 @@ async fn bad_tool_input_is_rejected_before_any_app_code_runs() {
         (json!({"query": "x", "limit": 99}), "between 1 and 50"),
         (json!({"query": "x", "bogus": 1}), "unknown field `bogus`"),
     ] {
-        let e = call(&vm, "notes.search", args).await.unwrap_err();
+        let e = call(&vm, "search", args).await.unwrap_err();
         assert!(matches!(&e, VmError::InvalidInput(m) if m.contains(needle)), "{e:?}");
     }
     assert!(matches!(call(&vm, "ghost", json!({})).await, Err(VmError::NoSuchTool(_))));
@@ -602,4 +602,53 @@ async fn windows_are_declared_by_name() {
         let e = try_load("probe", &app(call)).await.err().unwrap().to_string();
         assert!(e.contains(needle), "wanted `{needle}` in `{e}`");
     }
+}
+
+// ---- readOnly tools cannot write ----------------------------------------------------------------------------
+
+const READ_ONLY: &str = r#"
+    local db = app.db
+    db:migrate { [1] = "create table log(id integer primary key, msg text)" }
+    db:exec("insert into log(msg) values ('seed')")
+    local function try(f) local ok, err = pcall(f); return { ok = ok, err = (not ok) and tostring(err) or nil } end
+    app.tool { name = "count", readOnly = true, run = function() return { n = db:one("select count(*) as n from log").n } end }
+    app.tool { name = "write_exec", readOnly = true, run = function() return try(function() db:exec("insert into log(msg) values ('x')") end) end }
+    app.tool { name = "write_returning", readOnly = true, run = function() return try(function() db:all("insert into log(msg) values ('y') returning id") end) end }
+    app.tool { name = "write_tx", readOnly = true, run = function() return try(function() db:tx(function() db:exec("delete from log") end) end) end }
+    app.tool { name = "write_ddl", readOnly = true, run = function() return try(function() db:all("drop table log") end) end }
+    app.tool { name = "lift_it", readOnly = true, run = function() return try(function() db:all("pragma query_only = 0") end) end }
+    app.tool { name = "write_kv", readOnly = true, run = function() return try(function() app.kv:set("k", 1) end) end }
+    app.tool { name = "delete_kv", readOnly = true, run = function() return try(function() app.kv:delete("k") end) end }
+    app.tool { name = "write_migrate", readOnly = true, run = function() return try(function() db:migrate { [1] = "create table log(id integer primary key, msg text)", [2] = "create table z(a)" } end) end }
+    app.tool { name = "add", run = function(_, ctx) db:exec("insert into log(msg) values (:m)", { m = ctx.actor.name }); app.kv:set("k", 1); return { n = db:one("select count(*) as n from log").n } end }
+"#;
+
+#[tokio::test]
+async fn a_read_only_tool_cannot_write_by_any_route_and_a_normal_tool_still_can() {
+    let vm = load(&app(READ_ONLY)).await;
+    assert_eq!(call(&vm, "count", json!({})).await.unwrap(), json!({"n": 1}), "reads work");
+
+    for tool in [
+        "write_exec",
+        "write_returning",
+        "write_tx",
+        "write_ddl",
+        "lift_it",
+        "write_kv",
+        "delete_kv",
+        "write_migrate",
+    ] {
+        let out = call(&vm, tool, json!({})).await.unwrap();
+        assert_eq!(out["ok"], false, "{tool} must be refused: {out}");
+        let why = out["err"].as_str().unwrap().to_lowercase();
+        assert!(
+            why.contains("readonly") || why.contains("read-only") || why.contains("not authorized"),
+            "{tool}: {why}"
+        );
+    }
+    assert_eq!(call(&vm, "count", json!({})).await.unwrap(), json!({"n": 1}), "nothing was written");
+
+    // the VM is writable again for the next, non-readOnly call (even after the failures above)
+    assert_eq!(call(&vm, "add", json!({})).await.unwrap(), json!({"n": 2}));
+    assert_eq!(call(&vm, "count", json!({})).await.unwrap(), json!({"n": 2}));
 }

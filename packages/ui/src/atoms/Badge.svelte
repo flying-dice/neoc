@@ -11,7 +11,7 @@
   const text = $derived(typeof value === 'number' && value > max ? `${max}+` : value)
 </script>
 
-<span class="ios-badge" class:dot={text === undefined} style:background={color}>{text ?? ''}</span>
+<span class="ios-badge" class:dot={text === undefined} style:--badge-bg={color}>{text ?? ''}</span>
 
 <style>
   .ios-badge {
@@ -22,7 +22,9 @@
     height: 20px;
     padding: 0 6px;
     border-radius: 999px;
-    color: #fff;
+    background: var(--badge-bg);
+    /* White or black, whichever holds 4.5:1 on the badge colour in this scheme. */
+    color: oklch(from var(--badge-bg) clamp(0, (0.59 - l) * 1000, 1) 0 0);
     font: var(--type-footnote);
     font-weight: 500;
     font-variant-numeric: tabular-nums;

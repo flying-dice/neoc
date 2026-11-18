@@ -14,7 +14,8 @@
     "skipLibCheck": true,
     "noEmit": true,
     "types": [
-      "svelte"
+      "svelte",
+      "bun"
     ]
   },
   "include": [

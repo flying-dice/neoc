@@ -138,7 +138,34 @@ pub(super) fn install(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<
         })?,
     )?;
 
+    install_agents(lua, sh, app)?;
     install_shell(lua, sh, app)
+}
+
+/// `app.agents:list()`: the agent contacts as `{ id, name, avatar?, role }`, for an app with the `agents`
+/// permission. Never grants, tokens or launch commands.
+fn install_agents(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<()> {
+    let agents = lua.create_table()?;
+    let s = sh.clone();
+    agents.set(
+        "list",
+        lua.create_function(move |lua, _: Variadic<LuaValue>| {
+            need(s.caps.agents, "agents", "app.agents:list")?;
+            let list = lua.create_table()?;
+            for (i, card) in s.roster.cards().into_iter().enumerate() {
+                let row = lua.create_table()?;
+                row.set("id", card.id.0)?;
+                row.set("name", card.name)?;
+                if let Some(avatar) = card.avatar {
+                    row.set("avatar", avatar)?;
+                }
+                row.set("role", card.role)?;
+                list.raw_set(i + 1, row)?;
+            }
+            Ok(list)
+        })?,
+    )?;
+    app.set("agents", agents)
 }
 
 /// `app.shell`: Dock badge, menu commands, deep links. Declarations only: the shell implements them later.

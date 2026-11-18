@@ -41,7 +41,7 @@ CREATE TABLE installed_apps(
 /// The system database behind both `DeviceRegistry` and `InstalledAppStore`. The host and the CLI open the
 /// same file, so they must agree on the migration list: it lives here.
 pub struct SqliteSystemDb {
-    db: AppDb,
+    pub(crate) db: AppDb,
 }
 
 /// The old name, from when the system database held only devices.
@@ -52,7 +52,12 @@ impl SqliteSystemDb {
     pub fn open(path: Option<&Path>) -> Result<Self, DbError> {
         let db = AppDb::open_system(
             path,
-            &[Migration::new(1, "devices", SCHEMA), Migration::new(2, "installed_apps", INSTALLED_APPS)],
+            &[
+                Migration::new(1, "devices", SCHEMA),
+                Migration::new(2, "installed_apps", INSTALLED_APPS),
+                Migration::new(3, "agents", crate::agents::AGENTS),
+                Migration::new(4, "threads", crate::agents::THREADS),
+            ],
         )?;
         Ok(Self { db })
     }
@@ -127,7 +132,7 @@ fn to_device(row: &Value) -> Option<Device> {
 }
 
 /// Unix milliseconds fit an i64 for the next 292 million years; saturate rather than wrap.
-fn sql_ms(ms: u64) -> Value {
+pub(crate) fn sql_ms(ms: u64) -> Value {
     json!(i64::try_from(ms).unwrap_or(i64::MAX))
 }
 

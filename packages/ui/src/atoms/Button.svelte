@@ -6,9 +6,12 @@
 <script lang="ts">
   import type { Snippet } from 'svelte'
   import type { HTMLButtonAttributes } from 'svelte/elements'
+  import { cssColor, inkFor } from '../contrast'
 
   interface Props extends HTMLButtonAttributes {
     testid: string
+    /** Accessible description (read after the name). */
+    'aria-description'?: string
     variant?: 'filled' | 'tinted' | 'gray' | 'plain'
     size?: 'small' | 'medium' | 'large'
     /** Capsule (pill) corners instead of rounded rect. */
@@ -17,6 +20,11 @@
     square?: boolean
     /** Any CSS colour; defaults to the inherited --tint. */
     tint?: string
+    /**
+     * A data colour (palette token or `#rrggbb`) for a `filled` button: the text colour is chosen for 4.5:1 on it.
+     * Unlike `tint`, which is the accent of the control, this is content.
+     */
+    fill?: string
     destructive?: boolean
     block?: boolean
     children: Snippet
@@ -29,6 +37,7 @@
     capsule = false,
     square = false,
     tint,
+    fill,
     destructive = false,
     block = false,
     type = 'button',
@@ -38,6 +47,8 @@
   }: Props = $props()
 
   const color = $derived(destructive ? 'var(--ios-red)' : tint)
+  const fillColor = $derived(fill ? cssColor(fill) : undefined)
+  const ink = $derived(fill && variant === 'filled' ? inkFor(fill) : undefined)
 </script>
 
 <button
@@ -48,7 +59,8 @@
   class:square
   class:block
   style:--btn-tint={color}
-  style:--btn-fill={tint && !destructive ? tint : undefined}
+  style:--btn-fill={fillColor ?? (tint && !destructive ? tint : undefined)}
+  style:--btn-ink={ink}
   {...rest}
 >
   {@render children()}
@@ -127,7 +139,7 @@
      * --tint-fill). An explicit `tint` is used exactly as given.
      */
     background: var(--btn-fill, light-dark(var(--_tint), color-mix(in oklab, var(--_tint) 70%, black)));
-    color: #fff;
+    color: var(--btn-ink, #fff);
   }
   /*
    * Tint-coloured text on a tinted or gray fill: darker in light mode, lighter

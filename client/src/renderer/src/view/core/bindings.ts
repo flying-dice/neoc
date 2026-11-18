@@ -24,7 +24,7 @@
  * Scalar controls are human-wins: the host returns the user's value, and a value that changed elsewhere in the
  * meantime is overwritten (the host keeps it in the revision ring).
  */
-import type { Json } from '../protocol'
+import type { Json, ResumeDraft, RowKey, WriteResolution, WriteResult } from '../protocol'
 import { isConnectionError } from '../rpc/peer'
 import { bindingKey, type BindingTarget, type ViewStore } from './store'
 import { rebase } from './textMerge'
@@ -56,30 +56,19 @@ export function parseSync(spec: unknown, fallback: SyncPolicy): SyncPolicy {
 
 // ── Acks ───────────────────────────────────────────────────────────────────
 
-/** The ack of `state.set` / `row.set` (spec 3.4 rule 6). */
-export interface WriteAck {
-  rev: number
-  value: Json
-  conflict?: boolean
-}
+/** The ack of `state.set` / `row.set` (spec 3.4 rule 6): the host says how it resolved the write. */
+export type WriteAck = WriteResult
 
 /**
- * How the host resolved a write, read from the ack alone (the spec's ack has no explicit field; see the report):
  *  - accepted: the value stands;
- *  - merged: a non-overlapping change from elsewhere was composed in (value differs, no conflict);
- *  - replaced: an overlap resolved to the user's value (conflict, value equals what was sent);
- *  - rejected: the host refused the write (conflict, value differs): `conflict = "reject"` sources.
+ *  - merged: a non-overlapping change from elsewhere was composed in;
+ *  - replaced: an overlap resolved to the user's value (`undo` names the revision that lost);
+ *  - rejected: the host refused the write (`conflict = "reject"` sources).
  */
-export type Resolution = 'accepted' | 'merged' | 'replaced' | 'rejected'
+export type Resolution = WriteResolution
 
 export const sameJson = (a: Json | undefined, b: Json | undefined): boolean =>
   a === b || JSON.stringify(a) === JSON.stringify(b)
-
-export function classifyAck(sent: Json, ack: WriteAck): Resolution {
-  const same = sameJson(sent, ack.value)
-  if (ack.conflict) return same ? 'replaced' : 'rejected'
-  return same ? 'accepted' : 'merged'
-}
 
 // ── Dependencies ───────────────────────────────────────────────────────────
 
@@ -92,10 +81,19 @@ export interface BindingsDeps {
   read(target: BindingTarget): { value: Json; rev: number } | undefined
   /** Write a server value for a target into the store. */
   adopt(target: BindingTarget, value: Json, rev: number): void
-  notify(kind: 'info' | 'conflict' | 'error', text: string): void
+  /** `undo` is set when a row write replaced a change made elsewhere: the notice offers to bring it back. */
+  notify(kind: 'info' | 'conflict' | 'error', text: string, undo?: UndoOffer): void
   announce(text: string): void
   onError(error: unknown): void
   timers?: Timers
+}
+
+/** What the notice for a replaced row write offers: restore the revision that lost. */
+export interface UndoOffer {
+  source: string
+  key: RowKey
+  field: string
+  revisionId: number
 }
 
 /** A caret-mapping hook: called when an ack replaced what the user typed with the host's merged value. */
@@ -273,10 +271,22 @@ export class Bindings {
   }
 
   /** What is still unacknowledged, for `view.open {resume}` (spec 2.5). */
-  pending(): ({ baseRev: number } & BindingTarget)[] {
+  pending(): ResumeDraft[] {
     return [...this.entries.values()]
       .filter((e) => e.dirty)
-      .map((e) => ({ ...e.target, baseRev: e.baseRev }))
+      .map((e) => {
+        const value = this.d.store.drafts[bindingKey(e.target)] ?? null
+        return e.target.kind === 'state'
+          ? { kind: 'state', path: e.target.path, value, baseRev: e.baseRev }
+          : {
+              kind: 'row',
+              source: e.target.source,
+              key: e.target.key,
+              field: e.target.field,
+              value,
+              baseRev: e.baseRev
+            }
+      })
   }
 
   // ── The ack ────────────────────────────────────────────────────────────
@@ -284,7 +294,7 @@ export class Bindings {
   /** Settle an ack into the store. Returns true when the user kept typing and a follow-up write must be scheduled. */
   private acknowledge(e: Entry, sent: Json, sentSeq: number, ack: WriteAck): boolean {
     const { store } = this.d
-    const resolution = classifyAck(sent, ack)
+    const resolution = ack.resolution
     // A remote change that landed after the host applied our write is newer than the ack: keep it.
     const remoteNewer = e.latestRev > ack.rev
     if (!remoteNewer) {
@@ -315,7 +325,18 @@ export class Bindings {
         this.d.announce('Updated with a change made elsewhere')
         break
       case 'replaced':
-        this.d.notify('conflict', 'Your edit replaced a change made elsewhere.')
+        this.d.notify(
+          'conflict',
+          'Your edit replaced a change made elsewhere.',
+          ack.undo && e.target.kind === 'row'
+            ? {
+                source: e.target.source,
+                key: e.target.key,
+                field: e.target.field,
+                revisionId: ack.undo.revisionId
+              }
+            : undefined
+        )
         break
       case 'rejected':
         store.fieldErrors[e.key] = 'Changed elsewhere'

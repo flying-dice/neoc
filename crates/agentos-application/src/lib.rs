@@ -9,6 +9,12 @@
 //! It must never depend on an adapter crate, nor on tokio, axum, mlua, rusqlite, ... (a test runtime
 //! is a dev-dependency only).
 
+pub mod agents;
+#[cfg(test)]
+mod agents_tests;
+pub mod chat;
+#[cfg(test)]
+mod chat_tests;
 pub mod data;
 pub mod devices;
 pub mod error;
@@ -28,6 +34,8 @@ pub mod writeback;
 #[cfg(test)]
 mod writeback_tests;
 
+pub use agents::{AgentError, AgentPatch, AgentService, NewAgent};
+pub use chat::{ChatError, ChatPorts, ChatService, RunEvents, PERMISSION_TTL_MS};
 pub use devices::{DeviceService, PairError, PairedDevice, PairingCode, PairingPolicy};
 pub use error::{AppError, PortError};
 pub use live::{LiveSources, SourceDef, SourceId, SourceKind, SourceUpdate, SubscriptionId, Window};
