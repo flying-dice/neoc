@@ -62,9 +62,12 @@ bun run build:apps      # dev build of app bundles → dist/bundles (mutable; th
 bun run release:apps    # release build → bundles/ (immutable, committed); bump the app's version to change a released app
 bun run build && bun start   # production: the server serves the built PWA on :7400
 bun run dev:web         # the desktop in a browser on the in-memory host (http://localhost:6200/web.html)
-bun run lint            # atomic layers + test ids + boundaries + eslint
-bun run typecheck
-bun run test            # unit tests in every package
+bun run host            # the Rust host (cargo run -p agentos-host): serves the client, /rpc, /agui, /mcp on :7400
+bun run host pair       # print a fresh device pairing code (every client must pair; see docs/architecture/host-stack.md)
+bun run lint            # atomic layers + test ids + boundaries + eslint + cargo fmt/clippy/deny + crate deps + luau-lsp + stylua
+bun run typecheck       # + cargo check --workspace --all-targets
+bun run test            # cargo nextest run --workspace + unit tests in every package
+bun run format          # prettier + cargo fmt + stylua
 bun run test:e2e        # all Storybooks + desktop + journeys, headless (test:e2e:update to rebaseline)
 bun run storybooks list # every app's Storybook (each package: bun run storybook)
 bun scripts/design-audit.ts <app>   # static styleguide audit

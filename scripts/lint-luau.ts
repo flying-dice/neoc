@@ -1,0 +1,93 @@
+#!/usr/bin/env bun
+/**
+ * Type-checks every Luau app and fixture against the app API definitions with `luau-lsp analyze`.
+ *
+ *  1. Positive: every `.luau` file outside `tests/negative/` and the generated types must analyze clean.
+ *  2. Negative: every file in a `tests/negative/` folder marks the lines that must be rejected with
+ *     `-- expect-error`; luau-lsp must flag exactly those lines. This is what stops the gate passing
+ *     silently when the definitions file itself is broken (every `app` use would then be "unknown",
+ *     which is also an error, so the negative check also fails if the definitions file does not load).
+ *
+ * `luau-lsp` is found on PATH or at ~/.local/bin/luau-lsp. When it is missing the check SKIPS with a message
+ * and exits 0, like the rest of the optional tooling.
+ *
+ * Usage: bun scripts/lint-luau.ts
+ */
+import { Glob } from 'bun'
+import { spawnSync } from 'node:child_process'
+import { existsSync, readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join, resolve } from 'node:path'
+
+const root = resolve(import.meta.dir, '..')
+const DEFINITIONS = join(root, 'crates/agentos-luau/types/agentos.d.luau')
+/** Generated type modules are checked when the codegen pipeline (wave A2) owns them. */
+const SKIP = ['crates/agentos-codegen/generated/', 'node_modules/', 'target/', '.claude/']
+
+function findLuauLsp(): string | undefined {
+  const which = spawnSync('which', ['luau-lsp'], { encoding: 'utf8' })
+  if (which.status === 0 && which.stdout.trim()) return which.stdout.trim()
+  const local = join(homedir(), '.local/bin/luau-lsp')
+  return existsSync(local) ? local : undefined
+}
+
+const lsp = findLuauLsp()
+if (!lsp) {
+  console.log('lint:luau SKIPPED: luau-lsp not found (install it on PATH or at ~/.local/bin/luau-lsp to type-check Luau apps)')
+  process.exit(0)
+}
+
+const files: string[] = []
+for (const file of new Glob('**/*.luau').scanSync({ cwd: root })) {
+  if (!SKIP.some((s) => file.includes(s)) && !file.endsWith('.d.luau')) files.push(file)
+}
+files.sort()
+const negative = files.filter((f) => f.includes('/negative/'))
+const positive = files.filter((f) => !f.includes('/negative/'))
+
+function analyze(paths: string[]): { output: string; status: number } {
+  const run = spawnSync(
+    lsp as string,
+    ['analyze', '--platform', 'standard', '--definitions', `@agentos=${DEFINITIONS}`, ...paths],
+    { cwd: root, encoding: 'utf8' }
+  )
+  return { output: `${run.stdout}${run.stderr}`, status: run.status ?? 1 }
+}
+
+const problems: string[] = []
+const brokenDefinitions = /Failed to read definitions file|\.d\.luau: SyntaxError/
+const diagnostics = (output: string) => output.split('\n').filter((l) => /\(\d+,\d+\): (TypeError|SyntaxError)/.test(l))
+
+if (positive.length > 0) {
+  const { output, status } = analyze(positive)
+  if (brokenDefinitions.test(output)) problems.push(`the definitions file does not load:\n${output}`)
+  else if (status !== 0 || diagnostics(output).length > 0) problems.push(output.trim())
+}
+
+for (const file of negative) {
+  const lines = readFileSync(join(root, file), 'utf8').split('\n')
+  const expected = lines.flatMap((l, i) => (l.includes('-- expect-error') ? [i + 1] : []))
+  const { output } = analyze([file])
+  if (brokenDefinitions.test(output)) {
+    problems.push(`${file}: the definitions file does not load:\n${output}`)
+    continue
+  }
+  const flagged = new Set(
+    diagnostics(output).flatMap((l) => {
+      const m = /\((\d+),\d+\): TypeError/.exec(l)
+      return m ? [Number(m[1])] : []
+    })
+  )
+  for (const line of expected) if (!flagged.has(line)) problems.push(`${file}:${line}: expected a type error here, luau-lsp accepted it`)
+  for (const line of flagged) if (!expected.includes(line)) problems.push(`${file}:${line}: unexpected type error on a line not marked expect-error`)
+}
+
+if (problems.length > 0) {
+  console.error(`lint:luau FAILED\n${problems.join('\n')}`)
+  process.exit(1)
+}
+console.log(
+  `lint:luau OK (${positive.length} file${positive.length === 1 ? '' : 's'} clean, ${negative.length} negative fixture${
+    negative.length === 1 ? '' : 's'
+  } rejected as expected; ${lsp})`
+)

@@ -108,3 +108,97 @@ Features `luau, async, serialize, send`. Proven (all in `tests/vm.rs`, 9 tests):
 ## What I did not do / failed
 - Did not run `luau-lsp` (download executed under a policy block; I deleted it). Did not run Docker/Linux builds (daemon down). Did not test `jsonrpsee` (reasoned from docs). Did not test `https://` fetches (no network test; reqwest+rustls is compiled and works for `http://`).
 - No file in `/Users/jonathanturnock/Projects/AgentOS` was modified; no processes left running.
+
+## Running the host
+
+The host is the product: one binary that serves the built client, `/rpc`, `/agui` and `/mcp`.
+
+```sh
+cargo run -p agentos-host                  # serve (bun run host does the same)
+cargo run -p agentos-host -- pair          # print a fresh pairing code (alias: --new-pairing-code)
+cargo run -p agentos-host -- --config f    # use a specific config file
+RUST_LOG=agentos_host=debug,info cargo run -p agentos-host
+```
+
+It listens on `0.0.0.0:7400` by default. At start it prints the URLs it is reachable on (loopback, each LAN
+address, the hostname) and a **pairing code**. `SIGINT` and `SIGTERM` shut it down gracefully: it stops
+accepting, drains open connections for 3 seconds, unloads every app (their data is kept), stops agent
+processes, and exits 0. Logging is `tracing`, filtered by `RUST_LOG` (default `info`), written to stderr; the
+banner and pairing code go to stdout.
+
+### Pairing
+
+Every client route needs a paired device, **including from loopback**: there is no trusted-network shortcut.
+
+1. The host prints a code like `K7QM-3XHR`: 8 characters from a 31-symbol alphabet without `0 O 1 I L`
+   (about 40 bits), valid 10 minutes, single use. `agentos-host pair` issues another at any time, even while the
+   host is running (they share `<data>/system.db`).
+2. The client's static files load unauthenticated. The shell asks `GET /session` (`{"paired":false}`), shows its
+   pairing screen, and posts `POST /pair` with `{"code": "...", "deviceName": "..."}`. The device name defaults
+   to a label from the `User-Agent`.
+3. The host answers with `Set-Cookie: agentos_session=<256-bit token>; Path=/; HttpOnly; SameSite=Strict`
+   (plus `Secure` over TLS) and `{"device": {...}}`. The database stores only the SHA-256 of the token and of the
+   code, with the device name, creation time and last-seen time.
+4. `/rpc` and `/agui` (and any route added later: protected is the default) require that cookie, else `401`.
+5. Wrong codes are rate limited: after 5 attempts in a minute, `429` with `Retry-After`, even for the right code;
+   10 wrong guesses in 10 minutes destroy every outstanding code.
+6. Sessions have no expiry; they last until revoked. The JSON-RPC methods `host.devices.list` (`{devices:[{id, name,
+   createdAt, lastSeenAt, current}]}`) and `host.devices.revoke` (`{id}`) back a future Settings screen. Revoking a
+   device hangs up its sockets and ends its session.
+
+`/mcp` is separate: per-agent bearer tokens only. A paired session is not an MCP credential and an MCP token is
+not a session. For local MCP clients the host writes `<data>/mcp.json` (mode 0600,
+`{"url": ".../mcp", "headers": {"Authorization": "Bearer ..."}}`); the token changes on every start.
+
+The **Origin/Host guard** covers every route. A request's `Host` must be a loopback address, one of this
+machine's interface addresses (re-read every 10 s, so joining a network works without a restart), its hostname,
+any `*.local` name, or a name in `allowed_hosts`; own names and addresses must carry the listening port. A browser
+`Origin` must satisfy the same rule. Everything else gets `403`, which is what stops DNS rebinding and
+cross-site WebSockets.
+
+### LAN and TLS
+
+Reaching the host from another device needs only the default bind; the client then opens
+`http://<lan-address>:7400`. Plain HTTP on the LAN is fine for the desktop itself, but **a PWA's service worker
+(install, offline) needs a secure context**, and only `localhost` is exempt. For a PWA on another device, serve TLS:
+
+```toml
+[tls]
+cert = "certs/agentos.pem"   # certificate chain, PEM
+key = "certs/agentos.key"    # private key, PEM
+```
+
+With TLS the host speaks HTTPS directly (rustls) and sets `Secure` on the cookie; `mcp.json` then holds an
+`https://` URL. Use a certificate the devices trust (a local CA such as mkcert, or a real name via a tunnel or
+reverse proxy). Behind a TLS-terminating proxy, leave TLS off, set `secure_cookies = true` and list the proxy's
+name in `allowed_hosts`.
+
+### Configuration
+
+Defaults, then `agentos.toml`, then environment variables. The file is `--config <path>`, else
+`AGENTOS_CONFIG`, else `./agentos.toml`, else `<data_dir>/agentos.toml`. Unknown keys are an error.
+
+| `agentos.toml` | environment | default |
+|---|---|---|
+| `data_dir` | `AGENTOS_DATA` | `~/.agentos` (mode 0700): `system.db`, `apps/<id>.db`, `mcp.json` |
+| `bind` | `AGENTOS_BIND` | `0.0.0.0` |
+| `port` | `AGENTOS_PORT` | `7400` (`0` picks a free port) |
+| `client_dir` | `AGENTOS_CLIENT_DIR` | `client/dist`, else `apps/desktop/dist`; none built = API only |
+| `registries` | `AGENTOS_REGISTRIES` (comma list) | none: app-ref URLs installed at start |
+| `allowed_hosts` | `AGENTOS_ALLOWED_HOSTS` (comma list) | none |
+| `dev_client_port` | `AGENTOS_DEV_CLIENT_PORT` | none: also accept the Vite dev server on this port |
+| `secure_cookies` | `AGENTOS_SECURE_COOKIES` | on when TLS is configured |
+| `[tls] cert`, `key` | `AGENTOS_TLS_CERT`, `AGENTOS_TLS_KEY` | TLS off |
+
+An explicit `client_dir` that is not built is an error; the default quietly falls back to the old
+`apps/desktop/dist` until the client moves to `client/`.
+
+### The gate
+
+`bun run lint` (adds `cargo fmt --check`, clippy with `-D warnings`, `scripts/check-deps.ts`, `cargo deny check`,
+`lint:luau`, `lint:stylua`), `bun run typecheck` (adds `cargo check --workspace --all-targets`), `bun run test`
+(adds `cargo nextest run --workspace`), `bun run format` (adds `cargo fmt` and StyLua). `lint:luau` type-checks
+every Luau app and fixture with `luau-lsp analyze` against `crates/agentos-luau/types/agentos.d.luau`, and a
+negative fixture (`tests/negative/*.luau`, lines marked `-- expect-error`) must be rejected, so a broken
+definitions file cannot pass silently. `lint:luau` and `lint:stylua` skip with a message when `luau-lsp` or
+`stylua` is not installed.
