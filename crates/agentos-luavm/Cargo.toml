@@ -22,6 +22,8 @@ tokio = { workspace = true, features = ["net", "io-util", "signal"] }
 mlua = { workspace = true }
 parking_lot = { workspace = true }
 regex = "1"
+# Linear-time substring search for the budgeted `string.find` (lua::patterns).
+memchr = "2"
 base64 = "0.22"
 # Zero-dep hex, backs `lib:hex` alongside the base64 crate.
 hex = "0.4"

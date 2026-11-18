@@ -6,10 +6,12 @@
 //! namespaces 1:1 (`crate::lua::std::collections` → `std:collections`,
 //! `crate::lua::vnd::hyper` → `vnd:hyper`, etc.); `modules.rs` builds the
 //! `require` registry that ties them together.
+pub mod app_env;
 pub mod bit;
 pub mod facade;
 pub mod lib;
 pub mod modules;
+pub mod patterns;
 pub mod sandbox;
 pub mod std;
 pub mod tracing_layer;

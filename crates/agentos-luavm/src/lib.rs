@@ -51,6 +51,10 @@
     )
 )]
 
+/// The `mlua` this crate is built on, re-exported so the adapter on top names one binding and `deny.toml`'s
+/// `mlua` wrapper rule (only this crate depends on it directly) holds.
+pub use mlua;
+
 pub mod dto;
 pub mod errors;
 pub mod lua;

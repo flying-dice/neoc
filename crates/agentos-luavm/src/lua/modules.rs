@@ -81,7 +81,24 @@ fn truncate_list(members: &[&str], cap: usize) -> String {
     }
 }
 
+/// Install the `require` global over every module.
+///
+/// # Errors
+/// Fails when a module cannot be built.
 pub fn install(lua: &Lua) -> mlua::Result<()> {
+    install_filtered(lua, None)
+}
+
+/// Install the `require` global over only the modules named in `allowed` (`"lib:json"`, ...); any other
+/// spec fails as unknown. This is the seam for exposing a subset of the modules to untrusted scripts.
+///
+/// # Errors
+/// Fails when a module cannot be built.
+pub fn install_allowed(lua: &Lua, allowed: &[&str]) -> mlua::Result<()> {
+    install_filtered(lua, Some(allowed))
+}
+
+fn install_filtered(lua: &Lua, allowed: Option<&[&str]>) -> mlua::Result<()> {
     let mut modules: HashMap<String, Table> = HashMap::new();
 
     // std:* — mirrors Rust standard library.
@@ -140,6 +157,10 @@ pub fn install(lua: &Lua) -> mlua::Result<()> {
     #[cfg(feature = "testcontainers")]
     modules.insert("vnd:testcontainers_modules".into(), vnd::testcontainers_modules::module(lua)?);
     modules.insert("vnd:toml".into(), vnd::toml::module(lua)?);
+
+    if let Some(allowed) = allowed {
+        modules.retain(|name, _| allowed.contains(&name.as_str()));
+    }
 
     // Custom require — strict `namespace:name` form, no path search, no
     // file I/O. Unknown specs error with the namespace catalogue so typos

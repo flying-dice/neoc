@@ -46,13 +46,49 @@ const STRIPPED_GLOBALS: &[&str] = &[
 /// # Errors
 /// Fails when the engine, a library or a module cannot be set up.
 pub fn make_engine() -> mlua::Result<Lua> {
+    let lua = base_engine()?;
+    lua.set_app_data(crate::lua::std::task::Scheduler::new());
+    modules::install(&lua)?;
+    Ok(lua)
+}
+
+/// Build a bare standard Lua 5.1 engine for untrusted app code: the curated stdlib, the `bit` library and
+/// the yield-safe `pcall`/`xpcall` of [`make_engine`], but NO `std:`/`lib:`/`vnd:` modules, no scheduler and
+/// no `require` (the embedder installs its own, and gives each script its own environment, see
+/// [`crate::lua::app_env`]).
+///
+/// The one shared string metatable is locked (`__metatable`), so `getmetatable("").__index` cannot be used
+/// to reach, and mutate, the shared `string` table.
+///
+/// To offer a script some of the modules later, install them with [`modules::install_allowed`]: this
+/// function deliberately exposes none.
+///
+/// # Errors
+/// Fails when the engine or a library cannot be set up.
+pub fn make_bare_engine() -> mlua::Result<Lua> {
+    let lua = base_engine()?;
+    lock_string_metatable(&lua)?;
+    Ok(lua)
+}
+
+/// The libraries, the stripped globals, `bit` and the yield-safe `pcall` shared by both engines.
+fn base_engine() -> mlua::Result<Lua> {
     let lua = Lua::new_with(StdLib::TABLE | StdLib::STRING | StdLib::MATH, mlua::LuaOptions::new())?;
     strip_unsafe_globals(&lua)?;
     bit::install(&lua)?;
     install_yieldable_pcall(&lua)?;
-    lua.set_app_data(crate::lua::std::task::Scheduler::new());
-    modules::install(&lua)?;
     Ok(lua)
+}
+
+/// Every string shares one metatable (`{ __index = string }`) that `getmetatable("")` returns. Locking it
+/// makes `getmetatable("")` return the lock value instead, so a script cannot reach the table `__index`
+/// names. (Scripts cannot `setmetatable` a string, and `debug.setmetatable` is not loaded.)
+fn lock_string_metatable(lua: &Lua) -> mlua::Result<()> {
+    let meta: Option<mlua::Table> = lua.load("return getmetatable('')").eval()?;
+    if let Some(meta) = meta {
+        meta.raw_set("__metatable", "locked")?;
+    }
+    Ok(())
 }
 
 /// Load script source as a text-only chunk.
