@@ -98,8 +98,22 @@ pub trait AppRuntime: Send + Sync {
         data: Arc<dyn AppData>,
         capabilities: Capabilities,
     ) -> PortResult<LoadedApp>;
+    /// Stop the app and free its VM. A call still running in it is stopped too (it does not keep the app
+    /// alive), so an uninstalled app never runs on.
     async fn unload(&self, app: &AppId) -> PortResult<()>;
-    async fn call_tool(&self, app: &AppId, tool: &str, args: Value, ctx: CallContext) -> PortResult<Value>;
+    /// Run one of the app's tools. `read_only` is the caller's requirement: the call runs with every write
+    /// refused (data, `app.kv`, `app.state`, notifications, windows, shell) even if the tool itself is not
+    /// declared `readOnly`. The use case sets it for a tool the app declared `readOnly`, so the guarantee that
+    /// lets an agent run such a tool without a prompt holds whatever the adapter does with its own bookkeeping;
+    /// an adapter may only tighten it (a tool it knows is `readOnly` runs read-only regardless).
+    async fn call_tool(
+        &self,
+        app: &AppId,
+        tool: &str,
+        args: Value,
+        ctx: CallContext,
+        read_only: bool,
+    ) -> PortResult<Value>;
     /// Run a row source's `write(key, field, value, ctx)` callback.
     async fn write_row(
         &self,

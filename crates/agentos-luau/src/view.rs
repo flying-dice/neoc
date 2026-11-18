@@ -7,7 +7,7 @@
 //! component schema, and handed to the view service, which diffs it against what the client has.
 
 use crate::{
-    convert::{json_to_lua, lua_to_json},
+    convert::{json_to_lua, lua_to_json, lua_to_json_in, Walk},
     error::ScriptError,
     state::{make_state, DepKey},
     vm::{AppVm, Result, Shared, VmError},
@@ -18,6 +18,7 @@ use agentos_application::{
 };
 use agentos_domain::ui::{
     bindings::{bound_fields, writable_by_source},
+    node::limits,
     protocol::{Command, Toast, ToastAction},
     source::{ConflictPolicy, SourceDecl, TotalMode as WireTotal, ViewDecls},
     validate::{validate_with, Context, Severity},
@@ -122,20 +123,39 @@ fn bad(path: &str, why: impl std::fmt::Display) -> VmError {
     VmError::Convert(format!("{path}: {why}"))
 }
 
-fn wire_handler(
-    value: &LuaValue,
-    path: &str,
-    key: &str,
-    fns: &mut HashMap<String, Vec<Function>>,
-) -> Result<Handler> {
+/// What converting one rendered tree has used, against what a view may hold. The domain validates the
+/// finished tree, but a Luau tree is untrusted until it is converted: one that contains itself, or is
+/// shared at every level, would overflow the stack or the memory before validation ever saw it.
+struct Wire {
+    /// The closures of the handlers met so far, by `path#event`.
+    fns: HashMap<String, Vec<Function>>,
+    /// Nodes converted, against `limits::MAX_NODES`.
+    nodes: usize,
+    /// Every prop and action value, against a budget for the whole tree; also the tables the walk is inside
+    /// of, so a cycle is found.
+    walk: Walk,
+}
+
+impl Wire {
+    fn new() -> Self {
+        // a tree larger than one wire message can't be sent anyway
+        Self {
+            fns: HashMap::new(),
+            nodes: 0,
+            walk: Walk::with_limits(limits::MAX_NODES * 10, limits::MAX_MESSAGE_BYTES),
+        }
+    }
+}
+
+fn wire_handler(value: &LuaValue, path: &str, key: &str, wire: &mut Wire) -> Result<Handler> {
     let slot = format!("{path}#{key}");
     match value {
         LuaValue::Boolean(true) => {
-            fns.insert(slot, vec![]);
+            wire.fns.insert(slot, vec![]);
             Ok(Handler::Emit)
         }
         LuaValue::Function(f) => {
-            fns.insert(slot, vec![f.clone()]);
+            wire.fns.insert(slot, vec![f.clone()]);
             Ok(Handler::Emit)
         }
         LuaValue::Table(list) => {
@@ -145,7 +165,8 @@ fn wire_handler(
                 match item.map_err(|e| bad(path, e))? {
                     LuaValue::Function(f) => closures.push(f),
                     LuaValue::Table(a) => {
-                        let json = lua_to_json(&LuaValue::Table(a)).map_err(|e| bad(path, e))?;
+                        let json = lua_to_json_in(&LuaValue::Table(a), path, &mut wire.walk)
+                            .map_err(|e| bad(path, e))?;
                         actions.push(
                             serde_json::from_value::<Action>(json)
                                 .map_err(|e| bad(path, format!("on.{key}: {e}")))?,
@@ -170,7 +191,7 @@ fn wire_handler(
                 }
                 Handler::Actions(actions)
             };
-            fns.insert(slot, closures);
+            wire.fns.insert(slot, closures);
             Ok(handler)
         }
         other => Err(bad(
@@ -184,41 +205,60 @@ fn wire_list(
     list: &Table,
     path: &str,
     slot: Option<&str>,
-    fns: &mut HashMap<String, Vec<Function>>,
+    wire: &mut Wire,
+    depth: usize,
 ) -> Result<Vec<Node>> {
     let mut out = Vec::new();
     for child in list.sequence_values::<Table>() {
         let child = child.map_err(|e| bad(path, e))?;
         let key: String = child.get("key").map_err(|_| bad(path, "a child node has no key"))?;
-        out.push(wire_node(&child, &agentos_domain::ui::node::join_path(path, slot, &key), fns)?);
+        let child_path = agentos_domain::ui::node::join_path(path, slot, &key);
+        out.push(wire_node(&child, &child_path, wire, depth + 1)?);
     }
     Ok(out)
 }
 
-fn wire_node(t: &Table, path: &str, fns: &mut HashMap<String, Vec<Function>>) -> Result<Node> {
+fn wire_node(t: &Table, path: &str, wire: &mut Wire, depth: usize) -> Result<Node> {
+    wire.nodes += 1;
+    if wire.nodes > limits::MAX_NODES {
+        return Err(bad(path, format!("a view holds at most {} nodes", limits::MAX_NODES)));
+    }
+    if depth > limits::MAX_DEPTH {
+        return Err(bad(path, format!("trees are at most {} levels deep", limits::MAX_DEPTH)));
+    }
+    if !wire.walk.enter(t) {
+        return Err(bad(path, "a node that contains itself"));
+    }
+    let node = wire_node_inside(t, path, wire, depth);
+    wire.walk.leave(t);
+    node
+}
+
+fn wire_node_inside(t: &Table, path: &str, wire: &mut Wire, depth: usize) -> Result<Node> {
     let type_: String = t.get("type").map_err(|_| bad(path, "a node has no type"))?;
     let key: String = t.get("key").map_err(|_| bad(path, "a node has no key"))?;
     let mut node = Node::new(type_, key);
     if let Some(props) = t.get::<Option<Table>>("props").map_err(|e| bad(path, e))? {
         for pair in props.pairs::<String, LuaValue>() {
             let (name, value) = pair.map_err(|e| bad(path, e))?;
-            let json = lua_to_json(&value).map_err(|e| bad(path, format!("props.{name}: {e}")))?;
+            let json = lua_to_json_in(&value, "value", &mut wire.walk)
+                .map_err(|e| bad(path, format!("props.{name}: {e}")))?;
             node.props.insert(name, json);
         }
     }
     if let Some(children) = t.get::<Option<Table>>("children").map_err(|e| bad(path, e))? {
-        node.children = wire_list(&children, path, None, fns)?;
+        node.children = wire_list(&children, path, None, wire, depth)?;
     }
     if let Some(slots) = t.get::<Option<Table>>("slots").map_err(|e| bad(path, e))? {
         for pair in slots.pairs::<String, Table>() {
             let (name, list) = pair.map_err(|e| bad(path, e))?;
-            node.slots.insert(name.clone(), wire_list(&list, path, Some(&name), fns)?);
+            node.slots.insert(name.clone(), wire_list(&list, path, Some(&name), wire, depth)?);
         }
     }
     if let Some(on) = t.get::<Option<Table>>("on").map_err(|e| bad(path, e))? {
         for pair in on.pairs::<String, LuaValue>() {
             let (event, value) = pair.map_err(|e| bad(path, e))?;
-            let handler = wire_handler(&value, path, &event, fns)?;
+            let handler = wire_handler(&value, path, &event, wire)?;
             node.on.insert(event, handler);
         }
     }
@@ -229,9 +269,9 @@ fn wire_node(t: &Table, path: &str, fns: &mut HashMap<String, Vec<Function>>) ->
 /// the window name.
 pub(crate) fn wire_tree(root: &Table, window: &str) -> Result<(Node, HashMap<String, Vec<Function>>)> {
     root.set("key", window).map_err(|e| bad(window, e))?;
-    let mut fns = HashMap::new();
-    let node = wire_node(root, window, &mut fns)?;
-    Ok((node, fns))
+    let mut wire = Wire::new();
+    let node = wire_node(root, window, &mut wire, 0)?;
+    Ok((node, wire.fns))
 }
 
 fn client_decls(spec: &Table) -> Result<BTreeMap<String, ClientDecl>> {
@@ -292,8 +332,8 @@ fn ctx_actor(lua: &Lua, ctx: &CallContext) -> mlua::Result<Table> {
 
 // ---- the window context `w` ------------------------------------------------------------------------------------
 
-fn command(sh: &Arc<Shared>, view: &str, c: Command) {
-    sh.view_effects.lock().push((view.to_owned(), ViewEffect::Command(c)));
+fn command(sh: &Arc<Shared>, view: &str, what: &str, c: Command) -> mlua::Result<()> {
+    sh.push_view_effect(what, view, ViewEffect::Command(c))
 }
 
 fn text_of(v: &LuaValue) -> mlua::Result<String> {
@@ -369,11 +409,11 @@ fn build_w(
                 if let Some(opening) = s.views.lock().get_mut(&v).and_then(|i| i.opening.as_mut()) {
                     opening.insert(name.clone(), json.clone());
                 }
-                s.view_effects.lock().push((
-                    v.clone(),
+                s.push_view_effect(
+                    "w.client:set",
+                    &v,
                     ViewEffect::ClientSet { path: name, value: json, force: force.unwrap_or(false) },
-                ));
-                Ok(())
+                )
             },
         )?,
     )?;
@@ -397,60 +437,53 @@ fn build_w(
                     toast.action = Some(ToastAction { title, id });
                 }
             }
-            command(&s, &v, Command::Toast(toast));
-            Ok(())
+            command(&s, &v, "w:toast", Command::Toast(toast))
         })?,
     )?;
     let (s, v) = (sh.clone(), view.to_owned());
     method(
         "focus",
         lua.create_function(move |_, (_this, key): (LuaValue, LuaValue)| {
-            command(&s, &v, Command::Focus { key: text_of(&key)? });
-            Ok(())
+            command(&s, &v, "w:focus", Command::Focus { key: text_of(&key)? })
         })?,
     )?;
     let (s, v) = (sh.clone(), view.to_owned());
     method(
         "scrollTo",
         lua.create_function(move |_, (_this, key): (LuaValue, LuaValue)| {
-            command(&s, &v, Command::ScrollTo { key: Some(text_of(&key)?), row: None });
-            Ok(())
+            command(&s, &v, "w:scrollTo", Command::ScrollTo { key: Some(text_of(&key)?), row: None })
         })?,
     )?;
     let (s, v) = (sh.clone(), view.to_owned());
     method(
         "announce",
         lua.create_function(move |_, (_this, text): (LuaValue, LuaValue)| {
-            command(&s, &v, Command::Announce { text: text_of(&text)? });
-            Ok(())
+            command(&s, &v, "w:announce", Command::Announce { text: text_of(&text)? })
         })?,
     )?;
     let (s, v) = (sh.clone(), view.to_owned());
     method(
         "copy",
         lua.create_function(move |_, (_this, text): (LuaValue, LuaValue)| {
-            command(&s, &v, Command::Copy { text: text_of(&text)? });
-            Ok(())
+            command(&s, &v, "w:copy", Command::Copy { text: text_of(&text)? })
         })?,
     )?;
     let (s, v) = (sh.clone(), view.to_owned());
     method(
         "close",
-        lua.create_function(move |_, _this: LuaValue| {
-            command(&s, &v, Command::CloseWindow);
-            Ok(())
-        })?,
+        lua.create_function(move |_, _this: LuaValue| command(&s, &v, "w:close", Command::CloseWindow))?,
     )?;
     let s = sh.clone();
     method(
         "openWindow",
         lua.create_function(move |_, (_this, name, params): (LuaValue, String, Option<LuaValue>)| {
+            s.writable("w:openWindow")?;
+            s.declared_window(&name)?;
             let params = match params {
                 Some(p) => lua_to_json(&p)?,
                 None => Value::Null,
             };
-            s.effects.lock().push(crate::vm::Effect::OpenWindow { name, params });
-            Ok(())
+            s.push_effect("w:openWindow", crate::vm::Effect::OpenWindow { name, params })
         })?,
     )?;
     Ok(w)

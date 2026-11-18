@@ -39,13 +39,6 @@ impl LuauRuntime {
         Self { vms: RwLock::default(), notifier, shell, limits, host_modules, roster: None }
     }
 
-    /// Make `require("@agentos/<name>")` load this Luau source in every app's VM (the generated `ui` module).
-    #[must_use]
-    pub fn with_host_module(mut self, name: &str, source: impl Into<Vec<u8>>) -> Self {
-        self.host_modules.insert(name.to_owned(), source.into());
-        self
-    }
-
     /// The agent contacts apps with the `agents` permission can list.
     #[must_use]
     pub fn with_roster(mut self, roster: Arc<dyn AgentRoster>) -> Self {
@@ -119,8 +112,12 @@ impl AppRuntime for LuauRuntime {
     }
 
     async fn unload(&self, app: &AppId) -> PortResult<()> {
-        if let Some(vm) = self.vms.write().remove(app) {
-            // last Arc => dropped => the VM is freed; an in-flight call keeps its own Arc until it finishes
+        let removed = self.vms.write().remove(app);
+        if let Some(vm) = removed {
+            // an in-flight call keeps its own Arc until it ends, and a runaway one never would: retire the
+            // app first, so the call stops at its next interrupt or host call and the VM is freed then
+            vm.retire();
+            // last Arc => dropped => the VM is freed
             if let Ok(vm) = Arc::try_unwrap(vm) {
                 vm.unload();
             }
@@ -128,9 +125,16 @@ impl AppRuntime for LuauRuntime {
         Ok(())
     }
 
-    async fn call_tool(&self, app: &AppId, tool: &str, args: Value, ctx: CallContext) -> PortResult<Value> {
+    async fn call_tool(
+        &self,
+        app: &AppId,
+        tool: &str,
+        args: Value,
+        ctx: CallContext,
+        read_only: bool,
+    ) -> PortResult<Value> {
         let vm = self.vm(app)?;
-        let out = vm.call_tool(tool, args, &ctx).await.map_err(|e| port_error(app, e));
+        let out = vm.call_tool(tool, args, &ctx, read_only).await.map_err(|e| port_error(app, e));
         self.flush_effects(app, &vm).await?;
         out
     }

@@ -36,7 +36,7 @@ async fn calculator() -> LuauRuntime {
 }
 
 async fn tool(rt: &LuauRuntime, name: &str, args: Value, ctx: CallContext) -> PortResult<Value> {
-    rt.call_tool(&id("calculator"), name, args, ctx).await
+    rt.call_tool(&id("calculator"), name, args, ctx, false).await
 }
 
 #[tokio::test]
@@ -72,6 +72,32 @@ async fn results_are_formatted_for_the_display() {
         ("0.00000012", "1.2e-7"),
     ] {
         let out = tool(&rt, "calculate", json!({ "expression": expression }), agent_ctx(0)).await.unwrap();
+        assert_eq!(out["display"], shown, "{expression}");
+    }
+}
+
+/// `%.9g` writes 1e-6..1e-4 and a value that rounds up to 1e9 in exponent form, which has no integer part:
+/// `group()` used to raise on it, so `calculate { expression = "0.00005" }` and 1 / 20000 = crashed.
+#[tokio::test]
+async fn results_between_a_millionth_and_a_ten_thousandth_are_shown_in_full_not_a_crash() {
+    let rt = calculator().await;
+    for (expression, shown) in [
+        ("0.00005", "0.00005"),
+        ("1 / 20000", "0.00005"),
+        ("0.0001", "0.0001"),
+        ("0.000001", "0.000001"),
+        ("-0.0000123456789", "-0.0000123456789"),
+        ("0.0000999999999", "0.0000999999999"),
+        ("999999999.6", "1e9"),
+        ("-999999999.6", "-1e9"),
+        ("999999999", "999,999,999"),
+        ("1234567.891", "1,234,567.89"),
+        ("0.1 + 0.2", "0.3"),
+        ("0 * -5", "0"),
+    ] {
+        let out = tool(&rt, "calculate", json!({ "expression": expression }), agent_ctx(0))
+            .await
+            .unwrap_or_else(|e| panic!("{expression}: {e}"));
         assert_eq!(out["display"], shown, "{expression}");
     }
 }

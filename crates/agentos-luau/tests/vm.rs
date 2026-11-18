@@ -254,9 +254,11 @@ async fn unload_frees_the_vm_and_hot_reload_swaps_in_new_code() {
     };
     write(1);
     let mut w = reload::watch_dir(&dir).unwrap();
+    // every VM of the app holds the database through its closures: the count says whether one is still alive
+    let data = db();
     let load_now = || async {
         let src = std::fs::read_to_string(dir.join("app.luau")).unwrap();
-        try_load_with("hot", &src, db(), agentos_luau::Limits::default()).await.unwrap()
+        try_load_with("hot", &src, data.clone(), agentos_luau::Limits::default()).await.unwrap()
     };
     let mut vm = load_now().await;
     assert_eq!(vm.emit("v", json!(null)).await.unwrap(), json!(1));
@@ -266,9 +268,17 @@ async fn unload_frees_the_vm_and_hot_reload_swaps_in_new_code() {
     tokio::time::timeout(Duration::from_secs(5), reload::next_change(&mut w.rx, Duration::from_millis(150)))
         .await
         .expect("watcher fired");
-    let old = std::mem::replace(&mut vm, load_now().await); // old VM dropped here
+    let old = std::mem::replace(&mut vm, load_now().await);
+    assert_eq!(Arc::strong_count(&data), 3, "the test, the old VM and the new one hold the database");
     assert!(old.unload() > 0);
+    assert_eq!(
+        Arc::strong_count(&data),
+        2,
+        "the unloaded VM is freed: nothing of it still holds the database"
+    );
     assert_eq!(vm.emit("v", json!(null)).await.unwrap(), json!(2));
+    drop(vm);
+    assert_eq!(Arc::strong_count(&data), 1, "and so is a VM that is only dropped");
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -289,8 +299,8 @@ async fn one_call_runs_at_a_time_in_a_vm() {
     "#;
     let vm = std::sync::Arc::new(load(src).await);
     let (a, b) = (vm.clone(), vm.clone());
-    let first = tokio::spawn(async move { a.call_tool("slow", json!({}), &agent_ctx(0)).await });
-    let second = tokio::spawn(async move { b.call_tool("fast", json!({}), &agent_ctx(0)).await });
+    let first = tokio::spawn(async move { a.call_tool("slow", json!({}), &agent_ctx(0), false).await });
+    let second = tokio::spawn(async move { b.call_tool("fast", json!({}), &agent_ctx(0), false).await });
     let (first, second) = (first.await.unwrap().unwrap(), second.await.unwrap().unwrap());
     // whichever ran first ran to completion before the other started
     let a_done = first == json!(["a-start", "a-end"]) || second == json!(["a-start", "a-end", "b"]);

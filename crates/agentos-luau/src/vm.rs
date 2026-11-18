@@ -25,11 +25,14 @@ use serde_json::Value;
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
     time::Duration,
 };
+
+/// Luau builtins an app does not get (see `AppVm::load`).
+const REMOVED_GLOBALS: [&str; 3] = ["loadstring", "getfenv", "setfenv"];
 
 #[derive(Debug, thiserror::Error)]
 pub enum VmError {
@@ -71,8 +74,31 @@ pub struct Limits {
     /// Wall-clock backstop on the same slice: far above an honest slice, it only catches what the count
     /// cannot see.
     pub cpu_wall: Duration,
+    /// Max interrupts in one whole top-level call (a tool, an event, a render), host calls included at
+    /// `budget::HOST_CALL_TICKS` each. Host awaits refill the slice (`cpu_ticks`) but never this, so
+    /// `while true do app.kv:get("k") end` is killed. 25 million is five slices: an honest call is a few
+    /// thousand interrupts and a handful of host calls.
+    pub call_ticks: u64,
+    /// Wall-clock limit of one top-level call, host waits included (a call also holds the VM's gate, and
+    /// inside `db:tx` the database's write gate). Thirty seconds is three host-call timeouts: far above any
+    /// honest call.
+    pub call_wall: Duration,
+    /// Max effects (`app.notify`, `app:openWindow`, window commands) one call may queue. Effects are
+    /// broadcast to every connected client, so an app must not be able to flood them. 32 is far above what an
+    /// honest call queues (one or two); shell declarations replace each other and do not count.
+    pub max_effects: usize,
     /// Max wall-clock time of one host call (a database call that never returns).
     pub host_call_timeout: Duration,
+}
+impl Limits {
+    pub(crate) fn allowance(&self) -> Allowance {
+        Allowance {
+            ticks: self.cpu_ticks,
+            wall: self.cpu_wall,
+            call_ticks: self.call_ticks,
+            call_wall: self.call_wall,
+        }
+    }
 }
 impl Default for Limits {
     fn default() -> Self {
@@ -80,6 +106,9 @@ impl Default for Limits {
             memory_bytes: 16 * 1024 * 1024,
             cpu_ticks: 5_000_000,
             cpu_wall: Duration::from_secs(10),
+            call_ticks: 25_000_000,
+            call_wall: Duration::from_secs(30),
+            max_effects: 32,
             host_call_timeout: Duration::from_secs(10),
         }
     }
@@ -184,7 +213,9 @@ pub(crate) struct Shared {
     pub tx: Mutex<Option<Box<dyn DataTx>>>,
     /// The running tool is declared `readOnly`: its database handle refuses writes and `app.kv` /
     /// `db:migrate` raise. Set only while that tool's call holds the VM's gate.
-    pub read_only: AtomicBool,
+    pub read_only: Arc<AtomicBool>,
+    /// Effects queued by the running call, against `limits.max_effects` (reset when a call starts).
+    pub effects_in_call: AtomicUsize,
 }
 
 impl Shared {
@@ -195,6 +226,58 @@ impl Shared {
         } else {
             self.db.clone()
         }
+    }
+
+    /// The call may change the world: refused inside a tool declared `readOnly`, which may only read. A
+    /// `readOnly` tool that could open a window (whose `onOpen` writes), notify, change the shell or assign
+    /// `app.state` would write behind the guarantee that lets agents run it without a prompt.
+    pub fn writable(&self, what: &str) -> mlua::Result<()> {
+        if self.read_only.load(Ordering::SeqCst) {
+            return Err(mlua::Error::runtime(format!(
+                "{what} is not allowed in a tool declared readOnly: a readOnly tool cannot write"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Count one more effect against the call's cap.
+    pub fn spend_effect(&self, what: &str) -> mlua::Result<()> {
+        let max = self.limits.max_effects;
+        if self.effects_in_call.fetch_add(1, Ordering::Relaxed) >= max {
+            return Err(mlua::Error::runtime(format!(
+                "{what}: too many effects in one call (at most {max}: notifications, windows, window commands)"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Queue something for the host to do after the call (counted against the cap).
+    pub fn push_effect(&self, what: &str, effect: Effect) -> mlua::Result<()> {
+        self.spend_effect(what)?;
+        self.effects.lock().push(effect);
+        Ok(())
+    }
+
+    /// Queue what a window asked of its view (counted against the cap).
+    pub fn push_view_effect(&self, what: &str, view: &str, effect: ViewEffect) -> mlua::Result<()> {
+        self.spend_effect(what)?;
+        self.view_effects.lock().push((view.to_owned(), effect));
+        Ok(())
+    }
+
+    /// An `openWindow` target must be a window the app declared: an app cannot ask the shell for anything
+    /// else (the request is broadcast to every client).
+    pub fn declared_window(&self, name: &str) -> mlua::Result<()> {
+        let windows = self.windows.lock();
+        if windows.contains_key(name) {
+            return Ok(());
+        }
+        let mut declared: Vec<&str> = windows.keys().map(String::as_str).collect();
+        declared.sort_unstable();
+        Err(mlua::Error::runtime(format!(
+            "openWindow: no window `{name}` is declared (declared: {})",
+            if declared.is_empty() { "none".to_owned() } else { declared.join(", ") }
+        )))
     }
 
     pub fn chunk_name(&self, path: &str) -> String {
@@ -268,6 +351,7 @@ impl AppVm {
         let VmConfig { capabilities, limits, host_modules, roster } = config;
         let lua = Lua::new();
         let slice = Slice::new();
+        let read_only = Arc::new(AtomicBool::new(false));
         let shared = Arc::new(Shared {
             app: app.clone(),
             caps: capabilities,
@@ -277,7 +361,7 @@ impl AppVm {
             limits: limits.clone(),
             host_modules,
             roster,
-            tracker: Arc::new(Mutex::new(Tracker::default())),
+            tracker: Arc::new(Mutex::new(Tracker::new(read_only.clone()))),
             tools: Mutex::default(),
             handlers: Mutex::default(),
             sources: Mutex::default(),
@@ -295,7 +379,8 @@ impl AppVm {
             render_scope: Mutex::default(),
             view_effects: Mutex::default(),
             tx: Mutex::new(None),
-            read_only: AtomicBool::new(false),
+            read_only,
+            effects_in_call: AtomicUsize::new(0),
         });
         let load_err =
             |e: &mlua::Error| VmError::Load { app: app.to_string(), error: ScriptError::from_lua(e) };
@@ -303,17 +388,19 @@ impl AppVm {
         // mlua registers a filesystem `require` for Luau: replace it with the bundle-only one, and install
         // `app` BEFORE sandboxing (the sandbox freezes the globals).
         lua.globals().set("require", LuaValue::Nil).map_err(|e| load_err(&e))?;
+        // `loadstring` compiles text the package never held (past the bundle's sha256 check) and
+        // `getfenv` / `setfenv` reach other functions' environments: none has a use in an app
+        for escape in REMOVED_GLOBALS {
+            lua.globals().set(escape, LuaValue::Nil).map_err(|e| load_err(&e))?;
+        }
         api::install(&lua, &shared).map_err(|e| load_err(&e))?;
 
         // Interrupt: runs at function calls and loop back-edges. Returning Err aborts the running chunk;
         // the kill is sticky so a `pcall` cannot swallow it.
-        let allowance = Allowance { ticks: limits.cpu_ticks, wall: limits.cpu_wall };
-        lua.set_interrupt(move |_| {
-            if slice.exceeded(allowance) {
-                Err(mlua::Error::runtime("cpu budget exceeded"))
-            } else {
-                Ok(VmState::Continue)
-            }
+        let allowance = limits.allowance();
+        lua.set_interrupt(move |_| match slice.exceeded(allowance) {
+            Some(stop) => Err(mlua::Error::runtime(stop.message())),
+            None => Ok(VmState::Continue),
         });
         // Freeze the globals / builtins and give this app its own global table.
         lua.sandbox(true).map_err(|e| load_err(&e))?;
@@ -356,6 +443,7 @@ impl AppVm {
     async fn enter(&self) -> tokio::sync::MutexGuard<'_, ()> {
         let guard = self.gate.lock().await;
         self.shared.slice.begin();
+        self.shared.effects_in_call.store(0, Ordering::Relaxed);
         drop(self.shared.tx.lock().take());
         guard
     }
@@ -404,14 +492,23 @@ impl AppVm {
     }
 
     /// `app.tools.register`'s `run(input, ctx)`. Arguments are validated against the tool's schema first.
-    pub async fn call_tool(&self, name: &str, args: Value, ctx: &CallContext) -> Result<Value> {
+    ///
+    /// The call is read-only when the tool is declared `readOnly` or when the caller requires it
+    /// (`require_read_only`, from the `AppRuntime` port): the caller can only tighten, never loosen.
+    pub async fn call_tool(
+        &self,
+        name: &str,
+        args: Value,
+        ctx: &CallContext,
+        require_read_only: bool,
+    ) -> Result<Value> {
         let (schema, run, read_only) = {
             let tools = self.shared.tools.lock();
             let t = tools
                 .iter()
                 .find(|t| t.spec.name == name)
                 .ok_or_else(|| VmError::NoSuchTool(name.to_owned()))?;
-            (t.spec.input_schema.clone(), t.run.clone(), t.spec.read_only)
+            (t.spec.input_schema.clone(), t.run.clone(), t.spec.read_only || require_read_only)
         };
         let input = tool_schema::validate_args(&schema, &args).map_err(VmError::InvalidInput)?;
         let _call = self.enter().await;
@@ -492,6 +589,13 @@ impl AppVm {
 
     pub fn gc(&self) {
         let _ = self.lua.gc_collect();
+    }
+
+    /// The app is going away: whatever is running in it stops at its next interrupt or host call (a host
+    /// call it is waiting on is abandoned), and nothing new runs. Call this before dropping the last `Arc`,
+    /// so a runaway call cannot keep the VM alive after an uninstall.
+    pub fn retire(&self) {
+        self.shared.slice.retire();
     }
 
     /// Unload: release every Rust-held reference to Luau values, then the VM. Returns the heap size freed.

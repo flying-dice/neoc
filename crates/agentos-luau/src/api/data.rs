@@ -35,15 +35,13 @@ impl Shared {
         need(self.caps.data, "data", what)
     }
 
-    /// A tool declared `readOnly` may not write: the host's read-only handle would refuse the statement too,
-    /// this gives the app an error that says why.
-    fn writable(&self, what: &str) -> mlua::Result<()> {
-        if self.read_only.load(std::sync::atomic::Ordering::SeqCst) {
-            return Err(mlua::Error::runtime(format!(
-                "{what} is not allowed in a tool declared readOnly: a readOnly tool cannot write"
-            )));
-        }
-        Ok(())
+    /// The gate every write passes: the app has the `data` permission, the call is not a `readOnly` tool (the
+    /// host's read-only handle would refuse the statement too, this gives the app an error that says why)
+    /// and it is not a render.
+    fn require_write(&self, what: &str) -> mlua::Result<()> {
+        self.data(what)?;
+        self.writable(what)?;
+        check_effects_allowed(self, what)
     }
 
     /// A read: through the open transaction when there is one.
@@ -113,15 +111,24 @@ async fn declare(
     def.validate().map_err(|e| mlua::Error::runtime(format!("source {id}: {e}")))?;
     let params = def.info.named_params.clone();
     sh.sources.lock().push(def);
-    source_factory(sh, lua, id, params)
+    source_factory(sh, lua, id, params, None)
 }
 
 /// The function an app calls to get a handle on a declared source: `notes { folder = 1 }`. Every param the
-/// declaration names must be given, and no other.
-fn source_factory(sh: &Sh, lua: &Lua, id: String, params: Vec<String>) -> mlua::Result<Function> {
+/// declaration names must be given, and no other. `check` (a source kind's own rule) sees the params first.
+fn source_factory(
+    sh: &Sh,
+    lua: &Lua,
+    id: String,
+    params: Vec<String>,
+    check: Option<fn(&Shared, &Table) -> mlua::Result<()>>,
+) -> mlua::Result<Function> {
     let sh = sh.clone();
     lua.create_function(move |lua, given: Option<Table>| {
         let values = lua.create_table()?;
+        if let (Some(check), Some(given)) = (check, &given) {
+            check(&sh, given)?;
+        }
         if let Some(given) = &given {
             for pair in given.pairs::<String, LuaValue>() {
                 let (k, v) = pair?;
@@ -143,9 +150,43 @@ fn source_factory(sh: &Sh, lua: &Lua, id: String, params: Vec<String>) -> mlua::
     })
 }
 
+/// What a thread source may name. A literal agent must be on the roster (`app.agents:list()`): an app cannot
+/// open a chat with an agent the person has not made a contact. A Ref (`current.agent_id`) names a row of the
+/// app's own data and is resolved by the client, so only its type is checked here. The thread id is the app's
+/// own to choose: threads are created by the host the first time the client opens one, and are not owned by
+/// an app (a host that wants to refuse another app's thread must record the owner when it creates it).
+fn check_thread_params(sh: &Shared, given: &Table) -> mlua::Result<()> {
+    match given.get::<LuaValue>("agent")? {
+        LuaValue::String(agent) => {
+            let agent = agent.to_string_lossy();
+            if !sh.roster.cards().iter().any(|card| card.id.0 == agent) {
+                return Err(mlua::Error::runtime(format!(
+                    "app.thread: agent `{agent}` is not on the roster (see app.agents:list())"
+                )));
+            }
+        }
+        LuaValue::Table(_) | LuaValue::Nil => {}
+        other => {
+            return Err(mlua::Error::runtime(format!(
+                "app.thread: `agent` must be an agent id or a Ref, got {}",
+                other.type_name()
+            )))
+        }
+    }
+    match given.get::<LuaValue>("thread")? {
+        LuaValue::String(_) | LuaValue::Table(_) | LuaValue::Nil => Ok(()),
+        other => Err(mlua::Error::runtime(format!(
+            "app.thread: `thread` must be a thread id or a Ref, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
 /// `app.thread()`: declare a chat thread source for `ChatTranscript { thread = chat { thread = id, agent = id } }`.
-/// It runs no query (the thread's data is `/agui`) and needs no capability: it only names a thread and its agent.
+/// It runs no query (the thread's data is `/agui`). It needs the `agents` permission, because a chat shows an
+/// agent's conversation, and the agent it names must be on the roster (see [`check_thread_params`]).
 fn declare_thread(sh: &Sh, lua: &Lua) -> mlua::Result<Function> {
+    need(sh.caps.agents, "agents", "app.thread")?;
     let id = {
         let sources = sh.sources.lock();
         format!("s{}", sources.len() + 1)
@@ -160,7 +201,7 @@ fn declare_thread(sh: &Sh, lua: &Lua) -> mlua::Result<Function> {
     let def = SourceDef { id: SourceId(id.clone()), kind: SourceKind::Thread, sql: String::new(), info };
     def.validate().map_err(|e| mlua::Error::runtime(format!("source {id}: {e}")))?;
     sh.sources.lock().push(def);
-    source_factory(sh, lua, id, params)
+    source_factory(sh, lua, id, params, Some(check_thread_params))
 }
 
 pub(super) fn install(lua: &Lua, sh: &Sh, app: &Table) -> mlua::Result<()> {
@@ -183,9 +224,7 @@ fn install_statements(lua: &Lua, sh: &Sh, db: &Table) -> mlua::Result<()> {
         lua.create_async_function(move |_, (_this, steps): (LuaValue, Table)| {
             let s = s.clone();
             async move {
-                s.data("db:migrate")?;
-                s.writable("db:migrate")?;
-                check_effects_allowed(&s, "db:migrate")?;
+                s.require_write("db:migrate")?;
                 let len = steps.raw_len();
                 let mut migrations = Vec::with_capacity(len);
                 for version in 1..=len {
@@ -217,9 +256,7 @@ fn install_statements(lua: &Lua, sh: &Sh, db: &Table) -> mlua::Result<()> {
         lua.create_async_function(move |lua, (_this, sql, params): (LuaValue, String, Option<LuaValue>)| {
             let s = s.clone();
             async move {
-                s.data("db:exec")?;
-                s.writable("db:exec")?;
-                check_effects_allowed(&s, "db:exec")?;
+                s.require_write("db:exec")?;
                 let out = s.run_exec(sql, lua_to_params(params)?).await?;
                 json_to_lua(&lua, &json!({"changes": out.changes, "last_insert_id": out.last_insert_id}))
             }
@@ -437,9 +474,7 @@ fn install_kv(lua: &Lua, sh: &Sh, app: &Table) -> mlua::Result<()> {
         lua.create_async_function(move |_, (_this, key, value): (LuaValue, String, LuaValue)| {
             let s = s.clone();
             async move {
-                s.data("app.kv:set")?;
-                s.writable("app.kv:set")?;
-                check_effects_allowed(&s, "app.kv:set")?;
+                s.require_write("app.kv:set")?;
                 let json = lua_to_json(&value)?;
                 if json.is_null() {
                     s.run_exec("delete from _kv where key = :k".into(), Params::named([("k", json!(key))])).await?;
@@ -461,9 +496,7 @@ fn install_kv(lua: &Lua, sh: &Sh, app: &Table) -> mlua::Result<()> {
         lua.create_async_function(move |_, (_this, key): (LuaValue, String)| {
             let s = s.clone();
             async move {
-                s.data("app.kv:delete")?;
-                s.writable("app.kv:delete")?;
-                check_effects_allowed(&s, "app.kv:delete")?;
+                s.require_write("app.kv:delete")?;
                 s.run_exec("delete from _kv where key = :k".into(), Params::named([("k", json!(key))]))
                     .await?;
                 Ok(())

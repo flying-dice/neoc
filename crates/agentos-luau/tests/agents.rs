@@ -61,13 +61,13 @@ async fn a_thread_handle_needs_both_params_and_no_others() {
         app.tool { name = "probe", run = function()
           local ok_both = try(function() return chat { thread = "t1", agent = "claude" } end)
           local ok_missing, why_missing = try(function() return chat { thread = "t1" } end)
-          local ok_extra, why_extra = try(function() return chat { thread = "t1", agent = "a", bogus = 1 } end)
+          local ok_extra, why_extra = try(function() return chat { thread = "t1", agent = "claude", bogus = 1 } end)
           return { both = ok_both, missing = ok_missing, why_missing = why_missing, extra = ok_extra, why_extra = why_extra }
         end }
         "#,
     )
     .await;
-    let out = vm.call_tool("probe", json!({}), &agent_ctx(0)).await.unwrap();
+    let out = vm.call_tool("probe", json!({}), &agent_ctx(0), false).await.unwrap();
     assert_eq!(out["both"], true);
     assert_eq!(out["missing"], false);
     assert!(out["why_missing"].as_str().unwrap().contains("needs param `agent`"), "{out}");
@@ -75,10 +75,52 @@ async fn a_thread_handle_needs_both_params_and_no_others() {
     assert!(out["why_extra"].as_str().unwrap().contains("no param `bogus`"), "{out}");
 }
 
+/// Major 16: `app.thread()` used to need no capability and accept any agent id.
+#[tokio::test]
+async fn app_thread_needs_the_agents_permission() {
+    let config = VmConfig {
+        capabilities: Capabilities { data: true, ..Capabilities::default() },
+        roster: Arc::new(Cards),
+        ..VmConfig::default()
+    };
+    let src = r#"app.manifest { id = "probe", name = "Probe", icon = "gear", permissions = { "data" } }
+                 local chat = app.thread()"#;
+    let err = AppVm::load(&id("probe"), package(src, &[]), db(), config).await.err().unwrap().to_string();
+    assert!(err.contains("app.thread") && err.contains("`agents` permission"), "{err}");
+}
+
+#[tokio::test]
+async fn a_thread_may_name_only_an_agent_on_the_roster_or_a_ref_to_the_apps_own_data() {
+    let vm = with_roster(
+        r#"
+        local chat = app.thread()
+        local function try(f) local ok, err = pcall(f); return ok, tostring(err) end
+        app.tool { name = "probe", run = function()
+          local ok_roster = try(function() return chat { thread = "t1", agent = "other" } end)
+          local ok_ref = try(function() return chat { thread = "t1", agent = { ["$ref"] = "src.s1.agent_id" } } end)
+          local ok_unknown, why_unknown = try(function() return chat { thread = "t1", agent = "stranger" } end)
+          local ok_number, why_number = try(function() return chat { thread = "t1", agent = 7 } end)
+          local ok_thread, why_thread = try(function() return chat { thread = true, agent = "claude" } end)
+          return { roster = ok_roster, ref = ok_ref, unknown = ok_unknown, why_unknown = why_unknown,
+                   number = ok_number, why_number = why_number, thread = ok_thread, why_thread = why_thread }
+        end }
+        "#,
+    )
+    .await;
+    let out = vm.call_tool("probe", json!({}), &agent_ctx(0), false).await.unwrap();
+    assert_eq!((out["roster"].clone(), out["ref"].clone()), (json!(true), json!(true)), "{out}");
+    assert_eq!(out["unknown"], false);
+    assert!(out["why_unknown"].as_str().unwrap().contains("`stranger` is not on the roster"), "{out}");
+    assert_eq!(out["number"], false);
+    assert!(out["why_number"].as_str().unwrap().contains("`agent` must be an agent id or a Ref"), "{out}");
+    assert_eq!(out["thread"], false);
+    assert!(out["why_thread"].as_str().unwrap().contains("`thread` must be a thread id or a Ref"), "{out}");
+}
+
 #[tokio::test]
 async fn the_roster_is_listed_as_cards_without_grants_or_tokens() {
     let vm = with_roster(r#"app.tool { name = "who", run = function() return app.agents:list() end }"#).await;
-    let out = vm.call_tool("who", json!({}), &agent_ctx(0)).await.unwrap();
+    let out = vm.call_tool("who", json!({}), &agent_ctx(0), false).await.unwrap();
     assert_eq!(
         out,
         json!([
@@ -107,6 +149,6 @@ async fn listing_agents_needs_the_agents_permission() {
     )
     .await
     .unwrap();
-    let err = vm.call_tool("who", json!({}), &agent_ctx(0)).await.unwrap_err().to_string();
+    let err = vm.call_tool("who", json!({}), &agent_ctx(0), false).await.unwrap_err().to_string();
     assert!(err.contains("agents") && err.contains("permission"), "{err}");
 }
