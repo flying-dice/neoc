@@ -11,7 +11,6 @@ import { parseShortcut } from './shortcuts'
 import { childPath } from './tree'
 import {
   choose,
-  keyOf,
   optionsFromRows,
   parseOptions,
   selectedKeys,
@@ -160,7 +159,3 @@ export function menuItems(
   }
   return out
 }
-
-/** True when the picker's key is currently chosen (used by tests and the menu picker label). */
-export const isChosen = (current: unknown, value: Json, multiple: boolean): boolean =>
-  selectedKeys(current, multiple).includes(keyOf(value))

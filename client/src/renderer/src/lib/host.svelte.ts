@@ -53,6 +53,12 @@ const browserDeps: HostDeps = {
   schedule: (run, ms) => void setTimeout(run, ms)
 }
 
+/** What a story supplies in place of the session's views: how a window's view opens (or fails to). */
+export interface FakeViews {
+  openView(...args: Parameters<Session['openView']>): Promise<ViewCore>
+  closeView?(view: ViewCore): Promise<void>
+}
+
 /** A socket that never opens may be a revoked session (the host answers 401): ask once, after this long. */
 const REVOKED_CHECK_MS = 3000
 
@@ -75,6 +81,7 @@ export class Host {
   session: Session | null = null
   private channel: HostChannel | null = null
   private fake: HostApi | null = null
+  private fakeViews: FakeViews | null = null
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a list of callbacks, not state
   private windowRequests = new Set<(request: WindowRequest) => void>()
   private refreshing: Promise<void> | null = null
@@ -220,17 +227,20 @@ export class Host {
   }
 
   openView(...args: Parameters<Session['openView']>): Promise<ViewCore> {
+    if (this.fakeViews) return this.fakeViews.openView(...args)
     if (!this.session) return Promise.reject(new Error('Not connected to AgentOS'))
     return this.session.openView(...args)
   }
 
   closeView(view: ViewCore): Promise<void> {
+    if (this.fakeViews) return this.fakeViews.closeView?.(view) ?? Promise.resolve()
     return this.session?.closeView(view) ?? Promise.resolve()
   }
 
-  /** Stories and tests: serve the shell from a fake instead of a host. */
-  useFake(api: HostApi, apps: AppSummary[] = []): void {
+  /** Stories and tests: serve the shell from a fake instead of a host (and, optionally, its windows' views). */
+  useFake(api: HostApi, apps: AppSummary[] = [], views: FakeViews | null = null): void {
     this.fake = api
+    this.fakeViews = views
     this.phase = 'ready'
     this.connection = 'online'
     this.setApps(apps)

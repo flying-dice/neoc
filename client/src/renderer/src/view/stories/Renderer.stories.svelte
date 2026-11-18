@@ -220,6 +220,36 @@
   }}
 />
 
+<!-- The host reports an error the window cannot handle: an alert banner says what, and the last good tree stays on screen. -->
+<Story
+  name="Host error banner"
+  play={async ({ canvas }) => {
+    await canvas.findByTestId('notes-count')
+    const { harness } = await story()
+    harness.host.allViews()[0]!.push('view.error', { message: 'The app ran out of memory.' })
+    const banner = await canvas.findByTestId('notes-view-error')
+    await expect(banner).toHaveAttribute('role', 'alert')
+    await expect(banner).toHaveTextContent('The app ran out of memory.')
+    await expect(canvas.getByTestId('notes-tree')).toBeVisible()
+    await expect(canvas.getByTestId('notes-count')).toBeVisible()
+  }}
+/>
+
+<!-- The host closes the window (the app stopped or was removed): the tree gives way to a message, announced as an alert. -->
+<Story
+  name="Window closed by the host"
+  play={async ({ canvas }) => {
+    await canvas.findByTestId('notes-count')
+    const { harness } = await story()
+    harness.host.allViews()[0]!.push('view.closed', { reason: 'The app stopped.' })
+    const closed = await canvas.findByTestId('notes-view-closed')
+    await expect(closed).toHaveAttribute('role', 'alert')
+    await expect(closed).toHaveTextContent('This window is no longer available')
+    await expect(closed).toHaveTextContent('The app stopped.')
+    await expect(canvas.queryByTestId('notes-tree')).toBeNull()
+  }}
+/>
+
 <style>
   .fill {
     display: flex;

@@ -356,6 +356,18 @@ describe('the api before and after a connection', () => {
     expect((error as HostError).message).toBe('Not connected to AgentOS')
   })
 
+  test('a story can supply how a window’s view opens (it fails, or never answers) without a session', async () => {
+    const s = setup()
+    const api = { call: () => Promise.resolve({ apps: [] }), onNotification: () => () => undefined }
+    s.host.useFake(api as never, [], {
+      openView: () => Promise.reject(new Error('refused'))
+    })
+    await expect(
+      s.host.openView({ app: 'calculator', window: 'main', windowId: 'w', size: { w: 1, h: 1 } })
+    ).rejects.toThrow('refused')
+    await expect(s.host.closeView({} as never)).resolves.toBeUndefined()
+  })
+
   test('openView with no session rejects instead of throwing', async () => {
     const s = setup()
     await expect(
