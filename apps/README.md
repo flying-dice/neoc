@@ -1,208 +1,309 @@
-> **Heads-up (wave B2).** Apps are Luau packages now (`apps/<id>/app.json` + `app.luau`, built into app refs by
-> `bun run build:apps`; see `docs/architecture/host-stack.md` and `apps/calculator`). This document still describes the
-> TypeScript app model and the Bun server, which wave B4 removes together with `packages/sdk`'s app contract.
-
 # Building AgentOS apps
 
-AgentOS is two programs and a set of apps:
-
-- **`apps/server`**: the Bun server. It runs app server modules, the tool registry, the MCP endpoint and the ACP agents, and serves the client and the app bundles.
-- **`client`**: the client, an installable PWA (Vite + Svelte). It's the iPadOS-style shell: windows, Dock and Stage Manager.
-- **`apps/<id>`**: **app modules**. Each is built into a bundle, released into this repo's `bundles/` and installed onto a server at runtime, if the server knows it.
+An AgentOS app is a **server-side Luau package** that runs inside the Rust host. It holds its state, data, tools,
+notifications and a description of its UI. It ships no client code: the managed client renders the view trees the app
+produces and sends events back.
 
 ```
- PWA client (browser)                           Bun server
- ┌─────────────────────────────┐  JSON-RPC 2.0  ┌────────────────────────────────────┐
- │ shell · windows · Dock      │ ◀─ WebSocket ─▶│ AppRuntime: register / unregister  │
- │ app client.js (ESM)         │     /rpc       │ app server.js (ESM, Bun)           │
- │  Svelte · kit · SDK shared  │                │ ToolRegistry ─▶ /mcp ◀── ACP agents │
- └─────────────────────────────┘                │ SystemDb (bun:sqlite)              │
-        ▲ /bundles/<id>/<version>/client.js     │ KnownApps ◀── known-apps.json      │
-        └───────────────────────────────────────┴────────────────────────────────────┘
+ Browser: managed client                         Rust host (crates/agentos-host)
+ ┌──────────────────────────────┐  JSON-RPC/WS   ┌─────────────────────────────────────────┐
+ │ shell: windows, Dock         │◀──── /rpc ────▶│ one sandboxed Luau VM per app           │
+ │ renderer: view trees → kit   │                │   app.window → view tree → client       │
+ │ client state, drafts         │  AG-UI / SSE   │   app.db / app.kv  (per-app SQLite)     │
+ │ no app code, ever            │◀──── /agui ────│   app.tool ──▶ /mcp ◀── agents          │
+ └──────────────────────────────┘                │ app refs ◀── file:// http(s):// ────────│
+                                                 └─────────────────────────────────────────┘
 ```
 
-Everything an app touches comes from **`@agentos/sdk`**: there is no other contract.
+The reference apps are `apps/calculator` (a keypad window, shared state, three agent tools) and `apps/agents` (a
+SQLite-backed chat list around the `ChatTranscript` component). Read them next to this page. The architecture is in
+`docs/architecture/` (`host-stack.md` for the host, `ui-system.md` for the UI protocol and the Luau API); the typed API
+is `types/generated/agentos.d.luau`; the components are listed in `docs/reference/components.md`. The last two are
+generated from the Rust schema (`bun run codegen`): never edit them.
 
-## An app bundle
-
-Each app builds into a directory of plain static files:
-
-```
-<id>/bundle.json                    the latest version: { manifest, server: {url, sha256}, client: {url, sha256} }
-<id>/<version>/bundle.json          that version (file URLs relative to it)
-<id>/<version>/server.js            ESM for Bun: everything bundled; bun:*, node:* and npm deps allowed
-<id>/<version>/client.js            browser ESM: Svelte, @agentos/ui and the SDK client come from the host
-```
-
-Two build targets (`scripts/build-apps.ts`, schema in `packages/sdk/src/bundle.ts`):
-
-| Command | Writes | For |
-|---|---|---|
-| `bun run build:apps [ids…]` | `dist/bundles/` (gitignored) | development: mutable, the dev server hot-reloads it |
-| `bun run release:apps [ids…]` | `bundles/` (committed) | shipping: immutable, adds `<id>/bundle.json` to `apps/server/known-apps.json` if missing |
-
-- **Client bundles don't ship their own Svelte or kit.** The build maps those imports to the host's shared instances (`SHARED_MODULES` in `@agentos/sdk/build`), so there's one Svelte runtime, one kit and one set of styles. A client bundle is typically tens of kB.
-- **Servers verify each file's sha256** against its `bundle.json` before installing it.
-- **Builds are byte-deterministic**: the same source gives the same sha256s, so re-running `release:apps` on an unchanged app changes nothing.
-- **Released versions are immutable.** `release:apps` refuses to overwrite `bundles/<id>/<version>/` with different bytes (`PublishedVersionError`): bump `version` in `src/manifest.ts` to release a change.
-- **Bundles are stored on the server per version and hash**, so an update never reuses a stale module.
-
-## Make an app
-
-### 1. Scaffold
-
-Copy `apps/calculator` to `apps/<id>`. Rename the package to `@agentos/app-<id>`, then edit `src/manifest.ts`:
-
-```ts
-import { defineManifest } from '@agentos/sdk'
-
-export default defineManifest({
-  id: 'notes', // lowercase, digits, dashes; namespaces RPC, tools and storage
-  version: '0.1.0', // semver; bump it to ship an update
-  name: 'Notes',
-  icon: 'doc', // an IconName from @agentos/ui
-  background: 'linear-gradient(180deg, #ffd60a, #ff9f0a)',
-  window: { width: 720, height: 520, minWidth: 360, minHeight: 320 }, // say why if min > 320x240
-  dock: true
-})
-```
-
-Layout (the build and the checks rely on it):
+## The package
 
 ```
-src/manifest.ts        plain data
-src/server/index.ts    default export defineServerApp(...)    runs in Bun
-src/client/index.ts    default export defineClientApp(...)    runs in the browser
-src/client/{atoms,molecules,organisms,pages}/   atomic layers (bun run lint:atomic)
-src/shared/            pure logic both sides use, with bun tests
-src/mock/server.ts     optional: a browser-safe stand-in for web mode and stories
+apps/<id>/
+  app.json         the package manifest (below)
+  app.luau         the entry (`main` in app.json): declares the manifest, windows, tools, data
+  *.luau           modules the entry loads with require("./calc") (calc.luau in the Calculator)
+  JOURNEYS.md      4 to 8 key user journeys
+  e2e/journeys.spec.ts   their automated twins
+  tests/, negative/, e2e/   never shipped: the build leaves these folders out of the package
 ```
 
-### 2. The server module
-
-```ts
-import { join } from 'node:path'
-import { Database } from 'bun:sqlite'
-import { z } from 'zod'
-import { defineServerApp } from '@agentos/sdk/app/server'
-
-export default defineServerApp((ctx) => {
-  // ctx.dataDir is yours and survives updates. Open what you need here.
-  const db = new Database(join(ctx.dataDir!, 'notes.sqlite'), { create: true, strict: true })
-  db.exec('CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL)')
-
-  // Client → server calls. Payloads are untrusted: parse them.
-  ctx.handle('add', (payload) => {
-    const body = z.string().min(1).max(10_000).parse(payload)
-    db.query('INSERT INTO notes (body) VALUES (?)').run(body)
-    ctx.emit('changed') // → every open client of this app
-  })
-
-  // Tools: agents call these over MCP, other apps' clients via api.tools.call.
-  ctx.registerTool({
-    name: 'list_notes',
-    description: 'List the most recent notes.',
-    input: { limit: z.number().int().min(1).max(100).default(20) },
-    readOnly: true, // agents may call read-only tools without asking
-    run: ({ limit }) => ({ notes: db.query('SELECT * FROM notes ORDER BY id DESC LIMIT ?').all(limit) })
-  })
-
-  // Runs on uninstall, update and server shutdown. Release EVERYTHING you opened.
-  return () => db.close()
-})
-```
-
-**Runtime registration rules.** Apps are registered and unregistered while the server keeps running:
-
-- **On unregister**, the host aborts `ctx.signal`, awaits your dispose function, then drops your handlers and tools. Timers, intervals, watchers, sockets and child processes are your job: clear them in dispose, or listen to `ctx.signal`.
-- **Updates** unregister the old version before registering the new one. Leaked resources keep running beside the new code, so release them.
-- **`ctx.emit` and `ctx.openWindow` are ignored** once the app is unregistered.
-- **A throwing `setup` marks the app "failed"** and leaves everything else running. Clients show the error.
-- **Small key/value state** goes in `ctx.storage`; it lives in the server's database, scoped to your app. For anything relational, use your own SQLite file in `ctx.dataDir`.
-
-### 3. The client
-
-```ts
-// src/client/index.ts
-import { defineClientApp } from '@agentos/sdk/app/client'
-import NotesPage from './pages/NotesPage.svelte'
-
-export default defineClientApp({ component: NotesPage })
-```
-
-```svelte
-<!-- src/client/pages/NotesPage.svelte -->
-<script lang="ts">
-  import { useAppApi } from '@agentos/sdk/app/client'
-  import { Button } from '@agentos/ui/atoms'
-
-  const api = useAppApi() // scoped to this app
-  $effect(() => api.on('changed', () => void refresh())) // returns the unsubscribe
-  async function add(): Promise<void> {
-    await api.invoke('add', 'Hello')
-  }
-</script>
-
-<Button testid="notes-add" onclick={add}>Add</Button>
-```
-
-- **The client API:** `api.invoke`, `api.on`, `api.tools.list` / `api.tools.call` (any app's tools) and `api.host.openApp`.
-- **Client code may import only** `@agentos/sdk` (root and `app/client`), `@agentos/ui`, `svelte` and `zod`. They're shared with the host. Anything else is an architecture change.
-- **Use the kit** (`@agentos/ui`) and follow `docs/design/DESIGN_LANGUAGE.md`. Every interactive element gets a `testid` (`docs/TESTING.md`).
-
-### 4. Try it
-
-```sh
-bun run dev:web            # http://localhost:6200/web.html?open=<id>
-                           # the shell on the in-memory host; your app from source
-bun run dev                # the real thing: builds dist/bundles, starts the server on :7400 and Vite on :5173
-                           # open http://localhost:5173 → Discover → Apps → GET
-bun run build:apps <id>    # after changing the app: the dev server hot-reloads it (unregister → register)
-bun run release:apps <id>  # to ship it: bump `version` first (see "Ship it")
-```
-
-- **Web mode** finds every `apps/*/src/manifest.ts` by itself. If your server module needs Bun (SQLite, files, processes), add `src/mock/server.ts` with the same handlers and tools, backed by memory, so web mode and Storybook can run it.
-- **`bun run dev`** stores data in `~/.agentos` (`AGENTOS_DATA` overrides it). `<data>/mcp.json` lets other local MCP clients use the tools too.
-
-### 5. Ship it
-
-A new or changed app reaches `main` only through a PR, with the full gate and the readiness checks in `agentos-code-review`:
-- stories for every screen and state;
-- `JOURNEYS.md` plus `e2e/journeys.spec.ts`;
-- a `verify-change` record;
-- a UX research round (`app-design`).
-
-Until all of those exist, the app stays in its MR. Then `bun run release:apps <id>` and commit `bundles/` (and the list entry it adds) in the same PR. To publish an update, bump `version` first: servers show it in Discover as **UPDATE**.
-
-## Known apps
-
-There are no registries and no discovery. A server offers only the apps in its **known-apps list**, `apps/server/known-apps.json`:
+### `app.json`
 
 ```json
 {
-  "base": "https://raw.githubusercontent.com/flying-dice/AgentOS/main/bundles/",
-  "apps": ["calculator/bundle.json"]
+  "id": "calculator",
+  "name": "Calculator",
+  "version": "0.1.0",
+  "description": "Arithmetic for you and your agents: type or tap a sum, or let an agent put a result on it.",
+  "main": "app.luau",
+  "icon": "plus",
+  "tint": "orange",
+  "permissions": ["data"],
+  "requires": { "host": ">=1.0" }
 }
 ```
 
-- **Entries** are `bundle.json` URLs, absolute or relative to `base`. Without a `base` they resolve against the list file.
-- **The URLs are fixed:** `bundles/` is committed to this repo, so the GitHub URLs above serve the released bundles. Later a CDN takes over by changing the one `base` value.
-- **Clients install by id only** (`apps.known()` lists the apps with their `installedVersion`; `apps.install(appId)` installs or updates one). A client can never name a URL, so it can't make the server fetch one.
-- **Configuration** (env vars on the server):
-  - `AGENTOS_APPS_BASE`: overrides `base` with a URL or a path. `bun run dev` sets it to the local `dist/bundles/`, so development uses the same list against local builds.
-  - `AGENTOS_APPS_TOKEN`: for a private repo. Sent as `Authorization: Bearer <token>` only on requests to the base URL's origin, never to other hosts (redirects included).
-  - `AGENTOS_APPS`: extra absolute `bundle.json` URLs (comma-separated).
-  - `AGENTOS_KNOWN_APPS`: a different list file.
-- **Allowed URLs:** `https:` and `file:`; `http:` only on localhost. A hosted `bundle.json` can't point at `file:` URLs. A broken entry is logged and skipped; the rest still load.
-- **Trust:** a server module runs with the server's full privileges. The list is the allow-list: add only authors you trust. The sha256 check guards against tampering in transit and a bundle that doesn't match its descriptor, not against a malicious author.
+| Field | Rule |
+|---|---|
+| `id` | 3 to 40 characters: lowercase letters, digits, dashes, not starting with a dash. Namespaces the app's data and its tools (`<id>__<tool>`). |
+| `name`, `version` | `version` is `major.minor.patch` digits (`0.1.0`); bump it to ship a change. |
+| `main` | the Luau entry file (default `app.luau`). |
+| `icon`, `tint`, `description` | what Discover and the add-by-URL preview show *before* the app runs. `icon` is a symbol name, `tint` a palette role. |
+| `permissions` | any of `data`, `notify`, `shell`, `agents`. Nothing else is granted (see "Security"). |
+| `requires.host` | the host API range the app needs (checked against the host at install). |
+| `migrations` | optional list of `{ version, name, file }` SQL files; most apps call `db:migrate` in Luau instead. |
+
+`app.json` and the `app.manifest { ... }` call in the entry must agree on `id`, `icon` and `tint`: `bun run build:apps`
+fails when they differ. `app.manifest` additionally carries the window (`w`, `h`, `minW`, `minH`) and may repeat
+`permissions`.
+
+### App refs, registries and install
+
+`bun run build:apps` (`scripts/build-apps.ts`) turns every `apps/*/app.json` into an **app ref** under
+`dist/apps/<id>/<version>/`: `app-ref.json` (`{ manifest, files: [{ path, url, sha256 }] }`, file URLs relative to it)
+plus the Luau files and migrations, copied as they are, and one `dist/apps/registry.json`
+(`{ "apps": ["calculator/0.1.0/app-ref.json", ...] }`). The package is every `.luau` file except in `tests`, `e2e`,
+`negative` and `node_modules` folders.
+
+- **A registry** is a list of app-ref URLs. The host's default registry is `dist/apps/registry.json` over `file://`
+  when it exists; `registries` in `agentos.toml` (or `AGENTOS_REGISTRIES`) adds more. Discover lists what they offer.
+- **An app is installed from an app ref URL** (`file://`, `http://`, `https://`): the host fetches it, verifies every
+  file's sha256, runs the migrations, loads the app in its VM and publishes its tools. Discover previews an app ref
+  first (manifest, source host, permissions) without running anything, then asks for confirmation. `install` in
+  `agentos.toml` makes sure listed app refs are installed at every start.
+- **Lifecycle:** install, enable, disable (VM unloaded, tools withdrawn, data kept), delete data, uninstall. At start
+  the host re-fetches and re-verifies every installed app. An app that fails to load is marked failed and the rest
+  start. All of it is in `docs/architecture/host-stack.md` ("Apps: lifecycle").
+- **Dev loop:** `bun run dev` builds the apps, starts the host with `dev_reload` and Vite. Save a `.luau` file, run
+  `bun run build:apps`: the host rebuilds that app's VM and keeps its database (the old version keeps running if the new
+  one does not load).
+
+## The `app` API
+
+An app file starts like this (the Calculator):
+
+```lua
+--!strict
+local app = require("@agentos/app")   -- the host module; also a global named `app`
+local ui = require("@agentos/ui")     -- component constructors and helpers, generated from the component schema
+local calc = require("./calc")        -- a module of this package: require is bundle-only
+```
+
+`require` accepts `./x`, `../x`, `@agentos/app` and `@agentos/ui`: nothing else, and never the filesystem. The
+definitions in `types/generated/agentos.d.luau` are the contract; `bun run lint:luau` type-checks every app against
+them in strict mode.
+
+| Call | What it does |
+|---|---|
+| `app.manifest { id, name, icon, tint, window = { w, h, minW, minH }, permissions }` | identity and the window's preferred and **minimum** size. Call it first. |
+| `app.window(name, { title, size, client, state, render, onOpen, onClose })` | declare a window kind. `render(w)` returns the view tree. |
+| `app.state(initial)` | shared in-memory state for the whole app; reads in `render` are tracked, assignments re-render the windows that read them. Lost on restart: persist what matters with `app.kv` or `app.db`. |
+| `app.kv:get(key)`, `:set(key, value)`, `:delete(key)` | small durable key/value store (needs `data`) |
+| `app.db` | `migrate`, `exec`, `all`, `one`, `tx`, and the live sources `query`, `row`, `scalar` (needs `data`) |
+| `app.tool { ... }` (alias `app.tools.register`) | declare an agent tool |
+| `app.t.string / integer / number / boolean / array / object / enum` | input schema builders for tools |
+| `app.notify { title, body, at, actions }` | a notification (needs `notify`) |
+| `app:openWindow(name, params)`, `app:windows(name)` | bring a window forward, or iterate the open instances |
+| `app.thread()` | declare a chat-thread source for `ChatTranscript` |
+| `app.agents:list()` | the agent contacts, as `{ id, name, avatar, role }` (needs `agents`) |
+| `app.shell.badge / command / deepLink` | Dock badge, menu commands, deep links (needs `shell`; declarations the shell does not act on yet) |
+| `app.timer.at / every`, `app.log(message)`, `app.id` | host-scheduled timers, logging, the app's id |
+
+Style is table-call constructors, StyLua-formatted (`stylua.toml`: `call_parentheses = "NoSingleTable"`):
+
+```lua
+ui.Button { key = "key-7", title = "7", label = "7", onTap = function() press("digit", "7") end }
+```
+
+Positional entries are children (or the text of `Text`, `Label`, `Button`, `Row`), named keys are props, slots and
+handlers. `nil` and nested lists in child position are flattened; `ui.each(list, fn)` maps a list to children. Apps
+never style: universal props (`padding`, `frame`, `background`, `foreground`, `style`) take semantic tokens only.
+
+## Windows and view trees
+
+A window kind is a view factory. Each open window is an **instance** with its own `w`:
+
+```lua
+app.window("main", {
+  title = "Calculator",
+  render = function(w)
+    return ui.Scope { scheme = "dark", background = "primary", frame = "fill", ui.VStack { ... } }
+  end,
+})
+```
+
+- **`render(w)` is pure.** It runs as a tracked scope: the state it reads is that window's dependency set, so when a
+  handler or a tool changes `app.state` the host re-renders exactly the windows that read it and sends the minimal
+  ops. A db write, `app:*` call or state assignment inside `render` raises. One calculator, however many windows are
+  open, is the point of `app.state`.
+- **The tree is data.** The VM turns the constructors' tables into a wire tree and validates it (every interactive
+  node needs an explicit `key`; icon-only controls need a `label`; an `Image` needs `alt` or `decorative = true`).
+  Handlers stay closures in the VM, keyed by path and event; only the key path crosses the wire.
+- **Handlers** are a Luau function `function(e) ... end` (`e.key`, `e.row`, `e.value`, `e.payload`, `e.actor`), a
+  client action (`ui.act.set / toggle / push / pop / popToRoot / focus / scrollTo / copy / emit / seq`) that runs on the
+  client with no round trip, or a list mixing both.
+- **`w`**: `w.id`, `w.params`; `w.state` (per-window server state); `w.client` (Refs to client state); `w.env` (Refs:
+  `sizeClass`, `heightClass`, `locale`, `timeZone`, `scheme`, `now`); one-shot commands `w:toast { text, icon, kind,
+  action = { title, onTap } }`, `w:focus(key)`, `w:scrollTo(key)`, `w:announce(text)`, `w:copy(text)`, `w:close()`,
+  `w:openWindow(name, params)`.
+- **Test ids come from keys:** `<appId>-<explicit keys on the path>`, skipping auto keys, slot names and the window root
+  (`key = "key-7"` is `calculator-key-7`; the display is `calculator-display`). A row template adds `row-<rowKey>`.
+  Set a `key` on every interactive node, and use stable ids for rows, never indices or display text.
+
+### Bindings and state
+
+Where a value lives decides who owns it. A prop is a literal, a **Ref**, or a call of the closed expression set
+(`ui.eq`, `ui.when`, `ui.concat`, `ui.isEmpty`, `ui.fmt.relative`, ...); the client evaluates it, so a keystroke or a
+list refresh never rebuilds the tree.
+
+| State | Owner | Use it for |
+|---|---|---|
+| Ephemeral UI (focus, scroll, caret, drafts) | client | nothing to declare |
+| **Client state** `client = { threadId = { init = "", persist = "app" } }` | client (mirrored to the host when `sync`/`persist`) | selection, search text, the open item. `persist`: `none`, `session`, `app` (kept by the host across restarts). Read the Ref `w.client.threadId` in the tree; `w.client:get("threadId")` in handlers; `w.client:set(...)` to drive it. |
+| App and window state (`app.state`, `w.state`) | host | what the app owns: the calculator's entry and operator |
+| Data (`app.db`, `app.kv`) | host | everything durable |
+
+Two-way controls take a Binding prop: `ui.TextField { text = w.client.search }`, `ui.List { selection = c.threadId }`,
+or a row field from a source (`row:bind("title")`). The client shows an instant draft, then writes with a base revision;
+the host merges text and the human wins for scalars.
+
+## Data: `app.db`, live sources, `app.kv`
+
+```lua
+db:migrate { [1] = [[create table threads (id text primary key, title text not null)]] }  -- numbered, once each
+
+local threads = db:query([[select id, title from threads order by updated_at desc, id desc]], { key = "id", page = 60 })
+local thread  = db:row([[select id, title from threads where id = :id]], { key = "id" })
+```
+
+- **Migrations** are numbered steps, each in its own transaction, recorded with a checksum; a changed old step is an
+  error, so add a new number instead.
+- **`exec`, `all`, `one`, `tx`** are the imperative calls (named `:params`). `tx(body)` commits its statements together
+  or not at all.
+- **Sources** (`query`, `row`, `scalar`) are prepared once and return a factory. Calling the factory *in `render`*
+  with params (values or Refs) gives a handle for `ui.ForEach { source = ..., row = function(r) ... end }` or a field
+  Ref (`current.title`). The SQL never leaves the host; the client gets rows in windows and row deltas whenever a
+  commit touches a table the query reads, so **an agent's write through a tool updates every open window with no UI
+  code**. A windowed query (`page`) needs a total order: end its `order by` with the key.
+- **`app.kv`** is for small values (the Calculator keeps its history there). SQL `ATTACH` is denied: an app's SQL
+  cannot leave its own file.
+
+## Tools
+
+```lua
+app.tool {
+  name = "history",                         -- [a-z][a-z0-9_]*; agents see it as "calculator__history"
+  title = "Calculation History",
+  description = "List recent calculations, newest first.",   -- agents read this: say what it does
+  readOnly = true,
+  input = { limit = app.t.integer { default = 10, min = 1, max = 50 } },
+  run = function(input, ctx) ... return { entries = ... } end,
+}
+```
+
+- **Names:** the local name is `[a-z][a-z0-9_]*` (no dots); the MCP name is `<appId>__<tool>`.
+- **Inputs** are described with `app.t` builders (`description`, `default`, `min`, `max`, `minLength`, `maxLength`,
+  `optional`); a field is required unless it is `optional` or has a default. The host validates input before the VM
+  runs, so `run` receives well-typed values; still describe every field, because agents read them.
+- **`ctx`:** `ctx.actor` (`{ kind = "user" | "agent", name }`), `ctx.now`, `ctx:fail(message)` to report a problem to the
+  caller. Raising an error does the same with the error's message.
+- **`readOnly = true` is enforced, not a hint.** The tool runs with app writes blocked: `db:exec`, writes in `db:tx`,
+  DDL, `app.kv:set/delete` and `db:migrate` raise. In return, an agent whose approval policy is `auto_read_only` (the
+  default) may run it without a permission prompt. A tool that must write (the Calculator's `calculate` records
+  history) is not `readOnly`.
+- **Who can call it:** an agent sees and may call only the tools of the apps it was granted (deny by default; see
+  `host-stack.md`, "Agents ... identity and permissions"), and every call is attributed to it. A tool can bring the UI
+  forward: `show_on_calculator` sets the shared state and calls `app:openWindow("main")`, and every open window
+  re-renders by itself.
+
+## Notifications and shell
+
+`app.notify { title = "...", body = "...", actions = {...} }` (or `app:notify { ... }`) needs the `notify` permission.
+`app.shell.badge(value)`, `app.shell.command { id, title, shortcut, run }` and `app.shell.deepLink(pattern, handler)`
+need `shell`; they are declarations the shell does not act on yet. `w:toast { ... }` is the in-window message.
+
+## Agents and chats
+
+An app with the `agents` permission can read the roster with `app.agents:list()` (`{ id, name, avatar, role }`: never
+grants, tokens or launch commands). It shows a chat with a thread source:
+
+```lua
+local chat = app.thread()
+-- in render:
+ui.ChatTranscript { key = "chat", thread = chat { thread = c.threadId, agent = current.agent_id }, onSend = function(e) ... end }
+```
+
+A thread source declares only the thread and the agent (literals or Refs); it runs no query and sends no data. The
+client opens the conversation on `/agui` (AG-UI over SSE, mapped from the agent's ACP session), so messages, tool calls,
+permission prompts and the agent's settings live with the host, and the app never sees them. The `send` and `stop`
+events also reach the app (`e.payload.text`), which is how the Agents app titles a chat and keeps its chat list in
+SQLite (`apps/agents/app.luau`).
+
+## Security
+
+- **Sandbox.** One Luau VM per app, `sandbox(true)`: builtins read-only, no `io`, `os.execute`, `dofile` or `debug`, no
+  filesystem `require`, no network. A **memory limit** (16 MiB by default) and a **CPU budget** per call (250 ms,
+  enforced from the VM interrupt, sticky so `pcall` cannot swallow it; time waiting on the host does not count) kill a
+  runaway app, not the host. A blocking host call has its own timeout. SQL `ATTACH` is denied and a statement past
+  its wall-clock budget is interrupted.
+- **Permissions** are what `app.json` declares and the user confirmed at install; the host checks them at each call
+  (`permission denied: app.notify needs the notify permission in the package manifest`), so an app cannot grant itself
+  more by editing its manifest call.
+- **Supply chain.** The host verifies the sha256 of every file in an app ref before loading it. That guards against
+  tampering in transit, not against a malicious author: the add-by-URL preview shows the source and permissions and asks
+  first, and an app's tools reach every agent granted to that app.
+- **Agents are untrusted callers, and so is what they write.** Tool input is validated against the declared schema;
+  `readOnly` is enforced by the data layer; strings an agent or a tool returns reach the client as text, never HTML.
+  Do not build SQL by concatenating them: use named params.
+- **The client is not trusted either.** Events carry a key path and values; the host looks the handler up in the VM, so
+  a client cannot invoke anything the tree did not offer.
+- **Nothing reaches another app but tools.** An app cannot read another app's data or call its functions.
+
+## Adding an app
+
+1. **Create the package.** Copy `apps/calculator` to `apps/<id>` and edit `app.json` (id, name, version `0.1.0`,
+   description, icon, tint, the smallest `permissions` list that works). Rewrite `app.luau`, starting with
+   `--!strict`, the two `require`s and `app.manifest { ... }`.
+2. **Set the window.** `window = { w, h, minW, minH }`. The minimum is the smallest size at which every control is
+   fully visible and at least 44 pt (the Calculator's 320x500 is justified by the keypad: say why in a comment when
+   it is more than 320x240). The host clamps the window to it.
+3. **Write the logic as plain Luau functions** (the Calculator's `calc.luau`), the view as `render`, and the tools.
+   Every interactive node gets a `key`; every tool gets a described schema and a `readOnly` that is true when the tool
+   does not write.
+4. **Make it clean.** `bun run lint:luau` (strict `luau-lsp analyze` against the generated definitions) and
+   `bun run lint:stylua` pass; `bun run format` fixes formatting. Fix the types, do not cast them away.
+5. **Test the logic and tools in Rust.** Add a test beside `crates/agentos-luau/tests/calculator_app.rs` that loads the
+   shipped package under the real runtime, calls its tools (`call_tool`) and asserts results, permission denials and
+   `readOnly`. A host-level test (`crates/agentos-host/tests/agents_app.rs`) is for what needs the data layer, views or
+   agents. Run `cargo nextest run -p agentos-luau`.
+6. **Write `JOURNEYS.md`** (4 to 8 journeys: id, who and what they want, start state, an observable "Done when"; never
+   steps, including an error case, a minimum-window case, a keyboard-only case and, where it applies, an agent driving
+   the app) **and `e2e/journeys.spec.ts`** with a test of the same id per journey, driven by test ids on the real host
+   (`apps/calculator/e2e/journeys.spec.ts`: `openDesktop`, `callTool` for the agent journey). An app that writes shared
+   state runs its journeys serially and clears that state first.
+7. **Cover the states.** The `desktop` project opens your app in the real shell on its own (floating light/dark, its
+   minimum and a large window, every layout, axe, snapshots). For a state a journey does not reach, add a JSON-tree
+   story to the client Storybook (`client/src/renderer/src/view/stories`); the kit's own components have stories in
+   `packages/ui`.
+8. **Try it for real.** `bun run dev`, open `http://127.0.0.1:5173`, pair with the code the host prints, install the app
+   from Discover and use it with the keyboard, in light and dark, at its minimum size. Then the `verify-change` skill,
+   and `bun run test:e2e` on a Mac (update the baselines deliberately and look at them).
+9. **Design it.** Run the `app-design` loop (`ux-research` rounds) until the exit criteria hold, with the report at
+   `docs/ux/<id>/round-<n>.md`.
+10. **Ship it** through a PR with the full gate and the readiness table in `agentos-code-review` §6. Until then the app
+    stays in its MR. To change a released app, bump `version` in `app.json`.
 
 ## Rules that are enforced
 
-`bun run lint` (`scripts/check-boundaries.ts`, `check-atomic.ts`, `check-testids.ts`):
-
-- **An app imports** only the SDK, the kit, `svelte` and `zod` on the client. Its server code may use `bun:*`, `node:*` and npm packages declared in its own `package.json`, never host internals, other apps or client packages. `src/client` and `src/server` never import each other; `src/shared` is browser-safe pure logic.
-- **The server never imports app packages:** apps arrive as bundles.
-- **All client ↔ server traffic is the SDK protocol** (`@agentos/sdk/host/protocol`, zod-validated on the server): no raw WebSockets, no extra endpoints.
-- **No raw HTML** (`{@html}`, `innerHTML`): agent and tool output is untrusted.
-
-Missing a capability? Extend the SDK (contract, server implementation, in-memory host, tests), never a side channel.
+- `bun run lint:luau` and `lint:stylua` (types and format of every app), `bun run lint:testids` (test ids in the
+  kit and the client), `bun run codegen:check` (generated types match the Rust schema).
+- In the host, always: app ids, manifests and app refs are validated and checksum-verified at install; permissions are
+  checked at each capability call; tool input is validated against the schema; `readOnly` blocks writes.
+- Missing a capability? Extend the host API (domain type and schema, application port and use case, the Luau adapter,
+  codegen, tests), never a side channel. That is a platform change: call it out in the MR.

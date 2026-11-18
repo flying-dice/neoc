@@ -10,10 +10,10 @@ too.
 
 | Source | Command / place |
 |---|---|
-| Static audit | `bun scripts/design-audit.ts <app>`: raw colours, type, radii, shadows, gradients, materials, spacing, emoji |
-| Automated UI checks | `npx playwright test --project=stories --project=desktop --grep <app>`: axe WCAG 2.1 AA, overflow, snapshots |
+| Static audit | `bun scripts/design-audit.ts <page>` for a built-in shell page: raw colours, type, radii, shadows, gradients, materials, spacing, emoji. A Luau app has no CSS (it uses semantic tokens only), so read its props, keys, labels and copy in `apps/<app>/app.luau` instead; categories 1 to 5 are then mostly the kit's, and a defect there is a kit or token fix |
+| Automated UI checks | `bunx playwright test --project=stories --project=desktop --grep <app>`: axe WCAG 2.1 AA, overflow, snapshots (starts the real host) |
 | Visual baselines | `e2e/__screenshots__/stories.spec.ts/<storybook>/…` and `e2e/__screenshots__/desktop.spec.ts/<app>-…` |
-| Live use | `node e2e/tools/session.mjs start audit --url "http://localhost:6200/web.html?open=<app>"` |
+| Live use | `node e2e/tools/session.mjs start audit --url "http://127.0.0.1:<port>/"`, paired as in `docs/TESTING.md`, then open the app from the Dock |
 
 ## Categories
 
