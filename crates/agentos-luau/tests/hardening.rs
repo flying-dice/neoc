@@ -438,26 +438,28 @@ async fn a_coroutine_cannot_park_a_host_call_and_switch_off_the_cpu_budget() {
     assert!(started.elapsed() < PROMPTLY);
 }
 
+/// On Lua 5.1 a host call inside the app's own coroutine is not refused (the resume wrappers pass the
+/// executor's wait outward, see `async_coroutines.lua`), so nothing is ever parked: the call finishes before
+/// the coroutine's `resume` returns, and what the app sees is what it would see on the main thread.
 #[tokio::test]
-async fn a_host_call_inside_a_coroutine_is_refused_with_an_error_that_says_why() {
+async fn a_host_call_inside_a_coroutine_finishes_before_resume_returns_and_leaves_nothing_parked() {
     let src = r#"
       app.on("probe", function()
         local co = coroutine.create(function() return app.kv:get("k") end)
-        local ok, why = coroutine.resume(co)
-        local wrapped = coroutine.wrap(function() return app.db:all("select 1") end)
-        local ok2, why2 = pcall(wrapped)
+        local ok, value = coroutine.resume(co)
+        local wrapped = coroutine.wrap(function() return app.db:all("select 1 as x") end)
+        local ok2, rows = pcall(wrapped)
         -- coroutines still do what they are for, and the main thread still reaches the host afterwards
         local gen = coroutine.wrap(function() for i = 1, 3 do coroutine.yield(i) end end)
-        return { ok = ok, why = tostring(why), ok2 = ok2, why2 = tostring(why2),
+        return { ok = ok, value = value, status = coroutine.status(co), ok2 = ok2, rows = rows,
                  gen = gen() + gen() + gen(), kv = app.kv:get("k") }
       end)
     "#;
     let out = load(src).await.emit("probe", json!(null)).await.unwrap();
-    assert_eq!(out["ok"], false, "{out}");
-    assert_eq!(out["ok2"], false, "{out}");
-    for why in [&out["why"], &out["why2"]] {
-        assert!(why.as_str().unwrap().contains("coroutine"), "{out}");
-    }
+    assert_eq!(out["ok"], true, "{out}");
+    assert_eq!(out["status"], "dead", "the coroutine ran to its end, it is not parked: {out}");
+    assert_eq!(out["ok2"], true, "{out}");
+    assert_eq!(out["rows"], json!([{"x": 1}]), "{out}");
     assert_eq!(out["gen"], 6, "{out}");
     assert_eq!(out["kv"], Value::Null);
 }

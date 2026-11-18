@@ -124,8 +124,8 @@ mod tests {
     use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
     async fn vm_with(limits: Limits) -> AppVm {
-        let files = BTreeMap::from([("app.luau".to_owned(), b"app.on('x', function() end)".to_vec())]);
-        let package = AppPackage { entry: "app.luau".into(), files };
+        let files = BTreeMap::from([("app.lua".to_owned(), b"app.on('x', function() end)".to_vec())]);
+        let package = AppPackage { entry: "app.lua".into(), files };
         let config = VmConfig { limits, ..VmConfig::default() };
         let db = Arc::new(AppDb::open(None, &[]).expect("in-memory database"));
         AppVm::load(&AppId::parse("probe").expect("id"), package, db, config).await.expect("loads")
@@ -153,7 +153,7 @@ mod tests {
         let vm = vm_with(Limits { call_wall: Duration::from_millis(100), ..Limits::default() }).await;
         let sh = vm.shared().clone();
         sh.budget.begin();
-        let failed: mlua::Result<()> = host(&sh, async {
+        let failed: agentos_luavm::mlua::Result<()> = host(&sh, async {
             std::thread::sleep(Duration::from_millis(250));
             Err(agentos_application::PortError::Rejected("late".into()))
         })
