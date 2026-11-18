@@ -357,6 +357,7 @@
                     type="submit"
                     size="small"
                     capsule
+                    hit
                     disabled={!addUrl.trim() || previewing}
                     >{previewing ? 'Looking…' : 'Preview'}</Button
                   >
@@ -394,6 +395,7 @@
                           testid="discover-add-install"
                           size="small"
                           capsule
+                          hit
                           disabled={!!preview.installed || !!busy[preview.url]}
                           onclick={() => (confirming = true)}>Install…</Button
                         >
@@ -401,6 +403,7 @@
                           testid="discover-add-cancel"
                           variant="plain"
                           size="small"
+                          hit
                           onclick={() => (preview = null)}>Cancel</Button
                         >
                       </span>

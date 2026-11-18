@@ -138,10 +138,15 @@
       canvas.getByTestId('discover-add-url'),
       'https://apps.example.org/notes/app-ref.json'
     )
+    // every button of the flow is a target a finger can hit (44 pt)
+    const tall = (id: string): number => canvas.getByTestId(id).getBoundingClientRect().height
+    await expect(tall('discover-add-preview')).toBeGreaterThanOrEqual(44)
     await userEvent.click(canvas.getByTestId('discover-add-preview'))
     await expect(await canvas.findByTestId('discover-add-preview-card')).toHaveTextContent(
       'Version 0.2.0'
     )
+    await expect(tall('discover-add-install')).toBeGreaterThanOrEqual(44)
+    await expect(tall('discover-add-cancel')).toBeGreaterThanOrEqual(44)
   }}
 />
 

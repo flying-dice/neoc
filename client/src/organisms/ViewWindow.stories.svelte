@@ -35,11 +35,16 @@
     return session.view
   }
 
-  type Behaviour = 'never' | 'fail' | 'fail-once' | 'ok'
+  type Behaviour = 'never' | 'fail' | 'fail-once' | 'fail-slow' | 'ok'
   const views = (behaviour: Behaviour): FakeViews => ({
     openView: () => {
       attempts++
       if (behaviour === 'never') return new Promise(() => undefined)
+      // a retry that takes a moment to fail again: the alert gives way to the spinner and comes back
+      if (behaviour === 'fail-slow' && attempts > 1)
+        return new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('The app is not running on this host.')), 150)
+        )
       if (behaviour === 'fail' || (behaviour === 'fail-once' && attempts === 1))
         return Promise.reject(new Error('The app is not running on this host.'))
       return openReady()
@@ -94,6 +99,9 @@
     await expect(failed).toHaveTextContent('Couldn’t open Calculator')
     await expect(failed).toHaveTextContent('The app is not running on this host.')
     await expect(canvas.getByTestId('calculator-failed-retry')).toBeEnabled()
+    // a target a finger can hit (44 pt)
+    const rect = canvas.getByTestId('calculator-failed-retry').getBoundingClientRect()
+    await expect(rect.height).toBeGreaterThanOrEqual(44)
   }}
 />
 
@@ -119,5 +127,20 @@
     await waitFor(() => expect(attempts).toBe(2))
     await expect(await canvas.findByTestId('calculator-failed')).toBeVisible()
     await expect(canvas.getByTestId('calculator-failed-retry')).toBeEnabled()
+  }}
+/>
+
+<!-- Focus stays with the person: a retry that fails again puts it back on "Try again" (the old button went with the alert). -->
+<Story
+  name="Failed again keeps focus"
+  beforeEach={withViews('fail-slow')}
+  play={async ({ canvas, userEvent }) => {
+    await userEvent.click(await canvas.findByTestId('calculator-failed-retry'))
+    await expect(await canvas.findByTestId('calculator-opening')).toBeVisible()
+    await expect(await canvas.findByTestId('calculator-failed')).toBeVisible()
+    await waitFor(() => expect(canvas.getByTestId('calculator-failed-retry')).toHaveFocus())
+    await userEvent.keyboard('{Enter}') // and it works from the keyboard, again
+    await until(() => attempts === 3, 'the third open')
+    await waitFor(() => expect(canvas.getByTestId('calculator-failed-retry')).toHaveFocus())
   }}
 />
