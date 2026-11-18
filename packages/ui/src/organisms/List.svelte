@@ -115,13 +115,20 @@
   const isTextEntry = (el: HTMLElement): boolean =>
     el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)
 
-  function refocus(key: string | null): void {
+  /**
+   * Puts focus back on a moved row after the re-render (`part` picks the row's focus target or its reorder handle).
+   * Focus someone moved elsewhere in the meantime is left alone.
+   */
+  function refocus(key: string | null, part: 'row' | 'handle' = 'row'): void {
     if (key === null) return
-    requestAnimationFrame(() =>
-      root
-        ?.querySelector<HTMLElement>(`[data-row-key="${CSS.escape(key)}"] [data-row-focus], [data-row-key="${CSS.escape(key)}"][data-row-focus]`)
-        ?.focus()
-    )
+    const before = document.activeElement
+    const attr = part === 'handle' ? '[data-reorder-handle]' : '[data-row-focus]'
+    const row = `[data-row-key="${CSS.escape(key)}"]`
+    requestAnimationFrame(() => {
+      const now = document.activeElement
+      if (now !== before && now !== null && now !== document.body) return
+      root?.querySelector<HTMLElement>(`${row} ${attr}, ${row}${attr}`)?.focus()
+    })
   }
 
   /**
@@ -153,7 +160,7 @@
     if (handle && rowKey !== null && (e.key === 'ArrowUp' || e.key === 'ArrowDown') && !e.altKey) {
       e.preventDefault()
       onreorder?.(rowKey, e.key === 'ArrowUp' ? -1 : 1)
-      refocus(rowKey)
+      refocus(rowKey, 'handle')
       return
     }
     const el = target.closest<HTMLElement>('[data-row-focus]')

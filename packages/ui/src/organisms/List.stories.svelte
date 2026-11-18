@@ -155,6 +155,10 @@
     await waitFor(() => expect(canvas.getByTestId('order-Cheese-handle')).toHaveFocus())
     await userEvent.keyboard('{ArrowUp}')
     await waitFor(() => expect(names()).toEqual(['Eggs', 'Milk', 'Cheese', 'Bread']))
+    // Focus stays on the handle, so the next arrow keeps moving the same row.
+    await waitFor(() => expect(canvas.getByTestId('order-Cheese-handle')).toHaveFocus())
+    await userEvent.keyboard('{ArrowUp}')
+    await waitFor(() => expect(names()).toEqual(['Eggs', 'Cheese', 'Milk', 'Bread']))
   }}
 >
   <div style="width:360px">
