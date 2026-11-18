@@ -2,37 +2,45 @@
   "name": "@agentos/sdk",
   "version": "0.1.0",
   "private": true,
-  "description": "AgentOS app SDK — the contract between app modules and the host OS (manifest, renderer API, main API, tools)",
+  "description": "AgentOS SDK: the contract between app modules, the PWA client and the Bun server (manifest, app server/client APIs, JSON-RPC host protocol, registry format, bundle build)",
   "type": "module",
   "exports": {
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
     },
-    "./app/main": {
-      "types": "./src/app/main.ts",
-      "default": "./src/app/main.ts"
+    "./app/server": {
+      "types": "./src/app/server.ts",
+      "default": "./src/app/server.ts"
     },
-    "./app/renderer": {
-      "types": "./src/app/renderer.ts",
-      "svelte": "./src/app/renderer.ts",
-      "default": "./src/app/renderer.ts"
+    "./app/client": {
+      "types": "./src/app/client.ts",
+      "svelte": "./src/app/client.ts",
+      "default": "./src/app/client.ts"
     },
     "./host/protocol": {
       "types": "./src/host/protocol.ts",
       "default": "./src/host/protocol.ts"
     },
-    "./host/main": {
-      "types": "./src/host/main.ts",
-      "default": "./src/host/main.ts"
+    "./host/server": {
+      "types": "./src/host/server.ts",
+      "default": "./src/host/server.ts"
     },
-    "./host/preload": {
-      "types": "./src/host/preload.ts",
-      "default": "./src/host/preload.ts"
+    "./host/client": {
+      "types": "./src/host/client.ts",
+      "default": "./src/host/client.ts"
     },
-    "./host/renderer": {
-      "types": "./src/host/renderer.ts",
-      "default": "./src/host/renderer.ts"
+    "./rpc": {
+      "types": "./src/rpc/index.ts",
+      "default": "./src/rpc/index.ts"
+    },
+    "./registry": {
+      "types": "./src/registry.ts",
+      "default": "./src/registry.ts"
+    },
+    "./build": {
+      "types": "./src/build/index.ts",
+      "default": "./src/build/index.ts"
     },
     "./testing": {
       "types": "./src/testing/index.ts",

@@ -2,7 +2,7 @@
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import AppWindow from '@agentos/storybook/AppWindow.svelte'
   import TerminalPage from './TerminalPage.svelte'
-  import { apps } from '../lib/apps'
+  import { apps } from '../lib/apps.svelte'
 
   const app = apps.terminal
 

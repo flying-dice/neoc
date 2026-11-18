@@ -11,6 +11,18 @@
   import AgentListing from '../molecules/AgentListing.svelte'
   import CapabilityCard from '../molecules/CapabilityCard.svelte'
   import { windowManager as wm } from '../lib/windowManager.svelte'
+  import { appStore } from '../lib/appStore.svelte'
+  import type { RegistryApp } from '@agentos/sdk/host/client'
+
+  const registryApps = $derived(
+    appStore.available.filter((a) => a.manifest.name.toLowerCase().includes(query.toLowerCase()))
+  )
+
+  async function primary(app: RegistryApp): Promise<void> {
+    const state = appStore.stateOf(app)
+    if (state === 'open') return wm.open(app.manifest.id)
+    if (await appStore.install(app)) wm.open(app.manifest.id)
+  }
 
   type Section =
     'discover' | 'agents' | 'create' | 'work' | 'play' | 'develop' | 'categories' | 'updates'
@@ -171,6 +183,43 @@
               {/each}
             </div>
           </section>
+
+          <section data-testid="discover-apps">
+            <header class="section-head">
+              <Text style="title3" weight="bold" as="h2">Apps</Text>
+            </header>
+            {#if appStore.error}
+              <p class="store-error" role="alert" data-testid="discover-apps-error">
+                {appStore.error}
+              </p>
+            {/if}
+            <div class="listings">
+              {#each registryApps as app (`${app.registry}/${app.manifest.id}`)}
+                <AgentListing
+                  testid="discover-app-{app.manifest.id}"
+                  name={app.manifest.name}
+                  blurb="{app.registry} · {app.installedVersion &&
+                  app.installedVersion !== app.manifest.version
+                    ? `${app.installedVersion} → ${app.manifest.version}`
+                    : app.manifest.version}"
+                  icon={app.manifest.icon}
+                  background={app.manifest.background}
+                  action={appStore.stateOf(app)}
+                  busy={!!appStore.busy[app.manifest.id]}
+                  onget={() => void primary(app)}
+                  onremove={app.installedVersion ? () => void appStore.uninstall(app) : undefined}
+                />
+              {:else}
+                <Text style="subheadline" color="secondary">
+                  {query
+                    ? `No apps match “${query}”.`
+                    : 'No registries are offering apps. Run `bun run build:apps`.'}
+                </Text>
+              {/each}
+            </div>
+          </section>
+
+          <hr />
 
           <section>
             <header class="section-head">
@@ -347,6 +396,11 @@
     }
   }
 
+  .store-error {
+    margin: 0 0 12px;
+    font: var(--type-footnote);
+    color: var(--ios-red);
+  }
   .section-head {
     display: flex;
     align-items: baseline;

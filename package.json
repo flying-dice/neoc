@@ -7,8 +7,10 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "bun run --filter @agentos/desktop dev",
-    "build": "bun run --filter @agentos/desktop build",
+    "dev": "bun run build:apps && bun run --filter @agentos/server --filter @agentos/desktop dev",
+    "build": "bun run build:apps && bun run --filter @agentos/desktop build",
+    "start": "bun run --filter @agentos/server start",
+    "build:apps": "bun scripts/build-registry.ts",
     "typecheck": "bun run --filter '*' typecheck",
     "lint": "bun run lint:atomic && bun run lint:testids && bun run lint:boundaries && bun run --filter '*' lint",
     "format": "bun run --filter '*' format",
@@ -22,7 +24,6 @@
     "dev:web": "bun run --filter @agentos/desktop dev:web"
   },
   "trustedDependencies": [
-    "electron",
     "esbuild"
   ],
   "devDependencies": {

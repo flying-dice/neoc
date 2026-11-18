@@ -2,6 +2,7 @@ import { defineManifest } from '@agentos/sdk'
 
 export default defineManifest({
   id: 'calculator',
+  version: '0.1.0',
   name: 'Calculator',
   icon: 'plus',
   background: 'linear-gradient(180deg, #5a5a5e 0%, #1c1c1e 100%)',

@@ -1,7 +1,9 @@
 /**
- * `HostBridge` — the complete API the host renderer may use, exposed by the
- * preload as the frozen global `window.agentos`. Declared here (not inferred
- * from the preload) so both sides compile against the same contract.
+ * `HostBridge`: the complete API the AgentOS client (the PWA shell) may use,
+ * installed as the frozen global `window.agentos`. In production it is the
+ * WebSocket JSON-RPC bridge to the Bun server (`createWsHostBridge`); in tests
+ * and web mode it is the in-memory host (`@agentos/sdk/testing`). Declared here,
+ * not inferred from either implementation, so all of them compile against it.
  */
 import type { ToolInfo, ToolResult } from '../tools'
 import type {
@@ -12,10 +14,16 @@ import type {
   AgentUpdate,
   AppEvent,
   ConfigValue,
+  HostInfo,
+  InstalledApp,
+  RegistryApp,
   SessionConfigOption
 } from './protocol'
 
 export type Unsubscribe = () => void
+
+/** WebSocket link state; the in-memory host is always "open". */
+export type ConnectionStatus = 'connecting' | 'open' | 'reconnecting' | 'closed'
 
 export interface HostBridge {
   /** Host OS, e.g. "darwin", "win32", "linux". */
@@ -23,18 +31,36 @@ export interface HostBridge {
   /** Runtime versions (electron, chrome, node…). */
   readonly versions: Readonly<Record<string, string>>
 
+  /** The connection to the server. */
+  connection: {
+    readonly status: ConnectionStatus
+    onStatus(listener: (status: ConnectionStatus) => void): Unsubscribe
+  }
+
+  /** The server this client is attached to. */
+  host: {
+    info(): Promise<HostInfo>
+  }
+
+  /** The browser window the shell runs in (client-local, no server round trip). */
   window: {
     isFullScreen(): Promise<boolean>
     toggleFullScreen(): void
     onFullScreenChange(listener: (fullScreen: boolean) => void): Unsubscribe
-    quit(): void
   }
 
-  /** App modules: renderer ↔ main calls and events, namespaced by app id. */
+  /** Installed app modules: lifecycle, client ↔ server calls and events, namespaced by app id. */
   apps: {
+    list(): Promise<InstalledApp[]>
+    /** Apps offered by the server's registries, with what's installed. */
+    available(): Promise<RegistryApp[]>
+    install(registry: string, appId: string): Promise<InstalledApp>
+    uninstall(appId: string): Promise<void>
+    /** The installed set changed (any client installed/uninstalled, or the server reloaded an app). */
+    onChanged(listener: (apps: InstalledApp[]) => void): Unsubscribe
     invoke(appId: string, channel: string, payload?: unknown): Promise<unknown>
     onEvent(listener: (event: AppEvent) => void): Unsubscribe
-    /** An app's main module asked to open its window. */
+    /** An app's server module asked to open its window. */
     onOpenRequest(listener: (appId: string) => void): Unsubscribe
   }
 
@@ -61,12 +87,17 @@ export interface HostBridge {
   }
 }
 
-/** The global the preload defines. */
+/** The global the shell installs the bridge as. */
 export const BRIDGE_GLOBAL = 'agentos'
+
+/** Install a bridge as `window.agentos` (once, non-writable). */
+export function installHostBridge(bridge: HostBridge): void {
+  Object.defineProperty(globalThis, BRIDGE_GLOBAL, { value: Object.freeze(bridge), configurable: false, writable: false })
+}
 
 declare global {
   interface Window {
-    /** Present only inside the AgentOS desktop host. */
+    /** Present once the shell has installed its host bridge. */
     readonly agentos?: HostBridge
   }
 }

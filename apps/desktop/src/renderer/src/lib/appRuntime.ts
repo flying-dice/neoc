@@ -1,9 +1,9 @@
-import { createAppRuntime, hostBridge } from '@agentos/sdk/host/renderer'
+import { createAppRuntime, hostBridge } from '@agentos/sdk/host/client'
 import { windowManager } from './windowManager.svelte'
 
 /**
- * The host's app runtime: hands each app module its scoped SDK API. Created
- * at startup so main → app events are captured (and queued) before any app
+ * The shell's app runtime: hands each app module its scoped SDK API. Created
+ * at startup so server → app events are captured (and queued) before any app
  * window mounts.
  */
 export const appRuntime = createAppRuntime(hostBridge(), {

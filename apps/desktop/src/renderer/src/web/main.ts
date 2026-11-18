@@ -1,6 +1,6 @@
 /**
- * Web-mode entry (`web.html`): the real desktop renderer on the in-memory
- * host. No Electron, no main process; app main modules run in the page.
+ * Web-mode entry (`web.html`): the real shell on the in-memory host. No
+ * server: app server modules run in the page and app clients load from source.
  *
  *   ?open=calculator,settings   open these apps instead of Discover
  *   ?theme=light|dark           force the appearance
@@ -9,18 +9,20 @@
  *
  * Exposes `window.__agentos` (host + stores) for tests and the research panel.
  */
+import '../lib/sharedModules'
 import { createMemoryHost, demoAgent, installHost, type MemoryHost } from '@agentos/sdk/testing'
-import { installedApps } from '../../../main/platform/installedApps'
+import { repoApps } from './repoApps'
 import { scenarios } from './scenarios'
 
 const params = new URLSearchParams(location.search)
 
 const host = createMemoryHost({
-  apps: installedApps,
+  // Every repo app, run from source (the server runs their built bundles instead).
+  apps: repoApps(),
   agents: [demoAgent()],
   streamDelay: Number(params.get('delay') ?? 30),
   versions: {
-    electron: 'web mode',
+    client: 'web mode',
     chrome: navigator.userAgent.match(/Chrome\/([\d.]+)/)?.[1] ?? '—'
   }
 })
@@ -31,11 +33,16 @@ const [{ windowManager }, { settings }, { agentStore }, { apps }] = await Promis
   import('../lib/windowManager.svelte'),
   import('../lib/settings.svelte'),
   import('../lib/agents.svelte'),
-  import('../lib/apps')
+  import('../lib/apps.svelte')
 ])
 
 const theme = params.get('theme')
 if (theme === 'light' || theme === 'dark') settings.theme = theme
+
+// The installed set arrives asynchronously from the host; let it land first.
+await host.ready
+const { setInstalledApps } = await import('../lib/apps.svelte')
+setInstalledApps(await host.apps.list())
 
 await import('../main')
 

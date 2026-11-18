@@ -3,18 +3,18 @@
  * Dev smoke test for the agent stack, without the UI:
  *   ACP client (AgentHost) → Claude ACP adapter → AgentOS MCP server → app tools
  *
- * Requires the desktop app running in dev (it writes userData/mcp.json) and a
- * Claude login. Approves every permission request once — dev use only.
+ * Requires the AgentOS server running (it writes <data>/mcp.json; AGENTOS_DATA,
+ * default ~/.agentos) and a Claude login. Approves every permission request once — dev use only.
  *
  *   bun scripts/acp-smoke.ts "Use the calculator to show 1337 * 42"
  */
 import { readFileSync, mkdtempSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { AgentHost } from '../apps/desktop/src/main/platform/acp/agentHost'
+import { AgentHost } from '../apps/server/src/acp/agentHost'
 
 const discovery = JSON.parse(
-  readFileSync(join(homedir(), 'Library/Application Support/@agentos/desktop/mcp.json'), 'utf8')
+  readFileSync(join(process.env.AGENTOS_DATA ?? join(homedir(), '.agentos'), 'mcp.json'), 'utf8')
 ) as { url: string; headers: { Authorization: string } }
 
 const adapter = join(

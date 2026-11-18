@@ -1,7 +1,7 @@
 <!-- @page SettingsPage — iPadOS Settings-style system preferences. -->
 <script lang="ts">
   import type { IconName } from '@agentos/ui'
-  import { hostBridge } from '@agentos/sdk/host/renderer'
+  import { hostBridge } from '@agentos/sdk/host/client'
   import { Icon, IconTile, Toggle, SegmentedControl } from '@agentos/ui/atoms'
   import { ListRow, SearchField, IconSlider, Alert } from '@agentos/ui/molecules'
   import { ListSection, NavigationBar } from '@agentos/ui/organisms'

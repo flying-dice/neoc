@@ -12,11 +12,10 @@
   import GalleryPage from './pages/GalleryPage.svelte'
   import TerminalPage from './pages/TerminalPage.svelte'
   import ModuleAppView from './organisms/ModuleAppView.svelte'
-  import { moduleApp } from './lib/installedApps'
   import { settings } from './lib/settings.svelte'
   import { windowManager } from './lib/windowManager.svelte'
-  import type { AppId } from './lib/apps'
-  import { hostBridge } from '@agentos/sdk/host/renderer'
+  import { moduleApp, onAppsRemoved, type AppId } from './lib/apps.svelte'
+  import { hostBridge } from '@agentos/sdk/host/client'
 
   $effect(() => settings.apply(document.documentElement))
 
@@ -24,6 +23,14 @@
   // Opened on the user's behalf, so they join the current stage beside the requester.
   $effect(() =>
     hostBridge()?.apps.onOpenRequest((appId) => windowManager.open(appId, { alongside: true }))
+  )
+
+  // An app uninstalled (here or from another client) closes its windows first.
+  $effect(() =>
+    onAppsRemoved((ids) => {
+      for (const win of [...windowManager.windows])
+        if (ids.includes(win.appId)) windowManager.close(win.id)
+    })
   )
 
   // Land on the Discover window.

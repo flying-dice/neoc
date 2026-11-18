@@ -6,7 +6,7 @@ import {
   type ConfigValue,
   type SessionConfigOption,
   type SessionModeState
-} from '@agentos/sdk/host/renderer'
+} from '@agentos/sdk/host/client'
 
 /**
  * Agent conversations backed by real ACP sessions in the main process.

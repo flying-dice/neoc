@@ -2,7 +2,7 @@
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import AppWindow from '@agentos/storybook/AppWindow.svelte'
   import AgentsPage from './AgentsPage.svelte'
-  import { apps } from '../lib/apps'
+  import { apps } from '../lib/apps.svelte'
   import { agentStore } from '../lib/agents.svelte'
   import { scenarios } from '../web/scenarios'
 

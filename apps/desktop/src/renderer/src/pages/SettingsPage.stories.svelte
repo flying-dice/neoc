@@ -3,7 +3,7 @@
   import { expect } from 'storybook/test'
   import AppWindow from '@agentos/storybook/AppWindow.svelte'
   import SettingsPage from './SettingsPage.svelte'
-  import { apps } from '../lib/apps'
+  import { apps } from '../lib/apps.svelte'
 
   const app = apps.settings
 

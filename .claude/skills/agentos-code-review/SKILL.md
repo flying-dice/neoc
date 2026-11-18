@@ -71,8 +71,9 @@ The generic specs run axe (WCAG 2.1 AA) in light and dark on every story and app
 - Agent and tool output (ACP messages, tool results, permission prompts) is untrusted: rendered as text, never as
   HTML, URLs, file paths or commands without validation. Read-only tools (`readOnly: true`) really are read-only:
   an agent calls them without approval.
-- Sandbox and IPC: `webPreferences`, navigation and window-open handlers, `trustedFrames`, and the MCP server
-  (127.0.0.1, bearer token) are not weakened. New external links open only `http(s)`.
+- Server surface: the `/rpc` Origin check, the 127.0.0.1 default bind, registry sha256 verification, path
+  containment for `/registry` and `/bundles`, and the MCP bearer token are not weakened. App server modules release
+  what they open in their dispose function (they're unregistered at runtime on uninstall and update). New external links open only `http(s)`.
 - Apps reach other apps only through tools; the desktop knows apps only through the registries.
 
 ## 5. UI structure, design and clean code
@@ -94,7 +95,7 @@ one missing row means **STAYS IN MR**.
 | Window size | `manifest.window` has `width`/`height`, and `minWidth`/`minHeight` with a comment saying why, when the layout needs more than 320x240 |
 | Stories | a story for every screen and state (section 2), green in the stories project |
 | Journeys | `JOURNEYS.md` with 4 to 8 journeys (goal, start state, observable "Done when"), each with a passing spec of the same id |
-| Wiring | both `installedApps.ts` registries, `apps/desktop/package.json`, `electron.vite.config.ts` `workspacePackages`; main module browser-safe or `src/mock/main.ts` |
+| Bundles | `bun run build:apps <id>` builds it; it installs, opens, works and uninstalls cleanly on a real server (`bun run dev`, Discover → Apps); `version` bumped for changes; server module browser-safe or `src/mock/server.ts` |
 | Verified | the PR's "Manual verification" section (`verify-change`) covers light and dark, the minimum and large windows, Split View / Slide Over and keyboard |
 | Researched | `docs/ux/<app>/round-<n>.md` from the `app-design` skill whose scorecard meets the exit criteria (all journeys succeed for all three participants, mean ease ≥ 6.0, no blocker or major open, conformance ≥ 90 with no category below 70), and no layout or flow change landed after that round |
 
@@ -112,8 +113,8 @@ Gate: lint ✓ · typecheck ✓ · test ✓ · e2e ✓ (local, on <sha>)
 Readiness: <app>: window ✓ · stories ✓ · journeys ✓ · wiring ✓ · verified ✗ · researched ✗ (no docs/ux/<app>/)
 
 ### Findings
-1. **Blocker**, `apps/notes/src/main/index.ts:42`: `ctx.handle('save')` writes `payload` to storage unparsed.
-   Failure: a renderer sends `{ title: 5 }`; the next load renders `undefined` and the list crashes on `.trim()`.
+1. **Blocker**, `apps/notes/src/server/index.ts:42`: `ctx.handle('save')` writes `payload` to storage unparsed.
+   Failure: a client sends `{ title: 5 }`; the next load renders `undefined` and the list crashes on `.trim()`.
    Fix: parse with the `Note` schema from `src/shared` and return a validation result.
 2. **Major**, …
 

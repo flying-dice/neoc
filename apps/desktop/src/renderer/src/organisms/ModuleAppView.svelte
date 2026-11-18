@@ -1,12 +1,13 @@
 <!--
-  @organism ModuleAppView — mounts an installed app module's renderer inside a
-  window, providing its scoped SDK API. Loads the module bundle lazily.
+  @organism ModuleAppView — mounts an installed app module's client inside a
+  window, providing its scoped SDK API. Loads the client bundle lazily.
 -->
 <script lang="ts">
-  import { provideAppApi } from '@agentos/sdk/app/renderer'
+  import { provideAppApi } from '@agentos/sdk/app/client'
   import { ActivityIndicator, Text } from '@agentos/ui/atoms'
   import { appRuntime } from '../lib/appRuntime'
-  import { moduleApp } from '../lib/installedApps'
+  import { moduleApp } from '../lib/apps.svelte'
+  import { loadClientApp } from '../lib/appLoaders'
 
   interface Props {
     appId: string
@@ -14,18 +15,22 @@
 
   let { appId }: Props = $props()
 
-  // Context is fixed for the window's lifetime; an app view never changes app.
+  // A window never changes app: read the id once for the window's lifetime.
   // svelte-ignore state_referenced_locally
-  provideAppApi(appRuntime.apiFor(appId))
-  // svelte-ignore state_referenced_locally
-  const loading =
-    moduleApp(appId)?.load() ?? Promise.reject(new Error(`App "${appId}" is not installed`))
+  const id = appId
+  provideAppApi(appRuntime.apiFor(id))
+  const installed = moduleApp(id)
+  const loading = installed
+    ? installed.status === 'failed'
+      ? Promise.reject(new Error(installed.error ?? `${installed.manifest.name} failed to start`))
+      : loadClientApp(installed)
+    : Promise.reject(new Error(`App "${id}" is not installed`))
 </script>
 
 {#await loading}
   <div class="state"><ActivityIndicator size="large" /></div>
 {:then module}
-  {@const App = module.default.component}
+  {@const App = module.component}
   <App />
 {:catch error}
   <div class="state">

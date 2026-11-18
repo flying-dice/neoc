@@ -12,8 +12,8 @@
  */
 import { z } from 'zod'
 import type { AppManifest } from '../manifest'
-import type { AppMainContext, AppMainModule } from '../app/main'
-import type { AppRendererApi } from '../app/renderer'
+import type { AppDispose, AppServerContext, AppServerModule } from '../app/server'
+import type { AppClientApi } from '../app/client'
 import type { HostBridge, Unsubscribe } from '../host/bridge'
 import type {
   AgentExit,
@@ -22,10 +22,11 @@ import type {
   AgentSummary,
   AgentUpdate,
   AppEvent,
+  InstalledApp,
   SessionConfigOption,
   SessionModeState
 } from '../host/protocol'
-import { createAppRuntime } from '../host/renderer'
+import { createAppRuntime } from '../host/client'
 import { qualifyTool, type AppToolDefinition, type ToolInfo, type ToolResult } from '../tools'
 
 // ── Agents ───────────────────────────────────────────────────────────────
@@ -97,13 +98,17 @@ export const defaultScriptedConfig = (): SessionConfigOption[] => [
 
 export interface MemoryApp {
   manifest: AppManifest
-  main?: AppMainModule
+  /** The app's server module, run in the page (it gets no `dataDir`). */
+  server?: AppServerModule
   /** Initial storage for the app. */
   storage?: Record<string, unknown>
 }
 
 export interface MemoryHostOptions {
+  /** Apps the in-memory "registry" offers. */
   apps?: MemoryApp[]
+  /** Ids installed at start (default: every app in `apps`). */
+  installed?: string[]
   agents?: ScriptedAgent[]
   platform?: string
   versions?: Record<string, string>
@@ -112,9 +117,9 @@ export interface MemoryHostOptions {
 }
 
 export interface MemoryHost extends HostBridge {
-  /** Resolves once every app main module has finished `setup`. */
+  /** Resolves once every installed app's server module has finished `setup`. */
   readonly ready: Promise<void>
-  /** Push an event to an app's renderer as if its main module emitted it. */
+  /** Push an event to an app's client as if its server module emitted it. */
   emit(appId: string, event: string, payload?: unknown): void
   /** An app's in-memory storage (for assertions). */
   storageOf(appId: string): Map<string, unknown>
@@ -150,13 +155,21 @@ export function createMemoryHost(options: MemoryHostOptions = {}): MemoryHost {
   const storages = new Map<string, Map<string, unknown>>()
   const tools = new Map<string, { info: ToolInfo; def: AppToolDefinition }>()
 
-  const contextFor = (appId: string): AppMainContext => {
+  const changes = emitter<InstalledApp[]>()
+  const catalog = new Map((options.apps ?? []).map((a) => [a.manifest.id, a]))
+  const installed = new Map<string, { controller: AbortController; dispose?: AppDispose | void }>()
+
+  const contextFor = (app: MemoryApp, controller: AbortController): AppServerContext => {
+    const appId = app.manifest.id
     const own = new Map<string, (payload: unknown) => unknown>()
     handlers.set(appId, own)
     const storage = storages.get(appId) ?? new Map<string, unknown>()
     storages.set(appId, storage)
     return {
       appId,
+      version: app.manifest.version,
+      signal: controller.signal,
+      dataDir: undefined,
       handle: (channel, handler) => void own.set(channel, handler),
       registerTool: (def) => {
         const id = qualifyTool(appId, def.name)
@@ -178,9 +191,38 @@ export function createMemoryHost(options: MemoryHostOptions = {}): MemoryHost {
   for (const app of options.apps ?? []) {
     storages.set(app.manifest.id, new Map(Object.entries(app.storage ?? {})))
   }
+
+  const installedApps = (): InstalledApp[] =>
+    [...installed.keys()].map((id) => ({
+      manifest: catalog.get(id)!.manifest,
+      clientUrl: `memory://${id}`,
+      registry: 'memory',
+      status: 'running' as const
+    }))
+
+  const register = async (app: MemoryApp): Promise<void> => {
+    const controller = new AbortController()
+    const entry: { controller: AbortController; dispose?: AppDispose | void } = { controller }
+    installed.set(app.manifest.id, entry)
+    if (app.server) entry.dispose = await app.server.setup(contextFor(app, controller))
+  }
+
+  const unregister = async (appId: string): Promise<void> => {
+    const entry = installed.get(appId)
+    if (!entry) return
+    installed.delete(appId)
+    entry.controller.abort()
+    await entry.dispose?.()
+    handlers.delete(appId)
+    for (const [id, tool] of tools) if (tool.info.appId === appId) tools.delete(id)
+  }
+
   const ready = (async () => {
-    for (const app of options.apps ?? []) {
-      if (app.main) await app.main.setup(contextFor(app.manifest.id))
+    const ids = options.installed ?? [...catalog.keys()]
+    for (const id of ids) {
+      const app = catalog.get(id)
+      if (!app) throw new Error(`createMemoryHost: installed app "${id}" is not in \`apps\``)
+      await register(app)
     }
   })()
 
@@ -244,6 +286,15 @@ export function createMemoryHost(options: MemoryHostOptions = {}): MemoryHost {
 
   const bridge: MemoryHost = {
     platform: options.platform ?? 'web',
+    connection: { status: 'open', onStatus: () => () => {} },
+    host: {
+      info: async () => ({
+        name: 'AgentOS (in-memory host)',
+        version: '0.0.0',
+        platform: options.platform ?? 'web',
+        versions: { ...(options.versions ?? {}) }
+      })
+    },
     versions: Object.freeze({ ...(options.versions ?? {}) }),
     ready,
     calls,
@@ -254,11 +305,39 @@ export function createMemoryHost(options: MemoryHostOptions = {}): MemoryHost {
     window: {
       isFullScreen: async () => false,
       toggleFullScreen: () => record('window.toggleFullScreen', []),
-      onFullScreenChange: () => () => {},
-      quit: () => record('window.quit', [])
+      onFullScreenChange: () => () => {}
     },
 
     apps: {
+      list: async () => {
+        await ready
+        return installedApps()
+      },
+      available: async () => {
+        await ready
+        return [...catalog.values()].map((a) => ({
+          registry: 'memory',
+          manifest: a.manifest,
+          installedVersion: installed.has(a.manifest.id) ? a.manifest.version : null
+        }))
+      },
+      async install(registry, appId) {
+        record('apps.install', [registry, appId])
+        await ready
+        const app = catalog.get(appId)
+        if (!app) throw new Error(`App "${appId}" is not in registry "${registry}"`)
+        await unregister(appId)
+        await register(app)
+        changes.fire(installedApps())
+        return installedApps().find((a) => a.manifest.id === appId)!
+      },
+      async uninstall(appId) {
+        record('apps.uninstall', [appId])
+        await ready
+        await unregister(appId)
+        changes.fire(installedApps())
+      },
+      onChanged: (listener) => changes.on(listener),
       async invoke(appId, channel, payload) {
         record('apps.invoke', [appId, channel, payload])
         await ready
@@ -356,11 +435,11 @@ export function appApiFor(
   host: HostBridge,
   appId: string,
   openApp: (appId: string) => void = () => {}
-): AppRendererApi {
+): AppClientApi {
   return createAppRuntime(host, { openApp }).apiFor(appId)
 }
 
-/** Install a host as `window.agentos`, the way the Electron preload does. */
+/** Install a host as `window.agentos`, the way the client installs its WebSocket bridge. */
 export function installHost(host: HostBridge): void {
   Object.defineProperty(window, 'agentos', { value: host, configurable: true })
 }

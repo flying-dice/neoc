@@ -1,12 +1,14 @@
 import type { IconName } from '@agentos/ui'
 
 /**
- * Static description of an app. Imported by both host processes, so it must
- * stay plain data — no Node or DOM APIs.
+ * Static description of an app. Read by the server, the client and the bundle
+ * build (it becomes the bundle's manifest.json), so it must stay plain data.
  */
 export interface AppManifest {
-  /** Stable identifier: lowercase, digits and dashes (used to namespace IPC and tools). */
+  /** Stable identifier: lowercase, digits and dashes (namespaces RPC, tools and storage). */
   id: string
+  /** Semver of the app bundle; registries and updates compare it. */
+  version: string
   name: string
   icon: IconName
   /** CSS background for the app icon, typically a gradient. */
@@ -23,6 +25,9 @@ export interface AppManifest {
 export function defineManifest<const M extends AppManifest>(manifest: M): M {
   if (!/^[a-z][a-z0-9-]{1,31}$/.test(manifest.id)) {
     throw new Error(`Invalid app id "${manifest.id}": use lowercase letters, digits and dashes`)
+  }
+  if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(manifest.version)) {
+    throw new Error(`Invalid version "${manifest.version}" for app "${manifest.id}": use semver (1.2.3)`)
   }
   return manifest
 }

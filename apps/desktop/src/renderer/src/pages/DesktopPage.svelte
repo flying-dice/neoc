@@ -11,13 +11,13 @@
 <script lang="ts">
   import type { Snippet } from 'svelte'
   import type { DockApp } from '@agentos/ui'
-  import { hostBridge } from '@agentos/sdk/host/renderer'
+  import { hostBridge, type ConnectionStatus } from '@agentos/sdk/host/client'
   import { SplitHandle } from '@agentos/ui/atoms'
   import { DesktopTemplate } from '@agentos/ui/templates'
   import { StatusBar, Dock, Window, StageStrip } from '@agentos/ui/organisms'
   import ClockWidget from '../organisms/ClockWidget.svelte'
   import AgentActivityWidget from '../organisms/AgentActivityWidget.svelte'
-  import { apps, dockOrder, dockRecents, type AppId } from '../lib/apps'
+  import { apps, dockOrder, dockRecents, type AppId } from '../lib/apps.svelte'
   import { windowManager as wm } from '../lib/windowManager.svelte'
   import { agentStore } from '../lib/agents.svelte'
 
@@ -29,19 +29,16 @@
 
   let workspaceWidth = $state(0)
   let workspaceHeight = $state(0)
-  let fullScreen = $state(false)
 
   $effect(() => {
     if (workspaceWidth && workspaceHeight)
       wm.bounds = { width: workspaceWidth, height: workspaceHeight }
   })
 
+  // The link to the server: say so in the status bar while it's down.
   const host = hostBridge()
-  void host?.window.isFullScreen().then((v) => (fullScreen = v))
-  $effect(() => host?.window.onFullScreenChange((v) => (fullScreen = v)))
-
-  // Native traffic lights sit over the status bar unless the window is full screen.
-  const isMac = host?.platform === 'darwin'
+  let connection = $state<ConnectionStatus>(host?.connection.status ?? 'open')
+  $effect(() => host?.connection.onStatus((status) => (connection = status)))
   const waiting = $derived(agentStore.waitingCount)
 
   function toDock(id: AppId): DockApp {
@@ -56,7 +53,7 @@
     }
   }
 
-  const dockApps = $derived(dockOrder.map(toDock))
+  const dockApps = $derived(dockOrder().map(toDock))
   const recentApps = $derived(dockRecents.map(toDock))
   const awaitingSplit = $derived(wm.activeStage?.awaitingSplit ?? null)
 
@@ -88,8 +85,16 @@
 
 <DesktopTemplate bind:workspaceWidth bind:workspaceHeight dockHidden={wm.dockHidden}>
   {#snippet statusBar()}
-    <div class="drag-region" data-testid="status-bar">
-      <StatusBar insetLeading={isMac && !fullScreen ? 64 : 0} battery={0.86} />
+    <div data-testid="status-bar">
+      <StatusBar battery={0.86}>
+        {#snippet center()}
+          {#if connection !== 'open'}
+            <span class="connection" role="status" data-testid="status-connection">
+              {connection === 'connecting' ? 'Connecting to AgentOS…' : 'Reconnecting to AgentOS…'}
+            </span>
+          {/if}
+        {/snippet}
+      </StatusBar>
     </div>
   {/snippet}
 
@@ -197,8 +202,13 @@
 />
 
 <style>
-  .drag-region {
-    -webkit-app-region: drag;
+  .connection {
+    padding: 2px 10px;
+    border-radius: 999px;
+    background: rgb(0 0 0 / 0.35);
+    color: #fff;
+    font: var(--type-caption1);
+    font-weight: 600;
   }
   .stage {
     position: absolute;

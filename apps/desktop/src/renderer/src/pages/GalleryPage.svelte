@@ -24,7 +24,7 @@
   import { ScreenTemplate } from '@agentos/ui/templates'
   import ColorSwatch from '../atoms/ColorSwatch.svelte'
   import SpecimenCard from '../molecules/SpecimenCard.svelte'
-  import { apps } from '../lib/apps'
+  import { apps } from '../lib/apps.svelte'
 
   type Preview = 'system' | 'light' | 'dark'
   let preview = $state<Preview>('system')

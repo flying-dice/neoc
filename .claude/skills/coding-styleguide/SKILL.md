@@ -10,30 +10,34 @@ don't migrate unrelated APIs, add dependencies or change configuration on the wa
 
 ## Where code belongs
 
-AgentOS is hexagonal. The SDK is the port layer, so nothing crosses a process or package seam except through it.
+AgentOS is hexagonal: a PWA client and a Bun server, with apps installed as bundles at runtime. The SDK is the port
+layer, so nothing crosses a process or package seam except through it.
 
 | Role | AgentOS |
 |---|---|
-| Ports (contracts) | `packages/sdk`: `app/main` (`AppMainContext`), `app/renderer` (`AppRendererApi`), `host/protocol` (every IPC channel with its zod schema), tool types |
+| Ports (contracts) | `packages/sdk`: `app/server` (`AppServerContext`), `app/client` (`AppClientApi`), `host/protocol` (every JSON-RPC method with its zod schema), `registry` (bundle format), tool types |
 | Domain | `apps/<id>/src/shared`: pure, synchronous, no framework, no SDK runtime; bun-tested |
-| Driving adapters | an app's `src/renderer` (calls `useAppApi()`), its tools (`ctx.registerTool`) |
-| Driven adapters | `apps/desktop/src/main/platform` (tool registry, MCP server, ACP agent host, storage) |
-| Composition roots | `apps/desktop/src/main/index.ts`, `src/preload/index.ts`, the renderer `App.svelte`, the two `installedApps.ts` registries |
+| Driving adapters | an app's `src/client` (calls `useAppApi()`), its tools (`ctx.registerTool`) |
+| Driven adapters | `apps/server/src` (app runtime, registries, tool registry, MCP endpoint, ACP agent host, SQLite); an app's `src/server` (its own SQLite, Bun APIs) |
+| Composition roots | `apps/server/src/server.ts` (`startServer`), the client's `boot.ts` / `web/main.ts` and `App.svelte` |
 | Test adapter | `@agentos/sdk/testing` (in-memory host); an app's `src/testing.ts` / `src/mock/` |
 
 The boundary rules (enforced by `bun run lint:boundaries`, `scripts/check-boundaries.ts`):
 
-- An app imports only `@agentos/sdk` (root, `app/main`, `app/renderer`), `@agentos/ui`, `svelte`, `zod` and its own
-  files. Never `electron`, Node builtins, `apps/desktop`, another app or `@agentos/sdk/host/*`.
-- `src/renderer` and `src/main` never import each other: they talk through `api.invoke` / `ctx.handle` /
-  `ctx.emit`. `src/main` is headless and browser-safe (or the app ships `src/mock/main.ts`).
+- An app's `src/client` imports only `@agentos/sdk` (root, `app/client`), `@agentos/ui`, `svelte`, `zod` and its own
+  files: these are shared with the host's runtime. Its `src/server` may use `bun:*`, `node:*` and npm packages
+  declared in its own `package.json`; never host internals, another app or client-side packages.
+- `src/client` and `src/server` never import each other: they talk through `api.invoke` / `ctx.handle` /
+  `ctx.emit`. A server module that needs Bun ships `src/mock/server.ts` for web mode and stories.
+- Server modules are registered and unregistered at runtime: release everything they open in the dispose function
+  `setup` returns (or on `ctx.signal`), or the old version keeps running beside the new one.
 - Apps reach other apps only through tools (`api.tools.call('<app>__<tool>')`), never by import.
-- No raw `ipcMain` / `ipcRenderer` / `webContents.send` outside `packages/sdk/src/host` and the desktop composition
-  roots. The renderer stays sandboxed: `sandbox`, `contextIsolation`, no Node.
+- All client ↔ server traffic is the SDK protocol over the one `/rpc` WebSocket: no raw `WebSocket`, no extra
+  `Bun.serve` routes or endpoints. The server never imports app packages: apps arrive as bundles.
 
-**Missing a host capability?** Extend the port, never open a side channel: add the method to `AppMainContext` or
-`AppRendererApi`, or the channel to `host/protocol` with its zod schema, implement it in the desktop host and in the
-memory host, and test both. That is an SDK change: call it out in the MR.
+**Missing a host capability?** Extend the port, never open a side channel: add the method to `AppServerContext` or
+`AppClientApi`, or the method to `host/protocol` with its zod schema, implement it in the server and in the memory
+host, and test both. That is an SDK change: call it out in the MR.
 
 UI layering is atomic (`docs/design/DESIGN_LANGUAGE.md`, `bun run lint:atomic`): atoms < molecules < organisms <
 templates < pages, each importing only strictly lower layers. Reach for `@agentos/ui` first; a generic need goes
@@ -48,14 +52,15 @@ into the kit (with a story and a required `testid` prop), never into one app. Th
   error that has a `kind`. Throw only for bugs and broken invariants. Don't churn existing throwing APIs (the
   Calculator's `evaluate` throws, and its callers rely on that).
 - Framework contracts win: a tool's `run` throws an `Error` with an agent-readable message for rejected input (the
-  MCP server returns it as `isError`); an IPC invoke handler that throws reaches the renderer as a bare message, so
-  a failure the renderer must branch on is returned as data, not thrown.
+  MCP server returns it as `isError`); a `ctx.handle` handler that throws reaches the client as a JSON-RPC error
+  carrying only its message, so a failure the client must branch on is returned as data, not thrown.
 
 ## Trust boundaries (parse with zod here)
 
 | Boundary | Where |
 |---|---|
-| Renderer → main | `ctx.handle(channel, payload)`: `payload` is `unknown`; parse it first. Host IPC is parsed by `registerHostIpc`; a new channel needs its schema in `host/protocol`. |
+| Client → server | `ctx.handle(channel, payload)`: `payload` is `unknown`; parse it first. Host methods are parsed by `createProtocolDispatcher`; a new method needs its schema in `host/protocol`. |
+| Registries | `registry.json` (parsed with `registrySchema`) and bundle bytes (sha256-verified before install). |
 | Agents → tools | the tool's zod `input` shape (validated by the registry). Describe every field: agents read it. |
 | Disk | `ctx.storage.get<T>()` is an unchecked cast over data an older version may have written: parse it. |
 | Agents → UI | agent messages, tool results and permission prompts are untrusted text: render them as text nodes (`atoms/RichText.svelte`), never `{@html}`. |

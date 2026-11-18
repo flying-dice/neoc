@@ -1,14 +1,16 @@
 /**
- * The AgentOS host IPC protocol — the single source of truth for every
- * message between the host renderer (via the preload bridge) and main.
+ * The AgentOS host protocol: the single source of truth for every message
+ * between a client (the PWA) and the Bun server, carried as JSON-RPC 2.0 over
+ * one WebSocket (`/rpc`). The JSON-RPC method is the channel name; params are
+ * the positional args.
  *
- *  • Invoke  renderer → main, awaited       (`ipcRenderer.invoke` / `ipcMain.handle`)
- *  • Send    renderer → main, fire-and-forget (`ipcRenderer.send` / `ipcMain.on`)
- *  • Event   main → renderer                 (`webContents.send` / `ipcRenderer.on`)
+ *  • Invoke  client → server, awaited          JSON-RPC request
+ *  • Send    client → server, fire-and-forget  JSON-RPC notification
+ *  • Event   server → every client             JSON-RPC notification
  *
  * Request types are declared explicitly; the zod schemas below are checked
- * against them at compile time and used by main to validate everything the
- * renderer sends, so a compromised or buggy renderer can't pass bad input.
+ * against them at compile time and used by the server to validate everything a
+ * client sends, so a buggy or hostile client can't pass bad input.
  */
 import { z } from 'zod'
 import type {
@@ -20,6 +22,7 @@ import type {
 
 export type { SessionConfigOption, SessionModeState } from '@agentclientprotocol/sdk'
 import type { ToolInfo, ToolResult } from '../tools'
+import type { AppManifest } from '../manifest'
 
 // ── Shared payload types ─────────────────────────────────────────────────
 
@@ -66,9 +69,43 @@ export interface AgentExit {
   code: number | null
 }
 
+export interface HostInfo {
+  name: string
+  version: string
+  /** Server OS (e.g. "darwin", "linux"). */
+  platform: string
+  /** Runtime versions on the server (bun, …). */
+  versions: Record<string, string>
+}
+
+/** An app installed on this server, as clients see it. */
+export interface InstalledApp {
+  manifest: AppManifest
+  /** Where the client bundle is served (an ESM module, imported on first open). */
+  clientUrl: string
+  /** Registry it came from. */
+  registry: string
+  /** "running" once its server module is set up; "failed" if setup threw. */
+  status: 'running' | 'failed'
+  error?: string
+}
+
+/** An app offered by a registry. */
+export interface RegistryApp {
+  registry: string
+  manifest: AppManifest
+  /** Version installed here, if any (compare with manifest.version for updates). */
+  installedVersion: string | null
+}
+
 // ── Contracts ────────────────────────────────────────────────────────────
 
 export interface InvokeContract {
+  'host:info': { args: []; result: HostInfo }
+  'apps:list': { args: []; result: InstalledApp[] }
+  'apps:install': { args: [registry: string, appId: string]; result: InstalledApp }
+  'apps:uninstall': { args: [appId: string]; result: void }
+  'registry:list': { args: []; result: RegistryApp[] }
   'apps:invoke': { args: [appId: string, channel: string, payload: unknown]; result: unknown }
   'tools:list': { args: []; result: ToolInfo[] }
   'tools:call': { args: [id: string, input: Record<string, unknown>]; result: ToolResult }
@@ -81,39 +118,40 @@ export interface InvokeContract {
     args: [agentId: string, sessionId: string, configId: string, value: ConfigValue]
     result: SessionConfigOption[]
   }
-  'window:is-fullscreen': { args: []; result: boolean }
 }
 
 export interface SendContract {
-  'window:toggle-fullscreen': []
-  'app:quit': []
   'agents:permission-response': [id: string, optionId: string | null]
 }
 
 export interface EventContract {
+  /** The installed app set changed (install, uninstall, update, reload). */
+  'apps:changed': { apps: InstalledApp[] }
   'apps:event': AppEvent
   'apps:open': { appId: string }
   'agents:update': AgentUpdate
   'agents:permission': AgentPermissionRequest
   'agents:exit': AgentExit
-  'window:fullscreen-changed': { fullScreen: boolean }
 }
 
 export type InvokeChannel = keyof InvokeContract
 export type SendChannel = keyof SendContract
 export type EventChannel = keyof EventContract
 
-/** Wire name for a channel — namespaced so nothing else on IPC can collide. */
-export const wire = (channel: InvokeChannel | SendChannel | EventChannel): string => `agentos:${channel}`
-
-// ── Runtime validation for renderer input ────────────────────────────────
+// ── Runtime validation for client input ──────────────────────────────────
 
 const id = z.string().min(1).max(200)
 const appId = z.string().regex(/^[a-z][a-z0-9-]{1,31}$/)
+const registry = z.string().min(1).max(100)
 
 type Schemas<T> = { [C in keyof T]: z.ZodType<T[C]> }
 
 export const invokeSchemas = {
+  'host:info': z.tuple([]),
+  'apps:list': z.tuple([]),
+  'apps:install': z.tuple([registry, appId]),
+  'apps:uninstall': z.tuple([appId]),
+  'registry:list': z.tuple([]),
   'apps:invoke': z.tuple([appId, z.string().min(1).max(100), z.unknown()]),
   'tools:list': z.tuple([]),
   'tools:call': z.tuple([z.string().regex(/^[A-Za-z0-9_-]{1,80}$/), z.record(z.string(), z.unknown())]),
@@ -122,13 +160,10 @@ export const invokeSchemas = {
   'agents:prompt': z.tuple([id, id, z.string().min(1).max(100_000)]),
   'agents:cancel': z.tuple([id, id]),
   'agents:set-mode': z.tuple([id, id, id]),
-  'agents:set-config': z.tuple([id, id, id, z.union([z.string().min(1).max(200), z.boolean()])]),
-  'window:is-fullscreen': z.tuple([])
+  'agents:set-config': z.tuple([id, id, id, z.union([z.string().min(1).max(200), z.boolean()])])
 } satisfies Schemas<{ [C in InvokeChannel]: InvokeContract[C]['args'] }>
 
 export const sendSchemas = {
-  'window:toggle-fullscreen': z.tuple([]),
-  'app:quit': z.tuple([]),
   'agents:permission-response': z.tuple([z.string().uuid(), id.nullable()])
 } satisfies Schemas<SendContract>
 

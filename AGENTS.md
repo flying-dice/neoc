@@ -1,6 +1,7 @@
 # Working on AgentOS
 
-AgentOS is an iPadOS-style virtual desktop for agents: an Electron host (`apps/desktop`), app modules
+AgentOS is an iPadOS-style virtual desktop for agents: a Bun server (`apps/server`), a PWA client (`apps/desktop`),
+app modules installed from registries as bundles
 (`apps/<app>`), the app SDK (`packages/sdk`) and the UI kit (`packages/ui`). Bun workspaces.
 
 Sources of truth: `apps/README.md` (app model, SDK, security), `docs/TESTING.md` (test ids, headless testing),
@@ -31,15 +32,16 @@ A change is done when all of these hold:
 
 Enforced by `bun run lint:boundaries` (`scripts/check-boundaries.ts`):
 
-- An app imports only `@agentos/sdk` (root, `app/main`, `app/renderer`), `@agentos/ui`, `svelte`, `zod` and its own
-  files. Never `electron`, Node builtins, `apps/desktop`, another app or `@agentos/sdk/host/*`.
-- Inside an app, `src/renderer` and `src/main` talk only through `api.invoke` / `ctx.handle` / `ctx.emit`;
+- An app's client imports only `@agentos/sdk` (root, `app/client`), `@agentos/ui`, `svelte`, `zod` and its own files;
+  its server may also use `bun:*`, `node:*` and its declared npm deps. Never host internals or another app.
+- Inside an app, `src/client` and `src/server` talk only through `api.invoke` / `ctx.handle` / `ctx.emit`;
   `src/shared` is pure logic.
-- Renderer ↔ main traffic goes only through the SDK protocol: no raw `ipcMain` / `ipcRenderer` /
-  `webContents.send` outside `packages/sdk/src/host` and the desktop composition roots.
-- Agent and tool output is untrusted: no `{@html}` or `innerHTML`. The renderer stays sandboxed.
+- Client ↔ server traffic goes only through the SDK protocol (JSON-RPC over `/rpc`): no raw `WebSocket`, no extra
+  `Bun.serve` routes. The server never imports app packages: apps arrive as registry bundles.
+- Server modules are registered/unregistered at runtime: release what they open in their dispose function.
+- Agent and tool output is untrusted: no `{@html}` or `innerHTML`.
 
-Missing a capability? Extend the SDK (contract, zod schema, desktop host and memory host), never a side channel.
+Missing a capability? Extend the SDK (contract, zod schema, server and memory host), never a side channel.
 Also: atomic layers (`lint:atomic`) and test ids from the first commit (`lint:testids`).
 
 ## Skills: when to use which
@@ -55,7 +57,9 @@ Also: atomic layers (`lint:atomic`) and test ids from the first commit (`lint:te
 ## Commands
 
 ```sh
-bun run dev             # the Electron app
+bun run dev             # server on :7000 + client on :5173 (builds the registry first)
+bun run build:apps      # build app bundles + dist/registry/registry.json (the dev server hot-reloads them)
+bun run build && bun start   # production: the server serves the built PWA on :7000
 bun run dev:web         # the desktop in a browser on the in-memory host (http://localhost:6200/web.html)
 bun run lint            # atomic layers + test ids + boundaries + eslint
 bun run typecheck
@@ -72,5 +76,5 @@ Visual baselines (`e2e/__screenshots__`) are macOS-only, so run `test:e2e` on a 
 
 Follow `apps/README.md` → "Adding an app". From its first commit the app has a `manifest.window` min size, its own
 `.storybook/` (copy `apps/calculator/.storybook`), a story per screen and state (`tags: ['app']`, inside
-`AppWindow`), `JOURNEYS.md` plus `e2e/journeys.spec.ts`, and a browser-safe main module (or `src/mock/main.ts`).
+`AppWindow`), `JOURNEYS.md` plus `e2e/journeys.spec.ts`, and a browser-safe server module (or `src/mock/server.ts`).
 Then design it with `app-design` until the exit criteria hold; until then it stays in its MR.

@@ -1,5 +1,5 @@
 import type { Frame, StageSummary, WindowLayout } from '@agentos/ui'
-import { apps, type AppId } from './apps'
+import { apps, type AppId } from './apps.svelte'
 
 /**
  * Stage Manager–style window manager.

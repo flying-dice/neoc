@@ -37,9 +37,9 @@ ctx.handle('evaluate', (raw) => {
 })
 ```
 
-IPC payloads are structured-cloned: plain data only (no functions, class instances or `Error` objects). The memory
-host rethrows a handler's real `Error`, but Electron delivers only its message, so don't let tests depend on the
-error's type or fields crossing `api.invoke`.
+RPC payloads travel as JSON: plain data only (no functions, class instances, `Date`s, `Map`s or `Error` objects).
+The memory host rethrows a handler's real `Error`, but the server delivers only its message (as an `RpcError`), so
+don't let tests depend on the error's type or fields crossing `api.invoke`.
 
 ## Svelte 5 (runes only)
 

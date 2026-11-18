@@ -1,8 +1,9 @@
 # Testing AgentOS
 
-Every app is tested headless, in Chromium, **without Electron or the main process**. The renderer is the system
-under test. The backend is replaced by an in-memory host (`@agentos/sdk/testing`) that runs each app's real main
-module (handlers, tools, storage) and scripted agents.
+Every app is tested headless, in Chromium, **without the Bun server**. The client is the system under
+test. The server is replaced by an in-memory host (`@agentos/sdk/testing`) that runs each app's real server module
+(handlers, tools, storage, register/unregister lifecycle) and scripted agents. The server itself has its own
+integration test (`apps/server/src/server.test.ts`: real registry, real WebSocket JSON-RPC, MCP, restarts).
 
 | Layer | What | Where | Command |
 |---|---|---|---|
@@ -47,19 +48,19 @@ or key handler, or one with an interactive `role` must carry `data-testid`.
 
 `@agentos/sdk/testing` exports:
 
-- `createMemoryHost({ apps, agents, platform })`: a complete `HostBridge` (what `window.agentos` provides in
-  Electron). It runs app main modules in memory, routes `emit` to app renderers, validates tool input with zod,
-  and plays scripted agent sessions.
+- `createMemoryHost({ apps, agents, installed, platform })`: a complete `HostBridge` (what the WebSocket bridge
+  provides against the real server). It runs app server modules in memory (install, uninstall and `ctx.signal`
+  included), routes `emit` to app clients, validates tool input with zod, and plays scripted agent sessions.
 - `scriptedAgent(...)`: a fake ACP agent that streams messages, tool calls and permission requests.
-- `appApiFor(host, appId)`: the scoped `AppRendererApi` an app component gets, for stories.
+- `appApiFor(host, appId)`: the scoped `AppClientApi` an app component gets, for stories.
 
-An app's main module must be browser-safe (no `fs`, no `electron`), or the app provides a stand-in at
-`src/mock/main.ts` and exports it as `./mock-main`.
+An app's server module runs in the page here, so it must be browser-safe, or the app provides a stand-in at
+`src/mock/server.ts` (web mode and Storybook pick it up automatically; see `apps/desktop/src/renderer/src/web/repoApps.ts`).
 
 ## Web mode
 
-`apps/desktop` builds a second renderer entry, `web.html`, that installs the memory host as `window.agentos` and
-starts the real desktop. URL parameters set up a scenario:
+`apps/desktop` builds a second client entry, `web.html`, that installs the memory host as `window.agentos`, runs
+every repo app from source and starts the real shell. URL parameters set up a scenario:
 
 | Param | Example | Effect |
 |---|---|---|

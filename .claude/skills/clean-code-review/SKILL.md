@@ -28,12 +28,13 @@ given the diff and the file list, not your conclusions. Otherwise one inline pas
 5. **DEAD**: unused exports, props, handlers, tools or stories; unreachable branches; commented-out code.
 6. **KISS**: abstraction without a second user, premature options, `$effect` where `$derived` does. Ask why up to
    five times; if no answer survives, it is a violation.
-7. **BOUNDARY**: coupling across a real AgentOS seam that lint can't see. Seams: app ↔ host (only the SDK), renderer
-   ↔ main (only `invoke` / `handle` / `emit` and `host/protocol`), app ↔ app (only tools), agent ↔ host (ACP and MCP,
-   untrusted), kit ↔ app (the kit is generic), atomic layers. Flag: host or Electron types leaking into SDK
-   signatures; stringly-typed channels shared by copy instead of one constant; a protocol change without its zod
-   schema or memory-host twin; app-specific knowledge in the desktop beyond the registries; app knowledge in
-   `packages/ui`.
+7. **BOUNDARY**: coupling across a real AgentOS seam that lint can't see. Seams: app ↔ host (only the SDK), client
+   ↔ server (only `invoke` / `handle` / `emit` and `host/protocol` over JSON-RPC), app ↔ app (only tools), agent ↔
+   host (ACP and MCP, untrusted), registry ↔ server (bundles, sha256-verified), kit ↔ app (the kit is generic),
+   atomic layers. Flag: server or Bun types leaking into client-facing SDK signatures; stringly-typed methods shared
+   by copy instead of one constant; a protocol change without its zod schema or memory-host twin; app-specific
+   knowledge in the client or server (apps arrive as bundles); app knowledge in `packages/ui`; a server module that
+   opens something its dispose doesn't release.
 8. **PANIC**: a reachable crash or silent corruption from outside input. In TypeScript: `as T` over `unknown`
    (IPC payloads, `JSON.parse`, `ctx.storage.get<T>`, `api.tools.call<T>`, ACP notifications); a non-null `!`;
    indexing assumed defined; a throw inside an `api.on` listener or `$effect` that nothing catches; a fallible

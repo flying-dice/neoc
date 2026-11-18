@@ -9,7 +9,7 @@
  * The app list comes from the desktop's registries, so a newly installed app
  * is covered with no extra code.
  */
-import { readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   chooseLayout,
@@ -23,21 +23,28 @@ import {
   windowOf
 } from './fixtures'
 import type { Page } from '@playwright/test'
-import { installedApps } from '../apps/desktop/src/main/platform/installedApps'
 
 const ROOT = join(import.meta.dirname, '..')
 
-/** Built-in app ids, read from the `builtinApps` registry in apps.ts. */
+/** Built-in app ids, read from the `builtinApps` registry in apps.svelte.ts. */
 function builtinAppIds(): string[] {
-  const source = readFileSync(join(ROOT, 'apps/desktop/src/renderer/src/lib/apps.ts'), 'utf8')
-  const block = source.slice(source.indexOf('const builtinApps'), source.indexOf('/** Installed app modules'))
+  const source = readFileSync(join(ROOT, 'apps/desktop/src/renderer/src/lib/apps.svelte.ts'), 'utf8')
+  const block = source.slice(source.indexOf('const builtinApps'), source.indexOf('const toDefinition'))
   return [...block.matchAll(/^ {2}([a-z][a-z0-9-]*): \{/gm)].map((m) => m[1])
+}
+
+/** Repo app modules (apps/<dir>/src/manifest.ts): web mode installs every one of them. */
+function repoAppIds(): string[] {
+  return readdirSync(join(ROOT, 'apps'))
+    .map((dir) => join(ROOT, 'apps', dir, 'src/manifest.ts'))
+    .filter((file) => existsSync(file))
+    .map((file) => readFileSync(file, 'utf8').match(/\bid:\s*'([a-z][a-z0-9-]*)'/)![1])
 }
 
 /** Layout is checked inside the window's content: the resize corner deliberately overhangs the frame. */
 const contentOf = (page: Page, id: string) => page.getByTestId(`window-${id}-content`)
 
-const APPS = [...builtinAppIds(), ...installedApps.map((a) => a.manifest.id)]
+const APPS = [...builtinAppIds(), ...repoAppIds()]
 
 test('the desktop renders with every app in the Dock', async ({ page }, testInfo) => {
   await openDesktop(page)

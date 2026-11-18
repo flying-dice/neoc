@@ -9,7 +9,7 @@
 -->
 <script lang="ts">
   import type { Snippet } from 'svelte'
-  import { provideAppApi, type AppRendererApi } from '@agentos/sdk/app/renderer'
+  import { provideAppApi, type AppClientApi } from '@agentos/sdk/app/client'
 
   interface Props {
     /** Window title, used as the frame's accessible name. */
@@ -19,7 +19,7 @@
     /** The app's minimum window size (from its manifest); width/height are clamped to it, like a real Window. */
     minWidth?: number
     minHeight?: number
-    api?: AppRendererApi
+    api?: AppClientApi
     children: Snippet
   }
 

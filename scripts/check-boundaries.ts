@@ -1,26 +1,27 @@
 #!/usr/bin/env bun
 /**
- * Enforces the AgentOS process and package boundaries (AGENTS.md → "Boundaries",
+ * Enforces the AgentOS package boundaries (AGENTS.md → "Boundaries",
  * apps/README.md → "The SDK is the only contract").
  *
  * Rules
- *  1. An app module (apps/<id>, not desktop) imports only @agentos/sdk (root, app/main,
- *     app/renderer), @agentos/ui, svelte, zod and its own files. Never electron, Node builtins,
- *     the host, another app or @agentos/sdk/host/*. Test support may also use TEST_KIT.
- *  2. Inside an app, src/renderer and src/main never import each other (they talk through
- *     api.invoke / ctx.handle / ctx.emit); src/main is headless; src/shared is pure.
- *     Apps never touch `window.agentos`; they use useAppApi().
- *  3. No relative import leaves its workspace package (test support may reach the repo's e2e/).
- *  4. electron is imported only by the desktop main and preload processes and, type-only, by
- *     packages/sdk/src/host. ipcMain / ipcRenderer / contextBridge / webContents.send appear only
- *     in IPC_ROOTS: every other message goes through the SDK protocol.
- *  5. Code that runs sandboxed (desktop renderer and preload, packages/ui, packages/sdk) imports no
- *     Node builtins, and each desktop process imports only its own SDK entry points.
- *  6. @agentos/sdk/testing only in test support, Storybook and web mode; @agentos/app-* only in
- *     the desktop's installedApps registries; packages/ui imports no other @agentos package.
+ *  1. App modules (apps/<id> other than desktop and server) are built into bundles:
+ *     - src/client (browser, shares the host's runtime) imports only APP_CLIENT_IMPORTS + its own files;
+ *     - src/server (Bun) may use bun:*, node:* and npm packages declared in the app's package.json,
+ *       never host internals, client-side packages or other apps;
+ *     - src/shared is pure, browser-safe logic (no framework, SDK runtime, Node or Bun);
+ *     - src/client and src/server never import each other (api.invoke / ctx.handle / ctx.emit);
+ *     - apps never touch `window.agentos`; clients use useAppApi().
+ *  2. No relative import leaves its workspace package (test support may reach the repo's e2e/).
+ *  3. The server (apps/server) never imports app packages: apps arrive only as registry bundles.
+ *  4. Browser code (the desktop client, packages/ui, the universal parts of packages/sdk) imports
+ *     no Node or Bun builtins, and no server-only SDK entry points.
+ *  5. All client ↔ server traffic is the SDK protocol: `new WebSocket` only in the SDK bridge,
+ *     Bun.serve / upgrade only in the server entry.
+ *  6. @agentos/sdk/testing only in test support, Storybook and web mode; @agentos/app-* in the
+ *     desktop client only in web mode (source loaders); packages/ui imports no other @agentos package;
+ *     nothing imports electron (AgentOS is a PWA + Bun server).
  *  7. No {@html}, innerHTML, outerHTML, insertAdjacentHTML or document.write: agent and tool
  *     output is untrusted. HTML_ALLOWED lists the reviewed exceptions.
- *  8. BrowserWindow webPreferences never weaken the sandbox.
  *
  * Usage: bun scripts/check-boundaries.ts
  */
@@ -32,17 +33,18 @@ const ROOT = resolve(import.meta.dir, '..')
 const SOURCE_GLOBS = ['apps/*/{src,e2e,.storybook}/**/*.{ts,svelte,js,mjs}', 'packages/*/**/*.{ts,svelte,js,mjs}']
 const SKIP = /(^|\/)(node_modules|storybook-static|dist|out)\/|^packages\/[^/]+\/[^/]+\.config\.\w+$/
 
-/** What an app's shipped code may import. A new entry is an architecture decision: say why in the MR. */
-const APP_IMPORTS = [
+/** What an app's client code may import: these are shared with the host (one runtime). A new entry is an architecture decision. */
+const APP_CLIENT_IMPORTS = [
   '@agentos/sdk',
-  '@agentos/sdk/app/main',
-  '@agentos/sdk/app/renderer',
+  '@agentos/sdk/app/client',
   '@agentos/ui',
   '@agentos/ui/*',
   'svelte',
   'svelte/*',
   'zod'
 ]
+/** Never in an app's server code. */
+const APP_SERVER_FORBIDDEN = ['svelte', 'svelte/*', '@agentos/ui', '@agentos/ui/*', '@agentos/sdk/app/client', '@agentos/sdk/host/*', '@agentos/sdk/build', '@agentos/sdk/testing']
 /** Extra imports for test support (unit tests, stories, Storybook config, journeys, mocks). */
 const TEST_KIT = [
   '@agentos/sdk/testing',
@@ -56,34 +58,23 @@ const TEST_KIT = [
   '@axe-core/playwright'
 ]
 
-const ELECTRON_ALLOWED = ['apps/desktop/src/main/', 'apps/desktop/src/preload/', 'packages/sdk/src/host/main.ts', 'packages/sdk/src/host/preload.ts']
-const IPC_ROOTS = ['apps/desktop/src/main/index.ts', 'apps/desktop/src/preload/index.ts', 'packages/sdk/src/host/']
-const APP_REGISTRIES = ['apps/desktop/src/main/platform/installedApps.ts', 'apps/desktop/src/renderer/src/lib/installedApps.ts']
 /** Static, reviewed markup only. Never pass agent, tool or user text to these. */
 const HTML_ALLOWED = ['packages/ui/src/atoms/Icon.svelte'] // SVG strings from the constant icons map
-const SANDBOXED = ['apps/desktop/src/renderer/', 'apps/desktop/src/preload/', 'packages/ui/src/', 'packages/sdk/src/']
-const NODE_ALLOWED_IN_SANDBOXED = ['packages/sdk/src/host/main.ts'] // runs in the main process
-/** SDK entry points each desktop process must not import (they belong to another process). */
-const FOREIGN_SDK_ENTRIES: Record<string, string[]> = {
-  'apps/desktop/src/main/': ['@agentos/sdk/host/renderer', '@agentos/sdk/host/preload', '@agentos/sdk/app/renderer'],
-  'apps/desktop/src/preload/': ['@agentos/sdk/host/main', '@agentos/sdk/host/renderer', '@agentos/sdk/app/main', '@agentos/sdk/app/renderer'],
-  'apps/desktop/src/renderer/': ['@agentos/sdk/host/main', '@agentos/sdk/host/preload', '@agentos/sdk/app/main']
-}
-
-const WEAK_WEB_PREFERENCES: [RegExp, string][] = [
-  [/\bsandbox\s*:\s*false\b/, 'sandbox: false'],
-  [/\bcontextIsolation\s*:\s*false\b/, 'contextIsolation: false'],
-  [/\bnodeIntegration\w*\s*:\s*true\b/, 'nodeIntegration*: true'],
-  [/\bwebviewTag\s*:\s*true\b/, 'webviewTag: true'],
-  [/\bwebSecurity\s*:\s*false\b/, 'webSecurity: false'],
-  [/\ballowRunningInsecureContent\s*:\s*true\b/, 'allowRunningInsecureContent: true']
-]
+/** Runs in a browser: no Node or Bun builtins. */
+const BROWSER = ['apps/desktop/src/', 'packages/ui/src/', 'packages/sdk/src/']
+/** Bun-only parts of the SDK. */
+const SDK_BUN_ONLY = ['packages/sdk/src/build/']
+/** Server-only SDK entry points that browser code must not import. */
+const SERVER_ONLY_SDK = ['@agentos/sdk/host/server', '@agentos/sdk/app/server', '@agentos/sdk/build']
+const WEBSOCKET_ALLOWED = ['packages/sdk/src/host/ws-bridge.ts']
+const BUN_SERVE_ALLOWED = ['apps/server/src/server.ts']
 
 const under = (rel: string, prefixes: string[]): boolean => prefixes.some((p) => (p.endsWith('/') ? rel.startsWith(p) : rel === p))
 const matches = (spec: string, patterns: string[]): boolean =>
   patterns.some((p) => (p.endsWith('/*') ? spec === p.slice(0, -2) || spec.startsWith(p.slice(0, -1)) : spec === p))
-const isBuiltin = (spec: string): boolean => spec.startsWith('node:') || builtinModules.includes(spec.split('/')[0])
+const isBuiltin = (spec: string): boolean => spec.startsWith('node:') || spec.startsWith('bun:') || spec === 'bun' || builtinModules.includes(spec.split('/')[0])
 const isElectron = (spec: string): boolean => spec === 'electron' || spec.startsWith('electron/')
+const packageName = (spec: string): string => (spec.startsWith('@') ? spec.split('/').slice(0, 2).join('/') : spec.split('/')[0])
 
 function isTestSupport(rel: string): boolean {
   return (
@@ -96,11 +87,23 @@ function isTestSupport(rel: string): boolean {
   )
 }
 const isWebMode = (rel: string): boolean => rel.startsWith('apps/desktop/src/renderer/src/web/')
+const isAppModule = (app: string | undefined): app is string => !!app && app !== 'desktop' && app !== 'server'
 
 /** Which side of an app module a path is on. */
-function appPart(rel: string): 'main' | 'renderer' | 'shared' | null {
-  const part = rel.match(/^apps\/[^/]+\/src\/(main|renderer|shared)\//)?.[1]
-  return part === 'main' || part === 'renderer' || part === 'shared' ? part : null
+function appPart(rel: string): 'server' | 'client' | 'shared' | null {
+  const part = rel.match(/^apps\/[^/]+\/src\/(server|client|shared)\//)?.[1]
+  return part === 'server' || part === 'client' || part === 'shared' ? part : null
+}
+
+const declaredDeps = new Map<string, Set<string>>()
+async function depsOf(app: string): Promise<Set<string>> {
+  let deps = declaredDeps.get(app)
+  if (!deps) {
+    const pkg = (await Bun.file(join(ROOT, 'apps', app, 'package.json')).json()) as Record<string, Record<string, string> | undefined>
+    deps = new Set([...Object.keys(pkg.dependencies ?? {}), ...Object.keys(pkg.peerDependencies ?? {})])
+    declaredDeps.set(app, deps)
+  }
+  return deps
 }
 
 // ── Source preparation ───────────────────────────────────────────────────
@@ -208,41 +211,43 @@ function importsOf(code: string): Import[] {
 const errors: string[] = []
 const report = (rel: string, line: number, message: string): void => void errors.push(`${rel}:${line}: ${message}`)
 
-function appImportProblem(spec: string): string {
-  if (isElectron(spec)) return 'apps never import electron: reach the platform through ctx (app/main) or useAppApi() (app/renderer)'
-  if (spec.startsWith('@agentos/sdk/host/')) return `'${spec}' is host-only: apps use @agentos/sdk/app/main or @agentos/sdk/app/renderer`
-  if (spec === '@agentos/desktop' || spec.startsWith('@agentos/app-'))
-    return `apps never import the host or another app ('${spec}'): call other apps' tools with api.tools.call`
-  if (isBuiltin(spec)) return `apps get no Node builtins ('${spec}'): app code must be browser-safe; extend AppMainContext if a capability is missing`
-  return `'${spec}' is not on the app allow-list (sdk, ui, svelte, zod): a new app dependency is an architecture decision; justify it in the MR and add it to APP_IMPORTS`
-}
-
-function checkAppImport(rel: string, imp: Import, abs: string, test: boolean): void {
-  if (imp.spec.startsWith('.')) {
+async function checkAppImport(rel: string, app: string, imp: Import, abs: string, test: boolean): Promise<void> {
+  const { spec } = imp
+  if (spec.startsWith('.')) {
     if (test) return
     const from = appPart(rel)
-    const to = appPart(relative(ROOT, resolve(dirname(abs), imp.spec)).split(sep).join('/') + '/')
+    const to = appPart(relative(ROOT, resolve(dirname(abs), spec)).split(sep).join('/') + '/')
     if (from && to && from !== to && (from === 'shared' || to !== 'shared'))
       report(rel, imp.line, from === 'shared'
-        ? `src/shared is pure logic shared by both sides; it may not import src/${to} ('${imp.spec}')`
-        : `src/${from} may not import src/${to} ('${imp.spec}'): renderer and main run in different processes; use api.invoke / ctx.handle / ctx.emit and put shared code in src/shared`)
+        ? `src/shared is pure logic shared by both sides; it may not import src/${to} ('${spec}')`
+        : `src/${from} may not import src/${to} ('${spec}'): they run in different places (browser / Bun server); use api.invoke / ctx.handle / ctx.emit and put shared code in src/shared`)
     return
   }
-  if (!matches(imp.spec, APP_IMPORTS) && !(test && (matches(imp.spec, TEST_KIT) || isBuiltin(imp.spec)))) {
-    report(rel, imp.line, appImportProblem(imp.spec))
-    return
-  }
-  if (test) return
+  if (isElectron(spec)) return report(rel, imp.line, 'AgentOS has no Electron: apps reach the platform through ctx (app/server) or useAppApi() (app/client)')
+  if (spec === '@agentos/desktop' || spec === '@agentos/server' || spec.startsWith('@agentos/app-'))
+    return report(rel, imp.line, `apps never import the host or another app ('${spec}'): call other apps' tools`)
+  if (test && (matches(spec, TEST_KIT) || matches(spec, APP_CLIENT_IMPORTS) || isBuiltin(spec) || spec === '@agentos/sdk/app/server')) return
+
   const part = appPart(rel)
-  if (part === 'main' && matches(imp.spec, ['svelte', 'svelte/*', '@agentos/ui', '@agentos/ui/*', '@agentos/sdk/app/renderer']))
-    report(rel, imp.line, `src/main is headless: '${imp.spec}' belongs to the renderer`)
-  if (part === 'renderer' && imp.spec === '@agentos/sdk/app/main')
-    report(rel, imp.line, "src/renderer may not import '@agentos/sdk/app/main': the main context lives in another process")
-  if (part === 'shared' && matches(imp.spec, ['svelte', 'svelte/*', '@agentos/ui', '@agentos/ui/*', '@agentos/sdk/app/*']))
-    report(rel, imp.line, `src/shared is pure (no framework or SDK runtime) so bun tests run it directly; '${imp.spec}' is not allowed`)
+  if (part === 'server') {
+    if (matches(spec, APP_SERVER_FORBIDDEN))
+      return report(rel, imp.line, `src/server runs in the Bun server: '${spec}' belongs to the client or the host`)
+    if (isBuiltin(spec) || matches(spec, ['@agentos/sdk', '@agentos/sdk/app/server', 'zod'])) return
+    if (!(await depsOf(app)).has(packageName(spec)))
+      report(rel, imp.line, `'${spec}' is not a dependency of apps/${app}: add it to its package.json (it is bundled into server.js)`)
+    return
+  }
+  if (part === 'shared' && (isBuiltin(spec) || matches(spec, ['svelte', 'svelte/*', '@agentos/ui', '@agentos/ui/*', '@agentos/sdk/app/*'])))
+    return report(rel, imp.line, `src/shared is pure, browser-safe logic (bun tests run it directly, both sides use it); '${spec}' is not allowed`)
+  // client, shared, manifest and anything else ships to the browser
+  if (isBuiltin(spec)) return report(rel, imp.line, `'${spec}' is a Node/Bun builtin in code that runs in the browser: move it to src/server`)
+  if (spec.startsWith('@agentos/sdk/host/') || spec === '@agentos/sdk/app/server')
+    return report(rel, imp.line, `'${spec}' is not for app clients: use @agentos/sdk/app/client`)
+  if (!matches(spec, APP_CLIENT_IMPORTS))
+    report(rel, imp.line, `'${spec}' is not on the app client allow-list (sdk client, ui, svelte, zod): client bundles share the host's runtime; a new client dependency is an architecture decision (APP_CLIENT_IMPORTS)`)
 }
 
-function checkImport(rel: string, imp: Import, abs: string): void {
+async function checkImport(rel: string, imp: Import, abs: string): Promise<void> {
   const { spec } = imp
   const test = isTestSupport(rel)
   const app = rel.match(/^apps\/([^/]+)\//)?.[1]
@@ -255,30 +260,23 @@ function checkImport(rel: string, imp: Import, abs: string): void {
       report(rel, imp.line, `relative import '${spec}' leaves ${pkg}: cross packages only through their published entry points`)
   }
 
-  if (app && app !== 'desktop') return checkAppImport(rel, imp, abs, test)
+  if (isAppModule(app)) return checkAppImport(rel, app, imp, abs, test)
 
-  if (isElectron(spec)) {
-    if (!under(rel, ELECTRON_ALLOWED))
-      report(rel, imp.line, "only the desktop main and preload processes import 'electron'")
-    else if (rel.startsWith('packages/sdk/') && !imp.typeOnly)
-      report(rel, imp.line, 'the SDK takes Electron by injection: use `import type` from electron')
-    const raw = imp.clause.match(/\b(ipcMain|ipcRenderer|contextBridge)\b/)
-    if (raw && !under(rel, IPC_ROOTS))
-      report(rel, imp.line, `raw ${raw[1]} outside the IPC roots: add a channel to @agentos/sdk/host/protocol (zod-validated) instead`)
-  }
-
-  if (spec === '@agentos/desktop') report(rel, imp.line, 'nothing imports the host package')
+  if (isElectron(spec)) report(rel, imp.line, 'AgentOS has no Electron (PWA client + Bun server)')
+  if (spec === '@agentos/desktop' || spec === '@agentos/server') report(rel, imp.line, `nothing imports '${spec}'`)
   if (spec.startsWith('@agentos/sdk/testing') && !test && !isWebMode(rel))
     report(rel, imp.line, 'the in-memory host is for tests, stories and web mode only')
-  if (spec.startsWith('@agentos/app-') && !under(rel, APP_REGISTRIES) && !test)
-    report(rel, imp.line, `apps are wired only in the installedApps registries (${APP_REGISTRIES.join(', ')})`)
+  if (spec.startsWith('@agentos/app-')) {
+    if (app === 'server') report(rel, imp.line, 'the server never imports apps: they are installed as registry bundles')
+    else if (!test && !isWebMode(rel)) report(rel, imp.line, 'the client loads apps as bundles; only web mode registers source loaders for repo apps')
+  }
   if (rel.startsWith('packages/ui/src/') && spec.startsWith('@agentos/') && !matches(spec, ['@agentos/ui', '@agentos/ui/*']) && !test)
     report(rel, imp.line, `the UI kit depends on no other @agentos package ('${spec}')`)
-  if (under(rel, SANDBOXED) && isBuiltin(spec) && !under(rel, NODE_ALLOWED_IN_SANDBOXED) && !test)
-    report(rel, imp.line, `'${spec}' is a Node builtin in code that runs sandboxed (no Node)`)
-  for (const [zone, foreign] of Object.entries(FOREIGN_SDK_ENTRIES)) {
-    if (rel.startsWith(zone) && foreign.includes(spec))
-      report(rel, imp.line, `'${spec}' belongs to another process than ${zone}`)
+  if (under(rel, BROWSER) && !under(rel, SDK_BUN_ONLY) && !test) {
+    if (isBuiltin(spec)) report(rel, imp.line, `'${spec}' is a Node/Bun builtin in code that runs in the browser`)
+    // Types don't ship: web mode may type server modules it runs in the page.
+    if (rel.startsWith('apps/desktop/') && matches(spec, SERVER_ONLY_SDK) && !imp.typeOnly)
+      report(rel, imp.line, `'${spec}' is server-only`)
   }
 }
 
@@ -287,16 +285,18 @@ function checkCode(rel: string, code: string, markup: string): void {
     for (const m of text.matchAll(new RegExp(re.source, re.flags.includes('g') ? re.flags : re.flags + 'g')))
       report(rel, lineAt(text, m.index ?? 0), message)
   }
+  const test = isTestSupport(rel)
 
-  if (!under(rel, IPC_ROOTS)) scan(code, /\bwebContents\s*\.\s*send\s*\(/, 'raw webContents.send: emit through createHostEmitter and a protocol event channel')
-  if (!rel.startsWith('packages/sdk/src/')) scan(code, /\b(?:window|globalThis)\s*\.\s*agentos\b/, 'window.agentos is the host bridge: apps use useAppApi(), the host uses hostBridge()')
+  if (!under(rel, WEBSOCKET_ALLOWED) && !test)
+    scan(code, /\bnew\s+WebSocket\s*\(/, 'raw WebSocket: talk to the server through the SDK bridge (createWsHostBridge) and the protocol')
+  if (!under(rel, BUN_SERVE_ALLOWED) && !test)
+    scan(code, /\bBun\s*\.\s*serve\s*\(|\.upgrade\s*\(\s*request/, 'Bun.serve / upgrade belong to the server entry (apps/server/src/server.ts); apps add capabilities through ctx')
+  if (!rel.startsWith('packages/sdk/src/') && !test) scan(code, /\b(?:window|globalThis)\s*\.\s*agentos\b/, 'window.agentos is the host bridge: apps use useAppApi(), the shell uses hostBridge()')
   if (!under(rel, HTML_ALLOWED)) {
     const untrusted = 'renders raw HTML; agent, tool and user text is untrusted: build nodes (see atoms/RichText.svelte)'
     scan(markup, /\{@html\b/, `{@html} ${untrusted}`)
     scan(code, /\.(?:innerHTML|outerHTML)\s*\+?=|\binsertAdjacentHTML\s*\(|\bdocument\s*\.\s*write(?:ln)?\s*\(/, `this ${untrusted}`)
   }
-  if (rel.startsWith('apps/desktop/src/main/'))
-    for (const [re, setting] of WEAK_WEB_PREFERENCES) scan(code, re, `${setting} weakens the renderer sandbox: the renderer stays sandboxed with no Node`)
 }
 
 let checked = 0
@@ -306,7 +306,7 @@ for (const pattern of SOURCE_GLOBS) {
     checked++
     const abs = join(ROOT, rel)
     const { code, markup } = split(rel, await Bun.file(abs).text())
-    for (const imp of importsOf(code)) checkImport(rel, imp, abs)
+    for (const imp of importsOf(code)) await checkImport(rel, imp, abs)
     checkCode(rel, code, markup)
   }
 }

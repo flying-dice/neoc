@@ -7,11 +7,7 @@
 -->
 <script lang="ts">
   import type { IconName } from '@agentos/ui'
-  import type {
-    ConfigValue,
-    SessionConfigOption,
-    SessionModeState
-  } from '@agentos/sdk/host/renderer'
+  import type { ConfigValue, SessionConfigOption, SessionModeState } from '@agentos/sdk/host/client'
   import UsageRing from '../atoms/UsageRing.svelte'
   import SessionPill, { type PillOption } from '../molecules/SessionPill.svelte'
   import SessionToggle from '../molecules/SessionToggle.svelte'
