@@ -7,7 +7,7 @@
 //! ```
 //! Logging is `tracing` with `RUST_LOG` (default `info`).
 
-use agentos_application::{random_hex, PairingPolicy};
+use agentos_application::{mint_agent_token, PairingPolicy};
 use agentos_domain::{Agent, AgentId, AgentRuntime, ApprovalPolicy, Grants};
 use agentos_host::{
     build,
@@ -114,7 +114,7 @@ async fn run(settings: Settings, cwd: &Path) -> anyhow::Result<()> {
     let port = listener.local_addr()?.port();
 
     // /mcp: one bearer token for local MCP clients, regenerated on every start
-    let mcp_token = random_hex(&OsRandom, 24);
+    let mcp_token = mint_agent_token(&OsRandom);
     let local_agent = Agent {
         id: AgentId("local".into()),
         name: "Local MCP client".into(),

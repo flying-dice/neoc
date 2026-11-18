@@ -215,6 +215,7 @@ async fn rig_granted(approval: ApprovalPolicy, grants: Grants) -> Rig {
         Arc::new(MemAgentStore::default()),
         fakes.registry.clone(),
         Arc::new(SeededRandom::default()),
+        Arc::new(crate::NoAgentProcesses),
     ));
     agents
         .create(NewAgent {

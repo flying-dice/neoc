@@ -438,3 +438,11 @@ pub trait AgentProcesses: Send + Sync {
     /// session starts a new one from the agent's current settings.
     async fn stop_agent(&self, agent: &AgentId);
 }
+
+/// For a host whose connector launches no processes (a scripted one in tests): nothing to stop.
+pub struct NoAgentProcesses;
+
+#[async_trait]
+impl AgentProcesses for NoAgentProcesses {
+    async fn stop_agent(&self, _agent: &AgentId) {}
+}

@@ -76,35 +76,32 @@ pub struct AgentService {
     tools: Arc<dyn ToolRegistry>,
     random: Arc<dyn RandomSource>,
     roster: RwLock<Roster>,
-    processes: Option<Arc<dyn AgentProcesses>>,
+    processes: Arc<dyn AgentProcesses>,
 }
 
-/// 192 bits of randomness as hex, prefixed so a leaked token is recognisable.
-fn mint(random: &dyn RandomSource) -> String {
+/// A bearer token: 192 bits of randomness as hex, prefixed so a leaked token is recognisable. Every agent token
+/// is minted here, the host's own local MCP client's included.
+#[must_use]
+pub fn mint_agent_token(random: &dyn RandomSource) -> String {
     format!("agentos_{}", random_hex(random, 24))
 }
 
 impl AgentService {
     #[must_use]
+    /// `processes` stops an agent's process when the agent is deleted or its runtime (command, arguments,
+    /// environment) changes; it is required, so a wiring mistake cannot skip the stop silently
+    /// ([`crate::NoAgentProcesses`] for a connector that launches nothing).
     pub fn new(
         store: Arc<dyn AgentStore>,
         tools: Arc<dyn ToolRegistry>,
         random: Arc<dyn RandomSource>,
+        processes: Arc<dyn AgentProcesses>,
     ) -> Self {
-        Self { store, tools, random, roster: RwLock::default(), processes: None }
-    }
-
-    /// Stop an agent's process when the agent is deleted or its runtime (command, arguments, environment) changes.
-    #[must_use]
-    pub fn with_processes(mut self, processes: Arc<dyn AgentProcesses>) -> Self {
-        self.processes = Some(processes);
-        self
+        Self { store, tools, random, roster: RwLock::default(), processes }
     }
 
     async fn stop_process(&self, id: &AgentId) {
-        if let Some(processes) = &self.processes {
-            processes.stop_agent(id).await;
-        }
+        self.processes.stop_agent(id).await;
     }
 
     /// Read the roster from the store (at start, and in tests that share a store).
@@ -261,7 +258,7 @@ impl AgentService {
     /// Mint a new persistent token, replacing the old one. The plaintext is returned once and never stored.
     pub async fn rotate_token(&self, id: &AgentId) -> Result<String, AgentError> {
         self.require(id)?;
-        let token = mint(self.random.as_ref());
+        let token = mint_agent_token(self.random.as_ref());
         self.set_persistent_hash(id, &hash_token(&token)).await?;
         Ok(token)
     }
@@ -280,7 +277,7 @@ impl AgentService {
     /// [`AgentService::revoke_launch_tokens`] is called with the same `scope` (or the agent is deleted).
     pub fn launch_token(&self, agent: &AgentId, scope: &str) -> Result<String, AgentError> {
         self.require(agent)?;
-        let token = mint(self.random.as_ref());
+        let token = mint_agent_token(self.random.as_ref());
         self.roster.write().launch.push(LaunchToken {
             hash: hash_token(&token),
             agent: agent.clone(),

@@ -4,7 +4,7 @@
 use agentos_application::{
     ports::AgentDirectory,
     testing::{Fakes, MemAgentStore, SeededRandom},
-    AgentService, NewAgent,
+    AgentService, NewAgent, NoAgentProcesses,
 };
 use agentos_domain::{AgentRuntime, AppId, Grants};
 use agentos_mcp::{mcp_router, McpState};
@@ -40,6 +40,7 @@ async fn harness() -> Harness {
         Arc::new(MemAgentStore::default()),
         state.clone(),
         Arc::new(SeededRandom::default()),
+        Arc::new(NoAgentProcesses),
     ));
     let dir: Arc<dyn AgentDirectory> = agents.clone();
     let cancel = CancellationToken::new();

@@ -37,12 +37,12 @@ pub mod writeback;
 #[cfg(test)]
 mod writeback_tests;
 
-pub use agents::{AgentError, AgentPatch, AgentService, NewAgent};
+pub use agents::{mint_agent_token, AgentError, AgentPatch, AgentService, NewAgent};
 pub use chat::{ChatError, ChatPorts, ChatService, RunEvents, PERMISSION_TTL_MS};
 pub use devices::{DeviceService, PairError, PairedDevice, PairingCode, PairingPolicy};
 pub use error::{AppError, PortError};
 pub use live::{LiveSources, SourceDef, SourceId, SourceKind, SourceUpdate, SubscriptionId, Window};
-pub use ports::AgentProcesses;
+pub use ports::{AgentProcesses, NoAgentProcesses};
 pub use services::{AppInfo, AppService, AppStatus, Display, Ports};
 pub use tokens::random_hex;
 pub use views::{ViewError, ViewService, ViewSink};

@@ -30,10 +30,10 @@ use agentos_application::{
         AgentConnector, AgentDirectory, AppRuntime, Clock, DataStore, DeviceRegistry, EventSink, Fetcher,
         InstalledAppStore, RandomSource, ThreadStore, ToolRegistry,
     },
-    AgentProcesses, AgentService, AppService, ChatPorts, ChatService, DeviceService, PairingPolicy, Ports,
-    ViewService,
+    AgentProcesses, AgentService, AppService, ChatPorts, ChatService, DeviceService, NoAgentProcesses,
+    PairingPolicy, Ports, ViewService,
 };
-use agentos_domain::Agent;
+use agentos_domain::{limits, Agent};
 use agentos_fetch::UrlFetcher;
 use agentos_http::{
     origin_guard, require_session, rpc_router, session_router, static_router, HostGuard, RpcHub,
@@ -141,12 +141,12 @@ pub fn open_system(data_dir: Option<&std::path::Path>) -> anyhow::Result<Arc<Sql
 fn agent_processes(
     scripted: Option<Arc<dyn AgentConnector>>,
     cwd: PathBuf,
-) -> (Arc<dyn AgentConnector>, Option<Arc<dyn AgentProcesses>>) {
+) -> (Arc<dyn AgentConnector>, Arc<dyn AgentProcesses>) {
     if let Some(connector) = scripted {
-        return (connector, None);
+        return (connector, Arc::new(NoAgentProcesses));
     }
     let acp = Arc::new(AcpConnector::new(cwd));
-    (acp.clone(), Some(acp))
+    (acp.clone(), acp)
 }
 
 pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
@@ -155,7 +155,7 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
     // driven adapters -> ports
     let hub = Arc::new(RpcHub::default()); // EventSink + Notifier + the /rpc handler
     let mcp_state = Arc::new(McpState::default()); // ToolRegistry
-    let fetcher: Arc<dyn Fetcher> = Arc::new(UrlFetcher::new(8 * 1024 * 1024)?);
+    let fetcher: Arc<dyn Fetcher> = Arc::new(UrlFetcher::new(limits::MAX_FILE_BYTES as u64)?); // one fetch is one package file
     let data: Arc<dyn DataStore> =
         Arc::new(SqliteDataStore::new(cfg.data_dir.as_ref().map(|d| d.join("apps"))));
     let system = open_system(cfg.data_dir.as_deref())?;
@@ -165,11 +165,7 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
     let (connector, processes) = agent_processes(cfg.connector, cfg.agent_cwd);
     // the roster is also the MCP adapter's directory, tells it when an agent's tool list changes, and is what
     // apps with the `agents` permission list
-    let mut contacts = AgentService::new(system.clone(), mcp_state.clone(), random.clone());
-    if let Some(processes) = processes {
-        contacts = contacts.with_processes(processes);
-    }
-    let contacts = Arc::new(contacts);
+    let contacts = Arc::new(AgentService::new(system.clone(), mcp_state.clone(), random.clone(), processes));
     contacts.load().await?;
     let runtime: Arc<dyn AppRuntime> =
         Arc::new(LuauRuntime::new(hub.clone(), hub.clone(), Limits::default()).with_roster(contacts.clone()));

@@ -17,7 +17,12 @@ struct Rig {
 fn rig() -> Rig {
     let store = Arc::new(MemAgentStore::default());
     let tools = Arc::new(MemRegistry::default());
-    let svc = AgentService::new(store.clone(), tools.clone(), Arc::new(SeededRandom::default()));
+    let svc = AgentService::new(
+        store.clone(),
+        tools.clone(),
+        Arc::new(SeededRandom::default()),
+        Arc::new(crate::NoAgentProcesses),
+    );
     Rig { store, tools, svc }
 }
 
@@ -174,7 +179,12 @@ async fn ensure_seeds_an_agent_once_and_never_overwrites_what_the_person_edited(
     assert!(again.grants.all, "the edited grants survive a re-seed");
 
     // a second service over the same store reads the roster back
-    let fresh = AgentService::new(r.store.clone(), r.tools.clone(), Arc::new(SeededRandom::default()));
+    let fresh = AgentService::new(
+        r.store.clone(),
+        r.tools.clone(),
+        Arc::new(SeededRandom::default()),
+        Arc::new(crate::NoAgentProcesses),
+    );
     fresh.load().await.unwrap();
     assert_eq!(fresh.list().len(), 1);
     assert_eq!(fresh.authenticate("fixed-token").unwrap().grants, [Permission::CallAnyTool]);
@@ -197,8 +207,8 @@ fn rig_with_processes() -> (AgentService, Arc<StopLog>) {
         Arc::new(MemAgentStore::default()),
         Arc::new(MemRegistry::default()),
         Arc::new(SeededRandom::default()),
-    )
-    .with_processes(log.clone());
+        log.clone(),
+    );
     (svc, log)
 }
 
@@ -242,4 +252,16 @@ async fn deleting_an_agent_stops_its_process() {
     assert!(log.0.lock().is_empty(), "a delete that failed stops nothing");
     svc.delete(&a.id).await.unwrap();
     assert_eq!(*log.0.lock(), ["claude"]);
+}
+
+#[test]
+fn every_agent_token_is_minted_with_the_agentos_prefix_and_192_random_bits() {
+    let random = SeededRandom::default();
+    let (a, b) = (crate::mint_agent_token(&random), crate::mint_agent_token(&random));
+    for token in [&a, &b] {
+        let hex = token.strip_prefix("agentos_").expect("a leaked token is recognisable by its prefix");
+        assert_eq!(hex.len(), 48);
+        assert!(hex.bytes().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+    }
+    assert_ne!(a, b);
 }

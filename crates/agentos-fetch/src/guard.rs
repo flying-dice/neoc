@@ -177,7 +177,14 @@ mod tests {
         ] {
             assert!(is_blocked(ip(blocked), false), "{blocked} must be blocked");
         }
-        for public in ["93.184.216.34", "1.1.1.1", "2606:4700:4700::1111", "::ffff:8.8.8.8", "100.128.0.1", "2002:808:808::1"] {
+        for public in [
+            "93.184.216.34",
+            "1.1.1.1",
+            "2606:4700:4700::1111",
+            "::ffff:8.8.8.8",
+            "100.128.0.1",
+            "2002:808:808::1",
+        ] {
             assert!(!is_blocked(ip(public), false), "{public} must be allowed");
         }
     }
