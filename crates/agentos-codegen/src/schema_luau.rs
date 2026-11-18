@@ -87,3 +87,50 @@ fn object(s: &Value, root: &str) -> String {
         _ => "{ [string]: any }".to_owned(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn emit(name: &str, schema: &Value) -> String {
+        schema_to_luau(name, schema, &mut BTreeSet::new())
+    }
+
+    #[test]
+    fn objects_mark_optional_fields_and_recursion() {
+        let schema = json!({
+            "type": "object",
+            "properties": { "key": { "type": "string" }, "children": { "type": "array", "items": { "$ref": "#" } } },
+            "required": ["key"]
+        });
+        assert_eq!(emit("Node", &schema), "export type Node = { children: ({ Node })?, key: string }\n\n");
+    }
+
+    #[test]
+    fn unions_enums_and_refs() {
+        let schema = json!({
+            "$defs": { "Persist": { "oneOf": [{ "const": "none" }, { "const": "app" }] } },
+            "type": "object",
+            "properties": { "persist": { "$ref": "#/$defs/Persist" }, "n": { "type": ["integer", "null"] } }
+        });
+        let out = emit("Decl", &schema);
+        assert!(out.contains("export type Persist = \"none\" | \"app\""), "{out}");
+        assert!(out.contains("persist: (Persist)?"), "{out}");
+        assert!(out.contains("n: (number | nil)?"), "{out}");
+    }
+
+    #[test]
+    fn open_objects_are_string_maps() {
+        let out = emit("Bag", &json!({ "type": "object", "additionalProperties": { "type": "number" } }));
+        assert_eq!(out, "export type Bag = { [string]: number }\n\n");
+    }
+
+    #[test]
+    fn a_type_is_emitted_once() {
+        let mut seen = BTreeSet::new();
+        let schema = json!({ "type": "string" });
+        assert!(!schema_to_luau("Name", &schema, &mut seen).is_empty());
+        assert!(schema_to_luau("Name", &schema, &mut seen).is_empty());
+    }
+}
