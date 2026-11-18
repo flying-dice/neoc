@@ -10,7 +10,7 @@ use agentos_application::ports::{
 use agentos_domain::{ui::Node, Capabilities};
 use agentos_luau::{Limits, LuauRuntime};
 use common::{agent_ctx, db, id, user_ctx};
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use std::{collections::BTreeMap, path::Path, sync::Arc};
 
 struct Quiet;
@@ -166,10 +166,7 @@ fn path_of(node: &Node, key: &str) -> Option<String> {
 impl Keypad {
     async fn open() -> Self {
         let rt = calculator().await;
-        let out = rt
-            .open_view(&id("calculator"), "v1", "main", Default::default(), Default::default())
-            .await
-            .unwrap();
+        let out = rt.open_view(&id("calculator"), "v1", "main", Map::new(), Map::new()).await.unwrap();
         Self { rt, out }
     }
 
@@ -470,9 +467,9 @@ async fn clear_clears_the_entry_first_and_everything_the_second_time() {
     assert_eq!(pad.clear_title(), "AC", "a result is not typed text");
     // AC drops the pending operator and the caption too
     pad.press("clear").await;
-    assert_eq!((pad.display(), pad.caption()), ("0".into(), "".into()));
+    assert_eq!((pad.display(), pad.caption()), ("0".into(), String::new()));
     pad.press("5 add 3 clear clear").await;
-    assert_eq!((pad.display(), pad.pending(), pad.caption()), ("0".into(), vec![], "".into()));
+    assert_eq!((pad.display(), pad.pending(), pad.caption()), ("0".into(), vec![], String::new()));
     pad.press("2 eq").await;
     assert_eq!(pad.display(), "2", "no pending operator survives AC");
     assert_eq!(shows("1 2 3 clear clear").await, "0");
