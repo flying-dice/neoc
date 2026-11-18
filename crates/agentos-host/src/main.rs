@@ -7,14 +7,14 @@
 //! ```
 //! Logging is `tracing` with `RUST_LOG` (default `info`).
 
-use agentos_application::PairingPolicy;
+use agentos_application::{random_hex, PairingPolicy};
 use agentos_domain::{Agent, AgentId, AgentRuntime, ApprovalPolicy, Grants};
 use agentos_host::{
     build,
     config::Settings,
     net::reachable_urls,
     open_devices,
-    platform::{random_hex, OsRandom, SystemClock},
+    platform::{OsRandom, SystemClock},
     serve::{serve, termination_signal},
     startup::{prepare_data_dir, spawn_revision_purge, start_apps, watch_for_reload, write_mcp_json},
     HostConfig,

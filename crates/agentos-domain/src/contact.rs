@@ -194,7 +194,17 @@ impl Agent {
 /// SHA-256 of a bearer token, as lowercase hex: all that is stored of a token.
 #[must_use]
 pub fn hash_token(token: &str) -> String {
-    format!("{:x}", Sha256::digest(token.as_bytes()))
+    hex_of(&Sha256::digest(token.as_bytes()))
+}
+
+/// Lowercase hex of some bytes.
+#[must_use]
+pub fn hex_of(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    bytes.iter().fold(String::with_capacity(bytes.len() * 2), |mut s, b| {
+        let _ = write!(s, "{b:02x}");
+        s
+    })
 }
 
 /// Constant-time equality of two hashes (no early exit on the first differing byte).
@@ -277,5 +287,12 @@ mod tests {
         assert_ne!(h, hash_token("s3cre7"));
         assert!(same_hash(&h, &hash_token("s3cret")));
         assert!(!same_hash(&h, &hash_token("other")) && !same_hash(&h, "short"));
+    }
+
+    #[test]
+    fn hex_is_lowercase_and_two_digits_per_byte() {
+        assert_eq!(hex_of(&[0, 1, 0xab, 0xff]), "0001abff");
+        assert_eq!(hex_of(&[]), "");
+        assert_eq!(hash_token(""), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
     }
 }

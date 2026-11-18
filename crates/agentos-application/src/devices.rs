@@ -7,11 +7,11 @@
 
 use crate::{
     ports::{Clock, DeviceRegistry, RandomSource},
+    tokens::random_hex,
     PortError,
 };
-use agentos_domain::{Device, DeviceId};
+use agentos_domain::{hash_token, Device, DeviceId};
 use parking_lot::Mutex;
-use sha2::{Digest, Sha256};
 use std::{collections::VecDeque, sync::Arc};
 
 /// 31 symbols with no `0 O 1 I L`: safe to read aloud and to type from a screen.
@@ -99,7 +99,7 @@ impl DeviceService {
         let now = self.clock.now_unix_ms();
         let code = self.random_code();
         let expires_at_ms = now + self.policy.code_ttl_ms;
-        self.registry.add_pairing_code(&hash(&code), expires_at_ms).await?;
+        self.registry.add_pairing_code(&hash_token(&code), expires_at_ms).await?;
         Ok(PairingCode {
             code: format!("{}-{}", &code[..CODE_LEN / 2], &code[CODE_LEN / 2..]),
             expires_at_ms,
@@ -114,7 +114,7 @@ impl DeviceService {
 
         let normalised = normalise_code(code);
         let valid = match &normalised {
-            Some(c) => self.registry.take_pairing_code(&hash(c), now).await?,
+            Some(c) => self.registry.take_pairing_code(&hash_token(c), now).await?,
             None => false,
         };
         if !valid {
@@ -125,12 +125,12 @@ impl DeviceService {
 
         let token = self.random_token();
         let device = Device {
-            id: DeviceId(self.random_hex(8)),
+            id: DeviceId(random_hex(self.random.as_ref(), 8)),
             name: clean_device_name(device_name),
             created_at: now,
             last_seen_at: now,
         };
-        self.registry.add_session(&device, &hash(&token)).await?;
+        self.registry.add_session(&device, &hash_token(&token)).await?;
         Ok(PairedDevice { device, token })
     }
 
@@ -139,7 +139,7 @@ impl DeviceService {
         if token.is_empty() || token.len() > 128 {
             return None;
         }
-        let mut device = match self.registry.find_session(&hash(token)).await {
+        let mut device = match self.registry.find_session(&hash_token(token)).await {
             Ok(found) => found?,
             Err(e) => {
                 tracing::error!(error = %e, "session lookup failed");
@@ -211,14 +211,8 @@ impl DeviceService {
         Ok(())
     }
 
-    fn random_hex(&self, bytes: usize) -> String {
-        let mut buf = vec![0u8; bytes];
-        self.random.fill(&mut buf);
-        hex(&buf)
-    }
-
     fn random_token(&self) -> String {
-        self.random_hex(32)
+        random_hex(self.random.as_ref(), 32)
     }
 
     /// Uniform over the alphabet (rejection sampling: 248 = 31 * 8 is the largest multiple below 256).
@@ -253,18 +247,6 @@ fn clean_device_name(raw: &str) -> String {
     } else {
         cleaned.chars().take(MAX_DEVICE_NAME).collect()
     }
-}
-
-fn hash(secret: &str) -> String {
-    hex(&Sha256::digest(secret.as_bytes()))
-}
-
-fn hex(bytes: &[u8]) -> String {
-    use std::fmt::Write as _;
-    bytes.iter().fold(String::with_capacity(bytes.len() * 2), |mut s, b| {
-        let _ = write!(s, "{b:02x}");
-        s
-    })
 }
 
 #[cfg(test)]

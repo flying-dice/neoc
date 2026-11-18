@@ -117,7 +117,7 @@ struct ThreadSink {
 fn hex_id(random: &dyn RandomSource, prefix: &str) -> String {
     let mut bytes = [0u8; 8];
     random.fill(&mut bytes);
-    format!("{prefix}{}", crate::agents::hex_of(&bytes))
+    format!("{prefix}{}", agentos_domain::hex_of(&bytes))
 }
 
 fn replace(path: &str, value: &Value) -> Value {

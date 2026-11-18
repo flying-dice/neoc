@@ -29,7 +29,7 @@ pub use agent::{AgentId, AgentIdentity, Capabilities, Permission};
 pub use app::{
     resolve_url, source_label, AppId, AppRef, FileRef, Manifest, MigrationSpec, Registry, Requires, HOST_API,
 };
-pub use contact::{hash_token, same_hash, Agent, AgentRuntime, ApprovalPolicy, Grants};
+pub use contact::{hash_token, hex_of, same_hash, Agent, AgentRuntime, ApprovalPolicy, Grants};
 pub use decl::{AppDecl, KitRequirement, WindowDecl};
 pub use device::{Device, DeviceId};
 pub use error::DomainError;

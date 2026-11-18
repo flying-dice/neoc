@@ -5,6 +5,7 @@ use agentos_acp::{handshake, AcpConnector, AgentLaunch};
 use agentos_application::ports::{
     AgentConnector, AgentEventSink, McpAccess, PermissionDecision, SessionOpened,
 };
+use agentos_application::AgentProcesses;
 use agentos_domain::{
     thread::{
         AgentEvent, ConfigOption, ConfigValue, PermissionAnswer, PermissionRequest, StopReason, ToolStatus,
@@ -343,4 +344,64 @@ async fn handshake_with_real_claude_agent_acp_via_node() {
         .expect("handshake in 30s")
         .unwrap();
     assert!(hello.name.is_some());
+}
+
+/// An agent that starts and then never answers `initialize`.
+fn hung_agent() -> Agent {
+    Agent {
+        id: AgentId("hung".into()),
+        runtime: AgentRuntime {
+            command: "/bin/sh".into(),
+            args: vec!["-c".into(), "sleep 60".into()],
+            ..AgentRuntime::default()
+        },
+        ..fake_agent("unused")
+    }
+}
+
+#[tokio::test]
+async fn an_agent_that_never_answers_initialize_does_not_block_another_agents_session() {
+    let timeout = Duration::from_secs(4);
+    let c = Arc::new(AcpConnector::new(std::env::current_dir().unwrap()).with_initialize_timeout(timeout));
+    let (c2, hung) = (c.clone(), hung_agent());
+    let stuck = tokio::spawn(async move { c2.open_session(&hung, None, Arc::new(Sink::default())).await });
+    tokio::time::sleep(Duration::from_millis(300)).await; // the hung agent is now starting
+
+    let started = std::time::Instant::now();
+    let sink = Arc::new(Sink::default());
+    let opened = within(c.open_session(&fake(), None, sink.clone())).await.unwrap();
+    assert!(
+        started.elapsed() < timeout / 2,
+        "another agent waited for the hung one: {:?}",
+        started.elapsed()
+    );
+    within(c.prompt(&fake().id, &opened.session_id, "hello")).await.unwrap();
+    assert!(!stuck.is_finished(), "the hung agent is still being waited for");
+
+    // and the hung one gives up with a clear error instead of waiting for ever
+    let err = within(stuck).await.unwrap().unwrap_err().to_string();
+    assert!(err.contains("did not answer `initialize`"), "{err}");
+    assert!(c.prompt(&AgentId("hung".into()), "s", "x").await.is_err(), "nothing is left running for it");
+    c.stop_all().await;
+}
+
+#[tokio::test]
+async fn stopping_an_agent_ends_its_process_tells_its_sessions_and_the_next_session_starts_afresh() {
+    let c = connector();
+    let sink = Arc::new(Sink::default());
+    let s = open(&c, &sink).await;
+    within(c.prompt(&fake().id, &s.session_id, "hello")).await.unwrap();
+
+    c.stop_agent(&fake().id).await;
+    assert_eq!(sink.exits.lock().len(), 1, "the session is told: {:?}", sink.exits.lock());
+    assert!(c.prompt(&fake().id, &s.session_id, "hello").await.is_err(), "the process is gone");
+    c.stop_agent(&fake().id).await; // idempotent
+
+    let again = Arc::new(Sink::default());
+    let s2 = open(&c, &again).await;
+    assert_eq!(s2.session_id, "sess-1", "a new process numbers its sessions from 1");
+    // stopping one agent leaves the others alone
+    c.stop_agent(&AgentId("somebody-else".into())).await;
+    within(c.prompt(&fake().id, &s2.session_id, "hello")).await.unwrap();
+    c.stop_all().await;
 }

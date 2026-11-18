@@ -31,18 +31,6 @@ impl RandomSource for OsRandom {
     }
 }
 
-/// Lowercase hex of `bytes` random bytes.
-#[must_use]
-pub fn random_hex(random: &dyn RandomSource, bytes: usize) -> String {
-    use std::fmt::Write as _;
-    let mut buf = vec![0u8; bytes];
-    random.fill(&mut buf);
-    buf.iter().fold(String::new(), |mut s, b| {
-        let _ = write!(s, "{b:02x}");
-        s
-    })
-}
-
 /// Runs background work (the live-source pumps) on the tokio runtime; dropping the handle aborts the task.
 pub struct TokioBackground;
 

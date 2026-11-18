@@ -30,7 +30,8 @@ use agentos_application::{
         AgentConnector, AgentDirectory, AppRuntime, Clock, DataStore, DeviceRegistry, EventSink, Fetcher,
         InstalledAppStore, RandomSource, ThreadStore, ToolRegistry,
     },
-    AgentService, AppService, ChatPorts, ChatService, DeviceService, PairingPolicy, Ports, ViewService,
+    AgentProcesses, AgentService, AppService, ChatPorts, ChatService, DeviceService, PairingPolicy, Ports,
+    ViewService,
 };
 use agentos_domain::Agent;
 use agentos_fetch::UrlFetcher;
@@ -149,14 +150,26 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
     let random = cfg.random;
     // the roster is also the MCP adapter's directory, tells it when an agent's tool list changes, and is what
     // apps with the `agents` permission list
-    let contacts = Arc::new(AgentService::new(system.clone(), mcp_state.clone(), random.clone()));
+    // the agent processes: real ACP ones unless a test scripts the connector. The roster stops a process when
+    // its agent is deleted or relaunched with other settings.
+    let (connector, processes): (Arc<dyn AgentConnector>, Option<Arc<dyn AgentProcesses>>) =
+        match cfg.connector {
+            Some(scripted) => (scripted, None),
+            None => {
+                let acp = Arc::new(AcpConnector::new(cfg.agent_cwd));
+                (acp.clone(), Some(acp))
+            }
+        };
+    let mut roster = AgentService::new(system.clone(), mcp_state.clone(), random.clone());
+    if let Some(processes) = processes {
+        roster = roster.with_processes(processes);
+    }
+    let contacts = Arc::new(roster);
     contacts.load().await?;
     let runtime: Arc<dyn AppRuntime> =
         Arc::new(LuauRuntime::new(hub.clone(), hub.clone(), Limits::default()).with_roster(contacts.clone()));
     let tools: Arc<dyn ToolRegistry> = mcp_state.clone();
     let events: Arc<dyn EventSink> = hub.clone();
-    let connector: Arc<dyn AgentConnector> =
-        cfg.connector.unwrap_or_else(|| Arc::new(AcpConnector::new(cfg.agent_cwd)));
     let installed: Arc<dyn InstalledAppStore> = system.clone();
     let thread_store: Arc<dyn ThreadStore> = system.clone();
     let registry: Arc<dyn DeviceRegistry> = system;

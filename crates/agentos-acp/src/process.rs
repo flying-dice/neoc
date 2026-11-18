@@ -156,20 +156,31 @@ impl AgentProcess {
         !self.task.is_finished() && !self.commands.is_closed()
     }
 
-    /// Start the process and run `initialize`.
+    /// End the process now (its child with it) and tell every session why.
+    pub fn stop(&self, reason: &str) {
+        self.task.abort();
+        self.sessions.exit_all(reason);
+    }
+
+    /// Start the process and run `initialize`, giving the agent `timeout` to answer.
     pub async fn start(
         launch: AgentLaunch,
         permissions: Permissions,
         next_request: Arc<AtomicU64>,
+        timeout: Duration,
     ) -> Result<Arc<Self>, String> {
         let (commands, rx) = mpsc::unbounded_channel();
         let (ready_tx, ready_rx) = oneshot::channel::<Result<ProcessInfo, String>>();
         let sessions = Arc::new(Sessions::default());
         let task = tokio::spawn(serve(launch, rx, ready_tx, sessions.clone(), permissions, next_request));
-        let info = match ready_rx.await {
-            Ok(Ok(info)) => info,
-            Ok(Err(e)) => return Err(e),
-            Err(_) => return Err("the agent process ended before it answered `initialize`".to_owned()),
+        let info = match tokio::time::timeout(timeout, ready_rx).await {
+            Ok(Ok(Ok(info))) => info,
+            Ok(Ok(Err(e))) => return Err(e),
+            Ok(Err(_)) => return Err("the agent process ended before it answered `initialize`".to_owned()),
+            Err(_) => {
+                task.abort(); // ends the child too
+                return Err(format!("the agent did not answer `initialize` within {timeout:?}"));
+            }
         };
         Ok(Arc::new(Self { commands, info, sessions, task }))
     }
