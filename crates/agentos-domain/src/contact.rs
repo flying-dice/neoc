@@ -68,7 +68,7 @@ impl Grants {
     }
 }
 
-/// What the host does with an agent's ACP permission request about an AgentOS tool.
+/// What the host does with an agent's ACP permission request about an `AgentOS` tool.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalPolicy {

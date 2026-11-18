@@ -344,16 +344,53 @@ explicit "all apps" option. `approval` (`ask` | `auto_read_only` | `allow_all`, 
 host does with an agent's ACP permission requests about AgentOS tools: `auto_read_only` allows a request for a tool the
 app declared `readOnly` and prompts for the rest, `ask` prompts always, `allow_all` never prompts. A persistent
 **MCP bearer token** is stored hashed (SHA-256; shown once, at `agents.create` and `agents.token.rotate`), for agents the
-host does not launch. A host-launched agent gets a **fresh random token per process launch**, kept only as a hash in
-memory and handed to the agent in `session/new`: every `tools/call` is attributed (`ctx.actor = {kind="agent", id,
+host does not launch (an agent without a `runtime.command` is such an external client: it has an identity, grants and a
+token, and the host never starts it). A host-launched agent gets a **fresh random token for every session** (one per
+chat thread), kept only as a hash in memory, handed to the agent in `session/new` and revoked when the session ends or
+the agent is deleted: every `tools/call` is attributed (`ctx.actor = {kind="agent", id,
 name}`) and checked against that agent's grants. `tools/list` is filtered to the agent's granted apps; `tools/list_changed`
 goes to that agent's sessions when its grants change or an app it may use is published or retracted.
 
-`/rpc` methods (for a future Contacts/Settings UI): `agents.list`, `agents.create`, `agents.update`, `agents.delete`,
-`agents.grants.set`, `agents.token.rotate`.
+`/rpc` methods (for a future Contacts/Settings UI), all behind the device session; `agents.create` and
+`agents.token.rotate` are the only places a plaintext token is ever returned:
 
-**`readOnly` is enforced.** A tool declared `readOnly = true` runs with app writes blocked: the app's SQLite handle runs
-with writes denied (`app.db:exec`, `db:tx` writes, DDL, and a write smuggled through `db:all ... returning` all fail),
-`app.kv` `set`/`delete` raise, and `app.db:migrate` raises. A tool that must write is not `readOnly`.
+| method | params | result |
+|---|---|---|
+| `agents.list` | none | `{agents: Agent[]}` (no tokens) |
+| `agents.create` | `{id?, name, avatar?, role?, runtime:{command, args?, env?}, grants?, approval?}` | `{agent, token}` (`id` defaults to a slug of the name) |
+| `agents.update` | `{id, name?, avatar? (null clears), role?, runtime?, approval?}` | `{agent}` |
+| `agents.delete` | `{id}` | `null`; its tokens and sessions' access die with it |
+| `agents.grants.set` | `{id, grants:{all?, apps?}}` | `{agent}`; the agent's MCP sessions get `tools/list_changed` |
+| `agents.token.rotate` | `{id}` | `{token}`; the old persistent token stops working |
+
+Errors: `-32602` bad params, `-32001` invalid agent, `-32002` no such agent, `-32004` id taken. Every change also
+broadcasts `agents.changed {id}` to the paired clients.
+
+**Configuration.** `agentos.toml` may list `[[agents]]` (an `Agent`: `id`, `name`, `role`, `avatar`, `[agents.runtime]`
+`command`/`args`/`env`, `[agents.grants]` `all`/`apps`, `approval`). They seed the roster: an entry is added when no
+agent has its id and left alone afterwards (edit through `agents.*`). With none configured, Claude is added if its ACP
+adapter is installed (`node_modules/@agentclientprotocol/claude-agent-acp`), with no grants. The host also keeps a
+`local` agent (external, all apps) whose token is rewritten into `<data>/mcp.json` at every start: the one seeded
+exception to deny-by-default, because it is the person's own MCP client.
+
+**Why deny by default, and `auto_read_only`.** A new agent can do nothing until a person names the apps it may use, and
+"all apps" is a switch that has to be flipped on purpose. `auto_read_only` is safe because it is enforced where it
+matters: a tool the app declared `readOnly` cannot write (below), so allowing it unprompted cannot change anything,
+whereas every writing tool, and everything that is not an AgentOS tool, asks.
+
+**Apps and chats.** An app shows a chat with `ui.ChatTranscript { thread = chat { thread = <id>, agent = <id> } }`
+where `local chat = app.thread()`. A `thread` source declares only the thread and the agent (literals or Refs); it
+runs no query, is never subscribed, and sends no `data.patch`: the client opens the thread on `/agui`. (When a param
+Ref changes the client re-asks with `source.set`; the host answers `{kind:"value", value:null}`.) The `send` and
+`stop` events also reach the app (`e.payload.text`), so it can title the chat. An app with the `agents` permission can
+read the roster with `app.agents:list()` (`{id, name, avatar?, role}`, never grants, tokens or commands).
+
+**`readOnly` is enforced.** A tool declared `readOnly = true` runs with app writes blocked. The app's database handle
+is `AppData::read_only()`: SQLite `PRAGMA query_only` for each statement (checked when the statement runs, so a statement
+cached while writable cannot sneak a write through; the authorizer refuses app SQL that tries to lift it), so
+`db:exec`, writes in `db:tx`, DDL and a write smuggled through `db:all ... returning` all fail. `app.kv:set`/`delete` and
+`db:migrate` raise with a message that says why. `app.state`, `app.notify` and `app:openWindow` are not data and are not
+blocked. A tool that must write is not `readOnly`: the spec Calculator's `calculate` no longer records history (only
+`show_on_calculator` does).
 
 **Tool names** are local identifiers `[a-z][a-z0-9_]*` (no dots); the MCP name is `<appId>__<tool>`.

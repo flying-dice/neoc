@@ -3,8 +3,8 @@ use crate::{
     chat::{ChatError, ChatPorts, ChatService, RunEvents},
     error::PortError,
     ports::{
-        AgentConnector, AgentEventSink, Background, McpAccess, PermissionDecision, PortResult, SessionOpened,
-        TaskHandle,
+        AgentConnector, AgentDirectory, AgentEventSink, Background, McpAccess, PermissionDecision,
+        PortResult, SessionOpened, TaskHandle,
     },
     services::AppService,
     testing::{Fakes, FixedClock, MemAgentStore, MemThreadStore, SeededRandom},
@@ -365,7 +365,6 @@ async fn the_session_gets_the_agents_own_mcp_token() {
 }
 
 fn agentos_application_directory(agents: &AgentService, token: &str) -> String {
-    use crate::ports::AgentDirectory;
     agents.authenticate(token).unwrap().name
 }
 
@@ -853,7 +852,6 @@ async fn grants_default_to_nothing_for_the_agent_a_chat_runs_as() {
     let r = rig_with(ApprovalPolicy::default()).await;
     r.chat.ensure("t1", "claude").await.unwrap();
     let token = r.connector.opened.lock()[0].1.clone().unwrap().token;
-    use crate::ports::AgentDirectory;
     assert!(r.agents.authenticate(&token).unwrap().grants.is_empty());
     r.agents.set_grants(&AgentId("claude".into()), Grants::allow_all()).await.unwrap();
     assert_eq!(r.agents.authenticate(&token).unwrap().grants.len(), 1, "grants are read live");

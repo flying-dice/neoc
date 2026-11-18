@@ -146,11 +146,11 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
     let random = cfg.random;
     // the roster is also the MCP adapter's directory, tells it when an agent's tool list changes, and is what
     // apps with the `agents` permission list
-    let roster = Arc::new(AgentService::new(system.clone(), mcp_state.clone(), random.clone()));
-    roster.load().await?;
+    let contacts = Arc::new(AgentService::new(system.clone(), mcp_state.clone(), random.clone()));
+    contacts.load().await?;
     let runtime: Arc<dyn AppRuntime> = Arc::new(
         LuauRuntime::new(hub.clone(), Arc::new(platform::LogShell), Limits::default())
-            .with_roster(roster.clone()),
+            .with_roster(contacts.clone()),
     );
     let tools: Arc<dyn ToolRegistry> = mcp_state.clone();
     let events: Arc<dyn EventSink> = hub.clone();
@@ -173,7 +173,7 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
         background: Arc::new(platform::TokioBackground),
     }));
     for (token, agent) in cfg.agents {
-        roster.ensure(agent, Some(&token)).await?;
+        contacts.ensure(agent, Some(&token)).await?;
     }
     let chat = ChatService::new(ChatPorts {
         connector,
@@ -181,12 +181,12 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
         background: Arc::new(platform::TokioBackground),
         clock: cfg.clock,
         random,
-        agents: roster.clone(),
+        agents: contacts.clone(),
         apps: service.clone(),
         mcp_url: cfg.mcp_url,
     });
     hub.bind(service.clone(), devices.clone());
-    hub.bind_agents(roster.clone());
+    hub.bind_agents(contacts.clone());
     let views = Arc::new(ViewService::new(service.clone()));
     service.add_observer(views.clone());
     hub.bind_views(views.clone());
@@ -208,7 +208,7 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
         .layer(from_fn_with_state(devices.clone(), require_session));
     let public =
         session_router(SessionConfig { devices: devices.clone(), secure_cookies: cfg.secure_cookies });
-    let directory: Arc<dyn AgentDirectory> = roster.clone();
+    let directory: Arc<dyn AgentDirectory> = contacts.clone();
     let mcp = mcp_router(mcp_state, service.clone(), directory, shutdown.child_token());
 
     let mut router = Router::new().merge(protected).merge(public).merge(mcp);
@@ -217,5 +217,5 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
     }
     let router = router.layer(from_fn_with_state(Arc::new(guard), origin_guard));
 
-    Ok(Host { router, service, views, devices, agents: roster, chat, shutdown })
+    Ok(Host { router, service, views, devices, agents: contacts, chat, shutdown })
 }

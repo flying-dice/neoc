@@ -47,7 +47,8 @@ impl Permission {
     }
 }
 
-/// What the host lets an app's VM do, from the grants in its package manifest.
+/// What the host lets an app's VM do, from the grants in its package manifest: one switch per capability.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Capabilities {
     pub data: bool,

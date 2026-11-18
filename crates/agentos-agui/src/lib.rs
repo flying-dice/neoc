@@ -64,9 +64,8 @@ fn chat_failure(e: &ChatError) -> Response {
 }
 
 /// The body as `T`, or a `422` that says what is wrong with it.
-fn parse<T: for<'de> Deserialize<'de>>(body: &Bytes, what: &str) -> Result<T, Response> {
-    serde_json::from_slice(body)
-        .map_err(|e| failure(StatusCode::UNPROCESSABLE_ENTITY, &format!("invalid {what}: {e}")))
+fn parse<T: for<'de> Deserialize<'de>>(body: &Bytes, what: &str) -> Result<T, String> {
+    serde_json::from_slice(body).map_err(|e| format!("invalid {what}: {e}"))
 }
 
 /// The events of one run as they are streamed; dropping it (the client went away) lets the chat service
@@ -96,7 +95,7 @@ impl Drop for RunStream {
 async fn run(State(chat): State<Arc<ChatService>>, body: Bytes) -> Response {
     let input: RunAgentInput = match parse(&body, "RunAgentInput") {
         Ok(i) => i,
-        Err(r) => return r,
+        Err(why) => return failure(StatusCode::UNPROCESSABLE_ENTITY, &why),
     };
     let (thread_id, run_id) = (input.thread_id.clone(), input.run_id.clone());
     let events = match chat.run(input).await {
@@ -121,7 +120,7 @@ struct EnsureThread {
 async fn ensure_thread(State(chat): State<Arc<ChatService>>, body: Bytes) -> Response {
     let req: EnsureThread = match parse(&body, "thread request") {
         Ok(r) => r,
-        Err(r) => return r,
+        Err(why) => return failure(StatusCode::UNPROCESSABLE_ENTITY, &why),
     };
     match chat.ensure(&req.thread_id, &req.agent_id).await {
         Ok(snapshot) => Json(snapshot).into_response(),
@@ -146,7 +145,7 @@ async fn cancel(State(chat): State<Arc<ChatService>>, Path(id): Path<String>) ->
 async fn settings(State(chat): State<Arc<ChatService>>, Path(id): Path<String>, body: Bytes) -> Response {
     let change: SettingsChange = match parse(&body, "settings change") {
         Ok(c) => c,
-        Err(r) => return r,
+        Err(why) => return failure(StatusCode::UNPROCESSABLE_ENTITY, &why),
     };
     match chat.settings(&id, change).await {
         Ok(state) => Json(json_of(&state)).into_response(),

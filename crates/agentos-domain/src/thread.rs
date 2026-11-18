@@ -203,7 +203,7 @@ pub struct PermissionRequest {
 }
 
 impl PermissionRequest {
-    /// The `<app>__<tool>` an AgentOS MCP tool call is called in a title such as `mcp__agentos__notes__search`
+    /// The `<app>__<tool>` an `AgentOS` MCP tool call is called in a title such as `mcp__agentos__notes__search`
     /// (`mcp__<server>__<app>__<tool>`): the part after the server name, if it has that shape.
     #[must_use]
     pub fn agentos_tool(&self) -> Option<crate::QualifiedToolName> {

@@ -14,7 +14,7 @@ use agentos_domain::thread::{
 use serde::Serialize;
 use serde_json::Value;
 
-/// The snake_case name serde gives a unit-like ACP enum (`ToolKind::SwitchMode` is `switch_mode`).
+/// The `snake_case` name serde gives a unit-like ACP enum (`SwitchMode` is `switch_mode`).
 fn name_of(value: &impl Serialize) -> Option<String> {
     serde_json::to_value(value).ok().and_then(|v| v.as_str().map(str::to_owned))
 }
@@ -28,7 +28,7 @@ fn tool_status(s: ToolCallStatus) -> ToolStatus {
     }
 }
 
-pub fn stop_reason(s: &AcpStop) -> StopReason {
+pub fn stop_reason(s: AcpStop) -> StopReason {
     match s {
         AcpStop::MaxTokens => StopReason::MaxTokens,
         AcpStop::MaxTurnRequests => StopReason::MaxTurnRequests,
@@ -362,8 +362,8 @@ mod tests {
 
     #[test]
     fn stop_reasons_map_one_to_one() {
-        assert_eq!(stop_reason(&AcpStop::EndTurn), StopReason::EndTurn);
-        assert_eq!(stop_reason(&AcpStop::Cancelled), StopReason::Cancelled);
-        assert_eq!(stop_reason(&AcpStop::Refusal), StopReason::Refusal);
+        assert_eq!(stop_reason(AcpStop::EndTurn), StopReason::EndTurn);
+        assert_eq!(stop_reason(AcpStop::Cancelled), StopReason::Cancelled);
+        assert_eq!(stop_reason(AcpStop::Refusal), StopReason::Refusal);
     }
 }

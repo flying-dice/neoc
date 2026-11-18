@@ -81,8 +81,16 @@ pub struct AgentService {
 fn mint(random: &dyn RandomSource) -> String {
     let mut bytes = [0u8; 24];
     random.fill(&mut bytes);
-    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-    format!("agentos_{hex}")
+    format!("agentos_{}", hex_of(&bytes))
+}
+
+/// Lowercase hex of some bytes.
+pub(crate) fn hex_of(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    bytes.iter().fold(String::with_capacity(bytes.len() * 2), |mut s, b| {
+        let _ = write!(s, "{b:02x}");
+        s
+    })
 }
 
 impl AgentService {
@@ -182,7 +190,7 @@ impl AgentService {
     pub async fn update(&self, id: &AgentId, patch: AgentPatch) -> Result<Agent, AgentError> {
         let mut agent = self.require(id)?;
         if let Some(name) = patch.name {
-            agent.name = name.trim().to_owned();
+            name.trim().clone_into(&mut agent.name);
         }
         if let Some(avatar) = patch.avatar {
             agent.avatar = avatar;

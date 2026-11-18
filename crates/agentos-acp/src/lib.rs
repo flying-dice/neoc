@@ -98,7 +98,7 @@ impl AgentConnector for AcpConnector {
         let tools = mcp.filter(|_| process.info.http_mcp);
         let servers = tools.iter().map(|a| map::mcp_server(&a.url, &a.token)).collect();
         let session = process.new_session(self.cwd.clone(), servers).await.map_err(rejected)?;
-        process.sessions.register(&session.id, sink);
+        process.sessions.register(&session.id, &sink);
         let mut state = map::session_state(&session.response, tools.is_some());
         state.agent.clone_from(&process.info.agent);
         Ok(SessionOpened { session_id: session.id, session: state })

@@ -125,9 +125,9 @@ async fn starting_a_chat_adds_it_to_the_list_and_the_first_message_titles_it() {
 
     let started = event(&mut ws, 3, &view, 1, "new-chat", "tap", &Value::Null).await;
     assert_eq!(started["result"], json!({"ok": true}), "{started}");
-    let set = next_notification(&mut ws, "client.set").await;
-    assert_eq!(set["path"], "threadId");
-    let thread = set["value"].as_str().unwrap().to_owned();
+    let selected = next_notification(&mut ws, "client.set").await;
+    assert_eq!(selected["path"], "threadId");
+    let thread = selected["value"].as_str().unwrap().to_owned();
     assert_eq!(thread.len(), 16, "a random id from the database");
     let list = notification_where(&mut ws, "data.patch", |p| {
         p["sources"]
@@ -167,7 +167,7 @@ async fn starting_a_chat_adds_it_to_the_list_and_the_first_message_titles_it() {
 #[tokio::test]
 async fn an_app_without_the_agents_permission_cannot_list_the_roster() {
     let r = start(|c| {
-        c.agents = vec![common::claude(), ("tok-fake".into(), launchable("fake", "Fake", Grants::default()))]
+        c.agents = vec![common::claude(), ("tok-fake".into(), launchable("fake", "Fake", Grants::default()))];
     })
     .await;
     let source = br#"app.manifest { id = "nosy", name = "Nosy", icon = "gear", permissions = {} }

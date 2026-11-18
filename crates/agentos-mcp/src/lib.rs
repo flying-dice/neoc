@@ -154,6 +154,7 @@ impl ServerHandler for McpHandler {
         }
     }
 
+    #[allow(clippy::unused_async_trait_impl)] // the trait method is async
     async fn on_initialized(&self, ctx: NotificationContext<RoleServer>) {
         if let Some(who) = identity_of(&ctx.extensions) {
             self.state.peers.write().push((who.id, ctx.peer.clone()));

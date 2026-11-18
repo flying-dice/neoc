@@ -117,11 +117,10 @@ struct ThreadSink {
 fn hex_id(random: &dyn RandomSource, prefix: &str) -> String {
     let mut bytes = [0u8; 8];
     random.fill(&mut bytes);
-    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-    format!("{prefix}{hex}")
+    format!("{prefix}{}", crate::agents::hex_of(&bytes))
 }
 
-fn replace(path: &str, value: Value) -> Value {
+fn replace(path: &str, value: &Value) -> Value {
     json!({ "op": "replace", "path": path, "value": value })
 }
 
@@ -180,7 +179,7 @@ impl Inner {
             AgentEvent::MessageChunk(text) => self.message_chunk(random, &text),
             AgentEvent::ThoughtChunk(text) => self.thought_chunk(random, &text),
             AgentEvent::ToolCall { id, title, kind, status, raw_input } => {
-                self.tool_call(&id, &title, kind, status, raw_input);
+                self.tool_call(&id, &title, kind, status, raw_input.as_ref());
             }
             AgentEvent::ToolUpdate { id, title, kind, status, output } => {
                 self.tool_update(random, &id, title, kind, status, output);
@@ -188,24 +187,24 @@ impl Inner {
             AgentEvent::Plan(entries) => self.set_plan(entries),
             AgentEvent::Mode(mode) => {
                 if let Some(modes) = &mut self.state.session.modes {
-                    modes.current = mode.clone();
-                    self.delta(vec![replace("/session/modes/current", json_of(&mode))]);
+                    modes.current.clone_from(&mode);
+                    self.delta(vec![replace("/session/modes/current", &json_of(&mode))]);
                 }
             }
             AgentEvent::Config(options) => {
                 self.state.session.config.clone_from(&options);
-                self.delta(vec![replace("/session/config", json_of(&options))]);
+                self.delta(vec![replace("/session/config", &json_of(&options))]);
             }
             AgentEvent::Commands(commands) => {
                 self.state.session.commands.clone_from(&commands);
-                self.delta(vec![replace("/session/commands", json_of(&commands))]);
+                self.delta(vec![replace("/session/commands", &json_of(&commands))]);
             }
             AgentEvent::Usage(usage) => {
-                self.delta(vec![replace("/session/usage", json_of(&usage))]);
+                self.delta(vec![replace("/session/usage", &json_of(&usage))]);
                 self.state.session.usage = Some(usage);
             }
             AgentEvent::Title(title) => {
-                self.delta(vec![replace("/session/title", json_of(&title))]);
+                self.delta(vec![replace("/session/title", &json_of(&title))]);
                 self.state.session.title = Some(title);
             }
             AgentEvent::PermissionClosed { request_id } => self.pending.retain(|i| i.id != request_id),
@@ -273,10 +272,10 @@ impl Inner {
         title: &str,
         kind: Option<String>,
         status: ToolStatus,
-        raw_input: Option<Value>,
+        raw_input: Option<&Value>,
     ) {
         self.close_messages();
-        let arguments = raw_input.as_ref().map(Value::to_string).unwrap_or_default();
+        let arguments = raw_input.map(Value::to_string).unwrap_or_default();
         let meta = ToolMeta { title: title.to_owned(), kind, status };
         self.messages.push(ThreadMessage::Assistant {
             id: id.to_owned(),
@@ -342,7 +341,7 @@ impl Inner {
     }
 
     fn set_plan(&mut self, entries: Vec<PlanEntry>) {
-        self.delta(vec![replace("/plan", json_of(&entries))]);
+        self.delta(vec![replace("/plan", &json_of(&entries))]);
         self.state.plan = Some(entries);
     }
 
@@ -438,7 +437,7 @@ impl ChatService {
         if let Some(t) = self.threads.lock().get(id) {
             return Ok(Some(t.clone()));
         }
-        let stored = self.p.threads.load(id).await.map_err(port)?;
+        let stored = self.p.threads.load(id).await?;
         Ok(stored.map(|s| self.adopt(id, s.agent_id, s.messages)))
     }
 
@@ -739,7 +738,7 @@ impl ChatService {
                 if !known {
                     return Err(ChatError::BadInput(format!("the agent has no mode `{mode}`")));
                 }
-                self.p.connector.set_mode(&thread.agent_id, &session, &mode).await.map_err(agent_err)?;
+                self.p.connector.set_mode(&thread.agent_id, &session, &mode).await?;
                 thread.inner.lock().apply(self.p.random.as_ref(), AgentEvent::Mode(mode));
             }
             SettingsChange::Config { id, value } => {
@@ -752,12 +751,7 @@ impl ChatService {
                         return Err(ChatError::BadInput("a setting's value cannot be empty".into()));
                     }
                 }
-                let options = self
-                    .p
-                    .connector
-                    .set_config(&thread.agent_id, &session, &id, value)
-                    .await
-                    .map_err(agent_err)?;
+                let options = self.p.connector.set_config(&thread.agent_id, &session, &id, value).await?;
                 thread.inner.lock().apply(self.p.random.as_ref(), AgentEvent::Config(options));
             }
         }
@@ -777,12 +771,10 @@ impl ChatService {
     }
 }
 
-fn port(e: PortError) -> ChatError {
-    ChatError::Agent(e.to_string())
-}
-
-fn agent_err(e: PortError) -> ChatError {
-    ChatError::Agent(e.to_string())
+impl From<PortError> for ChatError {
+    fn from(e: PortError) -> Self {
+        Self::Agent(e.to_string())
+    }
 }
 
 /// A run that only reports why it cannot proceed (AG-UI: a refused resume is a `RUN_ERROR`).

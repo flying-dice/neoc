@@ -96,6 +96,7 @@ async fn ask(cx: &ConnectionTo<agent_client_protocol::Client>, session: &str, ti
     })
 }
 
+#[allow(clippy::too_many_lines)] // one arm per scripted behaviour: a table of what the fake does
 async fn prompt(
     cx: &ConnectionTo<agent_client_protocol::Client>,
     state: &Arc<Mutex<State>>,

@@ -177,6 +177,27 @@ impl LiveSink for SourceSink {
     }
 }
 
+/// Which sources a render started and stopped using. Queries are remembered by their subscription; thread
+/// sources are declared but never subscribed, so `st.sources` is where they are remembered.
+fn source_changes(st: &State, used: &BTreeMap<String, SourceBinding>) -> (Vec<String>, Vec<String>) {
+    let added = used
+        .iter()
+        .filter(|(k, b)| {
+            let known = if is_thread(b) { st.sources.contains_key(*k) } else { st.subs.contains_key(*k) };
+            !known
+        })
+        .map(|(k, _)| k.clone())
+        .collect();
+    let removed = st
+        .subs
+        .keys()
+        .chain(st.sources.iter().filter(|(_, b)| is_thread(b)).map(|(k, _)| k))
+        .filter(|k| !used.contains_key(*k))
+        .cloned()
+        .collect();
+    (added, removed)
+}
+
 /// A `thread` source (`ChatTranscript`): declared to the client, never subscribed or queried.
 fn is_thread(binding: &SourceBinding) -> bool {
     matches!(binding.decl, SourceDecl::Thread { .. })
@@ -714,21 +735,7 @@ impl ViewService {
         let live = self.app.live(&view.app).ok();
         let (added, removed, client) = {
             let st = view.st.lock();
-            // thread sources are declared but never subscribed: `st.sources` is where they are remembered
-            let added: Vec<String> = out
-                .sources
-                .iter()
-                .filter(|(k, b)| !st.subs.contains_key(*k) && !(is_thread(b) && st.sources.contains_key(*k)))
-                .map(|(k, _)| k.clone())
-                .collect();
-            let gone = |k: &&String| !out.sources.contains_key(*k);
-            let removed: Vec<String> = st
-                .subs
-                .keys()
-                .chain(st.sources.iter().filter(|(_, b)| is_thread(b)).map(|(k, _)| k))
-                .filter(gone)
-                .cloned()
-                .collect();
+            let (added, removed) = source_changes(&st, &out.sources);
             (added, removed, st.client.clone())
         };
         let mut declare = BTreeMap::new();

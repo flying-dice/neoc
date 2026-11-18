@@ -82,10 +82,10 @@ const MAX_EARLY_EVENTS: usize = 64;
 const MAX_EARLY_SESSIONS: usize = 16;
 
 impl Sessions {
-    pub fn register(&self, id: &str, sink: Arc<dyn AgentEventSink>) {
+    pub fn register(&self, id: &str, sink: &Arc<dyn AgentEventSink>) {
         let early = {
             let mut inner = self.0.lock();
-            inner.sinks.insert(id.to_owned(), sink.clone());
+            inner.sinks.insert(id.to_owned(), Arc::clone(sink));
             inner.early.remove(id)
         };
         for event in early.unwrap_or_default() {
@@ -106,22 +106,19 @@ impl Sessions {
     fn deliver(&self, id: &str, event: AgentEvent) {
         let sink = {
             let mut inner = self.0.lock();
-            match inner.sinks.get(id) {
-                Some(sink) => Some(sink.clone()),
-                None => {
-                    if inner.early.len() < MAX_EARLY_SESSIONS || inner.early.contains_key(id) {
-                        let list = inner.early.entry(id.to_owned()).or_default();
-                        if list.len() < MAX_EARLY_EVENTS {
-                            list.push(event);
-                        }
+            if let Some(sink) = inner.sinks.get(id) {
+                Arc::clone(sink)
+            } else {
+                if inner.early.len() < MAX_EARLY_SESSIONS || inner.early.contains_key(id) {
+                    let list = inner.early.entry(id.to_owned()).or_default();
+                    if list.len() < MAX_EARLY_EVENTS {
+                        list.push(event);
                     }
-                    return;
                 }
+                return;
             }
         };
-        if let Some(sink) = sink {
-            sink.on_event(event);
-        }
+        sink.on_event(event);
     }
 
     /// The process ended: every session is told, then forgotten.
@@ -327,7 +324,7 @@ fn run_command(cx: &ConnectionTo<Agent>, command: Command) -> Result<(), agent_c
                 .send_request(PromptRequest::new(session, vec![ContentBlock::Text(TextContent::new(text))]))
                 .block_task()
                 .await
-                .map(|p| map::stop_reason(&p.stop_reason))
+                .map(|p| map::stop_reason(p.stop_reason))
                 .map_err(|e| err(&e));
             let _ = reply.send(r);
             Ok(())
