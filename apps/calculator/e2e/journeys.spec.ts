@@ -105,6 +105,15 @@ test.describe('Calculator journeys', () => {
     await expect(windowOf(page, 'calculator')).toHaveClass(/slideover/)
     for (const k of ['6', 'mul', '7', 'eq']) await page.getByTestId(key(k)).click()
     await expect(page.getByTestId(display)).toHaveText('42')
+
+    // Files, waiting in the strip, comes back beside the Slide Over and is still usable
+    await page.getByTestId('stage-strip-files').click()
+    await expect(windowOf(page, 'files')).toBeVisible()
+    await page.getByTestId('files-search').fill('refactor')
+    await expect(page.getByTestId('files-recent-refactor-plan.md')).toBeVisible()
+    await expect(page.getByTestId('files-recent-uptime-report.csv')).toHaveCount(0)
+    await expect(windowOf(page, 'calculator')).toHaveClass(/slideover/)
+    await expect(page.getByTestId(display)).toHaveText('42')
   })
 
   test('J7: the Calculator still works at its smallest window size', async ({ page }) => {
