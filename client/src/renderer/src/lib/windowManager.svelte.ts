@@ -1,5 +1,5 @@
 import type { Frame, StageSummary, WindowLayout } from '@agentos/ui'
-import { apps, type AppId } from './apps.svelte'
+import { appOf, type AppDefinition, type AppId } from './apps.svelte'
 
 /**
  * Stage Manager–style window manager.
@@ -45,7 +45,7 @@ const SLIDE_OVER_WIDTH = 380
 
 const uid = (): string => crypto.randomUUID().slice(0, 8)
 
-class WindowManager {
+export class WindowManager {
   windows = $state<WindowState[]>([])
   stages = $state<Stage[]>([])
   activeStageId = $state<string | null>(null)
@@ -96,12 +96,12 @@ class WindowManager {
         apps: s.windowIds
           .map((id) => this.windows.find((w) => w.id === id))
           .filter((w): w is WindowState => !!w)
-          .map((w) => ({
-            id: w.appId,
-            name: apps[w.appId].name,
-            icon: apps[w.appId].icon,
-            background: apps[w.appId].background
-          }))
+          .flatMap((w) => {
+            const app = appOf(w.appId)
+            return app
+              ? [{ id: w.appId, name: app.name, icon: app.icon, background: app.background }]
+              : []
+          })
       }))
   }
 
@@ -169,12 +169,15 @@ class WindowManager {
    * Open (or focus) an app. `alongside` adds a new window to the current
    * stage instead of starting a new one — used when an app is opened on the
    * user's behalf (e.g. by an agent tool) so it appears next to what they're
-   * looking at rather than replacing it.
+   * looking at rather than replacing it. An id that is not an app the shell can
+   * show (not installed, disabled, failed) is ignored.
    */
   open(
     appId: AppId,
     options: { alongside?: boolean; kind?: string; params?: Record<string, unknown> } = {}
   ): void {
+    const app = appOf(appId)
+    if (!app) return
     const existing = this.windows.find((w) => w.appId === appId)
     if (existing) {
       if (existing.layout === 'slideover') {
@@ -185,7 +188,7 @@ class WindowManager {
       return this.focus(existing.id)
     }
 
-    const win = this.#createWindow(appId, options.kind ?? 'main', options.params)
+    const win = this.#createWindow(app, options.kind ?? 'main', options.params)
     const stage = this.activeStage
 
     // Filling the empty side of a pending Split View.
@@ -262,7 +265,7 @@ class WindowManager {
   setFrame(id: string, frame: Frame): void {
     const win = this.windows.find((w) => w.id === id)
     if (!win || win.layout !== 'floating') return
-    const { minWidth, minHeight } = apps[win.appId]
+    const { minWidth, minHeight } = appOf(win.appId) ?? { minWidth: 0, minHeight: 0 }
     const maxWidth = this.bounds.width - frame.x - INSET
     const maxHeight = this.bounds.height - frame.y - (this.dockHidden ? INSET : DOCK_SPACE)
     win.frame = {
@@ -369,12 +372,12 @@ class WindowManager {
 
   // ── Internals ──────────────────────────────────────────────────────────
 
-  #createWindow(appId: AppId, kind: string, params?: Record<string, unknown>): WindowState {
-    const app = apps[appId]
+  /** Only called for an app `open` has checked. */
+  #createWindow(app: AppDefinition, kind: string, params?: Record<string, unknown>): WindowState {
     const frame = this.#cascade(this.onStage.length)
     return {
-      id: `${appId}-${uid()}`,
-      appId,
+      id: `${app.id}-${uid()}`,
+      appId: app.id,
       kind,
       params,
       stageId: null,

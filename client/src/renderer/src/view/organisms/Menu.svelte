@@ -36,6 +36,7 @@
     <Button
       testid="{common.testid}-primary"
       variant="tinted"
+      hit
       disabled={common.disabled}
       aria-label={name}
       onclick={() => view.fire(node, path, 'primaryAction', scope)}
@@ -48,6 +49,7 @@
     testid={common.testid}
     variant={split ? 'gray' : icon && !title ? 'plain' : 'gray'}
     square={split || (!!icon && !title)}
+    hit
     disabled={common.disabled}
     aria-label={split ? `${name ?? 'Menu'}, more actions` : name}
     aria-description={common.hint}

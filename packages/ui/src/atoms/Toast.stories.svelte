@@ -15,6 +15,8 @@
 
   const action = fn()
   const dismiss = fn()
+  const hold = fn()
+  const release = fn()
 </script>
 
 {#snippet glyph()}<Icon name="info.circle" size={18} weight={2.2} />{/snippet}
@@ -44,6 +46,12 @@
   asChild
   play={async ({ canvasElement }) => {
     const canvas = within(canvasElement)
+    // Touch targets: at least 44 x 44 points.
+    for (const id of ['toast-action', 'toast-dismiss']) {
+      const box = canvas.getByTestId(id).getBoundingClientRect()
+      await expect(box.width).toBeGreaterThanOrEqual(44)
+      await expect(box.height).toBeGreaterThanOrEqual(44)
+    }
     await userEvent.click(canvas.getByTestId('toast-action'))
     await waitFor(() => expect(action).toHaveBeenCalledTimes(1))
     await userEvent.click(canvas.getByTestId('toast-dismiss'))
@@ -52,5 +60,34 @@
 >
   <div style="width:340px">
     <Toast testid="toast" kind="success" text="Note deleted" action="Undo" icon={check} onaction={action} ondismiss={dismiss} />
+  </div>
+</Story>
+
+<!-- WCAG 2.2.1: the owner pauses the expiry while the pointer or focus is on the toast, and restarts it afterwards. -->
+<Story
+  name="Held while read"
+  asChild
+  play={async ({ canvasElement }) => {
+    hold.mockClear()
+    release.mockClear()
+    const canvas = within(canvasElement)
+    const toast = canvas.getByTestId('toast')
+    await userEvent.hover(toast)
+    await expect(hold).toHaveBeenCalledTimes(1)
+    await userEvent.unhover(toast)
+    await expect(release).toHaveBeenCalledTimes(1)
+    // keyboard focus on the action holds it too, and moving between its own buttons does not release it
+    await userEvent.tab()
+    await expect(canvas.getByTestId('toast-action')).toHaveFocus()
+    await expect(hold).toHaveBeenCalledTimes(2)
+    await userEvent.tab()
+    await expect(canvas.getByTestId('toast-dismiss')).toHaveFocus()
+    await expect(release).toHaveBeenCalledTimes(1)
+    await userEvent.tab()
+    await waitFor(() => expect(release).toHaveBeenCalledTimes(2))
+  }}
+>
+  <div style="width:340px">
+    <Toast testid="toast" text="Note deleted" action="Undo" icon={glyph} onhold={hold} onrelease={release} />
   </div>
 </Story>

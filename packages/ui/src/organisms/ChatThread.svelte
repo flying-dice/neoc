@@ -21,12 +21,14 @@
     liveActivityId?: string
     /** Overrides the live label (e.g. "Starting Claude…"). */
     status?: string
+    /** A reply is streaming: the log is `aria-busy`, so a screen reader announces the finished message, not every token. */
+    busy?: boolean
     /** Shown instead of the transcript when there are no blocks. */
     empty?: Snippet
     onchoose: (permissionId: string, optionId: string | null) => void
   }
 
-  let { testid, blocks, liveActivityId, status, empty, onchoose }: Props = $props()
+  let { testid, blocks, liveActivityId, status, busy = false, empty, onchoose }: Props = $props()
 
   let scroller: HTMLElement | undefined = $state()
   let pinned = true
@@ -53,6 +55,7 @@
   role="log"
   aria-live="polite"
   aria-relevant="additions text"
+  aria-busy={busy}
   aria-label="Conversation"
   tabindex="0"
   data-testid={testid}

@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Every workspace package with a `.storybook/` folder has its own Storybook.
+ * Every workspace package (`packages/*`) and the client with a `.storybook/` folder has its own Storybook.
  *
  *   bun scripts/storybooks.ts list     names, one per line
  *   bun scripts/storybooks.ts build    build them all (storybook-static/)
@@ -8,7 +8,7 @@
  *                                      http://localhost:6100/<name>/ (AGENTOS_PORT_BASE moves it)  and  /storybooks.json
  *
  * `bun run test:e2e` builds first, so the stories spec can read each
- * storybook-static/index.json; new apps are picked up automatically.
+ * storybook-static/index.json; a new package with a `.storybook/` folder is picked up automatically.
  * FORCE_STORYBOOK_BUILD=1 rebuilds before serving.
  */
 import { existsSync } from 'node:fs'
@@ -25,7 +25,7 @@ interface Storybook {
 
 async function discover(): Promise<Storybook[]> {
   const found: Storybook[] = []
-  for (const pattern of ['{apps,packages}/*/.storybook/main.ts', 'client/.storybook/main.ts']) {
+  for (const pattern of ['packages/*/.storybook/main.ts', 'client/.storybook/main.ts']) {
     for await (const main of new Glob(pattern).scan({ cwd: ROOT, dot: true })) {
       const dir = join(ROOT, main, '..', '..')
       found.push({ name: basename(dir), dir })

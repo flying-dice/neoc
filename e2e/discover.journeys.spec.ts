@@ -1,6 +1,6 @@
 /**
- * Discover journeys V1 to V5 (client/journeys/discover.md): reading the landing window, searching it, the privacy
- * section and a narrow window. V6 and V7 (installing, disabling and removing apps) live in
+ * Discover journeys V1 to V5 (client/journeys/discover.md): reading the landing window, the host's agents, searching,
+ * narrowing by section and a narrow window. V6 and V7 (installing, disabling and removing apps) live in
  * client/e2e/discover.spec.ts: they change what the host has installed and run one after another there.
  * Nothing here installs anything.
  */
@@ -22,24 +22,23 @@ test.describe('Discover journeys', () => {
     await expect(page.getByTestId('discover-apps')).toContainText('Calculator')
   })
 
-  // The Featured Agents are fixed sample listings: GET only flips the button in this window, it installs nothing on
-  // the host (agents come from agentos.toml or agents.create). The journey describes the intent; see discover.md.
-  test.fixme('V2: find an agent that helps with code and get it', async ({ page }) => {
+  test('V2: see which agents this host has, with nothing offered to install', async ({ page }) => {
     await openDesktop(page, { open: ['discover'] })
-    await page.getByTestId('discover-search').fill('code')
-    await expect(page.getByTestId('discover-listing-coder')).toBeVisible()
-    await page.getByTestId('discover-listing-coder-get').click()
-    // would need: the Coder agent on the host's roster (Settings > Agents), not just a button label
-    await expect(page.getByTestId('discover-listing-coder-get')).toHaveText('OPEN')
+    const agent = page.getByTestId('discover-agent-scripted')
+    await expect(agent).toContainText('Scripted agent')
+    await expect(agent).toContainText('Answers by script, for tests')
+    // the Agents app runs, so the only action is OPEN (it opens the Agents app); there is never a GET
+    await expect(page.getByTestId('discover-agent-scripted-get')).toHaveText('OPEN')
+    await expect(page.getByTestId('discover-agents')).not.toContainText('GET')
   })
 
   test('V3: search for something that is not there, understand the result, get everything back', async ({
     page
   }) => {
     await openDesktop(page, { open: ['discover'] })
-    await expect(page.getByTestId('discover-listing-coder')).toBeVisible()
+    await expect(page.getByTestId('discover-agent-scripted')).toBeVisible()
     await page.getByTestId('discover-search').fill('spreadsheet')
-    await expect(page.getByTestId('discover-listing-coder')).toHaveCount(0)
+    await expect(page.getByTestId('discover-agent-scripted')).toHaveCount(0)
     await expect(page.getByTestId('discover-app-calculator')).toHaveCount(0)
     const text = page.getByTestId(content)
     await expect(text).toContainText('No apps match “spreadsheet”.')
@@ -47,21 +46,22 @@ test.describe('Discover journeys', () => {
     // clearing the search brings everything back
     await page.getByTestId('discover-search-clear').click()
     await expect(page.getByTestId('discover-search')).toHaveValue('')
-    await expect(page.getByTestId('discover-listing-coder')).toBeVisible()
+    await expect(page.getByTestId('discover-agent-scripted')).toBeVisible()
     await expect(page.getByTestId('discover-app-calculator')).toBeVisible()
     await expect(text).not.toContainText('No agents match')
   })
 
-  test('V4: find out what agents can read and do, and open Settings from there', async ({ page }) => {
+  test('V4: look at only the agents, then only the apps, then everything', async ({ page }) => {
     await openDesktop(page, { open: ['discover'] })
-    const text = page.getByTestId(content)
-    await page.getByTestId('discover-privacy-details').scrollIntoViewIfNeeded()
-    await expect(text).toContainText('Agent Privacy')
-    await expect(text).toContainText('Can Act for You')
-    await expect(text).toContainText('Can Read')
-    await expect(text).toContainText('Never Leaves Device')
-    await page.getByTestId('discover-privacy-details').click()
-    await expect(windowOf(page, 'settings')).toBeVisible()
+    await page.getByTestId('discover-section-agents').click()
+    await expect(page.getByTestId('discover-agents')).toBeVisible()
+    await expect(page.getByTestId('discover-apps')).toHaveCount(0)
+    await page.getByTestId('discover-section-apps').click()
+    await expect(page.getByTestId('discover-apps')).toBeVisible()
+    await expect(page.getByTestId('discover-agents')).toHaveCount(0)
+    await page.getByTestId('discover-section-discover').click()
+    await expect(page.getByTestId('discover-apps')).toBeVisible()
+    await expect(page.getByTestId('discover-agents')).toBeVisible()
   })
 
   test('V5: Discover in Slide Over still reads well', async ({ page }) => {

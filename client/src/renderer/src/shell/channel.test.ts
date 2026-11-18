@@ -83,4 +83,33 @@ describe('the shell channel', () => {
     wire.setStatus('closed')
     expect(await reply.catch((e: unknown) => e)).toBeInstanceOf(HostError)
   })
+
+  test('a call on a transport that is not open rejects at once with "Not connected"', async () => {
+    const wire = fakeTransport()
+    wire.transport.send = () => {
+      throw new Error('socket closed')
+    }
+    const channel = createHostChannel(wire.transport)
+    const error = await channel.call('app.list').catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(HostError)
+    expect((error as HostError).message).toBe('Not connected to AgentOS')
+  })
+
+  test('a call the host never answers times out with a HostError', async () => {
+    const wire = fakeTransport()
+    const channel = createHostChannel(wire.transport, 5)
+    const error = await channel.call('app.list').catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(HostError)
+    expect((error as HostError).code).toBe(-32001)
+  })
+
+  test('a request from the host is the session’s, never the shell’s', () => {
+    const wire = fakeTransport()
+    const channel = createHostChannel(wire.transport)
+    const seenBySession: string[] = []
+    channel.transport.onMessage((m) => seenBySession.push(m))
+    wire.receive({ jsonrpc: '2.0', id: 's9', method: 'ui.ask', params: {} })
+    expect(seenBySession).toHaveLength(1)
+    expect(wire.sent).toEqual([]) // the shell did not answer "method not found" on the session's behalf
+  })
 })

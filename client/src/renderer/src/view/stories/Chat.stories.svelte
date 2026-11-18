@@ -7,6 +7,13 @@
   import { openChatStory, type ChatScenario, type ChatStoryHandle } from '../host/chatStory'
   import { until } from '../host/storyKit'
 
+  /** A control's hit area, in CSS pixels: every touch target is at least 44 x 44. */
+  const expectHitArea = async (el: HTMLElement): Promise<void> => {
+    const box = el.getBoundingClientRect()
+    await expect(box.width).toBeGreaterThanOrEqual(44)
+    await expect(box.height).toBeGreaterThanOrEqual(44)
+  }
+
   /** The session of the story on screen, for its play function (the host side of the scenario). */
   let latest: Promise<ChatStoryHandle> | null = null
   const open = (scenario: ChatScenario): Promise<ChatStoryHandle> => {
@@ -133,6 +140,8 @@
     await waitFor(() => expect(canvas.getByText('Ask Claude')).toBeVisible())
     const model = await chat(canvas, 'session-config-model')
     await expect(model).toHaveValue('large')
+    for (const part of ['composer-attach', 'composer-send'])
+      await expectHitArea(await chat(canvas, part))
     await expect(await chat(canvas, 'session-mode')).toHaveValue('default')
     await expect(await chat(canvas, 'session-usage')).toBeVisible()
     await userEvent.selectOptions(await chat(canvas, 'session-config-effort'), 'high')
@@ -164,11 +173,15 @@
     await say(canvas, userEvent, 'Hi there')
     await waitFor(() => expect(canvas.getByText('Hi there')).toBeVisible())
     await expect(await chat(canvas, 'composer-stop')).toBeVisible()
+    await expectHitArea(await chat(canvas, 'composer-stop'))
+    // the log is busy while the reply streams, so a screen reader reads the finished message once
+    await expect(canvas.getByTestId('agents-chat-thread')).toHaveAttribute('aria-busy', 'true')
     await waitFor(() =>
       expect(within(canvas.getByTestId('agents-chat-thread')).getByText('Working')).toBeVisible()
     )
     await waitFor(() => expect(canvas.getByText(/piece by piece/)).toBeVisible(), { timeout: 4000 })
     await waitFor(() => expect(canvas.queryByTestId('agents-chat-composer-stop')).toBeNull())
+    await expect(canvas.getByTestId('agents-chat-thread')).toHaveAttribute('aria-busy', 'false')
     const { app } = await story()
     await expect(app.events.map((e) => e.event)).toEqual(['send'])
     await expect(app.events[0].payload).toEqual({ text: 'Hi there' })
@@ -275,6 +288,34 @@
     await expect(canvas.getByRole('group', { name: 'Permission request' })).toHaveTextContent(
       'Deny'
     )
+  }}
+/>
+
+<!-- An agent that repeats an option id (or asks twice with one interrupt id) must not crash the transcript: repeats are dropped at the edge. -->
+<Story
+  name="Permission with repeated ids"
+  args={{
+    scenario: {
+      onRun: (run) => {
+        run.start()
+        run.interrupt({
+          id: 'int-1',
+          title: 'Bash',
+          options: [
+            { optionId: 'allow', name: 'Allow once', kind: 'allow_once' },
+            { optionId: 'allow', name: 'Allow (again)', kind: 'allow_always' },
+            { optionId: 'reject', name: 'Deny', kind: 'reject_once' }
+          ]
+        })
+      }
+    }
+  }}
+  play={async ({ canvas, userEvent }) => {
+    await say(canvas, userEvent, 'Run it')
+    const card = await canvas.findByRole('group', { name: 'Permission request' })
+    await expect(within(card).getAllByRole('button')).toHaveLength(2)
+    await expect(within(card).getByText('Allow once')).toBeVisible()
+    await expect(within(card).queryByText('Allow (again)')).toBeNull()
   }}
 />
 

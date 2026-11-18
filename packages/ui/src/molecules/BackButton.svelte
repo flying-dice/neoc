@@ -21,7 +21,10 @@
     appearance: none;
     border: 0;
     background: none;
-    padding: 0;
+    /* a 44 pt hit area (the label and glyph are what is drawn) */
+    min-height: 44px;
+    min-width: 44px;
+    padding: 0 8px 0 0;
     margin-left: -8px;
     display: inline-flex;
     align-items: center;

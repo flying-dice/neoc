@@ -1,6 +1,7 @@
 <!--
   @organism AgentActivityWidget — medium widget listing the agents on this host (the host's roster); tapping a row
-  opens the Agents app. Atoms: Card, Text. Molecules: AgentAvatar.
+  opens the Agents app when the host has one (`onopen`; without it the rows are plain text, not buttons). Atoms: Card,
+  Text. Molecules: AgentAvatar.
   Test ids: `testid` on the widget, `${testid}-agent-${id}` per row, `${testid}-open` on the row shown when
   there are none.
 -->
@@ -12,12 +13,29 @@
   interface Props {
     testid: string
     agents: AgentRow[]
+    /** Bring the Agents app forward; leave it out when the host has no such app. */
     onopen?: () => void
   }
 
   let { testid, agents, onopen }: Props = $props()
   const shown = $derived(agents.slice(0, 3))
 </script>
+
+{#snippet agentRow(agent: AgentRow)}
+  <AgentAvatar icon={iconOf(agent.avatar ?? 'sparkles')} color="var(--ios-purple)" size={30} />
+  <span class="meta">
+    <Text style="subheadline" weight="semibold" truncate>{agent.name}</Text>
+    <Text style="caption1" color="secondary" truncate>{agent.role || 'Chat with it'}</Text>
+  </span>
+{/snippet}
+
+{#snippet none()}
+  <AgentAvatar icon="sparkles" color="var(--ios-gray)" size={30} />
+  <span class="meta">
+    <Text style="subheadline" weight="semibold">No agents yet</Text>
+    <Text style="caption1" color="secondary">Add one to agentos.toml</Text>
+  </span>
+{/snippet}
 
 <Card {testid} size="medium" surface="material" padding="14px 16px">
   <div class="head">
@@ -26,30 +44,26 @@
   </div>
   <div class="rows">
     {#each shown as agent (agent.id)}
-      <button
-        type="button"
-        class="row"
-        data-testid="{testid}-agent-{agent.id}"
-        onclick={() => onopen?.()}
-      >
-        <AgentAvatar
-          icon={iconOf(agent.avatar ?? 'sparkles')}
-          color="var(--ios-purple)"
-          size={30}
-        />
-        <span class="meta">
-          <Text style="subheadline" weight="semibold" truncate>{agent.name}</Text>
-          <Text style="caption1" color="secondary" truncate>{agent.role || 'Chat with it'}</Text>
-        </span>
-      </button>
+      {#if onopen}
+        <button
+          type="button"
+          class="row"
+          data-testid="{testid}-agent-{agent.id}"
+          onclick={() => onopen()}
+        >
+          {@render agentRow(agent)}
+        </button>
+      {:else}
+        <div class="row" data-testid="{testid}-agent-{agent.id}">{@render agentRow(agent)}</div>
+      {/if}
     {:else}
-      <button type="button" class="row" data-testid="{testid}-open" onclick={() => onopen?.()}>
-        <AgentAvatar icon="sparkles" color="var(--ios-gray)" size={30} />
-        <span class="meta">
-          <Text style="subheadline" weight="semibold">No agents yet</Text>
-          <Text style="caption1" color="secondary">Add one to agentos.toml</Text>
-        </span>
-      </button>
+      {#if onopen}
+        <button type="button" class="row" data-testid="{testid}-open" onclick={() => onopen()}>
+          {@render none()}
+        </button>
+      {:else}
+        <div class="row" data-testid="{testid}-open">{@render none()}</div>
+      {/if}
     {/each}
   </div>
 </Card>
@@ -75,6 +89,9 @@
     gap: 10px;
     text-align: left;
     color: inherit;
+    cursor: default;
+  }
+  button.row {
     cursor: pointer;
   }
   .meta {

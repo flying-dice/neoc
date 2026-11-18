@@ -55,6 +55,11 @@ export interface RpcPeerOptions {
   onError?(error: unknown): void
   /** Reject an outgoing request after this many ms (default 60s; 0 = never). */
   timeoutMs?: number
+  /**
+   * Prefix of the ids this peer gives its requests (`s` makes `s1`, `s2`, ...; default none, so plain numbers). Two
+   * peers sharing one connection use different prefixes and never mistake each other's responses.
+   */
+  idPrefix?: string
 }
 
 export interface RpcPeer {
@@ -62,6 +67,8 @@ export interface RpcPeer {
   notify(method: string, params?: Params): void
   /** Feed one raw message received from the other side. */
   receive(raw: string): void
+  /** Reject every in-flight request (the socket dropped) but keep the peer: the connection may come back. */
+  failPending(reason?: string): void
   /** Reject every in-flight request (the socket closed) and refuse new ones. */
   close(reason?: string): void
 }
@@ -86,6 +93,7 @@ interface Pending {
 export function createRpcPeer(options: RpcPeerOptions): RpcPeer {
   const pending = new Map<JsonRpcId, Pending>()
   const timeoutMs = options.timeoutMs ?? 60_000
+  const idPrefix = options.idPrefix ?? ''
   const toRpcError = options.toRpcError ?? defaultToRpcError
   const report = (error: unknown): void => options.onError?.(error)
   let nextId = 1
@@ -120,11 +128,19 @@ export function createRpcPeer(options: RpcPeerOptions): RpcPeer {
     } else entry.resolve(message.result)
   }
 
+  function failPending(reason = 'Connection closed'): void {
+    for (const [id, entry] of pending) {
+      if (entry.timer) clearTimeout(entry.timer)
+      entry.reject(new RpcError(RpcErrorCode.ConnectionClosed, reason))
+      pending.delete(id)
+    }
+  }
+
   return {
     request<T>(method: string, params: Params = {}): Promise<T> {
       if (closed)
         return Promise.reject(new RpcError(RpcErrorCode.ConnectionClosed, 'Connection closed'))
-      const id = nextId++
+      const id: JsonRpcId = idPrefix ? `${idPrefix}${nextId++}` : nextId++
       return new Promise<T>((resolve, reject) => {
         const entry: Pending = { resolve: resolve as (v: unknown) => void, reject }
         if (timeoutMs > 0) {
@@ -134,7 +150,19 @@ export function createRpcPeer(options: RpcPeerOptions): RpcPeer {
           }, timeoutMs)
         }
         pending.set(id, entry)
-        write({ jsonrpc: '2.0', id, method, params })
+        try {
+          write({ jsonrpc: '2.0', id, method, params })
+        } catch (error) {
+          // the transport refused the frame (not open): no response will come, so forget the request
+          pending.delete(id)
+          if (entry.timer) clearTimeout(entry.timer)
+          reject(
+            new RpcError(
+              RpcErrorCode.ConnectionClosed,
+              error instanceof Error ? error.message : 'Not connected'
+            )
+          )
+        }
       })
     },
 
@@ -173,14 +201,12 @@ export function createRpcPeer(options: RpcPeerOptions): RpcPeer {
       report(new Error('Unrecognised JSON-RPC message'))
     },
 
+    failPending,
+
     close(reason = 'Connection closed') {
       if (closed) return
       closed = true
-      for (const [id, entry] of pending) {
-        if (entry.timer) clearTimeout(entry.timer)
-        entry.reject(new RpcError(RpcErrorCode.ConnectionClosed, reason))
-        pending.delete(id)
-      }
+      failPending(reason)
     }
   }
 }

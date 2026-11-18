@@ -19,6 +19,13 @@
     toast: trees.toast
   }
 
+  /** A control's hit area, in CSS pixels: every touch target is at least 44 x 44. */
+  const expectHitArea = async (el: HTMLElement): Promise<void> => {
+    const box = el.getBoundingClientRect()
+    await expect(box.width).toBeGreaterThanOrEqual(44)
+    await expect(box.height).toBeGreaterThanOrEqual(44)
+  }
+
   /** The session of the story on screen, for its play function (the host side of the scenario). */
   let latest: Promise<KitStoryHandle> | null = null
   const open = (name: string): Promise<KitStoryHandle> => {
@@ -255,6 +262,7 @@
   play={async ({ canvas, userEvent }) => {
     const { host } = await story()
     const trigger = await canvas.findByTestId('kit-actions')
+    await expectHitArea(trigger)
     await userEvent.click(trigger)
     await waitFor(async () => expect(await canvas.findByTestId('kit-actions-menu')).toBeVisible())
     await userEvent.click(canvas.getByTestId('kit-actions-menu-pin'))
@@ -283,7 +291,7 @@
   }}
 />
 
-<!-- Markdown: structure renders, HTML and bad links stay text, a good link opens through the window's openUrl. -->
+<!-- Markdown: structure renders, HTML and bad links stay text; a good link asks before it opens, and opens on "Open". -->
 <Story
   name="Markdown"
   args={{ scenario: 'markdown' }}
@@ -293,10 +301,85 @@
     await expect(doc.querySelector('table')).toBeInTheDocument()
     await expect(doc.querySelector('script')).toBeNull()
     await expect(doc).toHaveTextContent('<scr' + 'ipt>alert(1)</scr' + 'ipt>')
-    await expect(doc.querySelectorAll('a')).toHaveLength(1)
-    await userEvent.click(canvas.getByTestId('kit-doc-link-0'))
+    await expect(doc.querySelectorAll('a')).toHaveLength(3)
     const { links } = await story()
-    await waitFor(() => expect(links).toContain('https://example.com/docs'))
+    await userEvent.click(canvas.getByTestId('kit-doc-link-0'))
+    await expect(await canvas.findByTestId('kit-link-confirm')).toBeVisible()
+    await expect(links).toEqual([]) // nothing opened yet
+    await userEvent.click(canvas.getByTestId('kit-link-confirm-action-open'))
+    await waitFor(() => expect(links).toEqual(['https://example.com/docs']))
+    await waitFor(() => expect(canvas.queryByTestId('kit-link-confirm')).toBeNull())
+  }}
+/>
+
+<!-- A link confirmation names the host (read from the URL, not the link text) and the full address; Escape cancels and nothing opens. -->
+<Story
+  name="Link confirmation"
+  args={{ scenario: 'markdown' }}
+  play={async ({ canvas, userEvent }) => {
+    const { links } = await story()
+    const link = await canvas.findByTestId('kit-doc-link-2')
+    await expect(link).toHaveTextContent('github.com/acme')
+    await userEvent.click(link)
+    const dialog = await canvas.findByTestId('kit-link-confirm')
+    await expect(dialog).toHaveAccessibleName('Open this link?')
+    await expect(canvas.getByTestId('kit-link-confirm-host')).toHaveTextContent(/^evil\.example$/)
+    await expect(canvas.getByTestId('kit-link-confirm-url')).toHaveTextContent(
+      'https://evil.example/login?next=1'
+    )
+    // keyboard: focus starts on the preferred action, Escape cancels
+    await waitFor(() => expect(canvas.getByTestId('kit-link-confirm-action-open')).toHaveFocus())
+    await userEvent.keyboard('{Escape}')
+    await waitFor(() => expect(canvas.queryByTestId('kit-link-confirm')).toBeNull())
+    await expect(links).toEqual([])
+    // Enter on the focused "Open" opens it
+    await userEvent.click(link)
+    await waitFor(() => expect(canvas.getByTestId('kit-link-confirm-action-open')).toHaveFocus())
+    await userEvent.keyboard('{Enter}')
+    await waitFor(() => expect(links).toEqual(['https://evil.example/login?next=1']))
+    // leave it asking, for the snapshot
+    await userEvent.click(link)
+    await expect(await canvas.findByTestId('kit-link-confirm')).toBeVisible()
+  }}
+/>
+
+<!-- mailto goes through the same confirmation, naming the recipient. -->
+<Story
+  name="Link confirmation: mail"
+  args={{ scenario: 'markdown' }}
+  play={async ({ canvas, userEvent }) => {
+    const { links } = await story()
+    await userEvent.click(await canvas.findByTestId('kit-doc-link-1'))
+    const dialog = await canvas.findByTestId('kit-link-confirm')
+    await expect(dialog).toHaveAccessibleName('Write to this address?')
+    await expect(canvas.getByTestId('kit-link-confirm-host')).toHaveTextContent('team@example.org')
+    await userEvent.click(canvas.getByTestId('kit-link-confirm-action-open'))
+    await waitFor(() => expect(links).toEqual(['mailto:team@example.org']))
+    await userEvent.click(canvas.getByTestId('kit-doc-link-1')) // leave it asking, for the snapshot
+    await expect(await canvas.findByTestId('kit-link-confirm')).toBeVisible()
+  }}
+/>
+
+<!-- An app's own `openUrl` command asks too (the host can push it at any time); a URL that is not web or mail never shows a dialog. -->
+<Story
+  name="Link confirmation: openUrl command"
+  args={{ scenario: 'markdown' }}
+  play={async ({ canvas, userEvent }) => {
+    const { host, links } = await story()
+    await canvas.findByTestId('kit-doc')
+    const view = host.allViews()[0]!
+    view.command({ cmd: 'openUrl', args: { url: 'javascript:alert(1)' } } as never)
+    view.command({ cmd: 'openUrl', args: { url: 'https://app.example/help' } } as never)
+    await expect(await canvas.findByTestId('kit-link-confirm-host')).toHaveTextContent(
+      'app.example'
+    )
+    await userEvent.click(canvas.getByTestId('kit-link-confirm-action-cancel'))
+    await waitFor(() => expect(canvas.queryByTestId('kit-link-confirm')).toBeNull())
+    await expect(links).toEqual([])
+    const long =
+      'https://app.example/help?topic=a-rather-long-address-that-must-wrap-inside-the-dialog-and-never-overflow-it'
+    view.command({ cmd: 'openUrl', args: { url: long } } as never)
+    await expect(await canvas.findByTestId('kit-link-confirm-url')).toHaveTextContent(long) // left asking, for the snapshot
   }}
 />
 
@@ -376,5 +459,33 @@
     await userEvent.click(await canvas.findByTestId('kit-notice-1-action'))
     await until(() => host.stateValue('last') === 'undo tapped', 'the toast event')
     await waitFor(() => expect(canvas.queryByText('Note deleted')).toBeNull())
+  }}
+/>
+
+<!-- A toast with an action outlives its duration (WCAG 2.2.1); a plain one of the same duration expires. Both have 44 x 44 buttons. -->
+<Story
+  name="Toast with action stays"
+  args={{ scenario: 'toast' }}
+  play={async ({ canvas }) => {
+    await canvas.findByTestId('kit-delete')
+    const { host } = await story()
+    const view = host.allViews()[0]!
+    view.command({
+      cmd: 'toast',
+      args: { text: 'Plain, 300 ms', duration: 300 }
+    } as never)
+    view.command({
+      cmd: 'toast',
+      args: { text: 'Undo me', duration: 300, action: { title: 'Undo', id: 't9' } }
+    } as never)
+    await expect(await canvas.findByText('Undo me')).toBeVisible()
+    await waitFor(() => expect(canvas.queryByText('Plain, 300 ms')).toBeNull())
+    await new Promise((r) => setTimeout(r, 600))
+    await expect(canvas.getByText('Undo me')).toBeVisible()
+    for (const id of ['action', 'dismiss']) {
+      const box = canvas.getByTestId(`kit-notice-2-${id}`).getBoundingClientRect()
+      await expect(box.width).toBeGreaterThanOrEqual(44)
+      await expect(box.height).toBeGreaterThanOrEqual(44)
+    }
   }}
 />

@@ -527,6 +527,8 @@ export const markdownSample = [
   '',
   'AgentOS **1.0** adds _tables_ and [docs](https://example.com/docs).',
   '',
+  'Write to [the team](mailto:team@example.org) or see [github.com/acme](https://evil.example/login?next=1).',
+  '',
   '- [x] Parser',
   '- [ ] Ship it',
   '',

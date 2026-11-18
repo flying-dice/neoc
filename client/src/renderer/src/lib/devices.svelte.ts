@@ -1,4 +1,5 @@
 import type { DeviceRow } from '../shell/hostApi'
+import { callParsed, deviceListSchema } from '../shell/results'
 import { host } from './host.svelte'
 
 /** The paired devices (Settings > Devices): the list, and revoking one. */
@@ -11,7 +12,7 @@ class Devices {
 
   async load(): Promise<void> {
     try {
-      this.list = (await host.api.call<{ devices: DeviceRow[] }>('host.devices.list')).devices
+      this.list = (await callParsed(host.api, 'host.devices.list', {}, deviceListSchema)).devices
       this.error = null
     } catch (e) {
       this.error = e instanceof Error ? e.message : String(e)

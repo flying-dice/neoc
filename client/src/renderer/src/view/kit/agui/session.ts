@@ -23,6 +23,7 @@ import {
   snapshotSchema,
   toolEventSchema,
   TOOL_EVENT,
+  uniqueBy,
   type AguiEvent,
   type Interrupt,
   type PermissionOption,
@@ -135,7 +136,18 @@ export function itemsFromMessages(messages: ThreadSnapshot['messages']): ChatIte
         break // `tool` results are summarised by the tool item
     }
   }
-  return items
+  return withUniqueIds(items)
+}
+
+/** Every item gets an id of its own: a transcript keyed by id cannot show two with the same one. */
+function withUniqueIds(items: ChatItem[]): ChatItem[] {
+  const seen = new Set<string>()
+  return items.map((item) => {
+    let id = item.id
+    for (let n = 2; seen.has(id); n++) id = `${item.id}#${n}`
+    seen.add(id)
+    return id === item.id ? item : { ...item, id }
+  })
 }
 
 const permissionItem = (interrupt: Interrupt): ChatItem => {
@@ -484,7 +496,12 @@ export class ChatSession {
       all.map((i) => (i.kind === 'agent' && i.streaming ? { ...i, streaming: false } : i))
     )
     if (outcome?.type === 'interrupt' && outcome.interrupts?.length) {
-      this.items((all) => [...all, ...outcome.interrupts!.map(permissionItem)])
+      const asked = uniqueBy((i: Interrupt) => i.id)(outcome.interrupts)
+      // an interrupt already on screen (a repeat from the agent) is not asked twice
+      this.items((all) => [
+        ...all,
+        ...asked.map(permissionItem).filter((p) => !all.some((i) => i.id === p.id))
+      ])
       this.set({ status: 'waiting' })
     } else this.set({ status: 'idle' })
   }

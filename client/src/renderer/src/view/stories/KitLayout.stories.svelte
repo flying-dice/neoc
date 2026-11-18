@@ -16,6 +16,13 @@
     swipeApp
   } from './kitTrees'
 
+  /** A control's hit area, in CSS pixels: every touch target is at least 44 x 44. */
+  const expectHitArea = async (el: HTMLElement): Promise<void> => {
+    const box = el.getBoundingClientRect()
+    await expect(box.width).toBeGreaterThanOrEqual(44)
+    await expect(box.height).toBeGreaterThanOrEqual(44)
+  }
+
   /** The scenario on screen, for its play function (the host side: events received, rows to change). */
   let latest: Promise<StoryHandle<TreeApp>> | null = null
   const story = async (): Promise<StoryHandle<TreeApp>> => {
@@ -338,6 +345,7 @@
     await expect(await canvas.findByRole('heading', { name: 'Ideas' })).toBeVisible()
     await expect(await canvas.findByText('Note id 2')).toBeVisible()
     const back = await canvas.findByRole('button', { name: 'Inbox' })
+    await expectHitArea(back)
     // Push again from inside the screen (a nav.push action), then all the way back with popToRoot.
     await userEvent.click(await canvas.findByRole('button', { name: 'Open related note' }))
     await expect(await canvas.findByRole('heading', { name: 'Related' })).toBeVisible()

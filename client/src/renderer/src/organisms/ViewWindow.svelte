@@ -12,6 +12,7 @@
   import { ViewHost, type protocol, type ViewCore } from '../view'
   import { host } from '../lib/host.svelte'
   import { installedApp } from '../lib/apps.svelte'
+  import { openExternal } from '../shell/links'
 
   interface Props {
     appId: string
@@ -56,11 +57,6 @@
       })
   })
 
-  /** Only web links leave the shell, and never with the shell as opener. */
-  function openUrl(url: string): void {
-    if (/^https?:\/\//i.test(url)) window.open(url, '_blank', 'noopener,noreferrer')
-  }
-
   onDestroy(() => {
     destroyed = true
     if (view) void host.closeView(view)
@@ -69,7 +65,13 @@
 
 <div class="frame" bind:this={box}>
   {#if view}
-    <ViewHost {view} app={appId} onretry={() => host.retry()} onopenurl={openUrl} {onclosewindow} />
+    <ViewHost
+      {view}
+      app={appId}
+      onretry={() => host.retry()}
+      onopenurl={openExternal}
+      {onclosewindow}
+    />
   {:else if failure}
     <div class="state" role="alert" data-testid="{appId}-failed">
       <Text style="headline">Couldn’t open {name}</Text>

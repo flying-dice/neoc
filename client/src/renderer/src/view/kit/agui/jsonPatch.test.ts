@@ -50,6 +50,17 @@ describe('applyPatch (RFC 6902 subset)', () => {
     expect(() => applyPatch(doc, [{ op: 'test', path: '/plan', value: 1 }])).toThrow(PatchError)
   })
 
+  test.each([
+    '/__proto__/polluted',
+    '/session/__proto__/polluted',
+    '/constructor/prototype/polluted',
+    '/session/prototype'
+  ])('a pointer through %s is refused and no object is polluted', (path) => {
+    for (const op of ['add', 'replace', 'remove', 'test'] as const)
+      expect(() => applyPatch(doc, [{ op, path, value: 'yes' }])).toThrow(PatchError)
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined()
+  })
+
   test('operations that cannot apply are errors, not silent no-ops', () => {
     for (const op of [
       { op: 'replace', path: '/missing', value: 1 },

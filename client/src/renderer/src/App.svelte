@@ -15,7 +15,7 @@
   import { settings } from './lib/settings.svelte'
   import { host } from './lib/host.svelte'
   import { windowManager, type WindowState } from './lib/windowManager.svelte'
-  import { apps, onAppsRemoved } from './lib/apps.svelte'
+  import { onAppsRemoved } from './lib/apps.svelte'
 
   $effect(() => settings.apply(document.documentElement))
 
@@ -23,7 +23,7 @@
   // looking at, or bring the app's own window forward.
   $effect(() =>
     host.onWindowRequest(({ app, window, params }) => {
-      if (apps[app]) windowManager.open(app, { alongside: true, kind: window, params })
+      windowManager.open(app, { alongside: true, kind: window, params }) // ignores an app that is not running
     })
   )
 

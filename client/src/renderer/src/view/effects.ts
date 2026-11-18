@@ -12,6 +12,8 @@ export interface DomEffectsOptions {
   root: () => HTMLElement | null | undefined
   openUrl?: (url: string) => void
   closeWindow?: () => void
+  /** The browser's user-activation state (`navigator.userActivation`); a test passes its own. */
+  userActivation?: () => { isActive: boolean } | undefined
 }
 
 export function createDomEffects(o: DomEffectsOptions): ViewEffects {
@@ -29,6 +31,8 @@ export function createDomEffects(o: DomEffectsOptions): ViewEffects {
         behavior: reduced() ? 'auto' : 'smooth'
       }),
     copy: (text) => void navigator.clipboard?.writeText(text).catch(() => undefined),
+    // A browser without the API (older Safari, Firefox) enforces the same rule inside `writeText` itself.
+    userActive: () => (o.userActivation?.() ?? navigator.userActivation)?.isActive ?? true,
     openUrl: o.openUrl,
     closeWindow: o.closeWindow
   }

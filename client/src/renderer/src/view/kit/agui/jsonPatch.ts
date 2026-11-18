@@ -8,10 +8,16 @@ export class PatchError extends Error {}
 
 const unescape = (token: string): string => token.replace(/~1/g, '/').replace(/~0/g, '~')
 
+/** Members a patch from an agent may never address: writing through them changes every object. */
+const FORBIDDEN = new Set(['__proto__', 'constructor', 'prototype'])
+
 function tokens(pointer: string): string[] {
   if (pointer === '') return []
   if (!pointer.startsWith('/')) throw new PatchError(`bad JSON pointer "${pointer}"`)
-  return pointer.slice(1).split('/').map(unescape)
+  const out = pointer.slice(1).split('/').map(unescape)
+  for (const token of out)
+    if (FORBIDDEN.has(token)) throw new PatchError(`refused member "${token}" in ${pointer}`)
+  return out
 }
 
 function index(token: string, length: number, allowEnd: boolean): number {

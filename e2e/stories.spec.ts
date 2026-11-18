@@ -32,7 +32,7 @@ const books = execFileSync('bun', ['scripts/storybooks.ts', 'list'], { cwd: ROOT
   .filter(Boolean)
 
 function storiesOf(book: string): IndexEntry[] {
-  const dir = [join(ROOT, 'apps', book), join(ROOT, 'packages', book), join(ROOT, book)].find((d) => existsSync(join(d, '.storybook'))) ?? join(ROOT, book)
+  const dir = [join(ROOT, 'packages', book), join(ROOT, book)].find((d) => existsSync(join(d, '.storybook'))) ?? join(ROOT, book)
   const index = join(dir, 'storybook-static', 'index.json')
   if (!existsSync(index)) throw new Error(`${book}: no Storybook build. Run \`bun scripts/storybooks.ts build\`.`)
   const { entries } = JSON.parse(readFileSync(index, 'utf8')) as { entries: Record<string, IndexEntry> }

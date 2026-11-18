@@ -16,7 +16,7 @@
   import { StatusBar, Dock, Window, StageStrip } from '@agentos/ui/organisms'
   import ClockWidget from '../organisms/ClockWidget.svelte'
   import AgentActivityWidget from '../organisms/AgentActivityWidget.svelte'
-  import { apps, dockOrder, dockRecents, type AppId } from '../lib/apps.svelte'
+  import { AGENTS_APP_ID, appOf, dockOrder, dockRecents, type AppId } from '../lib/apps.svelte'
   import { windowManager as wm, type WindowState } from '../lib/windowManager.svelte'
   import { host } from '../lib/host.svelte'
 
@@ -37,19 +37,17 @@
   // The link to the host: say so in the status bar while it's down.
   const connection = $derived(host.connection)
 
-  function toDock(id: AppId): DockApp {
-    const app = apps[id]
-    return {
-      id,
-      name: app.name,
-      icon: app.icon,
-      background: app.background,
-      running: wm.isOpen(id)
-    }
+  function toDock(id: AppId): DockApp[] {
+    const app = appOf(id)
+    return app
+      ? [{ id, name: app.name, icon: app.icon, background: app.background, running: wm.isOpen(id) }]
+      : []
   }
 
-  const dockApps = $derived(dockOrder().map(toDock))
-  const recentApps = $derived(dockRecents.map(toDock))
+  const dockApps = $derived(dockOrder().flatMap(toDock))
+  const recentApps = $derived(dockRecents.flatMap(toDock))
+  // The Agents app is an ordinary installed app: the widget offers to open it only while it is running.
+  const agentsRunning = $derived(!!appOf(AGENTS_APP_ID))
   const awaitingSplit = $derived(wm.activeStage?.awaitingSplit ?? null)
 
   // Dragging a strip group onto the stage merges it into the current group.
@@ -111,7 +109,7 @@
         <AgentActivityWidget
           testid="widget-agent-activity"
           agents={host.agents}
-          onopen={() => wm.open('agents')}
+          onopen={agentsRunning ? () => wm.open(AGENTS_APP_ID) : undefined}
         />
       </div>
 
@@ -123,17 +121,18 @@
       />
 
       {#each wm.windows as win (win.id)}
-        {#if win.stageId === wm.activeStageId || win.layout === 'slideover'}
+        {@const app = appOf(win.appId)}
+        {#if app && (win.stageId === wm.activeStageId || win.layout === 'slideover')}
           {@const frame = wm.frameOf(win)}
           <Window
             testid="window-{win.appId}"
-            title={apps[win.appId].name}
+            title={app.name}
             x={frame.x}
             y={frame.y}
             width={frame.width}
             height={frame.height}
-            minWidth={apps[win.appId].minWidth}
-            minHeight={apps[win.appId].minHeight}
+            minWidth={app.minWidth}
+            minHeight={app.minHeight}
             z={win.layout === 'slideover' ? 10000 : win.z}
             layout={win.layout}
             focused={wm.focusedId === win.id}

@@ -19,6 +19,19 @@ export const FAKE_CALCULATOR: AppSummary = {
   source: 'this computer'
 }
 
+/** The Agents app: an ordinary installed app, which a host may or may not have (stories show both). */
+export const FAKE_AGENTS_APP: AppSummary = {
+  id: 'agents',
+  name: 'Agents',
+  version: '0.1.0',
+  state: 'running',
+  icon: 'sparkles',
+  tint: 'purple',
+  description: 'Chat with the agents on this host.',
+  window: { w: 520, h: 640, minW: 480, minH: 420 },
+  source: 'this computer'
+}
+
 const NOTES: AppPreview = {
   url: 'file:///registry/notes/0.2.0/app-ref.json',
   id: 'notes',

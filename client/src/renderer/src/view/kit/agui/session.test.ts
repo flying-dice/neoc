@@ -514,6 +514,39 @@ describe('permission prompts (interrupts)', () => {
     })
   })
 
+  test('an agent that asks twice with the same interrupt id is shown one prompt (the transcript is keyed by id)', async () => {
+    const { fake, chat } = setup()
+    const ask = { id: 'dup', reason: 'tool_call', message: 'Run it' }
+    fake.onRun = (run) => {
+      run.start()
+      run.send({
+        type: 'RUN_FINISHED',
+        threadId: 't1',
+        runId: run.input.runId,
+        outcome: { type: 'interrupt', interrupts: [ask, ask] }
+      })
+      run.close()
+    }
+    await chat.open()
+    await chat.send('go')
+    const ids = chat.getState().items.map((i) => i.id)
+    expect(ids.filter((id) => id === 'permission-dup')).toHaveLength(1)
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  test('history with repeated message ids still gets an id per item', () => {
+    const items = itemsFromMessages([
+      { id: 'm', role: 'user', content: 'one' },
+      { id: 'm', role: 'user', content: 'two' },
+      { id: 'm', role: 'assistant', content: 'three' }
+    ])
+    const ids = items.map((i) => i.id)
+    expect(new Set(ids).size).toBe(3)
+    expect(ids[0]).toBe('m')
+    expect(items.map((i) => i.kind === 'user' && i.text)).toEqual(['one', 'two', false])
+    expect(new Set(toBlocks(items).map((b) => b.id)).size).toBe(toBlocks(items).length)
+  })
+
   test('a resume must cover every open prompt: it waits for the last answer', async () => {
     const { fake, chat } = setup()
     fake.onRun = (run) => {

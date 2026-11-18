@@ -10,6 +10,7 @@
  *   - every notification reaches the session (it ignores what it does not know) and the shell's listeners;
  */
 import type { SessionOptions } from '../view'
+import { createRpcPeer, RpcError } from '../view/rpc/peer'
 
 type Transport = SessionOptions['transport']
 type Params = Record<string, unknown>
@@ -36,57 +37,51 @@ export class HostError extends Error {
 
 const SHELL_ID = /^s\d+$/
 
-interface Frame {
-  id?: unknown
-  method?: string
-  params?: Params
-  result?: unknown
-  error?: { code: number; message: string }
+/** Which side of the channel a raw frame belongs to. */
+type Owner = 'shell-response' | 'notification' | 'session'
+
+const ownerOf = (raw: string): Owner => {
+  try {
+    const frame = JSON.parse(raw) as { id?: unknown; method?: unknown }
+    if (typeof frame !== 'object' || frame === null) return 'session'
+    if (typeof frame.id === 'string' && SHELL_ID.test(frame.id) && frame.method === undefined)
+      return 'shell-response'
+    if (frame.id === undefined && typeof frame.method === 'string') return 'notification'
+  } catch {
+    // not JSON: the session reports it
+  }
+  return 'session'
 }
 
-const parse = (raw: string): Frame | null => {
-  try {
-    const frame = JSON.parse(raw) as unknown
-    return typeof frame === 'object' && frame !== null ? (frame as Frame) : null
-  } catch {
-    return null
-  }
-}
+/** A request that failed on the wire is a host error with the same code and message. */
+const asHostError = (e: unknown): unknown =>
+  e instanceof RpcError ? new HostError(e.code, e.message) : e
 
 export function createHostChannel(base: Transport, timeoutMs = 30_000): HostChannel {
-  const pending = new Map<
-    string,
-    { resolve(v: unknown): void; reject(e: Error): void; timer: ReturnType<typeof setTimeout> }
-  >()
   const notifications = new Set<(method: string, params: Params) => void>()
-  let next = 1
-
-  const failAll = (message: string): void => {
-    for (const [id, p] of pending) {
-      clearTimeout(p.timer)
-      p.reject(new HostError(-32000, message))
-      pending.delete(id)
-    }
-  }
+  // The shell's requests are `s1`, `s2`, ... (the session's are numbers), so each peer only ever settles its own.
+  const peer = createRpcPeer({
+    send: (m) => {
+      try {
+        base.send(m)
+      } catch {
+        throw new HostError(-32000, 'Not connected to AgentOS')
+      }
+    },
+    onNotification: (method, params) => {
+      for (const l of [...notifications]) l(method, params)
+    },
+    onError: (e) => console.warn('[agentos] host channel:', e),
+    timeoutMs,
+    idPrefix: 's'
+  })
 
   base.onMessage((raw) => {
-    const frame = parse(raw)
-    if (!frame) return
-    if (typeof frame.id === 'string' && SHELL_ID.test(frame.id)) {
-      const entry = pending.get(frame.id)
-      if (!entry) return
-      pending.delete(frame.id)
-      clearTimeout(entry.timer)
-      if (frame.error) entry.reject(new HostError(frame.error.code, frame.error.message))
-      else entry.resolve(frame.result)
-      return
-    }
-    if (frame.method && frame.id === undefined) {
-      for (const l of [...notifications]) l(frame.method, frame.params ?? {})
-    }
+    // the peer settles the shell's responses and fans out notifications; everything else is the session's
+    if (ownerOf(raw) !== 'session') peer.receive(raw)
   })
   base.onStatus((status) => {
-    if (status !== 'open') failAll('The connection to AgentOS closed')
+    if (status !== 'open') peer.failPending('The connection to AgentOS closed')
   })
 
   const transport: Transport = {
@@ -101,29 +96,15 @@ export function createHostChannel(base: Transport, timeoutMs = 30_000): HostChan
     // the session sees every frame except the responses to the shell's requests
     onMessage: (l) =>
       base.onMessage((raw) => {
-        const frame = parse(raw)
-        if (frame && typeof frame.id === 'string' && SHELL_ID.test(frame.id)) return
-        l(raw)
+        if (ownerOf(raw) !== 'shell-response') l(raw)
       })
   }
 
   return {
     transport,
     call<T>(method: string, params: Params = {}): Promise<T> {
-      const id = `s${next++}`
-      return new Promise<T>((resolve, reject) => {
-        const timer = setTimeout(() => {
-          pending.delete(id)
-          reject(new HostError(-32001, `"${method}" timed out`))
-        }, timeoutMs)
-        pending.set(id, { resolve: resolve as (v: unknown) => void, reject, timer })
-        try {
-          base.send(JSON.stringify({ jsonrpc: '2.0', id, method, params }))
-        } catch {
-          pending.delete(id)
-          clearTimeout(timer)
-          reject(new HostError(-32000, 'Not connected to AgentOS'))
-        }
+      return peer.request<T>(method, params).catch((e: unknown) => {
+        throw asHostError(e)
       })
     },
     onNotification(listener) {

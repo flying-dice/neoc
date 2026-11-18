@@ -2,7 +2,8 @@
   @molecule Notices — the window's toasts: errors from handlers, "your edit replaced a change made elsewhere",
   `view.command toast`. Each is a kit Toast: a glyph (the toast's own `icon`, else one by kind), the text, an action
   button when the host gave one (tapping it reports the `toast` event), and a dismiss button. Errors are `alert`s,
-  the rest polite `status` messages. They expire on their own. Atoms: Toast, Icon.
+  the rest polite `status` messages. Plain ones expire on their own, and wait while the pointer or focus is on them;
+  one with an action or Undo stays until it is answered or dismissed (WCAG 2.2.1). Atoms: Toast, Icon.
 -->
 <script lang="ts">
   import { Icon, Toast } from '@agentos/ui/atoms'
@@ -16,9 +17,12 @@
     onaction?: (id: number) => void
     /** "Undo" on a notice that offers it (a write replaced a change made elsewhere). */
     onundo?: (id: number) => void
+    /** The pointer or focus is on a notice / has left it: pause and restart its expiry. */
+    onhold?: (id: number) => void
+    onrelease?: (id: number) => void
   }
 
-  let { testid, notices, ondismiss, onaction, onundo }: Props = $props()
+  let { testid, notices, ondismiss, onaction, onundo, onhold, onrelease }: Props = $props()
 
   const glyph = (n: Notice): IconName =>
     n.icon && n.icon in icons
@@ -39,6 +43,8 @@
       action={notice.undo ? 'Undo' : notice.action?.title}
       onaction={() => (notice.undo ? onundo?.(notice.id) : onaction?.(notice.id))}
       ondismiss={() => ondismiss(notice.id)}
+      onhold={() => onhold?.(notice.id)}
+      onrelease={() => onrelease?.(notice.id)}
     >
       {#snippet icon()}<Icon name={glyph(notice)} size={18} weight={2.4} />{/snippet}
     </Toast>

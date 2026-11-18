@@ -1,0 +1,100 @@
+/**
+ * What the host answers to the shell's own calls, parsed with zod at the edge. A host of another version (or a bug in
+ * one) can answer `{ "agents": null }`; a cast would carry that into the desktop and crash it on the first read. A
+ * failed parse is an error the caller shows, never a throw out of a render.
+ *
+ * The shapes mirror `crates/agentos-domain/src/api.rs`; the `satisfies` clauses make a drift from `hostApi.ts`
+ * (and so from the generated types) a type error. Unknown fields are dropped, so a field the shell never reads
+ * (an agent's runtime `env`) does not travel further than this module.
+ */
+import { z } from 'zod'
+import type { AgentRow, AppPreview, AppSummary, Catalog, DeviceRow, HostApi } from './hostApi'
+
+/** The host's answer was not what `method` promises. */
+export class ResultError extends Error {
+  constructor(
+    readonly method: string,
+    detail: string
+  ) {
+    super(`AgentOS sent an unexpected answer to “${method}” (${detail}). Reload to update.`)
+    this.name = 'ResultError'
+  }
+}
+
+const text = z.string()
+
+export const appStateSchema = z.enum(['running', 'disabled', 'failed'])
+
+export const appSummarySchema = z.object({
+  id: text,
+  name: text,
+  version: text,
+  state: appStateSchema,
+  message: text.optional(),
+  icon: text.optional(),
+  tint: text.optional(),
+  description: text.optional(),
+  window: z.object({ w: z.number(), h: z.number(), minW: z.number(), minH: z.number() }).optional(),
+  source: text
+}) satisfies z.ZodType<AppSummary>
+
+export const appListSchema = z.object({ apps: z.array(appSummarySchema) })
+
+export const appPreviewSchema = z.object({
+  url: text,
+  id: text,
+  name: text,
+  version: text,
+  icon: text.optional(),
+  tint: text.optional(),
+  description: text.optional(),
+  permissions: z.array(text),
+  source: text,
+  installed: z.object({ version: text, state: appStateSchema }).optional()
+}) satisfies z.ZodType<AppPreview>
+
+/** Registry problems are keyed by their text in the page: the same problem twice must show once. */
+export const unique = (items: readonly string[]): string[] => [...new Set(items)]
+
+export const catalogSchema = z.object({
+  apps: z.array(appPreviewSchema),
+  errors: z.array(text).transform(unique)
+}) satisfies z.ZodType<Catalog>
+
+export const agentListSchema = z.object({
+  agents: z.array(
+    z.object({
+      id: text,
+      name: text,
+      avatar: text.optional(),
+      role: text
+    }) satisfies z.ZodType<AgentRow>
+  )
+})
+
+export const deviceListSchema = z.object({
+  devices: z.array(
+    z.object({
+      id: text,
+      name: text,
+      createdAt: z.number(),
+      lastSeenAt: z.number(),
+      current: z.boolean()
+    }) satisfies z.ZodType<DeviceRow>
+  )
+})
+
+/** Call a host method and parse its result; a result of another shape rejects with a `ResultError`. */
+export async function callParsed<S extends z.ZodType>(
+  api: HostApi,
+  method: string,
+  params: Record<string, unknown>,
+  schema: S
+): Promise<z.infer<S>> {
+  const result = await api.call<unknown>(method, params)
+  const parsed = schema.safeParse(result)
+  if (parsed.success) return parsed.data
+  const issue = parsed.error.issues[0]
+  const where = issue?.path.length ? `${issue.path.join('.')}: ` : ''
+  throw new ResultError(method, `${where}${issue?.message ?? 'invalid'}`)
+}

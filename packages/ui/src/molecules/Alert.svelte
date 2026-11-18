@@ -2,12 +2,14 @@
   @molecule Alert — UIAlertController: the centred `alert`, or the bottom `actionSheet` (a confirmation dialog on
   a narrow window). Actions have a role: `default`, `cancel` (bold, runs on Escape) and `destructive` (red); the
   `preferred` action is bold, takes initial focus and runs on Enter from a field. Optional prompt `fields` (text or
-  secure) collect values that are handed to the action that closes the alert. Focus is trapped and restored.
+  secure) collect values that are handed to the action that closes the alert. Optional `children` render under the
+  message (a long URL, a name that must be read in full: the text wraps anywhere). Focus is trapped and restored.
   Atoms: Scrim, Material, TextInput.
   Test ids: `testid` on the dialog, `${testid}-scrim`, `${testid}-action-<key or label slug>` on each action and
   `${testid}-field-<key>` on each field.
 -->
 <script lang="ts">
+  import type { Snippet } from 'svelte'
   import { motion } from '../motion'
   import { fade, scale } from 'svelte/transition'
   import { cubicOut } from 'svelte/easing'
@@ -29,6 +31,8 @@
     /** The dialog role: `alertdialog` (default for an alert) or `dialog`. */
     role?: 'alertdialog' | 'dialog'
     onclose?: () => void
+    /** Extra content under the message. */
+    children?: Snippet
   }
 
   let {
@@ -40,7 +44,8 @@
     fields = [],
     variant = 'alert',
     role,
-    onclose
+    onclose,
+    children
   }: Props = $props()
 
   const slug = (label: string): string =>
@@ -108,6 +113,7 @@
             <div class="body">
               <h2>{title}</h2>
               {#if message}<p id="{testid}-message">{message}</p>{/if}
+              {#if children}<div class="extra">{@render children()}</div>{/if}
             </div>
             <div class="actions stacked">
               {#each rest as action (action.label)}{@render button(action)}{/each}
@@ -126,6 +132,7 @@
           <div class="body">
             <h2>{title}</h2>
             {#if message}<p id="{testid}-message">{message}</p>{/if}
+            {#if children}<div class="extra">{@render children()}</div>{/if}
             {#if fields.length}
               <form class="fields" onsubmit={(e) => { e.preventDefault(); if (preferred) run(preferred) }}>
                 {#each fields as field, i (field.key)}
@@ -206,6 +213,13 @@
     margin: 2px 0 0;
     font: var(--type-footnote);
     letter-spacing: var(--tracking-footnote);
+    overflow-wrap: anywhere;
+  }
+  .extra {
+    margin-top: 8px;
+    font: var(--type-footnote);
+    letter-spacing: var(--tracking-footnote);
+    overflow-wrap: anywhere;
   }
   .fields {
     display: flex;

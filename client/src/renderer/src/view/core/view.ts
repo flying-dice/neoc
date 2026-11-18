@@ -71,6 +71,11 @@ export interface ViewEffects {
   focus?(path: string): void
   scrollTo?(path: string, rowKey?: RowKey): void
   copy?(text: string): void
+  /**
+   * Whether the person has just tapped or pressed a key (a transient user activation). The host pushes `view.command
+   * copy` at any time, so the clipboard is only written while this says yes. Left out (tests, stories): always.
+   */
+  userActive?(): boolean
   openUrl?(url: string): void
   closeWindow?(): void
   haptic?(): void
@@ -117,6 +122,8 @@ export type EmitResult =
 
 const RESIZE_DEBOUNCE_MS = 150
 const NOTICE_MS = 6_000
+/** The most notices a window shows at once; the oldest go first (an unanswered Undo does not pile up forever). */
+const MAX_NOTICES = 5
 
 export class ViewCore {
   viewId = ''
@@ -135,6 +142,8 @@ export class ViewCore {
   private openParams: ViewOpenParams | null = null
   private seq = 0
   private noticeId = 0
+  /** The notices that expire: how long they get, and the running timer (none while held). */
+  private readonly noticeLife = new Map<number, { ms: number; timer: unknown }>()
   private resyncing: Promise<void> | null = null
   private resizeTimer: unknown
 
@@ -434,6 +443,12 @@ export class ViewCore {
           this.report(new Error('scrollTo {row} needs a windowed list (wave B)'))
         )
       case 'copy':
+        if (this.effects.userActive && !this.effects.userActive())
+          return this.report(
+            new Error(
+              'view.command copy ignored: the clipboard is only written right after a tap or key press'
+            )
+          )
         return this.effects.copy?.(c.args.text)
       case 'openUrl':
         return this.effects.openUrl?.(c.args.url)
@@ -449,6 +464,11 @@ export class ViewCore {
     if (hit) run(hit.path)
   }
 
+  /**
+   * Show a notice. One with an action or an Undo stays until the person answers or dismisses it: a timer would take it
+   * away from anyone slower than six seconds, or a screen-reader user still moving to the button (WCAG 2.2.1). The
+   * rest expire after `durationMs` (0 keeps them), and wait while the pointer or focus is on them (`holdNotice`).
+   */
   notice(
     kind: NoticeKind,
     text: string,
@@ -461,7 +481,30 @@ export class ViewCore {
     if (extra.action) notice.action = extra.action
     if (extra.undo) notice.undo = extra.undo
     this.store.notices.push(notice)
-    if (durationMs > 0) this.timers.setTimeout(() => this.dismissNotice(id), durationMs)
+    while (this.store.notices.length > MAX_NOTICES) {
+      const plain = this.store.notices.find((n) => !n.action && !n.undo)
+      this.dismissNotice((plain ?? this.store.notices[0]).id)
+    }
+    if (durationMs > 0 && !notice.action && !notice.undo) this.expireAfter(id, durationMs)
+  }
+
+  private expireAfter(id: number, ms: number): void {
+    this.noticeLife.set(id, { ms, timer: this.timers.setTimeout(() => this.dismissNotice(id), ms) })
+  }
+
+  /** The pointer or focus is on a notice: it stays while it is read. */
+  holdNotice(id: number): void {
+    const life = this.noticeLife.get(id)
+    if (!life?.timer) return
+    this.timers.clearTimeout(life.timer)
+    life.timer = undefined
+  }
+
+  /** The pointer and focus left the notice: it gets its full time again. */
+  releaseNotice(id: number): void {
+    const life = this.noticeLife.get(id)
+    if (life && life.timer === undefined && this.store.notices.some((n) => n.id === id))
+      this.expireAfter(id, life.ms)
   }
 
   /**
@@ -502,6 +545,8 @@ export class ViewCore {
   }
 
   dismissNotice(id: number): void {
+    this.holdNotice(id)
+    this.noticeLife.delete(id)
     const i = this.store.notices.findIndex((n) => n.id === id)
     if (i >= 0) this.store.notices.splice(i, 1)
   }

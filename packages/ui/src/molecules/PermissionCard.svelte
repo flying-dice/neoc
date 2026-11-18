@@ -5,6 +5,7 @@
   import Icon from '../atoms/Icon.svelte'
   import Text from '../atoms/Text.svelte'
   import type { ChatPermissionOption } from '../types'
+  import { uniqueBy } from '../unique'
 
   interface Props {
     testid: string
@@ -16,6 +17,9 @@
   }
 
   let { testid, title, options, answer, onchoose }: Props = $props()
+
+  // The options come from an agent, and each is keyed by its id: a repeated id must not crash the list.
+  const shown = $derived(uniqueBy((o: ChatPermissionOption) => o.optionId)(options))
 </script>
 
 <div class="permission" role="group" aria-label="Permission request" data-testid={testid}>
@@ -27,7 +31,7 @@
     <span role="status"><Text style="footnote" color="secondary">{answer}</Text></span>
   {:else}
     <div class="actions">
-      {#each options as o (o.optionId)}
+      {#each shown as o (o.optionId)}
         <Button
           testid="{testid}-{o.optionId}"
           size="small"
@@ -43,7 +47,7 @@
           {o.name}
         </Button>
       {/each}
-      {#if options.length === 0}
+      {#if shown.length === 0}
         <Button
           testid="{testid}-deny"
           size="small"
