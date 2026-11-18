@@ -16,7 +16,6 @@ export default defineConfig(
     ignores: [
       '**/node_modules',
       '**/dist',
-      '**/out',
       '**/storybook-static',
       '**/test-results',
       '**/playwright-report'
@@ -70,7 +69,7 @@ export default defineConfig(
     }
   },
   {
-    files: ['**/*.{tsx,svelte}'],
+    files: ['**/*.svelte'],
     rules: {
       'svelte/no-unused-svelte-ignore': 'off'
     }

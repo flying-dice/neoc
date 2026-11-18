@@ -9,10 +9,10 @@ bun run dev        # from the repo root: builds the apps, runs the host on :7400
 bun run build      # → dist/ (the host serves it: `bun run host`)
 ```
 
-Entry point: `src/renderer/index.html` → `src/boot.ts`. See `docs/TESTING.md` for tests and `docs/architecture/host-stack.md`
+Entry point: `index.html` → `src/boot.ts`. See `docs/TESTING.md` for tests and `docs/architecture/host-stack.md`
 for the host.
 
-## The shell (`src/renderer/src`)
+## The shell (`src`)
 
 ```
 boot.ts                 start: GET /session, then the pairing screen or one Session; exposes window.__agentos (tests)
@@ -28,7 +28,7 @@ shell/results.ts        zod schemas for what the host answers the shell (app.lis
 shell/links.ts          opening a link the person confirmed (web in a new tab, mailto to the mail client); the
                         confirmation itself is ViewHost's (view/core/link.ts describes the link: host and full URL)
 shell/pairing.ts        GET /session, POST /pair and their messages (wrong code, rate limit, unreachable)
-shell/hostApi.ts        the wire types of app.* / host.devices.* (mirror of types/generated/agentos.ts, tested for drift)
+shell/hostApi.ts        the wire types of app.* / agents.* / host.devices.*: re-exported from types/generated/agentos.ts
 shell/fakeHost.ts       a fake of those methods for stories
 organisms/ViewWindow    an installed app's window: view.open on mount, view.close on destroy, <ViewHost> in between
 pages/                  PairingPage, DiscoverPage (apps: install, enable, disable, remove, add by URL), SettingsPage
@@ -42,7 +42,7 @@ with a play function.
 Agents is not a page here: it is the Luau app `apps/agents`, rendered like any installed app, with `ChatTranscript`
 streaming over AG-UI (`/agui`).
 
-## The managed renderer (`src/renderer/src/view`)
+## The managed renderer (`src/view`)
 
 The client half of the server-driven UI (`docs/architecture/ui-system.md`, sections 2 and 3). The host owns truth and
 structure; this renders view trees with the `@agentos/ui` kit, holds client-managed state and drafts, and runs **no app
@@ -62,7 +62,7 @@ core/            framework-free, plain objects under bun test; Svelte hands it a
   clientState.ts   declared client state: init, persist (session/app), mirror to the host, client.set
   session.ts       one connection, many views: hello, routing by viewId, resume on reconnect
 registry.ts      type -> adapter component (the extension point)       kit.ts  the kit registered by default
-kit/layout.ts    registerLayout: the layout, navigation and collection adapters (wave B1a), one `register` per component
+kit/layout.ts    registerLayout: the layout, navigation and collection adapters, one `register` per component
 atoms/ molecules/ organisms/ templates/ pages/    Node, ViewHost and the adapters, one atomic layer each: layout (Stack,
                  ZStack, Grid, ScrollView, Spacer, Divider, Group, Adaptive, Scope, Show, ForEach, Card), navigation
                  (Screen, NavigationStack, NavigationLink, SplitView, TabView), collections (List, Section, Row, Form,
@@ -92,7 +92,7 @@ writes queued, and refuses events (a tap is not idempotent). On reconnect: `sess
 `view.open {resume}` per window; the snapshot goes through the same shielding as live patches and queued drafts replay on
 their original `baseRev`. A restarted host gets a fresh instance seeded with the client's persisted values.
 
-**Tier-1 controls, presentation and display** (wave B1b, `kit/controls.ts`): Shortcut, Button, Toggle, Slider, Stepper,
+**Tier-1 controls, presentation and display** (`kit/controls.ts`): Shortcut, Button, Toggle, Slider, Stepper,
 Picker, DatePicker, ColorPicker, TextField, SecureField, TextEditor, SearchField (controls); Sheet, Popover, Alert,
 ConfirmationDialog, Menu (presentation: portal nodes mounted in the window root, content inert behind a modal, focus
 returned to the opener by test id); Text, Label, Icon, Image, Badge, ProgressView, Markdown, Avatar (display). The
@@ -102,7 +102,7 @@ props: right-click, long press and Shift+F10 open the context menu; dragging is 
 kept through an adopted merge). Toasts are kit Toasts; a toast `action` reports the `toast` event of the view.
 Stories: "Renderer/Kit - controls" (JSON trees in `host/kitTrees.ts` on a `KitApp` fake host).
 
-**Lists, navigation and layout** (wave B1a). A `List` is a group of lists (a `listbox` of `option`s when it has a
+**Lists, navigation and layout.** A `List` is a group of lists (a `listbox` of `option`s when it has a
 selection) with one tab stop and arrow keys; rows are `listitem`s with an invisible full-row tap button, so interactive
 trailing content is never nested in a button. Past 200 rows the source rows are virtualized (a few dozen DOM rows,
 placeholders for rows the host has not sent, `source.set` for the window). Swipe actions, drag and `Alt+Arrow` reorder,
@@ -110,7 +110,7 @@ pull to refresh and the "Refresh" keyboard button are in the kit (`packages/ui`)
 client state (a `path` Binding, so it can persist); each screen gets a back button named after the previous screen
 through its `NavLevel`; a `SplitView` below 700 px is the same flow across its columns.
 
-**Adding a component** (wave B1): write an adapter under the right atomic layer that takes `AdapterProps`, reads props
+**Adding a component:** write an adapter under the right atomic layer that takes `AdapterProps`, reads props
 through `useView().view`, renders children with `<Children>`, passes `commonOf(...).testid` to the kit component, then
 `registry.register('Gauge', { component: Gauge, since: '1.2' })` in `kit.ts`. An unknown type renders its node's
 `fallback` slot or `Unsupported`.

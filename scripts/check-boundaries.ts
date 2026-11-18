@@ -30,12 +30,12 @@ const SOURCE_GLOBS = [
 const SKIP = /(^|\/)(node_modules|storybook-static|dist|out)\/|^packages\/[^/]+\/[^/]+\.config\.\w+$/
 
 /** The renderer's protocol.ts re-exports the types generated from the Rust schema: the one file that reaches types/. */
-const GENERATED_REEXPORT = 'client/src/renderer/src/view/protocol.ts'
+const GENERATED_REEXPORT = 'client/src/view/protocol.ts'
 /** Static, reviewed markup only. Never pass agent, tool or user text to these. */
 const HTML_ALLOWED = ['packages/ui/src/atoms/Icon.svelte'] // SVG strings from the constant icons map
 /** Runs in a browser: no Node or Bun builtins. */
 const BROWSER = ['client/src/', 'packages/ui/src/']
-const WEBSOCKET_ALLOWED = ['client/src/renderer/src/view/rpc/websocket.ts'] // the reconnecting JSON-RPC transport
+const WEBSOCKET_ALLOWED = ['client/src/view/rpc/websocket.ts'] // the reconnecting JSON-RPC transport
 
 const under = (rel: string, prefixes: string[]): boolean => prefixes.some((p) => (p.endsWith('/') ? rel.startsWith(p) : rel === p))
 const matches = (spec: string, patterns: string[]): boolean =>

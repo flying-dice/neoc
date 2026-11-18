@@ -10,11 +10,11 @@ AgentOS UI kit — the iOS / iPadOS 16–17 design language (before Liquid Glass
 | **molecules** | atoms | `ListRow`, `AppIcon`, `SearchField`, `IconButton`, `Alert`, `Sheet` |
 | **organisms** | atoms, molecules | `NavigationBar`, `TabBar`, `ListSection`, `StatusBar`, `Dock`, `Window` |
 | **templates** | atoms → organisms (layout only, regions are snippets) | `DesktopTemplate`, `SplitViewTemplate`, `ScreenTemplate` |
-| **pages** | anything below (live in apps, not here) | `client/src/renderer/src/pages/*` |
+| **pages** | anything below (live in the client, not here) | `client/src/pages/*` |
 
 Rules, enforced by `bun run lint:atomic` (`scripts/check-atomic.ts`):
 
-1. Every `.svelte` file lives in exactly one layer folder (apps allow one composition root, `App.svelte`).
+1. Every `.svelte` file lives in exactly one layer folder (the client has one composition root, `client/src/App.svelte`).
 2. Imports go **strictly downward** — never sideways within a layer, never up.
 3. Every component starts with a `<!-- @<layer> Name — … -->` header matching its folder.
 4. Consumers import through layer entry points, never deep paths:

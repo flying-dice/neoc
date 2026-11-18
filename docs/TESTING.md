@@ -44,7 +44,7 @@ snapshots deliberately with `bun run test:e2e:update`, then open the changed PNG
 `bun test` (via `bun run test`) covers the client renderer core and shell in `client/src`, the kit's logic in
 `packages/ui/src` (`keys`, `text`, `sheet`, `stepper`, ...) and `types/tests` (the generated types against samples).
 They are plain-object tests: the renderer core is framework-free and runs against a TypeScript fake host on an in-memory
-wire (`client/src/renderer/src/view/host/`). Rune modules (`*.svelte.ts`: the shell's host, apps and window stores) run
+wire (`client/src/view/host/`). Rune modules (`*.svelte.ts`: the shell's host, apps and window stores) run
 under `bun test` too, through the preload in `client/bunfig.toml` (`client/test/svelte-modules.ts` compiles them).
 `bun run codegen:check` fails when `types/generated/*` or
 `docs/reference/components.md` are stale against the Rust schema; `bun run codegen` regenerates them.
@@ -67,10 +67,10 @@ Two Storybooks exist: `client/` (the shell's pages, the pairing screen, and the 
 "Renderer/Kit - controls", "Renderer/Chat transcript", "Renderer/Notes window", all driven by **JSON view trees** on
 a fake host) and `packages/ui` (each kit component and its states). Stories are `*.stories.svelte` with Svelte CSF.
 
-- **Shell pages** run against `client/src/renderer/src/shell/fakeHost.ts`, a fake of the host's management methods
+- **Shell pages** run against `client/src/shell/fakeHost.ts`, a fake of the host's management methods
   (`app.*`, `host.devices.*`) with the host's own answers and error messages, keeping state so install, disable, remove
   and revoke behave end to end.
-- **Renderer states** run against the fake hosts in `client/src/renderer/src/view/host/` (`TreeApp`, `KitApp`,
+- **Renderer states** run against the fake hosts in `client/src/view/host/` (`TreeApp`, `KitApp`,
   `ChatApp`, the fake AG-UI): a tree, ops applied, a two-way binding, a windowed list, a conflict, offline, reconnect.
 - A story that shows a deliberately clipped state tags itself `overflow-ok`. Stories tagged `app` (an app screen inside the
   `AppWindow` frame) also run at a minimum and a large window; Luau apps have no Storybook of their own, because the
@@ -129,7 +129,7 @@ first commit. `bun run lint:testids` fails the build for raw Svelte elements and
 - **Scope** is the app id for anything inside an app, and the shell part for the desktop (`dock`, `status-bar`,
   `stage-strip`, `window-<appId>`, `pairing`).
 - **A Luau app's window** gets its ids from node keys: `<appId>-<explicit keys on the path>` (`calculator-key-7`,
-  `calculator-display`; `client/src/renderer/src/view/core/testid.ts`). Set a `key` on every interactive node; the host
+  `calculator-display`; `client/src/view/core/testid.ts`). Set a `key` on every interactive node; the host
   rejects an interactive node without one. Auto keys, slot names and the window root are skipped, so wrapping a node in a
   stack never renames it; a row template contributes `row-<rowKey>`.
 - Collections use the item's stable id, never its index or its display text: `dock-calculator`,

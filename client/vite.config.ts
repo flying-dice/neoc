@@ -16,14 +16,14 @@ const here = import.meta.dirname
 const host = process.env.AGENTOS_HOST ?? 'http://127.0.0.1:7400'
 
 export default defineConfig({
-  root: resolve(here, 'src/renderer'),
-  publicDir: resolve(here, 'src/renderer/public'),
+  root: here,
+  publicDir: resolve(here, 'public'),
   plugins: [svelte({ configFile: resolve(here, 'svelte.config.mjs') })],
   build: {
     target: 'esnext',
     outDir: resolve(here, 'dist'),
     emptyOutDir: true,
-    rollupOptions: { input: { index: resolve(here, 'src/renderer/index.html') } }
+    rollupOptions: { input: { index: resolve(here, 'index.html') } }
   },
   server: {
     port: 5173,

@@ -295,7 +295,7 @@ SQLite (`apps/agents/app.luau`).
    state runs its journeys serially and clears that state first.
 7. **Cover the states.** The `desktop` project opens your app in the real shell on its own (floating light/dark, its
    minimum and a large window, every layout, axe, snapshots). For a state a journey does not reach, add a JSON-tree
-   story to the client Storybook (`client/src/renderer/src/view/stories`); the kit's own components have stories in
+   story to the client Storybook (`client/src/view/stories`); the kit's own components have stories in
    `packages/ui`.
 8. **Try it for real.** `bun run dev`, open `http://127.0.0.1:5173`, pair with the code the host prints, install the app
    from Discover and use it with the keyboard, in light and dark, at its minimum size. Then the `verify-change` skill,

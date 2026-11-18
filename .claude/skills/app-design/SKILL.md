@@ -82,7 +82,7 @@ The panel and the audit run in parallel. A round is 5 agents.
 
 Work through the change list in priority order:
 
-- Fix root causes in the kit (`packages/ui`), the renderer adapters (`client/src/renderer/src/view`), the component schema
+- Fix root causes in the kit (`packages/ui`), the renderer adapters (`client/src/view`), the component schema
   (Rust, then `bun run codegen`) or the tokens, not one screen at a time. A kit change reaches every app, so run the whole
   e2e suite afterwards. A Luau app changes its tree, keys, labels, copy and window size only: it never styles.
 - If a finding shows the **styleguide** is wrong, change `DESIGN_LANGUAGE.md` deliberately in the same change and

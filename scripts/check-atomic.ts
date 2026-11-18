@@ -28,7 +28,7 @@ const rank = (l: Layer): number => LAYERS.indexOf(l)
 const SOURCE_GLOBS = ['packages/*/src/**/*.{svelte,ts}', 'client/src/**/*.{svelte,ts}']
 
 /** Files allowed outside the layer folders: app entry points that wire pages together. */
-const COMPOSITION_ROOTS = new Set(['client/src/renderer/src/App.svelte'])
+const COMPOSITION_ROOTS = new Set(['client/src/App.svelte'])
 
 function layerOfPath(path: string): Layer | null {
   const parts = path.split(sep)

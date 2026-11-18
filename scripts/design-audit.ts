@@ -24,7 +24,7 @@
 import { dirname, join, relative, resolve } from 'node:path'
 
 const ROOT = resolve(import.meta.dir, '..')
-const DESKTOP = join(ROOT, 'client/src/renderer/src')
+const DESKTOP = join(ROOT, 'client/src')
 
 /** The shell's pages → their page component (pages pull in their own components). */
 const BUILTIN_PAGES: Record<string, string> = {

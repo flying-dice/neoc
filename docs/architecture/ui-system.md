@@ -2,7 +2,7 @@
 
 Status: the design the platform is built on, and still its reference for the view protocol, bindings, state and the
 Luau authoring API. It is implemented: the host in `crates/` (`agentos-domain` holds the schema and the protocol,
-`agentos-luau` the app API), the renderer in `client/src/renderer/src/view` and the kit in `packages/ui`. Where the
+`agentos-luau` the app API), the renderer in `client/src/view` and the kit in `packages/ui`. Where the
 code and this text differ, the code wins: the generated `types/generated/agentos.d.luau` and
 `docs/reference/components.md` are the exact catalogue. Sections 6 to 8 record the original type-pipeline proposal,
 the prototype and the build plan; each opens with what was actually built. Sources of truth beside it:
@@ -56,7 +56,7 @@ Rules that fall out of the decided architecture:
    `ViewCore` (framework-free) is that contract in code; Svelte adapters are the only framework-bound part.
 
 Repo placement (as built): `packages/ui` is the kit (atomic layers, `testid` required). The renderer lives in the client,
-`client/src/renderer/src/view`: `core/` is this protocol's client half and `atoms/ molecules/ organisms/ templates/ pages/`
+`client/src/view`: `core/` is this protocol's client half and `atoms/ molecules/ organisms/ templates/ pages/`
 are the adapters (wire props -> kit components). Adapters import only `@agentos/ui` and `svelte`.
 
 ---
@@ -282,7 +282,7 @@ interface Node {
 }
 ```
 
-(`client/src/renderer/src/view/protocol.ts` is this, executable: it re-exports the types generated from the Rust schema.)
+(`client/src/view/protocol.ts` is this, executable: it re-exports the types generated from the Rust schema.)
 
 **Addressing.** A node's **path** is the keys from the window root, `/`-joined, with a `@slot` segment when the
 node sits in a named slot: `main/list/@row/item/delete`. Paths are stable across renders because keys are.
@@ -540,7 +540,7 @@ A literal object that happens to contain `$ref` or `$fn` as its own key is writt
 upper lower`, and `fmt.number fmt.currency fmt.percent fmt.bytes fmt.date fmt.time fmt.dateTime fmt.relative
 fmt.plural fmt.list`. No loops, no recursion, no user functions, no I/O: it cannot hang or exfiltrate, it has a total
 cost bound (nodes in the expression), and it is the same on every client. Anything beyond it is computed on the host
-(3.6). (Implemented in `client/src/renderer/src/view/core/expr.ts`; an unknown function evaluates to `undefined`, never throws.)
+(3.6). (Implemented in `client/src/view/core/expr.ts`; an unknown function evaluates to `undefined`, never throws.)
 
 Refs resolve **reactively** on the client: adapters call `view.evaluate(expr, scope)` inside `$derived`, which reads
 Svelte `$state` proxies, so Svelte tracks exactly which store entries a prop depends on and re-renders only that
@@ -1396,7 +1396,7 @@ enforcement to the **tree validator** (host, on every tree emitted, plus dev-tim
 
 ### 5.4 Test ids
 
-Rule (implemented in `client/src/renderer/src/view/core/testid.ts`, tested): **`testid = app + "-" + the explicit keys on the path`**,
+Rule (implemented in `client/src/view/core/testid.ts`, tested): **`testid = app + "-" + the explicit keys on the path`**,
 joined with `-`. The window root, **auto keys** (`_0`) and **slot names** are skipped (wrapping a node in a stack, or moving it into
 a toolbar slot, never renames it); a row template contributes `row-<rowKey>` (the item's stable id, never its index
 or text). An explicit `testid` prop overrides.
@@ -1432,7 +1432,7 @@ One component schema, generated outputs that are committed, and a no-diff check 
 ```
 crates/agentos-domain, ui module   (Rust types + the component catalogue: tokens, Action, Expr, Source decls, event payloads)
         │   bun run codegen     (cargo run -p agentos-codegen; `bun run codegen:check` is the no-diff check)
-        ├─▶ types/generated/agentos.ts        protocol types + the runtime COMPONENTS table  ──▶  client/src/renderer/src/view/protocol.ts
+        ├─▶ types/generated/agentos.ts        protocol types + the runtime COMPONENTS table  ──▶  client/src/view/protocol.ts
         ├─▶ types/generated/agentos.d.luau    the `app` API types (luau-lsp)
         ├─▶ types/generated/{ui,app}.luau     constructors (the Luau runtime's `@agentos/ui`) and the `@agentos/app` shim
         └─▶ docs/reference/components.md      the component reference
@@ -1486,7 +1486,7 @@ declare ui: { TextField: (props: TextFieldProps) -> Node, --[[ ... ]] }
 `ui.luau` is generated too: defaults, positional mapping, a11y checks, auto-keys, `fallback` slots for post-1.0 components.
 
 **Generated TypeScript**: `NodeOf<'TextField'>` types, the `Action`/`Expr`/`Op`/`Source*` protocol types (today hand-written in
-`client/src/renderer/src/view/protocol.ts`, now re-exporting the generated types), and a runtime `COMPONENTS` table (`interactive`, `bindings`, `events`, `since`) the renderer uses
+`client/src/view/protocol.ts`, now re-exporting the generated types), and a runtime `COMPONENTS` table (`interactive`, `bindings`, `events`, `since`) the renderer uses
 for `Unsupported` decisions and the binding-writability check.
 
 **Rust**: `build.rs` embeds `kit.schema.json`; the host validates every emitted tree and every event payload against it
@@ -1511,7 +1511,7 @@ layer and keep the same four outputs.
 
 ## 7. The prototype (`proto/`)
 
-Historical: `proto/` was the spike that proved the renderer core. It was removed once `client/src/renderer/src/view`
+Historical: `proto/` was the spike that proved the renderer core. It was removed once `client/src/view`
 (`ViewCore` in `core/`, tested under `bun test`) replaced it, so the commands and file names below no longer exist.
 
 Vite + Svelte 5, importing the real `@agentos/ui` atoms from the repo path (read-only), the host as a TypeScript stub on an

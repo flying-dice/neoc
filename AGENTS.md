@@ -10,7 +10,7 @@ AgentOS is an iPadOS-style virtual desktop for agents. It has three parts:
   app ref over `file://`, `http://` or `https://`. An app holds its state, data, tools, notifications and UI
   description. Examples: `apps/calculator`, `apps/agents`.
 - **The client** (`client/`): a managed Vite + Svelte 5 PWA. It renders the view trees the host sends with the kit in
-  `packages/ui` (atomic layers) through adapters in `client/src/renderer/src/view/`, holds client-managed state, and
+  `packages/ui` (atomic layers) through adapters in `client/src/view/`, holds client-managed state, and
   runs **no app code**.
 
 Bun workspaces cover `client` and `packages/*` (an app is Luau, `app.json` + `*.luau`, not a Bun package); Cargo covers
@@ -84,7 +84,7 @@ A change is done when all of these hold:
 Enforced by `bun run lint:boundaries` (`scripts/check-boundaries.ts`) on the client and the kit: no relative import
 leaves its package (the client never reaches into `crates/`), the client and kit import only `@agentos/ui` (stories
 also `@agentos/storybook`), no Node or Bun builtins in browser code, `new WebSocket` only in
-`client/src/renderer/src/view/rpc/websocket.ts`, and no `{@html}`, `innerHTML`, `outerHTML`, `insertAdjacentHTML` or
+`client/src/view/rpc/websocket.ts`, and no `{@html}`, `innerHTML`, `outerHTML`, `insertAdjacentHTML` or
 `document.write`.
 
 Also: atomic layers (`lint:atomic`, in `packages/ui` and `client/src`) and test ids from the first commit

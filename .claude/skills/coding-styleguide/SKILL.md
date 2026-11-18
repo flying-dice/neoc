@@ -22,7 +22,7 @@ crate seam except through a port or the protocol.
 | Dev-time adapter | `agentos-codegen`: the Rust schema to `types/generated/*` and `docs/reference/components.md` |
 | Composition root | `agentos-host`: wiring only (build adapters, hand each to its port, mount routers) |
 | Apps | `apps/<id>`: Luau packages; their only contract is the `app` table (`types/generated/agentos.d.luau`) |
-| Client | `client/`: the shell and the renderer (`client/src/renderer/src/view`); it renders view trees and runs no app code |
+| Client | `client/`: the shell and the renderer (`client/src/view`); it renders view trees and runs no app code |
 | Kit | `packages/ui`: Svelte components in atomic layers, tokens, stories; knows nothing about apps |
 
 The boundary rules:

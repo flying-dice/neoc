@@ -1,8 +1,8 @@
 {
   "include": [
-    "src/renderer/src/env.d.ts",
-    "src/renderer/src/**/*",
-    "src/renderer/src/**/*.svelte"
+    "src/env.d.ts",
+    "src/**/*",
+    "src/**/*.svelte"
   ],
   "compilerOptions": {
     "target": "esnext",

@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { ago, iconOf, tintBackground } from './hostApi'
 
 const generated = readFileSync(
-  join(import.meta.dir, '../../../../../types/generated/agentos.ts'),
+  join(import.meta.dir, '../../../types/generated/agentos.ts'),
   'utf8'
 )
 

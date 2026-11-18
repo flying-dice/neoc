@@ -13,7 +13,7 @@ code**: nothing in it knows what the Calculator is.
   (narrow, or state the invariant in a comment where it is established).
 - Model alternatives as discriminated unions and close switches with a `never` check.
 - Wire types come from the Rust schema: `types/generated/agentos.ts` (`bun run codegen`). Don't hand-write a second copy of
-  a wire shape; `client/src/renderer/src/view/protocol.ts` and `shell/hostApi.ts` are tested for drift against the generated
+  a wire shape; `client/src/view/protocol.ts` and `shell/hostApi.ts` are tested for drift against the generated
   file. A shape the client reads from outside that the schema doesn't cover (an `/agui` event, a JSON-RPC result) is parsed
   with zod before use.
 - Expected failure as a tuple, for a new API whose callers must branch (`Promise<[T, null] | [null, E]>` when async), with an
@@ -52,7 +52,7 @@ export function parseImport(file: { size: number; type: string }): [Draft, null]
 - Agent and tool text is rendered as text (or the kit's `Markdown`), never `{@html}` or `innerHTML`. The only `{@html}` is
   `packages/ui/src/atoms/Icon.svelte`, over the constant icon map.
 
-## Renderer adapters (`client/src/renderer/src/view`)
+## Renderer adapters (`client/src/view`)
 
 A node `type` maps to an adapter component in the registry (`registry.ts`, `kit.ts`, `kit/*.ts`); the adapter wraps a kit
 component. To add one:

@@ -7,9 +7,9 @@
  * compile error here and nowhere else. Nothing else in the renderer declares a message, node, op, patch or action
  * type or imports the generated module directly.
  */
-import type * as G from '../../../../../types/generated/agentos'
+import type * as G from '../../../types/generated/agentos'
 
-export { PROTO_VERSION as PROTO, KIT_VERSION as KIT } from '../../../../../types/generated/agentos'
+export { PROTO_VERSION as PROTO, KIT_VERSION as KIT } from '../../../types/generated/agentos'
 
 export type Json = G.JsonValue
 
