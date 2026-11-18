@@ -6,7 +6,8 @@ use crate::{
     vm::{Shared, ToolDecl},
 };
 use agentos_domain::{tool_schema, QualifiedToolName, ToolSpec};
-use mlua::{Function, Lua, Table, Value as LuaValue};
+use agentos_luavm::mlua;
+use agentos_luavm::mlua::{Function, Lua, Table, Value as LuaValue};
 use serde_json::{json, Value};
 use std::sync::Arc;
 

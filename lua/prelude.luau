@@ -3,15 +3,16 @@
 -- `.darklua.json`), so the few Luau standard-library members they use that Lua 5.1 lacks are provided here:
 -- `typeof`, `table.clone`, `table.move`, `table.pack`, `table.unpack` and the `utf8` library.
 --
--- The host runs this file once, in the globals table every app chunk and `@agentos/ui` then run in, before any
--- of them (`types/generated/prelude.lua`, built by `bun run codegen`). Nothing is overwritten: a member the
--- interpreter already has is left alone, so this is a no-op on Luau and on Lua 5.3+.
+-- The host runs this file once per app, before any app chunk or `@agentos/ui`, and passes the table those chunks
+-- will run in as the chunk's `...` argument (`types/generated/prelude.lua`, built by `bun run codegen`). It
+-- installs into that table rather than reaching for `getfenv()`, which an app's sandbox does not have. Nothing
+-- is overwritten: a member the interpreter already has is left alone, so this is a no-op on Luau and on Lua 5.3+.
 --
 -- The `utf8` functions follow Lua 5.3's strict semantics (which Luau shares): they reject overlong forms,
 -- surrogates and code points above U+10FFFF. Apps must not use Luau-only members that are not listed here
 -- (`table.find`, `math.clamp`, `bit32`, `buffer`, ...): `scripts/lua51.test.ts` fails when one appears.
 
-local env: { [string]: any } = getfenv()
+local env: { [string]: any } = ...
 
 local function define(library: { [string]: any }, name: string, value: any)
   if rawget(library, name) == nil then

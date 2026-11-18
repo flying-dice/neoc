@@ -21,8 +21,9 @@ pub use crate::data::{
 
 // ---- running apps -------------------------------------------------------------------------
 
-/// The files of an app package handed to the runtime: the entry point and every `.luau` module, by path
-/// inside the app ref. There is no filesystem: `require` resolves only within this set.
+/// The files of an app package handed to the runtime: the entry point, by path inside the app ref. An app is
+/// built into one self-contained Lua 5.1 file, so the entry is the only source; there is no filesystem and
+/// `require` loads no package file.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AppPackage {
     pub entry: String,

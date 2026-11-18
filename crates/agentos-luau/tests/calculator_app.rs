@@ -5,13 +5,13 @@
 mod common;
 
 use agentos_application::ports::{
-    AppData, AppPackage, AppRuntime, CallContext, Notifier, PortResult, RenderOutput, ViewEventCall,
+    AppData, AppRuntime, CallContext, Notifier, PortResult, RenderOutput, ViewEventCall,
 };
 use agentos_domain::{ui::Node, Capabilities};
 use agentos_luau::{Limits, LuauRuntime};
-use common::{agent_ctx, db, id, user_ctx};
+use common::{agent_ctx, built_app, db, id, user_ctx};
 use serde_json::{json, Map, Value};
-use std::{collections::BTreeMap, path::Path, sync::Arc};
+use std::{path::Path, sync::Arc};
 
 struct Quiet;
 #[async_trait::async_trait]
@@ -22,11 +22,7 @@ impl Notifier for Quiet {
 }
 
 async fn calculator() -> LuauRuntime {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/calculator");
-    let mut package = AppPackage { entry: "app.luau".into(), files: BTreeMap::new() };
-    for name in ["app.luau", "calc.luau"] {
-        package.files.insert(name.to_owned(), std::fs::read(dir.join(name)).unwrap());
-    }
+    let package = built_app("calculator");
     let runtime = LuauRuntime::new(
         Arc::new(Quiet),
         Arc::new(agentos_application::testing::RecordingShell::default()),

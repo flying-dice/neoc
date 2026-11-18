@@ -1,18 +1,20 @@
-//! The CPU budget, counted in Luau interrupts rather than wall-clock time.
+//! The CPU budget, counted in VM instructions rather than wall-clock time.
 //!
-//! The VM's interrupt runs at every Lua function call and every loop back-edge, so the number of interrupts
+//! The VM's count hook runs every [`HOOK_INSTRUCTIONS`] Lua VM instructions (a *tick*), so the number of ticks
 //! since the app was last handed control is a deterministic measure of the work it has done: it does not
 //! change when the machine is busy, when the process is descheduled or when the host sleeps. A loaded
-//! machine makes a runaway script take longer to hit the budget, never an honest one hit it.
+//! machine makes a runaway script take longer to hit the budget, never an honest one hit it. Work the VM
+//! cannot count (the pattern matcher, `string.rep`, `table.concat`, ...) is charged by its own size through
+//! [`CpuBudget::spend`].
 //!
 //! There are two budgets. A *slice* is the work between two host awaits and is refilled by every host call;
 //! it is not counted while a host call is in flight. A *call* is the whole top-level call (a tool, an event,
 //! a render); host calls never refill it and waiting never pauses it, so a loop that does nothing but call the
 //! host, or one that spins behind a host call a coroutine left parked, cannot run forever. A wall-clock
-//! backstop sits behind each count, checked only every few thousand interrupts so the check stays cheap (and
-//! at every host call).
+//! backstop sits behind each count, read whenever a count crosses a multiple of [`WALL_CHECK_EVERY`] ticks (a
+//! hundred microseconds or so of VM work) and at every host call.
 //!
-//! An unload retires the app (see [`Retirement`]): the interrupt, every host call and a host call in flight
+//! An unload retires the app (see [`Retirement`]): the hook, every host call and a host call in flight
 //! all stop, whatever is left of the budgets.
 
 use std::{
@@ -24,23 +26,28 @@ use std::{
 };
 use tokio::sync::Notify;
 
-/// How often (in interrupts) the wall-clock backstops are read.
-const WALL_CHECK_EVERY: u64 = 4096;
+/// How often (in ticks) the wall-clock backstops are read: `Instant::now` is some tens of nanoseconds, a
+/// tick is a hundred VM instructions, so this keeps a runaway inside one C library call's reach of the wall.
+pub const WALL_CHECK_EVERY: u64 = 256;
+
+/// VM instructions per tick: how often the count hook runs. Small enough that a runaway loop is caught
+/// within microseconds, large enough that the hook costs a few percent of an honest script's time.
+pub const HOOK_INSTRUCTIONS: u32 = 100;
 
 /// What a host call (a database statement, a transaction step) costs against the call's tick budget, on top
-/// of the interrupts the app spent getting there. A host call is far dearer than a Lua function call, and
+/// of the ticks the app spent getting there. A host call is far dearer than a Lua function call, and
 /// charging it keeps a loop of cheap host calls (`while true do app.kv:get("k") end`) from outliving the
-/// budget just because each iteration is only a few interrupts.
-pub const HOST_CALL_TICKS: u64 = 1_000;
+/// budget just because each iteration is only a few ticks.
+pub const HOST_CALL_TICKS: u64 = 100;
 
 /// What CPU an app may use: one slice (between two host awaits) and one whole top-level call.
 #[derive(Clone, Copy, Debug)]
 pub struct Allowance {
-    /// Interrupts (Lua calls and loop iterations) between two host awaits.
+    /// Ticks ([`HOOK_INSTRUCTIONS`] VM instructions each) between two host awaits.
     pub ticks: u64,
     /// Wall-clock time between two host awaits, whatever the count says.
     pub wall: Duration,
-    /// Interrupts (plus [`HOST_CALL_TICKS`] per host call) in one top-level call. Host calls refill the slice
+    /// Ticks (plus [`HOST_CALL_TICKS`] per host call) in one top-level call. Host calls refill the slice
     /// but never this.
     pub call_ticks: u64,
     /// Wall-clock time of one top-level call, host waits included.
@@ -74,7 +81,7 @@ pub struct Retirement {
 }
 
 impl Retirement {
-    /// The app is being unloaded: whatever it is running stops at its next interrupt or host call, and a
+    /// The app is being unloaded: whatever it is running stops at its next tick or host call, and a
     /// host call it is waiting on is abandoned.
     pub fn retire(&self) {
         self.retired.store(true, Ordering::SeqCst);
@@ -98,7 +105,7 @@ impl Retirement {
 
 /// The CPU an app has used: the slice since it was last handed control, the whole top-level call, and whether
 /// either ran out (the *spent latch*, which only [`CpuBudget::begin`] clears). Cheap to clone: every clone
-/// counts into the same budget (the interrupt holds one, the host calls another).
+/// counts into the same budget (the hook holds one, the host calls another).
 #[derive(Clone)]
 pub struct CpuBudget {
     base: Instant,
@@ -159,7 +166,7 @@ impl CpuBudget {
         self.started_ns.store(self.now_ns(), Ordering::Relaxed);
     }
     /// The app is about to wait on the host: waiting is not app CPU, so the slice stops until the returned
-    /// guard is dropped (the interrupt also runs when the coroutine is resumed to be polled, which must not
+    /// guard is dropped (the hook also runs when the coroutine is resumed to be polled, which must not
     /// count against the slice either).
     pub fn wait_for_host(&self) -> HostWait {
         self.waiting.fetch_add(1, Ordering::SeqCst);
@@ -195,29 +202,36 @@ impl CpuBudget {
             None
         }
     }
-    /// One interrupt: has a budget run out, or was the app unloaded? A budget stays out until `begin`.
-    ///
-    /// While a host call is in flight the slice is not counted, but the call's budget is: an app that parks a
-    /// host call (a coroutine suspended in one) and then spins still runs into it.
+    /// One tick: has a budget run out, or was the app unloaded? A budget stays out until `begin`.
     pub fn exceeded(&self, allowance: Allowance) -> Option<Stop> {
+        self.spend(allowance, 1)
+    }
+    /// `n` ticks of work were done (the hook's tick, or a library function's size-proportional cost): charge
+    /// them, then say whether a budget ran out or the app was unloaded. A budget stays out until `begin`.
+    ///
+    /// While a host call is in flight the slice is not counted, but the call's budget (ticks and wall clock)
+    /// is: an app that parks a host call and then spins still runs into it, and nothing here short-circuits
+    /// on the wait.
+    pub fn spend(&self, allowance: Allowance, n: u64) -> Option<Stop> {
         if self.retirement.is_retired() {
             return Some(Stop::Unloaded);
         }
         if self.spent.load(Ordering::Relaxed) {
             return Some(Stop::Budget);
         }
-        let call_ticks = self.call_ticks.fetch_add(1, Ordering::Relaxed) + 1;
+        // read the clock when a count crosses a multiple of WALL_CHECK_EVERY
+        let crossed = |after: u64| after / WALL_CHECK_EVERY != after.saturating_sub(n) / WALL_CHECK_EVERY;
+        let call_ticks = self.call_ticks.fetch_add(n, Ordering::Relaxed).saturating_add(n);
         let call_spent = call_ticks > allowance.call_ticks
-            || (call_ticks.is_multiple_of(WALL_CHECK_EVERY) && self.call_elapsed() > allowance.call_wall);
+            || (crossed(call_ticks) && self.call_elapsed() > allowance.call_wall);
         let slice_spent = self.waiting.load(Ordering::SeqCst) == 0 && {
-            let ticks = self.ticks.fetch_add(1, Ordering::Relaxed) + 1;
-            ticks > allowance.ticks
-                || (ticks.is_multiple_of(WALL_CHECK_EVERY) && self.wall_elapsed() > allowance.wall)
+            let ticks = self.ticks.fetch_add(n, Ordering::Relaxed).saturating_add(n);
+            ticks > allowance.ticks || (crossed(ticks) && self.wall_elapsed() > allowance.wall)
         };
         self.latch_if(call_spent || slice_spent)
     }
     /// A host call is about to start: charge it, and refuse it when the app was unloaded or the call's
-    /// budget (ticks or wall-clock) is spent. The interrupt reads the wall clock only now and then, so a
+    /// budget (ticks or wall-clock) is spent. The hook reads the wall clock only now and then, so a
     /// loop that does nothing but host calls is caught here.
     pub fn charge_host_call(&self, allowance: Allowance) -> Result<(), Stop> {
         if self.retirement.is_retired() {
@@ -273,7 +287,7 @@ mod tests {
         budget.begin();
         assert!((0..9).all(|_| !exceeded(&budget, allowance(10))));
         let wait = budget.wait_for_host();
-        assert!((0..1000).all(|_| !exceeded(&budget, allowance(10))), "interrupts while waiting are free");
+        assert!((0..1000).all(|_| !exceeded(&budget, allowance(10))), "ticks while waiting are free");
         drop(wait);
         assert!((0..10).all(|_| !exceeded(&budget, allowance(10))));
     }
@@ -356,7 +370,7 @@ mod tests {
         assert!((0..50).all(|_| !exceeded(&budget, a)));
         assert!(
             exceeded(&budget, a),
-            "the 101st interrupt of the call is over budget however often the slice refilled"
+            "the 101st tick of the call is over budget however often the slice refilled"
         );
         budget.begin();
         assert!(!exceeded(&budget, a), "a new call has a new budget");
@@ -370,7 +384,7 @@ mod tests {
         assert!((0..3).all(|_| budget.charge_host_call(a).is_ok()));
         assert_eq!(budget.charge_host_call(a), Err(Stop::Budget));
         assert_eq!(budget.charge_host_call(a), Err(Stop::Budget), "sticky");
-        assert!(exceeded(&budget, a), "and the interrupt agrees");
+        assert!(exceeded(&budget, a), "and the hook agrees");
     }
 
     #[test]

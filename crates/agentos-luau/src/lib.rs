@@ -17,6 +17,6 @@ mod vm;
 
 pub use convert::{json_to_lua, lua_to_json};
 pub use error::{ScriptError, ToolFailure};
-pub use runtime::LuauRuntime;
+pub use runtime::{LuauRuntime, UI_MODULE};
 pub use state::DepKey;
 pub use vm::{AppVm, Effect, Limits, Result, ShellEffect, VmConfig, VmError};

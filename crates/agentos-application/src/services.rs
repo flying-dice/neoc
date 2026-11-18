@@ -186,11 +186,6 @@ fn check_against_record(record: &InstalledApp, manifest: &Manifest) -> Result<()
     }
 }
 
-/// Package files that are Luau source: the entry and every module `require` may reach.
-fn is_luau(path: &str) -> bool {
-    std::path::Path::new(path).extension().is_some_and(|e| e.eq_ignore_ascii_case("luau"))
-}
-
 impl AppService {
     #[must_use]
     pub fn new(ports: Ports) -> Self {
@@ -800,14 +795,8 @@ impl AppService {
         m.validate()?;
         let mut budget = PackageBudget::default();
         let mut package = AppPackage { entry: m.main.clone(), ..AppPackage::default() };
-        for file in app_ref.files.iter().filter(|f| is_luau(&f.path)) {
-            package
-                .files
-                .insert(file.path.clone(), self.fetch_verified(app_ref, &file.path, &mut budget).await?);
-        }
-        if !package.files.contains_key(&m.main) {
-            return Err(agentos_domain::DomainError::MissingFile(m.main.clone()).into());
-        }
+        // an app is built into ONE Lua 5.1 file: the entry is the only source the runtime is handed
+        package.files.insert(m.main.clone(), self.fetch_verified(app_ref, &m.main, &mut budget).await?);
         let mut migrations = Vec::new();
         for spec in &m.migrations {
             let sql = String::from_utf8(self.fetch_verified(app_ref, &spec.file, &mut budget).await?)

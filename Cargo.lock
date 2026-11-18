@@ -183,6 +183,7 @@ dependencies = [
  "agentos-domain",
  "agentos-fetch",
  "agentos-http",
+ "agentos-luau",
  "agentos-mcp",
  "agentos-sqlite",
  "anyhow",

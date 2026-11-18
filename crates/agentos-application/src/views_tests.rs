@@ -270,7 +270,7 @@ async fn a_failed_render_keeps_the_last_good_tree_and_reports_an_error() {
     let r = rig().await;
     let s = open(&r).await;
     r.sink.take();
-    r.f.runtime.fail_render(Some("main/app.luau:9: boom"));
+    r.f.runtime.fail_render(Some("main/app.lua:9: boom"));
     r.f.runtime.mark_dirty("v1");
     r.views.event(CONN, event(&s.view_id, 1, "main/title")).await.unwrap();
     let sent = r.sink.take();

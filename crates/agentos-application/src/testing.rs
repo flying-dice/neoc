@@ -544,7 +544,7 @@ impl AppRuntime for FakeRuntime {
     ) -> PortResult<LoadedApp> {
         *self.loads.lock().unwrap().entry(app.to_string()).or_default() += 1;
         if self.fail_load.lock().unwrap().contains(app.as_str()) {
-            return Err(PortError::Rejected(format!("{app}/app.luau:3: boom")));
+            return Err(PortError::Rejected(format!("{app}/app.lua:3: boom")));
         }
         // the fake "app source" is a comma separated list of tool names
         let main = package.files.get(&package.entry).cloned().unwrap_or_default();
@@ -953,7 +953,7 @@ impl Fakes {
     pub fn add_app(&self, id: &str, tools: &[(&str, &str)]) -> String {
         self.add_app_with(id, tools, &[], vec![])
     }
-    /// Like `add_app`, with extra `.luau` modules (path, source) and package grants.
+    /// Like `add_app`, with extra `.lua` modules (path, source) and package grants.
     pub fn add_app_with(
         &self,
         id: &str,
@@ -965,7 +965,7 @@ impl Fakes {
         let sql = b"CREATE TABLE t(a);".to_vec();
         let sha = |b: &[u8]| format!("{:x}", Sha256::digest(b));
         let mut files = vec![
-            FileRef { path: "main.luau".into(), url: format!("mem://{id}/main.luau"), sha256: sha(&main) },
+            FileRef { path: "main.lua".into(), url: format!("mem://{id}/main.lua"), sha256: sha(&main) },
             FileRef {
                 path: "001_init.sql".into(),
                 url: format!("mem://{id}/001_init.sql"),
@@ -986,7 +986,7 @@ impl Fakes {
                 id: AppId::parse(id).unwrap(),
                 name: id.into(),
                 version: "1.0.0".into(),
-                main: "main.luau".into(),
+                main: "main.lua".into(),
                 permissions,
                 migrations: vec![MigrationSpec {
                     version: 1,
@@ -1000,14 +1000,14 @@ impl Fakes {
             },
             files,
         };
-        mem.insert(format!("mem://{id}/main.luau"), main);
+        mem.insert(format!("mem://{id}/main.lua"), main);
         mem.insert(format!("mem://{id}/001_init.sql"), sql);
         let url = format!("mem://{id}/app-ref.json");
         mem.insert(url.clone(), serde_json::to_vec(&r).unwrap());
         url
     }
     pub fn tamper(&self, id: &str) {
-        self.fetcher.0.lock().unwrap().insert(format!("mem://{id}/main.luau"), b"evil".to_vec());
+        self.fetcher.0.lock().unwrap().insert(format!("mem://{id}/main.lua"), b"evil".to_vec());
     }
 }
 

@@ -14,8 +14,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// A CPU budget of about 100 ms of an idle machine (the interpreter does roughly 20 million interrupts a second).
-const TWO_MILLION: u64 = 2_000_000;
+/// A small CPU budget: 200 000 ticks of 100 VM instructions each, a fraction of a second of an idle machine.
+const QUICK_SLICE: u64 = 200_000;
 /// "Killed at the budget, not by the backstop": far below the 10 s wall-clock backstop even on a busy machine.
 const PROMPTLY: Duration = Duration::from_secs(5);
 
@@ -49,7 +49,7 @@ async fn sandbox_blocks_escape_hatches_and_global_mutation() {
 #[tokio::test]
 async fn cpu_budget_kills_infinite_loops_even_through_pcall() {
     let t = Instant::now();
-    let err = try_load_with("spin", "while true do end", db(), quick(TWO_MILLION)).await.err().unwrap();
+    let err = try_load_with("spin", "while true do end", db(), quick(QUICK_SLICE)).await.err().unwrap();
     assert!(err.to_string().contains("cpu budget exceeded"), "{err}");
     assert!(t.elapsed() < PROMPTLY);
     // in a handler, with pcall trying to swallow the abort
@@ -59,7 +59,7 @@ async fn cpu_budget_kills_infinite_loops_even_through_pcall() {
         end)
         app.on("ok", function() return 42 end)
     "#;
-    let vm = try_load_with("spin2", src, db(), quick(TWO_MILLION)).await.unwrap();
+    let vm = try_load_with("spin2", src, db(), quick(QUICK_SLICE)).await.unwrap();
     let t = Instant::now();
     let err = vm.emit("evil", json!(null)).await.unwrap_err();
     assert!(matches!(err, VmError::Script(_)));
@@ -96,11 +96,11 @@ async fn host_awaits_do_not_eat_the_cpu_budget_and_a_spinning_vm_does_not_stall_
             for i = 1, 5 do n = n + #app.db:all("SELECT 1 AS x") end
             return n
         end)"#;
-    let vm = try_load_with("aaa", src, db(), quick(50_000)).await.unwrap();
+    let vm = try_load_with("aaa", src, db(), quick(5_000)).await.unwrap();
     assert_eq!(vm.emit("go", json!(null)).await.unwrap(), json!(5));
-    // a second VM spins for a good while (10 million interrupts) on another worker thread
+    // a second VM spins for a good while (a million ticks) on another worker thread
     let spin =
-        try_load_with("spin", r#"app.on("spin", function() while true do end end)"#, db(), quick(10_000_000))
+        try_load_with("spin", r#"app.on("spin", function() while true do end end)"#, db(), quick(1_000_000))
             .await
             .unwrap();
     let spinner = tokio::spawn(async move { spin.emit("spin", json!(null)).await });
@@ -143,14 +143,14 @@ impl Drop for Load {
     }
 }
 
-/// The budget counts interrupts, not wall-clock time: an honest call stays inside it however loaded the
+/// The budget counts ticks, not wall-clock time: an honest call stays inside it however loaded the
 /// machine is, and a runaway one is still killed.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_cpu_budget_is_not_tripped_by_a_loaded_host() {
     let src = r#"
         app.on("honest", function() local n = 0 for i = 1, 1e6 do n = n + 1 end return n end)
         app.on("runaway", function() local n = 0 for i = 1, 1e9 do n = n + 1 end return n end)"#;
-    let vm = try_load_with("loaded", src, db(), quick(3_000_000)).await.unwrap();
+    let vm = try_load_with("loaded", src, db(), quick(300_000)).await.unwrap();
     let _load = Load::start();
     for _ in 0..5 {
         assert_eq!(vm.emit("honest", json!(null)).await.unwrap(), json!(1_000_000));
@@ -171,8 +171,8 @@ async fn the_wall_clock_backstop_still_ends_a_call_that_runs_too_long() {
     assert!(err.to_string().contains("cpu budget exceeded"), "{err}");
 }
 
-/// Luau's own pattern matcher polls the interrupt, so a catastrophic-backtracking `string.find` is stopped
-/// by the CPU budget too.
+/// The C pattern matcher never polls the VM hook; the host's own matcher charges the CPU budget, so a
+/// catastrophic-backtracking `string.find` is stopped by it too.
 #[tokio::test]
 async fn backtracking_pattern_is_stopped_by_the_cpu_budget() {
     let src = r#"
@@ -180,7 +180,7 @@ async fn backtracking_pattern_is_stopped_by_the_cpu_budget() {
             local s = string.rep("a", 3000)
             return string.find(s, "a*a*a*a*a*a*a*a*b") == nil
         end)"#;
-    let vm = try_load_with("rex", src, db(), quick(TWO_MILLION)).await.unwrap();
+    let vm = try_load_with("rex", src, db(), quick(QUICK_SLICE)).await.unwrap();
     let t = Instant::now();
     let err = vm.emit("regex", json!(null)).await.unwrap_err();
     assert!(err.to_string().contains("cpu budget exceeded"), "{err}");
@@ -206,42 +206,35 @@ async fn a_blocking_host_call_has_its_own_timeout() {
 }
 
 #[tokio::test]
-async fn strict_annotations_and_generics_run() {
-    let src = r#"
-        --!strict
-        type Note = { id: number, body: string }
-        local function mk(id: number, body: string): Note return { id = id, body = body } end
-        app.on("t", function(p: any): Note return mk(p.id :: number, "typed") end)
-    "#;
-    let vm = load(src).await;
-    assert_eq!(vm.emit("t", json!({"id": 7})).await.unwrap(), json!({"id":7,"body":"typed"}));
-}
-
-#[tokio::test]
 async fn errors_carry_the_app_file_and_line_and_never_crash_the_host() {
     let src = "local x = 1\napp.on('boom', function()\n  local y = nil\n  return y.field\nend)\napp.on('err', function() error('custom failure') end)\napp.on('tbl', function() error({ code = 7 }) end)";
     let vm = try_load("broken", src).await.unwrap();
     let e = vm.emit("boom", json!(null)).await.unwrap_err().to_string();
-    assert!(e.starts_with("broken/app.luau:4:"), "{e}");
+    assert!(e.starts_with("broken/app.lua:4:"), "{e}");
     let e = vm.emit("err", json!(null)).await.unwrap_err().to_string();
-    assert_eq!(e, "broken/app.luau:6: custom failure");
+    assert_eq!(e, "broken/app.lua:6: custom failure");
     assert!(vm.emit("tbl", json!(null)).await.is_err(), "a table error is an error, not a panic");
 
     // a syntax error names its line, as a load failure
     let e = try_load("broken", "local x = = 1").await.err().unwrap();
     assert!(matches!(e, VmError::Load { .. }));
-    assert!(e.to_string().contains("broken/app.luau:1"), "{e}");
+    assert!(e.to_string().contains("broken/app.lua:1"), "{e}");
     // and a runtime error while loading
     let e = try_load("broken", "local t = nil\nlocal v = t.x").await.err().unwrap();
-    assert!(e.to_string().contains("broken/app.luau:2"), "{e}");
+    assert!(e.to_string().contains("broken/app.lua:2"), "{e}");
 }
 
 #[tokio::test]
 async fn host_function_errors_get_the_calling_line() {
-    let src = "app.on('bad', function()\n  return app.db:all('select * from nope')\nend)";
+    let src =
+        "app.on('bad', function()\n  local rows = app.db:all('select * from nope')\n  return rows\nend)\n\
+               app.on('tail', function()\n  return app.db:all('select * from nope')\nend)";
     let vm = try_load("err", src).await.unwrap();
     let e = vm.emit("bad", json!(null)).await.unwrap_err().to_string();
-    assert!(e.starts_with("err/app.luau:2:"), "{e}");
+    assert!(e.starts_with("err/app.lua:2:"), "{e}");
+    assert!(e.contains("no such table"), "{e}");
+    // Lua 5.1 drops the frame of a function that tail-calls (`return f()`): the line is lost, the cause is not
+    let e = vm.emit("tail", json!(null)).await.unwrap_err().to_string();
     assert!(e.contains("no such table"), "{e}");
 }
 
@@ -250,14 +243,14 @@ async fn unload_frees_the_vm_and_hot_reload_swaps_in_new_code() {
     let dir = std::env::temp_dir().join(format!("hot-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let write = |n: u32| {
-        std::fs::write(dir.join("app.luau"), format!("app.on('v', function() return {n} end)")).unwrap();
+        std::fs::write(dir.join("app.lua"), format!("app.on('v', function() return {n} end)")).unwrap();
     };
     write(1);
     let mut w = reload::watch_dir(&dir).unwrap();
     // every VM of the app holds the database through its closures: the count says whether one is still alive
     let data = db();
     let load_now = || async {
-        let src = std::fs::read_to_string(dir.join("app.luau")).unwrap();
+        let src = std::fs::read_to_string(dir.join("app.lua")).unwrap();
         try_load_with("hot", &src, data.clone(), agentos_luau::Limits::default()).await.unwrap()
     };
     let mut vm = load_now().await;

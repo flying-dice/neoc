@@ -37,7 +37,7 @@ async fn the_manifest_is_parsed_validated_and_checked_against_the_package() {
     let fails = |src: &'static str, needle: &'static str| async move {
         let e = try_load("probe", src).await.err().unwrap().to_string();
         assert!(e.contains(needle), "wanted `{needle}` in `{e}`");
-        assert!(e.contains("probe/app.luau:1"), "with the line: {e}");
+        assert!(e.contains("probe/app.lua:1"), "with the line: {e}");
     };
     fails(r#"app.manifest { id = "other", name = "P", icon = "gear" }"#, "does not match the package id")
         .await;
@@ -61,52 +61,50 @@ async fn the_manifest_is_parsed_validated_and_checked_against_the_package() {
 // ---- require ----------------------------------------------------------------------------------------------
 
 #[tokio::test]
-async fn require_loads_modules_from_the_package_only() {
-    let files = [
-        ("calc.luau", "local m = {} function m.add(a, b) return a + b end return m"),
-        (
-            "lib/util.luau",
-            "local calc = require('../calc')\nreturn { double = function(x) return calc.add(x, x) end }",
-        ),
-        ("lib/init.luau", "return { name = 'lib' }"),
-    ];
+async fn require_loads_the_two_host_modules_and_caches_them() {
     let src = r#"
-        local calc = require("./calc")
-        local util = require("./lib/util")
-        local lib = require("./lib")
-        local again = require("./calc")
         local app2 = require("@agentos/app")
-        app.on("t", function() return { sum = calc.add(2, 3), dbl = util.double(4), lib = lib.name, same = calc == again, app = app2 == app } end)
+        local ui = require("@agentos/ui")
+        local again = require("@agentos/ui")
+        app.on("t", function() return { app = app2 == app, same = ui == again, kit = type(ui.VStack), t = type(ui.each) } end)
     "#;
-    let vm = AppVm::load(&id("probe"), package(src, &files), db(), config(agentos_luau::Limits::default()))
-        .await
-        .unwrap();
+    let host_modules =
+        std::collections::HashMap::from([("ui".to_owned(), agentos_luau::UI_MODULE.as_bytes().to_vec())]);
+    let config = VmConfig { host_modules: Arc::new(host_modules), ..VmConfig::default() };
+    let vm = AppVm::load(&id("probe"), package(src, &[]), db(), config).await.unwrap();
     assert_eq!(
         vm.emit("t", json!(null)).await.unwrap(),
-        json!({"sum": 5, "dbl": 8, "lib": "lib", "same": true, "app": true})
+        json!({"app": true, "same": true, "kit": "function", "t": "function"})
     );
 }
 
 #[tokio::test]
-async fn require_refuses_everything_outside_the_bundle_with_the_requiring_line() {
-    let files = [("a.luau", "return require('./b')"), ("b.luau", "return require('./a')")];
-    let load_with = |src: &'static str| async move {
-        AppVm::load(&id("probe"), package(src, &files), db(), config(agentos_luau::Limits::default()))
-            .await
-            .err()
-            .unwrap()
-            .to_string()
-    };
-    assert!(load_with("local x = require('./nope')")
-        .await
-        .contains("no module `nope.luau` in the app package"));
-    assert!(load_with("\nrequire('../../etc/passwd')").await.contains("leaves the app package"));
-    assert!(load_with("require('/etc/passwd')").await.contains("must be relative"));
-    assert!(load_with("require('calc')").await.contains("must be relative"));
+async fn require_refuses_everything_but_the_host_modules_with_the_requiring_line() {
+    let load_with =
+        |src: &'static str| async move { try_load("probe", src).await.err().unwrap().to_string() };
+    // an app is bundled into one file: its relative requires are resolved by the build, never at run time
+    for spec in ["./calc", "../../etc/passwd", "calc", "lib:json", "std:fs", "@other/app"] {
+        let src: &'static str = Box::leak(format!("local x = require({spec:?})").into_boxed_str());
+        let e = load_with(src).await;
+        assert!(e.contains("only \"@agentos/app\" and \"@agentos/ui\" can be required"), "{spec}: {e}");
+    }
     assert!(load_with("require('@agentos/nope')").await.contains("unknown host module"));
-    let cyc = load_with("require('./a')").await;
-    assert!(cyc.contains("cyclic require"), "{cyc}");
-    assert!(load_with("local lines = 1\nrequire('./nope')").await.contains("probe/app.luau:2"));
+    assert!(load_with("local lines = 1\nrequire('./nope')").await.contains("probe/app.lua:2"));
+    // not even the neoc modules the VM crate ships
+    assert!(load_with("require('lib:base64')").await.contains("can be required"));
+}
+
+#[tokio::test]
+async fn a_host_module_that_requires_itself_is_a_cycle_not_a_stack_overflow() {
+    let mut modules = std::collections::HashMap::new();
+    modules.insert("loop".to_owned(), b"return require('@agentos/loop')".to_vec());
+    let config = VmConfig { host_modules: Arc::new(modules), ..VmConfig::default() };
+    let e = AppVm::load(&id("probe"), package("require('@agentos/loop')", &[]), db(), config)
+        .await
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(e.contains("cyclic require"), "{e}");
 }
 
 #[tokio::test]
@@ -323,7 +321,7 @@ async fn source_handles_check_their_params() {
     assert_eq!(vm.emit("ok", json!(null)).await.unwrap(), json!("s1"));
     assert!(vm.emit("missing", json!(null)).await.unwrap_err().to_string().contains("needs param `id`"));
     let e = vm.emit("extra", json!(null)).await.unwrap_err().to_string();
-    assert!(e.contains("has no param `other`") && e.contains("probe/app.luau:"), "{e}");
+    assert!(e.contains("has no param `other`") && e.contains("probe/app.lua:"), "{e}");
 }
 
 #[tokio::test]
@@ -345,7 +343,7 @@ async fn the_write_callback_runs_with_key_field_value_and_a_context() {
     assert_eq!(row, json!("hello (You at 2025-11-18T09:12:00.000Z)"));
     let e =
         vm.write_row(&source, &json!(1), "title", &json!("x"), &user_ctx(0)).await.unwrap_err().to_string();
-    assert!(e.contains("only body is writable") && e.contains("probe/app.luau:"), "{e}");
+    assert!(e.contains("only body is writable") && e.contains("probe/app.lua:"), "{e}");
     let e = vm
         .write_row(
             &agentos_application::live::SourceId("s9".into()),
@@ -424,7 +422,7 @@ async fn ctx_fail_is_a_tool_failure_and_a_bug_is_a_script_error_with_its_line() 
     let e = call(&vm, "fails", json!({})).await.unwrap_err();
     assert!(matches!(&e, VmError::ToolFailed(m) if m == "No note with id 9"), "{e:?}");
     let e = call(&vm, "bug", json!({})).await.unwrap_err();
-    assert!(matches!(&e, VmError::Script(s) if s.summary.starts_with("probe/app.luau:")), "{e:?}");
+    assert!(matches!(&e, VmError::Script(s) if s.summary.starts_with("probe/app.lua:")), "{e:?}");
 }
 
 #[tokio::test]

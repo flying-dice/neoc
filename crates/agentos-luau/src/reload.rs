@@ -11,7 +11,7 @@ pub struct AppWatcher {
 }
 
 fn is_app_file(p: &Path) -> bool {
-    p.extension().is_some_and(|e| e == "luau" || e == "json")
+    p.extension().is_some_and(|e| e == "lua" || e == "json")
 }
 
 /// Watch `dir` recursively. Each change to a `.luau` or `.json` file sends one `()`; consumers debounce.

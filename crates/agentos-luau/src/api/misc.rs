@@ -7,7 +7,8 @@ use crate::{
 };
 use agentos_application::ports::MenuCommand;
 use agentos_domain::{AppDecl, Notification};
-use mlua::{Function, Lua, Table, Value as LuaValue, Variadic};
+use agentos_luavm::mlua;
+use agentos_luavm::mlua::{Function, Lua, Table, Value as LuaValue, Variadic};
 use serde_json::Value;
 use std::sync::Arc;
 

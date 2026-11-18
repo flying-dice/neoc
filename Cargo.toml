@@ -1,10 +1,6 @@
 [workspace]
 resolver = "2"
 members = ["crates/*"]
-# TODO(lua51): agentos-luau is out of the build until the adapter is rewritten on agentos-luavm. mlua's `luau`
-# and `lua51` features cannot coexist and Cargo unifies features across the workspace, so the shared mlua
-# dependency below is Lua 5.1 and the Luau adapter cannot compile alongside it.
-exclude = ["crates/agentos-luau"]
 
 [workspace.package]
 version = "0.1.0"
@@ -17,6 +13,7 @@ publish = false
 # internal (path deps; the arrows in the dependency diagram)
 agentos-domain      = { path = "crates/agentos-domain" }
 agentos-application = { path = "crates/agentos-application" }
+agentos-luau        = { path = "crates/agentos-luau" }
 agentos-luavm       = { path = "crates/agentos-luavm" }
 agentos-sqlite      = { path = "crates/agentos-sqlite" }
 agentos-fetch       = { path = "crates/agentos-fetch" }

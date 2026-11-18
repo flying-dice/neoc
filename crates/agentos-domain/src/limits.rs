@@ -3,7 +3,7 @@
 
 use crate::DomainError;
 
-/// The largest single package file (the app ref itself, a `.luau` module or a migration).
+/// The largest single package file (the app ref itself, a `.lua` module or a migration).
 pub const MAX_FILE_BYTES: usize = 2 * 1024 * 1024;
 /// The most bytes of files an install or load fetches for one app.
 pub const MAX_PACKAGE_BYTES: usize = 8 * 1024 * 1024;
@@ -42,9 +42,9 @@ mod tests {
     #[test]
     fn a_file_over_the_cap_is_refused() {
         let mut b = PackageBudget::default();
-        assert!(b.charge("a.luau", MAX_FILE_BYTES).is_ok());
+        assert!(b.charge("a.lua", MAX_FILE_BYTES).is_ok());
         assert!(
-            matches!(b.charge("b.luau", MAX_FILE_BYTES + 1), Err(DomainError::PackageTooLarge(m)) if m.contains("b.luau"))
+            matches!(b.charge("b.lua", MAX_FILE_BYTES + 1), Err(DomainError::PackageTooLarge(m)) if m.contains("b.lua"))
         );
     }
 
@@ -52,10 +52,10 @@ mod tests {
     fn the_package_total_is_capped() {
         let mut b = PackageBudget::default();
         for i in 0..MAX_PACKAGE_BYTES / MAX_FILE_BYTES {
-            b.charge(&format!("{i}.luau"), MAX_FILE_BYTES).unwrap();
+            b.charge(&format!("{i}.lua"), MAX_FILE_BYTES).unwrap();
         }
         assert!(
-            matches!(b.charge("one-more.luau", 1), Err(DomainError::PackageTooLarge(m)) if m.contains("package"))
+            matches!(b.charge("one-more.lua", 1), Err(DomainError::PackageTooLarge(m)) if m.contains("package"))
         );
     }
 }

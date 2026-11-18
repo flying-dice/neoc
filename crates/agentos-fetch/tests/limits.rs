@@ -42,15 +42,15 @@ fn temp_dir(name: &str) -> std::path::PathBuf {
 #[tokio::test]
 async fn a_file_must_be_a_regular_file_within_the_cap() {
     let dir = temp_dir("files");
-    std::fs::write(dir.join("small.luau"), "return 1").unwrap();
-    std::fs::write(dir.join("big.luau"), vec![b'x'; 5000]).unwrap();
+    std::fs::write(dir.join("small.lua"), "return 1").unwrap();
+    std::fs::write(dir.join("big.lua"), vec![b'x'; 5000]).unwrap();
     let fifo = dir.join("pipe");
     assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
     let f = UrlFetcher::new(1024).unwrap();
     let url = |p: &std::path::Path| format!("file://{}", p.display());
 
-    assert_eq!(quickly(f.fetch(&url(&dir.join("small.luau")))).await.unwrap(), b"return 1");
-    assert!(rejected(quickly(f.fetch(&url(&dir.join("big.luau")))).await).contains("larger than"));
+    assert_eq!(quickly(f.fetch(&url(&dir.join("small.lua")))).await.unwrap(), b"return 1");
+    assert!(rejected(quickly(f.fetch(&url(&dir.join("big.lua")))).await).contains("larger than"));
     // a FIFO would block the host forever on open; a device would never end; a directory is not a file
     for not_a_file in [fifo, "/dev/zero".into(), "/dev/null".into(), dir.clone()] {
         let why = rejected(quickly(f.fetch(&url(&not_a_file))).await);
@@ -107,8 +107,8 @@ async fn a_remote_ref_cannot_reach_private_link_local_or_metadata_addresses() {
     let f = UrlFetcher::new(1024).unwrap();
     for url in [
         "http://169.254.169.254/latest/meta-data/",
-        "http://10.0.0.1/app.luau",
-        "http://192.168.1.1/app.luau",
+        "http://10.0.0.1/app.lua",
+        "http://192.168.1.1/app.lua",
         "http://[fd00:ec2::254]/latest",
         "http://[::ffff:169.254.169.254]/latest",
         "http://0.0.0.0:7400/rpc",

@@ -10,9 +10,7 @@ local env = {}
 for name, value in pairs(_G) do
   env[name] = value
 end
-env.utf8, env.typeof, env.getfenv = nil, nil, function()
-  return env
-end
+env.utf8, env.typeof = nil, nil
 env.unpack = table.unpack
 env.table = {}
 for name, value in pairs(table) do
@@ -21,7 +19,7 @@ end
 env.table.move, env.table.pack, env.table.unpack, env.table.clone = nil, nil, nil, nil
 
 local source = assert(io.open(arg[1], "rb")):read("a")
-assert(load(source, "prelude", "t", env))()
+assert(load(source, "prelude", "t", env))(env) -- the prelude installs into its `...` argument
 local poly = { utf8 = env.utf8, move = env.table.move }
 
 local comparisons = 0

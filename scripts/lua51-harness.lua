@@ -13,7 +13,7 @@ local function chunk(path)
 end
 
 assert(utf8 == nil and table.move == nil and typeof == nil, "this is not a plain Lua 5.1: the prelude would be skipped")
-chunk(arg[1])()
+chunk(arg[1])(_G) -- the prelude installs into its `...` argument (the host passes the app's environment)
 
 -- The polyfills do what Lua 5.3 does (a few of the cases the apps rely on; the full comparison is
 -- scripts/lua51.test.ts against a native Lua 5.3+).

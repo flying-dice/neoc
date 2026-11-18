@@ -15,24 +15,9 @@ use agentos_domain::{
 };
 use agentos_luau::{Limits, LuauRuntime};
 use agentos_sqlite::AppDb;
-use common::{agent_ctx, db, id};
+use common::{agent_ctx, built_app, db, id};
 use serde_json::{json, Map, Value};
 use std::{collections::BTreeMap, path::Path, sync::Arc};
-
-fn fixture(app: &str, files: &[&str]) -> AppPackage {
-    // the shipped app when the repo has one (the Calculator), else the codegen example (Notes)
-    let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps").join(app);
-    let dir = if shipped.join("app.json").exists() {
-        shipped
-    } else {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../agentos-codegen/tests/fixtures").join(app)
-    };
-    let mut package = AppPackage { entry: "app.luau".into(), files: BTreeMap::new() };
-    for name in files {
-        package.files.insert((*name).to_owned(), std::fs::read(dir.join(name)).unwrap());
-    }
-    package
-}
 
 fn obj(pairs: &[(&str, Value)]) -> Map<String, Value> {
     pairs.iter().map(|(k, v)| ((*k).to_owned(), v.clone())).collect()
@@ -73,10 +58,10 @@ async fn load(app: &str, package: AppPackage) -> (Rig, LoadedApp) {
 }
 
 async fn calculator() -> Rig {
-    load("calculator", fixture("calculator", &["app.luau", "calc.luau"])).await.0
+    load("calculator", built_app("calculator")).await.0
 }
 async fn notes() -> (Rig, LoadedApp) {
-    load("notes", fixture("notes", &["app.luau"])).await
+    load("notes", built_app("notes")).await
 }
 
 async fn open(rig: &Rig, app: &str, view: &str) -> RenderOutput {
@@ -320,7 +305,7 @@ app.window("main", {
     end
     return ui.VStack {
       ui.Text { tostring(s.n), key = "n" },
-      ui.Button { key = "inc", title = "Inc", onTap = function() s.n += 1 end },
+      ui.Button { key = "inc", title = "Inc", onTap = function() s.n = s.n + 1 end },
       ui.Button { key = "bad", title = "Bad", onTap = function() s.bad = true end },
       ui.Button { key = "toast", title = "Toast", onTap = function() w:toast { text = "Saved", kind = "success" } w:announce("done") end },
       ui.Button { key = "fail", title = "Fail", onTap = function() error("handler exploded") end },
@@ -333,8 +318,8 @@ app.window("main", {
 #[tokio::test]
 async fn a_render_that_fails_or_is_invalid_is_an_error_and_the_view_survives() {
     let package = AppPackage {
-        entry: "app.luau".into(),
-        files: [("app.luau".to_owned(), BROKEN.as_bytes().to_vec())].into(),
+        entry: "app.lua".into(),
+        files: [("app.lua".to_owned(), BROKEN.as_bytes().to_vec())].into(),
     };
     let (rig, _) = load("broken", package).await;
     let first = open(&rig, "broken", "v1").await;
@@ -352,7 +337,7 @@ async fn a_render_that_fails_or_is_invalid_is_an_error_and_the_view_survives() {
         rig.runtime.dispatch_view_event(&id("broken"), "v1", call, common::user_ctx(0)).await.unwrap_err()
     };
     assert!(
-        matches!(&handler_error, PortError::Rejected(m) if m.contains("broken/app.luau:") && m.contains("handler exploded")),
+        matches!(&handler_error, PortError::Rejected(m) if m.contains("broken/app.lua:") && m.contains("handler exploded")),
         "{handler_error:?}"
     );
 
@@ -369,7 +354,7 @@ async fn a_render_that_fails_or_is_invalid_is_an_error_and_the_view_survives() {
     tap(&rig, "broken", "v1", &first, "bad").await;
     let raised = rig.runtime.render_view(&id("broken"), "v1").await.unwrap_err();
     assert!(
-        matches!(&raised, PortError::Rejected(m) if m.contains("render exploded") && m.contains("broken/app.luau:")),
+        matches!(&raised, PortError::Rejected(m) if m.contains("render exploded") && m.contains("broken/app.lua:")),
         "{raised:?}"
     );
 }
@@ -381,11 +366,11 @@ local app = require("@agentos/app")
 local ui = require("@agentos/ui")
 app.manifest { id = "impure", name = "Impure", icon = "gear" }
 local s = app.state { n = 0 }
-app.window("main", { render = function(w) s.n += 1 return ui.Text { "x", key = "t" } end })
+app.window("main", { render = function(w) s.n = s.n + 1 return ui.Text { "x", key = "t" } end })
 "#;
     let package = AppPackage {
-        entry: "app.luau".into(),
-        files: [("app.luau".to_owned(), src.as_bytes().to_vec())].into(),
+        entry: "app.lua".into(),
+        files: [("app.lua".to_owned(), src.as_bytes().to_vec())].into(),
     };
     let (rig, _) = load("impure", package).await;
     let err = rig.runtime.open_view(&id("impure"), "v1", "main", Map::new(), Map::new()).await.unwrap_err();
@@ -417,8 +402,8 @@ app.window("main", {
         key = "add",
         title = "Add",
         onTap = function()
-          s.n += 1
-          w:toast { text = "Added", action = { title = "Undo", onTap = function() s.undone += 1 end } }
+          s.n = s.n + 1
+          w:toast { text = "Added", action = { title = "Undo", onTap = function() s.undone = s.undone + 1 end } }
         end,
       },
     }

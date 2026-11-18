@@ -9,7 +9,8 @@
 //!   error instead of gigabytes of JSON outside the Luau memory limit.
 
 use agentos_application::data::Params;
-use mlua::{Lua, Table, Value as LuaValue};
+use agentos_luavm::mlua;
+use agentos_luavm::mlua::{Lua, Table, Value as LuaValue};
 use serde_json::{Map, Number, Value};
 use std::collections::HashSet;
 

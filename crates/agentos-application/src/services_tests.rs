@@ -35,18 +35,19 @@ async fn install_verifies_files_then_wires_data_runtime_tools_and_announces() {
 }
 
 #[tokio::test]
-async fn the_package_carries_every_luau_module_and_the_granted_capabilities() {
+async fn the_package_carries_only_the_bundled_entry_and_the_granted_capabilities() {
     let f = Fakes::new();
     let url = f.add_app_with(
         "calc",
         &[("t", "x")],
-        &[("lib/calc.luau", "return 1"), ("notes.txt", "not luau")],
+        &[("lib/calc.lua", "return 1"), ("notes.txt", "not lua")],
         vec![Permission::Data, Permission::Notify],
     );
     f.service().install_from_url(&url).await.unwrap();
     let package = f.runtime.package("calc").unwrap();
-    assert_eq!(package.entry, "main.luau");
-    assert_eq!(package.files.keys().collect::<Vec<_>>(), vec!["lib/calc.luau", "main.luau"]);
+    assert_eq!(package.entry, "main.lua");
+    // the app is one file: other files the ref lists are not fetched or handed to the runtime
+    assert_eq!(package.files.keys().collect::<Vec<_>>(), vec!["main.lua"]);
     let caps = f.runtime.capabilities("calc").unwrap();
     assert_eq!(caps, Capabilities { data: true, notify: true, shell: false, agents: false });
 }
@@ -69,7 +70,7 @@ async fn an_app_that_fails_to_load_is_not_recorded_and_nothing_is_published() {
     let url = f.add_app("notes", &[("t", "x")]);
     f.runtime.fail_load("notes", true);
     let err = f.service().install_from_url(&url).await.unwrap_err();
-    assert!(err.to_string().contains("notes/app.luau:3"), "{err}");
+    assert!(err.to_string().contains("notes/app.lua:3"), "{err}");
     assert!(f.registry.names().is_empty() && f.installed.records().is_empty());
     assert_eq!(f.background.alive(), 0);
 }
@@ -512,7 +513,7 @@ async fn a_record_from_before_approvals_were_kept_adopts_what_the_manifest_asks_
 #[tokio::test]
 async fn an_app_ref_may_not_list_files_outside_its_own_origin_or_directory() {
     for foreign in
-        ["file:///etc/passwd", "file:///dev/zero", "mem://evil/main.luau", "../main.luau", "/etc/passwd"]
+        ["file:///etc/passwd", "file:///dev/zero", "mem://evil/main.lua", "../main.lua", "/etc/passwd"]
     {
         let f = Fakes::new();
         let url = f.add_app("notes", &[("t", "x")]);
@@ -529,22 +530,45 @@ async fn an_app_ref_may_not_list_files_outside_its_own_origin_or_directory() {
 async fn files_over_the_cap_and_packages_over_the_cap_are_refused() {
     use agentos_domain::limits::{MAX_FILE_BYTES, MAX_PACKAGE_FILES};
     let big = |n: usize| "-- x\n".repeat(n / 5);
-    // one file just over the file cap
+    // the entry just over the file cap
     let f = Fakes::new();
     let one = big(MAX_FILE_BYTES + 5);
-    let url = f.add_app_with("notes", &[("t", "x")], &[("lib/one.luau", &one)], vec![]);
+    let url = f.add_app("notes", &[(one.as_str(), "x")]);
     let err = f.service().install_from_url(&url).await.unwrap_err();
     assert!(
-        matches!(&err, AppError::Domain(DomainError::PackageTooLarge(m)) if m.contains("lib/one.luau")),
+        matches!(&err, AppError::Domain(DomainError::PackageTooLarge(m)) if m.contains("main.lua")),
         "{err:?}"
     );
 
-    // many files, each under the cap, together over the package cap
+    // several files, each under the cap, together over the package cap: the entry plus five migrations
     let f = Fakes::new();
     let part = big(MAX_FILE_BYTES);
-    let names: Vec<String> = (0..5).map(|i| format!("lib/m{i}.luau")).collect();
-    let modules: Vec<(&str, &str)> = names.iter().map(|n| (n.as_str(), part.as_str())).collect();
-    let url = f.add_app_with("notes", &[("t", "x")], &modules, vec![]);
+    let url = f.add_app("notes", &[("t", "x")]);
+    {
+        let mut fetcher = f.fetcher.0.lock().unwrap();
+        let mut r: agentos_domain::AppRef = serde_json::from_slice(&fetcher[&url]).unwrap();
+        r.manifest.migrations.clear();
+        r.files.retain(|file| file.path == "main.lua");
+        for i in 1..=5u32 {
+            let path = format!("{i:03}_m.sql");
+            let sha = {
+                use sha2::Digest;
+                format!("{:x}", sha2::Sha256::digest(part.as_bytes()))
+            };
+            r.manifest.migrations.push(agentos_domain::MigrationSpec {
+                version: i,
+                name: format!("m{i}"),
+                file: path.clone(),
+            });
+            r.files.push(agentos_domain::FileRef {
+                path: path.clone(),
+                url: format!("mem://notes/{path}"),
+                sha256: sha,
+            });
+            fetcher.insert(format!("mem://notes/{path}"), part.clone().into_bytes());
+        }
+        fetcher.insert(url.clone(), serde_json::to_vec(&r).unwrap());
+    }
     let err = f.service().install_from_url(&url).await.unwrap_err();
     assert!(
         matches!(&err, AppError::Domain(DomainError::PackageTooLarge(m)) if m.contains("package")),

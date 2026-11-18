@@ -1,13 +1,15 @@
-//! One sandboxed Luau VM per app.
+//! One sandboxed Lua 5.1 VM per app.
 //!
-//! The VM is created, given the `app` capability table and a bundle-only `require`, sandboxed, limited
-//! (memory, CPU budget per call, host-call timeout) and then runs the app's entry. After that the host
-//! calls into it: tools, write-back callbacks, events. One call runs in a VM at a time (an app is
-//! single-threaded by design); the VM lives as long as its `AppVm`.
+//! The VM is a bare `agentos-luavm` engine with the app's own environment table (see
+//! `agentos_luavm::lua::app_env`): the prelude's polyfills, the `app` capability table and a `require` that
+//! knows only the host modules. It is limited (memory, a CPU budget enforced by the VM's count hook, a
+//! host-call timeout) and then runs the app's entry. After that the host calls into it: tools, write-back
+//! callbacks, events. One call runs in a VM at a time (an app is single-threaded by design); the VM lives
+//! as long as its `AppVm`.
 
 use crate::{
     api,
-    budget::{Allowance, CpuBudget},
+    budget::{Allowance, CpuBudget, HOOK_INSTRUCTIONS},
     convert::{json_to_lua, lua_to_json},
     error::{ScriptError, ToolFailure},
     state::{DepKey, SharedTracker, Tracker},
@@ -19,7 +21,15 @@ use agentos_application::{
     ports::{AgentCard, AgentRoster, AppData, AppPackage, CallContext, MenuCommand, ViewEffect},
 };
 use agentos_domain::{time, tool_schema, AppDecl, AppId, Capabilities, Notification, ToolSpec};
-use mlua::{Function, Lua, Table, Value as LuaValue, VmState};
+use agentos_luavm::mlua;
+use agentos_luavm::{
+    lua::{
+        app_env, patterns,
+        patterns::PatternLimits,
+        sandbox::{load_source, make_bare_engine},
+    },
+    mlua::{Function, HookTriggers, Lua, Table, Value as LuaValue, VmState},
+};
 use parking_lot::Mutex;
 use serde_json::Value;
 use std::{
@@ -31,8 +41,9 @@ use std::{
     time::Duration,
 };
 
-/// Luau builtins an app does not get (see `AppVm::load`).
-const REMOVED_GLOBALS: [&str; 3] = ["loadstring", "getfenv", "setfenv"];
+/// The Lua 5.1 polyfills of the Luau standard library (`lua/prelude.luau`, built by `bun run codegen`): run
+/// once in each app's environment before the app.
+const PRELUDE: &str = include_str!("../../../types/generated/prelude.lua");
 
 #[derive(Debug, thiserror::Error)]
 pub enum VmError {
@@ -66,18 +77,20 @@ pub type Result<T> = std::result::Result<T, VmError>;
 
 #[derive(Clone, Debug)]
 pub struct Limits {
-    /// Hard cap on the Luau heap (allocations past this raise a Lua `MemoryError`).
+    /// Hard cap on the Lua heap (allocations past this raise a Lua `MemoryError`). It also caps what the
+    /// host-side string functions (`gsub`, `rep`) may build.
     pub memory_bytes: usize,
-    /// Max interrupts (Lua calls and loop iterations) between host awaits: a `while true do end` is killed
-    /// after this many, however loaded the machine is (see `budget`).
+    /// Max ticks (one per `HOOK_INSTRUCTIONS` VM instructions; the pattern matcher is charged in the same
+    /// unit) between host awaits: a `while true do end` is killed after this many, however loaded the
+    /// machine is (see `budget`).
     pub cpu_ticks: u64,
     /// Wall-clock backstop on the same slice: far above an honest slice, it only catches what the count
     /// cannot see.
     pub cpu_wall: Duration,
-    /// Max interrupts in one whole top-level call (a tool, an event, a render), host calls included at
+    /// Max ticks in one whole top-level call (a tool, an event, a render), host calls included at
     /// `budget::HOST_CALL_TICKS` each. Host awaits refill the slice (`cpu_ticks`) but never this, so
-    /// `while true do app.kv:get("k") end` is killed. 25 million is five slices: an honest call is a few
-    /// thousand interrupts and a handful of host calls.
+    /// `while true do app.kv:get("k") end` is killed. 2.5 million is five slices: an honest call is a few
+    /// hundred ticks and a handful of host calls.
     pub call_ticks: u64,
     /// Wall-clock limit of one top-level call, host waits included (a call also holds the VM's gate, and
     /// inside `db:tx` the database's write gate). Thirty seconds is three host-call timeouts: far above any
@@ -104,9 +117,9 @@ impl Default for Limits {
     fn default() -> Self {
         Self {
             memory_bytes: 16 * 1024 * 1024,
-            cpu_ticks: 5_000_000,
+            cpu_ticks: 500_000,
             cpu_wall: Duration::from_secs(10),
-            call_ticks: 25_000_000,
+            call_ticks: 2_500_000,
             call_wall: Duration::from_secs(30),
             max_effects: 32,
             host_call_timeout: Duration::from_secs(10),
@@ -119,7 +132,7 @@ impl Default for Limits {
 pub struct VmConfig {
     pub capabilities: Capabilities,
     pub limits: Limits,
-    /// Luau source of host modules `require("@agentos/<name>")` can load besides `@agentos/app`
+    /// Lua 5.1 source of host modules `require("@agentos/<name>")` can load besides `@agentos/app`
     /// (the generated `@agentos/ui` constructors), by module name.
     pub host_modules: Arc<HashMap<String, Vec<u8>>>,
     /// The agent contacts `app.agents:list()` shows (empty unless the host gives a roster).
@@ -198,6 +211,8 @@ pub(crate) struct Shared {
     pub deep_links: Mutex<Vec<(String, Function)>>,
     pub decl: Mutex<Option<AppDecl>>,
     pub effects: Mutex<Vec<Effect>>,
+    /// The table the app's chunks (and the host modules it requires) run in as their globals.
+    pub env: Mutex<Option<Table>>,
     pub modules: Mutex<HashMap<String, LuaValue>>,
     pub loading: Mutex<HashSet<String>>,
     pub app_table: Mutex<Option<Table>>,
@@ -216,9 +231,6 @@ pub(crate) struct Shared {
     pub read_only: Arc<AtomicBool>,
     /// Effects queued by the running call, against `limits.max_effects` (reset when a call starts).
     pub effects_in_call: AtomicUsize,
-    /// How many of the app's own coroutines are running right now (see [`COROUTINE_GUARD`]); a host call
-    /// raises while this is not zero. Reset when a call starts.
-    pub coroutines_running: AtomicUsize,
 }
 
 impl Shared {
@@ -300,40 +312,11 @@ impl Shared {
         self.deep_links.lock().clear();
         self.modules.lock().clear();
         self.views.lock().clear();
+        *self.env.lock() = None;
         *self.app_table.lock() = None;
         *self.fail.lock() = None;
     }
 }
-
-/// Luau run before the sandbox freezes the standard library: `coroutine.resume` and `coroutine.wrap` tell the
-/// host while the app's own coroutine runs.
-///
-/// A host call (`app.kv:get`, `db:exec`) is an async function. Called from inside a coroutine the app resumed
-/// itself it cannot wait for the host: it hands the app a pending marker, and the host future stays alive in the
-/// suspended coroutine. That future can hold the database's write gate, and the "waiting on the host" state it
-/// set switched the CPU budget off for the code that went on running. Such a call is refused instead; the
-/// function that resumes the coroutine can make the host call itself.
-const COROUTINE_GUARD: &str = r"
-local enter, leave = ...
-local resume, create = coroutine.resume, coroutine.create
-local function guarded(co, ...)
-    enter()
-    local results = table.pack(resume(co, ...))
-    leave()
-    return table.unpack(results, 1, results.n)
-end
-coroutine.resume = guarded
-coroutine.wrap = function(f)
-    local co = create(f)
-    return function(...)
-        local results = table.pack(guarded(co, ...))
-        if not results[1] then
-            error(results[2], 0)
-        end
-        return table.unpack(results, 2, results.n)
-    end
-end
-";
 
 /// Marks the VM as running a `readOnly` tool until dropped (the call's gate is held for that whole time).
 struct ReadOnlyCall<'a>(Option<&'a Shared>);
@@ -384,21 +367,6 @@ impl Drop for AppVm {
     }
 }
 
-/// Install [`COROUTINE_GUARD`]: `enter` / `leave` count the app's own coroutines that are running.
-fn guard_coroutines(lua: &Lua, shared: &Arc<Shared>) -> mlua::Result<()> {
-    let (on, off) = (shared.clone(), shared.clone());
-    let enter = lua.create_function(move |_, ()| {
-        on.coroutines_running.fetch_add(1, Ordering::SeqCst);
-        Ok(())
-    })?;
-    let leave = lua.create_function(move |_, ()| {
-        // saturating: a new call may have reset the count under a coroutine that was resumed across calls
-        let _ = off.coroutines_running.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1));
-        Ok(())
-    })?;
-    lua.load(COROUTINE_GUARD).set_name("=agentos/coroutine").call::<()>((enter, leave))
-}
-
 fn script(e: &mlua::Error) -> VmError {
     match e.downcast_ref::<ToolFailure>() {
         Some(f) => VmError::ToolFailed(f.0.clone()),
@@ -415,7 +383,9 @@ impl AppVm {
         config: VmConfig,
     ) -> Result<Self> {
         let VmConfig { capabilities, limits, host_modules, roster } = config;
-        let lua = Lua::new();
+        let load_err =
+            |e: &mlua::Error| VmError::Load { app: app.to_string(), error: ScriptError::from_lua(e) };
+        let lua = make_bare_engine().map_err(|e| load_err(&e))?;
         let budget = CpuBudget::new();
         let read_only = Arc::new(AtomicBool::new(false));
         let shared = Arc::new(Shared {
@@ -437,6 +407,7 @@ impl AppVm {
             deep_links: Mutex::default(),
             decl: Mutex::default(),
             effects: Mutex::default(),
+            env: Mutex::new(None),
             modules: Mutex::default(),
             loading: Mutex::default(),
             app_table: Mutex::default(),
@@ -447,35 +418,47 @@ impl AppVm {
             tx: Mutex::new(None),
             read_only,
             effects_in_call: AtomicUsize::new(0),
-            coroutines_running: AtomicUsize::new(0),
         });
-        let load_err =
-            |e: &mlua::Error| VmError::Load { app: app.to_string(), error: ScriptError::from_lua(e) };
 
-        // mlua registers a filesystem `require` for Luau: replace it with the bundle-only one, and install
-        // `app` BEFORE sandboxing (the sandbox freezes the globals).
-        lua.globals().set("require", LuaValue::Nil).map_err(|e| load_err(&e))?;
-        // `loadstring` compiles text the package never held (past the bundle's sha256 check) and
-        // `getfenv` / `setfenv` reach other functions' environments: none has a use in an app
-        for escape in REMOVED_GLOBALS {
-            lua.globals().set(escape, LuaValue::Nil).map_err(|e| load_err(&e))?;
-        }
-        api::install(&lua, &shared).map_err(|e| load_err(&e))?;
-        guard_coroutines(&lua, &shared).map_err(|e| load_err(&e))?;
-
-        // Interrupt: runs at function calls and loop back-edges. Returning Err aborts the running chunk;
-        // the kill is sticky so a `pcall` cannot swallow it.
+        // The CPU budget. The count hook runs every HOOK_INSTRUCTIONS VM instructions, on the main thread and
+        // (set globally) on every coroutine mlua creates; a coroutine the app creates inherits it from its
+        // creator. Returning Err raises in the running code; the kill is sticky so a `pcall` cannot swallow it.
         let allowance = limits.allowance();
-        lua.set_interrupt(move |_| match budget.exceeded(allowance) {
-            Some(stop) => Err(mlua::Error::runtime(stop.message())),
-            None => Ok(VmState::Continue),
-        });
-        // Freeze the globals / builtins and give this app its own global table.
-        lua.sandbox(true).map_err(|e| load_err(&e))?;
+        let hook_budget = budget.clone();
+        lua.set_global_hook(HookTriggers::new().every_nth_instruction(HOOK_INSTRUCTIONS), move |_, _| {
+            match hook_budget.exceeded(allowance) {
+                Some(stop) => Err(mlua::Error::runtime(stop.message())),
+                None => Ok(VmState::Continue),
+            }
+        })
+        .map_err(|e| load_err(&e))?;
+        // The host-side pattern functions (the C matcher never polls the hook) pay into the same budget.
+        let pattern_budget = budget.clone();
+        patterns::install(
+            &lua,
+            PatternLimits {
+                charge: Arc::new(move |ticks| match pattern_budget.spend(allowance, ticks) {
+                    Some(stop) => Err(mlua::Error::runtime(stop.message())),
+                    None => Ok(()),
+                }),
+                max_output: limits.memory_bytes,
+            },
+        )
+        .map_err(|e| load_err(&e))?;
         lua.set_memory_limit(limits.memory_bytes).map_err(|e| load_err(&e))?;
 
+        let env = app_env::new_env(&lua).map_err(|e| load_err(&e))?;
         let vm = Self { app: app.clone(), lua, shared, gate: tokio::sync::Mutex::new(()) };
         let call = vm.enter().await;
+        // the polyfills go in before the environment is sealed, and the host's own `app` and `require` after
+        load_source(&vm.lua, PRELUDE)
+            .set_name("=prelude")
+            .set_environment(env.clone())
+            .call::<()>(env.clone())
+            .map_err(|e| load_err(&e))?;
+        app_env::freeze(&vm.lua, &env).map_err(|e| load_err(&e))?;
+        *vm.shared.env.lock() = Some(env.clone());
+        api::install(&vm.lua, &vm.shared, &env).map_err(|e| load_err(&e))?;
         let entry = vm.shared.package.entry.clone();
         let source = vm
             .shared
@@ -484,9 +467,9 @@ impl AppVm {
             .get(&entry)
             .cloned()
             .ok_or_else(|| VmError::Convert(format!("the package has no entry `{entry}`")))?;
-        vm.lua
-            .load(source.as_slice())
+        load_source(&vm.lua, source.as_slice())
             .set_name(vm.shared.chunk_name(&entry))
+            .set_environment(env)
             .exec_async()
             .await
             .map_err(|e| load_err(&e))?;
@@ -512,7 +495,6 @@ impl AppVm {
         let gate = self.gate.lock().await;
         self.shared.budget.begin();
         self.shared.effects_in_call.store(0, Ordering::Relaxed);
-        self.shared.coroutines_running.store(0, Ordering::Relaxed);
         CallGuard { shared: &self.shared, _gate: gate }
     }
 
@@ -659,7 +641,7 @@ impl AppVm {
         let _ = self.lua.gc_collect();
     }
 
-    /// The app is going away: whatever is running in it stops at its next interrupt or host call (a host
+    /// The app is going away: whatever is running in it stops at its next tick or host call (a host
     /// call it is waiting on is abandoned), and nothing new runs. Call this before dropping the last `Arc`,
     /// so a runaway call cannot keep the VM alive after an uninstall.
     pub fn retire(&self) {
@@ -671,7 +653,7 @@ impl AppVm {
         self.shared.budget.retirement().is_retired()
     }
 
-    /// Unload: release every Rust-held reference to Luau values, then the VM. Returns the heap size freed.
+    /// Unload: release every Rust-held reference to Lua values, then the VM. Returns the heap size freed.
     pub fn unload(self) -> usize {
         let used = self.lua.used_memory();
         self.shared.release();

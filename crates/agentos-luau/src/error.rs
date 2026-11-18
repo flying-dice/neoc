@@ -1,13 +1,14 @@
 //! Errors from app code: reported with the app's file and line, never a panic in the host.
 
+use agentos_luavm::mlua;
 use std::fmt;
 
 /// A failure inside app code (or a host call it made).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScriptError {
-    /// `notes/app.luau:12: message`: what is shown to people and agents.
+    /// `notes/app.lua:12: message`: what is shown to people and agents.
     pub summary: String,
-    /// The Luau stack, for logs and the dev banner.
+    /// The Lua stack, for logs and the dev banner.
     pub traceback: Option<String>,
 }
 
@@ -30,21 +31,21 @@ impl fmt::Display for ToolFailure {
 }
 impl std::error::Error for ToolFailure {}
 
-/// Does a message already begin with `chunk.luau:LINE:`?
+/// Does a message already begin with `chunk.lua:LINE:`?
 fn has_location(message: &str) -> bool {
     let Some((head, rest)) = message.split_once(':') else { return false };
-    if !head.contains(".luau") {
+    if !head.contains(".lua") {
         return false;
     }
     rest.split_once(':').is_some_and(|(line, _)| !line.is_empty() && line.bytes().all(|b| b.is_ascii_digit()))
 }
 
-/// The first `file.luau:LINE` frame of a Luau traceback.
+/// The first `file.lua:LINE` frame of a Luau traceback.
 fn first_frame(traceback: &str) -> Option<String> {
     traceback.lines().find_map(|l| {
         let l = l.trim();
         let (name, rest) = l.split_once(':')?;
-        if !name.contains(".luau") {
+        if !name.contains(".lua") {
             return None;
         }
         let line: String = rest.chars().take_while(char::is_ascii_digit).collect();
@@ -97,13 +98,13 @@ mod tests {
 
     fn run(src: &str) -> mlua::Error {
         let lua = Lua::new();
-        lua.load(src).set_name("=notes/app.luau").exec().unwrap_err()
+        lua.load(src).set_name("=notes/app.lua").exec().unwrap_err()
     }
 
     #[test]
     fn a_lua_error_carries_the_app_file_and_line_without_the_stack() {
         let e = ScriptError::from_lua(&run("local x = 1\nerror('boom')"));
-        assert_eq!(e.summary, "notes/app.luau:2: boom");
+        assert_eq!(e.summary, "notes/app.lua:2: boom");
         assert!(e.traceback.as_deref().is_some_and(|t| t.starts_with("stack traceback:")), "{e:?}");
     }
 
@@ -116,26 +117,26 @@ mod tests {
             })
             .unwrap();
         lua.globals().set("host", f).unwrap();
-        let err = lua.load("local a = 1\n\nhost()").set_name("=notes/app.luau").exec().unwrap_err();
+        let err = lua.load("local a = 1\n\nhost()").set_name("=notes/app.lua").exec().unwrap_err();
         let e = ScriptError::from_lua(&err);
-        assert!(e.summary.starts_with("notes/app.luau:3: "), "{e}");
+        assert!(e.summary.starts_with("notes/app.lua:3: "), "{e}");
         assert!(e.summary.ends_with("db is down"), "{e}");
     }
 
     #[test]
     fn a_syntax_error_names_its_line() {
         let e = ScriptError::from_lua(&run("local x = = 1"));
-        assert!(e.summary.starts_with("notes/app.luau:1:"), "{e}");
+        assert!(e.summary.starts_with("notes/app.lua:1:"), "{e}");
     }
 
     #[test]
     fn location_detection() {
-        assert!(has_location("notes/app.luau:12: boom"));
+        assert!(has_location("notes/app.lua:12: boom"));
         assert!(!has_location("boom: not a location"));
         assert!(!has_location("cpu budget exceeded"));
         assert_eq!(
-            first_frame("stack traceback:\n\t[C] in ?\n\tnotes/lib.luau:7 function f").as_deref(),
-            Some("notes/lib.luau:7")
+            first_frame("stack traceback:\n\t[C] in ?\n\tnotes/lib.lua:7 function f").as_deref(),
+            Some("notes/lib.lua:7")
         );
     }
 }

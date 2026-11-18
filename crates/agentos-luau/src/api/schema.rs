@@ -16,7 +16,8 @@
 
 use crate::convert::{json_to_lua, lua_to_json};
 use agentos_domain::tool_schema::{compile_fields, OPTIONAL_KEY};
-use mlua::{Lua, Table, Value as LuaValue};
+use agentos_luavm::mlua;
+use agentos_luavm::mlua::{Lua, Table, Value as LuaValue};
 use serde_json::{Map, Value};
 
 /// Options a builder understands, renamed to their JSON Schema keys.

@@ -220,7 +220,7 @@ async fn the_human_edits_a_bound_field_through_the_write_callback() {
         .write_row(&id("notes"), &SourceId("s3".into()), json!(2), "title", json!("x"), user_ctx(5))
         .await
         .unwrap_err();
-    assert!(matches!(&e, PortError::Rejected(m) if m.contains("notes/app.luau:")), "{e:?}");
+    assert!(matches!(&e, PortError::Rejected(m) if m.contains("notes/app.lua:")), "{e:?}");
 }
 
 #[tokio::test]
@@ -260,7 +260,7 @@ async fn a_failing_app_is_isolated_and_a_failed_reload_keeps_the_old_version_run
         .load(&id("crashy"), package("local t = nil\nreturn t.x", &[]), data, Capabilities::all())
         .await
         .unwrap_err();
-    assert!(matches!(&e, PortError::Rejected(m) if m.contains("crashy/app.luau:2")), "{e:?}");
+    assert!(matches!(&e, PortError::Rejected(m) if m.contains("crashy/app.lua:2")), "{e:?}");
 
     // reload: new code that does not load leaves the running VM in place
     let e =

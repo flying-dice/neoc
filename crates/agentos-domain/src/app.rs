@@ -58,7 +58,7 @@ pub struct Manifest {
     pub id: AppId,
     pub name: String,
     pub version: String,
-    /// Luau entry file, a path in the app ref.
+    /// The entry file, a path in the app ref: the app built into one Lua 5.1 file (`app.lua`).
     pub main: String,
     #[serde(default)]
     pub permissions: Vec<Permission>,
@@ -94,6 +94,12 @@ pub struct Requires {
 impl Manifest {
     /// Self-consistency of the package manifest (before anything is fetched).
     pub fn validate(&self) -> Result<(), DomainError> {
+        if !self.main.ends_with(".lua") {
+            return Err(DomainError::InvalidManifest(format!(
+                "main must be the built Lua 5.1 file (ending in `.lua`), not `{}`; build the app with `bun run build:apps`",
+                self.main
+            )));
+        }
         let in_order = self.migrations.iter().enumerate().all(|(i, m)| m.version as usize == i + 1);
         if !in_order {
             return Err(DomainError::MigrationOrder);
@@ -123,7 +129,7 @@ pub fn source_label(url: &str) -> String {
 }
 
 /// `file` resolved against the URL of the document that names it: absolute URLs stay as they are, a
-/// relative one is looked up next to the document (`dir/app-ref.json` + `app.luau` = `dir/app.luau`).
+/// relative one is looked up next to the document (`dir/app-ref.json` + `app.lua` = `dir/app.lua`).
 ///
 /// For the entries of a registry, which may point anywhere. A package's files go through
 /// [`resolve_package_url`] instead.
@@ -248,7 +254,7 @@ mod tests {
                 id: AppId::parse("notes").unwrap(),
                 name: "Notes".into(),
                 version: "1.0.0".into(),
-                main: "main.luau".into(),
+                main: "main.lua".into(),
                 permissions: vec![],
                 migrations: vec![],
                 icon: None,
@@ -257,14 +263,14 @@ mod tests {
                 requires: None,
             },
             files: vec![FileRef {
-                path: "main.luau".into(),
+                path: "main.lua".into(),
                 url: "file:///x".into(),
                 // sha256("abc")
                 sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad".into(),
             }],
         };
-        assert!(r.verify("main.luau", b"abc").is_ok());
-        assert!(matches!(r.verify("main.luau", b"abd"), Err(DomainError::ChecksumMismatch { .. })));
+        assert!(r.verify("main.lua", b"abc").is_ok());
+        assert!(matches!(r.verify("main.lua", b"abd"), Err(DomainError::ChecksumMismatch { .. })));
         assert!(matches!(r.verify("nope", b""), Err(DomainError::MissingFile(_))));
     }
 
@@ -274,7 +280,7 @@ mod tests {
             id: AppId::parse("notes").unwrap(),
             name: "n".into(),
             version: "1".into(),
-            main: "m".into(),
+            main: "m.lua".into(),
             permissions: vec![],
             migrations: vec![],
             icon: None,
@@ -291,8 +297,8 @@ mod tests {
 
     #[test]
     fn urls_resolve_next_to_the_document_that_names_them() {
-        assert_eq!(resolve_url("file:///r/calc/app-ref.json", "app.luau"), "file:///r/calc/app.luau");
-        assert_eq!(resolve_url("https://x.org/a/ref.json", "./b/c.luau"), "https://x.org/a/b/c.luau");
+        assert_eq!(resolve_url("file:///r/calc/app-ref.json", "app.lua"), "file:///r/calc/app.lua");
+        assert_eq!(resolve_url("https://x.org/a/ref.json", "./b/c.lua"), "https://x.org/a/b/c.lua");
         assert_eq!(resolve_url("file:///r/ref.json", "https://y.org/z"), "https://y.org/z");
         assert_eq!(source_label("https://apps.example.org:8443/x/ref.json"), "apps.example.org:8443");
         assert_eq!(source_label("file:///r/ref.json"), "this computer");
@@ -302,13 +308,13 @@ mod tests {
         let files = urls
             .iter()
             .enumerate()
-            .map(|(i, u)| FileRef { path: format!("f{i}.luau"), url: (*u).into(), sha256: String::new() })
+            .map(|(i, u)| FileRef { path: format!("f{i}.lua"), url: (*u).into(), sha256: String::new() })
             .collect();
         let manifest = Manifest {
             id: AppId::parse("notes").unwrap(),
             name: "n".into(),
             version: "1".into(),
-            main: "f0.luau".into(),
+            main: "f0.lua".into(),
             permissions: vec![],
             migrations: vec![],
             icon: None,
@@ -322,21 +328,18 @@ mod tests {
     #[test]
     fn a_package_file_must_stay_on_the_refs_scheme_and_origin() {
         let base = "https://apps.example.org/notes/app-ref.json";
-        for ok in [
-            "app.luau",
-            "./lib/x.luau",
-            "https://apps.example.org/notes/app.luau",
-            "HTTPS://Apps.Example.org/a",
-        ] {
+        for ok in
+            ["app.lua", "./lib/x.lua", "https://apps.example.org/notes/app.lua", "HTTPS://Apps.Example.org/a"]
+        {
             assert!(resolve_package_url(base, ok).is_ok(), "{ok}");
         }
         for bad in [
             "file:///dev/zero",
             "file:///etc/passwd",
-            "http://apps.example.org/a.luau",
-            "https://evil.example/a.luau",
-            "https://apps.example.org@evil.example/a.luau",
-            "https://apps.example.org:8443/a.luau",
+            "http://apps.example.org/a.lua",
+            "https://evil.example/a.lua",
+            "https://apps.example.org@evil.example/a.lua",
+            "https://apps.example.org:8443/a.lua",
             "ftp://apps.example.org/a",
         ] {
             assert!(
@@ -345,7 +348,7 @@ mod tests {
             );
         }
         // a file ref may list file urls, and only file urls
-        assert!(resolve_package_url("file:///r/ref.json", "file:///r/app.luau").is_ok());
+        assert!(resolve_package_url("file:///r/ref.json", "file:///r/app.lua").is_ok());
         assert!(resolve_package_url("file:///r/ref.json", "https://evil.example/a").is_err());
         assert!(resolve_package_url("mem://notes/ref.json", "mem://notes/a").is_ok());
         assert!(resolve_package_url("mem://notes/ref.json", "mem://other/a").is_err());
@@ -355,30 +358,30 @@ mod tests {
     fn a_package_file_cannot_climb_out_with_dot_dot_or_start_at_the_root() {
         let base = "file:///r/notes/app-ref.json";
         for bad in [
-            "../secrets.luau",
-            "lib/../../x.luau",
-            "lib/%2e%2E/x.luau",
-            "lib\\..\\x.luau",
-            "file:///r/notes/../x.luau",
+            "../secrets.lua",
+            "lib/../../x.lua",
+            "lib/%2e%2E/x.lua",
+            "lib\\..\\x.lua",
+            "file:///r/notes/../x.lua",
             "/etc/passwd",
             "\\evil",
-            "a\0b.luau",
+            "a\0b.lua",
         ] {
             assert!(resolve_package_url(base, bad).is_err(), "{bad:?} must be refused");
         }
-        assert_eq!(resolve_package_url(base, "lib/a..b.luau").unwrap(), "file:///r/notes/lib/a..b.luau");
+        assert_eq!(resolve_package_url(base, "lib/a..b.lua").unwrap(), "file:///r/notes/lib/a..b.lua");
     }
 
     #[test]
     fn resolving_a_ref_refuses_one_that_lists_a_foreign_file_or_too_many() {
         let base = "https://apps.example.org/notes/app-ref.json";
-        let ok = ref_listing(&["a.luau", "b/c.luau"]).resolved(base).unwrap();
-        assert_eq!(ok.files[1].url, "https://apps.example.org/notes/b/c.luau");
+        let ok = ref_listing(&["a.lua", "b/c.lua"]).resolved(base).unwrap();
+        assert_eq!(ok.files[1].url, "https://apps.example.org/notes/b/c.lua");
         assert!(matches!(
-            ref_listing(&["a.luau", "file:///dev/zero"]).resolved(base),
+            ref_listing(&["a.lua", "file:///dev/zero"]).resolved(base),
             Err(DomainError::UnsafeFileUrl { .. })
         ));
-        let many = vec!["a.luau"; MAX_PACKAGE_FILES + 1];
+        let many = vec!["a.lua"; MAX_PACKAGE_FILES + 1];
         assert!(matches!(ref_listing(&many).resolved(base), Err(DomainError::PackageTooLarge(_))));
         assert!(ref_listing(&many[..MAX_PACKAGE_FILES]).resolved(base).is_ok());
     }
@@ -389,7 +392,7 @@ mod tests {
             id: AppId::parse("notes").unwrap(),
             name: "n".into(),
             version: "1".into(),
-            main: "m".into(),
+            main: "m.lua".into(),
             permissions: vec![],
             migrations: vec![MigrationSpec { version: 2, name: "x".into(), file: "x".into() }],
             icon: None,
@@ -399,6 +402,26 @@ mod tests {
         };
         assert_eq!(m.validate(), Err(DomainError::MigrationOrder));
         m.migrations[0].version = 1;
+        assert!(m.validate().is_ok());
+    }
+
+    #[test]
+    fn the_entry_must_be_the_built_lua_file() {
+        let mut m = Manifest {
+            id: AppId::parse("notes").unwrap(),
+            name: "n".into(),
+            version: "1".into(),
+            main: "app.luau".into(),
+            permissions: vec![],
+            migrations: vec![],
+            icon: None,
+            tint: None,
+            description: None,
+            requires: None,
+        };
+        let err = m.validate().unwrap_err().to_string();
+        assert!(err.contains("app.luau") && err.contains("bun run build:apps"), "{err}");
+        m.main = "app.lua".into();
         assert!(m.validate().is_ok());
     }
 }

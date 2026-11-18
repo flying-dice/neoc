@@ -1,4 +1,4 @@
-//! The `app` capability table: the only way a Luau app reaches the host.
+//! The `app` capability table: the only way an app reaches the host.
 //!
 //! ```text
 //! app.manifest { ... }            identity, window, permissions (validated)
@@ -22,13 +22,13 @@ use crate::{
     vm::{Effect, Shared, ShellEffect},
 };
 use agentos_application::PortError;
-use mlua::Lua;
-use std::{
-    future::Future,
-    sync::{atomic::Ordering, Arc},
-};
+use agentos_luavm::mlua;
+use agentos_luavm::mlua::Lua;
+use std::{future::Future, sync::Arc};
 
-pub(crate) fn install(lua: &Lua, sh: &Arc<Shared>) -> mlua::Result<()> {
+/// Install the `app` table and `require` into the app's environment (they are globals of its chunks, not of
+/// the engine).
+pub(crate) fn install(lua: &Lua, sh: &Arc<Shared>, env: &mlua::Table) -> mlua::Result<()> {
     let app = lua.create_table()?;
     app.set("id", sh.app.as_str())?;
     misc::install(lua, sh, &app)?;
@@ -37,8 +37,8 @@ pub(crate) fn install(lua: &Lua, sh: &Arc<Shared>) -> mlua::Result<()> {
     data::install(lua, sh, &app)?;
     app.set("state", crate::state::state_constructor(lua, sh.tracker.clone())?)?;
     *sh.app_table.lock() = Some(app.clone());
-    lua.globals().set("app", app)?;
-    require::install(lua, sh)
+    env.set("app", app)?;
+    require::install(lua, sh, env)
 }
 
 /// Run a host call under the wall-clock backstop; the app's CPU slice restarts when it returns (time
@@ -47,21 +47,18 @@ pub(crate) fn install(lua: &Lua, sh: &Arc<Shared>) -> mlua::Result<()> {
 /// the app was unloaded.
 ///
 /// A host call that finished is reported as finished, even when the call's budget ran out while it ran: the
-/// app learns that its `commit` went through, and the next interrupt or host call stops it. (Raising here
+/// app learns that its `commit` went through, and the next tick or host call stops it. (Raising here
 /// would tell the app a transaction failed that is in the database.)
 ///
-/// Refused inside the app's own coroutine, which cannot wait for the host (see `vm::COROUTINE_GUARD`).
+/// The wait is a guard ([`crate::budget::HostWait`]): however this future ends (it finished, it timed out, or
+/// it was dropped half done because the host call failed where Lua 5.1 cannot yield, in a `table.sort`
+/// comparator or a `gsub` callback), the slice starts counting again.
 pub(crate) async fn host<T>(
     sh: &Shared,
     call: impl Future<Output = Result<T, PortError>>,
 ) -> mlua::Result<T> {
     let allowance = sh.limits.allowance();
     let stopped = |stop: Stop| mlua::Error::runtime(stop.message());
-    if sh.coroutines_running.load(Ordering::SeqCst) > 0 {
-        return Err(mlua::Error::runtime(
-            "a host call cannot be made inside a coroutine: make it from the function that resumes the coroutine",
-        ));
-    }
     sh.budget.charge_host_call(allowance).map_err(stopped)?;
     let limit = sh.limits.host_call_timeout.min(sh.budget.call_wall_left(allowance));
     let waiting = sh.budget.wait_for_host();

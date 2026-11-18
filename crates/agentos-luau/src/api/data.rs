@@ -24,7 +24,8 @@ use agentos_application::{
     data::{ExecOutcome, Params, QueryInfo, SqlMigration},
     live::{Conflict, SourceDef, SourceId, SourceKind, TotalMode},
 };
-use mlua::{Function, Lua, Table, Value as LuaValue};
+use agentos_luavm::mlua;
+use agentos_luavm::mlua::{Function, Lua, Table, Value as LuaValue};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
