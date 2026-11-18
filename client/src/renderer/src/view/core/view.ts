@@ -41,6 +41,7 @@ import {
 } from './bindings'
 import { ClientState, type KeyValueStorage } from './clientState'
 import { dig, evaluate, isRef, type FormatEnv } from './expr'
+import { NavRegistry } from './nav'
 import { Sources } from './sources'
 import {
   bindingKey,
@@ -123,6 +124,8 @@ export class ViewCore {
   readonly shortcuts = new ShortcutRegistry()
   readonly bindings: Bindings
   readonly sources: Sources
+  /** Mounted navigation stacks: where `nav.*` actions are routed (spec 3.5). */
+  readonly nav = new NavRegistry()
   private readonly clientState: ClientState
   private readonly link: ViewLink
   private readonly timers: Timers
@@ -134,7 +137,6 @@ export class ViewCore {
   private noticeId = 0
   private resyncing: Promise<void> | null = null
   private resizeTimer: unknown
-  private warned = new Set<string>()
 
   /** Format env with lazy getters: an expression only subscribes to `env.now` if it calls a function that reads it. */
   private readonly fmt: FormatEnv
@@ -181,7 +183,8 @@ export class ViewCore {
             }),
       read: (t) => this.readServer(t),
       adopt: (t, v, r) => this.adoptServer(t, v, r),
-      notify: (kind, text) => this.notice(kind === 'conflict' ? 'conflict' : kind, text),
+      notify: (kind, text, undo) =>
+        this.notice(kind === 'conflict' ? 'conflict' : kind, text, NOTICE_MS, { undo }),
       announce: (text) => void (store.announcement = text),
       onError: this.report
     })
@@ -270,6 +273,18 @@ export class ViewCore {
       }
     })
     this.load(snap, true)
+  }
+
+  /** `view.closed {reason: "reloaded"}`: open the same window again (a fresh instance, drafts and client state kept). */
+  private async reopen(): Promise<void> {
+    try {
+      await this.resume()
+    } catch (error) {
+      if (isConnectionError(error)) return // the reconnect path will resume it
+      this.store.closed = error instanceof Error ? error.message : String(error)
+      this.store.phase = 'closed'
+      this.report(error)
+    }
   }
 
   /** Replace the DOM effects (the host component installs them once it has a root element). */
@@ -369,10 +384,15 @@ export class ViewCore {
         case 'view.error':
           this.store.error = (params as HostNotifications['view.error']).message
           return
-        case 'view.closed':
-          this.store.closed = (params as HostNotifications['view.closed']).reason
+        case 'view.closed': {
+          const reason = (params as HostNotifications['view.closed']).reason
+          // A dev hot reload replaced the app code: the instance is gone but the app is not. Open it again,
+          // carrying the draft and client state like a reconnect does.
+          if (reason === 'reloaded' && this.openParams) return void this.reopen()
+          this.store.closed = reason
           this.store.phase = 'closed'
           return
+        }
       }
     } catch (error) {
       // A broken op means we diverged: never guess, ask for the full tree.
@@ -382,6 +402,7 @@ export class ViewCore {
   }
 
   private applyData(p: DataPatch): void {
+    if (p.declare) this.sources.declare(p.declare) // before the windows that use them
     for (const [path, { v, r }] of Object.entries(p.state ?? {}))
       this.bindings.remote({ kind: 'state', path }, v, r)
     for (const [id, patch] of Object.entries(p.sources ?? {})) this.sources.apply(id, patch)
@@ -432,12 +453,13 @@ export class ViewCore {
     kind: NoticeKind,
     text: string,
     durationMs = NOTICE_MS,
-    extra: { icon?: string; action?: string } = {}
+    extra: { icon?: string; action?: string; undo?: Notice['undo'] } = {}
   ): void {
     const id = ++this.noticeId
     const notice: Notice = { id, kind, text }
     if (extra.icon) notice.icon = extra.icon
     if (extra.action) notice.action = extra.action
+    if (extra.undo) notice.undo = extra.undo
     this.store.notices.push(notice)
     if (durationMs > 0) this.timers.setTimeout(() => this.dismissNotice(id), durationMs)
   }
@@ -447,6 +469,33 @@ export class ViewCore {
     const root = this.store.tree?.key
     this.dismissNotice(id)
     if (root !== undefined) void this.emit(root, 'toast')
+  }
+
+  /**
+   * The notice's "Undo": ask the host to restore the value a write replaced (`row.restore`), adopt the ack like any
+   * other write's, and say so. A restore the host refuses leaves the value alone and shows the error.
+   */
+  async undo(id: number): Promise<void> {
+    const notice = this.store.notices.find((n) => n.id === id)
+    const undo = notice?.undo
+    this.dismissNotice(id)
+    if (!undo) return
+    try {
+      const { source, key, field, revisionId } = undo
+      const ack = await this.link.request('row.restore', {
+        viewId: this.viewId,
+        source,
+        key,
+        revisionId
+      })
+      this.adoptServer({ kind: 'row', source, key, field }, ack.value, ack.rev)
+      this.store.announcement = 'Restored the earlier value'
+    } catch (error) {
+      if (isConnectionError(error))
+        this.notice('error', 'You are offline. The edit was not undone.')
+      else
+        this.notice('error', error instanceof Error ? error.message : 'Could not undo that edit.')
+    }
   }
 
   dismissNotice(id: number): void {
@@ -648,15 +697,19 @@ export class ViewCore {
 
   // ── Events and actions (spec 2.4, 3.5) ─────────────────────────────────
 
-  /** A node reported an event: run its handler (client actions first, `emit` entries towards the app). */
-  fire(node: Node, path: string, event: string, scope: Scope = {}, payload?: Json): void {
+  /**
+   * A node reported an event: run its handler (client actions first, `emit` entries towards the app). The promise
+   * settles when the app has answered every `emit` (a list's "pull to refresh" spinner runs until then).
+   */
+  fire(node: Node, path: string, event: string, scope: Scope = {}, payload?: Json): Promise<void> {
     const handler: Handler | undefined = node.on?.[event]
-    if (!handler) return
-    if (handler === true) return void this.emit(path, event, scope.rowKey, payload)
+    if (!handler) return Promise.resolve()
+    if (handler === true) return this.emit(path, event, scope.rowKey, payload).then(() => undefined)
     const undo: { ref: string; before: unknown; after: unknown; scope: Scope }[] = []
     const sent: Promise<EmitResult>[] = []
     for (const a of handler) this.run(a, { path, event, scope, undo, sent })
     if (undo.length && sent.length) void this.restoreOnError(sent, undo)
+    return Promise.all(sent).then(() => undefined)
   }
 
   private run(a: Action, ctx: ActionCtx): void {
@@ -690,17 +743,30 @@ export class ViewCore {
       case 'copy':
         return this.effects.copy?.(String(this.evaluate(a.text, scope) ?? ''))
       case 'nav.push':
+        return this.navigate(ctx.path, a.route, scope, a.stack)
       case 'nav.pop':
-      case 'nav.popToRoot':
-        if (!this.warned.has(a.do)) {
-          this.warned.add(a.do)
-          this.report(
-            new Error(
-              `action ${a.do} needs NavigationStack, which this client does not register yet`
-            )
-          )
-        }
+      case 'nav.popToRoot': {
+        const stack = this.nav.resolve(ctx.path)
+        if (!stack)
+          return this.report(new Error(`${a.do}: no NavigationStack contains ${ctx.path}`))
+        return a.do === 'nav.pop' ? stack.pop() : stack.popToRoot()
+      }
     }
+  }
+
+  /**
+   * Push a route on the stack an action or a `NavigationLink` addresses (spec 3.5): the innermost stack that
+   * contains the node at `from`, or the one named `stack`. Param values are expressions, read in `scope` now.
+   */
+  navigate(from: string, route: Record<string, Expr>, scope: Scope = {}, stack?: string): void {
+    const target = this.nav.resolve(from, stack)
+    if (!target) return this.report(new Error(`nav.push: no NavigationStack contains ${from}`))
+    const value = Object.fromEntries(
+      Object.entries(route).map(([k, e]) => [k, (this.evaluate(e, scope) ?? null) as Json])
+    )
+    if (typeof value.name !== 'string' || !value.name)
+      return this.report(new Error('nav.push: the route needs a name'))
+    target.push({ ...value, name: value.name })
   }
 
   /** Apply a `set`/`toggle` at once and remember the before value so a failed event can restore it. */

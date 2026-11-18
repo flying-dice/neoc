@@ -115,6 +115,24 @@ export class Sources {
     if (resumed) this.refreshStale()
   }
 
+  /**
+   * Sources a re-render started to use: declared here (with their first window arriving in the same patch's
+   * `sources`, before the ops that reference them). A declaration already known is replaced.
+   */
+  declare(decls: Record<string, SourceDecl>): void {
+    for (const [id, decl] of Object.entries(decls)) {
+      this.decls[id] = decl
+      this.ranges.delete(id)
+      this.lastParams.delete(id)
+      this.seqs.delete(id)
+    }
+    // Params are read once the declaration is in place; the first window in the patch is the answer for them.
+    for (const id of Object.keys(decls)) {
+      this.lastParams.set(id, this.paramsKey(id))
+      this.ranges.set(id, { from: 0, to: this.page(id) })
+    }
+  }
+
   /** A `data.patch` for a source (or a reply to `source.set`). */
   apply(id: string, patch: SourcePatch): void {
     const { store } = this.d

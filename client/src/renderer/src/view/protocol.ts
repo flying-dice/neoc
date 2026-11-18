@@ -65,6 +65,8 @@ export type StateSetParams = G.StateSet
 export type RowSetParams = G.RowSet
 /** The ack of a two-way write: the authoritative value and revision (spec 3.4 rule 6). */
 export type WriteResult = G.WriteAck
+export type WriteResolution = G.WriteResolution
+export type RowRestoreParams = G.RowRestore
 export type SourceSetParams = G.SourceSet
 
 type Entry<K extends 'request' | 'notification', D extends 'clientToHost' | 'hostToClient'> = {

@@ -14,9 +14,11 @@
     notices: Notice[]
     ondismiss: (id: number) => void
     onaction?: (id: number) => void
+    /** "Undo" on a notice that offers it (a write replaced a change made elsewhere). */
+    onundo?: (id: number) => void
   }
 
-  let { testid, notices, ondismiss, onaction }: Props = $props()
+  let { testid, notices, ondismiss, onaction, onundo }: Props = $props()
 
   const glyph = (n: Notice): IconName =>
     n.icon && n.icon in icons
@@ -34,8 +36,8 @@
       testid="{testid}-{notice.id}"
       kind={notice.kind}
       text={notice.text}
-      action={notice.action}
-      onaction={() => onaction?.(notice.id)}
+      action={notice.undo ? 'Undo' : notice.action}
+      onaction={() => (notice.undo ? onundo?.(notice.id) : onaction?.(notice.id))}
       ondismiss={() => ondismiss(notice.id)}
     >
       {#snippet icon()}<Icon name={glyph(notice)} size={18} weight={2.4} />{/snippet}
