@@ -14,8 +14,14 @@ use common::{
 use serde_json::{json, Value};
 use std::path::Path;
 
+/// An app's file: the shipped app when the repo has one (the Calculator), else the codegen example (Notes).
 fn fixture(app: &str, name: &str) -> (String, Vec<u8>) {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../agentos-codegen/tests/fixtures").join(app);
+    let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps").join(app);
+    let dir = if shipped.join("app.json").exists() {
+        shipped
+    } else {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../agentos-codegen/tests/fixtures").join(app)
+    };
     (name.to_owned(), std::fs::read(dir.join(name)).unwrap())
 }
 
@@ -339,7 +345,7 @@ async fn app_management_describes_installed_and_available_apps() {
     assert_eq!((app["id"].as_str(), app["state"].as_str()), (Some("calculator"), Some("running")), "{list}");
     assert_eq!(app["icon"], "plus");
     assert_eq!(app["tint"], "orange");
-    assert_eq!(app["window"], json!({"w": 340, "h": 560, "minW": 320, "minH": 480}));
+    assert_eq!(app["window"], json!({"w": 340, "h": 560, "minW": 320, "minH": 500}));
     assert_eq!(app["source"], "this computer");
 
     let url = format!("file://{}/pkg-calculator/app-ref.json", tmp.display());

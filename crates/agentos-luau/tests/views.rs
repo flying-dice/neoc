@@ -20,7 +20,13 @@ use serde_json::{json, Map, Value};
 use std::{collections::BTreeMap, path::Path, sync::Arc};
 
 fn fixture(app: &str, files: &[&str]) -> AppPackage {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../agentos-codegen/tests/fixtures").join(app);
+    // the shipped app when the repo has one (the Calculator), else the codegen example (Notes)
+    let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps").join(app);
+    let dir = if shipped.join("app.json").exists() {
+        shipped
+    } else {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../agentos-codegen/tests/fixtures").join(app)
+    };
     let mut package = AppPackage { entry: "app.luau".into(), files: BTreeMap::new() };
     for name in files {
         package.files.insert((*name).to_owned(), std::fs::read(dir.join(name)).unwrap());
@@ -171,7 +177,7 @@ async fn the_shared_state_reaches_every_open_window_and_the_agent_tool_drives_it
     // app:openWindow("main") went to the shell
     assert_eq!(rig.shell.windows.lock().unwrap()[0].1, "main");
 
-    // the read-only tools: arithmetic (writes nothing: it is readOnly), and history through app.kv
+    // arithmetic (not readOnly: it records the sum in the history), then the history through app.kv (readOnly)
     let r = rig
         .runtime
         .call_tool(
@@ -189,11 +195,7 @@ async fn the_shared_state_reaches_every_open_window_and_the_agent_tool_drives_it
         .call_tool(&id("calculator"), "history", json!({"limit": 5}), agent_ctx(0), false)
         .await
         .unwrap();
-    assert_eq!(
-        h["entries"].as_array().unwrap().len(),
-        1,
-        "only show_on_calculator recorded: calculate is readOnly"
-    );
+    assert_eq!(h["entries"].as_array().unwrap().len(), 2, "show_on_calculator and calculate both recorded");
     let bad = rig
         .runtime
         .call_tool(&id("calculator"), "calculate", json!({"expression": "1 / 0"}), agent_ctx(0), false)

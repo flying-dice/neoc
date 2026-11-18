@@ -419,7 +419,7 @@ cached while writable cannot sneak a write through; the authorizer refuses app S
 `db:exec`, writes in `db:tx`, DDL and a write smuggled through `db:all ... returning` all fail. `app.kv:set`/`delete` and
 `db:migrate` raise with a message that says why. A `readOnly` call also cannot assign `app.state`, `app.notify`, open a window (whose `onOpen` could write) or
 drive the shell (`app.shell.*`), and the flag travels through the `AppRuntime` port, not only the Luau adapter.
-`openWindow` accepts only windows the app declared. A tool that must write is not `readOnly`: the spec Calculator's `calculate` no longer records history (only
-`show_on_calculator` does).
+`openWindow` accepts only windows the app declared. A tool that must write is not `readOnly`: the Calculator's `calculate` records the sum in its history, so it is not
+`readOnly` (its `history` tool is).
 
 **Tool names** are local identifiers `[a-z][a-z0-9_]*` (no dots); the MCP name is `<appId>__<tool>`.

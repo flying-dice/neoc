@@ -187,6 +187,17 @@ fn committed(app: &str) -> Value {
 
 /// Run an example app's `main` window with the `luau` runner against the generated `ui.luau`. `None` when the
 /// runner is not installed.
+/// Where an example app's Luau lives: the real app under `apps/<app>` when the repo has one (the Calculator), so the
+/// contract is checked against what ships, else a fixture (Notes, which exists only as an example).
+fn source_of(app: &str) -> std::path::PathBuf {
+    let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps").join(app);
+    if shipped.join("app.json").exists() {
+        shipped
+    } else {
+        fixtures().join(app)
+    }
+}
+
 fn run_luau(app: &str) -> Option<Value> {
     let work = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("luau-{app}"));
     let _ = fs::remove_dir_all(&work);
@@ -195,8 +206,11 @@ fn run_luau(app: &str) -> Option<Value> {
     fs::write(work.join("mods/ui.luau"), agentos_codegen::ui_module()).unwrap();
     fs::copy(fixtures().join("stub/app.luau"), work.join("mods/app.luau")).unwrap();
     fs::copy(fixtures().join("stub/harness.luau"), work.join("harness.luau")).unwrap();
-    for entry in fs::read_dir(fixtures().join(app)).unwrap() {
+    for entry in fs::read_dir(source_of(app)).unwrap() {
         let entry = entry.unwrap();
+        if entry.path().extension().is_none_or(|e| e != "luau") {
+            continue; // an app folder also holds its manifest, journeys and e2e specs
+        }
         fs::create_dir_all(work.join(app)).unwrap();
         let target = work.join(app).join(entry.file_name());
         if entry.file_name() == "app.luau" {
@@ -317,16 +331,19 @@ fn the_calculator_tree_has_the_documented_shape_and_ids() {
     ] {
         assert!(found.iter().any(|id| id == expected), "{expected} in {found:?}");
     }
-    let keys = found.iter().filter(|id| id.starts_with("calculator-key-")).count();
+    // the keys themselves (`calculator-key-7`), not ids inside one (the wide 0 key's `calculator-key-0-label`)
+    let keys = found
+        .iter()
+        .filter(|id| id.strip_prefix("calculator-key-").is_some_and(|k| !k.contains('-')))
+        .count();
     assert_eq!(keys, 19, "the keypad");
     // the keys are grid children with a column span, the display is a live region
-    let stack = &rendered.tree.children[0];
-    let grid = &stack.children[3];
-    assert_eq!(grid.type_, "Grid");
+    // (found by key, not position: the layout around them is the app's to change)
+    let grid = find(&rendered.tree, "Grid").expect("a keypad grid");
     assert_eq!(grid.children.len(), 19);
     let zero = grid.children.iter().find(|k| k.key == "key-0").unwrap();
     assert_eq!(zero.props["span"], 2);
-    let display = &stack.children[2];
+    let display = find_key(&rendered.tree, "display").expect("a display");
     assert_eq!(display.props["live"], "polite");
     assert!(lookup(&display.type_).is_some());
 }
@@ -354,4 +371,26 @@ fn the_notes_tree_has_the_documented_sources_bindings_and_ids() {
     {
         assert!(found.iter().any(|id| id == expected), "{expected} in {found:?}");
     }
+}
+
+/// The first node of this type, depth first.
+fn find<'a>(
+    node: &'a agentos_domain::ui::node::Node,
+    type_: &str,
+) -> Option<&'a agentos_domain::ui::node::Node> {
+    if node.type_ == type_ {
+        return Some(node);
+    }
+    node.containers().flat_map(|(_, children)| children.iter()).find_map(|c| find(c, type_))
+}
+
+/// The first node with this key, depth first.
+fn find_key<'a>(
+    node: &'a agentos_domain::ui::node::Node,
+    key: &str,
+) -> Option<&'a agentos_domain::ui::node::Node> {
+    if node.key == key {
+        return Some(node);
+    }
+    node.containers().flat_map(|(_, children)| children.iter()).find_map(|c| find_key(c, key))
 }

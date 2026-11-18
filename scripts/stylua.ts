@@ -34,7 +34,7 @@ if (!stylua) {
   process.exit(0)
 }
 
-// the nearest stylua.toml wins: crates/agentos-codegen/tests/fixtures/ keeps the table-call idiom (`ui.VStack { ... }`)
+// one stylua.toml at the root (call_parentheses = "NoSingleTable" keeps the table-call idiom, `ui.VStack { ... }`)
 const args = ['--search-parent-directories', ...(mode === 'check' ? ['--check'] : []), '.']
 const run = spawnSync(stylua, args, { cwd: root, stdio: 'inherit' })
 if (run.status !== 0) {
