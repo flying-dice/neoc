@@ -11,7 +11,7 @@ import { chooseLayout, expect, openDesktop, resizeWindow, test, windowOf } from 
 
 const chat = 'agents-chat'
 const thread = `${chat}-thread`
-const agentRow = 'agents-sidebar-agents-agent-scripted-tap'
+const agentRow = 'agents-roster-agents-agent-scripted-tap'
 
 async function openAgents(page: Page): Promise<void> {
   await openDesktop(page, { open: ['agents'] })
@@ -37,7 +37,7 @@ test.describe('Agents journeys', () => {
     await page.getByTestId('dock-agents').click()
     await expect(windowOf(page, 'agents')).toBeVisible()
     await expect(page.getByTestId('agents-view')).toBeVisible()
-    await expect(page.getByTestId('agents-sidebar-agents-agent-scripted')).toContainText('Scripted agent')
+    await expect(page.getByTestId('agents-roster-agents-agent-scripted')).toContainText('Scripted agent')
     await expect(page.getByTestId('agents-no-chat')).toBeVisible()
     // the desktop widget lists the same agents
     await page.getByTestId('dock-discover').click()

@@ -401,7 +401,7 @@ export const presentations: KitAppOptions = {
           },
           children: [
             stack(
-              '_4',
+              'popover-body', // an explicit key: an auto key would give it the popover's own test id
               [
                 text('popover-title', { text: 'Filters', style: 'headline' }),
                 {
@@ -607,7 +607,7 @@ export const dnd: KitAppOptions = {
   }
 }
 
-/** A button whose event makes the host send a toast with an action; tapping the action reports the `toast` event. */
+/** A button whose event makes the host send a toast with an action; tapping the action reports `tap` on `$toast/<id>`. */
 export const toast: KitAppOptions = {
   state: { last: { value: 'no toast yet' } },
   tree: screen('Toast', [
@@ -615,6 +615,10 @@ export const toast: KitAppOptions = {
     button('delete', 'Delete note', true)
   ]),
   onEvent: (view, event, host) => {
+    if (event.path === '$toast/t1') {
+      host.setState('last', 'undo tapped')
+      return
+    }
     if (event.event === 'tap')
       view.command({
         cmd: 'toast',
@@ -625,6 +629,5 @@ export const toast: KitAppOptions = {
           duration: 0
         }
       } as never)
-    if (event.event === 'toast') host.setState('last', 'undo tapped')
   }
 }

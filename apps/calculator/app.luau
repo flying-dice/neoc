@@ -136,14 +136,16 @@ local FILL: { [string]: "gray4" | "gray2" | "orange" } =
   { digit = "gray4", ["function"] = "gray2", operator = "orange" } -- semantic palette, auto-contrast text
 
 local function keyView(k: any)
-  local title = k.label
+  local title, name = k.label, k.name
   if k.id == "clear" and s.entry ~= "0" and not s.fresh then
-    title = "C"
+    title, name = "C", "C, clear entry" -- the accessible name keeps the visible text (WCAG 2.5.3)
+  elseif k.id == "clear" then
+    name = "AC, all clear"
   end
   return ui.Button {
     key = "key-" .. k.id,
     title = title,
-    label = k.name,
+    label = name,
     shape = "circle",
     size = "fill",
     fill = FILL[k.face],
@@ -185,7 +187,7 @@ app.window("main", {
           lines = 1,
           live = "polite",
         },
-        ui.Grid { columns = 4, spacing = 2, cellAspect = 1, ui.each(KEYS, keyView) },
+        ui.Grid { columns = 4, rows = 5, spacing = 2, frame = "fill", ui.each(KEYS, keyView) },
         ui.Shortcut {
           key = "backspace",
           shortcut = "backspace",

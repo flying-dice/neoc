@@ -46,7 +46,7 @@
   <div style="display:grid;grid-template-columns:repeat(3,110px);gap:8px">
     {#each ['topLeading', 'top', 'topTrailing', 'leading', 'center', 'trailing', 'bottomLeading', 'bottom', 'bottomTrailing'] as const as anchor (anchor)}
       <ZStack testid="zstack-{anchor}" align={anchor} style="height:80px;background:var(--fill-tertiary);border-radius:8px">
-        <Text style="caption2" color="secondary">{anchor}</Text>
+        <Text style="caption2" color="primary">{anchor}</Text>
         <span style="width:14px;height:14px;border-radius:50%;background:var(--tint)"></span>
       </ZStack>
     {/each}

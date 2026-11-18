@@ -175,20 +175,28 @@ export async function expectNoOverflow(container: Locator): Promise<void> {
     for (const el of [root, ...root.querySelectorAll('*')]) {
       const style = getComputedStyle(el)
       if (style.display === 'none' || style.visibility === 'hidden') continue
-      if (['auto', 'scroll'].includes(style.overflowX) && el.scrollWidth > el.clientWidth + 1) {
+      // A pager (scroll-snap on x: TabView pages, carousels) is meant to scroll sideways.
+      const pager = style.scrollSnapType.startsWith('x')
+      if (!pager && ['auto', 'scroll'].includes(style.overflowX) && el.scrollWidth > el.clientWidth + 1) {
         out.push(`${label(el)} scrolls horizontally (${el.scrollWidth} > ${el.clientWidth})`)
       }
     }
     for (const el of root.querySelectorAll('[data-testid]')) {
       const r = el.getBoundingClientRect()
       if (!r.width || !r.height || !shown(el)) continue
-      // Inside a vertical scroller, being below the fold is fine.
+      // Visually hidden helpers (a 1x1 live region) are not content.
+      if (r.width <= 1 && r.height <= 1) continue
+      // Inside a scroller, being past its edge is fine: below the fold (vertical), on another page (horizontal).
+      const scrolls = (n: Element, axis: 'overflowX' | 'overflowY'): boolean =>
+        ['auto', 'scroll'].includes(getComputedStyle(n)[axis])
       let scroller: Element | null = el.parentElement
-      while (scroller && scroller !== root && !['auto', 'scroll'].includes(getComputedStyle(scroller).overflowY))
+      while (scroller && scroller !== root && !scrolls(scroller, 'overflowY') && !scrolls(scroller, 'overflowX'))
         scroller = scroller.parentElement
       const clip = scroller && scroller !== root ? scroller.getBoundingClientRect() : frame
-      const horizontally = r.left < clip.left - 1 || r.right > clip.right + 1
-      const vertically = scroller && scroller !== root ? false : r.top < frame.top - 1 || r.bottom > frame.bottom + 1
+      const inScroller = !!scroller && scroller !== root
+      const horizontally =
+        !(inScroller && scrolls(scroller!, 'overflowX')) && (r.left < clip.left - 1 || r.right > clip.right + 1)
+      const vertically = inScroller ? false : r.top < frame.top - 1 || r.bottom > frame.bottom + 1
       if (horizontally || vertically) {
         out.push(
           `${label(el)} is cut off (${Math.round(r.left)},${Math.round(r.top)} ${Math.round(r.width)}x${Math.round(r.height)} ` +
