@@ -19,9 +19,10 @@ const VERSION = '0.1.0'
 export interface RunningServer {
   url: URL
   runtime: AppRuntime
+  known: KnownApps
   /**
    * Dev: re-install installed apps whose known bundle changed (after
-   * `bun run build:apps`), through the same unregister → register path as an
+   * `bun run build:apps`, mutable local build), through the same unregister → register path as an
    * update. Returns the ids reloaded.
    */
   reloadChanged(): Promise<string[]>
@@ -58,7 +59,12 @@ export async function startServer(
   }
 
   const runtime = new AppRuntime(db, tools, emit, config.dataDir)
-  const known = new KnownApps(pathToFileURL(config.knownAppsFile), config.extraApps)
+  const known = new KnownApps({
+    listFile: pathToFileURL(config.knownAppsFile),
+    base: config.appsBase,
+    extra: config.extraApps,
+    token: config.appsToken
+  })
   const mcp = createMcpHandler(tools, VERSION)
 
   // Bun.serve with port 0 picks a free port; the MCP URL needs the real one.
@@ -197,6 +203,7 @@ export async function startServer(
   return {
     url: origin,
     runtime,
+    known,
     async reloadChanged() {
       const reloaded: string[] = []
       for (const app of await known.load()) {

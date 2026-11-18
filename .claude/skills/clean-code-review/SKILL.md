@@ -30,7 +30,7 @@ given the diff and the file list, not your conclusions. Otherwise one inline pas
    five times; if no answer survives, it is a violation.
 7. **BOUNDARY**: coupling across a real AgentOS seam that lint can't see. Seams: app ↔ host (only the SDK), client
    ↔ server (only `invoke` / `handle` / `emit` and `host/protocol` over JSON-RPC), app ↔ app (only tools), agent ↔
-   host (ACP and MCP, untrusted), registry ↔ server (bundles, sha256-verified), kit ↔ app (the kit is generic),
+   host (ACP and MCP, untrusted), known apps ↔ server (bundles, sha256-verified), kit ↔ app (the kit is generic),
    atomic layers. Flag: server or Bun types leaking into client-facing SDK signatures; stringly-typed methods shared
    by copy instead of one constant; a protocol change without its zod schema or memory-host twin; app-specific
    knowledge in the client or server (apps arrive as bundles); app knowledge in `packages/ui`; a server module that

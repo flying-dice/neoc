@@ -7,7 +7,7 @@ import type { IconName } from '@agentos/ui'
 export interface AppManifest {
   /** Stable identifier: lowercase, digits and dashes (namespaces RPC, tools and storage). */
   id: string
-  /** Semver of the app bundle; registries and updates compare it. */
+  /** Semver of the app bundle; known apps and updates compare it. */
   version: string
   name: string
   icon: IconName

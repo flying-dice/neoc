@@ -1,0 +1,24 @@
+{
+  "manifest": {
+    "id": "calculator",
+    "version": "0.1.0",
+    "name": "Calculator",
+    "icon": "plus",
+    "background": "linear-gradient(180deg, #5a5a5e 0%, #1c1c1e 100%)",
+    "window": {
+      "width": 340,
+      "height": 560,
+      "minWidth": 320,
+      "minHeight": 480
+    },
+    "dock": true
+  },
+  "server": {
+    "url": "0.1.0/server.js",
+    "sha256": "d11e73d2628defe1e0c89e7a6f00328ef0b989a0ce090bd2249c531a20151c2e"
+  },
+  "client": {
+    "url": "0.1.0/client.js",
+    "sha256": "841357840f41920d08804ed079c54fea43c8bb9f7d5517fdcb74dcde3d27f81e"
+  }
+}

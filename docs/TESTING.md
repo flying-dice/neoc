@@ -3,7 +3,7 @@
 Every app is tested headless, in Chromium, **without the Bun server**. The client is the system under
 test. The server is replaced by an in-memory host (`@agentos/sdk/testing`) that runs each app's real server module
 (handlers, tools, storage, register/unregister lifecycle) and scripted agents. The server itself has its own
-integration test (`apps/server/src/server.test.ts`: real registry, real WebSocket JSON-RPC, MCP, restarts).
+integration test (`apps/server/src/server.test.ts`: known apps built from the Calculator, a hosted base on 127.0.0.1, real WebSocket JSON-RPC, MCP, restarts).
 
 | Layer | What | Where | Command |
 |---|---|---|---|

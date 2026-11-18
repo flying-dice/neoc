@@ -1,5 +1,5 @@
 /**
- * App store journeys in web mode: Discover lists the registry's apps;
+ * App store journeys in web mode: Discover lists the server's known apps;
  * Remove unregisters an app (its Dock icon and windows go) and GET installs it
  * again and opens it. The in-memory host runs the same register / unregister
  * lifecycle as the server.

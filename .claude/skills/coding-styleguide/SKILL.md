@@ -15,10 +15,10 @@ layer, so nothing crosses a process or package seam except through it.
 
 | Role | AgentOS |
 |---|---|
-| Ports (contracts) | `packages/sdk`: `app/server` (`AppServerContext`), `app/client` (`AppClientApi`), `host/protocol` (every JSON-RPC method with its zod schema), `registry` (bundle format), tool types |
+| Ports (contracts) | `packages/sdk`: `app/server` (`AppServerContext`), `app/client` (`AppClientApi`), `host/protocol` (every JSON-RPC method with its zod schema), `bundle` (bundle.json and known-apps formats), tool types |
 | Domain | `apps/<id>/src/shared`: pure, synchronous, no framework, no SDK runtime; bun-tested |
 | Driving adapters | an app's `src/client` (calls `useAppApi()`), its tools (`ctx.registerTool`) |
-| Driven adapters | `apps/server/src` (app runtime, registries, tool registry, MCP endpoint, ACP agent host, SQLite); an app's `src/server` (its own SQLite, Bun APIs) |
+| Driven adapters | `apps/server/src` (app runtime, known apps, tool registry, MCP endpoint, ACP agent host, SQLite); an app's `src/server` (its own SQLite, Bun APIs) |
 | Composition roots | `apps/server/src/server.ts` (`startServer`), the client's `boot.ts` / `web/main.ts` and `App.svelte` |
 | Test adapter | `@agentos/sdk/testing` (in-memory host); an app's `src/testing.ts` / `src/mock/` |
 
@@ -60,7 +60,7 @@ into the kit (with a story and a required `testid` prop), never into one app. Th
 | Boundary | Where |
 |---|---|
 | Client → server | `ctx.handle(channel, payload)`: `payload` is `unknown`; parse it first. Host methods are parsed by `createProtocolDispatcher`; a new method needs its schema in `host/protocol`. |
-| Registries | `registry.json` (parsed with `registrySchema`) and bundle bytes (sha256-verified before install). |
+| Known apps | `known-apps.json` (`knownAppsSchema`), each `bundle.json` (`bundleDescriptorSchema`) and the bundle bytes (sha256-verified before install). Clients install by id, never by URL. |
 | Agents → tools | the tool's zod `input` shape (validated by the registry). Describe every field: agents read it. |
 | Disk | `ctx.storage.get<T>()` is an unchecked cast over data an older version may have written: parse it. |
 | Agents → UI | agent messages, tool results and permission prompts are untrusted text: render them as text nodes (`atoms/RichText.svelte`), never `{@html}`. |

@@ -12,7 +12,7 @@
  *     - src/client and src/server never import each other (api.invoke / ctx.handle / ctx.emit);
  *     - apps never touch `window.agentos`; clients use useAppApi().
  *  2. No relative import leaves its workspace package (test support may reach the repo's e2e/).
- *  3. The server (apps/server) never imports app packages: apps arrive only as registry bundles.
+ *  3. The server (apps/server) never imports app packages: apps arrive only as bundles.
  *  4. Browser code (the desktop client, packages/ui, the universal parts of packages/sdk) imports
  *     no Node or Bun builtins, and no server-only SDK entry points.
  *  5. All client ↔ server traffic is the SDK protocol: `new WebSocket` only in the SDK bridge,
@@ -267,7 +267,7 @@ async function checkImport(rel: string, imp: Import, abs: string): Promise<void>
   if (spec.startsWith('@agentos/sdk/testing') && !test && !isWebMode(rel))
     report(rel, imp.line, 'the in-memory host is for tests, stories and web mode only')
   if (spec.startsWith('@agentos/app-')) {
-    if (app === 'server') report(rel, imp.line, 'the server never imports apps: they are installed as registry bundles')
+    if (app === 'server') report(rel, imp.line, 'the server never imports apps: they are installed as bundles')
     else if (!test && !isWebMode(rel)) report(rel, imp.line, 'the client loads apps as bundles; only web mode registers source loaders for repo apps')
   }
   if (rel.startsWith('packages/ui/src/') && spec.startsWith('@agentos/') && !matches(spec, ['@agentos/ui', '@agentos/ui/*']) && !test)

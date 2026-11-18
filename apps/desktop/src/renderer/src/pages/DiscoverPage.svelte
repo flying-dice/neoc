@@ -12,13 +12,13 @@
   import CapabilityCard from '../molecules/CapabilityCard.svelte'
   import { windowManager as wm } from '../lib/windowManager.svelte'
   import { appStore } from '../lib/appStore.svelte'
-  import type { RegistryApp } from '@agentos/sdk/host/client'
+  import type { KnownApp } from '@agentos/sdk/host/client'
 
-  const registryApps = $derived(
-    appStore.available.filter((a) => a.manifest.name.toLowerCase().includes(query.toLowerCase()))
+  const knownApps = $derived(
+    appStore.known.filter((a) => a.manifest.name.toLowerCase().includes(query.toLowerCase()))
   )
 
-  async function primary(app: RegistryApp): Promise<void> {
+  async function primary(app: KnownApp): Promise<void> {
     const state = appStore.stateOf(app)
     if (state === 'open') return wm.open(app.manifest.id)
     if (await appStore.install(app)) wm.open(app.manifest.id)
@@ -194,11 +194,11 @@
               </p>
             {/if}
             <div class="listings">
-              {#each registryApps as app (`${app.registry}/${app.manifest.id}`)}
+              {#each knownApps as app (app.manifest.id)}
                 <AgentListing
                   testid="discover-app-{app.manifest.id}"
                   name={app.manifest.name}
-                  blurb="{app.registry} · {app.installedVersion &&
+                  blurb="Version {app.installedVersion &&
                   app.installedVersion !== app.manifest.version
                     ? `${app.installedVersion} → ${app.manifest.version}`
                     : app.manifest.version}"
@@ -213,7 +213,7 @@
                 <Text style="subheadline" color="secondary">
                   {query
                     ? `No apps match “${query}”.`
-                    : 'No registries are offering apps. Run `bun run build:apps`.'}
+                    : 'No apps are available to install. Run `bun run build:apps`.'}
                 </Text>
               {/each}
             </div>

@@ -1,7 +1,7 @@
 # Working on AgentOS
 
 AgentOS is an iPadOS-style virtual desktop for agents: a Bun server (`apps/server`), a PWA client (`apps/desktop`),
-app modules installed from registries as bundles
+app modules released as bundles and installed from the server's known-apps list
 (`apps/<app>`), the app SDK (`packages/sdk`) and the UI kit (`packages/ui`). Bun workspaces.
 
 Sources of truth: `apps/README.md` (app model, SDK, security), `docs/TESTING.md` (test ids, headless testing),
@@ -37,7 +37,7 @@ Enforced by `bun run lint:boundaries` (`scripts/check-boundaries.ts`):
 - Inside an app, `src/client` and `src/server` talk only through `api.invoke` / `ctx.handle` / `ctx.emit`;
   `src/shared` is pure logic.
 - Client ↔ server traffic goes only through the SDK protocol (JSON-RPC over `/rpc`): no raw `WebSocket`, no extra
-  `Bun.serve` routes. The server never imports app packages: apps arrive as registry bundles.
+  `Bun.serve` routes. The server never imports app packages: apps arrive as bundles (installed by id from the known-apps list).
 - Server modules are registered/unregistered at runtime: release what they open in their dispose function.
 - Agent and tool output is untrusted: no `{@html}` or `innerHTML`.
 
@@ -57,9 +57,10 @@ Also: atomic layers (`lint:atomic`) and test ids from the first commit (`lint:te
 ## Commands
 
 ```sh
-bun run dev             # server on :7000 + client on :5173 (builds the registry first)
-bun run build:apps      # build app bundles + dist/registry/registry.json (the dev server hot-reloads them)
-bun run build && bun start   # production: the server serves the built PWA on :7000
+bun run dev             # server on :7400 + client on :5173 (builds dist/bundles first)
+bun run build:apps      # dev build of app bundles → dist/bundles (mutable; the dev server hot-reloads them)
+bun run release:apps    # release build → bundles/ (immutable, committed); bump the app's version to change a released app
+bun run build && bun start   # production: the server serves the built PWA on :7400
 bun run dev:web         # the desktop in a browser on the in-memory host (http://localhost:6200/web.html)
 bun run lint            # atomic layers + test ids + boundaries + eslint
 bun run typecheck

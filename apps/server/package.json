@@ -2,10 +2,10 @@
   "name": "@agentos/server",
   "version": "0.1.0",
   "private": true,
-  "description": "The AgentOS Bun server: JSON-RPC over WebSocket, app runtime and registries, tool registry + MCP, ACP agents",
+  "description": "The AgentOS Bun server: JSON-RPC over WebSocket, app runtime and known apps, tool registry + MCP, ACP agents",
   "type": "module",
   "scripts": {
-    "dev": "AGENTOS_DEV=1 AGENTOS_ALLOWED_ORIGINS=http://localhost:5173 bun --watch src/main.ts",
+    "dev": "AGENTOS_DEV=1 AGENTOS_APPS_BASE=../../dist/bundles AGENTOS_ALLOWED_ORIGINS=http://localhost:5173 bun --watch src/main.ts",
     "start": "bun src/main.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "bun test ./src"

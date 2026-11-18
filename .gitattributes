@@ -1,0 +1,2 @@
+# Release bundles are served byte for byte (their sha256 is verified): never rewrite line endings.
+bundles/** linguist-generated -diff -text

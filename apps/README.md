@@ -4,7 +4,7 @@ AgentOS is two programs and a set of apps:
 
 - **`apps/server`**: the Bun server. It runs app server modules, the tool registry, the MCP endpoint and the ACP agents, and serves the client and the app bundles.
 - **`apps/desktop`**: the client, an installable PWA (Vite + Svelte). It's the iPadOS-style shell: windows, Dock and Stage Manager.
-- **`apps/<id>`**: **app modules**. Each is built into a bundle, published in a registry and installed onto a server at runtime.
+- **`apps/<id>`**: **app modules**. Each is built into a bundle, released into this repo's `bundles/` and installed onto a server at runtime, if the server knows it.
 
 ```
  PWA client (browser)                           Bun server
@@ -13,7 +13,7 @@ AgentOS is two programs and a set of apps:
  │ app client.js (ESM)         │     /rpc       │ app server.js (ESM, Bun)           │
  │  Svelte · kit · SDK shared  │                │ ToolRegistry ─▶ /mcp ◀── ACP agents │
  └─────────────────────────────┘                │ SystemDb (bun:sqlite)              │
-        ▲ /bundles/<id>/<version>/client.js     │ Registries ◀── registry.json       │
+        ▲ /bundles/<id>/<version>/client.js     │ KnownApps ◀── known-apps.json      │
         └───────────────────────────────────────┴────────────────────────────────────┘
 ```
 
@@ -21,19 +21,27 @@ Everything an app touches comes from **`@agentos/sdk`**: there is no other contr
 
 ## An app bundle
 
-`bun run build:apps` turns each app into a registry entry:
+Each app builds into a directory of plain static files:
 
 ```
-dist/registry/
-  registry.json                     { name, apps: [{ manifest, server: {url, sha256}, client: {url, sha256} }] }
-  <id>/<version>/manifest.json
-  <id>/<version>/server.js          ESM for Bun: everything bundled; bun:*, node:* and npm deps allowed
-  <id>/<version>/client.js          browser ESM: Svelte, @agentos/ui and the SDK client come from the host
+<id>/bundle.json                    the latest version: { manifest, server: {url, sha256}, client: {url, sha256} }
+<id>/<version>/bundle.json          that version (file URLs relative to it)
+<id>/<version>/server.js            ESM for Bun: everything bundled; bun:*, node:* and npm deps allowed
+<id>/<version>/client.js            browser ESM: Svelte, @agentos/ui and the SDK client come from the host
 ```
+
+Two build targets (`scripts/build-apps.ts`, schema in `packages/sdk/src/bundle.ts`):
+
+| Command | Writes | For |
+|---|---|---|
+| `bun run build:apps [ids…]` | `dist/bundles/` (gitignored) | development: mutable, the dev server hot-reloads it |
+| `bun run release:apps [ids…]` | `bundles/` (committed) | shipping: immutable, adds `<id>/bundle.json` to `apps/server/known-apps.json` if missing |
 
 - **Client bundles don't ship their own Svelte or kit.** The build maps those imports to the host's shared instances (`SHARED_MODULES` in `@agentos/sdk/build`), so there's one Svelte runtime, one kit and one set of styles. A client bundle is typically tens of kB.
-- **Servers verify each bundle's sha256** against `registry.json` before installing it.
-- **Bundles are stored per version and hash**, so an update never reuses a stale module.
+- **Servers verify each file's sha256** against its `bundle.json` before installing it.
+- **Builds are byte-deterministic**: the same source gives the same sha256s, so re-running `release:apps` on an unchanged app changes nothing.
+- **Released versions are immutable.** `release:apps` refuses to overwrite `bundles/<id>/<version>/` with different bytes (`PublishedVersionError`): bump `version` in `src/manifest.ts` to release a change.
+- **Bundles are stored on the server per version and hash**, so an update never reuses a stale module.
 
 ## Make an app
 
@@ -143,9 +151,10 @@ export default defineClientApp({ component: NotesPage })
 ```sh
 bun run dev:web            # http://localhost:6200/web.html?open=<id>
                            # the shell on the in-memory host; your app from source
-bun run dev                # the real thing: builds the registry, starts the server on :7000 and Vite on :5173
+bun run dev                # the real thing: builds dist/bundles, starts the server on :7400 and Vite on :5173
                            # open http://localhost:5173 → Discover → Apps → GET
 bun run build:apps <id>    # after changing the app: the dev server hot-reloads it (unregister → register)
+bun run release:apps <id>  # to ship it: bump `version` first (see "Ship it")
 ```
 
 - **Web mode** finds every `apps/*/src/manifest.ts` by itself. If your server module needs Bun (SQLite, files, processes), add `src/mock/server.ts` with the same handlers and tools, backed by memory, so web mode and Storybook can run it.
@@ -159,14 +168,29 @@ A new or changed app reaches `main` only through a PR, with the full gate and th
 - a `verify-change` record;
 - a UX research round (`app-design`).
 
-Until all of those exist, the app stays in its MR. Bump `version` to publish an update: servers show it in Discover as **UPDATE**.
+Until all of those exist, the app stays in its MR. Then `bun run release:apps <id>` and commit `bundles/` (and the list entry it adds) in the same PR. To publish an update, bump `version` first: servers show it in Discover as **UPDATE**.
 
-## Registries
+## Known apps
 
-- **A registry is any URL of a `registry.json`** (`http(s):` or `file:`) plus the bundles it lists, with URLs relative to it.
-- **This repo is the first one:** `bun run build:apps` writes `dist/registry`, and every server serves its own at `/registry/registry.json`, so other servers can install from it.
-- **Adding registries:** list them in `AGENTOS_REGISTRIES` (comma-separated URLs). Each registry's `name` is how clients address it (`apps.install(registry, id)`).
-- **Trust:** a server module runs with the server's full privileges. Install only from registries you trust; the sha256 check guards against tampering in transit, not against a malicious author.
+There are no registries and no discovery. A server offers only the apps in its **known-apps list**, `apps/server/known-apps.json`:
+
+```json
+{
+  "base": "https://raw.githubusercontent.com/flying-dice/AgentOS/main/bundles/",
+  "apps": ["calculator/bundle.json"]
+}
+```
+
+- **Entries** are `bundle.json` URLs, absolute or relative to `base`. Without a `base` they resolve against the list file.
+- **The URLs are fixed:** `bundles/` is committed to this repo, so the GitHub URLs above serve the released bundles. Later a CDN takes over by changing the one `base` value.
+- **Clients install by id only** (`apps.known()` lists the apps with their `installedVersion`; `apps.install(appId)` installs or updates one). A client can never name a URL, so it can't make the server fetch one.
+- **Configuration** (env vars on the server):
+  - `AGENTOS_APPS_BASE`: overrides `base` with a URL or a path. `bun run dev` sets it to the local `dist/bundles/`, so development uses the same list against local builds.
+  - `AGENTOS_APPS_TOKEN`: for a private repo. Sent as `Authorization: Bearer <token>` only on requests to the base URL's origin, never to other hosts (redirects included).
+  - `AGENTOS_APPS`: extra absolute `bundle.json` URLs (comma-separated).
+  - `AGENTOS_KNOWN_APPS`: a different list file.
+- **Allowed URLs:** `https:` and `file:`; `http:` only on localhost. A hosted `bundle.json` can't point at `file:` URLs. A broken entry is logged and skipped; the rest still load.
+- **Trust:** a server module runs with the server's full privileges. The list is the allow-list: add only authors you trust. The sha256 check guards against tampering in transit and a bundle that doesn't match its descriptor, not against a malicious author.
 
 ## Rules that are enforced
 

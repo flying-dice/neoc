@@ -45,9 +45,14 @@ export type BundleFile = z.infer<typeof bundleFileSchema>
 export type BundleDescriptor = z.infer<typeof bundleDescriptorSchema>
 
 /**
- * A server's known apps (`known-apps.json`): the bundle.json URLs it offers to
- * install. Relative entries resolve against the file itself, so a list can
- * point at bundles on disk (this repo's `bundles/`) or on any static host.
+ * A server's known apps (`known-apps.json`): the only apps it offers to
+ * install. `apps` entries are bundle.json URLs, absolute or relative to `base`
+ * (a directory URL, itself relative to the file if not absolute). With no
+ * `base` they resolve against the file. Moving the built bundles to a CDN is a
+ * change to `base` alone.
  */
-export const knownAppsSchema = z.object({ apps: z.array(z.string().min(1)) })
+export const knownAppsSchema = z.object({
+  base: z.string().min(1).optional(),
+  apps: z.array(z.string().min(1))
+})
 export type KnownAppsFile = z.infer<typeof knownAppsSchema>
