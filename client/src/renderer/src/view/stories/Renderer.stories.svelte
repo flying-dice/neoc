@@ -67,7 +67,8 @@
 <Story
   name="Tree"
   play={async ({ canvas }) => {
-    await expect(await canvas.findByTestId('notes-count')).toHaveTextContent('2 notes')
+    await canvas.findByTestId('notes-count')
+    await waitFor(() => expect(canvas.getByTestId('notes-count')).toHaveTextContent('2 notes'))
     await expect(canvas.getByTestId('notes-list-row-1-item')).toBeVisible()
     await expect(canvas.getByTestId('notes-list-row-2-item')).toBeVisible()
     await expect(canvas.getByTestId('notes-body')).toBeVisible()
@@ -80,12 +81,14 @@
   play={async ({ canvas, userEvent }) => {
     await userEvent.click(await canvas.findByTestId('notes-actions-delete-all'))
     await expect(await canvas.findByTestId('notes-empty-state')).toBeVisible()
-    await expect(canvas.getByTestId('notes-status')).toHaveTextContent('Deleted all notes')
-    await expect(canvas.getByTestId('notes-count')).toHaveTextContent('0 notes')
+    await waitFor(() =>
+      expect(canvas.getByTestId('notes-status')).toHaveTextContent('Deleted all notes')
+    )
+    await waitFor(() => expect(canvas.getByTestId('notes-count')).toHaveTextContent('0 notes'))
     const { harness } = await story()
     harness.app.agentAddNote(harness.host, 'Back again')
     await waitFor(() => expect(canvas.queryByTestId('notes-empty-state')).toBeNull())
-    await expect(canvas.getByTestId('notes-count')).toHaveTextContent('1 note')
+    await waitFor(() => expect(canvas.getByTestId('notes-count')).toHaveTextContent('1 note'))
   }}
 />
 
@@ -95,7 +98,7 @@
   play={async ({ canvas, userEvent }) => {
     const body = await canvas.findByTestId('notes-body')
     await userEvent.type(body, 'Buy oat milk')
-    await expect(canvas.getByText('Saving…')).toBeVisible()
+    await expect(await canvas.findByText('Saving…')).toBeVisible()
     const { harness } = await story()
     harness.app.agentAppendDraft(harness.host, 'agent: ')
     await expect(body).toHaveValue('Buy oat milk') // shielded: the caret and text are not clobbered mid-typing
@@ -110,15 +113,16 @@
   name="Windowed list"
   args={{ scenario: { notes: { extra: 298, page: 20 } } }}
   play={async ({ canvas }) => {
-    await expect(await canvas.findByTestId('notes-count')).toHaveTextContent('300 notes')
+    await canvas.findByTestId('notes-count')
+    await waitFor(() => expect(canvas.getByTestId('notes-count')).toHaveTextContent('300 notes'))
     const { view } = await story()
     await waitFor(() => expect(canvas.getAllByTestId(/^notes-list-row-\d+-item$/)).toHaveLength(20))
     view.sources.loadMore('notes')
     await waitFor(() => expect(canvas.getAllByTestId(/^notes-list-row-\d+-item$/)).toHaveLength(40))
     const { harness } = await story()
     harness.app.agentAddNote(harness.host, 'Newest note')
-    await expect(await canvas.findByTestId('notes-count')).toHaveTextContent('301 notes')
-    await expect(canvas.getByText('Newest note')).toBeVisible()
+    await waitFor(() => expect(canvas.getByTestId('notes-count')).toHaveTextContent('301 notes'))
+    await waitFor(() => expect(canvas.getByText('Newest note')).toBeVisible())
   }}
 />
 
@@ -136,7 +140,7 @@
     await expect(
       await canvas.findByText('Your edit replaced a change made elsewhere.')
     ).toBeVisible()
-    await expect(body).toHaveValue('buy soy')
+    await waitFor(() => expect(body).toHaveValue('buy soy'))
     await expect(harness.host.overwritten[0]).toMatchObject({ theirs: 'buy tea', mine: 'buy soy' })
   }}
 />
@@ -155,7 +159,7 @@
     await userEvent.click(approved)
     harness.host.setState('approved', true)
     await waitFor(() => expect(canvas.getByText('Changed elsewhere')).toBeVisible())
-    await expect(approved).toHaveAttribute('aria-checked', 'true')
+    await waitFor(() => expect(approved).toHaveAttribute('aria-checked', 'true'))
     harness.link.setLatency(0)
   }}
 />
@@ -170,8 +174,10 @@
     harness.link.drop()
     await expect(await canvas.findByTestId('notes-offline')).toBeVisible()
     await userEvent.type(body, 'Typed while offline')
-    await expect(body).toHaveValue('Typed while offline')
-    await expect(canvas.getByTestId('notes-offline')).toHaveTextContent('1 edit is saved here')
+    await waitFor(() => expect(body).toHaveValue('Typed while offline'))
+    await waitFor(() =>
+      expect(canvas.getByTestId('notes-offline')).toHaveTextContent('1 edit is saved here')
+    )
     await expect(canvas.getByTestId('notes-actions-save')).toBeDisabled() // events are never queued: a tap is not idempotent
   }}
 />
@@ -200,7 +206,10 @@
   name="Unsupported component"
   args={{ scenario: { notes: { extraNodes: unknownNodes } } }}
   play={async ({ canvas }) => {
-    await expect(await canvas.findByTestId('notes-gauge')).toHaveTextContent('Unsupported: Gauge')
+    await canvas.findByTestId('notes-gauge')
+    await waitFor(() =>
+      expect(canvas.getByTestId('notes-gauge')).toHaveTextContent('Unsupported: Gauge')
+    )
     await expect(canvas.getByTestId('notes-gauge-fallback-fallback-text')).toHaveTextContent(
       'Storage: 40% used'
     )

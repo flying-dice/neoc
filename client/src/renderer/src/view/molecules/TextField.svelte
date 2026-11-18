@@ -151,7 +151,7 @@
   }
   .status {
     font: var(--type-caption1);
-    color: var(--label-secondary);
+    color: var(--label); /* secondary label on the field fill is 4.45:1: just under AA */
     white-space: nowrap;
     min-width: 0;
   }
