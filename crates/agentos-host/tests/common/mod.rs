@@ -27,6 +27,8 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
+pub mod agents;
+
 pub type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
 pub struct Running {
