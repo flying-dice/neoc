@@ -1,26 +1,33 @@
 //! In-memory fakes of every port (no frameworks, no mocks library).
 
 use crate::{
+    live::{SourceDef, SourceId, SourceUpdate, SubscriptionId},
     ports::{
-        AgentConnector, AgentDirectory, AppData, AppRuntime, Clock, DataStore, DeviceRegistry, EventSink,
-        ExecOutcome, Fetcher, LoadedApp, PortResult, RandomSource, RunId, ServerEvent, SqlMigration,
-        ToolRegistry,
+        AgentConnector, AgentDirectory, AppData, AppPackage, AppRuntime, Background, CallContext,
+        ChangeBatch, ChangeFeed, Clock, DataStore, DataTx, DeviceRegistry, EventSink, ExecOutcome, Fetcher,
+        InstalledApp, InstalledAppStore, LoadedApp, MenuCommand, Params, PortResult, QueryInfo, RandomSource,
+        RunId, ServerEvent, Shell, SqlMigration, TaskHandle, ToolRegistry,
     },
-    services::AppService,
+    services::{AppService, Ports},
+    PortError,
 };
 use agentos_domain::{
     ui::{UiEvent, UiNode},
-    AgentId, AppId, AppRef, Device, DeviceId, FileRef, Manifest, MigrationSpec, ToolSpec,
+    AgentId, AppId, AppRef, Capabilities, Device, DeviceId, FileRef, Manifest, MigrationSpec, Revision,
+    StoredRevision, ToolSpec,
 };
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet, VecDeque},
+    future::Future,
+    pin::Pin,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
         Arc, Mutex,
     },
+    task::{Poll, Waker},
 };
 
 #[derive(Default)]
@@ -32,20 +39,250 @@ impl Fetcher for MemFetcher {
     }
 }
 
-struct NullData;
-#[async_trait]
-impl AppData for NullData {
-    async fn query(&self, _: String, _: Vec<Value>) -> PortResult<Vec<Value>> {
-        Ok(vec![])
+// ---- data -----------------------------------------------------------------------------------------
+
+#[derive(Default)]
+struct FeedState {
+    queue: VecDeque<ChangeBatch>,
+    waker: Option<Waker>,
+    closed: bool,
+}
+
+#[derive(Default)]
+struct Inner {
+    rows: Mutex<Vec<(String, Vec<Value>)>>,
+    tables: Mutex<Vec<String>>,
+    fail: Mutex<String>,
+    begun: AtomicU64,
+    migrations: Mutex<Vec<SqlMigration>>,
+    execs: Mutex<Vec<(String, Params)>>,
+    feed: Mutex<FeedState>,
+    revs: Mutex<Vec<StoredRevision>>,
+}
+
+/// A scripted database: rows are registered per SQL fragment and returned for any statement containing it
+/// (the longest fragment wins). Windowed (`limit :__limit offset :__offset`) and `count(*) as n` wrappers
+/// are interpreted, so a source behaves like it does over SQLite.
+#[derive(Default, Clone)]
+pub struct ScriptedData(Arc<Inner>);
+
+impl ScriptedData {
+    pub fn set_rows(&self, sql_fragment: &str, rows: Vec<Value>) {
+        let mut all = self.0.rows.lock().unwrap();
+        all.retain(|(k, _)| k != sql_fragment);
+        all.push((sql_fragment.to_owned(), rows));
     }
-    async fn exec(&self, _: String, _: Vec<Value>) -> PortResult<ExecOutcome> {
-        Ok(ExecOutcome { changes: 0, last_insert_rowid: 0 })
+    /// The tables `analyze` reports (default: `notes`).
+    pub fn set_tables(&self, tables: &[&str]) {
+        *self.0.tables.lock().unwrap() = tables.iter().map(|t| (*t).to_owned()).collect();
+    }
+    /// Every query fails with this message while it is non-empty.
+    pub fn fail_queries(&self, message: &str) {
+        message.clone_into(&mut self.0.fail.lock().unwrap());
+    }
+    pub fn transactions_begun(&self) -> u64 {
+        self.0.begun.load(Ordering::SeqCst)
+    }
+    pub fn migrations(&self) -> Vec<SqlMigration> {
+        self.0.migrations.lock().unwrap().clone()
+    }
+    pub fn execs(&self) -> Vec<(String, Params)> {
+        self.0.execs.lock().unwrap().clone()
+    }
+    /// A commit touching these tables, as the database's commit hook would report it.
+    pub fn commit<'a>(&self, tables: impl IntoIterator<Item = &'a str>) {
+        let mut feed = self.0.feed.lock().unwrap();
+        feed.queue.push_back(ChangeBatch::of(tables));
+        if let Some(w) = feed.waker.take() {
+            w.wake();
+        }
+    }
+    /// End every change feed (the database closed).
+    pub fn close_feed(&self) {
+        let mut feed = self.0.feed.lock().unwrap();
+        feed.closed = true;
+        if let Some(w) = feed.waker.take() {
+            w.wake();
+        }
+    }
+    pub fn feed(&self) -> Box<dyn ChangeFeed> {
+        Box::new(ScriptedFeed(self.0.clone()))
+    }
+
+    fn run(&self, sql: &str, params: &Params) -> PortResult<Vec<Value>> {
+        let fail = self.0.fail.lock().unwrap().clone();
+        if !fail.is_empty() {
+            return Err(PortError::Rejected(fail));
+        }
+        let all = self.0.rows.lock().unwrap();
+        let best = all.iter().filter(|(k, _)| sql.contains(k.as_str())).max_by_key(|(k, _)| k.len());
+        let rows = best.map(|(_, r)| r.clone()).unwrap_or_default();
+        if sql.contains("count(*) as n from (") {
+            return Ok(vec![json!({ "n": rows.len() })]);
+        }
+        if let (Some(limit), Some(offset)) = (params.get("__limit"), params.get("__offset")) {
+            let (limit, offset) = (
+                usize::try_from(limit.as_u64().unwrap_or(0)).unwrap_or(0),
+                usize::try_from(offset.as_u64().unwrap_or(0)).unwrap_or(0),
+            );
+            return Ok(rows.into_iter().skip(offset).take(limit).collect());
+        }
+        Ok(rows)
+    }
+}
+
+struct ScriptedFeed(Arc<Inner>);
+#[async_trait]
+impl ChangeFeed for ScriptedFeed {
+    async fn next_batch(&mut self) -> Option<ChangeBatch> {
+        let inner = self.0.clone();
+        std::future::poll_fn(move |cx| {
+            let mut feed = inner.feed.lock().unwrap();
+            if let Some(b) = feed.queue.pop_front() {
+                Poll::Ready(Some(b))
+            } else if feed.closed {
+                Poll::Ready(None)
+            } else {
+                feed.waker = Some(cx.waker().clone());
+                Poll::Pending
+            }
+        })
+        .await
+    }
+}
+
+struct ScriptedTx(ScriptedData);
+#[async_trait]
+impl DataTx for ScriptedTx {
+    async fn query(&mut self, sql: String, params: Params) -> PortResult<Vec<Value>> {
+        self.0.run(&sql, &params)
+    }
+    async fn exec(&mut self, sql: String, params: Params) -> PortResult<ExecOutcome> {
+        AppData::exec(&self.0, sql, params).await
+    }
+    async fn commit(self: Box<Self>) -> PortResult<()> {
+        Ok(())
+    }
+    async fn rollback(self: Box<Self>) -> PortResult<()> {
+        Ok(())
+    }
+}
+
+/// Named parameters (`:name`) in a SQL string, in order of first use.
+fn named_params(sql: &str) -> Vec<String> {
+    let bytes = sql.as_bytes();
+    let mut out: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b':' && i + 1 < bytes.len() && bytes[i + 1] != b':' && (i == 0 || bytes[i - 1] != b':')
+        {
+            let end = bytes[i + 1..]
+                .iter()
+                .position(|b| !(b.is_ascii_alphanumeric() || *b == b'_'))
+                .map_or(bytes.len(), |p| i + 1 + p);
+            let name = &sql[i + 1..end];
+            if !name.is_empty() && !out.iter().any(|n| n == name) && !name.starts_with("__") {
+                out.push(name.to_owned());
+            }
+            i = end;
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+#[async_trait]
+impl AppData for ScriptedData {
+    async fn migrate(&self, migrations: Vec<SqlMigration>) -> PortResult<()> {
+        self.0.migrations.lock().unwrap().extend(migrations);
+        Ok(())
+    }
+    async fn query(&self, sql: String, params: Params) -> PortResult<Vec<Value>> {
+        self.run(&sql, &params)
+    }
+    async fn exec(&self, sql: String, params: Params) -> PortResult<ExecOutcome> {
+        let mut execs = self.0.execs.lock().unwrap();
+        execs.push((sql, params));
+        Ok(ExecOutcome { changes: 1, last_insert_id: i64::try_from(execs.len()).unwrap_or(0) })
+    }
+    async fn analyze(&self, sql: String) -> PortResult<QueryInfo> {
+        let mut tables: std::collections::BTreeSet<String> =
+            self.0.tables.lock().unwrap().iter().cloned().collect();
+        if tables.is_empty() {
+            tables.insert("notes".into());
+        }
+        let columns = self
+            .run(&sql, &Params::None)
+            .ok()
+            .and_then(|r| r.first().and_then(|v| v.as_object().map(|o| o.keys().cloned().collect())))
+            .unwrap_or_default();
+        Ok(QueryInfo {
+            tables,
+            columns,
+            named_params: named_params(&sql),
+            read_only: sql.trim_start().to_lowercase().starts_with("select"),
+        })
+    }
+    async fn begin(&self) -> PortResult<Box<dyn DataTx>> {
+        self.0.begun.fetch_add(1, Ordering::SeqCst);
+        Ok(Box::new(ScriptedTx(self.clone())))
+    }
+    fn changes(&self) -> Box<dyn ChangeFeed> {
+        self.feed()
+    }
+    async fn record_revision(&self, revision: Revision) -> PortResult<i64> {
+        let mut all = self.0.revs.lock().unwrap();
+        let id = i64::try_from(all.len()).unwrap_or(0) + 1;
+        all.push(StoredRevision { id, revision });
+        Ok(id)
+    }
+    async fn revision(&self, id: i64) -> PortResult<Option<StoredRevision>> {
+        Ok(self.0.revs.lock().unwrap().iter().find(|r| r.id == id).cloned())
+    }
+    async fn revisions(&self, source: &str, key: &Value, field: &str) -> PortResult<Vec<StoredRevision>> {
+        let mut v: Vec<StoredRevision> = self
+            .0
+            .revs
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|r| r.revision.source == source && &r.revision.key == key && r.revision.field == field)
+            .cloned()
+            .collect();
+        v.reverse();
+        Ok(v)
+    }
+    async fn purge_revisions(&self, cutoff_ms: u64) -> PortResult<u64> {
+        let mut all = self.0.revs.lock().unwrap();
+        let before = all.len();
+        all.retain(|r| r.revision.recorded_at_ms >= cutoff_ms);
+        Ok(u64::try_from(before - all.len()).unwrap_or(0))
+    }
+}
+
+/// Collects what a refresh delivers.
+#[derive(Default)]
+pub struct CollectingSink(Mutex<Vec<(SubscriptionId, SourceUpdate)>>);
+impl CollectingSink {
+    pub fn take(&self) -> Vec<(SubscriptionId, SourceUpdate)> {
+        std::mem::take(&mut *self.0.lock().unwrap())
+    }
+    pub fn peek(&self) -> Vec<(SubscriptionId, SourceUpdate)> {
+        self.0.lock().unwrap().clone()
+    }
+}
+#[async_trait]
+impl crate::live::LiveSink for CollectingSink {
+    async fn deliver(&self, subscription: SubscriptionId, update: SourceUpdate) {
+        self.0.lock().unwrap().push((subscription, update));
     }
 }
 
 #[derive(Default)]
 pub struct MemStore {
     opened: Mutex<HashMap<String, usize>>,
+    dbs: Mutex<HashMap<String, ScriptedData>>,
     purged: Mutex<Vec<String>>,
 }
 impl MemStore {
@@ -55,55 +292,139 @@ impl MemStore {
     pub fn purged(&self, app: &str) -> bool {
         self.purged.lock().unwrap().iter().any(|a| a == app)
     }
+    /// The app's scripted database (created on first open).
+    pub fn data(&self, app: &str) -> ScriptedData {
+        self.dbs.lock().unwrap().entry(app.to_owned()).or_default().clone()
+    }
 }
 #[async_trait]
 impl DataStore for MemStore {
     async fn open(&self, app: &AppId, m: Vec<SqlMigration>) -> PortResult<Arc<dyn AppData>> {
         self.opened.lock().unwrap().insert(app.to_string(), m.len());
-        Ok(Arc::new(NullData))
+        let data = self.data(app.as_str());
+        data.migrate(m).await?;
+        Ok(Arc::new(data))
     }
     async fn purge(&self, app: &AppId) -> PortResult<()> {
         self.purged.lock().unwrap().push(app.to_string());
+        self.dbs.lock().unwrap().remove(app.as_str());
         Ok(())
     }
 }
 
+// ---- runtime --------------------------------------------------------------------------------------
+
+/// (source, key, field, value, context) of a write-back the fake runtime ran.
+pub type WriteRecord = (String, Value, String, Value, CallContext);
+type WriteHook = Box<dyn Fn(&str, &Value, &str, &Value) + Send>;
+
 #[derive(Default)]
 pub struct FakeRuntime {
     apps: Mutex<HashMap<String, Vec<ToolSpec>>>,
-    calls: Mutex<usize>,
+    calls: Mutex<Vec<(String, String, CallContext)>>,
+    loads: Mutex<HashMap<String, usize>>,
+    packages: Mutex<HashMap<String, AppPackage>>,
+    sources: Mutex<HashMap<String, Vec<SourceDef>>>,
+    capabilities: Mutex<HashMap<String, Capabilities>>,
+    fail_load: Mutex<HashSet<String>>,
+    writes: Mutex<Vec<WriteRecord>>,
+    on_write: Mutex<Option<WriteHook>>,
 }
 impl FakeRuntime {
     pub fn loaded(&self) -> Vec<String> {
         self.apps.lock().unwrap().keys().cloned().collect()
     }
     pub fn calls(&self) -> usize {
-        *self.calls.lock().unwrap()
+        self.calls.lock().unwrap().len()
+    }
+    /// The context of the most recent tool call.
+    pub fn last_ctx(&self) -> Option<CallContext> {
+        self.calls.lock().unwrap().last().map(|c| c.2.clone())
+    }
+    /// How many times the app was loaded (install, enable, reload, delete data).
+    pub fn loads(&self, app: &str) -> usize {
+        self.loads.lock().unwrap().get(app).copied().unwrap_or(0)
+    }
+    pub fn package(&self, app: &str) -> Option<AppPackage> {
+        self.packages.lock().unwrap().get(app).cloned()
+    }
+    pub fn capabilities(&self, app: &str) -> Option<Capabilities> {
+        self.capabilities.lock().unwrap().get(app).copied()
+    }
+    pub fn set_sources(&self, app: &str, defs: Vec<SourceDef>) {
+        self.sources.lock().unwrap().insert(app.to_owned(), defs);
+    }
+    /// The next loads of this app fail (until `fail_load(app, false)`).
+    pub fn fail_load(&self, app: &str, fail: bool) {
+        let mut set = self.fail_load.lock().unwrap();
+        if fail {
+            set.insert(app.to_owned());
+        } else {
+            set.remove(app);
+        }
+    }
+    pub fn writes(&self) -> Vec<WriteRecord> {
+        self.writes.lock().unwrap().clone()
+    }
+    /// Called with (source, key, field, value) when a write-back runs (to change the scripted rows).
+    pub fn on_write(&self, hook: impl Fn(&str, &Value, &str, &Value) + Send + 'static) {
+        *self.on_write.lock().unwrap() = Some(Box::new(hook));
     }
 }
 #[async_trait]
 impl AppRuntime for FakeRuntime {
-    async fn load(&self, app: &AppId, main: Vec<u8>, _: Arc<dyn AppData>) -> PortResult<LoadedApp> {
+    async fn load(
+        &self,
+        app: &AppId,
+        package: AppPackage,
+        _: Arc<dyn AppData>,
+        capabilities: Capabilities,
+    ) -> PortResult<LoadedApp> {
+        *self.loads.lock().unwrap().entry(app.to_string()).or_default() += 1;
+        if self.fail_load.lock().unwrap().contains(app.as_str()) {
+            return Err(PortError::Rejected(format!("{app}/app.luau:3: boom")));
+        }
         // the fake "app source" is a comma separated list of tool names
+        let main = package.files.get(&package.entry).cloned().unwrap_or_default();
         let tools: Vec<ToolSpec> = String::from_utf8_lossy(&main)
             .split(',')
             .filter(|s| !s.is_empty())
             .map(|n| ToolSpec {
                 name: n.into(),
+                title: None,
                 description: String::new(),
                 input_schema: json!({"type":"object"}),
+                read_only: false,
             })
             .collect();
         self.apps.lock().unwrap().insert(app.to_string(), tools.clone());
-        Ok(LoadedApp { tools })
+        self.packages.lock().unwrap().insert(app.to_string(), package);
+        self.capabilities.lock().unwrap().insert(app.to_string(), capabilities);
+        let sources = self.sources.lock().unwrap().get(app.as_str()).cloned().unwrap_or_default();
+        Ok(LoadedApp { decl: None, tools, sources })
     }
     async fn unload(&self, app: &AppId) -> PortResult<()> {
         self.apps.lock().unwrap().remove(app.as_str());
         Ok(())
     }
-    async fn call_tool(&self, _: &AppId, _: &str, args: Value) -> PortResult<Value> {
-        *self.calls.lock().unwrap() += 1;
+    async fn call_tool(&self, app: &AppId, tool: &str, args: Value, ctx: CallContext) -> PortResult<Value> {
+        self.calls.lock().unwrap().push((app.to_string(), tool.to_owned(), ctx));
         Ok(json!({ "echo": args }))
+    }
+    async fn write_row(
+        &self,
+        _: &AppId,
+        source: &SourceId,
+        key: Value,
+        field: &str,
+        value: Value,
+        ctx: CallContext,
+    ) -> PortResult<()> {
+        if let Some(hook) = self.on_write.lock().unwrap().as_ref() {
+            hook(&source.0, &key, field, &value);
+        }
+        self.writes.lock().unwrap().push((source.0.clone(), key, field.to_owned(), value, ctx));
+        Ok(())
     }
     async fn dispatch_event(&self, _: &AppId, e: UiEvent) -> PortResult<Option<UiNode>> {
         Ok(Some(UiNode::Text { text: e.name }))
@@ -194,6 +515,79 @@ impl Clock for ManualClock {
     }
 }
 
+/// In-memory `InstalledAppStore`.
+#[derive(Default)]
+pub struct MemInstalled(Mutex<Vec<InstalledApp>>);
+impl MemInstalled {
+    pub fn records(&self) -> Vec<InstalledApp> {
+        self.0.lock().unwrap().clone()
+    }
+}
+#[async_trait]
+impl InstalledAppStore for MemInstalled {
+    async fn save(&self, app: &InstalledApp) -> PortResult<()> {
+        let mut all = self.0.lock().unwrap();
+        all.retain(|a| a.id != app.id);
+        all.push(app.clone());
+        Ok(())
+    }
+    async fn remove(&self, id: &AppId) -> PortResult<()> {
+        self.0.lock().unwrap().retain(|a| a.id != *id);
+        Ok(())
+    }
+    async fn set_enabled(&self, id: &AppId, enabled: bool) -> PortResult<()> {
+        if let Some(a) = self.0.lock().unwrap().iter_mut().find(|a| a.id == *id) {
+            a.enabled = enabled;
+        }
+        Ok(())
+    }
+    async fn list(&self) -> PortResult<Vec<InstalledApp>> {
+        Ok(self.records())
+    }
+}
+
+/// Records what apps asked of the shell.
+#[derive(Default)]
+pub struct RecordingShell {
+    pub badges: Mutex<Vec<(String, Option<String>)>>,
+    pub commands: Mutex<Vec<(String, Vec<MenuCommand>)>>,
+    pub links: Mutex<Vec<(String, Vec<String>)>>,
+}
+#[async_trait]
+impl Shell for RecordingShell {
+    async fn set_badge(&self, app: &AppId, badge: Option<String>) {
+        self.badges.lock().unwrap().push((app.to_string(), badge));
+    }
+    async fn set_menu_commands(&self, app: &AppId, commands: Vec<MenuCommand>) {
+        self.commands.lock().unwrap().push((app.to_string(), commands));
+    }
+    async fn set_deep_links(&self, app: &AppId, patterns: Vec<String>) {
+        self.links.lock().unwrap().push((app.to_string(), patterns));
+    }
+}
+
+/// A `Background` that never runs the task but counts the live handles (the pump's lifetime).
+#[derive(Default)]
+pub struct CountingBackground(Arc<AtomicUsize>);
+impl CountingBackground {
+    pub fn alive(&self) -> usize {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+struct CountedHandle(Arc<AtomicUsize>);
+impl TaskHandle for CountedHandle {}
+impl Drop for CountedHandle {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+impl Background for CountingBackground {
+    fn spawn(&self, _: &'static str, _: Pin<Box<dyn Future<Output = ()> + Send>>) -> Box<dyn TaskHandle> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Box::new(CountedHandle(self.0.clone()))
+    }
+}
+
 /// Deterministic "randomness": a counter run through SHA-256, so values differ but tests are repeatable.
 #[derive(Default)]
 pub struct SeededRandom(AtomicU64);
@@ -273,6 +667,9 @@ pub struct Fakes {
     pub registry: Arc<MemRegistry>,
     pub events: Arc<RecordingSink>,
     pub agents: Arc<FakeAgents>,
+    pub installed: Arc<MemInstalled>,
+    pub clock: Arc<ManualClock>,
+    pub background: Arc<CountingBackground>,
 }
 impl Default for Fakes {
     fn default() -> Self {
@@ -288,54 +685,80 @@ impl Fakes {
             registry: Arc::default(),
             events: Arc::default(),
             agents: Arc::default(),
+            installed: Arc::default(),
+            clock: Arc::new(ManualClock::new(1_000)),
+            background: Arc::default(),
         }
     }
+    /// A fresh service over these fakes (call twice to simulate a restart: the fakes keep their state).
     pub fn service(&self) -> AppService {
-        AppService::new(
-            self.fetcher.clone(),
-            self.store.clone(),
-            self.runtime.clone(),
-            self.registry.clone(),
-            self.events.clone(),
-            self.agents.clone(),
-        )
+        self.service_with_tools(self.registry.clone())
+    }
+    /// Like `service`, with another `ToolRegistry` (the real MCP adapter, in its own tests).
+    pub fn service_with_tools(&self, tools: Arc<dyn ToolRegistry>) -> AppService {
+        AppService::new(Ports {
+            fetcher: self.fetcher.clone(),
+            data: self.store.clone(),
+            runtime: self.runtime.clone(),
+            tools,
+            events: self.events.clone(),
+            agents: self.agents.clone(),
+            installed: self.installed.clone(),
+            clock: self.clock.clone(),
+            background: self.background.clone(),
+        })
     }
     /// Publish an app ref at `mem://<id>/app-ref.json`; `main` content = comma-joined tool names.
     pub fn add_app(&self, id: &str, tools: &[(&str, &str)]) -> String {
+        self.add_app_with(id, tools, &[], vec![])
+    }
+    /// Like `add_app`, with extra `.luau` modules (path, source) and package grants.
+    pub fn add_app_with(
+        &self,
+        id: &str,
+        tools: &[(&str, &str)],
+        modules: &[(&str, &str)],
+        permissions: Vec<agentos_domain::Permission>,
+    ) -> String {
         let main = tools.iter().map(|t| t.0).collect::<Vec<_>>().join(",").into_bytes();
         let sql = b"CREATE TABLE t(a);".to_vec();
         let sha = |b: &[u8]| format!("{:x}", Sha256::digest(b));
+        let mut files = vec![
+            FileRef { path: "main.luau".into(), url: format!("mem://{id}/main.luau"), sha256: sha(&main) },
+            FileRef {
+                path: "001_init.sql".into(),
+                url: format!("mem://{id}/001_init.sql"),
+                sha256: sha(&sql),
+            },
+        ];
+        let mut mem = self.fetcher.0.lock().unwrap();
+        for (path, src) in modules {
+            files.push(FileRef {
+                path: (*path).into(),
+                url: format!("mem://{id}/{path}"),
+                sha256: sha(src.as_bytes()),
+            });
+            mem.insert(format!("mem://{id}/{path}"), src.as_bytes().to_vec());
+        }
         let r = AppRef {
             manifest: Manifest {
                 id: AppId::parse(id).unwrap(),
                 name: id.into(),
                 version: "1.0.0".into(),
                 main: "main.luau".into(),
-                permissions: vec![],
+                permissions,
                 migrations: vec![MigrationSpec {
                     version: 1,
                     name: "init".into(),
                     file: "001_init.sql".into(),
                 }],
             },
-            files: vec![
-                FileRef {
-                    path: "main.luau".into(),
-                    url: format!("mem://{id}/main.luau"),
-                    sha256: sha(&main),
-                },
-                FileRef {
-                    path: "001_init.sql".into(),
-                    url: format!("mem://{id}/001_init.sql"),
-                    sha256: sha(&sql),
-                },
-            ],
+            files,
         };
-        let mut m = self.fetcher.0.lock().unwrap();
-        m.insert(format!("mem://{id}/main.luau"), main);
-        m.insert(format!("mem://{id}/001_init.sql"), sql);
+        mem.insert(format!("mem://{id}/main.luau"), main);
+        mem.insert(format!("mem://{id}/001_init.sql"), sql);
         let url = format!("mem://{id}/app-ref.json");
-        m.insert(url.clone(), serde_json::to_vec(&r).unwrap());
+        mem.insert(url.clone(), serde_json::to_vec(&r).unwrap());
         url
     }
     pub fn tamper(&self, id: &str) {

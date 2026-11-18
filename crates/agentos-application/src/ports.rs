@@ -1,60 +1,69 @@
 //! Driven ports. Each is a trait the application owns; an adapter crate implements it.
 
-use crate::PortError;
+use crate::live::{SourceDef, SourceId};
 use agentos_domain::{
     ui::{UiEvent, UiNode},
-    AgentId, AppId, Device, DeviceId, Notification, ToolSpec,
+    Actor, AgentId, AppDecl, AppId, Capabilities, Device, DeviceId, Notification, ToolSpec,
 };
 use async_trait::async_trait;
 use serde_json::Value;
-use std::sync::Arc;
+use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc};
 
-pub type PortResult<T> = Result<T, PortError>;
-
-// ---- per-app data -------------------------------------------------------------------------
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SqlMigration {
-    pub version: u32,
-    pub name: String,
-    pub sql: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ExecOutcome {
-    pub changes: u64,
-    pub last_insert_rowid: i64,
-}
-
-/// A single app's database (what `app.data.*` in Luau is backed by).
-#[async_trait]
-pub trait AppData: Send + Sync {
-    async fn query(&self, sql: String, params: Vec<Value>) -> PortResult<Vec<Value>>;
-    async fn exec(&self, sql: String, params: Vec<Value>) -> PortResult<ExecOutcome>;
-}
-
-/// Creates / destroys per-app databases (applies the app's declared migrations on open).
-#[async_trait]
-pub trait DataStore: Send + Sync {
-    async fn open(&self, app: &AppId, migrations: Vec<SqlMigration>) -> PortResult<Arc<dyn AppData>>;
-    /// Delete the app's data (uninstall with purge).
-    async fn purge(&self, app: &AppId) -> PortResult<()>;
-}
+pub use crate::data::{
+    AppData, ChangeBatch, ChangeFeed, DataStore, DataTx, ExecOutcome, Params, PortResult, QueryInfo,
+    SqlMigration,
+};
 
 // ---- running apps -------------------------------------------------------------------------
 
-/// What the runtime learned from running an app's main chunk.
+/// The files of an app package handed to the runtime: the entry point and every `.luau` module, by path
+/// inside the app ref. There is no filesystem: `require` resolves only within this set.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AppPackage {
+    pub entry: String,
+    pub files: BTreeMap<String, Vec<u8>>,
+}
+
+/// Who is calling and when: `ctx.actor` and `ctx.now` in Luau.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CallContext {
+    pub actor: Actor,
+    pub now_ms: u64,
+}
+
+/// What the runtime learned from running an app's entry point.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LoadedApp {
+    /// The app's `app.manifest { ... }`, if it declared one.
+    pub decl: Option<AppDecl>,
     pub tools: Vec<ToolSpec>,
+    /// Live-source definitions (`db:query`, `db:row`, `db:scalar`), already validated.
+    pub sources: Vec<SourceDef>,
 }
 
 #[async_trait]
 pub trait AppRuntime: Send + Sync {
-    /// Compile + run `main` with only the capabilities the host hands over.
-    async fn load(&self, app: &AppId, main: Vec<u8>, data: Arc<dyn AppData>) -> PortResult<LoadedApp>;
+    /// Compile + run the package's entry with only the capabilities the host hands over. Loading an app
+    /// that is already loaded replaces it (hot reload): the database handle is the caller's, so data is kept.
+    async fn load(
+        &self,
+        app: &AppId,
+        package: AppPackage,
+        data: Arc<dyn AppData>,
+        capabilities: Capabilities,
+    ) -> PortResult<LoadedApp>;
     async fn unload(&self, app: &AppId) -> PortResult<()>;
-    async fn call_tool(&self, app: &AppId, tool: &str, args: Value) -> PortResult<Value>;
+    async fn call_tool(&self, app: &AppId, tool: &str, args: Value, ctx: CallContext) -> PortResult<Value>;
+    /// Run a row source's `write(key, field, value, ctx)` callback.
+    async fn write_row(
+        &self,
+        app: &AppId,
+        source: &SourceId,
+        key: Value,
+        field: &str,
+        value: Value,
+        ctx: CallContext,
+    ) -> PortResult<()>;
     /// Deliver a UI event; returns the new view tree if the app produced one.
     async fn dispatch_event(&self, app: &AppId, event: UiEvent) -> PortResult<Option<UiNode>>;
 }
@@ -78,7 +87,17 @@ pub trait Notifier: Send + Sync {
 pub enum ServerEvent {
     AppInstalled(AppId),
     AppUninstalled(AppId),
-    UiTree { app: AppId, root: UiNode },
+    AppEnabled(AppId),
+    AppDisabled(AppId),
+    /// An app failed to load (install, restore, enable or reload); other apps are unaffected.
+    AppFailed {
+        app: AppId,
+        message: String,
+    },
+    UiTree {
+        app: AppId,
+        root: UiNode,
+    },
     Notification(Notification),
 }
 
@@ -110,6 +129,60 @@ pub trait Clock: Send + Sync {
 #[async_trait]
 pub trait Fetcher: Send + Sync {
     async fn fetch(&self, url: &str) -> PortResult<Vec<u8>>;
+}
+
+// ---- installed apps ---------------------------------------------------------------------------
+
+/// An installed app as the host remembers it across restarts (the system database).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InstalledApp {
+    pub id: AppId,
+    /// The app-ref URL it was installed from: restart and reload re-fetch (and re-verify) from here.
+    pub source_url: String,
+    pub version: String,
+    pub enabled: bool,
+    pub installed_at_ms: u64,
+}
+
+#[async_trait]
+pub trait InstalledAppStore: Send + Sync {
+    /// Insert or replace.
+    async fn save(&self, app: &InstalledApp) -> PortResult<()>;
+    async fn remove(&self, id: &AppId) -> PortResult<()>;
+    async fn set_enabled(&self, id: &AppId, enabled: bool) -> PortResult<()>;
+    async fn list(&self) -> PortResult<Vec<InstalledApp>>;
+}
+
+// ---- shell (stub) -------------------------------------------------------------------------------
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MenuCommand {
+    pub id: String,
+    pub title: String,
+    pub shortcut: Option<String>,
+}
+
+/// What an app asks of the desktop shell (`app.shell` in Luau). The shell does not implement it yet: the
+/// API shape is fixed so apps can be written against it.
+#[async_trait]
+pub trait Shell: Send + Sync {
+    async fn set_badge(&self, app: &AppId, badge: Option<String>);
+    async fn set_menu_commands(&self, app: &AppId, commands: Vec<MenuCommand>);
+    async fn set_deep_links(&self, app: &AppId, patterns: Vec<String>);
+}
+
+// ---- background tasks ---------------------------------------------------------------------------
+
+/// A running background task; dropping the handle stops it (release on dispose).
+pub trait TaskHandle: Send {}
+
+/// Spawns long-running work (the live-source pump) without the core knowing the async runtime.
+pub trait Background: Send + Sync {
+    fn spawn(
+        &self,
+        name: &'static str,
+        task: Pin<Box<dyn Future<Output = ()> + Send>>,
+    ) -> Box<dyn TaskHandle>;
 }
 
 // ---- paired devices ---------------------------------------------------------------------------

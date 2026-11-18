@@ -23,4 +23,7 @@ pub enum AppError {
     AlreadyInstalled(String),
     #[error("app `{0}` is not installed")]
     NotInstalled(String),
+    /// The app is installed but disabled or failed, so it cannot serve calls.
+    #[error("app `{app}` is {state}")]
+    NotRunning { app: String, state: String },
 }
