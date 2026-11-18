@@ -1,0 +1,540 @@
+{
+  "client": {
+    "confirmDelete": {
+      "init": false
+    },
+    "deleteId": {
+      "init": 0,
+      "sync": "commit"
+    },
+    "folder": {
+      "init": 0,
+      "persist": "app"
+    },
+    "mode": {
+      "init": "edit",
+      "persist": "app"
+    },
+    "noteId": {
+      "init": 0,
+      "persist": "app"
+    },
+    "search": {
+      "init": "",
+      "persist": "session"
+    }
+  },
+  "manifest": {
+    "icon": "note.text",
+    "id": "notes",
+    "name": "Notes",
+    "tint": "yellow",
+    "window": {
+      "h": 640,
+      "minH": 360,
+      "minW": 480,
+      "w": 960
+    }
+  },
+  "sources": {
+    "s1": {
+      "key": "id",
+      "kind": "row",
+      "params": {
+        "id": {
+          "$ref": "client.noteId"
+        }
+      }
+    },
+    "s2": {
+      "key": "id",
+      "kind": "rows",
+      "params": {}
+    },
+    "s3": {
+      "key": "id",
+      "kind": "rows",
+      "page": 60,
+      "params": {
+        "folder": {
+          "$ref": "client.folder"
+        },
+        "q": {
+          "$ref": "client.search"
+        }
+      }
+    }
+  },
+  "tools": 2,
+  "tree": {
+    "children": [
+      {
+        "key": "_0",
+        "props": {
+          "columns": 3
+        },
+        "slots": {
+          "content": [
+            {
+              "children": [
+                {
+                  "children": [
+                    {
+                      "key": "_0",
+                      "props": {
+                        "source": "s3"
+                      },
+                      "slots": {
+                        "row": [
+                          {
+                            "key": "_0",
+                            "props": {
+                              "subtitle": {
+                                "$fn": "concat",
+                                "args": [
+                                  {
+                                    "$fn": "fmt.relative",
+                                    "args": [
+                                      {
+                                        "$ref": "row.updated_at"
+                                      }
+                                    ]
+                                  },
+                                  "  ",
+                                  {
+                                    "$ref": "row.preview"
+                                  }
+                                ]
+                              },
+                              "tag": {
+                                "$ref": "row.id"
+                              },
+                              "title": {
+                                "$ref": "row.title"
+                              }
+                            },
+                            "slots": {
+                              "swipeTrailing": [
+                                {
+                                  "key": "delete",
+                                  "on": {
+                                    "tap": [
+                                      {
+                                        "actions": [
+                                          {
+                                            "do": "set",
+                                            "ref": "client.deleteId",
+                                            "value": {
+                                              "$ref": "row.id"
+                                            }
+                                          },
+                                          {
+                                            "do": "set",
+                                            "ref": "client.confirmDelete",
+                                            "value": true
+                                          }
+                                        ],
+                                        "do": "seq"
+                                      }
+                                    ]
+                                  },
+                                  "props": {
+                                    "icon": "trash",
+                                    "label": "Delete",
+                                    "role": "destructive"
+                                  },
+                                  "type": "Button"
+                                }
+                              ]
+                            },
+                            "type": "Row"
+                          }
+                        ]
+                      },
+                      "type": "ForEach"
+                    }
+                  ],
+                  "key": "notes",
+                  "props": {
+                    "selection": {
+                      "$ref": "client.noteId"
+                    },
+                    "style": "plain"
+                  },
+                  "slots": {
+                    "empty": [
+                      {
+                        "key": "_0",
+                        "props": {
+                          "icon": "note.text",
+                          "message": {
+                            "$fn": "if",
+                            "args": [
+                              {
+                                "$fn": "isEmpty",
+                                "args": [
+                                  {
+                                    "$ref": "client.search"
+                                  }
+                                ]
+                              },
+                              "Tap the compose button to start.",
+                              "No results."
+                            ]
+                          },
+                          "title": "No Notes"
+                        },
+                        "type": "EmptyState"
+                      }
+                    ]
+                  },
+                  "type": "List"
+                }
+              ],
+              "key": "_0",
+              "props": {
+                "searchable": {
+                  "placeholder": "Search",
+                  "sync": "debounce:250",
+                  "text": {
+                    "$ref": "client.search"
+                  }
+                },
+                "title": "Notes",
+                "titleDisplay": "large"
+              },
+              "slots": {
+                "toolbar.trailing": [
+                  {
+                    "key": "new-note",
+                    "on": {
+                      "tap": true
+                    },
+                    "props": {
+                      "icon": "square.and.pencil",
+                      "label": "New Note",
+                      "shortcut": "cmd+n"
+                    },
+                    "type": "Button"
+                  }
+                ]
+              },
+              "type": "Screen"
+            }
+          ],
+          "detail": [
+            {
+              "children": [
+                {
+                  "children": [
+                    {
+                      "key": "_0",
+                      "props": {
+                        "icon": "note.text",
+                        "title": "No Note Selected"
+                      },
+                      "type": "EmptyState"
+                    }
+                  ],
+                  "key": "_0",
+                  "props": {
+                    "when": {
+                      "$fn": "eq",
+                      "args": [
+                        {
+                          "$ref": "client.noteId"
+                        },
+                        0
+                      ]
+                    }
+                  },
+                  "slots": {
+                    "otherwise": [
+                      {
+                        "children": [
+                          {
+                            "children": [
+                              {
+                                "key": "body",
+                                "props": {
+                                  "grow": 1,
+                                  "label": "Note",
+                                  "placeholder": "Start writing…",
+                                  "sync": "debounce:400",
+                                  "text": {
+                                    "$ref": "src.s1.body"
+                                  }
+                                },
+                                "type": "TextEditor"
+                              }
+                            ],
+                            "key": "_0",
+                            "props": {
+                              "when": {
+                                "$fn": "eq",
+                                "args": [
+                                  {
+                                    "$ref": "client.mode"
+                                  },
+                                  "edit"
+                                ]
+                              }
+                            },
+                            "slots": {
+                              "otherwise": [
+                                {
+                                  "children": [
+                                    {
+                                      "key": "preview",
+                                      "props": {
+                                        "padding": 4,
+                                        "text": {
+                                          "$ref": "src.s1.body"
+                                        }
+                                      },
+                                      "type": "Markdown"
+                                    }
+                                  ],
+                                  "key": "_0",
+                                  "props": {
+                                    "grow": 1
+                                  },
+                                  "type": "ScrollView"
+                                }
+                              ]
+                            },
+                            "type": "Show"
+                          },
+                          {
+                            "key": "meta",
+                            "props": {
+                              "foreground": "secondary",
+                              "padding": 2,
+                              "style": "footnote",
+                              "text": {
+                                "$fn": "concat",
+                                "args": [
+                                  "Edited ",
+                                  {
+                                    "$fn": "fmt.relative",
+                                    "args": [
+                                      {
+                                        "$ref": "src.s1.updated_at"
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "$fn": "if",
+                                    "args": [
+                                      {
+                                        "$fn": "isEmpty",
+                                        "args": [
+                                          {
+                                            "$ref": "src.s1.author"
+                                          }
+                                        ]
+                                      },
+                                      "",
+                                      {
+                                        "$fn": "concat",
+                                        "args": [
+                                          " by ",
+                                          {
+                                            "$ref": "src.s1.author"
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            },
+                            "type": "Text"
+                          }
+                        ],
+                        "key": "_0",
+                        "props": {
+                          "axis": "v",
+                          "spacing": 0
+                        },
+                        "type": "Stack"
+                      }
+                    ]
+                  },
+                  "type": "Show"
+                }
+              ],
+              "key": "_0",
+              "props": {
+                "titleDisplay": "inline"
+              },
+              "slots": {
+                "toolbar.principal": [
+                  {
+                    "key": "mode",
+                    "props": {
+                      "label": "Mode",
+                      "options": [
+                        {
+                          "label": "Edit",
+                          "value": "edit"
+                        },
+                        {
+                          "label": "Preview",
+                          "value": "preview"
+                        }
+                      ],
+                      "selection": {
+                        "$ref": "client.mode"
+                      },
+                      "style": "segmented"
+                    },
+                    "type": "Picker"
+                  }
+                ],
+                "toolbar.trailing": [
+                  {
+                    "key": "delete-current",
+                    "on": {
+                      "tap": [
+                        {
+                          "actions": [
+                            {
+                              "do": "set",
+                              "ref": "client.deleteId",
+                              "value": {
+                                "$ref": "client.noteId"
+                              }
+                            },
+                            {
+                              "do": "set",
+                              "ref": "client.confirmDelete",
+                              "value": true
+                            }
+                          ],
+                          "do": "seq"
+                        }
+                      ]
+                    },
+                    "props": {
+                      "disabled": {
+                        "$fn": "eq",
+                        "args": [
+                          {
+                            "$ref": "client.noteId"
+                          },
+                          0
+                        ]
+                      },
+                      "icon": "trash",
+                      "label": "Delete Note",
+                      "role": "destructive"
+                    },
+                    "type": "Button"
+                  }
+                ]
+              },
+              "type": "Screen"
+            }
+          ],
+          "sidebar": [
+            {
+              "children": [
+                {
+                  "children": [
+                    {
+                      "key": "all",
+                      "props": {
+                        "icon": "tray.full",
+                        "tag": 0,
+                        "title": "All Notes"
+                      },
+                      "type": "Row"
+                    },
+                    {
+                      "key": "_1",
+                      "props": {
+                        "source": "s2"
+                      },
+                      "slots": {
+                        "row": [
+                          {
+                            "key": "_0",
+                            "props": {
+                              "badge": {
+                                "$ref": "row.count"
+                              },
+                              "icon": "folder",
+                              "tag": {
+                                "$ref": "row.id"
+                              },
+                              "title": {
+                                "$ref": "row.name"
+                              }
+                            },
+                            "type": "Row"
+                          }
+                        ]
+                      },
+                      "type": "ForEach"
+                    }
+                  ],
+                  "key": "folders",
+                  "props": {
+                    "selection": {
+                      "$ref": "client.folder"
+                    },
+                    "style": "sidebar"
+                  },
+                  "type": "List"
+                }
+              ],
+              "key": "_0",
+              "props": {
+                "title": "Folders"
+              },
+              "type": "Screen"
+            }
+          ]
+        },
+        "type": "SplitView"
+      },
+      {
+        "key": "confirm-delete",
+        "props": {
+          "message": "This can’t be undone.",
+          "presented": {
+            "$ref": "client.confirmDelete"
+          },
+          "title": "Delete this note?"
+        },
+        "slots": {
+          "actions": [
+            {
+              "key": "confirm",
+              "on": {
+                "tap": true
+              },
+              "props": {
+                "role": "destructive",
+                "title": "Delete"
+              },
+              "type": "Button"
+            },
+            {
+              "key": "cancel",
+              "props": {
+                "role": "cancel",
+                "title": "Cancel"
+              },
+              "type": "Button"
+            }
+          ]
+        },
+        "type": "Alert"
+      }
+    ],
+    "key": "main",
+    "type": "Group"
+  }
+}

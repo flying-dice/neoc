@@ -1,5 +1,5 @@
 //! JSON Schema (draft 2020-12 as emitted by schemars 1.x) -> Luau `export type` declarations. Types and fields are
-//! emitted in alphabetical order so the output is the same whichever crates enable serde_json's `preserve_order`.
+//! emitted in alphabetical order so the output is the same whichever crates enable `serde_json`'s `preserve_order`.
 
 use serde_json::Value;
 use std::{collections::BTreeSet, fmt::Write as _};
