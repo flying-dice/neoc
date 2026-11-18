@@ -78,7 +78,8 @@
         return r ? { x: r.left, y: r.top, width: r.width, height: r.height } : null
       },
       holds: (other) => el.contains(other),
-      isContainer: () => box()?.querySelector('[data-drag-id]') != null,
+      // A target that is not itself draggable is a container (a column, even an empty one): drops land inside it.
+      isContainer: () => drag === null,
       drop: applyDrop
     }
     return controller.register(target)
@@ -98,7 +99,11 @@
   function moveTo(target: DropTarget, dir: 1 | -1): void {
     if (!drag) return
     const edge = keyboardEdge(target.isContainer(), dir)
-    target.drop({ type: drag.type, payload: drag.payload ?? null, target: { key: target.key, beforeKey: null, edge } })
+    target.drop({
+      type: drag.type,
+      payload: drag.payload ?? null,
+      target: { key: target.key, beforeKey: null, edge }
+    })
     view.announce(`Moved to ${target.label}`)
     const focusId = baseId
     requestAnimationFrame(() => restoreFocusTo(ctx.app, focusId, wrapper ?? null))
@@ -111,7 +116,12 @@
 
   function keyMove(e: KeyboardEvent): void {
     if (!drag || !wrapper || !e.altKey || e.ctrlKey || e.metaKey) return
-    const dir = e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 : e.key === 'ArrowUp' || e.key === 'ArrowLeft' ? -1 : 0
+    const dir =
+      e.key === 'ArrowDown' || e.key === 'ArrowRight'
+        ? 1
+        : e.key === 'ArrowUp' || e.key === 'ArrowLeft'
+          ? -1
+          : 0
     if (dir === 0) return
     // Only the innermost draggable around the focus handles it.
     if ((e.target as Element).closest('[data-drag-id]') !== wrapper) return
@@ -135,7 +145,11 @@
       key: 'move-to',
       label: 'Move to',
       icon: 'folder',
-      submenu: targets.map((t) => ({ key: `move-${t.key}`, label: t.label, onclick: () => moveTo(t, 1) }))
+      submenu: targets.map((t) => ({
+        key: `move-${t.key}`,
+        label: t.label,
+        onclick: () => moveTo(t, 1)
+      }))
     }
     return own.length ? [...own, { separator: true }, move] : [move]
   })
@@ -154,15 +168,21 @@
   const hasMenu = $derived(menuNodes.length > 0 || drag !== null)
 
   function oncontextmenu(e: MouseEvent): void {
-    if (!hasMenu || (e.target as Element).closest('[data-drag-id], [data-ctx-id]') !== wrapper) return
+    if (!hasMenu || (e.target as Element).closest('[data-drag-id], [data-ctx-id]') !== wrapper)
+      return
     e.preventDefault()
     openMenu({ x: e.clientX, y: e.clientY })
   }
 
   function onkeydown(e: KeyboardEvent): void {
-    if (hasMenu && isContextMenuKey(e) && (e.target as Element).closest('[data-drag-id], [data-ctx-id]') === wrapper) {
+    if (
+      hasMenu &&
+      isContextMenuKey(e) &&
+      (e.target as Element).closest('[data-drag-id], [data-ctx-id]') === wrapper
+    ) {
       e.preventDefault()
-      const r = ((e.target as HTMLElement).getBoundingClientRect?.() ?? box()?.getBoundingClientRect())
+      const r =
+        (e.target as HTMLElement).getBoundingClientRect?.() ?? box()?.getBoundingClientRect()
       if (r) openMenu({ x: r.left + Math.min(r.width / 2, 40), y: r.bottom })
       return
     }
@@ -184,14 +204,22 @@
   let frame = 0
   let last = { x: 0, y: 0 }
 
-  const interactive = (el: Element): boolean => !!el.closest('input, textarea, select, [contenteditable="true"], [role="slider"]')
+  const interactive = (el: Element): boolean =>
+    !!el.closest('input, textarea, select, [contenteditable="true"], [role="slider"]')
 
   function onpointerdown(e: PointerEvent): void {
     if (e.button !== 0 && e.pointerType === 'mouse') return
     const mine = (e.target as Element).closest('[data-drag-id], [data-ctx-id]') === wrapper
     if (!mine || interactive(e.target as Element)) return
     const touch = e.pointerType !== 'mouse'
-    press = { x: e.clientX, y: e.clientY, pointerId: e.pointerId, touch, armed: !touch, dragging: false }
+    press = {
+      x: e.clientX,
+      y: e.clientY,
+      pointerId: e.pointerId,
+      touch,
+      armed: !touch,
+      dragging: false
+    }
     if (touch) {
       if (drag) press.armTimer = setTimeout(() => press && (press.armed = true), ARM_MS)
       if (hasMenu) {
@@ -299,7 +327,11 @@
     if (spec && target) {
       const rect = target.rect()
       const edge = rect ? pointerEdge(rect, last, target.isContainer()) : 'inside'
-      target.drop({ type: spec.type, payload: spec.payload ?? null, target: { key: target.key, beforeKey: null, edge } })
+      target.drop({
+        type: spec.type,
+        payload: spec.payload ?? null,
+        target: { key: target.key, beforeKey: null, edge }
+      })
       view.announce(`Dropped on ${target.label}`)
     } else if (spec && !commit) view.announce('Move cancelled')
   }

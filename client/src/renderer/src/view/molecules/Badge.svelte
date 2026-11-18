@@ -17,7 +17,9 @@
 
   const common = $derived(commonOf(ctx, node, path, scope))
   const raw = $derived(p('value'))
-  const value = $derived(typeof raw === 'number' || (typeof raw === 'string' && raw !== '') ? raw : undefined)
+  const value = $derived(
+    typeof raw === 'number' || (typeof raw === 'string' && raw !== '') ? raw : undefined
+  )
   const tint = $derived(isPaletteToken(p('tint')) ? `var(--ios-${p('tint') as string})` : undefined)
 </script>
 

@@ -32,9 +32,7 @@
   {#if spec}
     {@const Adapter = spec.component}
     {#if Decorator}
-      <Decorator {node} {path} {scope}>
-        {#snippet children()}<Adapter {node} {path} {scope} />{/snippet}
-      </Decorator>
+      <Decorator {node} {path} {scope}><Adapter {node} {path} {scope} /></Decorator>
     {:else}
       <Adapter {node} {path} {scope} />
     {/if}

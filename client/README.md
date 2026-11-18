@@ -57,6 +57,16 @@ writes queued, and refuses events (a tap is not idempotent). On reconnect: `sess
 `view.open {resume}` per window; the snapshot goes through the same shielding as live patches and queued drafts replay on
 their original `baseRev`. A restarted host gets a fresh instance seeded with the client's persisted values.
 
+**Tier-1 controls, presentation and display** (wave B1b, `kit/controls.ts`): Shortcut, Button, Toggle, Slider, Stepper,
+Picker, DatePicker, ColorPicker, TextField, SecureField, TextEditor, SearchField (controls); Sheet, Popover, Alert,
+ConfirmationDialog, Menu (presentation: portal nodes mounted in the window root, content inert behind a modal, focus
+returned to the opener by test id); Text, Label, Icon, Image, Badge, ProgressView, Markdown, Avatar (display). The
+`Decorated` organism, set as `registry.decorator`, wraps any node that has a `contextMenu` slot or `drag` / `drop`
+props: right-click, long press and Shift+F10 open the context menu; dragging is pointer-based with Alt+Arrow and a
+"Move to" submenu as the non-pointer paths. Text controls share `kit/textControl.svelte.ts` (draft shown first, caret
+kept through an adopted merge). Toasts are kit Toasts; a toast `action` reports the `toast` event of the view.
+Stories: "Renderer/Kit - controls" (JSON trees in `host/kitTrees.ts` on a `KitApp` fake host).
+
 **Adding a component** (wave B1): write an adapter under the right atomic layer that takes `AdapterProps`, reads props
 through `useView().view`, renders children with `<Children>`, passes `commonOf(...).testid` to the kit component, then
 `registry.register('Gauge', { component: Gauge, since: '1.2' })` in `kit.ts`. An unknown type renders its node's

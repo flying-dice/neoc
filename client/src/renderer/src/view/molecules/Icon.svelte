@@ -20,7 +20,9 @@
   const common = $derived(commonOf(ctx, node, path, scope))
   const name = $derived(iconOf(p('name')))
   const size = $derived(Math.min(96, Math.max(8, num(p('size'), 20))))
-  const weight = $derived(WEIGHT[oneOf(p('weight'), ['regular', 'medium', 'semibold', 'bold'] as const, 'regular')])
+  const weight = $derived(
+    WEIGHT[oneOf(p('weight'), ['regular', 'medium', 'semibold', 'bold'] as const, 'regular')]
+  )
   const appearance = $derived(appearanceStyle(ctx, node, scope))
 </script>
 

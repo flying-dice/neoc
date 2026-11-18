@@ -15,14 +15,24 @@
   const ctx = useView()
   const p = (name: string): unknown => ctx.view.evaluate(node.props?.[name], scope)
 
-  const RADII = { none: '0', xs: 'var(--radius-xs)', sm: 'var(--radius-sm)', md: 'var(--radius-md)', lg: 'var(--radius-lg)', xl: 'var(--radius-xl)', full: '999px' } as const
+  const RADII = {
+    none: '0',
+    xs: 'var(--radius-xs)',
+    sm: 'var(--radius-sm)',
+    md: 'var(--radius-md)',
+    lg: 'var(--radius-lg)',
+    xl: 'var(--radius-xl)',
+    full: '999px'
+  } as const
 
   const common = $derived(commonOf(ctx, node, path, scope))
   const src = $derived(imageSource(p('src')))
   const decorative = $derived(p('decorative') === true)
   const alt = $derived(str(p('alt')) || common.label || '')
   const size = $derived(optNum(p('size')))
-  const corner = $derived(RADII[oneOf(p('corner'), Object.keys(RADII) as (keyof typeof RADII)[], 'none')])
+  const corner = $derived(
+    RADII[oneOf(p('corner'), Object.keys(RADII) as (keyof typeof RADII)[], 'none')]
+  )
 </script>
 
 <span class="image" style={common.style} title={common.help}>

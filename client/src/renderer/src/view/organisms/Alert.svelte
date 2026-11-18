@@ -19,7 +19,13 @@
   const p = (name: string): unknown => ctx.view.evaluate(node.props?.[name], scope)
 
   let origin: HTMLElement | null = $state(null)
-  const present = presented({ ctx, node: () => node, path: () => path, scope: () => scope, host: () => origin })
+  const present = presented({
+    ctx,
+    node: () => node,
+    path: () => path,
+    scope: () => scope,
+    host: () => origin
+  })
   const common = $derived(commonOf(ctx, node, path, scope))
   const fields = $derived(alertFields(p('fields')))
   const actions = $derived(alertActions(ctx.view, node, path, scope, fields.length > 0))

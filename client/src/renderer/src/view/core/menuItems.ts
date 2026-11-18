@@ -9,7 +9,14 @@ import { icons, type IconName, type MenuItem } from '@agentos/ui'
 import type { Json, Node } from '../protocol'
 import { parseShortcut } from './shortcuts'
 import { childPath } from './tree'
-import { choose, keyOf, optionsFromRows, parseOptions, selectedKeys, type PickerOption } from './options'
+import {
+  choose,
+  keyOf,
+  optionsFromRows,
+  parseOptions,
+  selectedKeys,
+  type PickerOption
+} from './options'
 import type { Scope, ViewCore } from './view'
 
 const text = (v: unknown): string => (v === undefined || v === null ? '' : String(v))
@@ -36,8 +43,11 @@ export function formatShortcut(spec: string, apple: boolean): string | undefined
               : c.key.length === 1
                 ? c.key.toUpperCase()
                 : c.key[0]!.toUpperCase() + c.key.slice(1)
-  if (apple) return `${c.ctrl ? '⌃' : ''}${c.alt ? '⌥' : ''}${c.shift ? '⇧' : ''}${c.cmd ? '⌘' : ''}${key}`
-  return [c.cmd || c.ctrl ? 'Ctrl' : '', c.alt ? 'Alt' : '', c.shift ? 'Shift' : '', key].filter(Boolean).join('+')
+  if (apple)
+    return `${c.ctrl ? '⌃' : ''}${c.alt ? '⌥' : ''}${c.shift ? '⇧' : ''}${c.cmd ? '⌘' : ''}${key}`
+  return [c.cmd || c.ctrl ? 'Ctrl' : '', c.alt ? 'Alt' : '', c.shift ? 'Shift' : '', key]
+    .filter(Boolean)
+    .join('+')
 }
 
 export interface MenuContext {
@@ -52,7 +62,9 @@ export function pickerOptions(view: ViewCore, node: Node, scope: Scope): PickerO
   if (typeof raw === 'string') {
     const data = view.store.sources[raw]
     if (data?.kind !== 'rows') return []
-    return optionsFromRows(data.keys.map((k) => data.rows[String(k)]).filter((r) => r !== undefined))
+    return optionsFromRows(
+      data.keys.map((k) => data.rows[String(k)]).filter((r) => r !== undefined)
+    )
   }
   return parseOptions(raw)
 }

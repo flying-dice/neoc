@@ -38,13 +38,18 @@ describe('drag and drop props', () => {
       payload: { id: 7 },
       preview: 'Task 7'
     })
-    for (const bad of [null, 'task', { payload: 1 }, { type: '' }, { type: 3 }, []]) expect(parseDrag(bad)).toBeNull()
+    for (const bad of [null, 'task', { payload: 1 }, { type: '' }, { type: 3 }, []])
+      expect(parseDrag(bad)).toBeNull()
   })
 
   test('a drop target lists the types it accepts, highlighting by default', () => {
-    expect(parseDrop({ accepts: ['task', 'note', 3, ''] })).toEqual({ accepts: ['task', 'note'], highlight: true })
+    expect(parseDrop({ accepts: ['task', 'note', 3, ''] })).toEqual({
+      accepts: ['task', 'note'],
+      highlight: true
+    })
     expect(parseDrop({ accepts: ['task'], highlight: false })?.highlight).toBe(false)
-    for (const bad of [null, {}, { accepts: [] }, { accepts: 'task' }, { accepts: [1] }]) expect(parseDrop(bad)).toBeNull()
+    for (const bad of [null, {}, { accepts: [] }, { accepts: 'task' }, { accepts: [1] }])
+      expect(parseDrop(bad)).toBeNull()
   })
 })
 
@@ -73,7 +78,13 @@ describe('drop edges', () => {
 })
 
 describe('the drag controller (keyboard and menu paths)', () => {
-  function board(): { c: DragController; todo: ReturnType<typeof target>; doing: ReturnType<typeof target>; done: ReturnType<typeof target>; other: ReturnType<typeof target> } {
+  function board(): {
+    c: DragController
+    todo: ReturnType<typeof target>
+    doing: ReturnType<typeof target>
+    done: ReturnType<typeof target>
+    other: ReturnType<typeof target>
+  } {
     const c = new DragController()
     const todo = target('todo', 10, ['task'])
     const doing = target('doing', 20, ['task'])
@@ -133,9 +144,26 @@ describe('the drag controller (keyboard and menu paths)', () => {
     expect(n).toBe(2)
   })
 
+  test('the pointer-over target is tracked, cleared on end, and notifies only on change', () => {
+    const c = new DragController()
+    let n = 0
+    c.onChange(() => n++)
+    c.setOver('a')
+    c.setOver('a')
+    expect(c.over).toBe('a')
+    c.setOver('b')
+    c.end()
+    expect(c.over).toBeNull()
+    expect(n).toBe(3)
+  })
+
   test('dropping calls the target with the event', () => {
     const t = target('done', 1, ['task'])
-    t.drop({ type: 'task', payload: { id: 1 }, target: { key: 'done', beforeKey: null, edge: 'inside' } })
+    t.drop({
+      type: 'task',
+      payload: { id: 1 },
+      target: { key: 'done', beforeKey: null, edge: 'inside' }
+    })
     expect(t.dropped).toHaveLength(1)
     expect(t.dropped[0]?.target.edge).toBe('inside')
   })

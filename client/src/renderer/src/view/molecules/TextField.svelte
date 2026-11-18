@@ -76,7 +76,7 @@
       disabled={common.disabled}
       maxlength={rules.maxLength}
       required={rules.required}
-      autocapitalize={autocapitalize}
+      {autocapitalize}
       spellcheck={p('autocorrect') === false ? false : undefined}
       aria-label={name}
       aria-description={common.hint}

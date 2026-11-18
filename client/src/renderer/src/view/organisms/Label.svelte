@@ -13,7 +13,15 @@
   const ctx = useView()
   const p = (name: string): unknown => ctx.view.evaluate(node.props?.[name], scope)
 
-  const COLORS = ['primary', 'secondary', 'tertiary', 'tint', 'destructive', 'success', 'warning'] as const
+  const COLORS = [
+    'primary',
+    'secondary',
+    'tertiary',
+    'tint',
+    'destructive',
+    'success',
+    'warning'
+  ] as const
 
   const common = $derived(commonOf(ctx, node, path, scope))
 </script>
@@ -23,7 +31,11 @@
     testid={common.testid}
     title={str(p('title'))}
     icon={iconOf(p('icon'))}
-    display={oneOf(p('display'), ['titleAndIcon', 'titleOnly', 'iconOnly'] as const, 'titleAndIcon')}
+    display={oneOf(
+      p('display'),
+      ['titleAndIcon', 'titleOnly', 'iconOnly'] as const,
+      'titleAndIcon'
+    )}
     color={oneOf(p('foreground'), COLORS, 'primary')}
   />
 </span>

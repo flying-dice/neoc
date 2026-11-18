@@ -21,7 +21,13 @@
   const p = (name: string): unknown => ctx.view.evaluate(node.props?.[name], scope)
 
   let origin: HTMLElement | null = $state(null)
-  const present = presented({ ctx, node: () => node, path: () => path, scope: () => scope, host: () => origin })
+  const present = presented({
+    ctx,
+    node: () => node,
+    path: () => path,
+    scope: () => scope,
+    host: () => origin
+  })
   const common = $derived(commonOf(ctx, node, path, scope))
   const style = $derived(oneOf(p('style'), ['form', 'page', 'fullScreen'] as const, 'form'))
   const detents = $derived(Array.isArray(p('detents')) ? normaliseDetents(p('detents')) : undefined)

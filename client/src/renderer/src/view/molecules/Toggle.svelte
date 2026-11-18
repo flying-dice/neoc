@@ -34,10 +34,22 @@
   }
 </script>
 
-<div class="toggle" class:button={variant === 'button'} style="{common.style};{appearance}" title={common.help}>
+<div
+  class="toggle"
+  class:button={variant === 'button'}
+  style="{common.style};{appearance}"
+  title={common.help}
+>
   {#if variant !== 'button'}
     {#if labelNodes.length}
-      <span class="label"><Children nodes={labelNodes} {path} slotName={node.slots?.label ? 'label' : undefined} {scope} /></span>
+      <span class="label"
+        ><Children
+          nodes={labelNodes}
+          {path}
+          slotName={node.slots?.label ? 'label' : undefined}
+          {scope}
+        /></span
+      >
     {:else if title}
       <span class="label"><Text style="body">{title}</Text></span>
     {/if}

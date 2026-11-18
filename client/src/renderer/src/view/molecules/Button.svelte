@@ -32,7 +32,11 @@
   )
   const fill = $derived(optStr(p('fill')))
   const variant = $derived.by(() => {
-    const style = oneOf(p('style'), ['filled', 'tinted', 'gray', 'plain', 'bordered'] as const, 'tinted')
+    const style = oneOf(
+      p('style'),
+      ['filled', 'tinted', 'gray', 'plain', 'bordered'] as const,
+      'tinted'
+    )
     if (p('style') !== undefined) return style === 'bordered' ? 'gray' : style
     if (role === 'primary' || fill) return 'filled'
     if (role === 'cancel') return 'gray'

@@ -21,7 +21,9 @@
   const min = $derived(num(p('min'), 0))
   const max = $derived(Math.max(min, num(p('max'), 1)))
   const step = $derived(optNum(p('step')) ?? (max - min <= 1 ? (max - min) / 100 : 1))
-  const value = $derived(Math.min(max, Math.max(min, num(binding ? binding.value : p('value'), min))))
+  const value = $derived(
+    Math.min(max, Math.max(min, num(binding ? binding.value : p('value'), min)))
+  )
   const ticks = $derived(Math.max(0, Math.round(num(p('ticks'), 0))))
   const minLabel = $derived(optStr(p('minLabel')))
   const maxLabel = $derived(optStr(p('maxLabel')))

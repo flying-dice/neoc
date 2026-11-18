@@ -35,7 +35,12 @@
   const appearance = $derived(appearanceStyle(ctx, node, scope))
 </script>
 
-<div class="field" class:disabled={common.disabled} style="{common.style};{appearance}" title={common.help}>
+<div
+  class="field"
+  class:disabled={common.disabled}
+  style="{common.style};{appearance}"
+  title={common.help}
+>
   <TextInput
     bind:ref={input}
     testid={common.testid}

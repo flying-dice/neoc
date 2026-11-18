@@ -23,7 +23,15 @@ describe('picker options', () => {
   })
 
   test('malformed entries and repeated values are dropped, the first wins', () => {
-    expect(parseOptions(['x', null, { label: 'no value' }, { value: 'a', label: 'A' }, { value: 'a', label: 'again' }])).toHaveLength(1)
+    expect(
+      parseOptions([
+        'x',
+        null,
+        { label: 'no value' },
+        { value: 'a', label: 'A' },
+        { value: 'a', label: 'again' }
+      ])
+    ).toHaveLength(1)
     expect(parseOptions('nope')).toEqual([])
     expect(parseOptions(undefined)).toEqual([])
   })

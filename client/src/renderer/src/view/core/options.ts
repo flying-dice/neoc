@@ -50,7 +50,9 @@ export function parseOptions(raw: unknown): PickerOption[] {
 
 /** Options from a source's window: row fields `value`, `label`, optional `icon`, `disabled`. */
 export function optionsFromRows(rows: readonly Row[]): PickerOption[] {
-  return parseOptions(rows.map((r) => ({ value: r.value, label: r.label, icon: r.icon, disabled: r.disabled })))
+  return parseOptions(
+    rows.map((r) => ({ value: r.value, label: r.label, icon: r.icon, disabled: r.disabled }))
+  )
 }
 
 /** The selected keys: one for a single selection, any number when `multiple`. */
@@ -64,15 +66,23 @@ export function choose(current: unknown, value: Json, multiple: boolean): Json {
   if (!multiple) return value
   const list = Array.isArray(current) ? (current as Json[]) : []
   const key = keyOf(value)
-  return list.some((v) => keyOf(v) === key) ? list.filter((v) => keyOf(v) !== key) : [...list, value]
+  return list.some((v) => keyOf(v) === key)
+    ? list.filter((v) => keyOf(v) !== key)
+    : [...list, value]
 }
 
 /** The option for a key, or undefined. */
-export const optionFor = (options: readonly PickerOption[], key: string): PickerOption | undefined =>
-  options.find((o) => o.key === key)
+export const optionFor = (
+  options: readonly PickerOption[],
+  key: string
+): PickerOption | undefined => options.find((o) => o.key === key)
 
 /** The label a closed menu picker shows: the chosen option, several joined, or the placeholder. */
-export function selectionLabel(options: readonly PickerOption[], keys: readonly string[], none = 'Select'): string {
+export function selectionLabel(
+  options: readonly PickerOption[],
+  keys: readonly string[],
+  none = 'Select'
+): string {
   const labels = keys.map((k) => optionFor(options, k)?.label).filter((l): l is string => !!l)
   if (labels.length === 0) return none
   return labels.length <= 2 ? labels.join(', ') : `${labels.length} selected`

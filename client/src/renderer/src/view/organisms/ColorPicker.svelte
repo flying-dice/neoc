@@ -18,7 +18,9 @@
   const binding = $derived(view.bindingOf(node.props?.value, scope))
   const value = $derived(str(binding ? binding.value : p('value')))
   const palette = $derived(
-    Array.isArray(p('palette')) ? (p('palette') as unknown[]).filter((t): t is string => typeof t === 'string') : undefined
+    Array.isArray(p('palette'))
+      ? (p('palette') as unknown[]).filter((t): t is string => typeof t === 'string')
+      : undefined
   )
 
   function onchange(next: string): void {

@@ -51,13 +51,21 @@ export function registerControls(registry: ComponentRegistry): ComponentRegistry
       .register('ColorPicker', { component: ColorPicker, since: '1.0', bindings: ['value'] })
       .register('TextField', { component: TextField, since: '1.0', bindings: ['text'] })
       .register('SecureField', { component: SecureField, since: '1.0', bindings: ['text'] })
-      .register('TextEditor', { component: TextEditor, since: '1.0', bindings: ['text', 'selection'] })
+      .register('TextEditor', {
+        component: TextEditor,
+        since: '1.0',
+        bindings: ['text', 'selection']
+      })
       .register('SearchField', { component: SearchField, since: '1.0', bindings: ['text'] })
       // Presentation
       .register('Sheet', { component: Sheet, since: '1.0', bindings: ['presented', 'item'] })
       .register('Popover', { component: Popover, since: '1.0', bindings: ['presented'] })
       .register('Alert', { component: Alert, since: '1.0', bindings: ['presented'] })
-      .register('ConfirmationDialog', { component: ConfirmationDialog, since: '1.0', bindings: ['presented'] })
+      .register('ConfirmationDialog', {
+        component: ConfirmationDialog,
+        since: '1.0',
+        bindings: ['presented']
+      })
       .register('Menu', { component: Menu, since: '1.0' })
       // Display
       .register('Text', { component: Text, since: '1.0' })

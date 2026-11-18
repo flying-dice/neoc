@@ -9,6 +9,7 @@ const entry = (i: MenuItem | undefined): MenuEntry => {
   return i
 }
 
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type -- a test helper infers its return type
 async function setup() {
   const h = createHarness({ latencyMs: 0 })
   const view = await h.openNotes()
@@ -16,24 +17,39 @@ async function setup() {
   return { h, view, ctx }
 }
 
-const button = (key: string, props: Node['props'], on?: Node['on']): Node => ({ type: 'Button', key, props, on })
+const button = (key: string, props: Node['props'], on?: Node['on']): Node => ({
+  type: 'Button',
+  key,
+  props,
+  on
+})
 
 describe('menu content from nodes', () => {
   test('buttons, dividers, sections and nested menus map to kit items', async () => {
     const { ctx } = await setup()
-    const items = menuItems(ctx, [
-      button('new', { title: 'New note', icon: 'plus', shortcut: 'cmd+n' }),
-      { type: 'Divider', key: 'd' },
-      { type: 'Section', key: 's', props: { header: 'Danger' }, children: [button('del', { title: 'Delete', role: 'destructive', icon: 'trash' })] },
-      { type: 'Menu', key: 'move', props: { title: 'Move to' }, children: [button('inbox', { title: 'Inbox' })] }
-    ], 'main')
-    expect(items.map((i) => ('separator' in i ? '---' : 'heading' in i ? `# ${i.heading}` : i.label))).toEqual([
-      'New note',
-      '---',
-      '# Danger',
-      'Delete',
-      'Move to'
-    ])
+    const items = menuItems(
+      ctx,
+      [
+        button('new', { title: 'New note', icon: 'plus', shortcut: 'cmd+n' }),
+        { type: 'Divider', key: 'd' },
+        {
+          type: 'Section',
+          key: 's',
+          props: { header: 'Danger' },
+          children: [button('del', { title: 'Delete', role: 'destructive', icon: 'trash' })]
+        },
+        {
+          type: 'Menu',
+          key: 'move',
+          props: { title: 'Move to' },
+          children: [button('inbox', { title: 'Inbox' })]
+        }
+      ],
+      'main'
+    )
+    expect(
+      items.map((i) => ('separator' in i ? '---' : 'heading' in i ? `# ${i.heading}` : i.label))
+    ).toEqual(['New note', '---', '# Danger', 'Delete', 'Move to'])
     expect(entry(items[0])).toMatchObject({ key: 'new', icon: 'plus', shortcut: '⌘N' })
     expect(entry(items[3])).toMatchObject({ destructive: true, icon: 'trash' })
     expect(entry(items[4]).submenu).toHaveLength(1)
@@ -50,7 +66,11 @@ describe('menu content from nodes', () => {
 
   test('a toggle is a checkmark item that writes its binding', async () => {
     const { ctx, view } = await setup()
-    const toggle: Node = { type: 'Toggle', key: 'sync', props: { title: 'Show completed', on: { $ref: 'client.noteId' } } }
+    const toggle: Node = {
+      type: 'Toggle',
+      key: 'sync',
+      props: { title: 'Show completed', on: { $ref: 'client.noteId' } }
+    }
     const before = menuItems(ctx, [toggle], 'main')
     expect(entry(before[0]).checked).toBe(true) // client.noteId is 1: truthy
     entry(before[0]).onclick?.()
@@ -74,22 +94,32 @@ describe('menu content from nodes', () => {
     }
     view.write('client.search', 'title')
     const items = menuItems(ctx, [picker], 'main')
-    expect(items.map((i) => ('heading' in i ? i.heading : 'label' in i ? `${i.label}:${i.checked}:${i.disabled}` : '-'))).toEqual([
-      'Sort by',
-      'Title:true:false',
-      'Date:false:true'
-    ])
+    expect(
+      items.map((i) =>
+        'heading' in i ? i.heading : 'label' in i ? `${i.label}:${i.checked}:${i.disabled}` : '-'
+      )
+    ).toEqual(['Sort by', 'Title:true:false', 'Date:false:true'])
     entry(items[1]).onclick?.()
     expect(view.resolve('client.search')).toBe('title')
   })
 
   test('Group is transparent, Show follows its condition, unknown nodes are left out', async () => {
     const { ctx } = await setup()
-    const items = menuItems(ctx, [
-      { type: 'Group', key: 'g', children: [button('a', { title: 'A' })] },
-      { type: 'Show', key: 'show', props: { when: false }, children: [button('b', { title: 'B' })], slots: { otherwise: [button('c', { title: 'C' })] } },
-      { type: 'Text', key: 't', props: { text: 'not an item' } }
-    ], 'main')
+    const items = menuItems(
+      ctx,
+      [
+        { type: 'Group', key: 'g', children: [button('a', { title: 'A' })] },
+        {
+          type: 'Show',
+          key: 'show',
+          props: { when: false },
+          children: [button('b', { title: 'B' })],
+          slots: { otherwise: [button('c', { title: 'C' })] }
+        },
+        { type: 'Text', key: 't', props: { text: 'not an item' } }
+      ],
+      'main'
+    )
     expect(items.map((i) => (i as MenuEntry).label)).toEqual(['A', 'C'])
   })
 })

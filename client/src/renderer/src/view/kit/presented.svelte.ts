@@ -18,6 +18,8 @@ export interface PresentedOptions {
   host: () => HTMLElement | null
 }
 
+// The returned object's type is inferred from its getters.
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 export function presented(o: PresentedOptions) {
   const { view, app } = o.ctx
   const presentedBinding = $derived(view.bindingOf(o.node().props?.presented, o.scope()))
@@ -25,7 +27,11 @@ export function presented(o: PresentedOptions) {
   const open = $derived(
     itemBinding
       ? itemBinding.value !== null && itemBinding.value !== undefined
-      : Boolean(presentedBinding ? presentedBinding.value : view.evaluate(o.node().props?.presented, o.scope()))
+      : Boolean(
+          presentedBinding
+            ? presentedBinding.value
+            : view.evaluate(o.node().props?.presented, o.scope())
+        )
   )
 
   let opener: string | null = null

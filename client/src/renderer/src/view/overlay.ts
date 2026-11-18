@@ -69,8 +69,11 @@ export function restoreFocusTo(app: string, id: string | null, within: Element |
   if (!id || !within) return
   const root = rootOf(within, app)
   const active = document.activeElement
-  if (active && active !== document.body && root?.contains(active) && !active.closest('[inert]')) return
-  root?.querySelector<HTMLElement>(`[data-testid="${CSS.escape(id)}"]`)?.focus({ preventScroll: true })
+  if (active && active !== document.body && root?.contains(active) && !active.closest('[inert]'))
+    return
+  root
+    ?.querySelector<HTMLElement>(`[data-testid="${CSS.escape(id)}"]`)
+    ?.focus({ preventScroll: true })
 }
 
 /** The first ancestor (including `from`) that has a layout box: `display: contents` wrappers have none. */

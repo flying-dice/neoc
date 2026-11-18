@@ -76,7 +76,12 @@
       aria-description={common.hint}
       {multiple}
       {disabled}
-      options={options.map((o) => ({ key: o.key, label: o.label, icon: iconOf(o.icon), disabled: o.disabled }))}
+      options={options.map((o) => ({
+        key: o.key,
+        label: o.label,
+        icon: iconOf(o.icon),
+        disabled: o.disabled
+      }))}
       selected={chosen}
       onselect={pick}
     />

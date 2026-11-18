@@ -45,7 +45,12 @@
   }
 </script>
 
-<div class="editor" class:disabled={common.disabled} style="{common.style};{appearance}" title={common.help}>
+<div
+  class="editor"
+  class:disabled={common.disabled}
+  style="{common.style};{appearance}"
+  title={common.help}
+>
   <TextArea
     bind:ref={area}
     testid={common.testid}

@@ -3,6 +3,8 @@
  * Enter, Space or ArrowDown, closed by selecting, Escape, Tab or a press outside, with focus returned to the
  * trigger. The panel is a kit `Popover` (kind `menu`) holding a kit `Menu`.
  */
+// The returned object's type is inferred from its getters and setters.
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 export function popupMenu() {
   let open = $state(false)
   let trigger: HTMLElement | undefined = $state()

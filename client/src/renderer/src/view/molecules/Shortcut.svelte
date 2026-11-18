@@ -15,11 +15,17 @@
 
   const common = $derived(commonOf(ctx, node, path, scope))
   const spec = $derived(str(view.evaluate(node.props?.shortcut, scope)))
-  const blocked = $derived(common.disabled || (view.store.link !== 'online' && needsHost(node.on?.trigger)))
+  const blocked = $derived(
+    common.disabled || (view.store.link !== 'online' && needsHost(node.on?.trigger))
+  )
 
   $effect(() => {
     if (!spec) return undefined
-    return view.shortcuts.register(spec, () => view.fire(node, path, 'trigger', scope), () => !blocked)
+    return view.shortcuts.register(
+      spec,
+      () => view.fire(node, path, 'trigger', scope),
+      () => !blocked
+    )
   })
 </script>
 

@@ -20,7 +20,13 @@
   const label = $derived(common.label ?? (value === undefined ? 'Loading' : 'Progress'))
 </script>
 
-<span class="progress" class:linear={style === 'linear'} style={common.style} title={common.help} data-testid={common.testid}>
+<span
+  class="progress"
+  class:linear={style === 'linear'}
+  style={common.style}
+  title={common.help}
+  data-testid={common.testid}
+>
   {#if style === 'circular'}
     <ProgressRing {value} {label} />
   {:else if style === 'spinner'}

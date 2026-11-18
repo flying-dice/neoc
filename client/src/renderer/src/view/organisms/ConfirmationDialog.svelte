@@ -21,11 +21,19 @@
   const p = (name: string): unknown => ctx.view.evaluate(node.props?.[name], scope)
 
   let origin: HTMLElement | null = $state(null)
-  const present = presented({ ctx, node: () => node, path: () => path, scope: () => scope, host: () => origin })
+  const present = presented({
+    ctx,
+    node: () => node,
+    path: () => path,
+    scope: () => scope,
+    host: () => origin
+  })
   const common = $derived(commonOf(ctx, node, path, scope))
   const compact = $derived(ctx.view.store.env.sizeClass === 'compact')
   const actions = $derived(alertActions(ctx.view, node, path, scope, false))
-  const anchor = $derived(present.open && !compact ? anchorElement(ctx, optStr(p('anchor')), origin) : null)
+  const anchor = $derived(
+    present.open && !compact ? anchorElement(ctx, optStr(p('anchor')), origin) : null
+  )
   const title = $derived(str(p('title')))
   const message = $derived(str(p('message')))
 

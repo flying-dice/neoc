@@ -20,7 +20,13 @@
   const p = (name: string): unknown => ctx.view.evaluate(node.props?.[name], scope)
 
   let origin: HTMLElement | null = $state(null)
-  const present = presented({ ctx, node: () => node, path: () => path, scope: () => scope, host: () => origin })
+  const present = presented({
+    ctx,
+    node: () => node,
+    path: () => path,
+    scope: () => scope,
+    host: () => origin
+  })
   const common = $derived(commonOf(ctx, node, path, scope))
   const anchor = $derived(present.open ? anchorElement(ctx, optStr(p('anchor')), origin) : null)
   const compact = $derived(ctx.view.store.env.sizeClass === 'compact')

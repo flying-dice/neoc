@@ -28,6 +28,8 @@ export interface TextControlOptions {
   submitOnEnter?: boolean
 }
 
+// The returned object's type is inferred from its getters and handlers.
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 export function textControl(o: TextControlOptions) {
   const { view } = o.ctx
   const p = (name: string): unknown => view.evaluate(o.node().props?.[name], o.scope())
@@ -42,7 +44,13 @@ export function textControl(o: TextControlOptions) {
   $effect(() => {
     return binding?.onAdopt(({ before, after }) => {
       const el = o.element()
-      if (!el || document.activeElement !== el || typeof before !== 'string' || typeof after !== 'string') return
+      if (
+        !el ||
+        document.activeElement !== el ||
+        typeof before !== 'string' ||
+        typeof after !== 'string'
+      )
+        return
       const at = mapCaret(before, after, el.selectionStart ?? before.length)
       void tick().then(() => el.setSelectionRange(at, at))
     })

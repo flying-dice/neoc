@@ -29,7 +29,15 @@
     'caption2',
     'display'
   ] as const
-  const COLORS = ['primary', 'secondary', 'tertiary', 'tint', 'destructive', 'success', 'warning'] as const
+  const COLORS = [
+    'primary',
+    'secondary',
+    'tertiary',
+    'tint',
+    'destructive',
+    'success',
+    'warning'
+  ] as const
   const WEIGHTS = ['regular', 'medium', 'semibold', 'bold'] as const
 
   const common = $derived(commonOf(ctx, node, path, scope))

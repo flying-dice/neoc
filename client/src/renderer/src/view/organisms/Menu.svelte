@@ -69,25 +69,25 @@
 </span>
 
 <div class="portal" {@attach portalToWindow(ctx.app)}>
-<Popover
-  testid="{common.testid}-popover"
-  kind="menu"
-  open={popup.open}
-  anchor={popup.trigger ?? null}
-  arrow={false}
-  edge="bottom"
-  onclose={() => popup.close()}
->
-  <Menu
-    testid="{common.testid}-menu"
-    variant="ios"
-    label={name}
-    {items}
-    autofocus
-    onselect={() => popup.close()}
+  <Popover
+    testid="{common.testid}-popover"
+    kind="menu"
+    open={popup.open}
+    anchor={popup.trigger ?? null}
+    arrow={false}
+    edge="bottom"
     onclose={() => popup.close()}
-  />
-</Popover>
+  >
+    <Menu
+      testid="{common.testid}-menu"
+      variant="ios"
+      label={name}
+      {items}
+      autofocus
+      onselect={() => popup.close()}
+      onclose={() => popup.close()}
+    />
+  </Popover>
 </div>
 
 <style>
