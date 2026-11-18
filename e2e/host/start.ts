@@ -10,7 +10,7 @@
  *   3. runs agentos-host in the foreground, forwarding SIGTERM so the host shuts down gracefully.
  */
 import { spawn, spawnSync } from 'node:child_process'
-import { cpSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { CONFIG, DATA, DIR, FAKE_AGENT, HOST_BIN, PORT, REGISTRY, ROOT } from './config'
 
@@ -18,6 +18,10 @@ const run = (cmd: string, args: string[]): void => {
   const r = spawnSync(cmd, args, { cwd: ROOT, stdio: 'inherit' })
   if (r.status !== 0) process.exit(r.status ?? 1)
 }
+
+/** The version a repo app ships (its app.json), so a bump needs no change here. */
+const versionOf = (id: string): string =>
+  (JSON.parse(readFileSync(join(ROOT, 'apps', id, 'app.json'), 'utf8')) as { version: string }).version
 
 rmSync(DIR, { recursive: true, force: true })
 mkdirSync(DIR, { recursive: true })
@@ -53,7 +57,7 @@ writeFileSync(
     `port = ${PORT}`,
     `client_dir = "${join(ROOT, 'client/dist')}"`,
     `registries = ["file://${REGISTRY}"]`,
-    `install = [${['calculator', 'agents'].map((id) => `"file://${join(DIR, `registry/${id}/0.1.0/app-ref.json`)}"`).join(', ')}]`,
+    `install = [${['calculator', 'agents'].map((id) => `"file://${join(DIR, `registry/${id}/${versionOf(id)}/app-ref.json`)}"`).join(', ')}]`,
     // one agent, no model: the scripted ACP agent (crates/agentos-acp/src/bin/fake_agent.rs) answers by prompt
     '[[agents]]',
     'id = "scripted"',

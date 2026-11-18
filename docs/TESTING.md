@@ -184,7 +184,7 @@ and the UX research panel (`app-design`, `ux-research`) use. It needs a running 
 ```sh
 bun run build && bun run build:apps                       # the client and the app refs (dist/apps)
 AGENTOS_DATA=$(mktemp -d) AGENTOS_PORT=7420 \
-  AGENTOS_INSTALL="file://$PWD/dist/apps/calculator/0.1.0/app-ref.json,file://$PWD/dist/apps/agents/0.1.0/app-ref.json" \
+  AGENTOS_INSTALL="file://$PWD/dist/apps/calculator/0.1.1/app-ref.json,file://$PWD/dist/apps/agents/0.1.1/app-ref.json" \
   bun run host                                            # prints the URL and "Pairing code: K7QM-3XHR"
 node e2e/tools/session.mjs start me --url http://127.0.0.1:7420/ [--theme dark] [--width 1280 --height 800]
 node e2e/tools/session.mjs pair me K7QM-3XHR      # the first screen (fills "Pairing code", clicks "Pair")
