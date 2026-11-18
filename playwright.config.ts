@@ -9,13 +9,15 @@
  */
 import { defineConfig } from '@playwright/test'
 
+/** This checkout. Agent worktrees live under `<root>/.claude/` and carry copies of every spec: skip those. */
+const ROOT = import.meta.dirname
 const STORYBOOKS = 'http://localhost:6100'
 const DESKTOP = 'http://localhost:6200'
 
 export default defineConfig({
   testDir: '.',
   // Agent worktrees (.claude/worktrees) carry their own node_modules and copies of every spec.
-  testIgnore: ['**/node_modules/**', '.claude/**'],
+  testIgnore: ['**/node_modules/**', new RegExp(`^${ROOT.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/\\.claude/`)],
   snapshotPathTemplate: '{testFileDir}/__screenshots__/{testFileName}/{arg}-{platform}{ext}',
   outputDir: 'test-results/output',
   fullyParallel: true,

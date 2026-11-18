@@ -18,7 +18,7 @@ use agentos_domain::{
     StoredRevision, ToolSpec,
 };
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
@@ -680,15 +680,23 @@ impl InstalledAppStore for MemInstalled {
     }
 }
 
+/// `(app, window, params)` of an `app:openWindow`.
+pub type OpenedWindow = (String, String, Map<String, Value>);
+
 /// Records what apps asked of the shell.
 #[derive(Default)]
 pub struct RecordingShell {
     pub badges: Mutex<Vec<(String, Option<String>)>>,
     pub commands: Mutex<Vec<(String, Vec<MenuCommand>)>>,
     pub links: Mutex<Vec<(String, Vec<String>)>>,
+    /// `(app, window, params)` of every `app:openWindow`.
+    pub windows: Mutex<Vec<OpenedWindow>>,
 }
 #[async_trait]
 impl Shell for RecordingShell {
+    async fn open_window(&self, app: &AppId, window: &str, params: Map<String, Value>) {
+        self.windows.lock().unwrap().push((app.to_string(), window.to_owned(), params));
+    }
     async fn set_badge(&self, app: &AppId, badge: Option<String>) {
         self.badges.lock().unwrap().push((app.to_string(), badge));
     }
@@ -847,6 +855,13 @@ impl Fakes {
     }
     /// Like `service`, with another `ToolRegistry` (the real MCP adapter, in its own tests).
     pub fn service_with_tools(&self, tools: Arc<dyn ToolRegistry>) -> AppService {
+        self.service_with(tools, vec![])
+    }
+    /// Like `service`, browsing these registries (`mem://` URLs: see [`Fakes::add_registry`]).
+    pub fn service_with_registries(&self, registries: Vec<String>) -> AppService {
+        self.service_with(self.registry.clone(), registries)
+    }
+    fn service_with(&self, tools: Arc<dyn ToolRegistry>, registries: Vec<String>) -> AppService {
         AppService::new(Ports {
             fetcher: self.fetcher.clone(),
             data: self.store.clone(),
@@ -857,7 +872,13 @@ impl Fakes {
             installed: self.installed.clone(),
             clock: self.clock.clone(),
             background: self.background.clone(),
+            registries,
         })
+    }
+    /// Publish a registry file at `url` listing app-ref URLs (relative ones resolve against `url`).
+    pub fn add_registry(&self, url: &str, apps: &[&str]) {
+        let body = serde_json::to_vec(&json!({ "apps": apps })).unwrap();
+        self.fetcher.0.lock().unwrap().insert(url.to_owned(), body);
     }
     /// Publish an app ref at `mem://<id>/app-ref.json`; `main` content = comma-joined tool names.
     pub fn add_app(&self, id: &str, tools: &[(&str, &str)]) -> String {
@@ -903,6 +924,10 @@ impl Fakes {
                     name: "init".into(),
                     file: "001_init.sql".into(),
                 }],
+                icon: None,
+                tint: None,
+                description: None,
+                requires: None,
             },
             files,
         };

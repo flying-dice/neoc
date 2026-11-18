@@ -17,7 +17,7 @@ use agentos_application::{
 };
 use agentos_domain::{AppId, Capabilities};
 use async_trait::async_trait;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 use serde_json::{Map, Value};
 use std::{collections::HashMap, sync::Arc};
 
@@ -30,21 +30,12 @@ pub struct LuauRuntime {
     shell: Arc<dyn Shell>,
     limits: Limits,
     host_modules: HashMap<String, Vec<u8>>,
-    /// `app:openWindow(...)` requests, until the view layer takes them.
-    open_requests: Mutex<Vec<(AppId, String, Value)>>,
 }
 
 impl LuauRuntime {
     pub fn new(notifier: Arc<dyn Notifier>, shell: Arc<dyn Shell>, limits: Limits) -> Self {
         let host_modules = HashMap::from([("ui".to_owned(), UI_MODULE.as_bytes().to_vec())]);
-        Self {
-            vms: RwLock::default(),
-            notifier,
-            shell,
-            limits,
-            host_modules,
-            open_requests: Mutex::default(),
-        }
+        Self { vms: RwLock::default(), notifier, shell, limits, host_modules }
     }
 
     /// Make `require("@agentos/<name>")` load this Luau source in every app's VM (the generated `ui` module).
@@ -52,11 +43,6 @@ impl LuauRuntime {
     pub fn with_host_module(mut self, name: &str, source: impl Into<Vec<u8>>) -> Self {
         self.host_modules.insert(name.to_owned(), source.into());
         self
-    }
-
-    /// The `app:openWindow(name, params)` requests made since the last call.
-    pub fn take_open_requests(&self) -> Vec<(AppId, String, Value)> {
-        std::mem::take(&mut *self.open_requests.lock())
     }
 
     fn vm(&self, app: &AppId) -> PortResult<Arc<AppVm>> {
@@ -72,7 +58,11 @@ impl LuauRuntime {
                 Effect::Shell(ShellEffect::Commands(c)) => self.shell.set_menu_commands(app, c).await,
                 Effect::Shell(ShellEffect::DeepLinks(l)) => self.shell.set_deep_links(app, l).await,
                 Effect::OpenWindow { name, params } => {
-                    self.open_requests.lock().push((app.clone(), name, params));
+                    let params = match params {
+                        Value::Object(map) => map,
+                        _ => Map::new(),
+                    };
+                    self.shell.open_window(app, &name, params).await;
                 }
             }
         }

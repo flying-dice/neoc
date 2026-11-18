@@ -294,6 +294,9 @@ async fn the_calculator_answers_a_key_with_ops_before_the_ack_and_follows_the_ag
         })
         .await;
     }
+    // ... and the tool's app:openWindow reached the shell as a host notification
+    let open_window = next_notification(&mut ws, "window.open").await;
+    assert_eq!(open_window, json!({"app": "calculator", "window": "main"}));
     let sum = call(&agent, "calculator__calculate", json!({"expression": "(12.5 + 7) * 3"})).await;
     assert!(text_of(&sum).contains("58.5"), "{sum:?}");
     let bad = call(&agent, "calculator__calculate", json!({"expression": "1 / 0"})).await;
@@ -321,6 +324,37 @@ async fn a_view_in_another_connection_cannot_be_driven() {
     let view = open(&mut a, 1, "calculator").await;
     let reply = tap(&mut b, 2, &view, 1, "key-7").await;
     assert_eq!(reply["error"]["code"], -32011, "a view belongs to the socket that opened it: {reply}");
+    r.stop().await;
+    let _ = std::fs::remove_dir_all(tmp);
+}
+
+#[tokio::test]
+async fn app_management_describes_installed_and_available_apps() {
+    let tmp = temp("app-api");
+    let r = host_with(&tmp, &[("calculator", &["app.luau", "calc.luau"])]).await;
+    let mut ws = browser(&r).await;
+
+    let list = rpc(&mut ws, 1, "app.list", json!({})).await;
+    let app = &list["result"]["apps"][0];
+    assert_eq!((app["id"].as_str(), app["state"].as_str()), (Some("calculator"), Some("running")), "{list}");
+    assert_eq!(app["icon"], "plus");
+    assert_eq!(app["tint"], "orange");
+    assert_eq!(app["window"], json!({"w": 340, "h": 560, "minW": 320, "minH": 480}));
+    assert_eq!(app["source"], "this computer");
+
+    let url = format!("file://{}/pkg-calculator/app-ref.json", tmp.display());
+    let preview = rpc(&mut ws, 2, "app.preview", json!({"url": url})).await;
+    assert_eq!(preview["result"]["id"], "calculator", "{preview}");
+    assert_eq!(preview["result"]["installed"]["state"], "running");
+    let missing = rpc(&mut ws, 3, "app.preview", json!({"url": "file:///nowhere/app-ref.json"})).await;
+    assert!(missing.get("error").is_some());
+
+    // no registries configured: the catalog is empty, not an error
+    let catalog = rpc(&mut ws, 4, "app.available", json!({})).await;
+    assert_eq!(catalog["result"], json!({"apps": [], "errors": []}), "{catalog}");
+
+    let devices = rpc(&mut ws, 5, "host.devices.list", json!({})).await;
+    assert_eq!(devices["result"]["devices"][0]["current"], true, "{devices}");
     r.stop().await;
     let _ = std::fs::remove_dir_all(tmp);
 }

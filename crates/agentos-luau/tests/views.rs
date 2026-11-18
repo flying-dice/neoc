@@ -35,9 +35,10 @@ fn obj(pairs: &[(&str, Value)]) -> Map<String, Value> {
 struct Rig {
     runtime: LuauRuntime,
     db: Arc<AppDb>,
+    shell: Arc<agentos_application::testing::RecordingShell>,
 }
 
-fn runtime() -> LuauRuntime {
+fn runtime(shell: Arc<agentos_application::testing::RecordingShell>) -> LuauRuntime {
     struct Quiet;
     #[async_trait::async_trait]
     impl agentos_application::ports::Notifier for Quiet {
@@ -48,15 +49,18 @@ fn runtime() -> LuauRuntime {
             Ok(())
         }
     }
-    LuauRuntime::new(
-        Arc::new(Quiet),
-        Arc::new(agentos_application::testing::RecordingShell::default()),
-        Limits::default(),
-    )
+    LuauRuntime::new(Arc::new(Quiet), shell, Limits::default())
+}
+
+impl Rig {
+    fn new() -> Self {
+        let shell = Arc::new(agentos_application::testing::RecordingShell::default());
+        Self { runtime: runtime(shell.clone()), db: db(), shell }
+    }
 }
 
 async fn load(app: &str, package: AppPackage) -> (Rig, LoadedApp) {
-    let rig = Rig { runtime: runtime(), db: db() };
+    let rig = Rig::new();
     let data: Arc<dyn AppData> = rig.db.clone();
     let loaded = rig.runtime.load(&id(app), package, data, Capabilities::all()).await.unwrap();
     (rig, loaded)
@@ -158,8 +162,8 @@ async fn the_shared_state_reaches_every_open_window_and_the_agent_tool_drives_it
     let after = rig.runtime.render_view(&id("calculator"), "v1").await.unwrap();
     assert_eq!(text_at(&after.tree, "display").as_deref(), Some("42"));
     assert!(!diff(&a.tree, &after.tree).is_empty());
-    // app:openWindow("main") became a request for the shell
-    assert_eq!(rig.runtime.take_open_requests()[0].1, "main");
+    // app:openWindow("main") went to the shell
+    assert_eq!(rig.shell.windows.lock().unwrap()[0].1, "main");
 
     // the read-only tools: arithmetic, and history through app.kv
     let r = rig
@@ -377,4 +381,59 @@ fn the_fixture_trees_the_codegen_test_committed_are_what_a_stub_host_rendered() 
         let v: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
         assert_eq!(v["tree"]["key"], "main");
     }
+}
+
+const TOASTER: &str = r#"
+local app = require("@agentos/app")
+local ui = require("@agentos/ui")
+app.manifest { id = "toaster", name = "Toaster", icon = "plus", window = { w = 400, h = 300, minW = 320, minH = 240 } }
+local s = app.state { n = 0, undone = 0 }
+app.window("main", {
+  render = function(w)
+    return ui.VStack {
+      ui.Text { key = "n", tostring(s.n) .. "/" .. tostring(s.undone) },
+      ui.Button {
+        key = "add",
+        title = "Add",
+        onTap = function()
+          s.n += 1
+          w:toast { text = "Added", action = { title = "Undo", onTap = function() s.undone += 1 end } }
+        end,
+      },
+    }
+  end,
+})
+"#;
+
+#[tokio::test]
+async fn a_toast_action_runs_the_apps_closure_once() {
+    let rig = Rig::new();
+    let package = common::package(TOASTER, &[]);
+    let data: Arc<dyn AppData> = rig.db.clone();
+    rig.runtime.load(&id("toaster"), package, data, Capabilities::all()).await.unwrap();
+    let out = open(&rig, "toaster", "v1").await;
+    assert!(tap(&rig, "toaster", "v1", &out, "add").await);
+
+    let effects = rig.runtime.take_view_effects(&id("toaster")).await.unwrap();
+    let Some((_, ViewEffect::Command(Command::Toast(toast)))) = effects.first() else {
+        panic!("a toast was queued: {effects:?}")
+    };
+    let action = toast.action.clone().expect("the toast carries its action");
+    assert_eq!((action.title.as_str(), action.id.as_str()), ("Undo", "t1"));
+
+    let press = |path: &str| ViewEventCall {
+        path: path.into(),
+        event: "tap".into(),
+        row_key: None,
+        row: None,
+        payload: None,
+    };
+    let path = format!("$toast/{}", action.id);
+    let ran = rig.runtime.dispatch_view_event(&id("toaster"), "v1", press(&path), common::user_ctx(0)).await;
+    assert!(ran.unwrap(), "the action's onTap ran");
+    let again =
+        rig.runtime.dispatch_view_event(&id("toaster"), "v1", press(&path), common::user_ctx(0)).await;
+    assert!(!again.unwrap(), "a toast action is one-shot: the second tap is stale");
+    let after = rig.runtime.render_view(&id("toaster"), "v1").await.unwrap();
+    assert_eq!(text_at(&after.tree, "n").as_deref(), Some("1/1"), "the handler changed app state once");
 }

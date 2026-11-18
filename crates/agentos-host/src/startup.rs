@@ -57,9 +57,9 @@ pub fn prepare_data_dir(data_dir: &Path) -> anyhow::Result<()> {
 }
 
 /// Bring the apps up: load every app the system database remembers (an app that cannot load is marked
-/// failed, the rest start), then install the configured registry entries that are not installed yet. A
+/// failed, the rest start), then install the configured `install` URLs that are not installed yet. A
 /// failure is logged and skipped: one broken app or URL must not keep the host from starting.
-pub async fn start_apps(service: &AppService, registries: &[String]) {
+pub async fn start_apps(service: &AppService, install: &[String]) {
     match service.restore_installed().await {
         Ok(apps) => {
             for a in apps {
@@ -68,7 +68,7 @@ pub async fn start_apps(service: &AppService, registries: &[String]) {
         }
         Err(e) => tracing::warn!(error = %e, "could not read the installed apps"),
     }
-    service.sync_registries(registries).await;
+    service.ensure_installed(install).await;
     let removed = service.purge_expired_revisions().await;
     if removed > 0 {
         tracing::info!(removed, "purged revisions older than 30 days");

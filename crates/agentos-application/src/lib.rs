@@ -31,6 +31,6 @@ mod writeback_tests;
 pub use devices::{DeviceService, PairError, PairedDevice, PairingCode, PairingPolicy};
 pub use error::{AppError, PortError};
 pub use live::{LiveSources, SourceDef, SourceId, SourceKind, SourceUpdate, SubscriptionId, Window};
-pub use services::{AppInfo, AppService, AppStatus, Ports};
+pub use services::{AppInfo, AppService, AppStatus, Display, Ports};
 pub use views::{ViewError, ViewService, ViewSink};
 pub use writeback::{BindingKind, Resolution, WriteAck, WriteRequest};

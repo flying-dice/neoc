@@ -262,7 +262,7 @@ fn commands_are_cmd_plus_args() {
             text: "Your edit replaced an agent change.".into(),
             icon: None,
             kind: Some("info".into()),
-            action: Some("Undo".into()),
+            action: Some(ToastAction { title: "Undo".into(), id: "t1".into() }),
             duration: None,
         }),
     };
@@ -270,7 +270,7 @@ fn commands_are_cmd_plus_args() {
         &toast,
         &json!({
             "viewId": "v1", "cmd": "toast",
-            "args": { "text": "Your edit replaced an agent change.", "kind": "info", "action": "Undo" }
+            "args": { "text": "Your edit replaced an agent change.", "kind": "info", "action": { "title": "Undo", "id": "t1" } }
         }),
     );
     let focus = ViewCommand { view_id: "v1".into(), command: Command::Focus { key: "q".into() } };
@@ -311,6 +311,22 @@ fn the_rest_of_the_host_notifications() {
         },
         &json!({ "scheme": "dark", "tint": "blue", "textScale": 1.0, "reduceMotion": false, "reduceTransparency": false, "increaseContrast": true }),
     );
+}
+
+#[test]
+fn window_open_carries_the_app_the_window_kind_and_optional_params() {
+    round_trip(
+        &WindowOpen { app: "calculator".into(), window: "main".into(), params: None },
+        &json!({ "app": "calculator", "window": "main" }),
+    );
+    let note = HostNotification::WindowOpen(WindowOpen {
+        app: "notes".into(),
+        window: "main".into(),
+        params: json!({ "noteId": 12 }).as_object().cloned(),
+    });
+    let frame = serde_json::to_value(note.to_message()).unwrap();
+    assert_eq!(frame["method"], "window.open");
+    assert_eq!(frame["params"]["params"]["noteId"], 12);
 }
 
 #[test]
@@ -386,6 +402,7 @@ fn sample(method: &str) -> Value {
         "view.command" => json!({ "viewId": "v1", "cmd": "haptic" }),
         "view.error" => json!({ "viewId": "v1", "message": "m" }),
         "view.closed" => json!({ "viewId": "v1", "reason": "r" }),
+        "window.open" => json!({ "app": "calculator", "window": "main" }),
         "theme.set" => {
             json!({ "scheme": "light", "tint": "blue", "textScale": 1.0, "reduceMotion": false, "reduceTransparency": false, "increaseContrast": false })
         }

@@ -14,4 +14,6 @@ pub enum DomainError {
     MigrationOrder,
     #[error("invalid app.manifest: {0}")]
     InvalidManifest(String),
+    #[error("this app needs host API {needs}, this host provides {has}")]
+    UnsupportedHost { needs: String, has: String },
 }

@@ -16,8 +16,9 @@ use crate::{
     AppError, PortError,
 };
 use agentos_domain::{
-    Actor, AgentId, AgentIdentity, AppId, AppRef, Capabilities, QualifiedToolName, Revision, StoredRevision,
-    ToolSpec,
+    api::{AppPreview, Catalog, InstalledInfo},
+    resolve_url, source_label, Actor, AgentId, AgentIdentity, AppDecl, AppId, AppRef, Capabilities, Manifest,
+    QualifiedToolName, Registry, Revision, StoredRevision, ToolSpec, WindowDecl,
 };
 use parking_lot::Mutex;
 use serde_json::Value;
@@ -34,6 +35,8 @@ pub struct Ports {
     pub installed: Arc<dyn InstalledAppStore>,
     pub clock: Arc<dyn Clock>,
     pub background: Arc<dyn Background>,
+    /// The catalog Discover browses: registry files (`{"apps": [...]}`) or app refs, by URL.
+    pub registries: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -46,11 +49,42 @@ pub enum AppStatus {
 }
 
 impl AppStatus {
+    fn to_wire(&self) -> agentos_domain::api::AppState {
+        use agentos_domain::api::AppState;
+        match self {
+            Self::Running => AppState::Running,
+            Self::Disabled => AppState::Disabled,
+            Self::Failed(_) => AppState::Failed,
+        }
+    }
+
     fn describe(&self) -> String {
         match self {
             Self::Running => "running".into(),
             Self::Disabled => "disabled".into(),
             Self::Failed(why) => format!("failed ({why})"),
+        }
+    }
+}
+
+/// How an app presents itself in the Dock and the library: from its `app.manifest` while it runs, else from
+/// its package manifest.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Display {
+    pub icon: Option<String>,
+    pub tint: Option<String>,
+    pub description: Option<String>,
+    /// The default window and its minimum size; only a running app has declared one.
+    pub window: Option<WindowDecl>,
+}
+
+impl Display {
+    fn of(manifest: &Manifest, decl: Option<&AppDecl>) -> Self {
+        Self {
+            icon: decl.map(|d| d.icon.clone()).or_else(|| manifest.icon.clone()),
+            tint: decl.and_then(|d| d.tint.clone()).or_else(|| manifest.tint.clone()),
+            description: manifest.description.clone(),
+            window: decl.and_then(|d| d.window.clone()),
         }
     }
 }
@@ -62,6 +96,7 @@ pub struct AppInfo {
     pub version: String,
     pub source_url: String,
     pub status: AppStatus,
+    pub display: Display,
 }
 
 /// A loaded app: its database, live sources and the tasks that serve them.
@@ -69,6 +104,7 @@ struct Active {
     data: Arc<dyn AppData>,
     live: Arc<LiveSources>,
     name: String,
+    display: Display,
     tools: Vec<ToolSpec>,
     _pump: Box<dyn TaskHandle>,
 }
@@ -76,6 +112,7 @@ struct Active {
 struct AppEntry {
     record: InstalledApp,
     name: String,
+    display: Display,
     status: AppStatus,
     active: Option<Active>,
 }
@@ -159,10 +196,10 @@ impl AppService {
             self.deactivate(&m.id, active).await;
             return Err(e.into());
         }
-        let name = active.name.clone();
+        let (name, display) = (active.name.clone(), active.display.clone());
         self.apps.lock().insert(
             m.id.clone(),
-            AppEntry { record, name, status: AppStatus::Running, active: Some(active) },
+            AppEntry { record, name, display, status: AppStatus::Running, active: Some(active) },
         );
         self.p.events.emit(ServerEvent::AppInstalled(m.id.clone())).await;
         Ok(m.id.clone())
@@ -192,19 +229,21 @@ impl AppService {
             if self.apps.lock().contains_key(&id) {
                 continue;
             }
-            let (status, active, name) = if record.enabled {
+            let (status, active, name, display) = if record.enabled {
                 match self.load_from_source(&record.source_url, None).await {
                     Ok(active) => {
-                        let name = active.name.clone();
-                        (AppStatus::Running, Some(active), name)
+                        let (name, display) = (active.name.clone(), active.display.clone());
+                        (AppStatus::Running, Some(active), name, display)
                     }
                     Err(e) => {
                         tracing::warn!(app = %id, error = %e, "installed app failed to load");
-                        (AppStatus::Failed(e.to_string()), None, id.to_string())
+                        let (name, display) = self.package_display(&record).await;
+                        (AppStatus::Failed(e.to_string()), None, name, display)
                     }
                 }
             } else {
-                (AppStatus::Disabled, None, id.to_string())
+                let (name, display) = self.package_display(&record).await;
+                (AppStatus::Disabled, None, name, display)
             };
             if let AppStatus::Failed(message) = &status {
                 self.p
@@ -212,14 +251,14 @@ impl AppService {
                     .emit(ServerEvent::AppFailed { app: id.clone(), message: message.clone() })
                     .await;
             }
-            self.apps.lock().insert(id, AppEntry { record, name, status, active });
+            self.apps.lock().insert(id, AppEntry { record, name, display, status, active });
         }
         Ok(self.apps())
     }
 
-    /// Make sure every registry URL is installed: install the missing ones, retry the failed ones.
+    /// Make sure every one of these app-ref URLs is installed: install the missing ones, retry the failed ones.
     /// A failure is logged and skipped so one broken URL cannot keep the host from starting.
-    pub async fn sync_registries(&self, urls: &[String]) {
+    pub async fn ensure_installed(&self, urls: &[String]) {
         for url in urls {
             let known = self
                 .apps
@@ -277,6 +316,7 @@ impl AppService {
                 self.p.installed.set_enabled(app, true).await?;
                 if let Some(entry) = self.apps.lock().get_mut(app) {
                     entry.name.clone_from(&active.name);
+                    entry.display = active.display.clone();
                     entry.active = Some(active);
                     entry.status = AppStatus::Running;
                     entry.record.enabled = true;
@@ -341,6 +381,7 @@ impl AppService {
                 let mut apps = self.apps.lock();
                 if let Some(entry) = apps.get_mut(app) {
                     entry.name.clone_from(&active.name);
+                    entry.display = active.display.clone();
                     entry.active = Some(active); // the old pump stops when its handle drops
                     entry.status = AppStatus::Running;
                 }
@@ -463,6 +504,7 @@ impl AppService {
                 version: e.record.version.clone(),
                 source_url: e.record.source_url.clone(),
                 status: e.status.clone(),
+                display: e.display.clone(),
             })
             .collect();
         v.sort_by(|a, b| a.id.cmp(&b.id));
@@ -531,8 +573,93 @@ impl AppService {
 
     async fn fetch_app_ref(&self, url: &str) -> Result<AppRef, AppError> {
         let bytes = self.p.fetcher.fetch(url).await?;
-        serde_json::from_slice(&bytes)
-            .map_err(|e| AppError::Port(PortError::Rejected(format!("bad app ref at {url}: {e}"))))
+        let app_ref: AppRef = serde_json::from_slice(&bytes)
+            .map_err(|e| AppError::Port(PortError::Rejected(format!("bad app ref at {url}: {e}"))))?;
+        Ok(app_ref.resolved(url))
+    }
+
+    /// The name and presentation of an app that is not running, from its package manifest (best effort: an
+    /// unreachable source leaves the defaults).
+    async fn package_display(&self, record: &InstalledApp) -> (String, Display) {
+        match self.fetch_app_ref(&record.source_url).await {
+            Ok(r) => (r.manifest.name.clone(), Display::of(&r.manifest, None)),
+            Err(_) => (record.id.to_string(), Display::default()),
+        }
+    }
+
+    // ---- preview and catalog --------------------------------------------------------------------------
+
+    /// What an app ref is, without installing it or running anything: its manifest, where it comes from and
+    /// whether this host already has the app. Nothing but the app ref itself is fetched.
+    pub async fn preview(&self, app_ref_url: &str) -> Result<AppPreview, AppError> {
+        let app_ref = self.fetch_app_ref(app_ref_url).await?;
+        app_ref.manifest.validate()?;
+        Ok(self.preview_of(&app_ref, app_ref_url))
+    }
+
+    fn preview_of(&self, app_ref: &AppRef, url: &str) -> AppPreview {
+        let m = &app_ref.manifest;
+        let installed = self
+            .apps
+            .lock()
+            .get(&m.id)
+            .map(|e| InstalledInfo { version: e.record.version.clone(), state: e.status.to_wire() });
+        AppPreview {
+            url: url.to_owned(),
+            id: m.id.to_string(),
+            name: m.name.clone(),
+            version: m.version.clone(),
+            icon: m.icon.clone(),
+            tint: m.tint.clone(),
+            description: m.description.clone(),
+            permissions: m
+                .permissions
+                .iter()
+                .filter_map(|p| p.capability_name().map(str::to_owned))
+                .collect(),
+            source: source_label(url),
+            installed,
+        }
+    }
+
+    /// Everything the configured registries offer. A registry (or one of its apps) that cannot be read is
+    /// reported in `errors` and skipped: the rest still list.
+    pub async fn catalog(&self) -> Catalog {
+        let mut catalog = Catalog { apps: vec![], errors: vec![] };
+        let mut urls = Vec::new();
+        for registry in &self.p.registries {
+            match self.registry_entries(registry).await {
+                Ok(found) => urls.extend(found),
+                Err(e) => catalog.errors.push(format!("{registry}: {e}")),
+            }
+        }
+        for url in urls {
+            match self.fetch_app_ref(&url).await {
+                Ok(app_ref) if app_ref.manifest.validate().is_ok() => {
+                    if !catalog.apps.iter().any(|a| a.id == app_ref.manifest.id.as_str()) {
+                        catalog.apps.push(self.preview_of(&app_ref, &url));
+                    }
+                }
+                Ok(app_ref) => {
+                    catalog.errors.push(format!("{url}: {} needs a newer host", app_ref.manifest.name));
+                }
+                Err(e) => catalog.errors.push(format!("{url}: {e}")),
+            }
+        }
+        catalog
+    }
+
+    /// The app-ref URLs a registry URL stands for: the apps of a registry file, or the URL itself when it is
+    /// an app ref.
+    async fn registry_entries(&self, url: &str) -> Result<Vec<String>, AppError> {
+        let bytes = self.p.fetcher.fetch(url).await?;
+        if let Ok(registry) = serde_json::from_slice::<Registry>(&bytes) {
+            return Ok(registry.apps.iter().map(|a| resolve_url(url, a)).collect());
+        }
+        if serde_json::from_slice::<AppRef>(&bytes).is_ok() {
+            return Ok(vec![url.to_owned()]);
+        }
+        Err(PortError::Rejected("not a registry file or an app ref".into()).into())
     }
 
     async fn load_from_source(&self, url: &str, reuse: Option<Arc<dyn AppData>>) -> Result<Active, AppError> {
@@ -574,8 +701,9 @@ impl AppService {
             self.p.runtime.unload(&m.id).await.ok();
             return Err(e.into());
         }
+        let display = Display::of(m, loaded.decl.as_ref());
         let name = loaded.decl.map_or_else(|| m.name.clone(), |d| d.name);
-        Ok(Active { data, live, name, tools: loaded.tools, _pump: pump })
+        Ok(Active { data, live, name, display, tools: loaded.tools, _pump: pump })
     }
 
     /// Retract tools, stop serving and unload the VM. Failures are logged, not raised: teardown must finish.

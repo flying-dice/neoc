@@ -125,11 +125,12 @@ async fn run(settings: Settings, cwd: &Path) -> anyhow::Result<()> {
     config.client_dir = client_dir;
     config.dev_client_port = settings.dev_client_port;
     config.allowed_hosts = settings.allowed_hosts.clone();
+    config.registries = settings.catalog(cwd);
     config.secure_cookies = settings.secure_cookies;
     config.agents = vec![(mcp_token.clone(), local_agent)];
 
     let host = build(config)?;
-    start_apps(&host.service, &settings.registries).await;
+    start_apps(&host.service, &settings.install).await;
     spawn_revision_purge(host.service.clone(), host.shutdown.clone());
     if settings.dev_reload {
         for dir in watch_for_reload(&host.service, &host.shutdown) {

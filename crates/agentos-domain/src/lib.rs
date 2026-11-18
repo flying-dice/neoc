@@ -7,6 +7,7 @@
 
 pub mod actor;
 pub mod agent;
+pub mod api;
 pub mod app;
 pub mod decl;
 pub mod device;
@@ -22,7 +23,9 @@ pub mod ui;
 
 pub use actor::{Actor, ActorKind};
 pub use agent::{AgentId, AgentIdentity, Capabilities, Permission};
-pub use app::{AppId, AppRef, FileRef, Manifest, MigrationSpec};
+pub use app::{
+    resolve_url, source_label, AppId, AppRef, FileRef, Manifest, MigrationSpec, Registry, Requires, HOST_API,
+};
 pub use decl::{AppDecl, KitRequirement, WindowDecl};
 pub use device::{Device, DeviceId};
 pub use error::DomainError;

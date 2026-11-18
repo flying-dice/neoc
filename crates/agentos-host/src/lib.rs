@@ -60,6 +60,8 @@ pub struct HostConfig {
     pub secure_cookies: bool,
     /// The machine's own addresses and hostname for the Origin/Host guard; `None` = ask the OS.
     pub interfaces: Option<Interfaces>,
+    /// The catalog Discover browses (`app.available`): registry files or app refs, by URL.
+    pub registries: Vec<String>,
     /// (bearer token, identity) for `/mcp`.
     pub agents: Vec<(String, AgentIdentity)>,
     pub acp: HashMap<AgentId, AgentLaunch>,
@@ -87,6 +89,7 @@ impl HostConfig {
             allowed_hosts: vec![],
             secure_cookies: false,
             interfaces: None,
+            registries: vec![],
             agents: vec![],
             acp: HashMap::new(),
             pairing: PairingPolicy::default(),
@@ -171,7 +174,7 @@ pub fn build(cfg: HostConfig) -> anyhow::Result<Host> {
     let data: Arc<dyn DataStore> =
         Arc::new(SqliteDataStore::new(cfg.data_dir.as_ref().map(|d| d.join("apps"))));
     let runtime: Arc<dyn AppRuntime> =
-        Arc::new(LuauRuntime::new(hub.clone(), Arc::new(platform::LogShell), Limits::default()));
+        Arc::new(LuauRuntime::new(hub.clone(), hub.clone(), Limits::default()));
     let tools: Arc<dyn ToolRegistry> = mcp_state.clone();
     let events: Arc<dyn EventSink> = hub.clone();
     let agents = Arc::new(AcpConnector::new(cfg.acp));
@@ -191,6 +194,7 @@ pub fn build(cfg: HostConfig) -> anyhow::Result<Host> {
         installed,
         clock: cfg.clock,
         background: Arc::new(platform::TokioBackground),
+        registries: cfg.registries,
     }));
     hub.bind(service.clone(), devices.clone());
     let views = Arc::new(ViewService::new(service.clone()));

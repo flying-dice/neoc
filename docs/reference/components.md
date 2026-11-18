@@ -1542,5 +1542,6 @@ JSON-RPC 2.0 over `/rpc`, by-name params objects.
 | `view.error` | host to client | notification | `ViewError` |  | A render or validation failure; the last good tree stays. |
 | `view.closed` | host to client | notification | `ViewClosed` |  | The instance is gone. |
 | `theme.set` | host to client | notification | `ThemeSet` |  | The host theme. |
+| `window.open` | host to client | notification | `WindowOpen` |  | An app asked for a window (`app:openWindow`): open it, or bring it forward. |
 
 Catalogue size: Tier 1: 49, Tier 2: 12, Tier 3: 9.

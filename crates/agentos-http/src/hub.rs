@@ -4,19 +4,23 @@
 
 use crate::rpc::{RpcHandler, RpcPeer};
 use agentos_application::{
-    ports::{EventSink, Notifier, PortResult, ServerEvent},
-    AppError, AppService, AppStatus, DeviceService, PortError, ViewError, ViewService, ViewSink,
+    ports::{EventSink, MenuCommand, Notifier, PortResult, ServerEvent, Shell},
+    AppError, AppInfo, AppService, AppStatus, DeviceService, PortError, ViewError, ViewService, ViewSink,
 };
 use agentos_domain::{
+    api::{AppList, AppState, AppSummary, AppWindow, DeviceList, DeviceRow},
     protocol::RpcError,
-    ui::protocol::{codes, ClientNotification, ClientRequest, HostNotification, ParseError, SessionWelcome},
+    source_label,
+    ui::protocol::{
+        codes, ClientNotification, ClientRequest, HostNotification, ParseError, SessionWelcome, WindowOpen,
+    },
     ui::{KIT_VERSION, PROTO_VERSION},
     AppId, DeviceId, Notification,
 };
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use std::{
     sync::{Arc, OnceLock},
     time::Duration,
@@ -132,15 +136,18 @@ impl RpcHub {
             "host.devices.list" => {
                 let current = peer.device().map(|d| d.id.clone());
                 let devices = devices.list().await.map_err(|e| rpc_err(&AppError::Port(e)))?;
-                let rows: Vec<Value> = devices
-                    .iter()
-                    .map(|d| {
-                        let mut row = serde_json::to_value(d).unwrap_or(Value::Null);
-                        row["current"] = json!(current.as_ref() == Some(&d.id));
-                        row
-                    })
-                    .collect();
-                Ok(json!({ "devices": rows }))
+                encode(&DeviceList {
+                    devices: devices
+                        .into_iter()
+                        .map(|d| DeviceRow {
+                            current: current.as_ref() == Some(&d.id),
+                            id: d.id.0,
+                            name: d.name,
+                            created_at: d.created_at,
+                            last_seen_at: d.last_seen_at,
+                        })
+                        .collect(),
+                })
             }
             "host.devices.revoke" => {
                 let p: RevokeParams = serde_json::from_value(params).map_err(|e| bad_params(&e))?;
@@ -155,6 +162,32 @@ impl RpcHub {
     fn broadcast(&self, method: &str, params: &Value) {
         // drop peers whose socket is gone
         self.peers.lock().retain(|p| p.notify(method, params.clone()).is_ok());
+    }
+}
+
+/// One installed app as clients see it.
+fn summary(a: &AppInfo) -> AppSummary {
+    let (state, message) = match &a.status {
+        AppStatus::Running => (AppState::Running, None),
+        AppStatus::Disabled => (AppState::Disabled, None),
+        AppStatus::Failed(m) => (AppState::Failed, Some(m.clone())),
+    };
+    AppSummary {
+        id: a.id.to_string(),
+        name: a.name.clone(),
+        version: a.version.clone(),
+        state,
+        message,
+        icon: a.display.icon.clone(),
+        tint: a.display.tint.clone(),
+        description: a.display.description.clone(),
+        window: a.display.window.as_ref().map(|w| AppWindow {
+            w: w.w,
+            h: w.h,
+            min_w: w.min_w,
+            min_h: w.min_h,
+        }),
+        source: source_label(&a.source_url),
     }
 }
 
@@ -258,20 +291,11 @@ impl RpcHandler for RpcHub {
                 app.uninstall(&p.app, p.purge).await.map_err(|e| rpc_err(&e))?;
                 Ok(Value::Null)
             }
-            "app.list" => {
-                let apps: Vec<Value> = app
-                    .apps()
-                    .into_iter()
-                    .map(|a| {
-                        let (state, message) = match &a.status {
-                            AppStatus::Running => ("running", None),
-                            AppStatus::Disabled => ("disabled", None),
-                            AppStatus::Failed(m) => ("failed", Some(m.clone())),
-                        };
-                        json!({ "id": a.id, "name": a.name, "version": a.version, "state": state, "message": message })
-                    })
-                    .collect();
-                Ok(json!({ "apps": apps }))
+            "app.list" => encode(&AppList { apps: app.apps().iter().map(summary).collect() }),
+            "app.available" => encode(&app.catalog().await),
+            "app.preview" => {
+                let p: InstallParams = serde_json::from_value(params).map_err(|e| bad_params(&e))?;
+                encode(&app.preview(&p.url).await.map_err(|e| rpc_err(&e))?)
             }
             "app.enable" | "app.disable" | "app.deleteData" | "app.reload" => {
                 let p: AppParams = serde_json::from_value(params).map_err(|e| bad_params(&e))?;
@@ -306,6 +330,30 @@ impl EventSink for RpcHub {
                 }
             }
         }
+    }
+}
+
+/// What apps ask of the shell: opening a window goes to every connected client; the Dock badge, menu
+/// commands and deep links are accepted and dropped until the shell shows them.
+#[async_trait]
+impl Shell for RpcHub {
+    async fn open_window(&self, app: &AppId, window: &str, params: Map<String, Value>) {
+        let note = HostNotification::WindowOpen(WindowOpen {
+            app: app.to_string(),
+            window: window.to_owned(),
+            params: (!params.is_empty()).then_some(params),
+        });
+        let (method, params) = note.to_rpc();
+        self.broadcast(method, &params);
+    }
+    async fn set_badge(&self, app: &AppId, badge: Option<String>) {
+        tracing::debug!(%app, ?badge, "shell: badge (not shown yet)");
+    }
+    async fn set_menu_commands(&self, app: &AppId, commands: Vec<MenuCommand>) {
+        tracing::debug!(%app, commands = commands.len(), "shell: menu commands (not shown yet)");
+    }
+    async fn set_deep_links(&self, app: &AppId, patterns: Vec<String>) {
+        tracing::debug!(%app, ?patterns, "shell: deep links (not shown yet)");
     }
 }
 
