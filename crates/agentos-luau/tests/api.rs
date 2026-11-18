@@ -215,7 +215,7 @@ async fn a_failed_call_never_leaves_a_transaction_holding_the_database() {
         app.on("spin", function() db:tx(function() db:exec("insert into t values (1)") while true do end end) end)
         app.on("count", function() return db:one("select count(*) as n from t").n end)
     "#);
-    let vm = common::try_load_with("probe", &src, db(), common::quick(100)).await.unwrap();
+    let vm = common::try_load_with("probe", &src, db(), common::quick(2_000_000)).await.unwrap();
     assert!(vm.emit("spin", json!(null)).await.is_err());
     assert_eq!(vm.emit("count", json!(null)).await.unwrap(), json!(0), "rolled back, and not stuck");
 }

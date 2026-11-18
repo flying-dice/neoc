@@ -1,13 +1,13 @@
 //! One sandboxed Luau VM per app.
 //!
 //! The VM is created, given the `app` capability table and a bundle-only `require`, sandboxed, limited
-//! (memory, CPU slice per call, host-call timeout) and then runs the app's entry. After that the host
+//! (memory, CPU budget per call, host-call timeout) and then runs the app's entry. After that the host
 //! calls into it: tools, write-back callbacks, events. One call runs in a VM at a time (an app is
 //! single-threaded by design); the VM lives as long as its `AppVm`.
 
 use crate::{
     api,
-    budget::Slice,
+    budget::{Allowance, Slice},
     convert::{json_to_lua, lua_to_json},
     error::{ScriptError, ToolFailure},
     state::{DepKey, SharedTracker, Tracker},
@@ -65,8 +65,12 @@ pub type Result<T> = std::result::Result<T, VmError>;
 pub struct Limits {
     /// Hard cap on the Luau heap (allocations past this raise a Lua `MemoryError`).
     pub memory_bytes: usize,
-    /// Max continuous CPU time between host awaits (a `while true do end` is killed after this).
-    pub cpu_slice: Duration,
+    /// Max interrupts (Lua calls and loop iterations) between host awaits: a `while true do end` is killed
+    /// after this many, however loaded the machine is (see `budget`).
+    pub cpu_ticks: u64,
+    /// Wall-clock backstop on the same slice: far above an honest slice, it only catches what the count
+    /// cannot see.
+    pub cpu_wall: Duration,
     /// Max wall-clock time of one host call (a database call that never returns).
     pub host_call_timeout: Duration,
 }
@@ -74,7 +78,8 @@ impl Default for Limits {
     fn default() -> Self {
         Self {
             memory_bytes: 16 * 1024 * 1024,
-            cpu_slice: Duration::from_millis(250),
+            cpu_ticks: 5_000_000,
+            cpu_wall: Duration::from_secs(10),
             host_call_timeout: Duration::from_secs(10),
         }
     }
@@ -302,9 +307,9 @@ impl AppVm {
 
         // Interrupt: runs at function calls and loop back-edges. Returning Err aborts the running chunk;
         // the kill is sticky so a `pcall` cannot swallow it.
-        let max = limits.cpu_slice;
+        let allowance = Allowance { ticks: limits.cpu_ticks, wall: limits.cpu_wall };
         lua.set_interrupt(move |_| {
-            if slice.exceeded(max) {
+            if slice.exceeded(allowance) {
                 Err(mlua::Error::runtime("cpu budget exceeded"))
             } else {
                 Ok(VmState::Continue)
