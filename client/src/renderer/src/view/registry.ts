@@ -12,7 +12,7 @@
  * An adapter receives `{ node, path, scope }`, reads its props through `useView().view.evaluate(...)` inside
  * `$derived`, renders children through the `Children` atom, and passes the derived test id to the kit component.
  */
-import type { Component } from 'svelte'
+import type { Component, Snippet } from 'svelte'
 import type { Node } from './protocol'
 import type { Scope } from './core/view'
 
@@ -22,6 +22,23 @@ export interface AdapterProps {
   path: string
   scope: Scope
 }
+
+/** What a decorator wraps an adapter with: the node, and the adapter itself as `children`. */
+export interface DecoratorProps {
+  node: Node
+  path: string
+  scope: Scope
+  children: Snippet
+}
+
+/**
+ * True when a node needs the decorator: it has a `contextMenu` slot or the common `drag` / `drop` props. Plain nodes
+ * are rendered with no wrapper at all.
+ */
+export const needsDecorator = (node: Node): boolean =>
+  (node.slots?.contextMenu?.length ?? 0) > 0 ||
+  node.props?.drag !== undefined ||
+  node.props?.drop !== undefined
 
 export interface ComponentSpec {
   component: Component<AdapterProps>
@@ -33,6 +50,12 @@ export interface ComponentSpec {
 
 export class ComponentRegistry {
   private readonly specs = new Map<string, ComponentSpec>()
+
+  /**
+   * The component that adds the common `contextMenu` slot and `drag` / `drop` behaviour around any adapter. Set by
+   * the kit (`registerControls`); `Node` uses it for nodes that `needsDecorator`.
+   */
+  decorator: Component<DecoratorProps> | null = null
 
   /** Register (or replace) the adapter for a catalogue type. */
   register(type: string, spec: ComponentSpec | Component<AdapterProps>): this {

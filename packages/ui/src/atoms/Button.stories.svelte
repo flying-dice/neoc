@@ -47,3 +47,18 @@
     <Button testid="button-more" variant="gray" square aria-label="More"><Icon name="ellipsis" size={19} /></Button>
   </div>
 </Story>
+
+<Story name="Data colour fill" asChild parameters={{ controls: { disable: true } }}>
+  <div style="display:flex;flex-wrap:wrap;gap:12px;max-width:420px">
+    {#each ['blue', 'red', 'green', 'orange', 'yellow', 'purple', 'pink', 'teal', 'mint', 'gray', '#1d3557', '#f1faee'] as const as fill (fill)}
+      <Button testid="button-fill-{fill.replace('#', '')}" {fill}>{fill}</Button>
+    {/each}
+  </div>
+</Story>
+
+<Story name="Pressed and described" asChild parameters={{ controls: { disable: true } }}>
+  <div style="display:flex;gap:12px">
+    <Button testid="button-pressed" variant="tinted" aria-pressed="true">Bold</Button>
+    <Button testid="button-described" variant="gray" aria-description="Moves the note to the archive">Archive</Button>
+  </div>
+</Story>

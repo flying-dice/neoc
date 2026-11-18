@@ -3,6 +3,7 @@
   Test ids: `testid` on the input, `${testid}-clear`, `${testid}-cancel`.
 -->
 <script lang="ts">
+  import { describe } from '../aria'
   import Icon from '../atoms/Icon.svelte'
   import TextInput from '../atoms/TextInput.svelte'
 
@@ -15,6 +16,17 @@
     /** `small` is the compact macOS sidebar/toolbar search field. */
     size?: 'regular' | 'small'
     label?: string
+    /** Accessible description (read after the name). */
+    'aria-description'?: string
+    disabled?: boolean
+    /** Enter pressed in the field. */
+    onsubmit?: (value: string) => void
+    /** Cancel pressed, or Escape in the field: the search was abandoned (the text is cleared first). */
+    oncancel?: () => void
+    /** Focus entered or left the field. */
+    onfocuschange?: (focused: boolean) => void
+    /** The text changed because the person typed (not when it was set from outside). */
+    oninput?: (value: string) => void
   }
 
   let {
@@ -23,7 +35,13 @@
     placeholder = 'Search',
     showCancel = false,
     size = 'regular',
-    label = 'Search'
+    label = 'Search',
+    'aria-description': description,
+    disabled = false,
+    onsubmit,
+    oncancel,
+    onfocuschange,
+    oninput
   }: Props = $props()
 
   let focused = $state(false)
@@ -31,11 +49,25 @@
 
   function clear(): void {
     value = ''
+    oninput?.('')
     input?.focus()
   }
   function cancel(): void {
     value = ''
+    oninput?.('')
     input?.blur()
+    oncancel?.()
+  }
+  function onkeydown(e: KeyboardEvent): void {
+    if (e.isComposing) return
+    if (e.key === 'Enter') onsubmit?.(value)
+    else if (e.key === 'Escape') {
+      if (value || focused) {
+        e.preventDefault()
+        e.stopPropagation()
+        cancel()
+      }
+    }
   }
 </script>
 
@@ -49,8 +81,18 @@
       type="search"
       {placeholder}
       aria-label={label}
-      onfocus={() => (focused = true)}
-      onblur={() => (focused = false)}
+      {...describe(description)}
+      {disabled}
+      onfocus={() => {
+        focused = true
+        onfocuschange?.(true)
+      }}
+      onblur={() => {
+        focused = false
+        onfocuschange?.(false)
+      }}
+      oninput={(e) => oninput?.(e.currentTarget.value)}
+      {onkeydown}
     />
     {#if value}
       <button type="button" class="clear" aria-label="Clear" data-testid="{testid}-clear" onclick={clear}>

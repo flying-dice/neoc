@@ -46,6 +46,7 @@ import {
   bindingKey,
   plainStore,
   type BindingTarget,
+  type Notice,
   type NoticeKind,
   type StoreFactory,
   type ViewStore
@@ -276,6 +277,16 @@ export class ViewCore {
     this.effects = effects
   }
 
+  /** Open a link the person chose (a Markdown link): the shell decides how, after its usual confirmation. */
+  openUrl(url: string): void {
+    this.effects.openUrl?.(url)
+  }
+
+  /** Say something to assistive technology (the window's polite live region). */
+  announce(text: string): void {
+    this.store.announcement = text
+  }
+
   /** The link went up or down (the session calls this around the resume). */
   setLink(state: 'online' | 'offline'): void {
     this.store.link = state
@@ -380,12 +391,15 @@ export class ViewCore {
   private command(p: HostNotifications['view.command']): void {
     const c = p as { viewId: string } & ViewCommand
     switch (c.cmd) {
-      case 'toast':
+      case 'toast': {
+        const args = c.args as typeof c.args & { action?: string }
         return this.notice(
-          c.args.kind === 'error' ? 'error' : c.args.kind === 'success' ? 'success' : 'info',
-          c.args.text,
-          c.args.duration
+          args.kind === 'error' ? 'error' : args.kind === 'success' ? 'success' : 'info',
+          args.text,
+          args.duration,
+          { icon: args.icon, action: args.action }
         )
+      }
       case 'announce':
         this.store.announcement = c.args.text
         return
@@ -414,10 +428,25 @@ export class ViewCore {
     if (hit) run(hit.path)
   }
 
-  notice(kind: NoticeKind, text: string, durationMs = NOTICE_MS): void {
+  notice(
+    kind: NoticeKind,
+    text: string,
+    durationMs = NOTICE_MS,
+    extra: { icon?: string; action?: string } = {}
+  ): void {
     const id = ++this.noticeId
-    this.store.notices.push({ id, kind, text })
+    const notice: Notice = { id, kind, text }
+    if (extra.icon) notice.icon = extra.icon
+    if (extra.action) notice.action = extra.action
+    this.store.notices.push(notice)
     if (durationMs > 0) this.timers.setTimeout(() => this.dismissNotice(id), durationMs)
+  }
+
+  /** The action button of a toast was tapped: report the `toast` event of the view (addressed at its root) and dismiss. */
+  toastAction(id: number): void {
+    const root = this.store.tree?.key
+    this.dismissNotice(id)
+    if (root !== undefined) void this.emit(root, 'toast')
   }
 
   dismissNotice(id: number): void {

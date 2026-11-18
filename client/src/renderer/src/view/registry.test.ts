@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { Component } from 'svelte'
-import { ComponentRegistry, createRegistry, type AdapterProps } from './registry'
+import { ComponentRegistry, createRegistry, needsDecorator, type AdapterProps } from './registry'
 
 /** A stand-in for a Svelte 5 component (a function): the registry only stores it. */
 const fake = (name: string): Component<AdapterProps> =>
@@ -38,5 +38,27 @@ describe('the component registry', () => {
       bindings: ['text']
     })
     expect(r.get('TextField')?.bindings).toEqual(['text'])
+  })
+})
+
+describe('the decorator', () => {
+  test('only nodes with a contextMenu slot, drag or drop need it', () => {
+    expect(needsDecorator({ type: 'Text', key: 'a' })).toBe(false)
+    expect(needsDecorator({ type: 'Text', key: 'a', slots: { contextMenu: [] } })).toBe(false)
+    expect(
+      needsDecorator({
+        type: 'Text',
+        key: 'a',
+        slots: { contextMenu: [{ type: 'Button', key: 'b' }] }
+      })
+    ).toBe(true)
+    expect(needsDecorator({ type: 'Text', key: 'a', props: { drag: { type: 'task' } } })).toBe(true)
+    expect(
+      needsDecorator({ type: 'Stack', key: 'a', props: { drop: { accepts: ['task'] } } })
+    ).toBe(true)
+  })
+
+  test('a registry has none until the kit sets one', () => {
+    expect(createRegistry().decorator).toBeNull()
   })
 })

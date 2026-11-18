@@ -37,6 +37,10 @@ export interface Notice {
   id: number
   kind: NoticeKind
   text: string
+  /** A kit icon name for the leading glyph (default by kind). */
+  icon?: string
+  /** The label of the action button: tapping it reports the `toast` event of the view. */
+  action?: string
 }
 
 /** `env.*` refs: the viewer's environment (spec 3.2). */

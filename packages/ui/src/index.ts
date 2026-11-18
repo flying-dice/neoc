@@ -12,6 +12,9 @@
 export { icons, type IconName } from './icons'
 export type {
   AlertAction,
+  AlertField,
+  MenuEntry,
+  OptionItem,
   DockApp,
   Frame,
   MenuItem,
@@ -19,3 +22,40 @@ export type {
   StageSummary,
   WindowLayout
 } from './types'
+export {
+  PALETTE_TOKENS,
+  cssColor,
+  inkFor,
+  isPaletteToken,
+  normaliseHex,
+  onColor,
+  type PaletteToken
+} from './contrast'
+export {
+  optionsFromExtensions,
+  parseMarkdown,
+  plainText,
+  safeHref,
+  type Block,
+  type Inline,
+  type MarkdownOptions
+} from './markdown'
+export { isContextMenuKey, moveIndex, nextEnabled, typeAhead } from './keys'
+export { place, placeAtPoint, type Edge, type Placement, type Rect } from './floating'
+export { normaliseDetents, type Detent } from './sheet'
+export {
+  addDays,
+  addMonths,
+  clampParts,
+  dayDisabled,
+  formatValue,
+  fromNative,
+  monthGrid,
+  nativeType,
+  parseValue,
+  stepMinutes,
+  toNative,
+  type DateKind,
+  type Parts
+} from './datepicker'
+export { initials, safeImageSrc } from './avatar'

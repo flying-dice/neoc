@@ -39,6 +39,7 @@
   ],
   "scripts": {
     "typecheck": "svelte-check --tsconfig ./tsconfig.json",
+    "test": "bun test ./src",
     "storybook": "storybook dev -p 6006 --no-open",
     "build-storybook": "storybook build -o storybook-static"
   },
@@ -57,5 +58,8 @@
     "svelte-check": "^4.7.6",
     "typescript": "^5.9.3",
     "vite": "^8.3.4"
+  },
+  "dependencies": {
+    "marked": "18.1.2"
   }
 }
