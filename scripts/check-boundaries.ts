@@ -30,7 +30,7 @@ import { builtinModules } from 'node:module'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 
 const ROOT = resolve(import.meta.dir, '..')
-const SOURCE_GLOBS = ['apps/*/{src,e2e,.storybook}/**/*.{ts,svelte,js,mjs}', 'packages/*/**/*.{ts,svelte,js,mjs}']
+const SOURCE_GLOBS = ['apps/*/{src,e2e,.storybook}/**/*.{ts,svelte,js,mjs}', 'client/{src,e2e,.storybook}/**/*.{ts,svelte,js,mjs}', 'packages/*/**/*.{ts,svelte,js,mjs}']
 const SKIP = /(^|\/)(node_modules|storybook-static|dist|out)\/|^packages\/[^/]+\/[^/]+\.config\.\w+$/
 
 /** What an app's client code may import: these are shared with the host (one runtime). A new entry is an architecture decision. */
@@ -61,7 +61,7 @@ const TEST_KIT = [
 /** Static, reviewed markup only. Never pass agent, tool or user text to these. */
 const HTML_ALLOWED = ['packages/ui/src/atoms/Icon.svelte'] // SVG strings from the constant icons map
 /** Runs in a browser: no Node or Bun builtins. */
-const BROWSER = ['apps/desktop/src/', 'packages/ui/src/', 'packages/sdk/src/']
+const BROWSER = ['client/src/', 'packages/ui/src/', 'packages/sdk/src/']
 /** Bun-only parts of the SDK. */
 const SDK_BUN_ONLY = ['packages/sdk/src/build/']
 /** Server-only SDK entry points that browser code must not import. */
@@ -80,14 +80,14 @@ function isTestSupport(rel: string): boolean {
   return (
     /\.(test|spec)\.ts$/.test(rel) ||
     /\.stories\.(svelte|ts)$/.test(rel) ||
-    /^(apps|packages)\/[^/]+\/(e2e|\.storybook)\//.test(rel) ||
+    /^((apps|packages)\/[^/]+|client)\/(e2e|\.storybook)\//.test(rel) ||
     /^apps\/[^/]+\/src\/(testing\.ts$|mock\/)/.test(rel) ||
     rel.startsWith('packages/storybook/') ||
     rel.startsWith('packages/sdk/src/testing/')
   )
 }
-const isWebMode = (rel: string): boolean => rel.startsWith('apps/desktop/src/renderer/src/web/')
-const isAppModule = (app: string | undefined): app is string => !!app && app !== 'desktop' && app !== 'server'
+const isWebMode = (rel: string): boolean => rel.startsWith('client/src/renderer/src/web/')
+const isAppModule = (app: string | undefined): app is string => !!app && app !== 'server'
 
 /** Which side of an app module a path is on. */
 function appPart(rel: string): 'server' | 'client' | 'shared' | null {
@@ -224,7 +224,7 @@ async function checkAppImport(rel: string, app: string, imp: Import, abs: string
     return
   }
   if (isElectron(spec)) return report(rel, imp.line, 'AgentOS has no Electron: apps reach the platform through ctx (app/server) or useAppApi() (app/client)')
-  if (spec === '@agentos/desktop' || spec === '@agentos/server' || spec.startsWith('@agentos/app-'))
+  if (spec === '@agentos/client' || spec === '@agentos/server' || spec.startsWith('@agentos/app-'))
     return report(rel, imp.line, `apps never import the host or another app ('${spec}'): call other apps' tools`)
   if (test && (matches(spec, TEST_KIT) || matches(spec, APP_CLIENT_IMPORTS) || isBuiltin(spec) || spec === '@agentos/sdk/app/server')) return
 
@@ -253,7 +253,7 @@ async function checkImport(rel: string, imp: Import, abs: string): Promise<void>
   const app = rel.match(/^apps\/([^/]+)\//)?.[1]
 
   if (spec.startsWith('.')) {
-    const pkg = rel.split('/').slice(0, 2).join('/')
+    const pkg = rel.startsWith('client/') ? 'client' : rel.split('/').slice(0, 2).join('/')
     const target = relative(ROOT, resolve(dirname(abs), spec)).split(sep).join('/')
     const escapes = target !== pkg && !target.startsWith(pkg + '/')
     if (escapes && !(test && target.startsWith('e2e/')))
@@ -263,7 +263,7 @@ async function checkImport(rel: string, imp: Import, abs: string): Promise<void>
   if (isAppModule(app)) return checkAppImport(rel, app, imp, abs, test)
 
   if (isElectron(spec)) report(rel, imp.line, 'AgentOS has no Electron (PWA client + Bun server)')
-  if (spec === '@agentos/desktop' || spec === '@agentos/server') report(rel, imp.line, `nothing imports '${spec}'`)
+  if (spec === '@agentos/client' || spec === '@agentos/server') report(rel, imp.line, `nothing imports '${spec}'`)
   if (spec.startsWith('@agentos/sdk/testing') && !test && !isWebMode(rel))
     report(rel, imp.line, 'the in-memory host is for tests, stories and web mode only')
   if (spec.startsWith('@agentos/app-')) {
@@ -275,7 +275,7 @@ async function checkImport(rel: string, imp: Import, abs: string): Promise<void>
   if (under(rel, BROWSER) && !under(rel, SDK_BUN_ONLY) && !test) {
     if (isBuiltin(spec)) report(rel, imp.line, `'${spec}' is a Node/Bun builtin in code that runs in the browser`)
     // Types don't ship: web mode may type server modules it runs in the page.
-    if (rel.startsWith('apps/desktop/') && matches(spec, SERVER_ONLY_SDK) && !imp.typeOnly)
+    if (rel.startsWith('client/') && matches(spec, SERVER_ONLY_SDK) && !imp.typeOnly)
       report(rel, imp.line, `'${spec}' is server-only`)
   }
 }

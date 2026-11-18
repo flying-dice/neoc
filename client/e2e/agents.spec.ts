@@ -11,7 +11,7 @@ import {
   settle,
   test,
   windowOf
-} from '../../../e2e/fixtures'
+} from '../../e2e/fixtures'
 
 interface HostCall {
   method: string

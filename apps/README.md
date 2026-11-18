@@ -3,7 +3,7 @@
 AgentOS is two programs and a set of apps:
 
 - **`apps/server`**: the Bun server. It runs app server modules, the tool registry, the MCP endpoint and the ACP agents, and serves the client and the app bundles.
-- **`apps/desktop`**: the client, an installable PWA (Vite + Svelte). It's the iPadOS-style shell: windows, Dock and Stage Manager.
+- **`client`**: the client, an installable PWA (Vite + Svelte). It's the iPadOS-style shell: windows, Dock and Stage Manager.
 - **`apps/<id>`**: **app modules**. Each is built into a bundle, released into this repo's `bundles/` and installed onto a server at runtime, if the server knows it.
 
 ```

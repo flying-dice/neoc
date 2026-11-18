@@ -1,5 +1,5 @@
 {
-  "name": "@agentos/desktop",
+  "name": "@agentos/client",
   "private": true,
   "type": "module",
   "version": "1.0.0",

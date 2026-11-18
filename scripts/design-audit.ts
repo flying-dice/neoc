@@ -25,7 +25,7 @@ import { Glob } from 'bun'
 import { dirname, join, relative, resolve } from 'node:path'
 
 const ROOT = resolve(import.meta.dir, '..')
-const DESKTOP = join(ROOT, 'apps/desktop/src/renderer/src')
+const DESKTOP = join(ROOT, 'client/src/renderer/src')
 
 /** Built-in apps → their page component (pages pull in their own components). */
 const BUILTIN_PAGES: Record<string, string> = {

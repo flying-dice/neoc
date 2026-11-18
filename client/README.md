@@ -1,4 +1,4 @@
-# @agentos/desktop
+# @agentos/client
 
 The AgentOS client: an installable PWA (Vite + Svelte 5) that is the iPadOS-style shell. It talks to the Bun server
 (`apps/server`) over one WebSocket with JSON-RPC 2.0 (`@agentos/sdk/host/client`), and loads installed apps' client

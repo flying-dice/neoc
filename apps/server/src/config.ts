@@ -48,7 +48,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     hostname: env.AGENTOS_HOST ?? '127.0.0.1',
     port,
     dataDir: resolve(env.AGENTOS_DATA ?? join(homedir(), '.agentos')),
-    clientDir: resolve(env.AGENTOS_CLIENT_DIR ?? join(repoRoot, 'apps/desktop/dist')),
+    clientDir: resolve(env.AGENTOS_CLIENT_DIR ?? join(repoRoot, 'client/dist')),
     knownAppsFile: resolve(env.AGENTOS_KNOWN_APPS ?? join(repoRoot, 'apps/server/known-apps.json')),
     appsBase: directoryUrl(env.AGENTOS_APPS_BASE),
     appsToken: env.AGENTOS_APPS_TOKEN || undefined,

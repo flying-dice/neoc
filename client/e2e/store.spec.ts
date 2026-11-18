@@ -4,7 +4,7 @@
  * again and opens it. The in-memory host runs the same register / unregister
  * lifecycle as the server.
  */
-import { expect, openDesktop, settle, test, windowOf } from '../../../e2e/fixtures'
+import { expect, openDesktop, settle, test, windowOf } from '../../e2e/fixtures'
 
 test.describe('App store', () => {
   test('S1: remove an app from Discover, then get it back', async ({ page }) => {

@@ -25,7 +25,7 @@ interface Storybook {
 
 async function discover(): Promise<Storybook[]> {
   const found: Storybook[] = []
-  for await (const main of new Glob('{apps,packages}/*/.storybook/main.ts').scan({ cwd: ROOT, dot: true })) {
+  for await (const main of new Glob('{apps/*,packages/*,client}/.storybook/main.ts').scan({ cwd: ROOT, dot: true })) {
     const dir = join(ROOT, main, '..', '..')
     found.push({ name: basename(dir), dir })
   }

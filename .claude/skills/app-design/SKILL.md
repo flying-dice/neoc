@@ -21,7 +21,7 @@ The styleguide is `docs/design/DESIGN_LANGUAGE.md` (iPadOS virtual desktop, flat
 Each app has 4 to 8 key journeys. They are what people come to the app to do, plus the hard cases: errors, small
 windows, keyboard-only use, agents driving the app.
 
-- Module apps: `apps/<app>/JOURNEYS.md`. Built-in apps and the shell: `apps/desktop/journeys/<id>.md`.
+- Module apps: `apps/<app>/JOURNEYS.md`. Built-in apps and the shell: `client/journeys/<id>.md`.
 - Each row is an id (letter + number), who and what they want, a start state (web-mode URL params:
   `open`, `scenario`, `theme`), and an observable **Done when**. Never write steps: participants must find the
   way themselves.
@@ -46,7 +46,7 @@ look at them** (`node e2e/tools/contact-sheet.mjs out.png a.png b.png …` puts 
 Start web mode, then run the saved workflow:
 
 ```sh
-bun run dev:web            # or: bun run --filter @agentos/desktop build:web && … preview:web  (port 6200)
+bun run dev:web            # or: bun run --filter @agentos/client build:web && … preview:web  (port 6200)
 ```
 
 ```
