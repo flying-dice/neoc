@@ -38,9 +38,7 @@ fn v6_blocked(ip: Ipv6Addr) -> bool {
     let s = ip.segments();
     // NAT64 (64:ff9b::/96) embeds an IPv4 address in the last 32 bits
     if s[0] == 0x64 && s[1] == 0xff9b && s[2..6].iter().all(|x| *x == 0) {
-        let [a, b] = s[6].to_be_bytes();
-        let [c, d] = s[7].to_be_bytes();
-        return v4_blocked(Ipv4Addr::new(a, b, c, d));
+        return v4_blocked(Ipv4Addr::from(u32::from(s[6]) << 16 | u32::from(s[7])));
     }
     ip.is_loopback()
         || ip.is_unspecified()
