@@ -1,9 +1,20 @@
 export interface AlertAction {
   label: string
   style?: 'default' | 'cancel' | 'destructive'
-  /** Bold "preferred" action. Cancel actions are bold by default. */
+  /** Bold "preferred" action: takes initial focus and runs on Enter from a field. Cancel is bold by default. */
   preferred?: boolean
-  onclick?: () => void
+  /** Stable id for the test id (default: a slug of the label). */
+  key?: string
+  disabled?: boolean
+  /** Receives the prompt field values (`{}` when the alert has none). */
+  onclick?: (values: Record<string, string>) => void
+}
+
+/** A prompt field of an `Alert`. */
+export interface AlertField {
+  key: string
+  placeholder?: string
+  secure?: boolean
 }
 
 export interface DockApp {
@@ -15,9 +26,35 @@ export interface DockApp {
   running?: boolean
 }
 
+/** One row of a choice list (`OptionList`, a Picker). */
+export interface OptionItem {
+  /** Stable id: used in the test id and the callbacks. */
+  key: string
+  label: string
+  icon?: import('./icons').IconName
+  disabled?: boolean
+}
+
+/** A menu row. `submenu` makes it a branch; `checked` draws a checkmark (a toggle or the chosen option). */
+export interface MenuEntry {
+  label: string
+  shortcut?: string
+  disabled?: boolean
+  checked?: boolean
+  icon?: import('./icons').IconName
+  /** Red: the item removes or discards something. */
+  destructive?: boolean
+  /** Stable id for the test id (default: a slug of the label). */
+  key?: string
+  onclick?: () => void
+  submenu?: MenuItem[]
+}
+
 export type MenuItem =
-  | { label: string; shortcut?: string; disabled?: boolean; checked?: boolean; onclick?: () => void }
+  | MenuEntry
   | { separator: true }
+  /** A section heading: a small caption above the items that follow it. */
+  | { heading: string }
 
 export interface MenuDefinition {
   /** Menu bar title. */

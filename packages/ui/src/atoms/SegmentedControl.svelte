@@ -3,9 +3,13 @@
   Test ids: `testid` on the group, `${testid}-${segment.value}` on each segment.
 -->
 <script lang="ts" generics="T extends string">
+  import { describe } from '../aria'
+  import { moveIndex, nextEnabled } from '../keys'
+
   interface Segment {
     value: T
     label: string
+    disabled?: boolean
   }
 
   interface Props {
@@ -14,25 +18,67 @@
     value?: T
     block?: boolean
     label?: string
+    /** Accessible description (read after the name). */
+    'aria-description'?: string
+    disabled?: boolean
     onchange?: (value: T) => void
   }
 
-  let { testid, segments, value = $bindable(), block = false, label, onchange }: Props = $props()
+  let {
+    testid,
+    segments,
+    value = $bindable(),
+    block = false,
+    label,
+    'aria-description': description,
+    disabled = false,
+    onchange
+  }: Props = $props()
 
   const index = $derived(Math.max(0, segments.findIndex((s) => s.value === value)))
+  const selectedIndex = $derived(segments.findIndex((s) => s.value === value))
+  /** The one tab stop: the selected segment, or the first when nothing is selected. */
+  const stop = $derived(selectedIndex >= 0 ? selectedIndex : 0)
+  let group: HTMLElement | undefined = $state()
 
   function select(v: T): void {
+    if (disabled || v === value) return
     value = v
     onchange?.(v)
   }
+
+  /** Arrow keys move the selection (a radio group: focus and selection travel together). */
+  function onkeydown(e: KeyboardEvent): void {
+    if (disabled) return
+    const from = (e.target as HTMLElement).closest<HTMLElement>('[role="radio"]')
+    const current = from ? Number(from.dataset.index) : stop
+    const target = moveIndex(segments.length, current, e.key, 'both')
+    if (target === null) return
+    e.preventDefault()
+    const dir = e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 : -1
+    const disabledFlags = segments.map((s) => s.disabled === true)
+    const next =
+      e.key === 'Home' || e.key === 'End'
+        ? target
+        : nextEnabled(disabledFlags, current, dir)
+    const segment = segments[next]
+    if (!segment || segment.disabled) return
+    select(segment.value)
+    group?.querySelector<HTMLElement>(`[data-index="${next}"]`)?.focus()
+  }
 </script>
 
+<!-- svelte-ignore a11y_interactive_supports_focus (the radios inside are the tab stops) -->
 <div
   class="ios-segmented"
   class:block
   role="radiogroup"
   data-testid={testid}
   aria-label={label}
+  {...describe(description)}
+  aria-disabled={disabled || undefined}
+  bind:this={group}
+  {onkeydown}
   style:--count={segments.length}
   style:--index={index}
 >
@@ -43,6 +89,9 @@
       role="radio"
       data-testid="{testid}-{segment.value}"
       aria-checked={segment.value === value}
+      tabindex={i === stop ? 0 : -1}
+      data-index={i}
+      disabled={disabled || segment.disabled}
       class="segment"
       class:selected={segment.value === value}
       class:hide-divider={i === index || i === index + 1 || i === 0}
@@ -101,7 +150,15 @@
   .segment.selected {
     font-weight: 600;
   }
-  .segment:active:not(.selected) {
+  .segment:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+  .segment:focus-visible {
+    outline-offset: -2px;
+    border-radius: 7px;
+  }
+  .segment:active:not(.selected):not(:disabled) {
     opacity: 0.5;
   }
   /* Hairline dividers between unselected segments */
