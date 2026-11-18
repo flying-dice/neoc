@@ -7,6 +7,9 @@ import {
   popRoute,
   popToRoot,
   pushRoute,
+  reconcile,
+  removeEntry,
+  type StackEntry,
   sameRoute,
   type NavHandle
 } from './nav'
@@ -114,5 +117,56 @@ describe('NavRegistry', () => {
     off()
     expect(reg.size).toBe(0)
     expect(reg.resolve('main/a/x')).toBeUndefined()
+  })
+})
+
+describe('reconcile: screens follow the path', () => {
+  let n = 0
+  const id = (): string => `s${++n}`
+  const live = (entries: StackEntry[]): string[] =>
+    entries.filter((e) => !e.leaving).map((e) => e.route?.name ?? 'root')
+
+  test('the first path builds a root and one screen per route', () => {
+    const e = reconcile([], [{ name: 'a' }, { name: 'b' }], id)
+    expect(live(e)).toEqual(['root', 'a', 'b'])
+    expect(e[0].route).toBeNull()
+  })
+
+  test('a push keeps every existing screen and its id', () => {
+    const first = reconcile([], [{ name: 'a' }], id)
+    const next = reconcile(first, [{ name: 'a' }, { name: 'b' }], id)
+    expect(next.slice(0, 2)).toEqual(first)
+    expect(live(next)).toEqual(['root', 'a', 'b'])
+  })
+
+  test('a pop marks the top screen leaving; it is removed when its slide ends', () => {
+    const first = reconcile([], [{ name: 'a' }, { name: 'b' }], id)
+    const popped = reconcile(first, [{ name: 'a' }], id)
+    expect(popped.find((e) => e.route?.name === 'b')?.leaving).toBe(true)
+    expect(live(popped)).toEqual(['root', 'a'])
+    const done = removeEntry(popped, first[2].id)
+    expect(done.map((e) => e.id)).toEqual([first[0].id, first[1].id])
+  })
+
+  test('popToRoot drops everything above the root; pushing a different route replaces the top', () => {
+    const first = reconcile([], [{ name: 'a', id: 1 }, { name: 'b' }], id)
+    expect(live(reconcile(first, [], id))).toEqual(['root'])
+    const swapped = reconcile(first, [{ name: 'a', id: 1 }, { name: 'c' }], id)
+    expect(live(swapped)).toEqual(['root', 'a', 'c'])
+    expect(swapped.filter((e) => e.leaving).map((e) => e.route?.name)).toEqual(['b'])
+  })
+
+  test('a route with other params is another screen', () => {
+    const first = reconcile([], [{ name: 'note', id: 1 }], id)
+    const next = reconcile(first, [{ name: 'note', id: 2 }], id)
+    expect(next.find((e) => !e.leaving && e.route)?.id).not.toBe(first[1].id)
+  })
+
+  test('a screen that is still leaving stays through the next change', () => {
+    const a = reconcile([], [{ name: 'a' }, { name: 'b' }], id)
+    const b = reconcile(a, [{ name: 'a' }], id)
+    const c = reconcile(b, [{ name: 'a' }, { name: 'x' }], id)
+    expect(c.filter((e) => e.leaving)).toHaveLength(1)
+    expect(live(c)).toEqual(['root', 'a', 'x'])
   })
 })

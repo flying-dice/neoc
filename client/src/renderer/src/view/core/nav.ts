@@ -72,3 +72,39 @@ export class NavRegistry {
     return this.handles.length
   }
 }
+
+/** One screen of a mounted stack. The root has no route. A popped screen stays (`leaving`) until its slide ends. */
+export interface StackEntry {
+  id: string
+  route: Route | null
+  leaving?: boolean
+}
+
+/**
+ * Bring the screens in step with the path: keep the common prefix, mark the screens above it as leaving (they
+ * slide out, then `removeEntry`), and add the new ones on top. Screens already leaving stay where they are.
+ * Entries keep their id for as long as they stay, so a screen keeps its scroll and state while others come and go.
+ */
+export function reconcile(
+  entries: readonly StackEntry[],
+  routes: readonly Route[],
+  nextId: () => string
+): StackEntry[] {
+  const live = entries.filter((e) => !e.leaving)
+  const root = live[0] ?? { id: nextId(), route: null }
+  let common = 0
+  while (
+    common < routes.length &&
+    common + 1 < live.length &&
+    live[common + 1].route &&
+    sameRoute(live[common + 1].route!, routes[common])
+  )
+    common++
+  const kept = [root, ...live.slice(1, common + 1)]
+  const dropped = live.slice(common + 1).map((e) => ({ ...e, leaving: true }))
+  const added = routes.slice(common).map((route) => ({ id: nextId(), route }))
+  return [...kept, ...entries.filter((e) => e.leaving), ...dropped, ...added]
+}
+
+export const removeEntry = (entries: readonly StackEntry[], id: string): StackEntry[] =>
+  entries.filter((e) => e.id !== id)
