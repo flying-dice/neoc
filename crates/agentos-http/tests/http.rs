@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
 use agentos_domain::protocol::{RpcError, RpcMessage};
-use agentos_http::{origin_guard, rpc_router, static_router, AllowedOrigins, RpcHandler, RpcPeer};
+use agentos_http::{origin_guard, rpc_router, static_router, HostGuard, RpcHandler, RpcPeer};
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
@@ -37,7 +37,7 @@ impl RpcHandler for H {
 async fn start(dir: &std::path::Path) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let allowed = Arc::new(AllowedOrigins::loopback(addr.port(), None));
+    let allowed = Arc::new(HostGuard::with_interfaces(addr.port(), Arc::new(Vec::new), None));
     let app = rpc_router(Arc::new(H))
         .merge(static_router(dir))
         .layer(axum::middleware::from_fn_with_state(allowed, origin_guard));

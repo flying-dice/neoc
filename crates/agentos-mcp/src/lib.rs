@@ -179,7 +179,12 @@ async fn authenticate(State(dir): State<Arc<dyn AgentDirectory>>, mut req: Reque
     }
 }
 
-/// The `/mcp` router. Mount it in the http adapter: `Router::new().nest("/mcp", mcp_router(..))` or merge.
+/// The `/mcp` router; merge it into the host's router.
+///
+/// Authentication is the per-agent bearer token only: a paired browser session (cookie) is **not** an MCP
+/// credential, and an MCP token is not a session. rmcp's own `Host` allow-list is switched off because the
+/// host mounts this router behind its Origin/Host guard (`agentos_http::HostGuard`), which also knows the
+/// LAN addresses, hostname and `*.local` names that an rmcp allow-list of fixed strings cannot.
 pub fn mcp_router(
     state: Arc<McpState>,
     app: Arc<AppService>,
@@ -187,6 +192,7 @@ pub fn mcp_router(
     cancel: CancellationToken,
 ) -> Router {
     let config = StreamableHttpServerConfig::default()
+        .disable_allowed_hosts()
         .with_legacy_session_mode(true) // sessions => server-initiated list_changed on a GET stream
         .with_sse_keep_alive(Some(std::time::Duration::from_secs(15)))
         .with_cancellation_token(cancel);

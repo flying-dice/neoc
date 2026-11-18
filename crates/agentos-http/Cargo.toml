@@ -11,12 +11,16 @@ agentos-domain = { workspace = true }
 async-trait = { workspace = true }
 axum = { workspace = true }
 futures-util = { workspace = true }
+gethostname = { workspace = true }
+if-addrs = { workspace = true }
 parking_lot = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 tower-http = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 tokio-tungstenite = { workspace = true }

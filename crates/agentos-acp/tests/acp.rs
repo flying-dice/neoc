@@ -27,6 +27,15 @@ async fn connector_port_starts_a_session() {
     assert!(c.start_run(&AgentId("nope".into()), "hi").await.is_err());
 }
 
+#[tokio::test]
+async fn stop_all_refuses_new_runs_and_is_idempotent() {
+    let c = AcpConnector::new(HashMap::from([(AgentId("fake".into()), fake())]));
+    c.stop_all().await;
+    c.stop_all().await;
+    let err = c.start_run(&AgentId("fake".into()), "hi").await.unwrap_err();
+    assert!(err.to_string().contains("shutting down"), "{err}");
+}
+
 /// Real adapter: `node <repo>/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js`, initialize only.
 /// Skipped when node or the package is not present.
 #[tokio::test]

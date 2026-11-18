@@ -1,17 +1,22 @@
--- AgentOS app API: shipped to app authors; consumed by luau-analyze / luau-lsp (--definitions).
--- In the real host this file is GENERATED from the same Rust source of truth as the protocol types.
+-- AgentOS app API: type definitions for app authors, consumed by `luau-lsp analyze --definitions`
+-- (`bun run lint:luau`) and by editors via luau-lsp's `definitionFiles` setting.
+--
+-- Plain table types and `declare app:`, not `declare class`: the `class` keyword changed meaning in newer
+-- Luau releases (`declare extern type`), while aliases parse the same in every luau-lsp version.
+-- Wave A2 generates this file from the Rust schema; until then it is maintained by hand, and
+-- `bun run lint:luau` includes a negative check so a broken file cannot pass silently.
 
-export type JsonValue = nil | boolean | number | string | { JsonValue } | { [string]: JsonValue }
+type JsonValue = nil | boolean | number | string | { JsonValue } | { [string]: JsonValue }
 
-declare class ExecResult
-	changes: number
-	last_insert_rowid: number
-end
+type ExecResult = {
+	changes: number,
+	last_insert_rowid: number,
+}
 
-declare class AppData
-	query: (sql: string, params: { JsonValue }?) -> { { [string]: JsonValue } }
-	exec: (sql: string, params: { JsonValue }?) -> ExecResult
-end
+type AppData = {
+	query: (sql: string, params: { JsonValue }?) -> { { [string]: JsonValue } },
+	exec: (sql: string, params: { JsonValue }?) -> ExecResult,
+}
 
 type ToolDef = {
 	name: string,
@@ -20,23 +25,23 @@ type ToolDef = {
 	handler: (args: any) -> any,
 }
 
-declare class AppTools
-	register: (def: ToolDef) -> ()
-end
+type AppTools = {
+	register: (def: ToolDef) -> (),
+}
 
-declare class AppState
-	get: (key: string) -> JsonValue
-	set: (key: string, value: JsonValue) -> ()
-end
+type AppState = {
+	get: (key: string) -> JsonValue,
+	set: (key: string, value: JsonValue) -> (),
+}
 
-declare class AppApi
-	id: string
-	data: AppData
-	tools: AppTools
-	state: AppState
-	on: (event: string, handler: (payload: any) -> any) -> ()
-	notify: (n: { title: string, body: string? }) -> ()
-	log: (msg: string) -> ()
-end
+type AppApi = {
+	id: string,
+	data: AppData,
+	tools: AppTools,
+	state: AppState,
+	on: (event: string, handler: (payload: any) -> any) -> (),
+	notify: (n: { title: string, body: string? }) -> (),
+	log: (msg: string) -> (),
+}
 
 declare app: AppApi

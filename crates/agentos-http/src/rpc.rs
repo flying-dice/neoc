@@ -2,12 +2,15 @@
 //! notifications. Why not jsonrpsee: its server API is request/response + subscriptions; it has no
 //! way for the server to issue a *request* to a connected client and await the answer.
 
-use agentos_domain::protocol::{RpcError, RpcId, RpcMessage};
+use agentos_domain::{
+    protocol::{RpcError, RpcId, RpcMessage},
+    Device,
+};
 use async_trait::async_trait;
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        State,
+        Extension, State,
     },
     response::Response,
     routing::get,
@@ -25,6 +28,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::{mpsc, oneshot};
+use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RpcCallError {
@@ -44,9 +48,26 @@ pub struct RpcPeer {
     tx: mpsc::UnboundedSender<RpcMessage>,
     pending: Arc<Mutex<Pending>>,
     next_id: Arc<AtomicI64>,
+    device: Option<Device>,
+    closed: CancellationToken,
 }
 
 impl RpcPeer {
+    /// The paired device on the other end (`None` only when the router is mounted without a session guard).
+    pub fn device(&self) -> Option<&Device> {
+        self.device.as_ref()
+    }
+
+    /// Do both handles belong to the same socket?
+    pub fn is_same_connection(&self, other: &RpcPeer) -> bool {
+        Arc::ptr_eq(&self.next_id, &other.next_id)
+    }
+
+    /// Hang up on this client (its device was revoked). In-flight requests end with `Closed`.
+    pub fn close(&self) {
+        self.closed.cancel();
+    }
+
     pub fn notify(&self, method: &str, params: Value) -> Result<(), RpcCallError> {
         self.tx.send(RpcMessage::notification(method, params)).map_err(|_| RpcCallError::Closed)
     }
@@ -89,15 +110,25 @@ pub fn rpc_router(handler: Arc<dyn RpcHandler>) -> Router {
     Router::new().route("/rpc", get(upgrade)).with_state(handler)
 }
 
-async fn upgrade(ws: WebSocketUpgrade, State(h): State<Arc<dyn RpcHandler>>) -> Response {
-    ws.max_message_size(1 << 20).on_upgrade(move |socket| serve_socket(socket, h))
+async fn upgrade(
+    ws: WebSocketUpgrade,
+    State(h): State<Arc<dyn RpcHandler>>,
+    device: Option<Extension<Device>>,
+) -> Response {
+    let device = device.map(|Extension(d)| d);
+    ws.max_message_size(1 << 20).on_upgrade(move |socket| serve_socket(socket, h, device))
 }
 
-async fn serve_socket(socket: WebSocket, handler: Arc<dyn RpcHandler>) {
+async fn serve_socket(socket: WebSocket, handler: Arc<dyn RpcHandler>, device: Option<Device>) {
     let (mut sink, mut stream) = socket.split();
     let (tx, mut rx) = mpsc::unbounded_channel::<RpcMessage>();
-    let peer = RpcPeer { tx: tx.clone(), pending: Arc::default(), next_id: Arc::new(AtomicI64::new(1)) };
-
+    let peer = RpcPeer {
+        tx: tx.clone(),
+        pending: Arc::default(),
+        next_id: Arc::new(AtomicI64::new(1)),
+        device,
+        closed: CancellationToken::new(),
+    };
     // single writer task: everything outbound goes through the channel
     let writer = tokio::spawn(async move {
         while let Some(m) = rx.recv().await {
@@ -110,7 +141,14 @@ async fn serve_socket(socket: WebSocket, handler: Arc<dyn RpcHandler>) {
 
     handler.connected(peer.clone()).await;
 
-    while let Some(Ok(frame)) = stream.next().await {
+    loop {
+        let frame = tokio::select! {
+            () = peer.closed.cancelled() => break,
+            next = stream.next() => match next {
+                Some(Ok(frame)) => frame,
+                _ => break,
+            },
+        };
         let Message::Text(text) = frame else {
             if matches!(frame, Message::Close(_)) {
                 break;

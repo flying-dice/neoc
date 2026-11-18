@@ -9,6 +9,7 @@
 //! It must never depend on an adapter crate, nor on tokio, axum, mlua, rusqlite, ... (a test runtime
 //! is a dev-dependency only).
 
+pub mod devices;
 pub mod error;
 pub mod ports;
 pub mod services;
@@ -17,5 +18,6 @@ pub mod services;
 // in-memory fakes: a poisoned lock should just panic
 pub mod testing;
 
+pub use devices::{DeviceService, PairError, PairedDevice, PairingCode, PairingPolicy};
 pub use error::{AppError, PortError};
 pub use services::AppService;

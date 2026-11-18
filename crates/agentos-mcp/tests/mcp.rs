@@ -38,7 +38,7 @@ async fn harness() -> Harness {
         fakes.runtime.clone(),
         state.clone(),
         fakes.events.clone(),
-        Arc::new(FakeAgents),
+        Arc::new(FakeAgents::default()),
     ));
     let notes = AppId::parse("notes").unwrap();
     let dir: Arc<dyn AgentDirectory> = Arc::new(StaticDirectory(vec![

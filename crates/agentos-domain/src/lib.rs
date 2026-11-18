@@ -7,6 +7,7 @@
 
 pub mod agent;
 pub mod app;
+pub mod device;
 pub mod error;
 pub mod notification;
 pub mod protocol;
@@ -15,6 +16,7 @@ pub mod ui;
 
 pub use agent::{AgentId, AgentIdentity, Permission};
 pub use app::{AppId, AppRef, FileRef, Manifest, MigrationSpec};
+pub use device::{Device, DeviceId};
 pub use error::DomainError;
 pub use notification::Notification;
 pub use tool::{QualifiedToolName, ToolSpec};

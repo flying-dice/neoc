@@ -1,38 +1,105 @@
-//! The composition root of the hexagon. Reads like a wiring diagram: build every adapter, hand each to the port it
-//! implements, mount the driving adapters on one axum router. No business logic lives here.
+//! The composition root of the hexagon: the only crate that knows every adapter.
+//!
+//! [`build`] reads like a wiring diagram: build every adapter, hand each to the port it implements, mount
+//! the driving adapters on one axum router. No business logic lives here. The binary (`main.rs`) adds
+//! configuration, logging, the pairing banner and graceful shutdown around it.
+//!
+//! # Who may call what
+//!
+//! | route                        | credential                                                            |
+//! |------------------------------|-----------------------------------------------------------------------|
+//! | static client files          | none (the shell shows its pairing screen when the session is missing) |
+//! | `POST /pair`, `GET /session` | none: a pairing code is the credential for `/pair`                    |
+//! | `/rpc`, `/agui`              | a paired device's session cookie, **including from loopback**         |
+//! | `/mcp`                       | a per-agent bearer token; a session cookie is not accepted here       |
+//!
+//! Protected is the default: `/rpc`, `/agui` and any client route added later sit in one router behind
+//! the session guard, and only the routes listed above are mounted outside it. Every route is behind
+//! the Origin/Host guard.
+
+pub mod config;
+pub mod net;
+pub mod platform;
+pub mod serve;
+pub mod startup;
 
 use agentos_acp::{AcpConnector, AgentLaunch};
 use agentos_agui::{agui_router, AgUiEvent, Role, RunAgentInput, RunHandler};
 use agentos_application::{
-    ports::{AgentDirectory, AppRuntime, DataStore, EventSink, Fetcher, ToolRegistry},
-    AppService,
+    ports::{
+        AgentDirectory, AppRuntime, Clock, DataStore, DeviceRegistry, EventSink, Fetcher, RandomSource,
+        ToolRegistry,
+    },
+    AppService, DeviceService, PairingPolicy,
 };
 use agentos_domain::{AgentId, AgentIdentity};
 use agentos_fetch::UrlFetcher;
-use agentos_http::{origin_guard, rpc_router, static_router, AllowedOrigins, RpcHub};
+use agentos_http::{
+    origin_guard, require_session, rpc_router, session_router, static_router, HostGuard, RpcHub,
+    SessionConfig,
+};
 use agentos_luau::{Limits, LuauRuntime};
 use agentos_mcp::{mcp_router, McpState};
-use agentos_sqlite::SqliteDataStore;
-use axum::Router;
+use agentos_sqlite::{SqliteDataStore, SqliteDeviceRegistry};
+use axum::{middleware::from_fn_with_state, Router};
 use futures_util::{stream, stream::BoxStream, StreamExt};
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, net::IpAddr, path::PathBuf, sync::Arc};
 use tokio_util::sync::CancellationToken;
 
 pub struct HostConfig {
-    /// `None` = in-memory databases (tests, `dev:web`).
+    /// `None` = in-memory databases (tests).
     pub data_dir: Option<PathBuf>,
     /// Built Vite client; `None` = API only (dev: Vite serves the client).
     pub client_dir: Option<PathBuf>,
+    /// The port the host listens on (the Origin/Host guard requires it in every `Host` header).
     pub port: u16,
     pub dev_client_port: Option<u16>,
-    /// (bearer token, identity)
+    /// Extra `Host` names accepted on any port (a reverse proxy, a DNS name).
+    pub allowed_hosts: Vec<String>,
+    /// Mark the session cookie `Secure` (TLS is served here or by a proxy in front).
+    pub secure_cookies: bool,
+    /// The machine's own addresses and hostname for the Origin/Host guard; `None` = ask the OS.
+    pub interfaces: Option<Interfaces>,
+    /// (bearer token, identity) for `/mcp`.
     pub agents: Vec<(String, AgentIdentity)>,
     pub acp: HashMap<AgentId, AgentLaunch>,
+    pub pairing: PairingPolicy,
+    pub clock: Arc<dyn Clock>,
+    pub random: Arc<dyn RandomSource>,
+}
+
+/// A fixed view of this machine's network identity (tests).
+#[derive(Clone, Debug)]
+pub struct Interfaces {
+    pub ips: Vec<IpAddr>,
+    pub hostname: Option<String>,
+}
+
+impl HostConfig {
+    /// A config with in-memory state, the OS clock and randomness, and nothing mounted but the API.
+    #[must_use]
+    pub fn new(port: u16) -> Self {
+        Self {
+            data_dir: None,
+            client_dir: None,
+            port,
+            dev_client_port: None,
+            allowed_hosts: vec![],
+            secure_cookies: false,
+            interfaces: None,
+            agents: vec![],
+            acp: HashMap::new(),
+            pairing: PairingPolicy::default(),
+            clock: Arc::new(platform::SystemClock),
+            random: Arc::new(platform::OsRandom),
+        }
+    }
 }
 
 pub struct Host {
     pub router: Router,
     pub service: Arc<AppService>,
+    pub devices: Arc<DeviceService>,
     pub shutdown: CancellationToken,
 }
 
@@ -53,7 +120,7 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-/// Placeholder AG-UI run: the real one maps ACP `session/update` to AG-UI events.
+/// Placeholder AG-UI run: the real one maps ACP `session/update` to AG-UI events (wave B3).
 struct PlaceholderRun;
 impl RunHandler for PlaceholderRun {
     fn run(&self, i: RunAgentInput) -> BoxStream<'static, AgUiEvent> {
@@ -75,6 +142,19 @@ impl RunHandler for PlaceholderRun {
     }
 }
 
+/// The device service alone, over the system database in `data_dir` (or in memory). The `pair` command
+/// uses this to issue a code for a running host without starting a second one.
+pub fn open_devices(
+    data_dir: Option<&std::path::Path>,
+    clock: Arc<dyn Clock>,
+    random: Arc<dyn RandomSource>,
+    policy: PairingPolicy,
+) -> anyhow::Result<Arc<DeviceService>> {
+    let registry: Arc<dyn DeviceRegistry> =
+        Arc::new(SqliteDeviceRegistry::open(data_dir.map(|d| d.join("system.db")).as_deref())?);
+    Ok(Arc::new(DeviceService::new(registry, clock, random, policy)))
+}
+
 pub fn build(cfg: HostConfig) -> anyhow::Result<Host> {
     let shutdown = CancellationToken::new();
 
@@ -82,29 +162,43 @@ pub fn build(cfg: HostConfig) -> anyhow::Result<Host> {
     let hub = Arc::new(RpcHub::default()); // EventSink + Notifier + the /rpc handler
     let mcp_state = Arc::new(McpState::default()); // ToolRegistry
     let fetcher: Arc<dyn Fetcher> = Arc::new(UrlFetcher::new(8 * 1024 * 1024)?);
-    let data: Arc<dyn DataStore> = Arc::new(SqliteDataStore::new(cfg.data_dir.map(|d| d.join("apps"))));
+    let data: Arc<dyn DataStore> =
+        Arc::new(SqliteDataStore::new(cfg.data_dir.as_ref().map(|d| d.join("apps"))));
     let runtime: Arc<dyn AppRuntime> = Arc::new(LuauRuntime::new(hub.clone(), Limits::default()));
     let tools: Arc<dyn ToolRegistry> = mcp_state.clone();
     let events: Arc<dyn EventSink> = hub.clone();
     let agents = Arc::new(AcpConnector::new(cfg.acp));
+    let devices = open_devices(cfg.data_dir.as_deref(), cfg.clock, cfg.random, cfg.pairing)?;
 
     // application
     let service = Arc::new(AppService::new(fetcher, data, runtime, tools, events, agents));
-    hub.bind(service.clone());
+    hub.bind(service.clone(), devices.clone());
 
-    // driving adapters
-    let allowed = Arc::new(AllowedOrigins::loopback(cfg.port, cfg.dev_client_port));
-    let directory: Arc<dyn AgentDirectory> = Arc::new(TokenDirectory(cfg.agents));
-    let mut router = rpc_router(hub).merge(agui_router(Arc::new(PlaceholderRun))).merge(mcp_router(
-        mcp_state,
-        service.clone(),
-        directory,
-        shutdown.child_token(),
-    ));
-    if let Some(dir) = cfg.client_dir {
-        router = router.merge(static_router(&dir));
+    // the Origin/Host guard knows the machine's own network identity
+    let mut guard = match cfg.interfaces {
+        Some(i) => HostGuard::with_interfaces(cfg.port, Arc::new(move || i.ips.clone()), i.hostname.clone()),
+        None => HostGuard::new(cfg.port),
     }
-    let router = router.layer(axum::middleware::from_fn_with_state(allowed, origin_guard));
+    .allow_hosts(cfg.allowed_hosts);
+    if let Some(port) = cfg.dev_client_port {
+        guard = guard.allow_port(port);
+    }
 
-    Ok(Host { router, service, shutdown })
+    // driving adapters. Everything a client may call is in `protected`; the few public routes are
+    // listed below it, and /mcp has its own per-agent bearer authentication.
+    let protected = rpc_router(hub)
+        .merge(agui_router(Arc::new(PlaceholderRun)))
+        .layer(from_fn_with_state(devices.clone(), require_session));
+    let public =
+        session_router(SessionConfig { devices: devices.clone(), secure_cookies: cfg.secure_cookies });
+    let directory: Arc<dyn AgentDirectory> = Arc::new(TokenDirectory(cfg.agents));
+    let mcp = mcp_router(mcp_state, service.clone(), directory, shutdown.child_token());
+
+    let mut router = Router::new().merge(protected).merge(public).merge(mcp);
+    if let Some(dir) = cfg.client_dir {
+        router = router.merge(static_router(&dir)); // the client's files are public: the shell pairs itself
+    }
+    let router = router.layer(from_fn_with_state(Arc::new(guard), origin_guard));
+
+    Ok(Host { router, service, devices, shutdown })
 }

@@ -4,7 +4,9 @@
 //! pool, app-declared migrations recorded in `_migrations`, and commit-time change notifications
 //! (`update_hook` buffered until `commit_hook`; discarded on rollback).
 
+mod devices;
 mod ports;
+pub use devices::SqliteDeviceRegistry;
 pub use ports::SqliteDataStore;
 
 use parking_lot::Mutex;

@@ -36,6 +36,12 @@ axum        = { version = "0.8.9", features = ["ws", "macros"] }
 rmcp        = { version = "3.11.0", features = ["server", "macros", "transport-streamable-http-server", "client", "transport-streamable-http-client-reqwest"] }
 tokio-util  = "0.7"
 tracing     = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "ansi"] }
+axum-server = { version = "0.9", features = ["tls-rustls"] }
+getrandom   = "0.4"
+if-addrs    = "0.15"
+gethostname = "1"
+toml        = { version = "1", default-features = false, features = ["parse", "serde"] }
 ts-rs       = { version = "12.0.1", features = ["serde-json-impl"] }
 schemars    = "1.2.3"
 tower-http  = { version = "0.6.11", features = ["fs", "set-header", "trace"] }

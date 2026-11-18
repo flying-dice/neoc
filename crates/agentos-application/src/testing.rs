@@ -2,21 +2,25 @@
 
 use crate::{
     ports::{
-        AgentConnector, AgentDirectory, AppData, AppRuntime, Clock, DataStore, EventSink, ExecOutcome,
-        Fetcher, LoadedApp, PortResult, RunId, ServerEvent, SqlMigration, ToolRegistry,
+        AgentConnector, AgentDirectory, AppData, AppRuntime, Clock, DataStore, DeviceRegistry, EventSink,
+        ExecOutcome, Fetcher, LoadedApp, PortResult, RandomSource, RunId, ServerEvent, SqlMigration,
+        ToolRegistry,
     },
     services::AppService,
 };
 use agentos_domain::{
     ui::{UiEvent, UiNode},
-    AgentId, AppId, AppRef, FileRef, Manifest, MigrationSpec, ToolSpec,
+    AgentId, AppId, AppRef, Device, DeviceId, FileRef, Manifest, MigrationSpec, ToolSpec,
 };
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
 };
 
 #[derive(Default)]
@@ -148,11 +152,22 @@ impl EventSink for RecordingSink {
 }
 
 #[derive(Default)]
-pub struct FakeAgents;
+pub struct FakeAgents {
+    stopped: AtomicU64,
+}
+impl FakeAgents {
+    /// How many times `stop_all` was called.
+    pub fn stop_calls(&self) -> u64 {
+        self.stopped.load(Ordering::SeqCst)
+    }
+}
 #[async_trait]
 impl AgentConnector for FakeAgents {
     async fn start_run(&self, a: &AgentId, _: &str) -> PortResult<RunId> {
         Ok(RunId(format!("run-{}", a.0)))
+    }
+    async fn stop_all(&self) {
+        self.stopped.fetch_add(1, Ordering::SeqCst);
     }
 }
 
@@ -163,6 +178,93 @@ impl Clock for FixedClock {
     }
 }
 
+/// A clock tests move by hand.
+pub struct ManualClock(AtomicU64);
+impl ManualClock {
+    pub fn new(start_ms: u64) -> Self {
+        Self(AtomicU64::new(start_ms))
+    }
+    pub fn advance(&self, ms: u64) {
+        self.0.fetch_add(ms, Ordering::SeqCst);
+    }
+}
+impl Clock for ManualClock {
+    fn now_unix_ms(&self) -> u64 {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+/// Deterministic "randomness": a counter run through SHA-256, so values differ but tests are repeatable.
+#[derive(Default)]
+pub struct SeededRandom(AtomicU64);
+impl RandomSource for SeededRandom {
+    fn fill(&self, buf: &mut [u8]) {
+        for chunk in buf.chunks_mut(32) {
+            let n = self.0.fetch_add(1, Ordering::SeqCst);
+            let block = Sha256::digest(n.to_le_bytes());
+            chunk.copy_from_slice(&block[..chunk.len()]);
+        }
+    }
+}
+
+#[derive(Default)]
+struct DeviceTables {
+    /// code hash -> expiry
+    codes: HashMap<String, u64>,
+    /// token hash -> device
+    sessions: HashMap<String, Device>,
+}
+
+/// In-memory `DeviceRegistry`.
+#[derive(Default)]
+pub struct MemDevices(Mutex<DeviceTables>);
+impl MemDevices {
+    /// Everything stored, as one string (to assert that no secret is in it).
+    pub fn dump(&self) -> String {
+        let t = self.0.lock().unwrap();
+        format!("{:?} {:?}", t.codes, t.sessions)
+    }
+}
+#[async_trait]
+impl DeviceRegistry for MemDevices {
+    async fn add_pairing_code(&self, code_hash: &str, expires_at_ms: u64) -> PortResult<()> {
+        self.0.lock().unwrap().codes.insert(code_hash.to_owned(), expires_at_ms);
+        Ok(())
+    }
+    async fn take_pairing_code(&self, code_hash: &str, now_ms: u64) -> PortResult<bool> {
+        let expiry = self.0.lock().unwrap().codes.remove(code_hash);
+        Ok(expiry.is_some_and(|e| e > now_ms))
+    }
+    async fn clear_pairing_codes(&self) -> PortResult<()> {
+        self.0.lock().unwrap().codes.clear();
+        Ok(())
+    }
+    async fn add_session(&self, device: &Device, token_hash: &str) -> PortResult<()> {
+        self.0.lock().unwrap().sessions.insert(token_hash.to_owned(), device.clone());
+        Ok(())
+    }
+    async fn find_session(&self, token_hash: &str) -> PortResult<Option<Device>> {
+        Ok(self.0.lock().unwrap().sessions.get(token_hash).cloned())
+    }
+    async fn touch_session(&self, id: &DeviceId, now_ms: u64) -> PortResult<()> {
+        if let Some(d) = self.0.lock().unwrap().sessions.values_mut().find(|d| d.id == *id) {
+            d.last_seen_at = now_ms;
+        }
+        Ok(())
+    }
+    async fn list_devices(&self) -> PortResult<Vec<Device>> {
+        let mut all: Vec<Device> = self.0.lock().unwrap().sessions.values().cloned().collect();
+        all.sort_by_key(|d| d.created_at);
+        Ok(all)
+    }
+    async fn revoke_device(&self, id: &DeviceId) -> PortResult<bool> {
+        let mut t = self.0.lock().unwrap();
+        let before = t.sessions.len();
+        t.sessions.retain(|_, d| d.id != *id);
+        Ok(t.sessions.len() < before)
+    }
+}
+
 /// Bundle of all fakes + helpers to build the service under test.
 pub struct Fakes {
     pub fetcher: Arc<MemFetcher>,
@@ -170,6 +272,7 @@ pub struct Fakes {
     pub runtime: Arc<FakeRuntime>,
     pub registry: Arc<MemRegistry>,
     pub events: Arc<RecordingSink>,
+    pub agents: Arc<FakeAgents>,
 }
 impl Default for Fakes {
     fn default() -> Self {
@@ -184,6 +287,7 @@ impl Fakes {
             runtime: Arc::default(),
             registry: Arc::default(),
             events: Arc::default(),
+            agents: Arc::default(),
         }
     }
     pub fn service(&self) -> AppService {
@@ -193,7 +297,7 @@ impl Fakes {
             self.runtime.clone(),
             self.registry.clone(),
             self.events.clone(),
-            Arc::new(FakeAgents),
+            self.agents.clone(),
         )
     }
     /// Publish an app ref at `mem://<id>/app-ref.json`; `main` content = comma-joined tool names.

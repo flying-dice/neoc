@@ -101,6 +101,29 @@ impl AppService {
         Ok(self.runtime.call_tool(name.app(), name.tool(), args).await?)
     }
 
+    /// Host shutdown: retract every app's tools, unload its VM (data is kept) and stop the agent
+    /// processes. Nothing is purged and clients are not told the apps were uninstalled: they are
+    /// coming back with the host.
+    pub async fn shutdown(&self) {
+        let apps: Vec<AppId> = self.installed.lock().drain().collect();
+        for app in apps {
+            if let Err(e) = self.tools.retract(&app).await {
+                tracing::warn!(%app, error = %e, "retracting tools failed during shutdown");
+            }
+            if let Err(e) = self.runtime.unload(&app).await {
+                tracing::warn!(%app, error = %e, "unloading app failed during shutdown");
+            }
+        }
+        self.agents.stop_all().await;
+    }
+
+    /// Ids of the installed apps, sorted.
+    pub fn installed_apps(&self) -> Vec<AppId> {
+        let mut apps: Vec<AppId> = self.installed.lock().iter().cloned().collect();
+        apps.sort();
+        apps
+    }
+
     pub async fn start_agent_run(&self, agent: &AgentId, prompt: &str) -> Result<RunId, AppError> {
         Ok(self.agents.start_run(agent, prompt).await?)
     }
@@ -167,6 +190,23 @@ mod tests {
         assert_eq!(f.runtime.loaded(), Vec::<String>::new());
         assert!(f.store.purged("notes"));
         assert!(matches!(svc.uninstall(&id, false).await, Err(AppError::NotInstalled(_))));
+    }
+
+    #[tokio::test]
+    async fn shutdown_unloads_every_app_keeps_data_and_stops_agents() {
+        let f = Fakes::new();
+        let svc = f.service();
+        svc.install_from_url(&f.add_app("notes", &[("add_note", "x")])).await.unwrap();
+        svc.install_from_url(&f.add_app("todo", &[("add_task", "x")])).await.unwrap();
+        f.events.take();
+
+        svc.shutdown().await;
+        assert!(f.registry.names().is_empty());
+        assert!(f.runtime.loaded().is_empty());
+        assert!(!f.store.purged("notes"), "shutdown keeps app data");
+        assert_eq!(f.agents.stop_calls(), 1);
+        assert!(f.events.take().is_empty(), "clients are not told the apps were uninstalled");
+        assert!(svc.installed_apps().is_empty());
     }
 
     #[tokio::test]
