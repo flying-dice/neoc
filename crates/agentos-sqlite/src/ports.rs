@@ -66,6 +66,38 @@ impl AppData for AppDb {
         Box::new(SqliteFeed::new(self))
     }
 
+    async fn ui_state(&self, window: &str) -> PortResult<serde_json::Map<String, Value>> {
+        let rows = self
+            .query_with(
+                "SELECT name, value FROM _ui_state WHERE window = ?1 AND instance = ''".into(),
+                Params::Positional(vec![json!(window)]),
+            )
+            .await?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                let value = serde_json::from_str(r["value"].as_str()?).ok()?;
+                Some((r["name"].as_str()?.to_owned(), value))
+            })
+            .collect())
+    }
+    async fn set_ui_state(&self, window: &str, entries: serde_json::Map<String, Value>) -> PortResult<()> {
+        for (name, value) in entries {
+            self.exec_with(
+                "INSERT INTO _ui_state(window, instance, name, value) VALUES(?1, '', ?2, ?3) \
+                 ON CONFLICT(window, instance, name) DO UPDATE SET value = excluded.value"
+                    .into(),
+                Params::Positional(vec![json!(window), json!(name), json!(value.to_string())]),
+            )
+            .await?;
+        }
+        Ok(())
+    }
+    async fn clear_ui_state(&self) -> PortResult<()> {
+        self.exec_with("DELETE FROM _ui_state".into(), Params::None).await?;
+        Ok(())
+    }
+
     async fn record_revision(&self, r: Revision) -> PortResult<i64> {
         let params = Params::Positional(vec![
             json!(r.source),
