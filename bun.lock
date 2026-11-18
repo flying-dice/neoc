@@ -19,9 +19,7 @@
       },
       "devDependencies": {
         "@agentos/storybook": "workspace:*",
-        "@electron-toolkit/eslint-config-prettier": "^3.0.1",
-        "@electron-toolkit/eslint-config-ts": "^4.0.0",
-        "@electron-toolkit/tsconfig": "^2.0.0",
+        "@eslint/js": "^10.0.1",
         "@storybook/addon-a11y": "10.6.7",
         "@storybook/addon-docs": "10.6.7",
         "@storybook/addon-svelte-csf": "5.1.6",
@@ -30,13 +28,17 @@
         "@sveltejs/vite-plugin-svelte": "^7.3.1",
         "@types/node": "^24.19.2",
         "eslint": "^10.12.0",
+        "eslint-config-prettier": "^10.1.8",
+        "eslint-plugin-prettier": "^5.5.6",
         "eslint-plugin-svelte": "^3.23.1",
+        "globals": "^17.12.0",
         "prettier": "^3.9.10",
         "prettier-plugin-svelte": "^4.1.1",
         "storybook": "10.6.7",
         "svelte": "^5.57.2",
         "svelte-check": "^4.7.6",
         "typescript": "^5.9.3",
+        "typescript-eslint": "^8.70.1",
         "vite": "^8.3.4",
       },
     },
@@ -113,12 +115,6 @@
     "@cacheable/utils": ["@cacheable/utils@2.5.0", "", { "dependencies": { "hashery": "^1.5.1", "keyv": "^5.6.0" } }, "sha512-buipgOVDkkPXNR5+xBpDw7Zk2n1EvU7qBJCNUcL7rhQ//kfpOXPAvQ511Os0vpLYJ1pZnvudNytkQt2hst3wqA=="],
 
     "@dual-bundle/import-meta-resolve": ["@dual-bundle/import-meta-resolve@4.2.1", "", {}, "sha512-id+7YRUgoUX6CgV0DtuhirQWodeeA7Lf4i2x71JS/vtA5pRb/hIGWlw+G6MeXvsM+MXrz0VAydTGElX1rAfgPg=="],
-
-    "@electron-toolkit/eslint-config-prettier": ["@electron-toolkit/eslint-config-prettier@3.0.1", "", { "dependencies": { "eslint-config-prettier": "^10.1.8", "eslint-plugin-prettier": "^5.5.6" }, "peerDependencies": { "eslint": ">= 9.0.0", "prettier": ">= 3.0.0" } }, "sha512-OPdK26E9Nqjg3j8CW8gMV+gV8D3+S0WbbOGEeN8dTjWsHFBqVGxEevNdght2dJYelmeN58pqyjtEg0WTjq0gwg=="],
-
-    "@electron-toolkit/eslint-config-ts": ["@electron-toolkit/eslint-config-ts@4.0.0", "", { "dependencies": { "@eslint/js": "^10.0.1", "globals": "^17.12.0", "typescript-eslint": "^8.70.1" }, "peerDependencies": { "eslint": ">=9.0.0", "typescript": "*" }, "optionalPeers": ["typescript"] }, "sha512-vkH8ijLzUS1Hsnv7IG/2MGHXIbFSR7YcDXbKX45odfWqdXDIzLuSQ2r6uw3xPZ7rNfLS544OXQfTEY7AVhJsZg=="],
-
-    "@electron-toolkit/tsconfig": ["@electron-toolkit/tsconfig@2.0.0", "", { "peerDependencies": { "@types/node": "*" } }, "sha512-AdPsP770WhW7b260h13SHMdmjEEHJL6xFtgi3jwgdsSQbJOkJLeNnnpZW9qxTPCvmRI6vmdzWz5K3gibFS6SNg=="],
 
     "@emnapi/core": ["@emnapi/core@1.9.2", "", { "dependencies": { "@emnapi/wasi-threads": "1.2.1", "tslib": "^2.4.0" } }, "sha512-UC+ZhH3XtczQYfOlu3lNEkdW/p4dsJ1r/bP7H8+rhao3TTTMO1ATq/4DdIi23XuGoFY+Cz0JmCbdVl0hz9jZcA=="],
 
