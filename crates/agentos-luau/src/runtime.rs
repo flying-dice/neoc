@@ -107,7 +107,12 @@ impl AppRuntime for LuauRuntime {
         let loaded = LoadedApp { decl: Some(decl), tools: vm.tools(), sources: vm.sources() };
         self.flush_effects(app, &vm).await?;
         // only a VM that loaded completely replaces a running one (hot reload keeps the old one on failure)
-        self.vms.write().insert(app.clone(), Arc::new(vm));
+        let replaced = self.vms.write().insert(app.clone(), Arc::new(vm));
+        // the VM a reload replaces stops like an unloaded one: a call still running in it must not keep
+        // writing to the database the new version now owns
+        if let Some(old) = replaced {
+            old.retire();
+        }
         Ok(loaded)
     }
 

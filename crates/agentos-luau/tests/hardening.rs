@@ -84,13 +84,10 @@ async fn a_runaway_inside_a_transaction_ends_and_frees_the_write_gate() {
     direct.unwrap();
 }
 
-/// Records what reached the notification port.
-#[derive(Default)]
-struct Notes(std::sync::Mutex<Vec<Notification>>);
+struct Quiet;
 #[async_trait::async_trait]
-impl Notifier for Notes {
-    async fn notify(&self, n: Notification) -> PortResult<()> {
-        self.0.lock().unwrap().push(n);
+impl Notifier for Quiet {
+    async fn notify(&self, _: Notification) -> PortResult<()> {
         Ok(())
     }
 }
@@ -98,7 +95,6 @@ impl Notifier for Notes {
 struct Rig {
     runtime: Arc<LuauRuntime>,
     shell: Arc<RecordingShell>,
-    notes: Arc<Notes>,
     db: Arc<agentos_sqlite::AppDb>,
 }
 
@@ -108,9 +104,8 @@ fn rig() -> Rig {
 
 fn rig_with(limits: Limits) -> Rig {
     let shell = Arc::new(RecordingShell::default());
-    let notes = Arc::new(Notes::default());
-    let runtime = Arc::new(LuauRuntime::new(notes.clone(), shell.clone(), limits));
-    Rig { runtime, shell, notes, db: db() }
+    let runtime = Arc::new(LuauRuntime::new(Arc::new(Quiet), shell.clone(), limits));
+    Rig { runtime, shell, db: db() }
 }
 
 impl Rig {
@@ -564,3 +559,34 @@ async fn a_read_only_tool_cannot_act_on_a_window_through_a_stashed_w() {
     assert_eq!(vm.take_view_effects().len(), 2);
 }
 
+// ---- wave D1: the second review's sandbox holes ----------------------------------------------------------------
+
+/// An app that no budget will stop: only an unload or a reload ends its call.
+fn unbounded() -> Limits {
+    Limits { call_ticks: u64::MAX, call_wall: Duration::from_secs(3600), ..Limits::default() }
+}
+
+// N5: a hot reload swaps the VM in; the one it replaces must stop, not carry on writing.
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_hot_reload_retires_the_vm_it_replaces() {
+    let rig = rig_with(unbounded());
+    let v1 = format!(
+        "{MANIFEST}\napp.tool {{ name = \"spin\", run = function() while true do app.kv:get(\"k\") end end }}"
+    );
+    rig.load("probe", &v1).await.unwrap();
+    let (runtime, started) = (rig.runtime.clone(), Instant::now());
+    let call =
+        tokio::spawn(
+            async move { runtime.call_tool(&id("probe"), "spin", json!({}), agent_ctx(0), false).await },
+        );
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert!(!call.is_finished(), "the call is running on the old VM");
+
+    let v2 = format!("{MANIFEST}\napp.tool {{ name = \"spin\", run = function() return 1 end }}");
+    rig.load("probe", &v2).await.unwrap();
+    let ended = tokio::time::timeout(PROMPTLY, call).await.expect("the replaced VM's call stops").unwrap();
+    assert!(ended.unwrap_err().to_string().contains("unloaded"));
+    assert!(started.elapsed() < PROMPTLY);
+    assert_eq!(rig.tool("probe", "spin").await.unwrap(), json!(1), "the new version answers");
+}
