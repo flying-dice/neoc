@@ -45,6 +45,32 @@ local function tokenize(input: string): { Token }
   return tokens
 end
 
+-- One binary operation on numbers. Raises on division by zero.
+local function operate(op: string, a: number, b: number): number
+  if op == "+" then
+    return a + b
+  elseif op == "-" then
+    return a - b
+  elseif op == "*" then
+    return a * b
+  elseif op == "/" then
+    if b == 0 then
+      error("Division by zero")
+    end
+    return a / b
+  elseif op == "%" then
+    return a % b
+  elseif op == "^" then
+    return a ^ b
+  end
+  error(`Unknown operator "{op}"`)
+end
+
+-- Round away binary noise (0.1 + 0.2): 12 significant digits, as a number.
+local function tidy(value: number): number
+  return tonumber(string.format("%.12g", value)) :: number
+end
+
 local function apply(op: string, stack: { number })
   if op == "neg" then
     local a = table.remove(stack)
@@ -59,22 +85,17 @@ local function apply(op: string, stack: { number })
   if a == nil or b == nil then
     error("Malformed expression")
   end
-  if op == "+" then
-    table.insert(stack, a + b)
-  elseif op == "-" then
-    table.insert(stack, a - b)
-  elseif op == "*" then
-    table.insert(stack, a * b)
-  elseif op == "/" then
-    if b == 0 then
-      error("Division by zero")
-    end
-    table.insert(stack, a / b)
-  elseif op == "%" then
-    table.insert(stack, a % b)
-  elseif op == "^" then
-    table.insert(stack, a ^ b)
+  table.insert(stack, operate(op, a, b))
+end
+
+-- `a op b` on numbers, the way the keypad chains: no text round trip, so a result shown as 2e-7 or 1e21 is an
+-- ordinary operand. Raises on division by zero and on a result too large to show.
+function calc.combine(a: number, op: string, b: number): number
+  local result = operate(op, a, b)
+  if result ~= result or math.abs(result) == math.huge then
+    error("Result out of range")
   end
+  return tidy(result)
 end
 
 -- Evaluate an arithmetic expression; raises a descriptive error when invalid.
@@ -125,7 +146,7 @@ function calc.evaluate(expression: string): number
   if #values ~= 1 or result ~= result or math.abs(result) == math.huge then
     error("Malformed expression")
   end
-  return tonumber(string.format("%.12g", result)) :: number
+  return tidy(result)
 end
 
 local function group(digits: string): string
