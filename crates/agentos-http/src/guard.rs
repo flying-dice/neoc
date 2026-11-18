@@ -182,11 +182,30 @@ fn parse_authority(authority: &str) -> Option<(Name, Option<u16>)> {
     valid.then_some((Name::Dns(dns), port))
 }
 
+/// The authority a request is addressed to: the `Host` header (HTTP/1.1), the URI authority (`:authority`
+/// of HTTP/2, which has no `Host`), or either when they agree. `None` when there is none or they differ
+/// (two names for one request is an attempt to confuse the check).
+fn effective_host<'a>(header_host: Option<&'a str>, uri_authority: Option<&'a str>) -> Option<&'a str> {
+    match (header_host, uri_authority) {
+        (Some(h), Some(a)) => h.eq_ignore_ascii_case(a).then_some(h),
+        (Some(h), None) => Some(h),
+        (None, authority) => authority,
+    }
+}
+
 /// `axum::middleware::from_fn_with_state(Arc<HostGuard>, origin_guard)`; layer it over every route.
 pub async fn origin_guard(State(guard): State<Arc<HostGuard>>, req: Request, next: Next) -> Response {
     let h = req.headers();
     let origin = h.get(header::ORIGIN).and_then(|v| v.to_str().ok());
-    let host = h.get(header::HOST).and_then(|v| v.to_str().ok());
+    let header_host = match h.get(header::HOST) {
+        Some(v) => match v.to_str() {
+            Ok(text) => Some(text),
+            Err(_) => return forbidden(),
+        },
+        None => None,
+    };
+    let uri_authority = req.uri().authority().map(axum::http::uri::Authority::as_str);
+    let host = effective_host(header_host, uri_authority);
     if origin.is_none() && h.contains_key(header::ORIGIN) {
         return forbidden(); // an Origin header that is not text is not a browser's
     }
@@ -275,6 +294,20 @@ mod tests {
             "behind a proxy"
         );
         assert!(!g.permits(Some("https://other.example.org"), Some("agentos.example.org")));
+    }
+
+    #[test]
+    fn the_uri_authority_stands_in_for_a_missing_host_header_and_must_agree_with_one() {
+        // HTTP/2 has `:authority` and no `Host`
+        assert_eq!(effective_host(None, Some("127.0.0.1:7400")), Some("127.0.0.1:7400"));
+        assert_eq!(effective_host(Some("127.0.0.1:7400"), None), Some("127.0.0.1:7400"));
+        assert_eq!(effective_host(Some("Localhost:7400"), Some("localhost:7400")), Some("Localhost:7400"));
+        assert_eq!(effective_host(Some("localhost:7400"), Some("evil.example:7400")), None, "they differ");
+        assert_eq!(effective_host(None, None), None);
+        let g = guard();
+        assert!(g.permits(None, effective_host(None, Some("192.168.1.20:7400"))));
+        assert!(!g.permits(None, effective_host(None, Some("evil.example:7400"))));
+        assert!(!g.permits(None, effective_host(Some("127.0.0.1:7400"), Some("evil.example:7400"))));
     }
 
     #[test]

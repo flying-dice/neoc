@@ -14,7 +14,7 @@ pub use launch::{handshake, AgentHello, AgentLaunch};
 
 use agentos_application::{
     ports::{AgentConnector, AgentEventSink, McpAccess, PortResult, SessionOpened},
-    PortError,
+    AgentProcesses, PortError,
 };
 use agentos_domain::{
     thread::{ConfigOption, ConfigValue, PermissionAnswer, StopReason},
@@ -27,15 +27,25 @@ use std::{
     collections::HashMap,
     path::PathBuf,
     sync::{atomic::AtomicU64, Arc},
+    time::Duration,
 };
 use tokio::sync::Mutex as AsyncMutex;
+
+/// How long an agent gets to answer `initialize` before the host gives up on it.
+pub const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// One agent's process, behind a lock of its own: starting it (which can take as long as the program likes)
+/// holds up only that agent.
+type Slot = Arc<AsyncMutex<Option<Arc<AgentProcess>>>>;
 
 pub struct AcpConnector {
     /// The working directory handed to every session.
     cwd: PathBuf,
-    processes: AsyncMutex<HashMap<AgentId, Arc<AgentProcess>>>,
+    /// The slots by agent. The map's lock is held only to find or add a slot, never across a start.
+    processes: Mutex<HashMap<AgentId, Slot>>,
     permissions: Permissions,
     next_request: Arc<AtomicU64>,
+    initialize_timeout: Duration,
     stopped: Mutex<bool>,
 }
 
@@ -44,39 +54,74 @@ impl AcpConnector {
     pub fn new(cwd: PathBuf) -> Self {
         Self {
             cwd,
-            processes: AsyncMutex::default(),
+            processes: Mutex::default(),
             permissions: Arc::default(),
             next_request: Arc::default(),
+            initialize_timeout: INITIALIZE_TIMEOUT,
             stopped: Mutex::new(false),
         }
     }
 
-    /// The agent's running process, started (and initialized) if there is none or it died.
-    async fn process(&self, agent: &Agent) -> PortResult<Arc<AgentProcess>> {
+    /// Give an agent this long to answer `initialize` (default [`INITIALIZE_TIMEOUT`]).
+    #[must_use]
+    pub fn with_initialize_timeout(mut self, timeout: Duration) -> Self {
+        self.initialize_timeout = timeout;
+        self
+    }
+
+    fn slot(&self, agent: &AgentId) -> Slot {
+        self.processes.lock().entry(agent.clone()).or_default().clone()
+    }
+
+    fn check_running(&self) -> PortResult<()> {
         if *self.stopped.lock() {
             return Err(PortError::Rejected("the host is shutting down".into()));
         }
-        let mut processes = self.processes.lock().await;
-        if let Some(p) = processes.get(&agent.id) {
-            if p.is_alive() {
-                return Ok(p.clone());
-            }
-            processes.remove(&agent.id);
+        Ok(())
+    }
+
+    /// The agent's running process, started (and initialized) if there is none or it died.
+    async fn process(&self, agent: &Agent) -> PortResult<Arc<AgentProcess>> {
+        self.check_running()?;
+        let slot = self.slot(&agent.id);
+        let mut held = slot.lock().await;
+        if let Some(p) = held.as_ref().filter(|p| p.is_alive()) {
+            return Ok(p.clone());
         }
-        let started =
-            AgentProcess::start(AgentLaunch::of(agent), self.permissions.clone(), self.next_request.clone())
-                .await
-                .map_err(|e| {
-                    PortError::Rejected(format!("could not start `{}`: {e}", agent.runtime.command))
-                })?;
-        processes.insert(agent.id.clone(), started.clone());
+        *held = None;
+        let started = AgentProcess::start(
+            AgentLaunch::of(agent),
+            self.permissions.clone(),
+            self.next_request.clone(),
+            self.initialize_timeout,
+        )
+        .await
+        .map_err(|e| PortError::Rejected(format!("could not start `{}`: {e}", agent.runtime.command)))?;
+        // a shutdown that came while it started: do not leave a process behind
+        self.check_running()?;
+        *held = Some(started.clone());
         Ok(started)
     }
 
     async fn running(&self, agent: &AgentId) -> PortResult<Arc<AgentProcess>> {
-        match self.processes.lock().await.get(agent) {
-            Some(p) if p.is_alive() => Ok(p.clone()),
-            _ => Err(PortError::Rejected("the agent process is not running".into())),
+        let slot = self.processes.lock().get(agent).cloned();
+        if let Some(slot) = slot {
+            if let Some(p) = slot.lock().await.as_ref().filter(|p| p.is_alive()) {
+                return Ok(p.clone());
+            }
+        }
+        Err(PortError::Rejected("the agent process is not running".into()))
+    }
+}
+
+#[async_trait]
+impl AgentProcesses for AcpConnector {
+    async fn stop_agent(&self, agent: &AgentId) {
+        let slot = self.processes.lock().remove(agent);
+        if let Some(slot) = slot {
+            if let Some(process) = slot.lock().await.take() {
+                process.stop("the agent was stopped by the host");
+            }
         }
     }
 }
@@ -142,7 +187,11 @@ impl AgentConnector for AcpConnector {
 
     async fn stop_all(&self) {
         *self.stopped.lock() = true;
-        // dropping a process aborts its task, which ends the child
-        self.processes.lock().await.clear();
+        let slots: Vec<Slot> = self.processes.lock().drain().map(|(_, slot)| slot).collect();
+        for slot in slots {
+            if let Some(process) = slot.lock().await.take() {
+                process.stop("the host is shutting down");
+            }
+        }
     }
 }

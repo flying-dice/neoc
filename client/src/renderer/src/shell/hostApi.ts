@@ -1,72 +1,34 @@
 /**
  * What the shell asks the host besides the view protocol: the app lifecycle (`app.*`), the catalog Discover
- * browses and the paired devices (`host.devices.*`). The shapes mirror `crates/agentos-domain/src/api.rs`
- * (generated into `types/generated/agentos.ts`; `hostApi.test.ts` fails if the two disagree).
+ * browses, the agent roster (`agents.*`) and the paired devices (`host.devices.*`). The shapes are generated from
+ * `crates/agentos-domain/src/api.rs` into `types/generated/agentos.ts`.
  */
 import { icons, type IconName } from '@agentos/ui'
+import type {
+  HostAgentList,
+  HostAgentRow,
+  HostAppPreview,
+  HostAppState,
+  HostAppSummary,
+  HostAppWindow,
+  HostCatalog,
+  HostDeviceRow,
+  HostInstalledInfo
+} from '../view/protocol'
 
-export type AppState = 'running' | 'disabled' | 'failed'
-
-export interface AppWindowDecl {
-  w: number
-  h: number
-  minW: number
-  minH: number
-}
-
-export interface AppSummary {
-  id: string
-  name: string
-  version: string
-  state: AppState
-  message?: string
-  icon?: string
-  tint?: string
-  description?: string
-  window?: AppWindowDecl
-  source: string
-}
-
-export interface InstalledInfo {
-  version: string
-  state: AppState
-}
-
-export interface AppPreview {
-  url: string
-  id: string
-  name: string
-  version: string
-  icon?: string
-  tint?: string
-  description?: string
-  permissions: string[]
-  source: string
-  installed?: InstalledInfo
-  /** SHA-256 of the app-ref document as previewed; `app.install` pins to it. */
-  sha256: string
-}
-
-export interface Catalog {
-  apps: AppPreview[]
-  errors: string[]
-}
-
-/** One agent on the host's roster (`agents.list`; grants and tokens never come with it). */
-export interface AgentRow {
-  id: string
-  name: string
-  avatar?: string
-  role: string
-}
-
-export interface DeviceRow {
-  id: string
-  name: string
-  createdAt: number
-  lastSeenAt: number
-  current: boolean
-}
+// The wire shapes are the generated ones (the Rust schema in `crates/agentos-domain/src/api.rs`, re-exported by
+// `view/protocol.ts`, the renderer's one door to `types/generated`) under the names the shell uses, so a wire
+// change is a compile error there and here, and nowhere else.
+export type AppState = HostAppState
+export type AppWindowDecl = HostAppWindow
+export type AppSummary = HostAppSummary
+export type InstalledInfo = HostInstalledInfo
+export type AppPreview = HostAppPreview
+export type Catalog = HostCatalog
+/** One agent on the host's roster (`agents.list`): no tokens, and only the names of its environment variables. */
+export type AgentRow = HostAgentRow
+export type AgentList = HostAgentList
+export type DeviceRow = HostDeviceRow
 
 /** The calls the shell makes. The real one is the session's `call`; stories and tests pass a fake. */
 export interface HostApi {

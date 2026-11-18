@@ -29,6 +29,7 @@ mod services_tests;
 pub mod testing;
 #[cfg(test)]
 mod tool_calls_tests;
+pub mod tokens;
 pub mod views;
 #[cfg(test)]
 mod views_tests;
@@ -36,11 +37,12 @@ pub mod writeback;
 #[cfg(test)]
 mod writeback_tests;
 
-pub use agents::{AgentError, AgentPatch, AgentService, NewAgent};
+pub use agents::{AgentError, AgentPatch, AgentProcesses, AgentService, NewAgent};
 pub use chat::{ChatError, ChatPorts, ChatService, RunEvents, PERMISSION_TTL_MS};
 pub use devices::{DeviceService, PairError, PairedDevice, PairingCode, PairingPolicy};
 pub use error::{AppError, PortError};
 pub use live::{LiveSources, SourceDef, SourceId, SourceKind, SourceUpdate, SubscriptionId, Window};
 pub use services::{AppInfo, AppService, AppStatus, Display, Ports};
+pub use tokens::random_hex;
 pub use views::{ViewError, ViewService, ViewSink};
 pub use writeback::{BindingKind, Resolution, WriteAck, WriteRequest};

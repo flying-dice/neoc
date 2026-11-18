@@ -7,14 +7,14 @@
 //! ```
 //! Logging is `tracing` with `RUST_LOG` (default `info`).
 
-use agentos_application::PairingPolicy;
+use agentos_application::{random_hex, PairingPolicy};
 use agentos_domain::{Agent, AgentId, AgentRuntime, ApprovalPolicy, Grants};
 use agentos_host::{
     build,
     config::Settings,
-    net::reachable_urls,
+    net::{local_url, reachable_urls},
     open_devices,
-    platform::{random_hex, OsRandom, SystemClock},
+    platform::{OsRandom, SystemClock},
     serve::{serve, termination_signal},
     startup::{prepare_data_dir, spawn_revision_purge, start_apps, watch_for_reload, write_mcp_json},
     HostConfig,
@@ -133,7 +133,9 @@ async fn run(settings: Settings, cwd: &Path) -> anyhow::Result<()> {
     config.registries = settings.catalog(cwd);
     config.secure_cookies = settings.secure_cookies;
     config.agents = vec![(mcp_token.clone(), local_agent)];
-    config.mcp_url = Some(format!("{}://127.0.0.1:{port}/mcp", settings.scheme()));
+    // the one URL for host-launched agents and for mcp.json: reachable for whatever `bind` is
+    let mcp_url = local_url(settings.scheme(), settings.bind, port, "/mcp");
+    config.mcp_url = Some(mcp_url.clone());
 
     let host = build(config).await?;
     for agent in settings.agents.clone() {
@@ -150,12 +152,6 @@ async fn run(settings: Settings, cwd: &Path) -> anyhow::Result<()> {
         }
     }
 
-    let local_host = if settings.bind.is_unspecified() || settings.bind.is_loopback() {
-        "127.0.0.1".to_owned()
-    } else {
-        settings.bind.to_string()
-    };
-    let mcp_url = format!("{}://{local_host}:{port}/mcp", settings.scheme());
     let mcp_file = write_mcp_json(&settings.data_dir, &mcp_url, &mcp_token)?;
 
     let code = host.devices.issue_pairing_code().await.context("issuing the first pairing code")?;

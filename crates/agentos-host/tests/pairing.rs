@@ -331,16 +331,42 @@ async fn mcp_is_behind_the_origin_and_host_guard_too() {
     r.stop().await;
 }
 
-#[tokio::test]
-async fn over_tls_the_session_cookie_is_secure() {
-    let dir = std::env::temp_dir().join(format!("agentos-tls-{}", std::process::id()));
+/// Self-signed TLS files for `localhost` in a directory of their own.
+fn tls_files(tag: &str) -> (agentos_host::config::TlsFiles, std::path::PathBuf) {
+    let dir = std::env::temp_dir().join(format!("agentos-tls-{tag}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let cert =
         rcgen::generate_simple_self_signed(vec!["localhost".to_owned(), "127.0.0.1".to_owned()]).unwrap();
     let files = agentos_host::config::TlsFiles { cert: dir.join("cert.pem"), key: dir.join("key.pem") };
     std::fs::write(&files.cert, cert.cert.pem()).unwrap();
     std::fs::write(&files.key, cert.signing_key.serialize_pem()).unwrap();
+    (files, dir)
+}
 
+#[tokio::test]
+async fn over_tls_with_http2_the_authority_stands_in_for_the_host_header() {
+    // a browser over ALPN h2 sends `:authority` and no `Host`; the guard used to refuse every such request
+    let (files, dir) = tls_files("h2");
+    let r = common::start_with_tls(|c| c.secure_cookies = true, Some(files)).await;
+    let client = reqwest::Client::builder().danger_accept_invalid_certs(true).build().unwrap();
+    let res = client.get(format!("https://{}/pair", r.addr)).send().await.unwrap();
+    assert_eq!(res.version(), reqwest::Version::HTTP_2, "ALPN negotiated h2");
+    assert_ne!(res.status(), 403, "an h2 request with no Host header is the browser's normal request");
+    // a rebinding authority is still refused over h2 (the name is not ours)
+    let evil = client
+        .get(format!("https://localhost:{}/pair", r.addr.port()))
+        .header("host", "evil.example")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(evil.status(), 403, "an authority and a Host that differ are refused");
+    r.stop().await;
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn over_tls_the_session_cookie_is_secure() {
+    let (files, dir) = tls_files("cookie");
     let r = common::start_with_tls(|c| c.secure_cookies = true, Some(files)).await;
     let code = r.devices().issue_pairing_code().await.unwrap();
     let client = reqwest::Client::builder().danger_accept_invalid_certs(true).build().unwrap();
@@ -353,6 +379,24 @@ async fn over_tls_the_session_cookie_is_secure() {
     assert_eq!(res.status(), 200);
     let cookie = res.headers().get("set-cookie").unwrap().to_str().unwrap().to_owned();
     assert!(cookie.ends_with("; Secure") && cookie.contains("HttpOnly"), "{cookie}");
+    assert!(cookie.starts_with("__Host-agentos_session="), "the __Host- prefix with TLS: {cookie}");
+    // the browser sends it back under that name, and the host honours it (and only it)
+    let sent = cookie.split(';').next().unwrap().to_owned();
+    let paired =
+        client.get(format!("https://{}/session", r.addr)).header("cookie", &sent).send().await.unwrap();
+    assert_eq!(paired.json::<serde_json::Value>().await.unwrap()["paired"], true);
+    let value = sent.split_once('=').unwrap().1;
+    let tossed = client
+        .get(format!("https://{}/session", r.addr))
+        .header("cookie", format!("agentos_session={value}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        tossed.json::<serde_json::Value>().await.unwrap()["paired"],
+        false,
+        "unprefixed name over TLS"
+    );
     r.stop().await;
     let _ = std::fs::remove_dir_all(dir);
 }

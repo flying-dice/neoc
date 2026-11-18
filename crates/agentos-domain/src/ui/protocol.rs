@@ -708,11 +708,10 @@ impl ParseError {
     }
 }
 
-/// Params arrive as a by-name object; a one-element array wrapping that object (the SDK's positional
-/// convention) is accepted too.
+/// Params arrive as a by-name object; an absent `params` is an empty one. Anything else (an array included) is
+/// left to the typed parse, which refuses it.
 fn params_object(params: Value) -> Value {
     match params {
-        Value::Array(mut items) if items.len() == 1 => items.remove(0),
         Value::Null => Value::Object(Map::new()),
         other => other,
     }

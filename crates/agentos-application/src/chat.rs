@@ -26,7 +26,7 @@ use agentos_domain::{
         ToolCallRecord, ToolFunction, ToolMeta, ToolStatus,
     },
     time::iso8601_utc,
-    Agent, AgentId, ApprovalPolicy,
+    AgentId, ApprovalPolicy,
 };
 use futures_channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use parking_lot::Mutex;
@@ -117,7 +117,7 @@ struct ThreadSink {
 fn hex_id(random: &dyn RandomSource, prefix: &str) -> String {
     let mut bytes = [0u8; 8];
     random.fill(&mut bytes);
-    format!("{prefix}{}", crate::agents::hex_of(&bytes))
+    format!("{prefix}{}", agentos_domain::hex_of(&bytes))
 }
 
 fn replace(path: &str, value: &Value) -> Value {
@@ -368,7 +368,8 @@ impl AgentEventSink for ThreadSink {
     }
 
     fn on_permission(&self, request: &PermissionRequest) -> PermissionDecision {
-        let approval = self.agents.get(&self.thread.agent_id).map_or(ApprovalPolicy::Ask, |a| a.approval);
+        let agent = self.agents.get(&self.thread.agent_id);
+        let approval = agent.as_ref().map_or(ApprovalPolicy::Ask, |a| a.approval);
         let allow = request
             .options
             .iter()
@@ -376,11 +377,15 @@ impl AgentEventSink for ThreadSink {
             .or_else(|| request.options.iter().find(|o| o.kind == PermissionKind::AllowAlways))
             .map(|o| o.option_id.clone());
         let auto = match approval {
-            ApprovalPolicy::AllowAll => allow,
+            // every request, a shell command or a file edit included (see `ApprovalPolicy::AllowEverything`)
+            ApprovalPolicy::AllowEverything => allow,
             ApprovalPolicy::Ask => None,
-            // a tool the app declared readOnly cannot write (the runtime refuses), so it needs no prompt
+            // the title and kind are the agent's text: only an exact `mcp__agentos__<app>__<tool>` that exists,
+            // is granted to this agent and was declared readOnly (the runtime refuses writes) skips the prompt
             ApprovalPolicy::AutoReadOnly => request
                 .agentos_tool()
+                .filter(|_| !request.kind_forbids_auto_approval())
+                .filter(|tool| agent.as_ref().is_some_and(|a| a.grants.allows(tool.app())))
                 .filter(|tool| self.apps.tool_is_read_only(tool) == Some(true))
                 .and(allow),
         };
@@ -762,12 +767,6 @@ impl ChatService {
     /// Host shutdown: stop every agent process.
     pub async fn shutdown(&self) {
         self.p.connector.stop_all().await;
-    }
-
-    /// The agent behind a thread, if the thread exists.
-    pub async fn agent_of(&self, thread_id: &str) -> Option<Agent> {
-        let thread = self.thread(thread_id).await.ok()??;
-        self.p.agents.get(&thread.agent_id)
     }
 }
 

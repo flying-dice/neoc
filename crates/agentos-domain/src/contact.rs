@@ -74,11 +74,16 @@ impl Grants {
 pub enum ApprovalPolicy {
     /// Always ask the person.
     Ask,
-    /// Allow a tool its app declared `readOnly` (it cannot write: that is enforced), ask for the rest.
+    /// Allow a tool its app declared `readOnly` (it cannot write: that is enforced) when the request is exactly
+    /// `mcp__agentos__<app>__<tool>`, the tool exists, the agent is granted the app and the agent's kind for the
+    /// call is not execute, edit, delete, move or unknown. Ask for everything else.
     #[default]
     AutoReadOnly,
-    /// Never ask.
-    AllowAll,
+    /// Never ask: **every** permission request is allowed, whatever it is for (a shell command, a file edit, a
+    /// delete, as well as an `AgentOS` tool). It is not limited to app tools; grants still bound which app tools
+    /// the agent can see. The stored and wire value stays `allow_all`.
+    #[serde(rename = "allow_all")]
+    AllowEverything,
 }
 
 impl ApprovalPolicy {
@@ -87,7 +92,7 @@ impl ApprovalPolicy {
         match self {
             Self::Ask => "ask",
             Self::AutoReadOnly => "auto_read_only",
-            Self::AllowAll => "allow_all",
+            Self::AllowEverything => "allow_all",
         }
     }
 
@@ -96,7 +101,7 @@ impl ApprovalPolicy {
         match s {
             "ask" => Some(Self::Ask),
             "auto_read_only" => Some(Self::AutoReadOnly),
-            "allow_all" => Some(Self::AllowAll),
+            "allow_all" => Some(Self::AllowEverything),
             _ => None,
         }
     }
@@ -189,7 +194,17 @@ impl Agent {
 /// SHA-256 of a bearer token, as lowercase hex: all that is stored of a token.
 #[must_use]
 pub fn hash_token(token: &str) -> String {
-    format!("{:x}", Sha256::digest(token.as_bytes()))
+    hex_of(&Sha256::digest(token.as_bytes()))
+}
+
+/// Lowercase hex of some bytes.
+#[must_use]
+pub fn hex_of(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    bytes.iter().fold(String::with_capacity(bytes.len() * 2), |mut s, b| {
+        let _ = write!(s, "{b:02x}");
+        s
+    })
 }
 
 /// Constant-time equality of two hashes (no early exit on the first differing byte).
@@ -243,7 +258,7 @@ mod tests {
         assert_eq!(serde_json::to_value(&g).unwrap(), json);
         assert_eq!(serde_json::to_value(ApprovalPolicy::AutoReadOnly).unwrap(), "auto_read_only");
         assert!(serde_json::from_value::<Grants>(serde_json::json!({"apps": [], "root": true})).is_err());
-        for p in [ApprovalPolicy::Ask, ApprovalPolicy::AutoReadOnly, ApprovalPolicy::AllowAll] {
+        for p in [ApprovalPolicy::Ask, ApprovalPolicy::AutoReadOnly, ApprovalPolicy::AllowEverything] {
             assert_eq!(ApprovalPolicy::parse(p.as_str()), Some(p));
         }
     }
@@ -272,5 +287,12 @@ mod tests {
         assert_ne!(h, hash_token("s3cre7"));
         assert!(same_hash(&h, &hash_token("s3cret")));
         assert!(!same_hash(&h, &hash_token("other")) && !same_hash(&h, "short"));
+    }
+
+    #[test]
+    fn hex_is_lowercase_and_two_digits_per_byte() {
+        assert_eq!(hex_of(&[0, 1, 0xab, 0xff]), "0001abff");
+        assert_eq!(hex_of(&[]), "");
+        assert_eq!(hash_token(""), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
     }
 }

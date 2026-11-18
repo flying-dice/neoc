@@ -24,13 +24,14 @@ pub mod serve;
 pub mod startup;
 
 use agentos_acp::AcpConnector;
-use agentos_agui::agui_router;
+use agentos_agui::{agui_router_with, DeviceStreams};
 use agentos_application::{
     ports::{
         AgentConnector, AgentDirectory, AppRuntime, Clock, DataStore, DeviceRegistry, EventSink, Fetcher,
         InstalledAppStore, RandomSource, ThreadStore, ToolRegistry,
     },
-    AgentService, AppService, ChatPorts, ChatService, DeviceService, PairingPolicy, Ports, ViewService,
+    AgentProcesses, AgentService, AppService, ChatPorts, ChatService, DeviceService, PairingPolicy, Ports,
+    ViewService,
 };
 use agentos_domain::Agent;
 use agentos_fetch::UrlFetcher;
@@ -136,6 +137,18 @@ pub fn open_system(data_dir: Option<&std::path::Path>) -> anyhow::Result<Arc<Sql
     Ok(Arc::new(SqliteSystemDb::open(data_dir.map(|d| d.join("system.db")).as_deref())?))
 }
 
+/// The connector the chats use, and (for the real ACP one) the handle that stops an agent's process.
+fn agent_processes(
+    scripted: Option<Arc<dyn AgentConnector>>,
+    cwd: PathBuf,
+) -> (Arc<dyn AgentConnector>, Option<Arc<dyn AgentProcesses>>) {
+    if let Some(connector) = scripted {
+        return (connector, None);
+    }
+    let acp = Arc::new(AcpConnector::new(cwd));
+    (acp.clone(), Some(acp))
+}
+
 pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
     let shutdown = CancellationToken::new();
 
@@ -147,16 +160,21 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
         Arc::new(SqliteDataStore::new(cfg.data_dir.as_ref().map(|d| d.join("apps"))));
     let system = open_system(cfg.data_dir.as_deref())?;
     let random = cfg.random;
+    // the agent processes: real ACP ones unless a test scripts the connector. The roster stops a process when
+    // its agent is deleted or relaunched with other settings.
+    let (connector, processes) = agent_processes(cfg.connector, cfg.agent_cwd);
     // the roster is also the MCP adapter's directory, tells it when an agent's tool list changes, and is what
     // apps with the `agents` permission list
-    let contacts = Arc::new(AgentService::new(system.clone(), mcp_state.clone(), random.clone()));
+    let mut contacts = AgentService::new(system.clone(), mcp_state.clone(), random.clone());
+    if let Some(processes) = processes {
+        contacts = contacts.with_processes(processes);
+    }
+    let contacts = Arc::new(contacts);
     contacts.load().await?;
     let runtime: Arc<dyn AppRuntime> =
         Arc::new(LuauRuntime::new(hub.clone(), hub.clone(), Limits::default()).with_roster(contacts.clone()));
     let tools: Arc<dyn ToolRegistry> = mcp_state.clone();
     let events: Arc<dyn EventSink> = hub.clone();
-    let connector: Arc<dyn AgentConnector> =
-        cfg.connector.unwrap_or_else(|| Arc::new(AcpConnector::new(cfg.agent_cwd)));
     let installed: Arc<dyn InstalledAppStore> = system.clone();
     let thread_store: Arc<dyn ThreadStore> = system.clone();
     let registry: Arc<dyn DeviceRegistry> = system;
@@ -205,11 +223,15 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
 
     // driving adapters. Everything a client may call is in `protected`; the few public routes are
     // listed below it, and /mcp has its own per-agent bearer authentication.
+    // revoking a device ends its open /agui streams (its /rpc sockets are closed by the hub)
+    let streams = Arc::new(DeviceStreams::default());
+    let to_end = streams.clone();
+    devices.on_revoked(move |device| to_end.revoke(device));
+    let session = SessionConfig { devices: devices.clone(), secure_cookies: cfg.secure_cookies };
     let protected = rpc_router(hub)
-        .merge(agui_router(chat.clone()))
-        .layer(from_fn_with_state(devices.clone(), require_session));
-    let public =
-        session_router(SessionConfig { devices: devices.clone(), secure_cookies: cfg.secure_cookies });
+        .merge(agui_router_with(chat.clone(), streams))
+        .layer(from_fn_with_state(session.clone(), require_session));
+    let public = session_router(session);
     let directory: Arc<dyn AgentDirectory> = contacts.clone();
     let mcp = mcp_router(mcp_state, service.clone(), directory, shutdown.child_token());
 

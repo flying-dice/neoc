@@ -4,7 +4,8 @@
 use std::fmt::Write as _;
 
 use agentos_domain::api::{
-    AppList, AppPreview, AppState, AppSummary, AppWindow, Catalog, DeviceList, DeviceRow, InstalledInfo,
+    AgentGrantsRow, AgentList, AgentRow, AgentRuntimeRow, AppList, AppPreview, AppState, AppSummary,
+    AppWindow, Catalog, DeviceList, DeviceRow, InstalledInfo,
 };
 use agentos_domain::ui::{
     components::{CATALOGUE, COMMON_EVENTS, COMMON_PROPS, COMMON_SLOTS},
@@ -141,6 +142,10 @@ fn protocol() -> String {
     add(Catalog::decl(&cfg));
     add(DeviceRow::decl(&cfg));
     add(DeviceList::decl(&cfg));
+    add(AgentRuntimeRow::decl(&cfg));
+    add(AgentGrantsRow::decl(&cfg));
+    add(AgentRow::decl(&cfg));
+    add(AgentList::decl(&cfg));
     add(rpc_error());
     out
 }

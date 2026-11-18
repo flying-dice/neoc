@@ -9,7 +9,7 @@ use agentos_application::{
     PortError, ViewError, ViewService, ViewSink,
 };
 use agentos_domain::{
-    api::{AppList, AppState, AppSummary, AppWindow, DeviceList, DeviceRow},
+    api::{AgentList, AgentRow, AppList, AppState, AppSummary, AppWindow, DeviceList, DeviceRow},
     protocol::RpcError,
     source_label,
     ui::protocol::{
@@ -68,9 +68,12 @@ impl RpcHub {
         let Some(agents) = self.agents.get() else { return Err(not_ready()) };
         let changed = |id: &AgentId| self.broadcast("agents.changed", &json!({ "id": id }));
         match method {
-            "agents.list" => Ok(json!({ "agents": agents.list() })),
+            "agents.list" => {
+                no_params(params)?;
+                encode(&AgentList { agents: agents.list().iter().map(AgentRow::from).collect() })
+            }
             "agents.create" => {
-                let p: CreateAgentParams = serde_json::from_value(params).map_err(|e| bad_params(&e))?;
+                let p: CreateAgentParams = parse(params)?;
                 let agent = agents
                     .create(NewAgent {
                         id: p.id,
@@ -86,32 +89,29 @@ impl RpcHub {
                 // the token is shown once, here
                 let token = agents.rotate_token(&agent.id).await.map_err(|e| agent_err(&e))?;
                 changed(&agent.id);
-                Ok(json!({ "agent": agent, "token": token }))
+                Ok(json!({ "agent": AgentRow::from(&agent), "token": token }))
             }
             "agents.update" => {
-                let id = agent_id_of(&params)?;
-                let patch = agent_patch(&params)?;
-                let agent = agents.update(&id, patch).await.map_err(|e| agent_err(&e))?;
+                let p: UpdateAgentParams = parse(params)?;
+                let id = p.id.clone();
+                let agent = agents.update(&id, p.into_patch()).await.map_err(|e| agent_err(&e))?;
                 changed(&id);
-                Ok(json!({ "agent": agent }))
+                Ok(json!({ "agent": AgentRow::from(&agent) }))
             }
             "agents.delete" => {
-                let id = agent_id_of(&params)?;
+                let id = parse::<AgentIdParams>(params)?.id;
                 agents.delete(&id).await.map_err(|e| agent_err(&e))?;
                 changed(&id);
                 Ok(Value::Null)
             }
             "agents.grants.set" => {
-                let id = agent_id_of(&params)?;
-                let grants: Grants =
-                    serde_json::from_value(params.get("grants").cloned().unwrap_or(Value::Null))
-                        .map_err(|e| bad_params(&e))?;
-                let agent = agents.set_grants(&id, grants).await.map_err(|e| agent_err(&e))?;
-                changed(&id);
-                Ok(json!({ "agent": agent }))
+                let p: GrantsParams = parse(params)?;
+                let agent = agents.set_grants(&p.id, p.grants).await.map_err(|e| agent_err(&e))?;
+                changed(&p.id);
+                Ok(json!({ "agent": AgentRow::from(&agent) }))
             }
             "agents.token.rotate" => {
-                let id = agent_id_of(&params)?;
+                let id = parse::<AgentIdParams>(params)?.id;
                 let token = agents.rotate_token(&id).await.map_err(|e| agent_err(&e))?;
                 Ok(json!({ "token": token }))
             }
@@ -196,6 +196,7 @@ impl RpcHub {
         let Some(devices) = self.devices.get() else { return Err(not_ready()) };
         match method {
             "host.devices.list" => {
+                no_params(params)?;
                 let current = peer.device().map(|d| d.id.clone());
                 let devices = devices.list().await.map_err(|e| rpc_err(&AppError::Port(e)))?;
                 encode(&DeviceList {
@@ -212,7 +213,7 @@ impl RpcHub {
                 })
             }
             "host.devices.revoke" => {
-                let p: RevokeParams = serde_json::from_value(params).map_err(|e| bad_params(&e))?;
+                let p: RevokeParams = parse(params)?;
                 devices.revoke(&p.id).await.map_err(|e| rpc_err(&AppError::Port(e)))?;
                 self.disconnect_device(&p.id, peer);
                 Ok(Value::Null)
@@ -263,27 +264,6 @@ fn agent_err(e: &AgentError) -> RpcError {
     RpcError { code, message: e.to_string(), data: None }
 }
 
-fn agent_id_of(params: &Value) -> Result<AgentId, RpcError> {
-    let id = params.get("id").and_then(Value::as_str).ok_or_else(|| RpcError {
-        code: -32602,
-        message: "invalid params: `id` is required".into(),
-        data: None,
-    })?;
-    Ok(AgentId(id.to_owned()))
-}
-
-/// The fields `agents.update` may carry; `avatar: null` clears the avatar, an absent field is left alone.
-fn agent_patch(params: &Value) -> Result<AgentPatch, RpcError> {
-    let p: UpdateAgentParams = serde_json::from_value(params.clone()).map_err(|e| bad_params(&e))?;
-    Ok(AgentPatch {
-        name: p.name,
-        avatar: params.get("avatar").map(|v| v.as_str().map(str::to_owned)),
-        role: p.role,
-        runtime: p.runtime,
-        approval: p.approval,
-    })
-}
-
 fn rpc_err(e: &AppError) -> RpcError {
     let code = match e {
         AppError::Domain(_) => -32001,
@@ -320,23 +300,53 @@ fn bad_params(e: &serde_json::Error) -> RpcError {
     RpcError { code: -32602, message: format!("invalid params: {e}"), data: None }
 }
 
+/// Params of a method as its typed struct: a by-name object with exactly the declared fields. Anything else
+/// (a missing or unknown field, a wrong type, an array) is a `-32602`, never a silent default.
+fn parse<T: serde::de::DeserializeOwned>(params: Value) -> Result<T, RpcError> {
+    serde_json::from_value(params).map_err(|e| bad_params(&e))
+}
+
+/// A method that takes nothing: absent, `null` and `{}` are all fine, any field is not.
+fn no_params(params: Value) -> Result<(), RpcError> {
+    parse::<Option<NoParams>>(params).map(|_| ())
+}
+
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NoParams {}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct InstallParams {
     url: String,
 }
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RevokeParams {
     id: DeviceId,
 }
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct AppParams {
     app: AppId,
 }
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct UninstallParams {
     app: AppId,
     #[serde(default)]
     purge: bool,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AgentIdParams {
+    id: AgentId,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GrantsParams {
+    id: AgentId,
+    grants: Grants,
 }
 
 #[async_trait]
@@ -378,23 +388,29 @@ impl RpcHandler for RpcHub {
         let Some(app) = self.app.get() else { return Err(not_ready()) };
         match method {
             "app.install" => {
-                let p: InstallParams = serde_json::from_value(params).map_err(|e| bad_params(&e))?;
+                let p: InstallParams = parse(params)?;
                 let id = app.install_from_url(&p.url).await.map_err(|e| rpc_err(&e))?;
                 Ok(json!({ "app": id }))
             }
             "app.uninstall" => {
-                let p: UninstallParams = serde_json::from_value(params).map_err(|e| bad_params(&e))?;
+                let p: UninstallParams = parse(params)?;
                 app.uninstall(&p.app, p.purge).await.map_err(|e| rpc_err(&e))?;
                 Ok(Value::Null)
             }
-            "app.list" => encode(&AppList { apps: app.apps().iter().map(summary).collect() }),
-            "app.available" => encode(&app.catalog().await),
+            "app.list" => {
+                no_params(params)?;
+                encode(&AppList { apps: app.apps().iter().map(summary).collect() })
+            }
+            "app.available" => {
+                no_params(params)?;
+                encode(&app.catalog().await)
+            }
             "app.preview" => {
-                let p: InstallParams = serde_json::from_value(params).map_err(|e| bad_params(&e))?;
+                let p: InstallParams = parse(params)?;
                 encode(&app.preview(&p.url).await.map_err(|e| rpc_err(&e))?)
             }
             "app.enable" | "app.disable" | "app.deleteData" | "app.reload" => {
-                let p: AppParams = serde_json::from_value(params).map_err(|e| bad_params(&e))?;
+                let p: AppParams = parse(params)?;
                 match method {
                     "app.enable" => app.enable(&p.app).await,
                     "app.disable" => app.disable(&p.app).await,
@@ -478,14 +494,43 @@ struct CreateAgentParams {
     approval: ApprovalPolicy,
 }
 
+/// The fields `agents.update` may carry; `avatar: null` clears the avatar, an absent field is left alone.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct UpdateAgentParams {
+    id: AgentId,
     #[serde(default)]
     name: Option<String>,
+    #[serde(default, deserialize_with = "present")]
+    #[allow(clippy::option_option)]
+    // "absent" and "null" mean different things (AgentPatch says the same)
+    avatar: Option<Option<String>>,
     #[serde(default)]
     role: Option<String>,
     #[serde(default)]
     runtime: Option<AgentRuntime>,
     #[serde(default)]
     approval: Option<ApprovalPolicy>,
+}
+
+impl UpdateAgentParams {
+    fn into_patch(self) -> AgentPatch {
+        AgentPatch {
+            name: self.name,
+            avatar: self.avatar,
+            role: self.role,
+            runtime: self.runtime,
+            approval: self.approval,
+        }
+    }
+}
+
+/// A field that is present, null or not: `Some(None)` for `null`, so "absent" and "null" stay apart.
+#[allow(clippy::option_option)] // see the field it serves
+fn present<'de, D, T>(d: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(d).map(Some)
 }

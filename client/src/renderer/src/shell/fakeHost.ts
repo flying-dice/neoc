@@ -50,7 +50,10 @@ export const FAKE_AGENT: AgentRow = {
   id: 'scripted',
   name: 'Scripted agent',
   role: 'Answers by script, for tests',
-  avatar: 'bolt'
+  avatar: 'bolt',
+  runtime: { command: 'scripted-agent', args: [], envKeys: [] },
+  grants: { all: false, apps: [] },
+  approval: 'auto_read_only'
 }
 
 export function fakeDevices(now = Date.now()): DeviceRow[] {

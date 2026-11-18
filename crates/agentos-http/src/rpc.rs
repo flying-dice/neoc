@@ -4,6 +4,7 @@
 
 use agentos_domain::{
     protocol::{RpcError, RpcId, RpcMessage},
+    ui::node::limits::MAX_MESSAGE_BYTES,
     Device,
 };
 use async_trait::async_trait;
@@ -22,13 +23,23 @@ use serde_json::Value;
 use std::{
     collections::HashMap,
     sync::{
-        atomic::{AtomicI64, Ordering},
+        atomic::{AtomicI64, AtomicU64, Ordering},
         Arc,
     },
     time::Duration,
 };
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
+
+/// How many requests one connection may have in flight (queued or running) at once. The next one is answered
+/// at once with [`BUSY`], so a client that floods `/rpc` slows only itself.
+pub const MAX_IN_FLIGHT: usize = 64;
+
+/// The JSON-RPC server error for a connection over [`MAX_IN_FLIGHT`].
+pub const BUSY: i32 = -32000;
+
+/// The last connection id handed out.
+static LAST_CONNECTION: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, thiserror::Error)]
 pub enum RpcCallError {
@@ -48,6 +59,8 @@ pub struct RpcPeer {
     tx: mpsc::UnboundedSender<RpcMessage>,
     pending: Arc<Mutex<Pending>>,
     next_id: Arc<AtomicI64>,
+    /// This connection's id: from a counter, so it is never reused while the host runs.
+    connection: u64,
     device: Option<Device>,
     closed: CancellationToken,
 }
@@ -58,14 +71,15 @@ impl RpcPeer {
         self.device.as_ref()
     }
 
-    /// An id of this connection, unique among the live ones.
+    /// An id of this connection: unique for as long as the host runs, so state keyed by it (views) can never
+    /// be inherited by a later connection.
     pub fn connection_id(&self) -> u64 {
-        Arc::as_ptr(&self.next_id) as usize as u64
+        self.connection
     }
 
     /// Do both handles belong to the same socket?
     pub fn is_same_connection(&self, other: &RpcPeer) -> bool {
-        Arc::ptr_eq(&self.next_id, &other.next_id)
+        self.connection == other.connection
     }
 
     /// Hang up on this client (its device was revoked). In-flight requests end with `Closed`.
@@ -123,7 +137,7 @@ async fn upgrade(
     device: Option<Extension<Device>>,
 ) -> Response {
     let device = device.map(|Extension(d)| d);
-    ws.max_message_size(1 << 20).on_upgrade(move |socket| serve_socket(socket, h, device))
+    ws.max_message_size(MAX_MESSAGE_BYTES).on_upgrade(move |socket| serve_socket(socket, h, device))
 }
 
 async fn serve_socket(socket: WebSocket, handler: Arc<dyn RpcHandler>, device: Option<Device>) {
@@ -133,6 +147,7 @@ async fn serve_socket(socket: WebSocket, handler: Arc<dyn RpcHandler>, device: O
         tx: tx.clone(),
         pending: Arc::default(),
         next_id: Arc::new(AtomicI64::new(1)),
+        connection: LAST_CONNECTION.fetch_add(1, Ordering::Relaxed) + 1,
         device,
         closed: CancellationToken::new(),
     };
@@ -151,12 +166,15 @@ async fn serve_socket(socket: WebSocket, handler: Arc<dyn RpcHandler>, device: O
     // The view protocol is ordered: a person's keystrokes are `view.event`s with increasing `seq`, and the host
     // drops one that arrives after a later one as a replay. Those requests run one at a time, in arrival
     // order; everything else (app management, anything that may call back into the client) runs concurrently.
-    let (ordered_tx, mut ordered_rx) = mpsc::unbounded_channel::<(RpcId, String, Value)>();
+    let in_flight = Arc::new(Semaphore::new(MAX_IN_FLIGHT));
+    let (ordered_tx, mut ordered_rx) = mpsc::unbounded_channel::<(Job, OwnedSemaphorePermit)>();
     let ordered = {
         let (h, p, tx) = (handler.clone(), peer.clone(), tx.clone());
         tokio::spawn(async move {
-            while let Some(job) = ordered_rx.recv().await {
-                if tx.send(answer(&*h, &p, job).await).is_err() {
+            while let Some((job, permit)) = ordered_rx.recv().await {
+                let reply = answer(&*h, &p, job).await;
+                drop(permit);
+                if tx.send(reply).is_err() {
                     break;
                 }
             }
@@ -182,12 +200,22 @@ async fn serve_socket(socket: WebSocket, handler: Arc<dyn RpcHandler>, device: O
                 let _ = tx.send(RpcMessage::err(None, -32700, "parse error"));
             }
             Ok(RpcMessage::Request { id, method, params, .. }) => {
+                let Ok(permit) = in_flight.clone().try_acquire_owned() else {
+                    let busy =
+                        format!("too many requests in flight on this connection (at most {MAX_IN_FLIGHT})");
+                    let _ = tx.send(RpcMessage::err(Some(id), BUSY, &busy));
+                    continue;
+                };
                 let job = (id, method, params);
                 if is_ordered(&job.1) {
-                    let _ = ordered_tx.send(job); // one at a time, in the order sent
+                    let _ = ordered_tx.send((job, permit)); // one at a time, in the order sent
                 } else {
                     let (h, p, tx) = (handler.clone(), peer.clone(), tx.clone());
-                    tokio::spawn(async move { tx.send(answer(&*h, &p, job).await).ok() });
+                    tokio::spawn(async move {
+                        let reply = answer(&*h, &p, job).await;
+                        drop(permit);
+                        tx.send(reply).ok()
+                    });
                 }
             }
             Ok(RpcMessage::Notification { method, params, .. }) => {
@@ -218,11 +246,10 @@ fn is_ordered(method: &str) -> bool {
     ["view.", "row.", "state.", "source."].iter().any(|p| method.starts_with(p))
 }
 
-async fn answer(
-    handler: &dyn RpcHandler,
-    peer: &RpcPeer,
-    (id, method, params): (RpcId, String, Value),
-) -> RpcMessage {
+/// A request taken off the socket: its id, method and params.
+type Job = (RpcId, String, Value);
+
+async fn answer(handler: &dyn RpcHandler, peer: &RpcPeer, (id, method, params): Job) -> RpcMessage {
     match handler.request(peer, &method, params).await {
         Ok(v) => RpcMessage::ok(id, v),
         Err(e) => {

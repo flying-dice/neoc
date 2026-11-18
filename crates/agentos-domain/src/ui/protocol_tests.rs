@@ -431,12 +431,14 @@ fn every_method_in_the_table_decodes_through_its_enum() {
 }
 
 #[test]
-fn params_may_be_wrapped_in_a_one_element_array() {
-    let wrapped = json!([{ "viewId": "v1" }]);
+fn params_are_a_by_name_object_and_an_array_is_refused() {
     assert_eq!(
-        ClientRequest::from_rpc("view.sync", wrapped).unwrap(),
+        ClientRequest::from_rpc("view.sync", json!({ "viewId": "v1" })).unwrap(),
         ClientRequest::ViewSync(ViewRef { view_id: "v1".into() })
     );
+    // the positional convention of the deleted SDK is not accepted any more
+    let wrapped = ClientRequest::from_rpc("view.sync", json!([{ "viewId": "v1" }])).unwrap_err();
+    assert_eq!(wrapped.to_rpc_error().code, codes::INVALID_PARAMS);
 }
 
 #[test]

@@ -179,3 +179,67 @@ async fn ensure_seeds_an_agent_once_and_never_overwrites_what_the_person_edited(
     assert_eq!(fresh.list().len(), 1);
     assert_eq!(fresh.authenticate("fixed-token").unwrap().grants, [Permission::CallAnyTool]);
 }
+
+/// Records which agents the roster asked to have stopped.
+#[derive(Default)]
+struct StopLog(parking_lot::Mutex<Vec<String>>);
+
+#[async_trait::async_trait]
+impl crate::agents::AgentProcesses for StopLog {
+    async fn stop_agent(&self, agent: &AgentId) {
+        self.0.lock().push(agent.0.clone());
+    }
+}
+
+fn rig_with_processes() -> (AgentService, Arc<StopLog>) {
+    let log = Arc::new(StopLog::default());
+    let svc = AgentService::new(
+        Arc::new(MemAgentStore::default()),
+        Arc::new(MemRegistry::default()),
+        Arc::new(SeededRandom::default()),
+    )
+    .with_processes(log.clone());
+    (svc, log)
+}
+
+#[tokio::test]
+async fn changing_how_an_agent_is_launched_stops_its_process_and_other_edits_do_not() {
+    let (svc, log) = rig_with_processes();
+    let a = svc.create(new("Claude")).await.unwrap();
+    let runtime = |command: &str, env: &[(&str, &str)]| AgentRuntime {
+        command: command.into(),
+        args: vec![],
+        env: env.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect(),
+    };
+    let patch = |runtime| AgentPatch { runtime: Some(runtime), ..AgentPatch::default() };
+
+    // edits that do not change the launch leave the process alone
+    svc.update(&a.id, AgentPatch { role: Some("Pair".into()), ..AgentPatch::default() }).await.unwrap();
+    svc.update(&a.id, patch(a.runtime.clone())).await.unwrap();
+    svc.set_grants(&a.id, Grants::allow_all()).await.unwrap();
+    assert!(log.0.lock().is_empty(), "{:?}", log.0.lock());
+
+    svc.update(&a.id, patch(runtime("other-agent", &[]))).await.unwrap();
+    assert_eq!(*log.0.lock(), ["claude"], "a new command stops the process");
+    svc.update(&a.id, patch(runtime("other-agent", &[("API_KEY", "k2")]))).await.unwrap();
+    assert_eq!(log.0.lock().len(), 2, "a new environment stops it too");
+
+    // a rejected update changes nothing, and stops nothing
+    let bad = AgentPatch {
+        name: Some(String::new()),
+        runtime: Some(runtime("third", &[])),
+        ..AgentPatch::default()
+    };
+    assert!(svc.update(&a.id, bad).await.is_err());
+    assert_eq!(log.0.lock().len(), 2);
+}
+
+#[tokio::test]
+async fn deleting_an_agent_stops_its_process() {
+    let (svc, log) = rig_with_processes();
+    let a = svc.create(new("Claude")).await.unwrap();
+    assert!(svc.delete(&AgentId("nobody".into())).await.is_err());
+    assert!(log.0.lock().is_empty(), "a delete that failed stops nothing");
+    svc.delete(&a.id).await.unwrap();
+    assert_eq!(*log.0.lock(), ["claude"]);
+}

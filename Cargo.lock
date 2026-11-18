@@ -74,9 +74,11 @@ dependencies = [
  "agentos-domain",
  "axum",
  "futures-util",
+ "parking_lot",
  "serde",
  "serde_json",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -2351,6 +2353,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-util",
+ "h2",
  "http",
  "http-body",
  "http-body-util",
