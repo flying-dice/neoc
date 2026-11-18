@@ -1,6 +1,5 @@
 --!strict
--- A port of apps/calculator/src/shared/evaluate.ts: a safe arithmetic evaluator (no loadstring), `format` for
--- results and `formatEntry` for the number being typed.
+-- A safe arithmetic evaluator (no loadstring), `format` for results and `formatEntry` for the number being typed.
 local calc = {}
 
 type Token = { kind: string, value: string, number: number }
