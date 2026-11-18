@@ -349,7 +349,7 @@ fn install_sources(lua: &Lua, sh: &Sh, db: &Table) -> mlua::Result<()> {
                     LuaValue::Integer(p) => {
                         Some(u32::try_from(p).map_err(|_| mlua::Error::runtime("page must be positive"))?)
                     }
-                    LuaValue::Number(p) if p.fract() == 0.0 && p >= 0.0 =>
+                    LuaValue::Number(p) if p.fract() == 0.0 && (0.0..=f64::from(u32::MAX)).contains(&p) =>
                     {
                         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                         Some(p as u32)

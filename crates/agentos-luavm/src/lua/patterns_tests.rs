@@ -9,10 +9,22 @@ use std::sync::{
 use mlua::Lua;
 
 use super::{install, PatternLimits};
+use crate::lua::host_bytes::ByteBudget;
 use crate::lua::sandbox::make_bare_engine;
 
 fn unlimited() -> PatternLimits {
-    PatternLimits { charge: Arc::new(|_| Ok(())), max_output: 64 * 1024 * 1024 }
+    PatternLimits { charge: Arc::new(|_| Ok(())), bytes: ByteBudget::new(64 * 1024 * 1024) }
+}
+
+/// An engine whose host-side buffers (plus its own heap) may use `headroom` more bytes, and that budget.
+fn engine_with_headroom(headroom: usize) -> (Lua, Arc<ByteBudget>) {
+    let lua = make_bare_engine().expect("engine");
+    lua.load("orig = { find = string.find, match = string.match, gmatch = string.gmatch, gsub = string.gsub, rep = string.rep }")
+        .exec()
+        .expect("stash the originals");
+    let bytes = ByteBudget::new(lua.used_memory() + headroom);
+    install(&lua, PatternLimits { charge: Arc::new(|_| Ok(())), bytes: bytes.clone() }).expect("install");
+    (lua, bytes)
 }
 
 /// An engine whose `string` functions are ours, and a global `orig` holding the C originals.
@@ -160,7 +172,7 @@ fn a_catastrophic_pattern_is_stopped_by_the_budget_instead_of_hanging() {
             }
         })
     };
-    let lua = engine_with(PatternLimits { charge, max_output: 1 << 20 });
+    let lua = engine_with(PatternLimits { charge, bytes: ByteBudget::new(64 << 20) });
     let started = std::time::Instant::now();
     // cubic or worse: far more than `limit` ticks (a tick is STEP_BLOCK matcher steps)
     for source in [
@@ -189,16 +201,58 @@ fn a_pattern_of_a_hundred_thousand_items_is_too_complex_not_a_stack_overflow() {
 }
 
 #[test]
-fn gsub_output_is_capped_because_a_rust_buffer_is_outside_the_lua_heap_limit() {
-    let lua = engine_with(PatternLimits { charge: Arc::new(|_| Ok(())), max_output: 1000 });
+fn gsub_output_is_charged_because_a_rust_buffer_is_outside_the_lua_heap_limit() {
+    let (lua, bytes) = engine_with_headroom(40_000);
     let err = lua
-        .load(r#"return string.gsub(string.rep("a", 500), "a", "xyz")"#)
+        .load(r#"return string.gsub(string.rep("a", 20000), "a", "xyz")"#)
         .exec()
         .expect_err("too big")
         .to_string();
     assert!(err.contains("memory"), "{err}");
+    assert_eq!(bytes.used(), 0, "the failed call's buffer was released");
     let (_, n): (String, i64) = lua.load(r#"return string.gsub("aaa", "a", "x")"#).eval().expect("small");
     assert_eq!(n, 3);
+    assert_eq!(bytes.used(), 0);
+}
+
+/// A `gsub` whose replacement function runs another `gsub` keeps one output buffer per level alive. With a
+/// cap per call that is `levels * cap` bytes (sixty levels of 16 MiB: a gigabyte); the buffers of one VM share
+/// a budget, so the nest ends with a memory error once they add up to the limit, and the budget says so.
+#[test]
+fn nested_gsubs_share_one_byte_budget_instead_of_one_cap_each() {
+    const LIMIT: usize = 16 << 20;
+    let lua = make_bare_engine().expect("engine");
+    let bytes = ByteBudget::new(LIMIT);
+    install(&lua, PatternLimits { charge: Arc::new(|_| Ok(())), bytes: bytes.clone() }).expect("install");
+    let source = r#"
+        local chunk = string.rep("x", 1024 * 1024)
+        -- the nesting is what holds buffers: put the big output in the outer buffer before descending
+        local function nest(n)
+          if n == 0 then return "leaf" end
+          return (string.gsub(chunk .. "!", "!", function() return nest(n - 1) end))
+        end
+        return nest(60)
+    "#;
+    let err =
+        lua.load(source).exec().expect_err("sixty live megabyte buffers do not fit in 16 MiB").to_string();
+    assert!(err.contains("memory"), "{err}");
+    assert!(bytes.peak() <= LIMIT, "peak {} is past the limit {LIMIT}", bytes.peak());
+    assert!(bytes.peak() >= 4 << 20, "the levels really did hold buffers: peak {}", bytes.peak());
+    assert_eq!(bytes.used(), 0, "every level released its buffer when the error unwound");
+    // and a nest that fits still works
+    let ok: String = lua
+        .load(
+            r#"local chunk = "yy"
+               local function nest(n)
+                 if n == 0 then return "leaf" end
+                 return (string.gsub(chunk .. "!", "!", function() return nest(n - 1) end))
+               end
+               return nest(20)"#,
+        )
+        .eval()
+        .expect("shallow");
+    assert!(ok.ends_with("leaf"), "{ok}");
+    assert_eq!(bytes.used(), 0);
 }
 
 #[test]
@@ -214,7 +268,7 @@ fn gsub_replacement_functions_propagate_their_errors() {
 
 #[test]
 fn rep_matches_the_c_implementation_and_never_loops_on_an_empty_string() {
-    let lua = engine_with(PatternLimits { charge: Arc::new(|_| Ok(())), max_output: 1000 });
+    let (lua, bytes) = engine_with_headroom(1 << 20);
     lua.load(
         r#"
         for _, s in ipairs { "", "a", "ab", "\0" } do
@@ -231,4 +285,5 @@ fn rep_matches_the_c_implementation_and_never_loops_on_an_empty_string() {
     )
     .exec()
     .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(bytes.used(), 0, "rep gives its reservation back");
 }

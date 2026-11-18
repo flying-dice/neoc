@@ -14,11 +14,11 @@
 -- signal instead of an empty answer. The signal is handed to the inner coroutine so that its future is
 -- dropped, and this coroutine then stays suspended: control must never return into the script.
 --
--- Lua 5.1 still cannot yield out of a C boundary (a `table.sort` comparator, a `string.gsub` callback, a
+-- Lua 5.1 still cannot yield out of a C boundary (a `string.gsub` callback, a
 -- metamethod or a `for ... in` iterator function): a host call there fails with Lua's own
 -- "attempt to yield across metamethod/C-call boundary".
 
-local pending, raw = ...
+local pending, raw, killed = ...
 local select, unpack, error, type = select, unpack, error, type
 local create, resume, yield, status = raw.create, raw.resume, raw.yield, raw.status
 
@@ -44,8 +44,13 @@ end
 
 local M = {}
 
+-- An error that is the embedder stopping the script (`killed()`) is raised again, not returned: a script cannot
+-- swallow a stop by resuming a coroutine that was stopped and carrying on.
 function M.resume(co, ...)
   local r = drive(co, pack(resume(co, ...)))
+  if not r[1] and killed() then
+    error(r[2], 0)
+  end
   return unpack(r, 1, r.n)
 end
 

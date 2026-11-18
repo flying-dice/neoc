@@ -26,9 +26,11 @@ use std::{
 };
 use tokio::sync::Notify;
 
-/// How often (in ticks) the wall-clock backstops are read: `Instant::now` is some tens of nanoseconds, a
-/// tick is a hundred VM instructions, so this keeps a runaway inside one C library call's reach of the wall.
-pub const WALL_CHECK_EVERY: u64 = 256;
+/// How often (in ticks) the wall-clock backstops are read. `Instant::now` is some tens of nanoseconds and a
+/// tick is a hundred VM instructions (a microsecond or so), so reading it every fourth tick costs a percent or
+/// two; and what the count cannot see (one VM instruction that copies a string as large as the memory limit)
+/// can overshoot a wall by only the length of those four ticks, not by thousands of them.
+pub const WALL_CHECK_EVERY: u64 = 4;
 
 /// VM instructions per tick: how often the count hook runs. Small enough that a runaway loop is caught
 /// within microseconds, large enough that the hook costs a few percent of an honest script's time.
@@ -172,6 +174,12 @@ impl CpuBudget {
         self.waiting.fetch_add(1, Ordering::SeqCst);
         HostWait { budget: self.clone(), epoch: self.epoch.load(Ordering::SeqCst) }
     }
+    /// Host calls counted as in flight. While Lua code is running none can be (a host call suspends the whole
+    /// stack until it is ready), so a count above zero then means a host call whose future was left behind:
+    /// see `agentos_luavm::lua::sandbox::Watchdog::orphaned`.
+    pub fn host_waits(&self) -> usize {
+        self.waiting.load(Ordering::SeqCst)
+    }
     /// A new top-level call: fresh slice, fresh call budget, and the previous spent latch and any wait are
     /// forgotten (an unload is not: a retired app stays retired).
     pub fn begin(&self) {
@@ -182,11 +190,11 @@ impl CpuBudget {
         self.call_started_ns.store(self.now_ns(), Ordering::Relaxed);
         self.refill_slice();
     }
-    fn wall_elapsed(&self) -> Duration {
-        Duration::from_nanos(self.now_ns().saturating_sub(self.started_ns.load(Ordering::Relaxed)))
+    fn elapsed_since(started_ns: &AtomicU64, now: u64) -> Duration {
+        Duration::from_nanos(now.saturating_sub(started_ns.load(Ordering::Relaxed)))
     }
     fn call_elapsed(&self) -> Duration {
-        Duration::from_nanos(self.now_ns().saturating_sub(self.call_started_ns.load(Ordering::Relaxed)))
+        Self::elapsed_since(&self.call_started_ns, self.now_ns())
     }
     /// Time left of the call's wall-clock budget.
     pub fn call_wall_left(&self, allowance: Allowance) -> Duration {
@@ -219,16 +227,29 @@ impl CpuBudget {
         if self.spent.load(Ordering::Relaxed) {
             return Some(Stop::Budget);
         }
-        // read the clock when a count crosses a multiple of WALL_CHECK_EVERY
+        // read the clock (once) when a count crosses a multiple of WALL_CHECK_EVERY
         let crossed = |after: u64| after / WALL_CHECK_EVERY != after.saturating_sub(n) / WALL_CHECK_EVERY;
         let call_ticks = self.call_ticks.fetch_add(n, Ordering::Relaxed).saturating_add(n);
+        let waiting = self.waiting.load(Ordering::SeqCst) != 0;
+        let ticks = if waiting { 0 } else { self.ticks.fetch_add(n, Ordering::Relaxed).saturating_add(n) };
+        let (check_call, check_slice) = (crossed(call_ticks), !waiting && crossed(ticks));
+        let now = (check_call || check_slice).then(|| self.now_ns());
         let call_spent = call_ticks > allowance.call_ticks
-            || (crossed(call_ticks) && self.call_elapsed() > allowance.call_wall);
-        let slice_spent = self.waiting.load(Ordering::SeqCst) == 0 && {
-            let ticks = self.ticks.fetch_add(n, Ordering::Relaxed).saturating_add(n);
-            ticks > allowance.ticks || (crossed(ticks) && self.wall_elapsed() > allowance.wall)
-        };
+            || now.is_some_and(|now| {
+                check_call && Self::elapsed_since(&self.call_started_ns, now) > allowance.call_wall
+            });
+        let slice_spent = !waiting
+            && (ticks > allowance.ticks
+                || now.is_some_and(|now| {
+                    check_slice && Self::elapsed_since(&self.started_ns, now) > allowance.wall
+                }));
         self.latch_if(call_spent || slice_spent)
+    }
+    /// The app must stop and the stop is final for this call (a budget ran out and was latched, or the app was
+    /// unloaded). The library's `pcall`, `xpcall` and `coroutine.resume` ask this, and re-raise what they
+    /// caught, so that no handler (or a function that returns before the next tick) can swallow the kill.
+    pub fn is_stopped(&self) -> bool {
+        self.retirement.is_retired() || self.spent.load(Ordering::Relaxed)
     }
     /// A host call is about to start: charge it, and refuse it when the app was unloaded or the call's
     /// budget (ticks or wall-clock) is spent. The hook reads the wall clock only now and then, so a
@@ -395,6 +416,63 @@ mod tests {
         std::thread::sleep(Duration::from_millis(20));
         assert_eq!(budget.charge_host_call(a), Err(Stop::Budget));
         assert_eq!(budget.call_wall_left(a), Duration::ZERO);
+    }
+
+    #[test]
+    fn the_calls_wall_clock_and_ticks_are_still_checked_while_a_host_call_is_in_flight() {
+        // a wait left open (a host call that was dropped, or parked) must not exempt the call
+        let walled = Allowance { call_wall: Duration::from_millis(5), ..allowance(1_000_000) };
+        let budget = CpuBudget::new();
+        budget.begin();
+        let _parked = budget.wait_for_host();
+        std::thread::sleep(Duration::from_millis(20));
+        assert!((0..WALL_CHECK_EVERY).any(|_| exceeded(&budget, walled)), "the call's wall clock is read");
+        assert!(budget.is_stopped());
+
+        let counted = Allowance { call_ticks: 100, ..allowance(1_000_000) };
+        budget.begin();
+        let _parked = budget.wait_for_host();
+        assert_eq!(
+            budget.spend(counted, 101),
+            Some(Stop::Budget),
+            "and so is a charge that crosses the limit"
+        );
+    }
+
+    #[test]
+    fn one_large_charge_reads_the_clock_even_when_it_skips_over_the_boundary() {
+        let wall = Allowance { ticks: u64::MAX, wall: Duration::from_millis(5), ..allowance(0) };
+        let budget = CpuBudget::new();
+        budget.begin();
+        std::thread::sleep(Duration::from_millis(20));
+        // 10_000 ticks in one go crosses many multiples of WALL_CHECK_EVERY at once
+        assert_eq!(budget.spend(wall, 10_000), Some(Stop::Budget));
+    }
+
+    #[test]
+    fn the_wall_clock_is_read_every_few_ticks_not_every_thousands() {
+        const { assert!(WALL_CHECK_EVERY <= 16) };
+        let budget = CpuBudget::new();
+        budget.begin();
+        std::thread::sleep(Duration::from_millis(20));
+        let wall = Allowance { ticks: u64::MAX, wall: Duration::from_millis(5), ..allowance(0) };
+        let killed_at = (1..=1000).find(|_| exceeded(&budget, wall));
+        assert!(killed_at.is_some_and(|tick| tick <= WALL_CHECK_EVERY), "{killed_at:?}");
+    }
+
+    #[test]
+    fn a_stopped_budget_says_so_until_the_next_call_begins() {
+        let budget = CpuBudget::new();
+        budget.begin();
+        assert!(!budget.is_stopped());
+        assert!((0..10).all(|_| !exceeded(&budget, allowance(10))));
+        assert!(exceeded(&budget, allowance(10)));
+        assert!(budget.is_stopped());
+        budget.begin();
+        assert!(!budget.is_stopped(), "a budget that ran out is forgotten by the next call");
+        budget.retirement().retire();
+        budget.begin();
+        assert!(budget.is_stopped(), "an unload is not");
     }
 
     #[tokio::test]

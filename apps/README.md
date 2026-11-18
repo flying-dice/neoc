@@ -269,20 +269,27 @@ SQLite (`apps/agents/app.luau`).
   change what other code in its VM sees. `math.random` has a generator of its own per VM, seeded by the host (the C
   library's is one state shared by every app, which `math.randomseed` could steer). A **memory limit** (16 MiB by default) and a **CPU budget** per call
   (`Limits::cpu_ticks`, 500 000 ticks of 100 VM instructions each, a fraction of a second on an idle machine, so a
-  loaded host does not trip it; a 10 s wall-clock backstop, `cpu_wall`, catches the rest; sticky so `pcall` cannot
-  swallow it; the budget also binds inside coroutines; time waiting on the host does not count) kill a runaway app, not
+  loaded host does not trip it; a 10 s wall-clock backstop, `cpu_wall`, catches the rest; sticky, and `pcall`, `xpcall` and
+  `coroutine.resume` raise a stop again if they catch it, so nothing can swallow it; the budget also binds inside
+  coroutines; time waiting on the host does not count) kill a runaway app, not
   the host. **Pattern matching cannot hang the host:** the C pattern matcher cannot be interrupted, so `string.find`,
   `match`, `gmatch` and `gsub` (and `string.rep`) run in host code that charges the same CPU budget, stops at a recursion
-  depth of 200 (`pattern too complex`) and caps what it builds. A **per-call budget** that host calls do not refill
+  depth of 200 (`pattern too complex`) and charges what it builds to a byte budget shared with the Lua heap (a `gsub`
+  inside a `gsub` callback cannot outgrow the memory limit). The library functions whose work is one instruction
+  (`string.upper`, `format`, `sub`, `table.concat`, `insert`, ...) charge the CPU budget by the size of their input or
+  output, and `table.sort` is a counted Lua merge sort (O(n log n), stable, its comparison may call the host). A **per-call budget** that host calls do not refill
   (2 500 000 ticks, 30 s including host waits) stops a loop of host calls; at most 32 effects (notifications, windows,
   shell commands) per call; values leaving Lua are capped at 100 000 nodes and 4 MiB and may not contain cycles (view
   trees: 10 000 nodes, depth 64). Queries return at most 10 000 rows and 16 MiB; BLOBs come out as base64 text. A
   blocking host call has its own timeout. SQL `ATTACH` is denied and a statement past its wall-clock budget is
   interrupted.
 - **Lua 5.1 limits to write around.** A host call (`app.db:*`, `app.kv:*`) may be made inside `pcall`, inside a
-  coroutine and in any handler, but not where Lua 5.1 cannot yield: a `table.sort` comparator, a `string.gsub` callback,
+  coroutine and in any handler, but not where Lua 5.1 cannot yield: a `string.gsub` callback,
   a metamethod or the iterator function of a `for ... in` (it fails with "attempt to yield across metamethod/C-call
-  boundary"). `return app.db:all(...)` (a tail call) loses the line number in an error message. `pairs` and `next` of
+  boundary"). `return app.db:all(...)` (a tail call) loses the line number in an error message. `table.insert(t, pos, v)` with a
+  `pos` outside `1..#t + 1` is an error (position out of bounds), and `math.random` of a bound that is not a finite
+  number (`1e300`, `NaN`, an infinity) is an error; `table.sort` never raises "invalid order function for sorting" (an
+  inconsistent comparison gives some order of the same elements). `pairs` and `next` of
   a library table (`pairs(string)`) see nothing. An error raised by a host function (`app.db`, `app.kv`, and the
   string functions `find`, `match`, `gmatch`, `gsub`, `rep`, and `math.random`, which the host implements) reaches a
   `pcall` as an error object, not a plain string: write `tostring(err)` before concatenating or matching it.

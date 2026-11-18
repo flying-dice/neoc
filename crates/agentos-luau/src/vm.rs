@@ -24,9 +24,11 @@ use agentos_domain::{time, tool_schema, AppDecl, AppId, Capabilities, Notificati
 use agentos_luavm::mlua;
 use agentos_luavm::{
     lua::{
-        app_env, patterns,
+        app_env, charged,
+        host_bytes::ByteBudget,
+        patterns,
         patterns::PatternLimits,
-        sandbox::{load_source, make_bare_engine},
+        sandbox::{load_source, make_bare_engine, set_watchdog, Watchdog},
     },
     mlua::{Function, HookTriggers, Lua, Table, Value as LuaValue, VmState},
 };
@@ -340,9 +342,12 @@ impl Drop for ReadOnlyCall<'_> {
 
 /// A top-level call in progress: it holds the VM's gate. Ending it, or abandoning it (its caller gave up), rolls
 /// back a transaction it left open, so the database's write gate is free the moment the call is over rather than
-/// when some later call happens to start.
+/// when some later call happens to start. And it collects a host call the call left behind: one that failed
+/// where Lua 5.1 cannot yield (a `gsub` callback, a metamethod) leaves its future in a dead coroutine until the
+/// garbage collector frees it, and the future can hold the database's lock for the next call.
 pub(crate) struct CallGuard<'a> {
     shared: &'a Shared,
+    lua: &'a Lua,
     _gate: tokio::sync::MutexGuard<'a, ()>,
 }
 
@@ -350,6 +355,9 @@ impl Drop for CallGuard<'_> {
     fn drop(&mut self) {
         // before the gate is released (fields drop after this body): dropping the transaction rolls it back
         drop(self.shared.tx.lock().take());
+        if self.shared.budget.host_waits() > 0 {
+            let _ = self.lua.gc_collect();
+        }
     }
 }
 
@@ -432,19 +440,28 @@ impl AppVm {
             }
         })
         .map_err(|e| load_err(&e))?;
-        // The host-side pattern functions (the C matcher never polls the hook) pay into the same budget.
-        let pattern_budget = budget.clone();
-        patterns::install(
+        // The host-side library functions (the pattern matcher, `rep`, and the C functions whose work the hook
+        // cannot see) pay into the same budget, and everything they build outside the Lua heap is charged to one
+        // byte budget (see `agentos_luavm::lua::host_bytes`).
+        let charge_budget = budget.clone();
+        let limits_for_library = PatternLimits {
+            charge: Arc::new(move |ticks| match charge_budget.spend(allowance, ticks) {
+                Some(stop) => Err(mlua::Error::runtime(stop.message())),
+                None => Ok(()),
+            }),
+            bytes: ByteBudget::new(limits.memory_bytes),
+        };
+        patterns::install(&lua, limits_for_library.clone()).map_err(|e| load_err(&e))?;
+        charged::install(&lua, &limits_for_library).map_err(|e| load_err(&e))?;
+        // A stop the script catches (pcall, xpcall, coroutine.resume) is raised again: see `set_watchdog`.
+        let (stop_budget, orphan_budget) = (budget.clone(), budget.clone());
+        set_watchdog(
             &lua,
-            PatternLimits {
-                charge: Arc::new(move |ticks| match pattern_budget.spend(allowance, ticks) {
-                    Some(stop) => Err(mlua::Error::runtime(stop.message())),
-                    None => Ok(()),
-                }),
-                max_output: limits.memory_bytes,
+            Watchdog {
+                stopped: Arc::new(move || stop_budget.is_stopped()),
+                orphaned: Arc::new(move || orphan_budget.host_waits() > 0),
             },
-        )
-        .map_err(|e| load_err(&e))?;
+        );
         lua.set_memory_limit(limits.memory_bytes).map_err(|e| load_err(&e))?;
 
         let env = app_env::new_env(&lua).map_err(|e| load_err(&e))?;
@@ -495,7 +512,7 @@ impl AppVm {
         let gate = self.gate.lock().await;
         self.shared.budget.begin();
         self.shared.effects_in_call.store(0, Ordering::Relaxed);
-        CallGuard { shared: &self.shared, _gate: gate }
+        CallGuard { shared: &self.shared, lua: &self.lua, _gate: gate }
     }
 
     // ---- what the app declared ------------------------------------------------------------------------

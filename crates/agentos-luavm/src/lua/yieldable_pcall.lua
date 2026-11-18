@@ -11,7 +11,15 @@
 -- error site (there is no `debug.traceback` in the sandbox to need the difference), and a non-callable `f`
 -- reports "attempt to call upvalue 'f'" instead of "attempt to call a nil value".
 
-local select, unpack, type = select, unpack, type
+-- A caught error that is the embedder stopping the script (`killed()`, see `sandbox::set_watchdog`) is raised
+-- again: no handler, and no function that returns before the next tick, can swallow a stop.
+--
+-- A protected call that fails because a host call could not yield (a `gsub` callback, a metamethod) leaves that
+-- call's future alive in the dead coroutine. `reclaim()` collects it when the embedder says there is one, and
+-- is called with nothing referring to the dead coroutine any more.
+local killed, reclaim = ...
+
+local select, unpack, type, error = select, unpack, type, error
 local raw_pcall = pcall
 local create, resume, yield, status, running =
   coroutine.create, coroutine.resume, coroutine.yield, coroutine.status, coroutine.running
@@ -24,6 +32,11 @@ end
 local function drive(co, handler, r)
   while true do
     if not r[1] then
+      if killed() then
+        error(r[2], 0)
+      end
+      co = nil
+      reclaim()
       if handler then
         local ok, shaped = raw_pcall(handler, r[2])
         -- an erroring handler is "error in error handling", as in the built-in

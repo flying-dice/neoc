@@ -1,8 +1,10 @@
 //! Engine factory + (value, err) helpers shared by every lib module.
 
+use std::sync::Arc;
+
 use mlua::{
     chunk::{AsChunk, Chunk, ChunkMode},
-    IntoLua, Lua, StdLib, Value,
+    Function, IntoLua, Lua, StdLib, Value,
 };
 
 use crate::lua::{bit, modules};
@@ -101,13 +103,59 @@ pub fn load_source<'a>(lua: &Lua, source: impl AsChunk + 'a) -> Chunk<'a> {
     lua.load(source).set_mode(ChunkMode::Text)
 }
 
+/// What the embedder tells the engine about the script's state, for the library's own Lua parts to act on (see
+/// [`set_watchdog`]).
+#[derive(Clone)]
+pub struct Watchdog {
+    /// Has the script been stopped for good (its CPU budget ran out, or it was unloaded)?
+    pub stopped: Arc<dyn Fn() -> bool + Send + Sync>,
+    /// Is a host call that nobody is waiting for any more still alive? (A host call that cannot yield, in a
+    /// `gsub` callback or a metamethod, fails and leaves its future in a dead coroutine until the garbage
+    /// collector frees it; it can hold the database's lock, and the CPU slice stays "waiting" until it is gone.)
+    pub orphaned: Arc<dyn Fn() -> bool + Send + Sync>,
+}
+
+struct WatchdogSlot(Watchdog);
+
+/// Install the embedder's [`Watchdog`].
+///
+/// The embedder's count hook stops a script by raising an error, and a script can catch it (`pcall`, `xpcall`,
+/// `coroutine.resume`) and carry on with a function that returns before the hook runs again. The library's own
+/// `pcall`, `xpcall` and `coroutine.resume` therefore ask `stopped` after catching an error and, when it is
+/// true, raise the error again: a stop cannot be swallowed, whatever the handler does and however deeply the
+/// protected calls nest. And `pcall` / `xpcall`, having caught a failure, ask `orphaned` and, when it is true,
+/// collect the dead coroutine's garbage at once (and with it the orphan's future). Without a watchdog (the
+/// default) nothing is re-raised and nothing is collected.
+pub fn set_watchdog(lua: &Lua, watchdog: Watchdog) {
+    lua.set_app_data(WatchdogSlot(watchdog));
+}
+
+/// The Lua function `killed()` the library's Lua parts call: asks [`Watchdog::stopped`] when called.
+pub(crate) fn killed_function(lua: &Lua) -> mlua::Result<Function> {
+    lua.create_function(|lua, ()| {
+        Ok(lua.app_data_ref::<WatchdogSlot>().is_some_and(|slot| (slot.0.stopped)()))
+    })
+}
+
+/// The Lua function `reclaim()`: runs a full garbage collection when [`Watchdog::orphaned`] says a host call
+/// was left behind.
+pub(crate) fn reclaim_function(lua: &Lua) -> mlua::Result<Function> {
+    lua.create_function(|lua, ()| {
+        let orphaned = lua.app_data_ref::<WatchdogSlot>().is_some_and(|slot| (slot.0.orphaned)());
+        if orphaned {
+            lua.gc_collect()?;
+        }
+        Ok(())
+    })
+}
+
 /// Replace `pcall`/`xpcall` with versions a coroutine can yield through (see `yieldable_pcall.lua`).
 /// Standard Lua 5.1 cannot, and an async host call inside a protected call must.
 fn install_yieldable_pcall(lua: &Lua) -> mlua::Result<()> {
     lua.load(include_str!("yieldable_pcall.lua"))
         .set_name("=yieldable_pcall")
         .set_mode(ChunkMode::Text)
-        .exec()
+        .call((killed_function(lua)?, reclaim_function(lua)?))
 }
 
 fn strip_unsafe_globals(lua: &Lua) -> mlua::Result<()> {

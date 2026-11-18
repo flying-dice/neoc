@@ -378,8 +378,9 @@ async fn the_fetcher_caps_one_package_file_at_the_domain_limit() {
     let url = publish_package(
         &tmp.join("pkg"),
         "big",
-        "app.luau",
-        &[("app.luau", b"return 1".to_vec()), ("big.luau", vec![b'-'; max + 1])],
+        "app.lua",
+        // an app is one bundled file, so the entry is the file the fetcher is handed
+        &[("app.lua", vec![b'-'; max + 1])],
         vec![],
     );
     let r = start(|_| {}).await;

@@ -13,7 +13,8 @@
 //! - every [`STEP_BLOCK`] matcher steps it calls the embedder's `charge` callback (one CPU tick), which
 //!   returns an error once a budget is spent, so a catastrophic pattern ends like a runaway loop does;
 //! - recursion is capped at [`MAX_DEPTH`] ("pattern too complex", as Lua 5.2+ does), and `gsub` output is
-//!   capped at [`PatternLimits::max_output`], because a Rust buffer is outside the Lua heap's memory limit.
+//!   built in buffers charged to the VM's shared [`ByteBudget`], because a Rust buffer is outside the Lua heap's
+//!   memory limit (and a `gsub` inside a `gsub` callback keeps one buffer per level alive).
 //!
 //! Everything else follows the C source, quirks included (a NUL byte in a pattern ends the pattern; `^` is
 //! literal in `gmatch`; `%` before a non-digit in a `gsub` replacement is that character). The tests compare
@@ -25,6 +26,8 @@
 use std::{cell::Cell, sync::Arc};
 
 use mlua::{Function, Lua, LuaString, MultiValue, Table, Value};
+
+use super::host_bytes::{Buffer, ByteBudget};
 
 /// Matcher steps per CPU tick charged to the embedder's budget.
 pub const STEP_BLOCK: u64 = 64;
@@ -39,14 +42,14 @@ const L_ESC: u8 = b'%';
 /// Characters that make a `find` pattern a real pattern rather than a plain substring.
 const SPECIALS: &[u8] = b"^$*+?.([%-";
 
-/// The embedder's side of the budget: how matcher work is paid for, and how much `gsub` may build.
+/// The embedder's side of the budget: how matcher work is paid for, and how many bytes the host may build.
 #[derive(Clone)]
 pub struct PatternLimits {
     /// Called with a number of CPU ticks; an error aborts the match (and, being the embedder's, may keep
     /// failing until the call is over).
     pub charge: Arc<dyn Fn(u64) -> mlua::Result<()> + Send + Sync>,
-    /// Most bytes one `gsub` may produce.
-    pub max_output: usize,
+    /// The bytes every host-side buffer of the VM (`gsub` output, `rep` results) is charged to, together.
+    pub bytes: Arc<ByteBudget>,
 }
 
 type Charge = dyn Fn(u64) -> mlua::Result<()> + Send + Sync;
@@ -407,12 +410,22 @@ fn match_class(c: u8, cl: u8) -> bool {
 
 // ---- argument handling (luaL_check*) --------------------------------------------------------------
 
-fn bad_argument(position: usize, function: &str, expected: &str, got: Option<&Value>) -> mlua::Error {
+pub(super) fn bad_argument(
+    position: usize,
+    function: &str,
+    expected: &str,
+    got: Option<&Value>,
+) -> mlua::Error {
     let got = got.map_or("no value", Value::type_name);
     error(format!("bad argument #{position} to '{function}' ({expected} expected, got {got})"))
 }
 
-fn arg_string(lua: &Lua, args: &MultiValue, index: usize, function: &str) -> mlua::Result<LuaString> {
+pub(super) fn arg_string(
+    lua: &Lua,
+    args: &MultiValue,
+    index: usize,
+    function: &str,
+) -> mlua::Result<LuaString> {
     let value = args.get(index);
     match value {
         Some(v @ (Value::String(_) | Value::Number(_) | Value::Integer(_))) => {
@@ -423,7 +436,7 @@ fn arg_string(lua: &Lua, args: &MultiValue, index: usize, function: &str) -> mlu
 }
 
 /// `luaL_optinteger`: a number (or numeric string), truncated toward zero; `default` when absent or nil.
-fn arg_integer(
+pub(super) fn arg_integer(
     lua: &Lua,
     args: &MultiValue,
     index: usize,
@@ -448,7 +461,7 @@ fn truthy(value: Option<&Value>) -> bool {
 }
 
 /// `posrelat`: a negative position counts back from the end.
-fn pos_relative(pos: isize, len: usize) -> isize {
+pub(super) fn pos_relative(pos: isize, len: usize) -> isize {
     let len = isize::try_from(len).unwrap_or(isize::MAX);
     let pos = if pos < 0 { pos.saturating_add(len).saturating_add(1) } else { pos };
     pos.max(0)
@@ -555,8 +568,7 @@ fn gsub(lua: &Lua, limits: &PatternLimits, args: &MultiValue) -> mlua::Result<Mu
     let anchor = p.first() == Some(&b'^');
     let pat = if anchor { &p[1..] } else { &p[..] };
     let mut m = Matcher::new(&s, pat, limits.charge.as_ref());
-    let mut out: Vec<u8> = Vec::new();
-    let too_big = || mlua::Error::MemoryError("not enough memory".into());
+    let mut out = Buffer::new(&limits.bytes);
     let (mut src, mut n) = (0usize, 0isize);
     while n < max_s {
         m.level = 0;
@@ -568,24 +580,18 @@ fn gsub(lua: &Lua, limits: &PatternLimits, args: &MultiValue) -> mlua::Result<Mu
         match end {
             Some(e) if e > src => src = e, // a non-empty match: skip it
             _ if src < s.len() => {
-                out.push(s[src]);
+                out.push(lua, s[src])?;
                 src += 1;
             }
             _ => break,
-        }
-        if out.len() > limits.max_output {
-            return Err(too_big());
         }
         if anchor {
             break;
         }
     }
-    if out.len().saturating_add(s.len() - src) > limits.max_output {
-        return Err(too_big());
-    }
-    out.extend_from_slice(&s[src..]);
+    out.extend(lua, &s[src..])?;
     Ok(MultiValue::from_vec(vec![
-        Value::String(lua.create_string(&out)?),
+        Value::String(lua.create_string(out.as_slice())?),
         Value::Integer(i64::try_from(n).unwrap_or(0)),
     ]))
 }
@@ -596,7 +602,7 @@ fn add_value(
     replacement: &Replacement,
     s: usize,
     e: usize,
-    out: &mut Vec<u8>,
+    out: &mut Buffer,
 ) -> mlua::Result<()> {
     let value = match replacement {
         Replacement::Template(template) => return add_template(lua, m, &template.as_bytes(), s, e, out),
@@ -604,10 +610,10 @@ fn add_value(
         Replacement::Table(t) => t.get::<Value>(m.one_capture(lua, 0, Some(s), e)?)?,
     };
     match &value {
-        Value::Nil | Value::Boolean(false) => out.extend_from_slice(&m.src[s..e]), // keep the original text
+        Value::Nil | Value::Boolean(false) => out.extend(lua, &m.src[s..e])?, // keep the original text
         Value::String(_) | Value::Number(_) | Value::Integer(_) => {
             if let Some(text) = lua.coerce_string(value.clone())? {
-                out.extend_from_slice(&text.as_bytes());
+                out.extend(lua, &text.as_bytes())?;
             }
         }
         other => return Err(error(format!("invalid replacement value (a {})", other.type_name()))),
@@ -621,7 +627,7 @@ fn add_template(
     template: &[u8],
     s: usize,
     e: usize,
-    out: &mut Vec<u8>,
+    out: &mut Buffer,
 ) -> mlua::Result<()> {
     let mut i = 0;
     while i < template.len() {
@@ -629,22 +635,22 @@ fn add_template(
             i += 1; // skip the escape
             let c = template.get(i).copied().unwrap_or(0);
             if !c.is_ascii_digit() {
-                out.push(c);
+                out.push(lua, c)?;
             } else if c == b'0' {
-                out.extend_from_slice(&m.src[s..e]);
+                out.extend(lua, &m.src[s..e])?;
             } else {
                 match m.one_capture(lua, usize::from(c - b'1'), Some(s), e)? {
-                    Value::String(text) => out.extend_from_slice(&text.as_bytes()),
+                    Value::String(text) => out.extend(lua, &text.as_bytes())?,
                     other => {
                         // a position capture: its number as text
                         if let Some(text) = lua.coerce_string(other)? {
-                            out.extend_from_slice(&text.as_bytes());
+                            out.extend(lua, &text.as_bytes())?;
                         }
                     }
                 }
             }
         } else {
-            out.push(template[i]);
+            out.push(lua, template[i])?;
         }
         i += 1;
     }
@@ -662,11 +668,18 @@ fn rep(lua: &Lua, limits: &PatternLimits, args: &MultiValue) -> mlua::Result<Val
     if times == 0 || s.is_empty() {
         return Ok(Value::String(lua.create_string("")?));
     }
-    if s.len().checked_mul(times).is_none_or(|total| total > limits.max_output) {
-        return Err(mlua::Error::MemoryError("not enough memory".into()));
-    }
+    let total =
+        s.len().checked_mul(times).ok_or_else(|| mlua::Error::MemoryError("not enough memory".into()))?;
+    // the Vec below is outside the Lua heap: reserve it (refused when it would pass the VM's limit), and give it
+    // back once the string has been copied into the Lua heap
+    let mut reserved = limits.bytes.reservation();
+    reserved.hold(lua, total)?;
+    (limits.charge)(1 + u64::try_from(total / REP_BYTES_PER_TICK).unwrap_or(u64::MAX))?;
     Ok(Value::String(lua.create_string(s.repeat(times))?))
 }
+
+/// Bytes `string.rep` builds per CPU tick charged.
+const REP_BYTES_PER_TICK: usize = 4096;
 
 /// Replace `find`, `match`, `gmatch`, `gsub` and `rep` in the engine's `string` table with the budgeted
 /// versions.
