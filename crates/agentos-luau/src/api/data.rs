@@ -21,7 +21,7 @@ use crate::{
     vm::Shared,
 };
 use agentos_application::{
-    data::{ExecOutcome, Params, SqlMigration},
+    data::{ExecOutcome, Params, QueryInfo, SqlMigration},
     live::{Conflict, SourceDef, SourceId, SourceKind, TotalMode},
 };
 use mlua::{Function, Lua, Table, Value as LuaValue};
@@ -35,6 +35,17 @@ impl Shared {
         need(self.caps.data, "data", what)
     }
 
+    /// A tool declared `readOnly` may not write: the host's read-only handle would refuse the statement too,
+    /// this gives the app an error that says why.
+    fn writable(&self, what: &str) -> mlua::Result<()> {
+        if self.read_only.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(mlua::Error::runtime(format!(
+                "{what} is not allowed in a tool declared readOnly: a readOnly tool cannot write"
+            )));
+        }
+        Ok(())
+    }
+
     /// A read: through the open transaction when there is one.
     async fn run_query(&self, sql: String, params: Params) -> mlua::Result<Vec<Value>> {
         let open = self.tx.lock().take();
@@ -44,7 +55,7 @@ impl Shared {
                 *self.tx.lock() = Some(t);
                 out
             }
-            None => host(self, self.db.query(sql, params)).await,
+            None => host(self, self.database().query(sql, params)).await,
         }
     }
 
@@ -57,7 +68,7 @@ impl Shared {
                 *self.tx.lock() = Some(t);
                 out
             }
-            None => host(self, self.db.exec(sql, params)).await,
+            None => host(self, self.database().exec(sql, params)).await,
         }
     }
 }
@@ -102,7 +113,12 @@ async fn declare(
     def.validate().map_err(|e| mlua::Error::runtime(format!("source {id}: {e}")))?;
     let params = def.info.named_params.clone();
     sh.sources.lock().push(def);
+    source_factory(sh, lua, id, params)
+}
 
+/// The function an app calls to get a handle on a declared source: `notes { folder = 1 }`. Every param the
+/// declaration names must be given, and no other.
+fn source_factory(sh: &Sh, lua: &Lua, id: String, params: Vec<String>) -> mlua::Result<Function> {
     let sh = sh.clone();
     lua.create_function(move |lua, given: Option<Table>| {
         let values = lua.create_table()?;
@@ -127,7 +143,29 @@ async fn declare(
     })
 }
 
+/// `app.thread()`: declare a chat thread source for `ChatTranscript { thread = chat { thread = id, agent = id } }`.
+/// It runs no query (the thread's data is `/agui`) and needs no capability: it only names a thread and its agent.
+fn declare_thread(sh: &Sh, lua: &Lua) -> mlua::Result<Function> {
+    let id = {
+        let sources = sh.sources.lock();
+        format!("s{}", sources.len() + 1)
+    };
+    let params = vec!["thread".to_owned(), "agent".to_owned()];
+    let info = QueryInfo {
+        tables: std::collections::BTreeSet::new(),
+        columns: vec![],
+        named_params: params.clone(),
+        read_only: true,
+    };
+    let def = SourceDef { id: SourceId(id.clone()), kind: SourceKind::Thread, sql: String::new(), info };
+    def.validate().map_err(|e| mlua::Error::runtime(format!("source {id}: {e}")))?;
+    sh.sources.lock().push(def);
+    source_factory(sh, lua, id, params)
+}
+
 pub(super) fn install(lua: &Lua, sh: &Sh, app: &Table) -> mlua::Result<()> {
+    let thread_sh = sh.clone();
+    app.set("thread", lua.create_function(move |lua, _: mlua::MultiValue| declare_thread(&thread_sh, lua))?)?;
     let db = lua.create_table()?;
     install_statements(lua, sh, &db)?;
     install_sources(lua, sh, &db)?;
@@ -146,6 +184,7 @@ fn install_statements(lua: &Lua, sh: &Sh, db: &Table) -> mlua::Result<()> {
             let s = s.clone();
             async move {
                 s.data("db:migrate")?;
+                s.writable("db:migrate")?;
                 check_effects_allowed(&s, "db:migrate")?;
                 let len = steps.raw_len();
                 let mut migrations = Vec::with_capacity(len);
@@ -179,6 +218,7 @@ fn install_statements(lua: &Lua, sh: &Sh, db: &Table) -> mlua::Result<()> {
             let s = s.clone();
             async move {
                 s.data("db:exec")?;
+                s.writable("db:exec")?;
                 check_effects_allowed(&s, "db:exec")?;
                 let out = s.run_exec(sql, lua_to_params(params)?).await?;
                 json_to_lua(&lua, &json!({"changes": out.changes, "last_insert_id": out.last_insert_id}))
@@ -228,7 +268,7 @@ fn install_statements(lua: &Lua, sh: &Sh, db: &Table) -> mlua::Result<()> {
                 if s.tx.lock().is_some() {
                     return Err(mlua::Error::runtime("db:tx cannot be nested"));
                 }
-                let tx = host(&s, s.db.begin()).await?;
+                let tx = host(&s, s.database().begin()).await?;
                 *s.tx.lock() = Some(tx);
                 let result = body.call_async::<mlua::MultiValue>(()).await;
                 let tx = s.tx.lock().take();
@@ -398,6 +438,7 @@ fn install_kv(lua: &Lua, sh: &Sh, app: &Table) -> mlua::Result<()> {
             let s = s.clone();
             async move {
                 s.data("app.kv:set")?;
+                s.writable("app.kv:set")?;
                 check_effects_allowed(&s, "app.kv:set")?;
                 let json = lua_to_json(&value)?;
                 if json.is_null() {
@@ -421,6 +462,7 @@ fn install_kv(lua: &Lua, sh: &Sh, app: &Table) -> mlua::Result<()> {
             let s = s.clone();
             async move {
                 s.data("app.kv:delete")?;
+                s.writable("app.kv:delete")?;
                 check_effects_allowed(&s, "app.kv:delete")?;
                 s.run_exec("delete from _kv where key = :k".into(), Params::named([("k", json!(key))]))
                     .await?;

@@ -177,6 +177,32 @@ impl LiveSink for SourceSink {
     }
 }
 
+/// Which sources a render started and stopped using. Queries are remembered by their subscription; thread
+/// sources are declared but never subscribed, so `st.sources` is where they are remembered.
+fn source_changes(st: &State, used: &BTreeMap<String, SourceBinding>) -> (Vec<String>, Vec<String>) {
+    let added = used
+        .iter()
+        .filter(|(k, b)| {
+            let known = if is_thread(b) { st.sources.contains_key(*k) } else { st.subs.contains_key(*k) };
+            !known
+        })
+        .map(|(k, _)| k.clone())
+        .collect();
+    let removed = st
+        .subs
+        .keys()
+        .chain(st.sources.iter().filter(|(_, b)| is_thread(b)).map(|(k, _)| k))
+        .filter(|k| !used.contains_key(*k))
+        .cloned()
+        .collect();
+    (added, removed)
+}
+
+/// A `thread` source (`ChatTranscript`): declared to the client, never subscribed or queried.
+fn is_thread(binding: &SourceBinding) -> bool {
+    matches!(binding.decl, SourceDecl::Thread { .. })
+}
+
 /// The wire patch of an update, remembering what the client now has (rows, and the values a later merge
 /// needs as its base).
 fn patch_of(st: &mut State, source: &str, update: &SourceUpdate) -> Option<SourcePatch> {
@@ -368,6 +394,9 @@ impl ViewService {
         let mut data = BTreeMap::new();
         let mut subs = BTreeMap::new();
         for (sid, binding) in &out.sources {
+            if is_thread(binding) {
+                continue; // its data is `/agui`, not a query
+            }
             let sink = Arc::new(SourceSink { view: Arc::downgrade(view), source: sid.clone() });
             let params = resolve_params(&binding.decl, &client);
             match live.subscribe(&binding.def, params, window_of(&binding.decl), sink).await {
@@ -546,6 +575,13 @@ impl ViewService {
 
     pub async fn source_set(&self, conn: u64, req: SourceSet) -> Result<SourcePatch, ViewError> {
         let view = self.get(conn, &req.view_id)?;
+        let thread = view.st.lock().sources.get(&req.source).is_some_and(is_thread);
+        if thread {
+            // nothing to query: the thread's data is `/agui`. The client re-asks whenever a param ref changes
+            // (the selected thread); an empty value is the quiet answer (a thread patch would be reported as
+            // unsupported by the current client core).
+            return Ok(SourcePatch::Value { value: Value::Null });
+        }
         let live = self.app.live(&view.app).map_err(ViewError::from_app)?;
         let sub = *view
             .st
@@ -699,10 +735,7 @@ impl ViewService {
         let live = self.app.live(&view.app).ok();
         let (added, removed, client) = {
             let st = view.st.lock();
-            let added: Vec<String> =
-                out.sources.keys().filter(|k| !st.subs.contains_key(*k)).cloned().collect();
-            let removed: Vec<String> =
-                st.subs.keys().filter(|k| !out.sources.contains_key(*k)).cloned().collect();
+            let (added, removed) = source_changes(&st, &out.sources);
             (added, removed, st.client.clone())
         };
         let mut declare = BTreeMap::new();
@@ -710,6 +743,11 @@ impl ViewService {
         if let Some(live) = &live {
             for sid in &added {
                 let binding = &out.sources[sid];
+                if is_thread(binding) {
+                    view.st.lock().sources.insert(sid.clone(), binding.clone());
+                    declare.insert(sid.clone(), binding.decl.clone());
+                    continue;
+                }
                 let sink = Arc::new(SourceSink { view: Arc::downgrade(view), source: sid.clone() });
                 let params = resolve_params(&binding.decl, &client);
                 if let Ok((sub, first)) =

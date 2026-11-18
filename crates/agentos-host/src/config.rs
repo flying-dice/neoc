@@ -12,11 +12,17 @@
 //! | `dev_reload`                  | `AGENTOS_DEV_RELOAD`                 | off: rebuild an app's VM when its `file://` bundle changes |
 //! | `secure_cookies`              | `AGENTOS_SECURE_COOKIES`             | true when TLS is configured         |
 //! | `[tls] cert`, `[tls] key`     | `AGENTOS_TLS_CERT`, `AGENTOS_TLS_KEY`| TLS off                             |
+//! | `[[agents]]`                  | (file only)                          | Claude, if its ACP adapter is installed |
+//!
+//! `[[agents]]` seed the agent roster: an entry is added at start when no agent has its `id`, and left alone
+//! after that (edit agents through `agents.*` on `/rpc`). Each is an `Agent`: `id`, `name`, `role`, `avatar`,
+//! `[agents.runtime] command/args/env`, `[agents.grants] all/apps` (deny by default) and `approval`.
 //!
 //! The file is `--config <path>`, else `AGENTOS_CONFIG`, else `./agentos.toml`, else `<data_dir>/agentos.toml`.
 //! Relative paths in the file are relative to the file; relative paths in the environment, to the working
 //! directory.
 
+use agentos_domain::{Agent, AgentId, AgentRuntime, ApprovalPolicy, Grants};
 use anyhow::{bail, Context};
 use serde::Deserialize;
 use std::{
@@ -41,6 +47,7 @@ struct FileSettings {
     dev_reload: Option<bool>,
     secure_cookies: Option<bool>,
     tls: Option<FileTls>,
+    agents: Option<Vec<Agent>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -82,6 +89,8 @@ pub struct Settings {
     pub dev_reload: bool,
     pub secure_cookies: bool,
     pub tls: Option<TlsFiles>,
+    /// Agents added to the roster at start when absent.
+    pub agents: Vec<Agent>,
 }
 
 impl Settings {
@@ -156,6 +165,7 @@ impl Settings {
             dev_reload,
             secure_cookies,
             tls,
+            agents: file.agents.unwrap_or_else(|| default_agents(cwd)),
         })
     }
 
@@ -219,6 +229,30 @@ impl Settings {
             }
         }
     }
+}
+
+/// Claude through its ACP adapter, when the adapter is installed next to the working directory or in the source
+/// checkout this binary was built from. It starts with no grants: tools are opt-in.
+fn default_agents(cwd: &Path) -> Vec<Agent> {
+    const ADAPTER: &str = "node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js";
+    let source_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let Some(index) = [cwd, source_root.as_path()].iter().map(|r| r.join(ADAPTER)).find(|p| p.is_file())
+    else {
+        return vec![];
+    };
+    vec![Agent {
+        id: AgentId("claude".to_owned()),
+        name: "Claude".to_owned(),
+        avatar: None,
+        role: "Claude, through the ACP adapter".to_owned(),
+        runtime: AgentRuntime {
+            command: "node".to_owned(),
+            args: vec![index.canonicalize().unwrap_or(index).to_string_lossy().into_owned()],
+            env: std::collections::BTreeMap::new(),
+        },
+        grants: Grants::default(),
+        approval: ApprovalPolicy::default(),
+    }]
 }
 
 fn split_list(v: &str) -> Vec<String> {

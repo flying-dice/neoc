@@ -23,16 +23,16 @@ pub mod platform;
 pub mod serve;
 pub mod startup;
 
-use agentos_acp::{AcpConnector, AgentLaunch};
-use agentos_agui::{agui_router, AgUiEvent, Role, RunAgentInput, RunHandler};
+use agentos_acp::AcpConnector;
+use agentos_agui::agui_router;
 use agentos_application::{
     ports::{
-        AgentDirectory, AppRuntime, Clock, DataStore, DeviceRegistry, EventSink, Fetcher, InstalledAppStore,
-        RandomSource, ToolRegistry,
+        AgentConnector, AgentDirectory, AppRuntime, Clock, DataStore, DeviceRegistry, EventSink, Fetcher,
+        InstalledAppStore, RandomSource, ThreadStore, ToolRegistry,
     },
-    AppService, DeviceService, PairingPolicy, Ports, ViewService,
+    AgentService, AppService, ChatPorts, ChatService, DeviceService, PairingPolicy, Ports, ViewService,
 };
-use agentos_domain::{AgentId, AgentIdentity};
+use agentos_domain::Agent;
 use agentos_fetch::UrlFetcher;
 use agentos_http::{
     origin_guard, require_session, rpc_router, session_router, static_router, HostGuard, RpcHub,
@@ -42,8 +42,7 @@ use agentos_luau::{Limits, LuauRuntime};
 use agentos_mcp::{mcp_router, McpState};
 use agentos_sqlite::{SqliteDataStore, SqliteSystemDb};
 use axum::{middleware::from_fn_with_state, Router};
-use futures_util::{stream, stream::BoxStream, StreamExt};
-use std::{collections::HashMap, net::IpAddr, path::PathBuf, sync::Arc};
+use std::{net::IpAddr, path::PathBuf, sync::Arc};
 use tokio_util::sync::CancellationToken;
 
 pub struct HostConfig {
@@ -60,9 +59,15 @@ pub struct HostConfig {
     pub secure_cookies: bool,
     /// The machine's own addresses and hostname for the Origin/Host guard; `None` = ask the OS.
     pub interfaces: Option<Interfaces>,
-    /// (bearer token, identity) for `/mcp`.
-    pub agents: Vec<(String, AgentIdentity)>,
-    pub acp: HashMap<AgentId, AgentLaunch>,
+    /// Agents to add to the roster at start if they are not there yet, each with a fixed persistent MCP
+    /// bearer token (tests; the binary seeds from `agentos.toml` and mints tokens at runtime).
+    pub agents: Vec<(String, Agent)>,
+    /// The `/mcp` URL as agents reach it (handed to every agent session); `None` starts sessions without tools.
+    pub mcp_url: Option<String>,
+    /// The working directory handed to agent sessions.
+    pub agent_cwd: PathBuf,
+    /// Replace the ACP connector (tests that script an agent in-process); `None` launches real processes.
+    pub connector: Option<Arc<dyn AgentConnector>>,
     pub pairing: PairingPolicy,
     pub clock: Arc<dyn Clock>,
     pub random: Arc<dyn RandomSource>,
@@ -88,7 +93,9 @@ impl HostConfig {
             secure_cookies: false,
             interfaces: None,
             agents: vec![],
-            acp: HashMap::new(),
+            mcp_url: Some(format!("http://127.0.0.1:{port}/mcp")),
+            agent_cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            connector: None,
             pairing: PairingPolicy::default(),
             clock: Arc::new(platform::SystemClock),
             random: Arc::new(platform::OsRandom),
@@ -101,46 +108,11 @@ pub struct Host {
     pub service: Arc<AppService>,
     pub views: Arc<ViewService>,
     pub devices: Arc<DeviceService>,
+    /// The agent roster (contacts, grants, tokens).
+    pub agents: Arc<AgentService>,
+    /// Agent chats: what `/agui` serves.
+    pub chat: Arc<ChatService>,
     pub shutdown: CancellationToken,
-}
-
-struct TokenDirectory(Vec<(String, AgentIdentity)>);
-impl AgentDirectory for TokenDirectory {
-    fn authenticate(&self, token: &str) -> Option<AgentIdentity> {
-        // compare every entry (no early exit on the first match)
-        let mut found = None;
-        for (t, id) in &self.0 {
-            if constant_time_eq(t.as_bytes(), token.as_bytes()) {
-                found = Some(id.clone());
-            }
-        }
-        found
-    }
-}
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
-}
-
-/// Placeholder AG-UI run: the real one maps ACP `session/update` to AG-UI events (wave B3).
-struct PlaceholderRun;
-impl RunHandler for PlaceholderRun {
-    fn run(&self, i: RunAgentInput) -> BoxStream<'static, AgUiEvent> {
-        stream::iter([
-            AgUiEvent::RunStarted {
-                thread_id: i.thread_id.clone(),
-                run_id: i.run_id.clone(),
-                parent_run_id: None,
-            },
-            AgUiEvent::TextMessageStart { message_id: "m1".into(), role: Role::Assistant },
-            AgUiEvent::TextMessageContent {
-                message_id: "m1".into(),
-                delta: "ACP -> AG-UI mapping goes here".into(),
-            },
-            AgUiEvent::TextMessageEnd { message_id: "m1".into() },
-            AgUiEvent::RunFinished { thread_id: i.thread_id, run_id: i.run_id, result: None },
-        ])
-        .boxed()
-    }
 }
 
 /// The device service alone, over the system database in `data_dir` (or in memory). The `pair` command
@@ -161,7 +133,7 @@ pub fn open_system(data_dir: Option<&std::path::Path>) -> anyhow::Result<Arc<Sql
     Ok(Arc::new(SqliteSystemDb::open(data_dir.map(|d| d.join("system.db")).as_deref())?))
 }
 
-pub fn build(cfg: HostConfig) -> anyhow::Result<Host> {
+pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
     let shutdown = CancellationToken::new();
 
     // driven adapters -> ports
@@ -170,15 +142,24 @@ pub fn build(cfg: HostConfig) -> anyhow::Result<Host> {
     let fetcher: Arc<dyn Fetcher> = Arc::new(UrlFetcher::new(8 * 1024 * 1024)?);
     let data: Arc<dyn DataStore> =
         Arc::new(SqliteDataStore::new(cfg.data_dir.as_ref().map(|d| d.join("apps"))));
-    let runtime: Arc<dyn AppRuntime> =
-        Arc::new(LuauRuntime::new(hub.clone(), Arc::new(platform::LogShell), Limits::default()));
+    let system = open_system(cfg.data_dir.as_deref())?;
+    let random = cfg.random;
+    // the roster is also the MCP adapter's directory, tells it when an agent's tool list changes, and is what
+    // apps with the `agents` permission list
+    let contacts = Arc::new(AgentService::new(system.clone(), mcp_state.clone(), random.clone()));
+    contacts.load().await?;
+    let runtime: Arc<dyn AppRuntime> = Arc::new(
+        LuauRuntime::new(hub.clone(), Arc::new(platform::LogShell), Limits::default())
+            .with_roster(contacts.clone()),
+    );
     let tools: Arc<dyn ToolRegistry> = mcp_state.clone();
     let events: Arc<dyn EventSink> = hub.clone();
-    let agents = Arc::new(AcpConnector::new(cfg.acp));
-    let system = open_system(cfg.data_dir.as_deref())?;
+    let connector: Arc<dyn AgentConnector> =
+        cfg.connector.unwrap_or_else(|| Arc::new(AcpConnector::new(cfg.agent_cwd)));
     let installed: Arc<dyn InstalledAppStore> = system.clone();
+    let thread_store: Arc<dyn ThreadStore> = system.clone();
     let registry: Arc<dyn DeviceRegistry> = system;
-    let devices = Arc::new(DeviceService::new(registry, cfg.clock.clone(), cfg.random, cfg.pairing));
+    let devices = Arc::new(DeviceService::new(registry, cfg.clock.clone(), random.clone(), cfg.pairing));
 
     // application
     let service = Arc::new(AppService::new(Ports {
@@ -187,12 +168,25 @@ pub fn build(cfg: HostConfig) -> anyhow::Result<Host> {
         runtime,
         tools,
         events,
-        agents,
         installed,
-        clock: cfg.clock,
+        clock: cfg.clock.clone(),
         background: Arc::new(platform::TokioBackground),
     }));
+    for (token, agent) in cfg.agents {
+        contacts.ensure(agent, Some(&token)).await?;
+    }
+    let chat = ChatService::new(ChatPorts {
+        connector,
+        threads: thread_store,
+        background: Arc::new(platform::TokioBackground),
+        clock: cfg.clock,
+        random,
+        agents: contacts.clone(),
+        apps: service.clone(),
+        mcp_url: cfg.mcp_url,
+    });
     hub.bind(service.clone(), devices.clone());
+    hub.bind_agents(contacts.clone());
     let views = Arc::new(ViewService::new(service.clone()));
     service.add_observer(views.clone());
     hub.bind_views(views.clone());
@@ -210,11 +204,11 @@ pub fn build(cfg: HostConfig) -> anyhow::Result<Host> {
     // driving adapters. Everything a client may call is in `protected`; the few public routes are
     // listed below it, and /mcp has its own per-agent bearer authentication.
     let protected = rpc_router(hub)
-        .merge(agui_router(Arc::new(PlaceholderRun)))
+        .merge(agui_router(chat.clone()))
         .layer(from_fn_with_state(devices.clone(), require_session));
     let public =
         session_router(SessionConfig { devices: devices.clone(), secure_cookies: cfg.secure_cookies });
-    let directory: Arc<dyn AgentDirectory> = Arc::new(TokenDirectory(cfg.agents));
+    let directory: Arc<dyn AgentDirectory> = contacts.clone();
     let mcp = mcp_router(mcp_state, service.clone(), directory, shutdown.child_token());
 
     let mut router = Router::new().merge(protected).merge(public).merge(mcp);
@@ -223,5 +217,5 @@ pub fn build(cfg: HostConfig) -> anyhow::Result<Host> {
     }
     let router = router.layer(from_fn_with_state(Arc::new(guard), origin_guard));
 
-    Ok(Host { router, service, views, devices, shutdown })
+    Ok(Host { router, service, views, devices, agents: contacts, chat, shutdown })
 }

@@ -10,8 +10,11 @@ agentos-application = { workspace = true }
 agentos-domain = { workspace = true }
 agent-client-protocol = { workspace = true, features = ["process", "stdio"] }
 async-trait = { workspace = true }
+parking_lot = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["process", "io-util"] }
+tokio = { workspace = true, features = ["process", "io-util", "sync", "time", "rt"] }
 tokio-util = { workspace = true, features = ["compat"] }
 
 [lints]

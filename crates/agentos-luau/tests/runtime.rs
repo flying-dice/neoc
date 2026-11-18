@@ -40,7 +40,7 @@ local note = db:row("select id, body, rev from notes where id = :id", { key = "i
     db:exec("update notes set body = :v, rev = rev + 1, author = :who where id = :id", { v = value, id = id, who = ctx.actor.name })
   end })
 
-app.tool { name = "notes.append", input = { id = t.integer {}, text = t.string {} }, run = function(input, ctx)
+app.tool { name = "append", input = { id = t.integer {}, text = t.string {} }, run = function(input, ctx)
   local r = db:exec("update notes set body = body || char(10) || :text, rev = rev + 1, author = :who where id = :id",
     { text = input.text, id = input.id, who = ctx.actor.name })
   if r.changes == 0 then return ctx:fail("No note with id " .. input.id) end
@@ -48,7 +48,7 @@ app.tool { name = "notes.append", input = { id = t.integer {}, text = t.string {
   app.shell.badge(r.changes)
   return { id = input.id }
 end }
-app.tool { name = "notes.add_two", run = function(_, ctx)
+app.tool { name = "add_two", run = function(_, ctx)
   db:tx(function()
     db:exec("insert into notes(folder_id, body) values (1, 'a')")
     db:exec("insert into notes(folder_id, body) values (1, 'b')")
@@ -104,10 +104,7 @@ async fn loading_reports_what_the_app_declared() {
     let rig = rig();
     let loaded = load(&rig, NOTES).await.unwrap();
     assert_eq!(loaded.decl.unwrap().name, "Notes");
-    assert_eq!(
-        loaded.tools.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
-        ["notes.append", "notes.add_two"]
-    );
+    assert_eq!(loaded.tools.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["append", "add_two"]);
     assert_eq!(loaded.sources.iter().map(|s| s.id.0.as_str()).collect::<Vec<_>>(), ["s1", "s2", "s3"]);
 }
 
@@ -147,7 +144,7 @@ async fn an_agent_tool_writes_data_and_every_live_source_gets_a_delta() {
     // the agent appends to note 1 over the tool: no UI code anywhere
     let out = rig
         .runtime
-        .call_tool(&id("notes"), "notes.append", json!({"id": 1, "text": "- buy oat milk"}), agent_ctx(1_000))
+        .call_tool(&id("notes"), "append", json!({"id": 1, "text": "- buy oat milk"}), agent_ctx(1_000))
         .await
         .unwrap();
     assert_eq!(out, json!({"id": 1}));
@@ -192,7 +189,7 @@ async fn a_transaction_in_a_tool_is_one_commit_and_one_delta() {
         .await
         .unwrap();
     let pump = tokio::spawn(pump_changes(Box::new(SqliteFeed::new(&rig.db)), live));
-    rig.runtime.call_tool(&id("notes"), "notes.add_two", json!({}), agent_ctx(0)).await.unwrap();
+    rig.runtime.call_tool(&id("notes"), "add_two", json!({}), agent_ctx(0)).await.unwrap();
     let updates = wait_for(&sink, 1).await;
     tokio::time::sleep(Duration::from_millis(80)).await;
     assert_eq!(updates.len(), 1);
@@ -226,15 +223,12 @@ async fn tool_failures_and_bugs_are_errors_for_the_caller_not_for_the_host() {
     load(&rig, NOTES).await.unwrap();
     let e = rig
         .runtime
-        .call_tool(&id("notes"), "notes.append", json!({"id": 99, "text": "x"}), agent_ctx(0))
+        .call_tool(&id("notes"), "append", json!({"id": 99, "text": "x"}), agent_ctx(0))
         .await
         .unwrap_err();
     assert_eq!(e, PortError::Rejected("No note with id 99".into()));
-    let e = rig
-        .runtime
-        .call_tool(&id("notes"), "notes.append", json!({"id": "x"}), agent_ctx(0))
-        .await
-        .unwrap_err();
+    let e =
+        rig.runtime.call_tool(&id("notes"), "append", json!({"id": "x"}), agent_ctx(0)).await.unwrap_err();
     assert!(matches!(&e, PortError::Rejected(m) if m.contains("invalid input")), "{e:?}");
     assert!(matches!(
         rig.runtime.call_tool(&id("notes"), "nope", json!({}), agent_ctx(0)).await,
@@ -264,13 +258,13 @@ async fn a_failing_app_is_isolated_and_a_failed_reload_keeps_the_old_version_run
         load(&rig, "app.manifest { id = 'notes', name = 'N', icon = 'x' }\nerror('typo in the new version')")
             .await;
     assert!(matches!(&e, Err(PortError::Rejected(m)) if m.contains("typo in the new version")));
-    assert!(rig.runtime.call_tool(&id("notes"), "notes.add_two", json!({}), agent_ctx(0)).await.is_ok());
+    assert!(rig.runtime.call_tool(&id("notes"), "add_two", json!({}), agent_ctx(0)).await.is_ok());
 
     // and a good reload swaps the code (the database is the caller's, so the data stays)
     let v2 = NOTES.replace("return \"ok\"", "return \"v2\"");
     load(&rig, &v2).await.unwrap();
     assert_eq!(
-        rig.runtime.call_tool(&id("notes"), "notes.add_two", json!({}), agent_ctx(0)).await.unwrap(),
+        rig.runtime.call_tool(&id("notes"), "add_two", json!({}), agent_ctx(0)).await.unwrap(),
         json!("v2")
     );
     let count = rig.db.query_rows("select count(*) as n from notes").await;
@@ -283,7 +277,7 @@ async fn unload_removes_the_vm() {
     load(&rig, NOTES).await.unwrap();
     rig.runtime.unload(&id("notes")).await.unwrap();
     assert!(matches!(
-        rig.runtime.call_tool(&id("notes"), "notes.add_two", json!({}), agent_ctx(0)).await,
+        rig.runtime.call_tool(&id("notes"), "add_two", json!({}), agent_ctx(0)).await,
         Err(PortError::NotFound(_))
     ));
     rig.runtime.unload(&id("notes")).await.unwrap(); // idempotent

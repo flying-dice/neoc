@@ -81,12 +81,9 @@ async fn install_over_rpc_then_use_from_mcp_and_ui_and_uninstall() {
 
     // --- an agent connects on /mcp with its own bearer token and sees the tools
     let (agent, _) = connect_agent(addr, "tok-claude").await;
-    assert_eq!(
-        tool_names(&agent).await,
-        vec!["notes__add_note", "notes__notes.append", "notes__notes.search"]
-    );
+    assert_eq!(tool_names(&agent).await, vec!["notes__add_note", "notes__append", "notes__search"]);
     let tools = agent.peer().list_tools(None).await.unwrap().tools;
-    let search = tools.iter().find(|t| t.name == "notes__notes.search").unwrap();
+    let search = tools.iter().find(|t| t.name == "notes__search").unwrap();
     assert_eq!(search.annotations.as_ref().and_then(|a| a.read_only_hint), Some(true));
     assert_eq!(search.title.as_deref(), Some("Search Notes"));
     assert_eq!(search.input_schema["required"], json!(["query"]), "the schema the app.t builders compiled");
@@ -126,7 +123,7 @@ async fn install_over_rpc_then_use_from_mcp_and_ui_and_uninstall() {
         .unwrap();
     let SourceUpdate::Row(open) = open else { panic!("row") };
     assert_eq!(open.rev, Some(json!(0)));
-    let out = call(&agent, "notes__notes.append", json!({"id": 1, "text": "- buy oat milk"})).await;
+    let out = call(&agent, "notes__append", json!({"id": 1, "text": "- buy oat milk"})).await;
     assert_ne!(out.is_error, Some(true), "{out:?}");
     wait_until("the open note's delta", || {
         sink.peek().iter().any(|(_, u)| matches!(u, SourceUpdate::Row(r) if r.rev == Some(json!(1))))
@@ -164,10 +161,10 @@ async fn install_over_rpc_then_use_from_mcp_and_ui_and_uninstall() {
     .await;
 
     // --- the agent's bad calls are tool errors, not host failures
-    let out = call(&agent, "notes__notes.append", json!({"id": 99, "text": "x"})).await;
+    let out = call(&agent, "notes__append", json!({"id": 99, "text": "x"})).await;
     assert_eq!(out.is_error, Some(true));
     assert!(text_of(&out).contains("No note with id 99"), "{out:?}");
-    let out = call(&agent, "notes__notes.append", json!({"id": "x", "text": "x"})).await;
+    let out = call(&agent, "notes__append", json!({"id": "x", "text": "x"})).await;
     assert_eq!(out.is_error, Some(true));
     assert!(text_of(&out).contains("invalid input"), "{out:?}");
 
@@ -180,18 +177,16 @@ async fn install_over_rpc_then_use_from_mcp_and_ui_and_uninstall() {
     assert!(agent.peer().list_tools(None).await.unwrap().tools.is_empty());
     assert!(r.host.service.apps().is_empty());
 
-    // --- /agui streams for a paired device
-    let sse = reqwest::Client::new()
+    // --- /agui is reachable for a paired device (the chat behaviour is tested in `agui.rs`)
+    let res = reqwest::Client::new()
         .post(format!("http://{addr}/agui"))
         .header("cookie", &cookie)
         .json(&json!({"threadId":"t","runId":"r"}))
         .send()
         .await
-        .unwrap()
-        .text()
-        .await
         .unwrap();
-    assert!(sse.contains("RUN_STARTED") && sse.contains("RUN_FINISHED"));
+    assert_eq!(res.status(), 404, "no such thread");
+    assert!(res.json::<serde_json::Value>().await.unwrap()["error"].as_str().unwrap().contains("no thread"));
 
     agent.cancel().await.unwrap();
     agent2.cancel().await.unwrap();
@@ -226,7 +221,7 @@ async fn installed_apps_come_back_after_a_restart_with_their_data() {
     assert_eq!((apps.len(), &apps[0].status), (1, &AppStatus::Running));
     let (agent, _) = connect_agent(second.addr, "tok-claude").await;
     assert_eq!(tool_names(&agent).await.len(), 3);
-    let found = call(&agent, "notes__notes.search", json!({"query": "surv"})).await;
+    let found = call(&agent, "notes__search", json!({"query": "surv"})).await;
     assert!(text_of(&found).contains("survives"), "the data was kept: {found:?}");
 
     // registries are applied on top: the same URL is not installed twice
@@ -264,11 +259,11 @@ async fn disable_blocks_agents_keeps_data_and_enable_and_delete_data_work_over_r
 
     assert!(rpc(&mut ws, 3, "app.enable", json!({"app": "notes"})).await.get("error").is_none());
     assert_eq!(tool_names(&agent).await.len(), 3);
-    let found = call(&agent, "notes__notes.search", json!({"query": "kept"})).await;
+    let found = call(&agent, "notes__search", json!({"query": "kept"})).await;
     assert!(text_of(&found).contains("kept"), "data survived the disable: {found:?}");
 
     assert!(rpc(&mut ws, 4, "app.deleteData", json!({"app": "notes"})).await.get("error").is_none());
-    let found = call(&agent, "notes__notes.search", json!({"query": "kept"})).await;
+    let found = call(&agent, "notes__search", json!({"query": "kept"})).await;
     assert!(!text_of(&found).contains("kept"), "the data is gone: {found:?}");
     assert_eq!(tool_names(&agent).await.len(), 3, "and the app is back, on an empty database");
     let err = rpc(&mut ws, 5, "app.enable", json!({"app": "ghost"})).await;
@@ -304,10 +299,7 @@ async fn an_app_whose_bundle_broke_is_marked_failed_and_the_others_start() {
     assert_eq!(status("notes"), AppStatus::Running);
     assert!(matches!(status("todo"), AppStatus::Failed(m) if m.contains("checksum")), "{:?}", status("todo"));
     let (agent, _) = connect_agent(second.addr, "tok-claude").await;
-    assert_eq!(
-        tool_names(&agent).await,
-        vec!["notes__add_note", "notes__notes.append", "notes__notes.search"]
-    );
+    assert_eq!(tool_names(&agent).await, vec!["notes__add_note", "notes__append", "notes__search"]);
     agent.cancel().await.unwrap();
     second.stop().await;
     let _ = std::fs::remove_dir_all(tmp);
@@ -345,7 +337,7 @@ async fn dev_reload_rebuilds_the_vm_when_the_bundle_changes_and_keeps_the_data()
 
     wait_until("the reloaded tool list", || counter.0.load(Ordering::SeqCst) > before).await;
     assert!(tool_names(&agent).await.contains(&"notes__extra".to_owned()));
-    let found = call(&agent, "notes__notes.search", json!({"query": "before"})).await;
+    let found = call(&agent, "notes__search", json!({"query": "before"})).await;
     assert!(text_of(&found).contains("before"), "the database was kept: {found:?}");
 
     agent.cancel().await.unwrap();

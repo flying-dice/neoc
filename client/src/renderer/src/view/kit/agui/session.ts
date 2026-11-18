@@ -1,0 +1,535 @@
+/**
+ * One chat thread as the client sees it: a plain, framework-free store over the `/agui` contract.
+ *
+ *   const chat = new ChatSession({ threadId, agentId })
+ *   chat.subscribe(() => render(chat.getState()))
+ *   await chat.open()            // ensure the thread, load history, state and pending permission prompts
+ *   await chat.send('hello')     // a run: streams AG-UI events into `items`
+ *
+ * It folds the AG-UI events into a transcript (`ChatItem`s), keeps the host's `ThreadState` (session settings,
+ * slash commands, context usage, plan) up to date from `STATE_SNAPSHOT` / `STATE_DELTA`, turns an interrupt into a
+ * permission prompt and answers it with a resume run, and cancels (abort + `POST .../cancel`). State is replaced, never
+ * mutated, so a Svelte wrapper only has to assign `getState()` on every notification.
+ */
+import { EventType, type JsonPatchOperation } from '@ag-ui/core'
+import { applyPatch } from './jsonPatch'
+import {
+  emptyThreadState,
+  errorBodySchema,
+  parseEvent,
+  parseThreadState,
+  permissionOf,
+  runInput,
+  snapshotSchema,
+  toolEventSchema,
+  TOOL_EVENT,
+  type AguiEvent,
+  type Interrupt,
+  type PermissionOption,
+  type ResumeEntry,
+  type ThreadSnapshot,
+  type ThreadState,
+  type ToolStatus
+} from './schema'
+import { readSse } from './sse'
+
+export type ChatStatus = 'connecting' | 'idle' | 'running' | 'waiting' | 'error'
+
+export type ChatItem =
+  | { kind: 'user'; id: string; text: string }
+  | { kind: 'agent'; id: string; text: string; streaming: boolean }
+  | { kind: 'thought'; id: string; text: string }
+  | { kind: 'tool'; id: string; name: string; title: string; toolKind?: string; status: ToolStatus }
+  | { kind: 'error'; id: string; text: string }
+  | {
+      kind: 'permission'
+      id: string
+      interruptId: string
+      toolCallId?: string
+      title: string
+      options: PermissionOption[]
+      /** What was chosen, once answered (the prompt stays in the transcript). */
+      answer?: string
+    }
+
+export interface ChatState {
+  threadId: string
+  agentId: string
+  status: ChatStatus
+  /** The thread exists on the host and its history is loaded. */
+  ready: boolean
+  items: ChatItem[]
+  state: ThreadState
+  /** Why the thread could not be opened (a failed run is an `error` item instead). */
+  error: string | null
+}
+
+/** The part of `fetch` a chat uses (a story or test passes a fake host). */
+export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
+
+export interface ChatSessionOptions {
+  threadId: string
+  agentId: string
+  /** Defaults to the global `fetch`; a story or test passes a fake host. */
+  fetch?: FetchLike
+  /** Prefix of every route (`''` is same origin). */
+  baseUrl?: string
+  newId?: () => string
+}
+
+/** "mcp__agentos__calculator__show_on_calculator" is shown as "Calculator · show on calculator". */
+export function friendlyTool(title: string): string {
+  const m = /^mcp__agentos__([a-z0-9-]+?)__(.+)$/.exec(title)
+  if (!m) return title
+  const app = m[1].replace(/[-_]/g, ' ').replace(/^\w/, (c) => c.toUpperCase())
+  return `${app} · ${m[2].replace(/_/g, ' ')}`
+}
+
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v)
+const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined)
+
+function contentText(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  return content.map((p) => (isRecord(p) && p.type === 'text' ? (str(p.text) ?? '') : '')).join('')
+}
+
+/** A thread snapshot's AG-UI messages as transcript items. */
+export function itemsFromMessages(messages: ThreadSnapshot['messages']): ChatItem[] {
+  const items: ChatItem[] = []
+  for (const m of messages) {
+    const id = str(m.id) ?? `m${items.length}`
+    const ext = isRecord(m.agentos) ? m.agentos : {}
+    switch (m.role) {
+      case 'user':
+        items.push({ kind: 'user', id, text: contentText(m.content) })
+        break
+      case 'reasoning':
+        items.push({ kind: 'thought', id, text: contentText(m.content) })
+        break
+      case 'assistant': {
+        const text = contentText(m.content)
+        if (text) items.push({ kind: 'agent', id, text, streaming: false })
+        const calls = Array.isArray(m.toolCalls) ? m.toolCalls : []
+        for (const call of calls) {
+          if (!isRecord(call)) continue
+          const fn = isRecord(call.function) ? call.function : {}
+          const name = str(ext.title) ?? str(fn.name) ?? 'tool'
+          const status = toolEventSchema.shape.status.safeParse(ext.status)
+          items.push({
+            kind: 'tool',
+            id: str(call.id) ?? `${id}-tool`,
+            name,
+            title: friendlyTool(name),
+            toolKind: str(ext.kind),
+            status: status.success ? status.data : 'completed'
+          })
+        }
+        break
+      }
+      case 'system':
+        if (ext.error === true) items.push({ kind: 'error', id, text: contentText(m.content) })
+        break
+      default:
+        break // `tool` results are summarised by the tool item
+    }
+  }
+  return items
+}
+
+const permissionItem = (interrupt: Interrupt): ChatItem => {
+  const p = permissionOf(interrupt)
+  return {
+    kind: 'permission',
+    id: `permission-${p.interruptId}`,
+    interruptId: p.interruptId,
+    toolCallId: p.toolCallId,
+    title: friendlyTool(p.title),
+    options: p.options
+  }
+}
+
+export class ChatSession {
+  private s: ChatState
+  private readonly listeners = new Set<() => void>()
+  private readonly fetchImpl: FetchLike
+  private readonly base: string
+  private readonly newId: () => string
+  private abort: AbortController | null = null
+  private opening: Promise<void> | null = null
+  private disposed = false
+  /** The answers given so far to the open permission prompts (a resume must cover all of them at once). */
+  private readonly answers = new Map<string, PermissionOption | null>()
+
+  constructor(o: ChatSessionOptions) {
+    this.s = {
+      threadId: o.threadId,
+      agentId: o.agentId,
+      status: 'connecting',
+      ready: false,
+      items: [],
+      state: emptyThreadState(),
+      error: null
+    }
+    this.fetchImpl = o.fetch ?? ((input, init) => globalThis.fetch(input, init))
+    this.base = o.baseUrl ?? ''
+    this.newId = o.newId ?? (() => crypto.randomUUID())
+  }
+
+  // ── observation ──────────────────────────────────────────────────────────────────────────────────────────
+
+  getState(): ChatState {
+    return this.s
+  }
+
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+
+  private set(patch: Partial<ChatState>): void {
+    if (this.disposed) return
+    this.s = { ...this.s, ...patch }
+    for (const l of [...this.listeners]) l()
+  }
+
+  private items(update: (items: ChatItem[]) => ChatItem[]): void {
+    this.set({ items: update(this.s.items) })
+  }
+
+  /** Replace the item with this id (the newest one, if ids repeat) using `update`. */
+  private amend(id: string, update: (item: ChatItem) => ChatItem): boolean {
+    const at = this.s.items.findLastIndex((i) => i.id === id)
+    if (at < 0) return false
+    this.items((all) => all.map((item, i) => (i === at ? update(item) : item)))
+    return true
+  }
+
+  private push(item: ChatItem): void {
+    this.items((all) => [...all, item])
+  }
+
+  // ── opening ──────────────────────────────────────────────────────────────────────────────────────────────
+
+  /** Ensure the thread exists on the host and load its snapshot. Safe to call again after a failure. */
+  open(): Promise<void> {
+    this.opening ??= this.doOpen().finally(() => (this.opening = null))
+    return this.opening
+  }
+
+  private async doOpen(): Promise<void> {
+    this.set({ status: 'connecting', error: null })
+    try {
+      const res = await this.request('POST', '/agui/threads', {
+        threadId: this.s.threadId,
+        agentId: this.s.agentId
+      })
+      if (!res.ok) throw new Error(await httpError(res))
+      this.load(snapshotSchema.parse(await res.json()))
+    } catch (e) {
+      this.set({ status: 'error', ready: false, error: message(e) })
+    }
+  }
+
+  private load(snap: ThreadSnapshot): void {
+    this.answers.clear()
+    const waiting = snap.interrupts.length > 0
+    this.set({
+      ready: true,
+      error: null,
+      state: snap.state,
+      items: [...itemsFromMessages(snap.messages), ...snap.interrupts.map(permissionItem)],
+      status: waiting ? 'waiting' : snap.running ? 'running' : 'idle'
+    })
+  }
+
+  // ── sending ──────────────────────────────────────────────────────────────────────────────────────────────
+
+  /** A new user message and the run that answers it. Ignored while a run is going or a prompt is open. */
+  async send(text: string): Promise<void> {
+    const body = text.trim()
+    if (!body) return
+    if (!this.s.ready) await this.open()
+    if (!this.s.ready || this.s.status === 'running' || this.s.status === 'waiting') return
+    const id = this.newId()
+    this.push({ kind: 'user', id, text: body })
+    await this.run(
+      runInput({
+        threadId: this.s.threadId,
+        runId: this.newId(),
+        agentId: this.s.agentId,
+        messages: [{ id, role: 'user', content: body }]
+      })
+    )
+  }
+
+  /**
+   * Answer a permission prompt: an option id (allow once, allow always, reject...) or `null` to dismiss it (a cancelled
+   * resume entry, which the host treats as a denial). Once every open prompt is answered, one resume run continues the turn.
+   */
+  async respond(permissionId: string, optionId: string | null): Promise<void> {
+    const item = this.s.items.find((i) => i.kind === 'permission' && i.id === permissionId)
+    if (item?.kind !== 'permission' || item.answer !== undefined || this.s.status !== 'waiting')
+      return
+    const option = item.options.find((o) => o.optionId === optionId) ?? null
+    this.answers.set(item.interruptId, option)
+    this.amend(item.id, (i) => ({ ...i, answer: option?.name ?? 'Denied' }) as ChatItem)
+    const open = this.s.items.filter((i) => i.kind === 'permission' && i.answer === undefined)
+    if (open.length > 0) return
+    const resume: ResumeEntry[] = [...this.answers].map(([interruptId, chosen]) =>
+      chosen
+        ? { interruptId, status: 'resolved', payload: { optionId: chosen.optionId } }
+        : { interruptId, status: 'cancelled' }
+    )
+    this.answers.clear()
+    await this.run(
+      runInput({ threadId: this.s.threadId, runId: this.newId(), agentId: this.s.agentId, resume })
+    )
+  }
+
+  /** Stop the turn: drop the stream and tell the host to cancel (which also resolves a pending prompt). */
+  async stop(): Promise<void> {
+    const was = this.s.status
+    if (was !== 'running' && was !== 'waiting') return
+    this.abort?.abort()
+    this.abort = null
+    this.answers.clear()
+    this.items((all) =>
+      all.map((i) =>
+        i.kind === 'permission' && i.answer === undefined
+          ? { ...i, answer: 'Cancelled' }
+          : i.kind === 'agent' && i.streaming
+            ? { ...i, streaming: false }
+            : i
+      )
+    )
+    this.set({ status: 'idle' })
+    try {
+      await this.request('POST', `/agui/threads/${encodeURIComponent(this.s.threadId)}/cancel`)
+    } catch {
+      // the stream is already gone; there is nothing left to cancel on a dead connection
+    }
+  }
+
+  // ── session settings ─────────────────────────────────────────────────────────────────────────────────────
+
+  async setMode(mode: string): Promise<void> {
+    const before = this.s.state
+    const modes = before.session.modes
+    if (modes)
+      this.set({
+        state: { ...before, session: { ...before.session, modes: { ...modes, current: mode } } }
+      })
+    await this.change({ mode }, before)
+  }
+
+  async setConfig(id: string, value: string | boolean): Promise<void> {
+    const before = this.s.state
+    const config = before.session.config.map((c) =>
+      c.id === id ? ({ ...c, current: value } as typeof c) : c
+    )
+    this.set({ state: { ...before, session: { ...before.session, config } } })
+    await this.change({ config: { id, value } }, before)
+  }
+
+  private async change(body: object, before: ThreadState): Promise<void> {
+    try {
+      const res = await this.request(
+        'POST',
+        `/agui/threads/${encodeURIComponent(this.s.threadId)}/settings`,
+        body
+      )
+      if (!res.ok) throw new Error(await httpError(res))
+      this.set({ state: parseThreadState(await res.json()) })
+    } catch (e) {
+      this.set({ state: before })
+      this.push({ kind: 'error', id: this.newId(), text: message(e) })
+    }
+  }
+
+  // ── runs ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+  private async run(input: ReturnType<typeof runInput>): Promise<void> {
+    const ctl = new AbortController()
+    this.abort = ctl
+    this.set({ status: 'running' })
+    try {
+      const res = await this.request('POST', '/agui', input, ctl.signal, true)
+      if (!res.ok || !res.body) {
+        this.fail(res.ok ? 'The host sent no stream.' : await httpError(res))
+        return
+      }
+      for await (const data of readSse(res.body)) this.apply(parseEvent(data))
+      if (this.s.status === 'running' && !ctl.signal.aborted)
+        this.fail('The connection closed before the run finished.')
+    } catch (e) {
+      if (!ctl.signal.aborted) this.fail(message(e))
+    } finally {
+      if (this.abort === ctl) this.abort = null
+    }
+  }
+
+  private fail(text: string): void {
+    this.items((all) => [
+      ...all.map((i) => (i.kind === 'agent' && i.streaming ? { ...i, streaming: false } : i)),
+      { kind: 'error' as const, id: this.newId(), text }
+    ])
+    this.set({ status: 'error' })
+  }
+
+  private apply(e: AguiEvent): void {
+    switch (e.type) {
+      case EventType.RUN_STARTED:
+        this.set({ status: 'running' })
+        return
+      case EventType.RUN_FINISHED:
+        this.finish(e.outcome)
+        return
+      case EventType.RUN_ERROR:
+        this.fail(e.message)
+        return
+      case EventType.TEXT_MESSAGE_START:
+        if (e.role !== 'user')
+          this.push({ kind: 'agent', id: e.messageId, text: '', streaming: true })
+        return
+      case EventType.TEXT_MESSAGE_CONTENT:
+        this.amend(e.messageId, (i) => (i.kind === 'agent' ? { ...i, text: i.text + e.delta } : i))
+        return
+      case EventType.TEXT_MESSAGE_END:
+        this.amend(e.messageId, (i) => (i.kind === 'agent' ? { ...i, streaming: false } : i))
+        return
+      case EventType.TEXT_MESSAGE_CHUNK:
+        if (e.messageId && !this.s.items.some((i) => i.id === e.messageId))
+          this.push({ kind: 'agent', id: e.messageId, text: '', streaming: true })
+        if (e.messageId && e.delta)
+          this.amend(e.messageId, (i) =>
+            i.kind === 'agent' ? { ...i, text: i.text + e.delta } : i
+          )
+        return
+      case EventType.REASONING_MESSAGE_START:
+        this.push({ kind: 'thought', id: e.messageId, text: '' })
+        return
+      case EventType.REASONING_MESSAGE_CONTENT:
+        this.amend(e.messageId, (i) =>
+          i.kind === 'thought' ? { ...i, text: i.text + e.delta } : i
+        )
+        return
+      case EventType.REASONING_MESSAGE_CHUNK:
+        if (e.messageId && !this.s.items.some((i) => i.id === e.messageId))
+          this.push({ kind: 'thought', id: e.messageId, text: '' })
+        if (e.messageId && e.delta)
+          this.amend(e.messageId, (i) =>
+            i.kind === 'thought' ? { ...i, text: i.text + e.delta } : i
+          )
+        return
+      case EventType.TOOL_CALL_START:
+        if (!this.s.items.some((i) => i.kind === 'tool' && i.id === e.toolCallId))
+          this.push({
+            kind: 'tool',
+            id: e.toolCallId,
+            name: e.toolCallName,
+            title: friendlyTool(e.toolCallName),
+            status: 'pending'
+          })
+        return
+      case EventType.TOOL_CALL_RESULT:
+        this.amend(e.toolCallId, (i) =>
+          i.kind === 'tool' && (i.status === 'pending' || i.status === 'in_progress')
+            ? { ...i, status: 'completed' }
+            : i
+        )
+        return
+      case EventType.CUSTOM:
+        if (e.name === TOOL_EVENT) this.tool(e.value)
+        return
+      case EventType.STATE_SNAPSHOT:
+        this.set({ state: parseThreadState(e.snapshot) })
+        return
+      case EventType.STATE_DELTA:
+        this.set({
+          state: parseThreadState(applyPatch(this.s.state, e.delta as JsonPatchOperation[]))
+        })
+        return
+      default:
+        return // steps, args, ends, activity, raw: nothing to show
+    }
+  }
+
+  private tool(value: unknown): void {
+    const ev = toolEventSchema.parse(value)
+    const known = this.amend(ev.toolCallId, (i) =>
+      i.kind === 'tool'
+        ? {
+            ...i,
+            status: ev.status,
+            toolKind: ev.kind ?? i.toolKind,
+            ...(ev.title ? { name: ev.title, title: friendlyTool(ev.title) } : {})
+          }
+        : i
+    )
+    if (!known)
+      this.push({
+        kind: 'tool',
+        id: ev.toolCallId,
+        name: ev.title ?? 'tool',
+        title: friendlyTool(ev.title ?? 'tool'),
+        toolKind: ev.kind ?? undefined,
+        status: ev.status
+      })
+  }
+
+  private finish(outcome: { type: string; interrupts?: Interrupt[] } | undefined): void {
+    this.items((all) =>
+      all.map((i) => (i.kind === 'agent' && i.streaming ? { ...i, streaming: false } : i))
+    )
+    if (outcome?.type === 'interrupt' && outcome.interrupts?.length) {
+      this.items((all) => [...all, ...outcome.interrupts!.map(permissionItem)])
+      this.set({ status: 'waiting' })
+    } else this.set({ status: 'idle' })
+  }
+
+  // ── transport ────────────────────────────────────────────────────────────────────────────────────────────
+
+  private request(
+    method: 'POST',
+    path: string,
+    body?: object,
+    signal?: AbortSignal,
+    stream = false
+  ): Promise<Response> {
+    return this.fetchImpl(this.base + path, {
+      method,
+      credentials: 'same-origin',
+      headers: {
+        ...(body ? { 'content-type': 'application/json' } : {}),
+        ...(stream ? { accept: 'text/event-stream' } : {})
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal
+    })
+  }
+
+  /** Stop streaming and release listeners. The host keeps the thread (and cancels a run whose stream drops). */
+  dispose(): void {
+    this.abort?.abort()
+    this.abort = null
+    this.disposed = true
+    this.listeners.clear()
+  }
+}
+
+const message = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+
+/** The `{ "error": "..." }` of a failed request, else its text, else its status line. */
+async function httpError(res: Response): Promise<string> {
+  let text = ''
+  try {
+    text = (await res.text()).trim()
+    const body = errorBodySchema.safeParse(JSON.parse(text))
+    if (body.success) return body.data.error
+  } catch {
+    // not JSON: the plain text (or the status line) will do
+  }
+  return text || `${res.status} ${res.statusText || 'request failed'}`.trim()
+}

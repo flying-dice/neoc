@@ -16,7 +16,7 @@ use crate::{
 use agentos_application::{
     data::DataTx,
     live::{SourceDef, SourceId},
-    ports::{AppData, AppPackage, CallContext, MenuCommand, ViewEffect},
+    ports::{AgentCard, AgentRoster, AppData, AppPackage, CallContext, MenuCommand, ViewEffect},
 };
 use agentos_domain::{time, tool_schema, AppDecl, AppId, Capabilities, Notification, ToolSpec};
 use mlua::{Function, Lua, Table, Value as LuaValue, VmState};
@@ -24,7 +24,10 @@ use parking_lot::Mutex;
 use serde_json::Value;
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::Duration,
 };
 
@@ -78,17 +81,42 @@ impl Default for Limits {
 }
 
 /// How a VM is built.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct VmConfig {
     pub capabilities: Capabilities,
     pub limits: Limits,
     /// Luau source of host modules `require("@agentos/<name>")` can load besides `@agentos/app`
     /// (the generated `@agentos/ui` constructors), by module name.
     pub host_modules: Arc<HashMap<String, Vec<u8>>>,
+    /// The agent contacts `app.agents:list()` shows (empty unless the host gives a roster).
+    pub roster: Arc<dyn AgentRoster>,
 }
+
+impl std::fmt::Debug for VmConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VmConfig")
+            .field("capabilities", &self.capabilities)
+            .field("limits", &self.limits)
+            .finish_non_exhaustive()
+    }
+}
+
+/// No agents: what an app sees when the host has no roster (tests of other things).
+struct NoRoster;
+impl AgentRoster for NoRoster {
+    fn cards(&self) -> Vec<AgentCard> {
+        vec![]
+    }
+}
+
 impl Default for VmConfig {
     fn default() -> Self {
-        Self { capabilities: Capabilities::all(), limits: Limits::default(), host_modules: Arc::default() }
+        Self {
+            capabilities: Capabilities::all(),
+            limits: Limits::default(),
+            host_modules: Arc::default(),
+            roster: Arc::new(NoRoster),
+        }
     }
 }
 
@@ -125,6 +153,7 @@ pub(crate) struct Shared {
     pub slice: Slice,
     pub limits: Limits,
     pub host_modules: Arc<HashMap<String, Vec<u8>>>,
+    pub roster: Arc<dyn AgentRoster>,
     pub tracker: SharedTracker,
     pub tools: Mutex<Vec<ToolDecl>>,
     pub handlers: Mutex<HashMap<String, Function>>,
@@ -148,9 +177,21 @@ pub(crate) struct Shared {
     /// The open `db:tx(fn)` transaction, if any. A statement takes it out while it runs and puts it back, so
     /// no lock is held across an await and a call that was cut off cannot wedge the next one.
     pub tx: Mutex<Option<Box<dyn DataTx>>>,
+    /// The running tool is declared `readOnly`: its database handle refuses writes and `app.kv` /
+    /// `db:migrate` raise. Set only while that tool's call holds the VM's gate.
+    pub read_only: AtomicBool,
 }
 
 impl Shared {
+    /// The database as the running call may use it: a read-only handle inside a `readOnly` tool.
+    pub fn database(&self) -> Arc<dyn AppData> {
+        if self.read_only.load(Ordering::SeqCst) {
+            self.db.read_only()
+        } else {
+            self.db.clone()
+        }
+    }
+
     pub fn chunk_name(&self, path: &str) -> String {
         format!("={}/{path}", self.app)
     }
@@ -167,6 +208,26 @@ impl Shared {
         self.views.lock().clear();
         *self.app_table.lock() = None;
         *self.fail.lock() = None;
+    }
+}
+
+/// Marks the VM as running a `readOnly` tool until dropped (the call's gate is held for that whole time).
+struct ReadOnlyCall<'a>(Option<&'a Shared>);
+
+impl<'a> ReadOnlyCall<'a> {
+    fn enter(shared: &'a Shared, read_only: bool) -> Self {
+        if read_only {
+            shared.read_only.store(true, Ordering::SeqCst);
+        }
+        Self(read_only.then_some(shared))
+    }
+}
+
+impl Drop for ReadOnlyCall<'_> {
+    fn drop(&mut self) {
+        if let Some(shared) = self.0 {
+            shared.read_only.store(false, Ordering::SeqCst);
+        }
     }
 }
 
@@ -199,7 +260,7 @@ impl AppVm {
         db: Arc<dyn AppData>,
         config: VmConfig,
     ) -> Result<Self> {
-        let VmConfig { capabilities, limits, host_modules } = config;
+        let VmConfig { capabilities, limits, host_modules, roster } = config;
         let lua = Lua::new();
         let slice = Slice::new();
         let shared = Arc::new(Shared {
@@ -210,6 +271,7 @@ impl AppVm {
             slice: slice.clone(),
             limits: limits.clone(),
             host_modules,
+            roster,
             tracker: Arc::new(Mutex::new(Tracker::default())),
             tools: Mutex::default(),
             handlers: Mutex::default(),
@@ -228,6 +290,7 @@ impl AppVm {
             render_scope: Mutex::default(),
             view_effects: Mutex::default(),
             tx: Mutex::new(None),
+            read_only: AtomicBool::new(false),
         });
         let load_err =
             |e: &mlua::Error| VmError::Load { app: app.to_string(), error: ScriptError::from_lua(e) };
@@ -337,16 +400,17 @@ impl AppVm {
 
     /// `app.tools.register`'s `run(input, ctx)`. Arguments are validated against the tool's schema first.
     pub async fn call_tool(&self, name: &str, args: Value, ctx: &CallContext) -> Result<Value> {
-        let (schema, run) = {
+        let (schema, run, read_only) = {
             let tools = self.shared.tools.lock();
             let t = tools
                 .iter()
                 .find(|t| t.spec.name == name)
                 .ok_or_else(|| VmError::NoSuchTool(name.to_owned()))?;
-            (t.spec.input_schema.clone(), t.run.clone())
+            (t.spec.input_schema.clone(), t.run.clone(), t.spec.read_only)
         };
         let input = tool_schema::validate_args(&schema, &args).map_err(VmError::InvalidInput)?;
         let _call = self.enter().await;
+        let _read_only = ReadOnlyCall::enter(&self.shared, read_only);
         let convert = |e: mlua::Error| VmError::Convert(e.to_string());
         let arg = json_to_lua(&self.lua, &input).map_err(convert)?;
         let ctx = self.ctx_table(ctx).map_err(convert)?;

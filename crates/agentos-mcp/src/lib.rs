@@ -1,8 +1,10 @@
 //! Driving adapter: MCP over Streamable HTTP (rmcp). It is a *driving* adapter (agents call in) and also
 //! implements the `ToolRegistry` port (the application publishes tools into it).
 //!
-//! - one handler per MCP session, sharing `McpState` (the tool catalogue + live peers)
-//! - `ToolRegistry::publish/retract` -> `notifications/tools/list_changed` to every live session
+//! - one handler per MCP session, sharing `McpState` (the tool catalogue + live peers, each tagged with its agent)
+//! - `tools/list` shows an agent only the tools of apps it is granted
+//! - `ToolRegistry::publish/retract` -> `notifications/tools/list_changed` to every live session;
+//!   `ToolRegistry::visibility_changed(agent)` (its grants were edited) -> to that agent's sessions only
 //! - per-agent bearer tokens (`AgentDirectory` port) -> `AgentIdentity` in request extensions ->
 //!   `AppService::call_tool` does the permission check and attribution.
 
@@ -10,7 +12,7 @@ use agentos_application::{
     ports::{AgentDirectory, PortResult, ToolRegistry},
     AppService,
 };
-use agentos_domain::{AgentIdentity, AppId, QualifiedToolName, ToolSpec};
+use agentos_domain::{AgentId, AgentIdentity, AppId, QualifiedToolName, ToolSpec};
 use async_trait::async_trait;
 use axum::{
     extract::{Request, State},
@@ -35,12 +37,18 @@ use rmcp::{
 use std::{borrow::Cow, collections::HashMap, future::Future, sync::Arc};
 use tokio_util::sync::CancellationToken;
 
+/// The agent a request was authenticated as (the bearer middleware put it in the request's extensions).
+fn identity_of(extensions: &rmcp::model::Extensions) -> Option<AgentIdentity> {
+    extensions.get::<axum::http::request::Parts>().and_then(|p| p.extensions.get::<AgentIdentity>()).cloned()
+}
+
 /// Shared by every session handler and by the `ToolRegistry` implementation.
 pub struct McpState {
     tools: RwLock<HashMap<AppId, Vec<ToolSpec>>>,
-    peers: RwLock<Vec<Peer<RoleServer>>>,
-    /// Fan-out for the 2026-07-28 protocol (`subscriptions/listen`), where there are no sessions/peers.
-    changed: tokio::sync::broadcast::Sender<()>,
+    peers: RwLock<Vec<(AgentId, Peer<RoleServer>)>>,
+    /// Fan-out for the 2026-07-28 protocol (`subscriptions/listen`), where there are no sessions/peers: the
+    /// agent whose list changed, or `None` for everyone.
+    changed: tokio::sync::broadcast::Sender<Option<AgentId>>,
 }
 
 impl Default for McpState {
@@ -54,14 +62,19 @@ impl Default for McpState {
 }
 
 impl McpState {
-    async fn notify_all(&self) {
-        let _ = self.changed.send(());
+    /// Tell the sessions of `agent` (every session for `None`) that their tool list changed.
+    async fn notify(&self, agent: Option<&AgentId>) {
+        let _ = self.changed.send(agent.cloned());
         let peers: Vec<_> = self.peers.read().clone();
         let mut alive = Vec::new();
-        for p in peers {
+        for (owner, p) in peers {
+            if agent.is_some_and(|a| *a != owner) {
+                alive.push((owner, p));
+                continue;
+            }
             // a closed session errors here: drop it from the list
             if p.notify_tool_list_changed().await.is_ok() {
-                alive.push(p);
+                alive.push((owner, p));
             }
         }
         *self.peers.write() = alive;
@@ -72,12 +85,16 @@ impl McpState {
 impl ToolRegistry for McpState {
     async fn publish(&self, app: &AppId, tools: Vec<ToolSpec>) -> PortResult<()> {
         self.tools.write().insert(app.clone(), tools);
-        self.notify_all().await;
+        self.notify(None).await;
         Ok(())
     }
     async fn retract(&self, app: &AppId) -> PortResult<()> {
         self.tools.write().remove(app);
-        self.notify_all().await;
+        self.notify(None).await;
+        Ok(())
+    }
+    async fn visibility_changed(&self, agent: &AgentId) -> PortResult<()> {
+        self.notify(Some(agent)).await;
         Ok(())
     }
 }
@@ -117,12 +134,18 @@ impl ServerHandler for McpHandler {
 
     /// 2026-07-28: a client opens `subscriptions/listen` and we push `tools/list_changed` into it.
     async fn listen(&self, ctx: SubscriptionContext) -> Result<(), ErrorData> {
+        let me = identity_of(&ctx.request_context().extensions).map(|i| i.id);
         let mut rx = self.state.changed.subscribe();
         loop {
             tokio::select! {
                 () = ctx.cancelled() => return Ok(()),
                 r = rx.recv() => match r {
-                    Ok(()) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                    Ok(target) => {
+                        // someone else's grants changed: nothing to tell this listener
+                        if target.is_some() && target != me { continue; }
+                        if ctx.sink().notify_tool_list_changed().await.is_err() { return Ok(()); }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
                         if ctx.sink().notify_tool_list_changed().await.is_err() { return Ok(()); }
                     }
                     Err(_) => return Ok(()),
@@ -131,18 +154,31 @@ impl ServerHandler for McpHandler {
         }
     }
 
+    #[allow(clippy::unused_async_trait_impl)] // the trait method is async
     async fn on_initialized(&self, ctx: NotificationContext<RoleServer>) {
-        self.state.peers.write().push(ctx.peer.clone());
+        if let Some(who) = identity_of(&ctx.extensions) {
+            self.state.peers.write().push((who.id, ctx.peer.clone()));
+        }
     }
 
     fn list_tools(
         &self,
         _req: Option<PaginatedRequestParams>,
-        _ctx: RequestContext<RoleServer>,
+        ctx: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<ListToolsResult, ErrorData>> + Send + '_ {
+        // an agent sees the tools of the apps it is granted, and no others
+        let who = identity_of(&ctx.extensions);
+        let granted = |app: &AppId, tool: &ToolSpec| {
+            who.as_ref().is_some_and(|w| {
+                QualifiedToolName::new(app.clone(), &tool.name)
+                    .is_ok_and(|q| w.authorize_tool_call(&q).is_ok())
+            })
+        };
         let tools = self.state.tools.read();
-        let mut out: Vec<Tool> =
-            tools.iter().flat_map(|(app, ts)| ts.iter().filter_map(|t| to_tool(app, t))).collect();
+        let mut out: Vec<Tool> = tools
+            .iter()
+            .flat_map(|(app, ts)| ts.iter().filter(move |t| granted(app, t)).filter_map(|t| to_tool(app, t)))
+            .collect();
         out.sort_by(|a, b| a.name.cmp(&b.name));
         std::future::ready(Ok(ListToolsResult { tools: out, ..Default::default() }))
     }

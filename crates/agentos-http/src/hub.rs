@@ -5,13 +5,14 @@
 use crate::rpc::{RpcHandler, RpcPeer};
 use agentos_application::{
     ports::{EventSink, Notifier, PortResult, ServerEvent},
-    AppError, AppService, AppStatus, DeviceService, PortError, ViewError, ViewService, ViewSink,
+    AgentError, AgentPatch, AgentService, AppError, AppService, AppStatus, DeviceService, NewAgent,
+    PortError, ViewError, ViewService, ViewSink,
 };
 use agentos_domain::{
     protocol::RpcError,
     ui::protocol::{codes, ClientNotification, ClientRequest, HostNotification, ParseError, SessionWelcome},
     ui::{KIT_VERSION, PROTO_VERSION},
-    AppId, DeviceId, Notification,
+    AgentId, AgentRuntime, AppId, ApprovalPolicy, DeviceId, Grants, Notification,
 };
 use async_trait::async_trait;
 use parking_lot::Mutex;
@@ -30,6 +31,7 @@ pub struct RpcHub {
     app: OnceLock<Arc<AppService>>, // set once after construction (hub <-> service reference cycle)
     devices: OnceLock<Arc<DeviceService>>,
     views: OnceLock<Arc<ViewService>>,
+    agents: OnceLock<Arc<AgentService>>,
     peers: Mutex<Vec<RpcPeer>>,
 }
 
@@ -51,6 +53,66 @@ impl RpcHub {
     /// The view service behind `session.*`, `view.*`, `row.*`, `state.*` and `source.*`.
     pub fn bind_views(&self, views: Arc<ViewService>) {
         let _ = self.views.set(views);
+    }
+
+    /// The agent roster behind `agents.*`.
+    pub fn bind_agents(&self, agents: Arc<AgentService>) {
+        let _ = self.agents.set(agents);
+    }
+
+    async fn agents_request(&self, method: &str, params: Value) -> Result<Value, RpcError> {
+        let Some(agents) = self.agents.get() else { return Err(not_ready()) };
+        let changed = |id: &AgentId| self.broadcast("agents.changed", &json!({ "id": id }));
+        match method {
+            "agents.list" => Ok(json!({ "agents": agents.list() })),
+            "agents.create" => {
+                let p: CreateAgentParams = serde_json::from_value(params).map_err(|e| bad_params(&e))?;
+                let agent = agents
+                    .create(NewAgent {
+                        id: p.id,
+                        name: p.name,
+                        avatar: p.avatar,
+                        role: p.role,
+                        runtime: p.runtime,
+                        grants: p.grants,
+                        approval: p.approval,
+                    })
+                    .await
+                    .map_err(|e| agent_err(&e))?;
+                // the token is shown once, here
+                let token = agents.rotate_token(&agent.id).await.map_err(|e| agent_err(&e))?;
+                changed(&agent.id);
+                Ok(json!({ "agent": agent, "token": token }))
+            }
+            "agents.update" => {
+                let id = agent_id_of(&params)?;
+                let patch = agent_patch(&params)?;
+                let agent = agents.update(&id, patch).await.map_err(|e| agent_err(&e))?;
+                changed(&id);
+                Ok(json!({ "agent": agent }))
+            }
+            "agents.delete" => {
+                let id = agent_id_of(&params)?;
+                agents.delete(&id).await.map_err(|e| agent_err(&e))?;
+                changed(&id);
+                Ok(Value::Null)
+            }
+            "agents.grants.set" => {
+                let id = agent_id_of(&params)?;
+                let grants: Grants =
+                    serde_json::from_value(params.get("grants").cloned().unwrap_or(Value::Null))
+                        .map_err(|e| bad_params(&e))?;
+                let agent = agents.set_grants(&id, grants).await.map_err(|e| agent_err(&e))?;
+                changed(&id);
+                Ok(json!({ "agent": agent }))
+            }
+            "agents.token.rotate" => {
+                let id = agent_id_of(&params)?;
+                let token = agents.rotate_token(&id).await.map_err(|e| agent_err(&e))?;
+                Ok(json!({ "token": token }))
+            }
+            _ => Err(method_not_found(method)),
+        }
     }
 
     async fn view_request(&self, peer: &RpcPeer, request: ClientRequest) -> Result<Value, RpcError> {
@@ -158,6 +220,37 @@ impl RpcHub {
     }
 }
 
+fn agent_err(e: &AgentError) -> RpcError {
+    let code = match e {
+        AgentError::Domain(_) => -32001,
+        AgentError::NotFound(_) => -32002,
+        AgentError::Port(_) => -32003,
+        AgentError::Exists(_) => -32004,
+    };
+    RpcError { code, message: e.to_string(), data: None }
+}
+
+fn agent_id_of(params: &Value) -> Result<AgentId, RpcError> {
+    let id = params.get("id").and_then(Value::as_str).ok_or_else(|| RpcError {
+        code: -32602,
+        message: "invalid params: `id` is required".into(),
+        data: None,
+    })?;
+    Ok(AgentId(id.to_owned()))
+}
+
+/// The fields `agents.update` may carry; `avatar: null` clears the avatar, an absent field is left alone.
+fn agent_patch(params: &Value) -> Result<AgentPatch, RpcError> {
+    let p: UpdateAgentParams = serde_json::from_value(params.clone()).map_err(|e| bad_params(&e))?;
+    Ok(AgentPatch {
+        name: p.name,
+        avatar: params.get("avatar").map(|v| v.as_str().map(str::to_owned)),
+        role: p.role,
+        runtime: p.runtime,
+        approval: p.approval,
+    })
+}
+
 fn rpc_err(e: &AppError) -> RpcError {
     let code = match e {
         AppError::Domain(_) => -32001,
@@ -240,6 +333,9 @@ impl RpcHandler for RpcHub {
         if method.starts_with("host.") {
             return self.host_request(peer, method, params).await;
         }
+        if method.starts_with("agents.") {
+            return self.agents_request(method, params).await;
+        }
         // the view protocol first; anything it does not know is an app-management method below
         match ClientRequest::from_rpc(method, params.clone()) {
             Ok(request) => return self.view_request(peer, request).await,
@@ -315,4 +411,33 @@ impl Notifier for RpcHub {
         self.emit(ServerEvent::Notification(n)).await;
         Ok(())
     }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateAgentParams {
+    #[serde(default)]
+    id: Option<String>,
+    name: String,
+    #[serde(default)]
+    avatar: Option<String>,
+    #[serde(default)]
+    role: String,
+    runtime: AgentRuntime,
+    #[serde(default)]
+    grants: Grants,
+    #[serde(default)]
+    approval: ApprovalPolicy,
+}
+
+#[derive(Deserialize)]
+struct UpdateAgentParams {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    role: Option<String>,
+    #[serde(default)]
+    runtime: Option<AgentRuntime>,
+    #[serde(default)]
+    approval: Option<ApprovalPolicy>,
 }

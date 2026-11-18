@@ -23,6 +23,7 @@
     "build-storybook": "storybook build -o storybook-static --quiet"
   },
   "dependencies": {
+    "@ag-ui/core": "1.0.5",
     "@agentos/sdk": "workspace:*",
     "@agentos/ui": "workspace:*",
     "zod": "4.6.7"

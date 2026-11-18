@@ -1,165 +1,154 @@
 //! Driving adapter: AG-UI (<https://docs.ag-ui.com>) over HTTP + SSE, for agent chats.
 //!
-//! AG-UI over HTTP + SSE. Hand-rolled: the whole wire model we need is one
-//! serde enum. Events are `{"type":"RUN_STARTED","threadId":...}`; each SSE frame is `data: <json>\n\n`.
+//! The routes (all behind the host's device-session guard):
+//!
+//! | route                                | what                                                         |
+//! |--------------------------------------|--------------------------------------------------------------|
+//! | `POST /agui`                         | a run: `RunAgentInput` in, an SSE stream of AG-UI events out |
+//! | `POST /agui/threads`                 | ensure a thread (starts the agent session) -> snapshot       |
+//! | `GET  /agui/threads/{id}`            | the thread's snapshot (history, state, open interrupts)      |
+//! | `POST /agui/threads/{id}/cancel`     | cancel the turn                                              |
+//! | `POST /agui/threads/{id}/settings`   | change the session's mode or one of its settings             |
+//!
+//! Everything that is not HTTP lives in [`agentos_application::ChatService`]. Errors found before a stream
+//! starts are JSON `{"error": ...}` with a status code; once the stream is open a failure is a `RUN_ERROR`
+//! event. A client that drops the stream of a run that is not waiting for an answer cancels it.
 
+pub use agentos_domain::agui::{AgUiEvent, ReasoningRole, Role, RunAgentInput, RunOutcome};
+
+use agentos_application::{ChatError, ChatService, RunEvents};
+use agentos_domain::thread::{json_of, SettingsChange};
 use axum::{
-    extract::State,
+    body::Bytes,
+    extract::{Path, State},
+    http::StatusCode,
     response::{
         sse::{Event, KeepAlive, Sse},
         IntoResponse, Response,
     },
-    routing::post,
+    routing::{get, post},
     Json, Router,
 };
-use futures_util::{stream::BoxStream, StreamExt};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::{convert::Infallible, sync::Arc};
+use futures_util::{Stream, StreamExt};
+use serde::Deserialize;
+use serde_json::json;
+use std::{
+    convert::Infallible,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "SCREAMING_SNAKE_CASE", rename_all_fields = "camelCase")]
-pub enum AgUiEvent {
-    RunStarted {
-        thread_id: String,
-        run_id: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        parent_run_id: Option<String>,
-    },
-    RunFinished {
-        thread_id: String,
-        run_id: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        result: Option<Value>,
-    },
-    RunError {
-        message: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        code: Option<String>,
-    },
-    StepStarted {
-        step_name: String,
-    },
-    StepFinished {
-        step_name: String,
-    },
-    TextMessageStart {
-        message_id: String,
-        role: Role,
-    },
-    TextMessageContent {
-        message_id: String,
-        delta: String,
-    },
-    TextMessageEnd {
-        message_id: String,
-    },
-    ToolCallStart {
-        tool_call_id: String,
-        tool_call_name: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        parent_message_id: Option<String>,
-    },
-    ToolCallArgs {
-        tool_call_id: String,
-        delta: String,
-    },
-    ToolCallEnd {
-        tool_call_id: String,
-    },
-    ToolCallResult {
-        message_id: String,
-        tool_call_id: String,
-        content: String,
-    },
-    StateSnapshot {
-        snapshot: Value,
-    },
-    StateDelta {
-        delta: Vec<Value>,
-    },
-    Custom {
-        name: String,
-        value: Value,
-    },
+pub fn agui_router(chat: Arc<ChatService>) -> Router {
+    Router::new()
+        .route("/agui", post(run))
+        .route("/agui/threads", post(ensure_thread))
+        .route("/agui/threads/{id}", get(thread))
+        .route("/agui/threads/{id}/cancel", post(cancel))
+        .route("/agui/threads/{id}/settings", post(settings))
+        .with_state(chat)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Role {
-    Developer,
-    System,
-    Assistant,
-    User,
-    Tool,
+fn failure(status: StatusCode, message: &str) -> Response {
+    (status, Json(json!({ "error": message }))).into_response()
 }
 
-/// `RunAgentInput`, the POST body (only the parts we route on are typed; the rest is kept raw).
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RunAgentInput {
-    pub thread_id: String,
-    pub run_id: String,
-    #[serde(default)]
-    pub messages: Vec<Value>,
-    #[serde(default)]
-    pub state: Value,
-    #[serde(default)]
-    pub tools: Vec<Value>,
-    #[serde(default)]
-    pub context: Vec<Value>,
-    #[serde(default)]
-    pub forwarded_props: Value,
-}
-
-/// What the application provides: given the run input, a stream of AG-UI events. In the host this
-/// is a thin mapping of ACP `session/update` -> AG-UI events driven by the `AgentConnector` port.
-pub trait RunHandler: Send + Sync + 'static {
-    fn run(&self, input: RunAgentInput) -> BoxStream<'static, AgUiEvent>;
-}
-
-pub fn agui_router(handler: Arc<dyn RunHandler>) -> Router {
-    Router::new().route("/agui", post(run_endpoint)).with_state(handler)
-}
-
-async fn run_endpoint(
-    State(h): State<Arc<dyn RunHandler>>,
-    body: Result<Json<RunAgentInput>, axum::extract::rejection::JsonRejection>,
-) -> Response {
-    // structurally invalid input is refused with a plain HTTP error *before* the stream starts
-    let Ok(Json(input)) = body else {
-        return (axum::http::StatusCode::UNPROCESSABLE_ENTITY, "invalid RunAgentInput").into_response();
+fn chat_failure(e: &ChatError) -> Response {
+    let status = match e {
+        ChatError::BadInput(_) => StatusCode::UNPROCESSABLE_ENTITY,
+        ChatError::NotFound(_) => StatusCode::NOT_FOUND,
+        ChatError::Busy => StatusCode::CONFLICT,
+        ChatError::Agent(_) => StatusCode::BAD_GATEWAY,
     };
-    let events = h.run(input).map(|e| {
-        let json = serde_json::to_string(&e)
-            .unwrap_or_else(|_| r#"{"type":"RUN_ERROR","message":"serialize"}"#.into());
-        Ok::<_, Infallible>(Event::default().data(json))
-    });
-    Sse::new(events).keep_alive(KeepAlive::default()).into_response()
+    failure(status, &e.to_string())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
+/// The body as `T`, or a `422` that says what is wrong with it.
+fn parse<T: for<'de> Deserialize<'de>>(body: &Bytes, what: &str) -> Result<T, String> {
+    serde_json::from_slice(body).map_err(|e| format!("invalid {what}: {e}"))
+}
 
-    #[test]
-    fn wire_shape_matches_the_spec() {
-        let e = AgUiEvent::TextMessageContent { message_id: "m1".into(), delta: "hi".into() };
-        assert_eq!(
-            serde_json::to_value(&e).unwrap(),
-            json!({"type":"TEXT_MESSAGE_CONTENT","messageId":"m1","delta":"hi"})
-        );
-        let e = AgUiEvent::ToolCallStart {
-            tool_call_id: "t".into(),
-            tool_call_name: "notes__add".into(),
-            parent_message_id: None,
-        };
-        assert_eq!(
-            serde_json::to_value(&e).unwrap(),
-            json!({"type":"TOOL_CALL_START","toolCallId":"t","toolCallName":"notes__add"})
-        );
-        let back: AgUiEvent = serde_json::from_value(json!({"type":"RUN_ERROR","message":"x"})).unwrap();
-        assert_eq!(back, AgUiEvent::RunError { message: "x".into(), code: None });
+/// The events of one run as they are streamed; dropping it (the client went away) lets the chat service
+/// cancel a run that has nothing pending.
+struct RunStream {
+    events: RunEvents,
+    chat: Arc<ChatService>,
+    thread_id: String,
+    run_id: String,
+}
+
+impl Stream for RunStream {
+    type Item = AgUiEvent;
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<AgUiEvent>> {
+        self.events.poll_next_unpin(cx)
+    }
+}
+
+impl Drop for RunStream {
+    fn drop(&mut self) {
+        let (chat, thread, run) = (self.chat.clone(), self.thread_id.clone(), self.run_id.clone());
+        tokio::spawn(async move { chat.client_gone(&thread, &run).await });
+    }
+}
+
+#[axum::debug_handler]
+async fn run(State(chat): State<Arc<ChatService>>, body: Bytes) -> Response {
+    let input: RunAgentInput = match parse(&body, "RunAgentInput") {
+        Ok(i) => i,
+        Err(why) => return failure(StatusCode::UNPROCESSABLE_ENTITY, &why),
+    };
+    let (thread_id, run_id) = (input.thread_id.clone(), input.run_id.clone());
+    let events = match chat.run(input).await {
+        Ok(events) => events,
+        Err(e) => return chat_failure(&e),
+    };
+    let stream = RunStream { events, chat, thread_id, run_id }.map(|e| {
+        let data = serde_json::to_string(&e)
+            .unwrap_or_else(|_| r#"{"type":"RUN_ERROR","message":"could not encode an event"}"#.into());
+        Ok::<_, Infallible>(Event::default().data(data))
+    });
+    Sse::new(stream).keep_alive(KeepAlive::default()).into_response()
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EnsureThread {
+    thread_id: String,
+    agent_id: String,
+}
+
+async fn ensure_thread(State(chat): State<Arc<ChatService>>, body: Bytes) -> Response {
+    let req: EnsureThread = match parse(&body, "thread request") {
+        Ok(r) => r,
+        Err(why) => return failure(StatusCode::UNPROCESSABLE_ENTITY, &why),
+    };
+    match chat.ensure(&req.thread_id, &req.agent_id).await {
+        Ok(snapshot) => Json(snapshot).into_response(),
+        Err(e) => chat_failure(&e),
+    }
+}
+
+async fn thread(State(chat): State<Arc<ChatService>>, Path(id): Path<String>) -> Response {
+    match chat.snapshot(&id).await {
+        Ok(snapshot) => Json(snapshot).into_response(),
+        Err(e) => chat_failure(&e),
+    }
+}
+
+async fn cancel(State(chat): State<Arc<ChatService>>, Path(id): Path<String>) -> Response {
+    match chat.cancel(&id).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => chat_failure(&e),
+    }
+}
+
+async fn settings(State(chat): State<Arc<ChatService>>, Path(id): Path<String>, body: Bytes) -> Response {
+    let change: SettingsChange = match parse(&body, "settings change") {
+        Ok(c) => c,
+        Err(why) => return failure(StatusCode::UNPROCESSABLE_ENTITY, &why),
+    };
+    match chat.settings(&id, change).await {
+        Ok(state) => Json(json_of(&state)).into_response(),
+        Err(e) => chat_failure(&e),
     }
 }

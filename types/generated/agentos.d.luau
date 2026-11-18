@@ -50,6 +50,7 @@ type Manifest = {
 	tint: PaletteToken?,
 	kit: string?,
 	window: ManifestWindow,
+	-- "data", "notify", "shell", "agents"
 	permissions: { string }?,
 }
 
@@ -132,6 +133,19 @@ type RowSource = {
 
 type ScalarSource = { ["$source"]: string }
 
+-- A chat thread source for `ChatTranscript`: which thread, and the agent it runs as (literals or Refs). The
+-- thread's data is not a query: the client streams it from the host's `/agui`.
+type ThreadParams = { thread: string | Ref<string>, agent: string | Ref<string> }
+
+type ThreadSource = { ["$source"]: string }
+
+-- What an app with the `agents` permission may know of an agent contact.
+type AgentCard = { id: string, name: string, avatar: string?, role: string }
+
+type AgentsApi = {
+	list: (self: AgentsApi) -> { AgentCard },
+}
+
 type Db = {
 	migrate: (self: Db, steps: { [number]: string }) -> (),
 	exec: (self: Db, sql: string, params: SqlParams?) -> ExecResult,
@@ -174,11 +188,13 @@ type ToolContext = {
 }
 
 type ToolDef = {
+	-- a local identifier: [a-z][a-z0-9_]* (agents see it as `<appId>__<name>`)
 	name: string,
 	title: string?,
 	description: string?,
 	input: { [string]: Schema }?,
-	-- a hint to agents that the tool does not change data
+	-- enforced: the tool runs with app writes blocked (db writes, app.kv set/delete, db:migrate raise) and an agent may
+	-- run it without a permission prompt
 	readOnly: boolean?,
 	run: (input: any, ctx: ToolContext) -> any,
 }
@@ -211,6 +227,10 @@ type AppApi = {
 	kv: KvApi,
 	db: Db,
 	tool: (def: ToolDef) -> (),
+	-- declare a chat thread source once; `chat { thread = id, agent = id }` makes the handle a `ChatTranscript` takes
+	thread: () -> (params: ThreadParams) -> ThreadSource,
+	-- the agent contacts (needs the "agents" permission)
+	agents: AgentsApi,
 	t: SchemaBuilders,
 	openWindow: (self: AppApi, name: string, params: { [string]: any }?) -> (),
 	windows: (self: AppApi, name: string) -> { WindowContext },

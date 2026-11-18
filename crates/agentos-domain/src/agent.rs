@@ -1,7 +1,7 @@
 use crate::{error::DomainError, tool::QualifiedToolName, AppId};
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct AgentId(pub String);
 
 /// What an app may ask the host for (declared in its manifest) and what an agent may do to apps.
@@ -17,6 +17,8 @@ pub enum Permission {
     Data,
     /// App may use the shell: Dock badge, menu commands, deep links.
     Shell,
+    /// App may list the agent contacts (name, avatar, role): never their grants, tokens or launch commands.
+    Agents,
 }
 
 impl Permission {
@@ -27,6 +29,7 @@ impl Permission {
             Self::Data => Some("data"),
             Self::Notify => Some("notify"),
             Self::Shell => Some("shell"),
+            Self::Agents => Some("agents"),
             Self::CallTools(_) | Self::CallAnyTool => None,
         }
     }
@@ -38,17 +41,20 @@ impl Permission {
             "data" => Some(Self::Data),
             "notify" => Some(Self::Notify),
             "shell" => Some(Self::Shell),
+            "agents" => Some(Self::Agents),
             _ => None,
         }
     }
 }
 
-/// What the host lets an app's VM do, from the grants in its package manifest.
+/// What the host lets an app's VM do, from the grants in its package manifest: one switch per capability.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Capabilities {
     pub data: bool,
     pub notify: bool,
     pub shell: bool,
+    pub agents: bool,
 }
 
 impl Capabilities {
@@ -58,22 +64,28 @@ impl Capabilities {
             data: grants.contains(&Permission::Data),
             notify: grants.contains(&Permission::Notify),
             shell: grants.contains(&Permission::Shell),
+            agents: grants.contains(&Permission::Agents),
         }
     }
 
     /// The grants these capabilities stand for.
     #[must_use]
     pub fn grants(self) -> Vec<Permission> {
-        [(self.data, Permission::Data), (self.notify, Permission::Notify), (self.shell, Permission::Shell)]
-            .into_iter()
-            .filter_map(|(on, p)| on.then_some(p))
-            .collect()
+        [
+            (self.data, Permission::Data),
+            (self.notify, Permission::Notify),
+            (self.shell, Permission::Shell),
+            (self.agents, Permission::Agents),
+        ]
+        .into_iter()
+        .filter_map(|(on, p)| on.then_some(p))
+        .collect()
     }
 
     /// Everything (tests and tools that don't gate).
     #[must_use]
     pub fn all() -> Self {
-        Self { data: true, notify: true, shell: true }
+        Self { data: true, notify: true, shell: true, agents: true }
     }
 }
 

@@ -3,10 +3,10 @@
 use crate::{
     live::{SourceDef, SourceId, SourceUpdate, SubscriptionId},
     ports::{
-        AgentConnector, AgentDirectory, AppData, AppPackage, AppRuntime, Background, CallContext,
-        ChangeBatch, ChangeFeed, Clock, DataStore, DataTx, DeviceRegistry, EventSink, ExecOutcome, Fetcher,
-        InstalledApp, InstalledAppStore, LoadedApp, MenuCommand, Params, PortResult, QueryInfo, RandomSource,
-        RenderOutput, RunId, ServerEvent, Shell, SourceBinding, SqlMigration, TaskHandle, ToolRegistry,
+        AgentDirectory, AgentStore, AppData, AppPackage, AppRuntime, Background, CallContext, ChangeBatch,
+        ChangeFeed, Clock, DataStore, DataTx, DeviceRegistry, EventSink, ExecOutcome, Fetcher, InstalledApp,
+        InstalledAppStore, LoadedApp, MenuCommand, Params, PortResult, QueryInfo, RandomSource, RenderOutput,
+        ServerEvent, Shell, SourceBinding, SqlMigration, StoredThread, TaskHandle, ThreadStore, ToolRegistry,
         ViewEffect, ViewEventCall,
     },
     services::{AppService, Ports},
@@ -14,8 +14,8 @@ use crate::{
 };
 use agentos_domain::{
     ui::{ClientDecl, Node},
-    AgentId, AppId, AppRef, Capabilities, Device, DeviceId, FileRef, Manifest, MigrationSpec, Revision,
-    StoredRevision, ToolSpec,
+    Agent, AgentId, AppId, AppRef, Capabilities, Device, DeviceId, FileRef, Manifest, MigrationSpec,
+    Revision, StoredRevision, ToolSpec,
 };
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -233,6 +233,9 @@ impl AppData for ScriptedData {
     fn changes(&self) -> Box<dyn ChangeFeed> {
         self.feed()
     }
+    fn read_only(&self) -> Arc<dyn AppData> {
+        Arc::new(ReadOnlyData(self.clone()))
+    }
     async fn ui_state(&self, window: &str) -> PortResult<serde_json::Map<String, Value>> {
         Ok(self.0.ui_state.lock().unwrap().get(window).cloned().unwrap_or_default())
     }
@@ -271,6 +274,76 @@ impl AppData for ScriptedData {
         let before = all.len();
         all.retain(|r| r.revision.recorded_at_ms >= cutoff_ms);
         Ok(u64::try_from(before - all.len()).unwrap_or(0))
+    }
+}
+
+/// The read-only face of a [`ScriptedData`]: reads pass through, every write is refused.
+struct ReadOnlyData(ScriptedData);
+
+fn refused<T>() -> PortResult<T> {
+    Err(PortError::Rejected("attempt to write a readonly database".into()))
+}
+
+struct ReadOnlyTx(ScriptedTx);
+#[async_trait]
+impl DataTx for ReadOnlyTx {
+    async fn query(&mut self, sql: String, params: Params) -> PortResult<Vec<Value>> {
+        self.0.query(sql, params).await
+    }
+    async fn exec(&mut self, _sql: String, _params: Params) -> PortResult<ExecOutcome> {
+        refused()
+    }
+    async fn commit(self: Box<Self>) -> PortResult<()> {
+        Ok(())
+    }
+    async fn rollback(self: Box<Self>) -> PortResult<()> {
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl AppData for ReadOnlyData {
+    async fn migrate(&self, _migrations: Vec<SqlMigration>) -> PortResult<()> {
+        refused()
+    }
+    async fn query(&self, sql: String, params: Params) -> PortResult<Vec<Value>> {
+        self.0.query(sql, params).await
+    }
+    async fn exec(&self, _sql: String, _params: Params) -> PortResult<ExecOutcome> {
+        refused()
+    }
+    async fn analyze(&self, sql: String) -> PortResult<QueryInfo> {
+        self.0.analyze(sql).await
+    }
+    async fn begin(&self) -> PortResult<Box<dyn DataTx>> {
+        Ok(Box::new(ReadOnlyTx(ScriptedTx(self.0.clone()))))
+    }
+    fn changes(&self) -> Box<dyn ChangeFeed> {
+        self.0.feed()
+    }
+    fn read_only(&self) -> Arc<dyn AppData> {
+        Arc::new(ReadOnlyData(self.0.clone()))
+    }
+    async fn ui_state(&self, window: &str) -> PortResult<serde_json::Map<String, Value>> {
+        self.0.ui_state(window).await
+    }
+    async fn set_ui_state(&self, _window: &str, _entries: serde_json::Map<String, Value>) -> PortResult<()> {
+        refused()
+    }
+    async fn clear_ui_state(&self) -> PortResult<()> {
+        refused()
+    }
+    async fn record_revision(&self, _revision: Revision) -> PortResult<i64> {
+        refused()
+    }
+    async fn revision(&self, id: i64) -> PortResult<Option<StoredRevision>> {
+        self.0.revision(id).await
+    }
+    async fn revisions(&self, source: &str, key: &Value, field: &str) -> PortResult<Vec<StoredRevision>> {
+        self.0.revisions(source, key, field).await
+    }
+    async fn purge_revisions(&self, _cutoff_ms: u64) -> PortResult<u64> {
+        refused()
     }
 }
 
@@ -477,11 +550,12 @@ impl AppRuntime for FakeRuntime {
             .split(',')
             .filter(|s| !s.is_empty())
             .map(|n| ToolSpec {
-                name: n.into(),
+                // a trailing `?` declares the tool readOnly: "search?,add"
+                name: n.trim_end_matches('?').into(),
                 title: None,
                 description: String::new(),
                 input_schema: json!({"type":"object"}),
-                read_only: false,
+                read_only: n.ends_with('?'),
             })
             .collect();
         self.apps.lock().unwrap().insert(app.to_string(), tools.clone());
@@ -566,8 +640,12 @@ impl AppRuntime for FakeRuntime {
 }
 
 #[derive(Default)]
-pub struct MemRegistry(Mutex<HashMap<String, Vec<String>>>);
+pub struct MemRegistry(Mutex<HashMap<String, Vec<String>>>, Mutex<Vec<String>>);
 impl MemRegistry {
+    /// The agents whose tool lists were reported changed, in order.
+    pub fn visibility_changes(&self) -> Vec<String> {
+        self.1.lock().unwrap().clone()
+    }
     pub fn names(&self) -> Vec<String> {
         let mut v: Vec<String> = self
             .0
@@ -590,6 +668,10 @@ impl ToolRegistry for MemRegistry {
         self.0.lock().unwrap().remove(app.as_str());
         Ok(())
     }
+    async fn visibility_changed(&self, agent: &AgentId) -> PortResult<()> {
+        self.1.lock().unwrap().push(agent.0.clone());
+        Ok(())
+    }
 }
 
 #[derive(Default)]
@@ -603,26 +685,6 @@ impl RecordingSink {
 impl EventSink for RecordingSink {
     async fn emit(&self, e: ServerEvent) {
         self.0.lock().unwrap().push(e);
-    }
-}
-
-#[derive(Default)]
-pub struct FakeAgents {
-    stopped: AtomicU64,
-}
-impl FakeAgents {
-    /// How many times `stop_all` was called.
-    pub fn stop_calls(&self) -> u64 {
-        self.stopped.load(Ordering::SeqCst)
-    }
-}
-#[async_trait]
-impl AgentConnector for FakeAgents {
-    async fn start_run(&self, a: &AgentId, _: &str) -> PortResult<RunId> {
-        Ok(RunId(format!("run-{}", a.0)))
-    }
-    async fn stop_all(&self) {
-        self.stopped.fetch_add(1, Ordering::SeqCst);
     }
 }
 
@@ -817,7 +879,6 @@ pub struct Fakes {
     pub runtime: Arc<FakeRuntime>,
     pub registry: Arc<MemRegistry>,
     pub events: Arc<RecordingSink>,
-    pub agents: Arc<FakeAgents>,
     pub installed: Arc<MemInstalled>,
     pub clock: Arc<ManualClock>,
     pub background: Arc<CountingBackground>,
@@ -835,7 +896,6 @@ impl Fakes {
             runtime: Arc::default(),
             registry: Arc::default(),
             events: Arc::default(),
-            agents: Arc::default(),
             installed: Arc::default(),
             clock: Arc::new(ManualClock::new(1_000)),
             background: Arc::default(),
@@ -853,7 +913,6 @@ impl Fakes {
             runtime: self.runtime.clone(),
             tools,
             events: self.events.clone(),
-            agents: self.agents.clone(),
             installed: self.installed.clone(),
             clock: self.clock.clone(),
             background: self.background.clone(),
@@ -923,5 +982,77 @@ pub struct StaticDirectory(pub Vec<(String, agentos_domain::AgentIdentity)>);
 impl AgentDirectory for StaticDirectory {
     fn authenticate(&self, t: &str) -> Option<agentos_domain::AgentIdentity> {
         self.0.iter().find(|(k, _)| k == t).map(|(_, v)| v.clone())
+    }
+}
+
+/// In-memory agent contacts.
+#[derive(Default)]
+pub struct MemAgentStore {
+    agents: Mutex<Vec<(Agent, Option<String>)>>,
+}
+#[async_trait]
+impl AgentStore for MemAgentStore {
+    async fn list(&self) -> PortResult<Vec<Agent>> {
+        Ok(self.agents.lock().unwrap().iter().map(|(a, _)| a.clone()).collect())
+    }
+    async fn insert(&self, agent: &Agent, token_hash: Option<&str>) -> PortResult<bool> {
+        let mut all = self.agents.lock().unwrap();
+        if all.iter().any(|(a, _)| a.id == agent.id) {
+            return Ok(false);
+        }
+        all.push((agent.clone(), token_hash.map(str::to_owned)));
+        Ok(true)
+    }
+    async fn update(&self, agent: &Agent) -> PortResult<bool> {
+        let mut all = self.agents.lock().unwrap();
+        match all.iter_mut().find(|(a, _)| a.id == agent.id) {
+            Some(slot) => {
+                slot.0 = agent.clone();
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+    async fn delete(&self, id: &AgentId) -> PortResult<bool> {
+        let mut all = self.agents.lock().unwrap();
+        let before = all.len();
+        all.retain(|(a, _)| a.id != *id);
+        Ok(all.len() < before)
+    }
+    async fn set_token_hash(&self, id: &AgentId, token_hash: &str) -> PortResult<bool> {
+        let mut all = self.agents.lock().unwrap();
+        match all.iter_mut().find(|(a, _)| a.id == *id) {
+            Some(slot) => {
+                slot.1 = Some(token_hash.to_owned());
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+    async fn token_hashes(&self) -> PortResult<Vec<(AgentId, String)>> {
+        Ok(self.agents.lock().unwrap().iter().filter_map(|(a, h)| Some((a.id.clone(), h.clone()?))).collect())
+    }
+}
+
+/// In-memory transcripts.
+#[derive(Default)]
+pub struct MemThreadStore(Mutex<HashMap<String, StoredThread>>);
+impl MemThreadStore {
+    pub fn get(&self, id: &str) -> Option<StoredThread> {
+        self.0.lock().unwrap().get(id).cloned()
+    }
+}
+#[async_trait]
+impl ThreadStore for MemThreadStore {
+    async fn load(&self, thread_id: &str) -> PortResult<Option<StoredThread>> {
+        Ok(self.get(thread_id))
+    }
+    async fn save(&self, thread_id: &str, thread: &StoredThread, _now_ms: u64) -> PortResult<()> {
+        self.0.lock().unwrap().insert(thread_id.to_owned(), thread.clone());
+        Ok(())
+    }
+    async fn delete(&self, thread_id: &str) -> PortResult<()> {
+        self.0.lock().unwrap().remove(thread_id);
+        Ok(())
     }
 }
