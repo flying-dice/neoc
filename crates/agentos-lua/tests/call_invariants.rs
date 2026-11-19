@@ -7,24 +7,20 @@
 //! 1. a call lends the VM only when it really suspended at an idle wait (not at a stale request, not at a plain
 //!    `coroutine.yield()`), and never while it has a `db:tx` open;
 //! 2. a transaction is committed when `db:tx` says it succeeded, and belongs to the call that opened it;
-//! 3. a host call Lua could not suspend at holds nothing once the script goes on: no database lock.
+//! 3. a host call Lua could not suspend at holds nothing once the script goes on: no database lock;
+//! 4. no script drives a thread the host drives (the top-level thread of a call, a task's thread): resuming one is
+//!    refused and changes nothing, and script code never runs in a call that does not hold the turn.
 //!
 //! `chaos.rs` generates scripts that combine these ingredients and checks the same invariants over all of them.
 
 mod common;
 
-use common::{agent_ctx, db, load, try_load_with};
+use common::{db, load, timed_tool, try_load_with};
 use serde_json::{json, Value};
 use std::{sync::Arc, time::Duration};
 
 async fn call(vm: &Arc<agentos_lua::AppVm>, tool: &str) -> Value {
-    match tokio::time::timeout(Duration::from_secs(10), vm.call_tool(tool, json!({}), &agent_ctx(0), false))
-        .await
-    {
-        Ok(Ok(v)) => v,
-        Ok(Err(e)) => panic!("{tool} failed: {e}"),
-        Err(late) => panic!("{tool} never finished ({late}): the app is wedged"),
-    }
+    timed_tool(vm, tool, 10).await.unwrap_or_else(|why| panic!("{tool}: {why}"))
 }
 
 fn spawn_call(vm: &Arc<agentos_lua::AppVm>, tool: &'static str) -> tokio::task::JoinHandle<Value> {
@@ -32,7 +28,7 @@ fn spawn_call(vm: &Arc<agentos_lua::AppVm>, tool: &'static str) -> tokio::task::
     tokio::spawn(async move { call(&vm, tool).await })
 }
 
-/// A database call a database call Lua cannot suspend at must not keep the database's write gate.
+/// A database call that Lua cannot suspend at must not keep the database's write gate.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_database_call_lua_could_not_suspend_at_does_not_hold_the_write_gate() {
     let data = db();
@@ -68,7 +64,7 @@ async fn a_database_call_lua_could_not_suspend_at_does_not_hold_the_write_gate()
         .unwrap();
 }
 
-/// A transaction `db:tx` reports success only when its transaction committed, whatever coroutines did inside the body.
+/// `db:tx` reports success only when its transaction committed, whatever coroutines did inside the body.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_transaction_that_reports_success_committed_what_the_body_started() {
     let vm = Arc::new(
@@ -111,8 +107,8 @@ async fn a_transaction_that_reports_success_committed_what_the_body_started() {
     assert_eq!(rows, json!([{ "a": 1 }, { "a": 2 }, { "a": 3 }]));
 }
 
-/// A transaction body a transaction body continued by another call (a coroutine started in one tool, resumed in the next) never
-/// leaves half of it behind, and never reports success for it.
+/// A transaction body continued by another call (a coroutine started in one tool, resumed in the next) never leaves
+/// half of it behind, and never reports success for it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_transaction_body_continued_by_another_call_is_all_or_nothing() {
     let vm = Arc::new(
@@ -156,9 +152,9 @@ async fn a_transaction_body_continued_by_another_call_is_all_or_nothing() {
     assert!(all || b["v"] != json!("tx body done"), "no success without the commit: {b} {rows}");
 }
 
-/// A coroutine a coroutine that is handed to `task.spawn` belongs to the scheduler: the script resuming it too (two drivers
-/// of one host call) gets Lua's "cannot resume non-suspended coroutine" instead of stealing the call, and no other
-/// call is held up.
+/// A coroutine that is handed to `task.spawn` belongs to the scheduler: the script resuming it too (two drivers of one
+/// host call) gets Lua's "cannot resume non-suspended coroutine" instead of stealing the call, and no other call is
+/// held up.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_coroutine_with_two_drivers_does_not_hold_up_another_call() {
     let vm = Arc::new(
@@ -191,8 +187,8 @@ async fn a_coroutine_with_two_drivers_does_not_hold_up_another_call() {
     assert!(a["v"].as_str().unwrap().contains("non-suspended"), "{a}");
 }
 
-/// A failed wait a failed wait, then a plain `coroutine.yield()` at the top of a read-only call: the call still holds the
-/// VM, so nothing else runs inside it and it stays read-only.
+/// A failed wait, then a plain `coroutine.yield()` at the top of a read-only call: the call still holds the VM, so
+/// nothing else runs inside it and it stays read-only.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_plain_yield_after_a_failed_wait_does_not_lend_a_read_only_call() {
     let vm = Arc::new(
@@ -228,8 +224,8 @@ async fn a_plain_yield_after_a_failed_wait_does_not_lend_a_read_only_call() {
     assert!(vm.take_effects().is_empty(), "nothing was queued");
 }
 
-/// A wait a wait started outside `db:tx` (Lua could not suspend at it) and resumed inside the body must not lend the
-/// VM with the transaction open, and another call's write must not land in the transaction.
+/// A wait started outside `db:tx` (Lua could not suspend at it) and resumed inside the body must not lend the VM with
+/// the transaction open, and another call's write must not land in the transaction.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_wait_resumed_inside_a_transaction_does_not_lend_it() {
     let vm = Arc::new(
@@ -330,4 +326,254 @@ async fn the_scheduler_does_not_take_a_coroutine_that_is_waiting_at_a_host_call(
     let out = call(&vm, "adopt").await;
     assert_eq!(out["ok"], false, "{out}");
     assert!(out["e"].as_str().unwrap().contains("already running"), "{out}");
+}
+
+// ---- a thread the host drives is not the script's to resume -------------------------------------------------------
+
+/// A call that resumes the top-level thread of another call (a `coroutine.running()` the first stashed) while that
+/// call is parked at a wait is refused, and the other call finishes as if nothing had happened.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_top_level_thread_of_a_parked_call_cannot_be_resumed_by_another_call() {
+    let vm = Arc::new(
+        load(
+            r#"
+            local task = require("std:task")
+            local t
+            app.tool { name = "a", run = function() t = coroutine.running() task.wait(0.2) return "a done" end }
+            app.tool { name = "b", readOnly = true, run = function()
+              local ok, e = coroutine.resume(t)
+              local ok2, e2 = coroutine.resume(t, "with an argument")
+              return { ok = ok, e = tostring(e), ok2 = ok2, e2 = tostring(e2) }
+            end }
+            app.tool { name = "ping", readOnly = true, run = function() return "pong" end }
+            "#,
+        )
+        .await,
+    );
+    let a = spawn_call(&vm, "a");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let b = call(&vm, "b").await;
+    assert_eq!(b["ok"], false, "{b}");
+    assert_eq!(b["ok2"], false, "{b}");
+    for e in [&b["e"], &b["e2"]] {
+        assert!(e.as_str().unwrap().contains("non-suspended"), "{b}");
+    }
+    assert_eq!(a.await.unwrap(), json!("a done"), "the parked call was not disturbed");
+    assert_eq!(call(&vm, "ping").await, json!("pong"));
+}
+
+/// A `readOnly` call whose thread another call tried to resume stays read-only: it never runs without the turn, and
+/// the restriction goes with the turn.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_read_only_call_is_still_read_only_after_another_call_tried_to_resume_it() {
+    let vm = Arc::new(
+        load(
+            r#"
+            local task = require("std:task")
+            local state = app.state { v = 0 }
+            local t
+            local log = {}
+            app.tool { name = "a", readOnly = true, run = function()
+              t = coroutine.running()
+              task.wait(0.02)
+              coroutine.yield()
+              local ok = pcall(function() state.v = 42 end)
+              local notified = pcall(function() app.notify { title = "from readOnly" } end)
+              log[#log + 1] = { state = ok, notify = notified }
+              return "a done"
+            end }
+            app.tool { name = "b", run = function()
+              local x = 0
+              for i = 1, 5000000 do x = x + i end
+              local ok, e = coroutine.resume(t)
+              task.wait(0.2)
+              return { ok = ok, e = tostring(e) }
+            end }
+            app.tool { name = "report", readOnly = true, run = function() return { v = state.v, log = log } end }
+            "#,
+        )
+        .await,
+    );
+    let a = spawn_call(&vm, "a");
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    let b = call(&vm, "b").await;
+    assert_eq!(b["ok"], false, "{b}");
+    assert_eq!(a.await.unwrap(), json!("a done"));
+    let report = call(&vm, "report").await;
+    assert_eq!(report["v"], 0, "{report}");
+    assert_eq!(report["log"], json!([{ "state": false, "notify": false }]), "{report}");
+    assert!(vm.take_effects().is_empty(), "nothing was queued from a readOnly call");
+}
+
+/// A thread `task.spawn(fn)` makes is the scheduler's from its first instruction: another call resuming it is
+/// refused, and the task still runs to the end.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_task_thread_made_from_a_function_cannot_be_resumed_by_a_script() {
+    let vm = Arc::new(
+        load(
+            r#"
+            local task = require("std:task")
+            local T, h
+            local steps = {}
+            app.tool { name = "s", run = function()
+              h = task.spawn(function() T = coroutine.running() task.wait(0.1) steps[#steps + 1] = "after wait" return "task done" end)
+              return "spawned"
+            end }
+            app.tool { name = "r", run = function()
+              local ok, e = coroutine.resume(T)
+              return { ok = ok, e = tostring(e) }
+            end }
+            app.tool { name = "aw", run = function() return { h:await() } end }
+            app.tool { name = "report", readOnly = true, run = function() return steps end }
+            "#,
+        )
+        .await,
+    );
+    assert_eq!(call(&vm, "s").await, json!("spawned"));
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let r = call(&vm, "r").await;
+    assert_eq!(r["ok"], false, "{r}");
+    assert!(r["e"].as_str().unwrap().contains("non-suspended"), "{r}");
+    assert_eq!(call(&vm, "aw").await, json!(["task done"]), "the task was not wedged");
+    assert_eq!(call(&vm, "report").await, json!(["after wait"]));
+}
+
+/// A resume value that is not the executor's "terminate" signal changes nothing: `coroutine.resume(t, "x")` of a
+/// thread that is waiting at a host call is refused, and the thread finishes normally.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn resuming_a_waiting_thread_with_a_value_is_refused_and_does_not_wedge_it() {
+    let vm = Arc::new(
+        load(
+            r#"
+            local task = require("std:task")
+            local S, co, h
+            app.tool { name = "start", run = function()
+              co = coroutine.create(function() task.wait(0.15) return "finished" end)
+              h = task.spawn(function()
+                S = coroutine.running()
+                local ok, v = coroutine.resume(co)
+                return v
+              end)
+              return "started"
+            end }
+            app.tool { name = "poke", run = function()
+              local a, ae = coroutine.resume(S, "x")
+              local b, be = coroutine.resume(co, "y")
+              local c, ce = coroutine.resume(S, 1)
+              return { a = a, ae = tostring(ae), b = b, be = tostring(be), c = c, ce = tostring(ce) }
+            end }
+            app.tool { name = "finish", run = function() return { h:await() } end }
+            "#,
+        )
+        .await,
+    );
+    call(&vm, "start").await;
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    let poke = call(&vm, "poke").await;
+    for (ok, why) in [("a", "ae"), ("b", "be"), ("c", "ce")] {
+        assert_eq!(poke[ok], false, "{poke}");
+        assert!(poke[why].as_str().unwrap().contains("non-suspended"), "{poke}");
+    }
+    assert_eq!(call(&vm, "finish").await, json!(["finished"]), "the waiting thread ran on to its end");
+}
+
+/// Every entry point of the host into script code starts a thread the script cannot resume: a tool, an event
+/// handler, the body of `Mutex:with_lock`, a deferred and a delayed function, and a request handler. Each stashes its
+/// thread and waits; a probe resumes them all.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn every_entry_point_starts_a_thread_the_script_cannot_resume() {
+    let vm = Arc::new(
+        load(
+            r#"
+            local task = require("std:task")
+            local hyper = require("vnd:hyper")
+            local net = require("std:net")
+            local collections = require("std:collections")
+            local mu = collections.Mutex.new()
+            local threads = {}
+            local function stash(name) threads[name] = coroutine.running() task.wait(0.3) end
+            local server = hyper.serve(net.TcpListener.bind("127.0.0.1:0"), function(req)
+              stash("handler")
+              return { status = 200, body = "ok" }
+            end)
+            local url = "http://" .. server:addr() .. "/"
+            app.on("event", function() stash("event") return "event done" end)
+            app.tool { name = "tool", run = function() stash("tool") return "tool done" end }
+            app.tool { name = "lock", run = function() mu:with_lock(function() stash("with_lock") end) return "lock done" end }
+            app.tool { name = "later", run = function()
+              task.defer(function() stash("defer") end)
+              task.delay(0.01, function() stash("delay") end)
+              task.spawn(function() hyper.get(url) end)
+              return "scheduled"
+            end }
+            app.tool { name = "probe", run = function()
+              local out = {}
+              for _, name in ipairs { "tool", "event", "with_lock", "defer", "delay", "handler" } do
+                local t = threads[name]
+                if t == nil then
+                  out[name] = "never started"
+                else
+                  local ok, e = coroutine.resume(t)
+                  out[name] = (ok and "resumed: " or "refused: ") .. tostring(e)
+                end
+              end
+              return out
+            end }
+            "#,
+        )
+        .await,
+    );
+    let mut running = vec![spawn_call(&vm, "tool"), spawn_call(&vm, "lock")];
+    let event = {
+        let vm = vm.clone();
+        tokio::spawn(async move { vm.emit("event", json!(null)).await.unwrap() })
+    };
+    running.push(spawn_call(&vm, "later"));
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    let probe = call(&vm, "probe").await;
+    for name in ["tool", "event", "with_lock", "defer", "delay", "handler"] {
+        let said = probe[name].as_str().unwrap();
+        assert!(said.starts_with("refused: ") && said.contains("non-suspended"), "{name}: {probe}");
+    }
+    for call in running {
+        call.await.unwrap();
+    }
+    assert_eq!(event.await.unwrap(), json!("event done"));
+}
+
+/// A top-level plain `coroutine.yield()` waits for nothing, so the call does not lend the VM at it, even when a wait
+/// that Lua could not suspend at was left pending just before. This leans on mlua (0.12.x) waking the future's waker
+/// when a thread run with `call_async` yields something that is not its own "pending" marker (`AsyncThread::poll`):
+/// the call sees that wake and keeps its turn (`lifecycle`, rule 4). If an mlua upgrade stops waking there, this test
+/// fails instead of the app interleaving calls in the middle of one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_plain_yield_at_the_top_of_a_call_does_not_lend_the_vm() {
+    let vm = Arc::new(
+        load(
+            r#"
+            local task = require("std:task")
+            local counter = 0
+            app.tool { name = "bump", run = function() counter = counter + 1 return counter end }
+            app.tool { name = "yielder", run = function()
+              local before = counter
+              -- a wait Lua cannot suspend at: it is left pending, and the plain yields below are not waits
+              pcall(table.sort, { 3, 2, 1 }, function(a, b) task.wait(0) return a < b end)
+              for _ = 1, 20000 do coroutine.yield() end
+              return { interleaved = counter ~= before }
+            end }
+            "#,
+        )
+        .await,
+    );
+    let yielder = spawn_call(&vm, "yielder");
+    tokio::time::sleep(Duration::from_millis(2)).await;
+    let bumps: Vec<_> = (0..20).map(|_| spawn_call(&vm, "bump")).collect();
+    let out = yielder.await.unwrap();
+    for bump in bumps {
+        bump.await.unwrap();
+    }
+    assert_eq!(
+        out["interleaved"], false,
+        "another call ran in the middle of a call that only yielded: {out}"
+    );
 }

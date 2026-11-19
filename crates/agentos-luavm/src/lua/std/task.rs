@@ -23,8 +23,8 @@ use tokio::sync::Notify;
 
 use crate::lua::facade::Module;
 use crate::lua::lifecycle::{
-    async_function, async_method, first_slice, has_entry, hold, inbound, inherited, mark_driven, resumed,
-    Life, Role,
+    async_function, async_method, first_slice, has_entry, inbound, inherited, mark_driven, resumed, Life,
+    Role,
 };
 
 // ---------------------------------------------------------------------------
@@ -223,7 +223,12 @@ fn validate_thread(thread: &Thread, kind: &'static str) -> mlua::Result<()> {
 
 fn into_thread(lua: &Lua, val: Value, kind: &'static str) -> mlua::Result<Thread> {
     match val {
-        Value::Function(f) => lua.create_thread(f),
+        Value::Function(f) => {
+            let thread = lua.create_thread(f)?;
+            // the scheduler's thread, from its first instruction to the end of its life
+            mark_driven(lua, &thread)?;
+            Ok(thread)
+        }
         Value::Thread(t) => {
             validate_thread(&t, kind)?;
             // the scheduler drives it from here on: the script may not resume it too
@@ -300,9 +305,8 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             // `lifecycle::resumed`. What the call may do is what its task may do: see `Inherited`.
             let from = inherited();
             // A slice that stopped at a wait (an async function, which yields the poll sentinel) has a
-            // continuation that takes its turn when the wait ends, and the leaf it stopped at stays alive for it. One
-            // that stopped at a plain `coroutine.yield()` has nothing to wait for: it must take the turn before it
-            // resumes Lua, or it would run in the middle of the call that spawned it.
+            // continuation that takes its turn when the wait ends, and the leaf it stopped at stays alive for it
+            // (`Carried`). One that stopped at a plain `coroutine.yield()` has nothing to wait for.
             let stopped_at_wait = |vals: &MultiValue| {
                 let mut yielded = vals.iter();
                 matches!(
@@ -310,7 +314,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
                     (Some(Value::LightUserData(p)), None) if *p == Lua::poll_pending()
                 )
             };
-            let first = first_slice(
+            let (first, carried) = first_slice(
                 lua,
                 from,
                 || thread.resume::<MultiValue>(args),
@@ -319,17 +323,13 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             match first {
                 Ok(vals) => {
                     if matches!(thread.status(), ThreadStatus::Resumable) {
-                        let at_wait = stopped_at_wait(&vals);
                         let inner_clone = inner.clone();
                         let lua = lua.clone();
                         let abort = scheduler.spawn_task(async move {
-                            let outcome = resumed(&lua, from, async {
-                                if !at_wait {
-                                    hold().await;
-                                }
-                                drive_thread(thread, MultiValue::new()).await
-                            })
-                            .await;
+                            // a slice that stopped at a plain yield carries no leaf: the continuation takes its turn
+                            // before it resumes Lua (lifecycle rule 5)
+                            let outcome =
+                                resumed(&lua, from, carried, drive_thread(thread, MultiValue::new())).await;
                             inner_clone.complete(outcome);
                         });
                         *inner.abort.lock() = Some(abort);

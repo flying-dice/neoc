@@ -6,7 +6,8 @@ use agentos_application::ports::{AppData, AppPackage, CallContext};
 use agentos_domain::{Actor, AppId};
 use agentos_lua::{AppVm, VmConfig};
 use agentos_sqlite::AppDb;
-use std::{collections::BTreeMap, path::Path, process::Command, sync::Arc};
+use serde_json::{json, Value};
+use std::{collections::BTreeMap, path::Path, process::Command, sync::Arc, time::Duration};
 
 pub fn db() -> Arc<AppDb> {
     Arc::new(AppDb::open(None, &[]).unwrap())
@@ -48,6 +49,24 @@ pub fn agent_ctx(now_ms: u64) -> CallContext {
 
 pub fn user_ctx(now_ms: u64) -> CallContext {
     CallContext { actor: Actor::user("You"), now_ms }
+}
+
+/// Run the tool `name` (no arguments) as an agent, giving up after `secs`. The error names what went wrong: the
+/// call failed (the script raised), never finished (the app is wedged), or the host panicked (a panic in a call is a
+/// failed join).
+pub async fn timed_tool(vm: &Arc<AppVm>, name: &str, secs: u64) -> Result<Value, String> {
+    let name = name.to_owned();
+    let vm = vm.clone();
+    let call = tokio::spawn(async move {
+        tokio::time::timeout(Duration::from_secs(secs), vm.call_tool(&name, json!({}), &agent_ctx(0), false))
+            .await
+    });
+    match call.await {
+        Err(e) => Err(format!("(f) the call panicked or was aborted: {e}")),
+        Ok(Err(_)) => Err("(e) the call never finished: the app is wedged".into()),
+        Ok(Ok(Ok(v))) => Ok(v),
+        Ok(Ok(Err(e))) => Err(format!("the call failed: {e}")),
+    }
 }
 
 /// The bundled Lua 5.1 text of an app entry file, built with the product's own pipeline (`scripts/lua51.ts`: darklua

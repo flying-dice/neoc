@@ -308,6 +308,25 @@ SQLite (`apps/agents/app.lua`).
   a library table (`pairs(string)`) see nothing. An error raised by a host function (`app.db`, `app.kv`, and
   `math.random`, which the host implements) reaches a `pcall` as an error object, not a plain string: write
   `tostring(err)` before concatenating or matching it.
+- **Coroutines, abandoned calls and transactions.** Three things a script can run into when it is clever with
+  coroutines or with `db:tx`:
+  - *A host call Lua could not suspend at is over.* If a host call is made where Lua cannot yield (the list above) and
+    the script catches the error and goes on, that call is abandoned: whatever it held is released at once, and
+    resuming a coroutine that was waiting at it raises `this host call was abandoned`.
+  - *A thread the host drives cannot be resumed by a script.* The top-level thread of every call (a tool, an event,
+    a window callback, a request handler, a `db:tx` or `Mutex:with_lock` body, the app's entry) and every coroutine
+    that `task.spawn`, `task.defer` or `task.delay` has been given belongs to the host; so does a coroutine that
+    another thread is waiting on at a host call. `coroutine.resume` of one (say, a `coroutine.running()` you stashed in
+    a variable and resume from another tool) returns `false, "cannot resume non-suspended coroutine"`, and
+    `coroutine.wrap` raises it. Scheduling a coroutine that is already being driven (`task.spawn(co)` of one a task
+    or a waiting thread has) raises `cannot schedule a coroutine that is already running`. Nothing changes in the
+    thread you tried to resume.
+  - *`db:tx` and reloads.* A transaction ends with the app version that opened it: unloading the app or reloading it
+    (a hot reload, an update) rolls an open `db:tx` back, and the call that was inside it gets `the transaction has
+    ended` from its next statement or from `db:tx` itself. A statement whose host call was abandoned inside `db:tx`
+    (it was started where Lua could not suspend, and the script went on) was still queued at the moment it was
+    called, so it runs and **commits with the transaction** if the transaction commits; the abandoned call only loses
+    its result.
 - **Supply chain.** The host verifies the sha256 of every file in an app ref before loading it. That guards against
   tampering in transit, not against a malicious author: the add-by-URL preview shows the source and asks
   first, and an app's tools reach every agent granted to that app.

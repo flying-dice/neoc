@@ -24,6 +24,7 @@ use agentos_domain::ui::{
     validate::{validate_with, Context, Severity},
     Action, ClientDecl, Handler, Node,
 };
+use agentos_luavm::lua::lifecycle::call_driven;
 use agentos_luavm::mlua;
 use agentos_luavm::mlua::{Function, Lua, Table, Value as LuaValue};
 use serde_json::{Map, Value};
@@ -590,8 +591,7 @@ impl AppVm {
         let opened = async {
             if let Some(on_open) = spec.get::<Option<Function>>("onOpen").map_err(convert)? {
                 let p = json_to_lua(lua, &Value::Object(params)).map_err(convert)?;
-                on_open
-                    .call_async::<()>((w, p))
+                call_driven::<()>(lua, &on_open, (w, p))
                     .await
                     .map_err(|e| VmError::Script(ScriptError::from_lua(&e)))?;
             }
@@ -631,7 +631,7 @@ impl AppVm {
             .map_err(|_| VmError::InvalidWindow(format!("window `{window}` has no render function")))?;
 
         let scope_guard = RenderScopeGuard::begin(&sh);
-        let rendered = render.call_async::<LuaValue>(w).await;
+        let rendered = call_driven::<LuaValue>(self.lua(), &render, w).await;
         let (deps, scope) = scope_guard.finish();
 
         let root = match rendered.map_err(|e| VmError::Script(ScriptError::from_lua(&e)))? {
@@ -736,9 +736,11 @@ impl AppVm {
                 }
             }
             e.set("actor", ctx_actor(lua, ctx).map_err(convert)?).map_err(convert)?;
-            f.call_async::<()>(e).await.map_err(|e| match e.downcast_ref::<crate::error::ToolFailure>() {
-                Some(fail) => VmError::ToolFailed(fail.0.clone()),
-                None => VmError::Script(ScriptError::from_lua(&e)),
+            call_driven::<()>(self.lua(), &f, e).await.map_err(|e| {
+                match e.downcast_ref::<crate::error::ToolFailure>() {
+                    Some(fail) => VmError::ToolFailed(fail.0.clone()),
+                    None => VmError::Script(ScriptError::from_lua(&e)),
+                }
             })?;
         }
         Ok(true)
@@ -766,7 +768,7 @@ impl AppVm {
         // raw: a `__index` on the spec is app code, and this runs outside the VM's gate
         let on_close = instance.spec.raw_get::<Option<Function>>("onClose").ok().flatten();
         if let Some(f) = on_close {
-            self.in_call(false, f.call_async::<()>(instance.w.clone()))
+            self.in_call(false, call_driven::<()>(self.lua(), &f, instance.w.clone()))
                 .await
                 .map_err(|e| VmError::Script(ScriptError::from_lua(&e)))?;
         }

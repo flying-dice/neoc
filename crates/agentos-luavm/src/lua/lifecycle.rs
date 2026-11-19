@@ -42,6 +42,15 @@
 //!      still agrees (no open `db:tx`, not rendering: [`Baton::can_park`], asked at the moment of lending, not
 //!      only before the wait began).
 //!
+//!   5. **Script code runs only in a poll that holds the turn.** Every poll of a call goes through one gate in
+//!      [`scoped`]: a poll that is not resuming into a suspended leaf (the leaf takes the turn itself when it ends)
+//!      first takes the turn, and does not run script code until it has it. A call resumed anywhere else (at a plain
+//!      yield, or into a leaf that is gone) therefore queues for the turn instead of running in someone else's.
+//!   6. **No script can drive a thread the host drives.** The top-level thread of every call, and every thread
+//!      `task.spawn`, `task.defer` and `task.delay` make, is marked *driven* for its whole life
+//!      ([`call_driven`], [`mark_driven`]); `coroutine.resume` of it is refused (`async_coroutines.lua`). Rule 5 is the
+//!      second line of defence for the case a thread is resumed by someone else regardless.
+//!
 //!   A leaf never carries a baton: [`hold`] looks the baton up in the call that polls it. A host call that was
 //!   suspended by one call and is resumed by another therefore runs in the turn of whoever resumed it, as Lua's
 //!   own `coroutine.resume` would have it, instead of waiting for a turn that nobody can give it.
@@ -49,7 +58,8 @@
 //!   A `std:task` coroutine is the one call that does not start at its beginning: `task.spawn` runs its first
 //!   slice inside the spawning call and the rest later, from whichever wait that slice stopped at. Its
 //!   continuation therefore starts *detached* ([`resumed`]): it holds nothing until the wait it was stopped
-//!   at ends (an [`idle`] wait, or a host call, which takes its turn first) and takes its turn then.
+//!   at ends (an [`idle`] wait, or a host call, which takes its turn first) and takes its turn then. The leaf it
+//!   stopped at travels with it as [`Carried`], so a continuation that is dropped before it ever runs abandons it.
 //!
 //! Without a [`CallEntry`] (an engine that is not an app's, like a `std:thread` worker's or a test's) the
 //! callbacks run directly and [`idle`] is a plain `.await`.
@@ -273,10 +283,20 @@ struct Suspended {
     idle: bool,
 }
 
+impl Suspended {
+    /// Will a poll of the call resume into this leaf (it is neither gone nor abandoned)?
+    fn alive(&self) -> bool {
+        self.leaf.upgrade().is_some_and(|leaf| leaf.pending())
+    }
+}
+
 /// What a suspended leaf lets its caller do when the suspension turns out not to have happened.
 trait Abandon: Send + Sync {
     /// Drop the leaf's future now, whatever it holds with it.
     fn abandon(&self);
+
+    /// Is the leaf's future still there to be polled?
+    fn pending(&self) -> bool;
 }
 
 /// A call's baton, and what it is waiting at.
@@ -318,10 +338,18 @@ tokio::task_local! {
 /// Run `future` as the call that holds `baton`; the baton is released when the call ends. It is lent when the call
 /// suspends at an idle wait (see the module docs, rule 4).
 pub async fn scoped<F: Future>(baton: Box<dyn Baton>, future: F) -> F::Output {
-    HELD.scope(Slot::new(Some(baton)), async move {
+    run_call(Slot::new(Some(baton)), future).await
+}
+
+async fn run_call<F: Future>(slot: RefCell<Slot>, future: F) -> F::Output {
+    HELD.scope(slot, async move {
         let mut future = std::pin::pin!(future);
         let proxy = Arc::new(WakeProxy::default());
         std::future::poll_fn(move |cx| {
+            // rule 5: the one gate between the executor and script code
+            if turn_before_script(cx).is_pending() {
+                return Poll::Pending;
+            }
             proxy.arm(cx.waker());
             let waker = futures::task::waker_ref(&proxy);
             let polled = future.as_mut().poll(&mut Context::from_waker(&waker));
@@ -334,6 +362,25 @@ pub async fn scoped<F: Future>(baton: Box<dyn Baton>, future: F) -> F::Output {
         .await
     })
     .await
+}
+
+/// Rule 5 of the module docs. A poll of the call that resumes into a leaf that is still suspended lets the leaf take
+/// the turn when its wait ends (a wait that does not use the VM may end without it). Any other poll resumes script
+/// code, and the call must hold the turn first: a call that was lent its turn and finds its leaf gone (the thread was
+/// resumed and moved on by someone else) queues for it here, so it never runs in the turn of another call.
+fn turn_before_script(cx: &mut Context<'_>) -> Poll<()> {
+    HELD.try_with(|slot| {
+        let mut slot = slot.borrow_mut();
+        // the leaf the call resumes into first is the outermost one
+        if slot.suspended.last().is_some_and(Suspended::alive) {
+            return Poll::Ready(());
+        }
+        match slot.baton.as_mut() {
+            Some(baton) if !baton.holding() => baton.poll_unpark(cx),
+            _ => Poll::Ready(()),
+        }
+    })
+    .unwrap_or(Poll::Ready(()))
 }
 
 /// The waker a call is polled with: it forwards to the executor's and remembers that it was woken during a poll.
@@ -455,12 +502,36 @@ pub async fn request<F: Future>(lua: &Lua, future: F) -> F::Output {
     }
 }
 
-/// A coroutine's continuation, which starts where its first slice stopped (see the module docs): it runs as
-/// a call that holds nothing until the wait it stopped at ends. Without a [`CallEntry`] it just runs.
-pub async fn resumed<F: Future>(lua: &Lua, inherited: Inherited, future: F) -> F::Output {
+/// The leaves a task's first slice stopped at, which the continuation finishes ([`first_slice`], [`resumed`]). A
+/// continuation that never runs (the task is aborted before its first poll, the app unloaded) drops this, which
+/// abandons the leaves: what they hold is freed with the task instead of staying in the Lua thread that is
+/// suspended at them.
+#[derive(Default)]
+pub struct Carried(Vec<Suspended>);
+
+impl Drop for Carried {
+    fn drop(&mut self) {
+        abandon_all(std::mem::take(&mut self.0));
+    }
+}
+
+/// A coroutine's continuation, which starts where its first slice stopped (see the module docs): it runs as a
+/// call that holds nothing until the wait it stopped at ends, resuming into the leaf `carried` from that slice
+/// (rule 5 makes a continuation that stopped anywhere else, at a plain yield, take its turn before it runs).
+/// Without a [`CallEntry`] it just runs.
+pub async fn resumed<F: Future>(
+    lua: &Lua,
+    inherited: Inherited,
+    mut carried: Carried,
+    future: F,
+) -> F::Output {
     let detached = lua.app_data_ref::<Entry>().map(|entry| entry.0.detached(inherited));
     match detached {
-        Some(baton) => scoped(baton, future).await,
+        Some(baton) => {
+            let slot = Slot::new(Some(baton));
+            slot.borrow_mut().suspended = std::mem::take(&mut carried.0);
+            run_call(slot, future).await
+        }
         None => future.await,
     }
 }
@@ -468,25 +539,27 @@ pub async fn resumed<F: Future>(lua: &Lua, inherited: Inherited, future: F) -> F
 /// Run the synchronous first slice of a coroutine (`task.spawn`) inside the spawning call, but *not as* that
 /// call: a wait it starts keeps a detached baton of its own (see [`resumed`]), so the spawner keeps its turn.
 ///
-/// `suspended` says whether the slice stopped at a wait, which its continuation finishes later: the leaf it is
-/// suspended at stays alive for that. When the slice stopped anywhere else (it ended, failed or yielded plainly)
-/// the leaves it ran past are abandoned, as they would be at the end of a call.
+/// `suspended` says whether the slice stopped at a wait, which its continuation finishes later: the leaves it is
+/// suspended at stay alive for that, and come back as [`Carried`]. When the slice stopped anywhere else (it ended,
+/// failed or yielded plainly) the leaves it ran past are abandoned, as they would be at the end of a call.
 pub fn first_slice<R>(
     lua: &Lua,
     inherited: Inherited,
     slice: impl FnOnce() -> R,
     suspended: impl FnOnce(&R) -> bool,
-) -> R {
+) -> (R, Carried) {
     let detached = lua.app_data_ref::<Entry>().map(|entry| entry.0.detached(inherited));
     let (out, kept, left) = HELD.sync_scope(Slot::new(detached), || {
         let out = slice();
         let kept = suspended(&out);
         (out, kept, take_suspended())
     });
-    if !kept {
+    if kept {
+        (out, Carried(left))
+    } else {
         abandon_all(left);
+        (out, Carried::default())
     }
-    out
 }
 
 /// Wait for `future`, which does not use the VM, without holding the VM: when the wait suspends the running
@@ -581,6 +654,32 @@ pub fn mark_driven(lua: &Lua, thread: &mlua::Thread) -> mlua::Result<()> {
     driven.raw_set(thread.clone(), true)
 }
 
+/// Where the Lua registry keeps `async_coroutines.lua`'s `call`: the entry point of every thread the host drives.
+pub(crate) const DRIVEN_CALL: &str = "agentos.driven_call";
+
+/// Call `f` as the top-level body of a thread the host drives, which no script may resume (rule 6 of the module docs):
+/// the thread is marked driven by its first instruction, before any script code of `f` runs. Every entry point of
+/// the host into script code (a tool, an event, a window's callbacks, a request handler, a `db:tx` or `with_lock`
+/// body, the package's entry) calls through this instead of [`Function::call_async`]. Without the app's
+/// environment (a worker, a test) it is `call_async`.
+pub fn call_driven<R>(
+    lua: &Lua,
+    f: &Function,
+    args: impl IntoLuaMulti,
+) -> impl Future<Output = mlua::Result<R>> + Send + 'static
+where
+    R: FromLuaMulti + Send + 'static,
+{
+    let started = match lua.named_registry_value::<Function>(DRIVEN_CALL) {
+        Ok(entry) => args.into_lua_multi(lua).map(|mut all| {
+            all.push_front(mlua::Value::Function(f.clone()));
+            entry.call_async::<R>(all)
+        }),
+        Err(_) => Ok(f.call_async::<R>(args)),
+    };
+    async move { started?.await }
+}
+
 /// A leaf's future, in a cell the call can empty from outside when the leaf is abandoned.
 struct LeafCell<R> {
     body: Mutex<Option<BoxFuture<'static, mlua::Result<R>>>>,
@@ -593,6 +692,11 @@ impl<R: Send> Abandon for LeafCell<R> {
         // not while the leaf is being polled (that is the next poll's business: it sees the flag)
         let body = self.body.try_lock().and_then(|mut body| body.take());
         drop(body);
+    }
+
+    fn pending(&self) -> bool {
+        // locked means it is being polled right now
+        !self.abandoned.load(Ordering::SeqCst) && self.body.try_lock().is_none_or(|body| body.is_some())
     }
 }
 
@@ -859,7 +963,7 @@ mod tests {
         let mut continuation = None;
         inbound(&lua, Inherited::default(), async {
             let mut wait = Box::pin(idle(tokio::time::sleep(Duration::from_millis(80))));
-            first_slice(
+            let ((), carried) = first_slice(
                 &lua,
                 Inherited::default(),
                 || {
@@ -872,7 +976,7 @@ mod tests {
             assert_eq!(inside.load(Ordering::SeqCst), 1, "the spawner still holds its turn");
             let lua = lua.clone();
             continuation = Some(tokio::spawn(async move {
-                resumed(&lua, Inherited::default(), async move {
+                resumed(&lua, Inherited::default(), carried, async move {
                     wait.await.expect("idle");
                     hold().await;
                 })
@@ -1014,7 +1118,7 @@ mod tests {
         );
         let done = inbound(&lua, Inherited::default(), async {
             let mut waiting = Box::pin(hold());
-            first_slice(
+            let _ = first_slice(
                 &lua,
                 Inherited::default(),
                 || {
@@ -1129,7 +1233,7 @@ mod tests {
     }
 
     /// A first slice that stopped at a wait keeps the leaf alive for its continuation; one that stopped anywhere else
-    /// abandons it.
+    /// abandons it. A continuation that is dropped before it ever runs abandons the leaf it was carrying.
     #[tokio::test]
     async fn the_first_slice_of_a_task_keeps_a_leaf_only_when_it_stopped_at_it() {
         let lua = Lua::new();
@@ -1137,12 +1241,88 @@ mod tests {
         let (kept, left) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
         inbound(&lua, Inherited::default(), async {
             let (mut a, mut b) = (Box::pin(stuck(Role::Wait, &kept)), Box::pin(stuck(Role::Wait, &left)));
-            first_slice(&lua, Inherited::default(), || assert!(poll_once(&mut a).is_pending()), |()| true);
-            first_slice(&lua, Inherited::default(), || assert!(poll_once(&mut b).is_pending()), |()| false);
+            let ((), carried) = first_slice(
+                &lua,
+                Inherited::default(),
+                || assert!(poll_once(&mut a).is_pending()),
+                |()| true,
+            );
+            let _ = first_slice(
+                &lua,
+                Inherited::default(),
+                || assert!(poll_once(&mut b).is_pending()),
+                |()| false,
+            );
             assert!(!kept.load(Ordering::SeqCst), "the continuation finishes it");
             assert!(left.load(Ordering::SeqCst), "the slice went on past it");
+            // the continuation is aborted before its first poll: nobody will ever finish the wait
+            drop(carried);
+            assert!(
+                kept.load(Ordering::SeqCst),
+                "a continuation that never ran abandoned the leaf it carried"
+            );
         })
         .await;
+    }
+
+    /// A wait that the test polls by hand from more than one place.
+    type SharedWait = Arc<Mutex<Pin<Box<dyn Future<Output = mlua::Result<()>> + Send>>>>;
+
+    /// Rule 5: a call that is resumed anywhere but into a live leaf (here: the leaf it was suspended at was finished
+    /// by someone else while the call was lent) queues for the turn, and runs script code only after it has it.
+    #[tokio::test]
+    async fn a_call_resumed_without_its_leaf_takes_the_turn_before_it_runs_script_code() {
+        let lua = Lua::new();
+        counting(&lua);
+        let order = Arc::new(Mutex::new(Vec::<&'static str>::new()));
+        // the leaf is polled by hand with a waker that wakes nobody, so only the test resumes the call
+        let wait: SharedWait = Arc::new(Mutex::new(Box::pin(wait_for(Duration::from_millis(10)))));
+        let call_waker = Arc::new(Mutex::new(None::<std::task::Waker>));
+        let first = tokio::spawn({
+            let (lua, wait, call_waker, order) =
+                (lua.clone(), wait.clone(), call_waker.clone(), order.clone());
+            async move {
+                inbound(&lua, Inherited::default(), async {
+                    let mut suspended = false;
+                    std::future::poll_fn(|cx| {
+                        if suspended {
+                            return Poll::Ready(());
+                        }
+                        suspended = true;
+                        *call_waker.lock() = Some(cx.waker().clone());
+                        let noop = futures::task::noop_waker();
+                        assert!(wait.lock().as_mut().poll(&mut Context::from_waker(&noop)).is_pending());
+                        // the call is suspended at an idle wait: it lends the turn
+                        Poll::Pending
+                    })
+                    .await;
+                    // script code
+                    order.lock().push("first runs script code");
+                })
+                .await;
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        // another call takes the lent turn and keeps it for a while
+        let second = tokio::spawn({
+            let (lua, order) = (lua.clone(), order.clone());
+            async move {
+                inbound(&lua, Inherited::default(), async {
+                    tokio::time::sleep(Duration::from_millis(150)).await;
+                    order.lock().push("second ends");
+                })
+                .await;
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        // someone else finishes the leaf the first call was suspended at, and the first call is resumed: its leaf
+        // is gone, so it must not run script code in the turn of the second
+        let finished = wait.lock().as_mut().poll(&mut Context::from_waker(&futures::task::noop_waker()));
+        assert!(matches!(finished, Poll::Ready(Ok(()))));
+        call_waker.lock().take().expect("the first call suspended").wake();
+        first.await.expect("first call");
+        second.await.expect("second call");
+        assert_eq!(*order.lock(), ["second ends", "first runs script code"]);
     }
 
     /// The call lends the VM at an idle wait, and only there.

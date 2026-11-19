@@ -103,6 +103,24 @@ impl OpenTx {
     }
 }
 
+/// What the transaction's task is told while it waits: the opener let go (it ended without ending the transaction), or
+/// it is gone altogether.
+enum Released {
+    LetGo,
+    Gone,
+}
+
+/// Poll the opener's `let_go` signal (not again once it has fired).
+async fn released(let_go: &mut oneshot::Receiver<()>, ending: bool) -> Released {
+    if ending {
+        return std::future::pending().await;
+    }
+    match let_go.await {
+        Ok(()) => Released::LetGo,
+        Err(_) => Released::Gone,
+    }
+}
+
 /// The transaction's task: statements in the order they were sent, then the end. When the opener lets go without
 /// ending the transaction (its call was cancelled, or ended), whatever is running is dropped and so is `tx`,
 /// which rolls it back.
@@ -115,9 +133,9 @@ async fn run(
     loop {
         let job = tokio::select! {
             biased;
-            gone = &mut let_go, if !ending => match gone {
-                Ok(()) => { ending = true; continue }
-                Err(_) => return,
+            gone = released(&mut let_go, ending) => match gone {
+                Released::LetGo => { ending = true; continue }
+                Released::Gone => return,
             },
             job = queue.recv() => match job {
                 Some(job) => job,
@@ -137,9 +155,9 @@ async fn run(
                 loop {
                     tokio::select! {
                         biased;
-                        gone = &mut let_go, if !ending => match gone {
-                            Ok(()) => ending = true,
-                            Err(_) => return,
+                        gone = released(&mut let_go, ending) => match gone {
+                            Released::LetGo => ending = true,
+                            Released::Gone => return,
                         },
                         () = &mut work => break,
                     }

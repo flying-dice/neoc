@@ -51,9 +51,19 @@ impl SqliteTx {
 
 impl Drop for SqliteTx {
     fn drop(&mut self) {
-        if self.gate.is_some() {
-            // never committed: undo it so the next caller sees a clean connection
-            let _ = self.db.shared.conn.lock().execute_batch("ROLLBACK");
+        // never committed: undo it so the next caller sees a clean connection. The rollback takes the connection's
+        // lock and runs SQLite, which may block, so it does not run on the async worker that dropped us; the gate
+        // goes with it and is released only after the rollback, so the next caller still finds a clean connection.
+        let Some(gate) = self.gate.take() else { return };
+        let db = self.db.clone();
+        let rollback = move || {
+            let _ = db.shared.conn.lock().execute_batch("ROLLBACK");
+            drop(gate);
+        };
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => drop(runtime.spawn_blocking(rollback)),
+            // not inside a runtime (nothing to block): do it here
+            Err(_) => rollback(),
         }
     }
 }

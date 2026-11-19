@@ -28,7 +28,7 @@ use mlua::{Function, Lua, LuaSerdeExt, MultiValue, Table, UserData, UserDataMeth
 use parking_lot::RwLock;
 
 use crate::lua::facade::Module;
-use crate::lua::lifecycle::{async_method, idle, Role};
+use crate::lua::lifecycle::{async_method, call_driven, idle, Role};
 use crate::lua::sandbox::i64_to_lua;
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
@@ -246,12 +246,12 @@ impl UserData for Mutex {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         // `with_lock(fn)` — acquire the lock, call `fn` with no args, release
         // even if `fn` errors, and return whatever `fn` returned.
-        async_method(methods, "with_lock", Role::Mixed, |_, this, f: Function| {
+        async_method(methods, "with_lock", Role::Mixed, |lua, this, f: Function| {
             let mu = this.0.clone();
             async move {
                 // waiting for the lock does not use the VM (and the holder may need it to finish)
                 let _guard = idle(mu.inner.lock()).await?;
-                f.call_async::<MultiValue>(()).await
+                call_driven::<MultiValue>(&lua, &f, ()).await
             }
         });
     }

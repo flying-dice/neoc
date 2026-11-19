@@ -25,8 +25,8 @@
 
 use std::sync::Arc;
 
-use crate::lua::lifecycle::DRIVEN;
-use mlua::{Lua, Table, Value};
+use crate::lua::lifecycle::{DRIVEN, DRIVEN_CALL};
+use mlua::{Function, Lua, Table, Value};
 use parking_lot::Mutex;
 
 /// Base functions a script gets, copied from the engine's globals (after `pcall`/`xpcall` were replaced
@@ -178,7 +178,8 @@ fn install_async_coroutines(lua: &Lua, copy: &Table, raw: &Table) -> mlua::Resul
         .load(include_str!("async_coroutines.lua"))
         .set_name("=async_coroutines")
         .set_mode(mlua::chunk::ChunkMode::Text)
-        .call((pending, raw.clone(), driven))?;
+        .call((pending, raw.clone(), driven, Value::NULL))?;
+    lua.set_named_registry_value(DRIVEN_CALL, wrappers.raw_get::<Function>("call")?)?;
     copy.raw_set("resume", wrappers.raw_get::<Value>("resume")?)?;
     copy.raw_set("wrap", wrappers.raw_get::<Value>("wrap")?)
 }

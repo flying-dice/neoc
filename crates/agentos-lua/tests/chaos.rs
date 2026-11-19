@@ -9,8 +9,12 @@
 //! A program is a few *steps*. A step is one **leaf** (an idle wait, a database or key-value read or write, a
 //! mutex, a write through `app.state`, `app.notify` or `app:openWindow`), put inside a **context** where the host
 //! call cannot suspend (or none), and wrapped in **controls** (`pcall`, `xpcall`, coroutines, a plain yield, tasks,
-//! a nested `db:tx`, an error thrown mid-body). It runs as a tool of one of four kinds: `readOnly`, writable,
-//! writable with a concurrent second tool, or `readOnly` calling the app's own server. Per case, within a timeout:
+//! a nested `db:tx`, an error thrown mid-body, a wait left in flight and resumed inside a transaction). It runs as a
+//! tool of one of four kinds: `readOnly`, writable, writable with concurrent second tools, or `readOnly` calling the
+//! app's own server. Beside it run side calls that get in whenever the VM is free: a counter bump, a second writer, a
+//! `readOnly` peek that tries every write, and a *meddler* that resumes the threads the program left behind (its own
+//! top-level thread, the threads its tasks run in, its coroutines), with and without arguments, from another call.
+//! Per case, within a timeout:
 //!
 //! - (a) nothing `app.*` could write (db, kv, state, notify, windows) was written in a read-only context;
 //! - (b) nothing ran inside a call between its waits: while a step that cannot suspend runs, a concurrent tool
@@ -18,14 +22,26 @@
 //! - (c) no acknowledged write was lost, and (d) a `db:tx` that returned success committed everything its body
 //!   acknowledged (and one that failed left none of it behind);
 //! - (e) the app still answers a ping tool and the database still answers a query (nothing is wedged);
-//! - (f) the host did not panic (a panic in a call is a failed join).
+//! - (f) the host did not panic (a panic in a call is a failed join);
+//! - (g) a thread the host drives (a call's top-level thread, a task's thread) is never resumed by a script: a
+//!   `coroutine.resume` of one from anywhere returns false.
+//!
+//! A second test runs the same programs and reloads or unloads the app in the middle: nothing may be wedged, no VM may
+//! keep the database, and a `readOnly` program still left nothing behind.
 //!
 //! The scripts are generated from a seed, so a failure names the case and prints the program. Environment:
-//! `CHAOS_CASES` (default 600), `CHAOS_SEED` (default fixed), `CHAOS_ONLY=<case>` to run one case verbosely.
+//! `CHAOS_CASES` (default 1500), `CHAOS_DISTURBED_CASES` (300), `CHAOS_SEED` (default fixed), `CHAOS_ONLY=<case>` to run one case
+//! verbosely, `CHAOS_WATCHDOG` (seconds, default 120) before a hung run is ended.
 
 mod common;
 
-use common::{agent_ctx, db, try_load_with};
+use agentos_application::{
+    ports::{AppData, AppRuntime, Notifier, PortResult},
+    testing::RecordingShell,
+};
+use agentos_domain::Notification;
+use agentos_lua::LuaRuntime;
+use common::{agent_ctx, db, id, package, timed_tool as tool, try_load_with};
 use serde_json::{json, Value};
 use std::{
     collections::BTreeSet,
@@ -126,12 +142,16 @@ enum Control {
     Delay,
     Tx,
     Error,
+    /// A wait started where Lua cannot suspend at it, left in flight, and resumed inside a transaction.
+    Stale,
+    /// A task started inside a transaction (it waits for the transaction to end), with a statement after it.
+    SpawnInTx,
 }
 
 impl Control {
     /// The leaf runs in work that the call does not wait for (a task) or where waiting is refused (a transaction).
     fn detaches(self) -> bool {
-        matches!(self, Self::Spawn | Self::Defer | Self::Delay | Self::Tx)
+        matches!(self, Self::Spawn | Self::Defer | Self::Delay | Self::Tx | Self::Stale | Self::SpawnInTx)
     }
 }
 
@@ -146,6 +166,8 @@ const CONTROLS: &[Control] = &[
     Control::Delay,
     Control::Tx,
     Control::Error,
+    Control::Stale,
+    Control::SpawnInTx,
 ];
 
 /// Where Lua 5.1 cannot yield. Each gets the body in place of `<S>`.
@@ -164,13 +186,23 @@ fn wrap(control: Control, body: &str) -> String {
         Control::CoCreate => format!(
             "do local co = coroutine.create(function() {body} end) keep[#keep + 1] = co coroutine.resume(co) end"
         ),
-        Control::CoWrap => format!("pcall(coroutine.wrap(function() {body} end))"),
+        Control::CoWrap => format!(
+            "do local w = coroutine.wrap(function() {body} end) WR[#WR + 1] = w pcall(w) end"
+        ),
         Control::Yield => format!("{body} coroutine.yield() coroutine.yield()"),
         Control::Spawn => format!("task_start(task.spawn, function() {body} end)"),
         Control::Defer => format!("task_start(task.defer, function() {body} end)"),
         Control::Delay => format!("task_start(function(f) return task.delay(0.003, f) end, function() {body} end)"),
         Control::Tx => format!("TX(function() {body} end)"),
         Control::Error => format!("pcall(function() {body} error('boom') end)"),
+        Control::SpawnInTx => format!(
+            "TX(function() task_start(task.spawn, function() {body} end) local _ = app.db:one('select 1 as one') end)"
+        ),
+        Control::Stale => format!(
+            "do local co = coroutine.create(function() {body} end) keep[#keep + 1] = co \
+             pcall(string.gsub, 'a', 'a', function() coroutine.resume(co) end) \
+             TX(function() coroutine.resume(co) end) coroutine.resume(co) end"
+        ),
     }
 }
 
@@ -186,6 +218,13 @@ fn step(rng: &mut Rng, n: usize, kind: Kind) -> Step {
         return Step {
             code: "for _, co in ipairs(keep) do coroutine.resume(co) end".into(),
             describe: "resume every coroutine kept so far".into(),
+        };
+    }
+    if rng.chance(5) {
+        // the threads the host drives (the call's own, its tasks'): the program cannot resume them either
+        return Step {
+            code: "for _, t in ipairs(SH) do if coroutine.resume(t) then viol('(g) the program resumed a thread the host drives') end end".into(),
+            describe: "resume every thread the host drives".into(),
         };
     }
     let Leaf { code, idle } = leaf(rng, n, kind);
@@ -232,19 +271,25 @@ local mu = collections.Mutex.new()
 local state = app.state { v = 0 }
 local counter = 0
 local A, X, V, keep, pending, txp = {}, {}, {}, {}, 0, nil
+-- what the program leaves behind for another call to find: the threads the host drives (its top-level thread, the
+-- threads its tasks run in: no script may resume them) and the functions of its `coroutine.wrap`s
+local SH, WR = {}, {}
+-- set while a side call resumes the program's own script coroutines: they run in the resumer's turn, as Lua says
+local MEDDLING = false
 
 local function viol(msg) V[#V + 1] = msg end
 -- an acknowledged database write: it must be there at the end, unless the transaction it was in failed
 local function rec(n)
+  if MEDDLING then return end
   if RO then viol("a db write was acknowledged in a readOnly call") end
   if txp then txp[#txp + 1] = n else A[#A + 1] = n end
 end
-local function wrote(what) if RO then viol("a " .. what .. " write was acknowledged in a readOnly call") end end
-local function attempt(what, f) if pcall(f) and RO then viol("app." .. what .. " changed the world in a readOnly call") end end
+local function wrote(what) if RO and not MEDDLING then viol("a " .. what .. " write was acknowledged in a readOnly call") end end
+local function attempt(what, f) if pcall(f) and RO and not MEDDLING then viol("app." .. what .. " changed the world in a readOnly call") end end
 -- a task is counted until its body ends, so the test knows when everything the program started is over
 local function task_start(start, f)
   pending = pending + 1
-  start(function() pcall(f) pending = pending - 1 end)
+  start(function() SH[#SH + 1] = coroutine.running() pcall(f) pending = pending - 1 end)
 end
 -- a `db:tx` whose body records into `txp` only while the body runs (the transaction holds the VM, so nothing else
 -- does meanwhile); what it acknowledged counts only if the transaction succeeded
@@ -267,6 +312,44 @@ app.window("w", { render = function(w) end })
 const TOOLS: &str = r#"
 local others = {}
 app.tool { name = "bump", run = function() counter = counter + 1 return counter end }
+-- the driven threads of the program: resuming one, from any call, must be refused (g)
+local function steal(label)
+  for i, t in ipairs(SH) do
+    for _, extra in ipairs { 0, 1, 2 } do
+      local ok
+      if extra == 0 then ok = coroutine.resume(t) elseif extra == 1 then ok = coroutine.resume(t, "x") else ok = coroutine.resume(t, nil, 1) end
+      if ok then viol("(g) " .. label .. " resumed a thread the host drives") end
+    end
+  end
+end
+-- the program's script coroutines may be resumed from another call (they run in its turn); nothing may wedge or panic
+local function resume_scripts()
+  MEDDLING = true
+  for _, co in ipairs(keep) do coroutine.resume(co) coroutine.resume(co, "x") end
+  for _, w in ipairs(WR) do pcall(w) pcall(w, "x") end
+  MEDDLING = false
+end
+app.tool { name = "meddle", run = function()
+  counter = counter + 1
+  steal("a meddling call")
+  -- a program that is read-only is not to be written for by another call's turn
+  if not RO then resume_scripts() end
+  return counter
+end }
+-- a read-only call beside the program: every write is refused, and what it reads is consistent
+app.tool { name = "peek", readOnly = true, run = function()
+  counter = counter + 1
+  local function refused(what, f) if pcall(f) then viol("a readOnly side call: " .. what .. " changed the world") end end
+  refused("db", function() app.db:exec("insert into t(v) values (97)") end)
+  refused("kv", function() app.kv:set("k1", 97) end)
+  refused("state", function() state.v = 97 end)
+  refused("notify", function() app.notify { title = "peek" } end)
+  refused("window", function() app:openWindow("w") end)
+  refused("tx", function() app.db:tx(function() app.db:exec("insert into t(v) values (96)") end) end)
+  steal("a readOnly call")
+  resume_scripts()
+  return app.db:one("select count(*) as n from t").n
+end }
 app.tool { name = "other", run = function()
   local v = 1000 + #others
   local r = app.db:exec("insert into t(v) values (:v)", { v = v })
@@ -306,7 +389,10 @@ fn generate(seed: u64, index: usize, url: &str) -> Case {
         source.push_str(SERVER);
     }
     source.push_str(TOOLS);
-    let _ = writeln!(source, "app.tool {{ name = \"prog\", readOnly = RO, run = function()");
+    let _ = writeln!(
+        source,
+        "app.tool {{ name = \"prog\", readOnly = RO, run = function()\n  SH[#SH + 1] = coroutine.running()"
+    );
     for step in &steps {
         let _ = writeln!(source, "  -- {}\n  {}", step.describe, step.code);
     }
@@ -333,21 +419,6 @@ async fn canned_server() -> String {
     format!("http://{addr}/")
 }
 
-async fn tool(vm: &Arc<agentos_lua::AppVm>, name: &str, secs: u64) -> Result<Value, String> {
-    let name = name.to_owned();
-    let vm = vm.clone();
-    let call = tokio::spawn(async move {
-        tokio::time::timeout(Duration::from_secs(secs), vm.call_tool(&name, json!({}), &agent_ctx(0), false))
-            .await
-    });
-    match call.await {
-        Err(e) => Err(format!("(f) the call panicked or was aborted: {e}")),
-        Ok(Err(_)) => Err("(e) the call never finished: the app is wedged".into()),
-        Ok(Ok(Ok(v))) => Ok(v),
-        Ok(Ok(Err(e))) => Err(format!("the call failed: {e}")),
-    }
-}
-
 /// Run one case; the failures it found, each naming the invariant.
 async fn run(case: &Case) -> Vec<String> {
     let data = db();
@@ -361,6 +432,15 @@ async fn run(case: &Case) -> Vec<String> {
         Err(why) => failures.push(why),
     }
     failures
+}
+
+/// The calls that try to get in beside a program of this kind.
+fn side_tools(kind: Kind) -> &'static [&'static str] {
+    if kind == Kind::Concurrent {
+        &["bump", "other", "meddle", "peek"]
+    } else {
+        &["bump", "meddle", "peek"]
+    }
 }
 
 /// Run the program with two loops of second tools that try to get in whenever the VM is free (there is always one
@@ -382,7 +462,8 @@ async fn drive(case: &Case, vm: &Arc<agentos_lua::AppVm>) -> (Vec<String>, BTree
                     if over.load(Ordering::SeqCst) {
                         break;
                     }
-                    let name = if kind == Kind::Concurrent && (i + lane) % 2 == 1 { "other" } else { "bump" };
+                    let tools = side_tools(kind);
+                    let name = tools[(i + lane) % tools.len()];
                     done.push((name, tool(&vm, name, 20).await));
                 }
                 done
@@ -489,13 +570,44 @@ async fn verify(
     failures
 }
 
+/// A wedge that blocks a worker thread also stops the timers that would report it: this ends the process, which the
+/// test runner reports as a failure, instead of letting the run hang. Disarmed when dropped.
+struct Watchdog(Arc<AtomicBool>);
+
+impl Watchdog {
+    fn arm(test: &'static str) -> Self {
+        let limit = Duration::from_secs(env("CHAOS_WATCHDOG", 120));
+        let done = Arc::new(AtomicBool::new(false));
+        let flag = done.clone();
+        std::thread::spawn(move || {
+            let started = Instant::now();
+            while started.elapsed() < limit {
+                if flag.load(Ordering::SeqCst) {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            eprintln!("{test}: still running after {limit:?}: a call is wedged with a worker thread blocked");
+            std::process::exit(101);
+        });
+        Self(done)
+    }
+}
+
+impl Drop for Watchdog {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
 fn env<T: std::str::FromStr>(name: &str, default: T) -> T {
     std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn generated_scripts_leave_every_invariant_intact() {
-    let cases: usize = env("CHAOS_CASES", 600);
+    let _watchdog = Watchdog::arm("generated_scripts_leave_every_invariant_intact");
+    let cases: usize = env("CHAOS_CASES", 1500);
     let seed: u64 = env("CHAOS_SEED", 0x00A6_E575);
     let only: Option<usize> = std::env::var("CHAOS_ONLY").ok().and_then(|v| v.parse().ok());
     let url = canned_server().await;
@@ -539,6 +651,187 @@ async fn generated_scripts_leave_every_invariant_intact() {
     }
 }
 
+// ---- a reload or an unload in the middle of a program ------------------------------------------------------------
+
+struct Quiet;
+
+#[async_trait::async_trait]
+impl Notifier for Quiet {
+    async fn notify(&self, _: Notification) -> PortResult<()> {
+        Ok(())
+    }
+}
+
+/// What the app is told to be, for the runtime (which needs a manifest; the plain VM does not).
+const MANIFEST: &str = "app.manifest { id = \"chaos\", name = \"Chaos\", icon = \"gear\" }\n";
+
+/// A call through the runtime, as the host makes it; the error names what went wrong (a call that ended with an
+/// error because the app was unloaded is not a failure: one that never ends is).
+async fn runtime_tool(runtime: &Arc<LuaRuntime>, name: &'static str) -> Result<Value, String> {
+    let runtime = runtime.clone();
+    let call = tokio::spawn(async move {
+        tokio::time::timeout(
+            Duration::from_secs(20),
+            runtime.call_tool(&id("chaos"), name, json!({}), agent_ctx(0), false),
+        )
+        .await
+    });
+    match call.await {
+        Err(e) => Err(format!("(f) the call panicked or was aborted: {e}")),
+        Ok(Err(_)) => Err(format!("(e) {name} never finished: the app is wedged")),
+        Ok(Ok(Ok(v))) => Ok(v),
+        Ok(Ok(Err(e))) => Err(format!("the call failed: {e}")),
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Disturbance {
+    Reload,
+    Unload,
+}
+
+/// Run a case and reload or unload the app `after_ms` into it. The failures found.
+async fn run_disturbed(case: &Case, disturbance: Disturbance, after_ms: u64) -> Vec<String> {
+    let data = db();
+    let runtime = Arc::new(LuaRuntime::new(Arc::new(Quiet), Arc::new(RecordingShell::default())));
+    let source = format!("{MANIFEST}{}", case.source);
+    let load = |runtime: Arc<LuaRuntime>, data: Arc<dyn AppData>, source: String| async move {
+        runtime.load(&id("chaos"), package(&source, &[]), data).await
+    };
+    if let Err(e) = load(runtime.clone(), data.clone(), source.clone()).await {
+        return vec![format!("the generated program did not load: {e}")];
+    }
+    let over = Arc::new(AtomicBool::new(false));
+    let prog = {
+        let runtime = runtime.clone();
+        tokio::spawn(async move { runtime_tool(&runtime, "prog").await })
+    };
+    let side: Vec<_> = (0..2)
+        .map(|lane| {
+            let (runtime, over) = (runtime.clone(), over.clone());
+            tokio::spawn(async move {
+                let mut failures = vec![];
+                for i in 0.. {
+                    if over.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    let name = ["bump", "meddle", "peek"][(i + lane) % 3];
+                    // an error is the app going away; only a call that never ends or panics is a failure
+                    if let Err(e) = runtime_tool(&runtime, name).await {
+                        if e.starts_with("(e)") || e.starts_with("(f)") {
+                            failures.push(format!("{name}: {e}"));
+                        }
+                    }
+                }
+                failures
+            })
+        })
+        .collect();
+    tokio::time::sleep(Duration::from_millis(after_ms)).await;
+    let mut failures = vec![];
+    match disturbance {
+        Disturbance::Reload => {
+            if let Err(e) = load(runtime.clone(), data.clone(), source).await {
+                failures.push(format!("the reload failed: {e}"));
+            }
+        }
+        Disturbance::Unload => {
+            if let Err(e) = runtime.unload(&id("chaos")).await {
+                failures.push(format!("the unload failed: {e}"));
+            }
+        }
+    }
+    // the program ends, one way or the other (an error because the app went away is fine; never ending is not)
+    if let Err(e) = prog.await.unwrap() {
+        if e.starts_with("(e)") || e.starts_with("(f)") {
+            failures.push(e);
+        }
+    }
+    over.store(true, Ordering::SeqCst);
+    for lane in side {
+        failures.extend(lane.await.unwrap());
+    }
+    // nothing is wedged: the database's write gate is free, and nothing the program left behind has it
+    if tokio::time::timeout(Duration::from_secs(3), data.query("select v from t".into(), vec![]))
+        .await
+        .is_err()
+    {
+        failures.push("(e) the database's write gate is held by something that is gone".into());
+    }
+    match disturbance {
+        Disturbance::Reload => match runtime_tool(&runtime, "ping").await {
+            Ok(v) if v == "pong" => {}
+            other => failures.push(format!("(e) the new version does not answer: {other:?}")),
+        },
+        Disturbance::Unload => {
+            // an unloaded app is gone: asking it is an error, quickly
+            if runtime_tool(&runtime, "ping").await.is_ok() {
+                failures.push("an unloaded app still answers".into());
+            }
+        }
+    }
+    // a read-only program left nothing behind, in whichever version it ran
+    if case.kind.read_only() {
+        if let Ok(rows) = data.query("select v from t where v < 1000".into(), vec![]).await {
+            if !rows.is_empty() {
+                failures.push(format!("(a) a readOnly call left rows in the database: {rows:?}"));
+            }
+        }
+    }
+    drop(runtime);
+    // no VM, task or transaction of the app is left holding the database, in either version (aborted tasks let go as
+    // they are polled)
+    let settled = Instant::now();
+    while Arc::strong_count(&data) > 1 && settled.elapsed() < Duration::from_secs(5) {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    if Arc::strong_count(&data) > 1 {
+        failures.push("(e) a VM, task or transaction of the app still holds the database".into());
+    }
+    failures
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_reload_or_unload_in_the_middle_of_a_script_leaves_nothing_wedged() {
+    let _watchdog = Watchdog::arm("a_reload_or_unload_in_the_middle_of_a_script_leaves_nothing_wedged");
+    let cases: usize = env("CHAOS_DISTURBED_CASES", 300);
+    let seed: u64 = env("CHAOS_SEED", 0x00A6_E575) ^ 0x00D1_570B;
+    let url = canned_server().await;
+    let gate = Arc::new(Semaphore::new(env("CHAOS_PARALLEL", 8)));
+    let mut runs = vec![];
+    let only: Option<usize> = std::env::var("CHAOS_ONLY").ok().and_then(|v| v.parse().ok());
+    for index in (0..cases).filter(|i| only.is_none_or(|only| only == *i)) {
+        let case = generate(seed, index, &url);
+        let mut rng = Rng(seed ^ u64::try_from(index).unwrap());
+        let disturbance = *rng.pick(&[Disturbance::Reload, Disturbance::Unload]);
+        let after_ms = *rng.pick(&[0, 0, 1, 2, 3, 5, 8, 13, 21]);
+        let gate = gate.clone();
+        runs.push(tokio::spawn(async move {
+            let _slot = gate.acquire().await.unwrap();
+            let failures = run_disturbed(&case, disturbance, after_ms).await;
+            (case, disturbance, after_ms, failures)
+        }));
+    }
+    let mut broken = vec![];
+    for run in runs {
+        let (case, disturbance, after_ms, failures) = run.await.expect("(f) the host did not panic");
+        if !failures.is_empty() {
+            broken.push(format!(
+                "case {} ({:?}, {disturbance:?} after {after_ms} ms): {}",
+                case.index,
+                case.kind,
+                failures.join("; ")
+            ));
+        }
+    }
+    assert!(
+        broken.is_empty(),
+        "{} of {cases} cases broke an invariant:\n{}",
+        broken.len(),
+        broken.join("\n")
+    );
+}
+
 /// The generator is not vacuous: over the default cases every ingredient appears.
 #[test]
 fn the_generator_uses_every_ingredient() {
@@ -574,6 +867,9 @@ fn the_generator_uses_every_ingredient() {
         "TX(function()",
         "error('boom')",
         "coroutine.resume(co) end end",
+        "for _, t in ipairs(SH) do",
+        "WR[#WR + 1] = w",
+        "TX(function() coroutine.resume(co) end)",
     ] {
         assert!(programs.contains(ingredient), "no program uses `{ingredient}`");
     }

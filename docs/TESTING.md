@@ -4,15 +4,15 @@ Everything UI-facing runs headless in Chromium against the **real Rust host**. T
 mode: the host starts in milliseconds, so the desktop and the journeys talk to the same binary a person runs. Logic is
 tested where it lives, in Rust, with fakes for the ports.
 
-| Layer | What | Where | Command |
-|---|---|---|---|
-| Rust | domain, use cases (against port fakes), adapters, the host end to end | `crates/*/src`, `crates/*/tests` | `cargo nextest run --workspace` |
-| Client and kit unit | the renderer core (peer, expressions, ops, drafts, sources, offline), the shell's channel, kit logic | `*.test.ts` next to the code | `bun run test` (runs `bun test` in `client/` and `packages/ui`, and `bun test types`) |
-| Lua check and format | every app and fixture checks clean with lua-language-server against the generated LuaCATS API; StyLua formatting | `scripts/lint-lua.ts`, `scripts/stylua.ts` | `bun run lint:lua`, `bun run lint:stylua` |
-| Stories | every screen and state of the shell, the renderer and the kit, in isolation | `client/` and `packages/ui` Storybooks (`*.stories.svelte`) | `bun run storybook` in the package |
-| Story checks | every story: renders, axe WCAG 2.1 AA, visual snapshot light and dark, no overflow | `e2e/stories.spec.ts` (generic: new stories are picked up) | `bun run test:e2e --project=stories` |
-| Desktop | the real shell on the real host: every app from the Dock, resize, every layout, axe, snapshots | `e2e/desktop.spec.ts` (generic over built-in pages and `apps/*/app.json`) | `bun run test:e2e --project=desktop` |
-| Journeys | key user journeys (`JOURNEYS.md`, `client/journeys/*.md`), driven through test ids | `apps/<app>/e2e/*.spec.ts`, `client/e2e/*.spec.ts`, `e2e/*.journeys.spec.ts` | `bun run test:e2e --project=journeys` |
+| Layer                | What                                                                                                             | Where                                                                        | Command                                                                               |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| Rust                 | domain, use cases (against port fakes), adapters, the host end to end                                            | `crates/*/src`, `crates/*/tests`                                             | `cargo nextest run --workspace`                                                       |
+| Client and kit unit  | the renderer core (peer, expressions, ops, drafts, sources, offline), the shell's channel, kit logic             | `*.test.ts` next to the code                                                 | `bun run test` (runs `bun test` in `client/` and `packages/ui`, and `bun test types`) |
+| Lua check and format | every app and fixture checks clean with lua-language-server against the generated LuaCATS API; StyLua formatting | `scripts/lint-lua.ts`, `scripts/stylua.ts`                                   | `bun run lint:lua`, `bun run lint:stylua`                                             |
+| Stories              | every screen and state of the shell, the renderer and the kit, in isolation                                      | `client/` and `packages/ui` Storybooks (`*.stories.svelte`)                  | `bun run storybook` in the package                                                    |
+| Story checks         | every story: renders, axe WCAG 2.1 AA, visual snapshot light and dark, no overflow                               | `e2e/stories.spec.ts` (generic: new stories are picked up)                   | `bun run test:e2e --project=stories`                                                  |
+| Desktop              | the real shell on the real host: every app from the Dock, resize, every layout, axe, snapshots                   | `e2e/desktop.spec.ts` (generic over built-in pages and `apps/*/app.json`)    | `bun run test:e2e --project=desktop`                                                  |
+| Journeys             | key user journeys (`JOURNEYS.md`, `client/journeys/*.md`), driven through test ids                               | `apps/<app>/e2e/*.spec.ts`, `client/e2e/*.spec.ts`, `e2e/*.journeys.spec.ts` | `bun run test:e2e --project=journeys`                                                 |
 
 `bun run test:e2e` runs all of them (it builds every Storybook first; `bun run storybooks list` shows them). Update
 snapshots deliberately with `bun run test:e2e:update`, then open the changed PNGs (contact sheets:
@@ -85,6 +85,18 @@ under `bun test` too, through the preload in `client/bunfig.toml` (`client/test/
   pass: install `lua5.1`). `bun run codegen:check` also fails when `types/generated/ui.lua`, `luals/*` or `prelude.lua` is stale.
 - **Logic and tools:** tested from Rust against the shipped package (see "Rust"); views and journeys against the real
   host (below).
+
+## Tools the gate uses
+
+Required: Rust (the pinned toolchain), `cargo-nextest`, `cargo-deny`, Bun, `darklua` 0.18.0 (never skipped), Chromium
+for Playwright (`bun run test:e2e`, on a Mac for the snapshots). Needed for the Lua lints, which print `SKIPPED` without
+them (a skipped lint is not a pass): `lua-language-server` and `stylua`. **Optional interpreters**, used by
+`scripts/lua51.test.ts` only: a real **Lua 5.1** (`lua5.1` on PATH, or `LUA51=<path>`) loads the prelude, `ui.lua` and
+every app bundle under the real interpreter, and a native **Lua 5.3+** compares the polyfills with the native
+`utf8`/`table.move`. Without them those tests are skipped, not failed: the skip is written to stderr
+(`!! lua51 load tests SKIPPED`) and in the test names (`[SKIPPED: ...]`), so a run that did not check them says so. The
+Rust tests run the same bundles on mlua's own vendored Lua 5.1, so the real-interpreter check is a second opinion, not
+the only one.
 
 ## Storybook and the fake hosts
 

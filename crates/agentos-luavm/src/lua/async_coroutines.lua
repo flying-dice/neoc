@@ -18,15 +18,18 @@
 -- metamethod or a `for ... in` iterator function): a host call there fails with Lua's own
 -- "attempt to yield across metamethod/C-call boundary".
 
-local pending, raw, driven = ...
-local select, unpack, error, type = select, unpack, error, type
+local pending, raw, driven, null = ...
+local select, unpack, error, type, getmetatable = select, unpack, error, type, getmetatable
 local create, resume, yield, status, running = raw.create, raw.resume, raw.yield, raw.status, raw.running
 
 -- A coroutine whose host call is in flight is *running*, as far as the script can tell: the thread that resumed it
 -- waits for it. `driven` (a table with weak keys, shared with the task scheduler) maps such a coroutine to that
 -- thread; a script that resumes it from somewhere else (a task, another call) gets Lua's own "cannot resume
 -- non-suspended coroutine" instead of stealing the call from the thread that is waiting for it. A coroutine handed
--- to `task.spawn`, `task.defer` or `task.delay` is the scheduler's: its entry is `true`. A thread's entry means
+-- to `task.spawn`, `task.defer` or `task.delay` is the scheduler's: its entry is `true`. So is the top-level thread
+-- of every call the host makes into the script (`M.call`, which every entry point goes through), from its first
+-- instruction to the end of its life: a script that stashed `coroutine.running()` cannot resume the thread of a call
+-- that is parked at a wait, which would run that call's code in the resumer's turn. A thread's entry means
 -- something only while that thread is suspended: if its yield failed (it was inside a C boundary) the thread went
 -- on, and the coroutine is merely left behind.
 local function is_driven(co)
@@ -39,6 +42,13 @@ local function is_driven(co)
   end
   driven[co] = nil
   return false
+end
+
+-- The executor drops a call that is waiting by resuming the thread with a light userdata of its own (the
+-- "terminate" signal). A script can reach no light userdata but the null sentinel (`null`), so that is how the signal
+-- is told from anything a script resumed the thread with: a resume value that is nothing of the kind changes nothing.
+local function is_terminate(signal)
+  return type(signal) == "userdata" and signal ~= null and signal ~= pending and getmetatable(signal) == nil
 end
 
 local function pack(...)
@@ -56,7 +66,7 @@ local function drive(co, r)
     if driven[co] == me then
       driven[co] = nil
     end
-    if signal ~= nil then
+    if is_terminate(signal) then
       resume(co, signal) -- the executor is dropping this call: let the inner future go
       while true do
         yield()
@@ -68,6 +78,16 @@ local function drive(co, r)
 end
 
 local M = {}
+
+-- Run `f(...)` as the top-level body of a call the host made (see `lifecycle::call_driven`): the thread it runs in
+-- is the host's from the first instruction, so no script can resume it.
+function M.call(f, ...)
+  local me = running()
+  if me then
+    driven[me] = true
+  end
+  return f(...)
+end
 
 function M.resume(co, ...)
   if is_driven(co) then
