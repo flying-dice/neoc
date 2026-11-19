@@ -68,7 +68,7 @@
 
 ---@alias GridColumn { fixed?: Expr<number>, flex?: Expr<number>, min?: Expr<number>, max?: Expr<number> }
 
----@alias ImageSrc { asset?: Expr<string>, url?: Expr<string>, file?: Expr<string> }
+---@alias ImageSrc { url?: Expr<string> }
 
 ---@alias Insets { x?: Expr<number>, y?: Expr<number>, top?: Expr<number>, right?: Expr<number>, bottom?: Expr<number>, left?: Expr<number> }
 
