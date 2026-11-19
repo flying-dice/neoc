@@ -158,7 +158,7 @@
     border: var(--hairline) solid var(--separator);
   }
   .box:focus-within {
-    outline: 2px solid var(--tint);
+    outline: 3px solid var(--focus-ring);
     outline-offset: 1px;
   }
   .box.invalid {

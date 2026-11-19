@@ -123,6 +123,32 @@ export function visibleRange(heights: HeightIndex, view: Viewport, overscan = 6)
   return { start: Math.max(0, first - overscan), end: Math.min(total, last + 1 + overscan) }
 }
 
+/** Where the list sits in its scroller, for `scrollTopFor`. */
+export interface ScrollFrame {
+  /** Where the list starts inside the scroller's content (a large title and padding may sit above it). */
+  listOffset: number
+  /** The scroller's visible height. */
+  viewportHeight: number
+  /** The scroller's `scroll-padding-top`: the part of its top edge a sticky bar covers. */
+  padTop: number
+}
+
+/**
+ * The scrollTop that brings row `index` to the top (`start`, below the sticky bar) or to the bottom (`end`) of the
+ * scroller. The first row at `start` is the top of the scroller itself, not the top of the list: whatever sits above
+ * the list (a large title) is part of the screen and stays in view, and row 1 is then already clear of the sticky bar.
+ */
+export function scrollTopFor(
+  heights: HeightIndex,
+  index: number,
+  align: 'start' | 'end',
+  frame: ScrollFrame
+): number {
+  const i = Math.min(Math.max(0, Math.floor(index)), Math.max(0, heights.total - 1))
+  if (align === 'start') return i === 0 ? 0 : Math.max(0, frame.listOffset + heights.offsetOf(i) - frame.padTop)
+  return Math.max(0, frame.listOffset + heights.offsetOf(i + 1) - frame.viewportHeight)
+}
+
 /**
  * The window of the source to ask the host for: the rendered rows plus one page each side, aligned to page
  * boundaries so a slow scroll asks for the same window many times (the caller dedupes) and a fast one coalesces.

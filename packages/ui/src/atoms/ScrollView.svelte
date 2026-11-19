@@ -131,7 +131,7 @@
     display: none;
   }
   .ios-scroll:focus-visible {
-    outline: 2px solid var(--tint);
+    outline: 3px solid var(--focus-ring);
     outline-offset: -2px;
   }
   .pull {
@@ -180,7 +180,7 @@
     color: #fff;
     font: var(--type-subheadline);
     font-weight: 600;
-    outline: 2px solid var(--tint);
+    outline: 3px solid var(--focus-ring);
     outline-offset: 2px;
   }
   @media (prefers-reduced-motion: reduce) {

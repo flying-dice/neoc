@@ -106,7 +106,7 @@
     overscroll-behavior: contain;
   }
   .thread:focus-visible {
-    outline: 2px solid color-mix(in srgb, var(--tint) 55%, transparent);
+    outline: 3px solid var(--focus-ring);
     outline-offset: -2px;
   }
   .blocks {

@@ -1,7 +1,7 @@
 {
   "client": {},
   "manifest": {
-    "icon": "plus",
+    "icon": "calculator",
     "id": "calculator",
     "name": "Calculator",
     "tint": "orange",

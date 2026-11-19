@@ -1,5 +1,5 @@
 import type { Frame, StageSummary, WindowLayout } from '@agentos/ui'
-import { appOf, type AppDefinition, type AppId } from './apps.svelte'
+import { appOf, MIN_WIDTH, type AppDefinition, type AppId } from './apps.svelte'
 
 /**
  * Stage Manager–style window manager.
@@ -10,6 +10,14 @@ import { appOf, type AppDefinition, type AppId } from './apps.svelte'
  *    over. Non-floating frames are derived from the workspace bounds, so they
  *    re-flow on resize; floating windows keep their own frame.
  *  • Slide Over lives outside stages and floats above everything.
+ *
+ * Sizes: an app's minimum window is never broken by a layout. Two panes of a Split View always have at least their
+ * app's minimum width: the divider stops there (a quarter to three quarters otherwise), the ratio is re-checked when
+ * the second pane joins and when the workspace changes. Where the two minimums cannot share the screen the split is
+ * not made: choosing Split View does nothing, an app that will not fit beside the waiting one opens on its own (the
+ * waiting pane goes back to floating), and a screen that shrinks past that dissolves the split into floating windows.
+ * Where the screen is shorter than an app's minimum height (a waiting split and Slide Over stop above the Dock) the
+ * minimum wins, as it does for a floating window.
  */
 
 export interface WindowState {
@@ -54,15 +62,19 @@ export class WindowManager {
   #bounds = $state({ width: 1280, height: 800 })
   #topZ = 10
 
-  /** The workspace size. When it changes, floating windows are kept on screen. */
+  /**
+   * The workspace size. When it changes the splits are checked against it (re-clamped, or dissolved when their two
+   * minimums no longer fit) and every window's own frame, whatever its layout, is brought inside it: a frame kept from
+   * a bigger screen must not come back off a smaller one.
+   */
   get bounds(): { width: number; height: number } {
     return this.#bounds
   }
   set bounds(next: { width: number; height: number }) {
     if (next.width === this.#bounds.width && next.height === this.#bounds.height) return
     this.#bounds = next
-    for (const win of this.windows)
-      if (win.layout === 'floating') this.setFrame(win.id, this.#onScreen(win.frame))
+    for (const stage of this.stages) this.#fitSplit(stage)
+    for (const win of this.windows) win.frame = this.#fitFrame(win, this.#onScreen(win.frame))
   }
 
   // ── Queries ────────────────────────────────────────────────────────────
@@ -124,37 +136,59 @@ export class WindowManager {
     return this.windows.some((w) => w.appId === appId)
   }
 
-  /** The on-screen frame for a window, derived from its layout. */
+  /**
+   * The on-screen frame for a window, derived from its layout. A layout never gives less than the app's minimum size
+   * (a short screen's Dock edge or a narrow Slide Over does not cut the app off, as a floating window never is).
+   */
   frameOf(win: WindowState): Frame {
+    const frame = this.#layoutFrame(win)
+    if (win.layout === 'floating') return frame
+    const { minWidth, minHeight } = this.#minOf(win)
+    return {
+      ...frame,
+      width: Math.max(frame.width, minWidth),
+      height: Math.max(frame.height, minHeight)
+    }
+  }
+
+  #layoutFrame(win: WindowState): Frame {
     const { width: W, height: H } = this.bounds
     const fullH = H - INSET * 2
-    const clearOfDockH = this.#heightAboveDock
     switch (win.layout) {
       case 'fullscreen':
         return { x: INSET, y: INSET, width: W - INSET * 2, height: fullH }
       case 'split-left':
       case 'split-right': {
         const ratio = this.stages.find((s) => s.id === win.stageId)?.splitRatio ?? 0.5
-        const usable = W - INSET * 2 - GAP
-        const left = Math.round(usable * ratio)
         // while a split waits for its second app the Dock is up, so the first pane stops above it
-        const height = this.dockHidden ? fullH : clearOfDockH
-        return win.layout === 'split-left'
-          ? { x: INSET, y: INSET, width: left, height }
-          : { x: INSET + left + GAP, y: INSET, width: usable - left, height }
+        return this.#splitPane(win.layout, ratio, this.dockHidden ? fullH : this.#heightAboveDock)
       }
-      case 'slideover':
-        return this.slideOverHidden
-          ? { x: W + 20, y: INSET, width: SLIDE_OVER_WIDTH, height: clearOfDockH }
-          : {
-              x: W - SLIDE_OVER_WIDTH - INSET,
-              y: INSET,
-              width: SLIDE_OVER_WIDTH,
-              height: clearOfDockH // above the Dock, which a narrow screen would otherwise cover it with
-            }
+      case 'slideover': {
+        const width = Math.max(SLIDE_OVER_WIDTH, this.#minOf(win).minWidth) // an app wider than 380 keeps its minimum
+        return {
+          x: this.slideOverHidden ? W + 20 : W - width - INSET,
+          y: INSET,
+          width,
+          height: this.#heightAboveDock // above the Dock, which a narrow screen would otherwise cover it with
+        }
+      }
       default:
         return win.frame
     }
+  }
+
+  /** One side of a split at the divider's position. */
+  #splitPane(side: 'split-left' | 'split-right', ratio: number, height: number): Frame {
+    const usable = this.#splitWidth
+    const left = Math.round(usable * ratio)
+    return side === 'split-left'
+      ? { x: INSET, y: INSET, width: left, height }
+      : { x: INSET + left + GAP, y: INSET, width: usable - left, height }
+  }
+
+  /** The width the two panes of a split share (the gap between them is not theirs). */
+  get #splitWidth(): number {
+    return this.bounds.width - INSET * 2 - GAP
   }
 
   /** The height of a window that starts at the top inset and ends at the Dock's top edge, where floating windows stop too. */
@@ -166,12 +200,12 @@ export class WindowManager {
   get splitPlaceholderFrame(): Frame | null {
     const stage = this.activeStage
     if (!stage?.awaitingSplit) return null
-    const usable = this.bounds.width - INSET * 2 - GAP
-    const left = Math.round(usable * stage.splitRatio)
-    const height = this.#heightAboveDock // the Dock is up while a split waits
-    return stage.awaitingSplit === 'split-left'
-      ? { x: INSET, y: INSET, width: left, height }
-      : { x: INSET + left + GAP, y: INSET, width: usable - left, height }
+    const first = this.onStage.find((w) => w.layout.startsWith('split'))
+    return this.#splitPane(
+      stage.awaitingSplit,
+      stage.splitRatio,
+      first ? this.frameOf(first).height : this.#heightAboveDock // the Dock is up while a split waits
+    )
   }
 
   /** x position of the split divider, when the active stage is split. */
@@ -211,14 +245,21 @@ export class WindowManager {
     const win = this.#createWindow(app, options.kind ?? 'main', options.params)
     const stage = this.activeStage
 
-    // Filling the empty side of a pending Split View.
+    // Filling the empty side of a pending Split View, when the two apps fit side by side at their minimums.
     if (stage?.awaitingSplit) {
-      win.layout = stage.awaitingSplit
-      win.stageId = stage.id
-      stage.windowIds.push(win.id)
+      const waiting = this.onStage.find((w) => w.layout.startsWith('split'))
+      if (waiting && this.#fits([this.#minOf(waiting).minWidth, app.minWidth])) {
+        win.layout = stage.awaitingSplit
+        win.stageId = stage.id
+        stage.windowIds.push(win.id)
+        stage.awaitingSplit = null
+        this.windows.push(win)
+        stage.splitRatio = this.#clampRatio(stage, stage.splitRatio) // the divider may have been left where this app is too narrow
+        return this.focus(win.id)
+      }
+      // No room for both: the waiting pane gives up, and this app opens as anything else would.
+      if (waiting) waiting.layout = 'floating'
       stage.awaitingSplit = null
-      this.windows.push(win)
-      return this.focus(win.id)
     }
 
     // Joining the current group, placed beside the existing windows.
@@ -285,19 +326,13 @@ export class WindowManager {
   setFrame(id: string, frame: Frame): void {
     const win = this.windows.find((w) => w.id === id)
     if (!win || win.layout !== 'floating') return
-    const { minWidth, minHeight } = appOf(win.appId) ?? { minWidth: 0, minHeight: 0 }
-    const maxWidth = this.bounds.width - frame.x - INSET
-    const maxHeight = this.bounds.height - frame.y - (this.dockHidden ? INSET : DOCK_SPACE)
-    win.frame = {
-      ...frame,
-      width: Math.max(minWidth, Math.min(frame.width, maxWidth)),
-      height: Math.max(minHeight, Math.min(frame.height, maxHeight))
-    }
+    win.frame = this.#fitFrame(win, frame)
   }
 
   setLayout(id: string, layout: WindowLayout): void {
     const win = this.windows.find((w) => w.id === id)
     if (!win || win.layout === layout) return
+    if (layout.startsWith('split') && !this.#canSplit(win)) return // no room for two panes: the layout stays as it is
 
     if (layout === 'slideover') {
       // Only one Slide Over; an existing one returns to its own stage.
@@ -309,14 +344,17 @@ export class WindowManager {
       return this.focus(win.id)
     }
 
-    // Leaving Slide Over: join the active stage (or a new one).
+    // Leaving Slide Over: join the active stage, or start one and put it on screen (not in the strip).
     if (win.layout === 'slideover') {
       win.layout = 'floating'
       const stage = this.activeStage
       if (stage) {
         win.stageId = stage.id
         stage.windowIds.push(win.id)
-      } else this.#toOwnStage(win, 'floating')
+      } else {
+        this.#toOwnStage(win, 'floating')
+        this.activeStageId = win.stageId
+      }
     }
 
     const stage = this.stages.find((s) => s.id === win.stageId)
@@ -332,11 +370,10 @@ export class WindowManager {
       const otherSide = layout === 'split-left' ? 'split-right' : 'split-left'
       const siblings = this.#siblings(win)
       // Keep one partner (the most recently focused); others go to the strip.
-      const partner = siblings.sort((a, b) => b.z - a.z)[0]
+      const partner = this.#partnerOf(siblings)
       for (const other of siblings) if (other !== partner) this.#toOwnStage(other, 'floating')
       if (partner) partner.layout = otherSide
       stage.awaitingSplit = partner ? null : otherSide
-      stage.splitRatio = 0.5
     }
 
     if (layout === 'floating') {
@@ -347,24 +384,17 @@ export class WindowManager {
     }
 
     win.layout = layout
+    if (layout.startsWith('split')) stage.splitRatio = this.#clampRatio(stage, 0.5) // an even split, unless a minimum says otherwise
     this.focus(win.id)
   }
 
   /**
    * Between a quarter and three quarters, and never leaving a pane narrower than its app's minimum (a divider dragged
-   * further would cut the app off). Where the two minimums do not fit side by side, an even split.
+   * further would cut the app off). The minimums win over the quarter: a 700 px app leaves its neighbour less than that.
    */
   setSplitRatio(ratio: number): void {
     const stage = this.activeStage
-    if (!stage) return
-    const usable = this.bounds.width - INSET * 2 - GAP
-    const minOf = (layout: WindowLayout): number => {
-      const pane = this.onStage.find((w) => w.layout === layout)
-      return (pane && appOf(pane.appId)?.minWidth) || 0
-    }
-    const lowest = Math.max(0.25, minOf('split-left') / usable)
-    const highest = Math.min(0.75, 1 - minOf('split-right') / usable)
-    stage.splitRatio = lowest > highest ? 0.5 : Math.min(highest, Math.max(lowest, ratio))
+    if (stage) stage.splitRatio = this.#clampRatio(stage, ratio)
   }
 
   /** Split divider dragged to `x` within the workspace. */
@@ -469,6 +499,83 @@ export class WindowManager {
 
   #siblings(win: WindowState): WindowState[] {
     return this.windows.filter((w) => w.stageId === win.stageId && w.id !== win.id)
+  }
+
+  #minOf(win: WindowState): { minWidth: number; minHeight: number } {
+    return appOf(win.appId) ?? { minWidth: 0, minHeight: 0 }
+  }
+
+  /** `frame` inside the workspace, clear of the Dock and never smaller than the app's minimum (which wins over both). */
+  #fitFrame(win: WindowState, frame: Frame): Frame {
+    const { minWidth, minHeight } = this.#minOf(win)
+    const maxWidth = this.bounds.width - frame.x - INSET
+    const maxHeight = this.bounds.height - frame.y - (this.dockHidden ? INSET : DOCK_SPACE)
+    return {
+      ...frame,
+      width: Math.max(minWidth, Math.min(frame.width, maxWidth)),
+      height: Math.max(minHeight, Math.min(frame.height, maxHeight))
+    }
+  }
+
+  // ── Split sizing ──
+
+  /** The window that stays beside the one choosing Split View: the most recently focused. */
+  #partnerOf(others: WindowState[]): WindowState | undefined {
+    return [...others].sort((a, b) => b.z - a.z)[0]
+  }
+
+  /** Whether panes with these minimum widths fit side by side on this workspace. */
+  #fits(minWidths: number[]): boolean {
+    return minWidths.reduce((sum, w) => sum + w, 0) <= this.#splitWidth
+  }
+
+  /**
+   * Whether `win` can take a side of a Split View. With a partner already on stage the two minimums must fit; with
+   * none yet the second app is not known, so the least any app gets (a 320 px window) stands in for it.
+   */
+  #canSplit(win: WindowState): boolean {
+    const others = win.layout === 'slideover' ? this.onStage : this.#siblings(win)
+    const partner = this.#partnerOf(others)
+    return this.#fits([
+      this.#minOf(win).minWidth,
+      partner ? this.#minOf(partner).minWidth : MIN_WIDTH
+    ])
+  }
+
+  /** The two panes of a stage's split, by side (a side still waiting for its app is missing). */
+  #panes(stage: Stage): { left?: WindowState; right?: WindowState } {
+    const inStage = this.windows.filter((w) => w.stageId === stage.id)
+    return {
+      left: inStage.find((w) => w.layout === 'split-left'),
+      right: inStage.find((w) => w.layout === 'split-right')
+    }
+  }
+
+  /** `ratio` held between a quarter and three quarters, and where a pane's minimum asks for more, at that instead. */
+  #clampRatio(stage: Stage, ratio: number): number {
+    const { left, right } = this.#panes(stage)
+    const needLeft = (left ? this.#minOf(left).minWidth : 0) / this.#splitWidth
+    const needRight = (right ? this.#minOf(right).minWidth : 0) / this.#splitWidth
+    const lowest = Math.max(needLeft, 0.25)
+    const highest = Math.min(1 - needRight, 0.75)
+    return lowest <= highest
+      ? Math.min(highest, Math.max(lowest, ratio))
+      : Math.min(1 - needRight, Math.max(needLeft, ratio)) // the minimums beat the quarter
+  }
+
+  /** After the workspace changed: keep the divider within its limits, or dissolve a split that no longer fits. */
+  #fitSplit(stage: Stage): void {
+    const { left, right } = this.#panes(stage)
+    const panes = [left, right].filter((w): w is WindowState => !!w)
+    if (panes.length === 0) return
+    const minimums = panes.map((w) => this.#minOf(w).minWidth)
+    // a pane still waiting for its app is counted at the least any app gets
+    if (this.#fits(panes.length === 2 ? minimums : [...minimums, MIN_WIDTH])) {
+      stage.splitRatio = this.#clampRatio(stage, stage.splitRatio)
+      return
+    }
+    for (const w of panes) w.layout = 'floating'
+    stage.awaitingSplit = null
   }
 
   /** Remove a window from its stage, deleting the stage if it empties. */

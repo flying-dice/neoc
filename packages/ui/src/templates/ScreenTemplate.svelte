@@ -38,6 +38,7 @@
 <div class="screen {background}">
   <div
     class="scroll"
+    class:barred={!!navigationBar}
     use:pullToRefresh={{
       enabled: !!onrefresh,
       onrefresh: run,
@@ -80,6 +81,10 @@
     min-height: 0;
     overflow-y: auto;
     overscroll-behavior-y: contain;
+  }
+  /* The navigation bar sticks to the top (50px, its min-height): a row scrolled to the top stops below it. */
+  .barred {
+    scroll-padding-top: 50px;
   }
   .content {
     padding-bottom: 24px;

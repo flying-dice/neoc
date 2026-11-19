@@ -120,4 +120,42 @@ test.describe('Desktop journeys', () => {
     expect(Math.round(back.width)).toBe(Math.round(floating.width))
     await expect(page.getByTestId('dock')).toBeVisible()
   })
+
+  test('D7: tell the Dock icons apart by their names', async ({ page }) => {
+    await openDesktop(page)
+    const name = page.getByTestId('dock-calculator-name')
+    await expect(name).toHaveText('Calculator')
+    await expect(name, 'a name shows only for the icon being pointed at').toHaveCSS('opacity', '0')
+    await page.getByTestId('dock-calculator').hover()
+    await expect(name).toHaveCSS('opacity', '1')
+    await expect(page.getByTestId('dock-files-name')).toHaveCSS('opacity', '0')
+    await page.mouse.move(1, 1)
+    await expect(name).toHaveCSS('opacity', '0')
+
+    // the keyboard gets the name too; a click that leaves focus on the icon does not keep it showing
+    await page.getByTestId('dock-files').focus()
+    await page.keyboard.press('Shift+Tab') // a key press makes the focus visible, as it is for a person who tabs
+    await page.keyboard.press('Tab')
+    await expect(page.getByTestId('dock-files')).toBeFocused()
+    await expect(page.getByTestId('dock-files-name')).toHaveCSS('opacity', '1')
+    await expect(page.getByTestId('dock-files')).toHaveAccessibleName('Files') // the capsule is for the eye only
+  })
+
+  test('D8: Slide Over, then Full Screen: the window stays on screen', async ({ page }) => {
+    await openDesktop(page, { open: ['files'] })
+    await chooseLayout(page, 'files', 'slideover')
+    await expect(windowOf(page, 'files')).toHaveClass(/\bslideover\b/)
+    await chooseLayout(page, 'files', 'fullscreen')
+    await expect(windowOf(page, 'files')).toHaveClass(/\bfullscreen\b/)
+    await expect(windowOf(page, 'files')).toBeVisible()
+    await expect(page.getByTestId('stage-strip-files')).toHaveCount(0) // not sent to the recent-apps strip
+  })
+
+  test('D9: Split View on a screen too narrow for two apps is not offered a half-sized window', async ({ page }) => {
+    await page.setViewportSize({ width: 600, height: 800 })
+    await openDesktop(page, { open: ['files'] })
+    await chooseLayout(page, 'files', 'split-left')
+    await expect(windowOf(page, 'files')).toHaveClass(/\bfloating\b/) // two 320 px minimums do not fit in 600
+    await expect(page.getByTestId('split-placeholder')).toHaveCount(0)
+  })
 })

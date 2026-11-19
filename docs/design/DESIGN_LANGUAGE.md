@@ -46,10 +46,12 @@ Use the system palette for meaning, never a near-miss hex:
 | `--ios-orange` | warnings, "waiting for you" |
 | `--ios-yellow`, `--ios-purple`, `--ios-pink`, `--ios-indigo`, `--ios-teal`, `--ios-mint`, `--ios-cyan`, `--ios-brown` | icon tiles, categories, charts |
 | `--ios-gray` … `--ios-gray6` | neutral icon tiles and fills |
-| `--window-grip` | the window resize corner: one value that holds 3:1 on light, dark and black bodies |
-| `--on-tint` | text on a `--tint-fill` (white) |
+| `--window-grip` | the window resize corner and the "···" handle's dots: one value that holds 3:1 on light, dark and black bodies |
+| `--focus-ring` | the keyboard focus ring: always system blue (the Increase-Contrast blue of the theme), never the accent. At least 3:1 on `--bg`, `--bg-elevated`, `--bg-grouped-elevated` and a black body, in both themes (`packages/ui/src/contrast.test.ts`) |
+| `--on-tint` | text on a `--tint-fill` (white). 4.5:1 only on the darker accents: a small label on an accent that can be orange, green or cyan uses `--label` on `--bg-elevated` instead (the resize limit label, the Dock's names) |
 
-`--tint` is the accent and can be re-pointed per subtree (Settings → Accent Colour sets it on the root).
+`--tint` is the accent and can be re-pointed per subtree (Settings → Accent Colour sets it on the root). The focus ring does
+not follow it: a faded or orange accent cannot hold the 3:1 a focus indicator needs (WCAG 1.4.11).
 
 ### Semantic colours
 
@@ -169,11 +171,11 @@ Exactly these shadows, by plane:
 | **Status bar** (28 px) | time and date leading, indicators trailing, white text over the wallpaper. |
 | **Recent-apps strip** | left edge, 150 px, one thumbnail per stage (app group). Hides when a window overlaps it or the stage is full screen, and peeks back when the pointer rests on the left edge. |
 | **Stage** | the area for the current app group. Windows float, cascade from the centre, and never open under the strip or the Dock. |
-| **Window** | `--radius-xl`, elevated background, focused/unfocused shadow, a "···" multitasking handle centred at the top, a corner-arc resize grip bottom right (24 px, 5 px stroke; its 44 pt button sits mostly outside the window) that is always visible (`--window-grip`, at least 3:1 on a light, dark or black body), has the tooltip "Resize — drag or use arrow keys" and is a button that the arrow keys resize (Shift for bigger steps); last in the tab order, after the content. At the minimum size or the screen's edge the arc nudges back once (not under `prefers-reduced-motion`) and takes `--tint`, a flat `--tint-fill` capsule over the window's bottom edge, beside the grip, says "Smallest size" (or "Narrowest", "Shortest", "Widest", "Tallest", "Largest size") for about two seconds, and a polite live region says the full sentence ("<title> is at its smallest size", "can't get any narrower", ...) once; at its smallest size the arc stays tinted. Minimum 320x240. |
-| **Multitasking menu** | Full Screen, Split View (left/right), Slide Over, Minimize, Close. |
-| **Split View** | two windows share the stage with a 10 px gap and a draggable divider (25% to 75%). |
-| **Slide Over** | one 380 px window over the right edge; hides to a tab. |
-| **Dock** | floating, centred at the bottom, `--material-thin`, 58 px icons, a running dot under open apps, badges in red, recents after a divider. Hides when the stage is immersive. |
+| **Window** | `--radius-xl`, elevated background, focused/unfocused shadow, a "···" multitasking handle centred at the top (dots in `--window-grip`, a 44 x 24 hit area; it never takes the app's keys: clicking it leaves focus in the app, a typed key with focus on it goes to the app, and choosing from its menu hands focus back to the app), a corner-arc resize grip bottom right (24 px, 5 px stroke; its 44 pt button sits mostly outside the window) that is always visible (`--window-grip`, at least 3:1 on a light, dark or black body), has the tooltip "Resize — drag or use arrow keys" and is a button that the arrow keys resize (Shift for bigger steps); last in the tab order, after the content. At the minimum size or the screen's edge the arc nudges back once (not under `prefers-reduced-motion`) and takes `--tint`, a flat `--tint-fill` capsule over the window's bottom edge, beside the grip, says "Smallest size" (or "Narrowest", "Shortest", "Widest", "Tallest", "Largest size") for about two seconds, and a polite live region says the full sentence ("<title> is at its smallest size", "can't get any narrower", ...) once; at its smallest size the arc stays tinted. Minimum 320x240. |
+| **Multitasking menu** | Full Screen, Split View (left/right), Slide Over, Minimize, Close. A menu for the keyboard too: focus goes to the first item when it opens, Up/Down (Left/Right in the row of layouts), Home and End move, Tab closes it and Escape closes it, both returning focus to the "···" button (Escape after a mouse open returns it to the app). |
+| **Split View** | two windows share the stage with a 10 px gap and a draggable divider (25% to 75%, and never a pane under its app's minimum width: the minimums win over the band, and the ratio is re-checked when the second app joins and when the screen changes). Where the two minimums cannot share the screen the split is not made: choosing Split View does nothing, an app that will not fit beside the waiting one opens on its own, and a screen that shrinks below both dissolves the split into floating windows. A waiting split and Slide Over stop above the Dock but never below an app's minimum height. |
+| **Slide Over** | one 380 px window over the right edge (wider, never off screen, for an app whose minimum width is more); hides to a tab. |
+| **Dock** | floating, centred at the bottom, `--material-thin`, 58 px icons, a running dot under open apps, badges in red, recents after a divider. Hovering an icon, or tabbing to it, shows its name in a small flat capsule above it (`--label` on `--bg-elevated`, `aria-hidden`: the button already has the name). Hides when the stage is immersive. |
 | **Widgets** | top right on the wallpaper, `--radius-2xl`, regular material. |
 
 Motion: layout changes glide with `--ease-ios` over `--duration-slow`. Live drags track the pointer with no easing.
@@ -210,8 +212,9 @@ Rules:
 | Choice of actions | `Menu`, `Alert` (2 or 3 actions, cancel is bold), `Sheet` |
 | Progress | `ActivityIndicator` (unknown), `ProgressBar` (known) |
 
-Every control is reachable with Tab, shows the shared `:focus-visible` ring, works with Space/Enter, and has a
-`data-testid` (see `docs/TESTING.md`).
+Every control is reachable with Tab, shows the shared `:focus-visible` ring (a solid 3px `--focus-ring`; a component
+that draws its own uses the same token, never `--tint`), works with Space/Enter, and has a `data-testid` (see
+`docs/TESTING.md`).
 
 ## 10. Not part of this language
 
@@ -229,4 +232,4 @@ When you look at a screenshot, check:
 - [ ] One accent colour. Destructive actions in red.
 - [ ] Spacing on the 4 pt grid, lists inset 16, corners from the radius scale.
 - [ ] The window works at 320x240, at its preferred size and full screen, with no horizontal scroll.
-- [ ] Focus ring visible when tabbing. Every control has a label and a `data-testid`.
+- [ ] Focus ring (`--focus-ring`, 3px) visible when tabbing, on every surface. Every control has a label and a `data-testid`.

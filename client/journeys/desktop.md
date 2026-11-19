@@ -15,6 +15,9 @@ the test with the same id in `e2e/desktop.journeys.spec.ts`, driven by test ids 
 | D4  | Switch back to an app they used a moment ago, without the Dock.              | Files and Terminal opened in that order (Files is in the strip). | They used the recent-apps strip to bring Files back; Terminal took its place in the strip.                                                  |
 | D5  | Tidy up: minimise one window and close another.                              | Files and Terminal open (one on stage, one in the strip). | The minimised app waits in the strip, the closed one is gone from the stage and the strip; the Dock still opens it again.                              |
 | D6  | Make one app take over the whole screen, then go back to a normal window.    | Discover open.                                         | They used full screen (the window grew to fill the stage) and returned to a floating window of its original size.                                        |
+| D7  | Work out which Dock icon is which app.                                       | The desktop, nothing opened.                           | Pointing at an icon, or tabbing to it, shows its name in a small capsule above it; the others stay unlabelled.                                          |
+| D8  | Put an app in Slide Over, then give it the whole screen.                      | Files open.                                            | Files fills the screen; it did not vanish into the recent-apps strip.                                                                                    |
+| D9  | Try Split View on a screen too narrow for two apps.                           | A 600 px wide screen, Files open.                      | Nothing changes: Files stays a normal window and no empty half is offered (two 320 px apps do not fit).                                                  |
 
 Notes for the people running these:
 

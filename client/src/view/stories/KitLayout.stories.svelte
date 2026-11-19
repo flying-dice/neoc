@@ -4,7 +4,7 @@
   import AppWindow from '@agentos/storybook/AppWindow.svelte'
   import ViewHost from '../organisms/ViewHost.svelte'
   import type { TreeApp } from '../host/treeApp'
-  import { openAppStory, settleAtTop, until, type StoryHandle } from '../host/storyKit'
+  import { openAppStory, until, type StoryHandle } from '../host/storyKit'
   import {
     galleryApp,
     keypadApp,
@@ -199,8 +199,19 @@
     await waitFor(() => expect(canvasElement.querySelector('[data-row-key="1"]')).toHaveFocus(), {
       timeout: 4000
     })
-    await settleAtTop(scroller, canvasElement)
-    await expect(scroller.scrollTop).toBe(0)
+    // Home is the top of the screen: the large title is back in view and row 1 sits below the sticky bar, not under it.
+    const bar = canvasElement.querySelector<HTMLElement>('.bar')!
+    await waitFor(() => expect(scroller.scrollTop).toBe(0), { timeout: 4000 })
+    await waitFor(
+      () => {
+        const row1 = canvasElement.querySelector('[data-row-key="1"]')!
+        expect(row1.getBoundingClientRect().top).toBeGreaterThanOrEqual(
+          bar.getBoundingClientRect().bottom
+        )
+        expect(canvasElement.querySelectorAll('[aria-busy=true][role=listitem]')).toHaveLength(0) // the host's rows are in
+      },
+      { timeout: 4000 }
+    )
   }}
 />
 

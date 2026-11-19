@@ -164,9 +164,21 @@ describe('layouts', () => {
     expect(wm.frameOf(win('calculator')).width).toBeGreaterThanOrEqual(320)
     wm.setSplitRatio(0.99)
     expect(wm.frameOf(win('notes')).width).toBeGreaterThanOrEqual(320)
-    wm.bounds = { width: 600, height: 768 } // two minimums do not fit: an even split
+  })
+
+  test('a pane’s minimum beats the three-quarters limit when it asks for more', () => {
+    setInstalledApps([
+      summary('big', { window: { w: 1000, h: 600, minW: 900, minH: 300 } }),
+      summary('tiny', { window: { w: 300, h: 300, minW: 100, minH: 240 } })
+    ])
+    wm.bounds = { width: 1100, height: 768 } // 1074 to share: 900 + 100 fits
+    wm.open('big')
+    wm.setLayout(win('big').id, 'split-left')
+    wm.open('tiny')
+    expect(wm.frameOf(win('big')).width).toBeGreaterThanOrEqual(900)
+    expect(wm.frameOf(win('tiny')).width).toBeGreaterThanOrEqual(100)
     wm.setSplitRatio(0.05)
-    expect(wm.activeStage?.splitRatio).toBe(0.5)
+    expect(wm.frameOf(win('big')).width).toBeGreaterThanOrEqual(900)
   })
 
   test('a split waiting for its second app stops above the Dock; a full split fills the screen', () => {
@@ -224,6 +236,145 @@ describe('layouts', () => {
     expect(wm.slideOverHidden).toBe(true)
     wm.open('calculator')
     expect(wm.slideOverHidden).toBe(false)
+  })
+})
+
+describe('Split View sizing', () => {
+  const widthOf = (appId: string): number => wm.frameOf(win(appId)).width
+
+  test('a waiting split dragged wide is pulled back when the second app joins, so its pane meets its minimum', () => {
+    wm.bounds = { width: 1024, height: 768 }
+    wm.open('calculator')
+    wm.setLayout(win('calculator').id, 'split-left')
+    wm.setSplitRatio(0.75) // only the calculator exists: its own minimum is all that can be checked
+    expect(wm.activeStage?.splitRatio).toBe(0.75)
+    wm.open('notes') // needs 320 too: a 75% split leaves it 249
+    expect(widthOf('notes')).toBeGreaterThanOrEqual(320)
+    expect(widthOf('calculator')).toBeGreaterThanOrEqual(320)
+  })
+
+  test('the ratio is clamped again when the workspace changes', () => {
+    wm.open('calculator')
+    wm.setLayout(win('calculator').id, 'split-left')
+    wm.open('notes')
+    wm.setSplitRatio(0.75) // fine at 1280: the notes pane is 311 + ... wide
+    expect(widthOf('notes')).toBeGreaterThanOrEqual(320)
+    wm.bounds = { width: 1024, height: 768 }
+    expect(widthOf('notes')).toBeGreaterThanOrEqual(320)
+    expect(widthOf('calculator')).toBeGreaterThanOrEqual(320)
+    wm.bounds = { width: 1280, height: 800 } // growing again does not move the divider
+    expect(wm.activeStage?.splitRatio).toBeLessThanOrEqual(0.75)
+  })
+
+  test('where the two minimums cannot share the screen, Split View is refused and the layout is left as it was', () => {
+    wm.bounds = { width: 600, height: 768 } // 574 usable: 320 + 320 does not fit
+    wm.open('calculator')
+    wm.setLayout(win('calculator').id, 'split-left')
+    expect(win('calculator').layout).toBe('floating')
+    expect(wm.activeStage?.awaitingSplit).toBeNull()
+    wm.open('notes', { alongside: true })
+    wm.setLayout(win('notes').id, 'split-right') // with a partner there already
+    expect(win('notes').layout).toBe('floating')
+    expect(win('calculator').layout).toBe('floating')
+    expect(wm.activeStage?.windowIds).toHaveLength(2)
+  })
+
+  test('an app that cannot fit beside the waiting one opens as its own stage, and the waiting pane goes back to floating', () => {
+    setInstalledApps([
+      summary('wide', { window: { w: 900, h: 600, minW: 700, minH: 300 } }),
+      summary('roomy', { window: { w: 900, h: 600, minW: 400, minH: 300 } })
+    ])
+    wm.bounds = { width: 1100, height: 768 } // 1074 usable: 700 + 320 fits, 700 + 400 does not
+    wm.open('wide')
+    wm.setLayout(win('wide').id, 'split-left')
+    expect(wm.activeStage?.awaitingSplit).toBe('split-right')
+    wm.open('roomy')
+    expect(win('roomy').layout).toBe('floating')
+    expect(wm.onStage.map((w) => w.appId)).toEqual(['roomy'])
+    expect(win('wide').layout).toBe('floating')
+    expect(wm.stages.every((s) => s.awaitingSplit === null)).toBe(true)
+  })
+
+  test('a screen that shrinks below both minimums dissolves the split instead of leaving two panes cut off', () => {
+    wm.open('calculator')
+    wm.setLayout(win('calculator').id, 'split-left')
+    wm.open('notes')
+    wm.bounds = { width: 600, height: 768 }
+    expect(win('calculator').layout).toBe('floating')
+    expect(win('notes').layout).toBe('floating')
+    for (const w of wm.windows) {
+      expect(w.frame.x + w.frame.width).toBeLessThanOrEqual(600)
+    }
+  })
+
+  test('a waiting split and Slide Over are never shorter than the app’s minimum, however short the screen', () => {
+    wm.bounds = { width: 1280, height: 560 } // 560 - 112 = 448: the calculator needs 500
+    wm.open('calculator')
+    wm.setLayout(win('calculator').id, 'split-left')
+    expect(wm.frameOf(win('calculator')).height).toBe(500)
+    expect(wm.splitPlaceholderFrame!.height).toBe(500) // the empty side lines up with it
+    wm.setLayout(win('calculator').id, 'slideover')
+    expect(wm.frameOf(win('calculator')).height).toBe(500)
+    wm.bounds = { width: 1280, height: 700 } // room enough: the Dock edge decides again
+    expect(wm.frameOf(win('calculator')).height).toBe(700 - 8 - 104)
+  })
+
+  test('Slide Over is 380 wide, or the app’s minimum when that is more, and stays on screen either way', () => {
+    setInstalledApps([
+      summary('wide', { window: { w: 900, h: 600, minW: 480, minH: 300 } }),
+      summary('notes')
+    ])
+    wm.open('notes')
+    wm.setLayout(win('notes').id, 'slideover')
+    expect(wm.frameOf(win('notes'))).toMatchObject({ width: 380, x: 1280 - 380 - 8 })
+    wm.open('wide')
+    wm.setLayout(win('wide').id, 'slideover')
+    const f = wm.frameOf(win('wide'))
+    expect(f.width).toBe(480)
+    expect(f.x + f.width).toBe(1280 - 8)
+  })
+
+  test('a frame from a bigger screen is brought inside a narrow one, in every layout it passes through', () => {
+    wm.open('notes')
+    wm.setFrame(win('notes').id, { x: 300, y: 40, width: 800, height: 500 })
+    wm.setLayout(win('notes').id, 'fullscreen') // its floating frame is kept for later
+    wm.bounds = { width: 390, height: 800 }
+    wm.setLayout(win('notes').id, 'floating')
+    const f = wm.frameOf(win('notes'))
+    expect(f.x).toBeGreaterThanOrEqual(8)
+    expect(f.x + f.width).toBeLessThanOrEqual(390 - 8)
+    expect(f.width).toBeGreaterThanOrEqual(320)
+  })
+
+  test('a window waiting in the strip is brought inside too, not only the ones on stage', () => {
+    wm.open('notes')
+    wm.setFrame(win('notes').id, { x: 300, y: 40, width: 800, height: 500 })
+    wm.open('calculator') // notes goes to the strip
+    wm.bounds = { width: 390, height: 800 }
+    const f = win('notes').frame
+    expect(f.x + f.width).toBeLessThanOrEqual(390 - 8)
+    expect(f.x).toBeGreaterThanOrEqual(8)
+  })
+
+  test('leaving Slide Over for Full Screen keeps the only window on stage rather than sending it to the strip', () => {
+    wm.open('calculator')
+    wm.setLayout(win('calculator').id, 'slideover')
+    expect(wm.activeStage).toBeUndefined()
+    wm.setLayout(win('calculator').id, 'fullscreen')
+    expect(win('calculator').layout).toBe('fullscreen')
+    expect(wm.onStage.map((w) => w.appId)).toEqual(['calculator'])
+    expect(wm.recentStages).toEqual([])
+  })
+
+  test('leaving Slide Over for a floating window or a split also lands on stage', () => {
+    wm.open('calculator')
+    wm.setLayout(win('calculator').id, 'slideover')
+    wm.setLayout(win('calculator').id, 'floating')
+    expect(wm.onStage.map((w) => w.appId)).toEqual(['calculator'])
+    wm.setLayout(win('calculator').id, 'slideover')
+    wm.setLayout(win('calculator').id, 'split-left')
+    expect(wm.onStage.map((w) => w.appId)).toEqual(['calculator'])
+    expect(wm.activeStage?.awaitingSplit).toBe('split-right')
   })
 })
 

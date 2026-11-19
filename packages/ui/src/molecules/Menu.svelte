@@ -265,7 +265,7 @@
     background: var(--fill-secondary);
   }
   .item:focus-visible {
-    outline: 3px solid color-mix(in srgb, var(--tint) 55%, transparent);
+    outline: 3px solid var(--focus-ring);
     outline-offset: -3px;
   }
   .item:disabled {

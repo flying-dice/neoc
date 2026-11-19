@@ -29,6 +29,13 @@
   window whose keys are handled inside (an app's window-scoped shortcuts) keeps listening after a move or resize.
   `data-window-focus` is the convention for "this element takes the window's keys": one per window, `tabindex="-1"`.
   See client/README.md, "Focus hooks".
+
+  The "···" handle never takes the app's keys: a mouse press on it does not focus it, choosing from its menu (or
+  minimizing, or closing the menu with Escape after a mouse open) puts focus back on the `data-window-focus` element,
+  and an ordinary typed key (a character, Backspace, Delete) with focus on the button moves focus there and is sent on to
+  it. Enter, Space, Tab and Escape stay the button's and the menu's own. The menu is a keyboard menu (see
+  MultitaskingMenu): Tab and Escape close it and return focus to the "···" button (after a mouse open, Escape returns
+  it to the app instead).
 -->
 <script lang="ts">
   import { motion } from '../motion'
@@ -105,7 +112,7 @@
     const dy = e.clientY - gesture.py
     const f = gesture.frame
     if (gesture.kind === 'move') onframechange?.({ ...f, x: f.x + dx, y: Math.max(0, f.y + dy) })
-    else void resizeTo(f, f.width + dx, f.height + dy, false)
+    else resize(f, f.width + dx, f.height + dy, false)
   }
 
   function end(): void {
@@ -126,36 +133,28 @@
     e.preventDefault()
     onfocus?.()
     const step = e.shiftKey ? 64 : 16
-    void resizeTo({ x, y, width, height }, width + arrow[0] * step, height + arrow[1] * step, true)
+    resize({ x, y, width, height }, width + arrow[0] * step, height + arrow[1] * step, true)
   }
 
   // ── The limit cue ──────────────────────────────────────────────────────
 
   type Limit = 'narrowest' | 'shortest' | 'smallest' | 'widest' | 'tallest' | 'largest'
-  const SAID: Record<Limit, string> = {
-    narrowest: "can't get any narrower",
-    shortest: "can't get any shorter",
-    smallest: 'is at its smallest size',
-    widest: "can't get any wider here",
-    tallest: "can't get any taller here",
-    largest: 'is as large as the screen allows'
+  /** What each limit says: in full for the live region ("<title> ..."), and short enough for the label beside the grip. */
+  const LIMITS: Record<Limit, { said: string; short: string }> = {
+    narrowest: { said: "can't get any narrower", short: 'Narrowest' },
+    shortest: { said: "can't get any shorter", short: 'Shortest' },
+    smallest: { said: 'is at its smallest size', short: 'Smallest size' },
+    widest: { said: "can't get any wider here", short: 'Widest' },
+    tallest: { said: "can't get any taller here", short: 'Tallest' },
+    largest: { said: 'is as large as the screen allows', short: 'Largest size' }
   }
   /** How long the nudge and the announcement last after the last time a resize hit a limit. */
   const CUE_MS = 2200
-  let limit: Limit | null = $state(null)
+  let limit = $state<Limit | null>(null)
   let nudge = $state(0) // each key press at a limit restarts the nudge (the grip alternates between two animations)
   let cueTimer: ReturnType<typeof setTimeout> | undefined
   onDestroy(() => clearTimeout(cueTimer))
-  /** The same news, short enough for a small label beside the grip (the live region has the full sentence). */
-  const SHORT: Record<Limit, string> = {
-    narrowest: 'Narrowest',
-    shortest: 'Shortest',
-    smallest: 'Smallest size',
-    widest: 'Widest',
-    tallest: 'Tallest',
-    largest: 'Largest size'
-  }
-  const status = $derived(limit ? `${title} ${SAID[limit]}` : '')
+  const status = $derived(limit ? `${title} ${LIMITS[limit].said}` : '')
   /** Which way the grip pushes back: out when the person pulled in, in when they pulled out. */
   const push = $derived(limit === null ? null : ['widest', 'tallest', 'largest'].includes(limit) ? 'in' : 'out')
   /** At its smallest size the grip stays tinted: the window can't shrink more, whenever you look. */
@@ -182,6 +181,11 @@
     cue(wider && taller ? 'largest' : wider ? 'widest' : taller ? 'tallest' : null, byKey)
   }
 
+  /** `resizeTo`, fire and forget: an owner whose `onframechange` throws must not leave an unhandled rejection. */
+  function resize(from: Frame, wantW: number, wantH: number, byKey: boolean): void {
+    resizeTo(from, wantW, wantH, byKey).catch((error: unknown) => console.error('Window resize failed', error))
+  }
+
   function cue(kind: Limit | null, repeat: boolean): void {
     clearTimeout(cueTimer)
     if (kind !== null) {
@@ -191,9 +195,35 @@
     limit = kind // null: moving away from a limit, or letting go of it, ends the cue
   }
 
-  function choose(next: WindowLayout): void {
+  /** The menu was opened from the keyboard (so Escape gives focus back to the dots, as a menu button does). */
+  let menuByKey = false
+  let dotsEl: HTMLElement | undefined = $state()
+
+  function toggleMenu(e: MouseEvent): void {
+    menuByKey = e.detail === 0 // a key press clicks the button with no click count
+    menuOpen = !menuOpen
+  }
+
+  /** Close the menu and put focus back where typing goes: the content (or the dots, for a keyboard user who backed out). */
+  function closeMenu(toDots = false): void {
     menuOpen = false
+    if (toDots) dotsEl?.querySelector('button')?.focus({ preventScroll: true })
+    else forwardFocus()
+  }
+
+  function choose(next: WindowLayout): void {
+    closeMenu()
     onlayout?.(next)
+  }
+
+  /** Keys typed with focus on the dots belong to the app, as they would anywhere else in the window. */
+  function forwardTyping(e: KeyboardEvent): void {
+    const typed = (e.key.length === 1 && e.key !== ' ') || e.key === 'Backspace' || e.key === 'Delete'
+    const target = contentEl?.querySelector<HTMLElement>('[data-window-focus]')
+    if (!typed || e.defaultPrevented || e.isComposing || !target) return
+    e.preventDefault()
+    target.focus({ preventScroll: true })
+    target.dispatchEvent(new KeyboardEvent('keydown', e)) // the key was already sent to the button: send it on
   }
 
   function onwindowpointerdown(e: PointerEvent): void {
@@ -206,7 +236,7 @@
 
 <svelte:window
   onpointerdown={onwindowpointerdown}
-  onkeydown={(e) => e.key === 'Escape' && (menuOpen = false)}
+  onkeydown={(e) => e.key === 'Escape' && menuOpen && closeMenu()}
 />
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -239,12 +269,19 @@
     onpointerup={end}
     onpointercancel={end}
   >
-    <span role="presentation" data-testid="{testid}-handle-dots" onpointerdown={(e) => e.stopPropagation()}>
+    <span
+      role="presentation"
+      data-testid="{testid}-handle-dots"
+      bind:this={dotsEl}
+      onpointerdown={(e) => e.stopPropagation()}
+      onmousedown={(e) => e.preventDefault()}
+      onkeydown={forwardTyping}
+    >
       <MultitaskingDots
         testid="{testid}-multitasking"
-        active={focused}
         label="{title} multitasking options"
-        onclick={() => (menuOpen = !menuOpen)}
+        expanded={menuOpen}
+        onclick={toggleMenu}
       />
     </span>
   </div>
@@ -256,12 +293,13 @@
         {layout}
         {title}
         onlayout={choose}
+        ondismiss={(how) => closeMenu(how === 'tab' || menuByKey)}
         onminimize={() => {
-          menuOpen = false
+          closeMenu()
           onminimize?.()
         }}
         onclose={() => {
-          menuOpen = false
+          closeMenu()
           onclose?.()
         }}
       />
@@ -297,7 +335,7 @@
     <span class="sr-only" role="status" aria-live="polite" data-testid="{testid}-resize-status">{status}</span>
     <!-- What the live region says, for the eye: a small flat label beside the grip while a limit is being met. -->
     <span class="limit-note" class:shown={limit !== null} aria-hidden="true" data-testid="{testid}-resize-note"
-      >{limit ? SHORT[limit] : ''}</span
+      >{limit ? LIMITS[limit].short : ''}</span
     >
   {/if}
 </div>
@@ -346,7 +384,7 @@
     top: 0;
     left: 30%;
     right: 30%;
-    height: 22px;
+    height: 24px;
     display: flex;
     justify-content: center;
     align-items: flex-start;
@@ -354,10 +392,6 @@
   }
   .handle.movable {
     cursor: grab;
-  }
-  .handle :global(.ios-mt-dots) {
-    padding-top: 6px;
-    padding-bottom: 4px;
   }
   .menu {
     position: absolute;
@@ -452,8 +486,8 @@
     bottom: -13px;
     padding: 4px 12px;
     border-radius: var(--radius-pill);
-    background: var(--tint-fill);
-    color: var(--on-tint);
+    background: var(--label); /* a fixed neutral pair: 4.5:1 whatever accent Settings chose (see tokens.css, --on-tint) */
+    color: var(--bg-elevated);
     font: var(--type-footnote);
     letter-spacing: var(--tracking-footnote);
     white-space: nowrap;
@@ -478,7 +512,7 @@
     outline: none;
   }
   .resize:focus-visible::after {
-    outline: 2px solid var(--tint);
+    outline: 3px solid var(--focus-ring);
     outline-offset: 3px;
   }
 </style>

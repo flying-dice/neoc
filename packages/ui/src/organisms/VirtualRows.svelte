@@ -9,7 +9,7 @@
 <script lang="ts">
   import { tick, untrack, type Snippet } from 'svelte'
   import { offsetInScroller, outerClip, perFrame, scrollParent } from '../logic/dom'
-  import { anchorOf, anchorShift, HeightIndex, visibleRange, type Anchor, type RowRange } from '../logic/virtual'
+  import { anchorOf, anchorShift, HeightIndex, scrollTopFor, visibleRange, type Anchor, type RowRange } from '../logic/virtual'
 
   interface Props {
     testid: string
@@ -131,12 +131,19 @@
     })
   })
 
-  /** Bring row `index` to the top of the viewport (rows outside the DOM are reached by scrolling to them). */
+  /**
+   * Bring row `index` to the top of the viewport, below the scroller's sticky bar (its `scroll-padding-top`); the first
+   * row is the top of the scroller (rows outside the DOM are reached by scrolling to them).
+   */
   export function scrollToIndex(index: number, align: 'start' | 'end' = 'start'): void {
     if (!scroller) return
-    const i = Math.min(Math.max(0, index), Math.max(0, total - 1))
-    const top = listOffset + heights.offsetOf(i)
-    scroller.scrollTop = align === 'start' ? top : top + heights.heightOf(i) - scroller.clientHeight
+    heights.setTotal(total)
+    const padTop = parseFloat(getComputedStyle(scroller).scrollPaddingTop) || 0 // "auto" is NaN: none
+    scroller.scrollTop = scrollTopFor(heights, index, align, {
+      listOffset,
+      viewportHeight: scroller.clientHeight,
+      padTop
+    })
   }
 </script>
 

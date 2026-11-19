@@ -424,7 +424,7 @@ async fn app_management_describes_installed_and_available_apps() {
     let list = rpc(&mut ws, 1, "app.list", json!({})).await;
     let app = &list["result"]["apps"][0];
     assert_eq!((app["id"].as_str(), app["state"].as_str()), (Some("calculator"), Some("running")), "{list}");
-    assert_eq!(app["icon"], "plus");
+    assert_eq!(app["icon"], "calculator");
     assert_eq!(app["tint"], "orange");
     assert_eq!(app["window"], json!({"w": 340, "h": 560, "minW": 320, "minH": 500}));
     assert_eq!(app["source"], "this computer");

@@ -106,7 +106,7 @@
     color: var(--label);
   }
   .pill:focus-within {
-    outline: 2px solid color-mix(in srgb, var(--tint) 55%, transparent);
+    outline: 3px solid var(--focus-ring);
     outline-offset: 1px;
   }
   .disabled {

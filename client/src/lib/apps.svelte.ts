@@ -22,7 +22,7 @@ export interface AppDefinition {
 }
 
 /** The smallest window any app gets (iPadOS Stage Manager's minimum is similar). */
-const MIN_WIDTH = 320
+export const MIN_WIDTH = 320
 const MIN_HEIGHT = 240
 
 /** Registry of the built-in pages. They are wired to ids in App.svelte. */

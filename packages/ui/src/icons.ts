@@ -56,6 +56,8 @@ export const icons = {
   briefcase: '<rect x="3" y="7" width="18" height="13" rx="2.5"/><path d="M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7M3 13h18"/>',
   hammer: '<path d="M14.5 9.5L5 19a1.4 1.4 0 0 1-2-2l9.5-9.5"/><path d="M11 6l3-3c2 0 4.5 1 6 3l-1.5 1.5-1-1-2.5 2.5L18 12l-2 2-5-5z"/>',
   'rectangle.stack': '<rect x="3" y="9" width="18" height="11" rx="2.5"/><path d="M5.5 6h13M8 3h8"/>',
+  calculator:
+    '<rect x="5" y="3" width="14" height="18" rx="2.5"/><rect x="8" y="6" width="8" height="3.5" rx="1"/><circle cx="8.5" cy="13.2" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="13.2" r="1" fill="currentColor" stroke="none"/><circle cx="15.5" cy="13.2" r="1" fill="currentColor" stroke="none"/><circle cx="8.5" cy="17" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="17" r="1" fill="currentColor" stroke="none"/><circle cx="15.5" cy="17" r="1" fill="currentColor" stroke="none"/>',
   minus: '<path d="M5 12h14"/>',
   'layout.fullscreen': '<rect x="2.5" y="5" width="19" height="14" rx="2.5"/><rect x="5" y="7.5" width="14" height="9" rx="1" fill="currentColor" stroke="none"/>',
   'layout.split.left': '<rect x="2.5" y="5" width="19" height="14" rx="2.5"/><rect x="5" y="7.5" width="6" height="9" rx="1" fill="currentColor" stroke="none"/><rect x="13" y="7.5" width="6" height="9" rx="1" opacity="0.35" fill="currentColor" stroke="none"/>',

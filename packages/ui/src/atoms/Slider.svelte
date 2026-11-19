@@ -125,7 +125,7 @@
     outline: none;
   }
   .ios-slider:focus-visible::-webkit-slider-thumb {
-    outline: 3px solid color-mix(in srgb, var(--tint) 55%, transparent);
+    outline: 3px solid var(--focus-ring);
   }
   .ticks {
     position: absolute;

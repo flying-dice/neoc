@@ -114,3 +114,64 @@ describe('palette token ink (CSS rule replayed on tokens.css)', () => {
     expect(tokenInk('var(--ios-blue)')).toContain(`(${THRESHOLD} - l)`)
   })
 })
+
+// ── Chrome that must be seen: the focus ring, the resize grip and the "···" dots (WCAG 1.4.11, 3:1), the limit label (1.4.3, 4.5:1)
+
+/** A token declared in tokens.css as `#hex` or `light-dark(#hex, #hex)`, in each theme. */
+function colourToken(name: string): { light: string; dark: string } {
+  const css = readFileSync(new URL('./styles/tokens.css', import.meta.url), 'utf8')
+  const m = new RegExp(`${name}:\\s*(?:light-dark\\((#[0-9a-f]{6}),\\s*(#[0-9a-f]{6})\\)|(#[0-9a-f]{6}));`).exec(css)
+  if (!m) throw new Error(`${name} is not a plain hex or light-dark(hex, hex) token in tokens.css`)
+  return { light: m[1] ?? m[3]!, dark: m[2] ?? m[3]! }
+}
+const ratio = (a: string, b: string): number => contrastRatio(luminance(parseHex(a)!), luminance(parseHex(b)!))
+
+describe('the focus ring', () => {
+  const ring = colourToken('--focus-ring')
+  const surfaces = ['--bg', '--bg-elevated', '--bg-grouped-elevated'].map((name) => [name, colourToken(name)] as const)
+  for (const scheme of ['light', 'dark'] as const) {
+    for (const [name, surface] of surfaces) {
+      test(`holds 3:1 on ${name} in ${scheme}`, () => {
+        expect(ratio(ring[scheme], surface[scheme])).toBeGreaterThanOrEqual(3)
+      })
+    }
+    test(`holds 3:1 on a black body (the Calculator's) in ${scheme}`, () => {
+      expect(ratio(ring[scheme], '#000000')).toBeGreaterThanOrEqual(3)
+    })
+  }
+
+  test('is the one ring: the base style uses it, solid, and does not dim or follow the accent', () => {
+    const base = readFileSync(new URL('./styles/base.css', import.meta.url), 'utf8')
+    expect(base).toContain('outline: 3px solid var(--focus-ring);')
+    expect(base).not.toMatch(/:focus-visible\s*{[^}]*--tint/)
+  })
+})
+
+describe('window chrome', () => {
+  const grip = colourToken('--window-grip')
+  for (const body of ['--bg-grouped-elevated', '--bg-elevated', 'a black body'] as const) {
+    for (const scheme of ['light', 'dark'] as const) {
+      test(`the resize grip and the "···" dots hold 3:1 on ${body} in ${scheme}`, () => {
+        const surface = body === 'a black body' ? '#000000' : colourToken(body)[scheme]
+        expect(ratio(grip[scheme], surface)).toBeGreaterThanOrEqual(3)
+      })
+    }
+  }
+
+  test('the limit label (13 px) holds 4.5:1 whatever the accent: it does not use the accent', () => {
+    const label = colourToken('--label')
+    const bg = colourToken('--bg-elevated')
+    for (const scheme of ['light', 'dark'] as const) expect(ratio(label[scheme], bg[scheme])).toBeGreaterThanOrEqual(4.5)
+    const window = readFileSync(new URL('./organisms/Window.svelte', import.meta.url), 'utf8')
+    const rule = /\.limit-note\s*{[^}]*}/.exec(window)![0]
+    expect(rule).toContain('background: var(--label)')
+    expect(rule).toContain('color: var(--bg-elevated)')
+    expect(rule).not.toMatch(/var\(--(tint|on-tint)/)
+  })
+
+  test('the "···" dots take the grip colour and the button is at least 44 x 24', () => {
+    const dots = readFileSync(new URL('./atoms/MultitaskingDots.svelte', import.meta.url), 'utf8')
+    expect(dots).toContain('background: var(--window-grip)')
+    expect(dots).toMatch(/width: 44px;\s*height: 24px;/)
+  })
+})

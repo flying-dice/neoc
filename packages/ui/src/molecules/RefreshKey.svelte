@@ -39,7 +39,7 @@
     color: #fff;
     font: var(--type-subheadline);
     font-weight: 600;
-    outline: 2px solid var(--tint);
+    outline: 3px solid var(--focus-ring);
     outline-offset: 2px;
   }
 </style>

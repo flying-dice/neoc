@@ -87,7 +87,7 @@
     border-radius: var(--radius-md);
   }
   .field:focus-within {
-    outline: 2px solid var(--tint);
+    outline: 3px solid var(--focus-ring);
     outline-offset: -2px;
   }
   .disabled {

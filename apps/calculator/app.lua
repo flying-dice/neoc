@@ -8,7 +8,7 @@ local t = app.t
 app.manifest {
   id = "calculator",
   name = "Calculator",
-  icon = "plus",
+  icon = "calculator",
   tint = "orange",
   window = { w = 340, h = 560, minW = 320, minH = 500 }, -- below 500 tall the keypad no longer fits
 }

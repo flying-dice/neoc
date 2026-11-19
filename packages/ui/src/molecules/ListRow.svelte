@@ -505,7 +505,7 @@
   }
   .face:focus-visible,
   .managed.option:focus-visible {
-    outline: 2px solid var(--tint);
+    outline: 3px solid var(--focus-ring);
     outline-offset: -2px;
   }
   .managed.option {
@@ -556,7 +556,7 @@
     border-radius: inherit;
   }
   .hit:focus-visible {
-    outline: 2px solid var(--tint);
+    outline: 3px solid var(--focus-ring);
     outline-offset: -2px;
   }
   .face:has(.hit:active) {
@@ -635,7 +635,7 @@
     top: 6px;
   }
   .handle:focus-visible {
-    outline: 2px solid var(--tint);
+    outline: 3px solid var(--focus-ring);
     outline-offset: -4px;
     color: var(--tint);
   }

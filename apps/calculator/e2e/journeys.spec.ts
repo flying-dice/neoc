@@ -172,6 +172,19 @@ test.describe('Calculator journeys', () => {
     for (const k of ['6', 'mul', '7', 'eq']) await page.getByTestId(key(k)).click()
     await expect(page.getByTestId(display)).toHaveText('42')
 
+    // the menu did not take the keyboard with it: choosing from it leaves the keys with the calculator
+    await clearCalculator(page)
+    await page.getByTestId('window-calculator-multitasking').click()
+    await page.getByTestId('window-calculator-menu-slideover').click() // already there: the same choice, the menu closes
+    await expect(page.getByTestId('calculator-view'), 'the menu hands focus back to the window').toBeFocused()
+    await page.keyboard.type('6*7=')
+    await expect(page.getByTestId(display)).toHaveText('42')
+    // and so does a typed key with focus on the "···" button itself (reached with Tab, not clicked)
+    await clearCalculator(page)
+    await page.getByTestId('window-calculator-multitasking').focus()
+    await page.keyboard.type('6*7=')
+    await expect(page.getByTestId(display)).toHaveText('42')
+
     // Files, waiting in the strip, comes back beside the Slide Over and is still usable
     await page.getByTestId('stage-strip-files').click()
     await expect(windowOf(page, 'files')).toBeVisible()

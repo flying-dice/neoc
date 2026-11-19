@@ -4,6 +4,7 @@ import {
   anchorShift,
   covered,
   HeightIndex,
+  scrollTopFor,
   visibleRange,
   windowFor
 } from './virtual'
@@ -129,5 +130,35 @@ describe('scroll anchoring', () => {
     const anchor = { key: 'c', index: 2 }
     expect(anchorShift(anchor, ['a', 'b', 'c'], 0, heights)).toBeNull()
     expect(anchorShift(anchor, ['x', 'y'], 0, heights)).toBeNull()
+  })
+})
+
+describe('scrollTopFor', () => {
+  // A large title and padding put the list 101px down its scroller; a 50px sticky bar covers the scroller's top edge.
+  const frame = { listOffset: 101, viewportHeight: 600, padTop: 50 }
+  const heights = new HeightIndex(1000, 44)
+
+  test('the first row at start is the top of the scroller: the large title stays, row 1 clears the bar', () => {
+    expect(scrollTopFor(heights, 0, 'start', frame)).toBe(0)
+    expect(frame.listOffset).toBeGreaterThanOrEqual(frame.padTop) // row 1 then sits at 101px, below the 50px bar
+  })
+
+  test('any other row at start stops just below the sticky bar', () => {
+    expect(scrollTopFor(heights, 10, 'start', frame)).toBe(101 + 440 - 50)
+    expect(scrollTopFor(heights, 10, 'start', { ...frame, padTop: 0 })).toBe(101 + 440)
+  })
+
+  test('end puts the last row at the bottom edge, and never scrolls below the top', () => {
+    expect(scrollTopFor(heights, 999, 'end', frame)).toBe(101 + 1000 * 44 - 600)
+    expect(scrollTopFor(new HeightIndex(2, 44), 1, 'end', frame)).toBe(0)
+  })
+
+  test('an index past the list is clamped to its rows', () => {
+    expect(scrollTopFor(heights, 5000, 'end', frame)).toBe(scrollTopFor(heights, 999, 'end', frame))
+    expect(scrollTopFor(heights, -3, 'start', frame)).toBe(0)
+  })
+
+  test('an empty list scrolls to the top', () => {
+    expect(scrollTopFor(new HeightIndex(0, 44), 0, 'end', frame)).toBe(0)
   })
 })
