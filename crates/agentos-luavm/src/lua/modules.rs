@@ -349,25 +349,138 @@ mod tests {
         }
     }
 
-    /// Every type a definition file names is a primitive or a class the same file declares: a recorded
-    /// type name with no class would be an unknown type in lua-language-server.
+    /// Every type a definition file names (in a `---@param`, `---@return` or `---@field`) is a primitive or a class
+    /// the same file declares: a recorded type name with no class would be an unknown type in lua-language-server,
+    /// and `luals_type` turns any unknown name into `<module>.<Name>` without complaint.
     #[test]
     fn every_named_type_is_declared() {
         let lua = make_engine().expect("engine");
         for (key, meta) in luals_metas(&lua).expect("metas") {
             let declared: Vec<&str> = meta.lines().filter_map(|l| l.strip_prefix("---@class ")).collect();
             for line in meta.lines() {
-                let Some(rest) = line.strip_prefix("---@param ").or_else(|| line.strip_prefix("---@return "))
-                else {
+                // where the type sits among the words of the line: `@param name type`, `@return type`, `@field name type`
+                let type_word = if line.starts_with("---@return ") {
+                    1
+                } else if line.starts_with("---@param ") || line.starts_with("---@field ") {
+                    2
+                } else {
                     continue;
                 };
-                let ty =
-                    rest.split_whitespace().nth(usize::from(line.starts_with("---@param "))).unwrap_or("");
-                let ty = ty.trim_end_matches('?');
+                let ty = line.split_whitespace().nth(type_word).unwrap_or("").trim_end_matches('?');
                 let known = matches!(ty, "string" | "number" | "boolean" | "any" | "nil" | "err")
                     || declared.contains(&ty);
                 assert!(known, "{key}: `{line}` names `{ty}`, which no class declares");
             }
+        }
+    }
+
+    /// One Lua expression per recorded resource type, building a value that has every field set, so the test below
+    /// can hold the records to the implementation.
+    const INSTANCES: &[(&str, &str, &str)] = &[
+        ("lib:cache", "Cache", r#"require("lib:cache").Cache.new({ max_size = 2 })"#),
+        ("lib:chrono", "Date", r#"require("lib:chrono").Date.new(2026, 5, 20)"#),
+        ("lib:chrono", "Time", r#"require("lib:chrono").Time.new(1, 2, 3)"#),
+        ("lib:chrono", "DateTime", r#"require("lib:chrono").DateTime.new(2026, 5, 20, 1, 2, 3)"#),
+        (
+            "lib:chrono",
+            "ZonedDateTime",
+            r#"require("lib:chrono").ZonedDateTime.parse("2026-05-20T01:02:03+01:00[Europe/London]")"#,
+        ),
+        ("lib:chrono", "Duration", r#"require("lib:chrono").Duration.of({ hours = 1 })"#),
+        (
+            "lib:csv",
+            "CsvReader",
+            r#"require("lib:csv").reader(require("std:io").from_string("a\n1\n"), { headers = true })"#,
+        ),
+        ("lib:csv", "CsvWriter", r#"require("lib:csv").writer({ headers = { "a" } })"#),
+        ("lib:glob", "Glob", r#"require("lib:glob").Glob.new("*.lua")"#),
+        ("lib:glob", "GlobSet", r#"require("lib:glob").GlobSet.new({ "*.lua" })"#),
+        ("lib:hash", "Hasher", r#"require("lib:hash").Hasher.new("sha256")"#),
+        ("lib:hmac", "Hmac", r#"require("lib:hmac").Hmac.new("sha256", "key")"#),
+        ("lib:json", "Object", r#"require("lib:json").object()"#),
+        ("lib:json", "Array", r#"require("lib:json").array()"#),
+        ("lib:log", "Logger", r#"require("lib:log").new()"#),
+        ("lib:pkey", "KeyPair", r#"require("lib:pkey").KeyPair.generate("ed25519")"#),
+        ("lib:pkey", "PublicKey", r#"require("lib:pkey").KeyPair.generate("ed25519"):public_key()"#),
+        ("lib:regex", "Pattern", r#"require("lib:regex").Pattern.new("a+")"#),
+        ("lib:semver", "Version", r#"require("lib:semver").Version.parse("1.2.3-alpha.1+build.5")"#),
+        ("lib:semver", "VersionReq", r#"require("lib:semver").VersionReq.parse(">=1.2")"#),
+        ("lib:tempfile", "TempFile", r#"require("lib:tempfile").TempFile.new()"#),
+        ("lib:tempfile", "TempDir", r#"require("lib:tempfile").TempDir.new()"#),
+        ("lib:template", "Template", r#"require("lib:template").compile("hello")"#),
+        ("lib:url", "Url", r#"require("lib:url").Url.parse("https://u:p@example.com:8443/a/b?q=1#frag")"#),
+        ("std:collections", "Map", r#"require("std:collections").Map.new()"#),
+        ("std:collections", "Counter", r#"require("std:collections").Counter.new(1)"#),
+        ("std:collections", "Mutex", r#"require("std:collections").Mutex.new()"#),
+        ("std:io", "ReaderHandle", r#"require("std:io").from_string("x")"#),
+        ("std:net", "TcpListener", r#"require("std:net").TcpListener.bind("127.0.0.1:0")"#),
+        ("std:task", "Task", r#"require("std:task").spawn(function() end)"#),
+        ("std:thread", "WorkerHandle", r#"require("std:thread").spawn({ source = "return 1" })"#),
+        ("std:time", "Duration", r#"require("std:time").Duration.from_secs(1)"#),
+        ("std:time", "Instant", r#"require("std:time").Instant.now()"#),
+        ("vnd:jsonschema", "Schema", r#"require("vnd:jsonschema").compile("{}")"#),
+        ("vnd:jsonschema", "ValidationResult", r#"require("vnd:jsonschema").compile("{}"):validate(1)"#),
+        ("vnd:rusqlite", "Database", r#"require("vnd:rusqlite").open(":memory:")"#),
+        ("vnd:rusqlite", "Statement", r#"require("vnd:rusqlite").open(":memory:"):prepare("select 1")"#),
+    ];
+
+    /// The recorded types `INSTANCES` leaves out, each with why: a value of one needs something a unit test here
+    /// does not have (a running server, a task scheduler loop, a worker, a database server, Docker). Their records
+    /// are the only ones not held to the implementation.
+    const NOT_BUILT: &[(&str, &str, &str)] = &[
+        (
+            "std:io",
+            "WriterHandle",
+            "a writer opens a file for writing, and a unit test leaves no file behind",
+        ),
+        ("std:thread", "Channel", "exists only inside a spawned worker"),
+        (
+            "vnd:hyper",
+            "ServerHandle",
+            "a server is started by `serve` on a bound listener inside a running app",
+        ),
+        ("vnd:hyper", "Request", "exists only inside a request handler"),
+        ("vnd:sqlx_mysql", "Database", "needs a MySQL server"),
+        ("vnd:sqlx_mysql", "Statement", "needs a MySQL server"),
+        ("vnd:sqlx_postgres", "Database", "needs a PostgreSQL server"),
+    ];
+
+    /// Every method and field a module records for a resource type exists on a live value of that type. A record
+    /// with no implementation behind it (`Time:add`, once) is a call lua-language-server accepts and the VM
+    /// refuses; this is the mirror of `check_statics_recorded`, which holds the other direction for sub-tables.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recorded_members_exist_on_live_values() {
+        let lua = make_engine().expect("engine");
+        let mut seen = Vec::new();
+        for module in declared(&lua).expect("declared") {
+            for (type_name, methods, fields) in module.recorded_members() {
+                let key = module.name();
+                seen.push((key.to_string(), type_name.clone()));
+                let Some((_, _, expr)) = INSTANCES.iter().find(|(k, t, _)| *k == key && *t == type_name)
+                else {
+                    assert!(
+                        NOT_BUILT.iter().any(|(k, t, _)| *k == key && *t == type_name),
+                        "{key}: `{type_name}` is neither built by INSTANCES nor listed in NOT_BUILT"
+                    );
+                    continue;
+                };
+                let names: Vec<String> = methods.iter().chain(fields.iter()).cloned().collect();
+                let probe = format!(
+                    "local v = ({expr})\nlocal missing = {{}}\nfor _, name in ipairs(...) do\n  if v[name] == nil then missing[#missing + 1] = name end\nend\nreturn table.concat(missing, \", \")"
+                );
+                let missing: String = lua
+                    .load(probe.as_str())
+                    .call(names)
+                    .unwrap_or_else(|e| panic!("{key}: building a `{type_name}` with `{expr}`: {e}"));
+                assert!(
+                    missing.is_empty(),
+                    "{key}: `{type_name}` records {missing}, which a live value does not have"
+                );
+            }
+        }
+        for (key, type_name, _) in INSTANCES.iter().chain(NOT_BUILT.iter()) {
+            let known = seen.iter().any(|(k, t)| k == key && t == type_name);
+            assert!(known, "{key}: `{type_name}` is listed but no module records it");
         }
     }
 

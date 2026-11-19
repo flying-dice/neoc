@@ -11,8 +11,9 @@ local ud_Object = {}
 
 --- Walk a path of segments and return the leaf node.
 ---@param path any
+---@param ... any
 ---@return any
-function ud_Object:get(path) end
+function ud_Object:get(path, ...) end
 
 --- Insert or replace `key` with `value`.
 ---@param key string
@@ -41,8 +42,9 @@ local ud_Array = {}
 
 --- Walk a path starting from a 1-based index.
 ---@param path any
+---@param ... any
 ---@return any
-function ud_Array:get(path) end
+function ud_Array:get(path, ...) end
 
 --- Replace the element at a 1-based index.
 ---@param index number

@@ -90,24 +90,6 @@ local ud_Time = {}
 ---@return lib_chrono.DateTime
 function ud_Time:on(date) end
 
---- Add a `Duration`.
----@param duration lib_chrono.Duration
----@return lib_chrono.Time?
----@return string? err
-function ud_Time:add(duration) end
-
---- Subtract a `Duration`.
----@param duration lib_chrono.Duration
----@return lib_chrono.Time?
----@return string? err
-function ud_Time:sub(duration) end
-
---- Span from this time until `other`.
----@param other lib_chrono.Time
----@return lib_chrono.Duration?
----@return string? err
-function ud_Time:diff(other) end
-
 --- Format via a strftime pattern.
 ---@param fmt string
 ---@return string?

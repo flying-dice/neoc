@@ -182,14 +182,6 @@ fn record_userdata(m: &mut Module<'_>) {
             .field("second", "number", "Second of minute (0-59).")
             .field("nanosecond", "number", "Sub-second nanoseconds.")
             .method("on", &[("date", "Date")], "DateTime", "Combine with a `Date` into a `DateTime`.")
-            .method("add", &[("duration", "Duration")], "Result<Time, string>", "Add a `Duration`.")
-            .method("sub", &[("duration", "Duration")], "Result<Time, string>", "Subtract a `Duration`.")
-            .method(
-                "diff",
-                &[("other", "Time")],
-                "Result<Duration, string>",
-                "Span from this time until `other`.",
-            )
             .method(
                 "format",
                 &[("fmt", "string")],

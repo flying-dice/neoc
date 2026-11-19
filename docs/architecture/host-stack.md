@@ -36,9 +36,9 @@ Apps are written in plain Lua 5.1 (checked by lua-language-server against the ge
   | Clean release build | 1 min 58 s (378 s of CPU) | `CARGO_TARGET_DIR=<empty dir> cargo build --release -p agentos-host` |
   | Incremental release build (touched `crates/agentos-lua/src/api/misc.rs`) | 1 min 06 s: the adapter and the host are recompiled and relinked with LTO | `touch crates/agentos-lua/src/api/misc.rs`, then the same build |
   | Incremental dev build (same file) | 1.7 s | `cargo build -p agentos-host` after a first build, then `touch` the file and build again |
-  | VM create (the built Calculator, 14 656 bytes: engine, host API, manifest, window and tools; 50 VMs after one warm-up) | first 1.69 ms; then median 1.44 ms, mean 1.44 ms, p95 1.62 ms, max 1.68 ms | `cargo test --release -p agentos-lua --test baseline -- --ignored --nocapture` (`AGENTOS_BASELINE_VMS=<n>` for another count) |
+  | VM create (the built Calculator, 14 662 bytes: engine, host API, manifest, window and tools; 50 VMs after one warm-up) | first 1.64 ms; then median 1.26 ms, mean 1.30 ms, p95 1.42 ms, max 1.51 ms | `cargo test --release -p agentos-lua --test baseline -- --ignored --nocapture` (`AGENTOS_BASELINE_VMS=<n>` for another count) |
   | Lua heap per VM (`AppVm::used_memory`) | 512.9 KiB, the same for every VM | the same test |
-  | Process memory per VM (resident set after 50 VMs minus before, `ps`) | 822 KiB (12 176 KiB before, 53 296 KiB after): the Lua heap plus what Rust allocates for the VM (database handle, tables of the host API) | the same test |
+  | Process memory per VM (resident set after 50 VMs minus before, `ps`) | 822 KiB (12 208 KiB before, 53 296 KiB after): the Lua heap plus what Rust allocates for the VM (database handle, tables of the host API) | the same test |
 
   The VM numbers are for a VM that requires nothing from `std:`/`lib:`/`vnd:`: those module tables are built per VM on first `require`, so a VM that requires nothing pays nothing, and one that does pays for what it requires. Event dispatch (the Luau spike's 1.8 us per event) is not remeasured; `crates/agentos-lua/tests/baseline.rs` is the place to add it. In a debug build the same test gives about 2.5 ms and the same heap.
 

@@ -282,3 +282,17 @@ fn install_shell(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<()> {
     )?;
     app.set("shell", shell)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::open_order;
+
+    /// Views sort by their number, so `v2` comes before `v10`; an id that is not `v<n>` sorts after them, by
+    /// its text.
+    #[test]
+    fn numbered_views_sort_by_number_and_other_ids_come_last_by_text() {
+        let mut ids = ["v10", "zeta", "v2", "alpha", "v1", "v", "v1x", "v-3"];
+        ids.sort_by(|a, b| open_order(a).cmp(&open_order(b)));
+        assert_eq!(ids, ["v1", "v2", "v10", "alpha", "v", "v-3", "v1x", "zeta"]);
+    }
+}

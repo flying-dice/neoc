@@ -895,7 +895,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     m.userdata("Object", |o| {
         o.method(
             "get",
-            &[("path", "LuaValue")],
+            &[("path", "LuaValue"), ("...", "LuaValue")],
             "LuaValue",
             "Walk a path of segments and return the leaf node.",
         )
@@ -912,16 +912,21 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     });
 
     m.userdata("Array", |a| {
-        a.method("get", &[("path", "LuaValue")], "LuaValue", "Walk a path starting from a 1-based index.")
-            .method(
-                "set",
-                &[("index", "number"), ("value", "LuaValue")],
-                "()",
-                "Replace the element at a 1-based index.",
-            )
-            .method("push", &[("value", "LuaValue")], "()", "Append `value` to the end of the array.")
-            .method("len", &[], "number", "Current length of the array.")
-            .method("to_table", &[], "LuaValue", "Materialise the array as a 1-indexed Lua table.");
+        a.method(
+            "get",
+            &[("path", "LuaValue"), ("...", "LuaValue")],
+            "LuaValue",
+            "Walk a path starting from a 1-based index.",
+        )
+        .method(
+            "set",
+            &[("index", "number"), ("value", "LuaValue")],
+            "()",
+            "Replace the element at a 1-based index.",
+        )
+        .method("push", &[("value", "LuaValue")], "()", "Append `value` to the end of the array.")
+        .method("len", &[], "number", "Current length of the array.")
+        .method("to_table", &[], "LuaValue", "Materialise the array as a 1-indexed Lua table.");
     });
 
     m.const_("null", "LuaValue", "Sentinel userdata for explicit JSON `null`, distinct from Lua `nil`.");

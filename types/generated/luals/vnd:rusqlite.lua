@@ -11,24 +11,24 @@ local ud_Database = {}
 
 --- Execute a SQL statement, binding trailing arguments to `?` placeholders; returns rows affected.
 ---@param sql string
----@param params any
+---@param ... any
 ---@return number?
 ---@return string? err
-function ud_Database:execute(sql, params) end
+function ud_Database:execute(sql, ...) end
 
 --- Execute a SELECT and return all rows as a 1-indexed table of column-keyed row tables.
 ---@param sql string
----@param params any
+---@param ... any
 ---@return any
 ---@return string? err
-function ud_Database:query(sql, params) end
+function ud_Database:query(sql, ...) end
 
 --- Execute a SELECT and return the first matching row, or nil when none matched.
 ---@param sql string
----@param params any
+---@param ... any
 ---@return any
 ---@return string? err
-function ud_Database:query_one(sql, params) end
+function ud_Database:query_one(sql, ...) end
 
 --- Prepare a SQL statement for repeated execution, sharing this connection.
 ---@param sql string
@@ -42,22 +42,22 @@ function ud_Database:close() end
 local ud_Statement = {}
 
 --- Execute the prepared statement with positional parameters; returns rows affected.
----@param params any
+---@param ... any
 ---@return number?
 ---@return string? err
-function ud_Statement:execute(params) end
+function ud_Statement:execute(...) end
 
 --- Execute the prepared SELECT and return all rows.
----@param params any
+---@param ... any
 ---@return any
 ---@return string? err
-function ud_Statement:query(params) end
+function ud_Statement:query(...) end
 
 --- Execute the prepared SELECT and return the first matching row, or nil when none matched.
----@param params any
+---@param ... any
 ---@return any
 ---@return string? err
-function ud_Statement:query_one(params) end
+function ud_Statement:query_one(...) end
 
 ---@class vnd_rusqlite
 local M = {}

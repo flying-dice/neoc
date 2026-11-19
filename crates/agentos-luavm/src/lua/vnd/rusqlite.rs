@@ -112,19 +112,19 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     m.userdata("Database", |d| {
         d.method(
             "execute",
-            &[("sql", "string"), ("params", "LuaValue")],
+            &[("sql", "string"), ("...", "LuaValue")],
             "Result<number, string>",
             "Execute a SQL statement, binding trailing arguments to `?` placeholders; returns rows affected.",
         )
         .method(
             "query",
-            &[("sql", "string"), ("params", "LuaValue")],
+            &[("sql", "string"), ("...", "LuaValue")],
             "Result<LuaValue, string>",
             "Execute a SELECT and return all rows as a 1-indexed table of column-keyed row tables.",
         )
         .method(
             "query_one",
-            &[("sql", "string"), ("params", "LuaValue")],
+            &[("sql", "string"), ("...", "LuaValue")],
             "Result<LuaValue, string>",
             "Execute a SELECT and return the first matching row, or nil when none matched.",
         )
@@ -145,19 +145,19 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     m.userdata("Statement", |s| {
         s.method(
             "execute",
-            &[("params", "LuaValue")],
+            &[("...", "LuaValue")],
             "Result<number, string>",
             "Execute the prepared statement with positional parameters; returns rows affected.",
         )
         .method(
             "query",
-            &[("params", "LuaValue")],
+            &[("...", "LuaValue")],
             "Result<LuaValue, string>",
             "Execute the prepared SELECT and return all rows.",
         )
         .method(
             "query_one",
-            &[("params", "LuaValue")],
+            &[("...", "LuaValue")],
             "Result<LuaValue, string>",
             "Execute the prepared SELECT and return the first matching row, or nil when none matched.",
         );

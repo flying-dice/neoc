@@ -11,24 +11,24 @@ local ud_Database = {}
 
 --- Execute a SQL statement, binding trailing arguments to `$1, $2, …` placeholders; returns rows affected.
 ---@param sql string
----@param params any
+---@param ... any
 ---@return number?
 ---@return string? err
-function ud_Database:execute(sql, params) end
+function ud_Database:execute(sql, ...) end
 
 --- Execute a SELECT and return all rows as a 1-indexed table of column-keyed row tables.
 ---@param sql string
----@param params any
+---@param ... any
 ---@return any
 ---@return string? err
-function ud_Database:query(sql, params) end
+function ud_Database:query(sql, ...) end
 
 --- Execute a SELECT and return the first matching row, or nil when none matched.
 ---@param sql string
----@param params any
+---@param ... any
 ---@return any
 ---@return string? err
-function ud_Database:query_one(sql, params) end
+function ud_Database:query_one(sql, ...) end
 
 --- Close all connections in the pool; subsequent method calls on this handle error.
 function ud_Database:close() end

@@ -593,6 +593,20 @@ impl<'l> Module<'l> {
         Ok(out)
     }
 
+    /// What is recorded for each resource type of the module: `(type, methods, fields)`, so a test can hold the
+    /// records to a live instance (a recorded method the type does not have would be a call `LuaLS` accepts and the
+    /// VM refuses).
+    #[cfg(test)]
+    pub(crate) fn recorded_members(&self) -> Vec<(String, Vec<String>, Vec<String>)> {
+        let names = |entries: &[Entry]| entries.iter().map(|e| e.name.clone()).collect::<Vec<_>>();
+        let userdata = self.userdata.iter().map(|ud| {
+            let fields = ud.fields.iter().map(|f| f.name.clone()).collect();
+            (ud.type_name.clone(), names(&ud.methods), fields)
+        });
+        let types = self.types.iter().map(|ty| (ty.type_name.clone(), names(&ty.methods), Vec::new()));
+        userdata.chain(types).collect()
+    }
+
     /// Fails when the live sub-table for `ud` on the module table has a member the type did not record.
     fn check_statics_recorded(&self, ud: &UserDataEntry) -> mlua::Result<()> {
         let mlua::Value::Table(sub) = self.table.get::<mlua::Value>(ud.type_name.as_str())? else {

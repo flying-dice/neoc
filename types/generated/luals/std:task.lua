@@ -27,22 +27,22 @@ local M = {}
 
 --- Spawn a function or coroutine. The first synchronous slice runs immediately; a yield runs the continuation as a separate task.
 ---@param fn_or_thread any
----@param args any
+---@param ... any
 ---@return std_task.Task
-function M.spawn(fn_or_thread, args) end
+function M.spawn(fn_or_thread, ...) end
 
 --- Queue a function to run after the current synchronous batch. Deferred tasks execute in FIFO order.
 ---@param fn_or_thread any
----@param args any
+---@param ... any
 ---@return std_task.Task
-function M.defer(fn_or_thread, args) end
+function M.defer(fn_or_thread, ...) end
 
 --- Schedule a function to run after `secs` seconds. `delay(0, ...)` is equivalent to `defer(...)`.
 ---@param secs number
 ---@param fn_or_thread any
----@param args any
+---@param ... any
 ---@return std_task.Task
-function M.delay(secs, fn_or_thread, args) end
+function M.delay(secs, fn_or_thread, ...) end
 
 --- Yield the current coroutine for `secs` seconds (NaN and negative clamp to 0, over 100 years clamps to 100 years). Returns the actual elapsed time.
 ---@param secs number

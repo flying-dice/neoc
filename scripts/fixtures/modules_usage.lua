@@ -8,6 +8,8 @@ local hash = require("lib:hash")
 local collections = require("std:collections")
 local time = require("std:time")
 local fs = require("std:fs")
+local rusqlite = require("vnd:rusqlite")
+local task = require("std:task")
 
 -- a fallible function returns the value, then an error message
 local encoded = base64.encode("hello")
@@ -39,3 +41,20 @@ local digest, hash_err = hash.hash("sha256", "data")
 print(digest and digest:len(), hash_err)
 local text, read_err = fs.read("/tmp/x")
 print(text, read_err)
+
+-- functions that take any number of trailing arguments: SQL parameters, a JSON path, a task's arguments
+local db = rusqlite.open(":memory:")
+if db then
+  db:execute("CREATE TABLE t (a, b)")
+  print(db:execute("INSERT INTO t VALUES (?, ?)", 1, 2))
+  print(db:query("SELECT * FROM t WHERE a = ? AND b = ?", 1, 2))
+  print(db:query_one("SELECT * FROM t"))
+  local statement = db:prepare("SELECT * FROM t WHERE a = ? AND b = ?")
+  print(statement:query(1, 2))
+end
+print(object:get("a", "b", 1))
+task.spawn(function(a, b)
+  print(a, b)
+end, 1, 2)
+task.defer(print, "deferred", 1)
+task.delay(1, print, "later", 1, 2)

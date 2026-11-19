@@ -6,9 +6,10 @@ local json = require("lib:json")
 local base64 = require("lib:base64")
 local collections = require("std:collections")
 local time = require("std:time")
+local rusqlite = require("vnd:rusqlite")
 
 base64.encod("x") -- expect-error
-base64.encode(42) -- expect-error
+base64.encode {} -- expect-error
 base64.encode() -- expect-error
 ---@type number
 local _encoded = base64.encode("x") -- expect-error
@@ -17,6 +18,7 @@ json.object():set(1, 2) -- expect-error
 collections.Map.create() -- expect-error
 collections.Counter.new("ten") -- expect-error
 time.sleep("soon") -- expect-error
+rusqlite.open(":memory:"):query() -- expect-error
 local _timeout = time.Duration.from_secs(5):as_years() -- expect-error
 local _fine = base64.encode("this line is correct")
 local _object = json.object()
