@@ -72,8 +72,15 @@ pub enum VmError {
     /// The caller's arguments do not fit the tool's input schema.
     #[error("invalid input: {0}")]
     InvalidInput(String),
-    #[error("conversion: {0}")]
-    Convert(String),
+    /// A value could not cross between Lua and JSON (a function, a cycle, a number with no JSON form).
+    #[error("cannot convert a value between Lua and JSON: {0}")]
+    BadValue(String),
+    /// The app declared or rendered a window wrongly (no `render`, a malformed tree, an unknown source).
+    #[error("invalid window: {0}")]
+    InvalidWindow(String),
+    /// The package does not contain the file its manifest names as the entry.
+    #[error("the package has no entry `{0}`")]
+    NoEntry(String),
 }
 pub type Result<T> = std::result::Result<T, VmError>;
 
@@ -513,13 +520,8 @@ impl AppVm {
         *self.shared.env.lock() = Some(env.clone());
         api::install(&self.lua, &self.shared, &env)?;
         let entry = self.shared.package.entry.clone();
-        let source = self
-            .shared
-            .package
-            .files
-            .get(&entry)
-            .cloned()
-            .ok_or_else(|| VmError::Convert(format!("the package has no entry `{entry}`")))?;
+        let source =
+            self.shared.package.files.get(&entry).cloned().ok_or_else(|| VmError::NoEntry(entry.clone()))?;
         load_source(&self.lua, source.as_slice())
             .set_name(self.shared.chunk_name(&entry))
             .set_environment(env)
@@ -582,6 +584,7 @@ impl AppVm {
 
     // ---- calls into the app -----------------------------------------------------------------------------
 
+    // TODO: clean-code - 0.4 - DRY: builds the `ctx.actor` table that `view::ctx_actor` builds; call it.
     fn ctx_table(&self, ctx: &CallContext) -> mlua::Result<Table> {
         let t = self.lua.create_table()?;
         let actor = self.lua.create_table()?;
@@ -617,11 +620,11 @@ impl AppVm {
         };
         let input = tool_schema::validate_args(&schema, &args).map_err(VmError::InvalidInput)?;
         self.in_call(read_only, async {
-            let convert = |e: mlua::Error| VmError::Convert(e.to_string());
+            let convert = |e: mlua::Error| VmError::BadValue(e.to_string());
             let arg = json_to_lua(&self.lua, &input).map_err(convert)?;
             let ctx = self.ctx_table(ctx).map_err(convert)?;
             let out: LuaValue = run.call_async((arg, ctx)).await.map_err(|e| script(&e))?;
-            lua_to_json(&out).map_err(|e| VmError::Convert(e.to_string()))
+            lua_to_json(&out).map_err(|e| VmError::BadValue(e.to_string()))
         })
         .await
     }
@@ -643,7 +646,7 @@ impl AppVm {
             .cloned()
             .ok_or_else(|| VmError::NoSuchWriter(source.0.clone()))?;
         self.in_call(false, async {
-            let convert = |e: mlua::Error| VmError::Convert(e.to_string());
+            let convert = |e: mlua::Error| VmError::BadValue(e.to_string());
             let args = (
                 json_to_lua(&self.lua, key).map_err(convert)?,
                 field.to_owned(),
@@ -674,14 +677,14 @@ impl AppVm {
         let handler = self.shared.handlers.lock().get(event).cloned();
         let Some(handler) = handler else { return Ok((Value::Null, BTreeSet::new())) };
         self.in_call(false, async {
-            let arg = json_to_lua(&self.lua, &payload).map_err(|e| VmError::Convert(e.to_string()))?;
+            let arg = json_to_lua(&self.lua, &payload).map_err(|e| VmError::BadValue(e.to_string()))?;
             if track {
                 self.shared.tracker.lock().begin(false);
             }
             let result = handler.call_async::<LuaValue>(arg).await;
             let deps = if track { self.shared.tracker.lock().end() } else { BTreeSet::new() };
             let out = result.map_err(|e| script(&e))?;
-            Ok((lua_to_json(&out).map_err(|e| VmError::Convert(e.to_string()))?, deps))
+            Ok((lua_to_json(&out).map_err(|e| VmError::BadValue(e.to_string()))?, deps))
         })
         .await
     }

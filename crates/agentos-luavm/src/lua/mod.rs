@@ -15,7 +15,4 @@ pub(crate) mod limits;
 pub mod modules;
 pub mod sandbox;
 pub mod std;
-pub mod tracing_layer;
 pub mod vnd;
-
-pub use tracing_layer::{scope, LuaLayer, RunBuffers, CURRENT_RUN};

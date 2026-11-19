@@ -239,7 +239,6 @@ impl UserData for Request {
             }
             Ok(Value::Table(t))
         });
-        // TODO: clean-code - 0.55 - COUPLING: vnd:hyper reaches directly into vnd::serde_json::parse_to_handle; promote to a shared bridge in lib or accept it as a constructor dep.
         fields.add_field_method_get("json", |lua, this| {
             if this.inner.body.is_empty() {
                 return Ok(Value::Nil);

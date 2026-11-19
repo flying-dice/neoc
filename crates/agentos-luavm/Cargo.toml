@@ -1,6 +1,6 @@
 [package]
 name = "agentos-luavm"
-description = "Sandboxed standard Lua 5.1 VM (mlua, vendored): the std:/lib:/vnd: module registry, task scheduler and tracing layer. No dependency on any other agentos crate."
+description = "Sandboxed standard Lua 5.1 VM (mlua, vendored): the std:/lib:/vnd: module registry, and task scheduler. No dependency on any other agentos crate."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
@@ -17,7 +17,6 @@ toml = { workspace = true, features = ["display"] }
 quick-xml = { version = "0.42", features = ["serialize"] }
 tracing = { workspace = true }
 tracing-core = "0.1"
-tracing-subscriber = { workspace = true, features = ["json"] }
 tokio = { workspace = true, features = ["net", "io-util"] }
 mlua = { workspace = true }
 parking_lot = { workspace = true }

@@ -130,6 +130,7 @@ struct FetchedRef {
 }
 
 /// What an install record keeps of a load: the version and the digest of the app ref.
+// TODO: clean-code - 0.4 - NAMING: no approval is left in it, only the version and digest a load records; rename (`LoadedRevision`).
 struct Approval {
     version: String,
     ref_sha256: String,

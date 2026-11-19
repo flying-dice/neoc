@@ -157,7 +157,7 @@ macro_rules! db_op {
         $methods.add_async_method($name, |lua, this, args: MultiValue| {
             let pool = this.pool.clone();
             idle_result(async move {
-                let (sql, params) = match split_sql_args(args) {
+                let (sql, params) = match super::split_sql_args(args) {
                     Ok(v) => v,
                     Err(e) => return from_err(&lua, $op, e),
                 };
@@ -307,17 +307,6 @@ fn build_query(sql: &str, params: Vec<Value>) -> Result<Query<'_, MySql, MySqlAr
 // ---------------------------------------------------------------------------
 // Lua → sqlx
 // ---------------------------------------------------------------------------
-
-fn split_sql_args(mut args: MultiValue) -> Result<(String, Vec<Value>), String> {
-    let head = args.pop_front().ok_or_else(|| "missing SQL string".to_string())?;
-    let sql = match head {
-        Value::String(s) => s.to_str().map_err(|e| e.to_string())?.to_owned(),
-        other => {
-            return Err(format!("expected SQL string, got {} — accepted: string", other.type_name()));
-        }
-    };
-    Ok((sql, args.into_iter().collect()))
-}
 
 fn bind_param(
     q: Query<'_, MySql, MySqlArguments>,

@@ -1,5 +1,5 @@
 //! A sandboxed standard Lua 5.1 VM (mlua, vendored): the engine factory, the strict `require` registry
-//! (`std:*`, `lib:*`, `vnd:*`), the task scheduler and the tracing layer.
+//! (`std:*`, `lib:*`, `vnd:*`), and the task scheduler.
 //!
 //! This crate depends on no other `agentos-*` crate: it is the Lua runtime, not an adapter. The adapter
 //! that implements the `AppRuntime` port is built on top of it.
@@ -55,6 +55,4 @@
 /// `mlua` wrapper rule (only this crate depends on it directly) holds.
 pub use mlua;
 
-pub mod dto;
-pub mod errors;
 pub mod lua;

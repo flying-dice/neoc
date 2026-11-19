@@ -121,7 +121,7 @@ pub(crate) fn make_handle(lua: &Lua, sh: &Shared, def: &str, params: &Table) -> 
 // ---- Lua tree -> wire tree --------------------------------------------------------------------------------
 
 fn bad(path: &str, why: impl std::fmt::Display) -> VmError {
-    VmError::Convert(format!("{path}: {why}"))
+    VmError::InvalidWindow(format!("{path}: {why}"))
 }
 
 /// What converting one rendered tree has used, against what a view may hold. The domain validates the
@@ -276,12 +276,12 @@ pub(crate) fn wire_tree(root: &Table, window: &str) -> Result<(Node, HashMap<Str
 }
 
 fn client_decls(spec: &Table) -> Result<BTreeMap<String, ClientDecl>> {
-    let Some(client) = spec.get::<Option<Table>>("client").map_err(|e| VmError::Convert(e.to_string()))?
+    let Some(client) = spec.get::<Option<Table>>("client").map_err(|e| VmError::BadValue(e.to_string()))?
     else {
         return Ok(BTreeMap::new());
     };
     let Value::Object(map) =
-        lua_to_json(&LuaValue::Table(client)).map_err(|e| VmError::Convert(e.to_string()))?
+        lua_to_json(&LuaValue::Table(client)).map_err(|e| VmError::BadValue(e.to_string()))?
     else {
         return Ok(BTreeMap::new());
     };
@@ -289,7 +289,7 @@ fn client_decls(spec: &Table) -> Result<BTreeMap<String, ClientDecl>> {
         .map(|(name, decl)| {
             serde_json::from_value::<ClientDecl>(decl)
                 .map(|d| (name.clone(), d))
-                .map_err(|e| VmError::Convert(format!("client.{name}: {e}")))
+                .map_err(|e| VmError::InvalidWindow(format!("client.{name}: {e}")))
         })
         .collect()
 }
@@ -524,7 +524,7 @@ impl AppVm {
         restored: Map<String, Value>,
     ) -> Result<RenderOutput> {
         let sh = self.shared().clone();
-        let convert = |e: mlua::Error| VmError::Convert(e.to_string());
+        let convert = |e: mlua::Error| VmError::BadValue(e.to_string());
         let decls = client_decls(&spec)?;
         let lua = self.lua();
 
@@ -586,6 +586,7 @@ impl AppVm {
         self.in_call(false, self.render_inner(view)).await
     }
 
+    // TODO: clean-code - 0.4 - SRP: runs render under tracking, wires the tree, builds the source bindings and validates in one function; extract `bind_sources` and `check_tree`. Also 0.35 - PANIC: a call cancelled mid-render (the client socket closes at a host call) leaves `tracker.pure` and `render_scope` set until a later render ends; reset them in a drop guard.
     async fn render_inner(&self, view: &str) -> Result<RenderOutput> {
         let sh = self.shared().clone();
         let (spec, w, window, decls) = {
@@ -595,7 +596,7 @@ impl AppVm {
         };
         let render: Function = spec
             .get("render")
-            .map_err(|_| VmError::Convert(format!("window `{window}` has no render function")))?;
+            .map_err(|_| VmError::InvalidWindow(format!("window `{window}` has no render function")))?;
 
         *sh.render_scope.lock() = Some(RenderScope::default());
         sh.tracker.lock().begin(true);
@@ -606,7 +607,10 @@ impl AppVm {
         let root = match rendered.map_err(|e| VmError::Script(ScriptError::from_lua(&e)))? {
             LuaValue::Table(t) => t,
             other => {
-                return Err(VmError::Convert(format!("render must return a node, got {}", other.type_name())))
+                return Err(VmError::InvalidWindow(format!(
+                    "render must return a node, got {}",
+                    other.type_name()
+                )))
             }
         };
         let (tree, handlers) = wire_tree(&root, &window)?;
@@ -620,7 +624,7 @@ impl AppVm {
             let def = all_defs
                 .iter()
                 .find(|d| d.id.0 == *def_id)
-                .ok_or_else(|| VmError::Convert(format!("unknown source `{def_id}`")))?;
+                .ok_or_else(|| VmError::InvalidWindow(format!("unknown source `{def_id}`")))?;
             let fields = writable.get(id).cloned().unwrap_or_default();
             sources.insert(
                 id.clone(),
@@ -678,6 +682,7 @@ impl AppVm {
     }
 
     /// The closures of one view event, in the call that holds the VM.
+    // TODO: clean-code - 0.45 - DRY: `run_closures` (and the onOpen/render/onClose sites) re-implement `vm::script()`: downcast `ToolFailure`, else `ScriptError::from_lua`; use `script()` everywhere so `ctx:fail` behaves the same.
     async fn run_closures(
         &self,
         closures: Vec<Function>,
@@ -685,7 +690,7 @@ impl AppVm {
         ctx: &CallContext,
     ) -> Result<bool> {
         let lua = self.lua();
-        let convert = |e: mlua::Error| VmError::Convert(e.to_string());
+        let convert = |e: mlua::Error| VmError::BadValue(e.to_string());
         for f in closures {
             let e = lua.create_table().map_err(convert)?;
             if let Some(k) = &call.row_key {
@@ -715,8 +720,8 @@ impl AppVm {
         let views = sh.views.lock();
         let i = views.get(view).ok_or_else(|| VmError::NoSuchView(view.to_owned()))?;
         for (name, value) in values {
-            let v = json_to_lua(self.lua(), value).map_err(|e| VmError::Convert(e.to_string()))?;
-            i.mirror.raw_set(name.as_str(), v).map_err(|e| VmError::Convert(e.to_string()))?;
+            let v = json_to_lua(self.lua(), value).map_err(|e| VmError::BadValue(e.to_string()))?;
+            i.mirror.raw_set(name.as_str(), v).map_err(|e| VmError::BadValue(e.to_string()))?;
         }
         Ok(())
     }

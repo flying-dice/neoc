@@ -13,9 +13,14 @@ mod ui;
 pub use meta::{agentos_definitions, app_module_definitions, ui_module_definitions};
 pub use ui::{module, ACTION_BUILDERS};
 
-use agentos_domain::ui::spec::{ComponentSpec, EnumDef, ObjectDef, PropSpec, PropType};
+use std::collections::BTreeMap;
 
-use crate::walk::contains_source;
+use agentos_domain::ui::{
+    expr::Func,
+    spec::{ComponentSpec, EnumDef, ObjectDef, PropSpec, PropType, SlotSpec},
+};
+
+use crate::walk::{contains_source, split_group};
 
 /// The Lua keywords, which cannot be bare table keys.
 const RESERVED: &[&str] = &[
@@ -32,6 +37,42 @@ pub(crate) fn key(name: &str) -> String {
         name.to_owned()
     } else {
         format!("[\"{name}\"]")
+    }
+}
+
+/// The slot kinds of a component, as authors write them.
+pub(crate) struct Slots<'a> {
+    pub(crate) plain: Vec<&'a SlotSpec>,
+    pub(crate) groups: BTreeMap<&'a str, Vec<&'a SlotSpec>>,
+    pub(crate) prefixes: Vec<&'a SlotSpec>,
+}
+
+pub(crate) fn classify<'a>(slots: impl Iterator<Item = &'a SlotSpec>) -> Slots<'a> {
+    let mut out = Slots { plain: Vec::new(), groups: BTreeMap::new(), prefixes: Vec::new() };
+    for slot in slots {
+        if slot.prefix {
+            out.prefixes.push(slot);
+        } else if let Some((group, _)) = split_group(slot.name) {
+            out.groups.entry(group).or_default().push(slot);
+        } else {
+            out.plain.push(slot);
+        }
+    }
+    out
+}
+
+pub(crate) fn group_name(prefix: &str) -> &str {
+    prefix.trim_end_matches(':')
+}
+
+/// The Lua name of an expression function: `and`/`or`/`not`/`if` are keywords.
+pub(crate) fn helper_name(f: Func) -> String {
+    match f {
+        Func::And => "all".to_owned(),
+        Func::Or => "any".to_owned(),
+        Func::Not => "negate".to_owned(),
+        Func::If => "when".to_owned(),
+        other => other.name().strip_prefix("fmt.").unwrap_or(other.name()).to_owned(),
     }
 }
 

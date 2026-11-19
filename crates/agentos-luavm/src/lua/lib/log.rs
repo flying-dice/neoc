@@ -49,8 +49,7 @@
 //! ## Backing on `tracing`
 //!
 //! Each call also emits a `tracing::event!` at `target =
-//! "lua::lib::log"`, so the existing `LuaLayer` captures it when a
-//! script runs inside `lua::scope` (used for VCR/recording). The stderr
+//! "lua::lib::log"`, so a `tracing` subscriber the host installs sees it. The stderr
 //! write happens unconditionally — it does not depend on a subscriber
 //! being installed.
 
@@ -440,14 +439,12 @@ fn civil_from_unix(secs: i64) -> (i32, u32, u32, u32, u32, u32) {
 }
 
 // ---------------------------------------------------------------------------
-// Tracing emit — for VCR capture via the existing LuaLayer.
+// Tracing emit — for whatever `tracing` subscriber the host installs.
 // ---------------------------------------------------------------------------
 
 fn emit_tracing(lvl: LogLevel, msg: &str, fields: &Map<String, Json>) {
-    // The Lua layer reads `tracing::Event`s via a `Visit` impl that
-    // captures any field. We pack the merged map into a single
-    // serialised JSON string so the capture is lossless without needing
-    // dynamic structured fields (which `tracing::event!` cannot accept).
+    // The merged fields go out as one serialised JSON string: `tracing::event!` cannot take
+    // dynamic structured fields.
     let fields_json = serde_json::to_string(&Json::Object(fields.clone())).unwrap_or_default();
     match lvl {
         LogLevel::Trace => {

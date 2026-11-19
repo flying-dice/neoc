@@ -419,9 +419,11 @@ adapter is installed (`node_modules/@agentclientprotocol/claude-agent-acp`), wit
 exception to deny-by-default, because it is the person's own MCP client.
 
 **Why deny by default, and `auto_read_only`.** A new agent can do nothing until a person names the apps it may use, and
-"all apps" is a switch that has to be flipped on purpose. `auto_read_only` is safe because it is enforced where it
-matters: a tool the app declared `readOnly` cannot write (below), so allowing it unprompted cannot change anything,
-whereas every writing tool, and everything that is not an AgentOS tool, asks.
+"all apps" is a switch that has to be flipped on purpose. `auto_read_only` rests on the `readOnly` declaration
+of the app: the host stops such a tool writing through the `app.*` API (below) but not through the app's own `std:fs`,
+`vnd:rusqlite` or `std:net` code, so it trusts an app the person installed to declare honestly (apps are the person's
+own code: see "No permissions, no budgets"). Every tool that is not declared `readOnly`, and everything that is not
+an AgentOS tool, still asks.
 
 **Apps and chats.** An app shows a chat with `ui.ChatTranscript { thread = chat { thread = <id>, agent = <id> } }`
 where `local chat = app.thread()`. A `thread` source declares only the thread and the agent (literals or Refs); it

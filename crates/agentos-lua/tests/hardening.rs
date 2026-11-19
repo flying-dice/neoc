@@ -248,6 +248,28 @@ async fn a_read_only_tool_cannot_open_a_window_notify_change_the_shell_or_assign
     assert_eq!(rig.shell.windows.lock().unwrap().len(), 1);
 }
 
+/// `app.state` compares the old and the new value; an `__eq` that reads `app.state` must not deadlock on the
+/// tracker's lock (which would hang a worker thread of the host).
+#[tokio::test]
+async fn an_eq_metamethod_may_read_app_state_while_a_field_is_assigned() {
+    let rig = rig();
+    let app = format!(
+        "{MANIFEST}\n{}",
+        r#"
+        local state = app.state { x = false, y = 7 }
+        local mt = { __eq = function() return state.y == 7 end }
+        app.tool { name = "eq", run = function()
+          state.x = setmetatable({}, mt)
+          state.x = setmetatable({}, mt)
+          return state.y
+        end }
+        "#
+    );
+    rig.load("probe", &app).await.unwrap();
+    let out = tokio::time::timeout(PROMPTLY, rig.tool("probe", "eq")).await.expect("the call hung");
+    assert_eq!(out.unwrap(), json!(7));
+}
+
 #[tokio::test]
 async fn a_caller_can_require_a_read_only_run_of_a_tool_that_is_not_declared_read_only() {
     let rig = rig();

@@ -13,11 +13,14 @@ use agentos_domain::ui::{
     components::{CATALOGUE, STACK_SUGAR},
     expr::{Arity, Func},
     source::ClientDecl,
-    spec::{ComponentSpec, SlotScope, SlotSpec},
+    spec::{ComponentSpec, SlotScope},
 };
 use schemars::schema_for;
 
-use super::{describe, field_type, key, literals, object_type, optional, payload_type, value_type};
+use super::{
+    classify, describe, field_type, group_name, helper_name, key, literals, object_type, optional,
+    payload_type, value_type,
+};
 use crate::schema_lua::schema_to_lua;
 use crate::walk::{effective_events, effective_props, named_enums, named_objects, split_group};
 
@@ -120,27 +123,6 @@ pub fn ui_module_definitions() -> String {
     out
 }
 
-/// The slot kinds of a component, as authors write them.
-struct Slots<'a> {
-    plain: Vec<&'a SlotSpec>,
-    groups: BTreeMap<&'a str, Vec<&'a SlotSpec>>,
-    prefixes: Vec<&'a SlotSpec>,
-}
-
-fn classify<'a>(slots: impl Iterator<Item = &'a SlotSpec>) -> Slots<'a> {
-    let mut out = Slots { plain: Vec::new(), groups: BTreeMap::new(), prefixes: Vec::new() };
-    for slot in slots {
-        if slot.prefix {
-            out.prefixes.push(slot);
-        } else if let Some((group, _)) = split_group(slot.name) {
-            out.groups.entry(group).or_default().push(slot);
-        } else {
-            out.plain.push(slot);
-        }
-    }
-    out
-}
-
 /// One field of a props class: its type and whether the author must give it.
 struct Field {
     ty: String,
@@ -204,7 +186,7 @@ fn props_class(c: &ComponentSpec) -> String {
     }
     for prefix in &slots.prefixes {
         fields.put(
-            key(prefix.name.trim_end_matches(':')),
+            key(group_name(prefix.name)),
             Field { ty: "table<string, Child>".to_owned(), required: false, doc: "" },
         );
     }
@@ -266,17 +248,6 @@ fn params(arity: Arity) -> (String, String) {
             }
             (lines, names.iter().take(max).copied().collect::<Vec<_>>().join(", "))
         }
-    }
-}
-
-/// The Lua name of an expression function: `and`/`or`/`not`/`if` are keywords.
-fn helper_name(f: Func) -> String {
-    match f {
-        Func::And => "all".to_owned(),
-        Func::Or => "any".to_owned(),
-        Func::Not => "negate".to_owned(),
-        Func::If => "when".to_owned(),
-        other => other.name().strip_prefix("fmt.").unwrap_or(other.name()).to_owned(),
     }
 }
 

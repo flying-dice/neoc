@@ -105,6 +105,7 @@ impl AppRuntime for LuaRuntime {
         // load leaves the old one answering, without its background work.
         let running = self.vms.read().get(app).cloned();
         if let Some(old) = running {
+            // TODO: clean-code - 0.4 - BOUNDARY: stops the old VM's listeners, tasks and workers before the new version is known to load, so a failed hot reload leaves the old VM answering without its background work; state it in the `AppRuntime::load` port doc or restore it on failure.
             old.stop_background();
         }
         let vm = AppVm::load(app, package, data, config).await.map_err(|e| port_error(app, e))?;

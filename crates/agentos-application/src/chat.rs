@@ -382,9 +382,10 @@ impl AgentEventSink for ThreadSink {
                     .map(|o| o.option_id.clone())
             }),
             ApprovalPolicy::Ask => None,
-            // the title and kind are the agent's text: only an exact `mcp__agentos__<app>__<tool>` that exists,
-            // is granted to this agent, was declared readOnly (the runtime refuses writes) and comes with a
-            // read-only kind skips the prompt, and then only as allow-once, never as a standing allow
+            // the title and kind are the agent's text: only an exact `mcp__agentos__<app>__<tool>` that exists, is
+            // granted to this agent, was declared readOnly (the runtime refuses writes through `app.*` and trusts
+            // the app for the rest: apps are the person's own code) and comes with a read-only kind skips the
+            // prompt, and then only as allow-once, never as a standing allow
             ApprovalPolicy::AutoReadOnly => request
                 .agentos_tool()
                 .filter(|_| request.kind_allows_auto_approval())

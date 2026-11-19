@@ -74,7 +74,8 @@ impl Grants {
 pub enum ApprovalPolicy {
     /// Always ask the person.
     Ask,
-    /// Allow a tool its app declared `readOnly` (it cannot write: that is enforced) when the request is exactly
+    /// Allow a tool its app declared `readOnly` (the host stops it writing through the `app.*` API; it does not
+    /// stop the app's own `std:fs` or `vnd:rusqlite` code, so this trusts the app's declaration) when the request is exactly
     /// `mcp__agentos__<app>__<tool>`, the tool exists, the agent is granted the app and the agent's kind for the
     /// call is `read`, `search` or `fetch` (any other kind, or none, asks). It answers with allow-once, never a
     /// standing allow. Ask for everything else.

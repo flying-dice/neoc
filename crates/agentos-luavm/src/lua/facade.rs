@@ -498,6 +498,7 @@ impl<'l> Module<'l> {
     /// constant as a zero-argument accessor `fn`. Every nested item is indented
     /// one level deeper than its enclosing block, and the output is terminated
     /// by a single trailing newline.
+    // TODO: clean-code - 0.5 - DEAD: the signature and doc recording behind `decl_header`/`headers` has no production reader (only tests); keep just the span and registration half.
     pub fn decl_header(&self) -> String {
         let mut out = String::new();
         out.push_str(&format!("// @generated from the {} runtime module — do not edit.\n", self.name));

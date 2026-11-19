@@ -186,7 +186,7 @@ impl UserData for Database {
 }
 
 fn prepare(args: MultiValue, pool: &PgPool) -> Result<(String, Vec<Value>), String> {
-    let (sql, params) = split_args(args)?;
+    let (sql, params) = super::split_sql_args(args)?;
     if pool.is_closed() {
         return Err("database is closed".into());
     }
@@ -203,17 +203,6 @@ fn build_query(sql: &str, params: Vec<Value>) -> Result<Query<'_, Postgres, PgAr
 // Lua → sqlx
 // ---------------------------------------------------------------------------
 
-fn split_args(mut args: MultiValue) -> Result<(String, Vec<Value>), String> {
-    let head = args.pop_front().ok_or_else(|| "missing SQL string".to_string())?;
-    let sql = match head {
-        Value::String(s) => s.to_str().map_err(|e| e.to_string())?.to_owned(),
-        other => {
-            return Err(format!("expected SQL string, got {} — accepted: string", other.type_name()));
-        }
-    };
-    Ok((sql, args.into_iter().collect()))
-}
-
 fn bind_param(
     q: Query<'_, Postgres, PgArguments>,
     v: Value,
@@ -223,7 +212,7 @@ fn bind_param(
         Value::Boolean(b) => q.bind(b),
         Value::Integer(i) => q.bind(i),
         Value::Number(f) => q.bind(f),
-        // TODO: clean-code - 0.6 - KISS: implicit utf8→text / non-utf8→bytea fallback hides bind type from caller; consider explicit bytes type
+        // a Lua string is bytes: text when it is UTF-8, bytea otherwise
         Value::String(s) => {
             let bytes = s.as_bytes();
             match std::str::from_utf8(&bytes) {

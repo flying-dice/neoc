@@ -127,22 +127,25 @@ pub(crate) fn make_state(lua: &Lua, tracker: &SharedTracker, initial: &Table) ->
             "__newindex",
             lua.create_function(move |_, (_proxy, k, v): (LuaValue, LuaValue, LuaValue)| {
                 let key = key_of(&k)?;
-                let mut t = write_tracker.lock();
-                if t.pure {
-                    return Err(mlua::Error::runtime(
-                        "app.state cannot be changed while rendering: render must be pure",
-                    ));
+                {
+                    let t = write_tracker.lock();
+                    if t.pure {
+                        return Err(mlua::Error::runtime(
+                            "app.state cannot be changed while rendering: render must be pure",
+                        ));
+                    }
+                    if t.read_only.load(Ordering::SeqCst) {
+                        return Err(mlua::Error::runtime(
+                            "app.state cannot be changed in a tool declared readOnly: a readOnly tool cannot write",
+                        ));
+                    }
                 }
-                if t.read_only.load(Ordering::SeqCst) {
-                    return Err(mlua::Error::runtime(
-                        "app.state cannot be changed in a tool declared readOnly: a readOnly tool cannot write",
-                    ));
-                }
+                // `equals` can run an app's `__eq`, which may read `app.state` and so lock the tracker again:
+                // compare with the lock released
                 let old = write_data.raw_get::<LuaValue>(k.clone())?;
                 if !old.equals(&v)? {
-                    t.dirty.insert(DepKey { state: id, key });
+                    write_tracker.lock().dirty.insert(DepKey { state: id, key });
                 }
-                drop(t);
                 write_data.raw_set(k, v)
             })?,
         )?;

@@ -49,6 +49,7 @@ pub(super) fn install(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<
             s.writable("app.manifest")?;
             let table = last_table(args, "app.manifest")?;
             let mut json = lua_to_json(&LuaValue::Table(table))?;
+            // TODO: clean-code - 0.4 - BOUNDARY: the adapter edits the declaration before the domain parses it; tolerate the legacy `permissions` key in `AppDecl` (and drop the shim when no installed app carries it).
             // `permissions` was a key of the manifest before apps lost their permissions: still accepted (the
             // apps and tools written for it keep loading), ignored
             if let serde_json::Value::Object(map) = &mut json {
@@ -95,6 +96,7 @@ pub(super) fn install(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<
         })?,
     )?;
 
+    // TODO: clean-code - 0.45 - DRY: same body as `w:openWindow` in view.rs (writable, declared_window, params to JSON, OpenWindow effect), and the `check_effects_allowed` + `writable` pair here repeats data.rs's `require_write`; one `Shared` method for each.
     // app:openWindow(name, params?)
     let s = sh.clone();
     app.set(

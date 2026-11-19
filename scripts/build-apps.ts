@@ -69,6 +69,7 @@ if (appDirs.length === 0) {
 const darklua = requireDarklua()
 const started = performance.now()
 const registry: string[] = []
+// TODO: clean-code - 0.4 - SRP: this loop parses the manifest, checks it against the Lua source, bundles, copies and hashes migrations, writes the app ref and registers it; extract `checkManifestAgainstLua`, `buildApp` and `writeAppRef`.
 for (const dir of appDirs) {
   const manifest = PackageManifest.parse(JSON.parse(readFileSync(join(dir, 'app.json'), 'utf8')))
   const source = readFileSync(join(dir, manifest.main), 'utf8')
