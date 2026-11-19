@@ -34,7 +34,7 @@
 
 <!-- With a visible label the name comes from the content (so it matches what people see); icon-only uses aria-label. -->
 <button type="button" class="ios-app-icon" aria-label={showLabel ? undefined : badge ? `${name}, ${badge} new` : name} data-testid={testid} {onclick}>
-  <span class="plate">
+  <span class="plate" style:--plate-radius="{Math.round(size * 0.2237)}px">
     <IconTile {size} {background} shadow>
       <Icon name={icon} size={Math.round(size * 0.52)} weight={1.9} color="#fff" />
     </IconTile>
@@ -65,6 +65,15 @@
   .plate {
     position: relative;
     display: block;
+  }
+  /* The ring follows the tile's squircle (the button itself is a box that also holds the label). */
+  .ios-app-icon:focus-visible {
+    outline: none;
+  }
+  .ios-app-icon:focus-visible .plate {
+    outline: 3px solid var(--focus-ring);
+    outline-offset: 3px;
+    border-radius: var(--plate-radius);
   }
   .badge {
     position: absolute;

@@ -139,6 +139,13 @@ test.describe('Desktop journeys', () => {
     await expect(page.getByTestId('dock-files')).toBeFocused()
     await expect(page.getByTestId('dock-files-name')).toHaveCSS('opacity', '1')
     await expect(page.getByTestId('dock-files')).toHaveAccessibleName('Files') // the capsule is for the eye only
+    // the focus ring is the shared 3px blue, drawn round the icon's squircle rather than a box round the button
+    const ring = await page.getByTestId('dock-files').evaluate((button) => {
+      const plate = getComputedStyle(button.querySelector('.plate')!)
+      return { width: plate.outlineWidth, style: plate.outlineStyle, radius: plate.borderTopLeftRadius }
+    })
+    expect(ring).toMatchObject({ width: '3px', style: 'solid' })
+    expect(parseFloat(ring.radius)).toBeGreaterThan(10)
   })
 
   test('D8: Slide Over, then Full Screen: the window stays on screen', async ({ page }) => {
