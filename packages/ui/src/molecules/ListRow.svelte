@@ -519,11 +519,12 @@
     color: #fff;
   }
   /* The ring is drawn inside the row, on the tint fill, where system blue would vanish (blue on blue). --label (black in
-     light, white in dark) holds 3:1 on the fill of every accent in both themes: contrast.test.ts. */
-  .managed.selected:focus-visible,
-  .managed.selected .face:focus-visible,
-  .managed.selected .hit:focus-visible,
-  .managed.selected .handle:focus-visible {
+     light, white in dark) holds 3:1 on the fill of every accent in both themes: contrast.test.ts. Multiple selection
+     leaves the row without a fill (see below), so it keeps the ordinary ring. */
+  .managed.selected:not(.multi):focus-visible,
+  .managed.selected:not(.multi) .face:focus-visible,
+  .managed.selected:not(.multi) .hit:focus-visible,
+  .managed.selected:not(.multi) .handle:focus-visible {
     outline-color: var(--label);
   }
   /* Multiple selection marks rows with a check circle and leaves the row alone. */

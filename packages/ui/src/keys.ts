@@ -76,6 +76,8 @@ export const isPrintable = (e: KeyEvent): boolean =>
 /**
  * The keys a sum or a sentence is typed with: a printable character (not Space), Backspace or Delete, with no command
  * modifier. Enter, Space, Tab, Escape and the arrows press or move; they are not typing, and Cmd+R is not either.
+ * Alt is a modifier here too, so Alt+key (option-typed characters on a Mac) is not typing: this is the same rule the input
+ * modality uses, and a window never forwards what it would not call typing.
  */
 export const isTypingKey = (e: KeyEvent): boolean =>
   isPrintable(e) || ((e.key === 'Backspace' || e.key === 'Delete') && !e.ctrlKey && !e.metaKey && !e.altKey)

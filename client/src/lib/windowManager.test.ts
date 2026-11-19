@@ -347,6 +347,72 @@ describe('Split View sizing', () => {
     expect(f.width).toBe(344)
   })
 
+  test('a Slide Over whose app no longer fits when the screen shrinks goes back to a floating window on screen', () => {
+    setInstalledApps([summary('wide', { window: { w: 900, h: 600, minW: 480, minH: 300 } })])
+    wm.open('wide')
+    wm.setLayout(win('wide').id, 'slideover')
+    expect(wm.slideOver?.appId).toBe('wide')
+    wm.bounds = { width: 400, height: 800 } // 384 to use: 480 no longer fits
+    expect(wm.slideOver).toBeUndefined()
+    expect(win('wide').layout).toBe('floating')
+    expect(wm.onStage.map((w) => w.appId)).toEqual(['wide'])
+    // the layout a window is in is never listed as one it cannot have (the menu would show it checked and disabled)
+    expect(wm.unavailableLayouts(win('wide').id)).toEqual([
+      'split-left',
+      'split-right',
+      'slideover'
+    ])
+  })
+
+  test('a screen that shrinks under a Slide Over leaves a split beside it and the focus alone', () => {
+    setInstalledApps([
+      summary('calculator', { window: { w: 340, h: 560, minW: 320, minH: 500 } }),
+      summary('notes'),
+      summary('huge', { window: { w: 900, h: 600, minW: 700, minH: 300 } })
+    ])
+    wm.open('calculator')
+    wm.setLayout(win('calculator').id, 'split-left')
+    wm.open('notes')
+    wm.open('huge', { alongside: true })
+    wm.setLayout(win('huge').id, 'slideover')
+    wm.focus(win('notes').id)
+    wm.bounds = { width: 690, height: 800 } // 674 to use: 700 does not fit; two 320 panes (640 of 664) still do
+    expect(win('huge').layout).toBe('floating')
+    expect(win('calculator').layout).toBe('split-left')
+    expect(win('notes').layout).toBe('split-right')
+    expect(wm.focusedId).toBe(win('notes').id)
+    expect(wm.activeStage?.awaitingSplit).toBeNull()
+  })
+
+  test('a Slide Over that still fits after the screen shrinks stays', () => {
+    wm.open('notes')
+    wm.setLayout(win('notes').id, 'slideover')
+    wm.bounds = { width: 700, height: 800 }
+    expect(win('notes').layout).toBe('slideover')
+    expect(wm.unavailableLayouts(win('notes').id)).not.toContain('slideover')
+  })
+
+  test('the notice says where the waiting app went: the strip, or beside the new one when it opened alongside', () => {
+    setInstalledApps([
+      summary('wide', { window: { w: 900, h: 600, minW: 700, minH: 300 } }),
+      summary('roomy', { window: { w: 900, h: 600, minW: 400, minH: 300 } })
+    ])
+    wm.bounds = { width: 1100, height: 768 }
+    wm.open('wide')
+    wm.setLayout(win('wide').id, 'split-left')
+    wm.open('roomy')
+    expect(wm.notice).toContain('wide is in your recent apps')
+    expect(wm.recentStages.flatMap((s) => s.apps.map((a) => a.id))).toEqual(['wide'])
+    wm.notice = null
+    wm.close(win('roomy').id)
+    wm.close(win('wide').id)
+    wm.open('wide')
+    wm.setLayout(win('wide').id, 'split-left')
+    wm.open('roomy', { alongside: true })
+    expect(wm.notice as string | null).toContain('wide is a normal window again') // (the cast: the assignment above narrowed it to null)
+    expect(wm.onStage.map((w) => w.appId).sort()).toEqual(['roomy', 'wide'])
+  })
+
   test('Slide Over is 380 wide, or the app’s minimum when that is more, and stays on screen either way', () => {
     setInstalledApps([
       summary('wide', { window: { w: 900, h: 600, minW: 480, minH: 300 } }),

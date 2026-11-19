@@ -78,6 +78,9 @@ export class WindowManager {
     if (next.width === this.#bounds.width && next.height === this.#bounds.height) return
     this.#bounds = next
     for (const stage of this.stages) this.#fitSplit(stage)
+    // a Slide Over whose app no longer fits the screen goes back to a floating window (never off the right edge)
+    const slideOver = this.slideOver
+    if (slideOver && !this.#canSlideOver(slideOver)) this.#dropSlideOver(slideOver)
     for (const win of this.windows) win.frame = this.#fitFrame(win, this.#onScreen(win.frame))
   }
 
@@ -264,7 +267,9 @@ export class WindowManager {
       // No room for both: the waiting pane gives up, this app opens as anything else would, and the person is told.
       if (waiting) {
         waiting.layout = 'floating'
-        this.notice = `${app.name} needs more room than half the screen, so it opened on its own. ${appOf(waiting.appId)?.name ?? 'The other app'} is a normal window again.`
+        // where the waiting app went: beside the new one when it joins the stage (`alongside`), else into the strip
+        const where = options.alongside ? 'is a normal window again' : 'is in your recent apps'
+        this.notice = `${app.name} needs more room than half the screen, so it opened on its own. ${appOf(waiting.appId)?.name ?? 'The other app'} ${where}.`
       }
       stage.awaitingSplit = null
     }
@@ -343,7 +348,7 @@ export class WindowManager {
     return [
       ...(this.#canSplit(win) ? [] : (['split-left', 'split-right'] as const)),
       ...(this.#canSlideOver(win) ? [] : (['slideover'] as const))
-    ]
+    ].filter((layout) => layout !== win.layout) // the layout a window is in is never one it cannot have
   }
 
   setLayout(id: string, layout: WindowLayout): void {
@@ -361,18 +366,7 @@ export class WindowManager {
       return this.focus(win.id)
     }
 
-    // Leaving Slide Over: join the active stage, or start one and put it on screen (not in the strip).
-    if (win.layout === 'slideover') {
-      win.layout = 'floating'
-      const stage = this.activeStage
-      if (stage) {
-        win.stageId = stage.id
-        stage.windowIds.push(win.id)
-      } else {
-        this.#toOwnStage(win, 'floating')
-        this.activeStageId = win.stageId
-      }
-    }
+    if (win.layout === 'slideover') this.#dropSlideOver(win)
 
     const stage = this.stages.find((s) => s.id === win.stageId)
     if (!stage) return
@@ -557,6 +551,23 @@ export class WindowManager {
       this.#minOf(win).minWidth,
       partner ? this.#minOf(partner).minWidth : MIN_WIDTH
     ])
+  }
+
+  /**
+   * Leaving Slide Over: a floating window on the active stage, or on a stage of its own that is put on screen (not in the
+   * strip). Nothing else changes: the stage's windows keep their layouts and focus stays where it is, so a screen that
+   * shrinks under a Slide Over does not rearrange what is beside it.
+   */
+  #dropSlideOver(win: WindowState): void {
+    win.layout = 'floating'
+    const stage = this.activeStage
+    if (stage) {
+      win.stageId = stage.id
+      stage.windowIds.push(win.id)
+    } else {
+      this.#toOwnStage(win, 'floating')
+      this.activeStageId = win.stageId
+    }
   }
 
   /** Whether the app's minimum width fits the screen as a Slide Over (with the inset each side). */

@@ -191,7 +191,7 @@ describe('the focus ring inside a tint fill', () => {
 
   test('the selected list row and the picked day use --label for their inner ring', () => {
     const row = readFileSync(new URL('./molecules/ListRow.svelte', import.meta.url), 'utf8')
-    expect(row).toMatch(/\.managed\.selected \.face:focus-visible[^}]*{\s*outline-color: var\(--label\)/)
+    expect(row).toMatch(/\.managed\.selected:not\(\.multi\) \.face:focus-visible[^}]*{\s*outline-color: var\(--label\)/)
     const day = readFileSync(new URL('./molecules/DatePicker.svelte', import.meta.url), 'utf8')
     expect(day).toMatch(/\.day\.picked:focus-visible\s*{\s*outline-color: var\(--label\)/)
   })

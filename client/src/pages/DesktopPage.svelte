@@ -185,10 +185,16 @@
         </div>
       {/if}
 
+      <!-- The live region is always mounted and only its text changes: a region inserted with its text already in it
+           is often not announced. The toast is what is seen; it is not a live region itself. -->
+      <div class="sr-only" role="status" aria-live="polite" data-testid="desktop-notice-live">
+        {wm.notice ?? ''}
+      </div>
       {#if wm.notice}
         <div class="notice">
           <Toast
             testid="desktop-notice"
+            live={false}
             text={wm.notice}
             ondismiss={() => (wm.notice = null)}
             onhold={() => (noticeHeld = true)}
@@ -272,6 +278,14 @@
     color: #fff;
     font: var(--type-headline);
     z-index: 5;
+  }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
   .notice {
     position: absolute;

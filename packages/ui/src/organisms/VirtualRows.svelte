@@ -108,7 +108,10 @@
 
   // ── scroll anchoring: hold the first visible row still while rows change above it ──
   // `held` is the first visible row as of the last frame; when the rows the caller holds change, the scroller moves
-  // by however far that row moved, so an insert above the viewport does not shift what is being read.
+  // by however far that row moved, so an insert above the viewport does not shift what is being read. A list at the very
+  // top is not anchored (a row added above it is simply the new first row), and "at the top" is read from the scroller
+  // itself, not from `scrollTop`: that state lags the real position by a frame, and a list sent to the top (Home, or a
+  // jump) while the host's new rows were still on their way was pushed a row down again by an anchor from before.
   let held: Anchor<string | number> | null = null
   const note = (): void => {
     const first = heights.indexAt(Math.max(0, scrollTop - listOffset))
@@ -123,11 +126,13 @@
     const nextKeys = keys
     const nextFrom = from
     untrack(() => {
-      if (!held || !scroller || scrollTop <= 0) return
+      if (!held || !scroller || scroller.scrollTop <= 0) return
       const shift = anchorShift(held, nextKeys, nextFrom, heights)
       if (shift === null) return
       const el = scroller
-      void tick().then(() => (el.scrollTop += shift))
+      void tick().then(() => {
+        if (el.scrollTop > 0) el.scrollTop += shift // it may have been sent to the top while the rows were rendering
+      })
     })
   })
 

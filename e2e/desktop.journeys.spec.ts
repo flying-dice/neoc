@@ -182,10 +182,14 @@ test.describe('Desktop journeys', () => {
     await page.getByTestId('dock-agents').click()
     await expect(windowOf(page, 'agents')).toBeVisible()
     await expect(page.getByTestId('desktop-notice')).toContainText('opened on its own')
+    await expect(page.getByTestId('desktop-notice')).toContainText('Files is in your recent apps') // where it actually is
+    // the always-mounted live region carries the same words, so a screen reader hears them
+    await expect(page.getByTestId('desktop-notice-live')).toContainText('opened on its own')
     await expect(page.getByTestId('split-placeholder')).toHaveCount(0)
     await expect(page.getByTestId('stage-strip-files')).toBeAttached() // Files is a normal window again, in the strip
     await page.getByTestId('desktop-notice-dismiss').click()
     await expect(page.getByTestId('desktop-notice')).toHaveCount(0)
+    await expect(page.getByTestId('desktop-notice-live')).toHaveText('') // emptied, ready for the next
   })
 
   test('D11: Slide Over is shown unavailable for an app wider than the screen', async ({ page }) => {
@@ -194,5 +198,17 @@ test.describe('Desktop journeys', () => {
     await page.getByTestId('window-agents-multitasking').click()
     await expect(page.getByTestId('window-agents-menu-slideover')).toHaveAttribute('aria-disabled', 'true')
     await expect(page.getByTestId('window-agents-menu-fullscreen')).not.toHaveAttribute('aria-disabled')
+  })
+
+  test('D12: a Slide Over that no longer fits when the screen shrinks goes back to a window on screen', async ({ page }) => {
+    await openDesktop(page, { open: ['agents'] })
+    await chooseLayout(page, 'agents', 'slideover')
+    await expect(windowOf(page, 'agents')).toHaveClass(/\bslideover\b/)
+    await page.setViewportSize({ width: 440, height: 800 }) // 424 to use: Agents needs 480
+    await expect(windowOf(page, 'agents')).toHaveClass(/\bfloating\b/)
+    const box = (await windowOf(page, 'agents').boundingBox())!
+    expect(box.x, 'not off the left edge').toBeGreaterThanOrEqual(0)
+    await page.getByTestId('window-agents-multitasking').click()
+    await expect(page.getByTestId('window-agents-menu-floating')).not.toHaveAttribute('aria-disabled') // the layout it is in is not shown disabled
   })
 })

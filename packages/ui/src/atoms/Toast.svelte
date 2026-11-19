@@ -12,6 +12,8 @@
     testid: string
     kind?: 'info' | 'success' | 'error' | 'conflict'
     text: string
+    /** The toast is its own live region (the default). False when the owner announces the text elsewhere, in a region it keeps mounted. */
+    live?: boolean
     /** Label of the action button (omit for none). */
     action?: string
     /** The glyph; render a kit `Icon` here. Decorative: the text carries the meaning. */
@@ -24,7 +26,7 @@
     onrelease?: () => void
   }
 
-  let { testid, kind = 'info', text, action, icon, onaction, ondismiss, onhold, onrelease }: Props =
+  let { testid, kind = 'info', text, live = true, action, icon, onaction, ondismiss, onhold, onrelease }: Props =
     $props()
 
   let hovered = false
@@ -42,8 +44,8 @@
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div
   class="ios-toast {kind}"
-  role={kind === 'error' ? 'alert' : 'status'}
-  aria-atomic="true"
+  role={live ? (kind === 'error' ? 'alert' : 'status') : undefined}
+  aria-atomic={live ? 'true' : undefined}
   data-testid={testid}
   onpointerenter={() => track(() => (hovered = true))}
   onpointerleave={() => track(() => (hovered = false))}

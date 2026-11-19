@@ -126,7 +126,19 @@
     harness.app.agentAddNote(harness.host, 'Newest note')
     await waitFor(() => expect(canvas.getByTestId('notes-count')).toHaveTextContent('301 notes'))
     scroller.scrollTop = 0
-    await waitFor(() => expect(canvas.getByText('Newest note')).toBeVisible(), { timeout: 4000 })
+    // settled means settled: at the top, the new first row below the bar (not under it), the host's rows in (no
+    // placeholders) and, a moment later, still there (an anchor from before the jump must not push the list down again)
+    const bar = canvasElement.querySelector<HTMLElement>('.bar')!
+    const settled = (): void => {
+      expect(scroller.scrollTop).toBe(0)
+      expect(canvas.getByText('Newest note').getBoundingClientRect().top).toBeGreaterThanOrEqual(
+        bar.getBoundingClientRect().bottom
+      )
+      expect(canvasElement.querySelectorAll('[aria-busy=true][role=listitem]')).toHaveLength(0)
+    }
+    await waitFor(settled, { timeout: 4000 })
+    await new Promise((r) => setTimeout(r, 400))
+    settled()
   }}
 />
 
