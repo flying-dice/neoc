@@ -10,33 +10,41 @@
 //! - **[`CallEntry`]**, the way a Lua callback that nobody called (an HTTP request arriving at a
 //!   `vnd:hyper` server, a continuing `std:task` coroutine) takes its turn. The embedder serialises the
 //!   calls into one VM; [`inbound`] makes those callbacks queue like any other call. A call is a *baton*:
-//!   while it holds it, no other call runs in the VM. [`idle`] is the one place the baton is handed back: a
-//!   wait that does not use the VM (a timer, the network, a worker) releases it and takes it again
-//!   afterwards, so a `while true do task.wait(1) end` loop does not stop the app, and a script can call its
+//!   while it holds it, no other call runs in the VM. [`scoped`] is the one place the baton is handed back: when
+//!   the call suspends at a wait that does not use the VM (a timer, the network, a worker: an [`idle`] wait) it
+//!   releases the baton and takes it again afterwards, so a `while true do task.wait(1) end` loop does not stop the app, and a script can call its
 //!   own listener from a task. Between two waits a call is atomic.
 //!
 //!   **Who lends, and when.** A wait that cannot suspend the call (it was called from a `string.gsub` callback,
 //!   a `table.sort` comparator, a metamethod or an iterator function: Lua 5.1 cannot yield across those, and the
 //!   wait fails with an error the script may catch) must not lend the baton: the script goes on running, and so
 //!   must the restrictions that go with the turn (a `readOnly` tool stays read-only). The VM cannot see whether
-//!   Lua managed to yield, so the rule is structural and has three parts:
+//!   Lua managed to yield, so the rules are structural, and they are checked by a generated test
+//!   (`crates/agentos-lua/tests/chaos.rs`):
 //!
-//!   1. [`idle`] only *asks*: when its wait is `Pending` it marks the call "lend if suspended".
-//!   2. [`scoped`] lends when the call's future returns `Pending` *and* the mark is still set. The mark is cleared
-//!      at the start of every poll of the call and at the start of every poll of every *leaf*, so it survives
-//!      only if the last leaf polled before the `Pending` was an idle wait: a failed wait is forgotten as soon as
-//!      anything else runs, and a different leaf's `Pending` (a database query that was left in flight and is
-//!      resumed later, say) can never be mistaken for it.
-//!   3. Every async host function is a leaf, because it is made by [`async_function`] or [`async_method`] (the
-//!      only constructors; clippy's `disallowed-methods` refuses `create_async_function` and `add_async_method`
+//!   1. **Every async host function is a leaf.** It is made by [`async_function`] or [`async_method`] (the only
+//!      constructors; clippy's `disallowed-methods` refuses `create_async_function` and `add_async_method`
 //!      anywhere else). Its [`Role`] says how it relates to the turn, so no function has to remember to call
 //!      [`hold`] or [`idle`] by hand: a [`Role::Vm`] function takes the turn before its body runs, a
 //!      [`Role::Wait`] function is an idle wait.
+//!   2. **A leaf that returns `Pending` is *suspended*,** and the call records it (innermost first, with whether
+//!      its wait is idle). mlua's wrapper yields to the executor on the very next instruction, and the executor
+//!      resumes into that same leaf: when the call goes on, the next thing it polls is the leaf that suspended
+//!      (an outer leaf first, then the one inside it).
+//!   3. **A leaf the script ran past is *abandoned*.** If anything else happens instead (another leaf starts
+//!      polling, the call ends, the first slice of a task stops somewhere else) the yield failed: Lua refused it at
+//!      a C boundary. The leaf's future is dropped on the spot, so whatever it held (a database gate, a mutex
+//!      guard, a transaction) is released, and a coroutine the script resumes later finds the leaf gone: its host
+//!      call raises "abandoned". A host call that Lua could not suspend is therefore over, not left half-done.
+//!   4. **A call lends the baton only when it really suspended at an idle wait:** its future returned `Pending`,
+//!      the innermost suspended leaf is an idle wait, the call's waker was *not* woken during that poll (mlua
+//!      wakes it itself when the script calls a plain `coroutine.yield()`, which waits for nothing), and the baton
+//!      still agrees (no open `db:tx`, not rendering: [`Baton::can_park`], asked at the moment of lending, not
+//!      only before the wait began).
 //!
 //!   A leaf never carries a baton: [`hold`] looks the baton up in the call that polls it. A host call that was
-//!   left in flight (its `resume` failed at a C boundary) and is resumed later, by a different call, therefore
-//!   runs in the turn of whoever resumed it, as Lua's own `coroutine.resume` would have it, instead of waiting
-//!   for a turn that nobody can give it.
+//!   suspended by one call and is resumed by another therefore runs in the turn of whoever resumed it, as Lua's
+//!   own `coroutine.resume` would have it, instead of waiting for a turn that nobody can give it.
 //!
 //!   A `std:task` coroutine is the one call that does not start at its beginning: `task.spawn` runs its first
 //!   slice inside the spawning call and the rest later, from whichever wait that slice stopped at. Its
@@ -51,12 +59,13 @@ use std::{
     future::Future,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, Weak,
     },
     task::{Context, Poll},
 };
 
-use futures::future::BoxFuture;
+pub use futures::future::BoxFuture;
+use futures::task::ArcWake;
 use mlua::{FromLuaMulti, Function, IntoLuaMulti, Lua, UserDataMethods, UserDataRef};
 use parking_lot::Mutex;
 use tokio::{sync::watch, task::AbortHandle};
@@ -208,20 +217,25 @@ pub fn inherited() -> Inherited {
 
 /// A call's turn in the VM, held until it is dropped.
 pub trait Baton: Send + 'static {
+    /// Which call this is: unique among the calls of the embedder, stable for the call's life.
+    fn id(&self) -> u64;
+
     /// Does this call hold the VM right now? (A parked or detached call does not.)
     fn holding(&self) -> bool;
 
     /// What the work this call starts inherits from it.
     fn inherited(&self) -> Inherited;
 
-    /// May the holder wait without the VM right now? Asked before the wait starts.
+    /// May the holder wait without the VM right now? Asked before an idle wait starts, and again when the call
+    /// is about to lend its turn: a wait that was started where it was allowed and finished being polled where
+    /// it is not (a `db:tx` was opened meanwhile) must not lend.
     ///
     /// # Errors
     /// The reason the call must not wait (the wait is refused with it).
     fn can_park(&self) -> Result<(), String>;
 
     /// The holder is suspended at a wait that does not use the VM: set the call's own state aside and let
-    /// others in. Called only after [`Baton::can_park`] agreed and the wait really suspended the call.
+    /// others in. Called only after [`Baton::can_park`] agreed and the call really suspended at the wait.
     fn park(&mut self);
 
     /// Queue for the VM (when this call does not hold it), and take the call's state back. [`hold`] polls this
@@ -251,17 +265,48 @@ pub fn set_entry(lua: &Lua, entry: Arc<dyn CallEntry>) {
     lua.set_app_data(Entry(entry));
 }
 
-/// A call's baton and whether its wait wants it lent (see [`idle`]).
+/// A leaf that returned `Pending` and has not been polled since (see the module docs, rules 2 and 3).
+struct Suspended {
+    /// Weak: a leaf whose future is dropped (the script's reference to it is collected) is gone at once.
+    leaf: Weak<dyn Abandon>,
+    /// Its wait does not use the VM: the call may lend its turn while it lasts.
+    idle: bool,
+}
+
+/// What a suspended leaf lets its caller do when the suspension turns out not to have happened.
+trait Abandon: Send + Sync {
+    /// Drop the leaf's future now, whatever it holds with it.
+    fn abandon(&self);
+}
+
+/// A call's baton, and what it is waiting at.
 struct Slot {
     baton: Option<Box<dyn Baton>>,
-    /// The last leaf polled was an idle wait and is pending; the baton is lent if the call suspends. Every poll
-    /// of a leaf clears it first, so only the last one counts.
-    lend: bool,
+    /// An idle wait is pending in the leaf that is being polled; the leaf records that when it returns `Pending`.
+    idle_pending: bool,
+    /// The leaves that returned `Pending` since the call last ran script code, innermost first.
+    suspended: Vec<Suspended>,
 }
 
 impl Slot {
     fn new(baton: Option<Box<dyn Baton>>) -> RefCell<Self> {
-        RefCell::new(Self { baton, lend: false })
+        RefCell::new(Self { baton, idle_pending: false, suspended: vec![] })
+    }
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        // the call ends (or its future is dropped): nothing it was waiting at will be polled again. This runs
+        // before the baton is dropped, so what the leaves held is free by the time the turn is.
+        abandon_all(std::mem::take(&mut self.suspended));
+    }
+}
+
+fn abandon_all(leaves: Vec<Suspended>) {
+    for suspended in leaves {
+        if let Some(leaf) = suspended.leaf.upgrade() {
+            leaf.abandon();
+        }
     }
 }
 
@@ -271,15 +316,18 @@ tokio::task_local! {
 }
 
 /// Run `future` as the call that holds `baton`; the baton is released when the call ends. It is lent when the call
-/// suspends at a wait that asked for it (see the module docs).
+/// suspends at an idle wait (see the module docs, rule 4).
 pub async fn scoped<F: Future>(baton: Box<dyn Baton>, future: F) -> F::Output {
     HELD.scope(Slot::new(Some(baton)), async move {
         let mut future = std::pin::pin!(future);
+        let proxy = Arc::new(WakeProxy::default());
         std::future::poll_fn(move |cx| {
-            forget_lend();
-            let polled = future.as_mut().poll(cx);
-            if polled.is_pending() {
-                lend_if_asked();
+            proxy.arm(cx.waker());
+            let waker = futures::task::waker_ref(&proxy);
+            let polled = future.as_mut().poll(&mut Context::from_waker(&waker));
+            match &polled {
+                Poll::Ready(_) => abandon_all(take_suspended()),
+                Poll::Pending => lend_if_suspended_at_idle_wait(proxy.woken()),
             }
             polled
         })
@@ -288,22 +336,90 @@ pub async fn scoped<F: Future>(baton: Box<dyn Baton>, future: F) -> F::Output {
     .await
 }
 
-/// Forget that a wait asked for the baton to be lent: called at the start of every poll of a leaf (see [`async_function`]).
-fn forget_lend() {
-    let _ = HELD.try_with(|slot| slot.borrow_mut().lend = false);
+/// The waker a call is polled with: it forwards to the executor's and remembers that it was woken during a poll.
+/// mlua wakes it when the script yields something that is not a wait (`coroutine.yield()` at the top of the
+/// call), which is how a plain yield is told from a leaf's suspension.
+#[derive(Default)]
+struct WakeProxy {
+    woken: AtomicBool,
+    executor: Mutex<Option<std::task::Waker>>,
 }
 
-/// The call suspended (its future returned `Pending`): if the last leaf it polled was an idle wait, give the VM
-/// to the next call.
-fn lend_if_asked() {
+impl WakeProxy {
+    fn arm(&self, executor: &std::task::Waker) {
+        self.woken.store(false, Ordering::SeqCst);
+        let mut slot = self.executor.lock();
+        if !slot.as_ref().is_some_and(|known| known.will_wake(executor)) {
+            *slot = Some(executor.clone());
+        }
+    }
+
+    fn woken(&self) -> bool {
+        self.woken.load(Ordering::SeqCst)
+    }
+}
+
+impl ArcWake for WakeProxy {
+    fn wake_by_ref(arc: &Arc<Self>) {
+        arc.woken.store(true, Ordering::SeqCst);
+        if let Some(executor) = arc.executor.lock().as_ref() {
+            executor.wake_by_ref();
+        }
+    }
+}
+
+fn take_suspended() -> Vec<Suspended> {
+    HELD.try_with(|slot| std::mem::take(&mut slot.borrow_mut().suspended)).unwrap_or_default()
+}
+
+/// A leaf starts a poll (the first, or one after a wake). If it is the one that suspended last, it is being
+/// resumed as it should: it leaves the record. Anything else suspended is stale (the script ran on after it):
+/// those leaves are abandoned.
+fn leaf_polling(me: &Weak<dyn Abandon>) {
+    let stale = HELD
+        .try_with(|slot| {
+            let mut slot = slot.borrow_mut();
+            slot.idle_pending = false;
+            match slot.suspended.last() {
+                Some(last) if Weak::ptr_eq(&last.leaf, me) => {
+                    slot.suspended.pop();
+                    vec![]
+                }
+                Some(_) => std::mem::take(&mut slot.suspended),
+                None => vec![],
+            }
+        })
+        .unwrap_or_default();
+    abandon_all(stale);
+}
+
+/// A leaf's poll returned `Pending`: record it as suspended.
+fn leaf_suspended(leaf: Weak<dyn Abandon>) {
     let _ = HELD.try_with(|slot| {
         let mut slot = slot.borrow_mut();
-        if std::mem::take(&mut slot.lend) {
-            if let Some(baton) = slot.baton.as_mut().filter(|b| b.holding()) {
+        let idle = std::mem::take(&mut slot.idle_pending);
+        slot.suspended.push(Suspended { leaf, idle });
+    });
+}
+
+/// The call's future returned `Pending`. Give the VM to the next call only if the call is waiting at an idle wait
+/// (module docs, rule 4); anything else (a database call, a plain yield, a leaf waiting for the VM) keeps it.
+fn lend_if_suspended_at_idle_wait(woken: bool) {
+    let _ = HELD.try_with(|slot| {
+        let mut slot = slot.borrow_mut();
+        let waits = !woken && slot.suspended.first().is_some_and(|innermost| innermost.idle);
+        if waits {
+            if let Some(baton) = slot.baton.as_mut().filter(|b| b.holding() && b.can_park().is_ok()) {
                 baton.park();
             }
         }
     });
+}
+
+/// The identity of the call running in this tokio task (see [`Baton::id`]); `None` outside a call.
+#[must_use]
+pub fn turn_id() -> Option<u64> {
+    HELD.try_with(|slot| slot.borrow().baton.as_ref().map(|baton| baton.id())).ok().flatten()
 }
 
 /// Is there a [`CallEntry`] on this engine (an embedder that serialises calls)?
@@ -351,9 +467,26 @@ pub async fn resumed<F: Future>(lua: &Lua, inherited: Inherited, future: F) -> F
 
 /// Run the synchronous first slice of a coroutine (`task.spawn`) inside the spawning call, but *not as* that
 /// call: a wait it starts keeps a detached baton of its own (see [`resumed`]), so the spawner keeps its turn.
-pub fn first_slice<R>(lua: &Lua, inherited: Inherited, slice: impl FnOnce() -> R) -> R {
+///
+/// `suspended` says whether the slice stopped at a wait, which its continuation finishes later: the leaf it is
+/// suspended at stays alive for that. When the slice stopped anywhere else (it ended, failed or yielded plainly)
+/// the leaves it ran past are abandoned, as they would be at the end of a call.
+pub fn first_slice<R>(
+    lua: &Lua,
+    inherited: Inherited,
+    slice: impl FnOnce() -> R,
+    suspended: impl FnOnce(&R) -> bool,
+) -> R {
     let detached = lua.app_data_ref::<Entry>().map(|entry| entry.0.detached(inherited));
-    HELD.sync_scope(Slot::new(detached), slice)
+    let (out, kept, left) = HELD.sync_scope(Slot::new(detached), || {
+        let out = slice();
+        let kept = suspended(&out);
+        (out, kept, take_suspended())
+    });
+    if !kept {
+        abandon_all(left);
+    }
+    out
 }
 
 /// Wait for `future`, which does not use the VM, without holding the VM: when the wait suspends the running
@@ -373,12 +506,10 @@ pub(crate) async fn idle<F: Future>(future: F) -> mlua::Result<F::Output> {
     }
     let mut future = std::pin::pin!(future);
     let out = std::future::poll_fn(|cx| {
-        // also cleared by the enclosing leaf, but a `Role::Mixed` body calls `idle` directly
-        forget_lend();
         let polled = future.as_mut().poll(cx);
         if polled.is_pending() {
-            // lent only if the call suspends: this wait may be one Lua cannot yield from
-            let _ = HELD.try_with(|slot| slot.borrow_mut().lend = true);
+            // the leaf records it when its poll ends; the call lends only if it really suspends here
+            let _ = HELD.try_with(|slot| slot.borrow_mut().idle_pending = true);
         }
         polled
     })
@@ -394,7 +525,7 @@ pub(crate) async fn hold() {
     std::future::poll_fn(|cx| {
         HELD.try_with(|slot| {
             let mut slot = slot.borrow_mut();
-            slot.lend = false;
+            slot.idle_pending = false;
             match slot.baton.as_mut() {
                 Some(baton) if !baton.holding() => baton.poll_unpark(cx),
                 _ => Poll::Ready(()),
@@ -406,23 +537,71 @@ pub(crate) async fn hold() {
 }
 
 /// How an async host function relates to the call's turn in the VM (see [`async_function`]).
+///
+/// One rule holds for every role: **a body may create Lua values (tables, strings, userdata) at any time, with the
+/// turn or without it, but it may only run script code or touch the app's state while the call holds the turn.**
+/// Making a value reads and changes nothing the app can see; a `Role::Wait` body therefore builds its result as
+/// the wait ends, while the VM may still be lent to another call, and a `Role::Mixed` body that needs the wait's
+/// result first builds it after [`idle`] (which has taken the turn back). The conversion of the finished result
+/// into Lua values, by mlua, always happens with the turn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
     /// It uses the VM (the app's database, its state): it takes the turn before its body runs, so the body
     /// never has to ask.
     Vm,
     /// It waits for something that does not use the VM (a timer, a socket, a worker): the whole body is an
-    /// [`idle`] wait, and the turn is taken again when it ends. Turning the result into Lua values is part of
-    /// the body, so it happens as the wait ends, just before the turn is taken again.
+    /// [`idle`] wait, and the turn is taken again when it ends.
     Wait,
-    /// It does both in turns: the body calls [`idle`] for its waits (`Mutex:with_lock` waits for the lock, then
-    /// runs Lua).
+    /// It does both in turns, and the body starts *without* the turn: nothing takes it first (a detached
+    /// continuation runs the start of the body without it). The body calls [`idle`] for its waits, which take the
+    /// turn back when they end, and [`hold`] before it runs script code or touches the app's state before its
+    /// first wait (`Mutex:with_lock` waits for the lock, which takes the turn, then runs Lua).
     Mixed,
 }
 
+/// Where the Lua registry keeps the table of coroutines whose driver is somewhere else (`async_coroutines.lua`).
+pub(crate) const DRIVEN: &str = "agentos.driven_coroutines";
+
+/// A coroutine the task scheduler took over (`task.spawn`, `task.defer`, `task.delay` of a coroutine the script made):
+/// the script may no longer resume it itself, as with a coroutine that is running; two drivers of one coroutine would
+/// fight over the host call it is waiting at. Without the app's environment (a worker, a test) it does nothing.
+///
+/// # Errors
+/// The coroutine is already being driven (a thread is waiting at its host call, or the scheduler has it).
+pub fn mark_driven(lua: &Lua, thread: &mlua::Thread) -> mlua::Result<()> {
+    let Ok(driven) = lua.named_registry_value::<mlua::Table>(DRIVEN) else { return Ok(()) };
+    let live = match driven.raw_get::<mlua::Value>(thread.clone())? {
+        mlua::Value::Boolean(true) => true,
+        mlua::Value::Thread(driver) => driver.status() == mlua::thread::ThreadStatus::Resumable,
+        _ => false,
+    };
+    if live {
+        return Err(mlua::Error::runtime("cannot schedule a coroutine that is already running"));
+    }
+    driven.raw_set(thread.clone(), true)
+}
+
+/// A leaf's future, in a cell the call can empty from outside when the leaf is abandoned.
+struct LeafCell<R> {
+    body: Mutex<Option<BoxFuture<'static, mlua::Result<R>>>>,
+    abandoned: AtomicBool,
+}
+
+impl<R: Send> Abandon for LeafCell<R> {
+    fn abandon(&self) {
+        self.abandoned.store(true, Ordering::SeqCst);
+        // not while the leaf is being polled (that is the next poll's business: it sees the flag)
+        let body = self.body.try_lock().and_then(|mut body| body.take());
+        drop(body);
+    }
+}
+
 /// Run an async host function's body as the leaf its `role` says.
-async fn leaf<R: Send + 'static>(role: Role, body: impl Future<Output = mlua::Result<R>>) -> mlua::Result<R> {
-    let mut run = std::pin::pin!(async move {
+fn leaf<R: Send + 'static>(
+    role: Role,
+    body: impl Future<Output = mlua::Result<R>> + Send + 'static,
+) -> impl Future<Output = mlua::Result<R>> + Send + 'static {
+    let run = async move {
         match role {
             Role::Vm => {
                 hold().await;
@@ -431,14 +610,37 @@ async fn leaf<R: Send + 'static>(role: Role, body: impl Future<Output = mlua::Re
             Role::Wait => idle(body).await?,
             Role::Mixed => body.await,
         }
-    });
-    // every poll of the function, the first and each one after a wake, forgets a request to lend made by an
-    // earlier leaf in the same poll: only the wait that is pending *now* may ask for it
-    std::future::poll_fn(|cx| {
-        forget_lend();
-        run.as_mut().poll(cx)
+    };
+    let cell =
+        Arc::new(LeafCell { body: Mutex::new(Some(Box::pin(run))), abandoned: AtomicBool::new(false) });
+    // every poll of the function, the first and each one after a wake, is a leaf poll (module docs, rules 2-3)
+    std::future::poll_fn(move |cx| {
+        let me: Weak<dyn Abandon> = Arc::downgrade(&cell) as Weak<dyn Abandon>;
+        leaf_polling(&me);
+        let polled = {
+            let mut body = cell.body.lock();
+            if cell.abandoned.load(Ordering::SeqCst) {
+                *body = None;
+            }
+            let polled = match body.as_mut() {
+                Some(future) => future.as_mut().poll(cx),
+                None => Poll::Ready(Err(mlua::Error::runtime(
+                    "this host call was abandoned: Lua could not suspend at it (it was called from a string.gsub \
+                     callback, a table.sort comparator, a metamethod or an iterator) and the script went on",
+                ))),
+            };
+            if polled.is_ready() {
+                // finished: a second poll (the script resumed a coroutine it should not have) must not resume
+                // a completed future
+                *body = None;
+            }
+            polled
+        };
+        if polled.is_pending() {
+            leaf_suspended(me);
+        }
+        polled
     })
-    .await
 }
 
 /// The one way to make an async host function (a Lua function whose work is a future). Every poll of the
@@ -477,6 +679,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::pin::Pin;
     use std::sync::atomic::AtomicUsize;
     use std::time::Duration;
 
@@ -485,6 +688,7 @@ mod tests {
         gate: Arc<tokio::sync::Mutex<()>>,
         inside: Arc<AtomicUsize>,
         most: Arc<AtomicUsize>,
+        refuse_park: Arc<AtomicBool>,
     }
 
     struct CountingBaton {
@@ -493,6 +697,8 @@ mod tests {
         waiting: Option<BoxFuture<'static, tokio::sync::OwnedMutexGuard<()>>>,
         inside: Arc<AtomicUsize>,
         most: Arc<AtomicUsize>,
+        /// Refuse to park (an open transaction, say).
+        refuse_park: Arc<AtomicBool>,
     }
 
     impl CountingBaton {
@@ -503,6 +709,9 @@ mod tests {
     }
 
     impl Baton for CountingBaton {
+        fn id(&self) -> u64 {
+            1
+        }
         fn holding(&self) -> bool {
             self.held.is_some()
         }
@@ -510,7 +719,11 @@ mod tests {
             Inherited::default()
         }
         fn can_park(&self) -> Result<(), String> {
-            Ok(())
+            if self.refuse_park.load(Ordering::SeqCst) {
+                Err("no".to_owned())
+            } else {
+                Ok(())
+            }
         }
         fn park(&mut self) {
             self.inside.fetch_sub(1, Ordering::SeqCst);
@@ -545,6 +758,7 @@ mod tests {
                 waiting: None,
                 inside: self.inside.clone(),
                 most: self.most.clone(),
+                refuse_park: self.refuse_park.clone(),
             })
         }
         fn request(&self) -> BoxFuture<'static, Box<dyn Baton>> {
@@ -552,13 +766,23 @@ mod tests {
         }
         fn enter(&self, _: Inherited) -> BoxFuture<'static, Box<dyn Baton>> {
             let (gate, inside, most) = (self.gate.clone(), self.inside.clone(), self.most.clone());
+            let refuse_park = self.refuse_park.clone();
             Box::pin(async move {
                 let held = gate.clone().lock_owned().await;
-                let baton = CountingBaton { gate, held: Some(held), waiting: None, inside, most };
+                let baton =
+                    CountingBaton { gate, held: Some(held), waiting: None, inside, most, refuse_park };
                 baton.arrive();
                 Box::new(baton) as Box<dyn Baton>
             })
         }
+    }
+
+    /// An idle wait, as every real one is made: by a leaf.
+    fn wait_for(time: Duration) -> impl Future<Output = mlua::Result<()>> + Send + 'static {
+        leaf(Role::Wait, async move {
+            tokio::time::sleep(time).await;
+            Ok(())
+        })
     }
 
     #[tokio::test]
@@ -594,6 +818,7 @@ mod tests {
                 gate: Arc::new(tokio::sync::Mutex::new(())),
                 inside: inside.clone(),
                 most: most.clone(),
+                refuse_park: Arc::default(),
             }),
         );
         // four callbacks that each wait (idle) in the middle: never two inside at once, and the waits overlap
@@ -603,7 +828,7 @@ mod tests {
             let lua = lua.clone();
             calls.push(tokio::spawn(async move {
                 inbound(&lua, Inherited::default(), async {
-                    idle(tokio::time::sleep(Duration::from_millis(100))).await.expect("idle");
+                    wait_for(Duration::from_millis(100)).await.expect("wait");
                 })
                 .await;
             }));
@@ -626,6 +851,7 @@ mod tests {
                 gate: Arc::new(tokio::sync::Mutex::new(())),
                 inside: inside.clone(),
                 most: most.clone(),
+                refuse_park: Arc::default(),
             }),
         );
         // the spawner's call holds the VM; the slice it runs starts a wait (the future is created and polled
@@ -633,11 +859,16 @@ mod tests {
         let mut continuation = None;
         inbound(&lua, Inherited::default(), async {
             let mut wait = Box::pin(idle(tokio::time::sleep(Duration::from_millis(80))));
-            first_slice(&lua, Inherited::default(), || {
-                let waker = futures::task::noop_waker();
-                let mut cx = std::task::Context::from_waker(&waker);
-                assert!(std::future::Future::poll(wait.as_mut(), &mut cx).is_pending());
-            });
+            first_slice(
+                &lua,
+                Inherited::default(),
+                || {
+                    let waker = futures::task::noop_waker();
+                    let mut cx = std::task::Context::from_waker(&waker);
+                    assert!(std::future::Future::poll(wait.as_mut(), &mut cx).is_pending());
+                },
+                |()| true,
+            );
             assert_eq!(inside.load(Ordering::SeqCst), 1, "the spawner still holds its turn");
             let lua = lua.clone();
             continuation = Some(tokio::spawn(async move {
@@ -668,6 +899,7 @@ mod tests {
                 gate: Arc::new(tokio::sync::Mutex::new(())),
                 inside: inside.clone(),
                 most: most.clone(),
+                refuse_park: Arc::default(),
             }),
         );
         let other_ran = Arc::new(AtomicBool::new(false));
@@ -718,6 +950,7 @@ mod tests {
                 gate: Arc::new(tokio::sync::Mutex::new(())),
                 inside: inside.clone(),
                 most: most.clone(),
+                refuse_park: Arc::default(),
             }),
         );
         let other_ran = Arc::new(AtomicBool::new(false));
@@ -734,11 +967,12 @@ mod tests {
                     }
                     // another function is then pending (a host call left in flight, resumed now) and the call
                     // really suspends at it
-                    leaf(Role::Mixed, async {
+                    let (inside_now, other_now) = (inside.clone(), other_ran.clone());
+                    leaf(Role::Mixed, async move {
                         tokio::task::yield_now().await;
                         tokio::task::yield_now().await;
-                        assert_eq!(inside.load(Ordering::SeqCst), 1, "still holding while it waits");
-                        assert!(!other_ran.load(Ordering::SeqCst), "nothing else ran inside the call");
+                        assert_eq!(inside_now.load(Ordering::SeqCst), 1, "still holding while it waits");
+                        assert!(!other_now.load(Ordering::SeqCst), "nothing else ran inside the call");
                         Ok(())
                     })
                     .await
@@ -775,20 +1009,229 @@ mod tests {
                 gate: Arc::new(tokio::sync::Mutex::new(())),
                 inside: inside.clone(),
                 most: most.clone(),
+                refuse_park: Arc::default(),
             }),
         );
         let done = inbound(&lua, Inherited::default(), async {
             let mut waiting = Box::pin(hold());
-            first_slice(&lua, Inherited::default(), || {
-                let waker = futures::task::noop_waker();
-                let mut cx = Context::from_waker(&waker);
-                assert!(waiting.as_mut().poll(&mut cx).is_pending(), "the spawner holds the VM");
-            });
+            first_slice(
+                &lua,
+                Inherited::default(),
+                || {
+                    let waker = futures::task::noop_waker();
+                    let mut cx = Context::from_waker(&waker);
+                    assert!(waiting.as_mut().poll(&mut cx).is_pending(), "the spawner holds the VM");
+                },
+                |()| true,
+            );
             tokio::time::timeout(Duration::from_secs(2), waiting).await.is_ok()
         })
         .await;
         assert!(done, "the call that holds the VM finished it instead of waiting for its own turn");
         assert_eq!(inside.load(Ordering::SeqCst), 0);
+    }
+
+    /// Sets a flag when it is dropped: a leaf's body that holds something.
+    struct Holds(Arc<AtomicBool>);
+    impl Drop for Holds {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    /// A leaf that holds something and never finishes.
+    fn stuck(
+        role: Role,
+        dropped: &Arc<AtomicBool>,
+    ) -> impl Future<Output = mlua::Result<()>> + Send + 'static {
+        let holds = Holds(dropped.clone());
+        leaf(role, async move {
+            let _holds = holds;
+            std::future::pending::<()>().await;
+            Ok(())
+        })
+    }
+
+    fn poll_once<F: Future + Unpin>(future: &mut F) -> Poll<F::Output> {
+        let waker = futures::task::noop_waker();
+        Pin::new(future).poll(&mut Context::from_waker(&waker))
+    }
+
+    fn counting(lua: &Lua) -> (Arc<AtomicUsize>, Arc<AtomicBool>) {
+        let (inside, refuse_park) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicBool::new(false)));
+        set_entry(
+            lua,
+            Arc::new(Counting {
+                gate: Arc::new(tokio::sync::Mutex::new(())),
+                inside: inside.clone(),
+                most: Arc::default(),
+                refuse_park: refuse_park.clone(),
+            }),
+        );
+        (inside, refuse_park)
+    }
+
+    /// The yield at a leaf failed (Lua could not suspend there) and the script ran on: the next leaf to start, and
+    /// the end of the call, drop what the first one held; and polling it later is an error, not a stale suspension.
+    #[tokio::test]
+    async fn a_leaf_the_script_ran_past_is_abandoned_by_the_next_leaf_and_by_the_end_of_the_call() {
+        let lua = Lua::new();
+        counting(&lua);
+        let (first, second, third) = (Arc::default(), Arc::default(), Arc::default());
+        inbound(&lua, Inherited::default(), async {
+            let mut a = Box::pin(stuck(Role::Mixed, &first));
+            assert!(poll_once(&mut a).is_pending());
+            assert!(!first.load(Ordering::SeqCst), "suspended, not abandoned");
+            // the script ran on and called something else
+            assert!(leaf(Role::Mixed, async { Ok(()) }).await.is_ok());
+            assert!(first.load(Ordering::SeqCst), "the next leaf abandoned it");
+            let Poll::Ready(late) = poll_once(&mut a) else { panic!("an abandoned leaf is over") };
+            assert!(late.unwrap_err().to_string().contains("abandoned"));
+
+            let mut b = Box::pin(stuck(Role::Mixed, &second));
+            assert!(poll_once(&mut b).is_pending());
+            std::mem::forget(b);
+            let mut c = Box::pin(stuck(Role::Wait, &third));
+            assert!(poll_once(&mut c).is_pending());
+            assert!(second.load(Ordering::SeqCst), "a leaf started after it abandoned it as well");
+            std::mem::forget(c);
+        })
+        .await;
+        assert!(third.load(Ordering::SeqCst), "the end of the call abandoned what it was still waiting at");
+    }
+
+    /// A leaf that has finished is over: polling it again (a script resumed a coroutine it should not have) is an
+    /// error, not a resumed completed future.
+    #[tokio::test]
+    async fn a_finished_leaf_polled_again_is_an_error_not_a_panic() {
+        let mut once = Box::pin(leaf(Role::Mixed, async { Ok(7) }));
+        assert!(matches!(poll_once(&mut once), Poll::Ready(Ok(7))));
+        let Poll::Ready(again) = poll_once(&mut once) else { panic!("over") };
+        assert!(again.is_err());
+    }
+
+    /// A leaf that suspended for real is polled again next: it is not abandoned, however many times it is polled.
+    #[tokio::test]
+    async fn a_leaf_that_is_polled_again_after_suspending_is_not_abandoned() {
+        let lua = Lua::new();
+        counting(&lua);
+        let dropped = Arc::default();
+        inbound(&lua, Inherited::default(), async {
+            let mut a = Box::pin(stuck(Role::Mixed, &dropped));
+            for _ in 0..3 {
+                assert!(poll_once(&mut a).is_pending());
+            }
+            assert!(!dropped.load(Ordering::SeqCst));
+            drop(a);
+            assert!(dropped.load(Ordering::SeqCst), "dropping it drops its body, as always");
+        })
+        .await;
+    }
+
+    /// A first slice that stopped at a wait keeps the leaf alive for its continuation; one that stopped anywhere else
+    /// abandons it.
+    #[tokio::test]
+    async fn the_first_slice_of_a_task_keeps_a_leaf_only_when_it_stopped_at_it() {
+        let lua = Lua::new();
+        counting(&lua);
+        let (kept, left) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
+        inbound(&lua, Inherited::default(), async {
+            let (mut a, mut b) = (Box::pin(stuck(Role::Wait, &kept)), Box::pin(stuck(Role::Wait, &left)));
+            first_slice(&lua, Inherited::default(), || assert!(poll_once(&mut a).is_pending()), |()| true);
+            first_slice(&lua, Inherited::default(), || assert!(poll_once(&mut b).is_pending()), |()| false);
+            assert!(!kept.load(Ordering::SeqCst), "the continuation finishes it");
+            assert!(left.load(Ordering::SeqCst), "the slice went on past it");
+        })
+        .await;
+    }
+
+    /// The call lends the VM at an idle wait, and only there.
+    #[tokio::test]
+    async fn a_call_lends_the_vm_at_an_idle_wait_and_only_when_nothing_says_otherwise() {
+        // an idle wait: lent
+        let lua = Lua::new();
+        let (inside, _) = counting(&lua);
+        let call = tokio::spawn({
+            let lua = lua.clone();
+            async move {
+                inbound(&lua, Inherited::default(), async {
+                    let _ = wait_for(Duration::from_secs(60)).await;
+                })
+                .await;
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        call.abort();
+        assert_eq!(inside.load(Ordering::SeqCst), 0, "suspended at an idle wait: lent");
+
+        // a leaf that is not an idle wait: kept
+        let lua = Lua::new();
+        let (inside, _) = counting(&lua);
+        let started = Arc::new(AtomicBool::new(false));
+        let flag = started.clone();
+        let call = tokio::spawn({
+            let lua = lua.clone();
+            async move {
+                inbound(&lua, Inherited::default(), async {
+                    flag.store(true, Ordering::SeqCst);
+                    let _ = leaf(Role::Mixed, std::future::pending::<mlua::Result<()>>()).await;
+                })
+                .await;
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        assert!(started.load(Ordering::SeqCst));
+        assert_eq!(inside.load(Ordering::SeqCst), 1, "suspended at something that is not an idle wait: kept");
+        call.abort();
+
+        // an idle wait where the baton says no (a `db:tx` was opened meanwhile): kept
+        let lua = Lua::new();
+        let (inside, refuse_park) = counting(&lua);
+        let call = tokio::spawn({
+            let lua = lua.clone();
+            async move {
+                inbound(&lua, Inherited::default(), async {
+                    // the wait is allowed when it starts, and by the time it is pending the call may not wait
+                    // (a transaction was opened where the wait was left in flight)
+                    let _ = leaf(Role::Wait, async move {
+                        refuse_park.store(true, Ordering::SeqCst);
+                        tokio::time::sleep(Duration::from_secs(60)).await;
+                        Ok(())
+                    })
+                    .await;
+                })
+                .await;
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        assert_eq!(inside.load(Ordering::SeqCst), 1, "the baton refused at the moment of lending: kept");
+        call.abort();
+    }
+
+    /// A call that wakes itself while an idle wait is pending (mlua does that when a script yields plainly) is not
+    /// waiting for anything: it keeps the VM.
+    #[tokio::test]
+    async fn a_call_that_wakes_itself_at_a_pending_idle_wait_does_not_lend_the_vm() {
+        let lua = Lua::new();
+        let (inside, _) = counting(&lua);
+        let call = tokio::spawn({
+            let lua = lua.clone();
+            async move {
+                inbound(&lua, Inherited::default(), async {
+                    let mut wait = Box::pin(wait_for(Duration::from_secs(60)));
+                    std::future::poll_fn(|cx| {
+                        let _ = wait.as_mut().poll(cx);
+                        cx.waker().wake_by_ref();
+                        Poll::<()>::Pending
+                    })
+                    .await;
+                })
+                .await;
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        assert_eq!(inside.load(Ordering::SeqCst), 1, "a plain yield after a wait is not a wait");
+        call.abort();
     }
 
     #[tokio::test]

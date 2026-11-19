@@ -25,6 +25,7 @@
 
 use std::sync::Arc;
 
+use crate::lua::lifecycle::DRIVEN;
 use mlua::{Lua, Table, Value};
 use parking_lot::Mutex;
 
@@ -167,11 +168,17 @@ fn splitmix(x: u64) -> u64 {
 /// inside a coroutine of the script's own reach the executor (see `async_coroutines.lua`).
 fn install_async_coroutines(lua: &Lua, copy: &Table, raw: &Table) -> mlua::Result<()> {
     let pending = Value::LightUserData(Lua::poll_pending());
+    // the coroutines whose driver is somewhere else, which the task scheduler shares (`lifecycle::mark_driven`)
+    let driven = lua.create_table()?;
+    let weak = lua.create_table()?;
+    weak.raw_set("__mode", "k")?;
+    driven.set_metatable(Some(weak))?;
+    lua.set_named_registry_value(DRIVEN, driven.clone())?;
     let wrappers: Table = lua
         .load(include_str!("async_coroutines.lua"))
         .set_name("=async_coroutines")
         .set_mode(mlua::chunk::ChunkMode::Text)
-        .call((pending, raw.clone()))?;
+        .call((pending, raw.clone(), driven))?;
     copy.raw_set("resume", wrappers.raw_get::<Value>("resume")?)?;
     copy.raw_set("wrap", wrappers.raw_get::<Value>("wrap")?)
 }

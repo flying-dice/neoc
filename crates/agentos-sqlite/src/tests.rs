@@ -505,3 +505,40 @@ async fn a_read_only_handle_reads_and_refuses_every_write_while_the_writable_one
     AppData::exec(&db, "INSERT INTO notes(body) VALUES ('d')".into(), Params::None).await.unwrap();
     assert_eq!(db.query("SELECT body FROM notes".into(), vec![]).await.unwrap().len(), 2);
 }
+
+/// A caller that stops waiting for `begin` (its future is dropped) must not leave the connection inside a
+/// transaction nobody owns, nor the write gate held: beginning runs to the end in a task of its own and the
+/// transaction it made is rolled back when nobody takes it.
+#[tokio::test]
+async fn a_begin_whose_caller_gave_up_is_rolled_back_and_frees_the_gate() {
+    let db = AppDb::open(None, &migs()).unwrap();
+    let data: &dyn AppData = &db;
+    for _ in 0..50 {
+        // polled once (it may have taken the gate and queued `BEGIN`), then dropped
+        let mut begin = Box::pin(data.begin());
+        let _ = std::future::Future::poll(
+            begin.as_mut(),
+            &mut std::task::Context::from_waker(std::task::Waker::noop()),
+        );
+        drop(begin);
+        // the gate is free again, and statements run on a clean connection (outside any transaction)
+        tokio::time::timeout(
+            Duration::from_secs(3),
+            db.exec("INSERT INTO notes(body) VALUES('x')".into(), vec![]),
+        )
+        .await
+        .expect("the write gate is not held by the dropped begin")
+        .unwrap();
+        assert!(db.shared.conn.lock().is_autocommit(), "no transaction was left open");
+    }
+}
+
+/// A database dropped with a transaction open rolls it back while its hooks are alive (SQLite calls the rollback
+/// hook while closing).
+#[tokio::test]
+async fn dropping_a_database_with_an_open_transaction_is_safe() {
+    let db = AppDb::open(None, &migs()).unwrap();
+    db.shared.conn.lock().execute_batch("BEGIN").unwrap();
+    db.shared.conn.lock().execute_batch("INSERT INTO notes(body) VALUES('lost')").unwrap();
+    drop(db);
+}

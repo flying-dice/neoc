@@ -39,7 +39,7 @@ use tracing_core::callsite::{Callsite, DefaultCallsite, Identifier};
 use tracing_core::field::FieldSet;
 use tracing_core::metadata::{Kind, Metadata};
 
-use crate::lua::lifecycle::{async_function, idle, Role};
+use crate::lua::lifecycle::{async_function, Role};
 use crate::lua::sandbox::{from_err, ok};
 
 /// Maps a Rust binding type to its neoc type name.
@@ -338,12 +338,12 @@ impl<'l> Module<'l> {
     {
         let prefix = format!("{}.{}", module_stem(&self.name), name);
         let span = dyn_span(&self.target(), &prefix);
-        // the conversion to Lua values happens with the turn back, so the function is not a plain wait
-        let func = async_function(self.lua, Role::Mixed, move |lua, a: A| {
+        // a plain wait: building the result's Lua values needs no turn (see `Role`)
+        let func = async_function(self.lua, Role::Wait, move |lua, a: A| {
             let fut = f(lua.clone(), a).instrument(span.clone());
             let prefix = prefix.clone();
             async move {
-                match idle(fut).await? {
+                match fut.await {
                     Ok(v) => ok(&lua, v),
                     Err(e) => from_err(&lua, &prefix, e),
                 }

@@ -83,14 +83,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "vnd:hyper")?;
 
-    m.set(
-        "get",
-        crate::lua::lifecycle::async_function(
-            lua,
-            crate::lua::lifecycle::Role::Wait,
-            |lua, args: (String, Option<Table>)| get(lua, args),
-        )?,
-    )?;
+    m.set("get", async_function(lua, Role::Wait, |lua, args: (String, Option<Table>)| get(lua, args))?)?;
     m.record_fn(
         "get",
         &[("url", "string"), ("opts", "LuaValue")],

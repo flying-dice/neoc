@@ -12,10 +12,10 @@ use crate::{
     convert::{json_to_lua, lua_to_json},
     error::{ScriptError, ToolFailure},
     state::{DepKey, SharedTracker, TrackGuard, Tracker, TrackerScope},
+    tx::OpenTx,
     view::{RenderScope, ViewInstance},
 };
 use agentos_application::{
-    data::DataTx,
     live::{SourceDef, SourceId},
     ports::{AgentCard, AgentRoster, AppData, AppPackage, CallContext, MenuCommand, ViewEffect},
 };
@@ -25,7 +25,7 @@ use agentos_luavm::{
     lua::{
         app_env,
         lib::log::set_log_sink,
-        lifecycle::{self, set_entry, Baton, CallEntry, Inherited, Life},
+        lifecycle::{self, set_entry, Baton, BoxFuture, CallEntry, Inherited, Life},
         sandbox::{install_runtime_state, load_source, make_bare_engine},
     },
     mlua::{Function, Lua, Table, Value as LuaValue},
@@ -35,9 +35,8 @@ use serde_json::Value;
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
     future::Future,
-    pin::Pin,
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         Arc,
     },
     task::{Context, Poll},
@@ -184,9 +183,9 @@ pub(crate) struct Shared {
     pub render_scope: Mutex<Option<RenderScope>>,
     /// What windows asked for during a call (toasts, `client.set`).
     pub view_effects: Mutex<Vec<(String, ViewEffect)>>,
-    /// The open `db:tx(fn)` transaction, if any. A statement takes it out while it runs and puts it back, so
-    /// no lock is held across an await and a call that was cut off cannot wedge the next one.
-    pub tx: Mutex<Option<Box<dyn DataTx>>>,
+    /// The open `db:tx(fn)` transaction, if any. It belongs to the turn that opened it (see [`crate::tx`]);
+    /// nothing holds it across an await, so a call that was cut off cannot wedge the next one.
+    pub tx: Mutex<Option<OpenTx>>,
     /// The call that holds the VM's gate is read-only: its database handle refuses writes and every other
     /// change to the world raises. It is the holder's own state (see [`Turn`]): set when a call takes the gate,
     /// cleared when it lets it go.
@@ -199,6 +198,8 @@ pub(crate) struct Shared {
     /// else: a task or a tool carries its own origin ([`Inherited`]), so a long-lived read-only poller does
     /// not make an unrelated writable tool's `task.delay` read-only.
     pub read_only_live: AtomicUsize,
+    /// The next [`Baton::id`]: unique among this VM's turns.
+    pub next_turn: AtomicU64,
     /// Everything the app spawned (tasks, servers, workers): aborted when the app is unloaded.
     pub life: Life,
     /// Woken when a call that nobody made through the host (a request to the app's own server, a task's next
@@ -291,8 +292,6 @@ enum Via {
     Request,
 }
 
-type LockWait = Pin<Box<dyn Future<Output = tokio::sync::OwnedMutexGuard<()>> + Send>>;
-
 /// What a call keeps while it waits without using the VM (see [`Baton::park`]).
 struct Parked {
     scope: TrackerScope,
@@ -306,13 +305,14 @@ struct Parked {
 /// (`task.wait`, the network, a worker) the call sets its own state aside and lets the next call in, then
 /// takes the gate and its state back.
 pub(crate) struct Turn {
+    id: u64,
     shared: Arc<Shared>,
     gate: Arc<tokio::sync::Mutex<()>>,
     held: Option<tokio::sync::OwnedMutexGuard<()>>,
     /// The place in the gate's queue of a call that is waiting to take it (see [`Baton::poll_unpark`]). It lives
     /// here, not in the host call that is waiting, so it stays with this call whichever call polls that host
     /// call later.
-    waiting: Option<LockWait>,
+    waiting: Option<BoxFuture<'static, tokio::sync::OwnedMutexGuard<()>>>,
     parked: Option<Parked>,
     /// The call came from inside the VM (a request to the app's server, a task), not through the host: its
     /// effects are forwarded by the runtime's pump when it ends.
@@ -355,11 +355,24 @@ impl Turn {
         if read_only {
             shared.read_only_live.fetch_add(1, Ordering::SeqCst);
         }
-        Self { shared, gate, held, waiting: None, parked: None, inbound, read_only }
+        Self {
+            id: shared.next_turn.fetch_add(1, Ordering::Relaxed),
+            shared,
+            gate,
+            held,
+            waiting: None,
+            parked: None,
+            inbound,
+            read_only,
+        }
     }
 }
 
 impl Baton for Turn {
+    fn id(&self) -> u64 {
+        self.id
+    }
+
     fn holding(&self) -> bool {
         self.held.is_some()
     }
@@ -391,13 +404,12 @@ impl Baton for Turn {
     }
 
     fn poll_unpark(&mut self, cx: &mut Context<'_>) -> Poll<()> {
-        if self.held.is_none() {
-            let gate = &self.gate;
-            let waiting = self.waiting.get_or_insert_with(|| Box::pin(gate.clone().lock_owned()));
-            let Poll::Ready(held) = waiting.as_mut().poll(cx) else { return Poll::Pending };
-            self.waiting = None;
-            self.held = Some(held);
-        }
+        // only asked of a call that does not hold the gate (see `lifecycle::hold`)
+        let gate = &self.gate;
+        let waiting = self.waiting.get_or_insert_with(|| Box::pin(gate.clone().lock_owned()));
+        let Poll::Ready(held) = waiting.as_mut().poll(cx) else { return Poll::Pending };
+        self.waiting = None;
+        self.held = Some(held);
         self.shared.read_only.store(self.read_only, Ordering::SeqCst);
         if let Some(parked) = self.parked.take() {
             self.shared.tracker.lock().resume(parked.scope);
@@ -408,9 +420,15 @@ impl Baton for Turn {
 
 impl Drop for Turn {
     fn drop(&mut self) {
+        {
+            // before the gate is released (fields drop after this body): a transaction this call left open is
+            // rolled back, so the database is free the moment the call is over
+            let mut open = self.shared.tx.lock();
+            if open.as_ref().is_some_and(|tx| tx.owner() == self.id) {
+                drop(open.take());
+            }
+        }
         if self.held.is_some() {
-            // before the gate is released (fields drop after this body): dropping the transaction rolls it back
-            drop(self.shared.tx.lock().take());
             self.shared.read_only.store(false, Ordering::SeqCst);
         }
         if self.read_only {
@@ -433,14 +451,14 @@ impl CallEntry for Entry {
         Box::new(Turn::detached(self.shared.clone(), self.gate.clone(), inherited.read_only))
     }
 
-    fn enter(&self, inherited: Inherited) -> Pin<Box<dyn Future<Output = Box<dyn Baton>> + Send + 'static>> {
+    fn enter(&self, inherited: Inherited) -> BoxFuture<'static, Box<dyn Baton>> {
         let (shared, gate) = (self.shared.clone(), self.gate.clone());
         Box::pin(
             async move { Box::new(Turn::take(shared, gate, Via::Task(inherited)).await) as Box<dyn Baton> },
         )
     }
 
-    fn request(&self) -> Pin<Box<dyn Future<Output = Box<dyn Baton>> + Send + 'static>> {
+    fn request(&self) -> BoxFuture<'static, Box<dyn Baton>> {
         let (shared, gate) = (self.shared.clone(), self.gate.clone());
         Box::pin(async move { Box::new(Turn::take(shared, gate, Via::Request).await) as Box<dyn Baton> })
     }
@@ -524,6 +542,7 @@ impl AppVm {
             tx: Mutex::new(None),
             read_only,
             read_only_live: AtomicUsize::new(0),
+            next_turn: AtomicU64::new(1),
             life,
             effects_signal: Arc::new(Notify::new()),
         });

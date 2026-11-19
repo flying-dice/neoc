@@ -12,6 +12,7 @@ pub mod reload;
 mod require;
 mod runtime;
 mod state;
+mod tx;
 mod view;
 mod vm;
 

@@ -23,7 +23,8 @@ use tokio::sync::Notify;
 
 use crate::lua::facade::Module;
 use crate::lua::lifecycle::{
-    async_function, async_method, first_slice, has_entry, hold, inbound, inherited, resumed, Life, Role,
+    async_function, async_method, first_slice, has_entry, hold, inbound, inherited, mark_driven, resumed,
+    Life, Role,
 };
 
 // ---------------------------------------------------------------------------
@@ -225,6 +226,8 @@ fn into_thread(lua: &Lua, val: Value, kind: &'static str) -> mlua::Result<Thread
         Value::Function(f) => lua.create_thread(f),
         Value::Thread(t) => {
             validate_thread(&t, kind)?;
+            // the scheduler drives it from here on: the script may not resume it too
+            mark_driven(lua, &t)?;
             Ok(t)
         }
         other => Err(mlua::Error::external(format!(
@@ -296,18 +299,27 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             // the first slice runs inside this call, but a wait it stops at is not this call's: see
             // `lifecycle::resumed`. What the call may do is what its task may do: see `Inherited`.
             let from = inherited();
-            match first_slice(lua, from, || thread.resume::<MultiValue>(args)) {
+            // A slice that stopped at a wait (an async function, which yields the poll sentinel) has a
+            // continuation that takes its turn when the wait ends, and the leaf it stopped at stays alive for it. One
+            // that stopped at a plain `coroutine.yield()` has nothing to wait for: it must take the turn before it
+            // resumes Lua, or it would run in the middle of the call that spawned it.
+            let stopped_at_wait = |vals: &MultiValue| {
+                let mut yielded = vals.iter();
+                matches!(
+                    (yielded.next(), yielded.next()),
+                    (Some(Value::LightUserData(p)), None) if *p == Lua::poll_pending()
+                )
+            };
+            let first = first_slice(
+                lua,
+                from,
+                || thread.resume::<MultiValue>(args),
+                |slice| matches!(slice, Ok(vals) if stopped_at_wait(vals) && thread.status() == ThreadStatus::Resumable),
+            );
+            match first {
                 Ok(vals) => {
                     if matches!(thread.status(), ThreadStatus::Resumable) {
-                        // A slice that stopped at a wait (an async function, which yields the poll sentinel) has
-                        // a continuation that takes its turn when the wait ends. One that stopped at a plain
-                        // `coroutine.yield()` has nothing to wait for: it must take the turn before it resumes
-                        // Lua, or it would run in the middle of the call that spawned it.
-                        let mut yielded = vals.iter();
-                        let at_wait = matches!(
-                            (yielded.next(), yielded.next()),
-                            (Some(Value::LightUserData(p)), None) if *p == Lua::poll_pending()
-                        );
+                        let at_wait = stopped_at_wait(&vals);
                         let inner_clone = inner.clone();
                         let lua = lua.clone();
                         let abort = scheduler.spawn_task(async move {

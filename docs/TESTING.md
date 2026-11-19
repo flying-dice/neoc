@@ -35,8 +35,15 @@ snapshots deliberately with `bun run test:e2e:update`, then open the changed PNG
   isolation of the per-app VMs, the read-only libraries and host calls under `pcall` and in coroutines; `modules.rs` holds the modules and
   the lifecycle: every `std:`/`lib:`/`vnd:` module can be required, a request handler and a task take their turn in
   the VM's one-call-at-a-time queue, an unloaded or replaced app's listener port is free again and its tasks and
-  workers stop. `agentos-luavm` has its own unit tests (the module registry, the lifecycle, and the `vnd:hyper` client
-  against a local TLS server).
+  workers stop. `call_invariants.rs` and `turns.rs` pin what a call into the VM may and may not do (when it lends
+  the VM, `db:tx`, a host call Lua cannot suspend at), each with the script that broke it. `chaos.rs` generates
+  scripts (seeded, deterministic) that combine a leaf (waits, database, key-value, mutex, state, notify, windows), a
+  context where Lua 5.1 cannot yield, and controls (`pcall`, coroutines, plain yields, tasks, nested `db:tx`, errors) in
+  a read-only, writable, concurrent or own-server call, and checks that nothing was written read-only, nothing
+  interleaved, no acknowledged write was lost, `db:tx` success means committed, the app and its database still answer,
+  and the host did not panic; 600 cases take about a second. `CHAOS_CASES=20000` (and `CHAOS_SEED`) go further, and
+  `CHAOS_ONLY=<case>` prints and runs one. `agentos-luavm` has its own unit tests (the module registry, the lifecycle,
+  and the `vnd:hyper` client against a local TLS server).
 - **Host** (`agentos-host/tests`): the real wiring on an ephemeral loopback port (`tests/common`), driven like a
   browser or an agent would: `/rpc`, `/agui`, `/mcp`, pairing, the Agents app.
 - Tests may use `unwrap`, `expect` and `panic!` (`clippy.toml`); an integration-test file with helpers carries

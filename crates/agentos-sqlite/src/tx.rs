@@ -1,5 +1,9 @@
 //! An open transaction: it owns the database's write gate, so nothing else touches the connection until it
 //! commits or rolls back (or is dropped, which rolls back).
+//!
+//! Beginning runs in a task of its own, to the end, whether or not the caller is still waiting: a caller that is
+//! dropped between taking the gate and `BEGIN` running on the blocking pool would otherwise roll back *before*
+//! the `BEGIN` it queued ran, and leave the connection inside a transaction nobody owns.
 
 use crate::{run_exec, run_query, AppDb, DbError};
 use agentos_application::{
@@ -8,7 +12,7 @@ use agentos_application::{
 };
 use async_trait::async_trait;
 use serde_json::Value;
-use tokio::sync::OwnedMutexGuard;
+use tokio::sync::{oneshot, OwnedMutexGuard};
 
 pub struct SqliteTx {
     db: AppDb,
@@ -17,6 +21,16 @@ pub struct SqliteTx {
 
 impl SqliteTx {
     pub(crate) async fn begin(db: &AppDb) -> Result<Self, DbError> {
+        let db = db.clone();
+        let (sent, received) = oneshot::channel();
+        tokio::spawn(async move {
+            // when nobody is waiting any more the transaction comes back here and is dropped: rolled back, gate free
+            drop(sent.send(Self::open(&db).await));
+        });
+        received.await.map_err(|_| DbError::Cancelled)?
+    }
+
+    async fn open(db: &AppDb) -> Result<Self, DbError> {
         let gate = db.gate().lock_owned().await;
         let this = Self { db: db.clone(), gate: Some(gate) };
         // from here a failure drops `this`, which releases the gate

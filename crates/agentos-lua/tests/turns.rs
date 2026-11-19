@@ -4,10 +4,10 @@
 //! - a wait Lua cannot yield from (a `string.gsub` callback, a sort comparator, a metamethod, an iterator) fails
 //!   with a Lua error and must not lend the turn: the call keeps it, and a `readOnly` tool stays read-only;
 //! - a wait that failed to yield must not make the call give up the turn at the *next* thing it waits for: a host
-//!   call left in flight and resumed later (`coroutine.resume`) is a different leaf, and its `Pending` is not the
-//!   failed wait's (every async host function is a leaf, see `lifecycle`);
-//! - a host call that a detached call (a task's first slice) left waiting for its turn, and a different call then
-//!   resumes, runs in that call's turn instead of waiting for a turn nobody can give it;
+//!   call Lua could not suspend at is abandoned the moment the script goes on (every async host function is a
+//!   leaf, see `lifecycle`), so a coroutine resumed later gets an error from it, not a stale suspension;
+//! - that holds for the first slice of a task too: what a detached call could not suspend at is over, and a
+//!   different call that resumes the coroutine gets the error instead of running the host call in its turn;
 //! - `task.spawn` inside `db:tx` neither deadlocks nor sees the transaction: the task waits for its turn;
 //! - the read-only restriction follows a call's origin: a long-lived read-only poller does not make an unrelated
 //!   writable tool's delayed write read-only, while a request to the app's own listener while a read-only call
@@ -200,10 +200,13 @@ async fn stale_lend_case(container: &str, wait: &str, later: &str, url: &str) ->
           local a = pcall(string.gsub, "x", "x", function() coroutine.resume(late) end)
           local b = pcall(string.gsub, "x", "x", function() coroutine.resume(failing) end)
           local before = counter
-          -- the call suspends here, at the query, and not at the failed wait
-          local ok, row = coroutine.resume(late)
+          -- the query Lua could not suspend at is over (abandoned), and so is the wait
+          local ok, why = coroutine.resume(late)
+          -- the call really suspends here, at a query, and not at the failed wait
+          local row = {later}
           return {{
-            failed = not a and not b, resumed = ok, n = row and row.n,
+            failed = not a and not b, abandoned = (not ok) and tostring(why):find("abandoned", 1, true) ~= nil,
+            n = row and row.n,
             interleaved = counter ~= before,
             state_write_refused = refused(function() state.v = 42 end),
             notify_refused = refused(function() app.notify {{ title = "from a readOnly call" }} end),
@@ -266,7 +269,7 @@ async fn a_failed_wait_does_not_make_a_later_host_call_lend_the_turn_of_a_read_o
 
 fn check_stale_lend_case(name: &str, out: &serde_json::Value) {
     assert_eq!(out["failed"], true, "{name}: both waits failed where Lua cannot yield: {out}");
-    assert_eq!(out["resumed"], true, "{name}: {out}");
+    assert_eq!(out["abandoned"], true, "{name}: a host call Lua could not suspend at is over: {out}");
     assert_eq!(out["n"], 1_000_000, "{name}: {out}");
     assert_eq!(out["interleaved"], false, "{name}: another call ran inside this one: {out}");
     assert_eq!(out["state_write_refused"], true, "{name}: the call is still read-only: {out}");
@@ -342,19 +345,23 @@ async fn detached_hold_case(resumer: &str, leaf: &str) -> serde_json::Value {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_host_call_a_detached_call_left_waiting_for_its_turn_is_finished_by_whoever_resumes_it() {
+async fn a_host_call_a_detached_call_could_not_suspend_at_is_over_when_someone_resumes_it() {
     for (resumer, r) in RESUMERS {
         for (leaf, l) in LEAVES {
             let out = detached_hold_case(r, l).await;
-            assert_eq!(out["ok"], true, "{resumer} / {leaf}: {out}");
+            assert_eq!(out["ok"], false, "{resumer} / {leaf}: {out}");
+            assert!(
+                out["r"].as_str().is_some_and(|why| why.contains("abandoned")),
+                "{resumer} / {leaf}: the host call Lua could not suspend at is over: {out}"
+            );
         }
     }
 }
 
-/// A write that a writable call's task left waiting for its turn is checked when it takes the turn, in the turn of
-/// whoever finishes it: a `readOnly` call that resumes it gets the refusal, not the write.
+/// A write that a writable call's task could not suspend at is never run: a `readOnly` call that resumes the
+/// coroutine gets the abandoned call's error, and the write did not happen.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_write_left_waiting_for_its_turn_is_checked_in_the_turn_that_finishes_it() {
+async fn a_write_a_task_could_not_suspend_at_is_never_run_by_a_later_read_only_call() {
     for (write, check) in [
         (r#"app.db:exec("insert into t values (1)")"#, r#"#app.db:all("select a from t") == 0"#),
         (r#"app.kv:set("k", 1)"#, r#"app.kv:get("k") == nil"#),
@@ -386,7 +393,7 @@ async fn a_write_left_waiting_for_its_turn_is_checked_in_the_turn_that_finishes_
         call("start").await.expect("start finished").unwrap();
         let out = call("finish").await.expect("finish did not wedge the app").unwrap();
         assert_eq!(out["ok"], false, "{write}: {out}");
-        assert!(out["err"].as_str().unwrap().contains("readOnly"), "{write}: {out}");
+        assert!(out["err"].as_str().unwrap().contains("abandoned"), "{write}: {out}");
         assert_eq!(out["untouched"], true, "{write}: {out}");
     }
 }

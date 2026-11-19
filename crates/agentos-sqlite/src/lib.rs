@@ -63,6 +63,8 @@ pub enum DbError {
     MigrationOrder(u32),
     #[error("blocking task failed: {0}")]
     Join(#[from] tokio::task::JoinError),
+    #[error("beginning the transaction was cut short (the runtime is shutting down)")]
+    Cancelled,
     #[error("the statement ran longer than {0:?} and was interrupted")]
     Timeout(Duration),
     #[error("{0}")]
@@ -152,6 +154,17 @@ struct Shared {
     timeout: Duration,
     /// Raised while the adapter itself flips `query_only` (the authorizer refuses app SQL doing it).
     privileged: Arc<AtomicBool>,
+}
+
+impl Drop for Shared {
+    fn drop(&mut self) {
+        // a transaction nobody ended is rolled back while the hooks are still alive (closing the connection
+        // rolls it back through them)
+        let conn = self.conn.get_mut();
+        if !conn.is_autocommit() {
+            let _ = conn.execute_batch("ROLLBACK");
+        }
+    }
 }
 
 #[derive(Clone)]

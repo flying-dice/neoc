@@ -40,10 +40,11 @@ pub(crate) fn install(lua: &Lua, sh: &Arc<Shared>, env: &mlua::Table) -> mlua::R
     require::install(lua, sh, env)
 }
 
-/// Run a host call (a database call, the agent roster) from inside a `lifecycle::Role::Vm` function, which
-/// holds the turn already. It runs to its end, however long that takes, unless the app is unloaded or replaced
-/// meanwhile: the call is then abandoned and the app's code gets an error, so a loop of host calls in an
-/// unloaded app ends.
+/// Run a host call (a database call) from inside a `lifecycle::Role::Vm` function, which holds the turn already.
+/// It runs to its end, however long that takes, unless the app is unloaded or replaced meanwhile: the call is then
+/// abandoned and the app's code gets an error, so a loop of host calls in an unloaded app ends. If Lua could not
+/// suspend at the function (it was called from a `string.gsub` callback, say) the call is dropped as soon as the
+/// script goes on, and whatever it holds, a database lock included, is released (`lifecycle`, rule 3).
 pub(crate) async fn host<T>(
     sh: &Shared,
     call: impl Future<Output = Result<T, PortError>>,

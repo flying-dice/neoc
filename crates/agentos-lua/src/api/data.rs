@@ -18,17 +18,18 @@
 use super::{check_effects_allowed, host};
 use crate::{
     convert::{json_to_lua, lua_to_json, lua_to_params},
+    tx::{answer, OpenTx, Reply},
     vm::Shared,
 };
 use agentos_application::{
     data::{ExecOutcome, Params, QueryInfo, SqlMigration},
     live::{Conflict, SourceDef, SourceId, SourceKind, TotalMode},
 };
-use agentos_luavm::lua::lifecycle::{async_function, Role};
+use agentos_luavm::lua::lifecycle::{async_function, turn_id, Role};
 use agentos_luavm::mlua;
-use agentos_luavm::mlua::{Function, Lua, Table, Value as LuaValue};
+use agentos_luavm::mlua::{FromLuaMulti, Function, IntoLuaMulti, Lua, Table, Value as LuaValue};
 use serde_json::{json, Value};
-use std::sync::Arc;
+use std::{future::Future, sync::Arc};
 
 type Sh = Arc<Shared>;
 
@@ -40,31 +41,58 @@ impl Shared {
         check_effects_allowed(self, what)
     }
 
+    /// Queue a statement on the open transaction, when there is one: a transaction belongs to the turn that opened
+    /// it, and a statement from any other call is refused, never run inside it. The statement is handed back when
+    /// there is no transaction. Nothing is held across the wait for the answer.
+    fn in_open_tx<A, T>(
+        &self,
+        statement: A,
+        queue: impl FnOnce(&OpenTx, A) -> Reply<T>,
+    ) -> mlua::Result<Result<Reply<T>, A>> {
+        let open = self.tx.lock();
+        let Some(tx) = open.as_ref() else { return Ok(Err(statement)) };
+        if turn_id() != Some(tx.owner()) {
+            return Err(mlua::Error::runtime("another call's db:tx is open: wait for it to finish"));
+        }
+        Ok(Ok(queue(tx, statement)))
+    }
+
     /// A read: through the open transaction when there is one.
     async fn run_query(&self, sql: String, params: Params) -> mlua::Result<Vec<Value>> {
-        let open = self.tx.lock().take();
-        match open {
-            Some(mut t) => {
-                let out = host(self, t.query(sql, params)).await;
-                *self.tx.lock() = Some(t);
-                out
-            }
-            None => host(self, self.database().query(sql, params)).await,
+        match self.in_open_tx((sql, params), |tx, (sql, params)| tx.query(sql, params))? {
+            Ok(reply) => await_reply(self, reply).await,
+            Err((sql, params)) => host(self, self.database().query(sql, params)).await,
         }
     }
 
     /// A write: through the open transaction when there is one.
     async fn run_exec(&self, sql: String, params: Params) -> mlua::Result<ExecOutcome> {
-        let open = self.tx.lock().take();
-        match open {
-            Some(mut t) => {
-                let out = host(self, t.exec(sql, params)).await;
-                *self.tx.lock() = Some(t);
-                out
-            }
-            None => host(self, self.database().exec(sql, params)).await,
+        match self.in_open_tx((sql, params), |tx, (sql, params)| tx.exec(sql, params))? {
+            Ok(reply) => await_reply(self, reply).await,
+            Err((sql, params)) => host(self, self.database().exec(sql, params)).await,
         }
     }
+}
+
+/// Wait for what a transaction's task answers.
+async fn await_reply<T>(sh: &Shared, reply: Reply<T>) -> mlua::Result<T> {
+    host(sh, answer(reply)).await
+}
+
+/// An async host function of the app's own state: it takes the turn before its body runs ([`Role::Vm`]), and the
+/// body gets the app's shared state. Every function of `app.db` and `app.kv` is made here.
+fn vm_function<A, R, Fut>(
+    lua: &Lua,
+    sh: &Sh,
+    body: impl Fn(Sh, Lua, A) -> Fut + Send + 'static,
+) -> mlua::Result<Function>
+where
+    A: FromLuaMulti,
+    R: IntoLuaMulti + Send + 'static,
+    Fut: Future<Output = mlua::Result<R>> + Send + 'static,
+{
+    let sh = sh.clone();
+    async_function(lua, Role::Vm, move |lua, args| body(sh.clone(), lua, args))
 }
 
 fn opt_string(opts: &Table, key: &str) -> mlua::Result<Option<String>> {
@@ -214,128 +242,116 @@ pub(super) fn install(lua: &Lua, sh: &Sh, app: &Table) -> mlua::Result<()> {
 #[allow(clippy::too_many_lines)] // a flat table of host functions: splitting it would only scatter them
 fn install_statements(lua: &Lua, sh: &Sh, db: &Table) -> mlua::Result<()> {
     // db:migrate { [1] = sql, [2] = sql }
-    let s = sh.clone();
     db.set(
         "migrate",
-        async_function(lua, Role::Vm, move |_, (_this, steps): (LuaValue, Table)| {
-            let s = s.clone();
-            async move {
-                s.require_write("db:migrate")?;
-                if s.tx.lock().is_some() {
-                    // the transaction holds the database's write gate, and a migration waits for that same gate
-                    return Err(mlua::Error::runtime(
-                        "db:migrate cannot run inside db:tx: migrate before the transaction starts",
-                    ));
-                }
-                let len = steps.raw_len();
-                // not presized: `#steps` is whatever border Lua finds, so a forged table can report 2^30
-                let mut migrations = Vec::new();
-                for version in 1..=len {
-                    let LuaValue::String(sql) = steps.raw_get::<LuaValue>(version)? else {
-                        return Err(mlua::Error::runtime(format!("db:migrate: step [{version}] must be a SQL string")));
-                    };
-                    let sql = sql.to_string_lossy();
-                    migrations.push(SqlMigration {
-                        version: u32::try_from(version).map_err(mlua::Error::external)?,
-                        name: format!("migration {version}"),
-                        sql,
-                    });
-                }
-                let keys = steps.pairs::<LuaValue, LuaValue>().count();
-                if keys != len {
-                    return Err(mlua::Error::runtime(
-                        "db:migrate takes steps numbered 1..N without gaps: db:migrate { [1] = ..., [2] = ... }",
-                    ));
-                }
-                host(&s, s.db.migrate(migrations)).await
+        vm_function(lua, sh, |s, _, (_this, steps): (LuaValue, Table)| async move {
+            s.require_write("db:migrate")?;
+            if s.tx.lock().is_some() {
+                // the transaction holds the database's write gate, and a migration waits for that same gate
+                return Err(mlua::Error::runtime(
+                    "db:migrate cannot run inside db:tx: migrate before the transaction starts",
+                ));
             }
+            let len = steps.raw_len();
+            // not presized: `#steps` is whatever border Lua finds, so a forged table can report 2^30
+            let mut migrations = Vec::new();
+            for version in 1..=len {
+                let LuaValue::String(sql) = steps.raw_get::<LuaValue>(version)? else {
+                    return Err(mlua::Error::runtime(format!(
+                        "db:migrate: step [{version}] must be a SQL string"
+                    )));
+                };
+                let sql = sql.to_string_lossy();
+                migrations.push(SqlMigration {
+                    version: u32::try_from(version).map_err(mlua::Error::external)?,
+                    name: format!("migration {version}"),
+                    sql,
+                });
+            }
+            let keys = steps.pairs::<LuaValue, LuaValue>().count();
+            if keys != len {
+                return Err(mlua::Error::runtime(
+                    "db:migrate takes steps numbered 1..N without gaps: db:migrate { [1] = ..., [2] = ... }",
+                ));
+            }
+            host(&s, s.db.migrate(migrations)).await
         })?,
     )?;
 
     // db:exec(sql, params) -> { changes, last_insert_id }
-    let s = sh.clone();
     db.set(
         "exec",
-        async_function(
+        vm_function(
             lua,
-            Role::Vm,
-            move |lua, (_this, sql, params): (LuaValue, String, Option<LuaValue>)| {
-                let s = s.clone();
-                async move {
-                    s.require_write("db:exec")?;
-                    let out = s.run_exec(sql, lua_to_params(params)?).await?;
-                    json_to_lua(&lua, &json!({"changes": out.changes, "last_insert_id": out.last_insert_id}))
-                }
+            sh,
+            |s, lua, (_this, sql, params): (LuaValue, String, Option<LuaValue>)| async move {
+                s.require_write("db:exec")?;
+                let out = s.run_exec(sql, lua_to_params(params)?).await?;
+                json_to_lua(&lua, &json!({"changes": out.changes, "last_insert_id": out.last_insert_id}))
             },
         )?,
     )?;
 
     // db:all(sql, params) -> rows ; db:one(sql, params) -> row | nil
-    let s = sh.clone();
     db.set(
         "all",
-        async_function(
+        vm_function(
             lua,
-            Role::Vm,
-            move |lua, (_this, sql, params): (LuaValue, String, Option<LuaValue>)| {
-                let s = s.clone();
-                async move {
-                    let rows = s.run_query(sql, lua_to_params(params)?).await?;
-                    json_to_lua(&lua, &Value::Array(rows))
-                }
+            sh,
+            |s, lua, (_this, sql, params): (LuaValue, String, Option<LuaValue>)| async move {
+                let rows = s.run_query(sql, lua_to_params(params)?).await?;
+                json_to_lua(&lua, &Value::Array(rows))
             },
         )?,
     )?;
-    let s = sh.clone();
     db.set(
         "one",
-        async_function(
+        vm_function(
             lua,
-            Role::Vm,
-            move |lua, (_this, sql, params): (LuaValue, String, Option<LuaValue>)| {
-                let s = s.clone();
-                async move {
-                    let mut rows = s.run_query(sql, lua_to_params(params)?).await?;
-                    rows.truncate(1);
-                    match rows.pop() {
-                        Some(row) => json_to_lua(&lua, &row),
-                        None => Ok(LuaValue::Nil),
-                    }
+            sh,
+            |s, lua, (_this, sql, params): (LuaValue, String, Option<LuaValue>)| async move {
+                let mut rows = s.run_query(sql, lua_to_params(params)?).await?;
+                rows.truncate(1);
+                match rows.pop() {
+                    Some(row) => json_to_lua(&lua, &row),
+                    None => Ok(LuaValue::Nil),
                 }
             },
         )?,
     )?;
 
     // db:tx(fn): the statements inside commit together or not at all
-    let s = sh.clone();
     db.set(
         "tx",
-        async_function(lua, Role::Vm, move |_, (_this, body): (LuaValue, Function)| {
-            let s = s.clone();
-            async move {
-                // the call holds the turn here (`Role::Vm`): the checks below, the transaction and the `readOnly`
-                // flag `database()` reads belong to it (a task started inside another `db:tx` waited for it)
-                check_effects_allowed(&s, "db:tx")?;
-                if s.tx.lock().is_some() {
-                    return Err(mlua::Error::runtime("db:tx cannot be nested"));
+        vm_function(lua, sh, |s, _, (_this, body): (LuaValue, Function)| async move {
+            // the call holds the turn here (`Role::Vm`): the checks below, the transaction and the `readOnly`
+            // flag `database()` reads belong to it (a task started inside another `db:tx` waited for it)
+            check_effects_allowed(&s, "db:tx")?;
+            if s.tx.lock().is_some() {
+                return Err(mlua::Error::runtime("db:tx cannot be nested"));
+            }
+            let begun = host(&s, s.database().begin()).await?;
+            // the call that finishes beginning (the same one, unless the host call was left in flight) owns it
+            let owner = turn_id().ok_or_else(|| mlua::Error::runtime("db:tx needs a call to belong to"))?;
+            *s.tx.lock() = Some(OpenTx::start(&s.life, begun, owner));
+            let mut guard = TxGuard { shared: &s, owner: Some(owner) };
+            let result = body.call_async::<mlua::MultiValue>(()).await;
+            // whatever the body left in flight is queued ahead of the end, in the transaction
+            match (result, guard.release()) {
+                (Ok(values), Some(tx)) => {
+                    await_reply(&s, tx.end(true)).await?;
+                    Ok(values)
                 }
-                let tx = host(&s, s.database().begin()).await?;
-                *s.tx.lock() = Some(tx);
-                let result = body.call_async::<mlua::MultiValue>(()).await;
-                let tx = s.tx.lock().take();
-                match (result, tx) {
-                    (Ok(values), Some(tx)) => {
-                        host(&s, tx.commit()).await?;
-                        Ok(values)
+                (Err(e), Some(tx)) => {
+                    if let Err(rollback) = await_reply(&s, tx.end(false)).await {
+                        tracing::warn!(app = %s.app, error = %rollback, "rolling back a failed db:tx failed");
                     }
-                    (Err(e), Some(tx)) => {
-                        if let Err(rollback) = host(&s, tx.rollback()).await {
-                            tracing::warn!(app = %s.app, error = %rollback, "rolling back a failed db:tx failed");
-                        }
-                        Err(e)
-                    }
-                    (result, None) => result,
+                    Err(e)
                 }
+                (Ok(_), None) => Err(mlua::Error::runtime(
+                    "transaction lost: the call that opened it ended before the body finished, so it was rolled back",
+                )),
+                (Err(e), None) => Err(e),
             }
         })?,
     )?;
@@ -343,107 +359,118 @@ fn install_statements(lua: &Lua, sh: &Sh, db: &Table) -> mlua::Result<()> {
     Ok(())
 }
 
+/// The open `db:tx` of a host call: if the call is dropped (abandoned) before it ends the transaction, the
+/// transaction is rolled back, so nothing is left open that no call is finishing.
+struct TxGuard<'a> {
+    shared: &'a Shared,
+    owner: Option<u64>,
+}
+
+impl TxGuard<'_> {
+    /// The transaction, if it is still this call's (the turn that opened it may have ended and rolled it back).
+    fn release(&mut self) -> Option<OpenTx> {
+        let owner = self.owner.take()?;
+        let mut slot = self.shared.tx.lock();
+        if slot.as_ref().is_some_and(|tx| tx.owner() == owner) {
+            slot.take()
+        } else {
+            None
+        }
+    }
+}
+
+impl Drop for TxGuard<'_> {
+    fn drop(&mut self) {
+        drop(self.release());
+    }
+}
+
 /// `db:query`, `db:row`, `db:scalar`: live sources.
-#[allow(clippy::too_many_lines)] // a flat table of host functions: splitting it would only scatter them
 fn install_sources(lua: &Lua, sh: &Sh, db: &Table) -> mlua::Result<()> {
     // db:query(sql, { key, page, total }) -> factory of `rows` source handles
-    let s = sh.clone();
     db.set(
         "query",
-        async_function(lua, Role::Vm, move |lua, (_this, sql, opts): (LuaValue, String, Table)| {
-            let s = s.clone();
-            async move {
-                reject_unknown(&opts, &["key", "page", "total"], "db:query")?;
-                let key = opt_string(&opts, "key")?
-                    .ok_or_else(|| mlua::Error::runtime("db:query needs { key = \"<unique column>\" }"))?;
-                let page = match opts.get::<LuaValue>("page")? {
-                    LuaValue::Nil => None,
-                    LuaValue::Integer(p) => {
-                        Some(u32::try_from(p).map_err(|_| mlua::Error::runtime("page must be positive"))?)
-                    }
-                    LuaValue::Number(p) if p.fract() == 0.0 && (0.0..=f64::from(u32::MAX)).contains(&p) =>
-                    {
-                        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                        Some(p as u32)
-                    }
-                    _ => return Err(mlua::Error::runtime("page must be a whole number")),
-                };
-                let total = match opt_string(&opts, "total")?.as_deref() {
-                    None | Some("exact") => TotalMode::Exact,
-                    Some("estimate") => TotalMode::Estimate,
-                    Some("none") => TotalMode::None,
-                    Some(other) => {
-                        return Err(mlua::Error::runtime(format!(
-                            "total must be exact, estimate or none, got `{other}`"
-                        )))
-                    }
-                };
-                declare(&s, &lua, sql, |_| SourceKind::Rows { key, page, total }).await
-            }
+        vm_function(lua, sh, |s, lua, (_this, sql, opts): (LuaValue, String, Table)| async move {
+            reject_unknown(&opts, &["key", "page", "total"], "db:query")?;
+            let key = opt_string(&opts, "key")?
+                .ok_or_else(|| mlua::Error::runtime("db:query needs { key = \"<unique column>\" }"))?;
+            let page = match opts.get::<LuaValue>("page")? {
+                LuaValue::Nil => None,
+                LuaValue::Integer(p) => {
+                    Some(u32::try_from(p).map_err(|_| mlua::Error::runtime("page must be positive"))?)
+                }
+                LuaValue::Number(p) if p.fract() == 0.0 && (0.0..=f64::from(u32::MAX)).contains(&p) =>
+                {
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                    Some(p as u32)
+                }
+                _ => return Err(mlua::Error::runtime("page must be a whole number")),
+            };
+            let total = match opt_string(&opts, "total")?.as_deref() {
+                None | Some("exact") => TotalMode::Exact,
+                Some("estimate") => TotalMode::Estimate,
+                Some("none") => TotalMode::None,
+                Some(other) => {
+                    return Err(mlua::Error::runtime(format!(
+                        "total must be exact, estimate or none, got `{other}`"
+                    )))
+                }
+            };
+            declare(&s, &lua, sql, |_| SourceKind::Rows { key, page, total }).await
         })?,
     )?;
 
     // db:row(sql, { key, rev, write, conflict, writable }) -> factory of `row` source handles
-    let s = sh.clone();
     db.set(
         "row",
-        async_function(lua, Role::Vm, move |lua, (_this, sql, opts): (LuaValue, String, Table)| {
-            let s = s.clone();
-            async move {
-                reject_unknown(&opts, &["key", "rev", "write", "conflict", "writable"], "db:row")?;
-                let key = opt_string(&opts, "key")?
-                    .ok_or_else(|| mlua::Error::runtime("db:row needs { key = \"<unique column>\" }"))?;
-                let rev = opt_string(&opts, "rev")?;
-                let conflict = match opt_string(&opts, "conflict")?.as_deref() {
-                    None | Some("merge") => Conflict::HumanWins,
-                    Some("reject") => Conflict::Reject,
-                    Some(other) => {
-                        return Err(mlua::Error::runtime(format!(
-                            "conflict must be \"merge\" or \"reject\", got `{other}`"
-                        )))
-                    }
-                };
-                let writable = match opts.get::<LuaValue>("writable")? {
-                    LuaValue::Nil => None,
-                    v => match lua_to_json(&v)? {
-                        Value::Array(a) => Some(
-                            a.iter()
-                                .map(|f| f.as_str().map(str::to_owned))
-                                .collect::<Option<Vec<_>>>()
-                                .ok_or_else(|| {
-                                    mlua::Error::runtime("writable must be a list of field names")
-                                })?,
-                        ),
-                        _ => return Err(mlua::Error::runtime("writable must be a list of field names")),
-                    },
-                };
-                let write = match opts.get::<LuaValue>("write")? {
-                    LuaValue::Nil => None,
-                    LuaValue::Function(f) => Some(f),
-                    _ => {
-                        return Err(mlua::Error::runtime("write must be a function(key, field, value, ctx)"))
-                    }
-                };
-                let has_write = write.is_some();
-                let factory =
-                    declare(&s, &lua, sql, |_| SourceKind::Row { key, rev, writable, has_write, conflict })
-                        .await?;
-                if let Some(write) = write {
-                    let id = s.sources.lock().last().map(|d| d.id.0.clone()).unwrap_or_default();
-                    s.writers.lock().insert(id, write);
+        vm_function(lua, sh, |s, lua, (_this, sql, opts): (LuaValue, String, Table)| async move {
+            reject_unknown(&opts, &["key", "rev", "write", "conflict", "writable"], "db:row")?;
+            let key = opt_string(&opts, "key")?
+                .ok_or_else(|| mlua::Error::runtime("db:row needs { key = \"<unique column>\" }"))?;
+            let rev = opt_string(&opts, "rev")?;
+            let conflict = match opt_string(&opts, "conflict")?.as_deref() {
+                None | Some("merge") => Conflict::HumanWins,
+                Some("reject") => Conflict::Reject,
+                Some(other) => {
+                    return Err(mlua::Error::runtime(format!(
+                        "conflict must be \"merge\" or \"reject\", got `{other}`"
+                    )))
                 }
-                Ok(factory)
+            };
+            let writable = match opts.get::<LuaValue>("writable")? {
+                LuaValue::Nil => None,
+                v => match lua_to_json(&v)? {
+                    Value::Array(a) => Some(
+                        a.iter()
+                            .map(|f| f.as_str().map(str::to_owned))
+                            .collect::<Option<Vec<_>>>()
+                            .ok_or_else(|| mlua::Error::runtime("writable must be a list of field names"))?,
+                    ),
+                    _ => return Err(mlua::Error::runtime("writable must be a list of field names")),
+                },
+            };
+            let write = match opts.get::<LuaValue>("write")? {
+                LuaValue::Nil => None,
+                LuaValue::Function(f) => Some(f),
+                _ => return Err(mlua::Error::runtime("write must be a function(key, field, value, ctx)")),
+            };
+            let has_write = write.is_some();
+            let factory =
+                declare(&s, &lua, sql, |_| SourceKind::Row { key, rev, writable, has_write, conflict })
+                    .await?;
+            if let Some(write) = write {
+                let id = s.sources.lock().last().map(|d| d.id.0.clone()).unwrap_or_default();
+                s.writers.lock().insert(id, write);
             }
+            Ok(factory)
         })?,
     )?;
 
     // db:scalar(sql) -> factory of `value` source handles
-    let s = sh.clone();
     db.set(
         "scalar",
-        async_function(lua, Role::Vm, move |lua, (_this, sql): (LuaValue, String)| {
-            let s = s.clone();
-            async move { declare(&s, &lua, sql, |_| SourceKind::Scalar).await }
+        vm_function(lua, sh, |s, lua, (_this, sql): (LuaValue, String)| async move {
+            declare(&s, &lua, sql, |_| SourceKind::Scalar).await
         })?,
     )?;
     Ok(())
@@ -453,62 +480,46 @@ fn install_sources(lua: &Lua, sh: &Sh, db: &Table) -> mlua::Result<()> {
 fn install_kv(lua: &Lua, sh: &Sh, app: &Table) -> mlua::Result<()> {
     let kv = lua.create_table()?;
 
-    let s = sh.clone();
     kv.set(
         "get",
-        async_function(lua, Role::Vm, move |lua, (_this, key): (LuaValue, String)| {
-            let s = s.clone();
-            async move {
-                let rows = s
-                    .run_query(
-                        "select value from _kv where key = :k".into(),
-                        Params::named([("k", json!(key))]),
-                    )
-                    .await?;
-                match rows.first().and_then(|r| r["value"].as_str()) {
-                    Some(text) => {
-                        let v: Value = serde_json::from_str(text).map_err(mlua::Error::external)?;
-                        json_to_lua(&lua, &v)
-                    }
-                    None => Ok(LuaValue::Nil),
+        vm_function(lua, sh, |s, lua, (_this, key): (LuaValue, String)| async move {
+            let rows = s
+                .run_query("select value from _kv where key = :k".into(), Params::named([("k", json!(key))]))
+                .await?;
+            match rows.first().and_then(|r| r["value"].as_str()) {
+                Some(text) => {
+                    let v: Value = serde_json::from_str(text).map_err(mlua::Error::external)?;
+                    json_to_lua(&lua, &v)
                 }
+                None => Ok(LuaValue::Nil),
             }
         })?,
     )?;
 
-    let s = sh.clone();
     kv.set(
         "set",
-        async_function(lua, Role::Vm, move |_, (_this, key, value): (LuaValue, String, LuaValue)| {
-            let s = s.clone();
-            async move {
-                s.require_write("app.kv:set")?;
-                let json = lua_to_json(&value)?;
-                if json.is_null() {
-                    s.run_exec("delete from _kv where key = :k".into(), Params::named([("k", json!(key))])).await?;
-                } else {
-                    s.run_exec(
-                        "insert into _kv(key, value) values(:k, :v) on conflict(key) do update set value = excluded.value".into(),
-                        Params::named([("k", json!(key)), ("v", json!(json.to_string()))]),
-                    )
-                    .await?;
-                }
-                Ok(())
+        vm_function(lua, sh, |s, _, (_this, key, value): (LuaValue, String, LuaValue)| async move {
+            s.require_write("app.kv:set")?;
+            let json = lua_to_json(&value)?;
+            if json.is_null() {
+                s.run_exec("delete from _kv where key = :k".into(), Params::named([("k", json!(key))])).await?;
+            } else {
+                s.run_exec(
+                    "insert into _kv(key, value) values(:k, :v) on conflict(key) do update set value = excluded.value".into(),
+                    Params::named([("k", json!(key)), ("v", json!(json.to_string()))]),
+                )
+                .await?;
             }
+            Ok(())
         })?,
     )?;
 
-    let s = sh.clone();
     kv.set(
         "delete",
-        async_function(lua, Role::Vm, move |_, (_this, key): (LuaValue, String)| {
-            let s = s.clone();
-            async move {
-                s.require_write("app.kv:delete")?;
-                s.run_exec("delete from _kv where key = :k".into(), Params::named([("k", json!(key))]))
-                    .await?;
-                Ok(())
-            }
+        vm_function(lua, sh, |s, _, (_this, key): (LuaValue, String)| async move {
+            s.require_write("app.kv:delete")?;
+            s.run_exec("delete from _kv where key = :k".into(), Params::named([("k", json!(key))])).await?;
+            Ok(())
         })?,
     )?;
     app.set("kv", kv)

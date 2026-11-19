@@ -18,9 +18,28 @@
 -- metamethod or a `for ... in` iterator function): a host call there fails with Lua's own
 -- "attempt to yield across metamethod/C-call boundary".
 
-local pending, raw = ...
+local pending, raw, driven = ...
 local select, unpack, error, type = select, unpack, error, type
-local create, resume, yield, status = raw.create, raw.resume, raw.yield, raw.status
+local create, resume, yield, status, running = raw.create, raw.resume, raw.yield, raw.status, raw.running
+
+-- A coroutine whose host call is in flight is *running*, as far as the script can tell: the thread that resumed it
+-- waits for it. `driven` (a table with weak keys, shared with the task scheduler) maps such a coroutine to that
+-- thread; a script that resumes it from somewhere else (a task, another call) gets Lua's own "cannot resume
+-- non-suspended coroutine" instead of stealing the call from the thread that is waiting for it. A coroutine handed
+-- to `task.spawn`, `task.defer` or `task.delay` is the scheduler's: its entry is `true`. A thread's entry means
+-- something only while that thread is suspended: if its yield failed (it was inside a C boundary) the thread went
+-- on, and the coroutine is merely left behind.
+local function is_driven(co)
+  local driver = driven[co]
+  if driver == nil then
+    return false
+  end
+  if driver == true or status(driver) == "suspended" then
+    return true
+  end
+  driven[co] = nil
+  return false
+end
 
 local function pack(...)
   return { n = select("#", ...), ... }
@@ -30,7 +49,13 @@ end
 -- its own. Returns the packed `resume` result.
 local function drive(co, r)
   while r[1] and r.n == 2 and r[2] == pending and status(co) == "suspended" do
+    local me = running()
+    driven[co] = me
     local signal = yield(pending)
+    -- the scheduler may have taken the coroutine over meanwhile: only take back what is ours
+    if driven[co] == me then
+      driven[co] = nil
+    end
     if signal ~= nil then
       resume(co, signal) -- the executor is dropping this call: let the inner future go
       while true do
@@ -45,6 +70,9 @@ end
 local M = {}
 
 function M.resume(co, ...)
+  if is_driven(co) then
+    return false, "cannot resume non-suspended coroutine"
+  end
   local r = drive(co, pack(resume(co, ...)))
   return unpack(r, 1, r.n)
 end
@@ -52,6 +80,9 @@ end
 function M.wrap(f)
   local co = create(f)
   return function(...)
+    if is_driven(co) then
+      error("cannot resume non-suspended coroutine", 0)
+    end
     local r = drive(co, pack(resume(co, ...)))
     if not r[1] then
       error(r[2], 0)
