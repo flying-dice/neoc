@@ -25,7 +25,7 @@ use agentos_luavm::{
     lua::{
         app_env,
         lib::log::set_log_sink,
-        lifecycle::{self, call_driven, set_entry, Baton, BoxFuture, CallEntry, Inherited, Life},
+        lifecycle::{self, set_entry, Baton, BoxFuture, CallEntry, Inherited, Life},
         sandbox::{install_runtime_state, load_source, make_bare_engine},
     },
     mlua::{Function, Lua, Table, Value as LuaValue},
@@ -480,7 +480,8 @@ impl Drop for AppVm {
     }
 }
 
-fn script(e: &mlua::Error) -> VmError {
+/// A script's error as the VM reports it: `ctx:fail` is a failed tool call, anything else a script error.
+pub(crate) fn script(e: &mlua::Error) -> VmError {
     match e.downcast_ref::<ToolFailure>() {
         Some(f) => VmError::ToolFailed(f.0.clone()),
         None => VmError::Script(ScriptError::from_lua(e)),
@@ -572,11 +573,11 @@ impl AppVm {
         let entry = self.shared.package.entry.clone();
         let source =
             self.shared.package.files.get(&entry).cloned().ok_or_else(|| VmError::NoEntry(entry.clone()))?;
-        let main = load_source(&self.lua, source.as_slice())
+        load_source(&self.lua, source.as_slice())
             .set_name(self.shared.chunk_name(&entry))
             .set_environment(env)
-            .into_function()?;
-        call_driven::<()>(&self.lua, &main, ()).await?;
+            .exec_async()
+            .await?;
         Ok(())
     }
 
@@ -673,7 +674,7 @@ impl AppVm {
             let convert = |e: mlua::Error| VmError::BadValue(e.to_string());
             let arg = json_to_lua(&self.lua, &input).map_err(convert)?;
             let ctx = self.ctx_table(ctx).map_err(convert)?;
-            let out: LuaValue = call_driven(&self.lua, &run, (arg, ctx)).await.map_err(|e| script(&e))?;
+            let out: LuaValue = run.call_async((arg, ctx)).await.map_err(|e| script(&e))?;
             lua_to_json(&out).map_err(|e| VmError::BadValue(e.to_string()))
         })
         .await
@@ -703,7 +704,7 @@ impl AppVm {
                 json_to_lua(&self.lua, value).map_err(convert)?,
                 self.ctx_table(ctx).map_err(convert)?,
             );
-            call_driven::<()>(&self.lua, &write, args).await.map_err(|e| script(&e))
+            write.call_async::<()>(args).await.map_err(|e| script(&e))
         })
         .await
     }
@@ -730,7 +731,7 @@ impl AppVm {
             let arg = json_to_lua(&self.lua, &payload).map_err(|e| VmError::BadValue(e.to_string()))?;
             // closed by the guard if this call is dropped at a host call
             let scope = track.then(|| TrackGuard::begin(&self.shared.tracker));
-            let result = call_driven::<LuaValue>(&self.lua, &handler, arg).await;
+            let result = handler.call_async::<LuaValue>(arg).await;
             let deps = scope.map(TrackGuard::finish).unwrap_or_default();
             let out = result.map_err(|e| script(&e))?;
             Ok((lua_to_json(&out).map_err(|e| VmError::BadValue(e.to_string()))?, deps))

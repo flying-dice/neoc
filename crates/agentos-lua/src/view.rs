@@ -8,9 +8,8 @@
 
 use crate::{
     convert::{json_to_lua, lua_to_json, lua_to_json_in, Walk},
-    error::ScriptError,
     state::{make_state, DepKey},
-    vm::{AppVm, Result, Shared, VmError},
+    vm::{script, AppVm, Result, Shared, VmError},
 };
 use agentos_application::{
     live::{Conflict, SourceDef, SourceId, SourceKind, TotalMode},
@@ -24,7 +23,6 @@ use agentos_domain::ui::{
     validate::{validate_with, Context, Severity},
     Action, ClientDecl, Handler, Node,
 };
-use agentos_luavm::lua::lifecycle::call_driven;
 use agentos_luavm::mlua;
 use agentos_luavm::mlua::{Function, Lua, Table, Value as LuaValue};
 use serde_json::{Map, Value};
@@ -591,9 +589,7 @@ impl AppVm {
         let opened = async {
             if let Some(on_open) = spec.get::<Option<Function>>("onOpen").map_err(convert)? {
                 let p = json_to_lua(lua, &Value::Object(params)).map_err(convert)?;
-                call_driven::<()>(lua, &on_open, (w, p))
-                    .await
-                    .map_err(|e| VmError::Script(ScriptError::from_lua(&e)))?;
+                on_open.call_async::<()>((w, p)).await.map_err(|e| script(&e))?;
             }
             self.render_inner(view).await
         }
@@ -631,10 +627,10 @@ impl AppVm {
             .map_err(|_| VmError::InvalidWindow(format!("window `{window}` has no render function")))?;
 
         let scope_guard = RenderScopeGuard::begin(&sh);
-        let rendered = call_driven::<LuaValue>(self.lua(), &render, w).await;
+        let rendered = render.call_async::<LuaValue>(w).await;
         let (deps, scope) = scope_guard.finish();
 
-        let root = match rendered.map_err(|e| VmError::Script(ScriptError::from_lua(&e)))? {
+        let root = match rendered.map_err(|e| script(&e))? {
             LuaValue::Table(t) => t,
             other => {
                 return Err(VmError::InvalidWindow(format!(
@@ -712,7 +708,6 @@ impl AppVm {
     }
 
     /// The closures of one view event, in the call that holds the VM.
-    // TODO: clean-code - 0.45 - DRY: `run_closures` (and the onOpen/render/onClose sites) re-implement `vm::script()`: downcast `ToolFailure`, else `ScriptError::from_lua`; use `script()` everywhere so `ctx:fail` behaves the same.
     async fn run_closures(
         &self,
         closures: Vec<Function>,
@@ -736,12 +731,7 @@ impl AppVm {
                 }
             }
             e.set("actor", ctx_actor(lua, ctx).map_err(convert)?).map_err(convert)?;
-            call_driven::<()>(self.lua(), &f, e).await.map_err(|e| {
-                match e.downcast_ref::<crate::error::ToolFailure>() {
-                    Some(fail) => VmError::ToolFailed(fail.0.clone()),
-                    None => VmError::Script(ScriptError::from_lua(&e)),
-                }
-            })?;
+            f.call_async::<()>(e).await.map_err(|e| script(&e))?;
         }
         Ok(true)
     }
@@ -768,9 +758,7 @@ impl AppVm {
         // raw: a `__index` on the spec is app code, and this runs outside the VM's gate
         let on_close = instance.spec.raw_get::<Option<Function>>("onClose").ok().flatten();
         if let Some(f) = on_close {
-            self.in_call(false, call_driven::<()>(self.lua(), &f, instance.w.clone()))
-                .await
-                .map_err(|e| VmError::Script(ScriptError::from_lua(&e)))?;
+            self.in_call(false, f.call_async::<()>(instance.w.clone())).await.map_err(|e| script(&e))?;
         }
         Ok(())
     }

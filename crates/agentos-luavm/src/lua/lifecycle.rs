@@ -46,10 +46,20 @@
 //!      [`scoped`]: a poll that is not resuming into a suspended leaf (the leaf takes the turn itself when it ends)
 //!      first takes the turn, and does not run script code until it has it. A call resumed anywhere else (at a plain
 //!      yield, or into a leaf that is gone) therefore queues for the turn instead of running in someone else's.
-//!   6. **No script can drive a thread the host drives.** The top-level thread of every call, and every thread
-//!      `task.spawn`, `task.defer` and `task.delay` make, is marked *driven* for its whole life
-//!      ([`call_driven`], [`mark_driven`]); `coroutine.resume` of it is refused (`async_coroutines.lua`). Rule 5 is the
-//!      second line of defence for the case a thread is resumed by someone else regardless.
+//!   6. **A script resumes only the coroutines it made, and only while nobody else drives them.**
+//!      `coroutine.create` and `coroutine.wrap` record their coroutine in a weak-keyed *owned* set
+//!      (`async_coroutines.lua`); `coroutine.resume` of any other thread is refused with "cannot resume non-suspended
+//!      coroutine", as for a coroutine that is running. A script can hold other threads (`coroutine.running()` returns
+//!      the top-level thread of a call, a task's thread, the protected coroutine of a `pcall` or `xpcall`), but the
+//!      refusal is the default, so there is no list of host threads to keep complete. A coroutine of its own is
+//!      refused too while someone else drives it: a thread is waiting at its host call, or [`mark_driven`] gave it to
+//!      the task scheduler (`task.spawn`, `defer` and `delay` take only coroutines the script made).
+//!
+//!      Rule 5 is the second line of defence, and no script reaches it today: the one way a call finds its leaf gone
+//!      was another call resuming a thread parked at it, which rule 6 refuses for every thread the script did not
+//!      make and for every one that is waiting at a host call. It stays because it costs one gate and guards the
+//!      invariant itself (script code runs only with the turn) rather than the ways to break it; the unit test
+//!      `a_call_resumed_without_its_leaf_takes_the_turn_before_it_runs_script_code` covers the branch directly.
 //!
 //!   A leaf never carries a baton: [`hold`] looks the baton up in the call that polls it. A host call that was
 //!   suspended by one call and is resumed by another therefore runs in the turn of whoever resumed it, as Lua's
@@ -375,12 +385,18 @@ fn turn_before_script(cx: &mut Context<'_>) -> Poll<()> {
         if slot.suspended.last().is_some_and(Suspended::alive) {
             return Poll::Ready(());
         }
-        match slot.baton.as_mut() {
-            Some(baton) if !baton.holding() => baton.poll_unpark(cx),
-            _ => Poll::Ready(()),
-        }
+        take_turn(&mut slot, cx)
     })
     .unwrap_or(Poll::Ready(()))
+}
+
+/// Ready when the call holds the turn (or has no baton to hold); otherwise queue for it. The one place a call takes
+/// its turn, for [`hold`] and for [`turn_before_script`].
+fn take_turn(slot: &mut Slot, cx: &mut Context<'_>) -> Poll<()> {
+    match slot.baton.as_mut() {
+        Some(baton) if !baton.holding() => baton.poll_unpark(cx),
+        _ => Poll::Ready(()),
+    }
 }
 
 /// The waker a call is polled with: it forwards to the executor's and remembers that it was woken during a poll.
@@ -599,10 +615,7 @@ pub(crate) async fn hold() {
         HELD.try_with(|slot| {
             let mut slot = slot.borrow_mut();
             slot.idle_pending = false;
-            match slot.baton.as_mut() {
-                Some(baton) if !baton.holding() => baton.poll_unpark(cx),
-                _ => Poll::Ready(()),
-            }
+            take_turn(&mut slot, cx)
         })
         .unwrap_or(Poll::Ready(()))
     })
@@ -632,17 +645,41 @@ pub enum Role {
     Mixed,
 }
 
+/// Where the Lua registry keeps the table of coroutines the script made (`async_coroutines.lua`): the only ones it may
+/// resume.
+pub(crate) const OWNED: &str = "agentos.owned_coroutines";
+
 /// Where the Lua registry keeps the table of coroutines whose driver is somewhere else (`async_coroutines.lua`).
 pub(crate) const DRIVEN: &str = "agentos.driven_coroutines";
 
-/// A coroutine the task scheduler took over (`task.spawn`, `task.defer`, `task.delay` of a coroutine the script made):
-/// the script may no longer resume it itself, as with a coroutine that is running; two drivers of one coroutine would
-/// fight over the host call it is waiting at. Without the app's environment (a worker, a test) it does nothing.
+/// A table of the app's environment kept in the registry; `None` outside it (a worker, a test), which has no such tables.
+fn environment_table(lua: &Lua, name: &str) -> mlua::Result<Option<mlua::Table>> {
+    match lua.named_registry_value::<mlua::Value>(name)? {
+        mlua::Value::Nil => Ok(None),
+        mlua::Value::Table(table) => Ok(Some(table)),
+        other => Err(mlua::Error::runtime(format!(
+            "the registry entry `{name}` is a {}, not a table",
+            other.type_name()
+        ))),
+    }
+}
+
+/// A coroutine the script made and handed to the task scheduler (`task.spawn`, `task.defer`, `task.delay`): the
+/// scheduler drives it from here on, and the script may no longer resume it itself, as with a coroutine that is
+/// running; two drivers of one coroutine would fight over the host call it is waiting at. Without the app's environment
+/// (a worker, a test) it does nothing.
 ///
 /// # Errors
-/// The coroutine is already being driven (a thread is waiting at its host call, or the scheduler has it).
+/// The coroutine is not one the script made (a thread it reached through `coroutine.running()`: the host's own),
+/// or it is already being driven (a thread is waiting at its host call, or the scheduler has it).
 pub fn mark_driven(lua: &Lua, thread: &mlua::Thread) -> mlua::Result<()> {
-    let Ok(driven) = lua.named_registry_value::<mlua::Table>(DRIVEN) else { return Ok(()) };
+    let (Some(owned), Some(driven)) = (environment_table(lua, OWNED)?, environment_table(lua, DRIVEN)?)
+    else {
+        return Ok(());
+    };
+    if !owned.raw_get::<bool>(thread.clone()).unwrap_or(false) {
+        return Err(mlua::Error::runtime("cannot schedule a coroutine that is not yours: only one made by coroutine.create or coroutine.wrap"));
+    }
     let live = match driven.raw_get::<mlua::Value>(thread.clone())? {
         mlua::Value::Boolean(true) => true,
         mlua::Value::Thread(driver) => driver.status() == mlua::thread::ThreadStatus::Resumable,
@@ -652,32 +689,6 @@ pub fn mark_driven(lua: &Lua, thread: &mlua::Thread) -> mlua::Result<()> {
         return Err(mlua::Error::runtime("cannot schedule a coroutine that is already running"));
     }
     driven.raw_set(thread.clone(), true)
-}
-
-/// Where the Lua registry keeps `async_coroutines.lua`'s `call`: the entry point of every thread the host drives.
-pub(crate) const DRIVEN_CALL: &str = "agentos.driven_call";
-
-/// Call `f` as the top-level body of a thread the host drives, which no script may resume (rule 6 of the module docs):
-/// the thread is marked driven by its first instruction, before any script code of `f` runs. Every entry point of
-/// the host into script code (a tool, an event, a window's callbacks, a request handler, a `db:tx` or `with_lock`
-/// body, the package's entry) calls through this instead of [`Function::call_async`]. Without the app's
-/// environment (a worker, a test) it is `call_async`.
-pub fn call_driven<R>(
-    lua: &Lua,
-    f: &Function,
-    args: impl IntoLuaMulti,
-) -> impl Future<Output = mlua::Result<R>> + Send + 'static
-where
-    R: FromLuaMulti + Send + 'static,
-{
-    let started = match lua.named_registry_value::<Function>(DRIVEN_CALL) {
-        Ok(entry) => args.into_lua_multi(lua).map(|mut all| {
-            all.push_front(mlua::Value::Function(f.clone()));
-            entry.call_async::<R>(all)
-        }),
-        Err(_) => Ok(f.call_async::<R>(args)),
-    };
-    async move { started?.await }
 }
 
 /// A leaf's future, in a cell the call can empty from outside when the leaf is abandoned.

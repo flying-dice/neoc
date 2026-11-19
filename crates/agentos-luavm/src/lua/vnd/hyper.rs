@@ -271,9 +271,7 @@ async fn invoke_lua_handler(
         let req_ud = self::Request::from_parts(method, path, req_headers, body);
         let handler: Function = lua.registry_value(handler_key)?;
         // the handler is a call into the VM like any other: it waits for its turn (see `lifecycle`)
-        let raw: Value =
-            crate::lua::lifecycle::request(lua, crate::lua::lifecycle::call_driven(lua, &handler, req_ud))
-                .await?;
+        let raw: Value = crate::lua::lifecycle::request(lua, handler.call_async(req_ud)).await?;
         decode_handler_response(raw)
     }
     .await;

@@ -49,21 +49,34 @@ impl SqliteTx {
     }
 }
 
+/// The rollback of a transaction that was never committed, owed to the connection. Whoever drops it does it, so it is
+/// done wherever the guard ends up: normally on the blocking pool (below), but if the runtime shuts down before that
+/// job ran, the job is dropped unrun and this runs on the thread that drops it. The gate goes with it and is released
+/// only after the rollback, so the next caller always finds a clean connection.
+struct Rollback {
+    db: AppDb,
+    gate: Option<OwnedMutexGuard<()>>,
+}
+
+impl Drop for Rollback {
+    fn drop(&mut self) {
+        // errors only say there is no transaction left to undo
+        let _ = self.db.shared.conn.lock().execute_batch("ROLLBACK");
+        drop(self.gate.take());
+    }
+}
+
 impl Drop for SqliteTx {
     fn drop(&mut self) {
         // never committed: undo it so the next caller sees a clean connection. The rollback takes the connection's
-        // lock and runs SQLite, which may block, so it does not run on the async worker that dropped us; the gate
-        // goes with it and is released only after the rollback, so the next caller still finds a clean connection.
+        // lock and runs SQLite, which may block, so it does not run on the async worker that dropped us.
         let Some(gate) = self.gate.take() else { return };
-        let db = self.db.clone();
-        let rollback = move || {
-            let _ = db.shared.conn.lock().execute_batch("ROLLBACK");
-            drop(gate);
-        };
+        let owed = Rollback { db: self.db.clone(), gate: Some(gate) };
         match tokio::runtime::Handle::try_current() {
-            Ok(runtime) => drop(runtime.spawn_blocking(rollback)),
+            // the closure owns the guard: when it never runs (shutdown), dropping the closure does the rollback
+            Ok(runtime) => drop(runtime.spawn_blocking(move || drop(owed))),
             // not inside a runtime (nothing to block): do it here
-            Err(_) => rollback(),
+            Err(_) => drop(owed),
         }
     }
 }

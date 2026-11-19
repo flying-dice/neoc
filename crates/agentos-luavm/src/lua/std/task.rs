@@ -224,14 +224,12 @@ fn validate_thread(thread: &Thread, kind: &'static str) -> mlua::Result<()> {
 fn into_thread(lua: &Lua, val: Value, kind: &'static str) -> mlua::Result<Thread> {
     match val {
         Value::Function(f) => {
-            let thread = lua.create_thread(f)?;
-            // the scheduler's thread, from its first instruction to the end of its life
-            mark_driven(lua, &thread)?;
-            Ok(thread)
+            // a thread of the host's: the script holds no handle to it that `coroutine.resume` accepts
+            lua.create_thread(f)
         }
         Value::Thread(t) => {
             validate_thread(&t, kind)?;
-            // the scheduler drives it from here on: the script may not resume it too
+            // a coroutine the script made: the scheduler drives it from here on, so the script may not resume it too
             mark_driven(lua, &t)?;
             Ok(t)
         }

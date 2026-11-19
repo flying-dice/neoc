@@ -7,9 +7,9 @@
 //! - the **base functions** a script may call are copied in one by one (an allow-list: a function a Lua
 //!   upgrade adds is not available until someone adds it here): no `load*`, `dofile`, `getfenv`, `setfenv`,
 //!   `newproxy`, `collectgarbage`, `module`, `require`, `print` and no `io`/`os`/`debug`/`package`;
-//! - the **libraries** (`string`, `table`, `math`, `coroutine`, `bit`) are private copies (`coroutine.resume`
-//!   and `wrap` are versions that let an async host call run inside a coroutine of the script's own, see
-//!   `async_coroutines.lua`), so the host may add
+//! - the **libraries** (`string`, `table`, `math`, `coroutine`, `bit`) are private copies (`coroutine.create`,
+//!   `resume` and `wrap` are versions that let an async host call run inside a coroutine of the script's own and
+//!   let a script resume only the coroutines it made, see `async_coroutines.lua`), so the host may add
 //!   to them (the prelude's `table.clone`, `utf8`) before [`freeze`], and the script can never reach the
 //!   engine's own shared tables;
 //! - [`freeze`] then replaces every library in the environment with an empty read-only proxy whose
@@ -25,8 +25,8 @@
 
 use std::sync::Arc;
 
-use crate::lua::lifecycle::{DRIVEN, DRIVEN_CALL};
-use mlua::{Function, Lua, Table, Value};
+use crate::lua::lifecycle::{DRIVEN, OWNED};
+use mlua::{Lua, Table, Value};
 use parking_lot::Mutex;
 
 /// Base functions a script gets, copied from the engine's globals (after `pcall`/`xpcall` were replaced
@@ -164,24 +164,35 @@ fn splitmix(x: u64) -> u64 {
     (z ^ (z >> 31)) | 1
 }
 
-/// Replace `resume` and `wrap` in the script's copy of `coroutine` with versions that let an async host call
-/// inside a coroutine of the script's own reach the executor (see `async_coroutines.lua`).
+/// Replace `create`, `resume` and `wrap` in the script's copy of `coroutine` with versions that let an async host call
+/// inside a coroutine of the script's own reach the executor, and that refuse to resume a coroutine the script did not
+/// make (see `async_coroutines.lua`).
 fn install_async_coroutines(lua: &Lua, copy: &Table, raw: &Table) -> mlua::Result<()> {
     let pending = Value::LightUserData(Lua::poll_pending());
-    // the coroutines whose driver is somewhere else, which the task scheduler shares (`lifecycle::mark_driven`)
-    let driven = lua.create_table()?;
-    let weak = lua.create_table()?;
-    weak.raw_set("__mode", "k")?;
-    driven.set_metatable(Some(weak))?;
+    // the coroutines the script made, and those whose driver is somewhere else (which the task scheduler shares:
+    // `lifecycle::mark_driven`); both are keyed weakly, so a coroutine is not kept alive by being listed
+    let owned = weak_keyed(lua)?;
+    let driven = weak_keyed(lua)?;
+    lua.set_named_registry_value(OWNED, owned.clone())?;
     lua.set_named_registry_value(DRIVEN, driven.clone())?;
     let wrappers: Table = lua
         .load(include_str!("async_coroutines.lua"))
         .set_name("=async_coroutines")
         .set_mode(mlua::chunk::ChunkMode::Text)
-        .call((pending, raw.clone(), driven, Value::NULL))?;
-    lua.set_named_registry_value(DRIVEN_CALL, wrappers.raw_get::<Function>("call")?)?;
-    copy.raw_set("resume", wrappers.raw_get::<Value>("resume")?)?;
-    copy.raw_set("wrap", wrappers.raw_get::<Value>("wrap")?)
+        .call((pending, raw.clone(), driven, owned, Value::NULL))?;
+    for name in ["create", "resume", "wrap"] {
+        copy.raw_set(name, wrappers.raw_get::<Value>(name)?)?;
+    }
+    Ok(())
+}
+
+/// An empty table whose keys are held weakly: being a key does not keep a coroutine alive.
+fn weak_keyed(lua: &Lua) -> mlua::Result<Table> {
+    let table = lua.create_table()?;
+    let meta = lua.create_table()?;
+    meta.raw_set("__mode", "k")?;
+    table.set_metatable(Some(meta))?;
+    Ok(table)
 }
 
 /// A read-only view of `target`: an empty table whose `__index` is `target`.

@@ -25,7 +25,7 @@ use agentos_application::{
     data::{ExecOutcome, Params, QueryInfo, SqlMigration},
     live::{Conflict, SourceDef, SourceId, SourceKind, TotalMode},
 };
-use agentos_luavm::lua::lifecycle::{async_function, call_driven, turn_id, Role};
+use agentos_luavm::lua::lifecycle::{async_function, turn_id, Role};
 use agentos_luavm::mlua;
 use agentos_luavm::mlua::{FromLuaMulti, Function, IntoLuaMulti, Lua, Table, Value as LuaValue};
 use serde_json::{json, Value};
@@ -323,7 +323,7 @@ fn install_statements(lua: &Lua, sh: &Sh, db: &Table) -> mlua::Result<()> {
     // db:tx(fn): the statements inside commit together or not at all
     db.set(
         "tx",
-        vm_function(lua, sh, |s, lua, (_this, body): (LuaValue, Function)| async move {
+        vm_function(lua, sh, |s, _, (_this, body): (LuaValue, Function)| async move {
             // the call holds the turn here (`Role::Vm`): the checks below, the transaction and the `readOnly`
             // flag `database()` reads belong to it (a task started inside another `db:tx` waited for it)
             check_effects_allowed(&s, "db:tx")?;
@@ -335,7 +335,7 @@ fn install_statements(lua: &Lua, sh: &Sh, db: &Table) -> mlua::Result<()> {
             let owner = turn_id().ok_or_else(|| mlua::Error::runtime("db:tx needs a call to belong to"))?;
             *s.tx.lock() = Some(OpenTx::start(&s.life, begun, owner));
             let mut guard = TxGuard { shared: &s, owner: Some(owner) };
-            let result = call_driven::<mlua::MultiValue>(&lua, &body, ()).await;
+            let result = body.call_async::<mlua::MultiValue>(()).await;
             // whatever the body left in flight is queued ahead of the end, in the transaction
             match (result, guard.release()) {
                 (Ok(values), Some(tx)) => {

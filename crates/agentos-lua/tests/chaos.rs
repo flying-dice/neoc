@@ -13,7 +13,8 @@
 //! tool of one of four kinds: `readOnly`, writable, writable with concurrent second tools, or `readOnly` calling the
 //! app's own server. Beside it run side calls that get in whenever the VM is free: a counter bump, a second writer, a
 //! `readOnly` peek that tries every write, and a *meddler* that resumes the threads the program left behind (its own
-//! top-level thread, the threads its tasks run in, its coroutines), with and without arguments, from another call.
+//! top-level thread, the threads its tasks run in, the threads inside its `pcall`s, `xpcall`s and nested protected
+//! calls, its coroutines), with and without arguments, from another call.
 //! Per case, within a timeout:
 //!
 //! - (a) nothing `app.*` could write (db, kv, state, notify, windows) was written in a read-only context;
@@ -23,8 +24,9 @@
 //!   acknowledged (and one that failed left none of it behind);
 //! - (e) the app still answers a ping tool and the database still answers a query (nothing is wedged);
 //! - (f) the host did not panic (a panic in a call is a failed join);
-//! - (g) a thread the host drives (a call's top-level thread, a task's thread) is never resumed by a script: a
-//!   `coroutine.resume` of one from anywhere returns false.
+//! - (g) a thread the script did not make (a call's top-level thread, a task's thread, the coroutine a `pcall` or
+//!   `xpcall` runs its body in, found with `coroutine.running()`) is never resumed by a script: a `coroutine.resume`
+//!   of one from anywhere returns false. Only the coroutines the script made (`create`, `wrap`) can be resumed.
 //!
 //! A second test runs the same programs and reloads or unloads the app in the middle: nothing may be wedged, no VM may
 //! keep the database, and a `readOnly` program still left nothing behind.
@@ -134,6 +136,8 @@ fn leaf(rng: &mut Rng, n: usize, kind: Kind) -> Leaf {
 enum Control {
     Pcall,
     Xpcall,
+    /// A `pcall` inside a `pcall`: both protected coroutines are stashed.
+    NestedPcall,
     CoCreate,
     CoWrap,
     Yield,
@@ -158,6 +162,7 @@ impl Control {
 const CONTROLS: &[Control] = &[
     Control::Pcall,
     Control::Xpcall,
+    Control::NestedPcall,
     Control::CoCreate,
     Control::CoWrap,
     Control::Yield,
@@ -181,13 +186,20 @@ const CONTEXTS: &[(&str, &str)] = &[
 
 fn wrap(control: Control, body: &str) -> String {
     match control {
-        Control::Pcall => format!("pcall(function() {body} end)"),
-        Control::Xpcall => format!("xpcall(function() {body} end, function(e) return e end)"),
+        // each protected call stashes the thread its body runs in, for the meddlers to find (it is not the script's)
+        Control::Pcall => format!("pcall(function() SH[#SH + 1] = coroutine.running() {body} end)"),
+        Control::Xpcall => format!(
+            "xpcall(function() SH[#SH + 1] = coroutine.running() {body} end, function(e) return e end)"
+        ),
+        Control::NestedPcall => format!(
+            "pcall(function() SH[#SH + 1] = coroutine.running() pcall(function() SH[#SH + 1] = coroutine.running() {body} end) end)"
+        ),
         Control::CoCreate => format!(
             "do local co = coroutine.create(function() {body} end) keep[#keep + 1] = co coroutine.resume(co) end"
         ),
+        // the thread inside a `wrap` is the script's own: it is kept with the coroutines the meddlers may resume
         Control::CoWrap => format!(
-            "do local w = coroutine.wrap(function() {body} end) WR[#WR + 1] = w pcall(w) end"
+            "do local w = coroutine.wrap(function() keep[#keep + 1] = coroutine.running() {body} end) WR[#WR + 1] = w pcall(w) end"
         ),
         Control::Yield => format!("{body} coroutine.yield() coroutine.yield()"),
         Control::Spawn => format!("task_start(task.spawn, function() {body} end)"),
@@ -221,10 +233,10 @@ fn step(rng: &mut Rng, n: usize, kind: Kind) -> Step {
         };
     }
     if rng.chance(5) {
-        // the threads the host drives (the call's own, its tasks'): the program cannot resume them either
+        // the threads the script did not make (the call's own, its tasks', its protected calls'): it cannot resume them
         return Step {
-            code: "for _, t in ipairs(SH) do if coroutine.resume(t) then viol('(g) the program resumed a thread the host drives') end end".into(),
-            describe: "resume every thread the host drives".into(),
+            code: "for _, t in ipairs(SH) do if coroutine.resume(t) then viol('(g) the program resumed a thread it did not make') end end".into(),
+            describe: "resume every thread the program did not make".into(),
         };
     }
     let Leaf { code, idle } = leaf(rng, n, kind);
@@ -271,8 +283,8 @@ local mu = collections.Mutex.new()
 local state = app.state { v = 0 }
 local counter = 0
 local A, X, V, keep, pending, txp = {}, {}, {}, {}, 0, nil
--- what the program leaves behind for another call to find: the threads the host drives (its top-level thread, the
--- threads its tasks run in: no script may resume them) and the functions of its `coroutine.wrap`s
+-- what the program leaves behind for another call to find: the threads it did not make (its top-level thread, the
+-- threads its tasks and its protected calls run in: no script may resume them) and the functions of its `coroutine.wrap`s
 local SH, WR = {}, {}
 -- set while a side call resumes the program's own script coroutines: they run in the resumer's turn, as Lua says
 local MEDDLING = false
@@ -312,14 +324,16 @@ app.window("w", { render = function(w) end })
 const TOOLS: &str = r#"
 local others = {}
 app.tool { name = "bump", run = function() counter = counter + 1 return counter end }
--- the driven threads of the program: resuming one, from any call, must be refused (g)
+-- the program's threads that are not the script's own: resuming one, from any call, must be refused (g)
 local function steal(label)
   for i, t in ipairs(SH) do
     for _, extra in ipairs { 0, 1, 2 } do
       local ok
       if extra == 0 then ok = coroutine.resume(t) elseif extra == 1 then ok = coroutine.resume(t, "x") else ok = coroutine.resume(t, nil, 1) end
-      if ok then viol("(g) " .. label .. " resumed a thread the host drives") end
+      if ok then viol("(g) " .. label .. " resumed a thread the script did not make") end
     end
+    -- nor can it hand one to the scheduler, which would drive it under the scheduler
+    if pcall(task.spawn, t) then viol("(g) " .. label .. " scheduled a thread the script did not make") end
   end
 end
 -- the program's script coroutines may be resumed from another call (they run in its turn); nothing may wedge or panic

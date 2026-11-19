@@ -8,8 +8,9 @@
 //!    `coroutine.yield()`), and never while it has a `db:tx` open;
 //! 2. a transaction is committed when `db:tx` says it succeeded, and belongs to the call that opened it;
 //! 3. a host call Lua could not suspend at holds nothing once the script goes on: no database lock;
-//! 4. no script drives a thread the host drives (the top-level thread of a call, a task's thread): resuming one is
-//!    refused and changes nothing, and script code never runs in a call that does not hold the turn.
+//! 4. a script resumes only the coroutines it made, and only while nobody else drives them: resuming any other thread
+//!    (the top-level thread of a call, a task's thread, the protected coroutine of a `pcall` or `xpcall`) is refused
+//!    and changes nothing, and script code never runs in a call that does not hold the turn.
 //!
 //! `chaos.rs` generates scripts that combine these ingredients and checks the same invariants over all of them.
 
@@ -328,7 +329,7 @@ async fn the_scheduler_does_not_take_a_coroutine_that_is_waiting_at_a_host_call(
     assert!(out["e"].as_str().unwrap().contains("already running"), "{out}");
 }
 
-// ---- a thread the host drives is not the script's to resume -------------------------------------------------------
+// ---- a thread the script did not make is not the script's to resume -------------------------------------------------------
 
 /// A call that resumes the top-level thread of another call (a `coroutine.running()` the first stashed) while that
 /// call is parked at a wait is refused, and the other call finishes as if nothing had happened.
@@ -360,6 +361,271 @@ async fn the_top_level_thread_of_a_parked_call_cannot_be_resumed_by_another_call
     }
     assert_eq!(a.await.unwrap(), json!("a done"), "the parked call was not disturbed");
     assert_eq!(call(&vm, "ping").await, json!("pong"));
+}
+
+/// A protected call's coroutine is a host thread like any other: another call that resumes the one a `pcall` runs its
+/// body in (stashed by `coroutine.running()`) is refused, the parked call finishes with its own result, and a
+/// `readOnly` call never writes or notifies.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_thread_of_a_pcall_cannot_be_resumed_by_another_call() {
+    let vm = Arc::new(
+        load(
+            r#"
+            local task = require("std:task")
+            local state = app.state { v = 0 }
+            local t
+            local log = {}
+            app.tool { name = "a", readOnly = true, run = function()
+              local ok, e = pcall(function()
+                t = coroutine.running()
+                task.wait(0.3)
+                local w = pcall(function() state.v = 42 end)
+                local n = pcall(function() app.notify { title = "from readOnly" } end)
+                log[#log + 1] = { state = w, notify = n }
+              end)
+              return { "a done", ok, tostring(e) }
+            end }
+            app.tool { name = "b", run = function()
+              local ok, e = coroutine.resume(t)
+              local ok2, e2 = coroutine.resume(t, "with an argument")
+              return { ok = ok, e = tostring(e), ok2 = ok2, e2 = tostring(e2) }
+            end }
+            app.tool { name = "report", readOnly = true, run = function() return { v = state.v, log = log } end }
+            app.tool { name = "ping", readOnly = true, run = function() return "pong" end }
+            "#,
+        )
+        .await,
+    );
+    let a = spawn_call(&vm, "a");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let b = call(&vm, "b").await;
+    for ok in ["ok", "ok2"] {
+        assert_eq!(b[ok], false, "{b}");
+    }
+    for e in [&b["e"], &b["e2"]] {
+        assert_eq!(e, "cannot resume non-suspended coroutine", "{b}");
+    }
+    assert_eq!(a.await.unwrap(), json!(["a done", true, "nil"]), "the parked call finished its own way");
+    let report = call(&vm, "report").await;
+    assert_eq!(report["v"], 0, "{report}");
+    assert_eq!(report["log"], json!([{ "state": false, "notify": false }]), "{report}");
+    assert!(vm.take_effects().is_empty(), "nothing was queued from a readOnly call");
+    assert_eq!(call(&vm, "ping").await, json!("pong"));
+}
+
+/// The same for the protected coroutine of an `xpcall` inside a task: a task handle never fails to complete because
+/// another call resumed the thread under it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_thread_of_an_xpcall_in_a_task_cannot_be_resumed_and_the_task_completes() {
+    let vm = Arc::new(
+        load(
+            r#"
+            local task = require("std:task")
+            local T, h
+            local steps = {}
+            app.tool { name = "s", readOnly = true, run = function()
+              h = task.spawn(function()
+                local ok, e = xpcall(function()
+                  T = coroutine.running()
+                  task.wait(0.3)
+                  steps[#steps + 1] = "after wait"
+                  steps[#steps + 1] = tostring(pcall(function() app.notify { title = "x" } end))
+                end, function(m) return m end)
+                return { ok, tostring(e) }
+              end)
+              return "spawned"
+            end }
+            app.tool { name = "r", run = function()
+              local ok, e = coroutine.resume(T)
+              local ok2, e2 = coroutine.resume(T, "with an argument")
+              return { ok = ok, e = tostring(e), ok2 = ok2, e2 = tostring(e2) }
+            end }
+            app.tool { name = "aw", run = function() return { h:await() } end }
+            app.tool { name = "report", readOnly = true, run = function() return steps end }
+            "#,
+        )
+        .await,
+    );
+    assert_eq!(call(&vm, "s").await, json!("spawned"));
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    let r = call(&vm, "r").await;
+    assert_eq!(
+        r,
+        json!({ "ok": false, "e": "cannot resume non-suspended coroutine", "ok2": false, "e2": "cannot resume non-suspended coroutine" })
+    );
+    assert_eq!(call(&vm, "aw").await, json!([[true, "nil"]]), "the task completed with its own result");
+    assert_eq!(call(&vm, "report").await, json!(["after wait", "false"]), "readOnly came with the task");
+    assert!(vm.take_effects().is_empty(), "nothing was queued from a readOnly task");
+}
+
+/// Any thread a script can reach with `coroutine.running()` that it did not make is refused, wherever the call was:
+/// at the top of a tool, in a `pcall`, an `xpcall`, nested protected calls, a task, a `coroutine.wrap` body's caller.
+/// A coroutine of its own (a `create`, or the thread inside a `wrap`) is the script's to resume.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn only_coroutines_the_script_made_can_be_resumed() {
+    let vm = Arc::new(
+        load(
+            r#"
+            local task = require("std:task")
+            local seen = {}
+            local function stash(name) seen[name] = coroutine.running() task.wait(0.2) return name end
+            app.tool { name = "park", run = function()
+              local out = {}
+              out.top = stash("top")
+              out.p = { pcall(function() return stash("pcall") end) }
+              out.x = { xpcall(function() return stash("xpcall") end, function(m) return m end) }
+              out.n = { pcall(function() return { pcall(function() return stash("nested") end) } end) }
+              out.t = task.spawn(function() return stash("task") end):await()
+              -- a coroutine of the script's own, waiting at a host call: refused while its resumer waits for it
+              local co = coroutine.create(function() return stash("mine") end)
+              out.mine = { coroutine.resume(co) }
+              return out
+            end }
+            app.tool { name = "meddle", run = function()
+              local out = {}
+              for _, name in ipairs { "top", "pcall", "xpcall", "nested", "task", "mine" } do
+                local t = seen[name]
+                if t == nil then
+                  out[name] = "never started"
+                else
+                  local ok, e = coroutine.resume(t)
+                  local ok2, e2 = coroutine.resume(t, "with an argument")
+                  out[name] = tostring(ok) .. ":" .. tostring(e) .. "|" .. tostring(ok2) .. ":" .. tostring(e2)
+                end
+              end
+              return out
+            end }
+            "#,
+        )
+        .await,
+    );
+    let park = spawn_call(&vm, "park");
+    // each thread waits 0.2s at its stash: ask about every one while it is parked (the first answer for a name is
+    // given inside its own window, since the stash and the wait are one slice of the call)
+    let names = ["top", "pcall", "xpcall", "nested", "task", "mine"];
+    let mut said = std::collections::BTreeMap::<String, String>::new();
+    let started = std::time::Instant::now();
+    while said.len() < names.len() && started.elapsed() < Duration::from_secs(5) {
+        let round = call(&vm, "meddle").await;
+        for (name, v) in round.as_object().unwrap() {
+            if v != "never started" {
+                said.entry(name.clone()).or_insert_with(|| v.as_str().unwrap().to_owned());
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let park = park.await.unwrap();
+    assert_eq!(park["top"], "top", "{park}");
+    assert_eq!(park["p"], json!([true, "pcall"]), "{park}");
+    assert_eq!(park["x"], json!([true, "xpcall"]), "{park}");
+    assert_eq!(park["n"], json!([true, [true, "nested"]]), "{park}");
+    assert_eq!(park["t"], "task", "{park}");
+    assert_eq!(park["mine"], json!([true, "mine"]), "{park}");
+    let answer = "false:cannot resume non-suspended coroutine|false:cannot resume non-suspended coroutine";
+    for name in names {
+        assert_eq!(said.get(name).map(String::as_str), Some(answer), "{name}: {said:?}");
+    }
+}
+
+/// A coroutine the script made keeps working: it resumes, yields (across `pcall` and `xpcall`, nested in either
+/// direction), waits at host calls, and its own thread (`coroutine.running()` inside it, inside a `wrap`) is its to
+/// resume from anywhere.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_coroutine_the_script_made_still_resumes_yields_and_waits_through_protected_calls() {
+    let vm = Arc::new(
+        load(
+            r#"
+            local task = require("std:task")
+            local wrapped_self
+            app.tool { name = "mine", run = function()
+              local out = {}
+              -- yield across pcall and xpcall inside a coroutine of the script's own
+              local co = coroutine.create(function(a)
+                local ok, v = pcall(function() local x = coroutine.yield(a + 1) return x * 2 end)
+                local ok2, v2 = xpcall(function() return coroutine.yield("second") end, function(m) return m end)
+                return ok, v, ok2, v2
+              end)
+              out.y1 = { coroutine.resume(co, 1) }
+              out.y2 = { coroutine.resume(co, 10) }
+              out.y3 = { coroutine.resume(co, "last") }
+              out.dead = { coroutine.resume(co) }
+              -- a coroutine inside pcall inside a coroutine inside pcall, waiting at a host call
+              out.deep = { pcall(function()
+                local outer = coroutine.create(function()
+                  return pcall(function()
+                    local inner = coroutine.wrap(function() task.wait(0.01) coroutine.yield("in") return "out" end)
+                    return inner() .. inner()
+                  end)
+                end)
+                return coroutine.resume(outer)
+              end) }
+              -- the thread inside a wrap is the script's own
+              local gen = coroutine.wrap(function() wrapped_self = coroutine.running() coroutine.yield(1) return 2 end)
+              out.gen = { gen() }
+              out.resumed_wrapped = { coroutine.resume(wrapped_self) }
+              -- an error inside is the resumer's to see
+              out.err = { coroutine.resume(coroutine.create(function() error("boom", 0) end)) }
+              return out
+            end }
+            app.tool { name = "again", run = function() return { coroutine.resume(wrapped_self) } end }
+            "#,
+        )
+        .await,
+    );
+    let out = call(&vm, "mine").await;
+    assert_eq!(out["y1"], json!([true, 2]), "{out}");
+    assert_eq!(out["y2"], json!([true, "second"]), "{out}");
+    assert_eq!(out["y3"], json!([true, true, 20, true, "last"]), "{out}");
+    assert_eq!(out["dead"], json!([false, "cannot resume dead coroutine"]), "{out}");
+    assert_eq!(out["deep"], json!([true, true, true, "inout"]), "{out}");
+    assert_eq!(out["gen"], json!([1]), "{out}");
+    assert_eq!(out["resumed_wrapped"], json!([true, 2]), "{out}");
+    assert_eq!(out["err"], json!([false, "boom"]), "{out}");
+    // the wrap's coroutine finished with the resume above: the next call finds it dead, as Lua says
+    assert_eq!(call(&vm, "again").await, json!([false, "cannot resume dead coroutine"]));
+}
+
+/// `task.spawn`, `defer` and `delay` take only coroutines the script made: a thread it reached through
+/// `coroutine.running()` is the host's, and handing it to the scheduler would run another call's code under the
+/// scheduler. A coroutine of the script's own, once scheduled, is the scheduler's.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_scheduler_takes_only_coroutines_the_script_made() {
+    let vm = Arc::new(
+        load(
+            r#"
+            local task = require("std:task")
+            local T, mine
+            app.tool { name = "park", run = function() T = coroutine.running() task.wait(0.3) return "parked" end }
+            app.tool { name = "steal", run = function()
+              local out = {}
+              for _, kind in ipairs { "spawn", "defer", "delay" } do
+                local ok, e = pcall(function() if kind == "delay" then task.delay(0, T) else task[kind](T) end end)
+                out[kind] = { ok, tostring(e):match("not yours") or tostring(e) }
+              end
+              return out
+            end }
+            app.tool { name = "own", run = function()
+              mine = coroutine.create(function() task.wait(0.1) return "mine done" end)
+              local h = task.spawn(mine)
+              local ok, e = coroutine.resume(mine)
+              return { ok, tostring(e), h:await() }
+            end }
+            "#,
+        )
+        .await,
+    );
+    let parked = spawn_call(&vm, "park");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let steal = call(&vm, "steal").await;
+    for kind in ["spawn", "defer", "delay"] {
+        assert_eq!(steal[kind], json!([false, "not yours"]), "{kind}: {steal}");
+    }
+    assert_eq!(parked.await.unwrap(), json!("parked"), "the parked call was not disturbed");
+    assert_eq!(
+        call(&vm, "own").await,
+        json!([false, "cannot resume non-suspended coroutine", "mine done"]),
+        "a scheduled coroutine is the scheduler's"
+    );
 }
 
 /// A `readOnly` call whose thread another call tried to resume stays read-only: it never runs without the turn, and

@@ -313,14 +313,18 @@ SQLite (`apps/agents/app.lua`).
   - *A host call Lua could not suspend at is over.* If a host call is made where Lua cannot yield (the list above) and
     the script catches the error and goes on, that call is abandoned: whatever it held is released at once, and
     resuming a coroutine that was waiting at it raises `this host call was abandoned`.
-  - *A thread the host drives cannot be resumed by a script.* The top-level thread of every call (a tool, an event,
-    a window callback, a request handler, a `db:tx` or `Mutex:with_lock` body, the app's entry) and every coroutine
-    that `task.spawn`, `task.defer` or `task.delay` has been given belongs to the host; so does a coroutine that
-    another thread is waiting on at a host call. `coroutine.resume` of one (say, a `coroutine.running()` you stashed in
-    a variable and resume from another tool) returns `false, "cannot resume non-suspended coroutine"`, and
-    `coroutine.wrap` raises it. Scheduling a coroutine that is already being driven (`task.spawn(co)` of one a task
-    or a waiting thread has) raises `cannot schedule a coroutine that is already running`. Nothing changes in the
-    thread you tried to resume.
+  - *You can resume only the coroutines you created yourself.* `coroutine.resume` (and a `coroutine.wrap` function)
+    works on a coroutine your own code made with `coroutine.create` or `coroutine.wrap`, and on nothing else.
+    Every other thread belongs to the host and is refused: the top-level thread of a call (a tool, an event, a
+    window callback, a request handler, a `db:tx` or `Mutex:with_lock` body, the app's entry), a task's thread,
+    and the thread a `pcall` or `xpcall` runs its body in, however you got hold of it (a `coroutine.running()` you
+    stashed in a variable and resume from another tool). The refusal is `false, "cannot resume non-suspended
+    coroutine"`, and a `coroutine.wrap` function raises it; nothing changes in the thread you tried to resume. A
+    coroutine you did create is refused the same way while a host call it is waiting at is in flight (another thread
+    is waiting for it) and once you gave it to `task.spawn`, `task.defer` or `task.delay` (the scheduler drives it
+    now). Those three take only coroutines you created: `task.spawn(coroutine.running())` raises `cannot schedule a
+    coroutine that is not yours`, and scheduling one that is already being driven raises `cannot schedule a
+    coroutine that is already running`. Yielding across `pcall` inside your own coroutines works as in Lua.
   - *`db:tx` and reloads.* A transaction ends with the app version that opened it: unloading the app or reloading it
     (a hot reload, an update) rolls an open `db:tx` back, and the call that was inside it gets `the transaction has
     ended` from its next statement or from `db:tx` itself. A statement whose host call was abandoned inside `db:tx`

@@ -1,4 +1,4 @@
--- `coroutine.resume` / `coroutine.wrap` for scripts whose host calls are async (installed by `app_env::new_env`).
+-- `coroutine.create` / `resume` / `wrap` for scripts whose host calls are async (installed by `app_env::new_env`).
 --
 -- An async host function that is not ready suspends the coroutine it runs in by yielding a private marker
 -- (`pending`); the embedder's executor polls the future and resumes the coroutine when it is ready. That
@@ -17,8 +17,17 @@
 -- Lua 5.1 still cannot yield out of a C boundary (a `string.gsub` callback, a
 -- metamethod or a `for ... in` iterator function): a host call there fails with Lua's own
 -- "attempt to yield across metamethod/C-call boundary".
+--
+-- WHO MAY RESUME WHAT. A script reaches threads it did not make: `coroutine.running()` returns the thread it runs in,
+-- which may be the top-level thread of a call the host is driving, a task's thread, or the protected coroutine of a
+-- `pcall` (`yieldable_pcall.lua`). Resuming one of those from another call would run its code in the wrong call (a
+-- `readOnly` call writing state, a task that never finishes). So a script drives only what it made itself: `create` and
+-- `wrap` record the coroutine in `owned` (weak keys), and `resume` refuses everything else with Lua's own "cannot resume
+-- non-suspended coroutine", as it does for a coroutine that is running. The refusal is by default, so no thread the host
+-- or a module makes internally has to be found and marked: the host machinery uses the raw primitives captured below.
+-- A coroutine of its own is refused only while somebody else drives it (`driven`, see `is_driven`).
 
-local pending, raw, driven, null = ...
+local pending, raw, driven, owned, null = ...
 local select, unpack, error, type, getmetatable = select, unpack, error, type, getmetatable
 local create, resume, yield, status, running = raw.create, raw.resume, raw.yield, raw.status, raw.running
 
@@ -26,10 +35,7 @@ local create, resume, yield, status, running = raw.create, raw.resume, raw.yield
 -- waits for it. `driven` (a table with weak keys, shared with the task scheduler) maps such a coroutine to that
 -- thread; a script that resumes it from somewhere else (a task, another call) gets Lua's own "cannot resume
 -- non-suspended coroutine" instead of stealing the call from the thread that is waiting for it. A coroutine handed
--- to `task.spawn`, `task.defer` or `task.delay` is the scheduler's: its entry is `true`. So is the top-level thread
--- of every call the host makes into the script (`M.call`, which every entry point goes through), from its first
--- instruction to the end of its life: a script that stashed `coroutine.running()` cannot resume the thread of a call
--- that is parked at a wait, which would run that call's code in the resumer's turn. A thread's entry means
+-- to `task.spawn`, `task.defer` or `task.delay` is the scheduler's: its entry is `true`. A thread's entry means
 -- something only while that thread is suspended: if its yield failed (it was inside a C boundary) the thread went
 -- on, and the coroutine is merely left behind.
 local function is_driven(co)
@@ -44,9 +50,15 @@ local function is_driven(co)
   return false
 end
 
+-- Whether a script may resume `co`: it made it, and nobody else is driving it.
+local function resumable(co)
+  return owned[co] == true and not is_driven(co)
+end
+
 -- The executor drops a call that is waiting by resuming the thread with a light userdata of its own (the
--- "terminate" signal). A script can reach no light userdata but the null sentinel (`null`), so that is how the signal
--- is told from anything a script resumed the thread with: a resume value that is nothing of the kind changes nothing.
+-- "terminate" signal). The only light userdata a script can hold is the null sentinel (`null`); `pending` is the
+-- marker threads yield, never an answer, so it is no signal either. That is how the signal is told from anything a
+-- script resumed the thread with: a resume value that is nothing of the kind changes nothing.
 local function is_terminate(signal)
   return type(signal) == "userdata" and signal ~= null and signal ~= pending and getmetatable(signal) == nil
 end
@@ -79,18 +91,17 @@ end
 
 local M = {}
 
--- Run `f(...)` as the top-level body of a call the host made (see `lifecycle::call_driven`): the thread it runs in
--- is the host's from the first instruction, so no script can resume it.
-function M.call(f, ...)
-  local me = running()
-  if me then
-    driven[me] = true
-  end
-  return f(...)
+function M.create(f)
+  local co = create(f)
+  owned[co] = true
+  return co
 end
 
 function M.resume(co, ...)
-  if is_driven(co) then
+  if type(co) ~= "thread" then
+    return resume(co, ...) -- Lua's own "bad argument"
+  end
+  if not resumable(co) then
     return false, "cannot resume non-suspended coroutine"
   end
   local r = drive(co, pack(resume(co, ...)))
@@ -98,7 +109,7 @@ function M.resume(co, ...)
 end
 
 function M.wrap(f)
-  local co = create(f)
+  local co = M.create(f)
   return function(...)
     if is_driven(co) then
       error("cannot resume non-suspended coroutine", 0)

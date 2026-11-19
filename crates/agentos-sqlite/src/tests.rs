@@ -533,6 +533,29 @@ async fn a_begin_whose_caller_gave_up_is_rolled_back_and_frees_the_gate() {
     }
 }
 
+/// The rollback of a dropped transaction is owed to the connection even when the blocking pool it was handed to
+/// refuses the job (the runtime is shutting down): the job is dropped unrun, and dropping it rolls back.
+#[test]
+fn a_rollback_the_blocking_pool_refuses_still_happens() {
+    let db = AppDb::open(None, &migs()).unwrap();
+    let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build().unwrap();
+    let handle = runtime.handle().clone();
+    let tx = runtime.block_on(async {
+        let mut tx = AppData::begin(&db).await.unwrap();
+        tx.exec("INSERT INTO notes(body) VALUES('lost')".into(), Params::None).await.unwrap();
+        tx
+    });
+    assert!(!db.shared.conn.lock().is_autocommit(), "the transaction is open");
+    drop(runtime); // the pool is shut down; the handle still says "inside a runtime"
+    let entered = handle.enter();
+    drop(tx);
+    drop(entered);
+    assert!(
+        db.shared.conn.lock().is_autocommit(),
+        "the refused job rolled the transaction back as it was dropped"
+    );
+}
+
 /// A database dropped with a transaction open rolls it back while its hooks are alive (SQLite calls the rollback
 /// hook while closing).
 #[tokio::test]
