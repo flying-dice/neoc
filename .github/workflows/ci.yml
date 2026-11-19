@@ -306,3 +306,4 @@ jobs:
         run: docker build -t neoc:ci .
       - name: Smoke test
         if: steps.changes.outputs.run == 'true'
+        run: docker run --rm neoc:ci --version
