@@ -10,6 +10,10 @@
   for the row of layouts) move to the previous or next item without wrapping past the ends, Home/End to the first
   or last; one item is in the tab order at a time (roving tabindex). Escape and Tab call `ondismiss` (the owner closes
   the menu and decides where focus goes); Escape does not reach anything behind the menu.
+
+  `unavailable` lists layouts the screen has no room for (Split View on a narrow screen). Such an item is shown dimmed with
+  a title and an accessible name saying why, is `aria-disabled` (not `disabled`: it stays in the arrow-key order, as the
+  menu pattern asks, so a keyboard or screen reader user finds it and hears why), and does nothing when activated.
 -->
 <script lang="ts">
   import Material from '../atoms/Material.svelte'
@@ -22,6 +26,7 @@
     testid: string
     layout: WindowLayout
     title?: string
+    unavailable?: readonly WindowLayout[]
     onlayout?: (layout: WindowLayout) => void
     onminimize?: () => void
     onclose?: () => void
@@ -29,7 +34,9 @@
     ondismiss?: (how: 'escape' | 'tab') => void
   }
 
-  let { testid, layout, title, onlayout, onminimize, onclose, ondismiss }: Props = $props()
+  let { testid, layout, title, unavailable = [], onlayout, onminimize, onclose, ondismiss }: Props = $props()
+
+  const UNAVAILABLE_REASON = 'there is not room for it on this screen'
 
   let menu: HTMLElement | undefined = $state()
   /** The item that holds the tab stop (the one last focused; the first until then). */
@@ -91,17 +98,20 @@
   <Material thickness="thick" radius="14px">
     <div class="layouts" role="group" aria-label="Layout">
       {#each options as o, i (o.value)}
+        {@const off = unavailable.includes(o.value)}
         <button
           type="button"
           role="menuitemradio"
           data-testid="{testid}-{o.value}"
           aria-checked={layout === o.value}
           tabindex={tabStop === i ? 0 : -1}
-          aria-label={o.label}
-          title={o.label}
+          aria-label={off ? `${o.label}, unavailable: ${UNAVAILABLE_REASON}` : o.label}
+          aria-disabled={off || undefined}
+          title={off ? `${o.label}: ${UNAVAILABLE_REASON}` : o.label}
           class="layout"
           class:current={layout === o.value}
-          onclick={() => onlayout?.(o.value)}
+          class:unavailable={off}
+          onclick={() => !off && onlayout?.(o.value)}
         >
           <Icon name={o.icon} size={26} weight={1.8} />
         </button>
@@ -158,6 +168,23 @@
   .layout.current {
     color: var(--tint);
   }
+  /* Unavailable, not hidden: dimmed, no hover, a diagonal strike so it does not rely on the dimming alone. */
+  .layout.unavailable {
+    color: var(--label-tertiary);
+    cursor: default;
+    background-image: linear-gradient(
+      to top right,
+      transparent calc(50% - 1px),
+      var(--label-tertiary) calc(50% - 1px),
+      var(--label-tertiary) calc(50% + 1px),
+      transparent calc(50% + 1px)
+    );
+  }
+  .layout.unavailable:hover {
+    background-color: transparent;
+    color: var(--label-tertiary);
+  }
+
   .actions {
     box-shadow: 0 calc(var(--hairline) * -1) 0 var(--separator);
   }

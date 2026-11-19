@@ -30,6 +30,8 @@
   `data-window-focus` is the convention for "this element takes the window's keys": one per window, `tabindex="-1"`.
   See client/README.md, "Focus hooks".
 
+  `unavailable` lists layouts the screen has no room for; the menu shows them disabled (see MultitaskingMenu).
+
   The "···" handle never takes the app's keys: a mouse press on it does not focus it, choosing from its menu (or
   minimizing, or closing the menu with Escape after a mouse open) puts focus back on the `data-window-focus` element,
   and an ordinary typed key (a character, Backspace, Delete) with focus on the button moves focus there and is sent on to
@@ -44,6 +46,7 @@
   import { cubicOut } from 'svelte/easing'
   import MultitaskingDots from '../atoms/MultitaskingDots.svelte'
   import MultitaskingMenu from '../molecules/MultitaskingMenu.svelte'
+  import { isTypingKey } from '../keys'
   import type { Frame, WindowLayout } from '../types'
 
   interface Props {
@@ -58,6 +61,8 @@
     z?: number
     focused?: boolean
     layout?: WindowLayout
+    /** Layouts the screen has no room for (Split View on a narrow screen): shown disabled in the menu. */
+    unavailable?: readonly WindowLayout[]
     onframechange?: (frame: Frame) => void
     onfocus?: () => void
     onlayout?: (layout: WindowLayout) => void
@@ -78,6 +83,7 @@
     z = 1,
     focused = true,
     layout = 'floating',
+    unavailable = [],
     onframechange,
     onfocus,
     onlayout,
@@ -200,8 +206,10 @@
   let dotsEl: HTMLElement | undefined = $state()
 
   function toggleMenu(e: MouseEvent): void {
-    menuByKey = e.detail === 0 // a key press clicks the button with no click count
-    menuOpen = !menuOpen
+    const byKey = e.detail === 0 // a key press clicks the button with no click count
+    if (menuOpen) return closeMenu(byKey) // closing it with the button puts focus back where it belongs, not on the page
+    menuByKey = byKey
+    menuOpen = true
   }
 
   /** Close the menu and put focus back where typing goes: the content (or the dots, for a keyboard user who backed out). */
@@ -216,11 +224,13 @@
     onlayout?.(next)
   }
 
-  /** Keys typed with focus on the dots belong to the app, as they would anywhere else in the window. */
+  /**
+   * Keys typed with focus on the dots belong to the app, as they would anywhere else in the window. Shortcuts with a
+   * command modifier (Cmd+R, Ctrl+F) are the browser's and are left alone.
+   */
   function forwardTyping(e: KeyboardEvent): void {
-    const typed = (e.key.length === 1 && e.key !== ' ') || e.key === 'Backspace' || e.key === 'Delete'
     const target = contentEl?.querySelector<HTMLElement>('[data-window-focus]')
-    if (!typed || e.defaultPrevented || e.isComposing || !target) return
+    if (!isTypingKey(e) || e.defaultPrevented || e.isComposing || !target) return
     e.preventDefault()
     target.focus({ preventScroll: true })
     target.dispatchEvent(new KeyboardEvent('keydown', e)) // the key was already sent to the button: send it on
@@ -229,8 +239,11 @@
   function onwindowpointerdown(e: PointerEvent): void {
     if (!menuOpen) return
     const target = e.target as HTMLElement
-    if (menuEl?.contains(target) || target.closest('.ios-mt-dots')) return
-    menuOpen = false
+    if (menuEl?.contains(target) || dotsEl?.contains(target)) return // this window's own menu and button
+    // The menu gave way to a press elsewhere. Focus the press is about to move stays where the press puts it; focus
+    // still inside the menu (which is about to be removed) goes back to the app, or typing would be lost.
+    if (menuEl?.contains(document.activeElement)) closeMenu()
+    else menuOpen = false
   }
 </script>
 
@@ -292,6 +305,7 @@
         testid="{testid}-menu"
         {layout}
         {title}
+        {unavailable}
         onlayout={choose}
         ondismiss={(how) => closeMenu(how === 'tab' || menuByKey)}
         onminimize={() => {

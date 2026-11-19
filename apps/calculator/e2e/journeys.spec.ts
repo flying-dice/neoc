@@ -185,6 +185,15 @@ test.describe('Calculator journeys', () => {
     await page.keyboard.type('6*7=')
     await expect(page.getByTestId(display)).toHaveText('42')
 
+    // closing the menu by pressing "···" again does not leave the keys on the page behind it either
+    await clearCalculator(page)
+    await page.getByTestId('window-calculator-multitasking').click()
+    await expect(page.getByTestId('window-calculator-menu')).toBeVisible()
+    await page.getByTestId('window-calculator-multitasking').click()
+    await expect(page.getByTestId('window-calculator-menu')).toHaveCount(0)
+    await page.keyboard.type('6*7=')
+    await expect(page.getByTestId(display)).toHaveText('42')
+
     // Files, waiting in the strip, comes back beside the Slide Over and is still usable
     await page.getByTestId('stage-strip-files').click()
     await expect(windowOf(page, 'files')).toBeVisible()

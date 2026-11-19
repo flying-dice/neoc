@@ -33,6 +33,7 @@
   let capped = $state<Frame>({ x: 16, y: 16, width: 360, height: 300 })
   let typedKeys = $state('')
   let said = $state('')
+  let saidUnavail = $state('')
   /** The owner of a window keeps it on the screen: this desk's edge is 40 px short of 460 x 380. */
   const keepOnDesk = (next: Frame): void => {
     capped = { ...next, width: Math.min(next.width, 404), height: Math.min(next.height, 324) }
@@ -257,6 +258,30 @@
     await userEvent.keyboard('{Escape}')
     await expect(dots).toHaveFocus()
     await expect(typed()).toBe('6*7=91')
+
+    // a press on the app while the menu is open closes it and the keys stay with the app
+    await userEvent.keyboard('{Enter}')
+    await waitFor(() => expect(menu()).not.toBeNull())
+    await userEvent.click(view)
+    await waitFor(() => expect(menu()).toBeNull())
+    await expect(view).toHaveFocus()
+    await userEvent.keyboard('2')
+    await waitFor(() => expect(typed()).toBe('6*7=912'))
+
+    // pressing "···" again closes it too, and the keys are not left on the page behind it
+    await userEvent.click(dots)
+    await waitFor(() => expect(menu()).not.toBeNull())
+    await userEvent.click(dots)
+    await waitFor(() => expect(menu()).toBeNull())
+    await expect(view).toHaveFocus()
+    await userEvent.keyboard('3')
+    await waitFor(() => expect(typed()).toBe('6*7=9123'))
+
+    // a shortcut with a command key is the browser's: it is not carried to the app
+    dots.focus()
+    await userEvent.keyboard('{Meta>}r{/Meta}')
+    await expect(dots).toHaveFocus()
+    await expect(typed()).toBe('6*7=9123')
   }}
 >
   <div style="position:relative;width:460px;height:380px;background:var(--ios-gray5);border-radius:var(--radius-xl)">
@@ -331,6 +356,59 @@
     <Window testid="win-menu" title="Sample" x={16} y={16} width={360} height={300} onlayout={(l) => (said = l)}>
       <div tabindex="-1" data-window-focus style="flex:1;display:grid;place-items:center">
         <span data-testid="win-menu-said">{said}</span>
+      </div>
+    </Window>
+  </div>
+</Story>
+
+<!--
+  A layout the screen has no room for (Split View on a narrow screen) is shown, not hidden: dimmed and struck through,
+  aria-disabled with the reason in its name and title, still in the arrow-key order, and it does nothing when chosen.
+-->
+<Story
+  name="Unavailable layouts"
+  asChild
+  parameters={{ controls: { disable: true } }}
+  play={async ({ canvas, userEvent }) => {
+    const dots = await canvas.findByTestId('win-unavail-multitasking')
+    await userEvent.click(dots)
+    const item = (name: string): HTMLElement => canvas.getByTestId(`win-unavail-menu-${name}`)
+    for (const name of ['split-left', 'split-right']) {
+      await expect(item(name)).toHaveAttribute('aria-disabled', 'true')
+      await expect(item(name)).toHaveAccessibleName(/unavailable: there is not room for it on this screen/)
+      await expect(item(name)).toHaveAttribute('title', expect.stringContaining('not room'))
+    }
+    for (const name of ['fullscreen', 'slideover', 'floating']) await expect(item(name)).not.toHaveAttribute('aria-disabled')
+
+    // activating one does nothing (the menu stays open, nothing is chosen); the others still choose
+    await userEvent.click(item('split-left'))
+    await expect(canvas.getByTestId('win-unavail-said')).toHaveTextContent('')
+    await expect(canvas.queryByTestId('win-unavail-menu')).not.toBeNull()
+
+    // it is still reached with the arrow keys, and Enter on it does nothing either
+    item('fullscreen').focus()
+    await userEvent.keyboard('{ArrowRight}')
+    await expect(item('split-left')).toHaveFocus()
+    await userEvent.keyboard('{ArrowRight}')
+    await expect(item('split-right')).toHaveFocus()
+    await userEvent.keyboard('{Enter}')
+    await expect(canvas.getByTestId('win-unavail-said')).toHaveTextContent('')
+    await expect(canvas.queryByTestId('win-unavail-menu')).not.toBeNull() // the story ends with it open, for the snapshot
+  }}
+>
+  <div style="position:relative;width:460px;height:380px;background:var(--ios-gray5);border-radius:var(--radius-xl)">
+    <Window
+      testid="win-unavail"
+      title="Sample"
+      x={16}
+      y={16}
+      width={360}
+      height={300}
+      unavailable={['split-left', 'split-right']}
+      onlayout={(l) => (saidUnavail = l)}
+    >
+      <div tabindex="-1" data-window-focus style="flex:1;display:grid;place-items:center">
+        <span data-testid="win-unavail-said">{saidUnavail}</span>
       </div>
     </Window>
   </div>

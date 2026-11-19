@@ -14,8 +14,10 @@ import { appOf, MIN_WIDTH, type AppDefinition, type AppId } from './apps.svelte'
  * Sizes: an app's minimum window is never broken by a layout. Two panes of a Split View always have at least their
  * app's minimum width: the divider stops there (a quarter to three quarters otherwise), the ratio is re-checked when
  * the second pane joins and when the workspace changes. Where the two minimums cannot share the screen the split is
- * not made: choosing Split View does nothing, an app that will not fit beside the waiting one opens on its own (the
- * waiting pane goes back to floating), and a screen that shrinks past that dissolves the split into floating windows.
+ * not made: `unavailableLayouts` tells the multitasking menu to show Split View disabled (and `setLayout` ignores it
+ * for any other caller), an app that will not fit beside the waiting one opens on its own (the waiting pane goes back
+ * to floating and `notice` says so), and a screen that shrinks past that dissolves the split into floating windows.
+ * Slide Over is the same: not offered where the app's minimum width does not fit the screen.
  * Where the screen is shorter than an app's minimum height (a waiting split and Slide Over stop above the Dock) the
  * minimum wins, as it does for a floating window.
  */
@@ -59,6 +61,8 @@ export class WindowManager {
   activeStageId = $state<string | null>(null)
   focusedId = $state<string | null>(null)
   slideOverHidden = $state(false)
+  /** A one-line explanation of a layout the manager changed on its own (shown by the desktop, cleared by it). */
+  notice = $state<string | null>(null)
   #bounds = $state({ width: 1280, height: 800 })
   #topZ = 10
 
@@ -164,9 +168,9 @@ export class WindowManager {
         return this.#splitPane(win.layout, ratio, this.dockHidden ? fullH : this.#heightAboveDock)
       }
       case 'slideover': {
-        const width = Math.max(SLIDE_OVER_WIDTH, this.#minOf(win).minWidth) // an app wider than 380 keeps its minimum
+        const width = this.#slideOverWidth(win)
         return {
-          x: this.slideOverHidden ? W + 20 : W - width - INSET,
+          x: this.slideOverHidden ? W + 20 : Math.max(INSET, W - width - INSET), // never off the left of the screen
           y: INSET,
           width,
           height: this.#heightAboveDock // above the Dock, which a narrow screen would otherwise cover it with
@@ -257,8 +261,11 @@ export class WindowManager {
         stage.splitRatio = this.#clampRatio(stage, stage.splitRatio) // the divider may have been left where this app is too narrow
         return this.focus(win.id)
       }
-      // No room for both: the waiting pane gives up, and this app opens as anything else would.
-      if (waiting) waiting.layout = 'floating'
+      // No room for both: the waiting pane gives up, this app opens as anything else would, and the person is told.
+      if (waiting) {
+        waiting.layout = 'floating'
+        this.notice = `${app.name} needs more room than half the screen, so it opened on its own. ${appOf(waiting.appId)?.name ?? 'The other app'} is a normal window again.`
+      }
       stage.awaitingSplit = null
     }
 
@@ -329,10 +336,20 @@ export class WindowManager {
     win.frame = this.#fitFrame(win, frame)
   }
 
+  /** The layouts the multitasking menu should show disabled for a window: those this screen has no room for. */
+  unavailableLayouts(id: string): WindowLayout[] {
+    const win = this.windows.find((w) => w.id === id)
+    if (!win) return []
+    return [
+      ...(this.#canSplit(win) ? [] : (['split-left', 'split-right'] as const)),
+      ...(this.#canSlideOver(win) ? [] : (['slideover'] as const))
+    ]
+  }
+
   setLayout(id: string, layout: WindowLayout): void {
     const win = this.windows.find((w) => w.id === id)
     if (!win || win.layout === layout) return
-    if (layout.startsWith('split') && !this.#canSplit(win)) return // no room for two panes: the layout stays as it is
+    if (this.unavailableLayouts(id).includes(layout)) return // no room for it: the layout stays as it is
 
     if (layout === 'slideover') {
       // Only one Slide Over; an existing one returns to its own stage.
@@ -540,6 +557,19 @@ export class WindowManager {
       this.#minOf(win).minWidth,
       partner ? this.#minOf(partner).minWidth : MIN_WIDTH
     ])
+  }
+
+  /** Whether the app's minimum width fits the screen as a Slide Over (with the inset each side). */
+  #canSlideOver(win: WindowState): boolean {
+    return this.#minOf(win).minWidth <= this.bounds.width - INSET * 2
+  }
+
+  /** 380, or the screen's width where that is less, or the app's minimum where that is more. */
+  #slideOverWidth(win: WindowState): number {
+    return Math.max(
+      Math.min(SLIDE_OVER_WIDTH, this.bounds.width - INSET * 2),
+      this.#minOf(win).minWidth
+    )
   }
 
   /** The two panes of a stage's split, by side (a side still waiting for its app is missing). */

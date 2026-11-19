@@ -12,7 +12,7 @@ export const FAKE_CALCULATOR: AppSummary = {
   name: 'Calculator',
   version: '0.1.0',
   state: 'running',
-  icon: 'plus',
+  icon: 'calculator',
   tint: 'orange',
   description: 'Arithmetic for you and your agents.',
   window: { w: 340, h: 560, minW: 320, minH: 500 },

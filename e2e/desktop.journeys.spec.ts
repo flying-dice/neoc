@@ -158,11 +158,41 @@ test.describe('Desktop journeys', () => {
     await expect(page.getByTestId('stage-strip-files')).toHaveCount(0) // not sent to the recent-apps strip
   })
 
-  test('D9: Split View on a screen too narrow for two apps is not offered a half-sized window', async ({ page }) => {
+  test('D9: Split View on a screen too narrow for two apps is shown unavailable, not offered a half-sized window', async ({ page }) => {
     await page.setViewportSize({ width: 600, height: 800 })
     await openDesktop(page, { open: ['files'] })
-    await chooseLayout(page, 'files', 'split-left')
-    await expect(windowOf(page, 'files')).toHaveClass(/\bfloating\b/) // two 320 px minimums do not fit in 600
+    await page.getByTestId('window-files-multitasking').click()
+    for (const side of ['split-left', 'split-right']) {
+      const item = page.getByTestId(`window-files-menu-${side}`)
+      await expect(item).toHaveAttribute('aria-disabled', 'true') // two 320 px minimums do not fit in 600
+      await expect(item).toHaveAccessibleName(/unavailable/)
+    }
+    await page.getByTestId('window-files-menu-split-left').click() // does nothing
+    await expect(page.getByTestId('window-files-menu')).toBeVisible()
+    await expect(windowOf(page, 'files')).toHaveClass(/\bfloating\b/)
     await expect(page.getByTestId('split-placeholder')).toHaveCount(0)
+    await expect(page.getByTestId('window-files-menu-fullscreen')).not.toHaveAttribute('aria-disabled')
+  })
+
+  test('D10: an app too wide for the waiting half opens on its own, and the person is told', async ({ page }) => {
+    await page.setViewportSize({ width: 800, height: 800 }) // 774 to share: Files 320 + Agents 480 does not fit
+    await openDesktop(page, { open: ['files'] })
+    await chooseLayout(page, 'files', 'split-left')
+    await expect(page.getByTestId('split-placeholder')).toBeVisible()
+    await page.getByTestId('dock-agents').click()
+    await expect(windowOf(page, 'agents')).toBeVisible()
+    await expect(page.getByTestId('desktop-notice')).toContainText('opened on its own')
+    await expect(page.getByTestId('split-placeholder')).toHaveCount(0)
+    await expect(windowOf(page, 'files')).toHaveClass(/\bfloating\b/)
+    await page.getByTestId('desktop-notice-dismiss').click()
+    await expect(page.getByTestId('desktop-notice')).toHaveCount(0)
+  })
+
+  test('D11: Slide Over is shown unavailable for an app wider than the screen', async ({ page }) => {
+    await page.setViewportSize({ width: 480, height: 800 }) // 464 to use: Agents needs 480
+    await openDesktop(page, { open: ['agents'] })
+    await page.getByTestId('window-agents-multitasking').click()
+    await expect(page.getByTestId('window-agents-menu-slideover')).toHaveAttribute('aria-disabled', 'true')
+    await expect(page.getByTestId('window-agents-menu-fullscreen')).not.toHaveAttribute('aria-disabled')
   })
 })

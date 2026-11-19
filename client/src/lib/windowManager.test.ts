@@ -269,6 +269,7 @@ describe('Split View sizing', () => {
   test('where the two minimums cannot share the screen, Split View is refused and the layout is left as it was', () => {
     wm.bounds = { width: 600, height: 768 } // 574 usable: 320 + 320 does not fit
     wm.open('calculator')
+    expect(wm.unavailableLayouts(win('calculator').id)).toEqual(['split-left', 'split-right']) // the menu shows them disabled
     wm.setLayout(win('calculator').id, 'split-left')
     expect(win('calculator').layout).toBe('floating')
     expect(wm.activeStage?.awaitingSplit).toBeNull()
@@ -290,6 +291,8 @@ describe('Split View sizing', () => {
     expect(wm.activeStage?.awaitingSplit).toBe('split-right')
     wm.open('roomy')
     expect(win('roomy').layout).toBe('floating')
+    expect(wm.notice).toContain('roomy') // the person is told why the half they waited for went away
+    expect(wm.notice).toContain('wide')
     expect(wm.onStage.map((w) => w.appId)).toEqual(['roomy'])
     expect(win('wide').layout).toBe('floating')
     expect(wm.stages.every((s) => s.awaitingSplit === null)).toBe(true)
@@ -317,6 +320,31 @@ describe('Split View sizing', () => {
     expect(wm.frameOf(win('calculator')).height).toBe(500)
     wm.bounds = { width: 1280, height: 700 } // room enough: the Dock edge decides again
     expect(wm.frameOf(win('calculator')).height).toBe(700 - 8 - 104)
+  })
+
+  test('every layout is available on a screen with room, and a window that is gone has none disabled', () => {
+    wm.open('calculator')
+    expect(wm.unavailableLayouts(win('calculator').id)).toEqual([])
+    expect(wm.unavailableLayouts('nope')).toEqual([])
+  })
+
+  test('Slide Over is not offered where the app’s minimum width does not fit the screen, and fits the screen otherwise', () => {
+    setInstalledApps([
+      summary('wide', { window: { w: 900, h: 600, minW: 480, minH: 300 } }),
+      summary('notes')
+    ])
+    wm.bounds = { width: 360, height: 800 } // 344 to use: 480 does not fit, 320 does
+    wm.open('wide')
+    expect(wm.unavailableLayouts(win('wide').id)).toContain('slideover')
+    wm.setLayout(win('wide').id, 'slideover')
+    expect(win('wide').layout).toBe('floating')
+    wm.open('notes')
+    expect(wm.unavailableLayouts(win('notes').id)).not.toContain('slideover')
+    wm.setLayout(win('notes').id, 'slideover')
+    const f = wm.frameOf(win('notes'))
+    expect(f.x).toBeGreaterThanOrEqual(8) // never off the left
+    expect(f.x + f.width).toBeLessThanOrEqual(360 - 8) // nor the right
+    expect(f.width).toBe(344)
   })
 
   test('Slide Over is 380 wide, or the app’s minimum when that is more, and stays on screen either way', () => {

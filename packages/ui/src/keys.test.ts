@@ -4,6 +4,7 @@ import {
   isActivateKey,
   isContextMenuKey,
   isPrintable,
+  isTypingKey,
   moveIndex,
   nextEnabled,
   trapIndex,
@@ -74,6 +75,13 @@ describe('focus trap and key predicates', () => {
     expect(isPrintable({ key: 'a', ...k, metaKey: true })).toBe(false)
     expect(isPrintable({ key: ' ', ...k })).toBe(false)
     expect(isPrintable({ key: 'Enter', ...k })).toBe(false)
+  })
+
+  test('typing keys: characters, Backspace and Delete, never with a command modifier, Space, Enter, Tab or Escape', () => {
+    for (const key of ['a', '7', '*', '=', 'Backspace', 'Delete']) expect(isTypingKey({ key })).toBe(true)
+    for (const key of [' ', 'Enter', 'Tab', 'Escape', 'ArrowUp', 'Shift', 'F5']) expect(isTypingKey({ key })).toBe(false)
+    for (const mod of ['metaKey', 'ctrlKey', 'altKey'] as const)
+      for (const key of ['r', 'Backspace']) expect(isTypingKey({ key, [mod]: true })).toBe(false)
   })
 })
 

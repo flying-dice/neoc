@@ -67,10 +67,15 @@ export const isContextMenuKey = (e: { key: string; shiftKey: boolean }): boolean
 /** True for the keys that activate a control: Enter or Space. */
 export const isActivateKey = (key: string): boolean => key === 'Enter' || key === ' '
 
+type KeyEvent = { key: string; ctrlKey?: boolean; metaKey?: boolean; altKey?: boolean }
+
 /** Whether a keydown may be typed text (a printable single character with no command modifier). */
-export const isPrintable = (e: {
-  key: string
-  ctrlKey: boolean
-  metaKey: boolean
-  altKey: boolean
-}): boolean => e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && e.key !== ' '
+export const isPrintable = (e: KeyEvent): boolean =>
+  e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && e.key !== ' '
+
+/**
+ * The keys a sum or a sentence is typed with: a printable character (not Space), Backspace or Delete, with no command
+ * modifier. Enter, Space, Tab, Escape and the arrows press or move; they are not typing, and Cmd+R is not either.
+ */
+export const isTypingKey = (e: KeyEvent): boolean =>
+  isPrintable(e) || ((e.key === 'Backspace' || e.key === 'Delete') && !e.ctrlKey && !e.metaKey && !e.altKey)

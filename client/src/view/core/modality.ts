@@ -8,6 +8,8 @@
  * person who tabbed to a key and then types a sum is typing, not navigating: Enter finishes the sum.
  */
 
+import { isTypingKey } from '@agentos/ui'
+
 export type Modality = 'keyboard' | 'pointer' | 'typing'
 
 let modality: Modality = 'keyboard'
@@ -23,19 +25,15 @@ type InputEvent = Pick<Event, 'type'> &
   Partial<Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'altKey'>>
 
 /**
- * Record the modality the event implies. Enter, Space and the arrows leave it alone: they press or move, they do not
- * type.
+ * Record the modality the event implies. Enter, Space, Escape and the arrows leave it alone: they press, move or
+ * dismiss, they do not type (`isTypingKey` is the one definition of typing).
  */
 export function noteInput(e: InputEvent): void {
   if (e.type === 'pointerdown') modality = 'pointer'
   else if (e.type !== 'keydown' || !e.key) return
   else if (e.key === 'Tab') modality = 'keyboard'
-  else if (!e.metaKey && !e.ctrlKey && !e.altKey && isTyped(e.key)) modality = 'typing'
-}
-
-/** A printable character (not Space), Backspace or Delete: the keys a sum is typed with. Escape dismisses, it does not type. */
-function isTyped(key: string): boolean {
-  return (key.length === 1 && key !== ' ') || key === 'Backspace' || key === 'Delete'
+  else if (isTypingKey({ key: e.key, ctrlKey: e.ctrlKey, metaKey: e.metaKey, altKey: e.altKey }))
+    modality = 'typing'
 }
 
 /**

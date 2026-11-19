@@ -6,12 +6,12 @@
 
   Test ids: `status-bar`, `desktop-stage`, `widget-clock`, `widget-agent-activity`,
   `stage-strip` (+ `stage-strip-<appIds>`), `window-${appId}` (+ parts, see Window),
-  `split-divider`, `split-placeholder`, `slideover-tab`, `dock` (+ `dock-${appId}`).
+  `split-divider`, `split-placeholder`, `slideover-tab`, `dock` (+ `dock-${appId}`), `desktop-notice` (+ `-dismiss`).
 -->
 <script lang="ts">
   import type { Snippet } from 'svelte'
   import type { DockApp } from '@agentos/ui'
-  import { SplitHandle } from '@agentos/ui/atoms'
+  import { SplitHandle, Toast } from '@agentos/ui/atoms'
   import { DesktopTemplate } from '@agentos/ui/templates'
   import { StatusBar, Dock, Window, StageStrip } from '@agentos/ui/organisms'
   import ClockWidget from '../organisms/ClockWidget.svelte'
@@ -63,6 +63,19 @@
   }
 
   let dividerStart = 0
+
+  // A layout the manager changed on its own is explained in a toast that goes after a while, and waits while it is read.
+  const NOTICE_MS = 9000
+  let noticeHeld = $state(false)
+  $effect(() => {
+    if (!wm.notice) {
+      noticeHeld = false // the toast went (dismissed under the pointer): its `onrelease` never comes, so let go here
+      return undefined
+    }
+    if (noticeHeld) return undefined
+    const timer = setTimeout(() => (wm.notice = null), NOTICE_MS)
+    return () => clearTimeout(timer)
+  })
 
   // Widgets sit on the wallpaper; like iPadOS, they step back (fade out) as soon
   // as a window covers any part of them, instead of peeking out from behind it.
@@ -135,6 +148,7 @@
             minHeight={app.minHeight}
             z={win.layout === 'slideover' ? 10000 : win.z}
             layout={win.layout}
+            unavailable={wm.unavailableLayouts(win.id)}
             focused={wm.focusedId === win.id}
             onframechange={(f) => wm.setFrame(win.id, f)}
             onfocus={() => wm.focus(win.id)}
@@ -168,6 +182,18 @@
           style:height="{pane.height}px"
         >
           <p>Choose an app from the Dock</p>
+        </div>
+      {/if}
+
+      {#if wm.notice}
+        <div class="notice">
+          <Toast
+            testid="desktop-notice"
+            text={wm.notice}
+            ondismiss={() => (wm.notice = null)}
+            onhold={() => (noticeHeld = true)}
+            onrelease={() => (noticeHeld = false)}
+          />
         </div>
       {/if}
 
@@ -246,6 +272,14 @@
     color: #fff;
     font: var(--type-headline);
     z-index: 5;
+  }
+  .notice {
+    position: absolute;
+    top: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(440px, calc(100% - 32px));
+    z-index: 10001; /* above the windows and Slide Over */
   }
   .slideover-tab {
     position: absolute;

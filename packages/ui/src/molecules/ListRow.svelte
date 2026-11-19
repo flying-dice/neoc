@@ -518,6 +518,14 @@
     background: light-dark(var(--tint), color-mix(in oklab, var(--tint) 70%, black));
     color: #fff;
   }
+  /* The ring is drawn inside the row, on the tint fill, where system blue would vanish (blue on blue). --label (black in
+     light, white in dark) holds 3:1 on the fill of every accent in both themes: contrast.test.ts. */
+  .managed.selected:focus-visible,
+  .managed.selected .face:focus-visible,
+  .managed.selected .hit:focus-visible,
+  .managed.selected .handle:focus-visible {
+    outline-color: var(--label);
+  }
   /* Multiple selection marks rows with a check circle and leaves the row alone. */
   .managed.multi.selected .face {
     background: var(--list-row-bg, var(--bg-elevated));

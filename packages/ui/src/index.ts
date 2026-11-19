@@ -47,7 +47,7 @@ export {
   type Inline,
   type MarkdownOptions
 } from './markdown'
-export { isContextMenuKey, moveIndex, nextEnabled, typeAhead } from './keys'
+export { isContextMenuKey, isTypingKey, moveIndex, nextEnabled, typeAhead } from './keys'
 export { uniqueBy } from './unique'
 export { place, placeAtPoint, type Edge, type Placement, type Rect } from './floating'
 export { normaliseDetents, type Detent } from './sheet'

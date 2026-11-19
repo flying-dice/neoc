@@ -147,6 +147,56 @@ describe('the focus ring', () => {
   })
 })
 
+// A focus ring drawn inside a tint fill (the selected list row, the picked day): system blue would vanish on a blue fill
+// (1.3:1), so those rings are --label (black in light, white in dark). Replay the fill rule for every accent.
+function fromOklab([L, a, b]: [number, number, number]): [number, number, number] {
+  const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3
+  const m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3
+  const s = (L - 0.0894841775 * a - 1.291485548 * b) ** 3
+  const gamma = (v: number): number => Math.round(255 * Math.min(1, Math.max(0, v <= 0.0031308 ? 12.92 * v : 1.055 * v ** (1 / 2.4) - 0.055)))
+  return [
+    gamma(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s),
+    gamma(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s),
+    gamma(-0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s)
+  ]
+}
+function toOklab([r, g, b]: [number, number, number]): [number, number, number] {
+  const lin = (c: number): number => (c / 255 <= 0.04045 ? c / 255 / 12.92 : ((c / 255 + 0.055) / 1.055) ** 2.4)
+  const [lr, lg, lb] = [lin(r), lin(g), lin(b)]
+  const l = Math.cbrt(0.4122214708 * lr + 0.5363325363 * lg + 0.0514459929 * lb)
+  const m = Math.cbrt(0.2119034982 * lr + 0.6806995451 * lg + 0.1073969566 * lb)
+  const s = Math.cbrt(0.0883024619 * lr + 0.2817188376 * lg + 0.6299787005 * lb)
+  return [
+    0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
+    1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
+    0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s
+  ]
+}
+
+describe('the focus ring inside a tint fill', () => {
+  for (const [name, values] of Object.entries(tokenValues())) {
+    test(`${name}: --label holds 3:1 on its --tint-fill in light and dark (system blue would not)`, () => {
+      // --tint-fill: the tint itself in light, the tint mixed 70% with black in oklab in dark
+      const fillLight = parseHex(values.light)!
+      const fillDark = fromOklab(toOklab(parseHex(values.dark)!).map((v) => v * 0.7) as [number, number, number])
+      expect(contrastRatio(luminance(fillLight), 0)).toBeGreaterThanOrEqual(3) // --label is black in light
+      expect(contrastRatio(luminance(fillDark), 1)).toBeGreaterThanOrEqual(3) // and white in dark
+    })
+  }
+
+  test('the default accent shows why: the ring colour on the blue fill is under 2:1', () => {
+    const blue = colourToken('--ios-blue')
+    expect(ratio(colourToken('--focus-ring').light, blue.light)).toBeLessThan(2)
+  })
+
+  test('the selected list row and the picked day use --label for their inner ring', () => {
+    const row = readFileSync(new URL('./molecules/ListRow.svelte', import.meta.url), 'utf8')
+    expect(row).toMatch(/\.managed\.selected \.face:focus-visible[^}]*{\s*outline-color: var\(--label\)/)
+    const day = readFileSync(new URL('./molecules/DatePicker.svelte', import.meta.url), 'utf8')
+    expect(day).toMatch(/\.day\.picked:focus-visible\s*{\s*outline-color: var\(--label\)/)
+  })
+})
+
 describe('window chrome', () => {
   const grip = colourToken('--window-grip')
   for (const body of ['--bg-grouped-elevated', '--bg-elevated', 'a black body'] as const) {

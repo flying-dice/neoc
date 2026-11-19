@@ -383,6 +383,10 @@
   .day:focus-visible {
     outline-offset: -2px;
   }
+  /* Inside the tint fill of the picked day the ring is --label (black or white), not system blue: see ListRow. */
+  .day.picked:focus-visible {
+    outline-color: var(--label);
+  }
   .time-row {
     display: flex;
     align-items: center;
