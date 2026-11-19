@@ -97,7 +97,8 @@ A change is done when all of these hold:
   it and closes its listeners, and what a task or a request handler runs queues behind the app's other calls (one
   call at a time per VM). Still enforced: a tool declared `readOnly` cannot write through the `app.*` API (db, kv, state,
   notify, shell, windows, and registering tools, windows and handlers), and neither can the tasks it starts or the
-  requests it triggers; that guarantee does **not** cover the neoc modules (`std:fs`, `vnd:rusqlite`, `std:net`, ...),
+  requests it triggers through the app's own server (a request is read-only while any read-only call is acting, not
+  merely alive; `docs/architecture/host-stack.md` says what stays open); that guarantee does **not** cover the neoc modules (`std:fs`, `vnd:rusqlite`, `std:net`, ...),
   which are open to every tool. Agent auto-approval of `readOnly` app tools relies on this `app.*`-only guarantee
   (owner decision: auto-approval stays on). SQL `ATTACH` is denied through `app.db`/`app.kv` (not through `vnd:rusqlite`), a
   cyclic or absurdly shared table handed back to the host is an error (never a stack overflow), a Lua number can

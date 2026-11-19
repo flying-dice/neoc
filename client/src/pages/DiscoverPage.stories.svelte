@@ -173,8 +173,10 @@
     )
     await userEvent.click(canvas.getByTestId('discover-add-preview'))
     await userEvent.click(await canvas.findByTestId('discover-add-install'))
-    await expect(await canvas.findByTestId('discover-install-confirm')).toHaveTextContent(
-      'will run on this host'
+    const confirm = await canvas.findByTestId('discover-install-confirm')
+    await expect(confirm).toHaveTextContent('will run on this host')
+    await expect(confirm).toHaveTextContent(
+      'read and write files, use the network and run processes'
     )
   }}
 />

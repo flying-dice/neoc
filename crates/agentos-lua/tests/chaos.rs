@@ -26,7 +26,10 @@
 //! - (f) the host did not panic (a panic in a call is a failed join);
 //! - (g) a thread the script did not make (a call's top-level thread, a task's thread, the coroutine a `pcall` or
 //!   `xpcall` runs its body in, found with `coroutine.running()`) is never resumed by a script: a `coroutine.resume`
-//!   of one from anywhere returns false. Only the coroutines the script made (`create`, `wrap`) can be resumed.
+//!   of one from anywhere returns false, *and* no script code runs because of it (every leaf ends by bumping a
+//!   counter, and the attempt, which waits for nothing, must not move it: an answer of `false` alone would also be
+//!   what a thread that ran and then failed says). Only the coroutines the script made (`create`, `wrap`) can be
+//!   resumed.
 //!
 //! A second test runs the same programs and reloads or unloads the app in the middle: nothing may be wedged, no VM may
 //! keep the database, and a `readOnly` program still left nothing behind.
@@ -128,7 +131,11 @@ fn leaf(rng: &mut Rng, n: usize, kind: Kind) -> Leaf {
         leaves.push(Leaf { code: "hyper.get(OWN)".into(), idle: true });
     }
     let at = rng.below(leaves.len());
-    leaves.swap_remove(at)
+    let mut chosen = leaves.swap_remove(at);
+    // the witness of (g): script code that runs after a leaf bumps `PROG`, so a thread that was resumed when it
+    // should have been refused shows up as progress, whatever `coroutine.resume` answered
+    chosen.code.push_str(" PROG = PROG + 1");
+    chosen
 }
 
 /// Where the leaf runs.
@@ -235,7 +242,7 @@ fn step(rng: &mut Rng, n: usize, kind: Kind) -> Step {
     if rng.chance(5) {
         // the threads the script did not make (the call's own, its tasks', its protected calls'): it cannot resume them
         return Step {
-            code: "for _, t in ipairs(SH) do if coroutine.resume(t) then viol('(g) the program resumed a thread it did not make') end end".into(),
+            code: "do local p0 = PROG for _, t in ipairs(SH) do if coroutine.resume(t) then viol('(g) the program resumed a thread it did not make') end end if PROG ~= p0 then viol('(g) a thread the program did not make ran script code when it was resumed') end end".into(),
             describe: "resume every thread the program did not make".into(),
         };
     }
@@ -281,7 +288,7 @@ local net = require("std:net")
 local collections = require("std:collections")
 local mu = collections.Mutex.new()
 local state = app.state { v = 0 }
-local counter = 0
+local counter, PROG = 0, 0
 local A, X, V, keep, pending, txp = {}, {}, {}, {}, 0, nil
 -- what the program leaves behind for another call to find: the threads it did not make (its top-level thread, the
 -- threads its tasks and its protected calls run in: no script may resume them) and the functions of its `coroutine.wrap`s
@@ -301,7 +308,7 @@ local function attempt(what, f) if pcall(f) and RO and not MEDDLING then viol("a
 -- a task is counted until its body ends, so the test knows when everything the program started is over
 local function task_start(start, f)
   pending = pending + 1
-  start(function() SH[#SH + 1] = coroutine.running() pcall(f) pending = pending - 1 end)
+  start(function() SH[#SH + 1] = coroutine.running() pcall(f) PROG = PROG + 1 pending = pending - 1 end)
 end
 -- a `db:tx` whose body records into `txp` only while the body runs (the transaction holds the VM, so nothing else
 -- does meanwhile); what it acknowledged counts only if the transaction succeeded
@@ -326,6 +333,8 @@ local others = {}
 app.tool { name = "bump", run = function() counter = counter + 1 return counter end }
 -- the program's threads that are not the script's own: resuming one, from any call, must be refused (g)
 local function steal(label)
+  -- nothing in here waits, so no other call can run: any progress is a thread that should have been refused
+  local p0 = PROG
   for i, t in ipairs(SH) do
     for _, extra in ipairs { 0, 1, 2 } do
       local ok
@@ -335,6 +344,7 @@ local function steal(label)
     -- nor can it hand one to the scheduler, which would drive it under the scheduler
     if pcall(task.spawn, t) then viol("(g) " .. label .. " scheduled a thread the script did not make") end
   end
+  if PROG ~= p0 then viol("(g) " .. label .. " resumed a thread the script did not make and it ran script code") end
 end
 -- the program's script coroutines may be resumed from another call (they run in its turn); nothing may wedge or panic
 local function resume_scripts()
@@ -378,7 +388,7 @@ end }
 
 const SERVER: &str = r#"
 local server = hyper.serve(net.TcpListener.bind("127.0.0.1:0"), function(req)
-  -- a request made while a readOnly call is alive is read-only too
+  -- a request made while a readOnly call is acting is read-only too
   attempt("state", function() state.v = 99 end)
   attempt("db", function() app.db:exec("insert into t(v) values (98)") end)
   return { status = 200, body = "ok" }
@@ -890,4 +900,194 @@ fn the_generator_uses_every_ingredient() {
     for kind in [Kind::ReadOnly, Kind::Writable, Kind::Concurrent, Kind::OwnServer] {
         assert!((0..300).any(|i| generate(0x00A6_E575, i, url).kind == kind), "no program of kind {kind:?}");
     }
+}
+
+// ---- a call dropped while its own coroutine waits ----------------------------------------------------------------
+
+/// A server that accepts and never answers, so a `hyper.get` waits until its caller gives up.
+async fn silent_server() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let mut held = vec![];
+        while let Ok((stream, _)) = listener.accept().await {
+            held.push(stream);
+        }
+    });
+    format!("http://{addr}/")
+}
+
+/// One program of the dropped-call test: a wait that outlasts the drop, inside coroutines of the script's own
+/// (`create`, `wrap`, one inside the other, under a `pcall` or not), and a write after the wait that only runs if
+/// the wait was somehow resumed.
+fn dropped_program(rng: &mut Rng, url: &str) -> String {
+    let wait =
+        *rng.pick(&["task.wait(30)", "time.sleep(time.Duration.from_millis(30000))", "hyper.get(SLOW)"]);
+    let shape = *rng.pick(&["create", "wrap", "nested", "wrap_in_create"]);
+    let body = match shape {
+        "create" => "local co = coroutine.create(function() WAIT after(1) end) keep[#keep + 1] = co coroutine.resume(co)",
+        "wrap" => "local w = coroutine.wrap(function() WAIT after(1) end) WR[#WR + 1] = w w()",
+        "nested" => "local outer = coroutine.create(function() local inner = coroutine.wrap(function() WAIT after(1) end) WR[#WR + 1] = inner inner() after(2) end) keep[#keep + 1] = outer coroutine.resume(outer)",
+        _ => "local w = coroutine.wrap(function() WAIT after(1) end) WR[#WR + 1] = w local co = coroutine.create(function() w() after(2) end) keep[#keep + 1] = co coroutine.resume(co)",
+    };
+    let body = body.replace("WAIT", wait);
+    let body = if rng.chance(40) { format!("pcall(function() {body} end)") } else { body };
+    format!(
+        r#"
+local task = require("std:task")
+local time = require("std:time")
+local hyper = require("vnd:hyper")
+local SLOW = {url:?}
+local keep, WR, ran = {{}}, {{}}, {{}}
+app.db:migrate {{ [1] = "create table t(a integer primary key autoincrement, v integer)" }}
+-- what only runs if the dropped wait was resumed: it is recorded and written
+local function after(n) ran[#ran + 1] = n app.db:exec("insert into t(v) values (:v)", {{ v = n }}) end
+app.tool {{ name = "prog", run = function()
+  {body}
+  after(3) -- the dropped call never gets here
+  return "never"
+end }}
+-- another call resumes everything the program left behind, and calls its wrap functions
+app.tool {{ name = "meddle", run = function()
+  local out = {{}}
+  for _, co in ipairs(keep) do local ok, why = coroutine.resume(co) out[#out + 1] = {{ ok = ok, why = tostring(why) }} end
+  for _, w in ipairs(WR) do local ok, why = pcall(w) out[#out + 1] = {{ ok = ok, why = tostring(why) }} end
+  return out
+end }}
+app.tool {{ name = "churn", run = function()
+  local keep = {{}}
+  for i = 1, 400 do keep[i % 8] = {{ string.rep("x", 2048), i }} end
+  return #keep
+end }}
+app.tool {{ name = "ping", readOnly = true, run = function() return "pong" end }}
+app.tool {{ name = "ran", readOnly = true, run = function() return {{ n = #ran }} end }}
+"#
+    )
+}
+
+/// How a resume of what a dropped call left behind may answer: refused while its resumer might still wake it, or an
+/// error from the abandoned host call (or a coroutine that is already dead). Never success.
+fn dropped_answer_ok(answer: &Value) -> bool {
+    let why = answer["why"].as_str().unwrap_or_default();
+    answer["ok"] == false
+        && [
+            "cannot resume non-suspended coroutine",
+            "this host call was abandoned",
+            "cannot resume dead coroutine",
+        ]
+        .iter()
+        .any(|ok| why.contains(ok))
+}
+
+async fn meddle_answers(vm: &Arc<agentos_lua::AppVm>) -> Vec<Value> {
+    match tool(vm, "meddle", 10).await {
+        Ok(Value::Array(answers)) => answers,
+        other => vec![json!({ "ok": true, "why": format!("meddle failed: {other:?}") })],
+    }
+}
+
+async fn run_dropped(seed: u64, index: usize, url: &str) -> Vec<String> {
+    let mut rng = Rng(seed ^ u64::try_from(index).unwrap().wrapping_mul(0xA24B_AED4_963E_E407));
+    let source = dropped_program(&mut rng, url);
+    let by_timeout = rng.chance(50);
+    let wait_ms = *rng.pick(&[20_u64, 40, 80]);
+    let data = db();
+    let Ok(vm) = try_load_with("dropped", &source, data.clone()).await else {
+        return vec!["the generated program did not load".into()];
+    };
+    let vm = Arc::new(vm);
+    let mut failures = vec![];
+    // the call waits at its coroutine's host call until its caller gives up: a timeout around the call expires (the
+    // future is dropped), or the task running it is aborted
+    let call = {
+        let vm = vm.clone();
+        tokio::spawn(async move {
+            let ctx = agent_ctx(0);
+            let call = vm.call_tool("prog", json!({}), &ctx, false);
+            if by_timeout {
+                let _ = tokio::time::timeout(Duration::from_millis(wait_ms + 150), call).await;
+            } else {
+                let _ = call.await;
+            }
+        })
+    };
+    tokio::time::sleep(Duration::from_millis(wait_ms)).await;
+    // while its resumer waits for it, nothing may take the coroutine: every answer is the refusal, and nothing ran
+    for answer in meddle_answers(&vm).await {
+        if answer["why"].as_str().is_none_or(|why| !why.contains("cannot resume non-suspended coroutine")) {
+            failures.push(format!("a coroutine whose call is still waiting was not refused: {answer}"));
+        }
+    }
+    if by_timeout {
+        let _ = call.await;
+    } else {
+        call.abort();
+        let _ = call.await;
+    }
+    // the dead resumer is collected as the heap churns: after that the coroutines are the script's again, and every one
+    // finds its host call abandoned. Until then they are refused. None may succeed, and nothing may run.
+    let mut settled = false;
+    for _ in 0..300 {
+        let answers = meddle_answers(&vm).await;
+        if let Some(bad) = answers.iter().find(|a| !dropped_answer_ok(a)) {
+            failures.push(format!("a coroutine of a dropped call answered {bad}"));
+            break;
+        }
+        if answers
+            .iter()
+            .all(|a| !a["why"].as_str().unwrap_or_default().contains("cannot resume non-suspended"))
+        {
+            settled = true;
+            break;
+        }
+        let _ = tool(&vm, "churn", 10).await;
+    }
+    if !settled && failures.is_empty() {
+        failures.push("what a dropped call left behind stayed refused for ever".into());
+    }
+    match tool(&vm, "ran", 10).await {
+        Ok(v) if v["n"] == 0 => {}
+        other => failures.push(format!("script code ran after the drop: {other:?}")),
+    }
+    match tokio::time::timeout(Duration::from_secs(3), data.query("select v from t".into(), vec![])).await {
+        Ok(Ok(rows)) if rows.is_empty() => {}
+        Ok(other) => failures.push(format!("a write after the dropped wait was made: {other:?}")),
+        Err(_) => failures.push("(e) the database's write gate is held by a dropped call".into()),
+    }
+    match tool(&vm, "ping", 5).await {
+        Ok(v) if v == "pong" => {}
+        other => failures.push(format!("(e) ping: {other:?}")),
+    }
+    failures
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_call_dropped_while_its_own_coroutine_waits_leaves_nothing_running_and_nothing_refused_for_ever() {
+    let _watchdog = Watchdog::arm("a_call_dropped_while_its_own_coroutine_waits");
+    let cases: usize = env("CHAOS_DROPPED_CASES", 60);
+    let seed: u64 = env("CHAOS_SEED", 0x00A6_E575) ^ 0x00D2_0BED;
+    let url = silent_server().await;
+    let gate = Arc::new(Semaphore::new(env("CHAOS_PARALLEL", 8)));
+    let runs: Vec<_> = (0..cases)
+        .map(|index| {
+            let (gate, url) = (gate.clone(), url.clone());
+            tokio::spawn(async move {
+                let _slot = gate.acquire().await.unwrap();
+                (index, run_dropped(seed, index, &url).await)
+            })
+        })
+        .collect();
+    let mut broken = vec![];
+    for run in runs {
+        let (index, failures) = run.await.expect("(f) the host did not panic");
+        if !failures.is_empty() {
+            broken.push(format!("case {index}: {}", failures.join("; ")));
+        }
+    }
+    assert!(
+        broken.is_empty(),
+        "{} of {cases} cases broke an invariant:\n{}",
+        broken.len(),
+        broken.join("\n")
+    );
 }

@@ -170,27 +170,29 @@ fn splitmix(x: u64) -> u64 {
 fn install_async_coroutines(lua: &Lua, copy: &Table, raw: &Table) -> mlua::Result<()> {
     let pending = Value::LightUserData(Lua::poll_pending());
     // the coroutines the script made, and those whose driver is somewhere else (which the task scheduler shares:
-    // `lifecycle::mark_driven`); both are keyed weakly, so a coroutine is not kept alive by being listed
-    let owned = weak_keyed(lua)?;
-    let driven = weak_keyed(lua)?;
+    // `lifecycle::mark_driven`). Both are keyed weakly, so a coroutine is not kept alive by being listed; `driven`
+    // is also valued weakly, so a driver thread nobody refers to any more (its call was dropped) clears the entry
+    // instead of refusing the coroutine for ever (see `async_coroutines.lua`)
+    let owned = weak_table(lua, "k")?;
+    let driven = weak_table(lua, "kv")?;
     lua.set_named_registry_value(OWNED, owned.clone())?;
     lua.set_named_registry_value(DRIVEN, driven.clone())?;
     let wrappers: Table = lua
         .load(include_str!("async_coroutines.lua"))
         .set_name("=async_coroutines")
         .set_mode(mlua::chunk::ChunkMode::Text)
-        .call((pending, raw.clone(), driven, owned, Value::NULL))?;
+        .call((pending, raw.clone(), driven, owned))?;
     for name in ["create", "resume", "wrap"] {
         copy.raw_set(name, wrappers.raw_get::<Value>(name)?)?;
     }
     Ok(())
 }
 
-/// An empty table whose keys are held weakly: being a key does not keep a coroutine alive.
-fn weak_keyed(lua: &Lua) -> mlua::Result<Table> {
+/// An empty table with weak `mode` (`"k"`, or `"kv"`): being listed does not keep a coroutine (or a thread) alive.
+fn weak_table(lua: &Lua, mode: &str) -> mlua::Result<Table> {
     let table = lua.create_table()?;
     let meta = lua.create_table()?;
-    meta.raw_set("__mode", "k")?;
+    meta.raw_set("__mode", mode)?;
     table.set_metatable(Some(meta))?;
     Ok(table)
 }

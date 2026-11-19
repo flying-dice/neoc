@@ -25,7 +25,7 @@ use agentos_luavm::{
     lua::{
         app_env,
         lib::log::set_log_sink,
-        lifecycle::{self, set_entry, Baton, BoxFuture, CallEntry, Inherited, Life},
+        lifecycle::{self, set_entry, Baton, BoxFuture, CallEntry, IdleKind, Inherited, Life},
         sandbox::{install_runtime_state, load_source, make_bare_engine},
     },
     mlua::{Function, Lua, Table, Value as LuaValue},
@@ -190,14 +190,18 @@ pub(crate) struct Shared {
     /// change to the world raises. It is the holder's own state (see [`Turn`]): set when a call takes the gate,
     /// cleared when it lets it go.
     pub read_only: Arc<AtomicBool>,
-    /// How many read-only calls are alive: a `readOnly` tool (parked or running), a task it started that has
-    /// not finished (`task.spawn`, and a `task.delay` or `task.defer` once it has begun), and a request that
-    /// was itself made read-only by this count. A request that arrives from outside while this is above zero
-    /// (a request to the app's own listener, say, which carries no origin) runs read-only too, because
-    /// whoever sent it may be one of them. The taint ends when the last of them ends; it applies to nothing
-    /// else: a task or a tool carries its own origin ([`Inherited`]), so a long-lived read-only poller does
-    /// not make an unrelated writable tool's `task.delay` read-only.
-    pub read_only_live: AtomicUsize,
+    /// How many read-only calls are *active*: a `readOnly` tool, a task it started (`task.spawn`, and a
+    /// `task.delay` or `task.defer` once it has begun) or a request that was itself made read-only by this count,
+    /// that is running, queued for the VM, or waiting at something in flight (the network, a worker, a lock),
+    /// but not one that is asleep at a timer (`task.wait`, a `std:time` sleep), which sends nothing and starts
+    /// nothing until the timer ends and it has taken its turn back ([`Turn::quiet`]). A request that arrives
+    /// from outside while this is above zero (a request to the app's own listener, say, which carries no origin)
+    /// runs read-only too, because whoever sent it may be one of them. The taint lasts exactly as long as some
+    /// read-only call is acting, not as long as one is alive, so a read-only tool that leaves a poller behind
+    /// does not make the app's webhooks read-only for the poller's life; and it applies to nothing else: a task
+    /// or a tool carries its own origin ([`Inherited`]), so a long-lived read-only poller does not make an
+    /// unrelated writable tool's `task.delay` read-only.
+    pub read_only_active: AtomicUsize,
     /// The next [`Baton::id`]: unique among this VM's turns.
     pub next_turn: AtomicU64,
     /// Everything the app spawned (tasks, servers, workers): aborted when the app is unloaded.
@@ -288,7 +292,7 @@ enum Via {
     /// Work a call started (a deferred or delayed function): it is as restricted as that call was.
     Task(Inherited),
     /// A request from outside to the app's own listener: it has no origin, so it is read-only while any
-    /// read-only call is alive ([`Shared::read_only_live`]).
+    /// read-only call is active ([`Shared::read_only_active`]).
     Request,
 }
 
@@ -322,8 +326,13 @@ pub(crate) struct Turn {
     /// call holds the gate this is [`Shared::read_only`]; while it waits it is not (the next call's is). A
     /// coroutine continuation another call resumes (a host call left waiting by the task's first slice) is that
     /// call's: it takes the resumer's restrictions, as `coroutine.resume` runs the coroutine in the resumer.
-    /// Counted in [`Shared::read_only_live`] for as long as the call lives.
+    /// Counted in [`Shared::read_only_active`] for as long as the call lives, except while it is quiet.
     read_only: bool,
+    /// The call is not running and is asleep at a timer (see [`Baton::idle_at`]): it can have nothing in flight,
+    /// so it is not counted in [`Shared::read_only_active`] until its wait ends (it asks for its turn back,
+    /// [`Baton::poll_unpark`]). Every way back to running script code goes through that, so a call that is
+    /// quiet is never the one executing.
+    quiet: bool,
 }
 
 impl Turn {
@@ -333,7 +342,7 @@ impl Turn {
         let (inbound, read_only) = match via {
             Via::Host { read_only } => (false, read_only),
             Via::Task(from) => (true, from.read_only),
-            Via::Request => (true, shared.read_only_live.load(Ordering::SeqCst) > 0),
+            Via::Request => (true, shared.read_only_active.load(Ordering::SeqCst) > 0),
         };
         let turn = Self::new(shared, gate, Some(held), inbound, read_only);
         turn.shared.read_only.store(read_only, Ordering::SeqCst);
@@ -353,7 +362,7 @@ impl Turn {
         read_only: bool,
     ) -> Self {
         if read_only {
-            shared.read_only_live.fetch_add(1, Ordering::SeqCst);
+            shared.read_only_active.fetch_add(1, Ordering::SeqCst);
         }
         Self {
             id: shared.next_turn.fetch_add(1, Ordering::Relaxed),
@@ -364,7 +373,20 @@ impl Turn {
             parked: None,
             inbound,
             read_only,
+            quiet: false,
         }
+    }
+
+    /// Set whether the call is quiet, keeping [`Shared::read_only_active`] in step.
+    fn set_quiet(&mut self, quiet: bool) {
+        if self.read_only && self.quiet != quiet {
+            if quiet {
+                self.shared.read_only_active.fetch_sub(1, Ordering::SeqCst);
+            } else {
+                self.shared.read_only_active.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        self.quiet = quiet;
     }
 }
 
@@ -403,8 +425,15 @@ impl Baton for Turn {
         self.held = None;
     }
 
+    fn idle_at(&mut self, at: IdleKind) {
+        self.set_quiet(at == IdleKind::Timer);
+    }
+
     fn poll_unpark(&mut self, cx: &mut Context<'_>) -> Poll<()> {
-        // only asked of a call that does not hold the gate (see `lifecycle::hold`)
+        // only asked of a call that does not hold the gate (see `lifecycle::hold`). Its wait is over (or it was
+        // never at a timer): from here it may run script code once it has the gate, so it counts again, before
+        // it can send anything
+        self.set_quiet(false);
         let gate = &self.gate;
         let waiting = self.waiting.get_or_insert_with(|| Box::pin(gate.clone().lock_owned()));
         let Poll::Ready(held) = waiting.as_mut().poll(cx) else { return Poll::Pending };
@@ -431,8 +460,8 @@ impl Drop for Turn {
         if self.held.is_some() {
             self.shared.read_only.store(false, Ordering::SeqCst);
         }
-        if self.read_only {
-            self.shared.read_only_live.fetch_sub(1, Ordering::SeqCst);
+        if self.read_only && !self.quiet {
+            self.shared.read_only_active.fetch_sub(1, Ordering::SeqCst);
         }
         if self.inbound {
             self.shared.effects_signal.notify_one();
@@ -542,7 +571,7 @@ impl AppVm {
             view_effects: Mutex::default(),
             tx: Mutex::new(None),
             read_only,
-            read_only_live: AtomicUsize::new(0),
+            read_only_active: AtomicUsize::new(0),
             next_turn: AtomicU64::new(1),
             life,
             effects_signal: Arc::new(Notify::new()),

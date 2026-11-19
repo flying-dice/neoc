@@ -54,12 +54,20 @@
 //!      refusal is the default, so there is no list of host threads to keep complete. A coroutine of its own is
 //!      refused too while someone else drives it: a thread is waiting at its host call, or [`mark_driven`] gave it to
 //!      the task scheduler (`task.spawn`, `defer` and `delay` take only coroutines the script made).
+//!      A coroutine whose resumer's call was dropped while it waited is released when the collector clears the dead
+//!      thread from `driven` (a weak-valued table): the call is never resumed, so nothing can drive the coroutine
+//!      meanwhile, and a later resume finds its host call abandoned (rule 3).
 //!
 //!      Rule 5 is the second line of defence, and no script reaches it today: the one way a call finds its leaf gone
 //!      was another call resuming a thread parked at it, which rule 6 refuses for every thread the script did not
 //!      make and for every one that is waiting at a host call. It stays because it costs one gate and guards the
 //!      invariant itself (script code runs only with the turn) rather than the ways to break it; the unit test
 //!      `a_call_resumed_without_its_leaf_takes_the_turn_before_it_runs_script_code` covers the branch directly.
+//!
+//!   **Quiet calls.** A wait made by [`Role::Timer`] (`task.wait`, a `std:time` sleep) tells the baton so
+//!   ([`Baton::idle_at`] with [`IdleKind::Timer`]): a call asleep there has nothing in flight and runs no script
+//!   code until it asks for its turn back. The adapter uses that to bound its read-only taint on requests to the
+//!   app's own server (`agentos-lua`'s `Shared::read_only_active`).
 //!
 //!   A leaf never carries a baton: [`hold`] looks the baton up in the call that polls it. A host call that was
 //!   suspended by one call and is resumed by another therefore runs in the turn of whoever resumed it, as Lua's
@@ -235,6 +243,17 @@ pub fn inherited() -> Inherited {
         .unwrap_or_default()
 }
 
+/// What an idle wait is, for an embedder that wants to know what a call that does not hold the VM may be doing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IdleKind {
+    /// A timer and nothing else (`task.wait`, a `std:time` sleep): the call has nothing in flight, and runs no
+    /// script code until the timer ends and it has taken its turn back.
+    Timer,
+    /// Anything else that is waited for (the network, a worker, a lock, a database): something the call started may
+    /// be acting while it waits (a request on its way to somewhere, a worker running).
+    Other,
+}
+
 /// A call's turn in the VM, held until it is dropped.
 pub trait Baton: Send + 'static {
     /// Which call this is: unique among the calls of the embedder, stable for the call's life.
@@ -257,6 +276,13 @@ pub trait Baton: Send + 'static {
     /// The holder is suspended at a wait that does not use the VM: set the call's own state aside and let
     /// others in. Called only after [`Baton::can_park`] agreed and the call really suspended at the wait.
     fn park(&mut self);
+
+    /// The call does not hold the VM and is waiting at `at` (told right after [`Baton::park`], and to a
+    /// continuation that starts out detached at a wait its first slice stopped at). Until [`Baton::poll_unpark`]
+    /// is asked, the call is not running script code, which lets an embedder tell a call that is *quiet* (asleep
+    /// at a [`IdleKind::Timer`]: it sends nothing and starts nothing) from one that may still be acting on the
+    /// world through a wait that is in flight.
+    fn idle_at(&mut self, at: IdleKind);
 
     /// Queue for the VM (when this call does not hold it), and take the call's state back. [`hold`] polls this
     /// until it is ready; the place in the queue lives in the baton, not in whatever future is polling, so a
@@ -289,8 +315,8 @@ pub fn set_entry(lua: &Lua, entry: Arc<dyn CallEntry>) {
 struct Suspended {
     /// Weak: a leaf whose future is dropped (the script's reference to it is collected) is gone at once.
     leaf: Weak<dyn Abandon>,
-    /// Its wait does not use the VM: the call may lend its turn while it lasts.
-    idle: bool,
+    /// Its wait does not use the VM (and what kind it is): the call may lend its turn while it lasts.
+    idle: Option<IdleKind>,
 }
 
 impl Suspended {
@@ -313,14 +339,14 @@ trait Abandon: Send + Sync {
 struct Slot {
     baton: Option<Box<dyn Baton>>,
     /// An idle wait is pending in the leaf that is being polled; the leaf records that when it returns `Pending`.
-    idle_pending: bool,
+    idle_pending: Option<IdleKind>,
     /// The leaves that returned `Pending` since the call last ran script code, innermost first.
     suspended: Vec<Suspended>,
 }
 
 impl Slot {
     fn new(baton: Option<Box<dyn Baton>>) -> RefCell<Self> {
-        RefCell::new(Self { baton, idle_pending: false, suspended: vec![] })
+        RefCell::new(Self { baton, idle_pending: None, suspended: vec![] })
     }
 }
 
@@ -442,7 +468,7 @@ fn leaf_polling(me: &Weak<dyn Abandon>) {
     let stale = HELD
         .try_with(|slot| {
             let mut slot = slot.borrow_mut();
-            slot.idle_pending = false;
+            slot.idle_pending = None;
             match slot.suspended.last() {
                 Some(last) if Weak::ptr_eq(&last.leaf, me) => {
                     slot.suspended.pop();
@@ -460,7 +486,7 @@ fn leaf_polling(me: &Weak<dyn Abandon>) {
 fn leaf_suspended(leaf: Weak<dyn Abandon>) {
     let _ = HELD.try_with(|slot| {
         let mut slot = slot.borrow_mut();
-        let idle = std::mem::take(&mut slot.idle_pending);
+        let idle = slot.idle_pending.take();
         slot.suspended.push(Suspended { leaf, idle });
     });
 }
@@ -470,10 +496,11 @@ fn leaf_suspended(leaf: Weak<dyn Abandon>) {
 fn lend_if_suspended_at_idle_wait(woken: bool) {
     let _ = HELD.try_with(|slot| {
         let mut slot = slot.borrow_mut();
-        let waits = !woken && slot.suspended.first().is_some_and(|innermost| innermost.idle);
-        if waits {
+        let at = if woken { None } else { slot.suspended.first().and_then(|innermost| innermost.idle) };
+        if let Some(at) = at {
             if let Some(baton) = slot.baton.as_mut().filter(|b| b.holding() && b.can_park().is_ok()) {
                 baton.park();
+                baton.idle_at(at);
             }
         }
     });
@@ -522,12 +549,19 @@ pub async fn request<F: Future>(lua: &Lua, future: F) -> F::Output {
 /// continuation that never runs (the task is aborted before its first poll, the app unloaded) drops this, which
 /// abandons the leaves: what they hold is freed with the task instead of staying in the Lua thread that is
 /// suspended at them.
+///
+/// It also holds the continuation's baton, made when the first slice ends: the call exists from that moment, not
+/// from whenever the executor first polls the continuation, so an embedder that counts its calls never sees a gap in
+/// which a task that is waiting at something in flight is nobody's.
 #[derive(Default)]
-pub struct Carried(Vec<Suspended>);
+pub struct Carried {
+    leaves: Vec<Suspended>,
+    baton: Option<Box<dyn Baton>>,
+}
 
 impl Drop for Carried {
     fn drop(&mut self) {
-        abandon_all(std::mem::take(&mut self.0));
+        abandon_all(std::mem::take(&mut self.leaves));
     }
 }
 
@@ -541,11 +575,12 @@ pub async fn resumed<F: Future>(
     mut carried: Carried,
     future: F,
 ) -> F::Output {
-    let detached = lua.app_data_ref::<Entry>().map(|entry| entry.0.detached(inherited));
+    let detached =
+        carried.baton.take().or_else(|| lua.app_data_ref::<Entry>().map(|entry| entry.0.detached(inherited)));
     match detached {
         Some(baton) => {
             let slot = Slot::new(Some(baton));
-            slot.borrow_mut().suspended = std::mem::take(&mut carried.0);
+            slot.borrow_mut().suspended = std::mem::take(&mut carried.leaves);
             run_call(slot, future).await
         }
         None => future.await,
@@ -564,14 +599,24 @@ pub fn first_slice<R>(
     slice: impl FnOnce() -> R,
     suspended: impl FnOnce(&R) -> bool,
 ) -> (R, Carried) {
-    let detached = lua.app_data_ref::<Entry>().map(|entry| entry.0.detached(inherited));
-    let (out, kept, left) = HELD.sync_scope(Slot::new(detached), || {
+    let entry = lua.app_data_ref::<Entry>().map(|entry| entry.0.clone());
+    let detached = entry.as_ref().map(|entry| entry.detached(inherited));
+    let (out, kept, left, continuation) = HELD.sync_scope(Slot::new(detached), || {
         let out = slice();
         let kept = suspended(&out);
-        (out, kept, take_suspended())
+        let left = take_suspended();
+        // made before this slice's own baton goes, so a counting embedder never sees the task as nobody's
+        let continuation = entry.filter(|_| kept).map(|entry| {
+            let mut baton = entry.detached(inherited);
+            if let Some(at) = left.first().and_then(|innermost| innermost.idle) {
+                baton.idle_at(at);
+            }
+            baton
+        });
+        (out, kept, left, continuation)
     });
     if kept {
-        (out, Carried(left))
+        (out, Carried { leaves: left, baton: continuation })
     } else {
         abandon_all(left);
         (out, Carried::default())
@@ -588,6 +633,11 @@ pub fn first_slice<R>(
 /// # Errors
 /// The call cannot wait (it has an open `db:tx`): the wait is refused and `future` is not polled.
 pub(crate) async fn idle<F: Future>(future: F) -> mlua::Result<F::Output> {
+    idle_kind(IdleKind::Other, future).await
+}
+
+/// [`idle`], saying what the wait is.
+async fn idle_kind<F: Future>(kind: IdleKind, future: F) -> mlua::Result<F::Output> {
     let may_wait =
         HELD.try_with(|slot| slot.borrow().baton.as_ref().filter(|b| b.holding()).map(|b| b.can_park()));
     if let Ok(Some(Err(why))) = may_wait {
@@ -598,7 +648,7 @@ pub(crate) async fn idle<F: Future>(future: F) -> mlua::Result<F::Output> {
         let polled = future.as_mut().poll(cx);
         if polled.is_pending() {
             // the leaf records it when its poll ends; the call lends only if it really suspends here
-            let _ = HELD.try_with(|slot| slot.borrow_mut().idle_pending = true);
+            let _ = HELD.try_with(|slot| slot.borrow_mut().idle_pending = Some(kind));
         }
         polled
     })
@@ -614,7 +664,7 @@ pub(crate) async fn hold() {
     std::future::poll_fn(|cx| {
         HELD.try_with(|slot| {
             let mut slot = slot.borrow_mut();
-            slot.idle_pending = false;
+            slot.idle_pending = None;
             take_turn(&mut slot, cx)
         })
         .unwrap_or(Poll::Ready(()))
@@ -638,6 +688,10 @@ pub enum Role {
     /// It waits for something that does not use the VM (a timer, a socket, a worker): the whole body is an
     /// [`idle`] wait, and the turn is taken again when it ends.
     Wait,
+    /// A [`Role::Wait`] whose whole body is a timer and nothing else (`task.wait`, a `std:time` sleep): while the
+    /// call sleeps it has nothing in flight (no request, no worker), so an embedder may treat it as quiet
+    /// ([`IdleKind::Timer`]).
+    Timer,
     /// It does both in turns, and the body starts *without* the turn: nothing takes it first (a detached
     /// continuation runs the start of the body without it). The body calls [`idle`] for its waits, which take the
     /// turn back when they end, and [`hold`] before it runs script code or touches the app's state before its
@@ -723,6 +777,7 @@ fn leaf<R: Send + 'static>(
                 body.await
             }
             Role::Wait => idle(body).await?,
+            Role::Timer => idle_kind(IdleKind::Timer, body).await?,
             Role::Mixed => body.await,
         }
     };
@@ -804,6 +859,8 @@ mod tests {
         inside: Arc<AtomicUsize>,
         most: Arc<AtomicUsize>,
         refuse_park: Arc<AtomicBool>,
+        /// What every baton was told it waits at ([`Baton::idle_at`]).
+        idle: Arc<Mutex<Vec<IdleKind>>>,
     }
 
     struct CountingBaton {
@@ -814,6 +871,7 @@ mod tests {
         most: Arc<AtomicUsize>,
         /// Refuse to park (an open transaction, say).
         refuse_park: Arc<AtomicBool>,
+        idle: Arc<Mutex<Vec<IdleKind>>>,
     }
 
     impl CountingBaton {
@@ -843,6 +901,9 @@ mod tests {
         fn park(&mut self) {
             self.inside.fetch_sub(1, Ordering::SeqCst);
             self.held = None;
+        }
+        fn idle_at(&mut self, at: IdleKind) {
+            self.idle.lock().push(at);
         }
         fn poll_unpark(&mut self, cx: &mut Context<'_>) -> Poll<()> {
             if self.held.is_none() {
@@ -874,6 +935,7 @@ mod tests {
                 inside: self.inside.clone(),
                 most: self.most.clone(),
                 refuse_park: self.refuse_park.clone(),
+                idle: self.idle.clone(),
             })
         }
         fn request(&self) -> BoxFuture<'static, Box<dyn Baton>> {
@@ -881,11 +943,11 @@ mod tests {
         }
         fn enter(&self, _: Inherited) -> BoxFuture<'static, Box<dyn Baton>> {
             let (gate, inside, most) = (self.gate.clone(), self.inside.clone(), self.most.clone());
-            let refuse_park = self.refuse_park.clone();
+            let (refuse_park, idle) = (self.refuse_park.clone(), self.idle.clone());
             Box::pin(async move {
                 let held = gate.clone().lock_owned().await;
                 let baton =
-                    CountingBaton { gate, held: Some(held), waiting: None, inside, most, refuse_park };
+                    CountingBaton { gate, held: Some(held), waiting: None, inside, most, refuse_park, idle };
                 baton.arrive();
                 Box::new(baton) as Box<dyn Baton>
             })
@@ -934,6 +996,7 @@ mod tests {
                 inside: inside.clone(),
                 most: most.clone(),
                 refuse_park: Arc::default(),
+                idle: Arc::default(),
             }),
         );
         // four callbacks that each wait (idle) in the middle: never two inside at once, and the waits overlap
@@ -967,6 +1030,7 @@ mod tests {
                 inside: inside.clone(),
                 most: most.clone(),
                 refuse_park: Arc::default(),
+                idle: Arc::default(),
             }),
         );
         // the spawner's call holds the VM; the slice it runs starts a wait (the future is created and polled
@@ -1002,6 +1066,66 @@ mod tests {
         assert_eq!(inside.load(Ordering::SeqCst), 0);
     }
 
+    fn counting_with(idle: &Arc<Mutex<Vec<IdleKind>>>) -> Arc<Counting> {
+        Arc::new(Counting {
+            gate: Arc::new(tokio::sync::Mutex::new(())),
+            inside: Arc::default(),
+            most: Arc::default(),
+            refuse_park: Arc::default(),
+            idle: idle.clone(),
+        })
+    }
+
+    /// A timer wait, as `task.wait` makes it.
+    fn sleep_for(time: Duration) -> impl Future<Output = mlua::Result<()>> + Send + 'static {
+        leaf(Role::Timer, async move {
+            tokio::time::sleep(time).await;
+            Ok(())
+        })
+    }
+
+    #[tokio::test]
+    async fn a_parked_call_is_told_whether_it_sleeps_at_a_timer_or_waits_for_something_else() {
+        let lua = Lua::new();
+        let told = Arc::new(Mutex::new(vec![]));
+        set_entry(&lua, counting_with(&told));
+        inbound(&lua, Inherited::default(), async {
+            sleep_for(Duration::from_millis(5)).await.expect("timer");
+            wait_for(Duration::from_millis(5)).await.expect("wait");
+        })
+        .await;
+        assert_eq!(*told.lock(), [IdleKind::Timer, IdleKind::Other]);
+    }
+
+    #[tokio::test]
+    async fn the_continuation_of_a_task_exists_when_its_first_slice_ends_and_knows_what_it_waits_at() {
+        let lua = Lua::new();
+        let told = Arc::new(Mutex::new(vec![]));
+        set_entry(&lua, counting_with(&told));
+        // a slice that stops at a timer, one that stops at another wait, and one that does not stop at a wait
+        let waits: [(BoxFuture<'static, mlua::Result<()>>, bool, Vec<IdleKind>); 3] = [
+            (Box::pin(sleep_for(Duration::from_secs(60))), true, vec![IdleKind::Timer]),
+            (Box::pin(wait_for(Duration::from_secs(60))), true, vec![IdleKind::Other]),
+            (Box::pin(wait_for(Duration::from_secs(60))), false, vec![]),
+        ];
+        for (mut wait, kept, expected) in waits {
+            told.lock().clear();
+            let ((), carried) = first_slice(
+                &lua,
+                Inherited::default(),
+                || {
+                    let waker = futures::task::noop_waker();
+                    let mut cx = std::task::Context::from_waker(&waker);
+                    assert!(std::future::Future::poll(wait.as_mut(), &mut cx).is_pending());
+                },
+                |()| kept,
+            );
+            // told before anything polls the continuation: the call exists from the end of the slice
+            assert_eq!(*told.lock(), expected);
+            assert_eq!(carried.baton.is_some(), kept);
+        }
+    }
+
     /// A wait that Lua then fails to yield from (a `string.gsub` callback, say) is polled once and abandoned: the
     /// call goes on in the same poll. It must still hold the VM, so nothing else runs inside it.
     #[tokio::test]
@@ -1015,6 +1139,7 @@ mod tests {
                 inside: inside.clone(),
                 most: most.clone(),
                 refuse_park: Arc::default(),
+                idle: Arc::default(),
             }),
         );
         let other_ran = Arc::new(AtomicBool::new(false));
@@ -1066,6 +1191,7 @@ mod tests {
                 inside: inside.clone(),
                 most: most.clone(),
                 refuse_park: Arc::default(),
+                idle: Arc::default(),
             }),
         );
         let other_ran = Arc::new(AtomicBool::new(false));
@@ -1125,6 +1251,7 @@ mod tests {
                 inside: inside.clone(),
                 most: most.clone(),
                 refuse_park: Arc::default(),
+                idle: Arc::default(),
             }),
         );
         let done = inbound(&lua, Inherited::default(), async {
@@ -1181,6 +1308,7 @@ mod tests {
                 inside: inside.clone(),
                 most: Arc::default(),
                 refuse_park: refuse_park.clone(),
+                idle: Arc::default(),
             }),
         );
         (inside, refuse_park)

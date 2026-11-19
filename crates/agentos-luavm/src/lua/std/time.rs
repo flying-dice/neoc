@@ -446,7 +446,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     // detect overruns.
     m.set(
         "sleep",
-        async_function(lua, Role::Wait, |_, d: AnyUserData| async move {
+        async_function(lua, Role::Timer, |_, d: AnyUserData| async move {
             let target = d
                 .borrow::<DurationHandle>()
                 .map_err(|_| mlua::Error::external("time.sleep: expected Duration argument"))?

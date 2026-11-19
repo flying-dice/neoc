@@ -125,6 +125,13 @@
   const remove = (l: Listing): Promise<boolean> =>
     run(l.id, () => host.api.call('app.uninstall', { app: l.id }))
 
+  /**
+   * What an installed app can do, said once for every way to install one (Get, add by URL). There is no
+   * permission model to describe: an app is the person's own code on their own host.
+   */
+  const accessNote =
+    'Apps can read and write files, use the network and run processes on this machine.'
+
   // ── Add by URL: preview first, then say plainly what installing means ──
   let addUrl = $state('')
   let preview = $state<AppPreview | null>(null)
@@ -317,6 +324,13 @@
                   </Text>
                 {/each}
               </div>
+              {#if listings.some((l) => l.url)}
+                <p class="access-note" data-testid="discover-apps-access-note">
+                  <Text style="footnote" color="secondary"
+                    >{accessNote} Only install apps you trust.</Text
+                  >
+                </p>
+              {/if}
               {#if host.appsError}
                 <p class="store-error" role="alert" data-testid="discover-apps-list-error">
                   {host.appsError}
@@ -467,7 +481,7 @@
     testid="discover-install-confirm"
     bind:open={confirming}
     title="Install {preview.name}?"
-    message="{preview.name} will run on this host, not in your browser, and the tools it provides will be available to your agents. Only install apps you trust."
+    message="{preview.name} will run on this host, not in your browser, and the tools it provides will be available to your agents. {accessNote} Only install apps you trust."
     actions={[
       { label: 'Cancel', style: 'cancel' },
       { label: 'Install', preferred: true, onclick: () => void confirmInstall() }
@@ -560,6 +574,9 @@
     }
   }
 
+  .access-note {
+    margin: 12px 0 0;
+  }
   .store-error {
     margin: 0 0 12px;
     font: var(--type-footnote);

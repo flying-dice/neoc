@@ -18,6 +18,10 @@ test.describe('Discover journeys', () => {
     await openDesktop(page, { open: ['discover'] })
     await expect(page.getByTestId('discover-app-calculator-get')).toHaveText('OPEN')
     await expect(page.getByTestId('discover-app-notes-get')).toHaveText('GET')
+    // Get installs at once, so the page says what an installed app can do before anyone presses it
+    await expect(page.getByTestId('discover-apps-access-note')).toContainText(
+      'read and write files, use the network and run processes'
+    )
     await expect(page.getByTestId('dock-notes')).toHaveCount(0)
 
     // install: the app appears in the Dock and its window opens, rendered from what the host sent
@@ -75,6 +79,9 @@ test.describe('Discover journeys', () => {
     const alert = page.getByTestId('discover-install-confirm')
     await expect(alert).toContainText('will run on this host')
     await expect(alert).toContainText('available to your agents')
+    // and says what an app can do, without implying a permission model
+    await expect(alert).toContainText('read and write files, use the network and run processes')
+    await expect(alert).not.toContainText('permission')
     await page.getByTestId('discover-install-confirm-action-cancel').click()
     await expect(page.getByTestId('dock-notes')).toHaveCount(0)
 

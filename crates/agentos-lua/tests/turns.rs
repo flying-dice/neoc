@@ -11,7 +11,8 @@
 //! - `task.spawn` inside `db:tx` neither deadlocks nor sees the transaction: the task waits for its turn;
 //! - the read-only restriction follows a call's origin: a long-lived read-only poller does not make an unrelated
 //!   writable tool's delayed write read-only, while a request to the app's own listener while a read-only call
-//!   is alive still is;
+//!   is acting (running, queued, or waiting at something in flight) still is, and one that arrives while every
+//!   read-only call is asleep at a timer or gone is not;
 //! - an emit that is cancelled mid-call does not leave the state tracker recording.
 
 mod common;
@@ -538,7 +539,7 @@ async fn work_started_by_a_read_only_tool_stays_read_only_whenever_it_runs() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_request_to_the_apps_own_server_is_read_only_while_a_read_only_call_is_alive() {
+async fn a_request_to_the_apps_own_server_is_read_only_while_a_read_only_call_waits_for_it() {
     // the handler tries to write; the answer says whether it could
     let src = r#"
         local task, net, hyper = require("std:task"), require("std:net"), require("vnd:hyper")
@@ -566,11 +567,141 @@ async fn a_request_to_the_apps_own_server_is_read_only_while_a_read_only_call_is
     assert_eq!(get(&addr).await, "true");
 }
 
+// ---- the taint on requests to the app's own server lasts while a read-only call acts, not while it is alive -----
+
+/// An app whose server writes (`app.state`) on every request and reports whether it could, by path, and the
+/// readOnly tools that reach the server in the ways a readOnly call might try to write through it.
+const OWN_SERVER_REACH: &str = r#"
+    local task, net, hyper = require("std:task"), require("std:net"), require("vnd:hyper")
+    local state = app.state { v = 0 }
+    local seen = {}
+    local server
+    local function own(path) return "http://" .. server:addr() .. path end
+    server = hyper.serve(net.TcpListener.bind("127.0.0.1:0"), function(req)
+      local path = req.path
+      -- a handler that waits (asleep at a timer) before it writes, or asks the server again from inside
+      if path == "/slow" then task.wait(0.4) end
+      if path == "/chain" then return { status = 200, body = hyper.get(own("/leaf")).body } end
+      local ok = pcall(function() state.v = state.v + 1 end)
+      seen[path] = ok
+      return { status = 200, body = tostring(ok) }
+    end)
+    app.tool { name = "addr", run = function() return server:addr() end }
+    -- the tool asks the server to write and waits at the network for the answer
+    app.tool { name = "ro_asks", readOnly = true, run = function() return hyper.get(own("/asked")).body end }
+    -- the same through a handler that asks again (the second request is made by a read-only handler)
+    app.tool { name = "ro_chain", readOnly = true, run = function() return hyper.get(own("/chain")).body end }
+    -- the tool holds a slow request open (its handler sleeps at a timer) while others arrive
+    app.tool { name = "ro_slow", readOnly = true, run = function() return hyper.get(own("/slow")).body end }
+    -- a task it started sleeps, wakes and asks the server to write after the tool has returned
+    app.tool { name = "ro_task_wakes", readOnly = true, run = function()
+      task.spawn(function() task.wait(0.1) hyper.get(own("/woken")) end)
+      return "returned"
+    end }
+    -- a task whose first slice already has the request in flight, and the tool then sleeps at a timer
+    app.tool { name = "ro_spawn_then_sleep", readOnly = true, run = function()
+      task.spawn(function() hyper.get(own("/in_flight")) end)
+      task.wait(0.3)
+      return "slept"
+    end }
+    -- a task that waits at the network on the server for a long time, then asks again
+    app.tool { name = "ro_task_chain", readOnly = true, run = function()
+      task.spawn(function() hyper.get(own("/slow")) hyper.get(own("/after_slow")) end)
+      return "returned"
+    end }
+    -- a forever poller that sleeps at a timer, and a tool that sleeps
+    app.tool { name = "ro_poller", readOnly = true, run = function()
+      task.spawn(function() while true do task.wait(0.02) end end)
+      return "returned"
+    end }
+    app.tool { name = "ro_sleeps", readOnly = true, run = function() task.wait(0.6) return "slept" end }
+    app.tool { name = "report", readOnly = true, run = function() return { seen = seen, v = state.v } end }
+"#;
+
+async fn own_server() -> (Arc<agentos_lua::AppVm>, String) {
+    let vm = Arc::new(load(OWN_SERVER_REACH).await);
+    let addr = vm.call_tool("addr", json!({}), &agent_ctx(0), false).await.unwrap();
+    (vm, addr.as_str().unwrap().to_owned())
+}
+
+async fn call(vm: &agentos_lua::AppVm, tool: &str) -> serde_json::Value {
+    vm.call_tool(tool, json!({}), &agent_ctx(0), false).await.unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_read_only_call_cannot_write_through_its_own_server_by_any_route_it_has() {
+    let (vm, addr) = own_server().await;
+    // the tool waits at the network for the answer, directly and through a handler that asks again
+    assert_eq!(call(&vm, "ro_asks").await, json!("false"));
+    assert_eq!(call(&vm, "ro_chain").await, json!("false"));
+    // a task that slept at a timer, woke and asked after the tool returned
+    assert_eq!(call(&vm, "ro_task_wakes").await, json!("returned"));
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    // a task whose first slice started the request, while the tool that started it sleeps at a timer
+    assert_eq!(call(&vm, "ro_spawn_then_sleep").await, json!("slept"));
+    // a task that waits at the network for a slow handler, then asks again
+    assert_eq!(call(&vm, "ro_task_chain").await, json!("returned"));
+    tokio::time::sleep(Duration::from_millis(900)).await;
+    let report = call(&vm, "report").await;
+    assert_eq!(report["v"], 0, "nothing was written: {report}");
+    for path in ["/asked", "/leaf", "/woken", "/in_flight", "/slow", "/after_slow"] {
+        assert_eq!(report["seen"][path], json!(false), "{path} ran read-only: {report}");
+    }
+    // outside any read-only call the same server writes, as the app's own code may
+    assert_eq!(get_path(&addr, "/direct").await, "true");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_request_that_arrives_while_a_read_only_call_holds_one_open_is_read_only_too() {
+    let (vm, addr) = own_server().await;
+    let tool = {
+        let vm = vm.clone();
+        tokio::spawn(async move { call(&vm, "ro_slow").await })
+    };
+    // the tool is waiting at the network, its handler is asleep at a timer: whoever sent this may be the tool
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert_eq!(get_path(&addr, "/while_open").await, "false");
+    assert_eq!(tool.await.unwrap(), json!("false"));
+    // the tool is over: the taint went with it
+    assert_eq!(get_path(&addr, "/after").await, "true");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_unrelated_request_can_write_while_a_read_only_poller_sleeps_and_after_the_tool_that_made_it_ended(
+) {
+    let (vm, addr) = own_server().await;
+    // a readOnly tool leaves a poller behind that lives as long as the app does
+    assert_eq!(call(&vm, "ro_poller").await, json!("returned"));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    for path in ["/webhook_1", "/webhook_2", "/webhook_3"] {
+        assert_eq!(
+            get_path(&addr, path).await,
+            "true",
+            "{path} was made read-only by a poller that is asleep"
+        );
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+    // and a readOnly call that is itself asleep at a timer sends and starts nothing
+    let sleeper = {
+        let vm = vm.clone();
+        tokio::spawn(async move { call(&vm, "ro_sleeps").await })
+    };
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(get_path(&addr, "/while_asleep").await, "true");
+    assert_eq!(sleeper.await.unwrap(), json!("slept"));
+    let report = call(&vm, "report").await;
+    assert_eq!(report["v"], 4, "{report}");
+}
+
 async fn get(addr: &str) -> String {
+    get_path(addr, "/").await
+}
+
+async fn get_path(addr: &str, path: &str) -> String {
     use tokio::io::AsyncReadExt;
     let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     stream
-        .write_all(format!("GET / HTTP/1.1\r\nhost: {addr}\r\nconnection: close\r\n\r\n").as_bytes())
+        .write_all(format!("GET {path} HTTP/1.1\r\nhost: {addr}\r\nconnection: close\r\n\r\n").as_bytes())
         .await
         .unwrap();
     let mut out = String::new();

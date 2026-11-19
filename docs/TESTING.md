@@ -42,7 +42,7 @@ snapshots deliberately with `bun run test:e2e:update`, then open the changed PNG
   a read-only, writable, concurrent or own-server call, and checks that nothing was written read-only, nothing
   interleaved, no acknowledged write was lost, `db:tx` success means committed, the app and its database still answer,
   and the host did not panic; 600 cases take about a second. `CHAOS_CASES=20000` (and `CHAOS_SEED`) go further, and
-  `CHAOS_ONLY=<case>` prints and runs one. `agentos-luavm` has its own unit tests (the module registry, the lifecycle,
+  `CHAOS_ONLY=<case>` prints and runs one. A second generated test drops a call (timeout or abort) while its own coroutine waits, and checks that another call can neither run nor refuse for ever what it left behind (`CHAOS_DROPPED_CASES`). `agentos-luavm` has its own unit tests (the module registry, the lifecycle,
   and the `vnd:hyper` client against a local TLS server).
 - **Host** (`agentos-host/tests`): the real wiring on an ephemeral loopback port (`tests/common`), driven like a
   browser or an agent would: `/rpc`, `/agui`, `/mcp`, pairing, the Agents app.

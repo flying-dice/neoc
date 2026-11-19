@@ -10,9 +10,13 @@
 -- `resume`, so it reaches the executor through any depth of nesting) and the inner coroutine is resumed with
 -- whatever answer comes back; any other yield is the script's own and is returned from `resume`, as usual.
 --
--- When the executor drops a call that is waiting (cancellation), it resumes the coroutine with a termination
--- signal instead of an empty answer. The signal is handed to the inner coroutine so that its future is
--- dropped, and this coroutine then stays suspended: control must never return into the script.
+-- A call that is dropped while it waits (cancellation, a timeout) is never resumed: mlua drops the thread the
+-- executor was polling and nothing runs in it again, so no script code runs after the drop. The host call the
+-- inner coroutine was waiting at is abandoned by the call's end (`lifecycle`, rule 3): its future is dropped and
+-- whatever it held is released, and a coroutine of the script's own that is resumed later finds the call gone
+-- ("this host call was abandoned") instead of running it. (mlua also has a terminate signal for a parked async
+-- wrapper; it is only sent when the parked frame is mlua's own wrapper, never to the yield below, so nothing
+-- here handles it.)
 --
 -- Lua 5.1 still cannot yield out of a C boundary (a `string.gsub` callback, a
 -- metamethod or a `for ... in` iterator function): a host call there fails with Lua's own
@@ -27,17 +31,24 @@
 -- or a module makes internally has to be found and marked: the host machinery uses the raw primitives captured below.
 -- A coroutine of its own is refused only while somebody else drives it (`driven`, see `is_driven`).
 
-local pending, raw, driven, owned, null = ...
-local select, unpack, error, type, getmetatable = select, unpack, error, type, getmetatable
+local pending, raw, driven, owned = ...
+local select, unpack, error, type = select, unpack, error, type
 local create, resume, yield, status, running = raw.create, raw.resume, raw.yield, raw.status, raw.running
 
 -- A coroutine whose host call is in flight is *running*, as far as the script can tell: the thread that resumed it
--- waits for it. `driven` (a table with weak keys, shared with the task scheduler) maps such a coroutine to that
--- thread; a script that resumes it from somewhere else (a task, another call) gets Lua's own "cannot resume
--- non-suspended coroutine" instead of stealing the call from the thread that is waiting for it. A coroutine handed
--- to `task.spawn`, `task.defer` or `task.delay` is the scheduler's: its entry is `true`. A thread's entry means
--- something only while that thread is suspended: if its yield failed (it was inside a C boundary) the thread went
--- on, and the coroutine is merely left behind.
+-- waits for it. `driven` (a table with weak keys *and* weak values, shared with the task scheduler) maps such a
+-- coroutine to that thread; a script that resumes it from somewhere else (a task, another call) gets Lua's own
+-- "cannot resume non-suspended coroutine" instead of stealing the call from the thread that is waiting for it. A
+-- coroutine handed to `task.spawn`, `task.defer` or `task.delay` is the scheduler's: its entry is `true`. A thread's
+-- entry means something only while that thread is suspended: if its yield failed (it was inside a C boundary) the
+-- thread went on, and the coroutine is merely left behind.
+--
+-- A resumer whose call was dropped is suspended for ever, and the status check cannot tell that from one that is
+-- waiting for its wake-up. The weak value can: the thread is reachable only through the executor's call (and the
+-- coroutines that resumed it), so once that call is dropped nothing refers to the thread, the garbage collector
+-- clears the entry, and the coroutine can be resumed again (it finds its host call abandoned). Clearing an entry for
+-- a thread nothing can resume allows no second driver, and a strong value would keep the dead thread, its stack
+-- and the coroutine (Lua 5.1 has no ephemerons: the value refers back to the key) for ever.
 local function is_driven(co)
   local driver = driven[co]
   if driver == nil then
@@ -55,14 +66,6 @@ local function resumable(co)
   return owned[co] == true and not is_driven(co)
 end
 
--- The executor drops a call that is waiting by resuming the thread with a light userdata of its own (the
--- "terminate" signal). The only light userdata a script can hold is the null sentinel (`null`); `pending` is the
--- marker threads yield, never an answer, so it is no signal either. That is how the signal is told from anything a
--- script resumed the thread with: a resume value that is nothing of the kind changes nothing.
-local function is_terminate(signal)
-  return type(signal) == "userdata" and signal ~= null and signal ~= pending and getmetatable(signal) == nil
-end
-
 local function pack(...)
   return { n = select("#", ...), ... }
 end
@@ -73,16 +76,10 @@ local function drive(co, r)
   while r[1] and r.n == 2 and r[2] == pending and status(co) == "suspended" do
     local me = running()
     driven[co] = me
-    local signal = yield(pending)
+    yield(pending)
     -- the scheduler may have taken the coroutine over meanwhile: only take back what is ours
     if driven[co] == me then
       driven[co] = nil
-    end
-    if is_terminate(signal) then
-      resume(co, signal) -- the executor is dropping this call: let the inner future go
-      while true do
-        yield()
-      end
     end
     r = pack(resume(co))
   end

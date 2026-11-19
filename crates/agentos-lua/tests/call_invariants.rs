@@ -843,3 +843,69 @@ async fn a_plain_yield_at_the_top_of_a_call_does_not_lend_the_vm() {
         "another call ran in the middle of a call that only yielded: {out}"
     );
 }
+
+/// A call that is dropped (cancelled, timed out) while a coroutine of its own waits at a host call is never resumed:
+/// nothing of its script runs again. The coroutine it left behind is refused while its resumer might still wake it,
+/// and is the script's again once that resumer is gone (nothing refers to the dead thread any more, and the weak
+/// entry in `driven` clears): a later call that resumes it, or calls its `wrap` function, finds its host call
+/// abandoned rather than running it, and never gets "woke" out of a wait that was dropped.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_coroutine_whose_resumer_was_dropped_is_the_scripts_again_and_finds_its_host_call_abandoned() {
+    let vm = Arc::new(
+        load(
+            r#"
+            local task = require("std:task")
+            local kept, ran = {}, {}
+            app.tool { name = "park", run = function()
+              kept.co = coroutine.create(function() task.wait(30) ran.after_wait = true return "woke" end)
+              kept.wrapped = coroutine.wrap(function() task.wait(30) ran.after_wrapped_wait = true return "woke" end)
+              kept.thread = coroutine.create(function() return kept.wrapped() end)
+              coroutine.resume(kept.thread) -- waits at the host call inside two coroutines; the call is dropped here
+              ran.after_resume = true
+              return "never"
+            end }
+            -- what another call finds: the answer of `resume`, and of the `wrap` function
+            app.tool { name = "probe", run = function()
+              local ok, why = coroutine.resume(kept.thread)
+              return { ok = ok, why = tostring(why) }
+            end }
+            app.tool { name = "probe_direct", run = function()
+              local ok, why = pcall(kept.wrapped)
+              return { ok = ok, why = tostring(why) }
+            end }
+            app.tool { name = "churn", run = function()
+              local keep = {}
+              for i = 1, 400 do keep[i % 8] = { string.rep("x", 2048), i } end
+              return #keep
+            end }
+            app.tool { name = "ran", readOnly = true, run = function() return ran end }
+            "#,
+        )
+        .await,
+    );
+    let dropped = {
+        let vm = vm.clone();
+        tokio::time::timeout(Duration::from_millis(300), async move {
+            vm.call_tool("park", json!({}), &common::agent_ctx(0), false).await
+        })
+        .await
+    };
+    assert!(dropped.is_err(), "the call waits at the host call until its caller gives up");
+    // it is refused or released, never run: ask until the dead resumer is collected (allocation drives the collector)
+    let mut answer = Value::Null;
+    for _ in 0..200 {
+        answer = call(&vm, "probe").await;
+        if !answer["why"].as_str().unwrap_or_default().contains("cannot resume non-suspended coroutine") {
+            break;
+        }
+        call(&vm, "churn").await;
+    }
+    assert_eq!(answer["ok"], false, "{answer}");
+    let why = answer["why"].as_str().unwrap();
+    assert!(why.contains("this host call was abandoned"), "{answer}");
+    // the script's own wrap function of the same dropped wait is the script's too
+    let direct = call(&vm, "probe_direct").await;
+    assert_eq!(direct["ok"], false, "{direct}");
+    // nothing of the dropped call's script ran, and nothing woke from the dropped wait
+    assert_eq!(call(&vm, "ran").await, json!([]), "the dropped call ran script code after the drop");
+}

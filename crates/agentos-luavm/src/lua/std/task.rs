@@ -454,7 +454,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     // Negative and NaN values are clamped to 0, and a delay past 100 years (infinity included) to 100 years. Returns elapsed time as a float.
     m.set(
         "wait",
-        async_function(lua, Role::Wait, |_, secs: f64| async move {
+        async_function(lua, Role::Timer, |_, secs: f64| async move {
             let delay = crate::lua::limits::sleep_duration(secs);
             let start = tokio::time::Instant::now();
             tokio::time::sleep(delay).await;

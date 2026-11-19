@@ -60,7 +60,10 @@ struct Rollback {
 
 impl Drop for Rollback {
     fn drop(&mut self) {
-        // errors only say there is no transaction left to undo
+        // errors only say there is no transaction left to undo. This blocks on the connection's lock and on SQLite,
+        // which is acceptable only because it runs where blocking is harmless: on the blocking pool (the normal path),
+        // or, when the runtime is shutting down and that job was dropped unrun, or there is no runtime, on the
+        // thread that drops the job, at shutdown. The wait is bounded by the statement already running, if any.
         let _ = self.db.shared.conn.lock().execute_batch("ROLLBACK");
         drop(self.gate.take());
     }
