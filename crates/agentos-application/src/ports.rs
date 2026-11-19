@@ -161,6 +161,17 @@ pub trait AppObserver: Send + Sync {
     async fn stopping(&self, app: &AppId, reason: &str);
 }
 
+/// Told by the runtime when something happened in an app that no call through the host made: a task's slice
+/// ended or paused at a wait, a request to the app's own server finished. State, view effects or data may have
+/// changed, so open views must follow without waiting for the next event. The runtime adapter calls it (late
+/// bound: the application is built after the runtime); [`crate::AppService`] implements it by telling its
+/// [`AppObserver`]s. Calls for one app are never concurrent with themselves and are coalesced by the adapter.
+#[async_trait]
+pub trait AppActivity: Send + Sync {
+    /// A call nobody made through the host ended or paused; state may have changed.
+    async fn background_settled(&self, app: &AppId);
+}
+
 // ---- tools / notifications / clients --------------------------------------------------------
 
 /// The set of tools visible to agents. The MCP adapter implements this and emits `tools/list_changed`.

@@ -4,7 +4,7 @@
 use crate::{
     data::{Params, QueryInfo},
     live::{Conflict, SourceDef, SourceId, SourceKind, SourceUpdate, TotalMode},
-    ports::{AppObserver, ChangeBatch, SourceBinding, ViewEffect},
+    ports::{AppActivity, AppObserver, ChangeBatch, SourceBinding, ViewEffect},
     services::AppService,
     testing::{Fakes, RecordingViewSink, ScriptedData},
     views::{ViewError, ViewService},
@@ -330,6 +330,51 @@ async fn a_tool_call_makes_the_views_settle_through_the_observer() {
         ["view.ops"],
         "no event, no UI code: the tool's state change reached the window"
     );
+}
+
+#[tokio::test]
+async fn background_work_that_changed_state_reaches_the_open_view_with_no_event_and_no_tool_call() {
+    let r = rig().await;
+    open(&r).await;
+    r.sink.take();
+    // a task assigned `app.state`: the runtime only says that a background call settled
+    r.f.runtime.set_render(tree("changed by a task"), bindings(), decls());
+    r.f.runtime.mark_dirty("v1");
+    r.f.runtime.push_effect("v1", ViewEffect::Command(Command::Announce { text: "tick".into() }));
+    r.svc.background_settled(&r.app).await;
+    assert_eq!(r.sink.methods(), ["view.ops", "view.command"], "the view followed, the window's request too");
+
+    // nothing changed since: settling again is silent
+    r.sink.take();
+    r.svc.background_settled(&r.app).await;
+    assert!(r.sink.methods().is_empty());
+}
+
+#[tokio::test]
+async fn a_settle_a_background_change_started_finishes_before_the_event_that_follows_it_is_answered() {
+    let r = rig().await;
+    let s = open(&r).await;
+    r.sink.take();
+    r.f.runtime.set_render(tree("two"), bindings(), decls());
+    r.f.runtime.mark_dirty("v1");
+    // the background settle takes the dirty set and is still rendering when the event's handler has run
+    let release = r.f.runtime.hold_next_render();
+    let background = r.svc.background_settled(&r.app);
+    let event_then_look = async {
+        let ack = r.views.event(CONN, event(&s.view_id, 1, "main/title")).await.unwrap();
+        (ack.ok, r.sink.methods())
+    };
+    let releaser = async {
+        while r.f.runtime.view_events().is_empty() {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let _ = release.send(());
+    };
+    let ((), (ok, seen_at_the_ack), ()) = tokio::join!(background, event_then_look, releaser);
+    assert!(ok);
+    assert_eq!(seen_at_the_ack, ["view.ops"], "the ops were sent before the answer, whoever rendered them");
+    assert_eq!(r.sink.methods(), ["view.ops"], "and sent once");
 }
 
 #[tokio::test]

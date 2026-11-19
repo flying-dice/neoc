@@ -85,6 +85,27 @@ describe('keyed ops: structure, versioned', () => {
     expect(view.store.rev).toBe(rev0 + 2)
   })
 
+  test('ops the host pushes on its own (background work) apply in order, and an obsolete batch never overwrites newer state', async () => {
+    const { view, timers, received } = await setup()
+    const status = (text: string, base: number) => ({
+      viewId: view.viewId,
+      base,
+      rev: base + 1,
+      ops: [{ op: 'set', path: 'main/_0/status', props: { text } }] as Op[]
+    })
+    const rev0 = view.store.rev
+    view.notify('view.ops', status('tick 1', rev0))
+    view.notify('view.ops', status('tick 2', rev0 + 1))
+    expect(node(view, 'main/_0/status').props?.text).toBe('tick 2')
+    expect(view.store.rev).toBe(rev0 + 2)
+    expect(received('view.sync')).toHaveLength(0)
+
+    view.notify('view.ops', status('tick 1 again', rev0)) // an old batch arriving late
+    expect(node(view, 'main/_0/status').props?.text).toBe('tick 2') // not applied
+    await timers.settle()
+    expect(received('view.sync')).toHaveLength(1) // the client asks for the current tree instead
+  })
+
   test('a gap (base != rev) makes the client ask for the full tree, and nothing is guessed', async () => {
     const { view, timers, received } = await setup()
     view.notify('view.ops', {

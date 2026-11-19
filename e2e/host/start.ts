@@ -4,7 +4,8 @@
  *
  *   1. builds the client (client/dist) and the host (cargo), and the apps into a test registry:
  *      the repo's apps plus Notes (the codegen fixture), a second app the Discover journeys install and remove
- *      so they never disturb the Calculator the other specs use;
+ *      so they never disturb the Calculator the other specs use, and the Ticker (the host's background-work
+ *      fixture) outside the registry, which only the background journeys install;
  *   2. writes agentos.toml (port 7410 or AGENTOS_PORT_BASE + 10, loopback, a fresh data directory, the test registry; the Calculator and
  *      Agents are installed at start, Notes is only offered; one scripted ACP agent is on the roster);
  *   3. runs agentos-host in the foreground, forwarding SIGTERM so the host shuts down gracefully.
@@ -46,6 +47,23 @@ writeFileSync(
   })
 )
 run('bun', ['scripts/build-apps.ts', '--out', join(DIR, 'registry'), '--root', join(DIR, 'extra-apps')])
+
+// Ticker: built the same way, into a folder of its own that no registry lists (Discover must not offer it)
+const hidden = join(DIR, 'hidden-apps/ticker')
+mkdirSync(hidden, { recursive: true })
+cpSync(join(ROOT, 'crates/agentos-host/tests/fixtures/ticker/app.lua'), join(hidden, 'app.lua'))
+writeFileSync(
+  join(hidden, 'app.json'),
+  JSON.stringify({
+    id: 'ticker',
+    name: 'Ticker',
+    version: '0.1.0',
+    description: 'A counter that a background task raises on its own.',
+    icon: 'clock',
+    tint: 'teal'
+  })
+)
+run('bun', ['scripts/build-apps.ts', 'ticker', '--out', join(DIR, 'hidden'), '--root', join(DIR, 'hidden-apps')])
 
 mkdirSync(DATA, { recursive: true })
 writeFileSync(

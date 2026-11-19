@@ -7,8 +7,8 @@ use crate::vm::{AppVm, Effect, ShellEffect, VmConfig, VmError};
 use agentos_application::{
     live::SourceId,
     ports::{
-        AgentRoster, AppData, AppPackage, AppRuntime, CallContext, LoadedApp, Notifier, PortResult,
-        RenderOutput, Shell, ViewEffect, ViewEventCall,
+        AgentRoster, AppActivity, AppData, AppPackage, AppRuntime, CallContext, LoadedApp, Notifier,
+        PortResult, RenderOutput, Shell, ViewEffect, ViewEventCall,
     },
     PortError,
 };
@@ -16,7 +16,10 @@ use agentos_domain::AppId;
 use async_trait::async_trait;
 use parking_lot::RwLock;
 use serde_json::{Map, Value};
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{Arc, OnceLock, Weak},
+};
 
 /// The generated constructors (`types/generated/ui.lua`) every app gets as `require("@agentos/ui")`. Lua 5.1 source of
 /// `@agentos/ui` (hosts and tests that build a [`VmConfig`] by hand register it as `ui`).
@@ -28,12 +31,14 @@ pub struct LuaRuntime {
     shell: Arc<dyn Shell>,
     host_modules: HashMap<String, Vec<u8>>,
     roster: Option<Arc<dyn AgentRoster>>,
+    /// Who hears that a background call settled; bound once the application exists (see [`Self::bind_activity`]).
+    activity: Arc<OnceLock<Weak<dyn AppActivity>>>,
 }
 
 impl LuaRuntime {
     pub fn new(notifier: Arc<dyn Notifier>, shell: Arc<dyn Shell>) -> Self {
         let host_modules = HashMap::from([("ui".to_owned(), UI_MODULE.as_bytes().to_vec())]);
-        Self { vms: RwLock::default(), notifier, shell, host_modules, roster: None }
+        Self { vms: RwLock::default(), notifier, shell, host_modules, roster: None, activity: Arc::default() }
     }
 
     /// The agent contacts `app.agents:list()` shows to every app.
@@ -41,6 +46,13 @@ impl LuaRuntime {
     pub fn with_roster(mut self, roster: Arc<dyn AgentRoster>) -> Self {
         self.roster = Some(roster);
         self
+    }
+
+    /// Tell this runtime who to inform when an app's background work (a task, a request to its own server)
+    /// changed something. The runtime is built before the application that listens, so this is bound later and
+    /// holds the listener weakly. The first binding wins.
+    pub fn bind_activity(&self, activity: Weak<dyn AppActivity>) {
+        let _ = self.activity.set(activity);
     }
 
     fn vm(&self, app: &AppId) -> PortResult<Arc<AppVm>> {
@@ -119,12 +131,22 @@ impl AppRuntime for LuaRuntime {
         let vm = Arc::new(vm);
         let (signal, weak) = (vm.effects_signal(), Arc::downgrade(&vm));
         let (notifier, shell, id) = (self.notifier.clone(), self.shell.clone(), app.clone());
+        let activity = self.activity.clone();
         vm.life().spawn(async move {
             loop {
                 signal.notified().await;
                 let Some(vm) = weak.upgrade() else { break };
                 if let Err(error) = forward_effects(&*notifier, &*shell, &id, &vm).await {
                     tracing::warn!(app = %id, %error, "could not forward what the app asked for");
+                }
+                // open windows follow what the background work changed; a pause that changed no state or
+                // window request has nothing to follow (data changes are pushed by the live sources)
+                if vm.is_shut_down() || !vm.has_unsettled_views() {
+                    continue;
+                }
+                let listener = activity.get().and_then(Weak::upgrade);
+                if let Some(listener) = listener {
+                    listener.background_settled(&id).await;
                 }
             }
         });

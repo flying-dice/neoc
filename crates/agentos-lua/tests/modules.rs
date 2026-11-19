@@ -6,10 +6,10 @@
 mod common;
 
 use agentos_application::{
-    ports::{AppData, AppRuntime, Notifier, PortResult},
+    ports::{AppActivity, AppData, AppRuntime, Notifier, PortResult},
     testing::RecordingShell,
 };
-use agentos_domain::Notification;
+use agentos_domain::{AppId, Notification};
 use agentos_lua::LuaRuntime;
 use agentos_luavm::lua::modules;
 use common::{agent_ctx, built_package, db, id, load, package};
@@ -67,17 +67,37 @@ impl Notifier for Recorder {
     }
 }
 
+/// The application's side of `AppActivity`: records which app reported that its background work settled.
+#[derive(Default)]
+struct Activity(Mutex<Vec<AppId>>);
+
+#[async_trait::async_trait]
+impl AppActivity for Activity {
+    async fn background_settled(&self, app: &AppId) {
+        self.0.lock().push(app.clone());
+    }
+}
+
+impl Activity {
+    fn count(&self) -> usize {
+        self.0.lock().len()
+    }
+}
+
 struct Rig {
     runtime: Arc<LuaRuntime>,
     notes: Arc<Recorder>,
     shell: Arc<RecordingShell>,
+    activity: Arc<Activity>,
 }
 
 fn rig() -> Rig {
     let notes = Arc::new(Recorder::default());
     let shell = Arc::new(RecordingShell::default());
     let runtime = Arc::new(LuaRuntime::new(notes.clone(), shell.clone()));
-    Rig { runtime, notes, shell }
+    let activity = Arc::new(Activity::default());
+    runtime.bind_activity(Arc::downgrade(&activity) as std::sync::Weak<dyn AppActivity>);
+    Rig { runtime, notes, shell, activity }
 }
 
 impl Rig {
@@ -210,6 +230,105 @@ async fn a_background_loop_does_not_stop_the_app_and_tools_can_wait_too() {
     // a tool that waits hands the VM back while it waits: the loop kept ticking meanwhile
     let during = vm.call_tool("slow", json!({}), &agent_ctx(0), false).await.unwrap().as_i64().unwrap();
     assert!(during >= 3, "{during}");
+}
+
+// ---- background work reaches the application ----------------------------------------------------------------
+
+#[tokio::test]
+async fn long_running_work_started_with_task_spawn_does_not_hold_up_the_load() {
+    let r = rig();
+    // the entry chunk returns: the loop, the delayed job and the server all live on after it
+    let src = format!(
+        r#"{MANIFEST}
+        {SERVER_APP}
+        local task = require("std:task")
+        local ticks = 0
+        task.spawn(function() while true do task.wait(3600) end end)
+        task.delay(3600, function() ticks = -1 end)
+        task.spawn(function() while true do ticks = ticks + 1 task.wait(0.01) end end)
+        app.tool {{ name = "ticks", run = function() return ticks end }}"#
+    );
+    let data: Arc<dyn AppData> = db();
+    let app = id("probe");
+    let load = r.runtime.load(&app, package(&src, &[]), data);
+    tokio::time::timeout(Duration::from_secs(5), load).await.expect("the load returned").unwrap();
+    let ticks = || async { r.tool("probe", "ticks").await.as_i64().unwrap() };
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while ticks().await < 3 {
+        assert!(Instant::now() < deadline, "the background loop never ran");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+#[tokio::test]
+async fn a_loop_that_changes_state_tells_the_application_at_every_pause_not_only_when_it_ends() {
+    let r = rig();
+    let src = format!(
+        r#"{MANIFEST}
+        local task = require("std:task")
+        local s = app.state {{ n = 0 }}
+        task.spawn(function() while true do s.n = s.n + 1 task.wait(0.01) end end)"#
+    );
+    r.load("probe", &src).await;
+    // the loop never ends, so only a pause can report: it keeps reporting while it runs
+    eventually(5, "the loop's pauses to be reported", || r.activity.count() >= 3).await;
+    assert!(r.activity.0.lock().iter().all(|a| a == &id("probe")), "reported against the app that ran");
+}
+
+#[tokio::test]
+async fn a_background_call_that_ends_after_changing_state_tells_the_application() {
+    let r = rig();
+    let src = format!(
+        r#"{MANIFEST}
+        local task = require("std:task")
+        local s = app.state {{ n = 0 }}
+        -- changes state and ends without ever waiting
+        task.spawn(function() s.n = 1 end)"#
+    );
+    r.load("probe", &src).await;
+    eventually(5, "the ended task to be reported", || r.activity.count() >= 1).await;
+}
+
+#[tokio::test]
+async fn a_pause_that_changed_nothing_a_window_shows_is_not_reported() {
+    let r = rig();
+    let src = format!(
+        r#"{MANIFEST}
+        local task = require("std:task")
+        local s = app.state {{ n = 0 }}
+        local polls = 0
+        -- assigns the value it already has: nothing for a window to follow
+        task.spawn(function() while true do s.n = 0 polls = polls + 1 task.wait(0.01) end end)
+        app.tool {{ name = "polls", run = function() return polls end }}"#
+    );
+    r.load("probe", &src).await;
+    let polls = || async { r.tool("probe", "polls").await.as_i64().unwrap() };
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while polls().await < 3 {
+        assert!(Instant::now() < deadline, "the loop never ran");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(r.activity.count(), 0, "no state changed, so there was nothing to report");
+}
+
+#[tokio::test]
+async fn nothing_is_reported_for_an_app_after_it_is_unloaded() {
+    let r = rig();
+    let src = format!(
+        r#"{MANIFEST}
+        local task = require("std:task")
+        local s = app.state {{ n = 0 }}
+        task.spawn(function() while true do s.n = s.n + 1 task.wait(0.01) end end)"#
+    );
+    r.load("probe", &src).await;
+    eventually(5, "the loop to be reported", || r.activity.count() >= 1).await;
+
+    r.runtime.unload(&id("probe")).await.unwrap();
+
+    tokio::time::sleep(Duration::from_millis(100)).await; // anything in flight settles
+    let then = r.activity.count();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(r.activity.count(), then, "an unloaded app's loop is stopped and reports nothing more");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

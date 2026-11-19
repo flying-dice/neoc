@@ -8,10 +8,10 @@ mod common;
 use agentos_host::startup::prepare_data_dir;
 use common::{
     browser, built_app, call, claude, connect_agent, next_notification, notification_where, notify, path_of,
-    publish_package, rpc, start, temp, text_of, wait_until, Running, Ws,
+    publish_package, rpc, start, temp, text_of, tool_names, wait_until, Agent, Running, Ws,
 };
 use serde_json::{json, Value};
-use std::path::Path;
+use std::{path::Path, time::Duration};
 
 async fn host_with(tmp: &Path, apps: &[&str]) -> Running {
     prepare_data_dir(&tmp.join("data")).unwrap();
@@ -301,6 +301,101 @@ async fn the_calculator_answers_a_key_with_ops_before_the_ack_and_follows_the_ag
     // a dropped connection takes its windows with it
     drop(ws);
     wait_until("the windows to be released", || r.host.views.open_views() == 0).await;
+
+    agent.cancel().await.unwrap();
+    r.stop().await;
+    let _ = std::fs::remove_dir_all(tmp);
+}
+
+/// What the Ticker's `ticks` tool reports now.
+async fn ticker_now(agent: &Agent) -> (u64, bool) {
+    let out = call(agent, "ticker__ticks", json!({})).await;
+    let content = serde_json::to_value(&out.content).unwrap();
+    let report: Value = serde_json::from_str(content[0]["text"].as_str().unwrap()).unwrap();
+    (report["ticks"].as_u64().unwrap(), report["running"].as_bool().unwrap())
+}
+
+/// Wait for the Ticker's count to be above `floor`; returns it.
+async fn ticks_above(agent: &Agent, floor: u64) -> u64 {
+    for _ in 0..200 {
+        let (ticks, _) = ticker_now(agent).await;
+        if ticks > floor {
+            return ticks;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    panic!("the count never rose above {floor}");
+}
+
+/// The Ticker window's tick count in a `view.ops` batch, if the batch changes it.
+fn ticks_in(ops: &Value) -> Option<u64> {
+    ops["ops"].as_array()?.iter().find_map(|op| {
+        if op["op"] == "set" {
+            op["props"]["text"].as_str()?.parse().ok()
+        } else {
+            None
+        }
+    })
+}
+
+fn sets_text(ops: &Value, text: &str) -> bool {
+    ops["ops"].as_array().is_some_and(|ops| ops.iter().any(|op| op["props"]["text"] == text))
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)] // one journey, read top to bottom
+async fn background_work_updates_the_open_window_on_its_own_and_outlives_it() {
+    let tmp = temp("ticker");
+    let r = host_with(&tmp, &["ticker"]).await;
+    let mut ws = browser(&r).await;
+    hello(&mut ws).await;
+    let (agent, _) = connect_agent(r.addr, "tok-claude").await;
+
+    // --- open: the current view, then the count rises with nothing sent by the client (AGOS-54 #1, #3)
+    let view = open(&mut ws, 2, "ticker").await;
+    assert_eq!(view["tree"]["key"], "main");
+    let first = notification_where(&mut ws, "view.ops", |p| ticks_in(p).is_some()).await;
+    let first_tick = ticks_in(&first).unwrap();
+    let next = notification_where(&mut ws, "view.ops", |p| ticks_in(p).is_some_and(|n| n > first_tick)).await;
+    assert_eq!(next["viewId"], view["viewId"]);
+    assert!(next["rev"].as_u64() > first["rev"].as_u64(), "revisions only go up: {first} then {next}");
+
+    // --- a control reaches its handler, and the pause holds the count while the loop is still alive
+    let paused = tap(&mut ws, 3, &view, 1, "toggle").await;
+    assert_eq!(paused["result"], json!({"ok": true}), "{paused}");
+    notification_where(&mut ws, "view.ops", |p| sets_text(p, "Paused")).await;
+    let (held, running) = ticker_now(&agent).await;
+    assert!(!running);
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    assert_eq!(ticker_now(&agent).await.0, held, "paused: the loop runs but counts nothing");
+    let resumed = tap(&mut ws, 4, &view, 2, "toggle").await;
+    assert_eq!(resumed["result"], json!({"ok": true}));
+    ticks_above(&agent, held).await;
+
+    // --- an error in a handler is that tap's error answer, and the loop is untouched (AGOS-54 #6)
+    let failed = tap(&mut ws, 5, &view, 3, "fail").await;
+    assert!(failed["error"]["message"].as_str().unwrap().contains("always fails"), "{failed}");
+    let (before, _) = ticker_now(&agent).await;
+    ticks_above(&agent, before).await;
+
+    // --- closing the window does not stop the service (AGOS-52 #2)
+    let closed = rpc(&mut ws, 6, "view.close", json!({"viewId": view["viewId"]})).await;
+    assert!(closed.get("error").is_none(), "{closed}");
+    assert_eq!(r.host.views.open_views(), 0);
+    let (at_close, _) = ticker_now(&agent).await;
+    ticks_above(&agent, at_close).await;
+
+    // --- reopening shows the app as it is now
+    let again = open(&mut ws, 7, "ticker").await;
+    assert!(again["tree"].to_string().contains("\"Counting\""), "{again}");
+
+    // --- uninstalling stops and releases the app: the window is closed and its tools are gone
+    let reply = rpc(&mut ws, 8, "app.uninstall", json!({"app": "ticker", "purge": true})).await;
+    assert!(reply.get("error").is_none(), "{reply}");
+    let closed = next_notification(&mut ws, "view.closed").await;
+    assert_eq!(closed["viewId"], again["viewId"]);
+    assert_eq!(r.host.views.open_views(), 0);
+    assert!(!tool_names(&agent).await.iter().any(|n| n.starts_with("ticker__")));
 
     agent.cancel().await.unwrap();
     r.stop().await;

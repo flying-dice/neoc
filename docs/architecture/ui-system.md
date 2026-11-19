@@ -342,7 +342,11 @@ immediately); client apply <= 2 ms; paint. Target **event -> pixels <= 30 ms** o
 user does continuously (typing, scrolling, drag, sheet, navigation, selection) never waits on any of this (3.5).
 
 **Ordering guarantee.** All ops and data patches caused by handling an event are delivered **before** that event's
-response, so the response means "the UI already reflects it" and optimistic state can be settled on it.
+response, so the response means "the UI already reflects it" and optimistic state can be settled on it. Changes
+that no event caused (a `task.spawn` loop of the app assigning `app.state`, a request to its own server) are pushed
+the same way as soon as the background call pauses or ends, as ordinary `view.ops` between events; the host settles
+one app at a time, so an unsolicited batch never lands between an event's ops and its response. The client needs
+nothing new: `base`/`rev` already order the batches and a gap or an obsolete batch resyncs.
 
 ### 2.3 Data patches
 
@@ -846,7 +850,7 @@ local ui  = require("@agentos/ui")       -- constructors + helpers, generated fr
 |---|---|
 | `app.manifest { id, name, icon, tint, window {w,h,minW,minH}, kit = ">=1.0" }` | identity and minimum window (DESIGN_LANGUAGE: min 320x240) |
 | `app.window(name, spec)` | declare a window kind. `spec`: `title`, `size`, `client = {name = {init, persist, sync, type}}`, `state = {...}` (per-instance server state), `render = function(w) -> Node`, `onOpen(w, params)`, `onClose(w)` |
-| `app.state(initial)` | shared, in-memory server state; reads in `render` are tracked, assignments in handlers/tools schedule re-render of instances that read the field |
+| `app.state(initial)` | shared, in-memory server state; reads in `render` are tracked, assignments in handlers, tools and background tasks schedule re-render of instances that read the field |
 | `app.kv:get/set/delete` | small durable key-value in the app's SQLite |
 | `app.db` | `migrate{[n]=sql}`, `exec(sql, params) -> {changes, last_insert_id}`, `all(sql, params)`, `one(sql, params)`, `tx(fn)`; **sources** (below) |
 | `app.db:query(sql, {key, page, total})` | prepared once at load; returns a **factory**: calling it with params (values or Refs) gives a `rows` Source handle |

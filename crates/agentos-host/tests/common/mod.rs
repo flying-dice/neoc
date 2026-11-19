@@ -337,14 +337,17 @@ fn nonce() -> usize {
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
-/// The built Lua 5.1 file of the shipped app `apps/<id>` (or, when the repo has none, the codegen example).
+/// The built Lua 5.1 file of the shipped app `apps/<id>` (or, when the repo has none, the codegen example, or the
+/// host's own fixture app in `tests/fixtures/<id>`).
 pub fn built_app(app: &str) -> Vec<u8> {
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let shipped = manifest.join("../../apps").join(app);
-    let dir = if shipped.join("app.json").exists() {
-        shipped
-    } else {
-        manifest.join("../agentos-codegen/tests/fixtures").join(app)
-    };
-    build_lua(&dir.join("app.lua"))
+    let found = [
+        manifest.join("../../apps").join(app).join("app.json"),
+        manifest.join("../agentos-codegen/tests/fixtures").join(app).join("app.lua"),
+        manifest.join("tests/fixtures").join(app).join("app.lua"),
+    ]
+    .into_iter()
+    .find(|f| f.exists())
+    .unwrap_or_else(|| panic!("no app or fixture `{app}`"));
+    build_lua(&found.with_file_name("app.lua"))
 }

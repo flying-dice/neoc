@@ -8,8 +8,9 @@ use crate::{
     data::Params,
     live::{pump_changes, LiveSources},
     ports::{
-        AppData, AppObserver, AppPackage, AppRuntime, Background, CallContext, Clock, DataStore, EventSink,
-        Fetcher, InstalledApp, InstalledAppStore, ServerEvent, SqlMigration, TaskHandle, ToolRegistry,
+        AppActivity, AppData, AppObserver, AppPackage, AppRuntime, Background, CallContext, Clock, DataStore,
+        EventSink, Fetcher, InstalledApp, InstalledAppStore, ServerEvent, SqlMigration, TaskHandle,
+        ToolRegistry,
     },
     writeback::{self, WriteAck, WriteRequest},
     AppError, PortError,
@@ -19,6 +20,7 @@ use agentos_domain::{
     resolve_url, source_label, Actor, AgentIdentity, AppDecl, AppId, AppRef, DomainError, Manifest,
     PackageBudget, QualifiedToolName, Registry, Revision, StoredRevision, ToolSpec, WindowDecl,
 };
+use async_trait::async_trait;
 use parking_lot::Mutex;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -160,6 +162,15 @@ fn check_against_record(record: &InstalledApp, manifest: &Manifest) -> Result<()
         });
     }
     Ok(())
+}
+
+#[async_trait]
+impl AppActivity for AppService {
+    async fn background_settled(&self, app: &AppId) {
+        for o in self.observers() {
+            o.mutated(app).await;
+        }
+    }
 }
 
 impl AppService {

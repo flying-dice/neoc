@@ -6,7 +6,7 @@
  * against an explicit allow-list:
  *
  *   domain      -> nothing internal; external: serde, serde_json, sha2, thiserror (+ ts-rs, schemars)
- *   application -> domain; external: async-trait, futures-channel, parking_lot, serde_json, sha2, thiserror, tracing
+ *   application -> domain; external: async-trait, futures-channel, futures-util (its runtime-free `lock::Mutex`), parking_lot, serde_json, sha2, thiserror, tracing
  *   adapters    -> application, domain; never each other
  *   lua         -> application, domain, luavm (the one adapter that may use the Lua VM library)
  *   luavm       -> nothing internal (the Lua VM library; only the lua adapter may depend on it)
@@ -53,7 +53,7 @@ const INTERNAL: Record<string, string[]> = {
 /** Crates whose EXTERNAL dependencies are restricted too (the pure core). */
 const CORE_EXTERNAL: Record<string, Set<string>> = {
   'agentos-domain': new Set(['serde', 'serde_json', 'sha2', 'thiserror', 'ts-rs', 'schemars']),
-  'agentos-application': new Set(['async-trait', 'futures-channel', 'parking_lot', 'serde_json', 'sha2', 'thiserror', 'tracing'])
+  'agentos-application': new Set(['async-trait', 'futures-channel', 'futures-util', 'parking_lot', 'serde_json', 'sha2', 'thiserror', 'tracing'])
 }
 
 /** Framework and runtime crates that never appear in the core, whatever the tables above say. */

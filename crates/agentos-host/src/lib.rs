@@ -27,8 +27,8 @@ use agentos_acp::AcpConnector;
 use agentos_agui::{agui_router_with, DeviceStreams};
 use agentos_application::{
     ports::{
-        AgentConnector, AgentDirectory, AppRuntime, Clock, DataStore, DeviceRegistry, EventSink, Fetcher,
-        InstalledAppStore, RandomSource, ThreadStore, ToolRegistry,
+        AgentConnector, AgentDirectory, AppActivity, AppRuntime, Clock, DataStore, DeviceRegistry, EventSink,
+        Fetcher, InstalledAppStore, RandomSource, ThreadStore, ToolRegistry,
     },
     AgentProcesses, AgentService, AppService, ChatPorts, ChatService, DeviceService, NoAgentProcesses,
     PairingPolicy, Ports, ViewService,
@@ -43,7 +43,11 @@ use agentos_lua::LuaRuntime;
 use agentos_mcp::{mcp_router, McpState};
 use agentos_sqlite::{SqliteDataStore, SqliteSystemDb};
 use axum::{middleware::from_fn_with_state, Router};
-use std::{net::IpAddr, path::PathBuf, sync::Arc};
+use std::{
+    net::IpAddr,
+    path::PathBuf,
+    sync::{Arc, Weak},
+};
 use tokio_util::sync::CancellationToken;
 
 pub struct HostConfig {
@@ -167,8 +171,8 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
     // apps list
     let contacts = Arc::new(AgentService::new(system.clone(), mcp_state.clone(), random.clone(), processes));
     contacts.load().await?;
-    let runtime: Arc<dyn AppRuntime> =
-        Arc::new(LuaRuntime::new(hub.clone(), hub.clone()).with_roster(contacts.clone()));
+    let lua = Arc::new(LuaRuntime::new(hub.clone(), hub.clone()).with_roster(contacts.clone()));
+    let runtime: Arc<dyn AppRuntime> = lua.clone();
     let tools: Arc<dyn ToolRegistry> = mcp_state.clone();
     let events: Arc<dyn EventSink> = hub.clone();
     let installed: Arc<dyn InstalledAppStore> = system.clone();
@@ -188,6 +192,8 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
         background: Arc::new(platform::TokioBackground),
         registries: cfg.registries,
     }));
+    // what an app's background work changes reaches its open windows: the runtime tells the application
+    lua.bind_activity(Arc::downgrade(&service) as Weak<dyn AppActivity>);
     for (token, agent) in cfg.agents {
         contacts.ensure(agent, Some(&token)).await?;
     }

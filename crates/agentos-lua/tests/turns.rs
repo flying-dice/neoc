@@ -439,8 +439,12 @@ async fn a_task_spawned_in_a_transaction_waits_for_it_instead_of_deadlocking() {
         .await
         .expect("a later, unrelated call does not hang")
         .unwrap();
-    // the spawned tasks ran after their transactions committed: they saw every row of them
-    assert_eq!(r, json!({ "rows": 3, "seen": { "a": 2, "b": 3 } }));
+    // the spawned tasks ran after their transactions committed: they saw every row of them. Task `a` queues for the
+    // VM behind the second tool, which may take its turn first and add its row: `a` saw two rows or three, never
+    // fewer (that would be a read inside the transaction).
+    assert_eq!(r["rows"], 3);
+    assert!(matches!(r["seen"]["a"].as_i64(), Some(2 | 3)), "{r}");
+    assert_eq!(r["seen"]["b"], 3);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -14,6 +14,11 @@ export const DIR = join(ROOT, 'test-results/host')
 export const DATA = join(DIR, 'data')
 export const CONFIG = join(DIR, 'agentos.toml')
 export const REGISTRY = join(DIR, 'registry/registry.json')
+/**
+ * The Ticker (background work, `e2e/background.journeys.spec.ts`): built like any app, but kept out of the registry so
+ * Discover does not offer it; the spec installs it from this app ref.
+ */
+export const TICKER_APP_REF = `file://${join(DIR, 'hidden/ticker/0.1.0/app-ref.json')}`
 /** The paired browser the specs share (a Playwright storage state). */
 export const STATE = join(DIR, 'paired.json')
 export const HOST_BIN = join(ROOT, 'target/debug/agentos-host')

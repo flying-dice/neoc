@@ -12,6 +12,7 @@ testing = []   # in-memory fakes of every port, for application tests and the ho
 agentos-domain = { workspace = true }
 async-trait = { workspace = true }
 futures-channel = { workspace = true }
+futures-util = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
@@ -20,7 +21,6 @@ parking_lot = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }   # test runtime only
-futures-util = { workspace = true }
 
 [lints]
 workspace = true

@@ -264,6 +264,39 @@ permission prompts and the agent's settings live with the host, and the app neve
 events also reach the app (`e.payload.text`), which is how the Agents app titles a chat and keeps its chat list in
 SQLite (`apps/agents/app.lua`).
 
+## Background work
+
+An app can work while nobody has a window open: a counter, a poller, a server for the LAN, a download. The host runs
+it in the app's own VM and keeps it going for as long as the app is loaded.
+
+- **Start it at the top level with `task.spawn`, and let the entry return.** The app is not loaded until its entry
+  chunk has finished, so a loop written directly in the entry (or a wait that never ends) holds the load up for ever.
+  Start the loop in a task instead; servers (`vnd:hyper`, `lib:http`) already start without blocking:
+
+  ```lua
+  local task = require("std:task")
+  local s = app.state { ticks = 0 }
+  task.spawn(function()
+    while true do
+      task.wait(0.2)
+      s.ticks = s.ticks + 1
+    end
+  end)
+  ```
+
+  Use `task.delay` for a job that runs once later. `crates/agentos-host/tests/fixtures/ticker` is a complete example
+  (a loop, a window that shows it, a tool that reads it).
+- **Closing a window leaves the work running.** A window is a view of the app, not the app. Tools, tasks and servers
+  go on with no window open, and a window opened later shows the state as it is by then.
+- **Changing `app.state` from the background re-renders open windows.** Every window whose last render read a field you
+  assigned is re-rendered and its changes are sent to the client, at the next wait of the task (`task.wait`, the
+  network, a worker) or when it ends, with no event or tool call needed. Assigning the value a field already holds
+  changes nothing. Keep the loop's slice short: between two waits the app runs one call at a time, so a long
+  computation holds up tools, events and renders. Windows also follow your `app.db` writes (live sources) and a
+  `w:toast` or `w.client:set` made from a window you hold.
+- **Unloading stops and releases it.** Disabling, uninstalling or replacing the app aborts its tasks, closes its servers
+  and connections and stops its workers (see Security). What a task was about to do is dropped, not delivered.
+
 ## Security
 
 - **Apps keep their Lua state apart; that is not a security boundary.** One Lua 5.1 VM per app, and one
@@ -293,8 +326,7 @@ SQLite (`apps/agents/app.lua`).
   replaced (a replacement can bind the port the old version had). A callback that comes from inside the VM, a request
   to your own server or the next slice of a task, runs as one call at a time with your tools and events: between two
   waits (`task.wait`, the network, a worker) it is atomic, and a wait lets the others in. Do not wait inside `db:tx`
-  (it raises), and do not make `app.state` changes from a background callback and expect a view to refresh before the
-  next event.
+  (it raises). See "Background work" below for what a background callback can change.
 - **Still enforced.** Values leaving Lua are capped at 100 000 nodes and 4 MiB and may not contain cycles (view trees:
   10 000 nodes, depth 64): a cyclic table is an error, not a crash. Queries return at most 10 000 rows and 16 MiB;
   BLOBs come out as base64 text. SQL `ATTACH` is denied through `app.db`. `readOnly` tools cannot write through

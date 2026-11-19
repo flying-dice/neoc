@@ -432,6 +432,8 @@ struct ViewScript {
     events: Vec<(String, ViewEventCall)>,
     closed: Vec<String>,
     client_values: Vec<(String, serde_json::Map<String, Value>)>,
+    /// Makes the next `render_view` wait until the paired sender fires or is dropped.
+    hold_render: Option<futures_channel::oneshot::Receiver<()>>,
 }
 impl FakeRuntime {
     pub fn loaded(&self) -> Vec<String> {
@@ -478,6 +480,13 @@ impl FakeRuntime {
         v.tree = Some(tree);
         v.sources = sources;
         v.decls = decls;
+    }
+    /// The next `render_view` (a re-render, not an open) waits until the returned sender is used or dropped:
+    /// a render that takes a while.
+    pub fn hold_next_render(&self) -> futures_channel::oneshot::Sender<()> {
+        let (release, held) = futures_channel::oneshot::channel();
+        self.view.lock().unwrap().hold_render = Some(held);
+        release
     }
     /// The next renders fail with this message.
     pub fn fail_render(&self, message: Option<&str>) {
@@ -603,6 +612,10 @@ impl AppRuntime for FakeRuntime {
         Ok(out)
     }
     async fn render_view(&self, _: &AppId, _: &str) -> PortResult<RenderOutput> {
+        let held = self.view.lock().unwrap().hold_render.take();
+        if let Some(held) = held {
+            let _ = held.await;
+        }
         self.render()
     }
     async fn dispatch_view_event(

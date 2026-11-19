@@ -121,7 +121,9 @@ a fake host) and `packages/ui` (each kit component and its states). Stories are 
 1. builds the client (`client/dist`), the host (`cargo build -p agentos-host`), the scripted ACP agent
    (`cargo build -p agentos-acp --bin fake_agent`) and the apps into a **test registry** (`bun scripts/build-apps.ts`:
    every `apps/*/app.json`, plus Notes, the codegen fixture, as a second app the Discover journeys install and remove
-   without disturbing the Calculator);
+   without disturbing the Calculator), and the Ticker (`crates/agentos-host/tests/fixtures/ticker`, an app whose
+   background task counts up) built into `test-results/host/hidden`, which no registry lists: the background journeys
+   (`e2e/background.journeys.spec.ts`) install it by its app ref and remove it again;
 2. writes `agentos.toml` for it: port **7410** (never the default 7400, so a host you have running is untouched). All e2e ports come from
    one env var, `AGENTOS_PORT_BASE` (`scripts/ports.ts`; default 6100): the Storybook server is the base and the e2e
    host is base + 10. Set it (e.g. `AGENTOS_PORT_BASE=9100`) to run e2e in a second worktree at the same time; loopback
@@ -149,7 +151,9 @@ Rules that follow from one shared host:
 - **The Calculator is one calculator for the whole host**, so everything that presses its keys runs one test after
   another (`describe.configure({ mode: 'serial' })`), clears it first, and the `journeys` project runs after
   `desktop`. Use Notes (offered, not installed) for anything that installs or removes an app, and a second paired
-  device for anything that revokes one: never the shared browser's own device or the Calculator.
+  device for anything that revokes one: never the shared browser's own device or the Calculator. The Ticker is the app
+  for anything about background work (a window that changes with no input, a connection that drops); it is not
+  offered by Discover, so a spec installs it from `TICKER_APP_REF` and removes it afterwards.
 - Pairing attempts are rate limited (5 wrong codes a minute): the pairing journeys make at most two wrong guesses, and
   rate limiting itself is covered by the host's pairing tests and the "Too many attempts" story.
 - Do not run two `test:e2e` at once on one machine: they would fight over the host and Storybook ports. Run the

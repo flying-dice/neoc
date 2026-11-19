@@ -79,6 +79,10 @@ impl Tracker {
     pub fn is_tracking(&self) -> bool {
         self.active.is_some()
     }
+    /// Has any field been assigned since the last `take_dirty`?
+    pub fn has_dirty(&self) -> bool {
+        !self.dirty.is_empty()
+    }
     pub fn take_dirty(&mut self) -> BTreeSet<DepKey> {
         std::mem::take(&mut self.dirty)
     }

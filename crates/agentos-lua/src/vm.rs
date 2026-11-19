@@ -207,7 +207,8 @@ pub(crate) struct Shared {
     /// Everything the app spawned (tasks, servers, workers): aborted when the app is unloaded.
     pub life: Life,
     /// Woken when a call that nobody made through the host (a request to the app's own server, a task's next
-    /// slice) ends, so the runtime forwards the effects it queued (`app.notify`, `app.shell`).
+    /// slice) ends or pauses at a wait, so the runtime forwards the effects it queued (`app.notify`, `app.shell`)
+    /// and tells the application that state may have changed.
     pub effects_signal: Arc<Notify>,
 }
 
@@ -423,6 +424,12 @@ impl Baton for Turn {
         self.shared.read_only.store(false, Ordering::SeqCst);
         self.parked = Some(Parked { scope });
         self.held = None;
+        // a background call that pauses has run some script since the last time it let go of the VM: its state
+        // changes (and a window's `w:toast`) are for the host to see now, not when the call is finally over,
+        // which for a loop is never. The gate is free by now.
+        if self.inbound {
+            self.shared.effects_signal.notify_one();
+        }
     }
 
     fn idle_at(&mut self, at: IdleKind) {
@@ -622,7 +629,7 @@ impl AppVm {
         &self.shared.life
     }
 
-    /// Woken when a call that came from inside the VM ends (see [`Shared::effects_signal`]).
+    /// Woken when a call that came from inside the VM ends or pauses (see [`Shared::effects_signal`]).
     pub fn effects_signal(&self) -> Arc<Notify> {
         self.shared.effects_signal.clone()
     }
@@ -766,6 +773,12 @@ impl AppVm {
             Ok((lua_to_json(&out).map_err(|e| VmError::BadValue(e.to_string()))?, deps))
         })
         .await
+    }
+
+    /// Has a window something to show that no call through the host has delivered: an `app.state` field changed
+    /// or a window asked for a toast or a client value since the last settle?
+    pub fn has_unsettled_views(&self) -> bool {
+        self.shared.tracker.lock().has_dirty() || !self.shared.view_effects.lock().is_empty()
     }
 
     /// The `app.state` fields assigned since the last call (views that read them are dirty).
