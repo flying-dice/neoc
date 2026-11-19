@@ -24,8 +24,9 @@ ADRs are *retrospective* (decisions in force). [RFCs](/rfcs/) are *forward-looki
 - [0007. `std:process` — env, args, child-process spawning](/adrs/0007-std-process-module)
 - [0008. `lib:http` — Static file server with directory index](/adrs/0008-lib-http-static-file-server)
 - [0009. `--eval` / `-e` CLI flag](/adrs/0009-eval-cli-flag)
-- [0010. Independent codegen backends — no shared crate](/adrs/0010-independent-codegen-backends)
-- [0011. Use LuaJIT as the embedded runtime and sole compile target](/adrs/0011-use-luajit-as-the-embedded-runtime)
+- [0010. Independent codegen backends — no shared crate](/adrs/0010-independent-codegen-backends) — superseded by 0012
+- [0011. Use LuaJIT as the embedded runtime and sole compile target](/adrs/0011-use-luajit-as-the-embedded-runtime) — compile-target half superseded by 0012
+- [0012. Drop the neoc language; fall back to a core Lua runtime](/adrs/0012-drop-the-neoc-language)
 
 ## See also
 

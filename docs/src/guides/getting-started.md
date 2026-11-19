@@ -23,7 +23,7 @@ irm https://raw.githubusercontent.com/flying-dice/neoc/main/scripts/install.ps1 
 ### From source
 
 ```sh
-cargo install --path .
+cargo install --path crates/neoc
 ```
 
 ### Environment variables

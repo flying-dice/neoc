@@ -2,26 +2,22 @@
 
 > *Neocybex (n.) — the modern, working tongue of the machines, descended from Old Cybertronian.*
 
-**A fast, lightweight [LuaJIT](https://luajit.org/) runtime _and_ the compiler for the neoc language. Rust's standard library, blessed gap-fillers, and vendored crates. One trusted supply chain.**
+**A fast, lightweight [LuaJIT](https://luajit.org/) runtime. Rust's standard library, blessed gap-fillers, and vendored crates. One trusted supply chain.**
 
 A toolkit AI agents use to build things. Install one program — everything needed, no setup, no mid-task downloads.
 
 One of each, on purpose. Agents can't pick wrong when the right answer is the only answer. Same idea on security — audited set bundled in, nothing pulled from outside at runtime.
 
-## One repo, one binary
+## One binary
 
-This monorepo ships a single `neoc` binary that does both jobs:
+`neoc` runs Lua scripts in a sandboxed VM with a curated module surface.
 
-| Subcommand | Job |
+| Command | Job |
 |---|---|
-| `neoc run <script>` | run a Lua script in the sandboxed runtime |
-| `neoc emit-headers --out <dir>` | emit `ext` headers describing the runtime surface |
-| `neoc build <src>` | compile `.neoc` → Lua |
-| `neoc check <src>` | parse + type-check, no output |
-| `neoc fmt <src>` | format `.neoc` source |
-| `neoc lsp` | language server over stdio |
+| `neoc run <script>...` | run Lua scripts; globs expand |
+| `neoc run -e <source>` | run an inline Lua snippet |
 
-The tree-sitter grammar lives in `crates/neoc-grammar/tree-sitter-neoc/`.
+neoc used to be a language that compiled to Lua. That is gone: the runtime is the product. The last state of the language is preserved under the `neoc-lang-final` tag.
 
 ## Documentation style
 
@@ -68,26 +64,24 @@ curl -fsSL https://raw.githubusercontent.com/flying-dice/neoc/main/scripts/insta
 # irm https://raw.githubusercontent.com/flying-dice/neoc/main/scripts/install.ps1 | iex
 
 # From source
-cargo install --path .
+cargo install --path crates/neoc
 ```
 
 `NEOC_INSTALL_DIR` (default `~/.neoc/bin`) controls binary placement.
 
 ```lua
--- fetch.lua
-local fs    = require("std:fs")
-local hyper = require("vnd:hyper")
-local json  = require("vnd:serde_json")
+-- notes.lua
+local fs   = require("std:fs")
+local json = require("vnd:serde_json")
 
-local resp = assert(hyper.get("https://raw.githubusercontent.com/flying-dice/neoc/main/package.json"))
-local data = assert(json.from_str(resp.body))
+local doc = assert(json.from_str('{"name": "neoc", "tags": ["lua", "rust"]}'))
 
-fs.write("package.json", json.to_string_pretty(data))
-print("saved " .. data:get("name"))
+fs.write("notes.json", json.to_string_pretty(doc))
+print("saved " .. doc:get("name"))
 ```
 
 ```sh
-neoc run fetch.lua
+neoc run notes.lua
 ```
 
 ## What's inside
@@ -101,38 +95,22 @@ Three layers, one binary — `std:*` mirrors Rust's standard library, `lib:*` ar
 ```sh
 neoc run script.lua                   # one script
 neoc run 'tests/**/*.lua'             # globs expand
-neoc run one.lua two.lua             # several in sequence
+neoc run one.lua two.lua              # several in sequence
+neoc run -e 'print(1 + 2)'            # inline snippet
+neoc run script.lua -- a b            # arguments reach the script as _NEOC_ARGS
 ```
 
 `.test.lua` / `.spec.lua` suffix triggers built-in test runner.
 
-## Compiling neoc
-
-```sh
-neoc build main.neoc                   # → Lua (the only target)
-neoc check main.neoc                   # parse + type-check only
-neoc fmt main.neoc                     # canonical formatting
-neoc lsp                               # language server (stdio)
-```
-
-`.neoc` compiles to Lua 5.1, the dialect LuaJIT runs — the lowering runs unchanged on this runtime. Each emitted `.lua` module is self-contained: no runtime library, no sidecar files.
+`lib:compile` bundles a script and the runtime into a standalone executable.
 
 ## Workspace layout
 
 ```
-crates/neoc            # the `neoc` binary: unified CLI + folded compiler subcommands
-crates/neoc-vm         # the LuaJIT runtime: engine, script execution, .neoc headers
-crates/neoc-grammar    # tree-sitter grammar + generated parser; cc-builds it
-crates/neoc-ast        # typed AST — pure data, span-free
-crates/neoc-parser     # CST → AST adapter
-crates/neoc-types      # name resolution, inference, well-formedness
-crates/neoc-macros     # built-in derives (Clone/Eq/Debug/Display)
-crates/neoc-codegen-lua # AST → Lua 5.1
-crates/neoc-compiler   # public lib API: transpile to Lua (the runtime embeds this)
-crates/neoc-autosql    # SQL schema + queries → typed .neoc data layer (neoc autosql)
-crates/neoc-fmt        # formatter
-crates/neoc-lsp        # language server
-crates/neoc-wasm       # browser entry point
+crates/neoc            # the `neoc` binary: the CLI over the runtime
+crates/neoc-vm         # the LuaJIT runtime: engine, sandbox, std/lib/vnd modules
+tooling/cli            # Gherkin spec for the CLI, run against the built binary
+docs/                  # the documentation site
 ```
 
 ## Where it fits

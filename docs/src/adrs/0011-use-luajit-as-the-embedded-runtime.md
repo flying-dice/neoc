@@ -9,7 +9,7 @@ Date: 2026-10-10
 
 ## Status
 
-Accepted. Supersedes [ADR 0001](/adrs/0001-use-luau-as-the-embedded-language).
+Accepted. Supersedes [ADR 0001](/adrs/0001-use-luau-as-the-embedded-language). The embedded-runtime decision stands. The compile-target half is superseded by [ADR 0012](/adrs/0012-drop-the-neoc-language) (NEOC-106): there is no compiler, so no compile target.
 
 ## Context
 
