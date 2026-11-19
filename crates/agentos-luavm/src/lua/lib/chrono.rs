@@ -108,17 +108,17 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     Ok(m)
 }
 
-/// Records the five chrono userdata types' field-getters and methods for the
-/// emitted declaration header. The runtime registration of each type stays in its
-/// own `impl UserData`; this only mirrors the surface so the header documents
-/// it. Fields are recorded as zero-argument accessor methods.
+/// Records the five chrono userdata types' fields, methods and constructors for the
+/// emitted `LuaCATS` definitions. The runtime registration of each type stays in its
+/// own `impl UserData`; this only mirrors the surface so the definitions describe
+/// it. Fields (`date.year`) are recorded with `field`, constructors with `static_fn`.
 fn record_userdata(m: &mut Module<'_>) {
     m.userdata("Date", |t| {
-        t.method("year", &[], "number", "Calendar year.")
-            .method("month", &[], "number", "Month of year (1-12).")
-            .method("day", &[], "number", "Day of month (1-31).")
-            .method("weekday", &[], "number", "Day of week, Monday = 1.")
-            .method("ordinal", &[], "number", "Day of year (1-366).")
+        t.field("year", "number", "Calendar year.")
+            .field("month", "number", "Month of year (1-12).")
+            .field("day", "number", "Day of month (1-31).")
+            .field("weekday", "number", "Day of week, Monday = 1.")
+            .field("ordinal", "number", "Day of year (1-366).")
             .method(
                 "with_year",
                 &[("year", "number")],
@@ -161,14 +161,27 @@ fn record_userdata(m: &mut Module<'_>) {
                 &[("fmt", "string")],
                 "Result<string, string>",
                 "Format via a strftime pattern.",
+            )
+            .static_fn(
+                "new",
+                &[("year", "number"), ("month", "number"), ("day", "number")],
+                "Result<Date, string>",
+                "Build a date from year, month and day; an out-of-range value is an error.",
+            )
+            .static_fn(
+                "parse",
+                &[("s", "string")],
+                "Result<Date, string>",
+                "Parse an ISO 8601 date (`2026-05-20`).",
             );
     });
 
     m.userdata("Time", |t| {
-        t.method("hour", &[], "number", "Hour of day (0-23).")
-            .method("minute", &[], "number", "Minute of hour (0-59).")
-            .method("second", &[], "number", "Second of minute (0-59).")
-            .method("nanosecond", &[], "number", "Sub-second nanoseconds.")
+        t.field("hour", "number", "Hour of day (0-23).")
+            .field("minute", "number", "Minute of hour (0-59).")
+            .field("second", "number", "Second of minute (0-59).")
+            .field("nanosecond", "number", "Sub-second nanoseconds.")
+            .method("on", &[("date", "Date")], "DateTime", "Combine with a `Date` into a `DateTime`.")
             .method("add", &[("duration", "Duration")], "Result<Time, string>", "Add a `Duration`.")
             .method("sub", &[("duration", "Duration")], "Result<Time, string>", "Subtract a `Duration`.")
             .method(
@@ -182,17 +195,29 @@ fn record_userdata(m: &mut Module<'_>) {
                 &[("fmt", "string")],
                 "Result<string, string>",
                 "Format via a strftime pattern.",
+            )
+            .static_fn(
+                "new",
+                &[("hour", "number"), ("minute", "number"), ("second", "number"), ("nanosecond", "number?")],
+                "Result<Time, string>",
+                "Build a time of day; an out-of-range value is an error.",
+            )
+            .static_fn(
+                "parse",
+                &[("s", "string")],
+                "Result<Time, string>",
+                "Parse an ISO 8601 time (`13:45:30`).",
             );
     });
 
     m.userdata("DateTime", |t| {
-        t.method("year", &[], "number", "Calendar year.")
-            .method("month", &[], "number", "Month of year (1-12).")
-            .method("day", &[], "number", "Day of month (1-31).")
-            .method("hour", &[], "number", "Hour of day (0-23).")
-            .method("minute", &[], "number", "Minute of hour (0-59).")
-            .method("second", &[], "number", "Second of minute (0-59).")
-            .method("nanosecond", &[], "number", "Sub-second nanoseconds.")
+        t.field("year", "number", "Calendar year.")
+            .field("month", "number", "Month of year (1-12).")
+            .field("day", "number", "Day of month (1-31).")
+            .field("hour", "number", "Hour of day (0-23).")
+            .field("minute", "number", "Minute of hour (0-59).")
+            .field("second", "number", "Second of minute (0-59).")
+            .field("nanosecond", "number", "Sub-second nanoseconds.")
             .method("date", &[], "Date", "The civil `Date` component.")
             .method("time", &[], "Time", "The civil `Time` component.")
             .method(
@@ -214,20 +239,40 @@ fn record_userdata(m: &mut Module<'_>) {
                 &[("fmt", "string")],
                 "Result<string, string>",
                 "Format via a strftime pattern.",
+            )
+            .static_fn(
+                "new",
+                &[
+                    ("year", "number"),
+                    ("month", "number"),
+                    ("day", "number"),
+                    ("hour", "number"),
+                    ("minute", "number"),
+                    ("second", "number"),
+                    ("nanosecond", "number?"),
+                ],
+                "Result<DateTime, string>",
+                "Build a civil datetime; an out-of-range value is an error.",
+            )
+            .static_fn(
+                "parse",
+                &[("s", "string")],
+                "Result<DateTime, string>",
+                "Parse an ISO 8601 datetime (`2026-05-20T13:45:30`).",
             );
     });
 
     m.userdata("ZonedDateTime", |t| {
-        t.method("year", &[], "number", "Calendar year.")
-            .method("month", &[], "number", "Month of year (1-12).")
-            .method("day", &[], "number", "Day of month (1-31).")
-            .method("hour", &[], "number", "Hour of day (0-23).")
-            .method("minute", &[], "number", "Minute of hour (0-59).")
-            .method("second", &[], "number", "Second of minute (0-59).")
-            .method("nanosecond", &[], "number", "Sub-second nanoseconds.")
-            .method("timezone", &[], "string?", "IANA zone name, if any.")
-            .method("offset_seconds", &[], "number", "UTC offset in seconds.")
-            .method("epoch_seconds", &[], "number", "Seconds since the Unix epoch.")
+        t.field("year", "number", "Calendar year.")
+            .field("month", "number", "Month of year (1-12).")
+            .field("day", "number", "Day of month (1-31).")
+            .field("hour", "number", "Hour of day (0-23).")
+            .field("minute", "number", "Minute of hour (0-59).")
+            .field("second", "number", "Second of minute (0-59).")
+            .field("nanosecond", "number", "Sub-second nanoseconds.")
+            .field("timezone", "string?", "IANA zone name, if any.")
+            .field("offset_seconds", "number", "UTC offset in seconds.")
+            .field("epoch_seconds", "number", "Seconds since the Unix epoch.")
             .method("date", &[], "Date", "The civil `Date` component.")
             .method("time", &[], "Time", "The civil `Time` component.")
             .method("datetime", &[], "DateTime", "The civil `DateTime` component.")
@@ -256,20 +301,26 @@ fn record_userdata(m: &mut Module<'_>) {
                 "Result<string, string>",
                 "Format via a strftime pattern.",
             )
-            .method("to_rfc3339", &[], "string", "RFC 3339 timestamp string.");
+            .method("to_rfc3339", &[], "string", "RFC 3339 timestamp string.")
+            .static_fn(
+                "parse",
+                &[("s", "string")],
+                "Result<ZonedDateTime, string>",
+                "Parse an RFC 9557 timestamp with a zone (`2026-05-20T13:45:30+01:00[Europe/London]`).",
+            );
     });
 
     m.userdata("Duration", |t| {
-        t.method("years", &[], "number", "Named years component.")
-            .method("months", &[], "number", "Named months component.")
-            .method("weeks", &[], "number", "Named weeks component.")
-            .method("days", &[], "number", "Named days component.")
-            .method("hours", &[], "number", "Named hours component.")
-            .method("minutes", &[], "number", "Named minutes component.")
-            .method("seconds", &[], "number", "Named seconds component.")
-            .method("milliseconds", &[], "number", "Named milliseconds component.")
-            .method("microseconds", &[], "number", "Named microseconds component.")
-            .method("nanoseconds", &[], "number", "Named nanoseconds component.")
+        t.field("years", "number", "Named years component.")
+            .field("months", "number", "Named months component.")
+            .field("weeks", "number", "Named weeks component.")
+            .field("days", "number", "Named days component.")
+            .field("hours", "number", "Named hours component.")
+            .field("minutes", "number", "Named minutes component.")
+            .field("seconds", "number", "Named seconds component.")
+            .field("milliseconds", "number", "Named milliseconds component.")
+            .field("microseconds", "number", "Named microseconds component.")
+            .field("nanoseconds", "number", "Named nanoseconds component.")
             .method(
                 "total_seconds",
                 &[],
@@ -277,7 +328,19 @@ fn record_userdata(m: &mut Module<'_>) {
                 "Total span in seconds (calendar-agnostic units only).",
             )
             .method("negate", &[], "Duration", "Return the sign-flipped span.")
-            .method("abs", &[], "Duration", "Return the absolute span.");
+            .method("abs", &[], "Duration", "Return the absolute span.")
+            .static_fn(
+                "of",
+                &[("units", "LuaValue")],
+                "Result<Duration, string>",
+                "Build a span from a table of named units, e.g. `{ hours = 1, minutes = 30 }`.",
+            )
+            .static_fn(
+                "parse",
+                &[("s", "string")],
+                "Result<Duration, string>",
+                "Parse an ISO 8601 or friendly duration (`PT1H30M`, `1h 30m`).",
+            );
     });
 }
 

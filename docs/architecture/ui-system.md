@@ -859,7 +859,7 @@ local ui  = require("@agentos/ui")       -- constructors + helpers, generated fr
 | `app.db:scalar(sql)` | scalar Source (badge counts) |
 | `app.tool { name, title, description, input, readOnly, run(input, ctx) }` | an agent tool (MCP). `ctx.actor` (who), `ctx.now`, `ctx:fail(msg)`; writes made here update open views through sources (3.3) |
 | `app.t.string / integer / number / boolean / array / object / enum` | input schema builders with `description`, `default`, `min`, `max` |
-| `app:openWindow(name, params?)`, `app:windows(name)` | open or iterate window instances |
+| `app:openWindow(name, params?)`, `app:windows(name)` | open, or iterate in the order opened, window instances |
 | `app:notify { title, body, at?, actions }` | Notification Centre (host feature) |
 | `app.timer.at(time, fn)`, `app.timer.every(sec, fn)` | host-scheduled, VM-safe timers |
 

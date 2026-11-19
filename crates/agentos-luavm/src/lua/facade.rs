@@ -2,13 +2,10 @@
 //!
 //! A module is declared once, and that single declaration both registers functions with mlua exactly
 //! as a hand-written `module()` would and records the signature + doc for each function (and, for
-//! resource handles, each method). The recording is dumped as a declaration header via
-//! [`Module::decl_header`]. There is no reverse mapping: the Rust source is the source of truth.
-//!
-//! The header syntax (`extern { mod ... }`, `Result<T, E>`, `Option<T>`) is the declaration dialect of
-//! `neoc`, where this VM was written, and the comments below call its types "neoc types". Nothing in this
-//! repo reads the headers yet (the generated Lua typings come from the Rust schema), so they exist
-//! for the module-surface tests in `modules.rs`.
+//! resource handles, each method). The recording is dumped as a `LuaCATS` definition file via
+//! [`Module::luals_meta`]: `bun run codegen` writes one per module to `types/generated/luals/`, so
+//! `require("lib:json")` has completion and diagnostics in lua-language-server. There is no reverse
+//! mapping: the Rust source is the source of truth.
 //!
 //! Three things the facade preserves byte-for-byte versus the hand-written
 //! `module()` functions it replaces:
@@ -17,7 +14,8 @@
 //!    [`crate::lua::sandbox::ok`] / [`crate::lua::sandbox::from_err`], so a
 //!    fallible function returns `(v, nil)` on success and
 //!    `(nil, "<stem>.<fn>: <e>")` on failure — the identical idiom and the
-//!    identical error prefix the original used.
+//!    identical error prefix the original used. The definition file says the same:
+//!    `---@return T?` then `---@return string? err`.
 //! 2. **Per-call tracing spans.** Every registered function opens a
 //!    `tracing` span named `"<stem>.<name>"` at target
 //!    `"lua::lib::<module>"` around the call body, matching the old
@@ -42,16 +40,16 @@ use tracing_core::metadata::{Kind, Metadata};
 use crate::lua::lifecycle::{async_function, Role};
 use crate::lua::sandbox::{from_err, ok};
 
-/// Maps a Rust binding type to its neoc type name.
+/// Maps a Rust binding type to its recorded type name.
 ///
 /// Implemented for the bridge types a Lua-bound function takes or returns.
-/// The associated name is the neoc surface type, not the Rust type: every
+/// The associated name is the surface type, not the Rust type: every
 /// string-shaped binding (`mlua::LuaString`, `String`, `&str`, `Vec<u8>`)
 /// collapses to `"string"`, every numeric binding collapses to `"number"`,
 /// and every dynamic value binding (`mlua::Value`, `mlua::MultiValue`,
 /// `mlua::AnyUserData`) collapses to the opaque `"LuaValue"`.
 pub trait DeclType {
-    /// Returns the neoc type name for this binding type.
+    /// Returns the recorded type name for this binding type.
     fn decl_type() -> String;
 }
 
@@ -81,9 +79,9 @@ impl<T: DeclType, E: DeclType> DeclType for Result<T, E> {
     }
 }
 
-/// One recorded free function: its name, parameter list (name + neoc type
-/// per param), return type, and doc string. Enough to emit one `fn` line +
-/// its `///` doc.
+/// One recorded function: its name, parameter list (name + recorded type per
+/// param), return type, and doc string. Enough to emit one annotated `LuaCATS`
+/// function definition.
 struct Entry {
     name: String,
     params: Vec<(String, String)>,
@@ -92,61 +90,115 @@ struct Entry {
 }
 
 impl Entry {
-    /// Emits a bodyless `fn` line.
+    /// Emits the annotated, bodyless `LuaCATS` definition of this entry.
     ///
-    /// `receiver` is the leading `self` parameter when the entry is an instance
-    /// method (prepended ahead of the recorded params), or `None` for a free or
-    /// associated function. A `()` return is elided to a bare signature, since
-    /// the extern grammar treats the return clause as optional.
-    fn signature(&self, receiver: Option<&str>) -> String {
-        let mut parts = Vec::new();
-        if let Some(r) = receiver {
-            parts.push(r.to_string());
+    /// `owner` is the local table the function hangs on and `method` picks `owner:name(...)` (an
+    /// instance method, with the implicit `self`) over `owner.name(...)` (a free or associated
+    /// function). `scope` is the class prefix that the module's own type names resolve under.
+    fn write_luals(&self, out: &mut String, scope: &str, owner: &str, method: bool) {
+        write_doc(out, &self.doc);
+        for (name, ty) in &self.params {
+            let (ty, optional) = luals_param_type(ty, scope);
+            out.push_str(&format!(
+                "---@param {}{} {ty}\n",
+                luals_ident(name),
+                if optional { "?" } else { "" }
+            ));
         }
-        parts.extend(self.params.iter().map(|(n, t)| format!("{n}: {}", decl_ty(t))));
-        let params = parts.join(", ");
-        let ret = decl_ty(&self.ret);
-        if ret == "()" {
-            format!("fn {}({params});", self.name)
+        for ret in luals_returns(&self.ret, scope) {
+            out.push_str(&format!("---@return {ret}\n"));
+        }
+        let params = self.params.iter().map(|(n, _)| luals_ident(n)).collect::<Vec<_>>().join(", ");
+        let sep = if method { ':' } else { '.' };
+        out.push_str(&format!("function {owner}{sep}{}({params}) end\n\n", luals_ident(&self.name)));
+    }
+}
+
+/// Writes `doc` as `---` comment lines (nothing when it is empty).
+fn write_doc(out: &mut String, doc: &str) {
+    for line in doc.lines() {
+        out.push_str(&format!("--- {line}\n"));
+    }
+}
+
+/// Lua 5.1 reserved words: not usable as a parameter or function name in a definition file.
+const LUA_KEYWORDS: &[&str] = &[
+    "and", "break", "do", "else", "elseif", "end", "false", "for", "function", "if", "in", "local", "nil",
+    "not", "or", "repeat", "return", "then", "true", "until", "while",
+];
+
+/// A name made safe to write as a Lua identifier: a reserved word gets a trailing underscore.
+fn luals_ident(name: &str) -> String {
+    if LUA_KEYWORDS.contains(&name) {
+        format!("{name}_")
+    } else {
+        name.to_string()
+    }
+}
+
+/// The `LuaCATS` type of one recorded type string, and whether it is optional.
+///
+/// The recorded vocabulary is the facade's own (see [`DeclType`]): `string`, `number`, `bool`, `LuaValue`
+/// (the opaque dynamic value), a trailing `?` for an optional, and any other name for a type this module
+/// declares, which resolves under `scope`.
+fn luals_param_type(ty: &str, scope: &str) -> (String, bool) {
+    let ty = luals_type(ty, scope);
+    match ty.strip_suffix('?') {
+        Some(base) => (base.to_string(), true),
+        None => (ty, false),
+    }
+}
+
+fn luals_type(ty: &str, scope: &str) -> String {
+    match ty.trim() {
+        "string" => "string".to_string(),
+        "number" => "number".to_string(),
+        "bool" => "boolean".to_string(),
+        "LuaValue" => "any".to_string(),
+        "()" => "nil".to_string(),
+        other => match other.strip_suffix('?') {
+            Some(base) => format!("{}?", luals_type(base, scope)),
+            None => format!("{scope}.{other}"),
+        },
+    }
+}
+
+/// The `---@return` lines for a recorded return type.
+///
+/// `()` returns nothing. `Result<T, string>` is the runtime's `(value, error)` idiom: `T?` then `string? err`
+/// (a `()` value is `nil`). Anything else is one value.
+fn luals_returns(ret: &str, scope: &str) -> Vec<String> {
+    let ret = ret.trim();
+    if ret == "()" {
+        return Vec::new();
+    }
+    if let Some(value) = ret.strip_prefix("Result<").and_then(|r| r.strip_suffix(", string>")) {
+        let value = luals_type(value, scope);
+        let value = if value == "nil" || value == "any" || value.ends_with('?') {
+            value
         } else {
-            format!("fn {}({params}) -> {ret};", self.name)
-        }
+            format!("{value}?")
+        };
+        return vec![value, "string? err".to_string()];
     }
-
-    /// Emits a constructor line: `#[extern(constructor)] fn <name>(<params>);`.
-    /// A constructor has no return clause — it constructs the enclosing `Self`.
-    fn constructor_signature(&self) -> String {
-        let params =
-            self.params.iter().map(|(n, t)| format!("{n}: {}", decl_ty(t))).collect::<Vec<_>>().join(", ");
-        format!("#[extern(constructor)] fn {}({params});", self.name)
-    }
+    vec![luals_type(ret, scope)]
 }
 
-/// Translates a recorded neoc type string to its emitted surface form.
-///
-/// Two normalisations:
-///
-/// 1. The facade records the opaque dynamic type as `LuaValue` (its bridge
-///    name), but the extern surface speaks the language primitive `Unknown`.
-/// 2. The facade records optionality with a trailing `?` (`string?`), but neoc
-///    has no `?` sugar — optionality is the nominal `Option<T>`. A trailing `?`
-///    becomes `Option<…>` around the (recursively translated) base type.
-///
-/// Every other type passes through unchanged.
-fn decl_ty(ty: &str) -> String {
-    let ty = ty.trim();
-    if let Some(base) = ty.strip_suffix('?') {
-        return format!("Option<{}>", decl_ty(base));
-    }
-    ty.replace("LuaValue", "Unknown")
+/// The class name a registry key's module is declared under: `lib:json` becomes `lib_json`.
+fn luals_class(name: &str) -> String {
+    name.replace(':', "_")
 }
 
-/// One recorded `struct` + `impl` for a resource-handle userdata type. The
-/// receiver (`self`) is implicit on every method, so only the trailing
-/// arguments are recorded.
+/// One recorded resource-handle userdata type. The receiver (`self`) is implicit on every method, so only the
+/// trailing arguments are recorded. `fields` are the read-only values (`date.year`), `statics` and
+/// `static_consts` the members of the same-named sub-table on the module table (`Duration.from_secs`,
+/// `Duration.ZERO`).
 struct UserDataEntry {
     type_name: String,
     methods: Vec<Entry>,
+    fields: Vec<FieldEntry>,
+    statics: Vec<Entry>,
+    static_consts: Vec<FieldEntry>,
 }
 
 /// One recorded `struct <Type>; impl <Type> { … }` for a constructor-bearing
@@ -159,18 +211,16 @@ struct TypeEntry {
     methods: Vec<Entry>,
 }
 
-/// One recorded module-level constant: a value bound directly on the module
-/// table whose shape the facade does not model as a function (for example
-/// `std:thread`'s dynamically-injected `parent` / `shared`). The extern item
-/// set has no `const`, so it is emitted inside the `mod` as a zero-argument
-/// accessor `fn <name>() -> <type>;`.
-struct ConstEntry {
+/// One recorded value that is not a function: a module-level constant (for example `std:thread`'s
+/// dynamically-injected `parent` / `shared`), a userdata type's read-only field (`date.year`) or a constant on a
+/// type's sub-table (`Duration.ZERO`). It is emitted as a `---@field`.
+struct FieldEntry {
     name: String,
     ty: String,
     doc: String,
 }
 
-/// Builds a Lua module table while recording the neoc signature of each
+/// Builds a Lua module table while recording the signature of each
 /// function and userdata type it registers.
 ///
 /// Register free functions with [`Module::func`] (infallible) and
@@ -178,7 +228,7 @@ struct ConstEntry {
 /// `FromLuaMulti` plus an explicit parameter-name/type slice. Record a
 /// resource-handle userdata type with [`Module::userdata`]. When the surface
 /// is complete, hand the table to the engine with [`Module::into_table`] and
-/// emit the matching neoc header with [`Module::decl_header`].
+/// emit the matching `LuaCATS` definitions with [`Module::luals_meta`].
 pub struct Module<'l> {
     lua: &'l Lua,
     table: Table,
@@ -186,14 +236,14 @@ pub struct Module<'l> {
     entries: Vec<Entry>,
     userdata: Vec<UserDataEntry>,
     types: Vec<TypeEntry>,
-    consts: Vec<ConstEntry>,
+    consts: Vec<FieldEntry>,
 }
 
 impl<'l> Module<'l> {
     /// Creates a new module builder with an empty backing table.
     ///
     /// The `name` is the registry key the module is installed under
-    /// (for example, `"lib:base64"`) and appears in the emitted header.
+    /// (for example, `"lib:base64"`) and names the module's definition file.
     pub fn new(lua: &'l Lua, name: impl Into<String>) -> mlua::Result<Self> {
         Ok(Self {
             lua,
@@ -214,9 +264,8 @@ impl<'l> Module<'l> {
     /// the hand-written `(a, b): (TypeA, TypeB)` style). `f` is wrapped in
     /// `lua.create_function`, set on the table under `name`, and its body runs
     /// inside a `tracing` span named `"<stem>.<name>"` so the call is traced
-    /// exactly as the old `#[instrument]` attribute did. The recorded neoc
-    /// signature is `fn <name>(<params>) -> R`, where `R` resolves through
-    /// [`DeclType`].
+    /// exactly as the old `#[instrument]` attribute did. The recorded
+    /// return type is `R`, which resolves through [`DeclType`].
     pub fn func<A, R>(
         &mut self,
         name: &str,
@@ -286,9 +335,8 @@ impl<'l> Module<'l> {
     /// the calling Lua coroutine until the future resolves. The future runs
     /// inside the same `"<stem>.<name>"` tracing span [`Module::func`] uses,
     /// attached via [`tracing::Instrument`] so the span covers the whole
-    /// `await`. neoc has no async surface — async is a runtime detail — so the
-    /// recorded neoc signature is identical to a synchronous `fn`:
-    /// `fn <name>(<params>) -> R`.
+    /// `await`. The definitions have no async surface — async is a runtime
+    /// detail — so the recorded signature is identical to a synchronous function's.
     pub fn async_func<A, R, Fut>(
         &mut self,
         name: &str,
@@ -321,7 +369,7 @@ impl<'l> Module<'l> {
     /// becomes `(v, nil)` and `Err(e)` becomes `(nil, "<stem>.<name>: <e>")`,
     /// with the identical error prefix. The future runs inside the same
     /// `"<stem>.<name>"` tracing span, attached via [`tracing::Instrument`].
-    /// The recorded neoc return type is `Result<<T>, string>`, identical to
+    /// The recorded return type is `Result<<T>, string>`, identical to
     /// the synchronous form.
     pub fn try_async_func<A, T, E, Fut>(
         &mut self,
@@ -371,19 +419,19 @@ impl<'l> Module<'l> {
         Ok(self)
     }
 
-    /// Records a free-function signature for the header without registering an
+    /// Records a free-function signature for the definitions without registering an
     /// implementation.
     ///
     /// The signature-only counterpart to [`Module::set`]: pair the two when a
     /// free function must be registered verbatim — because it raises an
     /// `mlua::Error` directly, bakes its own error prefix, shares a prefix
     /// helper with a userdata method, or runs under a custom or absent
-    /// `tracing` span — yet must still appear in the emitted header. `params`
+    /// `tracing` span — yet must still appear in the emitted definitions. `params`
     /// is the ordered list of `(parameter_name, decl_type)` pairs; `ret` is the
-    /// neoc return type as a string (the caller passes it directly because such
+    /// return type as a string (the caller passes it directly because such
     /// a function's return shape is decided in its body rather than by a single
     /// Rust return type, exactly as [`UserDataSpec::method`] does). This records
-    /// only the header surface; the runtime registration is whatever
+    /// only the definitions; the runtime registration is whatever
     /// [`Module::set`] installed, left untouched.
     pub fn record_fn(&mut self, name: &str, params: &[(&str, &str)], ret: &str, doc: &str) -> &mut Self {
         self.entries.push(Entry {
@@ -395,18 +443,26 @@ impl<'l> Module<'l> {
         self
     }
 
-    /// Records a resource-handle userdata type for the emitted header.
+    /// Records a resource-handle userdata type for the emitted definitions.
     ///
-    /// `type_name` is the neoc type the userdata maps to (matching the Rust
+    /// `type_name` is the type name the userdata is recorded under (matching the Rust
     /// type name, e.g. `"Object"`). The closure receives a [`UserDataSpec`]
     /// recorder; declare each method on it with [`UserDataSpec::method`]. This
-    /// only records the neoc surface — the runtime registration of the type's
+    /// only records the surface — the runtime registration of the type's
     /// methods stays in the type's own `impl UserData`, untouched, so its
     /// behaviour is byte-identical to today.
     pub fn userdata(&mut self, type_name: &str, build: impl FnOnce(&mut UserDataSpec)) -> &mut Self {
-        let mut spec = UserDataSpec { type_name: type_name.to_string(), methods: Vec::new() };
+        let mut spec = UserDataSpec {
+            entry: UserDataEntry {
+                type_name: type_name.to_string(),
+                methods: Vec::new(),
+                fields: Vec::new(),
+                statics: Vec::new(),
+                static_consts: Vec::new(),
+            },
+        };
         build(&mut spec);
-        self.userdata.push(UserDataEntry { type_name: spec.type_name, methods: spec.methods });
+        self.userdata.push(spec.entry);
         self
     }
 
@@ -417,13 +473,13 @@ impl<'l> Module<'l> {
     /// `Map.new()` / `Counter.new(initial)`, `std:net`'s
     /// `TcpListener.bind(addr)`. The closure receives a [`TypeSpec`]: declare
     /// each constructor with [`TypeSpec::constructor`] (it both registers the
-    /// function on the sub-table with mlua and records an associated `fn`) and
-    /// each instance method with [`TypeSpec::method`] (recorded for the header
+    /// function on the sub-table with mlua and records it) and
+    /// each instance method with [`TypeSpec::method`] (recorded for the definitions
     /// only — the method's runtime registration stays in the type's own
     /// `impl UserData`). The sub-table is created here, populated with the
     /// constructors, and set on the module table under `type_name`, exactly as
-    /// a hand-written `t.set("Map", map_t)` would. The recorded header is
-    /// `struct <Type>; impl <Type> { <constructors> <methods> }`.
+    /// a hand-written `t.set("Map", map_t)` would. The recorded definitions are
+    /// a `<Type>` class of methods and a `<Type>Statics` class of constructors.
     pub fn type_(
         &mut self,
         type_name: &str,
@@ -446,18 +502,17 @@ impl<'l> Module<'l> {
         Ok(self)
     }
 
-    /// Records a module-level constant for the emitted header.
+    /// Records a module-level constant for the emitted definitions.
     ///
     /// For a value bound directly on the module table whose shape the facade
     /// does not model as a function — most notably a dynamically-injected
     /// global such as `std:thread`'s `parent` / `shared`, which only exists in
-    /// a spawned worker and cannot be typed beyond the opaque `Unknown`. This
-    /// only records the neoc surface (a zero-argument accessor
-    /// `fn <name>() -> <type>;` inside the `mod`, since the extern item set has
-    /// no `const`); the runtime value is set elsewhere (or injected at spawn
-    /// time), so the registration is unchanged.
+    /// a spawned worker and cannot be typed beyond the opaque `LuaValue`. This
+    /// only records the surface (a `---@field` on the module class); the runtime
+    /// value is set elsewhere (or injected at spawn time), so the registration
+    /// is unchanged.
     pub fn const_(&mut self, name: &str, ty: &str, doc: &str) -> &mut Self {
-        self.consts.push(ConstEntry { name: name.to_string(), ty: ty.to_string(), doc: doc.to_string() });
+        self.consts.push(FieldEntry { name: name.to_string(), ty: ty.to_string(), doc: doc.to_string() });
         self
     }
 
@@ -484,95 +539,171 @@ impl<'l> Module<'l> {
         format!("lua::lib::{}", module_stem(&self.name))
     }
 
-    /// Emits the declaration header text for this module.
+    /// Emits the `LuaCATS` definition file for this module: `---@meta`, then one class per resource
+    /// type and one for the module table, then the module table's functions.
     ///
-    /// The output is one `extern { … }` block wrapping a single
-    /// `#[extern(path = "<key>")] mod <name> { … }`, where `<key>` is the exact
-    /// registry key (`require()` path) and `<name>` is the neoc identifier
-    /// derived from the key's last segment. The module's whole surface lives
-    /// inside the `mod`: each resource-handle type as a `struct` + bodyless
-    /// `impl`, each free function as a bodyless `fn`, and each former module
-    /// constant as a zero-argument accessor `fn`. Every nested item is indented
-    /// one level deeper than its enclosing block, and the output is terminated
-    /// by a single trailing newline.
-    // TODO: clean-code - 0.5 - DEAD: the signature and doc recording behind `decl_header`/`headers` has no production reader (only tests); keep just the span and registration half.
-    pub fn decl_header(&self) -> String {
+    /// The file is named after the registry key (`lib:json.lua`), which is how lua-language-server
+    /// resolves `require("lib:json")`; the caller writes it. Classes are `<ns>_<stem>` for the module
+    /// (`lib_json`) and `<ns>_<stem>.<Type>` for each type it declares; a type with a sub-table of
+    /// functions on the module (`Duration.from_secs`) also gets a `<Type>Statics` class, the type of that
+    /// field of the module.
+    ///
+    /// # Errors
+    /// Fails when the live module table cannot be read, or when a type's sub-table on it has a member that
+    /// was not recorded: an unrecorded member would be a false alarm for every app that uses it.
+    pub fn luals_meta(&self) -> mlua::Result<String> {
+        let class = luals_class(&self.name);
         let mut out = String::new();
-        out.push_str(&format!("// @generated from the {} runtime module — do not edit.\n", self.name));
-        out.push_str("extern {\n");
-        out.push_str(&format!("    #[extern(path = \"{}\")]\n", self.name));
-        out.push_str(&format!("    mod {} {{\n", mod_name(&self.name)));
+        out.push_str("---@meta\n\n");
+        out.push_str("-- GENERATED by agentos-luavm (`cargo run -p agentos-luavm --example luals`) from the module's\n");
+        out.push_str("-- recorded surface. Do not edit. Regenerate with `bun run codegen`; `bun run codegen:check` fails\n");
+        out.push_str("-- when this file is stale.\n--\n");
+        out.push_str(&format!(
+            "-- Definitions for lua-language-server: `require(\"{}\")`. Never loaded by the host.\n\n",
+            self.name
+        ));
 
-        // Resource-handle types: every method takes the implicit `self`.
+        let mut module_fields = Vec::new();
         for ud in &self.userdata {
-            out.push_str(&format!("        struct {};\n", ud.type_name));
-            out.push_str(&format!("        impl {} {{\n", ud.type_name));
-            for m in &ud.methods {
-                out.push_str(&format!("            /// {}\n", m.doc));
-                out.push_str(&format!("            {}\n", m.signature(Some("self"))));
+            write_class(&mut out, &class, &ud.type_name, &ud.fields, &ud.methods);
+            if !ud.statics.is_empty() || !ud.static_consts.is_empty() {
+                self.check_statics_recorded(ud)?;
+                write_statics(&mut out, &class, &ud.type_name, &ud.static_consts, &ud.statics);
+                module_fields.push(&ud.type_name);
             }
-            out.push_str("        }\n");
         }
-
-        // Constructor-bearing types: constructors are associated (no `self`,
-        // marked `#[extern(constructor)]`); instance methods take `self`.
         for ty in &self.types {
-            out.push_str(&format!("        struct {};\n", ty.type_name));
-            out.push_str(&format!("        impl {} {{\n", ty.type_name));
-            for c in &ty.constructors {
-                out.push_str(&format!("            /// {}\n", c.doc));
-                out.push_str(&format!("            {}\n", c.constructor_signature()));
-            }
-            for m in &ty.methods {
-                out.push_str(&format!("            /// {}\n", m.doc));
-                out.push_str(&format!("            {}\n", m.signature(Some("self"))));
-            }
-            out.push_str("        }\n");
+            write_class(&mut out, &class, &ty.type_name, &[], &ty.methods);
+            write_statics(&mut out, &class, &ty.type_name, &[], &ty.constructors);
+            module_fields.push(&ty.type_name);
         }
 
-        // Free functions.
-        for e in &self.entries {
-            out.push_str(&format!("        /// {}\n", e.doc));
-            out.push_str(&format!("        {}\n", e.signature(None)));
+        out.push_str(&format!("---@class {class}\n"));
+        for name in module_fields {
+            out.push_str(&format!("---@field {name} {class}.{name}Statics\n"));
         }
-
-        // Former module constants: a value bound on the module table, modelled
-        // as a zero-argument accessor `fn` (the extern item set has no `const`).
         for c in &self.consts {
-            out.push_str(&format!("        /// {}\n", c.doc));
-            out.push_str(&format!("        fn {}() -> {};\n", c.name, decl_ty(&c.ty)));
+            write_field(&mut out, &class, c);
         }
+        out.push_str("local M = {}\n\n");
+        for e in &self.entries {
+            e.write_luals(&mut out, &class, "M", false);
+        }
+        out.push_str(&format!("---@type {class}\nreturn M\n"));
+        Ok(out)
+    }
 
-        out.push_str("    }\n");
-        out.push_str("}\n");
-        out
+    /// Fails when the live sub-table for `ud` on the module table has a member the type did not record.
+    fn check_statics_recorded(&self, ud: &UserDataEntry) -> mlua::Result<()> {
+        let mlua::Value::Table(sub) = self.table.get::<mlua::Value>(ud.type_name.as_str())? else {
+            return Err(mlua::Error::external(format!(
+                "{}: `{}` records statics but the module has no such sub-table",
+                self.name, ud.type_name
+            )));
+        };
+        for pair in sub.pairs::<String, mlua::Value>() {
+            let (key, _) = pair?;
+            let recorded =
+                ud.statics.iter().any(|e| e.name == key) || ud.static_consts.iter().any(|c| c.name == key);
+            if !recorded {
+                return Err(mlua::Error::external(format!(
+                    "{}: {}.{key} is on the module table but not recorded (add it with static_fn or static_const)",
+                    self.name, ud.type_name
+                )));
+            }
+        }
+        Ok(())
     }
 }
 
-/// Records the neoc method surface of one resource-handle userdata type.
+/// One `---@class <class>.<Type>` of values (`fields`) and methods, hung on a local `ud_<Type>`.
+fn write_class(out: &mut String, class: &str, type_name: &str, fields: &[FieldEntry], methods: &[Entry]) {
+    out.push_str(&format!("---@class {class}.{type_name}\n"));
+    for field in fields {
+        write_field(out, class, field);
+    }
+    out.push_str(&format!("local ud_{type_name} = {{}}\n\n"));
+    for m in methods {
+        m.write_luals(out, class, &format!("ud_{type_name}"), true);
+    }
+}
+
+/// One `---@class <class>.<Type>Statics`: the sub-table of a type on its module (`Duration.from_secs`).
+fn write_statics(out: &mut String, class: &str, type_name: &str, consts: &[FieldEntry], functions: &[Entry]) {
+    out.push_str(&format!("---@class {class}.{type_name}Statics\n"));
+    for c in consts {
+        write_field(out, class, c);
+    }
+    out.push_str(&format!("local statics_{type_name} = {{}}\n\n"));
+    for f in functions {
+        f.write_luals(out, class, &format!("statics_{type_name}"), false);
+    }
+}
+
+/// One `---@field <name> <type> <doc>` line.
+fn write_field(out: &mut String, class: &str, field: &FieldEntry) {
+    let (ty, optional) = luals_param_type(&field.ty, class);
+    let mark = if optional { "?" } else { "" };
+    let doc = field.doc.replace('\n', " ");
+    out.push_str(&format!("---@field {}{mark} {ty} {doc}\n", luals_ident(&field.name)));
+}
+
+/// Records the method surface of one resource-handle userdata type.
 ///
 /// Handed to the closure passed to [`Module::userdata`]. Each
 /// [`UserDataSpec::method`] call mirrors one `add_method` / `add_function` on
 /// the type's `impl UserData`. The receiver (`self`) is implicit and is not
 /// listed in `params`.
 pub struct UserDataSpec {
-    type_name: String,
-    methods: Vec<Entry>,
+    entry: UserDataEntry,
 }
 
 impl UserDataSpec {
     /// Records one method on the userdata type.
     ///
     /// `params` is the ordered list of `(parameter_name, decl_type)` pairs for
-    /// the arguments *after* the implicit `self` receiver. `ret` is the neoc
+    /// the arguments *after* the implicit `self` receiver. `ret` is the
     /// return type as a string (callers pass it directly because a method's
     /// return shape — often `LuaValue` or `(LuaValue, LuaValue)` — is decided
     /// at the `add_method` body rather than by a single Rust return type).
     pub fn method(&mut self, name: &str, params: &[(&str, &str)], ret: &str, doc: &str) -> &mut Self {
-        self.methods.push(Entry {
+        self.entry.methods.push(Entry {
             name: name.to_string(),
             params: own_params(params),
             ret: ret.to_string(),
+            doc: doc.to_string(),
+        });
+        self
+    }
+
+    /// Records one read-only field on the userdata type (`add_field_method_get`): `date.year`, not
+    /// `date:year()`. `ty` is the recorded type of the value.
+    pub fn field(&mut self, name: &str, ty: &str, doc: &str) -> &mut Self {
+        self.entry.fields.push(FieldEntry {
+            name: name.to_string(),
+            ty: ty.to_string(),
+            doc: doc.to_string(),
+        });
+        self
+    }
+
+    /// Records one function on the type's sub-table of the module table (`Duration.from_secs(n)`): a
+    /// constructor or another function with no `self`. `params` and `ret` are as for [`UserDataSpec::method`].
+    pub fn static_fn(&mut self, name: &str, params: &[(&str, &str)], ret: &str, doc: &str) -> &mut Self {
+        self.entry.statics.push(Entry {
+            name: name.to_string(),
+            params: own_params(params),
+            ret: ret.to_string(),
+            doc: doc.to_string(),
+        });
+        self
+    }
+
+    /// Records one constant value on the type's sub-table of the module table (`Duration.ZERO`).
+    pub fn static_const(&mut self, name: &str, ty: &str, doc: &str) -> &mut Self {
+        self.entry.static_consts.push(FieldEntry {
+            name: name.to_string(),
+            ty: ty.to_string(),
             doc: doc.to_string(),
         });
         self
@@ -584,7 +715,7 @@ impl UserDataSpec {
 ///
 /// Handed to the closure passed to [`Module::type_`]. Constructors are
 /// associated functions registered on the sub-table with mlua and recorded as
-/// `fn`s with no `self`. Methods are recorded for the header only — their
+/// `fn`s with no `self`. Methods are recorded for the definitions only — their
 /// runtime registration stays in the type's `impl UserData`, untouched — and
 /// carry an implicit `self` receiver not listed in `params`.
 pub struct TypeSpec<'l, 't> {
@@ -605,8 +736,8 @@ impl TypeSpec<'_, '_> {
     /// inside a `tracing` span named `"<Type>.<name>"` at the type's module
     /// target, matching the old `#[instrument(name = "Type.new", …)]`
     /// attribute on the constructor function. `params` is the ordered list of
-    /// `(parameter_name, decl_type)` pairs; the recorded associated function
-    /// is `fn <name>(<params>) -> <Type>` (constructors return the type).
+    /// `(parameter_name, decl_type)` pairs; the recorded return type is
+    /// `<Type>` (constructors return the type).
     pub fn constructor<A, R>(
         &mut self,
         name: &str,
@@ -638,8 +769,7 @@ impl TypeSpec<'_, '_> {
     /// [`crate::lua::sandbox::from_err`] with the `"<Type>.<name>"` error
     /// prefix, identical to the hand-written constructor. The body runs inside
     /// the same `"<Type>.<name>"` tracing span as [`TypeSpec::constructor`].
-    /// The recorded associated function is
-    /// `fn <name>(<params>) -> Result<<Type>, string>`.
+    /// The recorded return type is `Result<<Type>, string>`.
     pub fn try_constructor<A, T, E>(
         &mut self,
         name: &str,
@@ -675,8 +805,8 @@ impl TypeSpec<'_, '_> {
     /// Records one instance method on the type.
     ///
     /// Mirrors [`UserDataSpec::method`]: `params` lists the arguments after
-    /// the implicit `self` receiver, and `ret` is the neoc return type as a
-    /// string. This only records the header surface — the method's runtime
+    /// the implicit `self` receiver, and `ret` is the return type as a
+    /// string. This only records the definitions — the method's runtime
     /// registration lives in the type's own `impl UserData`.
     pub fn method(&mut self, name: &str, params: &[(&str, &str)], ret: &str, doc: &str) -> &mut Self {
         self.methods.push(Entry {
@@ -700,16 +830,6 @@ fn own_params(params: &[(&str, &str)]) -> Vec<(String, String)> {
 /// style guide).
 fn module_stem(name: &str) -> &str {
     name.split_once(':').map_or(name, |(_, stem)| stem)
-}
-
-/// Derives the `mod` identifier emitted in a header from a registry key: the
-/// key's last segment (`"vnd:rusqlite"` → `"rusqlite"`, `"std:fs"` → `"fs"`).
-/// This is what makes the backend emit `local <name> = require("<key>")` and
-/// lower member access to `<name>.member`. Runtime keys already use
-/// identifier-safe last segments (letters, digits, underscores), so the segment
-/// is returned verbatim.
-fn mod_name(name: &str) -> &str {
-    module_stem(name)
 }
 
 // ---------------------------------------------------------------------------
@@ -870,10 +990,20 @@ mod tests {
         )
         .expect("try_func");
 
-        let header = m.decl_header();
+        let meta = m.luals_meta().expect("meta");
         assert!(
-            header.contains("fn join(a: string, b: string) -> Result<string, string>;"),
-            "header missing multi-arg signature:\n{header}"
+            contains_in_order(
+                &meta,
+                &[
+                    "--- Concatenate two strings.",
+                    "---@param a string",
+                    "---@param b string",
+                    "---@return string?",
+                    "---@return string? err",
+                    "function M.join(a, b) end",
+                ]
+            ),
+            "meta missing the multi-arg definition:\n{meta}"
         );
 
         let f: mlua::Function = m.into_table().get("join").expect("get fn");
@@ -882,11 +1012,22 @@ mod tests {
         assert!(err.is_none());
     }
 
-    /// `userdata` records a `struct` + `impl` block inside the `mod`; each
-    /// method takes an implicit `self`, and the dynamic `LuaValue` bridge type
-    /// surfaces as the `Unknown` primitive.
+    /// The lines of `needle`, each found after the one before it.
+    fn contains_in_order(haystack: &str, needles: &[&str]) -> bool {
+        let mut rest = haystack;
+        needles.iter().all(|n| match rest.find(n) {
+            Some(at) => {
+                rest = &rest[at + n.len()..];
+                true
+            }
+            None => false,
+        })
+    }
+
+    /// `userdata` records a class per type with its methods (`ud:method`, the implicit `self`), and the
+    /// dynamic `LuaValue` bridge type surfaces as `any`.
     #[test]
-    fn userdata_emits_struct_impl() {
+    fn userdata_emits_class_and_methods() {
         let lua = Lua::new();
         let mut m = Module::new(&lua, "lib:json").expect("module");
         m.userdata("Object", |o| {
@@ -898,19 +1039,24 @@ mod tests {
             );
         });
 
-        let header = m.decl_header();
-        assert!(header.contains("extern {"), "{header}");
-        assert!(header.contains("#[extern(path = \"lib:json\")]"), "{header}");
-        assert!(header.contains("mod json {"), "{header}");
-        assert!(header.contains("struct Object;"), "{header}");
-        assert!(header.contains("impl Object {"), "{header}");
-        assert!(header.contains("fn get(self, path: Unknown) -> Unknown;"), "{header}");
-        assert!(header.contains("fn len(self) -> number;"), "{header}");
+        let meta = m.luals_meta().expect("meta");
+        assert!(meta.starts_with("---@meta\n"), "{meta}");
+        assert!(meta.contains("---@class lib_json.Object\n"), "{meta}");
+        assert!(meta.contains("---@class lib_json\n"), "{meta}");
+        assert!(
+            contains_in_order(
+                &meta,
+                &["---@param path any", "---@return any", "function ud_Object:get(path) end"]
+            ),
+            "{meta}"
+        );
+        assert!(contains_in_order(&meta, &["---@return number", "function ud_Object:len() end"]), "{meta}");
+        assert!(meta.ends_with("---@type lib_json\nreturn M\n"), "{meta}");
     }
 
     /// `type_` registers a constructor on the type's sub-table (so
-    /// `Type.new(...)` calls it) and records `struct … impl … { fn new() …
-    /// <methods> }`.
+    /// `Type.new(...)` calls it) and records a `Type` class of methods and a
+    /// `TypeStatics` class of constructors, reached from the module as a field.
     #[test]
     fn type_registers_and_records_constructor() {
         let lua = Lua::new();
@@ -927,10 +1073,17 @@ mod tests {
             })
             .expect("type_");
 
-            let header = m.decl_header();
-            assert!(header.contains("struct Map;"), "{header}");
-            assert!(header.contains("#[extern(constructor)] fn new();"), "{header}");
-            assert!(header.contains("fn set(self, k: string, v: Unknown);"), "{header}");
+            let meta = m.luals_meta().expect("meta");
+            assert!(meta.contains("---@class std_collections.Map\n"), "{meta}");
+            assert!(meta.contains("---@field Map std_collections.MapStatics\n"), "{meta}");
+            assert!(meta.contains("function statics_Map.new() end"), "{meta}");
+            assert!(
+                contains_in_order(
+                    &meta,
+                    &["---@param k string", "---@param v any", "function ud_Map:set(k, v) end"]
+                ),
+                "{meta}"
+            );
             m.into_table()
         };
 
@@ -959,8 +1112,19 @@ mod tests {
         })
         .expect("type_");
 
-        let header = m.decl_header();
-        assert!(header.contains("#[extern(constructor)] fn bind(addr: string);"), "{header}");
+        let meta = m.luals_meta().expect("meta");
+        assert!(
+            contains_in_order(
+                &meta,
+                &[
+                    "---@param addr string",
+                    "---@return std_net.TcpListener?",
+                    "---@return string? err",
+                    "function statics_TcpListener.bind(addr) end",
+                ]
+            ),
+            "{meta}"
+        );
 
         let sub: Table = m.into_table().get("TcpListener").expect("sub");
         let bind: mlua::Function = sub.get("bind").expect("bind");
@@ -968,21 +1132,21 @@ mod tests {
         assert_eq!(err.as_deref(), Some("TcpListener.bind: empty addr"));
     }
 
-    /// `const_` records a former module constant as a zero-argument accessor
-    /// `fn` inside the `mod`, with `LuaValue` surfaced as `Unknown` (the extern
-    /// item set has no `const`).
+    /// `const_` records a former module constant as a `---@field` on the module class, with an optional
+    /// type spelled `name?`.
     #[test]
-    fn const_records_accessor_fn() {
+    fn const_records_field() {
         let lua = Lua::new();
         let mut m = Module::new(&lua, "std:thread").expect("module");
         m.const_("parent", "LuaValue", "Dynamic parent channel.");
+        m.const_("shared", "LuaValue?", "Shared table.");
 
-        let header = m.decl_header();
-        assert!(header.contains("fn parent() -> Unknown;"), "{header}");
+        let meta = m.luals_meta().expect("meta");
+        assert!(meta.contains("---@field parent any Dynamic parent channel.\n"), "{meta}");
+        assert!(meta.contains("---@field shared? any Shared table.\n"), "{meta}");
     }
 
-    /// `try_async_func` records the same `Result<<T>, string>` signature as
-    /// the synchronous `try_func`.
+    /// `try_async_func` records the same `(value, error)` returns as the synchronous `try_func`.
     #[test]
     fn try_async_func_records_result_signature() {
         let lua = Lua::new();
@@ -992,12 +1156,23 @@ mod tests {
         })
         .expect("try_async_func");
 
-        let header = m.decl_header();
-        assert!(header.contains("fn open(url: string) -> Result<string, string>;"), "{header}");
+        let meta = m.luals_meta().expect("meta");
+        assert!(
+            contains_in_order(
+                &meta,
+                &[
+                    "---@param url string",
+                    "---@return string?",
+                    "---@return string? err",
+                    "function M.open(url) end"
+                ]
+            ),
+            "{meta}"
+        );
     }
 
     /// `set` + `record_fn` registers a verbatim implementation and records its
-    /// header signature without the facade touching the body — the path for
+    /// signature without the facade touching the body — the path for
     /// functions that raise or bake their own prefix.
     #[test]
     fn record_fn_records_signature_for_verbatim_set() {
@@ -1007,12 +1182,40 @@ mod tests {
         m.set("bump", raw).expect("set");
         m.record_fn("bump", &[("n", "number")], "number", "Increments by one.");
 
-        let header = m.decl_header();
-        assert!(header.contains("    fn bump(n: number) -> number;"), "{header}");
+        let meta = m.luals_meta().expect("meta");
+        assert!(
+            contains_in_order(
+                &meta,
+                &[
+                    "--- Increments by one.",
+                    "---@param n number",
+                    "---@return number",
+                    "function M.bump(n) end"
+                ]
+            ),
+            "{meta}"
+        );
 
         // The verbatim implementation is what actually runs.
         let bump: mlua::Function = m.into_table().get("bump").expect("bump fn");
         let out: i64 = bump.call(41).expect("call");
         assert_eq!(out, 42);
+    }
+
+    /// A `()` return writes no `---@return`, a `Result<(), string>` returns `nil` then the error, an
+    /// optional parameter is `name?`, and a Lua reserved word is made a safe name.
+    #[test]
+    fn return_and_name_shapes() {
+        let lua = Lua::new();
+        let mut m = Module::new(&lua, "lib:demo").expect("module");
+        m.record_fn("noop", &[("end", "number?")], "()", "Does nothing.");
+        m.record_fn("save", &[], "Result<(), string>", "Saves.");
+        let meta = m.luals_meta().expect("meta");
+        assert!(contains_in_order(&meta, &["---@param end_? number", "function M.noop(end_) end"]), "{meta}");
+        assert!(!meta.contains("function M.noop(end_) end\n---@return"), "{meta}");
+        assert!(
+            contains_in_order(&meta, &["---@return nil", "---@return string? err", "function M.save() end"]),
+            "{meta}"
+        );
     }
 }

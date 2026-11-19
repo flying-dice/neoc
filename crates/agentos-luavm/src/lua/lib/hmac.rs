@@ -198,7 +198,13 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
                 "string",
                 "Return the current tag as raw bytes; idempotent and does not consume the MAC.",
             )
-            .method("algorithm", &[], "string", "Return the algorithm name this MAC was constructed with.");
+            .method("algorithm", &[], "string", "Return the algorithm name this MAC was constructed with.")
+            .static_fn(
+                "new",
+                &[("algo", "string"), ("key", "string")],
+                "Result<Hmac, string>",
+                "Start an incremental HMAC under `algo` with `key`.",
+            );
     });
 
     m.record_fn(

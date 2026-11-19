@@ -69,20 +69,23 @@ under `bun test` too, through the preload in `client/bunfig.toml` (`client/test/
 - **Check:** `bun run lint:lua` runs `lua-language-server --check` (pinned: 3.19.2, in `scripts/lint-lua.ts`) over
   every `.lua` file `.luarc.json` does not ignore (apps, `lua/prelude.lua`, the codegen example app), against the
   generated LuaCATS definitions in `types/generated/luals/` (`agentos.lua` for the global `app`, `@agentos/ui.lua` and
-  `@agentos/app.lua` for the two `require`s; LuaLS finds them by file path through the library setting). Files in
-  `negative/` folders (`scripts/fixtures/negative/`) mark lines with `-- expect-error`; the check demands exactly those
-  lines are flagged, so a broken definitions file cannot pass silently.
+  `@agentos/app.lua` for the two `require`s, and one `<key>.lua` per `std:`/`lib:`/`vnd:` module, e.g. `lib:json.lua`,
+  written by `cargo run -p agentos-luavm --example luals` from the module's recorded surface; LuaLS finds them by file
+  path through the library setting). Files in `negative/` folders (`scripts/fixtures/negative/`) mark lines with
+  `-- expect-error`; the check demands exactly those lines are flagged, so a broken definitions file cannot pass
+  silently (`wrong_module_use.lua` is the one for the modules, `modules_usage.lua` its correct counterpart).
 - **Format:** `bun run lint:stylua` (`stylua.toml`, syntax `Lua51`; `.styluaignore`); `bun run format` rewrites.
   Both lints print a `SKIPPED` message when `lua-language-server` (PATH or `~/.local/bin`) or `stylua` (PATH or
-  `~/.cargo/bin`) is not installed: install them, a skipped lint is not a pass.
+  `~/.cargo/bin`) is not installed, and **fail** instead when `AGENTOS_GATE=1` or `CI` is set (`scripts/gate.ts`; the
+  `pre-commit` skill's gate sets it): install them, a skipped lint is not a pass.
 - **Lua 5.1 build:** apps run as plain Lua 5.1 (`scripts/lua51.ts`, `.darklua.json`; see `apps/README.md`).
   `darklua` 0.18.0 is required and **never skipped** (`cargo install darklua --version 0.18.0 --locked`):
   `bun run build:apps` fails with that message without it. `bun test scripts`
   (`scripts/lua51.test.ts`) checks the sources stay plain Lua 5.1 (no Luau syntax, no library members Lua 5.1 and `lua/prelude.lua` lack), that each
   app bundles into one file whose only requires are runtime ones (`@agentos/*` and the `std:`/`lib:`/`vnd:` modules, with a fixture that requires them), and (with a native Lua 5.3+ on PATH) that the prelude's
-  `utf8`/`table.move` polyfills agree with the native ones. With a real Lua 5.1 (`lua5.1` on PATH, or `LUA51=<path>`)
-  it also loads the prelude, `ui.lua` and every bundle; without one those tests print `SKIPPED` (a skip is not a
-  pass: install `lua5.1`). `bun run codegen:check` also fails when `types/generated/ui.lua`, `luals/*` or `prelude.lua` is stale.
+  `utf8`/`table.move` polyfills agree with the native ones. The prelude, `ui.lua` and the bundles are loaded and run
+  under Lua 5.1 by the Rust tests (the VM's vendored 5.1), so no system Lua 5.1 is needed. `bun run codegen:check`
+  also fails when `types/generated/ui.lua`, `luals/*` or `prelude.lua` is stale.
 - **Logic and tools:** tested from Rust against the shipped package (see "Rust"); views and journeys against the real
   host (below).
 
@@ -90,13 +93,11 @@ under `bun test` too, through the preload in `client/bunfig.toml` (`client/test/
 
 Required: Rust (the pinned toolchain), `cargo-nextest`, `cargo-deny`, Bun, `darklua` 0.18.0 (never skipped), Chromium
 for Playwright (`bun run test:e2e`, on a Mac for the snapshots). Needed for the Lua lints, which print `SKIPPED` without
-them (a skipped lint is not a pass): `lua-language-server` and `stylua`. **Optional interpreters**, used by
-`scripts/lua51.test.ts` only: a real **Lua 5.1** (`lua5.1` on PATH, or `LUA51=<path>`) loads the prelude, `ui.lua` and
-every app bundle under the real interpreter, and a native **Lua 5.3+** compares the polyfills with the native
-`utf8`/`table.move`. Without them those tests are skipped, not failed: the skip is written to stderr
-(`!! lua51 load tests SKIPPED`) and in the test names (`[SKIPPED: ...]`), so a run that did not check them says so. The
-Rust tests run the same bundles on mlua's own vendored Lua 5.1, so the real-interpreter check is a second opinion, not
-the only one.
+them (a skipped lint is not a pass; with `AGENTOS_GATE=1` or `CI` they fail): `lua-language-server` and `stylua`.
+**Optional interpreter**, used by `scripts/lua51.test.ts` only: a native **Lua 5.3+** compares the polyfills with the
+native `utf8`/`table.move`. Without it that test is skipped, not failed: the skip is written to stderr
+(`!! polyfill comparison SKIPPED`) and in the test name (`[SKIPPED: ...]`). The bundles themselves run on mlua's
+vendored Lua 5.1 in the Rust tests, so no system Lua 5.1 is involved.
 
 ## Storybook and the fake hosts
 

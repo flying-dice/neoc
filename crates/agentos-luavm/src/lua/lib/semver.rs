@@ -105,7 +105,12 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     );
 
     m.userdata("Version", |v| {
-        v.method(
+        v.field("major", "number", "Major version.")
+            .field("minor", "number", "Minor version.")
+            .field("patch", "number", "Patch version.")
+            .field("pre", "string?", "Pre-release identifiers, or nil when there are none.")
+            .field("build", "string?", "Build metadata, or nil when there is none.")
+            .method(
             "compare",
             &[("other", "LuaValue")],
             "number",
@@ -116,7 +121,13 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             &[("level", "string")],
             "Version",
             "Return a new `Version` incremented per `level`. The input is not mutated.",
-        );
+        )
+            .static_fn(
+                "parse",
+                &[("s", "string")],
+                "Result<Version, string>",
+                "Parse a strict SemVer 2.0.0 version. Returns `(nil, err)` on malformed input.",
+            );
     });
 
     m.userdata("VersionReq", |r| {
@@ -125,6 +136,12 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             &[("version", "LuaValue")],
             "bool",
             "True when `version` is in the range. Accepts a `Version` or a string (raises if invalid).",
+        )
+        .static_fn(
+            "parse",
+            &[("s", "string")],
+            "Result<VersionReq, string>",
+            "Parse a version requirement such as `\">=1.2, <2\"`. Returns `(nil, err)` on malformed input.",
         );
     });
 

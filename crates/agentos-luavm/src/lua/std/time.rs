@@ -469,7 +469,44 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             .method("as_micros", &[], "number", "Total microseconds (integer, saturating).")
             .method("as_nanos", &[], "number", "Total nanoseconds (integer, saturating).")
             .method("as_secs_f64", &[], "number", "Total seconds as a float.")
-            .method("is_zero", &[], "bool", "True if the duration is exactly zero.");
+            .method("is_zero", &[], "bool", "True if the duration is exactly zero.")
+            .static_const("ZERO", "Duration", "The zero-length duration.")
+            .static_fn(
+                "from_secs",
+                &[("secs", "number")],
+                "Duration",
+                "A duration of `secs` whole seconds; negative raises.",
+            )
+            .static_fn(
+                "from_millis",
+                &[("millis", "number")],
+                "Duration",
+                "A duration of `millis` milliseconds; negative raises.",
+            )
+            .static_fn(
+                "from_micros",
+                &[("micros", "number")],
+                "Duration",
+                "A duration of `micros` microseconds; negative raises.",
+            )
+            .static_fn(
+                "from_nanos",
+                &[("nanos", "number")],
+                "Duration",
+                "A duration of `nanos` nanoseconds; negative raises.",
+            )
+            .static_fn(
+                "from_secs_f64",
+                &[("secs", "number")],
+                "Duration",
+                "A duration of `secs` seconds as a float; negative or non-finite raises.",
+            )
+            .static_fn(
+                "parse",
+                &[("s", "string")],
+                "Result<Duration, string>",
+                "Parse a human duration such as `1h30m` or `250ms`.",
+            );
     });
 
     m.userdata("Instant", |i| {
@@ -484,7 +521,8 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             &[("other", "Instant")],
             "Duration",
             "Saturating difference `self - other`; returns `ZERO` if `other` is later.",
-        );
+        )
+        .static_fn("now", &[], "Instant", "The current monotonic point in time.");
     });
 
     Ok(m)

@@ -201,6 +201,63 @@ async fn open_window_accepts_only_windows_the_app_declared() {
     assert_eq!(rig.shell.windows.lock().unwrap().len(), 1, "nothing was asked of the shell");
 }
 
+// ---- AGOS-60: `app:windows` ----------------------------------------------------------------------------------
+
+const WINDOWS_APP: &str = r#"
+    app.window("main", { render = function(w) return { type = "Stack", key = "n" } end })
+    local function try(f) local ok, err = pcall(f); return { ok = ok, err = (not ok) and tostring(err) or nil } end
+    app.tool { name = "ids", readOnly = true, run = function()
+      local ids = {}
+      for _, w in ipairs(app:windows("main")) do ids[#ids + 1] = w.id end
+      return ids
+    end }
+    app.tool { name = "announce", readOnly = true, run = function()
+      return try(function() for _, w in ipairs(app:windows("main")) do w:announce("x") end end) end }
+    app.tool { name = "undeclared", readOnly = true, run = function()
+      return try(function() app:windows("evil") end) end }
+"#;
+
+async fn open_views(rig: &Rig, views: &[&str]) {
+    for view in views {
+        rig.runtime.open_view(&id("probe"), view, "main", Map::new(), Map::new()).await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn a_read_only_tool_may_list_the_open_windows_but_not_change_them() {
+    let rig = rig();
+    rig.load("probe", &format!("{MANIFEST}\n{WINDOWS_APP}")).await.unwrap();
+    open_views(&rig, &["v1", "v2"]).await;
+
+    assert_eq!(rig.tool("probe", "ids").await.unwrap(), json!(["v1", "v2"]), "listing is a read");
+    let out = rig.tool("probe", "announce").await.unwrap();
+    assert_eq!(out["ok"], false, "{out}");
+    assert!(out["err"].as_str().unwrap().contains("readOnly"), "{out}");
+    let effects = rig.runtime.take_view_effects(&id("probe")).await.unwrap();
+    assert!(effects.is_empty(), "the refused call left nothing for the windows: {effects:?}");
+}
+
+#[tokio::test]
+async fn app_windows_with_an_undeclared_name_is_an_error_that_names_app_windows() {
+    let rig = rig();
+    rig.load("probe", &format!("{MANIFEST}\n{WINDOWS_APP}")).await.unwrap();
+    let out = rig.tool("probe", "undeclared").await.unwrap();
+    assert_eq!(out["ok"], false, "{out}");
+    let why = out["err"].as_str().unwrap();
+    assert!(why.contains("app:windows: no window `evil` is declared"), "{why}");
+    assert!(why.contains("declared: main"), "{why}");
+    assert!(!why.contains("openWindow"), "the error names the call that was made: {why}");
+}
+
+#[tokio::test]
+async fn app_windows_lists_the_open_windows_in_the_order_they_were_opened() {
+    let rig = rig();
+    rig.load("probe", &format!("{MANIFEST}\n{WINDOWS_APP}")).await.unwrap();
+    // as text, `v10` sorts before `v2`
+    open_views(&rig, &["v1", "v2", "v9", "v10", "v11"]).await;
+    assert_eq!(rig.tool("probe", "ids").await.unwrap(), json!(["v1", "v2", "v9", "v10", "v11"]));
+}
+
 // ---- blocker 4 and major 15: a readOnly call changes nothing -------------------------------------------------
 
 const READ_ONLY_APP: &str = r#"

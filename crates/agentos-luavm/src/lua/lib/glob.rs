@@ -72,6 +72,12 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             &[("opts", "LuaValue?")],
             "LuaValue",
             "Walk the filesystem and return all paths matching this pattern, plus any per-entry walk errors.",
+        )
+        .static_fn(
+            "new",
+            &[("pattern", "string")],
+            "Result<Glob, string>",
+            "Compile one glob pattern.",
         );
     });
 
@@ -83,7 +89,13 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
                 "LuaValue",
                 "1-based indices of every pattern in the set that matches `path`.",
             )
-            .method("len", &[], "number", "Number of patterns in the set.");
+            .method("len", &[], "number", "Number of patterns in the set.")
+            .static_fn(
+                "new",
+                &[("patterns", "LuaValue")],
+                "Result<GlobSet, string>",
+                "Compile a list of glob patterns into one matcher.",
+            );
     });
 
     Ok(m)

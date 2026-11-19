@@ -290,6 +290,9 @@ function AppApi.thread() end
 ---@param params table<string, any>?
 function AppApi:openWindow(name, params) end
 
+--- The open instances of the declared window `name`, in the order they were opened, each the `w` its `render`
+--- got. An undeclared name raises `app:windows: no window ... is declared`. Listing is a read, so a `readOnly`
+--- tool may do it; changing a window through its `w` is not.
 ---@param name string
 ---@return WindowContext[]
 function AppApi:windows(name) end

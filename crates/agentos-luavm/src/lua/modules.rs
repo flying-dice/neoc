@@ -34,6 +34,7 @@ use std::collections::HashMap;
 use mlua::{Lua, Table};
 use strsim::levenshtein;
 
+use crate::lua::facade::Module;
 use crate::lua::{lib, std as stdmod, vnd};
 
 /// Soft cap on how many namespace members a `require` error inlines before it
@@ -100,7 +101,7 @@ pub fn install_allowed(lua: &Lua, allowed: &[&str]) -> mlua::Result<()> {
 type Build = fn(&Lua) -> mlua::Result<Table>;
 
 /// Every module an app (or a worker) can `require`, by registry key. The one list: the engine's own
-/// `require`, the apps' `require` and the declaration headers all follow it.
+/// `require`, the apps' `require` and the `LuaCATS` definitions all follow it.
 ///
 /// Left out on purpose: `lib:test` (a test harness that prints to stdout), `lib:compile` (builds standalone
 /// executables) and `std:workers` (a process-wide shutdown signal): none fits a server-side app.
@@ -231,18 +232,14 @@ fn install_filtered(lua: &Lua, allowed: Option<&[&str]>) -> mlua::Result<()> {
     Ok(())
 }
 
-/// Collects the emitted declaration header for every module that declares its
-/// surface through the facade.
+/// Declares every module through the facade, in registry order, so each one's recorded surface can be read.
 ///
-/// Each entry is `(registry_key, header_text)` — for example
-/// `("lib:base64", "// @generated …\nextern {\n    #[extern(path = \"lib:base64\")]\n    mod base64 { … }\n}\n")`.
-/// Only modules migrated to the facade appear here; the rest still register
-/// through a hand-written `module()` and a hand-written declaration header.
-pub fn headers(lua: &Lua) -> mlua::Result<Vec<(String, String)>> {
+/// Mirrors [`REGISTRY`] (a test holds the two together): a module appears here by its `declare`, which both
+/// builds its table and records its signatures, docs and types.
+fn declared<'l>(lua: &'l Lua) -> mlua::Result<Vec<Module<'l>>> {
     let mut out = Vec::new();
-    let mut push = |m: mlua::Result<crate::lua::facade::Module<'_>>| -> mlua::Result<()> {
-        let m = m?;
-        out.push((m.name().to_string(), m.decl_header()));
+    let mut push = |m: mlua::Result<Module<'l>>| -> mlua::Result<()> {
+        out.push(m?);
         Ok(())
     };
 
@@ -300,90 +297,84 @@ pub fn headers(lua: &Lua) -> mlua::Result<Vec<(String, String)>> {
     Ok(out)
 }
 
+/// The `LuaCATS` definition file of every module, as `(registry_key, text)` in registry order.
+///
+/// The text is a `---@meta` file for lua-language-server (`bun run codegen` writes it to
+/// `types/generated/luals/<key>.lua`, so `require("lib:json")` resolves to it): each function's parameters,
+/// returns and docs, and the resource types it hands out.
+///
+/// # Errors
+/// Fails when a module cannot be built.
+pub fn luals_metas(lua: &Lua) -> mlua::Result<Vec<(String, String)>> {
+    declared(lua)?.iter().map(|m| Ok((m.name().to_string(), m.luals_meta()?))).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::lua::sandbox::make_engine;
 
-    /// Every facade-migrated module reports an `extern { … }` header keyed by a
-    /// `#[extern(path = "<key>")] mod <name>` declaration. Guards the facade's
-    /// extern block shape and the collector wiring; the count tracks the modules
-    /// migrated so far (the rest follow in later batches).
+    /// `declared` follows the registry: the same modules, in the same order. A module added to one list and
+    /// not the other fails here.
     #[test]
-    fn headers_cover_migrated_modules() {
+    fn declared_follows_the_registry() {
         let lua = make_engine().expect("engine");
-        let headers = super::headers(&lua).expect("headers");
-
-        let keys: Vec<&str> = headers.iter().map(|(k, _)| k.as_str()).collect();
-        assert!(keys.contains(&"lib:archive"));
-        assert!(keys.contains(&"lib:args"));
-        assert!(keys.contains(&"lib:base64"));
-        assert!(keys.contains(&"lib:cache"));
-        assert!(keys.contains(&"lib:chrono"));
-        assert!(keys.contains(&"lib:compress"));
-        assert!(keys.contains(&"lib:crypto"));
-        assert!(keys.contains(&"lib:csv"));
-        assert!(keys.contains(&"lib:diff"));
-        assert!(keys.contains(&"lib:glob"));
-        assert!(keys.contains(&"lib:hash"));
-        assert!(keys.contains(&"lib:hex"));
-        assert!(keys.contains(&"lib:hmac"));
-        assert!(keys.contains(&"lib:html"));
-        assert!(keys.contains(&"lib:http"));
-        assert!(keys.contains(&"lib:ini"));
-        assert!(keys.contains(&"lib:json"));
-        assert!(keys.contains(&"lib:log"));
-        assert!(keys.contains(&"lib:mime"));
-        assert!(keys.contains(&"lib:pkey"));
-        assert!(keys.contains(&"lib:random"));
-        assert!(keys.contains(&"lib:regex"));
-        assert!(keys.contains(&"lib:semver"));
-        assert!(keys.contains(&"lib:template"));
-        assert!(keys.contains(&"lib:tempfile"));
-        assert!(keys.contains(&"lib:text"));
-        assert!(keys.contains(&"lib:unicode"));
-        assert!(keys.contains(&"lib:url"));
-        assert!(keys.contains(&"lib:vcr"));
-        assert!(keys.contains(&"std:collections"));
-        assert!(keys.contains(&"std:env"));
-        assert!(keys.contains(&"std:fs"));
-        assert!(keys.contains(&"std:io"));
-        assert!(keys.contains(&"std:net"));
-        assert!(keys.contains(&"std:task"));
-        assert!(keys.contains(&"std:thread"));
-        assert!(keys.contains(&"std:time"));
-        assert!(keys.contains(&"vnd:hyper"));
-        assert!(keys.contains(&"vnd:jsonschema"));
-        assert!(keys.contains(&"vnd:quick_xml"));
-        assert!(keys.contains(&"vnd:rusqlite"));
-        assert!(keys.contains(&"vnd:serde_json"));
-        assert!(keys.contains(&"vnd:serde_yaml"));
-        assert!(keys.contains(&"vnd:sqlx_mysql"));
-        assert!(keys.contains(&"vnd:sqlx_postgres"));
-        #[cfg(feature = "testcontainers")]
-        assert!(keys.contains(&"vnd:testcontainers_modules"));
-        assert!(keys.contains(&"vnd:toml"));
+        let declared: Vec<String> =
+            declared(&lua).expect("declared").iter().map(|m| m.name().to_string()).collect();
+        let registry: Vec<String> = names().map(String::from).collect();
+        assert_eq!(declared, registry);
         let expected = if cfg!(feature = "testcontainers") { 47 } else { 46 };
-        assert_eq!(keys.len(), expected, "expected {expected} migrated modules, got {keys:?}");
+        assert_eq!(registry.len(), expected, "expected {expected} modules, got {registry:?}");
+    }
 
-        for (key, header) in &headers {
-            let name = key.split_once(':').map_or(key.as_str(), |(_, s)| s);
-            assert!(header.contains("extern {"), "{key} header missing `extern {{` block:\n{header}");
+    /// Every module yields a definition file: `---@meta`, a module class named after its key, the
+    /// `require` return, and valid Lua 5.1 syntax (lua-language-server drops a file it cannot parse).
+    #[test]
+    fn every_module_yields_valid_definitions() {
+        let lua = make_engine().expect("engine");
+        let metas = luals_metas(&lua).expect("metas");
+        assert_eq!(metas.len(), names().count());
+        for (key, meta) in &metas {
+            let class = key.replace(':', "_");
+            assert!(meta.starts_with("---@meta\n"), "{key}: not a meta file");
+            assert!(meta.contains(&format!("---@class {class}\n")), "{key}: no module class {class}");
             assert!(
-                header.contains(&format!("#[extern(path = \"{key}\")]")),
-                "{key} header missing #[extern(path = …)]:\n{header}"
+                meta.ends_with(&format!("---@type {class}\nreturn M\n")),
+                "{key}: does not return the module"
             );
-            assert!(
-                header.contains(&format!("mod {name} {{")),
-                "{key} header missing `mod {name} {{`:\n{header}"
-            );
+            lua.load(meta.as_str())
+                .set_name(key)
+                .into_function()
+                .unwrap_or_else(|e| panic!("{key}: {e}\n{meta}"));
+        }
+    }
+
+    /// Every type a definition file names is a primitive or a class the same file declares: a recorded
+    /// type name with no class would be an unknown type in lua-language-server.
+    #[test]
+    fn every_named_type_is_declared() {
+        let lua = make_engine().expect("engine");
+        for (key, meta) in luals_metas(&lua).expect("metas") {
+            let declared: Vec<&str> = meta.lines().filter_map(|l| l.strip_prefix("---@class ")).collect();
+            for line in meta.lines() {
+                let Some(rest) = line.strip_prefix("---@param ").or_else(|| line.strip_prefix("---@return "))
+                else {
+                    continue;
+                };
+                let ty =
+                    rest.split_whitespace().nth(usize::from(line.starts_with("---@param "))).unwrap_or("");
+                let ty = ty.trim_end_matches('?');
+                let known = matches!(ty, "string" | "number" | "boolean" | "any" | "nil" | "err")
+                    || declared.contains(&ty);
+                assert!(known, "{key}: `{line}` names `{ty}`, which no class declares");
+            }
         }
     }
 
     /// Builds every facade-migrated module's runtime `require(...)` table,
-    /// paired with its registry key, in the same order as [`super::headers`].
+    /// paired with its registry key, in the same order as [`super::luals_metas`].
     /// The two lists line up by index so a test can cross-check a module's
-    /// live surface against its emitted header.
+    /// live surface against its emitted definitions.
     fn runtime_tables(lua: &Lua) -> Vec<(String, Table)> {
         macro_rules! tables {
             ($($key:literal => $module:expr),+ $(,)?) => {
@@ -448,65 +439,43 @@ mod tests {
     }
 
     /// Every top-level key on a module's live `require(...)` table must be
-    /// covered by that module's emitted header. This is the guard that turns a
-    /// missing `record_fn` into a CI failure: register a free function with
+    /// covered by that module's definitions. This is the guard that turns a
+    /// missing `record_fn` into a failure: register a free function with
     /// `set` but forget to record its signature and the key is present at
-    /// runtime yet absent from the `mod` block, so this fails.
+    /// runtime yet absent from the definition file, so this fails.
     ///
-    /// The check is one-directional (live keys ⊆ header surface): the header
+    /// The check is one-directional (live keys ⊆ definitions): the definitions
     /// may carry extra entries the base table lacks — most notably
     /// `std:thread`'s `parent` / `shared`, injected only inside a spawned
     /// worker — and that is fine. The shape of the assertion per key:
     ///
-    /// - a function value must appear as a free `fn <key>(` in the `mod` block;
+    /// - a function value must appear as `function M.<key>(`;
     /// - a table value (a constructor sub-table such as `chrono.Date`) must
-    ///   appear as `struct <Key>;`;
-    /// - any other value (a former const such as `json.null`) must appear as a
-    ///   zero-argument accessor `fn <key>()`.
+    ///   appear as a `---@field <key> ` on the module class;
+    /// - any other value (a former const such as `json.null`) must appear as
+    ///   a `---@field <key> `.
     #[test]
-    fn header_surface_covers_runtime_table_keys() {
+    fn definitions_cover_runtime_table_keys() {
         let lua = make_engine().expect("engine");
-        let headers = super::headers(&lua).expect("headers");
+        let metas = luals_metas(&lua).expect("metas");
         let tables = runtime_tables(&lua);
 
-        assert_eq!(headers.len(), tables.len(), "headers and runtime tables drifted out of sync");
+        assert_eq!(metas.len(), tables.len(), "definitions and runtime tables drifted out of sync");
 
-        for ((hkey, header), (tkey, table)) in headers.iter().zip(tables.iter()) {
-            assert_eq!(hkey, tkey, "header / table ordering drifted");
+        for ((mkey, meta), (tkey, table)) in metas.iter().zip(tables.iter()) {
+            assert_eq!(mkey, tkey, "definition / table ordering drifted");
 
             for pair in table.clone().pairs::<String, mlua::Value>() {
                 let (key, value) = pair.expect("module table pair");
 
-                match value {
-                    mlua::Value::Function(_) => {
-                        // Free functions and former-const accessors sit directly
-                        // in the `mod` at one indent level (eight spaces); a
-                        // same-named method inside an `impl` is indented deeper
-                        // (twelve spaces), so the leading indent disambiguates.
-                        let needle = format!("        fn {key}(");
-                        assert!(
-                            header.contains(&needle),
-                            "{hkey}: function key {key:?} has no free `fn {key}(` in its header surface:\n{header}"
-                        );
-                    }
-                    mlua::Value::Table(_) => {
-                        let needle = format!("struct {key};");
-                        assert!(
-                            header.contains(&needle),
-                            "{hkey}: sub-table key {key:?} has no `{needle}` in its header surface:\n{header}"
-                        );
-                    }
-                    _ => {
-                        // A former module constant lowers to a zero-argument
-                        // accessor `fn <key>()` (the extern item set has no
-                        // `const`).
-                        let needle = format!("        fn {key}()");
-                        assert!(
-                            header.contains(&needle),
-                            "{hkey}: value key {key:?} has no accessor `fn {key}()` in its header surface:\n{header}"
-                        );
-                    }
-                }
+                let needle = match value {
+                    mlua::Value::Function(_) => format!("function M.{key}("),
+                    _ => format!("---@field {key} "),
+                };
+                assert!(
+                    meta.contains(&needle),
+                    "{mkey}: key {key:?} has no `{needle}` in its definitions:\n{meta}"
+                );
             }
         }
     }

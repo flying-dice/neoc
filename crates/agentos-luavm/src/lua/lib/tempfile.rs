@@ -220,7 +220,13 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             "Result<string, string>",
             "Consume the handle and keep the file on disk past drop, returning the path.",
         )
-        .method("close", &[], "()", "Release the handle eagerly; idempotent.");
+        .method("close", &[], "()", "Release the handle eagerly; idempotent.")
+            .static_fn(
+                "new",
+                &[("opts", "LuaValue?")],
+                "Result<TempFile, string>",
+                "Create a temporary file; `opts` is `{ prefix?, suffix?, dir? }`. It is deleted when the handle is closed.",
+            );
     });
 
     m.userdata("TempDir", |t| {
@@ -236,6 +242,12 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
                 &[],
                 "Result<bool, string>",
                 "Remove the directory eagerly, surfacing unlink errors; idempotent.",
+            )
+            .static_fn(
+                "new",
+                &[("opts", "LuaValue?")],
+                "Result<TempDir, string>",
+                "Create a temporary directory; `opts` is `{ prefix?, suffix?, dir? }`. It is deleted when the handle is closed.",
             );
     });
 

@@ -19,6 +19,7 @@ Run before every push. Loop until everything below is clean.
 4. **Gates**, after every fix:
 
    ```sh
+   export AGENTOS_GATE=1  # a missing lua-language-server or stylua then fails lint:lua / lint:stylua instead of skipping
    bun run lint         # atomic layers, test ids, conflict markers, cargo fmt + clippy -D warnings, crate direction
                         # (check-deps), cargo deny, lua-language-server, StyLua, codegen:check, eslint
    bun run typecheck    # cargo check --workspace --all-targets, tsc on types/, svelte-check (required testid props)
@@ -27,8 +28,9 @@ Run before every push. Loop until everything below is clean.
                         # e2e/), and always before asking for a merge; needs a Mac for the baselines
    ```
 
-   `lint:lua` and `lint:stylua` say `SKIPPED` when `lua-language-server` or `stylua` is missing: a skip is not green, so install
-   them (and `cargo-nextest`, `cargo-deny`) before calling the gate clean. If you changed the Rust schema or the app API,
+   Without `AGENTOS_GATE=1` (or `CI`), `lint:lua` and `lint:stylua` say `SKIPPED` when `lua-language-server` or `stylua` is
+   missing; with it they fail. A skip is not green either way, so install them (and `cargo-nextest`, `cargo-deny`) before
+   calling the gate clean. If you changed the Rust schema or the app API,
    run `bun run codegen` first and commit the regenerated files.
 
    Snapshot changes are deliberate: `bun run test:e2e:update`, then open the changed PNGs (contact sheet:

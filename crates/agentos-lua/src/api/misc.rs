@@ -40,14 +40,22 @@ fn text_field(t: &Table, key: &str, what: &str, required: bool, max: usize) -> m
     }
 }
 
-/// `app:windows(name)`: the open instances of a declared window, in view-id order, each the `w` its render got (an
-/// app reaches the windows it has open: a tool empties their announcers, say).
+/// The order windows were opened in: the application layer numbers a view `v<n>` as it opens it, so the number is
+/// the order (`v2` before `v10`, which comparing the ids as text would get wrong). An id that is not `v<n>` sorts
+/// after the numbered ones, by its text.
+fn open_order(view: &str) -> (u64, &str) {
+    (view.strip_prefix('v').and_then(|n| n.parse().ok()).unwrap_or(u64::MAX), view)
+}
+
+/// `app:windows(name)`: the open instances of a declared window, in the order they were opened, each the `w` its
+/// render got (an app reaches the windows it has open: a tool empties their announcers, say). Listing is a read: a
+/// `readOnly` tool may, and what it does to a `w` is that `w`'s own call, refused the same way.
 fn install_windows(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<()> {
     let s = sh.clone();
     app.set(
         "windows",
         lua.create_function(move |lua, (_this, name): (LuaValue, String)| {
-            s.declared_window(&name)?;
+            s.declared_window("app:windows", &name)?;
             let mut open: Vec<(String, Table)> = s
                 .views
                 .lock()
@@ -55,7 +63,7 @@ fn install_windows(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<()>
                 .filter(|(_, instance)| instance.window == name)
                 .map(|(view, instance)| (view.clone(), instance.w.clone()))
                 .collect();
-            open.sort_by(|a, b| a.0.cmp(&b.0));
+            open.sort_by(|a, b| open_order(&a.0).cmp(&open_order(&b.0)));
             lua.create_sequence_from(open.into_iter().map(|(_, w)| w))
         })?,
     )
@@ -125,7 +133,7 @@ pub(super) fn install(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<
         lua.create_function(move |_, (_this, name, params): (LuaValue, String, Option<LuaValue>)| {
             check_effects_allowed(&s, "app:openWindow")?;
             s.writable("app:openWindow")?;
-            s.declared_window(&name)?;
+            s.declared_window("openWindow", &name)?;
             let params = match params {
                 Some(p) => lua_to_json(&p)?,
                 None => Value::Null,

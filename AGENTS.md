@@ -167,9 +167,11 @@ bun scripts/design-audit.ts <page>  # static styleguide audit of a built-in shel
 Visual baselines (`e2e/__screenshots__`) are macOS-only, so run `test:e2e` on a Mac. There is no hosted CI: the
 `pre-commit` skill runs the gate and `agentos-code-review` checks it. Needed tools: Rust (the pinned toolchain),
 `cargo-nextest`, `cargo-deny`, Bun, `darklua` 0.18.0 (`cargo install darklua --version 0.18.0 --locked`; building the
-apps fail without it, they never skip) and, for the Lua checks, `lua-language-server` 3.19.2 (`brew install lua-language-server`) and `stylua`. A real
-Lua 5.1 interpreter (`lua5.1` on PATH or `LUA51=<path>`) is optional: with it `bun test scripts` also loads the
-bundled apps.
+apps fail without it, they never skip) and, for the Lua checks, `lua-language-server` 3.19.2 (`brew install lua-language-server`) and `stylua`.
+Without them `lint:lua` and `lint:stylua` skip on a developer machine and **fail** when `AGENTOS_GATE=1` or `CI` is
+set (the `pre-commit` skill runs the gate that way). No system Lua 5.1 is needed: the Rust tests load and run the
+bundled apps on the VM's vendored 5.1. A native Lua 5.3+ is optional: with it `bun test scripts` also compares the
+prelude's polyfills with the native ones.
 
 ## Adding an app
 

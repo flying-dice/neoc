@@ -4,9 +4,9 @@
  *    every app bundles into one file whose only requires are runtime ones (`@agentos/*` and the host's `std:`, `lib:` and
  *    `vnd:` modules), non-ASCII text survives the bundle
  *    untouched, and the polyfills agree with a native Lua 5.3+ when one is installed;
- *  - with a real Lua 5.1 (`lua5.1`, `lua-5.1`, `lua51`, or `lua` when it is 5.1; override with LUA51=<path>): the
- *    prelude, ui.lua and every app bundle load and their top levels run. Without one these tests skip with a message.
- *    darklua is never skipped: without it they fail, as `build:apps` does.
+ *  - the bundles are loaded and run under Lua 5.1 by the Rust tests (`crates/agentos-lua/tests`, `crates/agentos-host/tests`:
+ *    the vendored 5.1 of the VM, on the bundle `scripts/lua51-build.ts` makes), so no system Lua 5.1 is needed here.
+ *    darklua is never skipped: without it these tests fail, as `build:apps` does.
  */
 import { Glob } from "bun";
 import { describe, expect, test } from "bun:test";
@@ -154,25 +154,22 @@ describe("darklua", () => {
   });
 });
 
-function interpreter(accept: (version: string) => boolean): string | undefined {
-  const candidates = [
-    process.env.LUA51,
-    "lua5.1",
-    "lua-5.1",
-    "lua51",
-    "lua",
-  ].filter((c): c is string => !!c);
+/** A native Lua 5.3+ (`lua5.3`, `lua5.4`, ... or `lua`), for the polyfill comparison; `LUA53=<path>` overrides. */
+function findLua53(): string | undefined {
+  const candidates = [process.env.LUA53, "lua5.4", "lua5.3", "lua5.5", "lua"].filter(
+    (c): c is string => !!c,
+  );
   for (const candidate of candidates) {
     const run = spawnSync(candidate, ["-e", "io.write(_VERSION)"], {
       encoding: "utf8",
     });
-    if (run.status === 0 && accept(run.stdout.trim())) return candidate;
+    if (run.status === 0 && /^Lua 5\.([3-9])$/.test(run.stdout.trim()))
+      return candidate;
   }
   return undefined;
 }
 
-const lua51 = interpreter((version) => version === "Lua 5.1");
-const lua53 = interpreter((version) => /^Lua 5\.([3-9])$/.test(version));
+const lua53 = findLua53();
 const generated = (name: string): string => join(root, "types/generated", name);
 
 describe("the prelude polyfills", () => {
@@ -197,59 +194,4 @@ describe("the prelude polyfills", () => {
     process.stderr.write(
       "\n!! polyfill comparison SKIPPED: no Lua 5.3+ interpreter on PATH\n",
     );
-});
-
-describe("under a real Lua 5.1", () => {
-  // optional, but never silent: the skip is in the test names, on stderr and in docs/TESTING.md
-  const skipped = lua51
-    ? ""
-    : " [SKIPPED: no Lua 5.1 on PATH; install lua5.1 or set LUA51=<path>]";
-  if (!lua51)
-    process.stderr.write(
-      `\n!! lua51 load tests SKIPPED: no Lua 5.1 found (install lua5.1 on PATH, or set LUA51=<path>)\n`,
-    );
-  const darklua = findDarklua();
-
-  test.skipIf(!lua51)(
-    `the prelude, ui.lua and every app bundle load and run their top level${skipped}`,
-    () => {
-      expect(
-        darklua,
-        `install it: cargo install darklua --version ${DARKLUA_VERSION} --locked`,
-      ).toBeDefined();
-      const scratch = mkdtempSync(join(tmpdir(), "agentos-lua51-"));
-      const files = apps.map((manifest, index) => {
-        const file = join(scratch, `app${index}.lua`);
-        writeFileSync(file, toLua51(darklua as string, entryOf(manifest)));
-        return file;
-      });
-      const run = spawnSync(
-        lua51 as string,
-        [
-          join(root, "scripts/lua51-harness.lua"),
-          generated("prelude.lua"),
-          generated("ui.lua"),
-          ...files,
-        ],
-        { encoding: "utf8" },
-      );
-      rmSync(scratch, { recursive: true, force: true });
-      expect(`${run.stdout}${run.stderr}`).toContain(`ok ${files.length}`);
-      expect(run.status).toBe(0);
-    },
-  );
-
-  test.skipIf(!lua51)(
-    `every generated and bundled file parses (luac -p equivalent)${skipped}`,
-    () => {
-      for (const file of ["prelude.lua", "ui.lua"]) {
-        const run = spawnSync(
-          lua51 as string,
-          ["-e", `assert(loadfile(${JSON.stringify(generated(file))}))`],
-          { encoding: "utf8" },
-        );
-        expect(`${file}: ${run.stderr}`).toBe(`${file}: `);
-      }
-    },
-  );
 });

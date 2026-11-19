@@ -254,9 +254,10 @@ impl Shared {
         Ok(())
     }
 
-    /// An `openWindow` target must be a window the app declared: an app cannot ask the shell for anything
-    /// else (the request is broadcast to every client).
-    pub fn declared_window(&self, name: &str) -> mlua::Result<()> {
+    /// A window named by `openWindow` (or listed by `app:windows`) must be one the app declared: an app cannot
+    /// ask the shell for anything else (the request is broadcast to every client). `call` is the call that
+    /// named it (`app:windows`), which the error says.
+    pub fn declared_window(&self, call: &str, name: &str) -> mlua::Result<()> {
         let windows = self.windows.lock();
         if windows.contains_key(name) {
             return Ok(());
@@ -264,7 +265,7 @@ impl Shared {
         let mut declared: Vec<&str> = windows.keys().map(String::as_str).collect();
         declared.sort_unstable();
         Err(mlua::Error::runtime(format!(
-            "openWindow: no window `{name}` is declared (declared: {})",
+            "{call}: no window `{name}` is declared (declared: {})",
             if declared.is_empty() { "none".to_owned() } else { declared.join(", ") }
         )))
     }

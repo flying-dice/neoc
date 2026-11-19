@@ -512,7 +512,7 @@ fn build_w(
         "openWindow",
         lua.create_function(move |_, (_this, name, params): (LuaValue, String, Option<LuaValue>)| {
             s.writable("w:openWindow")?;
-            s.declared_window(&name)?;
+            s.declared_window("openWindow", &name)?;
             let params = match params {
                 Some(p) => lua_to_json(&p)?,
                 None => Value::Null,

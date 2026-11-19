@@ -11,8 +11,8 @@
  *     fails when the definitions do not load).
  *
  * `lua-language-server` is found on PATH or at ~/.local/bin/lua-language-server and must be the pinned version
- * (its diagnostics change between releases). When it is missing the check SKIPS with a message and exits 0, like
- * the rest of the optional tooling.
+ * (its diagnostics change between releases). When it is missing the check SKIPS with a message and exits 0 on a
+ * developer machine, and FAILS in the quality gate (AGENTOS_GATE=1 or CI set, see scripts/gate.ts).
  *
  * Usage: bun scripts/lint-lua.ts
  */
@@ -22,6 +22,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { skipTool } from './gate'
 
 const root = resolve(import.meta.dir, '..')
 
@@ -40,10 +41,7 @@ function findLuaLs(): string | undefined {
 }
 
 const luals = findLuaLs()
-if (!luals) {
-  console.log(`lint:lua SKIPPED: lua-language-server not found (${INSTALL})`)
-  process.exit(0)
-}
+if (!luals) skipTool('lint:lua', `lua-language-server not found (${INSTALL})`)
 const version = spawnSync(luals, ['--version'], { encoding: 'utf8' }).stdout.trim()
 if (version !== LUALS_VERSION) {
   console.error(`lint:lua FAILED: ${luals} is "${version}", the config is pinned to ${LUALS_VERSION}\n${INSTALL}`)
