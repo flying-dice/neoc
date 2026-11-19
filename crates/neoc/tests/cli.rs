@@ -95,6 +95,28 @@ fn run_neoc_path_is_rejected_with_a_plain_message() {
 }
 
 #[test]
+fn run_neoc_path_among_lua_paths_runs_nothing() {
+    let dir = tempdir().unwrap();
+    let ok = write(dir.path(), "a.lua", "print(\"must not run\")\n");
+    let old = write(dir.path(), "old.neoc", "fn main() {}\n");
+
+    let out = Command::new(BIN)
+        .arg("run")
+        .arg(&ok)
+        .arg(&old)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.contains("must not run"),
+        "no script may run when a `.neoc` path is given: {stdout}"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("old.neoc"), "stderr: {stderr}");
+}
+
+#[test]
 fn run_runtime_fault_names_the_script_and_cause() {
     let dir = tempdir().unwrap();
     write(dir.path(), "fault.lua", "local n = explode()\n");
@@ -160,6 +182,7 @@ fn run_eval_conflicts_with_paths() {
 
 #[test]
 fn removed_language_flags_and_subcommands_are_refused() {
+    // clap's usage-error exit code is 2.
     for args in [
         &["run", "--lua", "-e", "print(1)"][..],
         &["run", "--neoc", "-e", "print(1)"][..],
@@ -171,12 +194,56 @@ fn removed_language_flags_and_subcommands_are_refused() {
         &["emit-headers"][..],
     ] {
         let out = Command::new(BIN).args(args).output().unwrap();
-        assert!(
-            !out.status.success(),
-            "`neoc {}` must be refused",
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "`neoc {}` must be a usage error",
             args.join(" ")
         );
     }
+}
+
+/// `lib:compile` bundles a script into a standalone executable; running it
+/// passes its arguments through as `_NEOC_ARGS`, with no subcommand.
+#[test]
+fn compile_bundle_runs_standalone_with_arguments() {
+    let dir = tempdir().unwrap();
+    write(
+        dir.path(),
+        "main.lua",
+        "print(\"standalone:\" .. #_NEOC_ARGS .. \":\" .. table.concat(_NEOC_ARGS, \",\"))\n",
+    );
+    write(
+        dir.path(),
+        "build.lua",
+        "local ok, err = require(\"lib:compile\").bundle({ entrypoint = \"main.lua\", output = \"app\" })\nassert(ok, err)\n",
+    );
+
+    let build = Command::new(BIN)
+        .arg("run")
+        .arg("build.lua")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let app = dir
+        .path()
+        .join(if cfg!(windows) { "app.exe" } else { "app" });
+    let out = Command::new(&app).arg("one").arg("two").output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "standalone:2:one,two"
+    );
 }
 
 // LuaJIT bytecode is unverified — a crafted chunk escapes the sandbox — so

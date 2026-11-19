@@ -8,7 +8,8 @@ use std::{env, fs, process};
 
 use clap::{Parser, Subcommand};
 
-/// neoc — a sandboxed Lua runtime with a curated standard library.
+/// neoc — a Lua runtime with a curated standard library. Unsafe Lua globals are
+/// stripped and only registered modules load; this is not a security boundary.
 #[derive(Debug, Parser)]
 #[command(name = "neoc", version, about, long_about = None)]
 struct Cli {
@@ -120,8 +121,8 @@ fn install_shutdown_handler() {
     });
 }
 
-/// Builds the sandboxed Lua engine, binding `user_args` as the `_NEOC_ARGS`
-/// global when any were supplied. Exits the process on engine-init failure.
+/// Builds the Lua engine (unsafe globals stripped, registered modules only),
+/// binding `user_args` as the `_NEOC_ARGS` global when any were supplied. Exits the process on engine-init failure.
 fn engine_with_args(user_args: &[String]) -> mlua::Lua {
     let engine = lua::sandbox::make_engine().unwrap_or_else(|e| {
         report_error(NeocError::EngineInit(e.to_string()));
@@ -157,16 +158,11 @@ fn red(s: &str) -> String {
     format!("\x1b[31m{s}\x1b[0m")
 }
 
-async fn run(paths: &[String], user_args: &[String]) {
-    install_shutdown_handler();
-
-    let mut total_passed = 0u32;
-    let mut total_failed = 0u32;
-    let multi = paths.len() > 1;
-
+/// Refuses `.neoc` paths before anything runs. A `.neoc` file is the retired
+/// language's source: say so plainly rather than feeding it to the Lua loader,
+/// and do it up front so `neoc run a.lua old.neoc` runs nothing.
+fn reject_neoc_paths(paths: &[String]) {
     for path in paths {
-        // Only Lua runs. A `.neoc` path is the retired language's source: say
-        // so plainly rather than feeding it to the Lua loader.
         if Path::new(path)
             .extension()
             .is_some_and(|e| e.eq_ignore_ascii_case("neoc"))
@@ -177,6 +173,18 @@ async fn run(paths: &[String], user_args: &[String]) {
             );
             process::exit(1);
         }
+    }
+}
+
+async fn run(paths: &[String], user_args: &[String]) {
+    reject_neoc_paths(paths);
+    install_shutdown_handler();
+
+    let mut total_passed = 0u32;
+    let mut total_failed = 0u32;
+    let multi = paths.len() > 1;
+
+    for path in paths {
         let source = fs::read_to_string(path).unwrap_or_else(|e| {
             eprintln!("error: {path}: {e}");
             process::exit(1);
