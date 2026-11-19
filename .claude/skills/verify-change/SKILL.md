@@ -50,8 +50,10 @@ Cover what the automated suite can't see yet. Run the host and drive the shell y
 
 ```sh
 bun run build && bun run build:apps                       # client/dist and the app refs in dist/apps
+# the newest built version of an app (dist/apps/<app>/<version>/app-ref.json), whatever its version is
+ref() { echo "file://$(ls -d "$PWD/dist/apps/$1"/*/ | sort -V | tail -1)app-ref.json"; }
 AGENTOS_DATA=$(mktemp -d) AGENTOS_PORT=7420 \
-  AGENTOS_INSTALL="file://$PWD/dist/apps/calculator/0.1.0/app-ref.json,file://$PWD/dist/apps/agents/0.1.0/app-ref.json" \
+  AGENTOS_INSTALL="$(ref calculator),$(ref agents)" \
   bun run host                                            # prints "Pairing code: K7QM-3XHR"; leave it running (run_in_background)
 node e2e/tools/session.mjs start me --url "http://127.0.0.1:7420/?theme=dark"
 node e2e/tools/session.mjs pair me K7QM-3XHR      # every device pairs first, even on loopback (fills "Pairing code", clicks "Pair")

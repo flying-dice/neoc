@@ -744,16 +744,19 @@ impl AppVm {
         Ok(true)
     }
 
-    /// The client mirrored synced or persisted entries.
-    pub fn set_client_values(&self, view: &str, values: &Map<String, Value>) -> Result<()> {
-        let sh = self.shared();
-        let views = sh.views.lock();
-        let i = views.get(view).ok_or_else(|| VmError::NoSuchView(view.to_owned()))?;
-        for (name, value) in values {
-            let v = json_to_lua(self.lua(), value).map_err(|e| VmError::BadValue(e.to_string()))?;
-            i.mirror.raw_set(name.as_str(), v).map_err(|e| VmError::BadValue(e.to_string()))?;
-        }
-        Ok(())
+    /// The client mirrored synced or persisted entries. Written inside a call (the VM's gate): the mirror is a
+    /// Lua table the running call may be reading, and the values are written as one unit.
+    pub async fn set_client_values(&self, view: &str, values: &Map<String, Value>) -> Result<()> {
+        self.in_call(false, async {
+            let views = self.shared().views.lock();
+            let i = views.get(view).ok_or_else(|| VmError::NoSuchView(view.to_owned()))?;
+            for (name, value) in values {
+                let v = json_to_lua(self.lua(), value).map_err(|e| VmError::BadValue(e.to_string()))?;
+                i.mirror.raw_set(name.as_str(), v).map_err(|e| VmError::BadValue(e.to_string()))?;
+            }
+            Ok(())
+        })
+        .await
     }
 
     /// Close the instance: `onClose(w)`, then it is gone.

@@ -1,6 +1,7 @@
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
 //! Shared by the Lua adapter's integration tests: apps run against the REAL SQLite adapter.
 
+use agentos_application::data::{ExecOutcome, Params, PortResult, QueryInfo, SqlMigration};
 use agentos_application::ports::{AppData, AppPackage, CallContext};
 use agentos_domain::{Actor, AppId};
 use agentos_lua::{AppVm, VmConfig};
@@ -96,4 +97,97 @@ pub fn built_app(app: &str) -> AppPackage {
         manifest.join("../agentos-codegen/tests/fixtures").join(app)
     };
     built_package(&dir.join("app.lua"))
+}
+
+/// The real database, except that a statement whose SQL contains `stall` never finishes (so a test can hold a
+/// call at a host call while it holds the VM's turn, and then give up on it).
+pub struct Stalling(Arc<dyn AppData>);
+
+impl Stalling {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self(db()))
+    }
+}
+
+async fn maybe_stall(sql: &str) {
+    if sql.contains("stall") {
+        std::future::pending::<()>().await;
+    }
+}
+
+struct StallingTx(Box<dyn agentos_application::data::DataTx>);
+
+#[async_trait::async_trait]
+impl agentos_application::data::DataTx for StallingTx {
+    async fn query(&mut self, sql: String, params: Params) -> PortResult<Vec<serde_json::Value>> {
+        maybe_stall(&sql).await;
+        self.0.query(sql, params).await
+    }
+    async fn exec(&mut self, sql: String, params: Params) -> PortResult<ExecOutcome> {
+        maybe_stall(&sql).await;
+        self.0.exec(sql, params).await
+    }
+    async fn commit(self: Box<Self>) -> PortResult<()> {
+        self.0.commit().await
+    }
+    async fn rollback(self: Box<Self>) -> PortResult<()> {
+        self.0.rollback().await
+    }
+}
+
+#[async_trait::async_trait]
+impl AppData for Stalling {
+    async fn migrate(&self, migrations: Vec<SqlMigration>) -> PortResult<()> {
+        self.0.migrate(migrations).await
+    }
+    async fn query(&self, sql: String, params: Params) -> PortResult<Vec<serde_json::Value>> {
+        maybe_stall(&sql).await;
+        self.0.query(sql, params).await
+    }
+    async fn exec(&self, sql: String, params: Params) -> PortResult<ExecOutcome> {
+        maybe_stall(&sql).await;
+        self.0.exec(sql, params).await
+    }
+    async fn analyze(&self, sql: String) -> PortResult<QueryInfo> {
+        self.0.analyze(sql).await
+    }
+    async fn begin(&self) -> PortResult<Box<dyn agentos_application::data::DataTx>> {
+        Ok(Box::new(StallingTx(self.0.begin().await?)))
+    }
+    fn changes(&self) -> Box<dyn agentos_application::data::ChangeFeed> {
+        self.0.changes()
+    }
+    fn read_only(&self) -> Arc<dyn AppData> {
+        self.0.read_only()
+    }
+    async fn ui_state(&self, window: &str) -> PortResult<serde_json::Map<String, serde_json::Value>> {
+        self.0.ui_state(window).await
+    }
+    async fn set_ui_state(
+        &self,
+        window: &str,
+        entries: serde_json::Map<String, serde_json::Value>,
+    ) -> PortResult<()> {
+        self.0.set_ui_state(window, entries).await
+    }
+    async fn clear_ui_state(&self) -> PortResult<()> {
+        self.0.clear_ui_state().await
+    }
+    async fn record_revision(&self, revision: agentos_domain::Revision) -> PortResult<i64> {
+        self.0.record_revision(revision).await
+    }
+    async fn revision(&self, id: i64) -> PortResult<Option<agentos_domain::StoredRevision>> {
+        self.0.revision(id).await
+    }
+    async fn revisions(
+        &self,
+        source: &str,
+        key: &serde_json::Value,
+        field: &str,
+    ) -> PortResult<Vec<agentos_domain::StoredRevision>> {
+        self.0.revisions(source, key, field).await
+    }
+    async fn purge_revisions(&self, cutoff_ms: u64) -> PortResult<u64> {
+        self.0.purge_revisions(cutoff_ms).await
+    }
 }

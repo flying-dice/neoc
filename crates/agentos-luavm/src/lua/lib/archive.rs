@@ -43,7 +43,7 @@ use std::path::{Component, Path, PathBuf};
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression as GzLevel;
-use globset::{Glob, GlobSet, GlobSetBuilder};
+use globset::{GlobSet, GlobSetBuilder};
 use mlua::{Lua, Table, Value};
 use tracing::instrument;
 use walkdir::WalkDir;
@@ -405,7 +405,7 @@ fn build_include(opts: Option<&Table>, prefix: &str) -> Result<Option<GlobSet>, 
     let mut any = false;
     for pat in arr.sequence_values::<String>() {
         let pat = pat.map_err(|e| format!("{prefix}: include: {e}"))?;
-        let glob = Glob::new(&pat).map_err(|e| format!("{prefix}: include: {e}"))?;
+        let glob = super::glob::compile(&pat).map_err(|e| format!("{prefix}: include: {e}"))?;
         builder.add(glob);
         any = true;
     }

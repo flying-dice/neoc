@@ -25,14 +25,14 @@ snapshots deliberately with `bun run test:e2e:update`, then open the changed PNG
 - **Domain** (`agentos-domain`): plain unit tests, no framework, no I/O.
 - **Application** (`agentos-application`): use cases tested against the in-memory port fakes in `agentos_application::testing`
   (`ManualClock`, `RecordingShell`, ...). Tests sit beside the code in `*_tests.rs`. No mocking library: write a fake.
-- **Adapters**: integration tests in `crates/<adapter>/tests/`, through the real library (the Lua 5.1 sandbox and
+- **Adapters**: integration tests in `crates/<adapter>/tests/`, through the real library (per-app VM isolation and the
   module set, SQLite migrations and live queries, MCP with an `rmcp` client, ACP against the scripted agent, `/rpc` with a
   WebSocket client, fetch against a local server). The shipped apps are tested here too: `crates/agentos-lua/tests/calculator_app.rs`
   builds `apps/calculator` with darklua and runs the bundle under the real runtime. The Lua apps and fixtures the Rust
   tests run are built with the product's own pipeline (`scripts/lua51-build.ts`, which `crates/agentos-lua/tests/common`
   and `crates/agentos-host/tests/common` call, so `bun` and `darklua` must be installed); inline snippets in those tests
   are plain Lua 5.1. `crates/agentos-lua/tests/lua51.rs` holds what is specific to running on Lua 5.1: the
-  sandbox and read-only libraries and host calls under `pcall` and in coroutines; `modules.rs` holds the modules and
+  isolation of the per-app VMs, the read-only libraries and host calls under `pcall` and in coroutines; `modules.rs` holds the modules and
   the lifecycle: every `std:`/`lib:`/`vnd:` module can be required, a request handler and a task take their turn in
   the VM's one-call-at-a-time queue, an unloaded or replaced app's listener port is free again and its tasks and
   workers stop. `agentos-luavm` has its own unit tests (the module registry, the lifecycle, and the `vnd:hyper` client
@@ -187,8 +187,10 @@ and the UX research panel (`app-design`, `ux-research`) use. It needs a running 
 
 ```sh
 bun run build && bun run build:apps                       # the client and the app refs (dist/apps)
+# the newest built version of an app (dist/apps/<app>/<version>/app-ref.json), whatever its version is
+ref() { echo "file://$(ls -d "$PWD/dist/apps/$1"/*/ | sort -V | tail -1)app-ref.json"; }
 AGENTOS_DATA=$(mktemp -d) AGENTOS_PORT=7420 \
-  AGENTOS_INSTALL="file://$PWD/dist/apps/calculator/0.1.1/app-ref.json,file://$PWD/dist/apps/agents/0.1.1/app-ref.json" \
+  AGENTOS_INSTALL="$(ref calculator),$(ref agents)" \
   bun run host                                            # prints the URL and "Pairing code: K7QM-3XHR"
 node e2e/tools/session.mjs start me --url http://127.0.0.1:7420/ [--theme dark] [--width 1280 --height 800]
 node e2e/tools/session.mjs pair me K7QM-3XHR      # the first screen (fills "Pairing code", clicks "Pair")

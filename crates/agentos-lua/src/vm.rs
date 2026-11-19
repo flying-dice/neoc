@@ -11,7 +11,7 @@ use crate::{
     api,
     convert::{json_to_lua, lua_to_json},
     error::{ScriptError, ToolFailure},
-    state::{DepKey, SharedTracker, Tracker, TrackerScope},
+    state::{DepKey, SharedTracker, TrackGuard, Tracker, TrackerScope},
     view::{RenderScope, ViewInstance},
 };
 use agentos_application::{
@@ -190,10 +190,13 @@ pub(crate) struct Shared {
     /// change to the world raises. It is the holder's own state (see [`Turn`]): set when a call takes the gate,
     /// cleared when it lets it go.
     pub read_only: Arc<AtomicBool>,
-    /// How many calls and tasks that are read-only are alive (a `readOnly` tool, parked or running, and
-    /// everything it started that has not finished). A request that arrives from outside while this is
-    /// above zero (a request to the app's own listener, say) runs read-only too: whoever sent it may be one
-    /// of them.
+    /// How many read-only calls are alive: a `readOnly` tool (parked or running), a task it started that has
+    /// not finished (`task.spawn`, and a `task.delay` or `task.defer` once it has begun), and a request that
+    /// was itself made read-only by this count. A request that arrives from outside while this is above zero
+    /// (a request to the app's own listener, say, which carries no origin) runs read-only too, because
+    /// whoever sent it may be one of them. The taint ends when the last of them ends; it applies to nothing
+    /// else: a task or a tool carries its own origin ([`Inherited`]), so a long-lived read-only poller does
+    /// not make an unrelated writable tool's `task.delay` read-only.
     pub read_only_live: AtomicUsize,
     /// Everything the app spawned (tasks, servers, workers): aborted when the app is unloaded.
     pub life: Life,
@@ -275,6 +278,18 @@ impl Shared {
     }
 }
 
+/// Where a call came from, which decides what restricts it.
+#[derive(Clone, Copy)]
+enum Via {
+    /// Through the host (a tool, an event, a write-back): `read_only` is what the caller requires.
+    Host { read_only: bool },
+    /// Work a call started (a deferred or delayed function): it is as restricted as that call was.
+    Task(Inherited),
+    /// A request from outside to the app's own listener: it has no origin, so it is read-only while any
+    /// read-only call is alive ([`Shared::read_only_live`]).
+    Request,
+}
+
 /// What a call keeps while it waits without using the VM (see [`Baton::park`]).
 struct Parked {
     scope: TrackerScope,
@@ -298,21 +313,19 @@ pub(crate) struct Turn {
     /// The call may not change anything. This belongs to the call, and everything it starts inherits it: a
     /// task a `readOnly` tool spawns stays read-only for as long as it lives, whenever it runs. While the
     /// call holds the gate this is [`Shared::read_only`]; while it waits it is not (the next call's is).
+    /// Counted in [`Shared::read_only_live`] for as long as the call lives.
     read_only: bool,
 }
 
 impl Turn {
-    /// A call that waits for the gate and takes it. `read_only` is what the caller requires of the call;
-    /// an `inbound` call is read-only too while any read-only call or task is alive (see
-    /// [`Shared::read_only_live`]).
-    async fn take(
-        shared: Arc<Shared>,
-        gate: Arc<tokio::sync::Mutex<()>>,
-        inbound: bool,
-        read_only: bool,
-    ) -> Self {
+    /// A call that waits for the gate and takes it.
+    async fn take(shared: Arc<Shared>, gate: Arc<tokio::sync::Mutex<()>>, via: Via) -> Self {
         let held = gate.clone().lock_owned().await;
-        let read_only = read_only || (inbound && shared.read_only_live.load(Ordering::SeqCst) > 0);
+        let (inbound, read_only) = match via {
+            Via::Host { read_only } => (false, read_only),
+            Via::Task(from) => (true, from.read_only),
+            Via::Request => (true, shared.read_only_live.load(Ordering::SeqCst) > 0),
+        };
         let turn = Self::new(shared, gate, Some(held), inbound, read_only);
         turn.shared.read_only.store(read_only, Ordering::SeqCst);
         turn
@@ -346,7 +359,7 @@ impl Baton for Turn {
         Inherited { read_only: self.read_only }
     }
 
-    fn park(&mut self) -> std::result::Result<(), String> {
+    fn can_park(&self) -> std::result::Result<(), String> {
         if self.shared.tx.lock().is_some() {
             return Err(
                 "cannot wait inside db:tx: a transaction holds the database for as long as it is open, \
@@ -354,17 +367,18 @@ impl Baton for Turn {
                     .to_owned(),
             );
         }
-        let mut tracker = self.shared.tracker.lock();
-        if tracker.is_pure() {
+        if self.shared.tracker.lock().is_pure() {
             return Err("cannot wait while rendering: render must be pure and quick".to_owned());
         }
-        let scope = tracker.suspend();
-        drop(tracker);
+        Ok(())
+    }
+
+    fn park(&mut self) {
+        let scope = self.shared.tracker.lock().suspend();
         // the next call to hold the gate is not this one: its restrictions are its own
         self.shared.read_only.store(false, Ordering::SeqCst);
         self.parked = Some(Parked { scope });
         self.held = None;
-        Ok(())
     }
 
     fn unpark(&mut self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
@@ -409,9 +423,14 @@ impl CallEntry for Entry {
 
     fn enter(&self, inherited: Inherited) -> Pin<Box<dyn Future<Output = Box<dyn Baton>> + Send + 'static>> {
         let (shared, gate) = (self.shared.clone(), self.gate.clone());
-        Box::pin(async move {
-            Box::new(Turn::take(shared, gate, true, inherited.read_only).await) as Box<dyn Baton>
-        })
+        Box::pin(
+            async move { Box::new(Turn::take(shared, gate, Via::Task(inherited)).await) as Box<dyn Baton> },
+        )
+    }
+
+    fn request(&self) -> Pin<Box<dyn Future<Output = Box<dyn Baton>> + Send + 'static>> {
+        let (shared, gate) = (self.shared.clone(), self.gate.clone());
+        Box::pin(async move { Box::new(Turn::take(shared, gate, Via::Request).await) as Box<dyn Baton> })
     }
 }
 
@@ -551,7 +570,7 @@ impl AppVm {
     ///
     /// `read_only`: the call may not change anything (a `readOnly` tool); whatever it starts may not either.
     pub(crate) async fn in_call<T>(&self, read_only: bool, body: impl Future<Output = T>) -> T {
-        let turn = Turn::take(self.shared.clone(), self.gate.clone(), false, read_only).await;
+        let turn = Turn::take(self.shared.clone(), self.gate.clone(), Via::Host { read_only }).await;
         lifecycle::scoped(Box::new(turn), body).await
     }
 
@@ -678,11 +697,10 @@ impl AppVm {
         let Some(handler) = handler else { return Ok((Value::Null, BTreeSet::new())) };
         self.in_call(false, async {
             let arg = json_to_lua(&self.lua, &payload).map_err(|e| VmError::BadValue(e.to_string()))?;
-            if track {
-                self.shared.tracker.lock().begin(false);
-            }
+            // closed by the guard if this call is dropped at a host call
+            let scope = track.then(|| TrackGuard::begin(&self.shared.tracker));
             let result = handler.call_async::<LuaValue>(arg).await;
-            let deps = if track { self.shared.tracker.lock().end() } else { BTreeSet::new() };
+            let deps = scope.map(TrackGuard::finish).unwrap_or_default();
             let out = result.map_err(|e| script(&e))?;
             Ok((lua_to_json(&out).map_err(|e| VmError::BadValue(e.to_string()))?, deps))
         })

@@ -36,19 +36,48 @@ pub(crate) struct Tracker {
     dirty: BTreeSet<DepKey>,
     /// The open scope is a render: it must not change anything.
     pure: bool,
+    /// Which scope is open (`0`: none), so that closing a scope that was dropped while its call waited cannot
+    /// end the scope of the call that took its place.
+    open_id: u64,
+    scopes_opened: u64,
 }
 
 impl Tracker {
     pub fn new(read_only: Arc<AtomicBool>) -> Self {
-        Self { read_only, next_state: 0, active: None, dirty: BTreeSet::new(), pure: false }
+        Self {
+            read_only,
+            next_state: 0,
+            active: None,
+            dirty: BTreeSet::new(),
+            pure: false,
+            open_id: 0,
+            scopes_opened: 0,
+        }
     }
-    pub fn begin(&mut self, pure: bool) {
+    /// Open a scope; returns its id (for [`Tracker::end_scope`]).
+    pub fn begin(&mut self, pure: bool) -> u64 {
         self.active = Some(BTreeSet::new());
         self.pure = pure;
+        self.scopes_opened += 1;
+        self.open_id = self.scopes_opened;
+        self.open_id
     }
     pub fn end(&mut self) -> BTreeSet<DepKey> {
         self.pure = false;
+        self.open_id = 0;
         self.active.take().unwrap_or_default()
+    }
+    /// Close scope `id` if it is the open one (nothing otherwise: it was set aside, or already closed).
+    pub fn end_scope(&mut self, id: u64) -> BTreeSet<DepKey> {
+        if self.open_id == id {
+            self.end()
+        } else {
+            BTreeSet::new()
+        }
+    }
+    #[cfg(test)]
+    pub fn is_tracking(&self) -> bool {
+        self.active.is_some()
     }
     pub fn take_dirty(&mut self) -> BTreeSet<DepKey> {
         std::mem::take(&mut self.dirty)
@@ -58,11 +87,16 @@ impl Tracker {
     }
     /// Set the open scope aside (the call waits and another runs): see [`TrackerScope`].
     pub fn suspend(&mut self) -> TrackerScope {
-        TrackerScope { active: self.active.take(), pure: std::mem::take(&mut self.pure) }
+        TrackerScope {
+            active: self.active.take(),
+            pure: std::mem::take(&mut self.pure),
+            id: std::mem::take(&mut self.open_id),
+        }
     }
     pub fn resume(&mut self, scope: TrackerScope) {
         self.active = scope.active;
         self.pure = scope.pure;
+        self.open_id = scope.id;
     }
 }
 
@@ -70,6 +104,33 @@ impl Tracker {
 pub(crate) struct TrackerScope {
     active: Option<BTreeSet<DepKey>>,
     pure: bool,
+    id: u64,
+}
+
+/// An open tracking scope of a call. However the call ends (finished, failed, or its future dropped at a host
+/// call because the caller gave up), dropping the guard closes the scope, so a cancelled call cannot leave the
+/// tracker recording reads for the calls that follow.
+pub(crate) struct TrackGuard {
+    tracker: SharedTracker,
+    id: u64,
+}
+
+impl TrackGuard {
+    pub fn begin(tracker: &SharedTracker) -> Self {
+        let id = tracker.lock().begin(false);
+        Self { tracker: tracker.clone(), id }
+    }
+
+    /// Close the scope: what the call read.
+    pub fn finish(self) -> BTreeSet<DepKey> {
+        self.tracker.lock().end_scope(self.id)
+    }
+}
+
+impl Drop for TrackGuard {
+    fn drop(&mut self) {
+        self.tracker.lock().end_scope(self.id);
+    }
 }
 
 pub(crate) type SharedTracker = Arc<Mutex<Tracker>>;
@@ -153,5 +214,49 @@ pub(crate) fn make_state(lua: &Lua, tracker: &SharedTracker, initial: &Table) ->
         let proxy = lua.create_table()?;
         proxy.set_metatable(Some(meta))?;
         Ok(proxy)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tracker() -> SharedTracker {
+        Arc::new(Mutex::new(Tracker::new(Arc::new(AtomicBool::new(false)))))
+    }
+
+    #[test]
+    fn a_dropped_guard_closes_its_scope() {
+        let tracker = tracker();
+        let guard = TrackGuard::begin(&tracker);
+        assert!(tracker.lock().is_tracking());
+        drop(guard); // the call was cancelled
+        assert!(!tracker.lock().is_tracking());
+    }
+
+    #[test]
+    fn a_finished_guard_returns_what_was_read_and_closes_once() {
+        let tracker = tracker();
+        let guard = TrackGuard::begin(&tracker);
+        tracker.lock().active.as_mut().unwrap().insert(DepKey { state: 1, key: "v".into() });
+        let deps = guard.finish();
+        assert_eq!(deps.len(), 1);
+        assert!(!tracker.lock().is_tracking());
+    }
+
+    /// A call dropped while it waits (its scope was set aside) must not end the scope of the call that took its
+    /// place.
+    #[test]
+    fn a_guard_dropped_while_its_call_waits_leaves_the_next_calls_scope_alone() {
+        let tracker = tracker();
+        let first = TrackGuard::begin(&tracker);
+        let set_aside = tracker.lock().suspend(); // the first call waits
+        let second = TrackGuard::begin(&tracker);
+        drop(first); // cancelled while waiting
+        assert!(tracker.lock().is_tracking(), "the second call's scope is still open");
+        let deps = second.finish();
+        assert!(deps.is_empty());
+        assert!(!tracker.lock().is_tracking());
+        drop(set_aside);
     }
 }

@@ -66,6 +66,8 @@ test.describe('Discover journeys', () => {
     await expect(card).toContainText('Notes')
     await expect(card).toContainText('Version 0.1.0')
     await expect(card).toContainText('from this computer')
+    // apps have no permissions to ask for: the preview must not show the old "Asks to use" list
+    await expect(card).not.toContainText('Asks to use')
     await expect(page.getByTestId('dock-notes')).toHaveCount(0) // previewing installs nothing
 
     // the confirmation says what installing means; cancelling leaves things as they were

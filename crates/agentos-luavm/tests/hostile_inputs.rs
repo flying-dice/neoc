@@ -69,6 +69,25 @@ const POOL: &str = r#"
     }
 "#;
 
+/// Text and tables nested a hundred thousand deep, for every bracket kind a parser, a pattern compiler or a
+/// template engine might recurse on (and the keys of nested tables). [`POOL`]'s nesting is only thousands deep, which
+/// the recursion limits of the parsers in use survive: a glob parser that recursed once per `{` still fit
+/// there and overflowed here. Swept with one and two arguments only (every function would be quadratic in these).
+const DEEP: &str = r#"
+    local N = 100000
+    local deep, deep_keys = {}, {}
+    for _ = 1, N do deep = { deep } deep_keys = { a = deep_keys } end
+    return {
+        ("["):rep(N), ("{"):rep(N), ("("):rep(N), ("<"):rep(N), ("<a>"):rep(N), ("[["):rep(N), ("{{"):rep(N),
+        ("(?:"):rep(N), ("(?"):rep(N), ("[:"):rep(N), ("{a,"):rep(N), ("a{b,"):rep(N), ("a{1,"):rep(N),
+        ("${"):rep(N), ("<!--"):rep(N), ("- "):rep(N), ("a = ["):rep(N), ('{"a":'):rep(N), ("[1,"):rep(N),
+        ("{%"):rep(N), ("{{ ("):rep(N), ("%("):rep(N), ("\\"):rep(N), ("*"):rep(N), ("&"):rep(N),
+        ("["):rep(N) .. ("]"):rep(N), ("{"):rep(N) .. ("}"):rep(N), ("("):rep(N) .. (")"):rep(N),
+        ("<a>"):rep(N) .. ("</a>"):rep(N), ("{a,"):rep(N) .. ("}"):rep(N), ("a{b,"):rep(N) .. ("}"):rep(N),
+        deep, deep_keys,
+    }
+"#;
+
 /// A reduced pool (indices into [`POOL`]) for three-argument combinations and for the methods of handles:
 /// `1`, `-1`, `2^63`, `-2^63`, `1e300`, NaN; `""`, `"a\0b"`, `"&ÜÜÜÜÜÜÜÜ;"`, invalid UTF-8 cut mid-character;
 /// `{}`, `{ 1, 2, 3 }`, `{ a = 1 }`; and the options tables with `1e300`, `2^63` and NaN under every name.
@@ -79,6 +98,7 @@ static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::n
 struct Harness {
     lua: Lua,
     pool: Vec<Value>,
+    deep: Vec<Value>,
     panics: Arc<Mutex<Vec<String>>>,
     current: Arc<Mutex<String>>,
     calls: usize,
@@ -144,6 +164,19 @@ impl Harness {
             for b in &wide {
                 let out = self.call(label, f, &with(&[(*a).clone(), (*b).clone()]));
                 keep(&mut handles, out);
+            }
+        }
+        // the deep nesting goes in as an argument, alone and next to a plain one (a pattern to
+        // compile or a text to parse, whichever way round), for module functions: the methods of a handle take the same text
+        // through the constructors swept here, and sweeping them too would only repeat the cost
+        if prefix.is_empty() {
+            let plain = self.lua.create_string("x").map(Value::String).unwrap();
+            for d in self.deep.clone() {
+                for args in [vec![d.clone()], vec![d.clone(), plain.clone()], vec![plain.clone(), d.clone()]]
+                {
+                    let out = self.call(label, f, &args);
+                    keep(&mut handles, out);
+                }
             }
         }
         if prefix.is_empty() {
@@ -251,10 +284,17 @@ fn sweep() -> (usize, Vec<String>) {
         let lua = make_engine().unwrap();
         let pool: Table = lua.load(POOL).eval().unwrap();
         let pool: Vec<Value> = pool.sequence_values::<Value>().map(Result::unwrap).collect();
+        let deep: Table = if std::env::var_os("HOSTILE_NO_DEEP").is_some() {
+            lua.create_table().unwrap()
+        } else {
+            lua.load(DEEP).eval().unwrap()
+        };
+        let deep: Vec<Value> = deep.sequence_values::<Value>().map(Result::unwrap).collect();
         let module: Table = lua.load(format!("return require({name:?})")).eval().unwrap();
         let mut h = Harness {
             lua,
             pool,
+            deep,
             panics: panics.clone(),
             current: current.clone(),
             calls: 0,
@@ -365,4 +405,51 @@ fn patterns_at_the_limit_still_match_and_plain_searches_are_not_counted() {
             .unwrap();
         assert!(ok);
     });
+}
+
+/// globset parses `{...}` recursively: a pattern of nested alternations overflowed even a 16 MiB stack, an
+/// abort of the host. Every place the VM compiles a glob goes through one bounded helper: `lib:glob` (every
+/// constructor and `ignore`), `lib:archive`'s `include` and `lib:http`'s `serve_static`.
+#[test]
+fn deeply_nested_glob_patterns_are_an_error_in_every_entry_point() {
+    let lines = on_small_stack(|| {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let lua = agentos_luavm::lua::sandbox::make_engine().unwrap();
+        let out: Table = rt
+            .block_on(
+                lua.load(
+                    r#"
+                    local glob, archive, http = require("lib:glob"), require("lib:archive"), require("lib:http")
+                    local out = {}
+                    for _, pattern in ipairs {
+                      ("{"):rep(100000) .. ("}"):rep(100000), ("a{b,"):rep(100000), ("{"):rep(100000),
+                      ("{a,"):rep(100) .. "a" .. ("}"):rep(100),
+                    } do
+                      local calls = {
+                        function() return glob.is_match(pattern, "a") end,
+                        function() return glob.Glob.new(pattern) end,
+                        function() return glob.GlobSet.new({ pattern }) end,
+                        function() return glob.scan(pattern, { cwd = "." }) end,
+                        function() return glob.scan("*", { cwd = ".", ignore = { pattern } }) end,
+                        function() return archive.tar_extract("not a tar", "out", { include = { pattern } }) end,
+                        function() return archive.zip_extract("not a zip", "out", { include = { pattern } }) end,
+                        function() return http.serve_static(pattern, { port = 0, host = "127.0.0.1" }) end,
+                      }
+                      for i, call in ipairs(calls) do
+                        local ok, value, err = pcall(call)
+                        -- a Lua error, or the (nil, message) pair: never a crash, never a handle
+                        local message = (not ok and tostring(value)) or (value == nil and tostring(err)) or "ACCEPTED"
+                        out[#out + 1] = i .. ":" .. message
+                      end
+                    end
+                    return out
+                    "#,
+                )
+                .eval_async::<Table>(),
+            )
+            .unwrap();
+        out.sequence_values::<String>().map(Result::unwrap).collect::<Vec<_>>()
+    });
+    assert_eq!(lines.len(), 32);
+    assert!(lines.iter().all(|l| l.contains("glob pattern")), "{lines:#?}");
 }

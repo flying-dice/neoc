@@ -98,7 +98,8 @@ A change is done when all of these hold:
   call at a time per VM). Still enforced: a tool declared `readOnly` cannot write through the `app.*` API (db, kv, state,
   notify, shell, windows, and registering tools, windows and handlers), and neither can the tasks it starts or the
   requests it triggers; that guarantee does **not** cover the neoc modules (`std:fs`, `vnd:rusqlite`, `std:net`, ...),
-  which are open to every tool. SQL `ATTACH` is denied through `app.db`/`app.kv` (not through `vnd:rusqlite`), a
+  which are open to every tool. Agent auto-approval of `readOnly` app tools relies on this `app.*`-only guarantee
+  (owner decision: auto-approval stays on). SQL `ATTACH` is denied through `app.db`/`app.kv` (not through `vnd:rusqlite`), a
   cyclic or absurdly shared table handed back to the host is an error (never a stack overflow), a Lua number can
   not panic a module or size an unbounded allocation (an error instead: a host panic aborts every app), and chunks
   load as text only.

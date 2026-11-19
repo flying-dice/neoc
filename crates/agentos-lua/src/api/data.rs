@@ -24,6 +24,7 @@ use agentos_application::{
     data::{ExecOutcome, Params, QueryInfo, SqlMigration},
     live::{Conflict, SourceDef, SourceId, SourceKind, TotalMode},
 };
+use agentos_luavm::lua::lifecycle;
 use agentos_luavm::mlua;
 use agentos_luavm::mlua::{Function, Lua, Table, Value as LuaValue};
 use serde_json::{json, Value};
@@ -41,6 +42,7 @@ impl Shared {
 
     /// A read: through the open transaction when there is one.
     async fn run_query(&self, sql: String, params: Params) -> mlua::Result<Vec<Value>> {
+        lifecycle::hold().await;
         let open = self.tx.lock().take();
         match open {
             Some(mut t) => {
@@ -54,6 +56,7 @@ impl Shared {
 
     /// A write: through the open transaction when there is one.
     async fn run_exec(&self, sql: String, params: Params) -> mlua::Result<ExecOutcome> {
+        lifecycle::hold().await;
         let open = self.tx.lock().take();
         match open {
             Some(mut t) => {
@@ -219,7 +222,14 @@ fn install_statements(lua: &Lua, sh: &Sh, db: &Table) -> mlua::Result<()> {
         lua.create_async_function(move |_, (_this, steps): (LuaValue, Table)| {
             let s = s.clone();
             async move {
+                lifecycle::hold().await;
                 s.require_write("db:migrate")?;
+                if s.tx.lock().is_some() {
+                    // the transaction holds the database's write gate, and a migration waits for that same gate
+                    return Err(mlua::Error::runtime(
+                        "db:migrate cannot run inside db:tx: migrate before the transaction starts",
+                    ));
+                }
                 let len = steps.raw_len();
                 // not presized: `#steps` is whatever border Lua finds, so a forged table can report 2^30
                 let mut migrations = Vec::new();
@@ -294,6 +304,9 @@ fn install_statements(lua: &Lua, sh: &Sh, db: &Table) -> mlua::Result<()> {
         lua.create_async_function(move |_, (_this, body): (LuaValue, Function)| {
             let s = s.clone();
             async move {
+                // the turn first: the checks below, the transaction and the `readOnly` flag `database()` reads
+                // belong to the call that holds it (a task started inside another `db:tx` waits here)
+                lifecycle::hold().await;
                 check_effects_allowed(&s, "db:tx")?;
                 if s.tx.lock().is_some() {
                     return Err(mlua::Error::runtime("db:tx cannot be nested"));

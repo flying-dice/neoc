@@ -72,31 +72,42 @@ async fn serve_static(lua: Lua, (glob_pattern, opts): (String, Option<Table>)) -
 
     tracing::info!("http static server on http://{addr} ({} files)", files.len());
 
-    // runs until the app is unloaded (its lifecycle closes), which drops the listener and ends the call
+    // runs until the app is unloaded (its lifecycle closes) or the call is dropped; either way the listener and
+    // every open connection go with it (the connections belong to the serve loop, see `serve_loop`)
     let life = Life::of(&lua);
     tokio::select! {
-        () = serve_loop(listener, files, index, life.clone()) => {},
+        () = serve_loop(listener, files, index) => {},
         () = life.closed() => {},
     }
 
     Ok(())
 }
 
-async fn serve_loop(listener: TcpListener, files: Arc<FileMap>, index: Arc<String>, life: Life) {
+/// Accept connections and serve them. The connections are tasks of this loop: when the loop ends, because the
+/// app is unloaded or because the call that runs it was dropped, they are aborted and their sockets closed,
+/// not left to outlive the server that accepted them.
+async fn serve_loop(listener: TcpListener, files: Arc<FileMap>, index: Arc<String>) {
+    let mut connections = tokio::task::JoinSet::new();
     loop {
-        match listener.accept().await {
-            Ok((stream, _peer)) => {
-                let files = files.clone();
-                let index = index.clone();
-                life.spawn(async move {
-                    if let Err(e) = handle_connection(stream, &files, &index).await {
-                        tracing::debug!("connection error: {e}");
-                    }
-                });
-            }
-            Err(e) => {
-                tracing::error!("accept error: {e}");
-            }
+        tokio::select! {
+            accepted = listener.accept() => match accepted {
+                Ok((stream, _peer)) => {
+                    let files = files.clone();
+                    let index = index.clone();
+                    connections.spawn(async move {
+                        if let Err(e) = handle_connection(stream, &files, &index).await {
+                            tracing::debug!("connection error: {e}");
+                        }
+                    });
+                }
+                Err(e) => {
+                    tracing::error!("accept error: {e}");
+                    // a persistent error (out of descriptors) must not spin
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            },
+            // reap the finished ones, so a long-lived server does not collect them
+            Some(_) = connections.join_next(), if !connections.is_empty() => {}
         }
     }
 }
@@ -341,7 +352,7 @@ fn glob_root(pattern: &str) -> PathBuf {
 
 fn resolve_glob(pattern: &str) -> Result<FileMap, Box<dyn std::error::Error + Send + Sync>> {
     let mut builder = GlobSetBuilder::new();
-    builder.add(globset::Glob::new(pattern)?);
+    builder.add(super::glob::compile(pattern)?);
     let set = builder.build()?;
 
     let root = glob_root(pattern);
@@ -551,6 +562,26 @@ pub fn benches(c: &mut criterion::Criterion) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The connections of a static server belong to its serve loop: when the loop is dropped (the call running
+    /// it was cancelled) an open connection is closed with it, not left running until the app unloads.
+    #[tokio::test]
+    async fn dropping_the_serve_loop_closes_its_connections_and_its_listener() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(serve_loop(listener, Arc::new(HashMap::new()), Arc::new(String::new())));
+        // a client that connects and says nothing: the connection waits for a request line
+        let mut idle = tokio::net::TcpStream::connect(addr).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        server.abort();
+        let _ = server.await;
+        let mut buf = [0_u8; 8];
+        let read = tokio::time::timeout(Duration::from_secs(2), idle.read(&mut buf))
+            .await
+            .expect("the connection was closed with the loop");
+        assert!(matches!(read, Ok(0) | Err(_)), "{read:?}");
+        assert!(tokio::net::TcpStream::connect(addr).await.is_err(), "the listener is closed");
+    }
 
     #[test]
     fn mime_known_types() {

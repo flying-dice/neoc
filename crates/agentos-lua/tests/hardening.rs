@@ -10,12 +10,13 @@
 mod common;
 
 use agentos_application::{
+    data::Params,
     ports::{AppData, AppRuntime, Notifier, PortResult},
     testing::RecordingShell,
 };
 use agentos_domain::Notification;
 use agentos_lua::LuaRuntime;
-use common::{agent_ctx, db, id, load, package, try_load_with};
+use common::{agent_ctx, db, id, load, package, try_load_with, Stalling};
 use serde_json::{json, Map, Value};
 use std::{
     sync::Arc,
@@ -399,27 +400,52 @@ async fn a_coroutine_cannot_leave_the_write_gate_held_after_the_call_returns() {
 /// and with it the write gate, until some later call happens to start.
 #[tokio::test]
 async fn a_cancelled_call_gives_up_its_transaction_at_once() {
-    // `db:migrate` inside the transaction waits for the very gate the transaction holds: a call parked
-    // between two statements with the transaction open in the VM
+    // a call held at a host call (a statement that never finishes) with the transaction open in the VM
     let src = r#"
       app.on("tx", function()
         app.db:tx(function()
           app.db:exec("create table if not exists t(a)")
-          app.db:migrate { [1] = "create table m(a)" }
+          app.db:all("select 'stall'")
         end)
       end)
     "#;
-    let data = db();
+    let data = Stalling::new();
     let vm = try_load_with("txcancel", src, data.clone()).await.unwrap();
     let cancelled = tokio::time::timeout(Duration::from_millis(300), vm.emit("tx", json!(null))).await;
-    assert!(cancelled.is_err(), "the call is parked on the gate and its caller gives up");
+    assert!(cancelled.is_err(), "the call is held at the statement and its caller gives up");
     let write = tokio::time::timeout(
         Duration::from_secs(3),
-        data.exec("create table if not exists y(a)".into(), vec![]),
+        data.exec("create table if not exists y(a)".into(), Params::None),
     )
     .await
     .expect("the cancelled call's transaction was rolled back and the gate released");
     write.unwrap();
+}
+
+/// `db:migrate` takes the database's write gate, which an open transaction holds: inside `db:tx` it would wait
+/// for itself for ever, so it is an error that says what to do.
+#[tokio::test]
+async fn db_migrate_inside_a_transaction_is_an_error_not_a_self_deadlock() {
+    let src = r#"
+      app.tool { name = "m", run = function()
+        local ok, why = pcall(function()
+          app.db:tx(function()
+            app.db:exec("create table if not exists t(a)")
+            app.db:migrate { [1] = "create table m(a)" }
+          end)
+        end)
+        -- the transaction is gone and the database is free: a migration works now
+        app.db:migrate { [1] = "create table m(a)" }
+        return { ok = ok, why = tostring(why) }
+      end }
+    "#;
+    let vm = load(src).await;
+    let out = tokio::time::timeout(PROMPTLY, vm.call_tool("m", json!({}), &agent_ctx(0), false))
+        .await
+        .expect("no self-deadlock")
+        .unwrap();
+    assert_eq!(out["ok"], false, "{out}");
+    assert!(out["why"].as_str().unwrap().contains("db:migrate cannot run inside db:tx"), "{out}");
 }
 
 // N3: a stashed `w` is still a window context; a readOnly tool must not be able to use it.

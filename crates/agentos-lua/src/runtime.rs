@@ -220,7 +220,7 @@ impl AppRuntime for LuaRuntime {
     }
 
     async fn set_client_values(&self, app: &AppId, view: &str, values: Map<String, Value>) -> PortResult<()> {
-        self.vm(app)?.set_client_values(view, &values).map_err(|e| port_error(app, e))
+        self.vm(app)?.set_client_values(view, &values).await.map_err(|e| port_error(app, e))
     }
 
     async fn close_view(&self, app: &AppId, view: &str) -> PortResult<()> {

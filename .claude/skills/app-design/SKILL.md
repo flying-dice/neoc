@@ -60,7 +60,9 @@ Run the real host with the app installed and the built client, then run the save
 
 ```sh
 bun run build && bun run build:apps
-AGENTOS_DATA=$(mktemp -d) AGENTOS_PORT=7420 AGENTOS_INSTALL="file://$PWD/dist/apps/<app>/0.1.0/app-ref.json" bun run host
+# the newest built version of an app (dist/apps/<app>/<version>/app-ref.json), whatever its version is
+ref() { echo "file://$(ls -d "$PWD/dist/apps/$1"/*/ | sort -V | tail -1)app-ref.json"; }
+AGENTOS_DATA=$(mktemp -d) AGENTOS_PORT=7420 AGENTOS_INSTALL="$(ref <app>)" bun run host
 ```
 
 ```
