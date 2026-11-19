@@ -10,6 +10,10 @@
   `${testid}-menu-<fullscreen|split-left|split-right|slideover|floating|minimize|close>`,
   `${testid}-resize` (floating windows only).
 
+  Resize: a floating window shows a corner grip (always visible, `--window-grip`: 3:1 on any body) that a pointer drags
+  and that is also a button: Tab to it, then the arrow keys resize by 16 px (Shift: 64 px), to the minimum size and
+  the screen's edge (the owner clamps the frame).
+
   Focus: the window itself is focusable (`tabindex="-1"`, so a click on its chrome or a drag of its handle lands
   there). When it is, focus moves on to the element in the content marked `data-window-focus`, if there is one, so a
   window whose keys are handled inside (an app's window-scoped shortcuts) keeps listening after a move or resize.
@@ -101,6 +105,28 @@
     gesture = null
   }
 
+  const ARROWS: Record<string, readonly [number, number]> = {
+    ArrowRight: [1, 0],
+    ArrowLeft: [-1, 0],
+    ArrowDown: [0, 1],
+    ArrowUp: [0, -1]
+  }
+
+  /** The keyboard's way to resize: the arrow keys on the focused grip. */
+  function resizeByKey(e: KeyboardEvent): void {
+    const arrow = ARROWS[e.key]
+    if (!arrow || e.metaKey || e.ctrlKey || e.altKey) return
+    e.preventDefault()
+    onfocus?.()
+    const step = e.shiftKey ? 64 : 16
+    onframechange?.({
+      x,
+      y,
+      width: Math.max(minWidth, width + arrow[0] * step),
+      height: Math.max(minHeight, height + arrow[1] * step)
+    })
+  }
+
   function choose(next: WindowLayout): void {
     menuOpen = false
     onlayout?.(next)
@@ -179,18 +205,25 @@
   {/if}
 
   {#if movable}
-    <div
+    <button
+      type="button"
       class="resize"
-      role="presentation"
+      aria-label="Resize {title}"
+      aria-describedby="{testid}-resize-hint"
+      aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight"
       data-testid="{testid}-resize"
+      onmousedown={(e) => e.preventDefault()}
       onpointerdown={(e) => {
         e.stopPropagation()
         begin('resize', e)
+        forwardFocus() // a drag leaves the keys with the content; only Tab puts focus on the grip itself
       }}
       onpointermove={move}
       onpointerup={end}
       onpointercancel={end}
-    ></div>
+      onkeydown={resizeByKey}
+    ></button>
+    <span class="sr-only" id="{testid}-resize-hint">Arrow keys resize, Shift for larger steps</span>
   {/if}
 </div>
 
@@ -267,29 +300,42 @@
       transform: translateX(-50%) scale(0.92);
     }
   }
-  /* iPadOS corner-arc resize affordance */
+  /* iPadOS corner grip: a short arc that follows the window's corner, always visible, a button for the keyboard */
   .resize {
     position: absolute;
     right: -6px;
     bottom: -6px;
     width: 28px;
     height: 28px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-xl);
+    background: none;
     cursor: nwse-resize;
+    touch-action: none;
     z-index: 20;
   }
   .resize::after {
     content: '';
     position: absolute;
-    right: 6px;
-    bottom: 6px;
-    width: 18px;
-    height: 18px;
-    border-right: 4px solid transparent;
-    border-bottom: 4px solid transparent;
-    border-bottom-right-radius: var(--radius-xl);
-    transition: border-color var(--duration-fast);
+    right: 10px;
+    bottom: 10px;
+    width: 16px;
+    height: 16px;
+    border-right: 3px solid var(--window-grip);
+    border-bottom: 3px solid var(--window-grip);
+    border-bottom-right-radius: calc(var(--radius-xl) - 4px);
   }
-  .ios-window:hover .resize::after {
-    border-color: var(--label-tertiary);
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .resize:focus-visible {
+    outline: 2px solid var(--tint);
+    outline-offset: -2px;
   }
 </style>

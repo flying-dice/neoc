@@ -46,6 +46,7 @@ Use the system palette for meaning, never a near-miss hex:
 | `--ios-orange` | warnings, "waiting for you" |
 | `--ios-yellow`, `--ios-purple`, `--ios-pink`, `--ios-indigo`, `--ios-teal`, `--ios-mint`, `--ios-cyan`, `--ios-brown` | icon tiles, categories, charts |
 | `--ios-gray` … `--ios-gray6` | neutral icon tiles and fills |
+| `--window-grip` | the window resize corner: one value that holds 3:1 on light, dark and black bodies |
 
 `--tint` is the accent and can be re-pointed per subtree (Settings → Accent Colour sets it on the root).
 
@@ -163,7 +164,7 @@ Exactly these shadows, by plane:
 | **Status bar** (28 px) | time and date leading, indicators trailing, white text over the wallpaper. |
 | **Recent-apps strip** | left edge, 150 px, one thumbnail per stage (app group). Hides when a window overlaps it or the stage is full screen, and peeks back when the pointer rests on the left edge. |
 | **Stage** | the area for the current app group. Windows float, cascade from the centre, and never open under the strip or the Dock. |
-| **Window** | `--radius-xl`, elevated background, focused/unfocused shadow, a "···" multitasking handle centred at the top, a corner-arc resize affordance bottom right. Minimum 320x240. |
+| **Window** | `--radius-xl`, elevated background, focused/unfocused shadow, a "···" multitasking handle centred at the top, a corner-arc resize grip bottom right that is always visible (`--window-grip`, at least 3:1 on a light, dark or black body) and is a button that the arrow keys resize (Shift for bigger steps). Minimum 320x240. |
 | **Multitasking menu** | Full Screen, Split View (left/right), Slide Over, Minimize, Close. |
 | **Split View** | two windows share the stage with a 10 px gap and a draggable divider (25% to 75%). |
 | **Slide Over** | one 380 px window over the right edge; hides to a tab. |

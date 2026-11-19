@@ -54,6 +54,33 @@ Driven with `e2e/tools/session.mjs` on a fresh host (1280x800, light shell), scr
   light and dark, with axe) are green; the interactive pass above was in the light shell, the panel's dark pass (Alex,
   round 3) covered the dark shell.
 
+## Checked: the resize corner (kit `Window`)
+
+Intended result, written before looking: a floating window shows a short arc in its bottom-right corner at all times (no hover
+needed), flat, in one grey (`--window-grip`, `#757579`) that holds at least 3:1 on the light window (`#f2f2f7`, 4.1:1), the
+dark window (`#1c1c1e`, 3.7:1) and the Calculator's black body (4.6:1); a drag still resizes and stops at the manifest
+minimum; Tab reaches the grip, which has the name "Resize Calculator" and a visible focus ring, and the arrow keys resize
+it by 16 px (Shift: 64 px) down to the minimum; a drag leaves the keys with the keypad.
+
+- [x] Light shell, Calculator at its preferred size (340 x 560): the arc sits inside the corner, concentric with the window's
+  radius, calm next to the "..." dots; it does not touch the `=` key.
+- [x] Dark shell, same: visible on the black body and on the dark window of Files.
+- [x] Minimum window: dragging the corner far past the limit stops at 320 x 500 and the whole keypad is visible with the arc in
+  the corner (`calculator-min` baseline and the live look).
+- [x] Keyboard: 21 Tabs from a clicked key reach the grip (named "Resize Calculator"); a blue focus ring shows around it;
+  three Right arrows grew the window from 320 to 368 wide, six Left arrows brought it back to 320.
+- [x] The kit story `Organisms/Window`: "Resize corner" (light and dark themes), "on a black body" and "with the keyboard"
+  assert the grip's computed colour against the window and against `rgb(0, 0, 0)` (at least 3:1), the accessible name, the
+  arrow steps, Shift's bigger step and the stop at the minimum.
+- [x] Baselines: `bun run test:e2e:update` left no baseline changed on its own, because the screenshot tolerance
+  (`maxDiffPixelRatio` 0.002) hides a 16 px arc. The desktop project was therefore rewritten with
+  `--update-snapshots=all`, which touched 49 files. A pixel diff against the previous baselines (in Chromium, per file)
+  showed 43 with the new arc (36 of them nothing else, 7 on Discover or Settings with a few hundred pixels of unrelated
+  moving text such as "2 min ago" next to it), and 6 with no arc (the fullscreen, Split View and Slide Over layouts have no grip; they differed by nothing
+  or by moving text only); those 6 were put back. Six new kit baselines
+  for the Window story were added. A contact sheet of the corner of all 43 and the 6 new ones was looked at, light and dark,
+  white, grey and black bodies: the arc is the same crisp shape and place in every one.
+
 ## How
 
 `bun run lint`, `bun run typecheck`, `bun run test`, `bun run test:e2e` (counts in the commit message and the report),

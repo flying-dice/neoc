@@ -49,6 +49,12 @@
   --ios-gray4: light-dark(#d1d1d6, #3a3a3c);
   --ios-gray5: light-dark(#e5e5ea, #2c2c2e);
   --ios-gray6: light-dark(#f2f2f7, #1c1c1e);
+  /*
+   * A line that has to be seen on every window body: the resize corner. One value for both themes, because the body
+   * can be light, dark or the always-dark instrument canvas (black). 4.1:1 on #f2f2f7, 3.7:1 on #1c1c1e, 4.6:1 on
+   * #000 (WCAG 1.4.11 asks 3:1).
+   */
+  --window-grip: #757579;
 
   /* Accent used by controls; override per subtree to re-tint. */
   --tint: var(--ios-blue);
