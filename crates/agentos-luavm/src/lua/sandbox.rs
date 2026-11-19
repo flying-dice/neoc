@@ -5,7 +5,7 @@ use mlua::{
     IntoLua, Lua, StdLib, Value,
 };
 
-use crate::lua::{bit, lifecycle::Life, modules};
+use crate::lua::{bit, lifecycle::Life, modules, patterns};
 
 /// Globals removed after the standard libraries load.
 ///
@@ -92,6 +92,7 @@ pub fn make_bare_engine() -> mlua::Result<Lua> {
 fn base_engine() -> mlua::Result<Lua> {
     let lua = Lua::new_with(StdLib::TABLE | StdLib::STRING | StdLib::MATH, mlua::LuaOptions::new())?;
     strip_unsafe_globals(&lua)?;
+    patterns::install(&lua)?;
     bit::install(&lua)?;
     install_yieldable_pcall(&lua)?;
     Ok(lua)

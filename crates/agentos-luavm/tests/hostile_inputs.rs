@@ -10,6 +10,9 @@
 //! into a failure that names the call. Allocation failures and stack overflows abort the process: that
 //! is a failure too, the test binary dies on the call it printed last (`HOSTILE_TRACE=1`).
 //!
+//! The sweep and the other tests here run on a 2 MiB thread (the stack of a default runtime worker): a
+//! recursion that only fits a bigger stack is a stack overflow, which aborts the host, so it fails here.
+//!
 //! Not swept: `std:thread`, `std:net` and the network modules (`vnd:hyper`, `vnd:sqlx_*`), which open
 //! sockets or spawn workers, and `std:task` (its sleeps are covered by `std/task.rs` tests). The sweep
 //! runs in a scratch working directory.
@@ -58,6 +61,11 @@ const POOL: &str = r#"
         function() end,
         print,
         opts(1e300), opts(2^63), opts(2^53), opts(-1), opts(0/0), opts(1/0), opts(-1/0),
+        -- text that nests: parsers, pattern compilers and template engines recurse on these
+        -- (past the recursion limit of every parser, small enough that quadratic ones like `diff` stay quick)
+        ("["):rep(3000), ("{"):rep(3000), ("("):rep(3000), ("<a>"):rep(2000), ("(?:"):rep(2000),
+        ("{a,"):rep(130) .. "a" .. ("}"):rep(130), ("a?"):rep(2000),
+        ("{% for i in [1] %}"):rep(500), ("{% if true %}"):rep(500), "{{ 1" .. (" + 1"):rep(3000) .. " }}",
     }
 "#;
 
@@ -268,7 +276,7 @@ fn sweep() -> (usize, Vec<String>) {
 fn no_module_function_panics_on_hostile_input() {
     let (tx, rx) = mpsc::channel();
     std::thread::Builder::new()
-        .stack_size(64 << 20)
+        .stack_size(2 << 20)
         .spawn(move || {
             let _ = tx.send(sweep());
         })
@@ -286,4 +294,75 @@ fn no_module_function_panics_on_hostile_input() {
         }
         Err(e) => panic!("the sweep hung or died: {e}"),
     }
+}
+
+/// Run `f` on a 2 MiB thread, the stack of a default runtime worker; a panic or stack overflow fails the test.
+fn on_small_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+    std::thread::Builder::new().stack_size(2 << 20).spawn(f).unwrap().join().expect("the call panicked")
+}
+
+/// Lua 5.1's pattern matcher recurses in C with no depth limit: these patterns overflowed the stack (an abort
+/// of the host) through `find`, `match`, `gmatch` and `gsub`, called as functions and as string methods.
+#[test]
+fn a_pattern_with_tens_of_thousands_of_items_is_an_error_not_a_stack_overflow() {
+    let refused = on_small_stack(|| {
+        let lua = agentos_luavm::lua::sandbox::make_engine().unwrap();
+        let out: Table = lua
+            .load(
+                r#"
+                local out = {}
+                local subject = ("a"):rep(20000)
+                for _, item in ipairs { "a?", "a*", "a+", "a-", "(a)", "(", ")" } do
+                  local pattern = item:rep(20000)
+                  local calls = {
+                    function() return string.find(subject, pattern) end,
+                    function() return string.match(subject, pattern) end,
+                    function() return string.gmatch(subject, pattern)() end,
+                    function() return string.gsub(subject, pattern, "") end,
+                    function() return subject:find(pattern) end,
+                    function() return subject:gsub(pattern, "x") end,
+                  }
+                  for i, call in ipairs(calls) do
+                    local ok, err = pcall(call)
+                    out[#out + 1] = tostring(ok) .. ":" .. tostring(err):match("pattern too complex") .. ":" .. item .. i
+                  end
+                end
+                return out
+                "#,
+            )
+            .eval()
+            .unwrap();
+        out.sequence_values::<String>().map(Result::unwrap).collect::<Vec<_>>()
+    });
+    assert_eq!(refused.len(), 42);
+    assert!(refused.iter().all(|r| r.starts_with("false:pattern too complex:")), "{refused:?}");
+}
+
+/// The guard is a count of the items the matcher recurses on, so a pattern at the limit still matches (on a
+/// 2 MiB thread, nested inside protected calls the way an app runs), and what is not a pattern is untouched.
+#[test]
+fn patterns_at_the_limit_still_match_and_plain_searches_are_not_counted() {
+    on_small_stack(|| {
+        let lua = agentos_luavm::lua::sandbox::make_engine().unwrap();
+        let ok: bool = lua
+            .load(
+                r##"
+                local limit = 512
+                local subject = ("a"):rep(limit)
+                local function nested(n, f) if n == 0 then return f() end return select(2, pcall(nested, n - 1, f)) end
+                local at_limit = nested(100, function()
+                  return subject:find(("a?"):rep(limit)) == 1 and select(2, subject:find(("a*"):rep(limit))) == limit
+                end)
+                local grouped = select("#", subject:match(("(a)"):rep(32))) == 32
+                -- a plain find reads no pattern, whatever it holds
+                local plain = (("x*"):rep(600)):find(("x*"):rep(600), 1, true) == 1
+                local over = pcall(string.find, subject, ("a?"):rep(limit + 1))
+                local gsub = (("ab"):rep(100)):gsub("(a)(b)", "%2%1") == ("ba"):rep(100)
+                return at_limit and grouped and plain and not over and gsub
+                "##,
+            )
+            .eval()
+            .unwrap();
+        assert!(ok);
+    });
 }

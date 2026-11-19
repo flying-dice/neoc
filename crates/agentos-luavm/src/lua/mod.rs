@@ -13,6 +13,7 @@ pub mod lib;
 pub mod lifecycle;
 pub(crate) mod limits;
 pub mod modules;
+pub mod patterns;
 pub mod sandbox;
 pub mod std;
 pub mod vnd;

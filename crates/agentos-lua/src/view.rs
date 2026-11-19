@@ -70,6 +70,38 @@ impl RenderScope {
     }
 }
 
+/// The open render: a tracked, pure scope and a [`RenderScope`]. However the render ends (finished, failed, or
+/// its future dropped at a host call because the caller gave up), dropping the guard closes both, so a
+/// cancelled render cannot leave `app.state` assignments refused for the calls that follow.
+struct RenderScopeGuard {
+    shared: Arc<Shared>,
+}
+
+impl RenderScopeGuard {
+    fn begin(shared: &Arc<Shared>) -> Self {
+        *shared.render_scope.lock() = Some(RenderScope::default());
+        shared.tracker.lock().begin(true);
+        Self { shared: shared.clone() }
+    }
+
+    /// Close the scope: what the render read, and the source handles it made.
+    fn finish(self) -> (BTreeSet<DepKey>, RenderScope) {
+        self.close()
+    }
+
+    fn close(&self) -> (BTreeSet<DepKey>, RenderScope) {
+        let deps = self.shared.tracker.lock().end();
+        let scope = self.shared.render_scope.lock().take().unwrap_or_default();
+        (deps, scope)
+    }
+}
+
+impl Drop for RenderScopeGuard {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
 fn dollar(key: &LuaValue) -> bool {
     matches!(key, LuaValue::String(s) if s.as_bytes().first() == Some(&b'$'))
 }
@@ -586,7 +618,7 @@ impl AppVm {
         self.in_call(false, self.render_inner(view)).await
     }
 
-    // TODO: clean-code - 0.4 - SRP: runs render under tracking, wires the tree, builds the source bindings and validates in one function; extract `bind_sources` and `check_tree`. Also 0.35 - PANIC: a call cancelled mid-render (the client socket closes at a host call) leaves `tracker.pure` and `render_scope` set until a later render ends; reset them in a drop guard.
+    // TODO: clean-code - 0.4 - SRP: runs render under tracking, wires the tree, builds the source bindings and validates in one function; extract `bind_sources` and `check_tree`.
     async fn render_inner(&self, view: &str) -> Result<RenderOutput> {
         let sh = self.shared().clone();
         let (spec, w, window, decls) = {
@@ -598,11 +630,9 @@ impl AppVm {
             .get("render")
             .map_err(|_| VmError::InvalidWindow(format!("window `{window}` has no render function")))?;
 
-        *sh.render_scope.lock() = Some(RenderScope::default());
-        sh.tracker.lock().begin(true);
+        let scope_guard = RenderScopeGuard::begin(&sh);
         let rendered = render.call_async::<LuaValue>(w).await;
-        let deps = sh.tracker.lock().end();
-        let scope = sh.render_scope.lock().take().unwrap_or_default();
+        let (deps, scope) = scope_guard.finish();
 
         let root = match rendered.map_err(|e| VmError::Script(ScriptError::from_lua(&e)))? {
             LuaValue::Table(t) => t,
@@ -730,7 +760,8 @@ impl AppVm {
     pub async fn close_view(&self, view: &str) -> Result<()> {
         let sh = self.shared().clone();
         let Some(instance) = sh.views.lock().remove(view) else { return Ok(()) };
-        let on_close = instance.spec.get::<Option<Function>>("onClose").ok().flatten();
+        // raw: a `__index` on the spec is app code, and this runs outside the VM's gate
+        let on_close = instance.spec.raw_get::<Option<Function>>("onClose").ok().flatten();
         if let Some(f) = on_close {
             self.in_call(false, f.call_async::<()>(instance.w.clone()))
                 .await

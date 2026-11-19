@@ -12,7 +12,7 @@ use agentos_application::{
 use agentos_domain::Notification;
 use agentos_lua::LuaRuntime;
 use agentos_luavm::lua::modules;
-use common::{agent_ctx, db, id, load, package};
+use common::{agent_ctx, built_package, db, id, load, package};
 use parking_lot::Mutex;
 use serde_json::{json, Value};
 use std::{
@@ -23,6 +23,11 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
 };
+
+/// The tests' own fixture apps, which the product's build pipeline (darklua) bundles.
+fn fixture(name: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name).join("app.lua")
+}
 
 const MANIFEST: &str = r#"app.manifest { id = "probe", name = "Probe", icon = "gear" }"#;
 
@@ -579,4 +584,21 @@ async fn effects_queued_after_the_app_was_unloaded_are_dropped_not_flushed() {
     let titles: Vec<String> = r.notes.0.lock().iter().map(|n| n.title.clone()).collect();
     assert_eq!(titles, ["from a live app"], "nothing queued after the unload was delivered");
     assert!(r.shell.badges.lock().unwrap().is_empty(), "no badge from an app that is gone");
+}
+
+/// `bun run build:apps` bundles an app's relative requires and leaves `@agentos/*` and the neoc modules
+/// (`std:`, `lib:`, `vnd:`) as runtime requires. darklua used to fail on `std:fs` ("unable to require
+/// resource"), so no built app could use a module. The fixture is built through the real pipeline and then
+/// loaded and exercised in the VM.
+#[tokio::test]
+async fn an_app_built_by_the_real_pipeline_requires_the_neoc_modules() {
+    let package = built_package(&fixture("neoc_modules"));
+    let bundle = String::from_utf8(package.files["app.lua"].clone()).unwrap();
+    for required in ["@agentos/app", "std:fs", "lib:json", "vnd:serde_yaml"] {
+        assert!(bundle.contains(&format!("require(\"{required}\")")), "{required} stays a runtime require");
+    }
+    assert!(!bundle.contains("./helpers"), "the relative module is bundled in");
+    let vm = agentos_lua::AppVm::load(&id("neoc-modules"), package, db(), common::config()).await.unwrap();
+    let out = vm.call_tool("probe", json!({}), &agent_ctx(0), false).await.unwrap();
+    assert_eq!(out, json!({"encoded": "aGk=", "same_module": true, "n": 6, "has_fs": true, "yaml": true}));
 }

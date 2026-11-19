@@ -70,20 +70,96 @@ pub fn write_all(root: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// The generated files under `root` that are missing or differ from what the generator would write now.
+/// The directory the generators own. Anything in it that is not listed in [`generate`] or [`WRITTEN_ELSEWHERE`] is
+/// left over from a version that wrote more (a renamed or dropped output), and would go on being read as if it were
+/// current.
+const GENERATED_DIR: &str = "types/generated";
+
+/// Files under [`GENERATED_DIR`] that another generator writes (`bun run codegen` runs both).
+const WRITTEN_ELSEWHERE: &[&str] = &["types/generated/prelude.lua"];
+
+/// The generated files under `root` that are missing or differ from what the generator would write now, and the
+/// files under `types/generated` that no generator writes any more.
 #[must_use]
-pub fn stale(root: &Path) -> Vec<&'static str> {
-    generate()
-        .into_iter()
+pub fn stale(root: &Path) -> Vec<String> {
+    let files = generate();
+    let mut stale: Vec<String> = files
+        .iter()
         .filter(|file| {
             fs::read_to_string(root.join(file.path)).ok().as_deref() != Some(file.contents.as_str())
         })
-        .map(|file| file.path)
-        .collect()
+        .map(|file| file.path.to_owned())
+        .collect();
+    let mut found = Vec::new();
+    list_files(root, &root.join(GENERATED_DIR), &mut found);
+    found.sort();
+    stale.extend(
+        found
+            .into_iter()
+            .filter(|path| {
+                !files.iter().any(|f| f.path == path) && !WRITTEN_ELSEWHERE.contains(&path.as_str())
+            })
+            .map(|path| format!("{path} (orphaned: no generator writes it; delete it)")),
+    );
+    stale
+}
+
+/// Every file under `dir`, as a `/`-separated path relative to `root`.
+fn list_files(root: &Path, dir: &Path, out: &mut Vec<String>) {
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if path.is_dir() {
+            list_files(root, &path, out);
+        } else if let Ok(relative) = path.strip_prefix(root) {
+            out.push(
+                relative.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/"),
+            );
+        }
+    }
 }
 
 /// The repository root, from this crate's manifest directory.
 #[must_use]
 pub fn repo_root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(2).unwrap_or_else(|| Path::new("."))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("agentos-codegen-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        write_all(&dir).unwrap();
+        dir
+    }
+
+    /// A generated file that nothing writes any more (`ui.luau` after the move to Lua 5.1) kept being read by
+    /// whatever globbed the directory, and `codegen:check` was green with it there.
+    #[test]
+    fn a_file_no_generator_writes_any_more_is_stale() {
+        let dir = scratch("orphans");
+        assert!(stale(&dir).is_empty(), "{:?}", stale(&dir));
+        fs::write(dir.join("types/generated/ui.luau"), "-- old output").unwrap();
+        fs::create_dir_all(dir.join("types/generated/luals/old")).unwrap();
+        fs::write(dir.join("types/generated/luals/old/extra.lua"), "-- old output").unwrap();
+        // the prelude is another generator's (scripts/codegen-lua.ts)
+        fs::write(dir.join("types/generated/prelude.lua"), "-- copy").unwrap();
+        let flagged = stale(&dir);
+        assert_eq!(flagged.len(), 2, "{flagged:?}");
+        assert!(flagged.iter().any(|p| p.starts_with("types/generated/ui.luau")), "{flagged:?}");
+        assert!(flagged.iter().any(|p| p.starts_with("types/generated/luals/old/extra.lua")), "{flagged:?}");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_missing_or_edited_file_is_stale() {
+        let dir = scratch("drift");
+        fs::write(dir.join("types/generated/ui.lua"), "-- edited").unwrap();
+        fs::remove_file(dir.join("docs/reference/components.md")).unwrap();
+        assert_eq!(stale(&dir), ["types/generated/ui.lua", "docs/reference/components.md"]);
+        fs::remove_dir_all(dir).unwrap();
+    }
 }

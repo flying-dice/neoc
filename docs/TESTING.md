@@ -72,7 +72,7 @@ under `bun test` too, through the preload in `client/bunfig.toml` (`client/test/
   `darklua` 0.18.0 is required and **never skipped** (`cargo install darklua --version 0.18.0 --locked`):
   `bun run build:apps` fails with that message without it. `bun test scripts`
   (`scripts/lua51.test.ts`) checks the sources stay plain Lua 5.1 (no Luau syntax, no library members Lua 5.1 and `lua/prelude.lua` lack), that each
-  app bundles into one file requiring only `@agentos/*`, and (with a native Lua 5.3+ on PATH) that the prelude's
+  app bundles into one file whose only requires are runtime ones (`@agentos/*` and the `std:`/`lib:`/`vnd:` modules, with a fixture that requires them), and (with a native Lua 5.3+ on PATH) that the prelude's
   `utf8`/`table.move` polyfills agree with the native ones. With a real Lua 5.1 (`lua5.1` on PATH, or `LUA51=<path>`)
   it also loads the prelude, `ui.lua` and every bundle; without one those tests print `SKIPPED` (a skip is not a
   pass: install `lua5.1`). `bun run codegen:check` also fails when `types/generated/ui.lua`, `luals/*` or `prelude.lua` is stale.

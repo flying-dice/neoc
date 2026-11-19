@@ -1,10 +1,12 @@
 /**
  * Apps as plain Lua 5.1 (scripts/lua51.ts, .darklua.json, lua/prelude.lua):
  *  - always: the sources stay plain Lua 5.1 (no Luau syntax) and use only what Lua 5.1 and the prelude provide,
- *    every app bundles into one file whose only requires are `@agentos/*`, non-ASCII text survives the bundle
+ *    every app bundles into one file whose only requires are runtime ones (`@agentos/*` and the host's `std:`, `lib:` and
+ *    `vnd:` modules), non-ASCII text survives the bundle
  *    untouched, and the polyfills agree with a native Lua 5.3+ when one is installed;
  *  - with a real Lua 5.1 (`lua5.1`, `lua-5.1`, `lua51`, or `lua` when it is 5.1; override with LUA51=<path>): the
  *    prelude, ui.lua and every app bundle load and their top levels run. Without one these tests skip with a message.
+ *    darklua is never skipped: without it they fail, as `build:apps` does.
  */
 import { Glob } from 'bun'
 import { describe, expect, test } from 'bun:test'
@@ -62,6 +64,9 @@ describe('Lua sources stay plain Lua 5.1', () => {
   }
 })
 
+/** What stays a `require` in a bundle: `@agentos/*` and the host's neoc modules, which the VM resolves at run time. */
+const RUNTIME_MODULE = /^(@agentos\/|std:|lib:|vnd:)/
+
 describe('darklua', () => {
   const darklua = findDarklua()
   test(`is installed (pinned: ${DARKLUA_VERSION})`, () => {
@@ -71,15 +76,35 @@ describe('darklua', () => {
 
   for (const manifest of apps) {
     const dir = dirname(manifest)
-    test(`${dir} bundles into one file that requires only @agentos modules`, () => {
+    test(`${dir} bundles into one file that requires only runtime modules`, () => {
       const out = toLua51(darklua, entryOf(manifest))
       const required = [...out.matchAll(/\brequire\s*\(\s*(['"])(.*?)\1\s*\)/g)].map((m) => m[2])
       expect(required.length).toBeGreaterThan(0)
-      expect(required.filter((name) => !name?.startsWith('@agentos/'))).toEqual([])
+      expect(required.filter((name) => !RUNTIME_MODULE.test(name ?? ''))).toEqual([])
       // darklua's own bundle prelude must not leave Luau syntax behind
       expect(out).not.toMatch(/::|\\u\{/)
     })
   }
+
+  test('leaves the host modules (std:, lib:, vnd:) as runtime requires and bundles relative ones', () => {
+    const scratch = mkdtempSync(join(tmpdir(), 'agentos-lua51-modules-'))
+    try {
+      writeFileSync(join(scratch, 'helper.lua'), 'return { answer = 42 }\n')
+      writeFileSync(
+        join(scratch, 'app.lua'),
+        'local fs = require("std:fs")\nlocal json = require("lib:json")\nlocal yaml = require("vnd:serde_yaml")\n' +
+          'local app = require("@agentos/app")\nlocal helper = require("./helper")\nreturn { fs, json, yaml, app, helper }\n'
+      )
+      const out = toLua51(darklua, join(scratch, 'app.lua'))
+      for (const name of ['std:fs', 'lib:json', 'vnd:serde_yaml', '@agentos/app']) {
+        expect(out).toContain(`require("${name}")`)
+      }
+      expect(out).not.toContain('./helper')
+      expect(out).toContain('answer = 42')
+    } finally {
+      rmSync(scratch, { recursive: true, force: true })
+    }
+  })
 
   test('keeps non-ASCII text as it is written (Lua 5.1 reads raw UTF-8 bytes in a string)', () => {
     const out = toLua51(darklua, join(root, 'apps/calculator/app.lua'))
@@ -119,7 +144,8 @@ describe('under a real Lua 5.1', () => {
   if (!lua51) console.log('lua51 load tests SKIPPED: no Lua 5.1 found (install lua5.1 on PATH, or set LUA51=<path>)')
   const darklua = findDarklua()
 
-  test.skipIf(!lua51 || !darklua)('the prelude, ui.lua and every app bundle load and run their top level', () => {
+  test.skipIf(!lua51)('the prelude, ui.lua and every app bundle load and run their top level', () => {
+    expect(darklua, `install it: cargo install darklua --version ${DARKLUA_VERSION} --locked`).toBeDefined()
     const scratch = mkdtempSync(join(tmpdir(), 'agentos-lua51-'))
     const files = apps.map((manifest, index) => {
       const file = join(scratch, `app${index}.lua`)

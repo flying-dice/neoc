@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use globset::{Glob as GsGlob, GlobMatcher, GlobSet as GsSet, GlobSetBuilder};
+use globset::{Glob as GsGlob, GlobSet as GsSet, GlobSetBuilder};
 use mlua::{Lua, MetaMethod, Table, UserData, UserDataMethods, Value};
 use tracing::instrument;
 use walkdir::WalkDir;
@@ -96,13 +96,14 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 #[derive(Clone)]
 pub struct GlobHandle {
     pattern: String,
-    matcher: GlobMatcher,
+    /// A set of one: `Glob::compile_matcher` compiles with `expect`, which panics (and a panic aborts the host)
+    /// on a pattern whose regex the engine refuses, such as deeply nested alternations.
+    matcher: GsSet,
 }
 
 impl GlobHandle {
     fn compile(pattern: &str) -> Result<Self, String> {
-        let g = GsGlob::new(pattern).map_err(|e| e.to_string())?;
-        Ok(Self { pattern: pattern.to_owned(), matcher: g.compile_matcher() })
+        Ok(Self { pattern: pattern.to_owned(), matcher: single(pattern)? })
     }
 
     fn matches(&self, path: &str) -> bool {
@@ -119,6 +120,14 @@ impl UserData for GlobHandle {
         });
         methods.add_meta_method(MetaMethod::ToString, |_, this, (): ()| Ok(this.pattern.clone()));
     }
+}
+
+/// `pattern` compiled, as a set of one, without a path to a panic: every failure is the `Err`.
+fn single(pattern: &str) -> Result<GsSet, String> {
+    let glob = GsGlob::new(pattern).map_err(|e| e.to_string())?;
+    let mut builder = GlobSetBuilder::new();
+    builder.add(glob);
+    builder.build().map_err(|e| e.to_string())
 }
 
 fn glob_new(lua: &Lua, pattern: String) -> mlua::Result<(Value, Value)> {
@@ -282,7 +291,7 @@ fn build_ignore_set(tbl: &Table, prefix: &str) -> Result<GsSet, String> {
 fn run_scan(
     lua: &Lua,
     pattern: &str,
-    matcher: &GlobMatcher,
+    matcher: &GsSet,
     opts: Option<Table>,
     prefix: &str,
 ) -> mlua::Result<(Value, Value)> {
@@ -316,7 +325,7 @@ fn run_scan(
 /// allocation lives in here.
 fn collect_matches(
     pattern: &str,
-    matcher: &GlobMatcher,
+    matcher: &GsSet,
     scan: &ScanOpts,
     absolute_root: Option<&Path>,
 ) -> (Vec<String>, Vec<(String, String)>) {
@@ -486,13 +495,13 @@ pub fn benches(c: &mut criterion::Criterion) {
     // Pattern compile + single match — pure globset path, no mlua.
     g.bench_function("library/compile_and_match", |b| {
         b.iter(|| {
-            let m = GsGlob::new("src/**/*.rs").unwrap().compile_matcher();
+            let m = single("src/**/*.rs").unwrap();
             let _ = m.is_match(black_box("src/lua/lib/glob.rs"));
         });
     });
 
     // Compiled matcher reused — dominant cost should be the match itself.
-    let matcher = GsGlob::new("src/**/*.rs").unwrap().compile_matcher();
+    let matcher = single("src/**/*.rs").unwrap();
     g.bench_function("library/match_only", |b| {
         b.iter(|| {
             let _ = matcher.is_match(black_box("src/lua/lib/glob.rs"));
@@ -535,6 +544,26 @@ mod tests {
         assert!(ok);
         let no: bool = lua.load(r#"return glob.is_match("src/**/*.rs", "README.md")"#).eval().unwrap();
         assert!(!no);
+    }
+
+    /// `Glob::compile_matcher` compiles with `expect`: this pattern made globset panic ("regex compilation
+    /// shouldn't fail"), and a panic aborts the host. It is a Lua error now, through every entry point.
+    #[test]
+    fn a_pattern_whose_regex_is_refused_is_an_error_not_a_panic() {
+        let lua = engine();
+        let pattern = format!("{}a{}", "{a,".repeat(130), "}".repeat(130));
+        lua.globals().set("pattern", pattern).unwrap();
+        for call in [
+            "glob.is_match(pattern, 'a')",
+            "glob.Glob.new(pattern)",
+            "glob.GlobSet.new({ pattern })",
+            "glob.scan(pattern, { cwd = '.' })",
+        ] {
+            let (val, e): (Value, Option<String>) =
+                lua.load(format!("return {call}")).eval().unwrap_or_else(|e| panic!("{call}: {e}"));
+            assert!(matches!(val, Value::Nil), "{call}: {val:?}");
+            assert!(e.is_some_and(|e| e.contains("glob")), "{call}: no error message");
+        }
     }
 
     #[test]

@@ -1,6 +1,6 @@
 ---
 name: agentos-code-review
-description: Use on every AgentOS merge request / pull request, and before calling any branch ready to merge. Reviews the change for what actually bites here (missing tests, stories and journey specs; accessibility; crate-direction, Lua sandbox, permission and protocol violations; untrusted agent output; atomic layers, test ids and design-language conformance; clean code via clean-code-review), checks the app readiness gate (min window size, tests, journeys, verify-change, UX research round), and ends with a verdict of READY TO MERGE or STAYS IN MR.
+description: Use on every AgentOS merge request / pull request, and before calling any branch ready to merge. Reviews the change for what actually bites here (missing tests, stories and journey specs; accessibility; crate-direction, per-app VM isolation (not a security boundary), host panics from app input, permission and protocol violations; untrusted agent output; atomic layers, test ids and design-language conformance; clean code via clean-code-review), checks the app readiness gate (min window size, tests, journeys, verify-change, UX research round), and ends with a verdict of READY TO MERGE or STAYS IN MR.
 ---
 
 # AgentOS code review
@@ -74,7 +74,7 @@ The generic specs run axe (WCAG 2.1 AA) in light and dark on every story and app
   on purpose.
 - **Missing capability = extend the host API.** A new capability changes the domain type and schema, the application port
   and use case, the adapter, and the generated output (`bun run codegen`, `codegen:check` green), with tests in each layer.
-  Anything else (a new route, a raw socket, a global, a flag read from the environment inside an app) is a blocker.
+  Anything else (a new route, a raw socket, a global) is a blocker. (An app reading the environment through `std:env` is by design: apps get every `std:`/`lib:`/`vnd:` module.)
 - **Rust hygiene.** No `unwrap`, `expect`, `panic!` or `unsafe` outside tests (clippy denies them; a local `allow` needs a
   stated reason). External input (JSON-RPC params, tool arguments, app output, ACP messages, app refs) is parsed into typed
   values and errors are typed (`DomainError`, `PortError`, `AppError`); `anyhow` stays in the host binary.
@@ -147,7 +147,7 @@ Readiness: <app>: window ✓ · package ✓ · types ✓ · tests ✓ · states 
 - e2e not run (not on a Mac): the gate is unverified, so the verdict is STAYS IN MR.
 ```
 
-Severities: **blocker** (a bug, data loss, security, sandbox, permission or boundary violation, a missing gate or readiness
+Severities: **blocker** (a bug, data loss, security, a host panic or stack overflow reachable from app input, a per-app VM isolation, permission or boundary violation, a missing gate or readiness
 item, an accessibility failure that stops someone finishing a journey); **major** (new behaviour without a check, an
 accessibility or design-language defect people will hit, a PANIC finding with a named trigger); **minor**
 (worth a follow-up issue, doesn't block).

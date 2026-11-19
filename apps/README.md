@@ -7,7 +7,7 @@ produces and sends events back.
 ```
  Browser: managed client                         Rust host (crates/agentos-host)
  ┌──────────────────────────────┐  JSON-RPC/WS   ┌─────────────────────────────────────────┐
- │ shell: windows, Dock         │◀──── /rpc ────▶│ one sandboxed Lua 5.1 VM per app        │
+ │ shell: windows, Dock         │◀──── /rpc ────▶│ one Lua 5.1 VM per app (isolated)      │
  │ renderer: view trees → kit   │                │   app.window → view tree → client       │
  │ client state, drafts         │  AG-UI / SSE   │   app.db / app.kv  (per-app SQLite)     │
  │ no app code, ever            │◀──── /agui ────│   app.tool ──▶ /mcp ◀── agents          │
@@ -103,8 +103,9 @@ local calc = require("./calc")        -- a module of this package: inlined into 
 ```
 
 In the source, `require` accepts `./x`, `../x` (bundled into the one built file when the app is built), `@agentos/app`
-and `@agentos/ui`. At run time the built file can `require` only `@agentos/app` and `@agentos/ui`: nothing else, and never
-the filesystem (`require("./x")` in a running app is an error that says so). The
+and `@agentos/ui`. At run time the built file can `require` `@agentos/app`, `@agentos/ui` and the host's `std:`, `lib:` and `vnd:` modules
+(the build leaves those as `require` calls, see "Every library module is yours" below), and never the filesystem
+(`require("./x")` in a running app is an error that says so). The
 LuaCATS definitions in `types/generated/luals/` (generated, `---@meta`) are the contract: lua-language-server reads
 them through `.luarc.json` (so an editor with the Lua extension knows `app`, `ui.*` and `require("@agentos/ui")`), and
 `bun run lint:lua` checks every app against them. Annotations in app code (`---@param`, `---@type`) are optional;

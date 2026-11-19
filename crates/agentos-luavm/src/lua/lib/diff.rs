@@ -896,7 +896,8 @@ fn emit_change_list(changes: &[Change]) -> String {
 
 fn read_changes(t: &Table, prefix: &str) -> Result<Vec<Change>, String> {
     let len = t.raw_len();
-    let mut out = Vec::with_capacity(len);
+    // not presized: `#t` is whatever border Lua finds, so a forged table can report 2^30
+    let mut out = Vec::new();
     for i in 1..=len {
         let row: Table = t.get(i).map_err(|e| format!("{prefix}: change #{i}: {e}"))?;
         let op_s: String = row.get("op").map_err(|e| format!("{prefix}: change #{i}: missing op: {e}"))?;

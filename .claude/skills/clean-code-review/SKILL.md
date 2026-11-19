@@ -1,6 +1,6 @@
 ---
 name: clean-code-review
-description: Clean-code audit of an AgentOS change (the current diff or a branch) against SRP, DRY, naming, coupling, dead code, KISS, BOUNDARY (the crate ports, the Lua sandbox, the protocol and the atomic layers) and PANIC (unwrap and panics in Rust, unvalidated JSON-RPC params, unchecked casts, non-null assertions, agent or tool input). Fixes what this session introduced and tags the rest as scored TODO markers. Use after implementing a change and before the pre-commit skill; agentos-code-review delegates its clean-code pass here.
+description: Clean-code audit of an AgentOS change (the current diff or a branch) against SRP, DRY, naming, coupling, dead code, KISS, BOUNDARY (the crate ports, per-app VM isolation (not a security boundary), the protocol and the atomic layers) and PANIC (unwrap and panics in Rust, unvalidated JSON-RPC params, unchecked casts, non-null assertions, agent or tool input). Fixes what this session introduced and tags the rest as scored TODO markers. Use after implementing a change and before the pre-commit skill; agentos-code-review delegates its clean-code pass here.
 ---
 
 # Clean-code review

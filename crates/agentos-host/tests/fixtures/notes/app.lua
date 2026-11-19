@@ -10,7 +10,6 @@ app.manifest {
   icon = "note.text",
   tint = "yellow",
   window = { w = 960, h = 640, minW = 480, minH = 360 },
-  permissions = { "data", "notify" },
 }
 
 db:migrate {

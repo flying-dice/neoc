@@ -26,8 +26,10 @@ app.manifest { id = "calculator", name = "Calculator", icon = "plus", tint = "or
   lua-language-server reports, don't silence it: a `---@cast` needs an invariant established just above it, or a one-line
   comment saying why the checker can't see it. Don't write annotations that only repeat the obvious.
 - `app.json` and `app.manifest` agree on `id`, `icon` and `tint` (the build checks).
-- Only `app`, `ui` and the package's own modules exist: no `io`, `os`, `debug`, no filesystem `require`, no network.
-  Don't reach for globals; the sandbox removes them.
+- `require` takes `@agentos/app`, `@agentos/ui`, the package's own modules (bundled at build time) and the host's `std:`,
+  `lib:` and `vnd:` modules; there is no bare `io`, `os` or `debug` and no filesystem `require`: files and the network
+  come through `std:fs`, `std:net`, `lib:http` and the rest. Don't reach for globals; the per-app VM leaves out the
+  ones that load code or reach the engine.
 
 ## Structure
 

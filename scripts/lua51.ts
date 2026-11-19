@@ -2,8 +2,9 @@
  * Bundling a Lua 5.1 app with darklua (config: .darklua.json), shared by `build-apps.ts` and `lua51-build.ts`.
  *
  * Apps are plain Lua 5.1 and are shipped as plain Lua 5.1: darklua only bundles an app's relative `require`s into
- * one chunk (and strips comments). `@agentos/*` requires stay as runtime `require` calls (the host provides those
- * modules). Nothing is lowered, so an app is exactly the Lua it is written in.
+ * one chunk (and strips comments). `@agentos/*` requires and the host's neoc modules (`std:*`, `lib:*`, `vnd:*`) stay as
+ * runtime `require` calls (the host provides those modules; `.darklua.json` excludes them, as `[:]` because a bare `:`
+ * is not a valid darklua glob). Nothing is lowered, so an app is exactly the Lua it is written in.
  *
  * The generator is `retain_lines` (with `remove_comments`), so line numbers in an error from the VM point at the
  * source: a file keeps every statement on its line (an app with no relative require is line for line its

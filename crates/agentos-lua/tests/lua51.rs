@@ -164,17 +164,31 @@ async fn the_preludes_polyfills_are_there_and_sealed() {
     );
 }
 
-// ---- the CPU budget in every kind of thread ---------------------------------------------------------------
-
-// ---- a host call that cannot yield is dropped half done: the budget must come back ------------------------
-
-// ---- a stop cannot be swallowed -----------------------------------------------------------------------------
-
-// ---- work inside library calls is charged -----------------------------------------------------------------------
-
-// ---- nothing built outside the Lua heap outgrows the memory limit ----------------------------------------------
-
 // ---- patterns and strings, which C code would run unchecked ------------------------------------------------
+
+/// Lua 5.1's C pattern matcher recurses with no depth limit: `("a?"):rep(20000)` overflowed a 2 MiB stack (a
+/// `#[tokio::test]` runs on one) and aborted the process. In an app it is a Lua error the app can catch.
+#[tokio::test]
+async fn a_huge_pattern_in_an_app_is_a_catchable_error_not_a_stack_overflow() {
+    let src = r#"
+        app.on("t", function()
+          local subject = ("a"):rep(20000)
+          local results = {}
+          for _, item in ipairs { "a?", "a*", "(a)" } do
+            local pattern = item:rep(20000)
+            local ok, err = pcall(string.find, subject, pattern)
+            results[#results + 1] = { ok = ok, refused = tostring(err):find("pattern too complex", 1, true) ~= nil }
+            ok, err = pcall(function() return subject:gsub(pattern, "") end)
+            results[#results + 1] = { ok = ok, refused = tostring(err):find("pattern too complex", 1, true) ~= nil }
+          end
+          return results
+        end)
+    "#;
+    let vm = load(src).await;
+    let out = emit(&vm, "t").await.unwrap();
+    assert_eq!(out.as_array().unwrap().len(), 6);
+    assert!(out.as_array().unwrap().iter().all(|r| r == &json!({"ok": false, "refused": true})), "{out}");
+}
 
 // ---- numbers the host must never panic on -----------------------------------------------------------------
 

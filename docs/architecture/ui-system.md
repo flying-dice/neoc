@@ -844,7 +844,7 @@ local ui  = require("@agentos/ui")       -- constructors + helpers, generated fr
 
 | Call | Purpose |
 |---|---|
-| `app.manifest { id, name, icon, tint, window {w,h,minW,minH}, kit = ">=1.0", permissions }` | identity and minimum window (DESIGN_LANGUAGE: min 320x240) |
+| `app.manifest { id, name, icon, tint, window {w,h,minW,minH}, kit = ">=1.0" }` | identity and minimum window (DESIGN_LANGUAGE: min 320x240) |
 | `app.window(name, spec)` | declare a window kind. `spec`: `title`, `size`, `client = {name = {init, persist, sync, type}}`, `state = {...}` (per-instance server state), `render = function(w) -> Node`, `onOpen(w, params)`, `onClose(w)` |
 | `app.state(initial)` | shared, in-memory server state; reads in `render` are tracked, assignments in handlers/tools schedule re-render of instances that read the field |
 | `app.kv:get/set/delete` | small durable key-value in the app's SQLite |
@@ -1317,10 +1317,13 @@ notes or 5 000. Test ids that fall out: `notes-folders-row-3`, `notes-new-note`,
   e2e specs: `local v = test.mount(app, "main"); v:tap("calculator-key-7"); v:expectText("calculator-display", "7")`;
   `v:type("notes-body", "hi")`; `v:tree()` for snapshots (the tree is JSON). Tool tests call `app.tool` directly against a
   temp SQLite and assert the resulting `data.patch` for an open view.
-- **Sandbox.** One Lua 5.1 VM per app (apps are plain Lua 5.1; darklua only bundles their modules), no `os`/`io`/`debug`,
-  no `require` at run time beyond `@agentos/app` and `@agentos/ui` (modules are bundled at build time), count-hook
-  time slices, memory cap, per-app SQLite file, and capabilities (network,
-  files, notifications) gated by `app.manifest.permissions` and the Settings permission model.
+- **Isolation (not a security boundary).** One Lua 5.1 VM per app (apps are plain Lua 5.1; darklua only bundles their
+  relative modules), its own environment table with no `load*`/`getfenv`/`setfenv` and no bare `os`/`io`/`debug`, and its
+  own per-app SQLite file. An app's `require` takes `@agentos/app`, `@agentos/ui` and every `std:`/`lib:`/`vnd:` module
+  (files, network, servers, threads), so it can reach other apps' data and the host's. There are no app permissions and
+  no CPU, memory or time limits: an app is the person's own code on their own host (see host-stack.md, "No permissions,
+  no budgets"). What still holds: values leaving the VM are size- and depth-checked, a host panic or stack overflow
+  from app input is a bug, and a tool declared `readOnly` cannot write through `app.*`.
 - **Dev loop**: saving a `.lua` file hot-reloads the VM; each open instance re-renders against the new code and the
   host sends the minimal ops (state is kept when the schema of `app.state` allows).
 

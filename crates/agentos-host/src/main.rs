@@ -64,8 +64,21 @@ fn parse_cli(args: impl IntoIterator<Item = String>) -> anyhow::Result<Option<Cl
     Ok(Some(cli))
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+/// The stack of each runtime worker thread (the default is 2 MiB). Apps' Lua runs on these threads, and a stack
+/// overflow aborts the whole host. The guards in `agentos-luavm` (pattern items, template nesting, value depth)
+/// are sound at 2 MiB without this; the slack is for the paths nobody has swept.
+const WORKER_STACK_BYTES: usize = 16 << 20;
+
+fn main() -> anyhow::Result<()> {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(WORKER_STACK_BYTES)
+        .build()
+        .context("start the async runtime")?
+        .block_on(run_cli())
+}
+
+async fn run_cli() -> anyhow::Result<()> {
     let Some(cli) = parse_cli(std::env::args().skip(1))? else {
         print!("{HELP}");
         return Ok(());

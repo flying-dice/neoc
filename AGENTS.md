@@ -76,7 +76,7 @@ A change is done when all of these hold:
   `agentos-application` (ports and use cases) depends on domain; each adapter (`lua`, `sqlite`, `mcp`, `acp`, `agui`,
   `fetch`, `http`, `codegen`) depends on application and domain and **never on another adapter**; `agentos-host` is the
   composition root and the only crate that sees them all. `agentos-luavm` is a support library, not an adapter: the
-  sandboxed Lua 5.1 VM (mlua, vendored), depending on no other crate here. Only the `lua` adapter may depend on it (it
+  per-app Lua 5.1 VM (mlua, vendored), depending on no other crate here. Only the `lua` adapter may depend on it (it
   reaches mlua through luavm's re-export, so mlua stays in one crate). Enforced by `bun run lint:deps` (`scripts/check-deps.ts`,
   an allow-list over `cargo metadata`) and `cargo deny check` (`deny.toml`: each framework crate is pinned to its
   adapter). A new crate must be placed in the allow-list on purpose.

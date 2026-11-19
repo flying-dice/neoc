@@ -339,7 +339,7 @@ async fn vacuum_into_and_attach_are_refused_through_db_all_and_exec() {
 
 // ---- wave D1: the second review's sandbox holes ----------------------------------------------------------------
 
-// N1: a coroutine parked in a host call switched the CPU budget off for the whole VM.
+// N1: a host call inside a coroutine (it once switched a CPU budget off; there is no budget now).
 
 /// On Lua 5.1 a host call inside the app's own coroutine is not refused (the resume wrappers pass the
 /// executor's wait outward, see `async_coroutines.lua`), so nothing is ever parked: the call finishes before
@@ -489,4 +489,62 @@ async fn a_hot_reload_retires_the_vm_it_replaces() {
     assert!(ended.unwrap_err().to_string().contains("unloaded"));
     assert!(started.elapsed() < PROMPTLY);
     assert_eq!(rig.tool("probe", "spin").await.unwrap(), json!(1), "the new version answers");
+}
+
+// ---- review fixes: a cancelled render, and closing a window outside the gate --------------------------------------
+
+/// A render marks the tracker pure (`app.state` cannot be assigned) and opens a source scope. When the call was
+/// cancelled at a host call (the client's socket closed), both stayed set until some later render ended, so every
+/// tool that assigned `app.state` failed with "render must be pure" in between.
+#[tokio::test]
+async fn a_render_cancelled_at_a_host_call_leaves_app_state_assignable() {
+    let rig = rig();
+    let src = format!(
+        r#"{MANIFEST}
+        local state = app.state {{ n = 0 }}
+        app.window("main", {{ render = function(w)
+          local rows = app.db:all("select 1 as one")
+          return {{ type = "Text", key = "t", props = {{ text = tostring(#rows + state.n) }} }}
+        end }})
+        app.tool {{ name = "bump", run = function()
+          state.n = state.n + 1
+          return state.n
+        end }}"#
+    );
+    rig.load("probe", &src).await.unwrap();
+    // poll the open once (it parks at the database call), then drop it: the cancelled call
+    let app = id("probe");
+    let open = rig.runtime.open_view(&app, "v1", "main", Map::new(), Map::new());
+    tokio::select! {
+        biased;
+        _ = open => panic!("the open finished without waiting at the host call"),
+        () = std::future::ready(()) => {}
+    }
+    let bumped = tokio::time::timeout(PROMPTLY, rig.tool("probe", "bump"))
+        .await
+        .expect("the tool call hung")
+        .expect("assigning app.state after a cancelled render must work");
+    assert_eq!(bumped, json!(1));
+}
+
+/// `onClose` was looked up with `spec:get`, which runs an app's `__index` outside the VM's gate (another call
+/// may be running in the VM at the same time). It is read raw now: an `onClose` that only an `__index` supplies
+/// is not run, and the `__index` is not either.
+#[tokio::test]
+async fn closing_a_window_does_not_run_app_code_outside_the_gate() {
+    let rig = rig();
+    let src = format!(
+        r#"{MANIFEST}
+        local lookups = 0
+        local spec = {{ render = function(w) return {{ type = "Text", key = "t", props = {{ text = "x" }} }} end }}
+        setmetatable(spec, {{ __index = function(_, key) lookups = lookups + 1 end }})
+        app.window("main", spec)
+        app.tool {{ name = "lookups", readOnly = true, run = function() return lookups end }}"#
+    );
+    rig.load("probe", &src).await.unwrap();
+    rig.runtime.open_view(&id("probe"), "v1", "main", Map::new(), Map::new()).await.unwrap();
+    let before = rig.tool("probe", "lookups").await.unwrap().as_u64().unwrap();
+    rig.runtime.close_view(&id("probe"), "v1").await.unwrap();
+    let after = rig.tool("probe", "lookups").await.unwrap().as_u64().unwrap();
+    assert_eq!(before, after, "closing the window ran the spec's __index");
 }

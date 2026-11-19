@@ -120,7 +120,8 @@ fn help(config_tbl: &Table) -> Result<String, String> {
 // ---------------------------------------------------------------------------
 
 fn read_argv(t: &Table) -> Result<Vec<String>, String> {
-    let mut out = Vec::with_capacity(t.raw_len());
+    // not presized: `#t` is whatever border Lua finds, so a forged table can report 2^30
+    let mut out = Vec::new();
     for entry in t.clone().sequence_values::<mlua::LuaString>() {
         let s = entry.map_err(|e| format!("argv must be a string array: {e}"))?;
         let s = s.to_str().map_err(|e| format!("argv contains non-utf8: {e}"))?;

@@ -221,7 +221,8 @@ fn install_statements(lua: &Lua, sh: &Sh, db: &Table) -> mlua::Result<()> {
             async move {
                 s.require_write("db:migrate")?;
                 let len = steps.raw_len();
-                let mut migrations = Vec::with_capacity(len);
+                // not presized: `#steps` is whatever border Lua finds, so a forged table can report 2^30
+                let mut migrations = Vec::new();
                 for version in 1..=len {
                     let LuaValue::String(sql) = steps.raw_get::<LuaValue>(version)? else {
                         return Err(mlua::Error::runtime(format!("db:migrate: step [{version}] must be a SQL string")));
