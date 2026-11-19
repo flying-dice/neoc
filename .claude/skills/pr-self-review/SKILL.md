@@ -104,8 +104,8 @@ Given / when / then table. Each category run or `N/A — <reason>`:
 - Deleted read / query / guard → list every clause it carried (WHERE, LIMIT, permission check); probe the state each one excluded.
 - Same function fixed twice → review its contract, not the symptom.
 
-### G8 — Docs / spec drift
-- Spec, ADR, RFC, CONTRIBUTING, README, CLI help affected by the behaviour → updated in the same PR.
+### G8 — Docs drift
+- ADR, RFC, CONTRIBUTING, README, CLI help affected by the behaviour → updated in the same PR.
 - Every added or changed link resolves (`test -e` for paths, HTTP 200 for URLs).
 - Docs describe the state after this PR, not a future one. Dependency on another PR → declared in the description and enforced: draft until the dependency merges, merge order at the top of the description. Declared but unenforced = FAIL.
 - Grep the doc set for the changed term — every mention agrees. Self-contradiction = FAIL.

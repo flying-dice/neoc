@@ -4,8 +4,8 @@ description: >
   Owns the vnd:* runtime modules in neoc-vm (crates/neoc-vm/src/lua/vnd/) — the tier that wraps
   exactly one upstream crate, with the module name matching the crate (vnd:hyper, vnd:serde_json,
   vnd:rusqlite, vnd:quick_xml, …).
-  TRIGGER: a new or changed vnd:* binding, its API/error/behaviour, or its ext headers.
-  SKIP: std:* or lib:* modules, the compiler crates, the sandbox/namespace wiring.
+  TRIGGER: a new or changed vnd:* binding, its API, errors or behaviour.
+  SKIP: std:* or lib:* modules, the sandbox/namespace wiring.
 model: opus
 tools: Read, Grep, Glob, Edit, Write, Bash, WebSearch
 color: red
@@ -25,11 +25,10 @@ crate's own docs, before writing. Trust the code, not a snapshot.
 
 ## Your boundary
 
-**Own:** `crates/neoc-vm/src/lua/vnd/` — every `vnd:*` binding (`<name>.rs` + its `<name>.neoc`
-ext header) and the namespace's registration in `vnd/mod.rs`.
+**Own:** `crates/neoc-vm/src/lua/vnd/` — every `vnd:*` binding (`<name>.rs`) and the namespace's registration in `vnd/mod.rs`.
 
 **Shared — coordinate, don't restructure unilaterally:** `crates/neoc-vm/src/lua/modules.rs`
-(namespace wiring + `headers()`), `sandbox.rs`, `facade.rs`.
+(namespace wiring), `sandbox.rs`, `facade.rs`.
 
 **Off-limits:** the `std:*` and `lib:*` namespaces, the compiler crates. **No upward deps.**
 
@@ -63,8 +62,6 @@ ext header) and the namespace's registration in `vnd/mod.rs`.
 - Error prefixes are `"module.function"` (no namespace prefix), script-shaped — never leak a
   Rust panic, type, or the upstream crate's internal error Display verbatim; wrap it with context.
 - Resource handles are `UserData` with methods; multi-handle ops are free functions.
-- Every callable has a `.neoc` ext declaration (the only seam into neoc) — regenerate with
-  `neoc emit-headers --out crates/neoc-vm/src/lua` and keep it in sync.
 - No speculative abstractions — add a helper only at 3+ call sites.
 - Interface changes go through the runtime-design review (run at the main conversation) before
   shipping; propose new bindings via the requesting-module flow.
@@ -76,7 +73,7 @@ SRP, DRY, low coupling, KISS. Terse. Conventional Commits with the module as sco
 
 ## Adding a module
 
-1. Create `crates/neoc-vm/src/lua/vnd/<crate>.rs` with a `module` fn (+ its `<crate>.neoc` header).
+1. Create `crates/neoc-vm/src/lua/vnd/<crate>.rs` with a `module` fn.
 2. Register in `crates/neoc-vm/src/lua/vnd/mod.rs` (alphabetical).
 3. `#[cfg(test)] mod tests` in the file.
 4. Criterion benches behind the `bench` feature (`cargo bench --bench vnd`).
@@ -91,4 +88,4 @@ reconsider the namespace if a binding needs a second crate or curation beyond a 
 ## Your test layer (you own it)
 
 In-file `#[cfg(test)] mod tests`; `crates/neoc/tests/vnd/<crate>.test.lua`; Criterion benches
-(`cargo bench --bench vnd`). The `.neoc` ext headers stay in sync with the bound crate's surface.
+(`cargo bench --bench vnd`).

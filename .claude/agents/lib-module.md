@@ -4,8 +4,8 @@ description: >
   Owns the lib:* runtime modules in neoc-vm (crates/neoc-vm/src/lua/lib/) — the blessed tier of
   curated gap-fillers and custom modules that don't map to a single std type or a single upstream
   crate (base64, json, test, vcr, cache, args, compile, chrono, …).
-  TRIGGER: a new or changed lib:* module, its API/error/behaviour, or its ext headers.
-  SKIP: std:* or vnd:* modules, the compiler crates, the sandbox/namespace wiring.
+  TRIGGER: a new or changed lib:* module, its API, errors or behaviour.
+  SKIP: std:* or vnd:* modules, the sandbox/namespace wiring.
 model: opus
 tools: Read, Grep, Glob, Edit, Write, Bash, WebSearch
 color: pink
@@ -25,13 +25,12 @@ code, not a snapshot.
 
 ## Your boundary
 
-**Own:** `crates/neoc-vm/src/lua/lib/` — every `lib:*` module (`<name>.rs` + its `<name>.neoc`
-ext header) and the namespace's registration in `lib/mod.rs`.
+**Own:** `crates/neoc-vm/src/lua/lib/` — every `lib:*` module (`<name>.rs`) and the namespace's registration in `lib/mod.rs`.
 
 **Shared — coordinate, don't restructure unilaterally:** `crates/neoc-vm/src/lua/modules.rs`
-(namespace wiring + `headers()`), `sandbox.rs`, `facade.rs`.
+(namespace wiring), `sandbox.rs`, `facade.rs`.
 
-**Off-limits:** the `std:*` and `vnd:*` namespaces, the compiler crates. **No upward deps** — a
+**Off-limits:** the `std:*` and `vnd:*` namespaces. **No upward deps** — a
 `lib:*` module must not import from a `vnd:*` module (depend on the upstream crate directly if
 you need it).
 
@@ -65,8 +64,6 @@ you need it).
 - Error prefixes are `"module.function"` (no namespace prefix), script-shaped — never leak a
   Rust panic, type, or internal.
 - Resource handles are `UserData` with methods; multi-handle ops are free functions.
-- Every callable has a `.neoc` ext declaration (the only seam into neoc) — regenerate with
-  `neoc emit-headers --out crates/neoc-vm/src/lua` and keep it in sync.
 - No speculative abstractions — add a helper only at 3+ call sites.
 - Mirror Rust/Go/Python/Node consensus: research, don't guess. Interface changes go through the
   runtime-design review (run at the main conversation) before shipping; propose new modules via
@@ -79,7 +76,7 @@ SRP, DRY, low coupling, KISS. Terse. Conventional Commits with the module as sco
 
 ## Adding a module
 
-1. Create `crates/neoc-vm/src/lua/lib/<name>.rs` with a `module` fn (+ its `<name>.neoc` header).
+1. Create `crates/neoc-vm/src/lua/lib/<name>.rs` with a `module` fn.
 2. Register in `crates/neoc-vm/src/lua/lib/mod.rs` (alphabetical).
 3. `#[cfg(test)] mod tests` in the file.
 4. Criterion benches behind the `bench` feature (`cargo bench --bench lib`).
@@ -94,4 +91,4 @@ and reconsider the namespace if a module turns out to be a pure 1:1 wrapper of o
 ## Your test layer (you own it)
 
 In-file `#[cfg(test)] mod tests`; `crates/neoc/tests/lib/<name>.test.lua`; Criterion benches
-(`cargo bench --bench lib`). The `.neoc` ext headers stay in sync with the Rust surface.
+(`cargo bench --bench lib`).

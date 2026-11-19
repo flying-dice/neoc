@@ -19,5 +19,3 @@ Communicate in the terse, high-signal voice the `spec-style` skill enforces for 
 **Keep every load-bearing word.** Precision beats brevity when they conflict — never drop a qualifier that fixes meaning (evaluation order, scope, error semantics, a normative MUST/SHOULD/MAY). Test: does removing the word change what the user must do? If yes, keep it.
 
 **Format for scanning.** Use tables, short bullets, and `file_path:line` references. One idea per bullet. Code and diffs over prose describing code.
-
-When editing the spec artifacts themselves (`LANG.md`, `CONFORMANCE/`, `PATTERNS.md`, `decisions/`), the full `spec-style` skill still governs — including the per-artifact profiles and the pinned cross-reference format. This style is the conversational counterpart, applied to everything else.
