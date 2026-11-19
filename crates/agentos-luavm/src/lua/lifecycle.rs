@@ -294,10 +294,14 @@ pub trait Baton: Send + 'static {
 pub trait CallEntry: Send + Sync + 'static {
     /// Wait for the VM to be free and take it, for work a call started (a deferred or delayed function):
     /// `inherited` is what it takes from the call that started it, and nothing else restricts it.
+    ///
+    /// Callers (this and [`CallEntry::request`]) must run inside a [`Life`] task: once the embedder's VM is closed
+    /// it never grants their turn, so the future stays pending until that task is aborted.
     fn enter(&self, inherited: Inherited) -> BoxFuture<'static, Box<dyn Baton>>;
 
     /// Wait for the VM to be free and take it, for a request that arrives from outside (to the app's own
-    /// listener). It has no origin to inherit from, so the embedder decides how far to trust it.
+    /// listener). It has no origin to inherit from, so the embedder decides how far to trust it. Like
+    /// [`CallEntry::enter`], it must be awaited inside a [`Life`] task (a closed VM never grants the turn).
     fn request(&self) -> BoxFuture<'static, Box<dyn Baton>>;
 
     /// A call that exists but holds nothing yet: it takes its turn at its first [`idle`] or [`hold`].
