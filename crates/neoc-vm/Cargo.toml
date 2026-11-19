@@ -3,6 +3,9 @@ name = "neoc-vm"
 version.workspace = true
 edition.workspace = true
 publish = false
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [lib]
 name = "neoc_vm"
@@ -117,7 +120,6 @@ futures = { version = "0.3", default-features = false, features = ["std"] }
 # their dedicated library modules and chain results through filters.
 tera = { version = "1.20", default-features = false }
 walkdir = "2"
-serde-jsonlines = "0.7.0"
 
 # `lib:args` parses script argv with clap's builder API (`Arg`, `Command`,
 # `value_parser`) — the runtime arg-parser, not a CLI tree. `derive` is the
@@ -130,8 +132,6 @@ hyper = { version = "1", features = ["client", "server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 bytes = "1"
-
-socket2 = { version = "0.5", features = ["all"] }
 
 # sqlx is async-only and used here for `lib.mysql` / `lib.postgres`, where the
 # work genuinely is network IO (worth yielding for). For `lib.sqlite` we use
@@ -214,3 +214,10 @@ name = "vnd"
 path = "benches/vnd/vnd.rs"
 harness = false
 required-features = ["bench"]
+
+# The root `[workspace.lints]` table (clippy pedantic, `unsafe_code = "deny"`) was
+# imported with the old compiler crates and never inherited here: opting in
+# today means ~700 pedantic findings and six `unsafe` blocks. Adopting it is its
+# own change, so silence cargo's "missing lints inheritance" nag until then.
+[lints.cargo]
+missing_lints_inheritance = "allow"

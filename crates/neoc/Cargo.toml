@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 default-run = "neoc"
 publish = false
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
 # The runtime library: engine construction and script execution.
@@ -36,3 +39,10 @@ futures = "0.3"
 [[test]]
 name = "cucumber"
 harness = false
+
+# The root `[workspace.lints]` table (clippy pedantic, `unsafe_code = "deny"`) was
+# imported with the old compiler crates and never inherited here: opting in
+# today means ~700 pedantic findings and six `unsafe` blocks. Adopting it is its
+# own change, so silence cargo's "missing lints inheritance" nag until then.
+[lints.cargo]
+missing_lints_inheritance = "allow"

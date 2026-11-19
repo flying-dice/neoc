@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 # Toolchain pin — must match rust-toolchain.toml (checked by scripts/check-toolchain-pin.sh).
-FROM rust:1.98.0-bookworm AS builder
+FROM rust:1.100.0-bookworm AS builder
 WORKDIR /src
 
 # The whole workspace is needed: the `neoc` bin pulls neoc-vm.
