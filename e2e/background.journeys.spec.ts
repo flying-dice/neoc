@@ -110,7 +110,7 @@ test.describe('Background work journeys', () => {
     let refuse = false
     await page.routeWebSocket(/\/rpc$/, (ws) => {
       if (refuse) {
-        void ws.close() // the host is unreachable: the client keeps trying
+        ws.close().catch(() => {}) // the host is unreachable: the client keeps trying
         return
       }
       ws.connectToServer()

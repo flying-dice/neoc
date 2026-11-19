@@ -481,7 +481,7 @@ impl FakeRuntime {
         v.sources = sources;
         v.decls = decls;
     }
-    /// The next `render_view` (a re-render, not an open) waits until the returned sender is used or dropped:
+    /// The next `render_view` call (arm it after the open) waits until the returned sender is used or dropped:
     /// a render that takes a while.
     pub fn hold_next_render(&self) -> futures_channel::oneshot::Sender<()> {
         let (release, held) = futures_channel::oneshot::channel();

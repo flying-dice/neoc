@@ -292,7 +292,8 @@ pub struct ViewService {
     /// One settle at a time per app: `dirty_views` hands the dirty set to whoever asks first, so a settle that
     /// a background change started must finish (its ops sent) before an event's own settle can return and
     /// the event be acknowledged.
-    settling: Mutex<HashMap<AppId, Arc<futures_util::lock::Mutex<()>>>>,
+    /// An entry is made by the first settle of an app with open views and dropped when the app stops.
+    settle_turns: Mutex<HashMap<AppId, Arc<futures_util::lock::Mutex<()>>>>,
     /// What apps see as the name of the person (`ctx.actor.name`).
     user: String,
 }
@@ -304,7 +305,7 @@ impl ViewService {
             app,
             views: Mutex::default(),
             next: AtomicU64::new(1),
-            settling: Mutex::default(),
+            settle_turns: Mutex::default(),
             user: "You".to_owned(),
         }
     }
@@ -681,7 +682,7 @@ impl ViewService {
         if self.views_of(app).is_empty() {
             return;
         }
-        let turn = self.settling.lock().entry(app.clone()).or_default().clone();
+        let turn = self.settle_turns.lock().entry(app.clone()).or_default().clone();
         let _one_at_a_time = turn.lock().await;
         let runtime = self.app.runtime();
         if let Ok(dirty) = runtime.dirty_views(app).await {
@@ -858,6 +859,6 @@ impl AppObserver for ViewService {
         for view in self.views_of(app) {
             self.drop_view(&view, Some(reason)).await;
         }
-        self.settling.lock().remove(app);
+        self.settle_turns.lock().remove(app);
     }
 }

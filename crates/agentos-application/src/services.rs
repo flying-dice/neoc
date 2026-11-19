@@ -167,9 +167,7 @@ fn check_against_record(record: &InstalledApp, manifest: &Manifest) -> Result<()
 #[async_trait]
 impl AppActivity for AppService {
     async fn background_settled(&self, app: &AppId) {
-        for o in self.observers() {
-            o.mutated(app).await;
-        }
+        self.announce_mutated(app).await;
     }
 }
 
@@ -186,6 +184,13 @@ impl AppService {
 
     fn observers(&self) -> Vec<Arc<dyn AppObserver>> {
         self.observers.lock().clone()
+    }
+
+    /// State or data of the app may have changed: tell the observers (open views follow).
+    async fn announce_mutated(&self, app: &AppId) {
+        for o in self.observers() {
+            o.mutated(app).await;
+        }
     }
 
     async fn announce_stopping(&self, app: &AppId, reason: &str) {
@@ -483,9 +488,7 @@ impl AppService {
         let read_only = self.tool_is_read_only(name).unwrap_or(false);
         let out = self.p.runtime.call_tool(name.app(), name.tool(), args, ctx, read_only).await;
         // a tool may have changed state or data (even when it then failed): open views follow
-        for o in self.observers() {
-            o.mutated(name.app()).await;
-        }
+        self.announce_mutated(name.app()).await;
         Ok(out?)
     }
 

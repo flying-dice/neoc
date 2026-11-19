@@ -165,7 +165,8 @@ pub trait AppObserver: Send + Sync {
 /// ended or paused at a wait, a request to the app's own server finished. State, view effects or data may have
 /// changed, so open views must follow without waiting for the next event. The runtime adapter calls it (late
 /// bound: the application is built after the runtime); [`crate::AppService`] implements it by telling its
-/// [`AppObserver`]s. Calls for one app are never concurrent with themselves and are coalesced by the adapter.
+/// [`AppObserver`]s. The adapter coalesces its signals; it may still call while an earlier call for the
+/// same app is running (a reload overlaps the old and new VM), so the listener must serialise its own work.
 #[async_trait]
 pub trait AppActivity: Send + Sync {
     /// A call nobody made through the host ended or paused; state may have changed.

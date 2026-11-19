@@ -141,7 +141,10 @@ impl AppRuntime for LuaRuntime {
                 }
                 // open windows follow what the background work changed; a pause that changed no state or
                 // window request has nothing to follow (data changes are pushed by the live sources)
-                if vm.is_shut_down() || !vm.has_unsettled_views() {
+                let follow = !vm.is_shut_down() && vm.has_unsettled_views();
+                // not held across the settle: an unload must find the VM's last reference to release it
+                drop(vm);
+                if !follow {
                     continue;
                 }
                 let listener = activity.get().and_then(Weak::upgrade);

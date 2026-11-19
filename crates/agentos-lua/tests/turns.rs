@@ -19,7 +19,11 @@ mod common;
 
 use common::{agent_ctx, load, try_load_with, Stalling};
 use serde_json::json;
-use std::{fmt::Write as _, sync::Arc, time::Duration};
+use std::{
+    fmt::Write as _,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio::{io::AsyncWriteExt, net::TcpListener};
 
 /// A tiny HTTP server that answers every request, so a script has a network wait to start.
@@ -428,23 +432,27 @@ async fn a_task_spawned_in_a_transaction_waits_for_it_instead_of_deadlocking() {
     "#;
     let vm = load(src).await;
     let patience = Duration::from_secs(5);
-    for tool in ["with_statement_after", "nothing_after"] {
-        let r = tokio::time::timeout(patience, vm.call_tool(tool, json!({}), &agent_ctx(0), false))
-            .await
-            .unwrap_or_else(|_| panic!("{tool} deadlocked"));
-        assert_eq!(r.unwrap(), json!("done"));
+    let run = |tool: &'static str| {
+        let vm = &vm;
+        async move {
+            let r = tokio::time::timeout(patience, vm.call_tool(tool, json!({}), &agent_ctx(0), false))
+                .await
+                .unwrap_or_else(|_| panic!("{tool} deadlocked"));
+            r.unwrap()
+        }
+    };
+    assert_eq!(run("with_statement_after").await, json!("done"));
+    // the task waits for the VM behind whoever holds it. Let it take its turn before the next tool starts, so what
+    // it saw does not depend on which of the two the scheduler lets in first
+    let deadline = Instant::now() + patience;
+    while run("unrelated").await["seen"]["a"].is_null() {
+        assert!(Instant::now() < deadline, "the task spawned in the transaction never ran");
+        tokio::time::sleep(Duration::from_millis(10)).await;
     }
+    assert_eq!(run("nothing_after").await, json!("done"));
     tokio::time::sleep(Duration::from_millis(200)).await;
-    let r = tokio::time::timeout(patience, vm.call_tool("unrelated", json!({}), &agent_ctx(0), false))
-        .await
-        .expect("a later, unrelated call does not hang")
-        .unwrap();
-    // the spawned tasks ran after their transactions committed: they saw every row of them. Task `a` queues for the
-    // VM behind the second tool, which may take its turn first and add its row: `a` saw two rows or three, never
-    // fewer (that would be a read inside the transaction).
-    assert_eq!(r["rows"], 3);
-    assert!(matches!(r["seen"]["a"].as_i64(), Some(2 | 3)), "{r}");
-    assert_eq!(r["seen"]["b"], 3);
+    // the spawned tasks ran after their transactions committed: they saw every row of them
+    assert_eq!(run("unrelated").await, json!({ "rows": 3, "seen": { "a": 2, "b": 3 } }));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
