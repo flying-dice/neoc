@@ -40,6 +40,7 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
+    task::{Context, Poll},
 };
 use tokio::sync::Notify;
 
@@ -290,6 +291,8 @@ enum Via {
     Request,
 }
 
+type LockWait = Pin<Box<dyn Future<Output = tokio::sync::OwnedMutexGuard<()>> + Send>>;
+
 /// What a call keeps while it waits without using the VM (see [`Baton::park`]).
 struct Parked {
     scope: TrackerScope,
@@ -306,13 +309,19 @@ pub(crate) struct Turn {
     shared: Arc<Shared>,
     gate: Arc<tokio::sync::Mutex<()>>,
     held: Option<tokio::sync::OwnedMutexGuard<()>>,
+    /// The place in the gate's queue of a call that is waiting to take it (see [`Baton::poll_unpark`]). It lives
+    /// here, not in the host call that is waiting, so it stays with this call whichever call polls that host
+    /// call later.
+    waiting: Option<LockWait>,
     parked: Option<Parked>,
     /// The call came from inside the VM (a request to the app's server, a task), not through the host: its
     /// effects are forwarded by the runtime's pump when it ends.
     inbound: bool,
     /// The call may not change anything. This belongs to the call, and everything it starts inherits it: a
     /// task a `readOnly` tool spawns stays read-only for as long as it lives, whenever it runs. While the
-    /// call holds the gate this is [`Shared::read_only`]; while it waits it is not (the next call's is).
+    /// call holds the gate this is [`Shared::read_only`]; while it waits it is not (the next call's is). A
+    /// coroutine continuation another call resumes (a host call left waiting by the task's first slice) is that
+    /// call's: it takes the resumer's restrictions, as `coroutine.resume` runs the coroutine in the resumer.
     /// Counted in [`Shared::read_only_live`] for as long as the call lives.
     read_only: bool,
 }
@@ -346,7 +355,7 @@ impl Turn {
         if read_only {
             shared.read_only_live.fetch_add(1, Ordering::SeqCst);
         }
-        Self { shared, gate, held, parked: None, inbound, read_only }
+        Self { shared, gate, held, waiting: None, parked: None, inbound, read_only }
     }
 }
 
@@ -381,16 +390,19 @@ impl Baton for Turn {
         self.held = None;
     }
 
-    fn unpark(&mut self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
-        Box::pin(async move {
-            if self.held.is_none() {
-                self.held = Some(self.gate.clone().lock_owned().await);
-            }
-            self.shared.read_only.store(self.read_only, Ordering::SeqCst);
-            if let Some(parked) = self.parked.take() {
-                self.shared.tracker.lock().resume(parked.scope);
-            }
-        })
+    fn poll_unpark(&mut self, cx: &mut Context<'_>) -> Poll<()> {
+        if self.held.is_none() {
+            let gate = &self.gate;
+            let waiting = self.waiting.get_or_insert_with(|| Box::pin(gate.clone().lock_owned()));
+            let Poll::Ready(held) = waiting.as_mut().poll(cx) else { return Poll::Pending };
+            self.waiting = None;
+            self.held = Some(held);
+        }
+        self.shared.read_only.store(self.read_only, Ordering::SeqCst);
+        if let Some(parked) = self.parked.take() {
+            self.shared.tracker.lock().resume(parked.scope);
+        }
+        Poll::Ready(())
     }
 }
 

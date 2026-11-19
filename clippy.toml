@@ -2,3 +2,12 @@ allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 allow-panic-in-tests = true
 msrv = "1.98"
+disallowed-methods = [
+    { path = "mlua::Lua::create_async_function", reason = "use agentos_luavm::lua::lifecycle::async_function: every async host function is a leaf with a Role (see lifecycle.rs)" },
+    { path = "mlua::UserDataMethods::add_async_method", reason = "use agentos_luavm::lua::lifecycle::async_method (see lifecycle.rs)" },
+    { path = "mlua::UserDataMethods::add_async_method_mut", reason = "an async method is a leaf: make it with lifecycle::async_method (add a _mut variant there if one is needed)" },
+    { path = "mlua::UserDataMethods::add_async_function", reason = "an async function is a leaf: make it with lifecycle::async_function" },
+    { path = "mlua::UserDataMethods::add_async_method_once", reason = "an async method is a leaf: make it with lifecycle::async_method" },
+    { path = "mlua::Function::wrap_async", reason = "an async function is a leaf: make it with lifecycle::async_function" },
+    { path = "mlua::Function::wrap_raw_async", reason = "an async function is a leaf: make it with lifecycle::async_function" },
+]

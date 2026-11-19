@@ -24,7 +24,7 @@ use agentos_application::{
     data::{ExecOutcome, Params, QueryInfo, SqlMigration},
     live::{Conflict, SourceDef, SourceId, SourceKind, TotalMode},
 };
-use agentos_luavm::lua::lifecycle;
+use agentos_luavm::lua::lifecycle::{async_function, Role};
 use agentos_luavm::mlua;
 use agentos_luavm::mlua::{Function, Lua, Table, Value as LuaValue};
 use serde_json::{json, Value};
@@ -42,7 +42,6 @@ impl Shared {
 
     /// A read: through the open transaction when there is one.
     async fn run_query(&self, sql: String, params: Params) -> mlua::Result<Vec<Value>> {
-        lifecycle::hold().await;
         let open = self.tx.lock().take();
         match open {
             Some(mut t) => {
@@ -56,7 +55,6 @@ impl Shared {
 
     /// A write: through the open transaction when there is one.
     async fn run_exec(&self, sql: String, params: Params) -> mlua::Result<ExecOutcome> {
-        lifecycle::hold().await;
         let open = self.tx.lock().take();
         match open {
             Some(mut t) => {
@@ -219,10 +217,9 @@ fn install_statements(lua: &Lua, sh: &Sh, db: &Table) -> mlua::Result<()> {
     let s = sh.clone();
     db.set(
         "migrate",
-        lua.create_async_function(move |_, (_this, steps): (LuaValue, Table)| {
+        async_function(lua, Role::Vm, move |_, (_this, steps): (LuaValue, Table)| {
             let s = s.clone();
             async move {
-                lifecycle::hold().await;
                 s.require_write("db:migrate")?;
                 if s.tx.lock().is_some() {
                     // the transaction holds the database's write gate, and a migration waits for that same gate
@@ -259,54 +256,65 @@ fn install_statements(lua: &Lua, sh: &Sh, db: &Table) -> mlua::Result<()> {
     let s = sh.clone();
     db.set(
         "exec",
-        lua.create_async_function(move |lua, (_this, sql, params): (LuaValue, String, Option<LuaValue>)| {
-            let s = s.clone();
-            async move {
-                s.require_write("db:exec")?;
-                let out = s.run_exec(sql, lua_to_params(params)?).await?;
-                json_to_lua(&lua, &json!({"changes": out.changes, "last_insert_id": out.last_insert_id}))
-            }
-        })?,
+        async_function(
+            lua,
+            Role::Vm,
+            move |lua, (_this, sql, params): (LuaValue, String, Option<LuaValue>)| {
+                let s = s.clone();
+                async move {
+                    s.require_write("db:exec")?;
+                    let out = s.run_exec(sql, lua_to_params(params)?).await?;
+                    json_to_lua(&lua, &json!({"changes": out.changes, "last_insert_id": out.last_insert_id}))
+                }
+            },
+        )?,
     )?;
 
     // db:all(sql, params) -> rows ; db:one(sql, params) -> row | nil
     let s = sh.clone();
     db.set(
         "all",
-        lua.create_async_function(move |lua, (_this, sql, params): (LuaValue, String, Option<LuaValue>)| {
-            let s = s.clone();
-            async move {
-                let rows = s.run_query(sql, lua_to_params(params)?).await?;
-                json_to_lua(&lua, &Value::Array(rows))
-            }
-        })?,
+        async_function(
+            lua,
+            Role::Vm,
+            move |lua, (_this, sql, params): (LuaValue, String, Option<LuaValue>)| {
+                let s = s.clone();
+                async move {
+                    let rows = s.run_query(sql, lua_to_params(params)?).await?;
+                    json_to_lua(&lua, &Value::Array(rows))
+                }
+            },
+        )?,
     )?;
     let s = sh.clone();
     db.set(
         "one",
-        lua.create_async_function(move |lua, (_this, sql, params): (LuaValue, String, Option<LuaValue>)| {
-            let s = s.clone();
-            async move {
-                let mut rows = s.run_query(sql, lua_to_params(params)?).await?;
-                rows.truncate(1);
-                match rows.pop() {
-                    Some(row) => json_to_lua(&lua, &row),
-                    None => Ok(LuaValue::Nil),
+        async_function(
+            lua,
+            Role::Vm,
+            move |lua, (_this, sql, params): (LuaValue, String, Option<LuaValue>)| {
+                let s = s.clone();
+                async move {
+                    let mut rows = s.run_query(sql, lua_to_params(params)?).await?;
+                    rows.truncate(1);
+                    match rows.pop() {
+                        Some(row) => json_to_lua(&lua, &row),
+                        None => Ok(LuaValue::Nil),
+                    }
                 }
-            }
-        })?,
+            },
+        )?,
     )?;
 
     // db:tx(fn): the statements inside commit together or not at all
     let s = sh.clone();
     db.set(
         "tx",
-        lua.create_async_function(move |_, (_this, body): (LuaValue, Function)| {
+        async_function(lua, Role::Vm, move |_, (_this, body): (LuaValue, Function)| {
             let s = s.clone();
             async move {
-                // the turn first: the checks below, the transaction and the `readOnly` flag `database()` reads
-                // belong to the call that holds it (a task started inside another `db:tx` waits here)
-                lifecycle::hold().await;
+                // the call holds the turn here (`Role::Vm`): the checks below, the transaction and the `readOnly`
+                // flag `database()` reads belong to it (a task started inside another `db:tx` waited for it)
                 check_effects_allowed(&s, "db:tx")?;
                 if s.tx.lock().is_some() {
                     return Err(mlua::Error::runtime("db:tx cannot be nested"));
@@ -342,7 +350,7 @@ fn install_sources(lua: &Lua, sh: &Sh, db: &Table) -> mlua::Result<()> {
     let s = sh.clone();
     db.set(
         "query",
-        lua.create_async_function(move |lua, (_this, sql, opts): (LuaValue, String, Table)| {
+        async_function(lua, Role::Vm, move |lua, (_this, sql, opts): (LuaValue, String, Table)| {
             let s = s.clone();
             async move {
                 reject_unknown(&opts, &["key", "page", "total"], "db:query")?;
@@ -379,7 +387,7 @@ fn install_sources(lua: &Lua, sh: &Sh, db: &Table) -> mlua::Result<()> {
     let s = sh.clone();
     db.set(
         "row",
-        lua.create_async_function(move |lua, (_this, sql, opts): (LuaValue, String, Table)| {
+        async_function(lua, Role::Vm, move |lua, (_this, sql, opts): (LuaValue, String, Table)| {
             let s = s.clone();
             async move {
                 reject_unknown(&opts, &["key", "rev", "write", "conflict", "writable"], "db:row")?;
@@ -433,7 +441,7 @@ fn install_sources(lua: &Lua, sh: &Sh, db: &Table) -> mlua::Result<()> {
     let s = sh.clone();
     db.set(
         "scalar",
-        lua.create_async_function(move |lua, (_this, sql): (LuaValue, String)| {
+        async_function(lua, Role::Vm, move |lua, (_this, sql): (LuaValue, String)| {
             let s = s.clone();
             async move { declare(&s, &lua, sql, |_| SourceKind::Scalar).await }
         })?,
@@ -448,7 +456,7 @@ fn install_kv(lua: &Lua, sh: &Sh, app: &Table) -> mlua::Result<()> {
     let s = sh.clone();
     kv.set(
         "get",
-        lua.create_async_function(move |lua, (_this, key): (LuaValue, String)| {
+        async_function(lua, Role::Vm, move |lua, (_this, key): (LuaValue, String)| {
             let s = s.clone();
             async move {
                 let rows = s
@@ -471,7 +479,7 @@ fn install_kv(lua: &Lua, sh: &Sh, app: &Table) -> mlua::Result<()> {
     let s = sh.clone();
     kv.set(
         "set",
-        lua.create_async_function(move |_, (_this, key, value): (LuaValue, String, LuaValue)| {
+        async_function(lua, Role::Vm, move |_, (_this, key, value): (LuaValue, String, LuaValue)| {
             let s = s.clone();
             async move {
                 s.require_write("app.kv:set")?;
@@ -493,7 +501,7 @@ fn install_kv(lua: &Lua, sh: &Sh, app: &Table) -> mlua::Result<()> {
     let s = sh.clone();
     kv.set(
         "delete",
-        lua.create_async_function(move |_, (_this, key): (LuaValue, String)| {
+        async_function(lua, Role::Vm, move |_, (_this, key): (LuaValue, String)| {
             let s = s.clone();
             async move {
                 s.require_write("app.kv:delete")?;

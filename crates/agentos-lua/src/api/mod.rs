@@ -21,8 +21,8 @@ use crate::{
     vm::{Effect, Shared, ShellEffect},
 };
 use agentos_application::PortError;
+use agentos_luavm::mlua;
 use agentos_luavm::mlua::Lua;
-use agentos_luavm::{lua::lifecycle, mlua};
 use std::{future::Future, sync::Arc};
 
 /// Install the `app` table and `require` into the app's environment (they are globals of its chunks, not of
@@ -40,15 +40,14 @@ pub(crate) fn install(lua: &Lua, sh: &Arc<Shared>, env: &mlua::Table) -> mlua::R
     require::install(lua, sh, env)
 }
 
-/// Run a host call (a database call, the agent roster). It runs to its end, however long that takes, unless the
-/// app is unloaded or replaced meanwhile: the call is then abandoned and the app's code gets an error, so a
-/// loop of host calls in an unloaded app ends.
+/// Run a host call (a database call, the agent roster) from inside a `lifecycle::Role::Vm` function, which
+/// holds the turn already. It runs to its end, however long that takes, unless the app is unloaded or replaced
+/// meanwhile: the call is then abandoned and the app's code gets an error, so a loop of host calls in an
+/// unloaded app ends.
 pub(crate) async fn host<T>(
     sh: &Shared,
     call: impl Future<Output = Result<T, PortError>>,
 ) -> mlua::Result<T> {
-    // a coroutine continuation that has not yet taken its turn takes it before it touches the app's data
-    lifecycle::hold().await;
     tokio::select! {
         done = call => done.map_err(mlua::Error::external),
         () = sh.life.closed() => Err(mlua::Error::runtime("the app was unloaded")),

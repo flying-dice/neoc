@@ -39,6 +39,7 @@ use tracing_core::callsite::{Callsite, DefaultCallsite, Identifier};
 use tracing_core::field::FieldSet;
 use tracing_core::metadata::{Kind, Metadata};
 
+use crate::lua::lifecycle::{async_function, idle, Role};
 use crate::lua::sandbox::{from_err, ok};
 
 /// Maps a Rust binding type to its neoc type name.
@@ -281,7 +282,7 @@ impl<'l> Module<'l> {
     /// Registers an infallible async function of any arity.
     ///
     /// The async counterpart of [`Module::func`]: `f` returns a future, and
-    /// the function is wrapped in `lua.create_async_function` so calls yield
+    /// the function is made by `lifecycle::async_function` (a [`Role::Wait`]) so calls yield
     /// the calling Lua coroutine until the future resolves. The future runs
     /// inside the same `"<stem>.<name>"` tracing span [`Module::func`] uses,
     /// attached via [`tracing::Instrument`] so the span covers the whole
@@ -297,15 +298,11 @@ impl<'l> Module<'l> {
     ) -> mlua::Result<&mut Self>
     where
         A: FromLuaMulti + 'static,
-        R: DeclType + IntoLuaMulti + Send,
+        R: DeclType + IntoLuaMulti + Send + 'static,
         Fut: Future<Output = mlua::Result<R>> + Send + 'static,
     {
         let span = dyn_span(&self.target(), &format!("{}.{}", module_stem(&self.name), name));
-        let func = self.lua.create_async_function(move |lua, a: A| {
-            let fut = f(lua, a);
-            let span = span.clone();
-            async move { crate::lua::lifecycle::idle_result(fut.instrument(span)).await }
-        })?;
+        let func = async_function(self.lua, Role::Wait, move |lua, a: A| f(lua, a).instrument(span.clone()))?;
         self.table.set(name, func)?;
         self.entries.push(Entry {
             name: name.to_string(),
@@ -341,12 +338,12 @@ impl<'l> Module<'l> {
     {
         let prefix = format!("{}.{}", module_stem(&self.name), name);
         let span = dyn_span(&self.target(), &prefix);
-        let func = self.lua.create_async_function(move |lua, a: A| {
-            let fut = f(lua.clone(), a);
-            let span = span.clone();
+        // the conversion to Lua values happens with the turn back, so the function is not a plain wait
+        let func = async_function(self.lua, Role::Mixed, move |lua, a: A| {
+            let fut = f(lua.clone(), a).instrument(span.clone());
             let prefix = prefix.clone();
             async move {
-                match crate::lua::lifecycle::idle(fut.instrument(span)).await? {
+                match idle(fut).await? {
                     Ok(v) => ok(&lua, v),
                     Err(e) => from_err(&lua, &prefix, e),
                 }

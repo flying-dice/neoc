@@ -36,7 +36,7 @@ use tracing::instrument;
 use tracing::log::LevelFilter;
 
 use crate::lua::facade::Module;
-use crate::lua::lifecycle::idle_result;
+use crate::lua::lifecycle::{async_function, async_method, Role};
 use crate::lua::sandbox::{from_err, i64_to_lua, ok};
 
 /// sqlx caches prepared statements per connection up to this many entries.
@@ -63,7 +63,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "vnd:sqlx_mysql")?;
 
-    m.set("open", lua.create_async_function(|lua, url: String| idle_result(open(lua, url)))?)?;
+    m.set("open", async_function(lua, Role::Wait, |lua, url: String| open(lua, url))?)?;
     m.record_fn(
         "open",
         &[("url", "string")],
@@ -154,28 +154,28 @@ async fn open(lua: Lua, url: String) -> mlua::Result<(Value, Value)> {
 
 macro_rules! db_op {
     ($methods:expr, $name:literal, $op:literal, $run:ident) => {
-        $methods.add_async_method($name, |lua, this, args: MultiValue| {
+        async_method($methods, $name, Role::Wait, |lua, this, args: MultiValue| {
             let pool = this.pool.clone();
-            idle_result(async move {
+            async move {
                 let (sql, params) = match super::split_sql_args(args) {
                     Ok(v) => v,
                     Err(e) => return from_err(&lua, $op, e),
                 };
                 $run(&lua, &pool, $op, &sql, params).await
-            })
+            }
         });
     };
 }
 
 macro_rules! stmt_op {
     ($methods:expr, $name:literal, $op:literal, $run:ident) => {
-        $methods.add_async_method($name, |lua, this, args: MultiValue| {
+        async_method($methods, $name, Role::Wait, |lua, this, args: MultiValue| {
             let sql = this.sql.clone();
             let pool = this.pool.clone();
-            idle_result(async move {
+            async move {
                 let params = args.into_iter().collect();
                 $run(&lua, &pool, $op, &sql, params).await
-            })
+            }
         });
     };
 }
@@ -190,12 +190,12 @@ impl UserData for Database {
             Ok(Statement { sql: Arc::new(sql), pool: this.pool.clone() })
         });
 
-        methods.add_async_method("close", |_, this, (): ()| {
+        async_method(methods, "close", Role::Wait, |_, this, (): ()| {
             let pool = this.pool.clone();
-            idle_result(async move {
+            async move {
                 pool.close().await;
                 Ok(())
-            })
+            }
         });
     }
 }

@@ -24,6 +24,7 @@ use tokio_rustls::{
 };
 use tracing::instrument;
 
+use crate::lua::lifecycle::Life;
 use crate::lua::sandbox::{from_err, ok};
 
 #[instrument(name = "hyper.get", target = "lua::lib::hyper", skip_all)]
@@ -110,7 +111,7 @@ async fn perform(
     headers: Vec<(String, String)>,
     ca_pem: Option<String>,
 ) -> mlua::Result<(Value, Value)> {
-    match do_request(method, url, body, headers, ca_pem).await {
+    match do_request(&Life::of(lua), method, url, body, headers, ca_pem).await {
         Ok(resp) => {
             let t = lua.create_table()?;
             t.set("status", i64::from(resp.status))?;
@@ -127,6 +128,7 @@ async fn perform(
 }
 
 async fn do_request(
+    life: &Life,
     method: String,
     url: String,
     body: Option<Vec<u8>>,
@@ -135,7 +137,7 @@ async fn do_request(
 ) -> Result<ClientResponse, String> {
     let target = Target::parse(&url)?;
     let tls = if target.tls { Some(tls_connector(ca_pem.as_deref())?) } else { None };
-    let mut sender = connect(&target, tls).await?;
+    let mut sender = connect(life, &target, tls).await?;
     let req = build_req(&method, &target.uri, &target.authority, &headers, body)?;
     let resp = sender.send_request(req).await.map_err(|e| e.to_string())?;
     collect_resp(resp).await
@@ -196,28 +198,32 @@ fn tls_connector(ca_pem: Option<&str>) -> Result<TlsConnector, String> {
 }
 
 /// Open a connection to the target (over TLS for `https`) and complete the HTTP/1.1 handshake, spawning the
-/// connection driver. Returns the request sender.
+/// connection driver (a task of the app's `life`, so unloading the app ends it). Returns the request sender.
 async fn connect(
+    life: &Life,
     target: &Target,
     tls: Option<TlsConnector>,
 ) -> Result<hyper::client::conn::http1::SendRequest<Full<Bytes>>, String> {
     let stream = TcpStream::connect(&target.authority).await.map_err(|e| e.to_string())?;
     match tls {
-        None => handshake(TokioIo::new(stream)).await,
+        None => handshake(life, TokioIo::new(stream)).await,
         Some(connector) => {
             let name = ServerName::try_from(target.host.clone()).map_err(|e| format!("tls: {e}"))?;
             let stream = connector.connect(name, stream).await.map_err(|e| format!("tls: {e}"))?;
-            handshake(TokioIo::new(stream)).await
+            handshake(life, TokioIo::new(stream)).await
         }
     }
 }
 
-async fn handshake<T>(io: TokioIo<T>) -> Result<hyper::client::conn::http1::SendRequest<Full<Bytes>>, String>
+async fn handshake<T>(
+    life: &Life,
+    io: TokioIo<T>,
+) -> Result<hyper::client::conn::http1::SendRequest<Full<Bytes>>, String>
 where
     T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
     let (sender, conn) = hyper::client::conn::http1::handshake(io).await.map_err(|e| e.to_string())?;
-    tokio::spawn(async move {
+    life.spawn(async move {
         let _ = conn.await;
     });
     Ok(sender)
@@ -386,5 +392,47 @@ mod tests {
             assert_eq!(body, None, "{script}");
             assert!(err.expect("an error").contains(needle), "{script}");
         }
+    }
+
+    /// The task that drives a client connection is one of the engine's: unloading the app ends it, and with it the
+    /// socket, instead of leaving a request to a server that never answers running on its own.
+    #[tokio::test]
+    async fn a_client_connection_is_a_task_of_the_engines_life_and_ends_with_it() {
+        use crate::lua::lifecycle::Life;
+        use std::time::Duration;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let (seen_tx, seen_rx) = tokio::sync::oneshot::channel();
+        let (closed_tx, closed_rx) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept");
+            let mut buf = [0u8; 1024];
+            let _ = stream.read(&mut buf).await; // the request: never answered
+            let _ = seen_tx.send(());
+            while matches!(stream.read(&mut buf).await, Ok(n) if n > 0) {}
+            let _ = closed_tx.send(()); // the client's side went away
+        });
+        let lua = make_engine().expect("engine");
+        let life = Life::of(&lua);
+        let request = tokio::spawn({
+            let lua = lua.clone();
+            async move {
+                run(&lua, &format!(r#"return require("vnd:hyper").get("http://127.0.0.1:{port}/")"#)).await
+            }
+        });
+        tokio::time::timeout(Duration::from_secs(5), seen_rx)
+            .await
+            .expect("the request arrived")
+            .expect("seen");
+        assert_eq!(life.live_tasks(), 1, "the connection is registered");
+        life.shutdown();
+        tokio::time::timeout(Duration::from_secs(5), closed_rx)
+            .await
+            .expect("the connection was dropped with the engine's tasks")
+            .expect("closed");
+        let (body, err) = request.await.expect("the script ended");
+        assert_eq!(body, None);
+        assert!(err.is_some(), "the request failed once its connection was gone");
     }
 }

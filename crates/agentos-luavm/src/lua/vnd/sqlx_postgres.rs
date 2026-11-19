@@ -32,7 +32,7 @@ use sqlx::{Column, Row, TypeInfo, ValueRef};
 use tracing::instrument;
 
 use crate::lua::facade::Module;
-use crate::lua::lifecycle::idle_result;
+use crate::lua::lifecycle::{async_function, async_method, Role};
 use crate::lua::sandbox::{from_err, i64_to_lua, ok};
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
@@ -54,7 +54,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "vnd:sqlx_postgres")?;
 
-    m.set("open", lua.create_async_function(|lua, url: String| idle_result(open(lua, url)))?)?;
+    m.set("open", async_function(lua, Role::Wait, |lua, url: String| open(lua, url))?)?;
     m.record_fn(
         "open",
         &[("url", "string")],
@@ -111,9 +111,9 @@ async fn open(lua: Lua, url: String) -> mlua::Result<(Value, Value)> {
 
 impl UserData for Database {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        methods.add_async_method("execute", |lua, this, args: MultiValue| {
+        async_method(methods, "execute", Role::Wait, |lua, this, args: MultiValue| {
             let pool = this.pool.clone();
-            idle_result(async move {
+            async move {
                 let op = "sqlx_postgres.execute";
                 let (sql, params) = match prepare(args, &pool) {
                     Ok(v) => v,
@@ -127,12 +127,12 @@ impl UserData for Database {
                     Ok(r) => ok(&lua, r.rows_affected() as i64),
                     Err(e) => from_err(&lua, op, e),
                 }
-            })
+            }
         });
 
-        methods.add_async_method("query", |lua, this, args: MultiValue| {
+        async_method(methods, "query", Role::Wait, |lua, this, args: MultiValue| {
             let pool = this.pool.clone();
-            idle_result(async move {
+            async move {
                 let op = "sqlx_postgres.query";
                 let (sql, params) = match prepare(args, &pool) {
                     Ok(v) => v,
@@ -152,12 +152,12 @@ impl UserData for Database {
                     }
                     Err(e) => from_err(&lua, op, e),
                 }
-            })
+            }
         });
 
-        methods.add_async_method("query_one", |lua, this, args: MultiValue| {
+        async_method(methods, "query_one", Role::Wait, |lua, this, args: MultiValue| {
             let pool = this.pool.clone();
-            idle_result(async move {
+            async move {
                 let op = "sqlx_postgres.query_one";
                 let (sql, params) = match prepare(args, &pool) {
                     Ok(v) => v,
@@ -172,15 +172,15 @@ impl UserData for Database {
                     Ok(None) => ok(&lua, Value::Nil),
                     Err(e) => from_err(&lua, op, e),
                 }
-            })
+            }
         });
 
-        methods.add_async_method("close", |_, this, (): ()| {
+        async_method(methods, "close", Role::Wait, |_, this, (): ()| {
             let pool = this.pool.clone();
-            idle_result(async move {
+            async move {
                 pool.close().await;
                 Ok(())
-            })
+            }
         });
     }
 }

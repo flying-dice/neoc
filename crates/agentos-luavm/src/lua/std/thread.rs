@@ -45,7 +45,7 @@ use tracing::instrument;
 
 use crate::lua::facade::Module;
 use crate::lua::lib::log::{set_log_sink, LogSink};
-use crate::lua::lifecycle::{idle_result, Life};
+use crate::lua::lifecycle::{async_method, Life, Role};
 use crate::lua::sandbox::{from_err, load_source, make_engine_in, ok};
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
@@ -446,17 +446,17 @@ impl UserData for WorkerHandle {
             send_json(&this.inner.tx, v, "thread.send: worker has exited")
         });
 
-        methods.add_async_method("receive", |lua, this, (): ()| {
+        async_method(methods, "receive", Role::Wait, |lua, this, (): ()| {
             let inner = this.inner.clone();
-            idle_result(async move {
+            async move {
                 let received = inner.rx.lock().await.recv().await;
                 handle_recv_result(&lua, received, "thread.receive: worker has exited")
-            })
+            }
         });
 
-        methods.add_async_method("await", |lua, this, (): ()| {
+        async_method(methods, "await", Role::Wait, |lua, this, (): ()| {
             let inner = this.inner.clone();
-            idle_result(async move {
+            async move {
                 let join = {
                     let mut guard = inner.join.lock().await;
                     match guard.take() {
@@ -470,7 +470,7 @@ impl UserData for WorkerHandle {
                     Err(e) if e.is_cancelled() => from_err(&lua, "thread.await", "terminated"),
                     Err(e) => from_err(&lua, "thread.await", e),
                 }
-            })
+            }
         });
 
         methods.add_method("terminate", |_, this, (): ()| {
@@ -495,12 +495,12 @@ impl UserData for Channel {
         methods
             .add_method("send", |_, this, v: Value| send_json(&this.tx, v, "channel.send: peer has exited"));
 
-        methods.add_async_method("receive", |lua, this, (): ()| {
+        async_method(methods, "receive", Role::Wait, |lua, this, (): ()| {
             let rx = this.rx.clone();
-            idle_result(async move {
+            async move {
                 let received = rx.lock().await.recv().await;
                 handle_recv_result(&lua, received, "channel.receive: peer has exited")
-            })
+            }
         });
     }
 }

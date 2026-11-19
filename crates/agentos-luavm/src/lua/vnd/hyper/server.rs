@@ -19,7 +19,7 @@ use tokio::runtime::Handle;
 use tokio::sync::oneshot;
 use tracing::instrument;
 
-use crate::lua::lifecycle::{idle, Life};
+use crate::lua::lifecycle::{async_method, idle, Life, Role};
 use crate::lua::sandbox::{from_err, ok};
 use crate::lua::std::net::Listener;
 
@@ -116,7 +116,7 @@ impl UserData for ServerHandle {
         // Block until the server stops accepting connections: `close()` was called, or the app is being
         // unloaded (the app's lifecycle closes). The wait does not hold the VM, so the server's own handlers
         // (and the rest of the app) keep running while a script sits in `server:wait()`.
-        methods.add_async_method("wait", |lua, this, (): ()| {
+        async_method(methods, "wait", Role::Mixed, |lua, this, (): ()| {
             let inner = this.inner.clone();
             let life = Life::of(&lua);
             async move {

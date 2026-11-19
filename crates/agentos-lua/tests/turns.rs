@@ -3,6 +3,11 @@
 //!
 //! - a wait Lua cannot yield from (a `string.gsub` callback, a sort comparator, a metamethod, an iterator) fails
 //!   with a Lua error and must not lend the turn: the call keeps it, and a `readOnly` tool stays read-only;
+//! - a wait that failed to yield must not make the call give up the turn at the *next* thing it waits for: a host
+//!   call left in flight and resumed later (`coroutine.resume`) is a different leaf, and its `Pending` is not the
+//!   failed wait's (every async host function is a leaf, see `lifecycle`);
+//! - a host call that a detached call (a task's first slice) left waiting for its turn, and a different call then
+//!   resumes, runs in that call's turn instead of waiting for a turn nobody can give it;
 //! - `task.spawn` inside `db:tx` neither deadlocks nor sees the transaction: the task waits for its turn;
 //! - the read-only restriction follows a call's origin: a long-lived read-only poller does not make an unrelated
 //!   writable tool's delayed write read-only, while a request to the app's own listener while a read-only call
@@ -152,6 +157,238 @@ async fn a_wait_that_cannot_yield_lets_a_writable_tool_go_on_and_a_later_wait_st
     vm.call_tool("bump", json!({}), &agent_ctx(0), false).await.unwrap();
     let out = w.await.unwrap().unwrap();
     assert_eq!(out, json!({ "failed": true, "bumped": 1 }));
+}
+
+// ---- a failed wait is forgotten when anything else runs ------------------------------------------------------
+
+/// A query that takes a while, so a call that resumes it really suspends at it.
+const HEAVY: &str = "with recursive c(x) as (select 1 union all select x + 1 from c where x < 1000000) select count(*) as n from c";
+
+/// Where the script under test runs, as the source that starts `body()`.
+const CONTAINERS: &[(&str, &str)] = &[
+    ("tool", "return body()"),
+    ("task.defer", "task.defer(function() result = body() end) return 'scheduled'"),
+    ("task.delay", "task.delay(0, function() result = body() end) return 'scheduled'"),
+    (
+        "task.spawn after a wait",
+        "task.spawn(function() task.wait(0.01) result = body() end) return 'scheduled'",
+    ),
+];
+
+/// How the stale request to lend is made: a wait that Lua cannot yield from.
+const FAILED_WAITS: &[(&str, &str)] = &[
+    ("task.wait", "task.wait(5)"),
+    ("time.sleep", "time.sleep(time.Duration.from_millis(5000))"),
+    ("net wait", "hyper.get(URL)"),
+];
+
+/// The host call that is left in flight and resumed after the failed wait.
+const LATER_CALLS: &[(&str, &str)] = &[("db:one", "app.db:one(HEAVY)"), ("db:all", "app.db:all(HEAVY)[1]")];
+
+async fn stale_lend_case(container: &str, wait: &str, later: &str, url: &str) -> serde_json::Value {
+    let src = format!(
+        r#"
+        local task, time, hyper = require("std:task"), require("std:time"), require("vnd:hyper")
+        local state = app.state {{ v = 0 }}
+        local counter = 0
+        local result
+        local function refused(f) local ok, e = pcall(f) return (not ok) and tostring(e):find("readOnly", 1, true) ~= nil end
+        local function body()
+          -- `late` is left with its query in flight, `failing` with a wait: both resumes fail at the C boundary
+          local late = coroutine.create(function() return {later} end)
+          local failing = coroutine.create(function() {wait} end)
+          local a = pcall(string.gsub, "x", "x", function() coroutine.resume(late) end)
+          local b = pcall(string.gsub, "x", "x", function() coroutine.resume(failing) end)
+          local before = counter
+          -- the call suspends here, at the query, and not at the failed wait
+          local ok, row = coroutine.resume(late)
+          return {{
+            failed = not a and not b, resumed = ok, n = row and row.n,
+            interleaved = counter ~= before,
+            state_write_refused = refused(function() state.v = 42 end),
+            notify_refused = refused(function() app.notify {{ title = "from a readOnly call" }} end),
+          }}
+        end
+        app.tool {{ name = "bump", run = function() counter = counter + 1 return counter end }}
+        app.tool {{ name = "ro", readOnly = true, run = function() {container} end }}
+        app.tool {{ name = "result", readOnly = true, run = function() return result or "none" end }}
+        app.tool {{ name = "v", readOnly = true, run = function() return state.v end }}
+        "#,
+        later = later.replace("HEAVY", &format!("{HEAVY:?}")),
+        wait = wait.replace("URL", &format!("{url:?}")),
+    );
+    let vm = Arc::new(load(&src).await);
+    let ro = {
+        let vm = vm.clone();
+        tokio::spawn(async move { vm.call_tool("ro", json!({}), &agent_ctx(0), false).await })
+    };
+    // a writable tool is queued behind the read-only work for as long as it runs
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    let bump = {
+        let vm = vm.clone();
+        tokio::spawn(async move { vm.call_tool("bump", json!({}), &agent_ctx(0), false).await })
+    };
+    let mut out =
+        tokio::time::timeout(Duration::from_secs(30), ro).await.expect("ro finished").unwrap().unwrap();
+    for _ in 0..300 {
+        if out != json!("scheduled") {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        out = vm.call_tool("result", json!({}), &agent_ctx(0), false).await.unwrap();
+        if out == json!("none") {
+            out = json!("scheduled");
+        }
+    }
+    tokio::time::timeout(Duration::from_secs(10), bump).await.expect("bump ran").unwrap().unwrap();
+    assert_eq!(
+        vm.call_tool("v", json!({}), &agent_ctx(0), false).await.unwrap(),
+        json!(0),
+        "nothing was written"
+    );
+    assert!(vm.take_effects().is_empty(), "nothing was queued");
+    out
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_failed_wait_does_not_make_a_later_host_call_lend_the_turn_of_a_read_only_call() {
+    let url = canned_server().await;
+    // one at a time: the cases are CPU-bound and would starve the other tests' timers
+    for (container, c) in CONTAINERS {
+        for (wait, w) in FAILED_WAITS {
+            for (later, l) in LATER_CALLS {
+                let name = format!("{container} / {wait} / {later}");
+                check_stale_lend_case(&name, &stale_lend_case(c, w, l, &url).await);
+            }
+        }
+    }
+}
+
+fn check_stale_lend_case(name: &str, out: &serde_json::Value) {
+    assert_eq!(out["failed"], true, "{name}: both waits failed where Lua cannot yield: {out}");
+    assert_eq!(out["resumed"], true, "{name}: {out}");
+    assert_eq!(out["n"], 1_000_000, "{name}: {out}");
+    assert_eq!(out["interleaved"], false, "{name}: another call ran inside this one: {out}");
+    assert_eq!(out["state_write_refused"], true, "{name}: the call is still read-only: {out}");
+    assert_eq!(out["notify_refused"], true, "{name}: {out}");
+}
+
+// ---- a host call left waiting for a turn by a detached call --------------------------------------------------------
+
+/// Host calls of every kind that take the turn first.
+const LEAVES: &[(&str, &str)] = &[
+    ("db:one", r#"app.db:one("select 1 as one")"#),
+    ("db:all", r#"app.db:all("select 1 as one")"#),
+    ("db:exec", r#"app.db:exec("insert into t values (1)")"#),
+    ("db:tx", "app.db:tx(function() return 1 end)"),
+    ("kv:get", r#"app.kv:get("k")"#),
+    ("kv:set", r#"app.kv:set("k", 1)"#),
+    ("kv:delete", r#"app.kv:delete("k")"#),
+];
+
+/// Who resumes the coroutine that the task's first slice left waiting for its turn.
+const RESUMERS: &[(&str, &str)] = &[
+    ("the spawning tool", "task.spawn(start) return resume_it()"),
+    ("a deferred function", "task.spawn(start) task.defer(resume_it) return 'scheduled'"),
+    ("a delayed function", "task.spawn(start) task.delay(0.01, resume_it) return 'scheduled'"),
+    (
+        "the task's own continuation",
+        "task.spawn(function() start() task.wait(0.01) resume_it() end) return 'scheduled'",
+    ),
+];
+
+async fn detached_hold_case(resumer: &str, leaf: &str) -> serde_json::Value {
+    let src = format!(
+        r#"
+        local task = require("std:task")
+        app.db:migrate {{ [1] = "create table t(a)" }}
+        local co, outcome
+        -- the first slice of a task runs without the turn: the call below waits for it (the spawner holds it),
+        -- its resume fails at the C boundary, and the coroutine is left with the call in flight
+        local function start()
+          co = coroutine.create(function() return {leaf} end)
+          pcall(string.gsub, "x", "x", function() coroutine.resume(co) end)
+        end
+        local function resume_it()
+          local ok, r = coroutine.resume(co)
+          outcome = {{ ok = ok, r = tostring(r) }}
+          return outcome
+        end
+        app.tool {{ name = "go", run = function() {resumer} end }}
+        app.tool {{ name = "outcome", readOnly = true, run = function() return outcome or "none" end }}
+        app.tool {{ name = "ping", run = function() return "pong" end }}
+        "#
+    );
+    let vm = Arc::new(load(&src).await);
+    let call = |tool: &'static str| {
+        let vm = vm.clone();
+        async move {
+            tokio::time::timeout(Duration::from_secs(5), vm.call_tool(tool, json!({}), &agent_ctx(0), false))
+                .await
+                .unwrap_or_else(|_| panic!("{tool} never finished: the app is wedged"))
+                .unwrap()
+        }
+    };
+    let mut out = call("go").await;
+    while out == json!("scheduled") {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        out = match call("outcome").await {
+            none if none == json!("none") => json!("scheduled"),
+            done => done,
+        };
+    }
+    assert_eq!(call("ping").await, json!("pong"), "the app still answers");
+    out
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_host_call_a_detached_call_left_waiting_for_its_turn_is_finished_by_whoever_resumes_it() {
+    for (resumer, r) in RESUMERS {
+        for (leaf, l) in LEAVES {
+            let out = detached_hold_case(r, l).await;
+            assert_eq!(out["ok"], true, "{resumer} / {leaf}: {out}");
+        }
+    }
+}
+
+/// A write that a writable call's task left waiting for its turn is checked when it takes the turn, in the turn of
+/// whoever finishes it: a `readOnly` call that resumes it gets the refusal, not the write.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_write_left_waiting_for_its_turn_is_checked_in_the_turn_that_finishes_it() {
+    for (write, check) in [
+        (r#"app.db:exec("insert into t values (1)")"#, r#"#app.db:all("select a from t") == 0"#),
+        (r#"app.kv:set("k", 1)"#, r#"app.kv:get("k") == nil"#),
+        (r#"app.kv:delete("k")"#, "true"),
+    ] {
+        let src = format!(
+            r#"
+            local task = require("std:task")
+            app.db:migrate {{ [1] = "create table t(a)" }}
+            local co
+            app.tool {{ name = "start", run = function()
+              task.spawn(function()
+                co = coroutine.create(function() return {write} end)
+                pcall(string.gsub, "x", "x", function() coroutine.resume(co) end)
+              end)
+              return "started"
+            end }}
+            app.tool {{ name = "finish", readOnly = true, run = function()
+              local ok, err = coroutine.resume(co)
+              return {{ ok = ok, err = tostring(err), untouched = {check} }}
+            end }}
+            "#
+        );
+        let vm = load(&src).await;
+        let call = |tool: &'static str| async {
+            tokio::time::timeout(Duration::from_secs(5), vm.call_tool(tool, json!({}), &agent_ctx(0), false))
+                .await
+        };
+        call("start").await.expect("start finished").unwrap();
+        let out = call("finish").await.expect("finish did not wedge the app").unwrap();
+        assert_eq!(out["ok"], false, "{write}: {out}");
+        assert!(out["err"].as_str().unwrap().contains("readOnly"), "{write}: {out}");
+        assert_eq!(out["untouched"], true, "{write}: {out}");
+    }
 }
 
 // ---- task.spawn inside db:tx ------------------------------------------------------------------------------------

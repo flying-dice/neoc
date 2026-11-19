@@ -48,6 +48,7 @@ use hyper::{Request as HyperRequest, Response};
 use mlua::{Function, Lua, RegistryKey, Table, UserData, UserDataMethods, Value};
 
 use crate::lua::facade::Module;
+use crate::lua::lifecycle::{async_function, Role};
 
 // Bench-only: the criterion matrix in `benches` (and its `bench_helpers`,
 // which pulls these in via `use super::*`) is the sole remaining user in this
@@ -84,9 +85,11 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
     m.set(
         "get",
-        lua.create_async_function(|lua, args: (String, Option<Table>)| {
-            crate::lua::lifecycle::idle_result(get(lua, args))
-        })?,
+        crate::lua::lifecycle::async_function(
+            lua,
+            crate::lua::lifecycle::Role::Wait,
+            |lua, args: (String, Option<Table>)| get(lua, args),
+        )?,
     )?;
     m.record_fn(
         "get",
@@ -95,10 +98,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "Perform an HTTP or HTTPS GET request, returning a response table `{ status, headers, body }`. `opts` may carry `ca_pem`.",
     );
 
-    m.set(
-        "post",
-        lua.create_async_function(|lua, opts: Table| crate::lua::lifecycle::idle_result(post(lua, opts)))?,
-    )?;
+    m.set("post", async_function(lua, Role::Wait, |lua, opts: Table| post(lua, opts))?)?;
     m.record_fn(
         "post",
         &[("opts", "LuaValue")],
@@ -106,10 +106,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "Perform an HTTP or HTTPS POST request given `{ url, body?, headers?, ca_pem? }`.",
     );
 
-    m.set(
-        "request",
-        lua.create_async_function(|lua, opts: Table| crate::lua::lifecycle::idle_result(request(lua, opts)))?,
-    )?;
+    m.set("request", async_function(lua, Role::Wait, |lua, opts: Table| request(lua, opts))?)?;
     m.record_fn(
         "request",
         &[("opts", "LuaValue")],

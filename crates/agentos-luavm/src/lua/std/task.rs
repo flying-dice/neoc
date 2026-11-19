@@ -22,8 +22,9 @@ use parking_lot::Mutex;
 use tokio::sync::Notify;
 
 use crate::lua::facade::Module;
-use crate::lua::lifecycle::idle_result;
-use crate::lua::lifecycle::{first_slice, has_entry, hold, inbound, inherited, resumed, Life};
+use crate::lua::lifecycle::{
+    async_function, async_method, first_slice, has_entry, hold, inbound, inherited, resumed, Life, Role,
+};
 
 // ---------------------------------------------------------------------------
 // Task outcome — stored once the task reaches a terminal state
@@ -102,10 +103,10 @@ impl UserData for TaskHandle {
 
         methods.add_method("is_finished", |_, this, ()| Ok(this.inner.is_finished()));
 
-        methods.add_async_method("await", |lua, this, ()| {
+        async_method(methods, "await", Role::Wait, |lua, this, ()| {
             let inner = this.inner.clone();
             inner.awaited.store(true, Ordering::Relaxed);
-            idle_result(async move {
+            async move {
                 // Enable the notification listener BEFORE checking outcome to
                 // guarantee we don't miss a notification that fires between
                 // the check and the await.
@@ -128,7 +129,7 @@ impl UserData for TaskHandle {
                     Some(outcome) => outcome_to_multi(&lua, outcome),
                     None => Err(mlua::Error::external("task.await: notified but no outcome was recorded")),
                 }
-            })
+            }
         });
     }
 }
@@ -443,13 +444,11 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     // Negative and NaN values are clamped to 0, and a delay past 100 years (infinity included) to 100 years. Returns elapsed time as a float.
     m.set(
         "wait",
-        lua.create_async_function(|_, secs: f64| {
-            idle_result(async move {
-                let delay = crate::lua::limits::sleep_duration(secs);
-                let start = tokio::time::Instant::now();
-                tokio::time::sleep(delay).await;
-                Ok(start.elapsed().as_secs_f64())
-            })
+        async_function(lua, Role::Wait, |_, secs: f64| async move {
+            let delay = crate::lua::limits::sleep_duration(secs);
+            let start = tokio::time::Instant::now();
+            tokio::time::sleep(delay).await;
+            Ok(start.elapsed().as_secs_f64())
         })?,
     )?;
     m.record_fn(
