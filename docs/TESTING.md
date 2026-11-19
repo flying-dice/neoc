@@ -156,7 +156,8 @@ Rules that follow from one shared host:
   offered by Discover, so a spec installs it from `TICKER_APP_REF` and removes it afterwards. An install or removal is
   broadcast to every open page (the Dock changes under whatever else is running, and the Desktop D6 journey failed
   when it overlapped one), so those journeys are their own Playwright project, `background`, which runs after
-  `journeys` (`bun run test:e2e --project=background`).
+  `journeys`. It depends on `desktop` and `journeys`, so `--project=background` runs those first; add `--no-deps`
+  (`bunx playwright test --project=background --no-deps`) to run only the background journeys.
 - Pairing attempts are rate limited (5 wrong codes a minute): the pairing journeys make at most two wrong guesses, and
   rate limiting itself is covered by the host's pairing tests and the "Too many attempts" story.
 - Do not run two `test:e2e` at once on one machine: they would fight over the host and Storybook ports. Run the

@@ -13,6 +13,7 @@ use agentos_application::{
     PortError,
 };
 use agentos_domain::AppId;
+use agentos_luavm::lua::lifecycle::Life;
 use async_trait::async_trait;
 use parking_lot::RwLock;
 use serde_json::{Map, Value};
@@ -67,10 +68,21 @@ async fn forward_effects(
     app: &AppId,
     vm: &AppVm,
 ) -> PortResult<()> {
-    for effect in vm.take_effects() {
+    deliver_effects(notifier, shell, app, vm.take_effects(), vm.life()).await
+}
+
+/// Deliver effects already taken from the VM, so a caller need not keep the VM alive while the ports work.
+async fn deliver_effects(
+    notifier: &dyn Notifier,
+    shell: &dyn Shell,
+    app: &AppId,
+    effects: Vec<Effect>,
+    life: &Life,
+) -> PortResult<()> {
+    for effect in effects {
         // An app that was unloaded (or replaced) while a call was in flight has nothing more to say: what it
         // queued is dropped, not delivered to a shell and a notification list it no longer belongs to.
-        if vm.is_shut_down() {
+        if life.is_closed() {
             break;
         }
         match effect {
@@ -117,7 +129,7 @@ impl AppRuntime for LuaRuntime {
         // load leaves the old one answering, without its background work.
         let running = self.vms.read().get(app).cloned();
         if let Some(old) = running {
-            // TODO: clean-code - 0.4 - BOUNDARY: stops the old VM's listeners, tasks and workers before the new version is known to load, so a failed hot reload leaves the old VM answering without its background work; state it in the `AppRuntime::load` port doc or restore it on failure.
+            // TODO: clean-code - 0.4 - BOUNDARY: stops the old VM's listeners, tasks and workers before the new version is known to load, so a failed hot reload leaves the old VM answering without its background work, and with every request to a server it starts again running read-only (`Shared::background_stopped`, which is never cleared); state it in the `AppRuntime::load` port doc or restore it on failure.
             old.stop_background();
         }
         let vm = AppVm::load(app, package, data, config).await.map_err(|e| port_error(app, e))?;
@@ -132,21 +144,26 @@ impl AppRuntime for LuaRuntime {
         let (signal, weak) = (vm.effects_signal(), Arc::downgrade(&vm));
         let (notifier, shell, id) = (self.notifier.clone(), self.shell.clone(), app.clone());
         let activity = self.activity.clone();
-        vm.life().spawn(async move {
+        let life = vm.life().clone();
+        life.clone().spawn(async move {
             loop {
                 signal.notified().await;
+                // what the VM has to say is taken first and the VM let go before anything is awaited: the pump
+                // must not be what keeps an unloaded VM alive
                 let Some(vm) = weak.upgrade() else { break };
-                if let Err(error) = forward_effects(&*notifier, &*shell, &id, &vm).await {
-                    tracing::warn!(app = %id, %error, "could not forward what the app asked for");
-                }
+                let effects = vm.take_effects();
                 // open windows follow what the background work changed; a pause that changed no state or
                 // window request has nothing to follow (data changes are pushed by the live sources)
-                let follow = !vm.is_shut_down() && vm.has_unsettled_views();
-                // not held across the settle: an unload must find the VM's last reference to release it
+                let follow = !life.is_closed() && vm.has_unsettled_views();
                 drop(vm);
-                if !follow {
+                if let Err(error) = deliver_effects(&*notifier, &*shell, &id, effects, &life).await {
+                    tracing::warn!(app = %id, %error, "could not forward what the app asked for");
+                }
+                if !follow || life.is_closed() {
                     continue;
                 }
+                // The application is held for the settle only. A settle that hangs (the VM's gate is held by a
+                // runaway call) holds it until the app is unloaded, which aborts this task: apps have no budgets.
                 let listener = activity.get().and_then(Weak::upgrade);
                 if let Some(listener) = listener {
                     listener.background_settled(&id).await;

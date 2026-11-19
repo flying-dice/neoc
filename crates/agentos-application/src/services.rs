@@ -167,7 +167,7 @@ fn check_against_record(record: &InstalledApp, manifest: &Manifest) -> Result<()
 #[async_trait]
 impl AppActivity for AppService {
     async fn background_settled(&self, app: &AppId) {
-        self.announce_mutated(app).await;
+        self.announce_background_changed(app).await;
     }
 }
 
@@ -190,6 +190,13 @@ impl AppService {
     async fn announce_mutated(&self, app: &AppId) {
         for o in self.observers() {
             o.mutated(app).await;
+        }
+    }
+
+    /// The app's own background work may have changed its state: tell the observers (open views follow).
+    async fn announce_background_changed(&self, app: &AppId) {
+        for o in self.observers() {
+            o.background_changed(app).await;
         }
     }
 

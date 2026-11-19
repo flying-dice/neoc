@@ -157,6 +157,10 @@ pub trait AppRuntime: Send + Sync {
 pub trait AppObserver: Send + Sync {
     /// A tool call (or anything else outside a view event) may have changed state or data.
     async fn mutated(&self, app: &AppId);
+    /// The app's own background work (a task, a request to its own server) may have changed its state or what a
+    /// window asked for. Data it wrote is pushed by the live sources, so unlike [`AppObserver::mutated`] this does
+    /// not re-query them.
+    async fn background_changed(&self, app: &AppId);
     /// The app is about to stop (disable, delete data, reload, uninstall, shutdown).
     async fn stopping(&self, app: &AppId, reason: &str);
 }
@@ -165,8 +169,8 @@ pub trait AppObserver: Send + Sync {
 /// ended or paused at a wait, a request to the app's own server finished. State, view effects or data may have
 /// changed, so open views must follow without waiting for the next event. The runtime adapter calls it (late
 /// bound: the application is built after the runtime); [`crate::AppService`] implements it by telling its
-/// [`AppObserver`]s. The adapter coalesces its signals; it may still call while an earlier call for the
-/// same app is running (a reload overlaps the old and new VM), so the listener must serialise its own work.
+/// [`AppObserver`]s. An app's pump makes one call at a time and waits for it to end before the next (a reload
+/// stops the old VM's pump before the new one starts), and the adapter coalesces its signals.
 #[async_trait]
 pub trait AppActivity: Send + Sync {
     /// A call nobody made through the host ended or paused; state may have changed.

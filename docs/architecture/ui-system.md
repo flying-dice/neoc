@@ -344,9 +344,10 @@ user does continuously (typing, scrolling, drag, sheet, navigation, selection) n
 **Ordering guarantee.** All ops and data patches caused by handling an event are delivered **before** that event's
 response, so the response means "the UI already reflects it" and optimistic state can be settled on it. Changes
 that no event caused (a `task.spawn` loop of the app assigning `app.state`, a request to its own server) are pushed
-the same way as soon as the background call pauses or ends, as ordinary `view.ops` between events; the host settles
-one app at a time, so an unsolicited batch never lands between an event's ops and its response. The client needs
-nothing new: `base`/`rev` already order the batches and a gap or an obsolete batch resyncs.
+the same way as soon as the background call pauses or ends, as ordinary `view.ops`. The host settles one app at a
+time, so a batch is never split by another and a settle already under way (a background one, say) finishes before an
+event's own can return; an unsolicited batch may still arrive just before or just after an event's response. The
+client needs nothing new: `base`/`rev` already order the batches, and a gap or an obsolete batch resyncs.
 
 ### 2.3 Data patches
 

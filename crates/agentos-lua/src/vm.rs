@@ -210,6 +210,10 @@ pub(crate) struct Shared {
     /// slice) ends or pauses at a wait, so the runtime forwards the effects it queued (`app.notify`, `app.shell`)
     /// and tells the application that state may have changed.
     pub effects_signal: Arc<Notify>,
+    /// The app's background work has been stopped (a reload began, or the app is being unloaded): its listeners are
+    /// gone, so what still reaches its own server is a straggler of work that was cut off, and a straggler whose
+    /// sender was a read-only call must not run writable. Set before anything is aborted, never cleared.
+    pub background_stopped: AtomicBool,
 }
 
 impl Shared {
@@ -343,8 +347,26 @@ impl Turn {
         let (inbound, read_only) = match via {
             Via::Host { read_only } => (false, read_only),
             Via::Task(from) => (true, from.read_only),
-            Via::Request => (true, shared.read_only_active.load(Ordering::SeqCst) > 0),
+            // The count is read before the flag. Stopping sets the flag before it aborts anything, and aborting is
+            // what removes a read-only call from the count, so a request that finds the count empty because its
+            // caller was cut off finds the flag set.
+            Via::Request => {
+                let acting = shared.read_only_active.load(Ordering::SeqCst) > 0;
+                (true, acting || shared.background_stopped.load(Ordering::SeqCst))
+            }
         };
+        // An app that is shut down (unloaded, or replaced by a reload) runs no more script code on its own behalf:
+        // what was queued for the VM is dropped here instead of running. Aborting a task is not enough, because a
+        // task that is being polled when it is aborted still runs on to its next wait, and this is where it asks
+        // for its turn. The order matters: `Life::shutdown` sets `closed` before it abandons the calls waiting at
+        // something in flight, and that is what ends a read-only call and drops `read_only_active` to nothing, so
+        // a request that saw that count at zero because its read-only caller was cut off by the shutdown sees
+        // `closed` here (the count is read first, this second). It would otherwise run as an ordinary, writable
+        // request, for a call that was read-only.
+        if inbound && shared.life.is_closed() {
+            drop(held);
+            match std::future::pending::<std::convert::Infallible>().await {}
+        }
         let turn = Self::new(shared, gate, Some(held), inbound, read_only);
         turn.shared.read_only.store(read_only, Ordering::SeqCst);
         turn
@@ -582,6 +604,7 @@ impl AppVm {
             next_turn: AtomicU64::new(1),
             life,
             effects_signal: Arc::new(Notify::new()),
+            background_stopped: AtomicBool::new(false),
         });
         let gate = Arc::new(tokio::sync::Mutex::new(()));
         // a request to the app's own server or the next slice of one of its tasks takes its turn like any call
@@ -799,6 +822,7 @@ impl AppVm {
     /// Stop what the app started (tasks, servers and their connections, workers; their sockets are closed)
     /// but leave the VM answering: a reload does this to the old version before the new one starts.
     pub fn stop_background(&self) {
+        self.shared.background_stopped.store(true, Ordering::SeqCst);
         self.shared.life.stop_background();
     }
 
@@ -806,6 +830,7 @@ impl AppVm {
     /// and a host call a running call is waiting on is abandoned. Call this before dropping the last `Arc`, so
     /// an app cannot keep a listener or a task alive after an uninstall or a reload.
     pub fn shutdown(&self) {
+        self.shared.background_stopped.store(true, Ordering::SeqCst);
         self.shared.life.shutdown();
     }
 
@@ -821,5 +846,68 @@ impl AppVm {
         self.shared.life.shutdown();
         self.shared.release();
         used
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentos_application::testing::ScriptedData;
+    use std::time::Duration;
+
+    async fn vm() -> AppVm {
+        let package = AppPackage {
+            entry: "app.lua".into(),
+            files: [("app.lua".to_owned(), b"-- an app that declares nothing".to_vec())].into(),
+        };
+        AppVm::load(
+            &AppId::parse("probe").unwrap(),
+            package,
+            Arc::new(ScriptedData::default()),
+            VmConfig::default(),
+        )
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_request_that_arrives_once_the_background_work_is_stopped_is_read_only() {
+        let vm = vm().await;
+        let entry = Entry { shared: vm.shared.clone(), gate: vm.gate.clone() };
+        let read_only = || async { entry.request().await.inherited().read_only };
+        assert!(!read_only().await, "control: with no read-only call acting a request is an ordinary one");
+
+        // a reload begins: the listeners are gone, and what is left reaching the server is the straggler of a call
+        // that was cut off (which may have been read-only, with nothing left to say so)
+        vm.stop_background();
+        assert!(read_only().await);
+    }
+
+    #[tokio::test]
+    async fn a_request_or_task_that_asks_for_its_turn_after_the_shutdown_never_runs() {
+        let vm = vm().await;
+        let entry = Entry { shared: vm.shared.clone(), gate: vm.gate.clone() };
+        let patience = Duration::from_millis(150);
+        // control: before the shutdown both take their turn at once
+        drop(tokio::time::timeout(patience, entry.request()).await.expect("a request takes its turn"));
+        drop(
+            tokio::time::timeout(patience, entry.enter(Inherited { read_only: false }))
+                .await
+                .expect("a task takes its turn"),
+        );
+
+        vm.shutdown();
+
+        // a request that was queued for the VM (a read-only call's own request, whose caller the shutdown cut
+        // off) would otherwise run as an ordinary one: it is dropped instead, and it does not keep the gate
+        assert!(
+            tokio::time::timeout(patience, entry.request()).await.is_err(),
+            "a request ran after the shutdown"
+        );
+        assert!(
+            tokio::time::timeout(patience, entry.enter(Inherited { read_only: false })).await.is_err(),
+            "a task ran after the shutdown"
+        );
+        tokio::time::timeout(patience, vm.in_call(false, async {})).await.expect("the gate is free");
     }
 }

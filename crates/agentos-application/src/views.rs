@@ -679,6 +679,13 @@ impl ViewService {
     /// After anything that may have changed state or data: re-render the views that read what changed,
     /// deliver what windows asked for, and refresh the live sources.
     pub async fn settle(&self, app: &AppId) {
+        self.settle_with(app, true).await;
+    }
+
+    /// [`ViewService::settle`], with or without re-querying the live sources. The app's own background work does
+    /// without: what it wrote to the database is pushed by the sources' change feed, and a poller would
+    /// otherwise re-run every subscribed query many times a second while events wait behind it.
+    async fn settle_with(&self, app: &AppId, refresh_sources: bool) {
         if self.views_of(app).is_empty() {
             return;
         }
@@ -703,6 +710,9 @@ impl ViewService {
                     }
                 }
             }
+        }
+        if !refresh_sources {
+            return;
         }
         if let Ok(live) = self.app.live(app) {
             live.refresh(&ChangeBatch::everything()).await;
@@ -853,6 +863,10 @@ impl ViewService {
 impl AppObserver for ViewService {
     async fn mutated(&self, app: &AppId) {
         self.settle(app).await;
+    }
+
+    async fn background_changed(&self, app: &AppId) {
+        self.settle_with(app, false).await;
     }
 
     async fn stopping(&self, app: &AppId, reason: &str) {

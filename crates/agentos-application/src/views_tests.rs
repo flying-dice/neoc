@@ -351,6 +351,24 @@ async fn background_work_that_changed_state_reaches_the_open_view_with_no_event_
 }
 
 #[tokio::test]
+async fn a_background_settle_does_not_re_query_the_live_sources_but_a_tool_calls_settle_does() {
+    let r = rig().await;
+    open(&r).await;
+    r.sink.take();
+    // a row changed behind the sources' back (no commit was reported)
+    r.data.set_rows(
+        "from notes order",
+        vec![json!({"id": 1, "title": "A"}), json!({"id": 2, "title": "b"}), json!({"id": 3, "title": "c"})],
+    );
+
+    r.svc.background_settled(&r.app).await;
+    assert!(r.sink.methods().is_empty(), "the background work's own change is not a reason to re-query");
+
+    r.views.mutated(&r.app).await;
+    assert_eq!(r.sink.methods(), ["data.patch"], "after a tool call every source is refreshed");
+}
+
+#[tokio::test]
 async fn a_settle_a_background_change_started_finishes_before_the_event_that_follows_it_is_answered() {
     let r = rig().await;
     let s = open(&r).await;
