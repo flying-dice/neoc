@@ -27,7 +27,8 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// `func` / `try_func` would open a second span. The infallible case-conversion
 /// helpers return a bare value, while `word_wrap` / `closest` / `truncate` /
 /// the pad family build their `(value, error)` returns directly through `err` /
-/// `ok` with a baked `"text.<fn>: "` prefix. Their signatures are recorded via [`crate::lua::facade::Module::record_fn`].
+/// `ok` with a baked `"text.<fn>: "` prefix. Their signatures are recorded via
+/// [`crate::lua::facade::Module::record_fn`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:text")?;
 

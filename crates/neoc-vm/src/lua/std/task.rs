@@ -288,8 +288,9 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// hand-written registration carried **no** `#[instrument]` span, and each
 /// function raises `mlua::Error` directly on bad input (a dead coroutine, a
 /// non-`Task` handle) rather than returning the `(value, error)` channel — so
-/// neither `func` nor `try_func` fits. The `Task` userdata keeps its own `impl
-/// UserData` and is recorded here via [`crate::lua::facade::Module::userdata`].
+/// neither `func` nor `try_func` fits. The `Task` userdata keeps its own
+/// `impl UserData` and is recorded here via
+/// [`crate::lua::facade::Module::userdata`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "std:task")?;
 

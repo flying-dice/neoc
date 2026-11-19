@@ -63,9 +63,9 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// Declares the `lib:archive` surface through the facade.
 ///
 /// Every function builds its result with `lua.create_string` / `create_table`
-/// (a raise via `?`) yet routes validation and IO failures through the `(value,
-/// error)` channel — the same mixed shape as `lib:compress`. That mix is
-/// outside `try_func`, so each function is registered verbatim with
+/// (a raise via `?`) yet routes validation and IO failures through the
+/// `(value, error)` channel — the same mixed shape as `lib:compress`. That mix
+/// is outside `try_func`, so each function is registered verbatim with
 /// [`Module::set`] (keeping its `archive.<fn>` span + error prefix) and
 /// recorded with [`Module::record_fn`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {

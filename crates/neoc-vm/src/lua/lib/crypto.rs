@@ -19,10 +19,10 @@
 //! ```
 //!
 //! `algo` is first to match `hash.hash` / `hmac.hmac`. The remaining order
-//! matches the Node / Go / Java / .NET / Rust consensus (`key, nonce, msg,
-//! aad`). Output is raw bytes (the encrypted message *concatenated with the
-//! 16-byte auth tag*), per the AEAD libraries we delegate to; hex / base64
-//! conversion belongs in `lib:hex` / `lib:base64`.
+//! matches the Node / Go / Java / .NET / Rust consensus
+//! (`key, nonce, msg, aad`). Output is raw bytes (the encrypted message
+//! *concatenated with the 16-byte auth tag*), per the AEAD libraries we
+//! delegate to; hex / base64 conversion belongs in `lib:hex` / `lib:base64`.
 //!
 //! ## Nonce is explicit, never derived
 //!

@@ -81,7 +81,8 @@ fn truncate_list(members: &[&str], cap: usize) -> String {
     }
 }
 
-pub fn install(lua: &Lua) -> mlua::Result<()> {
+/// Builds every module table, keyed by its `require` name.
+fn registry(lua: &Lua) -> mlua::Result<HashMap<String, Table>> {
     let mut modules: HashMap<String, Table> = HashMap::new();
 
     // std:* — mirrors Rust standard library.
@@ -142,6 +143,12 @@ pub fn install(lua: &Lua) -> mlua::Result<()> {
         vnd::testcontainers_modules::module(lua)?,
     );
     modules.insert("vnd:toml".into(), vnd::toml::module(lua)?);
+
+    Ok(modules)
+}
+
+pub fn install(lua: &Lua) -> mlua::Result<()> {
+    let modules = registry(lua)?;
 
     // Custom require — strict `namespace:name` form, no path search, no
     // file I/O. Unknown specs error with the namespace catalogue so typos
@@ -260,16 +267,39 @@ mod tests {
         ])
     }
 
-    /// Every module in the catalogue declares its surface through the facade
-    /// and is registered: the declared set is exactly the 50 `require` keys.
+    /// The declared (facade) set equals the registered `require` keys exactly:
+    /// no duplicates in either list, none missing either way, 50 in all. Each
+    /// key resolves to a table through `require`.
     #[test]
-    fn declared_modules_cover_the_catalogue() {
+    fn declared_modules_match_registered_keys() {
+        use std::collections::BTreeSet;
+
         let lua = make_engine().expect("engine");
         let declared = declared(&lua).expect("declared");
+        let declared_names: Vec<&str> = declared.iter().map(|m| m.name()).collect();
+        let declared_set: BTreeSet<&str> = declared_names.iter().copied().collect();
+        assert_eq!(
+            declared_set.len(),
+            declared_names.len(),
+            "duplicate declared module: {declared_names:?}"
+        );
 
-        let keys: Vec<&str> = declared.iter().map(|m| m.name()).collect();
-        assert_eq!(keys.len(), 50, "expected 50 declared modules, got {keys:?}");
-        for key in &keys {
+        let registered = registry(&lua).expect("registry");
+        let registered_set: BTreeSet<&str> = registered.keys().map(String::as_str).collect();
+
+        let undeclared: Vec<_> = registered_set.difference(&declared_set).collect();
+        let unregistered: Vec<_> = declared_set.difference(&registered_set).collect();
+        assert!(
+            undeclared.is_empty(),
+            "registered but not declared: {undeclared:?}"
+        );
+        assert!(
+            unregistered.is_empty(),
+            "declared but not registered: {unregistered:?}"
+        );
+        assert_eq!(registered_set.len(), 50);
+
+        for key in &registered_set {
             let kind: String = lua
                 .load(format!("return type(require({key:?}))"))
                 .eval()

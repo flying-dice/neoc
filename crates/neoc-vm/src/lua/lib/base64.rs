@@ -19,10 +19,10 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 ///
 /// The `encode*` functions are infallible and route through
 /// [`crate::lua::facade::Module::func`]. The `decode*` functions are a *mixed*
-/// raise-plus-channel shape: a base64-decode failure goes to the `(value,
-/// error)` channel, but a `lua.create_string` failure on the decoded bytes
-/// raises an `mlua::Error` directly (the bare `?`). `try_func` cannot model
-/// that mix, so each `decode*` is registered verbatim with
+/// raise-plus-channel shape: a base64-decode failure goes to the
+/// `(value, error)` channel, but a `lua.create_string` failure on the decoded
+/// bytes raises an `mlua::Error` directly (the bare `?`). `try_func` cannot
+/// model that mix, so each `decode*` is registered verbatim with
 /// [`crate::lua::facade::Module::set`] — keeping its `#[instrument]` span and
 /// `base64.decode*` channel prefix — and recorded with
 /// [`crate::lua::facade::Module::record_fn`]. The `(value, error)` shape, the

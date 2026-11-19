@@ -180,14 +180,14 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// digest bytes raises an `mlua::Error` directly (the bare `?`) — a mix
 /// `try_func` cannot model — so it is set verbatim with
 /// [`crate::lua::facade::Module::set`] (keeping its `hash.hash` span and
-/// channel prefix) and recorded with
-/// [`crate::lua::facade::Module::record_fn`]. The `Hasher` constructor
-/// sub-table and the `algorithms` lister are likewise set verbatim with
-/// [`crate::lua::facade::Module::set`] because their hand-written registration
-/// carried (respectively) a `hash.Hasher.new` span the facade's `type_` would
-/// rename to `Hasher.new`, and no span at all — routing them through the facade
-/// would change the trace shape. The `Hasher` userdata keeps its own `impl
-/// UserData` and is recorded here via [`crate::lua::facade::Module::userdata`].
+/// channel prefix) and recorded with [`crate::lua::facade::Module::record_fn`].
+/// The `Hasher` constructor sub-table and the `algorithms` lister are likewise
+/// set verbatim with [`crate::lua::facade::Module::set`] because their
+/// hand-written registration carried (respectively) a `hash.Hasher.new` span
+/// the facade's `type_` would rename to `Hasher.new`, and no span at all —
+/// routing them through the facade would change the trace shape. The `Hasher`
+/// userdata keeps its own `impl UserData` and is recorded here via
+/// [`crate::lua::facade::Module::userdata`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:hash")?;
 

@@ -394,16 +394,17 @@ impl<'l> Module<'l> {
     /// Registers a constructor-bearing type exposed as a sub-table.
     ///
     /// Models the pattern where a module surfaces a type through a sub-table
-    /// holding one or more constructors — `std:collections`'s
-    /// `Map.new()` / `Counter.new(initial)`, `std:net`'s
-    /// `TcpListener.bind(addr)`. The closure receives a [`TypeSpec`]: declare
-    /// each constructor with [`TypeSpec::constructor`] (it both registers the
-    /// function on the sub-table with mlua and records an associated `fn`) and
-    /// each instance method with [`TypeSpec::method`] (recorded only — the method's runtime registration stays in the type's own
-    /// `impl UserData`). The sub-table is created here, populated with the
-    /// constructors, and set on the module table under `type_name`, exactly as
-    /// a hand-written `t.set("Map", map_t)` would. The recorded surface is
-    /// the type, its constructors and its methods.
+    /// holding one or more constructors — `std:collections`'s `Map.new()` /
+    /// `Counter.new(initial)`, `std:net`'s `TcpListener.bind(addr)`. The
+    /// closure receives a [`TypeSpec`]: declare each constructor with
+    /// [`TypeSpec::constructor`] (it both registers the function on the
+    /// sub-table with mlua and records an associated `fn`) and each instance
+    /// method with [`TypeSpec::method`] (recorded only — the method's runtime
+    /// registration stays in the type's own `impl UserData`). The sub-table is
+    /// created here, populated with the constructors, and set on the module
+    /// table under `type_name`, exactly as a hand-written `t.set("Map", map_t)`
+    /// would. The recorded surface is the type, its constructors and its
+    /// methods.
     pub fn type_(
         &mut self,
         type_name: &str,
