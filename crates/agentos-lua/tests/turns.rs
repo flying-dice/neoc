@@ -609,9 +609,10 @@ const OWN_SERVER_REACH: &str = r#"
       task.spawn(function() hyper.get(own("/slow")) hyper.get(own("/after_slow")) end)
       return "returned"
     end }
-    -- a forever poller that sleeps at a timer, and a tool that sleeps
+    -- a forever poller that waits on a timer alone, with an interval far wider than the test, so it is never inside
+    -- its wake-up window while a request arrives (a poller that also makes requests does taint them: documented)
     app.tool { name = "ro_poller", readOnly = true, run = function()
-      task.spawn(function() while true do task.wait(0.02) end end)
+      task.spawn(function() while true do task.wait(3600) end end)
       return "returned"
     end }
     app.tool { name = "ro_sleeps", readOnly = true, run = function() task.wait(0.6) return "slept" end }

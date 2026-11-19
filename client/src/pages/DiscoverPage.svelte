@@ -575,7 +575,7 @@
   }
 
   .access-note {
-    margin: 12px 0 0;
+    margin: 12px 0 8px;
   }
   .store-error {
     margin: 0 0 12px;
