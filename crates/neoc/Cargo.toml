@@ -6,37 +6,21 @@ default-run = "neoc"
 publish = false
 
 [dependencies]
-# The runtime library: engine construction, script execution, and `.neoc`
-# header emission. The bin dispatches `run`/`emit-headers` here.
+# The runtime library: engine construction and script execution.
 neoc-vm = { workspace = true }
 
-# The compiler half of the unified `neoc` CLI. The bin folds the
-# `build`/`check`/`fmt`/`lsp` subcommands in directly (the `cli` module) and
-# dispatches them to these libs.
-neoc-compiler.workspace = true
-neoc-fmt.workspace = true
-neoc-lsp.workspace = true
-
-# The SQL → neoc generator backing `neoc autosql`. A compiler-domain tool: it
-# emits portable `.neoc` source and couples to no runtime module.
-neoc-autosql.workspace = true
-
-# `mlua::Error` surfaces when a script fails; the bin maps it to a neoc-shaped
+# `mlua::Error` surfaces when a script fails; the bin maps it to a plain
 # diagnostic. `miette` renders the runtime's `NeocError`. Both are the runtime's
 # public error types crossing into the bin.
 mlua = { version = "0.12", features = ["luajit", "async", "send", "vendored", "serialize", "macros"] }
 miette = { version = "7", features = ["fancy"] }
 
-# The bin owns the tokio runtime the engine paths drive on, the unified clap
-# tree, glob expansion for `run`, and tree-walking for the same.
+# The bin owns the tokio runtime the engine paths drive on, the clap tree, and
+# glob expansion for `run`.
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "net", "io-util", "signal"] }
 clap = { version = "4", default-features = false, features = ["std", "help", "usage", "error-context", "string", "derive"] }
 globset = "0.4"
 walkdir = "2"
-
-# Glob expansion + diagnostic plumbing for the folded compiler subcommands.
-anyhow = "1"
-glob = "0.3"
 
 [dev-dependencies]
 tempfile = "3"

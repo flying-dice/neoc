@@ -1,22 +1,14 @@
-use neoc_compiler::SourceMap;
 use neoc_vm::errors::{self, NeocError};
 use neoc_vm::lua;
 use neoc_vm::lua::lib::compile::{TrailerError, detect_embedded_payload_from};
 use neoc_vm::lua::std::workers::ShutdownSignal;
 
-use std::io::{self, Write};
 use std::path::Path;
 use std::{env, fs, process};
 
 use clap::{Parser, Subcommand};
 
-mod cli;
-
-/// neoc — embedded Lua runtime and neoc-language compiler.
-///
-/// The runtime subcommands (`run`, `emit-headers`) execute and introspect Lua
-/// scripts; the compiler subcommands (`build`, `check`, `fmt`, `lsp`) transpile
-/// neoc source and serve language tooling.
+/// neoc — a sandboxed Lua runtime with a curated standard library.
 #[derive(Debug, Parser)]
 #[command(name = "neoc", version, about, long_about = None)]
 struct Cli {
@@ -32,32 +24,14 @@ enum Commands {
         /// Script files or globs (for example `tests/**/*.test.lua`).
         #[arg(required_unless_present = "eval", conflicts_with = "eval")]
         paths: Vec<String>,
-        /// Evaluate the given source string in-process instead of reading
-        /// files. Treated as neoc by default (one module; its `main` runs if it
-        /// defines one); pass `--lua` to run it as raw Lua instead.
+        /// Evaluate the given Lua source string in-process instead of reading
+        /// files.
         #[arg(short = 'e', long = "eval", value_name = "SOURCE")]
         eval: Option<String>,
-        /// Treat the `--eval` source as raw Lua, loaded into the engine
-        /// verbatim with no neoc compilation.
-        #[arg(long, requires = "eval", conflicts_with_all = ["neoc", "paths"])]
-        lua: bool,
-        /// Treat the `--eval` source as neoc. This is the default; the flag is
-        /// here to state it explicitly.
-        #[arg(long, requires = "eval", conflicts_with = "paths")]
-        neoc: bool,
         /// Arguments passed through to the script(s) as `_NEOC_ARGS`.
         #[arg(last = true)]
         args: Vec<String>,
     },
-    /// Write every facade-declared module's `.neoc` header under a directory.
-    EmitHeaders {
-        /// Output directory for the generated headers.
-        #[arg(long, value_name = "DIR", default_value = "crates/neoc-vm/src/lua")]
-        out: String,
-    },
-    /// Compiler subcommands: `build`, `check`, `fmt`, `lsp`.
-    #[command(flatten)]
-    Compiler(cli::Command),
 }
 
 fn report_error(err: NeocError) -> ! {
@@ -65,59 +39,14 @@ fn report_error(err: NeocError) -> ! {
     process::exit(1);
 }
 
-/// Reports a runtime fault from a script. When `map` is present (a `.neoc`
-/// entry run via `neoc run`), every `<path>:<luaLine>` reference in the error
-/// and its traceback is rewritten to the originating `.neoc` line, so the fault
-/// points at neoc source rather than emitted-Lua lines. A `require` fault still
-/// takes the dedicated module-not-found path first.
-fn report_script_error_mapped(
-    e: mlua::Error,
-    source: &str,
-    path: &str,
-    map: Option<&SourceMap>,
-) -> ! {
-    if let Some(neoc_err) = errors::extract_require_error(&e, source, path) {
+/// Reports a runtime fault from a script. A `require` fault takes the dedicated
+/// module-not-found path first.
+fn report_script_error(e: &mlua::Error, source: &str, path: &str) -> ! {
+    if let Some(neoc_err) = errors::extract_require_error(e, source, path) {
         report_error(neoc_err);
     }
-    let text = format!("{e}");
-    let rendered = match map {
-        Some(map) => map_lua_lines_to_neoc(&text, path, map),
-        None => text,
-    };
-    eprintln!("{rendered}");
+    eprintln!("{e}");
     process::exit(1);
-}
-
-/// Rewrites every Lua chunk reference for `chunk` in `text` from its emitted-
-/// Lua line to the originating neoc line via `map`.
-///
-/// Lua renders a chunk frame as `[string "<chunk>"]:<line>` (in both the
-/// leading `runtime error:` line and each `stack traceback:` frame). Only frames
-/// whose chunk name equals `chunk` are rewritten — `[C]` frames and any other
-/// chunk are left untouched. On an exact miss the map returns the nearest
-/// preceding mapped line, so a line in appended boilerplate still resolves.
-fn map_lua_lines_to_neoc(text: &str, chunk: &str, map: &SourceMap) -> String {
-    let marker = format!("[string \"{chunk}\"]:");
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(pos) = rest.find(&marker) {
-        let (before, after) = rest.split_at(pos + marker.len());
-        out.push_str(before);
-        // Consume the run of digits following the marker — the Lua line number.
-        let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
-        if digits.is_empty() {
-            rest = after;
-            continue;
-        }
-        let lua_line: u32 = digits.parse().unwrap_or(0);
-        match map.neoc_line(lua_line) {
-            Some(neoc_line) => out.push_str(&neoc_line.to_string()),
-            None => out.push_str(&digits),
-        }
-        rest = &after[digits.len()..];
-    }
-    out.push_str(rest);
-    out
 }
 
 /// Expand one glob pattern to the matching file paths, walking from its leading
@@ -148,7 +77,6 @@ fn glob_expand(pattern: &str) -> Result<Vec<String>, String> {
     Ok(paths)
 }
 
-// TODO: clean-code - 0.55 - DRY: expand_args (globset+walkdir, exits on no-match) and cli.rs::resolve (glob, warns-and-continues) are two glob expanders for the same job on two dep stacks; unify on one crate with a behaviour flag.
 fn expand_args(args: impl Iterator<Item = String>) -> Vec<String> {
     let mut paths = Vec::new();
     for arg in args {
@@ -237,30 +165,22 @@ async fn run(paths: &[String], user_args: &[String]) {
     let multi = paths.len() > 1;
 
     for path in paths {
-        // A `.neoc` entry is transpiled to Lua in-process and run directly, so
-        // `neoc run app.neoc` behaves like running a Lua script. `.lua`
-        // scripts load verbatim. For a `.neoc` entry the source map travels with
-        // the Lua so a runtime fault is reported at the neoc line, not the
-        // emitted-Lua line.
-        let is_neoc = Path::new(path)
+        // Only Lua runs. A `.neoc` path is the retired language's source: say
+        // so plainly rather than feeding it to the Lua loader.
+        if Path::new(path)
             .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("neoc"));
-        let (source, source_map) = if is_neoc {
-            match cli::transpile_entry_to_lua(Path::new(path), &mut io::stderr().lock()) {
-                Ok(Some(entry)) => (entry.lua, Some(entry.source_map)),
-                Ok(None) => process::exit(1),
-                Err(e) => {
-                    eprintln!("error: {e:#}");
-                    process::exit(1);
-                }
-            }
-        } else {
-            let source = fs::read_to_string(path).unwrap_or_else(|e| {
-                eprintln!("error: {path}: {e}");
-                process::exit(1);
-            });
-            (source, None)
-        };
+            .is_some_and(|e| e.eq_ignore_ascii_case("neoc"))
+        {
+            eprintln!(
+                "error: {path}: `neoc run` runs Lua (`.lua`) scripts only; \
+                 `.neoc` source is no longer supported"
+            );
+            process::exit(1);
+        }
+        let source = fs::read_to_string(path).unwrap_or_else(|e| {
+            eprintln!("error: {path}: {e}");
+            process::exit(1);
+        });
 
         let engine = engine_with_args(user_args);
 
@@ -269,7 +189,7 @@ async fn run(paths: &[String], user_args: &[String]) {
             .exec_async()
             .await
         {
-            report_script_error_mapped(e, &source, path, source_map.as_ref());
+            report_script_error(&e, &source, path);
         }
 
         drain_scheduler(&engine).await;
@@ -319,36 +239,19 @@ async fn run(paths: &[String], user_args: &[String]) {
     }
 }
 
-/// Evaluates an inline snippet in-process, with no file on disk, under the chunk
-/// name `<eval>`. By default the snippet is neoc: transpiled to Lua first, with
-/// its source map carried along so a runtime fault is reported at the neoc line.
-/// With `as_lua` set, the snippet is raw Lua loaded into the engine
-/// verbatim — no compilation, no source map. Script arguments after `--` are
-/// bound as `_NEOC_ARGS`.
-async fn run_eval(source: &str, as_lua: bool, user_args: &[String]) {
+/// Evaluates an inline Lua snippet in-process, with no file on disk, under the
+/// chunk name `<eval>`. Script arguments after `--` are bound as `_NEOC_ARGS`.
+async fn run_eval(source: &str, user_args: &[String]) {
     install_shutdown_handler();
-
-    let (script, source_map) = if as_lua {
-        (source.to_string(), None)
-    } else {
-        match cli::transpile_source_to_lua(source, &mut io::stderr().lock()) {
-            Ok(Some(entry)) => (entry.lua, Some(entry.source_map)),
-            Ok(None) => process::exit(1),
-            Err(e) => {
-                eprintln!("error: {e:#}");
-                process::exit(1);
-            }
-        }
-    };
 
     let engine = engine_with_args(user_args);
 
-    if let Err(e) = lua::sandbox::load_source(&engine, &script)
+    if let Err(e) = lua::sandbox::load_source(&engine, source)
         .set_name("<eval>")
         .exec_async()
         .await
     {
-        report_script_error_mapped(e, &script, "<eval>", source_map.as_ref());
+        report_script_error(&e, source, "<eval>");
     }
 
     drain_scheduler(&engine).await;
@@ -377,37 +280,6 @@ fn detect_embedded_payload() -> Option<Vec<u8>> {
     }
 }
 
-/// Writes every facade-declared module's `.neoc` header under `out_dir`, one
-/// file per module at `<out_dir>/<namespace>/<module>.neoc` (so `lib:base64`
-/// lands at `<out_dir>/lib/base64.neoc`). Prints the path of each file written
-/// plus a total.
-fn emit_headers(out_dir: &str) {
-    let engine = lua::sandbox::make_engine().unwrap_or_else(|e| {
-        report_error(NeocError::EngineInit(e.to_string()));
-    });
-    let headers = lua::modules::headers(&engine).unwrap_or_else(|e| {
-        eprintln!("error: collecting headers failed: {e}");
-        process::exit(1);
-    });
-
-    let base = Path::new(out_dir);
-    for (key, header) in &headers {
-        let (ns, stem) = key.split_once(':').unwrap_or(("", key.as_str()));
-        let dir = base.join(ns);
-        fs::create_dir_all(&dir).unwrap_or_else(|e| {
-            eprintln!("error: {}: {e}", dir.display());
-            process::exit(1);
-        });
-        let path = dir.join(format!("{stem}.neoc"));
-        fs::write(&path, header).unwrap_or_else(|e| {
-            eprintln!("error: {}: {e}", path.display());
-            process::exit(1);
-        });
-        println!("{}", path.display());
-    }
-    println!("\n{} header(s) written to {out_dir}", headers.len());
-}
-
 /// Runs the in-memory payload bundled into a self-contained executable.
 async fn run_embedded(payload: &[u8]) {
     install_shutdown_handler();
@@ -424,20 +296,6 @@ async fn run_embedded(payload: &[u8]) {
     }
 
     drain_scheduler(&engine).await;
-}
-
-/// Dispatches a compiler subcommand and exits with its process code.
-fn run_compiler(command: cli::Command) -> ! {
-    let stderr = io::stderr();
-    let mut err = stderr.lock();
-    match command.run(&mut err) {
-        Ok(0) => process::exit(0),
-        Ok(_) => process::exit(1),
-        Err(e) => {
-            let _ = writeln!(err, "neoc: {e:#}");
-            process::exit(1);
-        }
-    }
 }
 
 /// Builds the multi-thread tokio runtime the Lua engine paths drive on, then
@@ -459,19 +317,10 @@ fn main() {
         return;
     }
 
-    // The compiler subcommands are synchronous; `lsp` builds its own
-    // current-thread runtime, so they must not run inside one here. Only the
-    // runtime subcommands (`run`, `emit-headers`) drive a tokio runtime.
     match Cli::parse().command {
-        Commands::Run {
-            paths,
-            eval,
-            lua,
-            neoc: _,
-            args,
-        } => {
+        Commands::Run { paths, eval, args } => {
             if let Some(source) = eval {
-                block_on_runtime(async move { run_eval(&source, lua, &args).await });
+                block_on_runtime(async move { run_eval(&source, &args).await });
             } else {
                 let resolved = expand_args(paths.into_iter());
                 if resolved.is_empty() {
@@ -481,10 +330,6 @@ fn main() {
                 block_on_runtime(async move { run(&resolved, &args).await });
             }
         }
-        Commands::EmitHeaders { out } => {
-            block_on_runtime(async move { emit_headers(&out) });
-        }
-        Commands::Compiler(command) => run_compiler(command),
     }
 }
 
@@ -503,75 +348,6 @@ mod tests {
     use std::process::{Child, Command, Stdio};
     use std::sync::atomic::{AtomicU16, Ordering};
     use std::time::{Duration, Instant};
-
-    // ---- source map: `neoc run` runtime-fault line rewriting ----------------
-    //
-    // `map_lua_lines_to_neoc` is the consumer side of the #56 source map: it
-    // rewrites every `[string "<chunk>"]:<luaLine>` reference in a Lua runtime
-    // fault to its originating neoc line. The map's own tests cover lookup
-    // (`SourceMap::neoc_line`); these pin the two consumer behaviours those
-    // don't reach — the string rewrite itself (chunk-selective), and the
-    // unmapped-line fallback that leaves a line verbatim.
-    use neoc_compiler::{SourceMap, Target, transpile};
-
-    #[test]
-    fn map_lua_lines_rewrites_matching_chunk_frames_to_neoc_lines() {
-        // The emitted module opens with the inlined runtime preamble, shifting the
-        // body down — so an emitted line's number differs from its neoc origin,
-        // which is what makes the rewrite observable.
-        let src = "struct Point { x: number }\npub fn read(p: Point) -> number {\n  p.x\n}\n";
-        let out = transpile(src, Target::Lua);
-        assert!(out.diagnostics.is_empty(), "{:#?}", out.diagnostics);
-        let map = out.source_map;
-        assert!(!map.is_empty(), "a transpile must carry a map");
-
-        // First emitted line whose origin differs from its own number — the
-        // preamble shift guarantees one exists.
-        let (lua_line, neoc_line) = (1..=200)
-            .find_map(|l| map.neoc_line(l).filter(|n| *n != l).map(|n| (l, n)))
-            .expect("a shifted, mapped emitted line");
-
-        let chunk = "app.neoc";
-        let err = format!(
-            "runtime error: [string \"{chunk}\"]:{lua_line}: boom\n\
-             stack traceback:\n\
-             \t[string \"{chunk}\"]:{lua_line}: in function 'read'\n\
-             \t[C]: in ?\n\
-             \t[string \"other.lua\"]:{lua_line}: in main chunk"
-        );
-        let got = super::map_lua_lines_to_neoc(&err, chunk, &map);
-
-        // Every matching-chunk frame now carries the neoc line; the emitted line
-        // is gone.
-        assert!(
-            got.contains(&format!("[string \"{chunk}\"]:{neoc_line}:")),
-            "matching frames should carry neoc line {neoc_line}:\n{got}"
-        );
-        assert!(
-            !got.contains(&format!("[string \"{chunk}\"]:{lua_line}:")),
-            "emitted line {lua_line} should be rewritten away:\n{got}"
-        );
-        // A `[C]` frame and a different chunk are left untouched.
-        assert!(got.contains("[C]: in ?"), "[C] frame untouched:\n{got}");
-        assert!(
-            got.contains(&format!("[string \"other.lua\"]:{lua_line}:")),
-            "a non-matching chunk must not be rewritten:\n{got}"
-        );
-    }
-
-    #[test]
-    fn map_lua_lines_leaves_unmapped_lines_verbatim() {
-        // An empty map — a module lowered without source text — knows no
-        // correspondence, so every line must survive verbatim: not
-        // dropped, not zeroed. This is the `None` fallback arm of the rewrite.
-        let chunk = "app.neoc";
-        let err = format!(
-            "runtime error: [string \"{chunk}\"]:5: boom\n\
-             stack traceback:\n\t[string \"{chunk}\"]:5: in main chunk"
-        );
-        let got = super::map_lua_lines_to_neoc(&err, chunk, &SourceMap::default());
-        assert_eq!(got, err, "an empty map passes every line through unchanged");
-    }
 
     static PORT_CTR: AtomicU16 = AtomicU16::new(29000);
 
