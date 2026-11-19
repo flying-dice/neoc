@@ -1,6 +1,0 @@
-// LEXICAL.md §2 / SYNTAX.md §2: reserved keywords cannot be used as identifiers;
-// `fn` is not a binding name.
-fn f() -> number {
-    let fn = 1;
-    fn
-}

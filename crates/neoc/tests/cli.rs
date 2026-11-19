@@ -1,17 +1,13 @@
-//! Integration tests driving the unified `neoc` binary: the compiler
-//! subcommands (`build`/`check`/`fmt`/`lsp`) and `run` of a `.neoc` entry
-//! (in-process transpile to Lua + execute on the embedded VM).
+//! Integration tests driving the `neoc` binary: `run` of Lua scripts, globs and
+//! `--eval`, the test-runner summary, and the refusal of retired `.neoc` source.
 
 use std::fs;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 use tempfile::tempdir;
 
 const BIN: &str = env!("CARGO_BIN_EXE_neoc");
-
-const VALID: &str = "extern { fn println(n: number); }\nfn main() {\n  println(1 + 2);\n}\n";
-const BROKEN: &str = "fn main( {\n";
 
 fn write(dir: &Path, name: &str, src: &str) -> std::path::PathBuf {
     let path = dir.join(name);
@@ -20,345 +16,131 @@ fn write(dir: &Path, name: &str, src: &str) -> std::path::PathBuf {
 }
 
 #[test]
-fn build_writes_lua_next_to_source() {
+fn run_lua_script_executes() {
     let dir = tempdir().unwrap();
-    let src = write(dir.path(), "foo.neoc", VALID);
+    let src = write(dir.path(), "app.lua", "print(\"ran lua\")\n");
 
-    let status = Command::new(BIN).arg("build").arg(&src).status().unwrap();
-    assert!(status.success());
-
-    let lua = dir.path().join("foo.lua");
-    assert!(lua.is_file(), "expected {} to exist", lua.display());
-    assert!(!fs::read_to_string(&lua).unwrap().is_empty());
+    let out = Command::new(BIN).arg("run").arg(&src).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ran lua");
 }
 
 #[test]
-fn build_with_output_dir_keeps_base_name() {
+fn run_passes_script_args_as_neoc_args() {
     let dir = tempdir().unwrap();
-    let src = write(dir.path(), "foo.neoc", VALID);
-    let out = dir.path().join("out");
+    let src = write(
+        dir.path(),
+        "args.lua",
+        "print(_NEOC_ARGS[1] .. \",\" .. _NEOC_ARGS[2])\n",
+    );
 
-    let status = Command::new(BIN)
-        .arg("build")
+    let out = Command::new(BIN)
+        .arg("run")
         .arg(&src)
-        .arg("-o")
-        .arg(&out)
-        .status()
+        .arg("--")
+        .arg("a")
+        .arg("b")
+        .output()
         .unwrap();
-    assert!(status.success());
-
-    assert!(out.join("foo.lua").is_file());
-    assert!(!dir.path().join("foo.lua").exists());
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "a,b");
 }
 
 #[test]
-fn build_glob_matches_multiple_files() {
+fn run_glob_runs_every_match() {
     let dir = tempdir().unwrap();
-    write(dir.path(), "a.neoc", VALID);
-    write(dir.path(), "b.neoc", VALID);
+    write(dir.path(), "a.lua", "print(\"from a\")\n");
+    write(dir.path(), "b.lua", "print(\"from b\")\n");
 
-    let pattern = format!("{}/*.neoc", dir.path().display());
-    let status = Command::new(BIN)
-        .arg("build")
-        .arg(&pattern)
-        .status()
-        .unwrap();
-    assert!(status.success());
-
-    assert!(dir.path().join("a.lua").is_file());
-    assert!(dir.path().join("b.lua").is_file());
-}
-
-#[test]
-fn build_skips_output_on_diagnostic_and_exits_nonzero() {
-    let dir = tempdir().unwrap();
-    let src = write(dir.path(), "bad.neoc", BROKEN);
-
-    let out = Command::new(BIN).arg("build").arg(&src).output().unwrap();
-    assert!(!out.status.success());
-    assert!(!dir.path().join("bad.lua").exists());
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("bad.neoc"), "stderr: {stderr}");
-}
-
-#[test]
-fn build_multi_file_project_emits_every_module_next_to_source() {
-    let dir = tempdir().unwrap();
-    write(
-        dir.path(),
-        "util.neoc",
-        "pub fn add(a: number, b: number) -> number { a + b }\n",
-    );
-    let entry = write(
-        dir.path(),
-        "main.neoc",
-        "use util::add;\nfn main() -> number { add(2, 3) }\n",
-    );
-
-    let status = Command::new(BIN).arg("build").arg(&entry).status().unwrap();
-    assert!(status.success());
-
-    let main_lua = dir.path().join("main.lua");
-    let util_lua = dir.path().join("util.lua");
-    assert!(main_lua.is_file(), "expected main.lua");
+    let pattern = format!("{}/*.lua", dir.path().display());
+    let out = Command::new(BIN).arg("run").arg(&pattern).output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        util_lua.is_file(),
-        "expected util.lua emitted from the graph"
+        stdout.contains("from a") && stdout.contains("from b"),
+        "{stdout}"
     );
-    assert!(fs::read_to_string(&main_lua).unwrap().contains("require"));
 }
 
 #[test]
-fn build_reports_private_import_and_writes_nothing() {
+fn run_glob_with_no_match_is_an_error() {
     let dir = tempdir().unwrap();
-    write(
-        dir.path(),
-        "util.neoc",
-        "fn secret(x: number) -> number { x }\n",
-    );
-    let entry = write(
-        dir.path(),
-        "main.neoc",
-        "use util::secret;\nfn main() -> number { secret(1) }\n",
-    );
+    let pattern = format!("{}/none-*.lua", dir.path().display());
 
-    let out = Command::new(BIN).arg("build").arg(&entry).output().unwrap();
+    let out = Command::new(BIN).arg("run").arg(&pattern).output().unwrap();
     assert!(!out.status.success());
-    assert!(!dir.path().join("main.lua").exists());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("`secret` is private in module `util`"),
+        stderr.contains("no matches for pattern"),
         "stderr: {stderr}"
     );
 }
 
 #[test]
-fn check_clean_exits_zero() {
+fn run_neoc_path_is_rejected_with_a_plain_message() {
     let dir = tempdir().unwrap();
-    let src = write(dir.path(), "ok.neoc", VALID);
+    let src = write(dir.path(), "app.neoc", "fn main() {}\n");
 
-    let status = Command::new(BIN).arg("check").arg(&src).status().unwrap();
-    assert!(status.success());
-    assert!(!dir.path().join("ok.lua").exists());
-}
-
-#[test]
-fn check_diagnostic_exits_nonzero() {
-    let dir = tempdir().unwrap();
-    let src = write(dir.path(), "bad.neoc", BROKEN);
-
-    let out = Command::new(BIN).arg("check").arg(&src).output().unwrap();
+    let out = Command::new(BIN).arg("run").arg(&src).output().unwrap();
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("bad.neoc"), "stderr: {stderr}");
-}
-
-const MESSY: &str = "struct   Point{x:number,y:number}\nfn main(){let p=Point{x:1,y:2};}\n";
-
-#[test]
-fn fmt_rewrites_file_in_place_and_is_a_no_op_on_second_run() {
-    let dir = tempdir().unwrap();
-    let src = write(dir.path(), "messy.neoc", MESSY);
-
-    let status = Command::new(BIN).arg("fmt").arg(&src).status().unwrap();
-    assert!(status.success());
-
-    let formatted = fs::read_to_string(&src).unwrap();
-    assert_ne!(formatted, MESSY, "expected the file to be rewritten");
-    assert!(formatted.contains("struct Point {\n    x: number,\n    y: number,\n}"));
-    assert!(formatted.ends_with('\n'));
-
-    // A second run leaves the now-canonical file untouched.
-    let status = Command::new(BIN).arg("fmt").arg(&src).status().unwrap();
-    assert!(status.success());
-    let again = fs::read_to_string(&src).unwrap();
-    assert_eq!(again, formatted, "second run was not a no-op");
+    assert!(
+        stderr.contains("runs Lua (`.lua`) scripts only"),
+        "stderr: {stderr}"
+    );
 }
 
 #[test]
-fn fmt_check_exits_nonzero_for_unformatted_and_writes_nothing() {
+fn run_neoc_path_among_lua_paths_runs_nothing() {
     let dir = tempdir().unwrap();
-    let src = write(dir.path(), "messy.neoc", MESSY);
+    let ok = write(dir.path(), "a.lua", "print(\"must not run\")\n");
+    let old = write(dir.path(), "old.neoc", "fn main() {}\n");
 
     let out = Command::new(BIN)
-        .arg("fmt")
-        .arg("--check")
-        .arg(&src)
+        .arg("run")
+        .arg(&ok)
+        .arg(&old)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.contains("must not run"),
+        "no script may run when a `.neoc` path is given: {stdout}"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("old.neoc"), "stderr: {stderr}");
+}
+
+#[test]
+fn run_runtime_fault_names_the_script_and_cause() {
+    let dir = tempdir().unwrap();
+    write(dir.path(), "fault.lua", "local n = explode()\n");
+
+    // Relative path: Lua truncates a long chunk name in its error text.
+    let out = Command::new(BIN)
+        .arg("run")
+        .arg("fault.lua")
+        .current_dir(dir.path())
         .output()
         .unwrap();
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("not formatted"), "stderr: {stderr}");
-    // --check must not touch the file.
-    assert_eq!(fs::read_to_string(&src).unwrap(), MESSY);
-}
-
-#[test]
-fn fmt_check_exits_zero_when_already_formatted() {
-    const CANONICAL: &str =
-        "extern {\n    fn println(n: number);\n}\n\nfn main() {\n    println(1 + 2);\n}\n";
-    let dir = tempdir().unwrap();
-    let src = write(dir.path(), "ok.neoc", CANONICAL);
-
-    let status = Command::new(BIN)
-        .arg("fmt")
-        .arg("--check")
-        .arg(&src)
-        .status()
-        .unwrap();
-    assert!(status.success());
-}
-
-#[test]
-fn fmt_parse_error_exits_nonzero() {
-    let dir = tempdir().unwrap();
-    let src = write(dir.path(), "bad.neoc", BROKEN);
-
-    let out = Command::new(BIN).arg("fmt").arg(&src).output().unwrap();
-    assert!(!out.status.success());
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("bad.neoc"), "stderr: {stderr}");
-}
-
-#[test]
-fn lsp_starts_and_exits_cleanly_when_stdin_closes() {
-    // `neoc lsp` runs the language server over stdio. With a closed stdin the
-    // client connection ends immediately, so the server shuts down with exit 0.
-    let out = Command::new(BIN)
-        .arg("lsp")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .output()
-        .unwrap();
     assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-// `print` is the built-in the sandboxed VM exposes (unlike the conformance
-// harness's `println`), so a runnable `.neoc` binds it as an `ext`.
-const RUNNABLE: &str = "extern { fn print(s: string); }\nfn main() {\n  print(\"ran neoc\");\n}\n";
-
-#[test]
-fn run_neoc_transpiles_and_executes() {
-    let dir = tempdir().unwrap();
-    let src = write(dir.path(), "app.neoc", RUNNABLE);
-
-    let out = Command::new(BIN).arg("run").arg(&src).output().unwrap();
-    assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ran neoc");
-    // No intermediate file is written next to the source.
-    assert!(!dir.path().join("app.lua").exists());
-}
-
-#[test]
-fn run_neoc_type_error_reports_neoc_diagnostic_not_lua() {
-    let dir = tempdir().unwrap();
-    let src = write(
-        dir.path(),
-        "bad.neoc",
-        "fn main() {\n  let x: string = 42;\n}\n",
-    );
-
-    let out = Command::new(BIN).arg("run").arg(&src).output().unwrap();
-    assert!(!out.status.success());
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("type:"),
-        "expected a neoc type diagnostic, got: {stderr}"
-    );
-}
-
-// A program that compiles cleanly but faults at runtime: `crash()` calls an
-// unbound name, so the embedded LuaJIT VM raises `attempt to call global 'explode' (a nil value)`.
-// The fault is reported against the `.neoc` chunk name, and the source map (#56)
-// rewrites the emitted-Lua line back to the neoc line — `explode()` sits on neoc
-// line 4, so the fault must read `fault.neoc:4`, not the emitted-Lua line.
-const RUNTIME_FAULT: &str = "\
-extern { fn print(s: string); }
-fn crash() {
-  print(\"in crash\");
-  let n = explode();
-}
-extern { fn explode() -> number; }
-fn main() {
-  crash();
-}
-";
-
-#[test]
-fn run_neoc_runtime_fault_reports_against_the_neoc_position() {
-    let dir = tempdir().unwrap();
-    let src = write(dir.path(), "fault.neoc", RUNTIME_FAULT);
-
-    let out = Command::new(BIN).arg("run").arg(&src).output().unwrap();
-    assert!(!out.status.success());
-    let stderr = String::from_utf8_lossy(&out.stderr);
-
-    // The fault names the `.neoc` chunk and the runtime cause, so the report
-    // points at the program the user ran rather than a host artifact.
-    assert!(
-        stderr.contains("fault.neoc")
+        stderr.contains("fault.lua")
             && stderr.contains("attempt to call global 'explode' (a nil value)"),
-        "expected a fault against the fault.neoc chunk, got: {stderr}"
-    );
-    // The source map remaps the emitted-Lua line to the neoc line: the failing
-    // `explode()` call is on neoc line 4, so the fault reports `:4`, not the
-    // (different) line the call lowered to in the emitted Lua.
-    assert!(
-        stderr.contains("fault.neoc\"]:4:"),
-        "expected the fault remapped to neoc line 4, got: {stderr}"
+        "stderr: {stderr}"
     );
 }
 
 #[test]
-fn run_eval_executes_inline_snippet() {
-    // An inline neoc snippet transpiles and runs in-process with no file on
-    // disk. A clean program that defines `main` runs to a zero exit.
+fn run_eval_executes_inline_lua() {
     let out = Command::new(BIN)
         .arg("run")
-        .arg("-e")
-        .arg("fn main() -> number { 1 + 2 }")
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-#[test]
-fn run_eval_type_error_reports_eval_chunk() {
-    // A diagnostic in an inline snippet is reported against the `<eval>` chunk
-    // name (the snippet has no file path) and exits non-zero.
-    let out = Command::new(BIN)
-        .arg("run")
-        .arg("--eval")
-        .arg("fn main() { let x: string = 42; }")
-        .output()
-        .unwrap();
-    assert!(!out.status.success());
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("<eval>: type:"),
-        "expected a neoc type diagnostic against <eval>, got: {stderr}"
-    );
-}
-
-#[test]
-fn run_eval_lua_runs_source_verbatim() {
-    // `--lua` treats the snippet as raw Lua: loaded into the engine with no
-    // neoc compilation, so `print` (a Lua global) works directly.
-    let out = Command::new(BIN)
-        .arg("run")
-        .arg("--lua")
         .arg("-e")
         .arg(r#"print("from lua eval")"#)
         .output()
@@ -372,17 +154,16 @@ fn run_eval_lua_runs_source_verbatim() {
 }
 
 #[test]
-fn run_eval_lua_and_neoc_flags_conflict() {
-    // The two language selectors are mutually exclusive.
+fn run_eval_fault_reports_eval_chunk() {
     let out = Command::new(BIN)
         .arg("run")
-        .arg("--lua")
-        .arg("--neoc")
-        .arg("-e")
-        .arg("print(1)")
+        .arg("--eval")
+        .arg("explode()")
         .output()
         .unwrap();
     assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("<eval>"), "stderr: {stderr}");
 }
 
 #[test]
@@ -392,7 +173,7 @@ fn run_eval_conflicts_with_paths() {
     let out = Command::new(BIN)
         .arg("run")
         .arg("-e")
-        .arg("fn main() {}")
+        .arg("print(1)")
         .arg("script.lua")
         .output()
         .unwrap();
@@ -400,29 +181,71 @@ fn run_eval_conflicts_with_paths() {
 }
 
 #[test]
-fn run_neoc_multi_module_is_rejected_with_pointer_to_build() {
-    // `run` executes a single file; a program that `use`s another module lowers
-    // to `require("util")`, which has no resolver under the runtime's
-    // `namespace:name` require — so it's rejected up front (not at a confusing
-    // runtime require failure) with a pointer to `neoc build`.
+fn removed_language_flags_and_subcommands_are_refused() {
+    // clap's usage-error exit code is 2.
+    for args in [
+        &["run", "--lua", "-e", "print(1)"][..],
+        &["run", "--neoc", "-e", "print(1)"][..],
+        &["build", "x.neoc"][..],
+        &["check", "x.neoc"][..],
+        &["fmt", "x.neoc"][..],
+        &["lsp"][..],
+        &["autosql"][..],
+        &["emit-headers"][..],
+    ] {
+        let out = Command::new(BIN).args(args).output().unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "`neoc {}` must be a usage error",
+            args.join(" ")
+        );
+    }
+}
+
+/// `lib:compile` bundles a script into a standalone executable; running it
+/// passes its arguments through as `_NEOC_ARGS`, with no subcommand.
+#[test]
+fn compile_bundle_runs_standalone_with_arguments() {
     let dir = tempdir().unwrap();
     write(
         dir.path(),
-        "util.neoc",
-        "pub fn add(a: number, b: number) -> number { a + b }\n",
+        "main.lua",
+        "print(\"standalone:\" .. #_NEOC_ARGS .. \":\" .. table.concat(_NEOC_ARGS, \",\"))\n",
     );
-    let entry = write(
+    // `bundle` writes exactly the path it is given, so name the output as the
+    // platform expects an executable.
+    let app_name = if cfg!(windows) { "app.exe" } else { "app" };
+    write(
         dir.path(),
-        "app.neoc",
-        "use util::add;\nfn main() -> number { add(2, 3) }\n",
+        "build.lua",
+        &format!(
+            "local ok, err = require(\"lib:compile\").bundle({{ entrypoint = \"main.lua\", output = \"{app_name}\" }})\nassert(ok, err)\n"
+        ),
     );
 
-    let out = Command::new(BIN).arg("run").arg(&entry).output().unwrap();
-    assert!(!out.status.success());
-    let stderr = String::from_utf8_lossy(&out.stderr);
+    let build = Command::new(BIN)
+        .arg("run")
+        .arg("build.lua")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
     assert!(
-        stderr.contains("imports other modules") && stderr.contains("neoc build"),
-        "expected a multi-module rejection pointing at `neoc build`, got: {stderr}"
+        build.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let app = dir.path().join(app_name);
+    let out = Command::new(&app).arg("one").arg("two").output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "standalone:2:one,two"
     );
 }
 

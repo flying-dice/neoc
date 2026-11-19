@@ -46,7 +46,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// that raises `mlua::Error` (the Lua iterator protocol cannot carry a
 /// `(nil, err)` tuple) — none fit the facade's `func` / `try_func` model. The
 /// `CsvReader` / `CsvWriter` userdata keep their own `impl UserData` and are
-/// recorded here for the header via [`crate::lua::facade::Module::userdata`].
+/// recorded here via [`crate::lua::facade::Module::userdata`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:csv")?;
 

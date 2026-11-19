@@ -77,7 +77,7 @@ use spki::{DecodePublicKey, EncodePublicKey};
 use crate::lua::facade::Module;
 use crate::lua::sandbox::{err, ok};
 
-/// Canonical algorithm list — the `.neoc` / docs order, Ed25519 first. Used by
+/// Canonical algorithm list — the docs order, Ed25519 first. Used by
 /// `algorithms()` and by tests that iterate every backend.
 const ALGOS: &[&str] = &[
     "ed25519",
@@ -442,8 +442,8 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// `KeyPair` and `PublicKey` are recorded as constructor-bearing types via
 /// [`crate::lua::facade::Module::type_`]: each `try_constructor` registers the
 /// function on the type's sub-table and opens a `skip_all` `"<Type>.<ctor>"`
-/// span, and each `method` records the matching `impl UserData` method for the
-/// header. `algorithms` is the one free function.
+/// span, and each `method` records the matching `impl UserData` method in the
+/// recorded surface. `algorithms` is the one free function.
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:pkey")?;
 

@@ -33,12 +33,12 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 ///
 /// The `Pattern` constructor sub-table and every flat function are set verbatim
 /// with [`crate::lua::facade::Module::set`]: `pattern_new` carries its own
-/// `#[instrument(name = "regex.Pattern.new")]` span (which the facade's
-/// `type_` constructor path could not reproduce — it would name the span
+/// `#[instrument(name = "regex.Pattern.new")]` span (which the facade's `type_`
+/// constructor path could not reproduce — it would name the span
 /// `"Pattern.new"`), and each flat function carries its own `#[instrument]`
 /// span plus a baked `"regex.<fn>: "` prefix built through `err` / `ok`. The
 /// `PatternHandle` userdata keeps its own `impl UserData` and is recorded here
-/// for the header via [`crate::lua::facade::Module::userdata`].
+/// via [`crate::lua::facade::Module::userdata`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:regex")?;
 
@@ -912,7 +912,7 @@ mod tests {
     /// `Pattern:find` is infallible — the regex is already compiled, so a
     /// no-match cannot raise. Return shape must be a bare `Match?`, not the
     /// `(Match?, string?)` tuple the flat `regex.find` uses. Lock the
-    /// observable return arity so the `regex.neoc` signature stays accurate.
+    /// observable return arity so the recorded signature stays accurate.
     #[test]
     fn pattern_find_returns_single_value() {
         let lua = engine();

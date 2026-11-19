@@ -1,12 +1,10 @@
 //! Executable CLI spec for the `neoc` binary.
 //!
 //! The Gherkin features in `tooling/cli/` are the behavioural contract for the
-//! command-line surface: `check` accepts a well-formed program and refuses a
-//! broken one, `build` transpiles a clean entry to Lua next to the source, and
-//! `run --eval` executes an inline snippet — each reported in neoc terms. The
-//! step definitions drive the *built* binary as a subprocess (the same way
-//! `tests/cli.rs` does), so the features *are* the spec, mirroring
-//! `crates/neoc-fmt/tests/cucumber.rs` and `lang/CONFORMANCE/`.
+//! command-line surface: `run` executes a Lua script or an inline `--eval`
+//! snippet, reports test files, and refuses what it cannot run. The step
+//! definitions drive the *built* binary as a subprocess (the same way
+//! `tests/cli.rs` does), so the features *are* the spec.
 //!
 //! Scenarios tagged `@pending` describe behaviour that is specified but not yet
 //! verifiable here; the runner filters them out so the suite stays green. Drop
@@ -121,23 +119,9 @@ fn stdout_contains(world: &mut Cli, needle: String) {
     );
 }
 
-#[then(regex = r#"^a non-empty file "([^"]+)" exists$"#)]
-fn non_empty_file_exists(world: &mut Cli, name: String) {
-    let path = world.working_dir().join(&name);
-    assert!(path.is_file(), "expected {name} to exist");
-    let contents = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("reading {name}: {e}"));
-    assert!(!contents.is_empty(), "expected {name} to be non-empty");
-}
-
-#[then(regex = r#"^no file "([^"]+)" exists$"#)]
-fn no_file_exists(world: &mut Cli, name: String) {
-    let path = world.working_dir().join(&name);
-    assert!(!path.exists(), "expected {name} not to exist, but it does",);
-}
-
 /// Splits a `neoc` argument line into argv. Tokens split on whitespace, except
 /// that everything after `-e`/`--eval` is kept as one argument: an inline
-/// snippet (`fn main() -> number { 1 + 2 }`) is a single program string, the
+/// snippet (`print(1 + 2)`) is a single program string, the
 /// same way `tests/cli.rs` passes it as one `.arg(...)`.
 fn split_args(line: &str) -> Vec<String> {
     let mut argv = Vec::new();

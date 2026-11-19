@@ -1,11 +1,11 @@
-//! A neoc-shaped facade over mlua module construction.
+//! A declarative facade over mlua module construction.
 //!
-//! A module is declared once, neoc-style, and that single declaration both
-//! registers functions with mlua exactly as a hand-written `module()` would
-//! and records the neoc signature + doc for each function (and, for resource
-//! handles, each method). The recording is then dumped as a `.neoc` header
-//! via [`Module::neoc_header`]. There is no reverse mapping: the Rust source
-//! is the source of truth.
+//! A module is declared once, and that single declaration both registers
+//! functions with mlua exactly as a hand-written `module()` would and records
+//! the signature + doc for each function (and, for resource handles, each
+//! method). The recording describes the VM's own API. Nothing renders it today;
+//! it is kept so tooling can generate editor types from it. There is no reverse
+//! mapping: the Rust source is the source of truth.
 //!
 //! Three things the facade preserves byte-for-byte versus the hand-written
 //! `module()` functions it replaces:
@@ -75,9 +75,11 @@ impl<T: NeocType, E: NeocType> NeocType for Result<T, E> {
     }
 }
 
-/// One recorded free function: its name, parameter list (name + neoc type
-/// per param), return type, and doc string. Enough to emit one `fn` line +
-/// its `///` doc.
+/// One recorded free function: its name, parameter list (name + type name per
+/// param), return type, and doc string.
+///
+/// The recorded metadata is not read by the runtime; see the module docs.
+#[allow(dead_code)]
 struct Entry {
     name: String,
     params: Vec<(String, String)>,
@@ -85,67 +87,10 @@ struct Entry {
     doc: String,
 }
 
-impl Entry {
-    /// Emits a bodyless `fn` line.
-    ///
-    /// `receiver` is the leading `self` parameter when the entry is an instance
-    /// method (prepended ahead of the recorded params), or `None` for a free or
-    /// associated function. A `()` return is elided to a bare signature, since
-    /// the extern grammar treats the return clause as optional.
-    fn signature(&self, receiver: Option<&str>) -> String {
-        let mut parts = Vec::new();
-        if let Some(r) = receiver {
-            parts.push(r.to_string());
-        }
-        parts.extend(
-            self.params
-                .iter()
-                .map(|(n, t)| format!("{n}: {}", neoc_ty(t))),
-        );
-        let params = parts.join(", ");
-        let ret = neoc_ty(&self.ret);
-        if ret == "()" {
-            format!("fn {}({params});", self.name)
-        } else {
-            format!("fn {}({params}) -> {ret};", self.name)
-        }
-    }
-
-    /// Emits a constructor line: `#[extern(constructor)] fn <name>(<params>);`.
-    /// A constructor has no return clause — it constructs the enclosing `Self`.
-    fn constructor_signature(&self) -> String {
-        let params = self
-            .params
-            .iter()
-            .map(|(n, t)| format!("{n}: {}", neoc_ty(t)))
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!("#[extern(constructor)] fn {}({params});", self.name)
-    }
-}
-
-/// Translates a recorded neoc type string to its emitted surface form.
-///
-/// Two normalisations:
-///
-/// 1. The facade records the opaque dynamic type as `LuaValue` (its bridge
-///    name), but the extern surface speaks the language primitive `Unknown`.
-/// 2. The facade records optionality with a trailing `?` (`string?`), but neoc
-///    has no `?` sugar — optionality is the nominal `Option<T>`. A trailing `?`
-///    becomes `Option<…>` around the (recursively translated) base type.
-///
-/// Every other type passes through unchanged.
-fn neoc_ty(ty: &str) -> String {
-    let ty = ty.trim();
-    if let Some(base) = ty.strip_suffix('?') {
-        return format!("Option<{}>", neoc_ty(base));
-    }
-    ty.replace("LuaValue", "Unknown")
-}
-
 /// One recorded `struct` + `impl` for a resource-handle userdata type. The
 /// receiver (`self`) is implicit on every method, so only the trailing
 /// arguments are recorded.
+#[allow(dead_code)]
 struct UserDataEntry {
     type_name: String,
     methods: Vec<Entry>,
@@ -155,6 +100,7 @@ struct UserDataEntry {
 /// type that the module exposes as a sub-table (for example
 /// `std:collections`'s `Map`, reached as `Map.new()`). Constructors are
 /// associated functions (no `self`); methods carry an implicit `self`.
+#[allow(dead_code)]
 struct TypeEntry {
     type_name: String,
     constructors: Vec<Entry>,
@@ -163,31 +109,34 @@ struct TypeEntry {
 
 /// One recorded module-level constant: a value bound directly on the module
 /// table whose shape the facade does not model as a function (for example
-/// `std:thread`'s dynamically-injected `parent` / `shared`). The extern item
-/// set has no `const`, so it is emitted inside the `mod` as a zero-argument
-/// accessor `fn <name>() -> <type>;`.
+/// `std:thread`'s dynamically-injected `parent` / `shared`).
+#[allow(dead_code)]
 struct ConstEntry {
     name: String,
     ty: String,
     doc: String,
 }
 
-/// Builds a Lua module table while recording the neoc signature of each
-/// function and userdata type it registers.
+/// Builds a Lua module table while recording the signature of each function
+/// and userdata type it registers.
 ///
 /// Register free functions with [`Module::func`] (infallible) and
 /// [`Module::try_func`] (fallible); both accept any arity through
 /// `FromLuaMulti` plus an explicit parameter-name/type slice. Record a
 /// resource-handle userdata type with [`Module::userdata`]. When the surface
-/// is complete, hand the table to the engine with [`Module::into_table`] and
-/// emit the matching neoc header with [`Module::neoc_header`].
+/// is complete, hand the table to the engine with [`Module::into_table`].
 pub struct Module<'l> {
     lua: &'l Lua,
     table: Table,
     name: String,
+    // The recorded surface; not read at runtime (see the module docs).
+    #[allow(dead_code)]
     entries: Vec<Entry>,
+    #[allow(dead_code)]
     userdata: Vec<UserDataEntry>,
+    #[allow(dead_code)]
     types: Vec<TypeEntry>,
+    #[allow(dead_code)]
     consts: Vec<ConstEntry>,
 }
 
@@ -195,7 +144,7 @@ impl<'l> Module<'l> {
     /// Creates a new module builder with an empty backing table.
     ///
     /// The `name` is the registry key the module is installed under
-    /// (for example, `"lib:base64"`) and appears in the emitted header.
+    /// (for example, `"lib:base64"`) and appears in the recorded surface.
     pub fn new(lua: &'l Lua, name: impl Into<String>) -> mlua::Result<Self> {
         Ok(Self {
             lua,
@@ -387,19 +336,19 @@ impl<'l> Module<'l> {
         Ok(self)
     }
 
-    /// Records a free-function signature for the header without registering an
+    /// Records a free-function signature without registering an
     /// implementation.
     ///
     /// The signature-only counterpart to [`Module::set`]: pair the two when a
     /// free function must be registered verbatim — because it raises an
     /// `mlua::Error` directly, bakes its own error prefix, shares a prefix
     /// helper with a userdata method, or runs under a custom or absent
-    /// `tracing` span — yet must still appear in the emitted header. `params`
+    /// `tracing` span — yet must still appear in the recorded surface. `params`
     /// is the ordered list of `(parameter_name, neoc_type)` pairs; `ret` is the
     /// neoc return type as a string (the caller passes it directly because such
     /// a function's return shape is decided in its body rather than by a single
     /// Rust return type, exactly as [`UserDataSpec::method`] does). This records
-    /// only the header surface; the runtime registration is whatever
+    /// only the recorded surface; the runtime registration is whatever
     /// [`Module::set`] installed, left untouched.
     pub fn record_fn(
         &mut self,
@@ -417,12 +366,12 @@ impl<'l> Module<'l> {
         self
     }
 
-    /// Records a resource-handle userdata type for the emitted header.
+    /// Records a resource-handle userdata type.
     ///
     /// `type_name` is the neoc type the userdata maps to (matching the Rust
     /// type name, e.g. `"Object"`). The closure receives a [`UserDataSpec`]
     /// recorder; declare each method on it with [`UserDataSpec::method`]. This
-    /// only records the neoc surface — the runtime registration of the type's
+    /// only records the surface — the runtime registration of the type's
     /// methods stays in the type's own `impl UserData`, untouched, so its
     /// behaviour is byte-identical to today.
     pub fn userdata(
@@ -445,17 +394,17 @@ impl<'l> Module<'l> {
     /// Registers a constructor-bearing type exposed as a sub-table.
     ///
     /// Models the pattern where a module surfaces a type through a sub-table
-    /// holding one or more constructors — `std:collections`'s
-    /// `Map.new()` / `Counter.new(initial)`, `std:net`'s
-    /// `TcpListener.bind(addr)`. The closure receives a [`TypeSpec`]: declare
-    /// each constructor with [`TypeSpec::constructor`] (it both registers the
-    /// function on the sub-table with mlua and records an associated `fn`) and
-    /// each instance method with [`TypeSpec::method`] (recorded for the header
-    /// only — the method's runtime registration stays in the type's own
-    /// `impl UserData`). The sub-table is created here, populated with the
-    /// constructors, and set on the module table under `type_name`, exactly as
-    /// a hand-written `t.set("Map", map_t)` would. The recorded header is
-    /// `struct <Type>; impl <Type> { <constructors> <methods> }`.
+    /// holding one or more constructors — `std:collections`'s `Map.new()` /
+    /// `Counter.new(initial)`, `std:net`'s `TcpListener.bind(addr)`. The
+    /// closure receives a [`TypeSpec`]: declare each constructor with
+    /// [`TypeSpec::constructor`] (it both registers the function on the
+    /// sub-table with mlua and records an associated `fn`) and each instance
+    /// method with [`TypeSpec::method`] (recorded only — the method's runtime
+    /// registration stays in the type's own `impl UserData`). The sub-table is
+    /// created here, populated with the constructors, and set on the module
+    /// table under `type_name`, exactly as a hand-written `t.set("Map", map_t)`
+    /// would. The recorded surface is the type, its constructors and its
+    /// methods.
     pub fn type_(
         &mut self,
         type_name: &str,
@@ -481,16 +430,14 @@ impl<'l> Module<'l> {
         Ok(self)
     }
 
-    /// Records a module-level constant for the emitted header.
+    /// Records a module-level constant.
     ///
     /// For a value bound directly on the module table whose shape the facade
     /// does not model as a function — most notably a dynamically-injected
     /// global such as `std:thread`'s `parent` / `shared`, which only exists in
     /// a spawned worker and cannot be typed beyond the opaque `Unknown`. This
-    /// only records the neoc surface (a zero-argument accessor
-    /// `fn <name>() -> <type>;` inside the `mod`, since the extern item set has
-    /// no `const`); the runtime value is set elsewhere (or injected at spawn
-    /// time), so the registration is unchanged.
+    /// only records the surface (name, type and doc); the runtime value is set
+    /// elsewhere (or injected at spawn time), so the registration is unchanged.
     pub fn const_(&mut self, name: &str, ty: &str, doc: &str) -> &mut Self {
         self.consts.push(ConstEntry {
             name: name.to_string(),
@@ -498,6 +445,18 @@ impl<'l> Module<'l> {
             doc: doc.to_string(),
         });
         self
+    }
+
+    /// Names of every declared surface item: free functions, constants and
+    /// types. Test-only: lets a test check the recording against the live
+    /// table without exposing the recorded structures.
+    #[cfg(test)]
+    pub(crate) fn declared_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.entries.iter().map(|e| e.name.clone()).collect();
+        names.extend(self.consts.iter().map(|c| c.name.clone()));
+        names.extend(self.types.iter().map(|t| t.type_name.clone()));
+        names.extend(self.userdata.iter().map(|u| u.type_name.clone()));
+        names
     }
 
     /// Consumes the builder and returns the backing Lua table for
@@ -521,72 +480,6 @@ impl<'l> Module<'l> {
     /// registration concern, not part of the trace target.
     fn target(&self) -> String {
         format!("lua::lib::{}", module_stem(&self.name))
-    }
-
-    /// Emits the `.neoc` header text for this module.
-    ///
-    /// The output is one `extern { … }` block wrapping a single
-    /// `#[extern(path = "<key>")] mod <name> { … }`, where `<key>` is the exact
-    /// registry key (`require()` path) and `<name>` is the neoc identifier
-    /// derived from the key's last segment. The module's whole surface lives
-    /// inside the `mod`: each resource-handle type as a `struct` + bodyless
-    /// `impl`, each free function as a bodyless `fn`, and each former module
-    /// constant as a zero-argument accessor `fn`. Every nested item is indented
-    /// one level deeper than its enclosing block, and the output is terminated
-    /// by a single trailing newline.
-    pub fn neoc_header(&self) -> String {
-        let mut out = String::new();
-        out.push_str(&format!(
-            "// @generated from the {} runtime module — do not edit.\n",
-            self.name
-        ));
-        out.push_str("extern {\n");
-        out.push_str(&format!("    #[extern(path = \"{}\")]\n", self.name));
-        out.push_str(&format!("    mod {} {{\n", mod_name(&self.name)));
-
-        // Resource-handle types: every method takes the implicit `self`.
-        for ud in &self.userdata {
-            out.push_str(&format!("        struct {};\n", ud.type_name));
-            out.push_str(&format!("        impl {} {{\n", ud.type_name));
-            for m in &ud.methods {
-                out.push_str(&format!("            /// {}\n", m.doc));
-                out.push_str(&format!("            {}\n", m.signature(Some("self"))));
-            }
-            out.push_str("        }\n");
-        }
-
-        // Constructor-bearing types: constructors are associated (no `self`,
-        // marked `#[extern(constructor)]`); instance methods take `self`.
-        for ty in &self.types {
-            out.push_str(&format!("        struct {};\n", ty.type_name));
-            out.push_str(&format!("        impl {} {{\n", ty.type_name));
-            for c in &ty.constructors {
-                out.push_str(&format!("            /// {}\n", c.doc));
-                out.push_str(&format!("            {}\n", c.constructor_signature()));
-            }
-            for m in &ty.methods {
-                out.push_str(&format!("            /// {}\n", m.doc));
-                out.push_str(&format!("            {}\n", m.signature(Some("self"))));
-            }
-            out.push_str("        }\n");
-        }
-
-        // Free functions.
-        for e in &self.entries {
-            out.push_str(&format!("        /// {}\n", e.doc));
-            out.push_str(&format!("        {}\n", e.signature(None)));
-        }
-
-        // Former module constants: a value bound on the module table, modelled
-        // as a zero-argument accessor `fn` (the extern item set has no `const`).
-        for c in &self.consts {
-            out.push_str(&format!("        /// {}\n", c.doc));
-            out.push_str(&format!("        fn {}() -> {};\n", c.name, neoc_ty(&c.ty)));
-        }
-
-        out.push_str("    }\n");
-        out.push_str("}\n");
-        out
     }
 }
 
@@ -631,7 +524,7 @@ impl UserDataSpec {
 ///
 /// Handed to the closure passed to [`Module::type_`]. Constructors are
 /// associated functions registered on the sub-table with mlua and recorded as
-/// `fn`s with no `self`. Methods are recorded for the header only — their
+/// `fn`s with no `self`. Methods are recorded only — their
 /// runtime registration stays in the type's `impl UserData`, untouched — and
 /// carry an implicit `self` receiver not listed in `params`.
 pub struct TypeSpec<'l, 't> {
@@ -727,7 +620,7 @@ impl TypeSpec<'_, '_> {
     ///
     /// Mirrors [`UserDataSpec::method`]: `params` lists the arguments after
     /// the implicit `self` receiver, and `ret` is the neoc return type as a
-    /// string. This only records the header surface — the method's runtime
+    /// string. This only records the surface — the method's runtime
     /// registration lives in the type's own `impl UserData`.
     pub fn method(
         &mut self,
@@ -760,16 +653,6 @@ fn own_params(params: &[(&str, &str)]) -> Vec<(String, String)> {
 /// style guide).
 fn module_stem(name: &str) -> &str {
     name.split_once(':').map_or(name, |(_, stem)| stem)
-}
-
-/// Derives the `mod` identifier emitted in a header from a registry key: the
-/// key's last segment (`"vnd:rusqlite"` → `"rusqlite"`, `"std:fs"` → `"fs"`).
-/// This is what makes the backend emit `local <name> = require("<key>")` and
-/// lower member access to `<name>.member`. Runtime keys already use
-/// identifier-safe last segments (letters, digits, underscores), so the segment
-/// is returned verbatim.
-fn mod_name(name: &str) -> &str {
-    module_stem(name)
 }
 
 // ---------------------------------------------------------------------------
@@ -953,11 +836,14 @@ mod tests {
         )
         .expect("try_func");
 
-        let header = m.neoc_header();
-        assert!(
-            header.contains("fn join(a: string, b: string) -> Result<string, string>;"),
-            "header missing multi-arg signature:\n{header}"
+        let e = &m.entries[0];
+        assert_eq!(e.name, "join");
+        assert_eq!(
+            e.params,
+            [("a".into(), "string".into()), ("b".into(), "string".into())]
         );
+        assert_eq!(e.ret, "Result<string, string>");
+        assert_eq!(e.doc, "Concatenate two strings.");
 
         let f: mlua::Function = m.into_table().get("join").expect("get fn");
         let (v, err): (String, Option<String>) = f.call(("foo", "bar")).expect("call");
@@ -965,11 +851,10 @@ mod tests {
         assert!(err.is_none());
     }
 
-    /// `userdata` records a `struct` + `impl` block inside the `mod`; each
-    /// method takes an implicit `self`, and the dynamic `LuaValue` bridge type
-    /// surfaces as the `Unknown` primitive.
+    /// `userdata` records a type with its methods; the dynamic `LuaValue`
+    /// bridge type is recorded as written.
     #[test]
-    fn userdata_emits_struct_impl() {
+    fn userdata_records_methods() {
         let lua = Lua::new();
         let mut m = Module::new(&lua, "lib:json").expect("module");
         m.userdata("Object", |o| {
@@ -977,57 +862,41 @@ mod tests {
                 .method("len", &[], "number", "Number of keys.");
         });
 
-        let header = m.neoc_header();
-        assert!(header.contains("extern {"), "{header}");
-        assert!(
-            header.contains("#[extern(path = \"lib:json\")]"),
-            "{header}"
-        );
-        assert!(header.contains("mod json {"), "{header}");
-        assert!(header.contains("struct Object;"), "{header}");
-        assert!(header.contains("impl Object {"), "{header}");
-        assert!(
-            header.contains("fn get(self, path: Unknown) -> Unknown;"),
-            "{header}"
-        );
-        assert!(header.contains("fn len(self) -> number;"), "{header}");
+        let ud = &m.userdata[0];
+        assert_eq!(ud.type_name, "Object");
+        let names: Vec<&str> = ud.methods.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, ["get", "len"]);
+        assert_eq!(ud.methods[0].ret, "LuaValue");
+        assert_eq!(ud.methods[1].ret, "number");
     }
 
     /// `type_` registers a constructor on the type's sub-table (so
-    /// `Type.new(...)` calls it) and records `struct … impl … { fn new() …
-    /// <methods> }`.
+    /// `Type.new(...)` calls it) and records the constructor and methods.
     #[test]
     fn type_registers_and_records_constructor() {
         let lua = Lua::new();
-        let table = {
-            let mut m = Module::new(&lua, "std:collections").expect("module");
-            m.type_("Map", |t| {
-                t.constructor("new", &[], "Build an empty map.", |_, _: ()| Ok("MAP"))?
-                    .method(
-                        "set",
-                        &[("k", "string"), ("v", "LuaValue")],
-                        "()",
-                        "Insert.",
-                    );
-                Ok(())
-            })
-            .expect("type_");
+        let mut m = Module::new(&lua, "std:collections").expect("module");
+        m.type_("Map", |t| {
+            t.constructor("new", &[], "Build an empty map.", |_, _: ()| Ok("MAP"))?
+                .method(
+                    "set",
+                    &[("k", "string"), ("v", "LuaValue")],
+                    "()",
+                    "Insert.",
+                );
+            Ok(())
+        })
+        .expect("type_");
 
-            let header = m.neoc_header();
-            assert!(header.contains("struct Map;"), "{header}");
-            assert!(
-                header.contains("#[extern(constructor)] fn new();"),
-                "{header}"
-            );
-            assert!(
-                header.contains("fn set(self, k: string, v: Unknown);"),
-                "{header}"
-            );
-            m.into_table()
-        };
+        let ty = &m.types[0];
+        assert_eq!(ty.type_name, "Map");
+        assert_eq!(ty.constructors[0].name, "new");
+        assert_eq!(ty.constructors[0].ret, "Map");
+        assert_eq!(ty.methods[0].name, "set");
+        assert_eq!(ty.methods[0].params.len(), 2);
 
         // The constructor is reachable as `Map.new()` and runs the body.
-        let sub: Table = table.get("Map").expect("Map sub-table");
+        let sub: Table = m.into_table().get("Map").expect("Map sub-table");
         let ctor: mlua::Function = sub.get("new").expect("new");
         let out: String = ctor.call(()).expect("call new");
         assert_eq!(out, "MAP");
@@ -1056,10 +925,9 @@ mod tests {
         })
         .expect("type_");
 
-        let header = m.neoc_header();
-        assert!(
-            header.contains("#[extern(constructor)] fn bind(addr: string);"),
-            "{header}"
+        assert_eq!(
+            m.types[0].constructors[0].ret,
+            "Result<TcpListener, string>"
         );
 
         let sub: Table = m.into_table().get("TcpListener").expect("sub");
@@ -1068,17 +936,15 @@ mod tests {
         assert_eq!(err.as_deref(), Some("TcpListener.bind: empty addr"));
     }
 
-    /// `const_` records a former module constant as a zero-argument accessor
-    /// `fn` inside the `mod`, with `LuaValue` surfaced as `Unknown` (the extern
-    /// item set has no `const`).
+    /// `const_` records a module-level constant.
     #[test]
-    fn const_records_accessor_fn() {
+    fn const_records_constant() {
         let lua = Lua::new();
         let mut m = Module::new(&lua, "std:thread").expect("module");
         m.const_("parent", "LuaValue", "Dynamic parent channel.");
 
-        let header = m.neoc_header();
-        assert!(header.contains("fn parent() -> Unknown;"), "{header}");
+        assert_eq!(m.consts[0].name, "parent");
+        assert_eq!(m.consts[0].ty, "LuaValue");
     }
 
     /// `try_async_func` records the same `Result<<T>, string>` signature as
@@ -1095,15 +961,11 @@ mod tests {
         )
         .expect("try_async_func");
 
-        let header = m.neoc_header();
-        assert!(
-            header.contains("fn open(url: string) -> Result<string, string>;"),
-            "{header}"
-        );
+        assert_eq!(m.entries[0].ret, "Result<string, string>");
     }
 
     /// `set` + `record_fn` registers a verbatim implementation and records its
-    /// header signature without the facade touching the body — the path for
+    /// signature without the facade touching the body — the path for
     /// functions that raise or bake their own prefix.
     #[test]
     fn record_fn_records_signature_for_verbatim_set() {
@@ -1115,11 +977,8 @@ mod tests {
         m.set("bump", raw).expect("set");
         m.record_fn("bump", &[("n", "number")], "number", "Increments by one.");
 
-        let header = m.neoc_header();
-        assert!(
-            header.contains("    fn bump(n: number) -> number;"),
-            "{header}"
-        );
+        assert_eq!(m.declared_names(), ["bump"]);
+        assert_eq!(m.entries[0].ret, "number");
 
         // The verbatim implementation is what actually runs.
         let bump: mlua::Function = m.into_table().get("bump").expect("bump fn");

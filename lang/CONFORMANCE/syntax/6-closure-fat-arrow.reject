@@ -1,4 +1,0 @@
-// SYNTAX.md §6.6: closures are `|x| body`; there is no `=>` arrow-function form.
-fn f() {
-    let g = (x) => x + 1;
-}

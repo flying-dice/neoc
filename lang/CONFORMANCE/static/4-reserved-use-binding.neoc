@@ -1,3 +1,0 @@
-// STATIC.md §4.3 (D-NAME-RESERVED): a `use` binds its alias at module scope;
-// aliased `__debug` it would shadow the derive helper every `debug` calls.
-use util::shout as __debug;

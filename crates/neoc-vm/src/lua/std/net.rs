@@ -41,9 +41,10 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// through [`crate::lua::facade::TypeSpec::try_constructor`], which opens the
 /// `"TcpListener.bind"` span at `lua::lib::net` and marshals the
 /// `(value, error)` idiom with the `"TcpListener.bind"` error prefix — exactly
-/// as the hand-written `#[instrument(name = "TcpListener.bind", target =
-/// "lua::lib::net")]` registration did. The `Listener` (`addr`) method keeps
-/// its own `impl UserData` and is recorded here for the header.
+/// as the hand-written
+/// `#[instrument(name = "TcpListener.bind", target = "lua::lib::net")]`
+/// registration did. The `Listener` (`addr`) method keeps its own
+/// `impl UserData` and is recorded here.
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "std:net")?;
 

@@ -33,11 +33,11 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// `mlua::Error` from the prefs-table coercion (`prefs.get::<Option<String>>`)
 /// *as a raise*, not into the channel — a shape `try_func` cannot model — so it
 /// is registered verbatim with [`crate::lua::facade::Module::set`], keeping its
-/// `#[instrument]` span and `mime.to_extension` error prefix, and recorded for
-/// the header with [`crate::lua::facade::Module::record_fn`]. All three keep
-/// their `(value, error)` shape, `mime.<fn>` error prefix, exact error
-/// suffixes, and `lua::lib::mime` span byte-identical to the hand-written
-/// registration this replaces.
+/// `#[instrument]` span and `mime.to_extension` error prefix, and recorded with
+/// [`crate::lua::facade::Module::record_fn`]. All three keep their
+/// `(value, error)` shape, `mime.<fn>` error prefix, exact error suffixes, and
+/// `lua::lib::mime` span byte-identical to the hand-written registration this
+/// replaces.
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:mime")?;
     m.try_func(

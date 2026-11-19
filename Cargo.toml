@@ -11,22 +11,8 @@ repository = "https://github.com/flying-dice/neoc"
 
 [workspace.dependencies]
 neoc-vm = { path = "crates/neoc-vm" }
-neoc-ast = { path = "crates/neoc-ast" }
-neoc-autosql = { path = "crates/neoc-autosql" }
-neoc-grammar = { path = "crates/neoc-grammar" }
-neoc-parser = { path = "crates/neoc-parser" }
-neoc-types = { path = "crates/neoc-types" }
-neoc-macros = { path = "crates/neoc-macros" }
-neoc-codegen-lua = { path = "crates/neoc-codegen-lua" }
-neoc-compiler = { path = "crates/neoc-compiler" }
-neoc-fmt = { path = "crates/neoc-fmt" }
-neoc-lsp = { path = "crates/neoc-lsp" }
-tree-sitter = "0.25"
-tree-sitter-language = "0.1"
 
 [workspace.lints.rust]
-# `deny` not `forbid` so the one FFI binding in neoc-grammar can opt in with a
-# documented `#![allow(unsafe_code)]`. Every other crate stays unsafe-free.
 unsafe_code = "deny"
 unused_must_use = "deny"
 

@@ -1,99 +1,82 @@
 Feature: CLI
 
-  The `neoc` binary drives both halves of the toolchain. `check` parses and
-  type-checks without emitting; `build` transpiles a `.neoc` entry to Lua (the
-  default target) next to the source; `run --eval` transpiles and executes an
-  inline snippet
-  in-process. Diagnostics speak neoc — `<path>: <stage>: <message>`, where the
-  stage is `parse`, `type`, or `emit` — never the host language. A clean program
-  exits 0; anything that fails to compile, a path that matches nothing, or an
-  unknown subcommand exits non-zero.
+  The `neoc` binary runs Lua. `run` executes one or more `.lua` scripts (globs
+  expand) or an inline `--eval` snippet in the runtime (unsafe Lua globals
+  stripped, only registered modules load; not a security boundary). A clean
+  script exits 0; a script that faults, a path that matches nothing, a `.neoc`
+  source file or an unknown subcommand exits non-zero.
 
-  Scenario: check accepts a well-formed program
-    Given a file "ok.neoc" with:
+  Scenario: run executes a Lua script
+    Given a file "hello.lua" with:
       """
-      extern { fn println(n: number); }
-      fn main() {
-        println(1 + 2);
-      }
+      print("hello from lua")
       """
-    When I run "neoc check ok.neoc"
+    When I run "neoc run hello.lua"
     Then it exits successfully
-
-  Scenario: check writes no output next to the source
-    Given a file "ok.neoc" with:
-      """
-      extern { fn println(n: number); }
-      fn main() {
-        println(1 + 2);
-      }
-      """
-    When I run "neoc check ok.neoc"
-    Then it exits successfully
-    And no file "ok.lua" exists
-
-  Scenario: build transpiles a clean program to Lua next to the source
-    Given a file "foo.neoc" with:
-      """
-      extern { fn println(n: number); }
-      fn main() {
-        println(1 + 2);
-      }
-      """
-    When I run "neoc build foo.neoc"
-    Then it exits successfully
-    And a non-empty file "foo.lua" exists
+    And stdout contains "hello from lua"
 
   Scenario: run --eval executes an inline snippet
-    When I run "neoc run -e fn main() -> number { 1 + 2 }"
+    When I run "neoc run -e print(1 + 2)"
     Then it exits successfully
+    And stdout contains "3"
+
+  Scenario: run reports a passing test file
+    Given a file "ok.test.lua" with:
+      """
+      local t = require("lib:test")
+      t.test("adds", function()
+        t.expect(1 + 2).toBe(3)
+      end)
+      """
+    When I run "neoc run ok.test.lua"
+    Then it exits successfully
+    And stdout contains "1 passed"
 
   @chaos
-  Scenario: check rejects a type error with a neoc diagnostic
-    Given a file "bad.neoc" with:
+  Scenario: run reports a failing test file and exits non-zero
+    Given a file "bad.test.lua" with:
       """
-      fn main() {
-        let x: string = 42;
-      }
+      local t = require("lib:test")
+      t.test("fails", function()
+        t.expect(1).toBe(2)
+      end)
       """
-    When I run "neoc check bad.neoc"
+    When I run "neoc run bad.test.lua"
     Then it exits with an error
-    And stderr contains "bad.neoc"
-    And stderr contains "type:"
+    And stdout contains "1 failed"
 
   @chaos
-  Scenario: check rejects a parse error and names the file
-    Given a file "broken.neoc" with:
+  Scenario: a script fault names the script
+    Given a file "boom.lua" with:
       """
-      fn main( {
+      local n = explode()
       """
-    When I run "neoc check broken.neoc"
+    When I run "neoc run boom.lua"
     Then it exits with an error
-    And stderr contains "broken.neoc"
+    And stderr contains "boom.lua"
 
   @chaos
-  Scenario: build skips emitting Lua when the program has a diagnostic
-    Given a file "bad.neoc" with:
+  Scenario: a .neoc path is refused with a plain message
+    Given a file "old.neoc" with:
       """
-      fn main( {
+      fn main() {}
       """
-    When I run "neoc build bad.neoc"
+    When I run "neoc run old.neoc"
     Then it exits with an error
-    And no file "bad.lua" exists
+    And stderr contains "runs Lua (`.lua`) scripts only"
 
   @chaos
   Scenario: a glob that matches nothing is reported, not silently ignored
-    When I run "neoc check no-such-*.neoc"
+    When I run "neoc run no-such-*.lua"
     Then it exits with an error
-    And stderr contains "no files matched"
+    And stderr contains "no matches for pattern"
+
+  @chaos
+  Scenario: a removed compiler subcommand is refused
+    When I run "neoc build main.neoc"
+    Then it exits with an error
 
   @chaos
   Scenario: an unknown subcommand is refused
     When I run "neoc frobnicate"
     Then it exits with an error
-
-  @chaos
-  Scenario: run --eval surfaces a type error against the eval chunk
-    When I run "neoc run --eval fn main() { let x: string = 42; }"
-    Then it exits with an error
-    And stderr contains "<eval>: type:"

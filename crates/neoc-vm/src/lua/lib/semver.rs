@@ -35,7 +35,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// path could not reproduce), and each flat function carries its own
 /// `#[instrument]` span plus a baked `"semver.<fn>: "` prefix built through
 /// `err` / `ok`. The `VersionHandle` / `VersionReqHandle` userdata keep their
-/// own `impl UserData` and are recorded here for the header via
+/// own `impl UserData` and are recorded here via
 /// [`crate::lua::facade::Module::userdata`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:semver")?;

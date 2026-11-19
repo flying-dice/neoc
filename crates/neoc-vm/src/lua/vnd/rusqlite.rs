@@ -114,10 +114,10 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// `#[instrument(name = "rusqlite.open", target = "lua::lib::rusqlite")]`
 /// attribute and bakes the `rusqlite.open` error prefix — routing through
 /// `try_func` would add a second span and double the prefix. Its signature is
-/// recorded for the header via [`crate::lua::facade::Module::record_fn`]. The
-/// `Database` and `Statement` userdata types keep their own `impl UserData`
-/// (methods, error prefixes, and the `rusqlite.statement.*` op tags unchanged)
-/// and are recorded for the header via [`crate::lua::facade::Module::userdata`].
+/// recorded via [`crate::lua::facade::Module::record_fn`]. The `Database` and
+/// `Statement` userdata types keep their own `impl UserData` (methods, error
+/// prefixes, and the `rusqlite.statement.*` op tags unchanged) and are recorded
+/// via [`crate::lua::facade::Module::userdata`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "vnd:rusqlite")?;
 

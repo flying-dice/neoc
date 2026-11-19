@@ -1,9 +1,0 @@
-// SYNTAX.md §7: struct patterns with a field sub-pattern, a field binding, and
-// a `..` rest.
-struct Point { x: number, y: number, z: number }
-fn f(p: Point) -> number {
-    match p {
-        Point { x: 0, y, .. } => y,
-        Point { x, .. } => x,
-    }
-}

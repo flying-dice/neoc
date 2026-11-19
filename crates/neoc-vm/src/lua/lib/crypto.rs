@@ -19,10 +19,10 @@
 //! ```
 //!
 //! `algo` is first to match `hash.hash` / `hmac.hmac`. The remaining order
-//! matches the Node / Go / Java / .NET / Rust consensus (`key, nonce, msg,
-//! aad`). Output is raw bytes (the encrypted message *concatenated with the
-//! 16-byte auth tag*), per the AEAD libraries we delegate to; hex / base64
-//! conversion belongs in `lib:hex` / `lib:base64`.
+//! matches the Node / Go / Java / .NET / Rust consensus
+//! (`key, nonce, msg, aad`). Output is raw bytes (the encrypted message
+//! *concatenated with the 16-byte auth tag*), per the AEAD libraries we
+//! delegate to; hex / base64 conversion belongs in `lib:hex` / `lib:base64`.
 //!
 //! ## Nonce is explicit, never derived
 //!
@@ -181,11 +181,11 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 ///
 /// `encrypt` and `decrypt` are a *mixed* raise-plus-channel shape: a validation
 /// or auth failure flows to the `(value, error)` channel via
-/// [`crate::lua::sandbox::err`], but a `lua.create_string` failure on the output
-/// bytes raises an `mlua::Error` directly (the bare `?`) — a mix `try_func`
-/// cannot model — so each is set verbatim with
+/// [`crate::lua::sandbox::err`], but a `lua.create_string` failure on the
+/// output bytes raises an `mlua::Error` directly (the bare `?`) — a mix
+/// `try_func` cannot model — so each is set verbatim with
 /// [`crate::lua::facade::Module::set`] (keeping its `crypto.<fn>` span and
-/// channel prefix) and recorded for the header with
+/// channel prefix) and recorded with
 /// [`crate::lua::facade::Module::record_fn`], exactly as `lib:base64`'s
 /// `decode*` functions are. `algorithms` builds a Lua table — there is no
 /// `NeocType` for `Vec`, and it carried no span in the hand-written form, so

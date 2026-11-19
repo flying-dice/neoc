@@ -1,7 +1,0 @@
-// STATIC.md §2: an item statement must not be generic.
-fn main() {
-    fn id<T>(x: T) -> T {
-        x
-    }
-    let a = id(1);
-}

@@ -1,5 +1,0 @@
-// SYNTAX.md §5: neoc's host seam is a bare `extern { ... }` block; there is no
-// ABI string form (`extern "C"`).
-extern "C" {
-    fn now() -> number;
-}

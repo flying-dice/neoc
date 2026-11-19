@@ -1,8 +1,0 @@
-// STATIC.md §3.4: a call through `Source<number>` types its result as `number`.
-trait Source<T> {
-    fn next(self) -> T;
-}
-
-fn pull(source: Source<number>) -> string {
-    source.next()
-}

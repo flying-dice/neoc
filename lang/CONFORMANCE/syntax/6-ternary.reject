@@ -1,5 +1,0 @@
-// SYNTAX.md §6: neoc has no ternary `? :`. Conditional values use `if`.
-fn f(n: number) -> number {
-    let x = n > 0 ? 1 : 0;
-    x
-}

@@ -24,7 +24,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// bytes raises an `mlua::Error` directly (the bare `?`). `try_func` cannot
 /// model that mix, so each `decode*` is registered verbatim with
 /// [`crate::lua::facade::Module::set`] — keeping its `#[instrument]` span and
-/// `base64.decode*` channel prefix — and recorded for the header with
+/// `base64.decode*` channel prefix — and recorded with
 /// [`crate::lua::facade::Module::record_fn`]. The `(value, error)` shape, the
 /// `base64.decode*` error prefix, the raise on `create_string`, and the
 /// `lua::lib::base64` span are byte-identical to the hand-written registration

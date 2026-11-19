@@ -20,12 +20,12 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// Declares the `std:fs` surface through the facade.
 ///
 /// Every function is set verbatim with [`crate::lua::facade::Module::set`]:
-/// each already carries its own `#[instrument(name = "fs.<fn>", target =
-/// "lua::lib::fs")]` attribute, so routing through the facade's `try_func`
-/// would add a second span and break byte-identical tracing. `open` returns a
-/// `ReaderHandle` or `WriterHandle` whose type depends on the mode, so it has
-/// no single facade return type. Each function is recorded for the header via
-/// [`crate::lua::facade::Module::record_fn`].
+/// each already carries its own
+/// `#[instrument(name = "fs.<fn>", target = "lua::lib::fs")]` attribute, so
+/// routing through the facade's `try_func` would add a second span and break
+/// byte-identical tracing. `open` returns a `ReaderHandle` or `WriterHandle`
+/// whose type depends on the mode, so it has no single facade return type. Each
+/// function is recorded via [`crate::lua::facade::Module::record_fn`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "std:fs")?;
 

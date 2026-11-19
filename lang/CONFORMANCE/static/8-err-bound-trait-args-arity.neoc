@@ -1,7 +1,0 @@
-// STATIC.md §3.4: a bound applies a generic trait to exactly its declared
-// arguments — bare `Source` is an error.
-trait Source<T> {
-    fn next(self) -> T;
-}
-
-fn pull<S: Source>(s: S) {}

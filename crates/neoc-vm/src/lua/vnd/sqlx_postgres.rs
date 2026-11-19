@@ -15,18 +15,18 @@
 //! db:close()
 //! ```
 //!
-//! Strings bind as `TEXT` when valid UTF-8 and as `BYTEA` otherwise.
-//! Result columns decode as: `BOOL` → boolean, `INT2`/`INT4`/`INT8` and
+//! Strings bind as `TEXT` when valid UTF-8 and as `BYTEA` otherwise. Result
+//! columns decode as: `BOOL` → boolean, `INT2`/`INT4`/`INT8` and
 //! `FLOAT4`/`FLOAT8` → number, `BYTEA` → string, `TEXT`/`VARCHAR`/`CHAR(n)`/
-//! `NAME`/`citext` → string. Any other column type raises `unsupported column
-//! type <T>; cast to text in SQL` — e.g. `SELECT created_at::text`,
-//! `SELECT data::text` for `JSON`/`JSONB`, `SELECT id::text` for `UUID`.
+//! `NAME`/`citext` → string. Any other column type raises
+//! `unsupported column type <T>; cast to text in SQL` — e.g.
+//! `SELECT created_at::text`, `SELECT data::text` for `JSON`/`JSONB`,
+//! `SELECT id::text` for `UUID`.
 //!
 //! Postgres is strictly typed at bind time — to insert SQL `NULL` into a
 //! non-text column, prefer the `NULL` literal in SQL over passing `nil` (we
-//! bind `nil` as `Option::<i64>::None`, which the server rejects against
-//! e.g. `TEXT` columns). All other casts work as usual: `INSERT … VALUES
-//! ($1::int)`.
+//! bind `nil` as `Option::<i64>::None`, which the server rejects against e.g.
+//! `TEXT` columns). All other casts work as usual: `INSERT … VALUES ($1::int)`.
 
 use std::str::FromStr;
 use std::sync::Arc;
@@ -53,10 +53,10 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// `#[instrument(name = "sqlx_postgres.open", target = "lua::lib::sqlx_postgres")]`
 /// attribute and bakes the `sqlx_postgres.open` error prefix into its pre-built
 /// `(Value, Value)` return — routing through the facade would add a second span
-/// and double the prefix. Its signature is recorded for the header via
-/// [`crate::lua::facade::Module::record_fn`]. The `Database` userdata type keeps
-/// its own `impl UserData` (the async methods and `sqlx_postgres.*` error
-/// prefixes unchanged) and is recorded for the header via
+/// and double the prefix. Its signature is recorded via
+/// [`crate::lua::facade::Module::record_fn`]. The `Database` userdata type
+/// keeps its own `impl UserData` (the async methods and `sqlx_postgres.*` error
+/// prefixes unchanged) and is recorded via
 /// [`crate::lua::facade::Module::userdata`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "vnd:sqlx_postgres")?;
@@ -272,9 +272,10 @@ fn decode_cell(lua: &Lua, row: &PgRow, idx: usize, type_name: &str) -> mlua::Res
 }
 
 /// Decode a column whose Postgres type maps to a fixed Lua scalar. Returns
-/// `None` for any type not in this table; the caller then decodes it as
-/// text if [`is_text_type`] allows, otherwise raises. Postgres is strict about widths (INT4 via i32, FLOAT4 via f32, …);
-/// a mismatch raises a decode error rather than coercing.
+/// `None` for any type not in this table; the caller then decodes it as text if
+/// [`is_text_type`] allows, otherwise raises. Postgres is strict about widths
+/// (INT4 via i32, FLOAT4 via f32, …); a mismatch raises a decode error rather
+/// than coercing.
 fn decode_known(
     lua: &Lua,
     row: &PgRow,

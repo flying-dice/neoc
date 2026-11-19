@@ -1,3 +1,0 @@
-// SYNTAX.md §3.8: a `fn` declaration requires a block body (only `fn`s inside an
-// `extern` block and trait-required methods end in `;`).
-fn f() -> number;

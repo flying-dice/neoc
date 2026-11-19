@@ -1,5 +1,5 @@
 ---
-status: Accepted
+status: Superseded
 date: 2026-05-29
 ---
 
@@ -9,7 +9,7 @@ Date: 2026-05-29
 
 ## Status
 
-Accepted
+Superseded by [ADR 0012](/adrs/0012-drop-the-neoc-language) (NEOC-106): the codegen crates were removed with the neoc language. Preserved for history.
 
 ## Context
 

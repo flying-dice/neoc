@@ -40,11 +40,10 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// [`crate::lua::facade::Module::set`]: their hand-written constructors carry
 /// `chrono.<Type>.<ctor>`-named spans the facade's `type_` would rename to
 /// `<Type>.<ctor>`, so routing them through the facade would change the trace
-/// shape. Each type keeps its own `impl UserData` and is recorded here for the
-/// header via [`crate::lua::facade::Module::userdata`]. The three flat helpers
-/// (`now`, `utc_now`, `parse`) are routed through the facade — their
-/// `chrono.<fn>` spans match what the facade emits, so behaviour stays
-/// byte-identical.
+/// shape. Each type keeps its own `impl UserData` and is recorded here via
+/// [`crate::lua::facade::Module::userdata`]. The three flat helpers (`now`,
+/// `utc_now`, `parse`) are routed through the facade — their `chrono.<fn>`
+/// spans match what the facade emits, so behaviour stays byte-identical.
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:chrono")?;
 
@@ -79,7 +78,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     // `parse` dispatches across handle types and routes a recognition failure
     // to the `(value, error)` channel, but the chosen handle's `into_lua` (done
     // by `ok`) raises an `mlua::Error` directly — a mix `try_func` cannot model
-    // — so it too is set verbatim and recorded for the header.
+    // — so it too is set verbatim and recorded.
     m.set("now", lua.create_function(flat_now)?)?
         .set("utc_now", lua.create_function(flat_utc_now)?)?
         .set("parse", lua.create_function(flat_parse)?)?;
@@ -108,10 +107,10 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     Ok(m)
 }
 
-/// Records the five chrono userdata types' field-getters and methods for the
-/// emitted `.neoc` header. The runtime registration of each type stays in its
-/// own `impl UserData`; this only mirrors the surface so the header documents
-/// it. Fields are recorded as zero-argument accessor methods.
+/// Records the five chrono userdata types' field-getters and methods in the
+/// recorded surface. The runtime registration of each type stays in its own
+/// `impl UserData`; this only mirrors the surface.
+/// Fields are recorded as zero-argument accessor methods.
 fn record_userdata(m: &mut Module<'_>) {
     m.userdata("Date", |t| {
         t.method("year", &[], "number", "Calendar year.")

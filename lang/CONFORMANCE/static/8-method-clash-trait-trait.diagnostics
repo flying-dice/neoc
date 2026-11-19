@@ -1,1 +1,0 @@
-`impl Wave for D` gives `D` a method `hi`, but `impl Greet for D` already does; a type has one method per name

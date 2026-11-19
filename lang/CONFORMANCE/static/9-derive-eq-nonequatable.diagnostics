@@ -1,1 +1,0 @@
-deriving Eq needs field `cb` of type `F` to support equality

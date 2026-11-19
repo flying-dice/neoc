@@ -1,5 +1,0 @@
-// STATIC.md §9: `#[derive(…)]` only on a `struct` or `enum`.
-#[derive(Clone)]
-fn f() -> number {
-    1
-}

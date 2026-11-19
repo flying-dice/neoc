@@ -66,8 +66,8 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// (a raise via `?`) yet routes validation and IO failures through the
 /// `(value, error)` channel — the same mixed shape as `lib:compress`. That mix
 /// is outside `try_func`, so each function is registered verbatim with
-/// [`Module::set`] (keeping its `archive.<fn>` span + error prefix) and recorded
-/// for the header with [`Module::record_fn`].
+/// [`Module::set`] (keeping its `archive.<fn>` span + error prefix) and
+/// recorded with [`Module::record_fn`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:archive")?;
 

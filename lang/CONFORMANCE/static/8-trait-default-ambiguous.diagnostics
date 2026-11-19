@@ -1,2 +1,0 @@
-`impl A for D` inherits default method `a`, but trait `B` also gives `D` a default `a`; override `a` in the impl
-`impl B for D` inherits default method `a`, but trait `A` also gives `D` a default `a`; override `a` in the impl

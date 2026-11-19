@@ -1,7 +1,0 @@
-// SYNTAX.md §3.3: alias parameters are substituted simultaneously, so swapped
-// arguments land in the right places.
-type Swap<T, U> = fn(T) -> U;
-
-fn f<T, U>(g: Swap<U, T>, u: U) -> T {
-    g(u)
-}

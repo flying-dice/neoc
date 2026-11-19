@@ -1,1 +1,0 @@
-method `show` does not match trait `Show`: expected `fn(number) -> string`, found `fn(string) -> string`

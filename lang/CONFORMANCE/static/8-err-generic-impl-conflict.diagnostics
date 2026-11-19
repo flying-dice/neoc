@@ -1,1 +1,0 @@
-conflicting impls of `Source` for `C`: a type implements a trait at most once

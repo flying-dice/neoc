@@ -63,7 +63,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// constructor path could not reproduce), and each flat function carries its
 /// own `#[instrument]` span plus a baked `"url.<fn>: "` prefix built through
 /// `err` / `ok`. The `UrlHandle` userdata keeps its own `impl UserData` and is
-/// recorded here for the header via [`crate::lua::facade::Module::userdata`].
+/// recorded here via [`crate::lua::facade::Module::userdata`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:url")?;
 
@@ -233,7 +233,7 @@ impl UserData for UrlHandle {
         // Validate range and integer-ness here rather than leaning on mlua's
         // `FromLua<u16>` coercion. That coercion raises a raw type-conversion
         // error, which would breach the documented `(Url?, string?)` contract
-        // in `url.neoc` — every other `with_*` honours it, so this one must
+        // of the `url` module — every other `with_*` honours it, so this one must
         // too. Floats with a fractional part are rejected for the same
         // reason: `with_port(8080.5)` silently truncating to 8080 is a
         // footgun, not a feature.

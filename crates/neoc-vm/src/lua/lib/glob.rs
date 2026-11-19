@@ -26,12 +26,12 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 ///
 /// `is_match` is the one fallible flat function the facade can model and is
 /// routed through [`crate::lua::facade::Module::try_func`]. `scan` returns the
-/// `(results, errors)` dual where *both* slots can be non-nil on a partial
-/// walk — outside the facade's `(value, error)` idiom — so it is set verbatim
+/// `(results, errors)` dual where *both* slots can be non-nil on a partial walk
+/// — outside the facade's `(value, error)` idiom — so it is set verbatim
 /// (keeping its `glob.scan` span) with [`crate::lua::facade::Module::set`]. The
 /// `Glob` / `GlobSet` constructor sub-tables are also set verbatim because the
 /// hand-written constructors carried no span; the userdata types keep their own
-/// `impl UserData` and are recorded here for the header via
+/// `impl UserData` and are recorded here via
 /// [`crate::lua::facade::Module::userdata`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:glob")?;

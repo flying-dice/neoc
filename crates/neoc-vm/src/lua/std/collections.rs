@@ -39,7 +39,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// whose `new` span (`"<Type>.new"` at `lua::lib::collections`) and registered
 /// Lua surface are byte-identical to the hand-written registration this
 /// replaces; the instance methods stay in each type's `impl UserData` and are
-/// recorded here for the header only.
+/// recorded here only.
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "std:collections")?;
 

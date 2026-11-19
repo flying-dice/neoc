@@ -1,115 +1,33 @@
 # CLAUDE.md
 
 Guidance for Claude (and any LLM agent) working in the **neoc** monorepo — one
-Cargo workspace holding two halves:
+Cargo workspace holding a Lua runtime:
 
 - **Runtime** (`crates/neoc-vm`) — an embedded LuaJIT engine backed by Rust. Lua
-  scripts run in a sandboxed VM with a curated module surface (`std:*`, `lib:*`,
+  scripts run in a VM with a curated module surface (`std:*`, `lib:*`,
   `vnd:*`). The unsafe halves of the Lua standard library are stripped;
-  everything scripts need is provided through explicit modules. The `neoc`
-  binary is a thin shell over this library.
-- **Compiler** (`neoc-*` crates) — the Rust compiler for the **neoc** language.
-  neoc emits one target: `lua` (Lua 5.1 / LuaJIT, `.lua`), the default and only
-  value of `--target`. A `.lua` module is self-contained — no sidecars, no
-  runtime library.
-  The library crate (`neoc-compiler`) is what the runtime embeds; the grammar
-  lives in the `neoc-grammar` crate.
+  everything scripts need is provided through explicit modules. This is not a
+  security boundary.
+- **Binary** (`crates/neoc`) — the thin `neoc` CLI over the runtime: `run` only.
 
-One binary, `neoc`, drives both: `run` / `emit-headers` (runtime) and `build` /
-`check` / `fmt` / `lsp` (compiler).
-
----
-
-## Golden rule: no host-language leaks
-
-**The host language (Rust, today) must never leak into neoc.** A user writing
-`.neoc` should never see, hear, or need to know the compiler is written in
-Rust — and the same source must compile identically through any future
-re-implementation in another host language.
-
-Concretely:
-
-- **Diagnostics, hover, completion, error messages** speak neoc. Say
-  `Result<T, E>`, `struct`, `ext fn`, `match arm`. Never say `enum variant`,
-  `trait bound`, `Option<&str>`, `borrowed value`, `lifetime`, `Cow<'_, str>`,
-  or quote a `thiserror` Display impl verbatim.
-- **Type names in errors are neoc types.** `number`, `string`, `bool`,
-  `Result<T, E>`, user-defined `struct`s. Not `i64`, `String`, `&str`, `usize`.
-- **Spec prose is host-agnostic.** `lang/` describes the language. It may not
-  say "the parser is implemented in Rust", "we use the `tree-sitter` crate", or
-  "the type env is a `HashMap`". An author re-implementing neoc in OCaml or Zig
-  must satisfy the spec without reading a line of our Rust.
-- **`ext` / `extern "<host>"` is the only seam.** Host runtimes declare every
-  API they expose to neoc using `ext` (`ext fn`, `ext struct`, …) in `.neoc`
-  source. No magic globals, no compiler-baked-in functions, no implicit prelude
-  that isn't itself `.neoc`. If it's callable from a `.neoc` file, it has an
-  `ext` declaration somewhere — visible, type-checkable, greppable. A runtime
-  that smuggles a function in without an `ext` is broken.
-- **Only the *form* of `ext` is the language's business.** The *contents* —
-  which bindings exist, their signatures — belong to whichever runtime embeds
-  the compiler, and are not visible in the language spec or language docs.
-- **Tooling output that crosses the boundary gets translated.** When a parser
-  error originates in `tree-sitter` or a `thiserror` variant fires, the
-  LSP/CLI maps it to a neoc-shaped message first. Raw host errors are a leak — a
-  bug.
-
-Rule of thumb for any user-visible string: **would this still make sense if the
-next major version of neoc were written in OCaml?** If no, rewrite it.
-
-Rustdoc, internal panics, log lines behind `RUST_LOG`, and crate-internal error
-variants are exempt — those are for us, not for neoc users.
-
----
-
-## Spec first, stages in sync
-
-The language is defined in `lang/` and the spec wins over the impl:
-
-| File | Layer |
-| --- | --- |
-| `lang/RATIONALE.md` | why neoc exists; the choices everything refers back to |
-| `lang/NOTATION.md` | the meta-notations (EBNF, inference rules, lowering brackets) |
-| `lang/LEXICAL.md` | tokens, keywords, literals, comments |
-| `lang/SYNTAX.md` | EBNF grammar |
-| `lang/STATIC.md` | name resolution, types, well-formedness (incl. `ext` forms) |
-| `lang/DYNAMIC.md` | lowering table — neoc construct → emitted Lua 5.1 |
-| `lang/CONFORMANCE/` | executable `.neoc` + expected `.lua` pairs |
-
-Every compiler crate's tests cite a spec section. Behaviour not in the spec is
-undefined and may not be relied on by the conformance suite. When impl and spec
-disagree, **the spec wins** — fix the impl.
-
-**Language changes move through every stage together.** A new construct touches
-grammar → AST → parser → types → codegen → conformance, and a feature isn't
-"done" until each stage is updated and asserts at its own level (CST tests, AST
-tests, static-diagnostic tests, emit goldens, end-to-end run, conformance pair).
-Don't land a half-threaded feature — a parser that produces a node no emitter
-handles, or an emitter for a node the type-checker never sees, is a desync bug.
+neoc used to be a language that compiled to Lua. That is gone; the last state is
+preserved under the `neoc-lang-final` tag. Restore a path from it with
+`git checkout neoc-lang-final -- <path>`.
 
 ---
 
 ## Crate isolation
 
-The workspace splits responsibilities across crates; boundaries are enforced by
-`Cargo.toml`, not convention:
+Two crates; the boundary is enforced by `Cargo.toml`, not convention:
 
-- Every compiler crate (everything except `neoc-vm` and the `neoc` bin) carries
-  **no host-language assumptions** — no `std::fs`, `std::net`, `std::process`,
-  `tokio`, `mlua`, `hyper`, `sqlx`. The runtime host deps live in `neoc-vm`; I/O
-  lives there, in the `neoc` bin, and (over stdio) in `neoc-lsp`.
-- The pure leaf crates (`neoc-ast`, `neoc-macros`, `neoc-codegen-lua`) compile
-  for `wasm32-unknown-unknown`; CI gates them with
-  `cargo check --target wasm32-unknown-unknown -p neoc-ast -p neoc-macros -p neoc-codegen-lua`.
-  The parser graph links the tree-sitter C runtime, which doesn't cross-compile
-  to wasm32 yet — a tracked limitation, so the gate guards the leaf crates
-  where host-dependency creep would start.
-- `neoc-compiler/src/lib.rs` is the public API surface. Anything not re-exported
-  there is implementation detail and may change without a version bump. The
-  runtime embeds this crate.
+- `neoc-vm` is the library. It owns the `mlua`/`tokio` stack, the sandbox and
+  every module. It depends on no other workspace crate.
+- `neoc` is the binary. It owns the CLI tree, glob expansion, the tokio runtime
+  the engine drives on, and process exit policy. It depends on `neoc-vm`.
 
-Don't reach across crate boundaries to "shortcut" something. If a need crosses
-cleanly, lift it into the right crate's API. If it doesn't cross cleanly, the
-design is wrong — flag it.
+Don't reach across the boundary to "shortcut" something. If a need crosses
+cleanly, lift it into `neoc-vm`'s API. If it doesn't, the design is wrong —
+flag it.
 
 ---
 
@@ -118,12 +36,10 @@ design is wrong — flag it.
 ```sh
 cargo build                                          # debug build
 cargo build --release                                # release build
-cargo test --workspace                               # full suite (runtime + compiler)
-cargo run -p neoc -- run 'crates/neoc/tests/**/*.test.lua'  # Lua integration tests
-cargo run -p neoc -- emit-headers --out crates/neoc-vm/src/lua  # regenerate ext headers
-cargo bench --bench lib                              # Criterion benchmarks (lib modules)
-cargo bench --bench vnd                              # Criterion benchmarks (vnd modules)
-cargo check --target wasm32-unknown-unknown -p neoc-ast -p neoc-macros -p neoc-codegen-lua  # wasm leaf gate
+cargo test --workspace                               # Rust tests + CLI integration tests + CLI Gherkin spec
+cargo run -p neoc -- run 'crates/neoc/tests/**/*.test.lua'  # Lua integration tests (Docker suites need a daemon)
+cargo bench -p neoc-vm --features bench --bench lib  # Criterion benchmarks (lib modules)
+cargo bench -p neoc-vm --features bench --bench vnd  # Criterion benchmarks (vnd modules)
 cargo clippy --workspace --all-targets               # lint
 cargo fmt --check                                    # formatting check
 ```
@@ -135,9 +51,9 @@ cargo fmt --check                                    # formatting check
 ```
 crates/neoc/                 # the thin `neoc` binary (the only bin)
   src/
-    main.rs                  # CLI entry (run/emit-headers + compiler subcommands)
-    cli.rs                   # folded compiler subcommand tree (build/check/fmt/lsp)
-  tests/                     # Lua integration tests (*.test.lua, *.spec.lua) + cli.rs
+    main.rs                  # CLI entry: `run`, embedded-payload executables
+  tests/                     # Lua integration tests (*.test.lua, *.spec.lua),
+                             # cli.rs, cucumber.rs
 
 crates/neoc-vm/              # the LuaJIT runtime library
   src/
@@ -145,27 +61,16 @@ crates/neoc-vm/              # the LuaJIT runtime library
     errors.rs                # runtime error types (NeocError)
     lua/
       sandbox.rs             # engine construction
-      modules.rs             # module registration + headers()
+      facade.rs              # Module builder: registration, spans, (value, error), recorded signatures
+      modules.rs             # module registration + `require`
       std/                   # std:* modules (collections, fs, io, net, thread, …)
       lib/                   # lib:* modules (base64, json, test, vcr, …)
       vnd/                   # vnd:* modules (hyper, serde_json, rusqlite, sqlx_*, …)
   benches/                   # Criterion suites (lib/, vnd/)
 
-neoc-grammar                 # tree-sitter grammar (grammar.js + generated parser.c); cc-builds it
-neoc-ast                     # typed AST — pure data, span-free, PartialEq
-neoc-parser                  # CST → AST adapter; parse diagnostics
-neoc-types                   # declaration collection, inference, well-formedness, elaborate
-neoc-macros                  # built-in derives (Clone/Eq/Debug/Display)
-neoc-codegen-lua             # AST → Lua 5.1; one emit module per construct family
-neoc-compiler                # public lib API: transpile to Lua; merges per-stage diagnostics
-neoc-autosql                 # SQL schema + queries → typed .neoc data layer (neoc autosql)
-neoc-fmt                     # formatter
-neoc-lsp                     # language server (diagnostics over stdio)
-neoc-wasm                    # browser entry point
+tooling/cli/                 # Gherkin spec for the CLI, driven against the built binary
+docs/                        # documentation site (VitePress): modules, guides, ADRs, RFCs
 ```
-
-The dependency graph is acyclic; the AST is the frozen contract every compiler
-stage shares. The tree-sitter grammar lives in `crates/neoc-grammar/tree-sitter-neoc/`.
 
 ---
 
@@ -215,27 +120,17 @@ Priority order, 1 > 2 > 3 > 4:
 
 ---
 
-## Compiler: code style (Rust specifics)
+## Rust code style
 
-- **Edition 2024.** `unsafe_code` is denied workspace-wide; only `neoc-grammar`
-  opts in (one documented FFI binding). If you genuinely need `unsafe`
-  elsewhere, lift it into its own clearly named crate and explain why.
+- **Edition 2024.** `unsafe_code` is denied workspace-wide. If you genuinely need
+  `unsafe`, lift it into its own clearly named crate and explain why.
 - **Lints.** `clippy::all` + `clippy::pedantic`. CI fails on warnings
   (`RUSTFLAGS: -D warnings`). Use `#[allow(...)]` with a comment when you must.
-- **Errors.** `thiserror` for library error enums; `anyhow` only inside the CLI
-  bin. Never `unwrap()` / `expect()` in library code — return `Result`.
-- **Naming.**
-  - `walk_<construct>` — CST → AST, only in `neoc-parser`.
-  - `emit_<construct>` — AST → Lua, only in the codegen crates. Pure function.
-  - `lower_<form>` — rewrites one construct in terms of another (e.g.
-    `lower_match` → IIFE).
-  - `infer_*` / `check_*` — typing, only in `neoc-types`.
-  - `derive` — Lua for a built-in trait, only in `neoc-macros`.
+- **Errors.** `thiserror` for library error enums; the CLI bin renders them with
+  `miette`. Never `unwrap()` / `expect()` in library code — return `Result`.
 - **Tests.** Live next to the code as `#[cfg(test)] mod tests`. Integration
-  tests in `tests/` only when they truly cross crate boundaries. Every feature
-  has a corresponding entry in `lang/CONFORMANCE/`.
-- **Pure functions over methods.** Emitters and lowerings take `&Node` and
-  return `String` or a new tree. Don't mutate inputs.
+  tests in `tests/` only when they truly cross crate boundaries. Every module has
+  a Lua integration test in `crates/neoc/tests/<ns>/`.
 
 ---
 
@@ -270,7 +165,7 @@ things stay exact and complete — **never** abbreviate or stylise these:
 | API names | Exact. `#[derive(Clone)]` stays `#[derive(Clone)]`. |
 | Type signatures | Exact. Never trim a type. |
 | Error / log messages | Quote verbatim. |
-| Commands | Exact: `neoc run`, `neoc build`, `neoc check`, `neoc lsp`, `cargo check --target wasm32-unknown-unknown`. (That `--target` is a Rust build target — *not* `neoc build --target`, which selects the output language: `lua`.) |
+| Commands | Exact: `neoc run`, `cargo test --workspace`. |
 | File paths, env vars | Exact. |
 | Rustdoc (`///`) on public items | Full, normal English — see below. |
 | Legal, LICENSE, security notes | Complete and careful. |
@@ -281,7 +176,7 @@ Rule of thumb: **trim filler, never trim fact.**
 
 Two doc layers, different rules.
 
-**1. Prose docs** (guides, README body, tutorials, spec prose) → terse. Short
+**1. Prose docs** (guides, README body, tutorials) → terse. Short
 sentences, lead with the point, no ceremony.
 
 **2. Rustdoc on public items** (`///` on anything `pub`) → full, normal English.
@@ -289,20 +184,20 @@ sentences, lead with the point, no ceremony.
 complete, and grammatical. Clipped phrasing in a `# Arguments` block is bad DX.
 
 ```rust
-/// Compile a neoc source string to Lua 5.1.
+/// Encode `input` as base64 using the standard alphabet.
 ///
 /// # Arguments
 ///
-/// * `src` — the `.neoc` source text. Caller owns the buffer; the compiler
-///   does not retain a reference once this function returns.
-/// * `env` — the type environment seeded with whatever `ext` declarations
-///   should be in scope. Embedders typically build this once at startup.
+/// * `input` — the bytes to encode. Caller owns the buffer; the function does
+///   not retain a reference once it returns.
+/// * `padded` — whether to append `=` padding. Pass `false` for the unpadded
+///   form used in URLs and JWTs.
 ///
 /// # Errors
 ///
-/// Returns `Error::Parse` for syntactic problems, `Error::Type` for static
-/// errors, and `Error::Codegen` for emit-time failures (rare; usually a bug).
-pub fn transpile(src: &str, env: &TypeEnv) -> Result<CompileOutput, Error> { /* ... */ }
+/// Returns `Error::InputTooLarge` when the encoded length would overflow
+/// `usize`; this cannot happen for in-memory inputs on a 64-bit target.
+pub fn encode(input: &[u8], padded: bool) -> Result<String, Error> { /* ... */ }
 ```
 
 Prose around a code sample stays terse. The doc comment itself stays complete.
@@ -313,8 +208,8 @@ Prose around a code sample stays terse. The doc comment itself stays complete.
 
 Direct. No marketing language. Friendly error messages that help the user, never
 scold. No rabbit / spring / Bun / Easter motifs — that brand belonged to an
-earlier life of the project when it targeted TypeScript on Bun. neoc now targets
-scripting runtimes (Lua first); the voice is plain.
+earlier life of the project when it targeted TypeScript on Bun. neoc is now a
+Lua runtime; the voice is plain.
 
 ---
 
@@ -325,29 +220,26 @@ spec-compliant. Releases are cut by pushing a `vX.Y.Z` tag (see CONTRIBUTING.md)
 release notes are generated from merged PRs and commits.
 
 ```
-fix(codegen-lua): trait defaults emit a clean Lua function signature
+fix(std:fs): read_to_string reports the path in its error
 
-Previously inlined the trait's source signature verbatim, producing
-invalid Lua. Now goes through the same param-name extractor inherent
-impl methods use.
+Previously the error named only the OS cause. Now it prefixes the path
+the caller passed.
 
 Refs NEOC-42.
 ```
 
 - **Type** — one of: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`,
   `test`, `build`, `ci`, `chore`, `revert`.
-- **Scope** — optional. Compiler crates: use the name without the `neoc-`
-  prefix (`parser`, `ast`, `types`, `codegen-lua`, `macros`, `compiler`, `fmt`,
-  `lsp`, `wasm`, `grammar`, `cli`). Runtime: use the module (`std:fs`) or
-  subsystem (`install`). Cross-cutting: `workspace`, `ci`, `spec`.
+- **Scope** — optional. The binary: `cli`. Runtime: use the module (`std:fs`) or
+  subsystem (`vm`, `install`). Cross-cutting: `workspace`, `ci`.
 - **Description** — imperative, lowercase, no trailing period.
 - **Body** — optional, terse prose. Bullet what changed. Use it when the *why*
   isn't obvious from the subject.
 - **Footer** — `Refs NEOC-42`, etc.
-- **Breaking changes** — append `!` after type/scope (`feat(compiler)!:`) **and**
-  add a `BREAKING CHANGE:` footer with full, careful English. The library API in
-  `neoc-compiler/src/lib.rs` is the most user-visible surface — changes there
-  almost always warrant `!`.
+- **Breaking changes** — append `!` after type/scope (`feat(cli)!:`) **and**
+  add a `BREAKING CHANGE:` footer with full, careful English. The Lua surface of
+  a module and the CLI are the user-visible contracts — changes there almost
+  always warrant `!`.
 - One logical change per commit. If you're tempted to write "and" in the
   subject, split it.
 

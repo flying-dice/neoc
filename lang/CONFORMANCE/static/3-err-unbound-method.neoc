@@ -1,9 +1,0 @@
-// STATIC.md §3.4: a method named on a type parameter with no bound providing
-// it is an error — a bare parameter has only the methods its bounds supply.
-trait Show {
-    fn show(self) -> string;
-}
-
-fn describe<T>(x: T) -> string {
-    x.show()
-}

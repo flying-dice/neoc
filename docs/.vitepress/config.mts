@@ -210,14 +210,15 @@ export default defineConfig({
             { text: '0006 — Hidden async with sync-looking APIs', link: '/adrs/0006-hidden-async-with-sync-looking-apis' },
             { text: '0008 — lib:http static file server', link: '/adrs/0008-lib-http-static-file-server' },
             { text: '0009 — --eval / -e CLI flag', link: '/adrs/0009-eval-cli-flag' },
-            { text: '0010 — Independent codegen backends', link: '/adrs/0010-independent-codegen-backends' },
             { text: '0011 — Use LuaJIT as the embedded runtime', link: '/adrs/0011-use-luajit-as-the-embedded-runtime' },
+            { text: '0012 — Drop the neoc language', link: '/adrs/0012-drop-the-neoc-language' },
           ],
         },
         {
           text: 'Superseded',
           items: [
             { text: '0001 — Use Luau as the embedded language', link: '/adrs/0001-use-luau-as-the-embedded-language' },
+            { text: '0010 — Independent codegen backends', link: '/adrs/0010-independent-codegen-backends' },
           ],
         },
         {

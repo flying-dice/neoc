@@ -1,7 +1,0 @@
-// STATIC.md §4.3 (D-ALIAS-ARITY): an `extern` signature is held to the same
-// alias arity as any other.
-type Pair<T> = [T];
-
-extern {
-    fn g(x: Pair<number, number>);
-}

@@ -385,8 +385,8 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 
 /// Declares the `lib:cache` surface through the facade. `Cache` is a
 /// constructor-bearing type: `new` is recorded and registered on its sub-table,
-/// each method is recorded for the header while its runtime registration stays
-/// in `impl UserData for Cache`.
+/// each method is recorded while its runtime
+/// registration stays in `impl UserData for Cache`.
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:cache")?;
 

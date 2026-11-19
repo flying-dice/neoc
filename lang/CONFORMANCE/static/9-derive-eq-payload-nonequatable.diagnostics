@@ -1,1 +1,0 @@
-deriving Eq needs field `o` of type `Option<NoEq>` to support equality

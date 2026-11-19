@@ -1,7 +1,0 @@
-// STATIC.md §4.3 (D-ALIAS-ARITY): a generic `type` alias is applied to exactly
-// the type arguments it declares.
-type Pair<T> = [T];
-
-fn count(items: Pair<number, string>) -> number {
-    1
-}

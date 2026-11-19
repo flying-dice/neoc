@@ -112,10 +112,8 @@ jobs:
           test -n "$crates"
           cargo clean $(printf -- '-p %s ' $crates) $CLEAN_ARGS
       - run: cargo build
-      # Full workspace suite: runtime lib/bin tests plus the compiler's
-      # integration tests (conformance, cli, LSP). The Lua conformance trials
-      # run in-process on LuaJIT; only the Rust anchor trials are ignored when
-      # rustc is absent.
+      # Full workspace suite: runtime lib tests plus the `neoc` binary's CLI
+      # integration tests and Gherkin spec.
       - run: cargo test --workspace
       # Docker-dependent suites (sqlx_mysql, sqlx_postgres,
       # testcontainers_modules) are excluded: they need a live Docker daemon.
@@ -130,63 +128,6 @@ jobs:
             "crates/neoc/tests/vnd/serde_json.test.lua" \
             "crates/neoc/tests/vnd/serde_yaml.test.lua" \
             "crates/neoc/tests/vnd/toml.test.lua"
-
-  # Demo packages: committed packages/*/src/auto output must match `neoc build`,
-  # and every package `start` host must run under LuaJIT (scripts/check-packages.sh).
-  packages:
-    name: packages
-    if: github.event_name != 'schedule'
-    needs: [lint]
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      CLEAN_ARGS: ""
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install pinned toolchain
-        run: rustup show
-      - name: Install LuaJIT and jq
-        run: sudo apt-get update && sudo apt-get install -y luajit jq
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: packages
-          key: ${{ github.ref }}
-          save-if: true
-      - name: Clean workspace crates
-        run: |
-          crates=$(cargo tree --workspace --depth 0 --prefix none | awk 'NF {print $1}')
-          test -n "$crates"
-          cargo clean $(printf -- '-p %s ' $crates) $CLEAN_ARGS
-      - run: cargo build -p neoc
-      - run: scripts/check-packages.sh
-
-  # The pure transform crates must stay host-free so the browser build remains
-  # viable. The parser/compiler graph links the tree-sitter C runtime, which
-  # does not yet cross-compile to wasm32-unknown-unknown, so the gate guards
-  # the leaf crates, where host-dependency creep would start.
-  wasm:
-    name: wasm
-    if: github.event_name != 'schedule'
-    needs: [lint]
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      CLEAN_ARGS: --target wasm32-unknown-unknown
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install pinned toolchain
-        run: rustup show
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: wasm
-          key: ${{ github.ref }}
-          save-if: true
-      - name: Clean workspace crates
-        run: |
-          crates=$(cargo tree --workspace --depth 0 --prefix none | awk 'NF {print $1}')
-          test -n "$crates"
-          cargo clean $(printf -- '-p %s ' $crates) $CLEAN_ARGS
-      - run: cargo check --target wasm32-unknown-unknown -p neoc-ast -p neoc-macros -p neoc-codegen-lua
 
   # Criterion benches for neoc-vm. Informational only: no baseline comparison,
   # no gating. Manual dispatch or the weekly schedule, never per push/PR.
@@ -365,3 +306,4 @@ jobs:
         run: docker build -t neoc:ci .
       - name: Smoke test
         if: steps.changes.outputs.run == 'true'
+        run: docker run --rm neoc:ci --version

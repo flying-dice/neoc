@@ -1,73 +1,54 @@
 # Architecture
 
-How `neoc` is structured. The language itself is defined in `lang/` (the source of truth); this document is about the *implementation* that realises it.
+How `neoc` is structured: a LuaJIT runtime with a curated module surface (unsafe Lua globals stripped, only registered modules load; not a security boundary), and a thin binary over it.
 
-## Pipeline
+## Shape
 
 ```
-.neoc source
-   │  tree-sitter parse            crates/neoc-grammar
+neoc run script.lua
+   │  clap parse, glob expand        crates/neoc
    ▼
-CST (tree-sitter tree)
-   │  walk + adapt                 crates/neoc-parser
+engine construction (sandbox)        crates/neoc-vm  lua/sandbox.rs
+   │  strip unsafe stdlib, install `require`
    ▼
-typed AST                          crates/neoc-ast
-   │  type-check                   crates/neoc-types  → diagnostics
-   ▼
-typed AST
-   │  elaborate                    crates/neoc-types  (string `+` → Concat)
-   ▼
-elaborated AST
-   │  emit (+ derives)             crates/neoc-codegen-lua, crates/neoc-macros
-   ▼
-Lua 5.1 source (LuaJIT dialect)
+LuaJIT VM  ── require("ns:name") ──▶ std:* / lib:* / vnd:* modules
+                                     crates/neoc-vm  lua/{std,lib,vnd}/
 ```
 
-`crates/neoc-compiler` orchestrates the run (`transpile(src, target) -> CompileOutput`) and is the stable seam an embedding runtime depends on. `lua` is the only target, emitted by `neoc-codegen-lua`. Each stage is single-purpose and reads its predecessor's output without mutating it.
-
-Each emitted `.lua` module is self-contained — no runtime library, no sidecar files.
+Each script runs in its own LuaJIT VM on a tokio runtime the binary owns. There are no ambient globals: `require("namespace:name")` is the only way to a module. See [ADR 0002](docs/src/adrs/0002-strip-unsafe-lua-stdlib.md) and [ADR 0003](docs/src/adrs/0003-three-namespace-module-structure.md).
 
 ## Crates
 
 | Crate | Owns | Depends on |
 | --- | --- | --- |
-| `neoc-grammar` | holds the `tree-sitter-neoc` grammar (`grammar.js` + generated parser); `cc`-builds the parser; exposes the `LANGUAGE` binding | (C runtime) |
-| `neoc-ast` | the typed AST — pure data, span-free, `PartialEq` | — |
-| `neoc-parser` | CST → AST adapter, one walker per construct family; parse diagnostics | ast, grammar |
-| `neoc-types` | declaration collection, inference, well-formedness checks, `elaborate` | ast |
-| `neoc-macros` | built-in derives (Clone/Eq/Debug/Display), structural over the AST | ast |
-| `neoc-codegen-lua` | AST → Lua 5.1; one emit module per construct family | ast, macros |
-| `neoc-compiler` | the public lib API: `transpile` to Lua; merges per-stage diagnostics | ast, parser, types, codegen-lua, macros |
-| `neoc-autosql` | SQL schema + query files → a type-safe `.neoc` data-access layer (sqlc-style); the `neoc autosql` backend. Emits portable `.neoc`, coupled to no runtime | (sqlparser) |
-| `neoc-fmt` | formatter | ast, parser |
-| `neoc-lsp` | language server | compiler, parser |
-| `neoc-wasm` | browser entry point | compiler |
-| `neoc-vm` | the LuaJIT runtime: engine construction, script execution, `.neoc` header emission; owns the `mlua`/`tokio` stack and the `std:*`/`lib:*`/`vnd:*` modules | (runtime deps) |
-| `neoc` | the `neoc` binary: the unified `clap` tree and the folded compiler subcommands (`build`/`check`/`fmt`/`lsp`); dispatches `run`/`emit-headers` to `neoc-vm` | vm, compiler, fmt, lsp |
+| `neoc-vm` | the LuaJIT runtime library: engine construction, sandbox, `require`, script execution support; owns the `mlua`/`tokio` stack and every `std:*` / `lib:*` / `vnd:*` module | (runtime deps) |
+| `neoc` | the `neoc` binary: the `clap` tree (`run`), glob expansion, the tokio runtime, process exit policy, embedded-payload executables | vm |
 
-The dependency graph is acyclic and the AST is the frozen contract every stage shares.
+The dependency graph is acyclic and `neoc-vm` depends on no other workspace crate.
 
-## Conventions
+## Modules
 
-### Naming
-- `walk_<construct>` — CST → AST, only in `neoc-parser`.
-- `emit_<construct>` / `lower` helpers — AST → Lua, only in `neoc-codegen-lua`.
-- `infer_*` / `check_*` — typing, only in `neoc-types`.
-- `derive` — Lua for a built-in trait, only in `neoc-macros`.
+`crates/neoc-vm/src/lua/` holds one file per module, registered in `modules.rs`:
 
-### Testing — assert at every stage
-A bug must be caught at the stage that introduced it, not only end to end:
-- **CST** — `neoc-grammar` parse tests over source.
-- **AST** — `neoc-parser` tests assert the produced AST against an expected value, independent of emit.
-- **Emit** — `neoc-codegen-lua` golden tests, including **hand-built-AST → Lua** so an emitter bug shows even when the parser is wrong, plus source → Lua goldens.
-- **Static** — `neoc-types` tests assert the diagnostics on ill-typed programs and none on well-typed ones.
-- **End-to-end** — `neoc-compiler` transpiles and runs the Lua under an interpreter, asserting stdout.
-- **Conformance** — `lang/CONFORMANCE/` holds impl-agnostic `.neoc` + expected-output cases.
+- `std:*` — mirrors Rust's standard library.
+- `lib:*` — blessed gap-fillers and custom modules.
+- `vnd:*` — vendored crates, named after the upstream crate.
 
-### Modularity
-Each construct family lives in its own module in each crate (`parser/{item,ty,expr,pattern}.rs`, `codegen-lua/{lib,expr,pat}.rs`, `types/{collect,infer,env,ty,elaborate}.rs`). Adding a language feature is additive across these per-construct sites, which is what lets the work parallelise.
+`facade.rs` is the registration builder: every function gets a per-call `tracing` span and, for the fallible forms, the `(value, error)` return shape ([ADR 0005](docs/src/adrs/0005-tuple-error-convention.md)). It also records each function's signature and doc. Nothing renders that record yet; it is kept for tooling such as editor type generation.
+
+## Testing
+
+- **Rust** — `#[cfg(test)] mod tests` next to each module; `crates/neoc/tests/cli.rs` drives the built binary.
+- **Lua** — `crates/neoc/tests/<ns>/<name>.test.lua`, run with `neoc run`. Suites that need Docker (`sqlx_mysql`, `sqlx_postgres`, `testcontainers_modules`) are excluded from CI.
+- **CLI spec** — `tooling/cli/*.feature`, Gherkin driven against the built binary by `crates/neoc/tests/cucumber.rs`.
+- **Benches** — Criterion suites in `crates/neoc-vm/benches`, behind the `bench` feature.
 
 ## Boundaries (enforced)
-- The compiler crates carry no host-language assumptions: no `tokio`, `mlua`, `hyper`, no filesystem in the library path. I/O lives in the `neoc` bin and (over stdio) `neoc-lsp`.
-- The pure leaf crates (`neoc-ast`, `neoc-macros`, `neoc-codegen-lua`) build for `wasm32-unknown-unknown`; CI checks them. The parser graph links the tree-sitter C runtime, which doesn't cross-compile to wasm32 yet — a tracked limitation.
-- No host-language detail (Rust types, `tree-sitter`, crate names) appears in a user-facing diagnostic or in `lang/`. See `CLAUDE.md`'s golden rule.
+
+- Every module and every module dependency lives in `neoc-vm`. The binary uses `mlua` only for the error type a failing script surfaces and `tokio` for the runtime it drives the engine on.
+- A module's tracing target is `lua::lib::<module>` regardless of namespace.
+- `unsafe_code` is denied workspace-wide.
+
+## History
+
+neoc was also a language that compiled to Lua. NEOC-106 removed it; the last state is preserved under the `neoc-lang-final` tag. See [ADR 0012](docs/src/adrs/0012-drop-the-neoc-language.md).

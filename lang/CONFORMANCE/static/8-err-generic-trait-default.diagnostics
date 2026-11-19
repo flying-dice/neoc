@@ -1,3 +1,0 @@
-argument 1 of `feed` expects `number`, found `string`
-let binding expects `string`, found `number`
-method `feed` does not match trait `Source`: expected `fn(number) -> number`, found `fn(string) -> number`

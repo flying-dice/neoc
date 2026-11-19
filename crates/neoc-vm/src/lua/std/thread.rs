@@ -61,8 +61,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// returns the core count directly. `parent` / `shared` are dynamically
 /// injected at spawn time (nil at the top level), so they are recorded as
 /// constants via [`crate::lua::facade::Module::const_`]. The `WorkerHandle` and
-/// `Channel` userdata keep their own `impl UserData` and are recorded here for
-/// the header.
+/// `Channel` userdata keep their own `impl UserData` and are recorded here.
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "std:thread")?;
 

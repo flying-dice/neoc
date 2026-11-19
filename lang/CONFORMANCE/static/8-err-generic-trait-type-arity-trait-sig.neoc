@@ -1,9 +1,0 @@
-// STATIC.md §3.4: a generic trait in a bodyless trait method signature takes
-// exactly its declared arguments — bare `Source` is an error.
-trait Source<T> {
-    fn next(self) -> T;
-}
-
-trait Factory {
-    fn make(self) -> Source;
-}

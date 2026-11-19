@@ -1,9 +1,0 @@
-// STATIC.md §3.3 (T-STRUCT-LIT): a field expr must match the declared field type.
-struct P {
-    x: number,
-    y: number,
-}
-
-fn main() {
-    let p = P { x: 1, y: "hi" };
-}

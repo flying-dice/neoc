@@ -17,13 +17,14 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 
 /// Declares the `std:env` surface through the facade.
 ///
-/// Every function is set verbatim with [`crate::lua::facade::Module::set`]:
-/// the hand-written registration carried **no** `#[instrument]` span, so
-/// routing through the facade's `func` / `try_func` would add one and break
+/// Every function is set verbatim with [`crate::lua::facade::Module::set`]: the
+/// hand-written registration carried **no** `#[instrument]` span, so routing
+/// through the facade's `func` / `try_func` would add one and break
 /// byte-identical tracing. `home_dir` and `var` bake their own literal error
 /// messages, `args` raises `mlua::Error` directly, and the platform constants
 /// are plain string values — none fit the facade's regular paths. Each is
-/// recorded for the header via [`crate::lua::facade::Module::record_fn`] /
+/// recorded via
+/// [`crate::lua::facade::Module::record_fn`] /
 /// [`crate::lua::facade::Module::const_`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "std:env")?;

@@ -183,7 +183,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// shape the facade models. `gettempdir` is an infallible one-shot routed
 /// through [`crate::lua::facade::Module::func`]; its `tempfile.gettempdir` span
 /// matches what the facade emits. Both userdata types keep their own
-/// `impl UserData` and are recorded here for the header via
+/// `impl UserData` and are recorded here via
 /// [`crate::lua::facade::Module::userdata`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:tempfile")?;

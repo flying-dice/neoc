@@ -47,10 +47,9 @@
 //!
 //! ## Backing on `tracing`
 //!
-//! Each call also emits a `tracing::event!` at `target =
-//! "lua::lib::log"`, so any installed `tracing` subscriber can capture
-//! it. The stderr write happens unconditionally — it does not depend on a subscriber
-//! being installed.
+//! Each call also emits a `tracing::event!` at `target = "lua::lib::log"`, so
+//! any installed `tracing` subscriber can capture it. The stderr write happens
+//! unconditionally — it does not depend on a subscriber being installed.
 
 use std::collections::{BTreeSet, HashSet};
 use std::io::{self, Write};
@@ -426,9 +425,10 @@ fn now_rfc3339_millis() -> String {
     format!("{y:04}-{mo:02}-{d:02}T{h:02}:{m:02}:{s:02}.{millis:03}Z")
 }
 
-/// Hinnant's `civil_from_days` adapted to seconds. Returns `(year, month,
-/// day, hour, minute, second)` in UTC. Correct for all dates representable
-/// by an `i64` second count, including pre-1970 (negative seconds).
+/// Hinnant's `civil_from_days` adapted to seconds. Returns
+/// `(year, month, day, hour, minute, second)` in UTC. Correct for all dates
+/// representable by an `i64` second count, including pre-1970 (negative
+/// seconds).
 fn civil_from_unix(secs: i64) -> (i32, u32, u32, u32, u32, u32) {
     let days = secs.div_euclid(86_400);
     let secs_of_day = secs.rem_euclid(86_400) as u32;
@@ -496,10 +496,9 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// **no** `#[instrument]` span (each log call already emits its own
 /// `tracing::event!`), so routing through the facade's `func` would add a span
 /// and break byte-identical tracing. `new` constructs a `Logger`; the five
-/// module-level level functions delegate to a fresh default-configured
-/// instance on each call. The `Logger` userdata keeps its own `impl UserData`
-/// and is recorded here for the header via
-/// [`crate::lua::facade::Module::userdata`].
+/// module-level level functions delegate to a fresh default-configured instance
+/// on each call. The `Logger` userdata keeps its own `impl UserData` and is
+/// recorded here via [`crate::lua::facade::Module::userdata`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:log")?;
 
