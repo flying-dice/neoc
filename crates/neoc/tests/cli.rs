@@ -213,10 +213,15 @@ fn compile_bundle_runs_standalone_with_arguments() {
         "main.lua",
         "print(\"standalone:\" .. #_NEOC_ARGS .. \":\" .. table.concat(_NEOC_ARGS, \",\"))\n",
     );
+    // `bundle` writes exactly the path it is given, so name the output as the
+    // platform expects an executable.
+    let app_name = if cfg!(windows) { "app.exe" } else { "app" };
     write(
         dir.path(),
         "build.lua",
-        "local ok, err = require(\"lib:compile\").bundle({ entrypoint = \"main.lua\", output = \"app\" })\nassert(ok, err)\n",
+        &format!(
+            "local ok, err = require(\"lib:compile\").bundle({{ entrypoint = \"main.lua\", output = \"{app_name}\" }})\nassert(ok, err)\n"
+        ),
     );
 
     let build = Command::new(BIN)
@@ -231,9 +236,7 @@ fn compile_bundle_runs_standalone_with_arguments() {
         String::from_utf8_lossy(&build.stderr)
     );
 
-    let app = dir
-        .path()
-        .join(if cfg!(windows) { "app.exe" } else { "app" });
+    let app = dir.path().join(app_name);
     let out = Command::new(&app).arg("one").arg("two").output().unwrap();
     assert!(
         out.status.success(),

@@ -122,7 +122,8 @@ fn install_shutdown_handler() {
 }
 
 /// Builds the Lua engine (unsafe globals stripped, registered modules only),
-/// binding `user_args` as the `_NEOC_ARGS` global when any were supplied. Exits the process on engine-init failure.
+/// binding `user_args` as the `_NEOC_ARGS` global when any were supplied. Exits
+/// the process on engine-init failure.
 fn engine_with_args(user_args: &[String]) -> mlua::Lua {
     let engine = lua::sandbox::make_engine().unwrap_or_else(|e| {
         report_error(NeocError::EngineInit(e.to_string()));

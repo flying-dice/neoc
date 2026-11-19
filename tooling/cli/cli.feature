@@ -1,9 +1,10 @@
 Feature: CLI
 
   The `neoc` binary runs Lua. `run` executes one or more `.lua` scripts (globs
-  expand) or an inline `--eval` snippet in the sandboxed runtime. A clean script
-  exits 0; a script that faults, a path that matches nothing, a `.neoc` source
-  file or an unknown subcommand exits non-zero.
+  expand) or an inline `--eval` snippet in the runtime (unsafe Lua globals
+  stripped, only registered modules load; not a security boundary). A clean
+  script exits 0; a script that faults, a path that matches nothing, a `.neoc`
+  source file or an unknown subcommand exits non-zero.
 
   Scenario: run executes a Lua script
     Given a file "hello.lua" with:
