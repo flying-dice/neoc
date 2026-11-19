@@ -982,7 +982,7 @@ end
 
 local KEYS = {
   { id = "clear", name = "Clear", label = "AC", kind = "clear", face = "function", shortcut = "escape" },
-  { id = "negate", name = "Plus minus", label = "±", kind = "negate", face = "function" },
+  { id = "negate", name = "Change sign", label = "±", kind = "negate", face = "function" },
   { id = "percent", name = "Percent", label = "%", kind = "percent", face = "function", shortcut = "%" },
   opKey("div", "÷", "/", "Divided by"),
   digitKey("7"), digitKey("8"), digitKey("9"), opKey("mul", "×", "*", "Times"),

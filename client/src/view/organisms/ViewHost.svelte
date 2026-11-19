@@ -122,6 +122,14 @@
         t.tagName === 'INPUT' ||
         t.tagName === 'TEXTAREA' ||
         t.tagName === 'SELECT')
+    // A key focused with the keyboard is activated by Enter or Space as a button always is; a bare shortcut must not
+    // take that key away. (A key focused by a click does not match :focus-visible, so Enter still reaches a shortcut
+    // such as the Calculator's "=" after the person has been tapping.)
+    const activating =
+      (e.key === 'Enter' || e.key === ' ') &&
+      !!t?.matches?.('button, [role="button"], a[href], summary') &&
+      t.matches(':focus-visible')
+    if (activating) return
     if (view.shortcuts.dispatch(e, { apple, editable })) e.preventDefault()
   }
 </script>
@@ -137,6 +145,8 @@
   data-testid="{app}-view"
   aria-label={app}
   aria-busy={store.phase === 'opening'}
+  tabindex="-1"
+  data-window-focus
   bind:this={root}
   {onkeydown}
 >
@@ -193,6 +203,8 @@
 
 <style>
   .view {
+    /* a focus target for the shell (a window that has just opened), not a control: it needs no ring */
+    outline: none;
     position: relative;
     display: flex;
     flex-direction: column;

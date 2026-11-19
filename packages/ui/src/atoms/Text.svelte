@@ -77,7 +77,14 @@
     const ro = new ResizeObserver(measure)
     ro.observe(box)
     ro.observe(readout)
-    return () => ro.disconnect()
+    // Typing into a readout that is already as wide as its box changes the text but not the box: no resize is
+    // reported, so the digit that no longer fits would be cut off ("123,456,78…") until something else resized it.
+    const text = new MutationObserver(measure)
+    text.observe(readout, { childList: true, characterData: true, subtree: true })
+    return () => {
+      ro.disconnect()
+      text.disconnect()
+    }
   })
 </script>
 

@@ -15,7 +15,7 @@ produces and sends events back.
                                                  └─────────────────────────────────────────┘
 ```
 
-The reference apps are `apps/calculator` (a keypad window, shared state, three agent tools) and `apps/agents` (a
+The reference apps are `apps/calculator` (a keypad window, shared state, three agent tools; [its walkthrough](calculator/README.md) covers files, state, view, tools, running and testing) and `apps/agents` (a
 SQLite-backed chat list around the `ChatTranscript` component). Read them next to this page. The architecture is in
 `docs/architecture/` (`host-stack.md` for the host, `ui-system.md` for the UI protocol and the Lua API); the generated
 LuaCATS definitions of the API are in `types/generated/luals/`; the components are listed in `docs/reference/components.md`. The last two are
@@ -345,7 +345,7 @@ SQLite (`apps/agents/app.lua`).
 
 ## Adding an app
 
-1. **Create the package.** Copy `apps/calculator` to `apps/<id>` and edit `app.json` (id, name, version `0.1.0`,
+1. **Create the package.** Copy `apps/calculator` (read [its README](calculator/README.md) first) to `apps/<id>` and edit `app.json` (id, name, version `0.1.0`,
    description, icon, tint). Rewrite `app.lua`, starting with the two `require`s and `app.manifest { ... }`.
 2. **Set the window.** `window = { w, h, minW, minH }`. The minimum is the smallest size at which every control is
    fully visible and at least 44 pt (the Calculator's 320x500 is justified by the keypad: say why in a comment when

@@ -73,7 +73,7 @@
                     },
                     "props": {
                       "fill": "gray2",
-                      "label": "Plus minus",
+                      "label": "Change sign",
                       "selected": false,
                       "shape": "circle",
                       "size": "fill",
@@ -401,6 +401,16 @@
               "spacing": 2
             },
             "type": "Stack"
+          },
+          {
+            "key": "equals",
+            "on": {
+              "trigger": true
+            },
+            "props": {
+              "shortcut": "="
+            },
+            "type": "Shortcut"
           },
           {
             "key": "backspace",

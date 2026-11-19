@@ -186,6 +186,19 @@ impl Keypad {
         self
     }
 
+    /// Multiply 999999999 by itself, again and again: each `× 999999999` adds nine digits, and past 1e308 the
+    /// product is not a number any more. Stops at the error (a digit would start a new sum).
+    async fn overflow(&mut self) {
+        let big = "9 9 9 9 9 9 9 9 9";
+        self.press(&format!("{big} mul {big} eq")).await;
+        for _ in 0..40 {
+            if self.display() == "Error" {
+                break;
+            }
+            self.press(&format!("mul {big} eq")).await;
+        }
+    }
+
     async fn refresh(&mut self) {
         self.out = self.rt.render_view(&id("calculator"), "v1").await.unwrap();
     }
@@ -274,8 +287,18 @@ async fn chained_operations_run_left_to_right_and_show_each_intermediate_result(
     pad.press("3").await;
     assert_eq!((pad.display(), pad.pending()), ("3".into(), vec![]), "typing the next number clears it");
     pad.press("sub").await;
-    assert_eq!((pad.display(), pad.caption()), ("27".into(), "9 × 3".into()));
-    pad.press("7 eq").await;
+    assert_eq!(
+        (pad.display(), pad.caption()),
+        ("27".into(), "27 −".into()),
+        "the caption says what is waiting"
+    );
+    pad.press("7").await;
+    assert_eq!(
+        (pad.display(), pad.caption()),
+        ("7".into(), "27 −".into()),
+        "and keeps saying it while typing"
+    );
+    pad.press("eq").await;
     assert_eq!((pad.display(), pad.caption()), ("20".into(), "27 − 7".into()));
 
     // no precedence: 2 + 3 × 4 is (2 + 3) × 4
@@ -383,19 +406,12 @@ async fn a_result_is_shown_the_way_calculate_shows_it() {
 
 #[tokio::test]
 async fn division_by_zero_is_an_error_until_cleared() {
-    for keys in [
-        "8 div 0 eq",
-        "8 div 0 add",
-        "8 div 0 mul 2 eq",
-        "0 div 0 eq",
-        "5 add 3 div 0 eq",
-        "5 add 3 div 0 add",
-    ] {
+    for keys in ["8 div 0 eq", "8 div 0 add", "0 div 0 eq", "5 add 3 div 0 eq", "5 add 3 div 0 add"] {
         let mut pad = Keypad::open().await;
         pad.press(keys).await;
         assert_eq!(pad.display(), "Error", "{keys}");
-        // keys other than clear are ignored while the error shows
-        pad.press("5 add 5 eq negate percent back").await;
+        // keys with nothing to work on are ignored while the error shows
+        pad.press("add sub mul div eq negate percent back").await;
         assert_eq!(pad.display(), "Error", "{keys}: ignored");
         assert_eq!(pad.clear_title(), "AC", "{keys}");
         pad.press("clear").await;
@@ -409,13 +425,8 @@ async fn division_by_zero_is_an_error_until_cleared() {
 
 #[tokio::test]
 async fn a_result_too_large_for_any_display_is_an_error_not_inf() {
-    let big = "9 9 9 9 9 9 9 9 9";
     let mut pad = Keypad::open().await;
-    // each `× 999999999` adds nine digits; past 1e308 the product is not a number any more
-    pad.press(&format!("{big} mul {big} eq")).await;
-    for _ in 0..40 {
-        pad.press(&format!("mul {big} eq")).await;
-    }
+    pad.overflow().await;
     assert_eq!(pad.display(), "Error");
     pad.press("clear").await;
     assert_eq!(pad.display(), "0");
@@ -487,4 +498,120 @@ async fn the_agent_tool_and_the_keypad_share_one_calculator() {
     assert_eq!(pad.display(), "441");
     pad.press("7").await;
     assert_eq!(pad.display(), "7");
+}
+
+#[tokio::test]
+async fn a_digit_after_an_error_starts_a_new_sum() {
+    for (keys, shown) in [
+        ("8 div 0 eq 5", "5"),
+        ("8 div 0 eq dot", "0."),
+        ("8 div 0 eq 5 add 4 eq", "9"),
+        ("8 div 0 add 7 mul 2 eq", "14"),
+    ] {
+        let mut pad = Keypad::open().await;
+        pad.press(keys).await;
+        assert_eq!(pad.display(), shown, "{keys}");
+    }
+    let mut pad = Keypad::open().await;
+    pad.press("8 div 0 eq 5").await;
+    assert_eq!((pad.caption(), pad.pending()), (String::new(), vec![]), "nothing of the failed sum is left");
+}
+
+#[tokio::test]
+async fn the_pending_operator_is_in_the_caption_and_on_its_key() {
+    let mut pad = Keypad::open().await;
+    pad.press("2 add").await;
+    assert_eq!((pad.caption(), pad.pending()), ("2 +".into(), vec!["add"]));
+    pad.press("mul").await;
+    assert_eq!((pad.caption(), pad.pending()), ("2 ×".into(), vec!["mul"]), "changing your mind");
+    pad.press("3 sub").await;
+    assert_eq!((pad.caption(), pad.pending()), ("6 −".into(), vec!["sub"]));
+    pad.press("eq").await;
+    assert_eq!((pad.display(), pad.caption(), pad.pending()), ("0".into(), "6 − 6".into(), vec![]));
+}
+
+// ---- error states: what the person and the agent are told --------------------------------------------------
+
+#[tokio::test]
+async fn a_failed_calculation_says_why_under_the_error() {
+    for keys in ["8 div 0 eq", "8 div 0 add", "0 div 0 eq"] {
+        let mut pad = Keypad::open().await;
+        pad.press(keys).await;
+        assert_eq!((pad.display(), pad.caption()), ("Error".into(), "Can't divide by zero".into()), "{keys}");
+    }
+    let mut pad = Keypad::open().await;
+    pad.overflow().await;
+    assert_eq!((pad.display(), pad.caption()), ("Error".into(), "Result too large".into()));
+    // AC clears the reason with the error
+    pad.press("clear").await;
+    assert_eq!((pad.display(), pad.caption()), ("0".into(), String::new()));
+}
+
+#[tokio::test]
+async fn the_error_reason_is_announced_but_an_ordinary_caption_is_not() {
+    let live = |pad: &Keypad| find(&pad.out.tree, "caption").and_then(|n| n.props.get("live")).cloned();
+    let mut pad = Keypad::open().await;
+    pad.press("1 2 add 7 eq").await;
+    assert_eq!(live(&pad), None, "a caption changes on every sum");
+    pad.press("div 0 eq").await;
+    assert_eq!(live(&pad), Some(json!("polite")));
+}
+
+#[tokio::test]
+async fn the_equals_sign_on_the_keyboard_is_equals() {
+    let mut pad = Keypad::open().await;
+    pad.press("6 mul 7").await;
+    pad.fire("equals", "trigger").await;
+    assert_eq!((pad.display(), pad.caption()), ("42".into(), "6 × 7".into()));
+}
+
+/// An agent gets the reason as a plain sentence, not a source position.
+#[tokio::test]
+async fn calculate_rejects_what_cannot_be_shown_with_a_plain_reason() {
+    let rt = calculator().await;
+    for (expression, reason) in [
+        ("1 / 0", "Can't divide by zero"),
+        ("5 % 0", "Can't divide by zero"),
+        ("10 ^ 400", "Result too large"),
+        ("(-8) ^ 0.5", "Not a real number"),
+        ("(1 + 2", "Mismatched parentheses"),
+        ("1 +", "Malformed expression"),
+        ("", "Empty expression"),
+        ("2 $ 3", "Unexpected character \"$\""),
+    ] {
+        let err = tool(&rt, "calculate", json!({ "expression": expression }), agent_ctx(0))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(reason), "{expression:?}: {err}");
+        assert!(!err.contains("calc.lua"), "{expression:?} leaks a source position: {err}");
+    }
+    let history = tool(&rt, "history", json!({}), agent_ctx(0)).await.unwrap();
+    assert_eq!(history["entries"], json!([]), "a failed calculation is not history");
+}
+
+#[tokio::test]
+async fn a_failed_show_on_calculator_leaves_the_calculator_alone() {
+    let mut pad = Keypad::open().await;
+    pad.press("1 2 add 3 eq").await;
+    let attempt = tool(&pad.rt, "show_on_calculator", json!({ "expression": "1 / 0" }), agent_ctx(0)).await;
+    assert!(attempt.is_err());
+    pad.refresh().await;
+    assert_eq!((pad.display(), pad.caption()), ("15".into(), "12 + 3".into()));
+}
+
+#[tokio::test]
+async fn history_is_newest_first_capped_and_limited_by_the_caller() {
+    let rt = calculator().await;
+    for n in 1..=55 {
+        tool(&rt, "calculate", json!({ "expression": format!("{n} + 0") }), agent_ctx(0)).await.unwrap();
+    }
+    let ten = tool(&rt, "history", json!({}), agent_ctx(0)).await.unwrap();
+    assert_eq!(ten["entries"].as_array().unwrap().len(), 10, "the default limit");
+    assert_eq!(ten["entries"][0], json!({ "expression": "55 + 0", "result": 55 }));
+    let all = tool(&rt, "history", json!({ "limit": 50 }), agent_ctx(0)).await.unwrap();
+    assert_eq!(all["entries"].as_array().unwrap().len(), 50, "the app keeps the newest 50");
+    assert_eq!(all["entries"][49]["result"], 6);
+    assert!(tool(&rt, "history", json!({ "limit": 0 }), agent_ctx(0)).await.is_err(), "bounds are enforced");
+    assert!(tool(&rt, "history", json!({ "limit": 51 }), agent_ctx(0)).await.is_err());
 }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { parseShortcut, ShortcutRegistry, type KeyEventLike } from './shortcuts'
+import { ariaShortcut, parseShortcut, ShortcutRegistry, type KeyEventLike } from './shortcuts'
 
 const key = (k: string, mods: Partial<KeyEventLike> = {}): KeyEventLike => ({
   key: k,
@@ -29,6 +29,32 @@ describe('shortcut parsing', () => {
     expect(parseShortcut('esc')?.key).toBe('escape')
     expect(parseShortcut('')).toBeNull()
     expect(parseShortcut('hyper+x')).toBeNull()
+  })
+  test('"+" is a key as well as the separator', () => {
+    expect(parseShortcut('+')?.key).toBe('+')
+    expect(parseShortcut('cmd++')).toEqual({
+      key: '+',
+      cmd: true,
+      ctrl: false,
+      alt: false,
+      shift: false
+    })
+    expect(parseShortcut('shift+')).toEqual({
+      key: '+',
+      cmd: false,
+      ctrl: false,
+      alt: false,
+      shift: true
+    })
+    expect(parseShortcut('a+')).toBeNull() // "a" is not a modifier
+    expect(ariaShortcut('+')).toBe('+')
+  })
+  test('a bare "+" fires on the Plus key', () => {
+    const r = new ShortcutRegistry()
+    let hits = 0
+    r.register('+', () => hits++)
+    expect(r.dispatch(key('+', { shiftKey: true }), { apple: true, editable: false })).toBe(true)
+    expect(hits).toBe(1)
   })
 })
 

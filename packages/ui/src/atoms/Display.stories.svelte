@@ -59,6 +59,31 @@
 </Story>
 
 <Story
+  name="Display readout follows its text"
+  asChild
+  play={async ({ canvasElement }) => {
+    const fit = within(canvasElement).getByTestId('readout-typed').querySelector<HTMLElement>('.fit-text')!
+    await expect(parseFloat(getComputedStyle(fit).fontSize)).toBe(56)
+    // Typing: the text changes while the readout is already as wide as its box allows, then must shrink to fit.
+    for (const text of ['12', '123,456', '123,456,789']) {
+      fit.textContent = text
+      await waitFor(() => {
+        // the glyphs' own width (a Range, so sub-pixel), not scrollWidth, which rounds: an overshoot of half a pixel
+        // is already an ellipsis
+        const range = document.createRange()
+        range.selectNodeContents(fit)
+        expect(range.getBoundingClientRect().width).toBeLessThanOrEqual(fit.getBoundingClientRect().width)
+      })
+    }
+    await expect(parseFloat(getComputedStyle(fit).fontSize)).toBeLessThan(56)
+  }}
+>
+  <div style="width:150px;background:#000;color:#fff;padding:12px;border-radius:var(--radius-md)">
+    <div data-testid="readout-typed"><Text style="display" color="inherit" fit>0</Text></div>
+  </div>
+</Story>
+
+<Story
   name="Display readout, longer than it can shrink"
   asChild
   play={async ({ canvasElement }) => {

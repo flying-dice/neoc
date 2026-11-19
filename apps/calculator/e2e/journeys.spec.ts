@@ -33,6 +33,7 @@ test.describe('Calculator journeys', () => {
     await page.getByTestId('dock-calculator').click()
     await expect(windowOf(page, 'calculator')).toBeVisible()
     await expect(page.getByTestId('calculator-view')).toBeVisible()
+    await expect(page.getByTestId('calculator-view'), 'a window opened from the Dock takes the keys').toBeFocused()
     await clearCalculator(page)
     for (const k of ['1', '2', 'add', '7', 'eq']) await page.getByTestId(key(k)).click()
     await expect(page.getByTestId(display)).toHaveText('19')
@@ -41,22 +42,42 @@ test.describe('Calculator journeys', () => {
 
   test('J2: type a calculation with the keyboard', async ({ page }) => {
     await openCalculator(page)
-    await page.getByTestId(key('clear')).focus()
+    await page.getByTestId('calculator-view').focus() // the window itself: its shortcuts work without a key focused
     await page.keyboard.type('250*0.18')
     await page.keyboard.press('Enter')
     await expect(page.getByTestId(display)).toHaveText('45')
     await page.keyboard.press('Escape')
     await page.keyboard.press('Escape')
     await expect(page.getByTestId(display)).toHaveText('0')
+
+    // the other keys of the pad: + and = (Enter is the pad's own), Backspace for a slip of the finger
+    await page.keyboard.type('12+79')
+    await page.keyboard.press('Backspace')
+    await page.keyboard.type('=')
+    await expect(page.getByTestId(display)).toHaveText('19')
+    await expect(page.getByTestId(caption)).toHaveText('12 + 7')
+
+    // a key reached with Tab is pressed by Enter, as any button is (Enter is "=" only while no key is focused that way)
+    await clearCalculator(page)
+    await page.getByTestId('calculator-view').focus()
+    for (let i = 0; i < 5; i++) await page.keyboard.press('Tab') // AC, ±, %, ÷, 7
+    await expect(page.getByTestId(key('7'))).toBeFocused()
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId(display)).toHaveText('7')
   })
 
   test('J3: chain operations; the pending operator is highlighted until the next number', async ({ page }) => {
     await openCalculator(page)
+    const fillOf = (k: string) => page.getByTestId(key(k)).evaluate((el) => getComputedStyle(el).backgroundColor)
+    const idle = await fillOf('mul')
     await page.getByTestId(key('9')).click()
     await page.getByTestId(key('mul')).click()
     await expect(page.getByTestId(key('mul'))).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.getByTestId(caption)).toHaveText('9 ×') // and said in words
+    await expect.poll(() => fillOf('mul'), 'the pending key looks different, not only aria-pressed').not.toBe(idle)
     await page.getByTestId(key('3')).click()
     await expect(page.getByTestId(key('mul'))).toHaveAttribute('aria-pressed', 'false')
+    await expect.poll(() => fillOf('mul')).toBe(idle)
     await page.getByTestId(key('sub')).click()
     await expect(page.getByTestId(display)).toHaveText('27')
     await page.getByTestId(key('7')).click()
@@ -68,10 +89,18 @@ test.describe('Calculator journeys', () => {
     await openCalculator(page)
     for (const k of ['8', 'div', '0', 'eq']) await page.getByTestId(key(k)).click()
     await expect(page.getByTestId(display)).toHaveText('Error')
+    await expect(page.getByTestId(caption)).toHaveText("Can't divide by zero")
+    await page.getByTestId(key('add')).click() // an operator has nothing to work on while the error shows
+    await expect(page.getByTestId(display)).toHaveText('Error')
     await page.getByTestId(key('clear')).click()
     await expect(page.getByTestId(display)).toHaveText('0')
+    await expect(page.getByTestId(caption)).toHaveText('')
     for (const k of ['4', 'add', '4', 'eq']) await page.getByTestId(key(k)).click()
     await expect(page.getByTestId(display)).toHaveText('8')
+
+    // a digit is the other way out: it starts a new sum, as on an iPad
+    for (const k of ['5', 'div', '0', 'eq', '6', 'add', '1', 'eq']) await page.getByTestId(key(k)).click()
+    await expect(page.getByTestId(display)).toHaveText('7')
   })
 
   test('J5: an agent puts a result on the Calculator and the open window follows', async ({ page }) => {
@@ -123,11 +152,31 @@ test.describe('Calculator journeys', () => {
     expect(Math.round(win.width), 'the manifest minimum width').toBe(320)
     expect(Math.round(win.height), 'the manifest minimum height').toBe(500)
     await expectNoOverflow(page.getByTestId('window-calculator-content'))
+
+    // dragging the resize corner leaves the keyboard with the calculator, not with the window frame
+    await page.keyboard.type('5+5=')
+    await expect(page.getByTestId(display)).toHaveText('10')
+    await clearCalculator(page)
     for (const k of ['5', 'add', '5', 'eq']) {
       const box = (await page.getByTestId(key(k)).boundingBox())!
       expect(Math.min(box.width, box.height), `${k} key is at least 44px`).toBeGreaterThanOrEqual(44)
       await page.getByTestId(key(k)).click()
     }
     await expect(page.getByTestId(display)).toHaveText('10')
+
+    // the longest number the keypad takes (nine digits, grouped) is shrunk to fit the display, never cut to "123,456,78…"
+    await clearCalculator(page)
+    for (const k of ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0']) await page.getByTestId(key(k)).click()
+    await expect(page.getByTestId(display)).toHaveText('123,456,789')
+    await expect
+      .poll(() =>
+        page.getByTestId(display).evaluate((el) => {
+          const text = el.querySelector('.fit-text')!
+          const glyphs = document.createRange()
+          glyphs.selectNodeContents(text)
+          return glyphs.getBoundingClientRect().width <= text.getBoundingClientRect().width
+        })
+      )
+      .toBe(true)
   })
 })

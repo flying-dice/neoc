@@ -75,6 +75,7 @@ local function operator(op)
     show(value)
   end
   s.pending = op
+  s.caption = calc.format(s.acc) .. " " .. SYMBOL[op] -- "27 −": what is waiting, in words as well as on the key
 end
 
 local function equals()
@@ -127,12 +128,21 @@ local actions = {
   end,
 }
 
+-- Every key goes through here. A calculation that fails (calc.lua raises a plain sentence) leaves the display at
+-- "Error" with the reason under it. "AC" gets out of it, and so does a digit, which starts a new sum as it does on
+-- an iPad; the other keys have nothing to work on and are ignored.
 local function press(kind, arg)
-  if s.err and kind ~= "clear" then
-    return
+  if s.err then
+    if kind == "digit" then
+      actions.clear()
+    elseif kind ~= "clear" then
+      return
+    end
   end
-  if not pcall(actions[kind], arg) then
+  local ok, message = pcall(actions[kind], arg)
+  if not ok then
     s.err, s.hasAcc, s.pending, s.fresh = true, false, "", true
+    s.caption = tostring(message)
   end
 end
 
@@ -148,7 +158,7 @@ end
 -- the keys are heterogeneous tables (not every key has a shortcut or a span)
 local KEYS = {
   { id = "clear", name = "Clear", label = "AC", kind = "clear", face = "function", shortcut = "escape" },
-  { id = "negate", name = "Plus minus", label = "±", kind = "negate", face = "function" },
+  { id = "negate", name = "Change sign", label = "±", kind = "negate", face = "function" },
   { id = "percent", name = "Percent", label = "%", kind = "percent", face = "function", shortcut = "%" },
   opKey("div", "÷", "/", "Divided by"),
   digitKey("7"),
@@ -249,6 +259,7 @@ app.window("main", {
             foreground = "secondary",
             align = "trailing",
             lines = 1,
+            live = s.err and "polite" or nil, -- the reason for an "Error" is read out; a caption is not, every key
           },
           ui.Text {
             key = "display",
@@ -266,6 +277,14 @@ app.window("main", {
             cellAspect = 1,
             ui.each(KEYS, keyView),
           },
+        },
+        -- keys a Button can't carry: it has one shortcut ("enter" for =), and Backspace has no key on the pad
+        ui.Shortcut {
+          key = "equals",
+          shortcut = "=",
+          onTrigger = function()
+            press("equals")
+          end,
         },
         ui.Shortcut {
           key = "backspace",

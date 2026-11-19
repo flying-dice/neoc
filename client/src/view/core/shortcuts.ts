@@ -36,12 +36,14 @@ const ALIASES: Record<string, string> = {
 }
 
 export function parseShortcut(spec: string): Combo | null {
-  const parts = spec
-    .toLowerCase()
+  const lower = spec.trim().toLowerCase()
+  // "+" is the separator and a key: a trailing "+" is the key ("+", "cmd++"), not an empty segment
+  const plus = lower.endsWith('+')
+  const parts = (plus ? lower.slice(0, -1) : lower)
     .split('+')
     .map((p) => p.trim())
     .filter(Boolean)
-  const key = parts.pop()
+  const key = plus ? '+' : parts.pop()
   if (!key) return null
   const combo: Combo = {
     key: ALIASES[key] ?? key,

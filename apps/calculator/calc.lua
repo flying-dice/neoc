@@ -2,6 +2,12 @@
 -- sandbox has no `loadstring`), `format` for results and `formatEntry` for the number being typed.
 local calc = {}
 
+-- Every error is raised at level 0, a plain sentence: a person sees it under the display ("Error") and an agent
+-- gets it back from the tool, so neither wants a "calc.lua:56:" prefix.
+local function fail(message)
+  error(message, 0)
+end
+
 -- A token is { kind = "num" | "op" | "paren", value = text, number = its value (numbers only) }.
 
 local PRECEDENCE = { ["+"] = 1, ["-"] = 1, ["*"] = 2, ["/"] = 2, ["%"] = 2, ["^"] = 3, neg = 4 }
@@ -24,7 +30,7 @@ local function tokenize(input)
       local text = string.sub(source, i, j - 1)
       local value = tonumber(text)
       if value == nil then
-        error('Invalid number "' .. text .. '"')
+        fail('Invalid number "' .. text .. '"')
       end
       table.insert(tokens, { kind = "num", value = text, number = value })
       i = j
@@ -37,7 +43,7 @@ local function tokenize(input)
       table.insert(tokens, { kind = "paren", value = ch, number = 0 })
       i = i + 1
     else
-      error('Unexpected character "' .. ch .. '"')
+      fail('Unexpected character "' .. ch .. '"')
     end
   end
   return tokens
@@ -53,15 +59,18 @@ local function operate(op, a, b)
     return a * b
   elseif op == "/" then
     if b == 0 then
-      error("Division by zero")
+      fail("Can't divide by zero")
     end
     return a / b
   elseif op == "%" then
+    if b == 0 then
+      fail("Can't divide by zero") -- Lua's `a % 0` is nan
+    end
     return a % b
   elseif op == "^" then
     return a ^ b
   end
-  error('Unknown operator "' .. op .. '"')
+  fail('Unknown operator "' .. op .. '"')
 end
 
 -- Round away binary noise (0.1 + 0.2): 12 significant digits, as a number.
@@ -73,7 +82,7 @@ local function apply(op, stack)
   if op == "neg" then
     local a = table.remove(stack)
     if a == nil then
-      error("Malformed expression")
+      fail("Malformed expression")
     end
     table.insert(stack, -a)
     return
@@ -81,26 +90,32 @@ local function apply(op, stack)
   local b = table.remove(stack)
   local a = table.remove(stack)
   if a == nil or b == nil then
-    error("Malformed expression")
+    fail("Malformed expression")
   end
   table.insert(stack, operate(op, a, b))
+end
+
+-- A result the display cannot show: infinity (too big) or nan (not a real number, such as (-8) ^ 0.5).
+local function checked(result)
+  if result ~= result then
+    fail("Not a real number")
+  elseif math.abs(result) == math.huge then
+    fail("Result too large")
+  end
+  return tidy(result)
 end
 
 -- `a op b` on numbers, the way the keypad chains: no text round trip, so a result shown as 2e-7 or 1e21 is an
 -- ordinary operand. Raises on division by zero and on a result too large to show.
 function calc.combine(a, op, b)
-  local result = operate(op, a, b)
-  if result ~= result or math.abs(result) == math.huge then
-    error("Result out of range")
-  end
-  return tidy(result)
+  return checked(operate(op, a, b))
 end
 
 -- Evaluate an arithmetic expression; raises a descriptive error when invalid.
 function calc.evaluate(expression)
   local tokens = tokenize(expression)
   if #tokens == 0 then
-    error("Empty expression")
+    fail("Empty expression")
   end
   local values = {}
   local ops = {}
@@ -114,7 +129,7 @@ function calc.evaluate(expression)
         apply(table.remove(ops), values)
       end
       if table.remove(ops) ~= "(" then
-        error("Mismatched parentheses")
+        fail("Mismatched parentheses")
       end
     else
       local precedence = PRECEDENCE[token.value]
@@ -136,15 +151,14 @@ function calc.evaluate(expression)
   while #ops > 0 do
     local op = table.remove(ops)
     if op == "(" then
-      error("Mismatched parentheses")
+      fail("Mismatched parentheses")
     end
     apply(op, values)
   end
-  local result = values[1]
-  if #values ~= 1 or result ~= result or math.abs(result) == math.huge then
-    error("Malformed expression")
+  if #values ~= 1 then
+    fail("Malformed expression")
   end
-  return tidy(result)
+  return checked(values[1])
 end
 
 local function group(digits)

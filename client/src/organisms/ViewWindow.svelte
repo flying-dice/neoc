@@ -52,11 +52,22 @@
       .then(async (opened) => {
         if (destroyed) return void (await host.closeView(opened))
         view = opened
+        void focusWhenOpened()
       })
       .catch((e: unknown) => {
         failure = messageOf(e)
       })
   })
+
+  // A window opened from the Dock takes the keyboard: its window-scoped shortcuts (the Calculator's digits) work at
+  // once instead of typing into the Dock icon. Focus that is already somewhere meaningful (inside a window, a
+  // field) stays put, so an app an agent opens never takes the keys from what the person is typing.
+  async function focusWhenOpened(): Promise<void> {
+    await tick()
+    const active = document.activeElement
+    if (active && active !== document.body && !active.closest('[data-testid="dock"]')) return
+    box?.querySelector<HTMLElement>(`[data-testid="${appId}-view"]`)?.focus({ preventScroll: true })
+  }
 
   // Retry replaces the alert with the spinner and, when it fails again, the alert with a new button: focus goes
   // back to that button, so a keyboard or switch user is not dropped to the top of the page for trying twice.

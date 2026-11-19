@@ -7,10 +7,10 @@ describe('Text fit scale', () => {
     expect(fitScale(200, 200)).toBe(1)
   })
 
-  test('a wider readout shrinks in proportion, always a little under so no glyph is clipped', () => {
+  test('a wider readout shrinks in proportion, always a little under so no glyph is clipped or ellipsised', () => {
     const s = fitScale(400, 200)
     expect(s).toBeLessThan(0.5)
-    expect(s).toBeGreaterThan(0.49)
+    expect(s).toBeGreaterThan(0.48)
     expect(400 * s).toBeLessThanOrEqual(200)
   })
 

@@ -62,3 +62,12 @@
     <Button testid="button-described" variant="gray" aria-description="Moves the note to the archive">Archive</Button>
   </div>
 </Story>
+
+<Story name="Pressed data colour" asChild parameters={{ controls: { disable: true } }}>
+  <div style="display:flex;gap:12px">
+    {#each ['orange', 'blue', 'green', 'gray4'] as const as fill (fill)}
+      <Button testid="button-off-{fill}" {fill} capsule aria-pressed="false">{fill}</Button>
+      <Button testid="button-on-{fill}" {fill} capsule aria-pressed="true">{fill}</Button>
+    {/each}
+  </div>
+</Story>

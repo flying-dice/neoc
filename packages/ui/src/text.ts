@@ -9,6 +9,7 @@ export function fitScale(natural: number, available: number, min = FIT_MIN): num
   if (!(natural > 0) || !(available > 0)) return 1
   const exact = available / natural
   if (exact >= 1) return 1
-  // A hair under the exact ratio: sub-pixel rounding must never push the last glyph past the edge.
-  return Math.max(min, Math.floor(exact * 1000) / 1000 - 0.001)
+  // Under the exact ratio: scrollWidth is a whole number and glyph widths do not scale in exact proportion with the
+  // font size, so a sub-pixel overshoot would still end the readout in an ellipsis ("123,456,78…"). 1% is cheap.
+  return Math.max(min, Math.floor(exact * 1000) / 1000 - 0.01)
 }

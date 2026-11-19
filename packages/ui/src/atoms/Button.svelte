@@ -66,6 +66,7 @@
   class:square
   class:hit
   class:block
+  class:inverts={fill && variant === 'filled'}
   style:--btn-tint={color}
   style:--btn-fill={fillColor ?? (tint && !destructive ? tint : undefined)}
   style:--btn-ink={ink}
@@ -190,6 +191,17 @@
      */
     background: var(--btn-fill, light-dark(var(--_tint), color-mix(in oklab, var(--_tint) 70%, black)));
     color: var(--btn-ink, #fff);
+  }
+  /*
+   * A pressed (`aria-pressed`) data-colour button swaps its fill and its text and gains a ring in the fill colour:
+   * the pending operator of a calculator, the active toggle of a keypad. The ink was picked for 4.5:1 on the fill,
+   * so the swap keeps that contrast both ways, and the ring keeps the key visible on a canvas the ink matches.
+   */
+  .inverts[aria-pressed='true'] {
+    background: var(--btn-ink);
+    color: var(--btn-fill);
+    outline: 2px solid var(--btn-fill);
+    outline-offset: -2px;
   }
   /*
    * Tint-coloured text on a tinted or gray fill: darker in light mode, lighter

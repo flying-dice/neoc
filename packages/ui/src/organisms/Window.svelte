@@ -9,6 +9,10 @@
   `${testid}-multitasking` (the "···" dots), `${testid}-menu` with items
   `${testid}-menu-<fullscreen|split-left|split-right|slideover|floating|minimize|close>`,
   `${testid}-resize` (floating windows only).
+
+  Focus: the window itself is focusable (`tabindex="-1"`, so a click on its chrome or a drag of its handle lands
+  there). When it is, focus moves on to the element in the content marked `data-window-focus`, if there is one, so a
+  window whose keys are handled inside (an app's window-scoped shortcuts) keeps listening after a move or resize.
 -->
 <script lang="ts">
   import { motion } from '../motion'
@@ -66,6 +70,11 @@
   let gesture: Gesture | null = $state(null)
   let menuOpen = $state(false)
   let menuEl: HTMLElement | undefined = $state()
+  let contentEl: HTMLElement | undefined = $state()
+
+  function forwardFocus(): void {
+    contentEl?.querySelector<HTMLElement>('[data-window-focus]')?.focus({ preventScroll: true })
+  }
 
   function begin(kind: Gesture['kind'], e: PointerEvent): void {
     onfocus?.()
@@ -123,9 +132,10 @@
   style:height="{height}px"
   style:z-index={z}
   onpointerdown={() => onfocus?.()}
+  onfocus={forwardFocus}
   transition:scale={{ start: 0.9, duration: motion(300), easing: cubicOut }}
 >
-  <div class="content" data-testid="{testid}-content">{@render children()}</div>
+  <div class="content" bind:this={contentEl} data-testid="{testid}-content">{@render children()}</div>
 
   <div
     class="handle"
