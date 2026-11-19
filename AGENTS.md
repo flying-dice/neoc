@@ -16,6 +16,9 @@ AgentOS is an iPadOS-style virtual desktop for agents. It has three parts:
 Bun workspaces cover `client` and `packages/*` (an app is Luau, `app.json` + `*.luau`, not a Bun package); Cargo covers
 `crates/*`.
 
+The direction is a self-hosted home lab: apps can provide LAN services such as DNS, DHCP and container-backed services,
+so AgentOS can stand in for the services people run on a home NAS.
+
 ## Sources of truth
 
 | For | Read |
@@ -30,6 +33,17 @@ Bun workspaces cover `client` and `packages/*` (an app is Luau, `app.json` + `*.
 
 `types/generated/*` and `docs/reference/components.md` are generated from the Rust schema (`bun run codegen`); never
 edit them by hand.
+
+## Work tracking and docs
+
+- Issues and work items live in **Jira project AGOS**:
+  <https://flying-dice.atlassian.net/jira/software/projects/AGOS/boards/101>. Create new work there, not as GitHub
+  issues (GitHub issues #1-#18 are legacy).
+- Long-form wiki and planning pages live in the **Confluence space AGOS**:
+  <https://flying-dice.atlassian.net/wiki/spaces/AGOS/overview>. The in-repo `docs/` stay the source of truth for
+  architecture, testing and design (the table above).
+- Current epic: **AGOS-1**, home-lab network services (DNS, DHCP, containers). AgentOS aims to replace the services
+  people run on a home NAS such as Synology.
 
 ## Merge policy
 
