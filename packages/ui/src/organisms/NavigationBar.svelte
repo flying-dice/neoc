@@ -107,7 +107,7 @@
     display: grid;
     grid-template-columns: 1fr auto 1fr;
     align-items: center;
-    min-height: 50px;
+    min-height: var(--nav-bar-height);
     padding: var(--nav-top-inset, 0px) var(--nav-inset, 16px) 0;
     gap: 8px;
     transition:

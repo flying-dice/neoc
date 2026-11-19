@@ -39,7 +39,7 @@ export interface HostApi {
 
 /** The icon of an app: its declared symbol when the kit has it, else a generic one. */
 export function iconOf(name: string | undefined): IconName {
-  return name && name in icons ? (name as IconName) : 'square.grid'
+  return name && Object.hasOwn(icons, name) ? (name as IconName) : 'square.grid'
 }
 
 /** Palette roles an app may tint its icon with, as the kit's colour variables. */

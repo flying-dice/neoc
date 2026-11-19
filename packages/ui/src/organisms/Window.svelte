@@ -13,11 +13,11 @@
   Resize: a floating window shows a corner grip (always visible, `--window-grip`: 3:1 on any body) that a pointer drags
   and that is also a button: Tab to it, then the arrow keys resize by 16 px (Shift: 64 px), to the minimum size and
   the screen's edge (the owner clamps the frame). When a resize reaches a limit the grip nudges back once (no nudge
-  under `prefers-reduced-motion`) and takes the tint, a small label beside the grip says which ("Smallest size",
+  under `prefers-reduced-motion`) and turns blue (`--focus-ring`), a small label beside the grip says which ("Smallest size",
   "Narrowest", "Shortest", "Widest", "Tallest", "Largest size") for a couple of seconds, and the window says it in full
   in `${testid}-resize-status` (a polite live region: "<title> is at its smallest size", "can't get any narrower", ...;
   said when the limit is first reached, not on every key press after it). At its smallest size (both axes at the
-  minimum) the grip stays tinted, whenever you look.
+  minimum) the grip stays blue, whenever you look.
   The grip has the tooltip "Resize — drag or use arrow keys".
 
   The grip is last in the tab order on purpose: it is window chrome in the bottom-right corner, so Tab reaches it after
@@ -157,7 +157,7 @@
   const status = $derived(limit ? `${title} ${LIMITS[limit].said}` : '')
   /** Which way the grip pushes back: out when the person pulled in, in when they pulled out. */
   const push = $derived(limit === null ? null : ['widest', 'tallest', 'largest'].includes(limit) ? 'in' : 'out')
-  /** At its smallest size the grip stays tinted: the window can't shrink more, whenever you look. */
+  /** At its smallest size the grip stays blue: the window can't shrink more, whenever you look. */
   const atSmallest = $derived(width <= minWidth && height <= minHeight)
 
   /**
@@ -437,10 +437,10 @@
     transition: border-color var(--duration) var(--ease-ios);
     pointer-events: none; /* the 44 px button is the target: the drawn arc reaches further into the corner than it */
   }
-  /* A limit (the minimum size or the screen's edge): the arc takes the tint, and pushes back once. --tint holds 3:1
-     on the light, dark and black bodies like the grip does. */
+  /* A limit (the minimum size or the screen's edge): the arc turns focus-ring blue (not the accent: orange or green fail 3:1) and pushes
+     back once. --focus-ring holds 3:1 on the light, dark and black bodies like the grip does. */
   .resize.limit::after {
-    border-color: var(--tint);
+    border-color: var(--focus-ring);
   }
   .resize[data-push='out'][data-nudge='0']::after {
     animation: grip-push-out var(--duration-slow) var(--ease-ios);
@@ -477,7 +477,7 @@
   }
   @media (prefers-reduced-motion: reduce) {
     .resize::after {
-      animation: none !important; /* the tint alone says it */
+      animation: none !important; /* the colour alone says it */
     }
   }
   .limit-note {
@@ -486,7 +486,7 @@
     bottom: -13px;
     padding: 4px 12px;
     border-radius: var(--radius-pill);
-    background: var(--label); /* a fixed neutral pair: 4.5:1 whatever accent Settings chose (see tokens.css, --on-tint) */
+    background: var(--label); /* a fixed neutral pair: 4.5:1 whatever accent Settings chose */
     color: var(--bg-elevated);
     font: var(--type-footnote);
     letter-spacing: var(--tracking-footnote);

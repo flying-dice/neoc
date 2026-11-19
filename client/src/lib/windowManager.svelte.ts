@@ -399,7 +399,7 @@ export class WindowManager {
 
   /** Split divider dragged to `x` within the workspace. */
   moveSplitDivider(x: number): void {
-    this.setSplitRatio((x - INSET) / (this.bounds.width - INSET * 2 - GAP))
+    this.setSplitRatio((x - INSET) / this.#splitWidth)
   }
 
   toggleSlideOver(): void {

@@ -158,6 +158,19 @@ describe('window chrome', () => {
     }
   }
 
+  test('the grip at a limit is focus-ring blue, never the accent, and holds 3:1 on every body', () => {
+    const window = readFileSync(new URL('./organisms/Window.svelte', import.meta.url), 'utf8')
+    const rule = /\.resize\.limit::after\s*{[^}]*}/.exec(window)![0]
+    expect(rule).toContain('border-color: var(--focus-ring)')
+    expect(rule).not.toMatch(/var\(--tint/)
+    const ring = colourToken('--focus-ring')
+    for (const body of ['--bg-grouped-elevated', '--bg-elevated', 'a black body'] as const)
+      for (const scheme of ['light', 'dark'] as const) {
+        const surface = body === 'a black body' ? '#000000' : colourToken(body)[scheme]
+        expect(ratio(ring[scheme], surface)).toBeGreaterThanOrEqual(3)
+      }
+  })
+
   test('the limit label (13 px) holds 4.5:1 whatever the accent: it does not use the accent', () => {
     const label = colourToken('--label')
     const bg = colourToken('--bg-elevated')
@@ -166,7 +179,7 @@ describe('window chrome', () => {
     const rule = /\.limit-note\s*{[^}]*}/.exec(window)![0]
     expect(rule).toContain('background: var(--label)')
     expect(rule).toContain('color: var(--bg-elevated)')
-    expect(rule).not.toMatch(/var\(--(tint|on-tint)/)
+    expect(rule).not.toMatch(/var\(--tint/)
   })
 
   test('the "···" dots take the grip colour and the button is at least 44 x 24', () => {

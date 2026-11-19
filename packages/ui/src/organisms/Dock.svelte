@@ -26,8 +26,8 @@
   let { testid, apps, recents = [], iconSize = 58, onselect }: Props = $props()
 </script>
 
-{#snippet slot(app: DockApp)}
-  <span class="slot">
+{#snippet dockItem(app: DockApp)}
+  <span class="item">
     <AppIcon
       testid="{testid}-{app.id}"
       name={app.name}
@@ -46,12 +46,12 @@
 <Material thickness="thin" radius="var(--radius-dock)" class="ios-dock">
   <div class="tray" data-testid={testid} data-launcher>
     {#each apps as app (app.id)}
-      {@render slot(app)}
+      {@render dockItem(app)}
     {/each}
     {#if recents.length}
       <span class="divider" aria-hidden="true"></span>
       {#each recents as app (app.id)}
-        {@render slot(app)}
+        {@render dockItem(app)}
       {/each}
     {/if}
   </div>
@@ -68,7 +68,7 @@
       inset 0 0 0 0.5px rgb(255 255 255 / 0.25),
       0 10px 30px rgb(0 0 0 / 0.18);
   }
-  .slot {
+  .item {
     position: relative;
     display: inline-flex;
   }
@@ -90,8 +90,8 @@
     transition: opacity var(--duration-fast) var(--ease-ios);
     z-index: 1;
   }
-  .slot:hover .name,
-  .slot:has(:global(:focus-visible)) .name {
+  .item:hover .name,
+  .item:has(:global(:focus-visible)) .name {
     opacity: 1;
   }
   .divider {

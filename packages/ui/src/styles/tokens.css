@@ -62,11 +62,8 @@
    * light; 6.0:1 / 7.4:1 on #1c1c1e and #000 in dark. packages/ui/src/contrast.test.ts asserts it.
    */
   --focus-ring: light-dark(#0066cc, #409cff);
-  /*
-   * Text on a --tint-fill: white. 4.5:1 only for the accents that are dark enough (blue, indigo, red, purple); a small label
-   * on an accent that may be orange, green or cyan uses --label on --bg-elevated instead (the resize limit label).
-   */
-  --on-tint: #ffffff;
+  /* The sticky navigation bar: its height, and how far a row scrolled to the top stops below the screen top (ScreenTemplate). */
+  --nav-bar-height: 50px;
 
   /* Accent used by controls; override per subtree to re-tint. */
   --tint: var(--ios-blue);

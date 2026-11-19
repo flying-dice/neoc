@@ -60,6 +60,9 @@ describe('presentation helpers', () => {
     expect(iconOf('plus')).toBe('plus')
     expect(iconOf('no.such.symbol')).toBe('square.grid')
     expect(iconOf(undefined)).toBe('square.grid')
+    expect(iconOf('calculator')).toBe('calculator')
+    for (const inherited of ['constructor', 'toString', '__proto__'])
+      expect(iconOf(inherited)).toBe('square.grid') // not Object.prototype members
   })
   test('a tint becomes a gradient and an unknown one is blue', () => {
     expect(tintBackground('orange')).toContain('var(--ios-orange)')
