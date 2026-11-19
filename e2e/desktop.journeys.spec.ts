@@ -167,7 +167,7 @@ test.describe('Desktop journeys', () => {
       await expect(item).toHaveAttribute('aria-disabled', 'true') // two 320 px minimums do not fit in 600
       await expect(item).toHaveAccessibleName(/unavailable/)
     }
-    await page.getByTestId('window-files-menu-split-left').click() // does nothing
+    await page.getByTestId('window-files-menu-split-left').click({ force: true }) // does nothing (Playwright waits forever to click an aria-disabled control)
     await expect(page.getByTestId('window-files-menu')).toBeVisible()
     await expect(windowOf(page, 'files')).toHaveClass(/\bfloating\b/)
     await expect(page.getByTestId('split-placeholder')).toHaveCount(0)
@@ -183,7 +183,7 @@ test.describe('Desktop journeys', () => {
     await expect(windowOf(page, 'agents')).toBeVisible()
     await expect(page.getByTestId('desktop-notice')).toContainText('opened on its own')
     await expect(page.getByTestId('split-placeholder')).toHaveCount(0)
-    await expect(windowOf(page, 'files')).toHaveClass(/\bfloating\b/)
+    await expect(page.getByTestId('stage-strip-files')).toBeAttached() // Files is a normal window again, in the strip
     await page.getByTestId('desktop-notice-dismiss').click()
     await expect(page.getByTestId('desktop-notice')).toHaveCount(0)
   })
