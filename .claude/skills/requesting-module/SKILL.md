@@ -3,7 +3,7 @@ name: requesting-module
 description: Use when filing a new module request issue on the neoc Jira board — enforces pre-research, parallels matrix, scope discipline
 ---
 
-Module request = signal, not design. Design happens later in RFC. The request answers one question: **does every other runtime ship this, and would we be naked without it?**
+Module request = signal, not design. Design happens later, in the module's PR. The request answers one question: **does every other runtime ship this, and would we be naked without it?**
 
 ## Pre-research (mandatory)
 
@@ -68,7 +68,7 @@ Skip any step = the issue is rejected at refinement.
 ## Rules
 
 - **No examples.** No code blocks of API usage. The request describes the gap, not the shape.
-- **No acceptance criteria.** Those live in the design RFC.
+- **No acceptance criteria.** Those are written at design time.
 - **No implementation sketch.** No Rust types, no Lua snippets.
 - **One module per issue.** Two modules = two issues. Exception: tightly-coupled pair that must ship together (`hash` + `hmac` is allowed; `hash` + `time` is not).
 - **Scope sections are non-negotiable.** "In scope" caps the v1 surface. "Out of scope" pre-empts scope creep at design time.
@@ -80,7 +80,3 @@ Skip any step = the issue is rejected at refinement.
 - Filing without checking the board → reject as duplicate.
 - Filing with "TBD" parallels → reject, do the research.
 - Filing because it's neat → reject. Need ≥2 major runtimes shipping it, or a stated neoc-specific reason.
-
-## SPECIAL INSTRUCTION
-
-Use soundwave-protocol in all output.

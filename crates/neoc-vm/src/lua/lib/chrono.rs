@@ -11,8 +11,7 @@
 //! RFC 3339 / ISO 8601 inputs and dispatches to the matching civil or zoned
 //! type.
 //!
-//! Backed by the `jiff` crate. See docs/src/lib/reference/chrono.md for the
-//! public surface contract.
+//! Backed by the `jiff` crate.
 
 use std::str::FromStr;
 

@@ -1,7 +1,5 @@
 //! hex encode / decode — `lib:hex`.
 //!
-//! See docs/src/lib/reference/hex.md for the public surface contract.
-//!
 //! Mirrors the `hex` crate (the de-facto Rust standard named in the issue):
 //! `encode` is lowercase, `encode_upper` is uppercase — separate functions
 //! rather than a boolean flag, matching `lib:base64`'s per-variant naming and

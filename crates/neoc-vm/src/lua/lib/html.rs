@@ -3,7 +3,7 @@
 //! Minimal API: `escape` produces the 5 XML entities; `unescape` reverses
 //! them plus numeric character references. Unknown entities and malformed
 //! references pass through unchanged — `unescape` is a string transform,
-//! not a validating parser. See docs/src/rfcs for the full design rationale.
+//! not a validating parser.
 
 use mlua::{Lua, Table};
 

@@ -1,6 +1,4 @@
 //! String utilities and case conversion — `lib:text`.
-//!
-//! See docs/src/rfcs/0011-lib-text.md for the public surface contract.
 
 use heck::{
     ToKebabCase, ToLowerCamelCase, ToShoutySnakeCase, ToSnakeCase, ToTitleCase, ToUpperCamelCase,

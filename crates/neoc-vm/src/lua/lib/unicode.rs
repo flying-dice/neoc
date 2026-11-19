@@ -8,9 +8,9 @@
 //! display width — shared with `lib:text`).
 //!
 //! Every function is a flat, stateless transform over a UTF-8 string; there is
-//! no resource to model, so the module is flat-functions-only (per STYLEGUIDE,
-//! stateless modules need no UserData surface). All arguments are taken as
-//! `String`, so non-UTF-8 input is rejected at the bridge before any body runs
+//! no resource to model, so the module is flat-functions-only (per the module API
+//! pattern in CLAUDE.md, stateless modules need no UserData surface). All
+//! arguments are taken as `String`, so non-UTF-8 input is rejected at the bridge before any body runs
 //! — a Unicode module has no meaning for ill-formed bytes.
 
 use caseless::{canonical_caseless_match_str, default_case_fold_str};

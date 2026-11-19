@@ -1,154 +1,35 @@
 # Contributing
 
-Mechanical walkthrough — order, file locations, pre-PR checks. Points to [STYLEGUIDE.md](STYLEGUIDE.md) and [README.md](README.md) for conventions and rationale.
+Build, test, add a module, release. The module design rules are in [CLAUDE.md](CLAUDE.md#modules); what neoc is, is in [README.md](README.md).
 
 ## Before you start
 
-- `rustup` + `cargo` on `PATH`. Toolchain pinned in [rust-toolchain.toml](rust-toolchain.toml) — rustup auto-installs it; don't use `+stable`.
-- Bumping the toolchain is its own PR: edit `rust-toolchain.toml`, the `Dockerfile` builder image and any CI image or toolchain reference (`.github` workflows) together, fix any new clippy/rustc lint fallout in that PR, and run `scripts/check-toolchain-pin.sh`.
-- Read [Design principles](README.md#design-principles) — non-negotiable.
-- Read [STYLEGUIDE.md](STYLEGUIDE.md) — binding rules.
+- `rustup` and `cargo` on `PATH`. The toolchain is pinned in [rust-toolchain.toml](rust-toolchain.toml); rustup installs it on first use. Don't use `+stable`.
+- Bumping the toolchain is its own PR: edit `rust-toolchain.toml`, the `Dockerfile` builder image and any `.github` workflow reference together, fix new clippy/rustc fallout in that PR, and run `scripts/check-toolchain-pin.sh`.
 
-## Adding a new module
-
-Example: adding `foo` module. First pick namespace per [STYLEGUIDE.md → Module namespaces](STYLEGUIDE.md#module-namespaces).
-
-### 1. Create module file
-
-`crates/neoc-vm/src/lua/lib/foo.rs`:
-
-```rust
-use mlua::{Lua, Table};
-
-pub fn module(lua: &Lua) -> mlua::Result<Table> {
-    let t = lua.create_table()?;
-    t.set("greet", lua.create_function(greet)?)?;
-    Ok(t)
-}
-
-fn greet(_: &Lua, name: mlua::String) -> mlua::Result<String> {
-    Ok(format!("hello, {}", name.to_str()?))
-}
-```
-
-### 2. Register
-
-Add to `crates/neoc-vm/src/lua/lib/mod.rs` — `pub mod` declaration + `install` body. Alphabetical.
-
-```rust
-pub mod foo;
-// ...
-modules.insert("lib:foo".into(), foo::module(lua)?);
-```
-
-### 3. Rust tests
-
-`#[cfg(test)] mod tests` at bottom of module file:
-
-```rust
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn greet_basic() {
-        let lua = Lua::new();
-        let s = lua.create_string("world").unwrap();
-        assert_eq!(greet(&lua, s).unwrap(), "hello, world");
-    }
-}
-```
-
-Full engine: `crate::lua::sandbox::make_engine()`. Run: `cargo test --workspace --lib`.
-
-### 4. Criterion benches
-
-`pub fn benches(c: &mut Criterion)` gated behind `bench` feature. Three tiers: `library` (pure Rust), `into_out_lua` (marshalling cost), `through_lua` (full user path).
-
-```rust
-#[cfg(feature = "bench")]
-pub fn benches(c: &mut criterion::Criterion) {
-    use criterion::black_box;
-
-    let lua = crate::lua::sandbox::make_engine().expect("engine");
-    let payload = lua.create_string("world").unwrap();
-
-    let mut g = c.benchmark_group("foo");
-
-    g.bench_function("greet/library", |b| {
-        b.iter(|| { let _ = black_box("hello, world"); });
-    });
-
-    let ident: mlua::Function = lua
-        .create_function(|_, s: mlua::String| Ok(s))
-        .unwrap();
-    g.bench_function("greet/into_out_lua", |b| {
-        b.iter(|| { let _: mlua::String = ident.call(black_box(payload.clone())).unwrap(); });
-    });
-
-    let chunk: mlua::Function = lua
-        .load(r#"return function(p) return (require("lib:foo")).greet(p) end"#)
-        .eval()
-        .unwrap();
-    g.bench_function("greet/through_lua", |b| {
-        b.iter(|| { let _: String = chunk.call(black_box(payload.clone())).unwrap(); });
-    });
-
-    g.finish();
-}
-```
-
-Add to `criterion_group!` in `crates/neoc-vm/benches/lib/lib.rs`. Run: `cargo bench -p neoc-vm --features bench --bench lib foo`.
-
-### 5. Lua integration test
-
-`crates/neoc/tests/<ns>/foo.test.lua`:
-
-```lua
-local _t       = require("lib:test")
-local describe = _t.describe
-local test     = _t.test
-local expect   = _t.expect
-
-local foo = require("lib:foo")
-
-describe("foo", function()
-    describe("greet", function()
-        test("basic case", function()
-            expect(foo.greet("world")).toBe("hello, world")
-        end)
-    end)
-end)
-```
-
-Run: `cargo run -p neoc -- run crates/neoc/tests/<ns>/foo.test.lua`.
-
-### 6. Update README
-
-Add row to modules table. Alphabetical within namespace.
-
-## Adding to existing module
-
-1. Add function in `crates/neoc-vm/src/lua/lib/<name>.rs`
-2. Register on table in `module()`
-3. Add `#[cfg(test)]` cases
-4. Extend bench group (3 tiers)
-5. Add `describe(...)` cases to test file
-
-## Pre-PR checks
+## Build and test
 
 ```sh
 cargo build
 cargo test --workspace
-cargo run -p neoc -- run 'crates/neoc/tests/**/*.test.lua'
-cargo bench -p neoc-vm --features bench --bench lib <name>
-cargo clippy --all-targets
-cargo fmt --check
 ```
 
-`cargo test --workspace` covers the `neoc-vm` unit tests, the `neoc` binary tests, the CLI integration tests and the Gherkin spec in `tooling/cli/`. The `**` Lua glob includes the Docker-dependent suites (`sqlx_mysql`, `sqlx_postgres`, `testcontainers_modules`); without a Docker daemon run the same set CI does:
+`cargo test --workspace` runs the `neoc-vm` unit tests, the `neoc` binary tests, the CLI integration tests and the Gherkin spec in `tooling/cli/`.
+
+Lua suites run with the binary itself:
 
 ```sh
+cargo run -p neoc -- run 'crates/neoc/tests/**/*.test.lua'
+```
+
+## Pre-PR checks
+
+Run all of these locally before opening a PR. They must pass exactly as written.
+
+```sh
+cargo fmt --check
+RUSTFLAGS="-D warnings" cargo clippy --all-targets
+cargo test --workspace
 cargo run -p neoc -- run \
   "crates/neoc/tests/lib/*.test.lua" \
   "crates/neoc/tests/std/*.test.lua" \
@@ -158,52 +39,28 @@ cargo run -p neoc -- run \
   "crates/neoc/tests/vnd/serde_json.test.lua" \
   "crates/neoc/tests/vnd/serde_yaml.test.lua" \
   "crates/neoc/tests/vnd/toml.test.lua"
+cargo bench -p neoc-vm --features bench --bench lib --bench vnd -- --test
 ```
 
-## CI
+The Lua list leaves out the suites that need a Docker daemon (`sqlx_mysql`, `sqlx_postgres`, `testcontainers_modules`). With Docker running, use the `**` glob above instead to include them.
 
-GitHub Actions (`.github/workflows/ci.yml`) on push to `main` and `develop` (docs, Markdown, media, CODEOWNERS and `.claude` changes excluded), on manual dispatch, and weekly. Never per PR (limited CI minutes): run the [pre-PR checks](#pre-pr-checks) locally. Dispatch a run on a branch with `gh workflow run ci.yml --ref <branch>`; follow it with `gh run watch <run-id> --exit-status` and read PR check status with `gh pr checks`.
+The bench line compiles every bench and runs each body once, with no timing. It catches stale bench code the other checks never build. To time a module, drop `-- --test` and name it: `cargo bench -p neoc-vm --features bench --bench lib <name>`.
 
-Jobs: `lint` (`fmt --check`, `clippy` with warnings = errors), `deny`, `test` (Rust + Lua integration), `bench` (dispatch and schedule only), `bench:smoke`, the release-binary builds and `docker:build`. Release binaries are built by the `Release` workflow (see [How to release](#how-to-release)).
+GitHub Actions (`.github/workflows/ci.yml`) mirrors these checks on pushes to `main`, but it is not a gate: the local run is the verification.
 
-### Branching
+## Branching and PRs
 
-- Implementation: `issues/{key}-{slug}` (e.g. `issues/NEOC-6-std-task`)
-- Design: `design/{key}-{slug}`
+`main` is the only long-lived branch.
 
-### How to release
+1. Branch from `main`: `issues/{key}-{slug}` (e.g. `issues/NEOC-6-std-task`).
+2. Run the [pre-PR checks](#pre-pr-checks).
+3. Self-review the diff with the `pr-self-review` skill (or `change-review`).
+4. Open a PR into `main`. One module or one well-scoped change per PR. Say why in the description, not only what. Reference the Jira key (`Refs NEOC-<n>`).
+5. Squash-merge once the checks and the self-review are clean, then delete the branch.
 
-Releases are cut by pushing a tag. There is no release bot and no release PR.
+### Commits and PR titles
 
-```sh
-git checkout main && git pull
-git tag vX.Y.Z
-git push origin vX.Y.Z
-```
-
-The tag must match `vMAJOR.MINOR.PATCH`, optionally with a `-<pre>` suffix
-(`v0.2.0-rc.1`), and must point at a commit on `main`. The `Release` workflow
-(`.github/workflows/release.yml`):
-
-1. Stamps the tag's version into the workspace `Cargo.toml` in the CI checkout
-   only (`scripts/stamp-version.sh`), so `neoc --version` reports it. Nothing is
-   committed back.
-2. Builds `neoc-x86_64-unknown-linux-gnu` and `neoc-x86_64-pc-windows-gnu.exe`.
-3. Creates the GitHub Release with generated notes, both binaries, and
-   `SHA256SUMS`. A `-<pre>` tag is marked as a pre-release.
-
-Any build failure, or a tag not on `main`, fails the workflow without publishing.
-It needs only the default `GITHUB_TOKEN`. `scripts/install.sh` and
-`scripts/install.ps1` install from the latest non-pre-release; set
-`NEOC_VERSION=vX.Y.Z-rc.1` to install a pre-release.
-
-## Commit style
-
-[Conventional Commits](https://www.conventionalcommits.org/).
-
-```
-<type>(<scope>): <subject>
-```
+[Conventional Commits](https://www.conventionalcommits.org/): `<type>(<scope>): <subject>`. The squash-merge commit takes the PR title, so the title follows the same format.
 
 | Type | When |
 |---|---|
@@ -212,22 +69,57 @@ It needs only the default `GITHUB_TOKEN`. `scripts/install.sh` and
 | `docs` | Documentation only |
 | `refactor` | No behaviour change |
 | `test` | Tests only |
-| `chore` | Maintenance |
 | `perf` | Performance |
+| `build`, `ci`, `chore` | Tooling and maintenance |
 
-Scope optional (module name or subsystem). Breaking: `!` suffix + `BREAKING CHANGE:` footer. Subject lowercase, no period. One logical change per commit.
+Scope is optional (a module or a subsystem). Subject is imperative, lowercase, no trailing period. One logical change per commit. A breaking change takes `!` after the type/scope and a `BREAKING CHANGE:` footer. The Lua surface of a module and the CLI are the user-visible contracts. A new crate dependency needs the owner's sign-off; call out any benchmark regression in the PR.
 
-## PR expectations
+## Adding a new module
 
-- One module or one well-scoped change per PR.
-- Say *why* in description, not just *what*.
-- Update docs in same PR.
-- New crates require sign-off per [STYLEGUIDE.md](STYLEGUIDE.md#allowed-dependencies).
-- Benchmark regressions: call out + explain in description.
-- Reference the Jira key (`Refs NEOC-<n>`). Open against `develop`; mark ready for review when the pre-PR checks pass.
+Example: a `lib:foo` module. Pick the namespace first (see [CLAUDE.md](CLAUDE.md#modules)). Copy the shape of a small existing module such as `crates/neoc-vm/src/lua/lib/hex.rs`; don't write one from scratch.
 
-## When in doubt
+1. **Module file.** `crates/neoc-vm/src/lua/lib/foo.rs` exports `pub fn module(lua: &Lua) -> mlua::Result<Table>` and a `declare` that builds the surface through the `Module` facade (`crates/neoc-vm/src/lua/facade.rs`). Each function carries its name, parameter types and a one-line description. Fallible functions return `(value, err)`.
+2. **Register.** Add `pub mod foo;` to `crates/neoc-vm/src/lua/lib/mod.rs` and a `modules.insert("lib:foo".into(), lib::foo::module(lua)?)` line in `install` in `crates/neoc-vm/src/lua/modules.rs`, both alphabetical. Add `foo` to the `declared` and `runtime_tables` lists in that file's tests and update the registered-module count they assert.
+3. **Rust tests.** A `#[cfg(test)] mod tests` in the module file, driving the full engine from `crate::lua::sandbox::make_engine()`. Run: `cargo test -p neoc-vm foo`.
+4. **Benches.** A `#[cfg(feature = "bench")] pub fn benches(c: &mut Criterion)` with three tiers: `library` (pure Rust), `into_out_lua` (marshalling cost) and `through_lua` (the full user path). Add it to the `criterion_group!` in `crates/neoc-vm/benches/lib/lib.rs`. Run: `cargo bench -p neoc-vm --features bench --bench lib foo`.
+5. **Lua test.** `crates/neoc/tests/lib/foo.test.lua`, using `lib:test`:
 
-- Module shape / errors / namespacing → [STYLEGUIDE.md](STYLEGUIDE.md)
-- Design trade-offs → [README.md](README.md#design-principles)
-- Testing / benching → this file + [README.md](README.md#module-workflow)
+   ```lua
+   local _t       = require("lib:test")
+   local describe = _t.describe
+   local test     = _t.test
+   local expect   = _t.expect
+
+   local foo = require("lib:foo")
+
+   describe("foo", function()
+       describe("greet", function()
+           test("basic case", function()
+               expect(foo.greet("world")).toBe("hello, world")
+           end)
+       end)
+   end)
+   ```
+
+   Run: `cargo run -p neoc -- run crates/neoc/tests/lib/foo.test.lua`. Per exported function: a happy path, one test per distinct error, and an empty or zero value where it applies.
+6. **README.** Add the module to the list in the README modules table, alphabetical within its namespace.
+
+Extending an existing module follows the same steps: add the function and register it on the table, add the Rust and Lua cases, and extend the bench group.
+
+## How to release
+
+Releases are cut by pushing a tag on `main`. There is no release bot and no release PR.
+
+```sh
+git checkout main && git pull
+git tag vX.Y.Z
+git push origin vX.Y.Z
+```
+
+The tag must match `vMAJOR.MINOR.PATCH`, optionally with a `-<pre>` suffix (`v0.2.0-rc.1`), and must point at a commit on `main`. The `Release` workflow (`.github/workflows/release.yml`):
+
+1. Stamps the tag's version into the workspace `Cargo.toml` in the CI checkout only (`scripts/stamp-version.sh`), so `neoc --version` reports it. Nothing is committed back.
+2. Builds `neoc-x86_64-unknown-linux-gnu` and `neoc-x86_64-pc-windows-gnu.exe`.
+3. Creates the GitHub Release with generated notes, both binaries and `SHA256SUMS`. A `-<pre>` tag is marked as a pre-release.
+
+A build failure, or a tag not on `main`, fails the workflow without publishing. It needs only the default `GITHUB_TOKEN`. `scripts/install.sh` and `scripts/install.ps1` install from the latest non-pre-release; set `NEOC_VERSION=vX.Y.Z-rc.1` to install a pre-release.

@@ -15,7 +15,7 @@
 //! })
 //! ```
 //!
-//! ## Trailer format (RFC-0002)
+//! ## Trailer format
 //!
 //! ```text
 //! [0..7]   magic   b"NEOC_BL" (7 bytes)

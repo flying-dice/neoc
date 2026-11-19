@@ -1,6 +1,4 @@
 //! `lib:http` — glob-scoped HTTP/1.1 static file server.
-//!
-//! See docs/src/lib/reference/http.md for the public surface contract.
 
 use std::collections::HashMap;
 use std::path::PathBuf;

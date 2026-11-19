@@ -1,6 +1,4 @@
 //! CSV parsing and writing — `lib:csv`.
-//!
-//! See docs/src/rfcs/0010-lib-csv.md for the public surface contract.
 
 use std::collections::HashMap;
 use std::io::Cursor;

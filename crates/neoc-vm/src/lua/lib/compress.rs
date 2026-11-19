@@ -1,6 +1,4 @@
 //! Compression and decompression — `lib:compress`.
-//!
-//! See docs/src/rfcs/0004-lib-compress.md for the public surface contract.
 
 use std::io::{Read, Write};
 

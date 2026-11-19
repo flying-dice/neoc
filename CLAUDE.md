@@ -1,223 +1,113 @@
 # CLAUDE.md
 
-Guidance for Claude (and any LLM agent) working in the **neoc** monorepo — one
-Cargo workspace holding a Lua runtime:
+Guidance for Claude (and any LLM agent) working in **neoc**: one Cargo workspace holding a Lua runtime.
 
-- **Runtime** (`crates/neoc-vm`) — an embedded LuaJIT engine backed by Rust. Lua
-  scripts run in a VM with a curated module surface (`std:*`, `lib:*`,
-  `vnd:*`). The unsafe halves of the Lua standard library are stripped;
-  everything scripts need is provided through explicit modules. This is not a
-  security boundary.
-- **Binary** (`crates/neoc`) — the thin `neoc` CLI over the runtime: `run` only.
+- **Runtime** (`crates/neoc-vm`): an embedded LuaJIT engine backed by Rust. Scripts run in a VM with a curated module surface (`std:*`, `lib:*`, `vnd:*`). The unsafe halves of the Lua standard library are stripped; everything else comes through explicit modules. Not a security boundary.
+- **Binary** (`crates/neoc`): the thin `neoc` CLI over the runtime. `run` only.
 
-neoc used to be a language that compiled to Lua. That is gone; the last state is
-preserved under the `neoc-lang-final` tag. Restore a path from it with
-`git checkout neoc-lang-final -- <path>`.
+neoc used to be a language that compiled to Lua. That is gone; the last state is under the `neoc-lang-final` tag. Restore a path with `git checkout neoc-lang-final -- <path>`.
 
----
+Read [README.md](README.md) for what neoc is and [CONTRIBUTING.md](CONTRIBUTING.md) for the build, the pre-PR checks, how to add a module and how to release.
 
-## Crate isolation
+## Layout
 
-Two crates; the boundary is enforced by `Cargo.toml`, not convention:
+```
+crates/neoc/                 # the `neoc` binary (the only bin)
+  src/main.rs                # CLI entry: `run`, embedded-payload executables
+  tests/                     # Lua suites (*.test.lua, *.spec.lua), cli.rs, cucumber.rs
+crates/neoc-vm/              # the runtime library
+  src/errors.rs              # runtime error types (NeocError)
+  src/lua/sandbox.rs         # engine construction, stripped globals
+  src/lua/facade.rs          # Module builder: registration, spans, (value, error)
+  src/lua/modules.rs         # module registration + `require`
+  src/lua/{std,lib,vnd}/     # one file per module
+  benches/                   # Criterion suites (lib/, vnd/), behind the `bench` feature
+tooling/cli/                 # Gherkin spec for the CLI, run against the built binary
+```
 
-- `neoc-vm` is the library. It owns the `mlua`/`tokio` stack, the sandbox and
-  every module. It depends on no other workspace crate.
-- `neoc` is the binary. It owns the CLI tree, glob expansion, the tokio runtime
-  the engine drives on, and process exit policy. It depends on `neoc-vm`.
-
-Don't reach across the boundary to "shortcut" something. If a need crosses
-cleanly, lift it into `neoc-vm`'s API. If it doesn't, the design is wrong —
-flag it.
-
----
+The crate boundary is enforced by `Cargo.toml`. `neoc-vm` owns the `mlua`/`tokio` stack, the sandbox and every module, and depends on no other workspace crate. `neoc` owns the CLI, glob expansion, the tokio runtime and process exit policy. If a need crosses the boundary, lift it into `neoc-vm`'s API; don't shortcut.
 
 ## Build and test
 
 ```sh
 cargo build                                          # debug build
-cargo build --release                                # release build
-cargo test --workspace                               # Rust tests + CLI integration tests + CLI Gherkin spec
-cargo run -p neoc -- run 'crates/neoc/tests/**/*.test.lua'  # Lua integration tests (Docker suites need a daemon)
-cargo bench -p neoc-vm --features bench --bench lib  # Criterion benchmarks (lib modules)
-cargo bench -p neoc-vm --features bench --bench vnd  # Criterion benchmarks (vnd modules)
+cargo test --workspace                               # Rust, CLI integration and the Gherkin spec
+cargo run -p neoc -- run 'crates/neoc/tests/**/*.test.lua'   # Lua suites (Docker ones need a daemon)
+cargo bench -p neoc-vm --features bench --bench lib --bench vnd -- --test   # bench smoke
 cargo clippy --workspace --all-targets               # lint
-cargo fmt --check                                    # formatting check
+cargo fmt --check                                    # formatting
 ```
 
----
+The full pre-PR gate, including the Lua suite set that needs no Docker, is in [CONTRIBUTING.md](CONTRIBUTING.md#pre-pr-checks).
 
-## Project structure
+## Modules
 
-```
-crates/neoc/                 # the thin `neoc` binary (the only bin)
-  src/
-    main.rs                  # CLI entry: `run`, embedded-payload executables
-  tests/                     # Lua integration tests (*.test.lua, *.spec.lua),
-                             # cli.rs, cucumber.rs
+Three namespaces, chosen at registration in `crates/neoc-vm/src/lua/modules.rs`. `require("namespace:name")` is the only way in.
 
-crates/neoc-vm/              # the LuaJIT runtime library
-  src/
-    lib.rs                   # library root (pub mod errors, lua)
-    errors.rs                # runtime error types (NeocError)
-    lua/
-      sandbox.rs             # engine construction
-      facade.rs              # Module builder: registration, spans, (value, error), recorded signatures
-      modules.rs             # module registration + `require`
-      std/                   # std:* modules (collections, fs, io, net, thread, …)
-      lib/                   # lib:* modules (base64, json, test, vcr, …)
-      vnd/                   # vnd:* modules (hyper, serde_json, rusqlite, sqlx_*, …)
-  benches/                   # Criterion suites (lib/, vnd/)
+- `std:*` mirrors Rust std (`std:fs`, `std:net`). Dependencies: std plus [blessed.rs](https://blessed.rs/crates).
+- `lib:*` holds gap-fillers and custom modules (`lib:base64`, `lib:test`). Adds one focused vendored crate when that is the module.
+- `vnd:*` wraps exactly one vendored crate; the name matches the upstream crate (`vnd:hyper`, `vnd:serde_json`).
 
-tooling/cli/                 # Gherkin spec for the CLI, driven against the built binary
-docs/                        # documentation site (VitePress): modules, guides, ADRs, RFCs
-```
+A non-blessed crate needs the owner's sign-off.
 
----
-
-## Runtime: module namespaces
-
-Three namespaces, chosen at registration in `crates/neoc-vm/src/lua/modules.rs`.
-No ambient globals — `require("namespace:name")` is the only way in:
-
-- `std:*` — mirrors Rust std (`std:collections`, `std:fs`, `std:net`).
-- `lib:*` — blessed gap-fillers and custom modules (`lib:base64`, `lib:test`).
-- `vnd:*` — vendored crates; name matches the upstream crate (`vnd:hyper`,
-  `vnd:serde_json`).
-
-### Design principles (non-negotiable)
+### Design principles
 
 Priority order, 1 > 2 > 3 > 4:
 
-1. **No surprises** — behave like every other major runtime. If Rust, Go,
-   Python, and Node agree, follow them.
-2. **No footguns** — never ship an API that is unintuitive or causes silent
-   mistakes. If a design needs a warning paragraph, redesign it.
-3. **Mirror Rust first** — primary API is `UserData` types mirroring `std::*`
-   1:1 (same methods, same semantics).
-4. **Supplement with scripting ergonomics** — flat functions (Python/Node-style)
-   layered on top. They delegate to the UserData layer and never introduce their
-   own design decisions.
+1. **No surprises.** Behave like every other major runtime. If Rust, Go, Python and Node agree, follow them.
+2. **No footguns.** Never ship an API that is unintuitive or causes silent mistakes. If a design needs a warning paragraph, redesign it.
+3. **Mirror Rust first.** The primary API is `UserData` types mirroring `std::*` 1:1 (same methods, same semantics).
+4. **Scripting ergonomics on top.** Flat functions (Python/Node style) delegate to the `UserData` layer and never make their own design decisions.
 
-### Key conventions
+### Conventions
 
-- Every module exports a single `pub fn module(lua: &Lua) -> mlua::Result<Table>`.
-- Infallible Lua functions return the value directly. Fallible ones return
-  `(Value, Value)` using `ok`/`from_err` helpers.
-- Error prefixes use `"module.function"` format (no namespace prefix).
-- Resource handles use `UserData` with methods. Multi-handle ops are free
-  functions.
-- Dependencies: `std:*` uses std + blessed.rs. `lib:*` adds focused vendored
-  crates. `vnd:*` wraps exactly one crate.
-- No speculative abstractions — add helpers only when 3+ call sites exist.
+- Every module exports `pub fn module(lua: &Lua) -> mlua::Result<Table>`. The table is the public surface; Rust items stay private. No globals.
+- **Errors.** The shape is fixed per function. A recoverable failure (file missing, network down) returns `(value, err)` through the `ok` / `from_err` helpers: `(value, nil)` on success, `(nil, "module.function: message")` on failure. A programming error (wrong type, closed handle) raises. Infallible functions return the value directly.
+- **Error prefixes** are `module.function:` (the bare module name, no namespace), and stable: scripts match on them.
+- **Naming.** A `UserData` type is named after its Rust type (`Url`, `Path`, `Map`). Constructors live on a sub-table: `mod.Type.new()`, `.parse()`, `.from_*()`. Mutators follow Rust (`push`, `set_path`). Avoid `new_with_*` and builders.
+- **Flat vs `UserData`.** Flat functions return strings and tables, never `UserData` (except a `parse()` alias). They use scripting convention (`extname()` gives `".txt"`); `UserData` mirrors Rust (`extension()` gives `"txt"`). A stateless module (`lib:base64`) needs only the flat surface.
+- **Resources.** OS resources are `UserData` handles with methods. Operations across several handles are free functions on the module table.
+- **No speculative abstractions.** Add a helper only when 3+ call sites exist.
+- A module's tracing target is `lua::lib::<module>` whatever its namespace.
 
-### Adding a module
+Adding a module: see [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-new-module).
 
-1. Create `crates/neoc-vm/src/lua/<ns>/<name>.rs` with a `module` function.
-2. Register in `crates/neoc-vm/src/lua/<ns>/mod.rs` (alphabetical).
-3. Add `#[cfg(test)] mod tests` in the file.
-4. Add Criterion benches (gated behind the `bench` feature).
-5. Add `crates/neoc/tests/<ns>/<name>.test.lua`.
+## Tests
 
----
+- **Rust:** `#[cfg(test)] mod tests` next to the code. Integration tests in `tests/` only where they cross crate boundaries.
+- **Lua:** every module has `crates/neoc/tests/<ns>/<name>.test.lua`, run with `neoc run`. Per exported function: one happy path, one test per distinct error condition, and an empty or zero value where it applies. The outer `describe` is the bare module name.
+- **CLI spec:** `tooling/cli/*.feature`, driven by `crates/neoc/tests/cucumber.rs`.
+- **Benches:** three tiers per module (`library`, `into_out_lua`, `through_lua`), behind the `bench` feature.
 
-## Rust code style
+## Rust style
 
-- **Edition 2024.** `unsafe_code` is denied workspace-wide. If you genuinely need
-  `unsafe`, lift it into its own clearly named crate and explain why.
-- **Lints.** `clippy::all` + `clippy::pedantic`. CI fails on warnings
-  (`RUSTFLAGS: -D warnings`). Use `#[allow(...)]` with a comment when you must.
-- **Errors.** `thiserror` for library error enums; the CLI bin renders them with
-  `miette`. Never `unwrap()` / `expect()` in library code — return `Result`.
-- **Tests.** Live next to the code as `#[cfg(test)] mod tests`. Integration
-  tests in `tests/` only when they truly cross crate boundaries. Every module has
-  a Lua integration test in `crates/neoc/tests/<ns>/`.
+- Edition 2024. `unsafe_code` is denied workspace-wide.
+- `clippy::all` + `clippy::pedantic`; warnings are errors (`RUSTFLAGS="-D warnings"`). Use `#[allow(...)]` with a comment when you must.
+- `thiserror` for library error enums; the CLI renders them with `miette`. No `unwrap()` / `expect()` in library code.
+- `///` on public items is full, normal English. Everywhere else, write tight: cut filler, keep every fact. Never abbreviate code, API names, types, commands, paths or error text.
+- Plain voice. No marketing language.
+- `mlua` is built `vendored` (bundles LuaJIT) and `rusqlite` with `bundled`. The binary supports Linux, macOS and Windows; gate platform code with `#[cfg(unix)]` / `#[cfg(not(unix))]`.
 
----
+## Workflow
 
-## House Style: Terse
+`main` is the only long-lived branch. Work is tracked in [Jira](https://flying-dice.atlassian.net/jira/software/projects/NEOC) (project `NEOC`); code and pull requests are on GitHub at `flying-dice/neoc`.
 
-Write tight. Cut every word that doesn't carry meaning. This repo favours short,
-direct prose — docs, comments, commits, PR bodies, chat — stripped of filler,
-hedging, and ceremony. Keep the substance, drop the padding.
+1. Branch from `main`: `issues/{key}-{slug}` (e.g. `issues/NEOC-6-std-task`).
+2. Run the [pre-PR checks](CONTRIBUTING.md#pre-pr-checks) locally. GitHub Actions is not a gate: it is not relied on, so the local run is the verification.
+3. Self-review the diff with the `pr-self-review` skill (or `change-review`).
+4. Open a PR into `main`. The squash-merge commit takes the PR title, so the title is a Conventional Commit. Reference the Jira key in the body or footer (`Refs NEOC-6`).
+5. Squash-merge once the checks and the self-review are clean, then delete the branch. Mark the Jira ticket Done.
 
-**Cut these:**
-- Pleasantries — "Sure, I'd be happy to help" → just answer.
-- Hedging — "it might be worth considering" → say it plainly.
-- Filler — "the reason this happens is because" → "because".
-- Throat-clearing — get to the point in the first sentence.
+Releases are cut by pushing a `vX.Y.Z` tag on `main` (see CONTRIBUTING.md). Don't push release tags unless asked.
 
-**Before:**
-> The reason the `match` is being rejected as non-exhaustive is likely because
-> the scrutinee is an `enum` and one of its variants has no corresponding arm.
+### Commits
 
-**After:**
-> The `match` is non-exhaustive because the `Color` enum has a variant — `Blue`
-> — with no arm. Add `Color::Blue => …` or a `_ =>` catch-all.
+[Conventional Commits](https://www.conventionalcommits.org): `type(scope): description`. Imperative, lowercase, no trailing period; one logical change per commit.
 
-### Terse, not cryptic
-
-Tight writing stays clear and grammatical. We remove waste, not articles. Some
-things stay exact and complete — **never** abbreviate or stylise these:
-
-| Thing | Rule |
-| --- | --- |
-| Code blocks | Real code, real syntax. |
-| API names | Exact. `#[derive(Clone)]` stays `#[derive(Clone)]`. |
-| Type signatures | Exact. Never trim a type. |
-| Error / log messages | Quote verbatim. |
-| Commands | Exact: `neoc run`, `cargo test --workspace`. |
-| File paths, env vars | Exact. |
-| Rustdoc (`///`) on public items | Full, normal English — see below. |
-| Legal, LICENSE, security notes | Complete and careful. |
-
-Rule of thumb: **trim filler, never trim fact.**
-
-### Docs enforcement
-
-Two doc layers, different rules.
-
-**1. Prose docs** (guides, README body, tutorials) → terse. Short
-sentences, lead with the point, no ceremony.
-
-**2. Rustdoc on public items** (`///` on anything `pub`) → full, normal English.
-`cargo doc` renders these for embedders and the docs site; they must be clear,
-complete, and grammatical. Clipped phrasing in a `# Arguments` block is bad DX.
-
-```rust
-/// Encode `input` as base64 using the standard alphabet.
-///
-/// # Arguments
-///
-/// * `input` — the bytes to encode. Caller owns the buffer; the function does
-///   not retain a reference once it returns.
-/// * `padded` — whether to append `=` padding. Pass `false` for the unpadded
-///   form used in URLs and JWTs.
-///
-/// # Errors
-///
-/// Returns `Error::InputTooLarge` when the encoded length would overflow
-/// `usize`; this cannot happen for in-memory inputs on a 64-bit target.
-pub fn encode(input: &[u8], padded: bool) -> Result<String, Error> { /* ... */ }
-```
-
-Prose around a code sample stays terse. The doc comment itself stays complete.
-
----
-
-## Voice
-
-Direct. No marketing language. Friendly error messages that help the user, never
-scold. No rabbit / spring / Bun / Easter motifs — that brand belonged to an
-earlier life of the project when it targeted TypeScript on Bun. neoc is now a
-Lua runtime; the voice is plain.
-
----
-
-## Commits & PRs
-
-Use [Conventional Commits](https://www.conventionalcommits.org). Terse, but
-spec-compliant. Releases are cut by pushing a `vX.Y.Z` tag (see CONTRIBUTING.md);
-release notes are generated from merged PRs and commits.
+- **Type:** `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`.
+- **Scope** (optional): `cli`, a module (`std:fs`), or a subsystem (`vm`, `install`, `workspace`, `ci`).
+- **Footer:** `Refs NEOC-42`. Never `Closes` / `Fixes` / `Resolves`.
+- **Breaking change:** `!` after the type/scope **and** a `BREAKING CHANGE:` footer. The Lua surface of a module and the CLI are the user-visible contracts, so changes there almost always need `!`.
 
 ```
 fix(std:fs): read_to_string reports the path in its error
@@ -225,56 +115,5 @@ fix(std:fs): read_to_string reports the path in its error
 Previously the error named only the OS cause. Now it prefixes the path
 the caller passed.
 
-Refs NEOC-42.
+Refs NEOC-42
 ```
-
-- **Type** — one of: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`,
-  `test`, `build`, `ci`, `chore`, `revert`.
-- **Scope** — optional. The binary: `cli`. Runtime: use the module (`std:fs`) or
-  subsystem (`vm`, `install`). Cross-cutting: `workspace`, `ci`.
-- **Description** — imperative, lowercase, no trailing period.
-- **Body** — optional, terse prose. Bullet what changed. Use it when the *why*
-  isn't obvious from the subject.
-- **Footer** — `Refs NEOC-42`, etc.
-- **Breaking changes** — append `!` after type/scope (`feat(cli)!:`) **and**
-  add a `BREAKING CHANGE:` footer with full, careful English. The Lua surface of
-  a module and the CLI are the user-visible contracts — changes there almost
-  always warrant `!`.
-- One logical change per commit. If you're tempted to write "and" in the
-  subject, split it.
-
-PR titles follow the same format — the squash-merge commit inherits them, so
-they feed the changelog.
-
----
-
-## Issue workflow — Jira and GitHub
-
-Work is tracked in [Jira](https://flying-dice.atlassian.net/jira/software/projects/NEOC)
-(project `NEOC`). Source and pull requests live on GitHub at
-`flying-dice/neoc`. Jira is the source of truth for ticket state.
-
-- **Branches.** Branch from `develop`: `issues/{key}-{slug}` for implementation
-  (e.g. `issues/NEOC-6-std-task`), `design/{key}-{slug}` for RFC/ADR work.
-- **Pull requests.** Open against `develop`. Title follows Conventional
-  Commits. Reference the Jira key in the body or commit footer (`Refs NEOC-6`).
-- **Review.** CODEOWNERS approval is required before merge. Reviewers use the
-  `pr-review` skill; authors run `pr-self-review` first.
-- **CI.** Minutes are limited: CI runs on push to `main` and `develop` (docs-only pushes excluded), on
-  manual dispatch (`gh workflow run ci.yml --ref <branch>`), and weekly. It does
-  not run per PR. Verify locally before opening a PR (see Build and test).
-- **Gates.** Never move a ticket out of Backlog without explicit CODEOWNER
-  instruction. A design PR needs CODEOWNER approval before implementation starts.
-- **Done.** Merge to `develop`, then mark the Jira ticket Done.
-
----
-
-## Cross-platform
-
-The binary supports Linux, macOS, and Windows. Signal handling uses
-`#[cfg(unix)]` / `#[cfg(not(unix))]` conditionally. `mlua` is built `vendored`
-(bundles LuaJIT). `rusqlite` uses `bundled` (bundles SQLite).
-
----
-
-*Few words. Full meaning.*

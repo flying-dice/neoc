@@ -51,7 +51,7 @@ use tracing::instrument;
 use crate::lua::facade::Module;
 use crate::lua::sandbox::{err, ok};
 
-/// Canonical algorithm list — the `docs/src/lib/reference/crypto.md` order. Used by `algorithms()`,
+/// Canonical algorithm list — the registration order. Used by `algorithms()`,
 /// `key_size` / `nonce_size` / `tag_size`, and by tests that iterate every
 /// backend.
 const ALGOS: &[&str] = &["aes_128_gcm", "aes_256_gcm", "chacha20_poly1305"];
