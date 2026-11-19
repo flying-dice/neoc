@@ -16,6 +16,7 @@
   import { untrack } from 'svelte'
   import { provideView } from '../context'
   import { describeLink, type ExternalLink } from '../core/link'
+  import { pressesFocusedControl, watchInputModality } from '../core/modality'
   import type { ViewCore } from '../core/view'
   import { createDomEffects } from '../effects'
   import { defaultRegistry } from '../kit'
@@ -28,6 +29,8 @@
     view: ViewCore
     /** The app id: the prefix of every test id in this window. */
     app: string
+    /** The window's name for a screen reader (the app's display name); the id when there is none. */
+    label?: string
     registry?: ComponentRegistry
     /** Reconnect now (the offline banner's Retry). */
     onretry?: () => void
@@ -36,7 +39,15 @@
     onclosewindow?: () => void
   }
 
-  let { view, app, registry = defaultRegistry, onretry, onopenurl, onclosewindow }: Props = $props()
+  let {
+    view,
+    app,
+    label,
+    registry = defaultRegistry,
+    onretry,
+    onopenurl,
+    onclosewindow
+  }: Props = $props()
 
   let root: HTMLElement | undefined = $state()
   const store = $derived(view.store)
@@ -113,6 +124,9 @@
     }
   })
 
+  // How focus arrived (Tab or a pointer) decides what Enter does on a focused control; see core/modality.
+  $effect(() => watchInputModality())
+
   const apple = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
   function onkeydown(e: KeyboardEvent): void {
     const t = e.target as HTMLElement | null
@@ -122,14 +136,10 @@
         t.tagName === 'INPUT' ||
         t.tagName === 'TEXTAREA' ||
         t.tagName === 'SELECT')
-    // A key focused with the keyboard is activated by Enter or Space as a button always is; a bare shortcut must not
-    // take that key away. (A key focused by a click does not match :focus-visible, so Enter still reaches a shortcut
-    // such as the Calculator's "=" after the person has been tapping.)
-    const activating =
-      (e.key === 'Enter' || e.key === ' ') &&
-      !!t?.matches?.('button, [role="button"], a[href], summary') &&
-      t.matches(':focus-visible')
-    if (activating) return
+    // Enter or Space on a control the person walked to with the keyboard presses that control, as it always does;
+    // a bare shortcut must not take it away. A control the person clicked or touched is not walked to (however the
+    // browser styles its focus), so Enter after tapping still reaches a shortcut such as an app's "=".
+    if (pressesFocusedControl(e, t)) return
     if (view.shortcuts.dispatch(e, { apple, editable })) e.preventDefault()
   }
 </script>
@@ -143,7 +153,7 @@
   class="view"
   class:offline
   data-testid="{app}-view"
-  aria-label={app}
+  aria-label={label ?? app}
   aria-busy={store.phase === 'opening'}
   tabindex="-1"
   data-window-focus

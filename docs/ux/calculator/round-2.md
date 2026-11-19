@@ -19,7 +19,7 @@ Success: **14 of 14** (was 9 of 14). Mean ease **5.6** / 7 (was 5.0). Conformanc
 
 | # | Severity | Hit by | Finding | Status |
 |---|---|---|---|---|
-| 1 | major | Alex | Enter on a key reached with Tab acted as `=`, not as a press of that key. | **Fixed** after the round: Enter and Space press a key focused with the keyboard (`:focus-visible`); after a click, Enter is still `=`. Journey J2 checks it. |
+| 1 | major | Alex | Enter on a key reached with Tab acted as `=`, not as a press of that key. | **Fixed** after the round, and **re-fixed after review**: the first fix decided by `:focus-visible`, but in Chromium a keydown on a clicked key turns that on, so after clicking keys Enter pressed the clicked key again (7, +, 2, Enter showed 22, not 9). Now the client decides from what the person last did (Tab, a click or touch, or typing: `view/core/modality.ts`): Enter and Space press a key walked to with Tab, and after a click or after typing Enter is `=`. Journey J2 checks both ([round 3](round-3.md)). |
 | 2 | major | Alex | After dragging the resize corner focus sat on the window frame and typed keys were ignored. | **Fixed** after the round: the kit `Window` hands focus to its content's `data-window-focus` element. Journey J7 types after the resize. |
 | 3 | major | Priya | No operator precedence: `2 + 3 x 4` shows 20 where she expects 14 (and the agent tool `calculate`, which parses precedence, says 14). | **Open, product decision.** The keypad has always chained left to right, immediate execution (documented in the README and tested). The default is kept; the owner decides. |
 | 4 | minor | 3 of 3 | Digits past the ninth dropped silently. | Deferred polish. |

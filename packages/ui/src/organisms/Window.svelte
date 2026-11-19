@@ -13,6 +13,8 @@
   Focus: the window itself is focusable (`tabindex="-1"`, so a click on its chrome or a drag of its handle lands
   there). When it is, focus moves on to the element in the content marked `data-window-focus`, if there is one, so a
   window whose keys are handled inside (an app's window-scoped shortcuts) keeps listening after a move or resize.
+  `data-window-focus` is the convention for "this element takes the window's keys": one per window, `tabindex="-1"`.
+  See client/README.md, "Focus hooks".
 -->
 <script lang="ts">
   import { motion } from '../motion'

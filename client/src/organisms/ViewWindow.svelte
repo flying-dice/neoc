@@ -12,6 +12,7 @@
   import { ViewHost, type protocol, type ViewCore } from '../view'
   import { host } from '../lib/host.svelte'
   import { installedApp } from '../lib/apps.svelte'
+  import { windowManager } from '../lib/windowManager.svelte'
   import { openExternal } from '../shell/links'
   import { messageOf } from '../view/errors'
 
@@ -59,14 +60,16 @@
       })
   })
 
-  // A window opened from the Dock takes the keyboard: its window-scoped shortcuts (the Calculator's digits) work at
-  // once instead of typing into the Dock icon. Focus that is already somewhere meaningful (inside a window, a
-  // field) stays put, so an app an agent opens never takes the keys from what the person is typing.
+  // A window opened from a launcher (the Dock) takes the keyboard, so its window-scoped shortcuts work at once
+  // instead of typing into the launcher's icon. Focus that is already somewhere meaningful (inside a window, a
+  // field, a dialog) stays put, so a window an agent opens never takes the keys from what the person is typing. With
+  // several windows opening together (a restore) only the top one, the window manager's focused window, takes it.
   async function focusWhenOpened(): Promise<void> {
     await tick()
+    if (windowManager.focusedId !== windowId) return
     const active = document.activeElement
-    if (active && active !== document.body && !active.closest('[data-testid="dock"]')) return
-    box?.querySelector<HTMLElement>(`[data-testid="${appId}-view"]`)?.focus({ preventScroll: true })
+    if (active && active !== document.body && !active.closest('[data-launcher]')) return
+    box?.querySelector<HTMLElement>('[data-window-focus]')?.focus({ preventScroll: true })
   }
 
   // Retry replaces the alert with the spinner and, when it fails again, the alert with a new button: focus goes
@@ -89,6 +92,7 @@
     <ViewHost
       {view}
       app={appId}
+      label={name}
       onretry={() => host.retry()}
       onopenurl={openExternal}
       {onclosewindow}

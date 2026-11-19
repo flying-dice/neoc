@@ -199,6 +199,21 @@
     await waitFor(() => expect(canvasElement.querySelector('[data-row-key="1"]')).toHaveFocus(), {
       timeout: 4000
     })
+    // Focus can land while the scroll back to the top is still under way (a snapshot then caught the list at
+    // "Item 2364", and another at 101 px once the host's rows replaced the placeholders): hold the list at the top
+    // until it has stayed there for twenty frames, with the first rows loaded rather than placeholders.
+    let still = 0
+    for (let frame = 0; frame < 300 && still < 20; frame++) {
+      await new Promise((r) => requestAnimationFrame(r))
+      const placeholders = canvasElement.querySelectorAll('[aria-busy=true][role=listitem]').length
+      if (scroller.scrollTop === 0 && placeholders === 0) still++
+      else {
+        still = 0
+        scroller.scrollTop = 0
+      }
+    }
+    await expect(still).toBe(20)
+    await expect(scroller.scrollTop).toBe(0)
   }}
 />
 

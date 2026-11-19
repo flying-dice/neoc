@@ -2,10 +2,24 @@
 -- sandbox has no `loadstring`), `format` for results and `formatEntry` for the number being typed.
 local calc = {}
 
--- Every error is raised at level 0, a plain sentence: a person sees it under the display ("Error") and an agent
--- gets it back from the tool, so neither wants a "calc.lua:56:" prefix.
+-- A failure calc raises on purpose is a plain sentence for a person ("Can't divide by zero") and for an agent, with
+-- no "calc.lua:56:" in front: an error object whose `tostring` is that sentence. Anything else that goes wrong
+-- (a bug) is an ordinary error with a source position, which `calc.reason` keeps from reaching the screen.
+local Failure = {}
+Failure.__tostring = function(failure)
+  return failure.message
+end
+
 local function fail(message)
-  error(message, 0)
+  error(setmetatable({ message = message }, Failure))
+end
+
+-- The sentence to show for something `pcall` caught: a failure raised by `fail`, else a generic one.
+function calc.reason(err)
+  if getmetatable(err) == Failure then
+    return err.message
+  end
+  return "Something went wrong"
 end
 
 -- A token is { kind = "num" | "op" | "paren", value = text, number = its value (numbers only) }.

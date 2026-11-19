@@ -128,10 +128,13 @@ local actions = {
   end,
 }
 
--- Every key goes through here. A calculation that fails (calc.lua raises a plain sentence) leaves the display at
--- "Error" with the reason under it. "AC" gets out of it, and so does a digit, which starts a new sum as it does on
--- an iPad; the other keys have nothing to work on and are ignored.
-local function press(kind, arg)
+-- Every key goes through here, with the window it was pressed in. A calculation that fails (calc.lua raises a plain
+-- sentence) leaves the display at "Error" with the reason under it, and the window announces the reason: the
+-- announcer is always on the page, so a screen reader hears it (a live region that appears together with its text is
+-- often missed). "AC" gets out of it, and so does a digit, which starts a new sum as it does on an iPad; the other
+-- keys have nothing to work on and are ignored.
+local function press(w, kind, arg)
+  local wasErr = s.err
   if s.err then
     if kind == "digit" then
       actions.clear()
@@ -139,10 +142,14 @@ local function press(kind, arg)
       return
     end
   end
-  local ok, message = pcall(actions[kind], arg)
+  local ok, err = pcall(actions[kind], arg)
   if not ok then
+    local reason = calc.reason(err) -- an unexpected error is a generic sentence, never a source position
     s.err, s.hasAcc, s.pending, s.fresh = true, false, "", true
-    s.caption = tostring(message)
+    s.caption = reason
+    w:announce(reason)
+  elseif wasErr and not s.err then
+    w:announce("") -- the announcer would otherwise keep the old reason, and not repeat it if the same error comes back
   end
 end
 
@@ -201,7 +208,7 @@ local function wideLabel(k)
   }
 end
 
-local function keyView(k)
+local function keyView(k, w)
   local title, name = k.label, k.name
   if k.id == "clear" and s.entry ~= "0" and not s.fresh then
     title, name = "C", "C, clear entry" -- the accessible name keeps the visible text (WCAG 2.5.3)
@@ -219,7 +226,7 @@ local function keyView(k)
     selected = k.kind == "operator" and s.pending == k.arg and s.fresh, -- aria-pressed on the pending operator
     shortcut = k.shortcut,
     onTap = function()
-      press(k.kind, k.arg)
+      press(w, k.kind, k.arg)
     end,
     k.wide and { wideLabel(k) } or {},
   }
@@ -227,7 +234,7 @@ end
 
 app.window("main", {
   title = "Calculator",
-  render = function(_)
+  render = function(w)
     local display
     if s.err then
       display = "Error"
@@ -258,8 +265,7 @@ app.window("main", {
             style = "body",
             foreground = "secondary",
             align = "trailing",
-            lines = 1,
-            live = s.err and "polite" or nil, -- the reason for an "Error" is read out; a caption is not, every key
+            lines = 1, -- not a live region: it changes on every sum, and the reason for an error is announced by `press`
           },
           ui.Text {
             key = "display",
@@ -275,7 +281,9 @@ app.window("main", {
             columns = 4,
             spacing = 2,
             cellAspect = 1,
-            ui.each(KEYS, keyView),
+            ui.each(KEYS, function(k)
+              return keyView(k, w)
+            end),
           },
         },
         -- keys a Button can't carry: it has one shortcut ("enter" for =), and Backspace has no key on the pad
@@ -283,14 +291,14 @@ app.window("main", {
           key = "equals",
           shortcut = "=",
           onTrigger = function()
-            press("equals")
+            press(w, "equals")
           end,
         },
         ui.Shortcut {
           key = "backspace",
           shortcut = "backspace",
           onTrigger = function()
-            press("backspace")
+            press(w, "backspace")
           end,
         },
       },
@@ -313,7 +321,7 @@ app.tool {
   name = "calculate",
   title = "Calculate",
   -- not readOnly: it writes the history to app.kv
-  description = "Evaluate an arithmetic expression exactly. Supports + - * / % ^, parentheses, unary minus and decimals.",
+  description = "Evaluate an arithmetic expression with the usual precedence (2 + 3 * 4 is 14), rounded to 12 significant digits. Supports + - * / % ^, parentheses, unary minus and decimals.",
   input = { expression = t.string { description = 'Arithmetic expression, e.g. "(12.5 + 7) * 3"' } },
   run = function(input)
     local result = calc.evaluate(input.expression)

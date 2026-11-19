@@ -110,6 +110,17 @@ pull to refresh and the "Refresh" keyboard button are in the kit (`packages/ui`)
 client state (a `path` Binding, so it can persist); each screen gets a back button named after the previous screen
 through its `NavLevel`; a `SplitView` below 700 px is the same flow across its columns.
 
+**Focus hooks (data attributes, not test ids).** The shell and the renderer find each other by two attributes, never
+by a test id (an app id must not leak into the shell's code): `data-window-focus` marks the one element of a window's
+content that takes the window's keys (`ViewHost`'s root, `tabindex="-1"`); the kit `Window` hands its own focus to it,
+so a click on the chrome or a drag of the handle leaves the keys with the app, and `ViewWindow` focuses it when a view
+opens. `data-launcher` marks a launcher (the Dock's tray): focus resting there yields to a window that has just opened,
+while focus anywhere else (a field, a dialog) stays. Only the top window, the window manager's `focusedId`, takes the
+keys when several open together. Enter and Space on a focused button or link are the browser's press when the person
+walked to it with Tab and has not typed since, and are the window's shortcut (an app's `=` on `enter`) after a click,
+a touch or typing: the renderer tracks what the person last did (`view/core/modality.ts`), because `:focus-visible` is
+also true for a clicked button once a key is typed.
+
 **Adding a component:** write an adapter under the right atomic layer that takes `AdapterProps`, reads props
 through `useView().view`, renders children with `<Children>`, passes `commonOf(...).testid` to the kit component, then
 `registry.register('Gauge', { component: Gauge, since: '1.2' })` in `kit.ts`. An unknown type renders its node's

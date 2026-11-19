@@ -5,9 +5,10 @@
 mod common;
 
 use agentos_application::ports::{
-    AppData, AppRuntime, CallContext, Notifier, PortResult, RenderOutput, ViewEventCall,
+    AppData, AppPackage, AppRuntime, CallContext, Notifier, PortResult, RenderOutput, ViewEffect,
+    ViewEventCall,
 };
-use agentos_domain::ui::Node;
+use agentos_domain::ui::{protocol::Command, Node};
 use agentos_lua::LuaRuntime;
 use common::{agent_ctx, built_app, db, id, user_ctx};
 use serde_json::{json, Map, Value};
@@ -22,7 +23,10 @@ impl Notifier for Quiet {
 }
 
 async fn calculator() -> LuaRuntime {
-    let package = built_app("calculator");
+    calculator_from(built_app("calculator")).await
+}
+
+async fn calculator_from(package: AppPackage) -> LuaRuntime {
     let runtime =
         LuaRuntime::new(Arc::new(Quiet), Arc::new(agentos_application::testing::RecordingShell::default()));
     let data: Arc<dyn AppData> = db();
@@ -35,7 +39,7 @@ async fn tool(rt: &LuaRuntime, name: &str, args: Value, ctx: CallContext) -> Por
 }
 
 #[tokio::test]
-async fn calculate_evaluates_exactly_and_rejects_what_is_not_arithmetic() {
+async fn calculate_follows_precedence_and_rejects_what_is_not_arithmetic() {
     let rt = calculator().await;
     for (expression, result) in [
         ("1 + 2 * 3", 7.0),
@@ -158,7 +162,10 @@ fn path_of(node: &Node, key: &str) -> Option<String> {
 
 impl Keypad {
     async fn open() -> Self {
-        let rt = calculator().await;
+        Self::open_on(calculator().await).await
+    }
+
+    async fn open_on(rt: LuaRuntime) -> Self {
         let out = rt.open_view(&id("calculator"), "v1", "main", Map::new(), Map::new()).await.unwrap();
         Self { rt, out }
     }
@@ -197,6 +204,20 @@ impl Keypad {
             }
             self.press(&format!("mul {big} eq")).await;
         }
+    }
+
+    /// What the window asked the client to announce to a screen reader since the last call, in order.
+    async fn announcements(&self) -> Vec<String> {
+        self.rt
+            .take_view_effects(&id("calculator"))
+            .await
+            .unwrap()
+            .into_iter()
+            .filter_map(|(_, effect)| match effect {
+                ViewEffect::Command(Command::Announce { text }) => Some(text),
+                _ => None,
+            })
+            .collect()
     }
 
     async fn refresh(&mut self) {
@@ -547,14 +568,45 @@ async fn a_failed_calculation_says_why_under_the_error() {
     assert_eq!((pad.display(), pad.caption()), ("0".into(), String::new()));
 }
 
+/// The reason is read out by the window's always-present announcer (`w:announce`), not by a live region that
+/// appears together with its text, which a screen reader often misses.
 #[tokio::test]
-async fn the_error_reason_is_announced_but_an_ordinary_caption_is_not() {
+async fn the_error_reason_is_announced_by_the_window_and_an_ordinary_caption_is_not() {
     let live = |pad: &Keypad| find(&pad.out.tree, "caption").and_then(|n| n.props.get("live")).cloned();
     let mut pad = Keypad::open().await;
     pad.press("1 2 add 7 eq").await;
-    assert_eq!(live(&pad), None, "a caption changes on every sum");
+    assert_eq!(pad.announcements().await, Vec::<String>::new(), "a caption changes on every sum");
     pad.press("div 0 eq").await;
-    assert_eq!(live(&pad), Some(json!("polite")));
+    assert_eq!(pad.announcements().await, ["Can't divide by zero"]);
+    assert_eq!(live(&pad), None, "the caption is never a live region: it would appear with its own text");
+    // keys that are ignored while the error shows say nothing more; AC clears the announcer, so the same
+    // reason is read again the next time it happens
+    pad.press("add eq").await;
+    assert_eq!(pad.announcements().await, Vec::<String>::new());
+    pad.press("clear").await;
+    assert_eq!(pad.announcements().await, [""]);
+    pad.press("5 div 0 eq").await;
+    assert_eq!(pad.announcements().await, ["Can't divide by zero"]);
+    // a digit is the other way out
+    pad.press("7").await;
+    assert_eq!(pad.announcements().await, [""]);
+    pad.press("add 2 eq").await;
+    assert_eq!(pad.announcements().await, Vec::<String>::new());
+}
+
+/// A bug in the app (not a failure `calc.lua` raises on purpose) must not show a source position to the person.
+#[tokio::test]
+async fn an_unexpected_error_shows_a_generic_sentence_not_a_source_position() {
+    let mut package = built_app("calculator");
+    let source = String::from_utf8(package.files["app.lua"].clone()).unwrap();
+    assert!(source.contains("return a / b"), "the bundle changed: update the anchor");
+    package.files.insert("app.lua".into(), source.replacen("return a / b", "return a / nil", 1).into_bytes());
+    let mut pad = Keypad::open_on(calculator_from(package).await).await;
+    pad.press("8 div 2 eq").await;
+    assert_eq!((pad.display(), pad.caption()), ("Error".into(), "Something went wrong".into()));
+    assert_eq!(pad.announcements().await, ["Something went wrong"]);
+    pad.press("clear 4 add 4 eq").await;
+    assert_eq!(pad.display(), "8", "the keypad is usable again");
 }
 
 #[tokio::test]

@@ -2,6 +2,8 @@
   @organism Dock — iPadOS floating dock with pinned apps and a recents group.
   Molecules: AppIcon. Atoms: Material.
   Test ids: `testid` on the tray, `${testid}-${app.id}` on each app (pinned and recents).
+
+  The tray is a `data-launcher`: focus on one of its icons yields to the window it opens (see Window, Focus).
 -->
 <script lang="ts">
   import Material from '../atoms/Material.svelte'
@@ -21,7 +23,7 @@
 </script>
 
 <Material thickness="thin" radius="var(--radius-dock)" class="ios-dock">
-  <div class="tray" data-testid={testid}>
+  <div class="tray" data-testid={testid} data-launcher>
     {#each apps as app (app.id)}
       <AppIcon
         testid="{testid}-{app.id}"

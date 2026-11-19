@@ -194,7 +194,7 @@
   }
   /*
    * A pressed (`aria-pressed`) data-colour button swaps its fill and its text and gains a ring in the fill colour:
-   * the pending operator of a calculator, the active toggle of a keypad. The ink was picked for 4.5:1 on the fill,
+   * the selected operation of a keypad, the active toggle of a toolbar. The ink was picked for 4.5:1 on the fill,
    * so the swap keeps that contrast both ways, and the ring keeps the key visible on a canvas the ink matches.
    */
   .inverts[aria-pressed='true'] {

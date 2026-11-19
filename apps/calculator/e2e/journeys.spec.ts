@@ -57,13 +57,46 @@ test.describe('Calculator journeys', () => {
     await expect(page.getByTestId(display)).toHaveText('19')
     await expect(page.getByTestId(caption)).toHaveText('12 + 7')
 
-    // a key reached with Tab is pressed by Enter, as any button is (Enter is "=" only while no key is focused that way)
+    // a key reached with Tab is pressed by Enter and by Space, as any button is (until a sum is typed on it)
     await clearCalculator(page)
     await page.getByTestId('calculator-view').focus()
     for (let i = 0; i < 5; i++) await page.keyboard.press('Tab') // AC, ±, %, ÷, 7
     await expect(page.getByTestId(key('7'))).toBeFocused()
     await page.keyboard.press('Enter')
     await expect(page.getByTestId(display)).toHaveText('7')
+    await page.keyboard.press('Tab') // 8
+    await page.keyboard.press(' ')
+    await expect(page.getByTestId(display)).toHaveText('78')
+    // ...but a key tabbed to and then typed on is not being navigated: Enter finishes the sum (it once pressed 8 again)
+    await page.keyboard.type('+2')
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId(display), 'Enter after typing on a key reached with Tab is =').toHaveText('80')
+    await expect(page.getByTestId(caption)).toHaveText('78 + 2')
+
+    // A key that was clicked keeps focus, and a keydown on it turns :focus-visible on in Chromium; Enter is still "="
+    // there, because the person did not walk to that key.
+    await clearCalculator(page)
+    for (const k of ['7', 'add', '2']) await page.getByTestId(key(k)).click()
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId(display), 'Enter after clicks is =, not another press of 2').toHaveText('9')
+    await expect(page.getByTestId(caption)).toHaveText('7 + 2')
+
+    await clearCalculator(page)
+    await page.getByTestId(key('7')).click()
+    await page.keyboard.type('+3') // typed keys on a clicked key
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId(display), 'Enter after typing on a clicked key is =').toHaveText('10')
+
+    // Tab hands Enter to the focused key again, and a click takes it back
+    await clearCalculator(page)
+    await page.getByTestId(key('7')).click()
+    await page.keyboard.press('Tab') // 8
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId(display), 'a key reached with Tab').toHaveText('78')
+    await page.getByTestId(key('add')).click()
+    await page.getByTestId(key('2')).click()
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId(display)).toHaveText('80')
   })
 
   test('J3: chain operations; the pending operator is highlighted until the next number', async ({ page }) => {
@@ -90,11 +123,15 @@ test.describe('Calculator journeys', () => {
     for (const k of ['8', 'div', '0', 'eq']) await page.getByTestId(key(k)).click()
     await expect(page.getByTestId(display)).toHaveText('Error')
     await expect(page.getByTestId(caption)).toHaveText("Can't divide by zero")
+    // the reason is announced by the window's announcer (always on the page), not by a live region of its own
+    await expect(page.getByTestId('calculator-announcer')).toHaveText("Can't divide by zero")
+    await expect(page.getByTestId(caption)).not.toHaveAttribute('aria-live')
     await page.getByTestId(key('add')).click() // an operator has nothing to work on while the error shows
     await expect(page.getByTestId(display)).toHaveText('Error')
     await page.getByTestId(key('clear')).click()
     await expect(page.getByTestId(display)).toHaveText('0')
     await expect(page.getByTestId(caption)).toHaveText('')
+    await expect(page.getByTestId('calculator-announcer')).toHaveText('') // so the same reason is read again next time
     for (const k of ['4', 'add', '4', 'eq']) await page.getByTestId(key(k)).click()
     await expect(page.getByTestId(display)).toHaveText('8')
 

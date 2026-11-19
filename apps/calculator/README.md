@@ -13,7 +13,7 @@ history. Both use **one calculator** however many windows are open.
 |---|---|
 | `app.json` | The package manifest Discover shows before the app runs: id, name, `version` (bump it when the source changes), icon, tint, `main`. |
 | `app.lua` | The entry: `app.manifest` (window sizes), `app.state`, the key handlers, the window's `render`, the three tools. |
-| `calc.lua` | Pure arithmetic with no UI and no `app`: `evaluate` (the expression parser), `combine` (one operation, as the keypad chains), `format`/`formatEntry` (what the display shows). |
+| `calc.lua` | Pure arithmetic with no UI and no `app`: `evaluate` (the expression parser), `combine` (one operation, as the keypad chains), `reason` (the sentence to show for a failure), `format`/`formatEntry` (what the display shows). |
 | `JOURNEYS.md` | Seven key user journeys, as goals with an observable "Done when". |
 | `e2e/journeys.spec.ts` | Their automated twins (one test per id), against the real host. Not shipped. |
 | `../../crates/agentos-lua/tests/calculator_app.rs` | The Rust tests of the keypad and the tools, run against the built package. |
@@ -35,7 +35,8 @@ The keypad is a small state machine, in the iPadOS Calculator's way:
 
 - `entry` is the text being typed; once a result is in (`fresh`), the number lives in `value`, so a result is never
   parsed back from its own display text (a result shown as `2e-7` is an ordinary operand).
-- Operations chain left to right with no precedence: `2 + 3 × 4` is `(2 + 3) × 4 = 20`. Pressing another operator before
+- Operations chain left to right with no precedence: `2 + 3 × 4` is `(2 + 3) × 4 = 20` (the `calculate` tool does use precedence and
+  says 14; which is right for the app is an open owner decision, AGOS-57). Pressing another operator before
   the next number replaces the pending one; `5 + =` doubles it; `=` with nothing pending does nothing.
 - `C` clears what is typed, `AC` (nothing typed) clears everything. `±` flips the sign, `%` divides by 100 (it is not a
   percentage of the first operand), Backspace removes the last typed character and leaves a result alone.
@@ -43,8 +44,11 @@ The keypad is a small state machine, in the iPadOS Calculator's way:
   `3.33e-9`) when it will not fit.
 - **Errors.** A calculation that cannot be shown (divide by zero, a result that is infinite or not a real number)
   raises a plain sentence in `calc.lua`. `press` catches it: the display says `Error`, the sentence is shown under it
-  and read out by the screen reader. `AC` clears it, and so does a digit, which starts a new sum; the other keys have
-  nothing to work on and are ignored.
+  and announced with `w:announce` (the window's announcer is on the page from the start, so a screen reader hears it;
+  the caption is not a live region, because a live region that appears together with its text is often missed). `AC`
+  clears it, and so does a digit, which starts a new sum; the other keys have nothing to work on and are ignored. A
+  bug in the app is not shown as a source position: `calc.reason` turns anything `calc.lua` did not raise on purpose
+  into `Something went wrong`.
 - The pending operator is shown three ways: the key is `selected` (an outlined key, and `aria-pressed`), and the caption
   says what is waiting (`27 −`), then the whole sum once `=` is pressed (`27 − 7`).
 
@@ -60,7 +64,9 @@ components are listed in [`docs/reference/components.md`](../../docs/reference/c
 - The pending operator is `selected` (it is `aria-pressed`, and drawn highlighted).
 - The keyboard: each key's `shortcut` prop (`7`, `+`, `*`, `enter`, `escape`, `.`, `%`) is a window-scoped shortcut, and
   two invisible `ui.Shortcut` nodes add `=` and Backspace. Focus has to be inside the window (a window opened from the
-  Dock takes it). Enter is `=` unless a key was reached with Tab, which Enter and Space then press like any button (a key you clicked is not "reached with Tab").
+  Dock takes it). Enter is `=`, except on a key you walked to with Tab and have not typed on since: Enter and Space then
+  press that key, like any button. The client decides from what the person last did (a Tab, a click or touch, or typing
+  a character), not from `:focus-visible`, so after tapping keys, or tabbing to a key and typing a sum, Enter is `=`.
 - The window is always on a dark canvas (`ui.Scope { scheme = "dark" }`, as on the iPad), in light and dark shell
   themes alike; the keys use palette roles (`gray4`, `gray2`, `orange`) that pick their own text colour for contrast.
 - **Minimum window** `320 x 500` (`app.manifest`): the keypad is one fixed-width column (296 pt) centred in the window,
@@ -73,7 +79,7 @@ as `calculator__<name>`.
 
 | Tool | Does | `readOnly` |
 |---|---|---|
-| `calculate` | Evaluates an expression exactly (`+ - * / % ^`, parentheses, unary minus, decimals) and returns `result` and its `display` form. Writes the history. | no |
+| `calculate` | Evaluates an expression with the usual operator precedence (`2 + 3 * 4` is 14), rounded to 12 significant digits (`+ - * / % ^`, parentheses, unary minus, decimals), and returns `result` and its `display` form. Writes the history. | no |
 | `show_on_calculator` | Does the same, puts the result on the keypad (the next digit starts a new number; the person can carry on from it with `×`, `+`...) and opens the window. Every open window updates by itself. | no |
 | `history` | The last calculations (the newest 50 are kept), newest first, `limit` 1 to 50. | yes |
 
