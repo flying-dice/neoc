@@ -25,7 +25,7 @@ use agentos_luavm::{
     lua::{
         app_env,
         lib::log::set_log_sink,
-        lifecycle::{self, set_entry, Baton, CallEntry, Life},
+        lifecycle::{self, set_entry, Baton, CallEntry, Inherited, Life},
         sandbox::{install_runtime_state, load_source, make_bare_engine},
     },
     mlua::{Function, Lua, Table, Value as LuaValue},
@@ -37,7 +37,7 @@ use std::{
     future::Future,
     pin::Pin,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
 };
@@ -179,9 +179,15 @@ pub(crate) struct Shared {
     /// The open `db:tx(fn)` transaction, if any. A statement takes it out while it runs and puts it back, so
     /// no lock is held across an await and a call that was cut off cannot wedge the next one.
     pub tx: Mutex<Option<Box<dyn DataTx>>>,
-    /// The running tool is declared `readOnly`: its database handle refuses writes and `app.kv` /
-    /// `db:migrate` raise. Set only while that tool's call holds the VM's gate.
+    /// The call that holds the VM's gate is read-only: its database handle refuses writes and every other
+    /// change to the world raises. It is the holder's own state (see [`Turn`]): set when a call takes the gate,
+    /// cleared when it lets it go.
     pub read_only: Arc<AtomicBool>,
+    /// How many calls and tasks that are read-only are alive (a `readOnly` tool, parked or running, and
+    /// everything it started that has not finished). A request that arrives from outside while this is
+    /// above zero (a request to the app's own listener, say) runs read-only too: whoever sent it may be one
+    /// of them.
+    pub read_only_live: AtomicUsize,
     /// Everything the app spawned (tasks, servers, workers): aborted when the app is unloaded.
     pub life: Life,
     /// Woken when a call that nobody made through the host (a request to the app's own server, a task's next
@@ -262,29 +268,8 @@ impl Shared {
     }
 }
 
-/// Marks the VM as running a `readOnly` tool until dropped (the call's gate is held for that whole time).
-struct ReadOnlyCall<'a>(Option<&'a Shared>);
-
-impl<'a> ReadOnlyCall<'a> {
-    fn enter(shared: &'a Shared, read_only: bool) -> Self {
-        if read_only {
-            shared.read_only.store(true, Ordering::SeqCst);
-        }
-        Self(read_only.then_some(shared))
-    }
-}
-
-impl Drop for ReadOnlyCall<'_> {
-    fn drop(&mut self) {
-        if let Some(shared) = self.0 {
-            shared.read_only.store(false, Ordering::SeqCst);
-        }
-    }
-}
-
 /// What a call keeps while it waits without using the VM (see [`Baton::park`]).
 struct Parked {
-    read_only: bool,
     scope: TrackerScope,
 }
 
@@ -303,23 +288,55 @@ pub(crate) struct Turn {
     /// The call came from inside the VM (a request to the app's server, a task), not through the host: its
     /// effects are forwarded by the runtime's pump when it ends.
     inbound: bool,
+    /// The call may not change anything. This belongs to the call, and everything it starts inherits it: a
+    /// task a `readOnly` tool spawns stays read-only for as long as it lives, whenever it runs. While the
+    /// call holds the gate this is [`Shared::read_only`]; while it waits it is not (the next call's is).
+    read_only: bool,
 }
 
 impl Turn {
-    async fn take(shared: Arc<Shared>, gate: Arc<tokio::sync::Mutex<()>>, inbound: bool) -> Self {
+    /// A call that waits for the gate and takes it. `read_only` is what the caller requires of the call;
+    /// an `inbound` call is read-only too while any read-only call or task is alive (see
+    /// [`Shared::read_only_live`]).
+    async fn take(
+        shared: Arc<Shared>,
+        gate: Arc<tokio::sync::Mutex<()>>,
+        inbound: bool,
+        read_only: bool,
+    ) -> Self {
         let held = gate.clone().lock_owned().await;
-        Self { shared, gate, held: Some(held), parked: None, inbound }
+        let read_only = read_only || (inbound && shared.read_only_live.load(Ordering::SeqCst) > 0);
+        let turn = Self::new(shared, gate, Some(held), inbound, read_only);
+        turn.shared.read_only.store(read_only, Ordering::SeqCst);
+        turn
     }
 
     /// A call that holds nothing yet (a coroutine's continuation): it takes the gate at its first wait's end.
-    fn detached(shared: Arc<Shared>, gate: Arc<tokio::sync::Mutex<()>>) -> Self {
-        Self { shared, gate, held: None, parked: None, inbound: true }
+    fn detached(shared: Arc<Shared>, gate: Arc<tokio::sync::Mutex<()>>, read_only: bool) -> Self {
+        Self::new(shared, gate, None, true, read_only)
+    }
+
+    fn new(
+        shared: Arc<Shared>,
+        gate: Arc<tokio::sync::Mutex<()>>,
+        held: Option<tokio::sync::OwnedMutexGuard<()>>,
+        inbound: bool,
+        read_only: bool,
+    ) -> Self {
+        if read_only {
+            shared.read_only_live.fetch_add(1, Ordering::SeqCst);
+        }
+        Self { shared, gate, held, parked: None, inbound, read_only }
     }
 }
 
 impl Baton for Turn {
     fn holding(&self) -> bool {
         self.held.is_some()
+    }
+
+    fn inherited(&self) -> Inherited {
+        Inherited { read_only: self.read_only }
     }
 
     fn park(&mut self) -> std::result::Result<(), String> {
@@ -336,8 +353,9 @@ impl Baton for Turn {
         }
         let scope = tracker.suspend();
         drop(tracker);
-        let read_only = self.shared.read_only.swap(false, Ordering::SeqCst);
-        self.parked = Some(Parked { read_only, scope });
+        // the next call to hold the gate is not this one: its restrictions are its own
+        self.shared.read_only.store(false, Ordering::SeqCst);
+        self.parked = Some(Parked { scope });
         self.held = None;
         Ok(())
     }
@@ -347,8 +365,8 @@ impl Baton for Turn {
             if self.held.is_none() {
                 self.held = Some(self.gate.clone().lock_owned().await);
             }
+            self.shared.read_only.store(self.read_only, Ordering::SeqCst);
             if let Some(parked) = self.parked.take() {
-                self.shared.read_only.store(parked.read_only, Ordering::SeqCst);
                 self.shared.tracker.lock().resume(parked.scope);
             }
         })
@@ -360,6 +378,10 @@ impl Drop for Turn {
         if self.held.is_some() {
             // before the gate is released (fields drop after this body): dropping the transaction rolls it back
             drop(self.shared.tx.lock().take());
+            self.shared.read_only.store(false, Ordering::SeqCst);
+        }
+        if self.read_only {
+            self.shared.read_only_live.fetch_sub(1, Ordering::SeqCst);
         }
         if self.inbound {
             self.shared.effects_signal.notify_one();
@@ -374,13 +396,15 @@ struct Entry {
 }
 
 impl CallEntry for Entry {
-    fn detached(&self) -> Box<dyn Baton> {
-        Box::new(Turn::detached(self.shared.clone(), self.gate.clone()))
+    fn detached(&self, inherited: Inherited) -> Box<dyn Baton> {
+        Box::new(Turn::detached(self.shared.clone(), self.gate.clone(), inherited.read_only))
     }
 
-    fn enter(&self) -> Pin<Box<dyn Future<Output = Box<dyn Baton>> + Send + 'static>> {
+    fn enter(&self, inherited: Inherited) -> Pin<Box<dyn Future<Output = Box<dyn Baton>> + Send + 'static>> {
         let (shared, gate) = (self.shared.clone(), self.gate.clone());
-        Box::pin(async move { Box::new(Turn::take(shared, gate, true).await) as Box<dyn Baton> })
+        Box::pin(async move {
+            Box::new(Turn::take(shared, gate, true, inherited.read_only).await) as Box<dyn Baton>
+        })
     }
 }
 
@@ -461,6 +485,7 @@ impl AppVm {
             view_effects: Mutex::default(),
             tx: Mutex::new(None),
             read_only,
+            read_only_live: AtomicUsize::new(0),
             life,
             effects_signal: Arc::new(Notify::new()),
         });
@@ -470,7 +495,7 @@ impl AppVm {
 
         let env = app_env::new_env(&lua).map_err(|e| load_err(&e))?;
         let vm = Self { app: app.clone(), lua, shared, gate };
-        vm.in_call(vm.boot(env)).await.map_err(|e| match e {
+        vm.in_call(false, vm.boot(env)).await.map_err(|e| match e {
             BootError::Lua(e) => load_err(&e),
             BootError::Vm(e) => e,
         })?;
@@ -521,8 +546,10 @@ impl AppVm {
     }
 
     /// Run a top-level call: wait for the previous one, then run `body` holding the VM's gate (see [`Turn`]).
-    pub(crate) async fn in_call<T>(&self, body: impl Future<Output = T>) -> T {
-        let turn = Turn::take(self.shared.clone(), self.gate.clone(), false).await;
+    ///
+    /// `read_only`: the call may not change anything (a `readOnly` tool); whatever it starts may not either.
+    pub(crate) async fn in_call<T>(&self, read_only: bool, body: impl Future<Output = T>) -> T {
+        let turn = Turn::take(self.shared.clone(), self.gate.clone(), false, read_only).await;
         lifecycle::scoped(Box::new(turn), body).await
     }
 
@@ -589,8 +616,7 @@ impl AppVm {
             (t.spec.input_schema.clone(), t.run.clone(), t.spec.read_only || require_read_only)
         };
         let input = tool_schema::validate_args(&schema, &args).map_err(VmError::InvalidInput)?;
-        self.in_call(async {
-            let _read_only = ReadOnlyCall::enter(&self.shared, read_only);
+        self.in_call(read_only, async {
             let convert = |e: mlua::Error| VmError::Convert(e.to_string());
             let arg = json_to_lua(&self.lua, &input).map_err(convert)?;
             let ctx = self.ctx_table(ctx).map_err(convert)?;
@@ -616,7 +642,7 @@ impl AppVm {
             .get(&source.0)
             .cloned()
             .ok_or_else(|| VmError::NoSuchWriter(source.0.clone()))?;
-        self.in_call(async {
+        self.in_call(false, async {
             let convert = |e: mlua::Error| VmError::Convert(e.to_string());
             let args = (
                 json_to_lua(&self.lua, key).map_err(convert)?,
@@ -647,7 +673,7 @@ impl AppVm {
     ) -> Result<(Value, BTreeSet<DepKey>)> {
         let handler = self.shared.handlers.lock().get(event).cloned();
         let Some(handler) = handler else { return Ok((Value::Null, BTreeSet::new())) };
-        self.in_call(async {
+        self.in_call(false, async {
             let arg = json_to_lua(&self.lua, &payload).map_err(|e| VmError::Convert(e.to_string()))?;
             if track {
                 self.shared.tracker.lock().begin(false);
@@ -686,6 +712,12 @@ impl AppVm {
     /// an app cannot keep a listener or a task alive after an uninstall or a reload.
     pub fn shutdown(&self) {
         self.shared.life.shutdown();
+    }
+
+    /// Has the app been unloaded or replaced ([`AppVm::shutdown`])? What a call it still had in flight queues
+    /// after that is dropped.
+    pub fn is_shut_down(&self) -> bool {
+        self.shared.life.is_closed()
     }
 
     /// Unload: release every Rust-held reference to Lua values, then the VM. Returns the heap size freed.

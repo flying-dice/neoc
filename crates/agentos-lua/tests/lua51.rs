@@ -151,7 +151,8 @@ async fn the_preludes_polyfills_are_there_and_sealed() {
         app.on("t", function()
           local clone = table.clone({ 1, 2 })
           return {
-            typeof = typeof("x"), utf8 = utf8.len("h\195\169llo"), clone = #clone, pack = table.pack(1, nil, 3).n,
+            typeof = typeof("x"), typeof_table = typeof({}), typeof_nil = typeof(nil),
+            typeof_userdata = typeof(require("lib:json").object()), utf8 = utf8.len("h\195\169llo"), clone = #clone, pack = table.pack(1, nil, 3).n,
             moved = table.concat(table.move({ 1, 2, 3 }, 1, 3, 2), ","), writable = pcall(function() utf8.evil = 1 end),
           }
         end)
@@ -159,7 +160,7 @@ async fn the_preludes_polyfills_are_there_and_sealed() {
     let vm = load(src).await;
     assert_eq!(
         emit(&vm, "t").await.unwrap(),
-        json!({"typeof": "string", "utf8": 5, "clone": 2, "pack": 3, "moved": "1,1,2,3", "writable": false})
+        json!({"typeof": "string", "typeof_table": "table", "typeof_nil": "nil", "typeof_userdata": "userdata", "utf8": 5, "clone": 2, "pack": 3, "moved": "1,1,2,3", "writable": false})
     );
 }
 

@@ -30,9 +30,11 @@ The boundary rules:
 - **Dependencies point inward.** An adapter depends on application and domain, never on another adapter; domain depends
   on nothing framework-shaped; application on domain only. Enforced by `bun run lint:deps` and `cargo deny check`.
   Frameworks (tokio, axum, mlua, rusqlite, reqwest, rmcp, ACP) stay in their adapters.
-- **The VM is the app boundary.** Apps are isolated from each other (their own VM, environment and module tables),
-  not from the host: they use `app.*` and every `std:`/`lib:`/`vnd:` module, with no permissions and no budgets. What
-  they start (tasks, servers, workers) is released when they are unloaded. Apps reach other apps only through tools.
+- **The VM keeps an app's Lua state apart; it is not a security boundary.** Apps have their own VM, environment and
+  module tables, and use `app.*` and every `std:`/`lib:`/`vnd:` module with no permissions and no budgets (the modules
+  reach other apps' data and the host database). What they start (tasks, servers, workers) is released when they are
+  unloaded. Through `app.*`, apps reach other apps only through tools. A Lua number that reaches Rust is bounded or an
+  error, never a panic.
 - **The client runs no app code.** Client and host talk only through the protocol (JSON-RPC on `/rpc`, AG-UI on `/agui`);
   no raw sockets or side routes. A new wire shape is declared once, in the Rust schema, and generated.
 - **Release what you open.** The host loads and unloads apps at runtime: an adapter's VMs, database handles, watchers and

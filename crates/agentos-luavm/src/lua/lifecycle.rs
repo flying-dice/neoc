@@ -163,10 +163,32 @@ impl Life {
     }
 }
 
+/// What a piece of work a call starts (a `std:task` coroutine, a deferred or delayed function) takes from
+/// the call that started it. The VM does not know what the restrictions mean; the embedder does.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Inherited {
+    /// The starting call may not change anything (a tool declared `readOnly`): neither may what it starts,
+    /// for as long as that lives.
+    pub read_only: bool,
+}
+
+/// What a task started *now*, by the call running in this tokio task, inherits. [`Inherited::default`] outside
+/// a call (a worker, a test).
+#[must_use]
+pub fn inherited() -> Inherited {
+    HELD.try_with(|slot| slot.borrow().as_ref().map(|baton| baton.inherited()))
+        .ok()
+        .flatten()
+        .unwrap_or_default()
+}
+
 /// A call's turn in the VM, held until it is dropped.
 pub trait Baton: Send + 'static {
     /// Does this call hold the VM right now? (A parked or detached call does not.)
     fn holding(&self) -> bool;
+
+    /// What the work this call starts inherits from it.
+    fn inherited(&self) -> Inherited;
 
     /// The holder starts a wait that does not use the VM: set the call's own state aside and let others in.
     /// An error means the call cannot wait right now (it says why) and keeps the baton.
@@ -181,11 +203,13 @@ pub trait Baton: Send + 'static {
 
 /// The embedder's queue of calls into one VM.
 pub trait CallEntry: Send + Sync + 'static {
-    /// Wait for the VM to be free and take it.
-    fn enter(&self) -> BoxFuture<'static, Box<dyn Baton>>;
+    /// Wait for the VM to be free and take it. `inherited` is what the work being started takes from whatever
+    /// started it ([`Inherited::default`] for a request that arrives from outside, which the embedder may
+    /// still restrict).
+    fn enter(&self, inherited: Inherited) -> BoxFuture<'static, Box<dyn Baton>>;
 
     /// A call that exists but holds nothing yet: it takes its turn at its first [`idle`] or [`hold`].
-    fn detached(&self) -> Box<dyn Baton>;
+    fn detached(&self, inherited: Inherited) -> Box<dyn Baton>;
 }
 
 struct Entry(Arc<dyn CallEntry>);
@@ -213,11 +237,11 @@ pub fn has_entry(lua: &Lua) -> bool {
 
 /// Run a Lua callback nobody called (an inbound request, a task's next slice) as a call of its own: it waits
 /// for its turn first. Without a [`CallEntry`] it just runs.
-pub async fn inbound<F: Future>(lua: &Lua, future: F) -> F::Output {
+pub async fn inbound<F: Future>(lua: &Lua, inherited: Inherited, future: F) -> F::Output {
     let entry = lua.app_data_ref::<Entry>().map(|entry| entry.0.clone());
     match entry {
         Some(entry) => {
-            let baton = entry.enter().await;
+            let baton = entry.enter(inherited).await;
             scoped(baton, future).await
         }
         None => future.await,
@@ -226,8 +250,8 @@ pub async fn inbound<F: Future>(lua: &Lua, future: F) -> F::Output {
 
 /// A coroutine's continuation, which starts where its first slice stopped (see the module docs): it runs as
 /// a call that holds nothing until the wait it stopped at ends. Without a [`CallEntry`] it just runs.
-pub async fn resumed<F: Future>(lua: &Lua, future: F) -> F::Output {
-    let detached = lua.app_data_ref::<Entry>().map(|entry| entry.0.detached());
+pub async fn resumed<F: Future>(lua: &Lua, inherited: Inherited, future: F) -> F::Output {
+    let detached = lua.app_data_ref::<Entry>().map(|entry| entry.0.detached(inherited));
     match detached {
         Some(baton) => scoped(baton, future).await,
         None => future.await,
@@ -236,8 +260,8 @@ pub async fn resumed<F: Future>(lua: &Lua, future: F) -> F::Output {
 
 /// Run the synchronous first slice of a coroutine (`task.spawn`) inside the spawning call, but *not as* that
 /// call: a wait it starts keeps a detached baton of its own (see [`resumed`]), so the spawner keeps its turn.
-pub fn first_slice<R>(lua: &Lua, slice: impl FnOnce() -> R) -> R {
-    let detached = lua.app_data_ref::<Entry>().map(|entry| entry.0.detached());
+pub fn first_slice<R>(lua: &Lua, inherited: Inherited, slice: impl FnOnce() -> R) -> R {
+    let detached = lua.app_data_ref::<Entry>().map(|entry| entry.0.detached(inherited));
     HELD.sync_scope(RefCell::new(detached), slice)
 }
 
@@ -311,6 +335,9 @@ mod tests {
         fn holding(&self) -> bool {
             self.held.is_some()
         }
+        fn inherited(&self) -> Inherited {
+            Inherited::default()
+        }
         fn park(&mut self) -> Result<(), String> {
             self.inside.fetch_sub(1, Ordering::SeqCst);
             self.held = None;
@@ -335,7 +362,7 @@ mod tests {
     }
 
     impl CallEntry for Counting {
-        fn detached(&self) -> Box<dyn Baton> {
+        fn detached(&self, _: Inherited) -> Box<dyn Baton> {
             Box::new(CountingBaton {
                 gate: self.gate.clone(),
                 held: None,
@@ -343,7 +370,7 @@ mod tests {
                 most: self.most.clone(),
             })
         }
-        fn enter(&self) -> BoxFuture<'static, Box<dyn Baton>> {
+        fn enter(&self, _: Inherited) -> BoxFuture<'static, Box<dyn Baton>> {
             let (gate, inside, most) = (self.gate.clone(), self.inside.clone(), self.most.clone());
             Box::pin(async move {
                 let held = gate.clone().lock_owned().await;
@@ -395,7 +422,7 @@ mod tests {
         for _ in 0..4 {
             let lua = lua.clone();
             calls.push(tokio::spawn(async move {
-                inbound(&lua, async {
+                inbound(&lua, Inherited::default(), async {
                     idle(tokio::time::sleep(Duration::from_millis(100))).await.expect("idle");
                 })
                 .await;
@@ -424,9 +451,9 @@ mod tests {
         // the spawner's call holds the VM; the slice it runs starts a wait (the future is created and polled
         // once inside the slice) and the continuation finishes it later, outside the spawner's call
         let mut continuation = None;
-        inbound(&lua, async {
+        inbound(&lua, Inherited::default(), async {
             let mut wait = Box::pin(idle(tokio::time::sleep(Duration::from_millis(80))));
-            first_slice(&lua, || {
+            first_slice(&lua, Inherited::default(), || {
                 let waker = futures::task::noop_waker();
                 let mut cx = std::task::Context::from_waker(&waker);
                 assert!(std::future::Future::poll(wait.as_mut(), &mut cx).is_pending());
@@ -434,7 +461,7 @@ mod tests {
             assert_eq!(inside.load(Ordering::SeqCst), 1, "the spawner still holds its turn");
             let lua = lua.clone();
             continuation = Some(tokio::spawn(async move {
-                resumed(&lua, async move {
+                resumed(&lua, Inherited::default(), async move {
                     wait.await.expect("idle");
                     hold().await;
                 })
@@ -452,7 +479,7 @@ mod tests {
     #[tokio::test]
     async fn without_an_entry_callbacks_run_and_idle_is_a_plain_wait() {
         let lua = Lua::new();
-        let out = inbound(&lua, async { idle(async { 7 }).await.expect("idle") }).await;
+        let out = inbound(&lua, Inherited::default(), async { idle(async { 7 }).await.expect("idle") }).await;
         assert_eq!(out, 7);
     }
 }

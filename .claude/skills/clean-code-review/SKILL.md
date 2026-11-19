@@ -36,7 +36,7 @@ given the diff and the file list, not your conclusions. Otherwise one inline pas
    - **crate ports**: a port that leaks adapter types (`rusqlite`, `mlua`, `axum`, `rmcp` types in a signature of
      `agentos-application` or `agentos-domain`); a driving adapter reaching into a driven one instead of a use case; a use
      case that bypasses a port; policy (permissions, grants, `readOnly`) enforced in an adapter instead of the layer that owns it;
-   - **app isolation**: a new `app.*` capability that exposes another app's data or state, a module or library that
+   - **app state hygiene** (the VM is not a security boundary): a new `app.*` capability that exposes another app's data or state, a module or library that
      opens a listener, task, worker or pool without registering it with the app's `Life`, anything that lets a VM
      outlive its unload;
    - **the protocol**: a JSON-RPC method, view message or AG-UI event that changes without the Rust schema,

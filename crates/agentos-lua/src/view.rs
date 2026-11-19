@@ -511,7 +511,7 @@ impl AppVm {
         let sh = self.shared().clone();
         let spec =
             sh.windows.lock().get(window).cloned().ok_or_else(|| VmError::NoSuchWindow(window.to_owned()))?;
-        self.in_call(self.open_view_in_call(view, window, spec, params, restored)).await
+        self.in_call(false, self.open_view_in_call(view, window, spec, params, restored)).await
     }
 
     /// [`AppVm::open_view`] once the call holds the VM.
@@ -583,7 +583,7 @@ impl AppVm {
 
     /// Render the instance again.
     pub async fn render_view(&self, view: &str) -> Result<RenderOutput> {
-        self.in_call(self.render_inner(view)).await
+        self.in_call(false, self.render_inner(view)).await
     }
 
     async fn render_inner(&self, view: &str) -> Result<RenderOutput> {
@@ -674,7 +674,7 @@ impl AppVm {
             }
         };
         let Some(closures) = closures else { return Ok(false) };
-        self.in_call(self.run_closures(closures, call, ctx)).await
+        self.in_call(false, self.run_closures(closures, call, ctx)).await
     }
 
     /// The closures of one view event, in the call that holds the VM.
@@ -727,7 +727,7 @@ impl AppVm {
         let Some(instance) = sh.views.lock().remove(view) else { return Ok(()) };
         let on_close = instance.spec.get::<Option<Function>>("onClose").ok().flatten();
         if let Some(f) = on_close {
-            self.in_call(f.call_async::<()>(instance.w.clone()))
+            self.in_call(false, f.call_async::<()>(instance.w.clone()))
                 .await
                 .map_err(|e| VmError::Script(ScriptError::from_lua(&e)))?;
         }

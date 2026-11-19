@@ -1,7 +1,7 @@
 //! The `app` capability table: the only way an app reaches the host.
 //!
 //! ```text
-//! app.manifest { ... }            identity, window, permissions (validated)
+//! app.manifest { ... }            identity, window, icon (validated)
 //! app.window(name, spec)          a window kind (rendered by the view layer)
 //! app.state { ... }               shared state, reads tracked
 //! app.db / app.kv                 data (sources, migrations, exec) and a small key-value store

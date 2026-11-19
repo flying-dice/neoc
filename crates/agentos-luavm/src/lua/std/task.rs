@@ -23,7 +23,7 @@ use tokio::sync::Notify;
 
 use crate::lua::facade::Module;
 use crate::lua::lifecycle::idle_result;
-use crate::lua::lifecycle::{first_slice, has_entry, inbound, resumed, Life};
+use crate::lua::lifecycle::{first_slice, has_entry, hold, inbound, inherited, resumed, Life};
 
 // ---------------------------------------------------------------------------
 // Task outcome — stored once the task reaches a terminal state
@@ -293,14 +293,30 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             scheduler.track(&inner);
 
             // the first slice runs inside this call, but a wait it stops at is not this call's: see
-            // `lifecycle::resumed`
-            match first_slice(lua, || thread.resume::<MultiValue>(args)) {
+            // `lifecycle::resumed`. What the call may do is what its task may do: see `Inherited`.
+            let from = inherited();
+            match first_slice(lua, from, || thread.resume::<MultiValue>(args)) {
                 Ok(vals) => {
                     if matches!(thread.status(), ThreadStatus::Resumable) {
+                        // A slice that stopped at a wait (an async function, which yields the poll sentinel) has
+                        // a continuation that takes its turn when the wait ends. One that stopped at a plain
+                        // `coroutine.yield()` has nothing to wait for: it must take the turn before it resumes
+                        // Lua, or it would run in the middle of the call that spawned it.
+                        let mut yielded = vals.iter();
+                        let at_wait = matches!(
+                            (yielded.next(), yielded.next()),
+                            (Some(Value::LightUserData(p)), None) if *p == Lua::poll_pending()
+                        );
                         let inner_clone = inner.clone();
                         let lua = lua.clone();
                         let abort = scheduler.spawn_task(async move {
-                            let outcome = resumed(&lua, drive_thread(thread, MultiValue::new())).await;
+                            let outcome = resumed(&lua, from, async {
+                                if !at_wait {
+                                    hold().await;
+                                }
+                                drive_thread(thread, MultiValue::new()).await
+                            })
+                            .await;
                             inner_clone.complete(outcome);
                         });
                         *inner.abort.lock() = Some(abort);
@@ -338,6 +354,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             scheduler.track(&inner);
 
             let prev = scheduler.prev_defer.lock().clone();
+            let from = inherited();
             let inner_clone = inner.clone();
             let lua = lua.clone();
             let abort = scheduler.spawn_task(async move {
@@ -363,7 +380,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
                 // With one, the turn is taken first (the spawner's call has ended by then) and
                 // cancellation is checked inside it.
-                let outcome = inbound(&lua, async {
+                let outcome = inbound(&lua, from, async {
                     if inner_clone.is_finished() {
                         return None;
                     }
@@ -392,7 +409,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     m.set(
         "delay",
         lua.create_function(|lua, (secs, fn_val, args): (f64, Value, MultiValue)| {
-            let secs = secs.max(0.0);
+            let delay = crate::lua::limits::sleep_duration(secs);
             let thread = into_thread(lua, fn_val, "task.delay")?;
             let inner = Arc::new(TaskInner::new());
             let scheduler = lua
@@ -401,11 +418,12 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
             scheduler.track(&inner);
 
+            let from = inherited();
             let inner_clone = inner.clone();
             let lua = lua.clone();
             let abort = scheduler.spawn_task(async move {
-                tokio::time::sleep(std::time::Duration::from_secs_f64(secs)).await;
-                let outcome = inbound(&lua, drive_thread(thread, args)).await;
+                tokio::time::sleep(delay).await;
+                let outcome = inbound(&lua, from, drive_thread(thread, args)).await;
                 inner_clone.complete(outcome);
             });
 
@@ -422,14 +440,14 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
     // task.wait(secs) — yield current coroutine for secs seconds.
     // Must be called from within a coroutine (spawned task or deferred task).
-    // Negative values are clamped to 0. Returns elapsed time as a float.
+    // Negative and NaN values are clamped to 0, and a delay past 100 years (infinity included) to 100 years. Returns elapsed time as a float.
     m.set(
         "wait",
         lua.create_async_function(|_, secs: f64| {
             idle_result(async move {
-                let secs = secs.max(0.0);
+                let delay = crate::lua::limits::sleep_duration(secs);
                 let start = tokio::time::Instant::now();
-                tokio::time::sleep(std::time::Duration::from_secs_f64(secs)).await;
+                tokio::time::sleep(delay).await;
                 Ok(start.elapsed().as_secs_f64())
             })
         })?,
@@ -438,7 +456,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "wait",
         &[("secs", "number")],
         "number",
-        "Yield the current coroutine for `secs` seconds (clamped to 0). Returns the actual elapsed time.",
+        "Yield the current coroutine for `secs` seconds (NaN and negative clamp to 0, over 100 years clamps to 100 years). Returns the actual elapsed time.",
     );
 
     // task.cancel(handle) — flat Roblox-compatible function; delegates to handle:cancel().
@@ -549,6 +567,40 @@ mod tests {
                 .expect("pcall(wait)");
             assert!(ok, "pcall around an async wait must succeed: {elapsed:?}");
             assert!(matches!(elapsed, mlua::Value::Number(n) if n >= 0.05), "elapsed={elapsed:?}");
+        });
+    }
+
+    /// `Duration::from_secs_f64` panics on infinity and on anything past ~1.8e19 s; with `panic = "abort"`
+    /// that would take the host down. Every such argument must be a clamped sleep, not a panic.
+    #[test]
+    fn hostile_wait_and_delay_durations_clamp_instead_of_panicking() {
+        rt().block_on(async {
+            let e = engine();
+            let (waits, pending): (i64, bool) = e
+                .load(
+                    r#"
+                    local task = require("std:task")
+                    local hostile = { 0/0, -1/0, -1, -1e300, 1/0, 1e300, 1.8e19, 2^63 }
+                    local handles = {}
+                    for _, secs in ipairs(hostile) do
+                        handles[#handles + 1] = task.delay(secs, function() end)
+                        handles[#handles + 1] = task.spawn(function() task.wait(secs) end)
+                    end
+                    task.wait(0.05)
+                    -- NaN and negatives are zero (done); infinite and huge ones are still sleeping
+                    local done, still = 0, false
+                    for i, h in ipairs(handles) do
+                        if h:is_finished() then done = done + 1 else still = true end
+                        h:cancel()
+                    end
+                    return done, still
+                "#,
+                )
+                .eval_async()
+                .await
+                .expect("hostile durations");
+            assert!(waits >= 6, "NaN and negative sleeps finish at once, got {waits} finished");
+            assert!(pending, "an infinite sleep is clamped to a long one, not to zero");
         });
     }
 

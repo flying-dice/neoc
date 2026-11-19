@@ -9,6 +9,7 @@ use tracing::instrument;
 use unicode_width::UnicodeWidthChar;
 
 use crate::lua::facade::Module;
+use crate::lua::limits;
 use crate::lua::sandbox::{err, ok};
 
 const ELLIPSIS: &str = "...";
@@ -517,10 +518,10 @@ fn pad_text(
     fill: Option<mlua::LuaString>,
     side: PadSide,
 ) -> mlua::Result<(Value, Value)> {
-    if width < 0 {
-        return err(lua, format!("{prefix}: width must be >= 0"));
-    }
-    let width = width as usize;
+    let width = match limits::size(width, "width") {
+        Ok(w) => w,
+        Err(m) => return err(lua, format!("{prefix}: {m}")),
+    };
     let fill_char = match parse_fill_char(fill, prefix) {
         Ok(c) => c,
         Err(m) => return err(lua, m),

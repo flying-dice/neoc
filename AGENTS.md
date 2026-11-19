@@ -83,18 +83,25 @@ A change is done when all of these hold:
 - **Rust hygiene** (`[workspace.lints]`): clippy pedantic with `-D warnings`; `unsafe_code` is forbidden;
   `unwrap`, `expect` and `panic!` are denied outside tests; `thiserror` in library crates, `anyhow` only in the host
   binary.
-- **Apps are the person's own code on their own host, isolated from each other, not from the machine.** An app runs
-  as plain Lua 5.1 in its own VM and its own environment table: its globals and its standard libraries (read-only) are
-  its own, so one app cannot reach another's state, and it has no `load*`/`getfenv`/`setfenv`. There are **no
-  permissions** and **no budgets** (no CPU, memory or time limits): an app that loops forever hurts only itself and the
-  host's CPU, and that is accepted. It reaches the host through the `app` table (typed by the generated LuaCATS definitions in `types/generated/luals/`) and
+- **Apps are the person's own code on their own host. The VM keeps their Lua state apart; it is not a security
+  boundary.** An app runs as plain Lua 5.1 in its own VM and its own environment table: its globals, its standard
+  libraries (read-only) and its module tables are its own, so apps do not share state by accident, and it has no
+  `load*`/`getfenv`/`setfenv`. That is all the separation there is. Through `std:fs`, `vnd:rusqlite` and the other
+  modules an app can read and write other apps' data and the host's own database under `~/.agentos`. There are **no
+  permissions** and **no budgets** (no CPU, memory or time limits): a runaway app (a loop that never yields, a
+  `std:thread` worker) can hang the host, not just itself, and can outlive its uninstall, because unloading aborts
+  work only at the points where the app yields to the host. That is accepted. It reaches the host through the `app` table (typed by the generated LuaCATS definitions in `types/generated/luals/`) and
   through **every `std:`, `lib:` and `vnd:` module of `agentos-luavm`** (`require("std:fs")`, `require("lib:json")`,
   `require("vnd:hyper")`, ...: files, network, servers, tasks, threads, SQLite, TLS), next to `@agentos/app` and
   `@agentos/ui`. What an app starts (tasks, servers, workers) belongs to it: unloading or replacing the app aborts
   it and closes its listeners, and what a task or a request handler runs queues behind the app's other calls (one
-  call at a time per VM). Still enforced: a tool declared `readOnly` really cannot write, SQL `ATTACH` is denied, a
-  cyclic or absurdly shared table handed back to the host is an error (never a stack overflow), and chunks load as
-  text only.
+  call at a time per VM). Still enforced: a tool declared `readOnly` cannot write through the `app.*` API (db, kv, state,
+  notify, shell, windows, and registering tools, windows and handlers), and neither can the tasks it starts or the
+  requests it triggers; that guarantee does **not** cover the neoc modules (`std:fs`, `vnd:rusqlite`, `std:net`, ...),
+  which are open to every tool. SQL `ATTACH` is denied through `app.db`/`app.kv` (not through `vnd:rusqlite`), a
+  cyclic or absurdly shared table handed back to the host is an error (never a stack overflow), a Lua number can
+  not panic a module or size an unbounded allocation (an error instead: a host panic aborts every app), and chunks
+  load as text only.
 - **The client runs no app code.** The renderer draws view trees and sends events; nothing executable crosses the
   wire. Kit knowledge of apps, and app knowledge in the client, are both bugs.
 - **Agent and tool output is untrusted:** render it as text. No `{@html}` or `innerHTML` for it (the only `{@html}` is

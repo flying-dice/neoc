@@ -19,7 +19,9 @@ local function define(library, name, value)
   end
 end
 
--- `typeof` (as in Luau) tells userdata types apart; the host hands apps none, so it is `type`.
+-- `typeof` exists for code written against Luau. Here it is `type`: the library modules return userdata (a JSON
+-- `Object`, a `Duration`, a `TcpListener`, ...), and every one of them is `"userdata"`, because their metatables
+-- are locked and name no type. Tell them apart by what they do, not by `typeof`.
 define(env, "typeof", type)
 
 local function argError(position, name, message)

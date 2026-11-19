@@ -78,12 +78,15 @@ The generic specs run axe (WCAG 2.1 AA) in light and dark on every story and app
 - **Rust hygiene.** No `unwrap`, `expect`, `panic!` or `unsafe` outside tests (clippy denies them; a local `allow` needs a
   stated reason). External input (JSON-RPC params, tool arguments, app output, ACP messages, app refs) is parsed into typed
   values and errors are typed (`DomainError`, `PortError`, `AppError`); `anyhow` stays in the host binary.
-- **App isolation (no permissions, no budgets).** A new `app.*` capability is typed in the generated definitions;
-  nothing gives an app another app's data or state (VMs, environments and module tables are per app); SQL `ATTACH`
-  stays denied; a VM, connection, watcher, listener, task or worker an adapter or a library module opens is
+- **App state hygiene (no permissions, no budgets, no security boundary).** A new `app.*` capability is typed in the generated definitions;
+  no `app.*` function gives an app another app's data or state (VMs, environments and module tables are per app;
+  that is state hygiene, not a security boundary: `std:fs` and `vnd:rusqlite` reach everything, so do not review
+  for isolation the modules do not have); SQL `ATTACH` stays denied through `app.db`; a Lua number that reaches
+  Rust (a size, a sleep, an index) is bounded or an error, never a panic (release aborts on one); a VM, connection, watcher, listener, task or worker an adapter or a library module opens is
   registered with the app's `Life` and released on unload or replace. A Lua callback that nobody called (a request
-  handler, a task slice) runs through the VM's call queue. A tool declared `readOnly` really writes nothing (the data
-  layer enforces it; check the tool's code agrees), and one that writes isn't marked `readOnly`.
+  handler, a task slice) runs through the VM's call queue. A tool declared `readOnly` writes nothing through the `app.*` API (the call's
+  read-only flag is inherited by the tasks and requests it starts; the neoc modules are not covered), and one that
+  writes isn't marked `readOnly`.
 - **Agents.** Tool calls carry the agent's identity and are checked against its grants before the VM runs (deny by
   default); `/mcp` accepts only per-agent bearer tokens (a device session is not one); tokens are stored hashed and shown
   once. Agent and tool output (ACP messages, tool results, permission prompts, `/agui` events) is untrusted: rendered as

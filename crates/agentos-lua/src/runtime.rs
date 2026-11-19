@@ -36,7 +36,7 @@ impl LuaRuntime {
         Self { vms: RwLock::default(), notifier, shell, host_modules, roster: None }
     }
 
-    /// The agent contacts apps with the `agents` permission can list.
+    /// The agent contacts `app.agents:list()` shows to every app.
     #[must_use]
     pub fn with_roster(mut self, roster: Arc<dyn AgentRoster>) -> Self {
         self.roster = Some(roster);
@@ -56,6 +56,11 @@ async fn forward_effects(
     vm: &AppVm,
 ) -> PortResult<()> {
     for effect in vm.take_effects() {
+        // An app that was unloaded (or replaced) while a call was in flight has nothing more to say: what it
+        // queued is dropped, not delivered to a shell and a notification list it no longer belongs to.
+        if vm.is_shut_down() {
+            break;
+        }
         match effect {
             Effect::Notify(n) => notifier.notify(n).await?,
             Effect::Shell(ShellEffect::Badge(b)) => shell.set_badge(app, b).await,

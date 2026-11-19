@@ -146,6 +146,15 @@ fn parse_algorithm(opts: Option<&Table>, prefix: &str) -> Result<Algorithm, Stri
     }
 }
 
+/// The most context lines a hunk can use. Larger values mean "the whole file" for any input a script can
+/// build, and `similar` computes `radius * 2`, which overflows (a panic) for the huge ones a Lua number can
+/// hold (`1e300`).
+const MAX_CONTEXT: u64 = 1 << 31;
+
+fn clamp_context(n: u64) -> usize {
+    n.min(MAX_CONTEXT) as usize
+}
+
 fn parse_context(opts: Option<&Table>, prefix: &str) -> Result<usize, String> {
     let Some(t) = opts else {
         return Ok(DEFAULT_CONTEXT);
@@ -153,8 +162,8 @@ fn parse_context(opts: Option<&Table>, prefix: &str) -> Result<usize, String> {
     let v: Value = t.get("context").map_err(|e| format!("{prefix}: {e}"))?;
     match v {
         Value::Nil => Ok(DEFAULT_CONTEXT),
-        Value::Integer(i) if i >= 0 => Ok(i as usize),
-        Value::Number(n) if n >= 0.0 && n.fract() == 0.0 => Ok(n as usize),
+        Value::Integer(i) if i >= 0 => Ok(clamp_context(i as u64)),
+        Value::Number(n) if n >= 0.0 && n.fract() == 0.0 => Ok(clamp_context(n as u64)),
         _ => Err(format!("{prefix}: context must be a non-negative integer")),
     }
 }
@@ -1109,6 +1118,21 @@ mod tests {
     #[test]
     fn parse_alg_default_is_patience() {
         assert!(matches!(parse_algorithm(None, "x"), Ok(Algorithm::Patience)));
+    }
+
+    #[test]
+    fn a_huge_context_is_clamped_not_an_overflow_panic() {
+        for src in ["1e300", "2^63", "2^53", "math.maxinteger or 9007199254740992", "1.8e19"] {
+            let lua = crate::lua::sandbox::make_engine().expect("engine");
+            let (hunks, _): (mlua::Value, mlua::Value) = lua
+                .load(format!(
+                    r#"return require("lib:diff").unified("a\nb\nc\n", "a\nB\nc\n", {{ context = {src} }})"#
+                ))
+                .eval()
+                .unwrap_or_else(|e| panic!("context = {src}: {e}"));
+            assert!(matches!(hunks, mlua::Value::Table(_)), "context = {src}: {hunks:?}");
+        }
+        assert_eq!(clamp_context(u64::MAX), MAX_CONTEXT as usize);
     }
 
     #[test]

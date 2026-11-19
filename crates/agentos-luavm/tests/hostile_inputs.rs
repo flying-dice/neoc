@@ -1,0 +1,289 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test harness
+//! Every function of every module the VM offers, called with hostile numbers, strings and tables
+//! (infinities, NaN, negatives, `2^53`, `2^63`, `1e300`, invalid UTF-8, mid-character text, cyclic and
+//! absurdly keyed tables), and the methods of the handles they return. Each call must give a value or a Lua
+//! error: a panic is a bug, because the release profile is `panic = "abort"` and a panic reachable from
+//! app input kills the host.
+//!
+//! The harness records panics with a hook (mlua catches a callback's panic and re-raises it at the
+//! outermost call, so a recorded panic also cannot be hidden by `pcall`) and a watchdog turns a hang
+//! into a failure that names the call. Allocation failures and stack overflows abort the process: that
+//! is a failure too, the test binary dies on the call it printed last (`HOSTILE_TRACE=1`).
+//!
+//! Not swept: `std:thread`, `std:net` and the network modules (`vnd:hyper`, `vnd:sqlx_*`), which open
+//! sockets or spawn workers, and `std:task` (its sleeps are covered by `std/task.rs` tests). The sweep
+//! runs in a scratch working directory.
+
+use agentos_luavm::lua::{modules, sandbox::make_engine};
+use mlua::{AnyUserData, Function, Lua, MultiValue, Table, Value};
+use std::{
+    panic::{catch_unwind, AssertUnwindSafe},
+    sync::{mpsc, Arc, Mutex},
+    time::Duration,
+};
+
+const SKIPPED_MODULES: &[&str] = &[
+    "std:thread",
+    "std:net",
+    "std:task",
+    "vnd:hyper",
+    "vnd:sqlx_mysql",
+    "vnd:sqlx_postgres",
+    "vnd:testcontainers_modules",
+];
+
+/// Functions that block on purpose (stdin, sleeps, servers) and are not an input-validation surface.
+const SKIPPED_FUNCTIONS: &[&str] = &["stdin", "read_line", "sleep", "park", "wait", "serve", "serve_static"];
+
+/// The hostile values, as Lua source (built in the VM so tables and functions are real).
+const POOL: &str = r#"
+    -- an options table with one hostile number under every option name the modules read
+    local function opts(n)
+      local t = {}
+      for _, key in ipairs { "context", "width", "max_size", "max_output_size", "level", "limit", "size", "length",
+        "count", "depth", "indent", "max_len", "ttl", "capacity", "timeout", "step_by", "max_entries", "mtime",
+        "mode", "radius", "offset", "max_depth" } do t[key] = n end
+      return t
+    end
+    local cyc = {} cyc[1] = cyc cyc.self = cyc
+    local deep = {} for _ = 1, 50000 do deep = { deep } end
+    return {
+        true, false,
+        0, -0, 1, -1, 255, 256, 65536, 2^31, 2^32, -2^31, 2^53, 2^53 + 2, -2^53, 2^63, -2^63, 2^64, 1e300, -1e300,
+        1/0, -1/0, 0/0, 0.5, -0.5, 1e-300,
+        "", "a\0b", "\255\254\253", "\195", "Ü", "ÜÜÜÜÜÜÜÜÜÜ", "&ÜÜÜÜÜÜÜÜ;", "%ÜÜ", "a=b", "🦀",
+        ("é"):rep(50), ("&"):rep(100), ("\240\159"):rep(20),
+        {}, { 1, 2, 3 }, { a = 1 }, { [2^53] = 1 }, { [1e300] = "x" }, { [-1] = 1, [0] = 2 },
+        { 1, nil, 3 }, { "a", "b" }, { {}, {} }, cyc, deep,
+        function() end,
+        print,
+        opts(1e300), opts(2^63), opts(2^53), opts(-1), opts(0/0), opts(1/0), opts(-1/0),
+    }
+"#;
+
+/// A reduced pool (indices into [`POOL`]) for three-argument combinations and for the methods of handles:
+/// `1`, `-1`, `2^63`, `-2^63`, `1e300`, NaN; `""`, `"a\0b"`, `"&ÜÜÜÜÜÜÜÜ;"`, invalid UTF-8 cut mid-character;
+/// `{}`, `{ 1, 2, 3 }`, `{ a = 1 }`; and the options tables with `1e300`, `2^63` and NaN under every name.
+const SMALL_POOL: &[usize] = &[4, 5, 15, 16, 18, 22, 26, 27, 32, 38, 39, 40, 41, 52, 53, 56];
+
+static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+struct Harness {
+    lua: Lua,
+    pool: Vec<Value>,
+    panics: Arc<Mutex<Vec<String>>>,
+    current: Arc<Mutex<String>>,
+    calls: usize,
+    rt: tokio::runtime::Runtime,
+    trace: bool,
+}
+
+impl Harness {
+    fn call(&mut self, label: &str, f: &Function, args: &[Value]) -> Option<Vec<Value>> {
+        self.calls += 1;
+        CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if self.trace {
+            eprintln!("{label} #{}", args.len());
+        }
+        *self.current.lock().unwrap() =
+            format!("{label}({})", args.iter().map(describe).collect::<Vec<_>>().join(", "));
+        let before = self.panics.lock().unwrap().len();
+        let outcome = catch_unwind(AssertUnwindSafe(|| {
+            self.rt.block_on(async {
+                f.call_async::<MultiValue>(MultiValue::from_iter(args.iter().cloned())).await
+            })
+        }));
+        if outcome.is_err() && self.panics.lock().unwrap().len() == before {
+            self.panics
+                .lock()
+                .unwrap()
+                .push(format!("{}: unwound without a recorded message", self.current.lock().unwrap()));
+        }
+        match outcome {
+            Ok(Ok(values)) => Some(values.into_iter().collect()),
+            _ => None,
+        }
+    }
+
+    fn sweep_function(&mut self, label: &str, f: &Function, prefix: &[Value]) -> Vec<AnyUserData> {
+        let mut handles = Vec::new();
+        let keep = |h: &mut Vec<AnyUserData>, out: Option<Vec<Value>>| {
+            for v in out.into_iter().flatten() {
+                if let Value::UserData(ud) = v {
+                    if h.len() < 4 {
+                        h.push(ud);
+                    }
+                }
+            }
+        };
+        let pool = self.pool.clone();
+        let with =
+            |rest: &[Value]| -> Vec<Value> { prefix.iter().cloned().chain(rest.iter().cloned()).collect() };
+        let out = self.call(label, f, &with(&[]));
+        keep(&mut handles, out);
+        for a in &pool {
+            let out = self.call(label, f, &with(std::slice::from_ref(a)));
+            keep(&mut handles, out);
+        }
+        // A handle accumulates what earlier calls did to it, so its methods get the reduced pool throughout
+        // (a million-element array would make every later call a slow one).
+        let wide: Vec<&Value> = if prefix.is_empty() {
+            pool.iter().collect()
+        } else {
+            SMALL_POOL.iter().map(|&i| &pool[i]).collect()
+        };
+        for a in &wide {
+            for b in &wide {
+                let out = self.call(label, f, &with(&[(*a).clone(), (*b).clone()]));
+                keep(&mut handles, out);
+            }
+        }
+        if prefix.is_empty() {
+            for &i in SMALL_POOL {
+                for &j in SMALL_POOL {
+                    for &k in SMALL_POOL {
+                        let args = with(&[pool[i].clone(), pool[j].clone(), pool[k].clone()]);
+                        let out = self.call(label, f, &args);
+                        keep(&mut handles, out);
+                    }
+                }
+            }
+        }
+        handles
+    }
+
+    fn sweep_table(&mut self, label: &str, t: &Table, depth: usize) {
+        let mut entries: Vec<(String, Value)> = t.pairs::<String, Value>().filter_map(Result::ok).collect();
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        for (name, value) in entries {
+            let path = format!("{label}.{name}");
+            match value {
+                Value::Function(f) if !SKIPPED_FUNCTIONS.contains(&name.as_str()) => {
+                    let handles = self.sweep_function(&path, &f, &[]);
+                    for (n, ud) in handles.into_iter().enumerate() {
+                        self.sweep_handle(&format!("{path}()#{n}"), &ud);
+                    }
+                }
+                Value::Table(inner) if depth < 2 => self.sweep_table(&path, &inner, depth + 1),
+                _ => {}
+            }
+        }
+    }
+
+    /// The methods of a handle: found through the `__index` table mlua builds for a userdata type.
+    fn sweep_handle(&mut self, label: &str, ud: &AnyUserData) {
+        let Ok(mt) = ud.metatable() else { return };
+        let Ok(Value::Table(methods)) = mt.get::<Value>("__index") else { return };
+        let names: Vec<String> =
+            methods.pairs::<String, Value>().filter_map(Result::ok).map(|(k, _)| k).collect();
+        for name in names {
+            if SKIPPED_FUNCTIONS.contains(&name.as_str()) {
+                continue;
+            }
+            let Ok(Value::Function(f)) = methods.get::<Value>(name.as_str()) else { continue };
+            // a method takes the handle itself first
+            self.sweep_function(&format!("{label}:{name}"), &f, &[Value::UserData(ud.clone())]);
+        }
+    }
+}
+
+fn describe(v: &Value) -> String {
+    match v {
+        Value::String(s) => {
+            let b = s.as_bytes();
+            format!("{:?}", String::from_utf8_lossy(&b[..b.len().min(24)]))
+        }
+        Value::Table(t) => format!("table(len {})", t.raw_len()),
+        Value::UserData(_) => "userdata".into(),
+        other => format!("{other:?}"),
+    }
+}
+
+fn sweep() -> (usize, Vec<String>) {
+    let scratch = tempfile::tempdir().unwrap();
+    std::env::set_current_dir(scratch.path()).unwrap();
+
+    let panics = Arc::new(Mutex::new(Vec::<String>::new()));
+    let current = Arc::new(Mutex::new(String::new()));
+    let hook_panics = panics.clone();
+    let hook_current = current.clone();
+    std::panic::set_hook(Box::new(move |info| {
+        let at = info.location().map(ToString::to_string).unwrap_or_default();
+        let msg = info
+            .payload()
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| info.payload().downcast_ref::<&str>().map(ToString::to_string))
+            .unwrap_or_default();
+        let line = format!("{at}: {msg}  <= {}", hook_current.lock().unwrap());
+        hook_panics.lock().unwrap().push(line);
+    }));
+
+    // a call that never returns is named after ten quiet seconds
+    {
+        let current = current.clone();
+        std::thread::spawn(move || {
+            let mut last = usize::MAX;
+            loop {
+                std::thread::sleep(Duration::from_secs(10));
+                let now = CALLS.load(std::sync::atomic::Ordering::Relaxed);
+                if now == last {
+                    eprintln!("STUCK for 10s in {}", current.lock().unwrap());
+                }
+                last = now;
+            }
+        });
+    }
+    let only = std::env::var("HOSTILE_ONLY").ok();
+    let mut total = 0;
+    for name in modules::names().filter(|n| !SKIPPED_MODULES.contains(n)) {
+        if only.as_deref().is_some_and(|o| !name.contains(o)) {
+            continue;
+        }
+        let lua = make_engine().unwrap();
+        let pool: Table = lua.load(POOL).eval().unwrap();
+        let pool: Vec<Value> = pool.sequence_values::<Value>().map(Result::unwrap).collect();
+        let module: Table = lua.load(format!("return require({name:?})")).eval().unwrap();
+        let mut h = Harness {
+            lua,
+            pool,
+            panics: panics.clone(),
+            current: current.clone(),
+            calls: 0,
+            trace: std::env::var_os("HOSTILE_TRACE").is_some(),
+            rt: tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap(),
+        };
+        let before = panics.lock().unwrap().len();
+        h.sweep_table(name, &module, 0);
+        total += h.calls;
+        eprintln!("{name}: {} calls, {} panics", h.calls, panics.lock().unwrap().len() - before);
+        let _ = &h.lua;
+    }
+    let _ = std::panic::take_hook();
+    let found = panics.lock().unwrap().clone();
+    (total, found)
+}
+
+#[test]
+fn no_module_function_panics_on_hostile_input() {
+    let (tx, rx) = mpsc::channel();
+    std::thread::Builder::new()
+        .stack_size(64 << 20)
+        .spawn(move || {
+            let _ = tx.send(sweep());
+        })
+        .unwrap();
+    match rx.recv_timeout(Duration::from_mins(15)) {
+        Ok((calls, panics)) => {
+            eprintln!("{calls} hostile calls");
+            let mut by_site: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+            for p in panics {
+                let site = p.split("  <= ").next().unwrap_or_default().to_owned();
+                by_site.entry(site).or_insert(p);
+            }
+            let unique: Vec<String> = by_site.into_values().collect();
+            assert!(unique.is_empty(), "{} distinct panics:\n{}", unique.len(), unique.join("\n"));
+        }
+        Err(e) => panic!("the sweep hung or died: {e}"),
+    }
+}

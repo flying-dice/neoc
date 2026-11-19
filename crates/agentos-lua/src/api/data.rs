@@ -181,6 +181,7 @@ fn check_thread_params(sh: &Shared, given: &Table) -> mlua::Result<()> {
 /// It runs no query (the thread's data is `/agui`). The agent it names must be on the roster (see
 /// [`check_thread_params`]).
 fn declare_thread(sh: &Sh, lua: &Lua) -> mlua::Result<Function> {
+    sh.writable("app.thread")?;
     let id = {
         let sources = sh.sources.lock();
         format!("s{}", sources.len() + 1)

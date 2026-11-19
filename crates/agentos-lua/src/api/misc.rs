@@ -46,6 +46,7 @@ pub(super) fn install(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<
     app.set(
         "manifest",
         lua.create_function(move |_, args: Variadic<LuaValue>| {
+            s.writable("app.manifest")?;
             let table = last_table(args, "app.manifest")?;
             let mut json = lua_to_json(&LuaValue::Table(table))?;
             // `permissions` was a key of the manifest before apps lost their permissions: still accepted (the
@@ -70,6 +71,7 @@ pub(super) fn install(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<
     app.set(
         "window",
         lua.create_function(move |_, (a, b, c): (LuaValue, LuaValue, Option<Table>)| {
+            s.writable("app.window")?;
             // `app.window(name, spec)` or `app:window(name, spec)`
             let (name, spec) = match (a, b, c) {
                 (LuaValue::String(n), LuaValue::Table(t), None)
@@ -114,6 +116,7 @@ pub(super) fn install(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<
     app.set(
         "on",
         lua.create_function(move |_, (name, f): (String, Function)| {
+            s.writable("app.on")?;
             s.handlers.lock().insert(name, f);
             Ok(())
         })?,

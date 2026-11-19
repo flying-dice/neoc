@@ -11,6 +11,7 @@ pub mod bit;
 pub mod facade;
 pub mod lib;
 pub mod lifecycle;
+pub(crate) mod limits;
 pub mod modules;
 pub mod sandbox;
 pub mod std;

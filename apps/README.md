@@ -203,8 +203,8 @@ local thread  = db:row([[select id, title from threads where id = :id]], { key =
   Ref (`current.title`). The SQL never leaves the host; the client gets rows in windows and row deltas whenever a
   commit touches a table the query reads, so **an agent's write through a tool updates every open window with no UI
   code**. A windowed query (`page`) needs a total order: end its `order by` with the key.
-- **`app.kv`** is for small values (the Calculator keeps its history there). SQL `ATTACH` is denied: an app's SQL
-  cannot leave its own file.
+- **`app.kv`** is for small values (the Calculator keeps its history there). SQL `ATTACH` is denied through
+  `app.db`, so `app.db` SQL cannot leave the app's own file (`vnd:rusqlite` can open any file: see Security).
 
 ## Tools
 
@@ -225,9 +225,14 @@ app.tool {
   runs, so `run` receives well-typed values; still describe every field, because agents read them.
 - **`ctx`:** `ctx.actor` (`{ kind = "user" | "agent", name }`), `ctx.now`, `ctx:fail(message)` to report a problem to the
   caller. Raising an error does the same with the error's message.
-- **`readOnly = true` is enforced, not a hint.** The tool runs with app writes blocked: `db:exec`, writes in `db:tx`,
-  DDL, `app.kv:set/delete` and `db:migrate` raise, and so do assigning `app.state`, `app.notify`, `app.shell.*` and
-  `openWindow` (a window's `onOpen` could write). In return, an agent whose approval policy is `auto_read_only` (the
+- **`readOnly = true` is enforced, not a hint, for the `app.*` API.** The tool runs with app writes blocked:
+  `db:exec`, writes in `db:tx`, DDL, `app.kv:set/delete` and `db:migrate` raise, and so do assigning `app.state`,
+  `app.notify`, `app.shell.*`, `openWindow` (a window's `onOpen` could write) and registering anything
+  (`app.on`, `app.window`, `app.tools.register`, `app.thread`). Reads (`db:all`, `db:one`, `db:query`) work. The
+  restriction is inherited: a task, deferred or delayed function the tool starts stays read-only for as long as it
+  lives, and a request to your own server while a read-only call or task is alive runs read-only too. It does **not**
+  cover the neoc modules: `std:fs`, `vnd:rusqlite`, `std:net` and the rest are open to every tool, `readOnly` or not.
+  In return, an agent whose approval policy is `auto_read_only` (the
   default) may run it without a permission prompt. A tool that must write (the Calculator's `calculate` records
   history) is not `readOnly`.
 - **Who can call it:** an agent sees and may call only the tools of the apps it was granted (deny by default; see
@@ -260,8 +265,11 @@ SQLite (`apps/agents/app.lua`).
 
 ## Security
 
-- **Apps are isolated from each other, not from the machine.** One Lua 5.1 VM per app, and one **environment table**
-  per app (its globals are its own; two apps share nothing, not even the module tables below). The base functions are
+- **Apps keep their Lua state apart; that is not a security boundary.** One Lua 5.1 VM per app, and one
+  **environment table** per app (its globals are its own; two apps share no Lua state, not even the module tables
+  below). Through `std:fs` and `vnd:rusqlite` an app can still read and write other apps' data and the host's own
+  database under `~/.agentos`, and a runaway app (a loop that never yields, a `std:thread` worker) can hang the host
+  and outlive its uninstall: unloading stops an app's work only where it yields to the host. The base functions are
   an allow-list: no `load`, `loadstring`, `dofile`, `loadfile`, `getfenv`, `setfenv`, `newproxy`, `module`,
   `collectgarbage`, `print`, no `string.dump`, no `io`, `os`, `debug` or `package`. Chunks load as text only (Lua 5.1
   bytecode is unverified). `string`, `table`, `math`, `coroutine`, `bit` and `utf8` are **read-only**: assigning to
@@ -278,7 +286,7 @@ SQLite (`apps/agents/app.lua`).
   `lib:compile`, `std:workers`. Files, the network, servers, background tasks and worker threads are all available;
   `vnd:hyper` speaks `http://` and `https://` (the operating system's certificate store, or `ca_pem` for your own
   CA). `lib:log` goes to the host's log with the app id. The host has no permission model for apps and no CPU, memory
-  or time limit: an app that loops forever costs the host a thread until it is unloaded, and that is accepted.
+  or time limit: an app that loops forever costs the host a thread, and one that never yields to the host (a tight loop, a `std:thread` worker) is not stopped by an unload and can hang the host. That is accepted.
 - **What an app starts is the app's.** Tasks (`std:task`), servers (`vnd:hyper`, `lib:http`), their connections and
   `std:thread` workers are aborted and their listeners closed when the app is unloaded, disabled, uninstalled or
   replaced (a replacement can bind the port the old version had). A callback that comes from inside the VM, a request
@@ -288,7 +296,9 @@ SQLite (`apps/agents/app.lua`).
   next event.
 - **Still enforced.** Values leaving Lua are capped at 100 000 nodes and 4 MiB and may not contain cycles (view trees:
   10 000 nodes, depth 64): a cyclic table is an error, not a crash. Queries return at most 10 000 rows and 16 MiB;
-  BLOBs come out as base64 text. SQL `ATTACH` is denied. `readOnly` tools cannot write (see above).
+  BLOBs come out as base64 text. SQL `ATTACH` is denied through `app.db`. `readOnly` tools cannot write through
+  `app.*` (see above; the neoc modules are not covered). A Lua number cannot panic a module: sizes, sleeps and
+  indices are bounded and answer with an error.
 - **Lua 5.1 limits to write around.** A host call (`app.db:*`, `app.kv:*`) may be made inside `pcall`, inside a
   coroutine and in any handler, but not where Lua 5.1 cannot yield: a `string.gsub` callback,
   a metamethod or the iterator function of a `for ... in` (it fails with "attempt to yield across metamethod/C-call
@@ -305,7 +315,9 @@ SQLite (`apps/agents/app.lua`).
   Do not build SQL by concatenating them: use named params.
 - **The client is not trusted either.** Events carry a key path and values; the host looks the handler up in the VM, so
   a client cannot invoke anything the tree did not offer.
-- **Nothing reaches another app but tools.** An app cannot read another app's data or call its functions.
+- **Other apps are reachable only through tools by the API; the modules are open.** `app.*` gives an app no way
+  to another app's data or functions, but `std:fs` and `vnd:rusqlite` can open the files, so do not treat another
+  app's data as private from your own code.
 
 ## Adding an app
 

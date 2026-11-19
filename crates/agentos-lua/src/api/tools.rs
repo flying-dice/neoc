@@ -22,6 +22,7 @@ fn text(t: &Table, key: &str) -> mlua::Result<Option<String>> {
 }
 
 fn register(sh: &Shared, def: &Table) -> mlua::Result<()> {
+    sh.writable("app.tools.register")?;
     let name = text(def, "name")?.ok_or_else(|| mlua::Error::runtime("a tool needs a `name`"))?;
     QualifiedToolName::new(sh.app.clone(), &name).map_err(|e| mlua::Error::runtime(e.to_string()))?;
     let run: Function = def.get("run").map_err(|_| {

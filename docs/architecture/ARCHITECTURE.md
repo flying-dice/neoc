@@ -101,7 +101,11 @@ crates/
   - no permissions and no CPU, memory or time budgets: apps are the person's own code on their own host;
   - what an app starts (tasks, servers, workers) is aborted and its listeners are closed when it is unloaded or
     replaced; callbacks that come from inside the VM take their turn in the app's one-call-at-a-time queue;
-  - SQL `ATTACH` denied, a `readOnly` tool cannot write, a cyclic or huge value handed back to the host is an error.
+  - SQL `ATTACH` denied through `app.db`, a `readOnly` tool cannot write through the `app.*` API (not through the
+    neoc modules), a cyclic or huge value handed back to the host is an error, and no Lua number can panic a
+    module;
+  - the VM keeps apps' Lua state apart but is not a security boundary: `std:fs` and `vnd:rusqlite` reach other apps'
+    data and the host database, and a runaway app can hang the host.
 - **App API** (described by generated LuaCATS definitions, `types/generated/luals/`):
   - **Window and UI:** `app.manifest`, `app.window(name, { client = …, render = fn })`, `ui.*` constructors.
   - **Data:** `db:migrate`, `db:query` / `db:row` (live sources), `db:exec`.

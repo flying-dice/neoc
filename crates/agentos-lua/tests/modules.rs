@@ -395,3 +395,188 @@ async fn replacing_an_app_frees_the_port_of_the_version_it_replaces_for_the_new_
     assert_eq!(body_of(&http_get(&first, "/").await), "up");
     r.runtime.unload(&id("probe")).await.unwrap();
 }
+
+// ---- a readOnly call and everything it starts change nothing ------------------------------------------------
+
+const READ_ONLY_REACH: &str = r#"
+    local task, net, hyper = require("std:task"), require("std:net"), require("vnd:hyper")
+    app.db:migrate { [1] = "create table log(id integer primary key, msg text)" }
+    local outcome = {}
+    local function insert(who)
+      local ok, err = pcall(function() app.db:exec("insert into log(msg) values (?)", { who }) end)
+      outcome[who] = ok and "wrote" or tostring(err)
+    end
+    -- the app's own listener: whatever reaches it runs the handler
+    local server = hyper.serve(net.TcpListener.bind("127.0.0.1:0"), function(req)
+      insert("handler")
+      return { status = 200, body = outcome.handler }
+    end)
+    local function poke() return hyper.get("http://" .. server:addr() .. "/").body end
+    -- route 1: a readOnly tool asks the app's own server to write while the tool waits for the answer
+    app.tool { name = "poke_ro", readOnly = true, run = poke }
+    app.tool { name = "poke", run = poke }
+    -- route 2: a readOnly tool leaves a task behind that writes after the tool has returned
+    app.tool { name = "spawn_ro", readOnly = true, run = function()
+      task.spawn(function() task.wait(0.05) insert("spawned") end)
+      return "returned"
+    end }
+    app.tool { name = "defer_ro", readOnly = true, run = function() task.defer(function() insert("deferred") end) return "returned" end }
+    app.tool { name = "delay_ro", readOnly = true, run = function() task.delay(0.05, function() insert("delayed") end) return "returned" end }
+    app.tool { name = "yield_ro", readOnly = true, run = function()
+      task.spawn(function() coroutine.yield() insert("yielded") end)
+      return "returned"
+    end }
+    -- a task spawned by a readOnly tool spawns another from inside: both stay read-only
+    app.tool { name = "nested_ro", readOnly = true, run = function()
+      task.spawn(function() task.wait(0.01) task.spawn(function() task.wait(0.01) insert("nested") end) end)
+      return "returned"
+    end }
+    app.tool { name = "spawn", run = function() task.spawn(function() task.wait(0.05) insert("writable") end) return "returned" end }
+    app.tool { name = "report", readOnly = true, run = function()
+      return { outcome = outcome, n = app.db:one("select count(*) as n from log").n }
+    end }
+"#;
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_read_only_tool_cannot_write_through_a_request_to_its_own_server() {
+    let r = rig();
+    r.load("probe", &format!("{MANIFEST}\n{READ_ONLY_REACH}")).await;
+    let body = r.tool("probe", "poke_ro").await;
+    assert!(
+        body.as_str().unwrap().contains("readOnly") || body.as_str().unwrap().contains("read-only"),
+        "{body}"
+    );
+    assert_ne!(body, "wrote");
+    assert_eq!(r.tool("probe", "report").await["n"], 0, "nothing was written");
+    // the same request outside a readOnly call writes, as the app's own code may
+    assert_eq!(r.tool("probe", "poke").await, "wrote");
+    assert_eq!(r.tool("probe", "report").await["n"], 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn what_a_read_only_tool_starts_stays_read_only_after_the_tool_returns() {
+    let r = rig();
+    r.load("probe", &format!("{MANIFEST}\n{READ_ONLY_REACH}")).await;
+    for tool in ["spawn_ro", "defer_ro", "delay_ro", "yield_ro", "nested_ro"] {
+        assert_eq!(r.tool("probe", tool).await, "returned", "{tool}");
+    }
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let report = r.tool("probe", "report").await;
+    assert_eq!(report["n"], 0, "no task a readOnly tool left behind wrote: {report}");
+    for who in ["spawned", "deferred", "delayed", "yielded", "nested"] {
+        let said = report["outcome"][who].as_str().unwrap_or_else(|| panic!("{who} never ran: {report}"));
+        assert!(
+            said.contains("readOnly") || said.contains("read-only") || said.contains("read only"),
+            "{who}: {said}"
+        );
+    }
+    // a task of a writable tool is not held back by them
+    assert_eq!(r.tool("probe", "spawn").await, "returned");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(r.tool("probe", "report").await["outcome"]["writable"], "wrote");
+}
+
+#[tokio::test]
+async fn a_read_only_tool_cannot_register_or_change_the_apps_wiring() {
+    let r = rig();
+    let src = r#"
+        local function try(f) local ok, err = pcall(f) return { ok = ok, err = (not ok) and tostring(err) or nil } end
+        app.tool { name = "on", readOnly = true, run = function() return try(function() app.on("late", function() end) end) end }
+        app.tool { name = "window", readOnly = true, run = function()
+          return try(function() app.window("late", { render = function() return { type = "Stack", key = "n" } end }) end) end }
+        app.tool { name = "register", readOnly = true, run = function()
+          return try(function() app.tools.register { name = "late", run = function() end } end) end }
+        app.tool { name = "thread", readOnly = true, run = function() return try(function() app.thread() end) end }
+        app.tool { name = "manifest", readOnly = true, run = function()
+          return try(function() app.manifest { id = "probe", name = "Probe", icon = "gear" } end) end }
+        app.tool { name = "reads", readOnly = true, run = function()
+          return { one = app.db:one("select 1 as n").n, query = type(app.db:query("select 1 as n", { key = "n" })) } end }
+        app.tool { name = "wire", run = function()
+          app.on("late", function() return "ok" end)
+          return "wired"
+        end }
+    "#;
+    r.load("probe", &format!("{MANIFEST}\n{src}")).await;
+    for tool in ["on", "window", "register", "thread", "manifest"] {
+        let out = r.tool("probe", tool).await;
+        assert_eq!(out["ok"], false, "{tool} must be refused: {out}");
+        assert!(out["err"].as_str().unwrap().contains("readOnly"), "{tool}: {out}");
+    }
+    let tools: Vec<String> = r.runtime.windows(&id("probe")).await.unwrap();
+    assert!(tools.is_empty(), "no window was registered: {tools:?}");
+    // reads stay allowed, and a writable tool may still wire the app
+    let reads = r.tool("probe", "reads").await;
+    assert_eq!(reads["one"], 1, "{reads}");
+    assert_eq!(r.tool("probe", "wire").await, "wired");
+}
+
+// ---- a task that stopped at a plain yield takes its turn before it runs -------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_task_continuation_does_not_interleave_with_the_call_that_spawned_it() {
+    let src = r#"
+        local task = require("std:task")
+        local log = {}
+        app.tool { name = "a", run = function()
+          log = { "a-start" }
+          task.spawn(function() coroutine.yield() log[#log + 1] = "continuation" end)
+          for _ = 1, 40 do app.kv:get("x") end
+          log[#log + 1] = "a-end"
+          local during = table.concat(log, ",")
+          return during
+        end }
+        app.tool { name = "log", run = function() return table.concat(log, ",") end }
+    "#;
+    let vm = Arc::new(load(src).await);
+    for _ in 0..20 {
+        let during = vm.call_tool("a", json!({}), &agent_ctx(0), false).await.unwrap();
+        assert_eq!(during, "a-start,a-end", "the continuation ran in the middle of the call");
+        // it runs once the call is over (the next call queues behind it or after it, never inside)
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let log = vm.call_tool("log", json!({}), &agent_ctx(0), false).await.unwrap();
+            if log == json!("a-start,a-end,continuation") {
+                break;
+            }
+            assert_eq!(log, json!("a-start,a-end"), "the continuation never ran, or ran out of order");
+            assert!(Instant::now() < deadline, "the continuation never ran");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+}
+
+// ---- what an unloaded app queued is dropped -----------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn effects_queued_after_the_app_was_unloaded_are_dropped_not_flushed() {
+    let r = rig();
+    let src = format!(
+        r#"{MANIFEST}
+        local task = require("std:task")
+        app.tool {{ name = "late", run = function()
+          task.wait(0.3) -- the call is still in flight when the app is unloaded
+          app.notify {{ title = "from a ghost" }}
+          app.shell.badge(9)
+          return "done"
+        end }}
+        app.tool {{ name = "now", run = function() app.notify {{ title = "from a live app" }} return "done" end }}"#
+    );
+    r.load("probe", &src).await;
+    // control: a live app's effects are delivered
+    assert_eq!(r.tool("probe", "now").await, "done");
+    assert_eq!(r.notes.0.lock().len(), 1);
+    r.shell.badges.lock().unwrap().clear();
+
+    let runtime = r.runtime.clone();
+    let call =
+        tokio::spawn(
+            async move { runtime.call_tool(&id("probe"), "late", json!({}), agent_ctx(0), false).await },
+        );
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    r.runtime.unload(&id("probe")).await.unwrap();
+    let _ = call.await.unwrap(); // the call ends (done or abandoned), either way
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let titles: Vec<String> = r.notes.0.lock().iter().map(|n| n.title.clone()).collect();
+    assert_eq!(titles, ["from a live app"], "nothing queued after the unload was delivered");
+    assert!(r.shell.badges.lock().unwrap().is_empty(), "no badge from an app that is gone");
+}

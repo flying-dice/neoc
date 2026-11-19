@@ -23,6 +23,7 @@ use parking_lot::Mutex;
 use tracing::instrument;
 
 use crate::lua::facade::Module;
+use crate::lua::limits;
 use crate::lua::sandbox::{from_err, ok};
 
 // ---------------------------------------------------------------------------
@@ -92,10 +93,18 @@ fn io_result<T>(
     }
 }
 
+/// The most one `read(n)` call returns (16 MiB): the contract is "up to `n` bytes", and a Lua-sized `n` must
+/// not become a Lua-sized allocation.
+const READ_CHUNK_MAX: usize = 16 << 20;
+
 impl UserData for ReaderHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("read", |lua, this, n: usize| {
-            let mut buf = vec![0u8; n];
+            // `read(n)` is "up to n bytes": clamp a Lua-sized request rather than abort on its allocation.
+            let mut buf = match limits::zeroed(n.min(READ_CHUNK_MAX)) {
+                Ok(buf) => buf,
+                Err(e) => return from_err(lua, "io.read", std::io::Error::other(e)),
+            };
             let result = this.inner.lock().read(&mut buf);
             io_result(lua, "io.read", result, |lua, k| match k {
                 0 => ok(lua, Value::Nil),

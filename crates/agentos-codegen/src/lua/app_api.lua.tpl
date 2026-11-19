@@ -309,7 +309,8 @@ app = nil
 -- What the host adds to Lua 5.1 before an app runs (lua/prelude.lua): `typeof`, `table.clone`, `table.move`,
 -- `table.pack`, `table.unpack` and the `utf8` library, with Lua 5.3's semantics.
 
---- The type of a value, as `type` (the host hands apps no userdata).
+--- The type of a value, exactly as `type`: a userdata a library module returned is `"userdata"` (its type is not
+--- named).
 ---@param value any
 ---@return string
 function typeof(value) end
