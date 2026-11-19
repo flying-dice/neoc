@@ -93,6 +93,13 @@ pub enum ViewEffect {
 pub trait AppRuntime: Send + Sync {
     /// Compile + run the package's entry. Loading an app
     /// that is already loaded replaces it (hot reload): the database handle is the caller's, so data is kept.
+    ///
+    /// A hot reload stops the old version's background work (listeners, tasks, workers) before the new version
+    /// is known to load. If the new version fails to load, the old one keeps serving its tools and windows
+    /// without that background work, and if it starts a server again, requests to that server run read-only
+    /// until the next successful reload or a host restart. That fails safe and is the accepted behaviour
+    /// (Jira AGOS-64); restarting the previous version in full is the option to revisit if failed reloads
+    /// become common.
     async fn load(&self, app: &AppId, package: AppPackage, data: Arc<dyn AppData>) -> PortResult<LoadedApp>;
     /// Stop the app and free its VM. A call still running in it is stopped too (it does not keep the app
     /// alive), so an uninstalled app never runs on.

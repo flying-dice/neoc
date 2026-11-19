@@ -129,7 +129,9 @@ impl AppRuntime for LuaRuntime {
         // load leaves the old one answering, without its background work.
         let running = self.vms.read().get(app).cloned();
         if let Some(old) = running {
-            // TODO: clean-code - 0.4 - BOUNDARY: stops the old VM's listeners, tasks and workers before the new version is known to load, so a failed hot reload leaves the old VM answering without its background work, and with every request to a server it starts again running read-only (`Shared::background_stopped`, which is never cleared); state it in the `AppRuntime::load` port doc or restore it on failure.
+            // The old VM's background work stops before the new version is known to load, and a failed reload
+            // leaves it answering without that work, with requests to any server it starts again running
+            // read-only: stated in the `AppRuntime::load` port doc, accepted in AGOS-64.
             old.stop_background();
         }
         let vm = AppVm::load(app, package, data, config).await.map_err(|e| port_error(app, e))?;
