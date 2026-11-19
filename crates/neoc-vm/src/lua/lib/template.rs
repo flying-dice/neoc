@@ -292,13 +292,12 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// compiled `Template` handle's `into_lua` (done by `ok`) raises an
 /// `mlua::Error` directly — a mix `try_func` cannot model — so it is registered
 /// verbatim with [`crate::lua::facade::Module::set`] (keeping its
-/// `template.compile` span and channel prefix) and recorded for the header with
-/// [`crate::lua::facade::Module::record_fn`]. The `(value, error)` shape, the
-/// exact error strings, the raise on `into_lua`, and the `lua::lib::template`
-/// spans are byte-identical to the hand-written registration this replaces. The
-/// shared `Engine` is cloned into each closure exactly as before. The compiled
-/// `Template` userdata keeps its own `impl UserData` and is recorded here for
-/// the header via [`crate::lua::facade::Module::userdata`].
+/// `template.compile` span and channel prefix) and recorded with [`crate::lua::facade::Module::record_fn`]. The `(value, error)`
+/// shape, the exact error strings, the raise on `into_lua`, and the
+/// `lua::lib::template` spans are byte-identical to the hand-written
+/// registration this replaces. The shared `Engine` is cloned into each closure
+/// exactly as before. The compiled `Template` userdata keeps its own `impl
+/// UserData` and is recorded here via [`crate::lua::facade::Module::userdata`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let engine = Engine::new();
     let mut m = Module::new(lua, "lib:template")?;

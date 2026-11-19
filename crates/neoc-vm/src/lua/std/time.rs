@@ -447,12 +447,11 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// The `Duration` and `Instant` constructor sub-tables are built verbatim and
 /// set with [`crate::lua::facade::Module::set`]: their constructors carried
 /// **no** `#[instrument]` span and raise `mlua::Error` directly (or bake the
-/// `"time.Duration.parse"` prefix), so routing through the facade's
-/// `type_` / `func` would add a span and change behaviour. The flat `now` and
-/// `sleep` functions likewise carried no span and are set verbatim. The
-/// `Duration` / `Instant` userdata keep their own `impl UserData` and are
-/// recorded here for the header via [`crate::lua::facade::Module::userdata`];
-/// `now` and `sleep` are recorded via
+/// `"time.Duration.parse"` prefix), so routing through the facade's `type_` /
+/// `func` would add a span and change behaviour. The flat `now` and `sleep`
+/// functions likewise carried no span and are set verbatim. The `Duration` /
+/// `Instant` userdata keep their own `impl UserData` and are recorded here via
+/// [`crate::lua::facade::Module::userdata`]; `now` and `sleep` are recorded via
 /// [`crate::lua::facade::Module::record_fn`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "std:time")?;

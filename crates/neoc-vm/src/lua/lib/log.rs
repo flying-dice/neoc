@@ -496,10 +496,9 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// **no** `#[instrument]` span (each log call already emits its own
 /// `tracing::event!`), so routing through the facade's `func` would add a span
 /// and break byte-identical tracing. `new` constructs a `Logger`; the five
-/// module-level level functions delegate to a fresh default-configured
-/// instance on each call. The `Logger` userdata keeps its own `impl UserData`
-/// and is recorded here for the header via
-/// [`crate::lua::facade::Module::userdata`].
+/// module-level level functions delegate to a fresh default-configured instance
+/// on each call. The `Logger` userdata keeps its own `impl UserData` and is
+/// recorded here via [`crate::lua::facade::Module::userdata`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:log")?;
 

@@ -24,8 +24,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// "lua::lib::fs")]` attribute, so routing through the facade's `try_func`
 /// would add a second span and break byte-identical tracing. `open` returns a
 /// `ReaderHandle` or `WriterHandle` whose type depends on the mode, so it has
-/// no single facade return type. Each function is recorded for the header via
-/// [`crate::lua::facade::Module::record_fn`].
+/// no single facade return type. Each function is recorded via [`crate::lua::facade::Module::record_fn`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "std:fs")?;
 

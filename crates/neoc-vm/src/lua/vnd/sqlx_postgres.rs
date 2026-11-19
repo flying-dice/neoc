@@ -50,13 +50,14 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 ///
 /// `open` is set verbatim with [`crate::lua::facade::Module::set`] rather than
 /// `try_async_func` because the hand-written async function carries its own
-/// `#[instrument(name = "sqlx_postgres.open", target = "lua::lib::sqlx_postgres")]`
-/// attribute and bakes the `sqlx_postgres.open` error prefix into its pre-built
-/// `(Value, Value)` return — routing through the facade would add a second span
-/// and double the prefix. Its signature is recorded for the header via
-/// [`crate::lua::facade::Module::record_fn`]. The `Database` userdata type keeps
-/// its own `impl UserData` (the async methods and `sqlx_postgres.*` error
-/// prefixes unchanged) and is recorded for the header via
+/// `#[instrument(name = "sqlx_postgres.open", target =
+/// "lua::lib::sqlx_postgres")]` attribute and bakes the `sqlx_postgres.open`
+/// error prefix into its pre-built `(Value, Value)` return — routing through
+/// the facade would add a second span and double the prefix. Its signature is
+/// recorded via
+/// [`crate::lua::facade::Module::record_fn`]. The `Database` userdata type
+/// keeps its own `impl UserData` (the async methods and `sqlx_postgres.*` error
+/// prefixes unchanged) and is recorded via
 /// [`crate::lua::facade::Module::userdata`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "vnd:sqlx_postgres")?;

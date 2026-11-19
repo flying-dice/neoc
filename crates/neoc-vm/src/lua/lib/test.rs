@@ -87,11 +87,10 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// Every function is set verbatim with [`crate::lua::facade::Module::set`]:
 /// `describe` / `test` / `it` are async (created with `create_async_function`)
 /// and `expect` returns a matcher table whose chained assertions raise
-/// `mlua::Error::RuntimeError` directly — none use the `(value, error)` idiom or
-/// an `#[instrument]` span, so the facade's `func` / `try_func` path does not
-/// apply. The matcher methods live on a plain returned table, not a userdata
-/// type. The free functions' signatures are recorded for the header via
-/// [`crate::lua::facade::Module::record_fn`].
+/// `mlua::Error::RuntimeError` directly — none use the `(value, error)` idiom
+/// or an `#[instrument]` span, so the facade's `func` / `try_func` path does
+/// not apply. The matcher methods live on a plain returned table, not a
+/// userdata type. The free functions' signatures are recorded via [`crate::lua::facade::Module::record_fn`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:test")?;
     init_state(lua)?;

@@ -67,17 +67,15 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// Declares the `vnd:hyper` surface through the facade.
 ///
 /// Every function is set verbatim with [`crate::lua::facade::Module::set`]
-/// rather than `async_func` / `try_func`. The client functions (`get`,
-/// `post`, `request`) return a pre-built `(Value, Value)` tuple from `perform`,
-/// bake their own `hyper.<fn>` error prefix, and already carry an
-/// `#[instrument]` span; `serve` likewise carries its own
-/// `#[instrument(name = "hyper.serve")]` attribute and bakes the `hyper.serve`
-/// prefix. Routing any of them through the facade's marshalling would add a
-/// span and reshape the result, so each is registered byte-for-byte as before
-/// and only its signature is recorded for the header via
-/// [`crate::lua::facade::Module::record_fn`]. The `ServerHandle` and `Request`
-/// userdata types keep their own `impl UserData` (fields and methods unchanged)
-/// and have their method surface recorded via
+/// rather than `async_func` / `try_func`. The client functions (`get`, `post`,
+/// `request`) return a pre-built `(Value, Value)` tuple from `perform`, bake
+/// their own `hyper.<fn>` error prefix, and already carry an `#[instrument]`
+/// span; `serve` likewise carries its own `#[instrument(name = "hyper.serve")]`
+/// attribute and bakes the `hyper.serve` prefix. Routing any of them through
+/// the facade's marshalling would add a span and reshape the result, so each is
+/// registered byte-for-byte as before and only its signature is recorded via [`crate::lua::facade::Module::record_fn`]. The
+/// `ServerHandle` and `Request` userdata types keep their own `impl UserData`
+/// (fields and methods unchanged) and have their method surface recorded via
 /// [`crate::lua::facade::Module::userdata`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "vnd:hyper")?;

@@ -1,8 +1,0 @@
-// @generated from the lib:compile runtime module — do not edit.
-extern {
-    #[extern(path = "lib:compile")]
-    mod compile {
-        /// Bundle a Lua source file into a self-contained executable. `opts` requires `entrypoint` and `output` string fields.
-        fn bundle(opts: Unknown) -> Result<bool, string>;
-    }
-}

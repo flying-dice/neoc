@@ -262,7 +262,8 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// carries its own `#[instrument(name = "compile.bundle")]` span and bakes its
 /// own `"compile.bundle: "` error prefix in `bundle_impl` (so it routes through
 /// `ok` / `err` rather than the facade's auto-prefix path). Its signature is
-/// recorded for the header via [`crate::lua::facade::Module::record_fn`].
+/// recorded via
+/// [`crate::lua::facade::Module::record_fn`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:compile")?;
 

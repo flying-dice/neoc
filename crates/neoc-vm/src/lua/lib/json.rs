@@ -854,10 +854,10 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// `object` / `array` are registered with [`crate::lua::facade::Module::set`]
 /// rather than `func` because the hand-written constructors carried **no**
 /// `#[instrument]` span — routing them through `func` would add one and break
-/// byte-identical tracing. The `Object` / `Array` userdata types keep their
-/// own `impl UserData` (their methods are unchanged) and are recorded here for
-/// the header via [`crate::lua::facade::Module::userdata`]; `null` is the
-/// cached singleton sentinel, set verbatim and recorded as a `const`.
+/// byte-identical tracing. The `Object` / `Array` userdata types keep their own
+/// `impl UserData` (their methods are unchanged) and are recorded here via
+/// [`crate::lua::facade::Module::userdata`]; `null` is the cached singleton
+/// sentinel, set verbatim and recorded as a `const`.
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:json")?;
 

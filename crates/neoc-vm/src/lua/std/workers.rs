@@ -24,7 +24,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// the hand-written registration carried **no** `#[instrument]` span, so
 /// routing through the facade's `func` would add one. Each returns the
 /// process-global `ShutdownSignal` userdata, whose `is_fired` / `wait` methods
-/// keep their own `impl UserData` and are recorded here for the header via
+/// keep their own `impl UserData` and are recorded here via
 /// [`crate::lua::facade::Module::userdata`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "std:workers")?;

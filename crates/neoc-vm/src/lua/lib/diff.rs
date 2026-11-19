@@ -45,7 +45,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// `(value, error)` returns directly through `err` / `ok` with a baked
 /// `"diff.<fn>: "` prefix (the option parsers funnel through the module-local
 /// `short_circuit!` macro), so they do not fit the facade's `func` / `try_func`
-/// model. Their signatures are recorded for the header via
+/// model. Their signatures are recorded via
 /// [`crate::lua::facade::Module::record_fn`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:diff")?;

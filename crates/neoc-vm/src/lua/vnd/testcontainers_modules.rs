@@ -53,18 +53,20 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// Declares the `vnd:testcontainers_modules` surface through the facade.
 ///
 /// `mysql`, `postgres`, and `generic` are set verbatim with
-/// [`crate::lua::facade::Module::set`] rather than `try_async_func` because each
-/// hand-written async function carries its own
-/// `#[instrument(name = "testcontainers_modules.<fn>", target = "lua::lib::testcontainers_modules")]`
-/// attribute and bakes the `testcontainers_modules.<fn>` error prefix into its
-/// pre-built `(Value, Value)` return — routing through the facade would add a
-/// second span and double the prefix. Their signatures are recorded for the
-/// header via [`crate::lua::facade::Module::record_fn`]. The `MysqlContainer`,
+/// [`crate::lua::facade::Module::set`] rather than `try_async_func` because
+/// each hand-written async function carries its own `#[instrument(name =
+/// "testcontainers_modules.<fn>", target =
+/// "lua::lib::testcontainers_modules")]` attribute and bakes the
+/// `testcontainers_modules.<fn>` error prefix into its pre-built `(Value,
+/// Value)` return — routing through the facade would add a second span and
+/// double the prefix. Their signatures are recorded via
+/// [`crate::lua::facade::Module::record_fn`]. The `MysqlContainer`,
 /// `PostgresContainer`, and `GenericContainer` handle types keep their own
 /// `impl UserData` (the sync accessors and async `stop` unchanged) and are
-/// recorded for the header via [`crate::lua::facade::Module::userdata`]. The
-/// `mysql` / `postgres` shortcuts share one generic `TypedContainer<I>` Rust
-/// type at runtime; the header records the two image-specific surfaces.
+/// recorded via
+/// [`crate::lua::facade::Module::userdata`]. The `mysql` / `postgres` shortcuts
+/// share one generic `TypedContainer<I>` Rust type at runtime; the
+/// recording covers the two image-specific surfaces.
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "vnd:testcontainers_modules")?;
 

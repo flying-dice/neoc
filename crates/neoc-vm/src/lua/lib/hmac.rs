@@ -162,14 +162,14 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// Declares the `lib:hmac` surface through the facade.
 ///
 /// Every free function is set verbatim with [`crate::lua::facade::Module::set`]
-/// and recorded for the header with [`crate::lua::facade::Module::record_fn`]:
-/// `hmac.Hmac.new` and `hmac.hmac` raise through [`crate::lua::sandbox::err`]
-/// with a baked `"<stem>.<fn>: <e>"` prefix under their own `#[instrument]`
-/// spans (the `hmac.Hmac.new` span the facade's `type_` would rename to
-/// `Hmac.new`), and `verify` / `algorithms` carry no span at all — routing any
-/// of them through the facade would change the trace shape. The `Hmac` userdata
-/// keeps its own `impl UserData` and is recorded here for the header via
-/// [`crate::lua::facade::Module::userdata`].
+/// and recorded with
+/// [`crate::lua::facade::Module::record_fn`]: `hmac.Hmac.new` and `hmac.hmac`
+/// raise through [`crate::lua::sandbox::err`] with a baked `"<stem>.<fn>: <e>"`
+/// prefix under their own `#[instrument]` spans (the `hmac.Hmac.new` span the
+/// facade's `type_` would rename to `Hmac.new`), and `verify` / `algorithms`
+/// carry no span at all — routing any of them through the facade would change
+/// the trace shape. The `Hmac` userdata keeps its own `impl UserData` and is
+/// recorded here via [`crate::lua::facade::Module::userdata`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:hmac")?;
 

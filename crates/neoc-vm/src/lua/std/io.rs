@@ -163,8 +163,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// `ReaderHandle` userdata and `copy` borrows two handles and bakes its own
 /// argument-type error messages, so neither fits a regular facade return type.
 /// The `ReaderHandle` / `WriterHandle` methods keep their own `impl UserData`
-/// and are recorded here for the header via
-/// [`crate::lua::facade::Module::userdata`].
+/// and are recorded here via [`crate::lua::facade::Module::userdata`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "std:io")?;
 

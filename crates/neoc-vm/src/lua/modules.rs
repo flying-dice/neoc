@@ -197,165 +197,91 @@ pub fn install(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-/// Collects the emitted `.neoc` header for every module that declares its
-/// surface through the facade.
-///
-/// Each entry is `(registry_key, header_text)` — for example
-/// `("lib:base64", "// @generated …\nextern {\n    #[extern(path = \"lib:base64\")]\n    mod base64 { … }\n}\n")`.
-/// Only modules migrated to the facade appear here; the rest still register
-/// through a hand-written `module()` and a hand-written `.neoc` header.
-pub fn headers(lua: &Lua) -> mlua::Result<Vec<(String, String)>> {
-    let mut out = Vec::new();
-    let mut push = |m: mlua::Result<crate::lua::facade::Module<'_>>| -> mlua::Result<()> {
-        let m = m?;
-        out.push((m.name().to_string(), m.neoc_header()));
-        Ok(())
-    };
-
-    push(stdmod::collections::declare(lua))?;
-    push(stdmod::env::declare(lua))?;
-    push(stdmod::fs::declare(lua))?;
-    push(stdmod::io::declare(lua))?;
-    push(stdmod::net::declare(lua))?;
-    push(stdmod::task::declare(lua))?;
-    push(stdmod::thread::declare(lua))?;
-    push(stdmod::time::declare(lua))?;
-    push(stdmod::workers::declare(lua))?;
-
-    push(lib::archive::declare(lua))?;
-    push(lib::args::declare(lua))?;
-    push(lib::base64::declare(lua))?;
-    push(lib::cache::declare(lua))?;
-    push(lib::chrono::declare(lua))?;
-    push(lib::compile::declare(lua))?;
-    push(lib::compress::declare(lua))?;
-    push(lib::crypto::declare(lua))?;
-    push(lib::csv::declare(lua))?;
-    push(lib::diff::declare(lua))?;
-    push(lib::glob::declare(lua))?;
-    push(lib::hash::declare(lua))?;
-    push(lib::hex::declare(lua))?;
-    push(lib::hmac::declare(lua))?;
-    push(lib::html::declare(lua))?;
-    push(lib::http::declare(lua))?;
-    push(lib::ini::declare(lua))?;
-    push(lib::json::declare(lua))?;
-    push(lib::log::declare(lua))?;
-    push(lib::mime::declare(lua))?;
-    push(lib::pkey::declare(lua))?;
-    push(lib::random::declare(lua))?;
-    push(lib::regex::declare(lua))?;
-    push(lib::semver::declare(lua))?;
-    push(lib::template::declare(lua))?;
-    push(lib::tempfile::declare(lua))?;
-    push(lib::test::declare(lua))?;
-    push(lib::text::declare(lua))?;
-    push(lib::unicode::declare(lua))?;
-    push(lib::url::declare(lua))?;
-    push(lib::vcr::declare(lua))?;
-
-    push(vnd::hyper::declare(lua))?;
-    push(vnd::jsonschema::declare(lua))?;
-    push(vnd::quick_xml::declare(lua))?;
-    push(vnd::rusqlite::declare(lua))?;
-    push(vnd::serde_json::declare(lua))?;
-    push(vnd::serde_yaml::declare(lua))?;
-    push(vnd::sqlx_mysql::declare(lua))?;
-    push(vnd::sqlx_postgres::declare(lua))?;
-    push(vnd::testcontainers_modules::declare(lua))?;
-    push(vnd::toml::declare(lua))?;
-
-    Ok(out)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::lua::sandbox::make_engine;
 
-    /// Every facade-migrated module reports an `extern { … }` header keyed by a
-    /// `#[extern(path = "<key>")] mod <name>` declaration. Guards the facade's
-    /// extern block shape and the collector wiring; the count tracks the modules
-    /// migrated so far (the rest follow in later batches).
+    /// Declares every facade module, in registry order. The recorded surface
+    /// stays available to tooling; tests use it to check that the recording and
+    /// the live tables agree.
+    fn declared(lua: &Lua) -> mlua::Result<Vec<crate::lua::facade::Module<'_>>> {
+        Ok(vec![
+            stdmod::collections::declare(lua)?,
+            stdmod::env::declare(lua)?,
+            stdmod::fs::declare(lua)?,
+            stdmod::io::declare(lua)?,
+            stdmod::net::declare(lua)?,
+            stdmod::task::declare(lua)?,
+            stdmod::thread::declare(lua)?,
+            stdmod::time::declare(lua)?,
+            stdmod::workers::declare(lua)?,
+            lib::archive::declare(lua)?,
+            lib::args::declare(lua)?,
+            lib::base64::declare(lua)?,
+            lib::cache::declare(lua)?,
+            lib::chrono::declare(lua)?,
+            lib::compile::declare(lua)?,
+            lib::compress::declare(lua)?,
+            lib::crypto::declare(lua)?,
+            lib::csv::declare(lua)?,
+            lib::diff::declare(lua)?,
+            lib::glob::declare(lua)?,
+            lib::hash::declare(lua)?,
+            lib::hex::declare(lua)?,
+            lib::hmac::declare(lua)?,
+            lib::html::declare(lua)?,
+            lib::http::declare(lua)?,
+            lib::ini::declare(lua)?,
+            lib::json::declare(lua)?,
+            lib::log::declare(lua)?,
+            lib::mime::declare(lua)?,
+            lib::pkey::declare(lua)?,
+            lib::random::declare(lua)?,
+            lib::regex::declare(lua)?,
+            lib::semver::declare(lua)?,
+            lib::template::declare(lua)?,
+            lib::tempfile::declare(lua)?,
+            lib::test::declare(lua)?,
+            lib::text::declare(lua)?,
+            lib::unicode::declare(lua)?,
+            lib::url::declare(lua)?,
+            lib::vcr::declare(lua)?,
+            vnd::hyper::declare(lua)?,
+            vnd::jsonschema::declare(lua)?,
+            vnd::quick_xml::declare(lua)?,
+            vnd::rusqlite::declare(lua)?,
+            vnd::serde_json::declare(lua)?,
+            vnd::serde_yaml::declare(lua)?,
+            vnd::sqlx_mysql::declare(lua)?,
+            vnd::sqlx_postgres::declare(lua)?,
+            vnd::testcontainers_modules::declare(lua)?,
+            vnd::toml::declare(lua)?,
+        ])
+    }
+
+    /// Every module in the catalogue declares its surface through the facade
+    /// and is registered: the declared set is exactly the 50 `require` keys.
     #[test]
-    fn headers_cover_migrated_modules() {
+    fn declared_modules_cover_the_catalogue() {
         let lua = make_engine().expect("engine");
-        let headers = super::headers(&lua).expect("headers");
+        let declared = declared(&lua).expect("declared");
 
-        let keys: Vec<&str> = headers.iter().map(|(k, _)| k.as_str()).collect();
-        assert!(keys.contains(&"lib:archive"));
-        assert!(keys.contains(&"lib:args"));
-        assert!(keys.contains(&"lib:base64"));
-        assert!(keys.contains(&"lib:cache"));
-        assert!(keys.contains(&"lib:chrono"));
-        assert!(keys.contains(&"lib:compile"));
-        assert!(keys.contains(&"lib:compress"));
-        assert!(keys.contains(&"lib:crypto"));
-        assert!(keys.contains(&"lib:csv"));
-        assert!(keys.contains(&"lib:diff"));
-        assert!(keys.contains(&"lib:glob"));
-        assert!(keys.contains(&"lib:hash"));
-        assert!(keys.contains(&"lib:hex"));
-        assert!(keys.contains(&"lib:hmac"));
-        assert!(keys.contains(&"lib:html"));
-        assert!(keys.contains(&"lib:http"));
-        assert!(keys.contains(&"lib:ini"));
-        assert!(keys.contains(&"lib:json"));
-        assert!(keys.contains(&"lib:log"));
-        assert!(keys.contains(&"lib:mime"));
-        assert!(keys.contains(&"lib:pkey"));
-        assert!(keys.contains(&"lib:random"));
-        assert!(keys.contains(&"lib:regex"));
-        assert!(keys.contains(&"lib:semver"));
-        assert!(keys.contains(&"lib:template"));
-        assert!(keys.contains(&"lib:tempfile"));
-        assert!(keys.contains(&"lib:test"));
-        assert!(keys.contains(&"lib:text"));
-        assert!(keys.contains(&"lib:unicode"));
-        assert!(keys.contains(&"lib:url"));
-        assert!(keys.contains(&"lib:vcr"));
-        assert!(keys.contains(&"std:collections"));
-        assert!(keys.contains(&"std:env"));
-        assert!(keys.contains(&"std:fs"));
-        assert!(keys.contains(&"std:io"));
-        assert!(keys.contains(&"std:net"));
-        assert!(keys.contains(&"std:task"));
-        assert!(keys.contains(&"std:thread"));
-        assert!(keys.contains(&"std:time"));
-        assert!(keys.contains(&"std:workers"));
-        assert!(keys.contains(&"vnd:hyper"));
-        assert!(keys.contains(&"vnd:jsonschema"));
-        assert!(keys.contains(&"vnd:quick_xml"));
-        assert!(keys.contains(&"vnd:rusqlite"));
-        assert!(keys.contains(&"vnd:serde_json"));
-        assert!(keys.contains(&"vnd:serde_yaml"));
-        assert!(keys.contains(&"vnd:sqlx_mysql"));
-        assert!(keys.contains(&"vnd:sqlx_postgres"));
-        assert!(keys.contains(&"vnd:testcontainers_modules"));
-        assert!(keys.contains(&"vnd:toml"));
-        assert_eq!(keys.len(), 50, "expected 50 migrated modules, got {keys:?}");
-
-        for (key, header) in &headers {
-            let name = key.split_once(':').map_or(key.as_str(), |(_, s)| s);
-            assert!(
-                header.contains("extern {"),
-                "{key} header missing `extern {{` block:\n{header}"
-            );
-            assert!(
-                header.contains(&format!("#[extern(path = \"{key}\")]")),
-                "{key} header missing #[extern(path = …)]:\n{header}"
-            );
-            assert!(
-                header.contains(&format!("mod {name} {{")),
-                "{key} header missing `mod {name} {{`:\n{header}"
-            );
+        let keys: Vec<&str> = declared.iter().map(|m| m.name()).collect();
+        assert_eq!(keys.len(), 50, "expected 50 declared modules, got {keys:?}");
+        for key in &keys {
+            let kind: String = lua
+                .load(format!("return type(require({key:?}))"))
+                .eval()
+                .unwrap_or_else(|e| panic!("require({key:?}) failed: {e}"));
+            assert_eq!(kind, "table", "{key} must be a table");
         }
     }
 
     /// Builds every facade-migrated module's runtime `require(...)` table,
-    /// paired with its registry key, in the same order as [`super::headers`].
+    /// paired with its registry key, in the same order as [`declared`].
     /// The two lists line up by index so a test can cross-check a module's
-    /// live surface against its emitted header.
+    /// live surface against its recorded surface.
     fn runtime_tables(lua: &Lua) -> Vec<(String, Table)> {
         macro_rules! tables {
             ($($key:literal => $module:expr),+ $(,)?) => {
@@ -417,69 +343,37 @@ mod tests {
     }
 
     /// Every top-level key on a module's live `require(...)` table must be
-    /// covered by that module's emitted header. This is the guard that turns a
-    /// missing `record_fn` into a CI failure: register a free function with
+    /// covered by that module's recorded surface. This is the guard that turns
+    /// a missing `record_fn` into a CI failure: register a free function with
     /// `set` but forget to record its signature and the key is present at
-    /// runtime yet absent from the `mod` block, so this fails.
+    /// runtime yet absent from the recording, so this fails.
     ///
-    /// The check is one-directional (live keys ⊆ header surface): the header
-    /// may carry extra entries the base table lacks — most notably
+    /// The check is one-directional (live keys ⊆ recorded surface): the
+    /// recording may carry extra entries the base table lacks — most notably
     /// `std:thread`'s `parent` / `shared`, injected only inside a spawned
-    /// worker — and that is fine. The shape of the assertion per key:
-    ///
-    /// - a function value must appear as a free `fn <key>(` in the `mod` block;
-    /// - a table value (a constructor sub-table such as `chrono.Date`) must
-    ///   appear as `struct <Key>;`;
-    /// - any other value (a former const such as `json.null`) must appear as a
-    ///   zero-argument accessor `fn <key>()`.
+    /// worker — and that is fine.
     #[test]
-    fn header_surface_covers_runtime_table_keys() {
+    fn recorded_surface_covers_runtime_table_keys() {
         let lua = make_engine().expect("engine");
-        let headers = super::headers(&lua).expect("headers");
+        let declared = declared(&lua).expect("declared");
         let tables = runtime_tables(&lua);
 
         assert_eq!(
-            headers.len(),
+            declared.len(),
             tables.len(),
-            "headers and runtime tables drifted out of sync"
+            "declared modules and runtime tables drifted out of sync"
         );
 
-        for ((hkey, header), (tkey, table)) in headers.iter().zip(tables.iter()) {
-            assert_eq!(hkey, tkey, "header / table ordering drifted");
+        for (module, (tkey, table)) in declared.iter().zip(tables.iter()) {
+            assert_eq!(module.name(), tkey, "declared / table ordering drifted");
+            let names = module.declared_names();
 
             for pair in table.clone().pairs::<String, mlua::Value>() {
-                let (key, value) = pair.expect("module table pair");
-
-                match value {
-                    mlua::Value::Function(_) => {
-                        // Free functions and former-const accessors sit directly
-                        // in the `mod` at one indent level (eight spaces); a
-                        // same-named method inside an `impl` is indented deeper
-                        // (twelve spaces), so the leading indent disambiguates.
-                        let needle = format!("        fn {key}(");
-                        assert!(
-                            header.contains(&needle),
-                            "{hkey}: function key {key:?} has no free `fn {key}(` in its header surface:\n{header}"
-                        );
-                    }
-                    mlua::Value::Table(_) => {
-                        let needle = format!("struct {key};");
-                        assert!(
-                            header.contains(&needle),
-                            "{hkey}: sub-table key {key:?} has no `{needle}` in its header surface:\n{header}"
-                        );
-                    }
-                    _ => {
-                        // A former module constant lowers to a zero-argument
-                        // accessor `fn <key>()` (the extern item set has no
-                        // `const`).
-                        let needle = format!("        fn {key}()");
-                        assert!(
-                            header.contains(&needle),
-                            "{hkey}: value key {key:?} has no accessor `fn {key}()` in its header surface:\n{header}"
-                        );
-                    }
-                }
+                let (key, _) = pair.expect("module table pair");
+                assert!(
+                    names.contains(&key),
+                    "{tkey}: key {key:?} is on the live table but not in its recorded surface"
+                );
             }
         }
     }

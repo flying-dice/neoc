@@ -65,10 +65,11 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// `random_bytes` and `uuid_parse` raise an `mlua::Error` from
 /// `lua.create_string` (the bare `?`) when the decoded bytes can't be lifted
 /// into a Lua string, while still routing their own validation/parse failures
-/// to the `(value, error)` channel — a mixed shape `try_func` cannot model. Both
-/// are registered verbatim with [`crate::lua::facade::Module::set`] (keeping
-/// their `#[instrument]` span and `random.<fn>` channel prefix) and recorded for
-/// the header with [`crate::lua::facade::Module::record_fn`].
+/// to the `(value, error)` channel — a mixed shape `try_func` cannot model.
+/// Both are registered verbatim with [`crate::lua::facade::Module::set`]
+/// (keeping their `#[instrument]` span and `random.<fn>` channel prefix) and
+/// recorded with
+/// [`crate::lua::facade::Module::record_fn`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:random")?;
     m.set("random_bytes", lua.create_function(random_bytes)?)?

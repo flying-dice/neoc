@@ -42,7 +42,8 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// carries no span of its own (the mode-specific constructors `passthrough` /
 /// `recording` / `replay` open their own spans), so routing it through the
 /// facade's `func` / `try_func` path would change its behaviour. Its signature
-/// is recorded for the header via [`crate::lua::facade::Module::record_fn`].
+/// is recorded via
+/// [`crate::lua::facade::Module::record_fn`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "lib:vcr")?;
 
