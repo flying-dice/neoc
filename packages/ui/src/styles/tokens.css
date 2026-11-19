@@ -55,6 +55,7 @@
    * #000 (WCAG 1.4.11 asks 3:1).
    */
   --window-grip: #757579;
+  --on-tint: #ffffff; /* text on a --tint-fill: 5:1 or more in light and dark */
 
   /* Accent used by controls; override per subtree to re-tint. */
   --tint: var(--ios-blue);
@@ -151,6 +152,7 @@
   --radius-lg: 14px; /* alerts, popovers */
   --radius-xl: 18px; /* windows */
   --radius-2xl: 22px; /* widgets */
+  --radius-pill: 999px; /* capsules: a short label, a toggle track */
   --radius-dock: 30px;
   --radius-icon: 22.37%; /* app icon squircle approximation */
 
@@ -160,6 +162,7 @@
   --shadow-popover: 0 10px 40px rgb(0 0 0 / 0.2);
   --shadow-window: 0 0 0 0.5px rgb(0 0 0 / 0.12), 0 24px 60px rgb(0 0 0 / 0.28),
     0 8px 20px rgb(0 0 0 / 0.12);
+  --shadow-slideover: 0 0 0 0.5px rgb(0 0 0 / 0.15), -12px 0 40px rgb(0 0 0 / 0.3);
   --shadow-window-inactive: 0 0 0 0.5px rgb(0 0 0 / 0.1), 0 12px 32px rgb(0 0 0 / 0.18);
 
   /* ── Motion ─────────────────────────────────────────────────── */

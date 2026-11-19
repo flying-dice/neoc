@@ -31,9 +31,9 @@ describe('input modality', () => {
     noteInput({ type: 'keydown', key: 'Backspace' })
     expect(inputModality()).toBe('typing')
   })
-  test('Enter, Space, the arrows, modifiers and shortcuts with a command key do not count as typing', () => {
+  test('Enter, Space, Escape, the arrows, modifiers and shortcuts with a command key do not count as typing', () => {
     noteInput({ type: 'keydown', key: 'Tab' })
-    for (const key of ['Enter', ' ', 'ArrowDown', 'Shift', 'Meta', 'Control'])
+    for (const key of ['Enter', ' ', 'Escape', 'ArrowDown', 'Shift', 'Meta', 'Control'])
       noteInput({ type: 'keydown', key })
     noteInput({ type: 'keydown', key: 'c', metaKey: true })
     noteInput({ type: 'keydown', key: 'a', ctrlKey: true })

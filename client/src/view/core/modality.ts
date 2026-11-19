@@ -1,6 +1,6 @@
 /**
  * What the person last did that bears on what Enter means on a focused control: walked to it with Tab (`keyboard`),
- * tapped or clicked it (`pointer`), or typed since (`typing`: a character, Backspace or Escape).
+ * tapped or clicked it (`pointer`), or typed since (`typing`: a character, Backspace or Delete).
  *
  * `:focus-visible` cannot say. In Chromium a key pressed while a mouse-focused button has focus turns it on, so
  * "does this button show a focus ring" is true after a click as soon as the person types. What distinguishes a key
@@ -33,11 +33,9 @@ export function noteInput(e: InputEvent): void {
   else if (!e.metaKey && !e.ctrlKey && !e.altKey && isTyped(e.key)) modality = 'typing'
 }
 
-/** A printable character (not Space), Backspace, Delete or Escape: the keys a sum is typed with. */
+/** A printable character (not Space), Backspace or Delete: the keys a sum is typed with. Escape dismisses, it does not type. */
 function isTyped(key: string): boolean {
-  return (
-    (key.length === 1 && key !== ' ') || key === 'Backspace' || key === 'Delete' || key === 'Escape'
-  )
+  return (key.length === 1 && key !== ' ') || key === 'Backspace' || key === 'Delete'
 }
 
 /**

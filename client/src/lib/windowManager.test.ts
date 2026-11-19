@@ -148,10 +148,55 @@ describe('layouts', () => {
     wm.open('calculator')
     wm.setLayout(win('calculator').id, 'split-left')
     wm.open('notes')
+    wm.bounds = { width: 2000, height: 800 }
     wm.setSplitRatio(0.05)
     expect(wm.activeStage?.splitRatio).toBe(0.25)
     wm.setSplitRatio(0.99)
     expect(wm.activeStage?.splitRatio).toBe(0.75)
+  })
+
+  test('the divider never leaves a pane narrower than its app allows', () => {
+    wm.bounds = { width: 1024, height: 768 }
+    wm.open('calculator')
+    wm.setLayout(win('calculator').id, 'split-left')
+    wm.open('notes')
+    wm.setSplitRatio(0.05)
+    expect(wm.frameOf(win('calculator')).width).toBeGreaterThanOrEqual(320)
+    wm.setSplitRatio(0.99)
+    expect(wm.frameOf(win('notes')).width).toBeGreaterThanOrEqual(320)
+    wm.bounds = { width: 600, height: 768 } // two minimums do not fit: an even split
+    wm.setSplitRatio(0.05)
+    expect(wm.activeStage?.splitRatio).toBe(0.5)
+  })
+
+  test('a split waiting for its second app stops above the Dock; a full split fills the screen', () => {
+    wm.open('calculator')
+    wm.setLayout(win('calculator').id, 'split-left')
+    expect(wm.frameOf(win('calculator')).y + wm.frameOf(win('calculator')).height).toBe(800 - 104)
+    wm.open('notes')
+    expect(wm.frameOf(win('calculator')).height).toBe(800 - 16)
+  })
+
+  test('the empty side of a waiting split is the pane the first window left, down to the same edge', () => {
+    wm.open('calculator')
+    wm.setLayout(win('calculator').id, 'split-left')
+    const pane = wm.frameOf(win('calculator'))
+    const slot = wm.splitPlaceholderFrame!
+    expect(slot.y + slot.height).toBe(pane.y + pane.height)
+    expect(slot.x).toBe(pane.x + pane.width + 10)
+    expect(slot.x + slot.width).toBe(1280 - 8)
+    wm.setSplitRatio(0.3) // the divider moves the empty side with it
+    const moved = wm.splitPlaceholderFrame!
+    expect(moved.x).toBe(wm.frameOf(win('calculator')).x + wm.frameOf(win('calculator')).width + 10)
+    wm.open('notes')
+    expect(wm.splitPlaceholderFrame).toBeNull()
+  })
+
+  test('Slide Over stops above the Dock', () => {
+    wm.open('calculator')
+    wm.setLayout(win('calculator').id, 'slideover')
+    const f = wm.frameOf(win('calculator'))
+    expect(f.y + f.height).toBe(800 - 104)
   })
 
   test('leaving a split returns the partner to floating', () => {

@@ -111,3 +111,109 @@ automated checks green (31 passed for the Calculator and Window specs). It still
 Split View, while the picker waits for the second app, the Dock floats over the keypad's bottom row (`calculator-split-left`
 baseline; once the second app is chosen the whole keypad is visible, also live). That is the shell's (Jira), and the rubric
 deducts only for cut-offs, so the better grip adds no points.
+
+## Second re-run: the minimum-size cue, a bolder grip, and J2 for Sam
+
+What changed in the kit and shell (the Calculator itself changed only in two small ways, see the commit):
+
+- **Cue at the limit** (kit `Window`): when a resize, by drag or by arrow keys, reaches the minimum size or the screen's edge, the
+  grip nudges back once (no nudge under `prefers-reduced-motion`; checked live with the media query on and off) and takes the
+  `--tint`, a flat capsule beside the grip says which ("Smallest size", "Narrowest", "Shortest", "Widest", "Tallest", "Largest
+  size") for about two seconds, and a polite live region says the full sentence ("Calculator is at its smallest size", "can't
+  get any narrower", ...) once, not on every key press after it. At its smallest size the grip stays tinted, whenever you look.
+- **Grip**: 24 px with a 5 px stroke (was 16 and 3), a 44 pt button that sits mostly outside the window so it does not cover the
+  `=` key's circle, the tooltip "Resize — drag or use arrow keys", the same `--window-grip` grey (3:1 or more on light, dark and
+  black). It stays **last in the tab order** on purpose (the reasoning is in the `Window` header: it is window chrome in the
+  bottom-right corner; first would cost every keyboard user a stop in every window). Alex's "21 Tabs" is therefore still true.
+- **Window manager** (found by the audit, see below): the split divider never leaves a pane narrower than its app's minimum; Slide
+  Over and a split that waits for its second app stop above the Dock; the empty side of a waiting split is sized from the split
+  ratio and ends at the same edge as the first pane.
+
+Same three personas (Sam/Haiku, Priya/Sonnet, Alex/Opus), fresh sessions on fresh hosts, labels and the accessibility tree
+only, not told what changed. Sam also ran J2, which he had no rating for.
+
+### J7, by build (every run, none left out)
+
+The cue went through three builds before the shipped one, because each run found something. All runs, in order:
+
+| Build | Sam | Priya | Alex | What the run found |
+|---|---|---|---|---|
+| Visible grip (first re-run, above) | 4 | 6 | 5 | no cue at the minimum, grip small and faint |
+| A: tint at the smallest size, live-region sentence, tooltip | 5 | 6 | 6 | nothing visible in words; the cue was colour only |
+| B: A + a label below the corner, 24 px grip | 6 | 6 | 6 | the label can sit under the Dock for a tall window |
+| C: B with the label inside the window, beside the grip | 6 | 6 | 5 | the label covered the `.` and `=` keys for two seconds (all three said so) |
+| **D, shipped**: the label over the window's bottom edge, 44 pt button outside the window | 6 | 6 | 6 | the label no longer covers keys; the tab order and focus ring remarks stay |
+
+The shipped build is D. B and D score alike; C scored 17 and is not the build that shipped. The spread between builds is one
+point on one participant, which is the noise of three agents; I report D's ratings as the measure and list the others so it
+can be seen that nothing was dropped.
+
+### Scorecard, round 3, with every re-run (shipped build)
+
+| Journey | Sam | Priya | Alex | Sum |
+|---|---|---|---|---|
+| J2 keyboard only | **5** (first rating) | 6 | 7 (re-run after the Enter fix) | 18 |
+| J4 divide by zero | 6 | 6 | 6 | 18 |
+| J7 minimum window (build D) | 6 | 6 | 6 | 18 |
+| Sum | 17 | 18 | 19 | **54** |
+
+Mean ease: 54 / 9 ratings = **6.00** / 7 (round 3 first pass: 5.4; after Alex's J2 re-run: 5.6; after the first J7 re-run:
+5.75). Every journey succeeded for every participant. This is the first measurement with a rating for every persona and
+journey of the round. It meets 6.0 exactly, not with room to spare: build C of the same run would have given 53 / 9 = 5.89.
+
+Sam's J2 (5): he typed `250*0.18` and Enter, found Escape to clear by guessing, and Backspace for the slip; "I did not know a
+keyboard route existed", "nothing on screen says the keyboard works", the focus ring sits on `=` after every key and looks
+like a pressed key, and the Dock icon is an unlabelled orange "+" that he found through its accessibility label. These are
+findings 9 (no keyboard hint) and the Dock icon, both left as they were (below).
+
+### What the shipped build's participants still said
+
+| # | Severity | Hit by | Finding | Status |
+|---|---|---|---|---|
+| 14 | minor | Sam, Alex | No cue at the minimum. | **Fixed**: nudge, tint, label, live region (above). Sam, Priya and Alex all saw it ("better than iPadOS, which gives no cue"). |
+| 15 | minor | Sam, Alex | The grip is small and faint. | **Done as far as the 3:1 rule allows**: 24 px, 5 px, 44 pt target. Sam still calls it "easy to miss" (polish): the grey cannot go darker without losing 3:1 on one of light, dark or black. |
+| 16 | minor | Alex | Last in the tab order (21 to 22 Tabs), and typed digits do nothing while the grip has focus. | **Kept, with the reason in the code**. Open, shell: a window-level resize shortcut or a way past the window chrome (finding 3). |
+| 18 | polish | Priya, Sam | The tint stays after the drag (it is the smallest-size state), and the grip sits at the `=` key's corner. | By design (a cue that is true whenever you look; the button is outside the key's circle: clicking the lower-right of `=` reaches `=`, checked by the audit). |
+| 19 | polish | Alex | The focus ring is faint on black; the result is not announced after `=`; the display has no label. | Deferred (findings 5 and 6; the readout is a polite live region named "Result"). |
+| 20 | polish | Sam | The Dock icon is an orange "+" with no visible name. | Deferred: a calculator glyph needs an icon in the kit and the manifest enum. |
+| 21 | polish | Priya | The keys move 4 px when the `5 + 5` line appears. | Deferred. |
+
+### Conformance, three independent audit agents (Opus), and what they found
+
+The same rubric ([CONFORMANCE.md](../../../.claude/skills/app-design/CONFORMANCE.md)), the same instructions to be strict, a fresh
+agent each time; none of them is the moderator. They did not agree, so all three are listed:
+
+| Audit | Build it saw | Total | Resize | What it found |
+|---|---|---|---|---|
+| Round 3 | before the grip work | 96 | 80 | Dock over the keypad while a split waits for its second app |
+| First of this round | A (grip 36 px, tint cue) | **89.3** | 40 | the split divider let the Calculator pane go to 250 px (below its 320 minimum) at 1024x768, Slide Over under the Dock at 1024x768, the grip's box over the `=` key |
+| Second | B (grip 40 px, label below) | **86.7** | 40 | the same, plus raw `#fff`, `999px`, `2px 10px` in the label's CSS, a raw Slide Over shadow, "Largest size" for a single axis, the 40 px button |
+| Third (window manager fixes, 44 pt grip, tokens; label inside the window) | C | 98.0 | 100 | the empty side of a waiting split ended 94 px lower than the first pane and did not follow the divider (Layout, -20); the label covered the `.` and `=` keys for two seconds (not deducted, "if you count it, 95") |
+| **Fourth, on the shipped source** | D | **96.6** | **100** | the "..." handle's dots are `--label-secondary` on the black body: about 1.5:1 in the light shell (Colour, -15; the same failure `--window-grip` fixed for the corner); the handle button is 43 x 15, under 44 pt (Accessibility, -5); two off-grid paddings on the handle (Layout, -4). Not deducted: leaving Slide Over for Full Screen or Split View sends the only window to the recent-apps strip (shell, predates this change); the capsule's lower half sits under the Dock for a window that ends at the Dock |
+
+**The conformance score to quote is 96.6, from the fourth audit agent (Opus, separate from the moderator), on the build that ships.**
+Resize and multitasking is 100 (was 80), the other categories 85 to 100, no category under 70.
+
+What I did about the first three audits' findings: the window manager clamps the divider to each pane's app minimum and stops
+Slide Over and a waiting split above the Dock (`windowManager.svelte.ts`, tests in `windowManager.test.ts`); the grip's button
+is 44 pt and outside the window; new tokens `--on-tint`, `--radius-pill` and `--shadow-slideover`, documented in
+`DESIGN_LANGUAGE.md` (as is the 28 px inset of the wide `0`, which the audits had counted against the Calculator); "Widest",
+"Tallest" and "Largest size" separate the axes; the label moved from inside the window to over its bottom edge (all three
+participants of build C asked for it); the empty side of a waiting split is sized from the split ratio and ends at the first
+pane's bottom edge (`splitPlaceholderFrame`, with a test). **Not fixed, reported by the audits**: the "..." handle's dots on a
+black body in the light shell (about 1.5:1, a kit change that touches every window's baseline) and its 43 x 15 px target;
+Text Size does nothing to px type tokens (kit-wide; the second audit counted it, the others did not); `--on-tint` is white
+and holds 5:1 only on the default blue; a frame left by a device with a bigger screen is not clamped on a 390 px screen
+(shell); the Slide Over exit above. The scores moved with what each audit tested (86.7 to 98.0); the spread is the rubric's
+cut-off deductions, which depend on which layouts and sizes an auditor opens, and on how it reads the categories the rubric
+does not spell out, not noise in the Calculator.
+
+### Exit criteria, after the second re-run
+
+| Criterion | Result |
+|---|---|
+| Every journey succeeded for every participant | met (9 of 9 ratings, all finished) |
+| Mean ease >= 6.0 | **met: 54 / 9 = 6.00** (build D; 5.89 with build C, see above) |
+| No blocker or major open | met except AGOS-57 (the owner's call); Sam's two "major" labels were the grip and the missing cue, both addressed |
+| Conformance >= 90, no category under 70 | met: **96.6** by the fourth audit, on the shipped build (lowest category 85); the earlier audits, of earlier builds, scored 89.3, 86.7 and 98.0 and are recorded above |
+| Automated checks green | met (see the verification record) |

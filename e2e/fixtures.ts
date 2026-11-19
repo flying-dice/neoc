@@ -114,6 +114,11 @@ export async function resizeWindow(page: Page, appId: string, width: number, hei
   await page.mouse.up()
   // Park the pointer so nothing (the Dock, a hover state) stays highlighted.
   await page.mouse.move(1, 1)
+  // A drag that meets the minimum size or the screen's edge shows a label for about two seconds: wait it out, or a
+  // snapshot taken now would catch it half faded.
+  const note = page.getByTestId(`window-${appId}-resize-note`)
+  await expect(note).toHaveText('', { timeout: 8000 })
+  await expect(note).toHaveCSS('opacity', '0')
   await settle(page)
 }
 

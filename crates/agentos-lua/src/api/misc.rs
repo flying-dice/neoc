@@ -1,4 +1,4 @@
-//! `app.manifest`, `app.window`, `app:openWindow`, `app.on`, `app.log`, `app.notify`, `app.shell`.
+//! `app.manifest`, `app.window`, `app:openWindow`, `app:windows`, `app.on`, `app.log`, `app.notify`, `app.shell`.
 
 use super::{check_effects_allowed, push_shell};
 use crate::{
@@ -38,6 +38,27 @@ fn text_field(t: &Table, key: &str, what: &str, required: bool, max: usize) -> m
             Err(mlua::Error::runtime(format!("{what}: `{key}` must be a string, got {}", other.type_name())))
         }
     }
+}
+
+/// `app:windows(name)`: the open instances of a declared window, in view-id order, each the `w` its render got (an
+/// app reaches the windows it has open: a tool empties their announcers, say).
+fn install_windows(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<()> {
+    let s = sh.clone();
+    app.set(
+        "windows",
+        lua.create_function(move |lua, (_this, name): (LuaValue, String)| {
+            s.declared_window(&name)?;
+            let mut open: Vec<(String, Table)> = s
+                .views
+                .lock()
+                .iter()
+                .filter(|(_, instance)| instance.window == name)
+                .map(|(view, instance)| (view.clone(), instance.w.clone()))
+                .collect();
+            open.sort_by(|a, b| a.0.cmp(&b.0));
+            lua.create_sequence_from(open.into_iter().map(|(_, w)| w))
+        })?,
+    )
 }
 
 pub(super) fn install(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<()> {
@@ -112,6 +133,8 @@ pub(super) fn install(lua: &Lua, sh: &Arc<Shared>, app: &Table) -> mlua::Result<
             s.push_effect(Effect::OpenWindow { name, params })
         })?,
     )?;
+
+    install_windows(lua, sh, app)?;
 
     // app.on(event, fn): a named hook the host can call
     let s = sh.clone();

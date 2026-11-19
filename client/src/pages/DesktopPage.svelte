@@ -157,8 +157,16 @@
         </div>
       {/if}
 
-      {#if awaitingSplit}
-        <div class="split-placeholder {awaitingSplit}" data-testid="split-placeholder">
+      {#if awaitingSplit && wm.splitPlaceholderFrame}
+        {@const pane = wm.splitPlaceholderFrame}
+        <div
+          class="split-placeholder"
+          data-testid="split-placeholder"
+          style:left="{pane.x}px"
+          style:top="{pane.y}px"
+          style:width="{pane.width}px"
+          style:height="{pane.height}px"
+        >
           <p>Choose an app from the Dock</p>
         </div>
       {/if}
@@ -228,9 +236,6 @@
   }
   .split-placeholder {
     position: absolute;
-    top: 8px;
-    bottom: 8px;
-    width: calc(50% - 13px);
     display: grid;
     place-items: center;
     border-radius: var(--radius-xl);
@@ -241,12 +246,6 @@
     color: #fff;
     font: var(--type-headline);
     z-index: 5;
-  }
-  .split-placeholder.split-left {
-    left: 8px;
-  }
-  .split-placeholder.split-right {
-    right: 8px;
   }
   .slideover-tab {
     position: absolute;

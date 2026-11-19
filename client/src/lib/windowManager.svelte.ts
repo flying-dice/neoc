@@ -128,6 +128,7 @@ export class WindowManager {
   frameOf(win: WindowState): Frame {
     const { width: W, height: H } = this.bounds
     const fullH = H - INSET * 2
+    const clearOfDockH = this.#heightAboveDock
     switch (win.layout) {
       case 'fullscreen':
         return { x: INSET, y: INSET, width: W - INSET * 2, height: fullH }
@@ -136,22 +137,41 @@ export class WindowManager {
         const ratio = this.stages.find((s) => s.id === win.stageId)?.splitRatio ?? 0.5
         const usable = W - INSET * 2 - GAP
         const left = Math.round(usable * ratio)
+        // while a split waits for its second app the Dock is up, so the first pane stops above it
+        const height = this.dockHidden ? fullH : clearOfDockH
         return win.layout === 'split-left'
-          ? { x: INSET, y: INSET, width: left, height: fullH }
-          : { x: INSET + left + GAP, y: INSET, width: usable - left, height: fullH }
+          ? { x: INSET, y: INSET, width: left, height }
+          : { x: INSET + left + GAP, y: INSET, width: usable - left, height }
       }
       case 'slideover':
         return this.slideOverHidden
-          ? { x: W + 20, y: INSET, width: SLIDE_OVER_WIDTH, height: fullH - DOCK_SPACE + 40 }
+          ? { x: W + 20, y: INSET, width: SLIDE_OVER_WIDTH, height: clearOfDockH }
           : {
               x: W - SLIDE_OVER_WIDTH - INSET,
               y: INSET,
               width: SLIDE_OVER_WIDTH,
-              height: fullH - DOCK_SPACE + 40
+              height: clearOfDockH // above the Dock, which a narrow screen would otherwise cover it with
             }
       default:
         return win.frame
     }
+  }
+
+  /** The height of a window that starts at the top inset and ends at the Dock's top edge, where floating windows stop too. */
+  get #heightAboveDock(): number {
+    return this.bounds.height - INSET - DOCK_SPACE
+  }
+
+  /** The empty side of a split that waits for its second app: the pane the first one left, down to the same edge. */
+  get splitPlaceholderFrame(): Frame | null {
+    const stage = this.activeStage
+    if (!stage?.awaitingSplit) return null
+    const usable = this.bounds.width - INSET * 2 - GAP
+    const left = Math.round(usable * stage.splitRatio)
+    const height = this.#heightAboveDock // the Dock is up while a split waits
+    return stage.awaitingSplit === 'split-left'
+      ? { x: INSET, y: INSET, width: left, height }
+      : { x: INSET + left + GAP, y: INSET, width: usable - left, height }
   }
 
   /** x position of the split divider, when the active stage is split. */
@@ -330,9 +350,21 @@ export class WindowManager {
     this.focus(win.id)
   }
 
+  /**
+   * Between a quarter and three quarters, and never leaving a pane narrower than its app's minimum (a divider dragged
+   * further would cut the app off). Where the two minimums do not fit side by side, an even split.
+   */
   setSplitRatio(ratio: number): void {
     const stage = this.activeStage
-    if (stage) stage.splitRatio = Math.min(0.75, Math.max(0.25, ratio))
+    if (!stage) return
+    const usable = this.bounds.width - INSET * 2 - GAP
+    const minOf = (layout: WindowLayout): number => {
+      const pane = this.onStage.find((w) => w.layout === layout)
+      return (pane && appOf(pane.appId)?.minWidth) || 0
+    }
+    const lowest = Math.max(0.25, minOf('split-left') / usable)
+    const highest = Math.min(0.75, 1 - minOf('split-right') / usable)
+    stage.splitRatio = lowest > highest ? 0.5 : Math.min(highest, Math.max(lowest, ratio))
   }
 
   /** Split divider dragged to `x` within the workspace. */

@@ -40,6 +40,25 @@ export async function until(check: () => boolean, label: string, timeoutMs = 400
   }
 }
 
+/**
+ * Hold a virtual list at the top until it has stayed there for twenty frames with its first rows loaded rather than
+ * placeholders. Focus (or a scroll) can land while the scroll back to the top is still under way, and the host's rows
+ * replace the placeholders a moment later: a snapshot or an assertion taken before that sees the list mid-flight.
+ */
+export async function settleAtTop(scroller: HTMLElement, root: ParentNode): Promise<void> {
+  let still = 0
+  for (let frame = 0; frame < 300 && still < 20; frame++) {
+    await new Promise((r) => requestAnimationFrame(r))
+    const placeholders = root.querySelectorAll('[aria-busy=true][role=listitem]').length
+    if (scroller.scrollTop === 0 && placeholders === 0) still++
+    else {
+      still = 0
+      scroller.scrollTop = 0
+    }
+  }
+  if (still < 20) throw new Error('the list did not settle at the top')
+}
+
 /** Open a story window on any fake app (a `TreeApp`): the same session, real timers and the reactive store. */
 export async function openAppStory<A extends FakeApp>(
   app: A,

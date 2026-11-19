@@ -47,6 +47,7 @@ Use the system palette for meaning, never a near-miss hex:
 | `--ios-yellow`, `--ios-purple`, `--ios-pink`, `--ios-indigo`, `--ios-teal`, `--ios-mint`, `--ios-cyan`, `--ios-brown` | icon tiles, categories, charts |
 | `--ios-gray` … `--ios-gray6` | neutral icon tiles and fills |
 | `--window-grip` | the window resize corner: one value that holds 3:1 on light, dark and black bodies |
+| `--on-tint` | text on a `--tint-fill` (white) |
 
 `--tint` is the accent and can be re-pointed per subtree (Settings → Accent Colour sets it on the root).
 
@@ -116,6 +117,8 @@ The system font stack (`--font-text`, `--font-display`), the Dynamic Type "Large
 
 - **4 pt grid.** Spacing is 4, 8, 12, 16, 20, 24, 32. Row inset is `--row-inset` (16). Row height is
   `--row-height` (44) minimum.
+- **One off-grid inset:** a wide key's label (the Calculator's `0`) is inset 28 px from its leading edge, as on the iPadOS
+  Calculator, where the label sits over the left circle's centre.
 - **Hit targets** are at least 44x44 (28 px is allowed only for compact buttons inside bars, with 44 px of
   surrounding tappable area).
 - **Readable width.** Text-heavy content caps at ~720 px (Settings panes) or ~980 px (Discover) and centres.
@@ -132,6 +135,7 @@ The system font stack (`--font-text`, `--font-display`), the Dynamic Type "Large
 | `--radius-lg` 14 | alerts, popovers, menus, cards |
 | `--radius-xl` 18 | windows, the hero banner |
 | `--radius-2xl` 22 | widgets |
+| `--radius-pill` | capsules: a short label (the resize limit label), toggle tracks |
 | `--radius-dock` 30 | the Dock |
 | `--radius-icon` | app icon squircle |
 
@@ -145,6 +149,7 @@ Exactly these shadows, by plane:
 |---|---|
 | `--shadow-card` | cards resting on a background (optional) |
 | `--shadow-window` / `--shadow-window-inactive` | focused / unfocused windows |
+| `--shadow-slideover` | the Slide Over window (a shadow to its leading side) |
 | `--shadow-popover` | menus, popovers, alerts, sheets |
 | `--shadow-control` | moving thumbs (switch knob, slider thumb, segmented thumb) |
 
@@ -164,7 +169,7 @@ Exactly these shadows, by plane:
 | **Status bar** (28 px) | time and date leading, indicators trailing, white text over the wallpaper. |
 | **Recent-apps strip** | left edge, 150 px, one thumbnail per stage (app group). Hides when a window overlaps it or the stage is full screen, and peeks back when the pointer rests on the left edge. |
 | **Stage** | the area for the current app group. Windows float, cascade from the centre, and never open under the strip or the Dock. |
-| **Window** | `--radius-xl`, elevated background, focused/unfocused shadow, a "···" multitasking handle centred at the top, a corner-arc resize grip bottom right that is always visible (`--window-grip`, at least 3:1 on a light, dark or black body) and is a button that the arrow keys resize (Shift for bigger steps). Minimum 320x240. |
+| **Window** | `--radius-xl`, elevated background, focused/unfocused shadow, a "···" multitasking handle centred at the top, a corner-arc resize grip bottom right (24 px, 5 px stroke; its 44 pt button sits mostly outside the window) that is always visible (`--window-grip`, at least 3:1 on a light, dark or black body), has the tooltip "Resize — drag or use arrow keys" and is a button that the arrow keys resize (Shift for bigger steps); last in the tab order, after the content. At the minimum size or the screen's edge the arc nudges back once (not under `prefers-reduced-motion`) and takes `--tint`, a flat `--tint-fill` capsule over the window's bottom edge, beside the grip, says "Smallest size" (or "Narrowest", "Shortest", "Widest", "Tallest", "Largest size") for about two seconds, and a polite live region says the full sentence ("<title> is at its smallest size", "can't get any narrower", ...) once; at its smallest size the arc stays tinted. Minimum 320x240. |
 | **Multitasking menu** | Full Screen, Split View (left/right), Slide Over, Minimize, Close. |
 | **Split View** | two windows share the stage with a 10 px gap and a draggable divider (25% to 75%). |
 | **Slide Over** | one 380 px window over the right edge; hides to a tab. |

@@ -340,6 +340,9 @@ app.tool {
     record(input.expression, result)
     show(result)
     s.caption, s.hasAcc, s.pending, s.err = input.expression, false, "", false
+    for _, w in ipairs(app:windows("main")) do
+      w:announce("") -- the error that was showing is gone: empty the announcers, or the same error would not be read again
+    end
     app:openWindow("main") -- every open Calculator window re-renders by itself
     return { shown = calc.format(result) }
   end,

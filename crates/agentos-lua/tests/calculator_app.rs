@@ -594,6 +594,37 @@ async fn the_error_reason_is_announced_by_the_window_and_an_ordinary_caption_is_
     assert_eq!(pad.announcements().await, Vec::<String>::new());
 }
 
+/// An agent putting a result on the Calculator takes the error away, so it empties the announcer too: the same error
+/// is read out again when it comes back.
+#[tokio::test]
+async fn show_on_calculator_empties_the_announcer_so_a_repeated_error_is_read_again() {
+    let mut pad = Keypad::open().await;
+    pad.press("8 div 0 eq").await;
+    assert_eq!(pad.announcements().await, ["Can't divide by zero"]);
+    tool(&pad.rt, "show_on_calculator", json!({ "expression": "2 + 2" }), agent_ctx(0)).await.unwrap();
+    assert_eq!(pad.announcements().await, [""], "the tool empties the announcer of the open window");
+    pad.refresh().await;
+    assert_eq!(pad.display(), "4");
+    pad.press("8 div 0 eq").await;
+    assert_eq!(pad.announcements().await, ["Can't divide by zero"]);
+}
+
+/// `app:windows` reaches every open window of the Calculator, not only one.
+#[tokio::test]
+async fn show_on_calculator_empties_the_announcer_of_every_open_window() {
+    let pad = Keypad::open().await;
+    pad.rt.open_view(&id("calculator"), "v2", "main", Map::new(), Map::new()).await.unwrap();
+    tool(&pad.rt, "show_on_calculator", json!({ "expression": "2 + 2" }), agent_ctx(0)).await.unwrap();
+    let cleared = pad.rt.take_view_effects(&id("calculator")).await.unwrap();
+    let mut views: Vec<_> = cleared
+        .into_iter()
+        .filter(|(_, effect)| matches!(effect, ViewEffect::Command(Command::Announce { text }) if text.is_empty()))
+        .map(|(view, _)| view)
+        .collect();
+    views.sort();
+    assert_eq!(views, ["v1", "v2"]);
+}
+
 /// A bug in the app (not a failure `calc.lua` raises on purpose) must not show a source position to the person.
 #[tokio::test]
 async fn an_unexpected_error_shows_a_generic_sentence_not_a_source_position() {

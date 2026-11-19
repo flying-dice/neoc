@@ -81,6 +81,51 @@ it by 16 px (Shift: 64 px) down to the minimum; a drag leaves the keys with the 
   for the Window story were added. A contact sheet of the corner of all 43 and the 6 new ones was looked at, light and dark,
   white, grey and black bodies: the arc is the same crisp shape and place in every one.
 
+## Checked: the limit cue, the bolder grip and the window manager (second re-run)
+
+Intended result, written before looking: when a resize, by drag or arrow keys, reaches the minimum size or the screen's edge,
+the window says so without anything loud. The grip nudges back once (not under `prefers-reduced-motion`) and takes the
+`--tint`; a small flat capsule over the window's bottom edge, beside the grip, names the limit for about two seconds and covers
+none of the keys' circles; a polite live region says the full sentence once; at the smallest size the grip stays tinted. The
+grip is 24 px with a 5 px stroke, still `--window-grip` grey at rest (3:1 or more on light, dark and black), with the tooltip
+"Resize — drag or use arrow keys", and its 44 pt button is mostly outside the window so a click on the lower-right edge of the
+`=` key still presses `=`. Split View never lets a pane under its app's minimum; Slide Over and a split that waits for its second
+app stop above the Dock.
+
+Driven on fresh hosts with `e2e/tools/session.mjs` and a scripted probe (Chromium 1280x800 and 1024x768), screenshots looked at:
+
+- [x] **Light shell, minimum window (320 x 500)**: dragging the corner far past the limit stops at 320 x 500, the arc is blue,
+  the label "Smallest size" sits across the bottom edge under the `.` key and covers no key; the status region reads "Calculator
+  is at its smallest size" at once. About two seconds later the label and the sentence are gone and the arc stays blue.
+- [x] **Dark shell, same**: the same, with the dark tint; the label reads (white on the tinted fill) and the arc is clear on the
+  black body.
+- [x] **At its preferred size** (340 x 560): the grip is grey, bolder than before, inside the corner, not touching `=`.
+- [x] **Keyboard**: Tab reaches "Resize Calculator" (21 Tabs from the first key; last in the tab order on purpose, see the `Window`
+  header), the focus ring goes round the arc, Shift+Arrow resizes by 64 px, the status says "can't get any narrower" when only
+  the width is at its minimum and "is at its smallest size" when both are; the label says "Narrowest" and then "Smallest size".
+  The story "Resize limit cue" asserts the same, the tint's contrast against the window and against black (3:1 or more), and that
+  the cue clears.
+- [x] **Reduced motion**: with `prefers-reduced-motion: reduce` the computed animation of the arc is `none` and the colour is
+  still `rgb(0, 102, 204)`; without it the animation is `grip-push-out`. The tint and the label carry the cue.
+- [x] **The `=` key**: a click at the lower-right edge of the key, inside its circle, at the minimum size presses `=` (the audit
+  agent clicked four points there). With the earlier 40 px grip it did not.
+- [x] **Split View**: the divider dragged as far as it goes leaves the Calculator at 320 px or more (the audit looked at 1024x768,
+  where it used to reach about 250 px and cut the keypad off); while a split waits for its second app the first pane and the
+  empty side end at the same edge above the Dock and the empty side follows the divider (the empty side was a fixed 50 % that ran
+  behind the Dock; the audit that found it saw it on the build before the fix, the tests and the baselines cover the fix).
+- [x] **Slide Over at 1024x768**: the window ends above the Dock (it ran 26 px behind it, over the `0` key's corner).
+- [x] **Baselines**: the grip and the layouts changed the baselines, so the whole suite was rewritten with
+  `--update-snapshots=all` (148 files byte-different, 63 changed in pixels because of this change, 85 only by moving text or
+  anti-aliasing and put back, 2 new for the new story, 6 Window story baselines among the 63). Pixel diff of every changed
+  file against HEAD: the 7 `*-min` files and 7 `*-large` differ only by the 23 x 23 px corner (208 px of tinted arc at the minimum,
+  137 px of grey at the large size); the 14 floating, 7 `screen-ipad` and 7 `screen-large` files by the grey arc alone (Discover
+  adds the moving "2 min ago" text beside it); the 7 `split-left` and 7 `slideover` files by the layout change (the pane and the
+  empty side now stop above the Dock; Slide Over ends 26 px higher), looked at for the Calculator and in a contact sheet for
+  Discover and Files; the 6 Window story baselines by the larger arc, and the 2 new ones show the grip tinted at 320 x 240 with
+  no label. A contact sheet of the lot was looked at, light and dark. The first rewrite caught the label half faded in `*-min`,
+  `*-large` and the keyboard story: `resizeWindow` (`e2e/fixtures.ts`) and the story now wait the cue out before the snapshot,
+  and those were rewritten again.
+
 ## How
 
 `bun run lint`, `bun run typecheck`, `bun run test`, `bun run test:e2e` (counts in the commit message and the report),
@@ -89,5 +134,5 @@ and a scripted probe against the real host (`cargo run -p agentos-host`, ports 9
 
 ## Not checked
 
-Text size at 125% (the session tool has no control for it), a screen reader (only the accessibility tree and the
+Text size at 125% (the session tool has no control for it; the third audit agent set the root font size by hand and found nothing clipped, and Text Size does not scale the px type tokens at all), a screen reader (only the accessibility tree and the
 status region were inspected), and Split View and Slide Over in the dark shell beyond the desktop baselines.

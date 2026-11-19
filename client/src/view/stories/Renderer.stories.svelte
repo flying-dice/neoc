@@ -3,7 +3,13 @@
   import { expect, waitFor } from 'storybook/test'
   import AppWindow from '@agentos/storybook/AppWindow.svelte'
   import ViewHost from '../organisms/ViewHost.svelte'
-  import { openStory, until, type StoryHandle, type StoryScenario } from '../host/storyKit'
+  import {
+    openStory,
+    settleAtTop,
+    until,
+    type StoryHandle,
+    type StoryScenario
+  } from '../host/storyKit'
   import type { Node } from '../protocol'
 
   /** The session of the story on screen, for its play function (the host side of the scenario). */
@@ -126,6 +132,7 @@
     harness.app.agentAddNote(harness.host, 'Newest note')
     await waitFor(() => expect(canvas.getByTestId('notes-count')).toHaveTextContent('301 notes'))
     scroller.scrollTop = 0
+    await settleAtTop(scroller, canvasElement)
     await waitFor(() => expect(canvas.getByText('Newest note')).toBeVisible(), { timeout: 4000 })
   }}
 />
