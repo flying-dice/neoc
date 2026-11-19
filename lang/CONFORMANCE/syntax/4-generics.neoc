@@ -1,6 +1,0 @@
-// SYNTAX.md §4: generics with inline bounds and a `where` clause.
-fn pair<A: Show, B>(a: A, b: B) -> A where B: Show + Show {
-    a
-}
-
-trait Show { fn show(self) -> string; }

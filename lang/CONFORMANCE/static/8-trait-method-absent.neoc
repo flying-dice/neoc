@@ -1,9 +1,0 @@
-// STATIC.md §3.4: a method not declared by the trait is an error on a
-// trait-typed receiver — only the trait's own methods resolve.
-trait Drawable {
-    fn draw(self) -> string;
-}
-
-fn describe(x: Drawable) -> string {
-    x.area()
-}

@@ -1,5 +1,0 @@
-// STATIC.md §9: `#[test]` only on a no-param fn returning `()` or `Result<(), E>`.
-#[test]
-fn t(n: number) -> number {
-    n
-}

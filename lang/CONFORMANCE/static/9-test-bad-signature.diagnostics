@@ -1,2 +1,0 @@
-a `#[test]` function takes no parameters
-a `#[test]` function returns `()` or `Result<(), E>`

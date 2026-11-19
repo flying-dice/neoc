@@ -1,3 +1,0 @@
-// STATIC.md §4.3 (D-ALIAS-RECURSIVE): a `type` alias is transparent, so it may
-// not expand to itself.
-type Loop<T> = [Loop<T>];

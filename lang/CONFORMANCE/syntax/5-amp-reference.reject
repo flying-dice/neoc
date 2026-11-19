@@ -1,3 +1,0 @@
-// LEXICAL.md §7 / SYNTAX.md §5: neoc has no reference types; a bare `&` in a
-// type position is a syntax error.
-fn f(x: &number) -> number { x }

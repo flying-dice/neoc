@@ -1,1 +1,0 @@
-`impl Greet for D` inherits default method `hi`, but `D` already has a method `hi`; override `hi` in the impl

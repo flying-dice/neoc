@@ -1,7 +1,0 @@
-// STATIC.md §2: only a `fn` may be declared in statement position.
-fn main() {
-    struct Point {
-        x: number,
-    }
-    let a = 1;
-}

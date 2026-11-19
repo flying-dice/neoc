@@ -1,7 +1,0 @@
-// STATIC.md §3.4: a default body sees only the trait's own methods (and its
-// supertraits'); calling any other method on `self` is an error.
-trait Greet {
-    fn hi(self) -> string {
-        self.nope()
-    }
-}

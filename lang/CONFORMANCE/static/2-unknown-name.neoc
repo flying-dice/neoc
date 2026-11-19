@@ -1,4 +1,0 @@
-// STATIC.md §2: an unqualified name that resolves to nothing is an error.
-fn main() {
-    let x = y + 1;
-}

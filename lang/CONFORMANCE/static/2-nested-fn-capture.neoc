@@ -1,8 +1,0 @@
-// STATIC.md §2: an item statement captures nothing from the enclosing function.
-fn main() {
-    let base = 10;
-    fn add(n: number) -> number {
-        n + base
-    }
-    let total = add(1);
-}

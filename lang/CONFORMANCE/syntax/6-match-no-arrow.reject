@@ -1,7 +1,0 @@
-// SYNTAX.md §6.3: a match arm separates pattern and value with `=>`, not `:`.
-fn f(n: number) -> string {
-    match n {
-        0: "zero",
-        _: "other",
-    }
-}

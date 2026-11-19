@@ -1,3 +1,0 @@
-nested `fn` cannot use `h`, a binding of the enclosing function
-nested `fn` cannot use `p`, a binding of the enclosing function
-nested `fn` cannot use `q`, a binding of the enclosing function

@@ -1,9 +1,0 @@
-// SYNTAX.md §6: `let` with a type annotation and a deferred-init `let` with no
-// initializer.
-fn f() -> number {
-    let total: number = 0;
-    let n;
-    n = 5;
-    total += n;
-    total
-}

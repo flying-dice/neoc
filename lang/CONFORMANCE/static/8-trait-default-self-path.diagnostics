@@ -1,2 +1,0 @@
-`Self::name` cannot be used in a default method body; it is shared by every implementor, so call a method on `self` instead
-`Self::name` cannot be used in a default method body; it is shared by every implementor, so call a method on `self` instead

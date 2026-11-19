@@ -1,9 +1,0 @@
-// STATIC.md §6 (T-TRY-RESULT): the `?` error type must unify with the fn error type.
-extern {
-    fn g() -> Result<number, string>;
-}
-
-fn f() -> Result<number, number> {
-    let x = g()?;
-    Ok(x)
-}

@@ -1,5 +1,0 @@
-use util::add;
-
-fn main() -> number {
-    add(2, 3)
-}

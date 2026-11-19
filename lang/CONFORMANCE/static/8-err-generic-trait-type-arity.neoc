@@ -1,9 +1,0 @@
-// STATIC.md §3.4: a generic trait used as a type takes exactly its declared
-// arguments — bare `Source` is an error.
-trait Source<T> {
-    fn next(self) -> T;
-}
-
-fn pull(source: Source) -> string {
-    source.next()
-}

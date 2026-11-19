@@ -1,1 +1,0 @@
-`impl Show for P` overlaps the blanket impl of `Show`

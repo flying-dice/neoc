@@ -4,9 +4,8 @@
 FROM rust:1.98.0-bookworm AS builder
 WORKDIR /src
 
-# The whole workspace is needed: the `neoc` bin pulls neoc-vm + the neoc-*
-# compiler libs, and neoc-grammar's build.rs cc-compiles the tree-sitter-neoc
-# parser.c. `crates/neoc/Cargo.toml` declares a `[[test]]` target, so
+# The whole workspace is needed: the `neoc` bin pulls neoc-vm.
+# `crates/neoc/Cargo.toml` declares a `[[test]]` target, so
 # `crates/neoc/tests` must stay in the context. `.dockerignore` keeps
 # target/, .git, and docs out. BuildKit cache mounts give dep + incremental
 # caching without the brittle per-crate stub trick (target/ is a cache mount,

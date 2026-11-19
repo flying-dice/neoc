@@ -1,3 +1,0 @@
-[package]
-name = "demo-lua-notes"
-target = "lua"

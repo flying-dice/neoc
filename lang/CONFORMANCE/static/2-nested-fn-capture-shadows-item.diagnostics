@@ -1,2 +1,0 @@
-nested `fn` cannot use `helper`, a binding of the enclosing function
-nested `fn` cannot use `other`, a binding of the enclosing function

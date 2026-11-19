@@ -1,6 +1,0 @@
-{
-  "name": "neoc",
-  "type": "module",
-  "private": true,
-  "workspaces": ["packages/*"]
-}
