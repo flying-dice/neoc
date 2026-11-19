@@ -10,7 +10,7 @@ One of each, on purpose. Agents can't pick wrong when the right answer is the on
 
 ## One binary
 
-`neoc` runs Lua scripts in a sandboxed VM with a curated module surface.
+`neoc` runs Lua scripts in a VM with a curated module surface: unsafe Lua globals are stripped and only registered modules load. It is not a security boundary.
 
 | Command | Job |
 |---|---|

@@ -4,9 +4,10 @@ Guidance for Claude (and any LLM agent) working in the **neoc** monorepo — one
 Cargo workspace holding a Lua runtime:
 
 - **Runtime** (`crates/neoc-vm`) — an embedded LuaJIT engine backed by Rust. Lua
-  scripts run in a sandboxed VM with a curated module surface (`std:*`, `lib:*`,
+  scripts run in a VM with a curated module surface (`std:*`, `lib:*`,
   `vnd:*`). The unsafe halves of the Lua standard library are stripped;
-  everything scripts need is provided through explicit modules.
+  everything scripts need is provided through explicit modules. This is not a
+  security boundary.
 - **Binary** (`crates/neoc`) — the thin `neoc` CLI over the runtime: `run` only.
 
 neoc used to be a language that compiled to Lua. That is gone; the last state is
@@ -37,8 +38,8 @@ cargo build                                          # debug build
 cargo build --release                                # release build
 cargo test --workspace                               # Rust tests + CLI integration tests + CLI Gherkin spec
 cargo run -p neoc -- run 'crates/neoc/tests/**/*.test.lua'  # Lua integration tests (Docker suites need a daemon)
-cargo bench --bench lib                              # Criterion benchmarks (lib modules)
-cargo bench --bench vnd                              # Criterion benchmarks (vnd modules)
+cargo bench -p neoc-vm --features bench --bench lib  # Criterion benchmarks (lib modules)
+cargo bench -p neoc-vm --features bench --bench vnd  # Criterion benchmarks (vnd modules)
 cargo clippy --workspace --all-targets               # lint
 cargo fmt --check                                    # formatting check
 ```

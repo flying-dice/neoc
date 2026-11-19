@@ -1,6 +1,6 @@
 # Architecture
 
-How `neoc` is structured: a sandboxed LuaJIT runtime with a curated module surface, and a thin binary over it.
+How `neoc` is structured: a LuaJIT runtime with a curated module surface (unsafe Lua globals stripped, only registered modules load; not a security boundary), and a thin binary over it.
 
 ## Shape
 

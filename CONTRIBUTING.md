@@ -98,7 +98,7 @@ pub fn benches(c: &mut criterion::Criterion) {
 }
 ```
 
-Add to `criterion_group!` in `crates/neoc-vm/benches/lib/lib.rs`. Run: `cargo bench --bench lib foo`.
+Add to `criterion_group!` in `crates/neoc-vm/benches/lib/lib.rs`. Run: `cargo bench -p neoc-vm --features bench --bench lib foo`.
 
 ### 5. Lua integration test
 
@@ -141,10 +141,9 @@ Add row to modules table. Alphabetical within namespace.
 cargo build
 cargo test --workspace
 cargo run -p neoc -- run 'crates/neoc/tests/**/*.test.lua'
-cargo bench --bench lib <name>
+cargo bench -p neoc-vm --features bench --bench lib <name>
 cargo clippy --all-targets
 cargo fmt --check
-cargo deny check advisories
 ```
 
 `cargo test --workspace` covers the `neoc-vm` unit tests, the `neoc` binary tests, the CLI integration tests and the Gherkin spec in `tooling/cli/`. The `**` Lua glob includes the Docker-dependent suites (`sqlx_mysql`, `sqlx_postgres`, `testcontainers_modules`); without a Docker daemon run the same set CI does:

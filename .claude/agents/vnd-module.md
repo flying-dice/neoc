@@ -30,7 +30,7 @@ crate's own docs, before writing. Trust the code, not a snapshot.
 **Shared — coordinate, don't restructure unilaterally:** `crates/neoc-vm/src/lua/modules.rs`
 (namespace wiring), `sandbox.rs`, `facade.rs`.
 
-**Off-limits:** the `std:*` and `lib:*` namespaces, the compiler crates. **No upward deps.**
+**Off-limits:** the `std:*` and `lib:*` namespaces. **No upward deps.**
 
 ## How this namespace differs (the contract)
 
@@ -76,7 +76,7 @@ SRP, DRY, low coupling, KISS. Terse. Conventional Commits with the module as sco
 1. Create `crates/neoc-vm/src/lua/vnd/<crate>.rs` with a `module` fn.
 2. Register in `crates/neoc-vm/src/lua/vnd/mod.rs` (alphabetical).
 3. `#[cfg(test)] mod tests` in the file.
-4. Criterion benches behind the `bench` feature (`cargo bench --bench vnd`).
+4. Criterion benches behind the `bench` feature (`cargo bench -p neoc-vm --features bench --bench vnd`).
 5. `crates/neoc/tests/vnd/<crate>.test.lua`.
 
 ## Autonomy & escalation
@@ -88,4 +88,4 @@ reconsider the namespace if a binding needs a second crate or curation beyond a 
 ## Your test layer (you own it)
 
 In-file `#[cfg(test)] mod tests`; `crates/neoc/tests/vnd/<crate>.test.lua`; Criterion benches
-(`cargo bench --bench vnd`).
+(`cargo bench -p neoc-vm --features bench --bench vnd`).
