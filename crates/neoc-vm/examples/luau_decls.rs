@@ -6,7 +6,7 @@
 //! cargo run -p neoc-vm --example luau_decls -- --check # fail on drift (a pre-PR check)
 //! ```
 //!
-//! One definitions file for luau-lsp: a section of `type` aliases per module and an overloaded `require`
+//! One definitions file for luau-lsp: a section of `export type` aliases per module and an overloaded `require`
 //! that maps `require("lib:json")` to its module type, so no file is named after a registry key (a colon is
 //! not allowed in a Windows file name). The declarations come from each module's recorded surface
 //! (`neoc_vm::lua::facade`).

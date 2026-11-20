@@ -1,13 +1,13 @@
 //! Luau declarations from a module's recorded surface.
 //!
-//! [`Module::luau_decls`] writes one section of a luau-lsp definitions file: a `type` alias per resource type
+//! [`Module::luau_decls`] writes one section of a luau-lsp definitions file: an `export type` alias per resource type
 //! (a table type of its methods, `self` first, and its fields), a `<Type>Statics` alias for the sub-table of a
 //! type on its module (`Duration.from_secs`), and one alias for the module table itself, named after the
 //! registry key (`lib:json` is `lib_json`, its `Object` type `lib_json_Object`). [`require_declaration`]
 //! closes the file with the overloaded `require` that maps each `"ns:name"` to its module alias.
 //!
 //! Aliases of table types, not `declare class`: the `class` keyword changed meaning in recent Luau releases
-//! (luau-lsp 1.70 no longer parses `declare class`), while an alias parses the same everywhere. Each alias is
+//! (luau-lsp 1.70 no longer parses `declare class`), while an alias parses in 1.70.1 and before. Each alias is
 //! an `export type`, which is what makes it visible to the scripts (`local o: lib_json_Object`): a plain
 //! `type` in a definitions file stays private to it. All of them share one global namespace, hence the
 //! module prefix on every name.
@@ -22,10 +22,11 @@ use std::fmt::Write as _;
 
 use super::{Entry, FieldEntry, Module, TypeEntry, VARIADIC, recorded_any};
 
-/// Reserved words of Luau: not usable as a parameter name or a bare property name.
+/// Reserved words of Luau, and `goto` (a reserved word of LuaJIT, the engine today, though not of Luau): not
+/// usable as a parameter name or a bare property name.
 const LUAU_KEYWORDS: &[&str] = &[
-    "and", "break", "do", "else", "elseif", "end", "false", "for", "function", "if", "in", "local",
-    "nil", "not", "or", "repeat", "return", "then", "true", "until", "while",
+    "and", "break", "do", "else", "elseif", "end", "false", "for", "function", "goto", "if", "in",
+    "local", "nil", "not", "or", "repeat", "return", "then", "true", "until", "while",
 ];
 
 /// The types Luau has that the recorded vocabulary uses as they are.
@@ -130,7 +131,7 @@ fn write_type_entry(out: &mut String, scope: &str, ty: &TypeEntry) {
     );
 }
 
-/// One `type <scope>_<name> = { ... }`: the fields, then the functions of each group. A method (`true`)
+/// One `export type <scope>_<name> = { ... }`: the fields, then the functions of each group. A method (`true`)
 /// takes the type itself as `self`, so `value:name(...)` checks and `value.name(...)` does not.
 fn write_alias(
     out: &mut String,
@@ -804,6 +805,33 @@ mod tests {
         ] {
             assert!(decls.contains(line), "missing {line:?} in:\n{decls}");
         }
+    }
+
+    /// Every reserved word is escaped as a property and as a parameter, and a name that only looks like one
+    /// (`ending`, `continue`, `type`, `export`) is not.
+    #[test]
+    fn every_reserved_word_is_escaped_and_near_misses_are_not() {
+        let lua = Lua::new();
+        let mut m = Module::new(&lua, "lib:demo").expect("module");
+        for word in super::LUAU_KEYWORDS {
+            m.record_fn(word, &[(word, "number")], "()", "");
+        }
+        for word in ["ending", "continue", "type", "export", "goto_"] {
+            m.record_fn(word, &[(word, "number")], "()", "");
+        }
+        let decls = m.luau_decls().expect("decls");
+        for word in super::LUAU_KEYWORDS {
+            let line = format!("\t[\"{word}\"]: ({word}_: number) -> (),\n");
+            assert!(decls.contains(&line), "missing {line:?} in:\n{decls}");
+        }
+        for word in ["ending", "continue", "type", "export", "goto_"] {
+            let line = format!("\t{word}: ({word}: number) -> (),\n");
+            assert!(decls.contains(&line), "missing {line:?} in:\n{decls}");
+        }
+        assert!(
+            super::LUAU_KEYWORDS.contains(&"goto"),
+            "goto is reserved in LuaJIT"
+        );
     }
 
     /// `Result<T, string>` makes `T` optional unless it already is (or is `any` or `nil`); a function value

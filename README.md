@@ -99,7 +99,7 @@ In VS Code with the [Luau Language Server](https://marketplace.visualstudio.com/
 
 `standard` keeps the extension from loading Roblox's API. Other editors start the server as `luau-lsp lsp --definitions=path/to/neoc/types/neoc.d.luau`. Put `--!strict` at the top of a script, or `{ "languageMode": "strict" }` in a [`.luaurc`](.luaurc) (this repository has one), to have strict mode flag an optional result used without a check. The resource types are exported: `local o: lib_json_Object = json.object()`. The declarations live in the source tree, not in the release binaries or the Docker image. `cargo run -p neoc-vm --example luau_decls` regenerates them.
 
-The declarations describe Luau. The engine neoc runs scripts on today is LuaJIT, which does not parse Luau-only syntax (annotations, `continue`, compound assignment, string interpolation); the engine switch is tracked as NEOC-137. The calls and results are typed either way.
+The declarations describe Luau. The engine neoc runs scripts on today is LuaJIT, which does not parse Luau-only syntax (annotations, `continue`, compound assignment, string interpolation); the engine switch is a separate piece of work (Jira NEOC-137). The calls and results are typed either way. `require` is typed for a string literal; a name held in a variable is a type error in strict mode (neoc's own `require` takes any string and fails at run time for an unknown one). This repository's `.luaurc` is strict, which also applies to the LuaJIT `.lua` test scripts under `crates/neoc/tests` when they are opened in an editor with luau-lsp.
 
 ## Contributing
 

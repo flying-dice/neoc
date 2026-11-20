@@ -57,10 +57,13 @@ test.expect(1).toBeAbout(1) -- expect-error: Key 'toBeAbout' not found in table 
 
 -- a handler that is not a function, a listener that is not one
 local _listener = assert(net.TcpListener.bind("127.0.0.1:0"))
-hyper.serve(_listener, "handler") -- expect-error: Expected this to be '(vnd_hyper_Request) -> (string | { [string]: any })?', but got 'string'
+hyper.serve(_listener, "handler") -- expect-error: Expected this to be '(vnd_hyper_Request) -> (...any)', but got 'string'
 hyper.serve("127.0.0.1:0", function(_req) return nil end) -- expect-error: Expected this to be 'std_net_TcpListener', but got 'string'
 
--- a module that does not exist
+-- a module that does not exist, and a module name that is not a literal
 local _missing = require("lib:jsno") -- expect-error: Expected this to be '"std:collections"', but got '"lib:jsno"'
+
+local _name: string = "lib:json"
+local _dynamic = require(_name) -- expect-error: Expected this to be '"std:collections"', but got 'string'
 
 local _fine = base64.encode("this line is correct")

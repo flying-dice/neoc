@@ -1253,7 +1253,7 @@ export type vnd_hyper = {
 	--- Perform an HTTP or HTTPS request with an arbitrary method given `{ method, url, body?, headers?, ca_pem? }`.
 	request: (opts: any) -> (any, string?),
 	--- Attach `handler` to `listener` and start accepting HTTP connections. The handler returns a body string, `{ status?, body?, headers? }`, or nothing (an empty 200).
-	serve: (listener: std_net_TcpListener, handler: (req: vnd_hyper_Request) -> string | { [string]: any } | nil) -> (vnd_hyper_ServerHandle?, string?),
+	serve: (listener: std_net_TcpListener, handler: (req: vnd_hyper_Request) -> ...any) -> (vnd_hyper_ServerHandle?, string?),
 }
 
 -- ===== vnd:jsonschema =====

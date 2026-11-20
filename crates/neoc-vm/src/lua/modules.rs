@@ -328,7 +328,7 @@ pub const LUAU_DECLS_PATH: &str = "types/neoc.d.luau";
 
 /// The Luau declarations of every module, as `(registry_key, section)` in registry order.
 ///
-/// A section is the `type` aliases of one module (its resource types and its table): each function's
+/// A section is the `export type` aliases of one module (its resource types and its table): each function's
 /// parameters, returns and docs. [`luau_decls`] joins them into the file.
 ///
 /// # Errors
@@ -432,6 +432,20 @@ mod tests {
             .collect()
     }
 
+    /// A quoted key (a reserved word) is read back as the bare name, a doc line and a nested line are not
+    /// properties.
+    #[test]
+    fn alias_props_reads_quoted_keys() {
+        let section = "-- ===== lib:x =====\n\nexport type lib_x = {\n\t--- doc: not a property\n\t[\"end\"]: number,\n\tf: (a: number) -> (),\n}\n\n";
+        assert_eq!(
+            alias_props(section, "lib_x"),
+            [
+                ("end".to_string(), "number".to_string()),
+                ("f".to_string(), "(a: number) -> ()".to_string())
+            ]
+        );
+    }
+
     /// Every module yields a section of the declarations: a header naming its key, an exported alias for its
     /// table named after the key, balanced braces, and an overload of `require` that returns that alias.
     #[test]
@@ -452,7 +466,7 @@ mod tests {
             );
             let opened = section.matches('{').count();
             let closed = section.matches('}').count();
-            // a `{` inside a doc comment would unbalance this; docs do not use braces, a type does
+            // doc comments count too: a `{` in one (`{ [string]: string }`) is fine while it is paired
             assert_eq!(opened, closed, "{key}: unbalanced braces:\n{section}");
             assert!(
                 file.contains(&format!("((path: \"{key}\") -> {scope})")),

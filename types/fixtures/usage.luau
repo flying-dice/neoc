@@ -111,13 +111,18 @@ local db = assert(rusqlite.open(":memory:"))
 db:execute("create table t (a integer)")
 db:execute("insert into t (a) values (?, ?)", 1, 2)
 print(db:query("select * from t"))
+local statement = db:prepare("select * from t where a = ?")
+print(statement:query(1))
 db:close()
+print(json.null)
 
 -- a callback is a function; a function that returns several values
 local running = task.spawn(function(...)
 	return select("#", ...)
 end, 1, 2, 3)
 print(running:await())
+print(running:is_finished())
+task.defer(function() end)
 print(task.wait(0))
 
 -- a handler returns a body, a table or nothing
@@ -131,6 +136,14 @@ local server = assert(hyper.serve(listener, function(req)
 end))
 print(server:addr())
 server:close()
+-- a handler may return nothing, or only on some paths, and reads the request's fields
+hyper.serve(listener, function(_req) end)
+hyper.serve(listener, function(req)
+	print(req.method, req.path, req.body, req.is_json, req.headers, req.json)
+	if req.path == "/hello" then
+		return "hello"
+	end
+end)
 local response, request_err = hyper.get("http://127.0.0.1:1/")
 print(response, request_err)
 
@@ -139,6 +152,10 @@ test.describe("fixture", function()
 	test.test("matches", function()
 		test.expect(1 + 1).toBe(2)
 		test.expect(nil).toBeNil()
+		test.expect(true).toBeTruthy()
+		test.expect(false).toBeFalsy()
+		test.expect({ 1, 2 }).toContain(2)
+		test.expect(function() error("x") end).toThrow()
 	end)
 end)
 

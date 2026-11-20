@@ -9,7 +9,7 @@
 //!    contains `<text>`, and no other line may carry one. The negative half also fails when the declarations
 //!    or the overloaded `require` do not load: `require("lib:json")` is then `any` and nothing is flagged.
 //!
-//! Half 2 needs `luau-lsp` (`brew install luau-lsp`, pinned below: its messages change between releases).
+//! Half 2 needs `luau-lsp` (a release binary from <https://github.com/JohnnyMorganz/luau-lsp/releases>, pinned below: its messages change between releases).
 //! Without it the test prints a skip notice and passes; set `NEOC_REQUIRE_LUAU_LSP=1` (the pre-PR checks do)
 //! to make a missing or wrong-version tool a failure.
 
@@ -174,7 +174,7 @@ fn fixtures_check_against_the_generated_declarations() {
     let Some(luau_lsp) = find_luau_lsp() else {
         assert!(
             !required,
-            "luau-lsp {LUAU_LSP_VERSION} not found on PATH (brew install luau-lsp)"
+            "luau-lsp {LUAU_LSP_VERSION} not found on PATH (release binaries: https://github.com/JohnnyMorganz/luau-lsp/releases)"
         );
         eprintln!("SKIPPED: luau-lsp not found; the fixtures were not checked");
         return;
