@@ -76,7 +76,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// registered byte-for-byte as before and only its signature is recorded via
 /// [`crate::lua::facade::Module::record_fn`]. The `ServerHandle` and `Request`
 /// userdata types keep their own `impl UserData` (fields and methods unchanged)
-/// and have their method surface recorded via
+/// and have their methods and fields recorded via
 /// [`crate::lua::facade::Module::userdata`].
 pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
     let mut m = Module::new(lua, "vnd:hyper")?;
@@ -145,9 +145,9 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
     m.userdata("Request", |r| {
         r.field("method", "string", "The HTTP method (`GET`).")
-            .field("path", "string", "The request path with its query string.")
+            .field("path", "string", "The request path, without the query string.")
             .field("body", "string", "The raw request body.")
-            .field("is_json", "bool", "Whether the body parses as JSON.")
+            .field("is_json", "bool", "Whether the `Content-Type` header is `application/json`.")
             .field(
                 "headers",
                 "LuaValue",

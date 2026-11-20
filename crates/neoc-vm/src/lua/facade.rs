@@ -623,8 +623,9 @@ impl<'l> Module<'l> {
     /// lua-language-server resolves `require("lib:json")`; the caller writes
     /// it. Classes are `<ns>_<stem>` for the module (`lib_json`) and
     /// `<ns>_<stem>.<Type>` for each type it declares; a type with a sub-table
-    /// of functions on the module (`Duration.from_secs`) also gets a
-    /// `<Type>Statics` class, the type of that field of the module.
+    /// of functions or constants on the module (`Duration.from_secs`,
+    /// `Duration.ZERO`) also gets a `<Type>Statics` class, the type of that
+    /// field of the module.
     ///
     /// # Errors
     /// Fails when the live module table cannot be read, or when a type's
@@ -812,12 +813,15 @@ fn write_field(out: &mut String, class: &str, field: &FieldEntry) {
     ));
 }
 
-/// Records the method surface of one resource-handle userdata type.
+/// Records the surface of one resource-handle userdata type (or of a plain
+/// table that acts like one).
 ///
 /// Handed to the closure passed to [`Module::userdata`]. Each
-/// [`UserDataSpec::method`] call mirrors one `add_method` / `add_function` on
-/// the type's `impl UserData`. The receiver (`self`) is implicit and is not
-/// listed in `params`.
+/// [`UserDataSpec::method`] call mirrors one `add_method` on the type's
+/// `impl UserData`, each [`UserDataSpec::field`] one `add_field_method_get`,
+/// and [`UserDataSpec::static_fn`] / [`UserDataSpec::static_const`] the
+/// members of the type's sub-table on the module. The receiver (`self`) is
+/// implicit on methods and is not listed in `params`.
 pub struct UserDataSpec {
     entry: UserDataEntry,
 }
@@ -1485,9 +1489,11 @@ mod tests {
             ),
             "{meta}"
         );
+        let noop = &meta[meta.find("--- Does nothing.").expect("noop doc")..];
+        let noop = &noop[..noop.find("function M.noop").expect("noop function")];
         assert!(
-            !meta.contains("function M.noop(end_) end\n---@return"),
-            "{meta}"
+            !noop.contains("---@return"),
+            "a `()` return wrote a return:\n{meta}"
         );
         assert!(
             contains_in_order(
@@ -1611,6 +1617,148 @@ mod tests {
         let error = m.luals_meta().expect_err("no sub-table").to_string();
         assert!(
             error.contains("records statics but the module has no such sub-table"),
+            "{error}"
+        );
+    }
+
+    /// Reserved words are escaped in function, parameter and field names (including LuaJIT's `goto`), and a
+    /// near miss is left alone.
+    #[test]
+    fn reserved_words_are_escaped_everywhere() {
+        let lua = Lua::new();
+        let mut m = Module::new(&lua, "lib:demo").expect("module");
+        m.record_fn(
+            "goto",
+            &[("local", "string"), ("ending", "string")],
+            "()",
+            "Jumps.",
+        );
+        m.const_("end", "number", "A constant.");
+        m.userdata("Thing", |t| {
+            t.field("repeat", "number", "A field.").method(
+                "then",
+                &[("until", "number")],
+                "()",
+                "A method.",
+            );
+        });
+        let meta = m.luals_meta().expect("meta");
+        assert!(
+            meta.contains("function M.goto_(local_, ending) end"),
+            "{meta}"
+        );
+        assert!(
+            meta.contains("---@field end_ number A constant.\n"),
+            "{meta}"
+        );
+        assert!(
+            meta.contains("---@field repeat_ number A field.\n"),
+            "{meta}"
+        );
+        assert!(
+            meta.contains("function ud_Thing:then_(until_) end"),
+            "{meta}"
+        );
+        // the output is still valid LuaJIT
+        lua.load(meta.as_str()).into_function().expect("valid Lua");
+    }
+
+    /// `Result<T, string>` makes `T` optional unless it already is (or is `any`), a `()` value is `nil`,
+    /// and `boolean` is the Lua name of `bool`.
+    #[test]
+    fn result_value_shapes() {
+        let lua = Lua::new();
+        let mut m = Module::new(&lua, "lib:demo").expect("module");
+        m.record_fn("a", &[], "Result<LuaValue, string>", "A.");
+        m.record_fn("b", &[], "Result<string?, string>", "B.");
+        m.record_fn("c", &[("flag", "bool")], "Result<bool, string>", "C.");
+        let meta = m.luals_meta().expect("meta");
+        assert!(
+            contains_in_order(
+                &meta,
+                &[
+                    "---@return any\n",
+                    "---@return string? err",
+                    "function M.a() end"
+                ]
+            ),
+            "{meta}"
+        );
+        assert!(
+            contains_in_order(
+                &meta,
+                &[
+                    "---@return string?\n",
+                    "---@return string? err",
+                    "function M.b() end"
+                ]
+            ),
+            "{meta}"
+        );
+        assert!(
+            contains_in_order(
+                &meta,
+                &[
+                    "---@param flag boolean",
+                    "---@return boolean?\n",
+                    "---@return string? err",
+                    "function M.c(flag) end"
+                ]
+            ),
+            "{meta}"
+        );
+    }
+
+    /// An empty doc writes no comment line and a multi-line doc is flattened into a single `---@field` line.
+    #[test]
+    fn docs_empty_and_multiline() {
+        let lua = Lua::new();
+        let mut m = Module::new(&lua, "lib:demo").expect("module");
+        m.record_fn("quiet", &[], "()", "");
+        m.const_("noisy", "number", "first line\nsecond line");
+        let meta = m.luals_meta().expect("meta");
+        assert!(
+            meta.contains("local M = {}\n\nfunction M.quiet() end"),
+            "{meta}"
+        );
+        assert!(
+            meta.contains("---@field noisy number first line second line\n"),
+            "{meta}"
+        );
+    }
+
+    /// A type that records only constants still gets a statics class and a module field, and a recorded
+    /// static function the sub-table lacks is a phantom, like a constant.
+    #[test]
+    fn const_only_statics_and_phantom_static_fn() {
+        let lua = Lua::new();
+        let sub = lua.create_table().expect("table");
+        sub.set("MAX", 1).expect("set");
+        let mut m = Module::new(&lua, "lib:demo").expect("module");
+        m.set("Limit", sub.clone()).expect("set");
+        m.userdata("Limit", |t| {
+            t.static_const("MAX", "number", "The cap.");
+        });
+        let meta = m.luals_meta().expect("meta");
+        assert!(
+            meta.contains("---@field Limit lib_demo.LimitStatics\n"),
+            "{meta}"
+        );
+        assert!(meta.contains("---@field MAX number The cap.\n"), "{meta}");
+
+        let mut m = Module::new(&lua, "lib:demo").expect("module");
+        m.set("Limit", sub).expect("set");
+        m.userdata("Limit", |t| {
+            t.static_const("MAX", "number", "The cap.").static_fn(
+                "make",
+                &[],
+                "Limit",
+                "Makes one.",
+            );
+        });
+        let error = m.luals_meta().expect_err("phantom static fn").to_string();
+        assert!(
+            error.contains("Limit.make is recorded but the module table has no such member"),
             "{error}"
         );
     }

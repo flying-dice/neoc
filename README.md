@@ -63,7 +63,7 @@ The source in [`crates/neoc-vm/src/lua/`](crates/neoc-vm/src/lua) is the catalog
 
 ## Editor types
 
-The runtime ships [LuaCATS](https://luals.github.io/wiki/annotations/) definitions for every module in [`types/luals/`](types/luals), one file per module named after its `require` key (`lib:json.lua`), generated from the modules' own signatures. Point [lua-language-server](https://luals.github.io/) at them for completion, hover docs and type checks of `require("lib:json")` and the rest:
+This repository contains [LuaCATS](https://luals.github.io/wiki/annotations/) definitions for every module in [`types/luals/`](types/luals), one file per module named after its `require` key (`lib:json.lua`), generated from the modules' own signatures. Point [lua-language-server](https://luals.github.io/) at them for completion, hover docs and type checks of `require("lib:json")` and the rest:
 
 ```jsonc
 // .luarc.json
@@ -73,7 +73,7 @@ The runtime ships [LuaCATS](https://luals.github.io/wiki/annotations/) definitio
 }
 ```
 
-This repository's own [`.luarc.json`](.luarc.json) does that. The file names contain a colon, which Windows file systems do not allow, so a Windows checkout needs WSL (or a copy of the folder made elsewhere). `cargo run -p neoc-vm --example luals` regenerates the folder.
+This repository's own [`.luarc.json`](.luarc.json) does that. The definitions live in the source tree, not in the release binaries or the Docker image. The file names contain a colon, which Windows file systems do not allow, so the folder cannot be checked out on Windows itself; use WSL or another non-NTFS file system. `cargo run -p neoc-vm --example luals` regenerates the folder.
 
 ## Contributing
 

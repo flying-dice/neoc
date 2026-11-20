@@ -361,6 +361,7 @@ mod tests {
     #[test]
     fn every_named_type_is_declared() {
         let lua = make_engine().expect("engine");
+        let mut checked = 0;
         for (key, meta) in luals_metas(&lua).expect("metas") {
             let declared: Vec<&str> = meta
                 .lines()
@@ -386,8 +387,11 @@ mod tests {
                     known,
                     "{key}: `{line}` names `{ty}`, which no class declares"
                 );
+                checked += 1;
             }
         }
+        // a changed annotation prefix would make the loop skip every line and pass
+        assert!(checked > 500, "only {checked} type names checked");
     }
 
     /// One Lua expression per recorded resource type, building a value that has every field set, so the test below
@@ -575,7 +579,7 @@ mod tests {
     ];
 
     /// The recorded types `INSTANCES` leaves out, each with why: a value of one needs something a unit test here
-    /// does not have (a running server, a task scheduler loop, a worker, a database server, Docker). Their records
+    /// does not have (a file a writer would leave behind, a running server, a worker, a database server, Docker). Their records
     /// are the only ones not held to the implementation.
     const NOT_BUILT: &[(&str, &str, &str)] = &[
         (

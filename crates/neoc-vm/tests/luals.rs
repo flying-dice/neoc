@@ -2,7 +2,8 @@
 //! Holds the generated `LuaCATS` definitions (`types/luals/<key>.lua`) to two things.
 //!
 //! 1. They are what the modules record now: a module whose surface changed without
-//!    `cargo run -p neoc-vm --example luals` fails here (the example's `--check` is the same test).
+//!    `cargo run -p neoc-vm --example luals` fails here, and so does a definition file no module writes
+//!    any more (the example's `--check` reports the same two things).
 //! 2. lua-language-server accepts correct use and flags misuse. `types/fixtures/usage.lua` must check clean and
 //!    every line of `types/fixtures/negative/*.lua` marked `-- expect-error` must be flagged, and no other
 //!    line. The negative half also fails when the definitions do not load: `require("lib:json")` is then `any`
@@ -38,7 +39,18 @@ fn definitions() -> Vec<(String, String)> {
 #[test]
 fn committed_definitions_match_the_modules() {
     let dir = root().join("types/luals");
-    for (key, text) in definitions() {
+    let definitions = definitions();
+    for entry in fs::read_dir(&dir).unwrap().flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        assert!(
+            definitions
+                .iter()
+                .any(|(key, _)| format!("{key}.lua") == name),
+            "{} is left over: no module writes it, delete it",
+            entry.path().display()
+        );
+    }
+    for (key, text) in definitions {
         let file = dir.join(format!("{key}.lua"));
         let on_disk = fs::read_to_string(&file).unwrap_or_default();
         assert!(
@@ -67,6 +79,15 @@ fn find_luals() -> Option<PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 
+/// Removes the scratch folder when dropped, so a failing run leaves nothing behind.
+struct Scratch(PathBuf);
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
 /// One diagnostic of `--check`: the 1-based line and a one-line description.
 struct Finding {
     line: usize,
@@ -77,6 +98,7 @@ struct Finding {
 fn check(luals: &Path) -> Vec<(String, Vec<Finding>)> {
     let fixtures = root().join("types/fixtures");
     let scratch = env::temp_dir().join(format!("neoc-luals-{}", std::process::id()));
+    let _cleanup = Scratch(scratch.clone());
     let output = Command::new(luals)
         .arg("--check")
         .arg(&fixtures)
@@ -106,7 +128,6 @@ fn check(luals: &Path) -> Vec<(String, Vec<Finding>)> {
             serde_json::Value::Object(serde_json::Map::new())
         }
     };
-    let _ = fs::remove_dir_all(&scratch);
     // an empty report is `[]`, a report with findings is an object keyed by file URI
     let found = found.as_object().cloned().unwrap_or_default();
     found
@@ -134,7 +155,7 @@ fn check(luals: &Path) -> Vec<(String, Vec<Finding>)> {
 
 #[test]
 fn fixtures_check_against_the_generated_definitions() {
-    let required = env::var_os("NEOC_REQUIRE_LUALS").is_some();
+    let required = env::var("NEOC_REQUIRE_LUALS").is_ok_and(|v| !v.is_empty() && v != "0");
     let Some(luals) = find_luals() else {
         assert!(
             !required,

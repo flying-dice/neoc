@@ -21,9 +21,9 @@ function ud_ServerHandle:wait() end
 
 ---@class vnd_hyper.Request
 ---@field method string The HTTP method (`GET`).
----@field path string The request path with its query string.
+---@field path string The request path, without the query string.
 ---@field body string The raw request body.
----@field is_json boolean Whether the body parses as JSON.
+---@field is_json boolean Whether the `Content-Type` header is `application/json`.
 ---@field headers any The request headers as a `{ [name]: value }` table.
 ---@field json any The body parsed as JSON (a JSON handle or scalar), or nil when it is empty or invalid.
 local ud_Request = {}
