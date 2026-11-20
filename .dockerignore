@@ -3,9 +3,4 @@
 .tmp
 .DS_Store
 target
-docs
-**/node_modules
-**/.venv
-**/__pycache__
-**/.pytest_cache
 **/*.log
