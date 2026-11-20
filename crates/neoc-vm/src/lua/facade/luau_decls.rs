@@ -6,27 +6,40 @@
 //! registry key (`lib:json` is `lib_json`, its `Object` type `lib_json_Object`). [`require_declaration`]
 //! closes the file with the overloaded `require` that maps each `"ns:name"` to its module alias.
 //!
-//! Aliases of table types, not `declare class`: the `class` keyword changed meaning in recent Luau releases
-//! (luau-lsp 1.70 no longer parses `declare class`), while an alias parses in 1.70.1 and before. Each alias is
-//! an `export type`, which is what makes it visible to the scripts (`local o: lib_json_Object`): a plain
-//! `type` in a definitions file stays private to it. All of them share one global namespace, hence the
-//! module prefix on every name.
+//! Aliases of table types, not `declare class`: luau-lsp 1.70.1 replaced `declare class` with
+//! `declare extern type` (a definitions file with `declare class` fails to load there), and an alias parses
+//! in 1.70.1, the only release tried. Each alias is an `export type`, which is what makes it visible to the
+//! scripts (`local o: lib_json_Object`): a plain `type` in a definitions file stays private to it. All of
+//! them share one global namespace, hence the module prefix on every name.
 //!
 //! The recorded vocabulary (see `CLAUDE.md`) is `string`, `number`, `bool`, `LuaValue` (opaque, `any`), a
 //! trailing `?` for optional, `Result<T, string>` for `(value, err)`, `(A, B)` for several returns (a `...`
 //! in it, or alone, for any number), `()` for nothing, a type's own name for a type its module declares,
 //! `std_net.TcpListener` for one of another module, and Luau's own syntax for a function
-//! (`(req: vnd_hyper.Request) -> string | nil`) or a table (`{ [string]: any }`).
+//! (`(req: vnd_hyper.Request) -> ...(string | { status: number? } | nil)`), a table (`{ [string]: any }`, `{ status: number? }`) and a
+//! string literal (`"GET" | "POST"`, copied as it is).
+//!
+//! The emitter refuses what it can see it cannot express: a control character in a doc or a type, a tuple
+//! or `...` inside `Result<>`, a top-level `...` that is not last, a character a type does not use, unbalanced
+//! brackets, a name that is not an identifier. That is an error of [`Module::luau_decls`], not invalid Luau in
+//! the file. What it does not look for (a malformed type that uses only permitted characters) is caught by the
+//! test-only `grammar` module, which parses the whole generated file with no luau-lsp needed.
 
 use std::fmt::Write as _;
 
 use super::{Entry, FieldEntry, Module, TypeEntry, VARIADIC, recorded_any};
 
-/// Reserved words of Luau, and `goto` (a reserved word of LuaJIT, the engine today, though not of Luau): not
-/// usable as a parameter name or a bare property name.
+#[cfg(test)]
+pub(crate) mod grammar;
+
+/// What the emitter cannot write is a message, not a panic and not invalid text.
+type Emit<T> = Result<T, String>;
+
+/// Reserved words of Luau: not usable as a parameter name or a bare property name. (`goto` is not one:
+/// neither Luau nor neoc's LuaJIT reserves it.)
 const LUAU_KEYWORDS: &[&str] = &[
-    "and", "break", "do", "else", "elseif", "end", "false", "for", "function", "goto", "if", "in",
-    "local", "nil", "not", "or", "repeat", "return", "then", "true", "until", "while",
+    "and", "break", "do", "else", "elseif", "end", "false", "for", "function", "if", "in", "local",
+    "nil", "not", "or", "repeat", "return", "then", "true", "until", "while",
 ];
 
 /// The types Luau has that the recorded vocabulary uses as they are.
@@ -46,7 +59,7 @@ pub fn file_header() -> String {
 -- recorded surface. Do not edit. Regenerate with the same command; `-- --check` fails
 -- when this file is stale.
 --
--- Luau declarations for luau-lsp: a definitions file (`--definitions` of `luau-lsp analyze`,
+-- Luau declarations for luau-lsp: a definitions file (`--definitions:@neoc=<this file>` of `luau-lsp`,
 -- `luau-lsp.types.definitionFiles` in an editor). Never loaded by neoc. One section per module, then
 -- the `require` overloads that give `require(\"lib:json\")` the type of that module.
 
@@ -72,63 +85,121 @@ impl Module<'_> {
     /// per type with constructors or constants on the module, and the module's own table type.
     ///
     /// # Errors
-    /// Fails when the live module table cannot be read, or when a type's sub-table on it disagrees with the
-    /// recording: a member that was not recorded would be a false alarm for every script that uses it, and a
-    /// recorded one that does not exist a call the editor accepts and the VM refuses.
+    /// Fails when the live module table cannot be read, when a type's sub-table on it disagrees with the
+    /// recording (a member that was not recorded would be a false alarm for every script that uses it, and a
+    /// recorded one that does not exist a call the editor accepts and the VM refuses), or when a record
+    /// cannot be written as Luau (see the module doc).
     pub fn luau_decls(&self) -> mlua::Result<String> {
+        for ud in &self.userdata {
+            self.check_statics_recorded(ud)?;
+        }
+        self.write_decls()
+            .map_err(|e| mlua::Error::external(format!("{}: {e}", self.name)))
+    }
+
+    fn write_decls(&self) -> Emit<String> {
         let scope = scope(&self.name);
+        check_key(&self.name)?;
         let mut out = format!("-- ===== {} =====\n\n", self.name);
         let mut statics = Vec::new();
         for ud in &self.userdata {
-            self.check_statics_recorded(ud)?;
             write_alias(
                 &mut out,
                 &scope,
                 &ud.type_name,
                 &ud.fields,
                 &[(&ud.methods, true), (&ud.functions, false)],
-            );
+            )?;
             if recorded_any(ud) {
                 write_alias(
                     &mut out,
                     &scope,
-                    &format!("{}Statics", ud.type_name),
+                    &statics_name(&ud.type_name),
                     &ud.static_consts,
                     &[(&ud.statics, false)],
-                );
+                )?;
                 statics.push(&ud.type_name);
             }
         }
         for ty in &self.types {
-            write_type_entry(&mut out, &scope, ty);
+            write_type_entry(&mut out, &scope, ty)?;
             statics.push(&ty.type_name);
         }
 
         out.push_str(&format!("export type {scope} = {{\n"));
         for name in statics {
-            write_prop(&mut out, "", name, &format!("{scope}_{name}Statics"));
+            write_prop(&mut out, "", name, &alias_name(&scope, &statics_name(name)))?;
         }
         for c in &self.consts {
-            write_field(&mut out, &scope, c);
+            write_field(&mut out, &scope, c)?;
         }
         for e in &self.entries {
-            e.write_fn_prop(&mut out, &scope, None);
+            e.write_fn_prop(&mut out, &scope, None)?;
         }
         out.push_str("}\n\n");
         Ok(out)
     }
 }
 
+/// The name of the alias of a type of a module: `lib_json_Object`.
+fn alias_name(scope: &str, type_name: &str) -> String {
+    format!("{scope}_{type_name}")
+}
+
+/// The type name of the sub-table of a type on its module (`Duration.from_secs`): `DurationStatics`.
+fn statics_name(type_name: &str) -> String {
+    format!("{type_name}Statics")
+}
+
+/// A registry key is `ns:name` with both parts identifiers: it is written in a header comment and in a
+/// string literal.
+fn check_key(key: &str) -> Emit<()> {
+    match key.split_once(':') {
+        Some((ns, name)) if is_ident(ns) && is_ident(name) => Ok(()),
+        _ => Err(format!("`{key}` is not an `ns:name` registry key")),
+    }
+}
+
+fn is_ident(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+fn check_ident(what: &str, name: &str) -> Emit<()> {
+    if is_ident(name) {
+        Ok(())
+    } else {
+        Err(format!("{what} `{name}` is not an identifier"))
+    }
+}
+
+/// A doc is comment lines: Luau ends a comment at a bare `\r` too, which `str::lines` does not split on,
+/// and any other control character is not text. A tab is.
+fn check_doc(doc: &str) -> Emit<()> {
+    match doc
+        .chars()
+        .find(|c| c.is_control() && !matches!(c, '\n' | '\t'))
+    {
+        Some(c) => Err(format!(
+            "a doc contains the control character {c:?}: {doc:?}"
+        )),
+        None => Ok(()),
+    }
+}
+
 /// The alias of a type with constructors recorded through `Module::type_`: its methods, and the statics.
-fn write_type_entry(out: &mut String, scope: &str, ty: &TypeEntry) {
-    write_alias(out, scope, &ty.type_name, &[], &[(&ty.methods, true)]);
+fn write_type_entry(out: &mut String, scope: &str, ty: &TypeEntry) -> Emit<()> {
+    write_alias(out, scope, &ty.type_name, &[], &[(&ty.methods, true)])?;
     write_alias(
         out,
         scope,
-        &format!("{}Statics", ty.type_name),
+        &statics_name(&ty.type_name),
         &[],
         &[(&ty.constructors, false)],
-    );
+    )
 }
 
 /// One `export type <scope>_<name> = { ... }`: the fields, then the functions of each group. A method (`true`)
@@ -139,55 +210,63 @@ fn write_alias(
     name: &str,
     fields: &[FieldEntry],
     groups: &[(&[Entry], bool)],
-) {
-    let alias = format!("{scope}_{name}");
+) -> Emit<()> {
+    check_ident("type name", name)?;
+    let alias = alias_name(scope, name);
     if fields.is_empty() && groups.iter().all(|(entries, _)| entries.is_empty()) {
         out.push_str(&format!("export type {alias} = {{}}\n\n"));
-        return;
+        return Ok(());
     }
     out.push_str(&format!("export type {alias} = {{\n"));
     for field in fields {
-        write_field(out, scope, field);
+        write_field(out, scope, field)?;
     }
     for (entries, is_method) in groups {
         for entry in *entries {
-            entry.write_fn_prop(out, scope, is_method.then_some(alias.as_str()));
+            entry.write_fn_prop(out, scope, is_method.then_some(alias.as_str()))?;
         }
     }
     out.push_str("}\n\n");
+    Ok(())
 }
 
 impl Entry {
     /// The property line of this function in a table type, with its doc comment above. `receiver` is the
     /// alias of the type a method belongs to.
-    fn write_fn_prop(&self, out: &mut String, scope: &str, receiver: Option<&str>) {
+    fn write_fn_prop(&self, out: &mut String, scope: &str, receiver: Option<&str>) -> Emit<()> {
         let mut params: Vec<String> = receiver
             .map(|alias| format!("self: {alias}"))
             .into_iter()
             .collect();
-        for (name, ty) in &self.params {
+        for (i, (name, ty)) in self.params.iter().enumerate() {
             if name == VARIADIC {
-                params.push(format!("...{}", luau_type(ty, scope)));
+                if i + 1 != self.params.len() {
+                    return Err(format!("`{}`: `...` is not its last parameter", self.name));
+                }
+                params.push(format!("...{}", luau_type(ty, scope)?));
             } else {
-                params.push(format!("{}: {}", param_ident(name), luau_type(ty, scope)));
+                check_ident("parameter", name)?;
+                params.push(format!("{}: {}", param_ident(name), luau_type(ty, scope)?));
             }
         }
         let ty = format!(
             "({}) -> {}",
             params.join(", "),
-            luau_returns(&self.ret, scope)
+            luau_returns(&self.ret, scope)?
         );
-        write_prop(out, &self.doc, &self.name, &ty);
+        write_prop(out, &self.doc, &self.name, &ty)
     }
 }
 
 /// One property of a value (a field, a constant) with its doc comment above.
-fn write_field(out: &mut String, scope: &str, field: &FieldEntry) {
-    write_prop(out, &field.doc, &field.name, &luau_type(&field.ty, scope));
+fn write_field(out: &mut String, scope: &str, field: &FieldEntry) -> Emit<()> {
+    write_prop(out, &field.doc, &field.name, &luau_type(&field.ty, scope)?)
 }
 
 /// `\t--- doc` lines, then `\t<name>: <ty>,`.
-fn write_prop(out: &mut String, doc: &str, name: &str, ty: &str) {
+fn write_prop(out: &mut String, doc: &str, name: &str, ty: &str) -> Emit<()> {
+    check_ident("name", name)?;
+    check_doc(doc)?;
     for line in doc.lines() {
         if line.is_empty() {
             out.push_str("\t---\n");
@@ -196,6 +275,7 @@ fn write_prop(out: &mut String, doc: &str, name: &str, ty: &str) {
         }
     }
     out.push_str(&format!("\t{}: {ty},\n", prop_name(name)));
+    Ok(())
 }
 
 /// A name made safe to write as a parameter name: a reserved word gets a trailing underscore.
@@ -222,35 +302,106 @@ fn prop_name(name: &str) -> String {
 /// Identifiers are mapped one by one and everything else (parentheses, `->`, `|`, `?`, braces) is Luau
 /// already: `bool` is `boolean`, `LuaValue` is `any`, a name with a dot is the type of another module
 /// (`std_net.TcpListener` is `std_net_TcpListener`), any other name not Luau's own is a type of `scope`'s
-/// module. A word followed by a colon is a label (a parameter or property name), not a type.
-fn luau_type(ty: &str, scope: &str) -> String {
-    let chars: Vec<char> = ty.trim().chars().collect();
+/// module. A word followed by a colon is a label, not a type: a property name inside a table type
+/// (a reserved word becomes the quoted key `["end"]`) and a parameter name inside a function type (a
+/// reserved word gets a trailing underscore). A string literal is copied as it is. A bare `()` is `nil`, as
+/// a value; a bare `...` and unbalanced brackets are errors.
+fn luau_type(ty: &str, scope: &str) -> Emit<String> {
+    let ty = ty.trim();
+    if ty.is_empty() {
+        return Err("a type is empty".to_string());
+    }
+    if ty == "()" {
+        return Ok("nil".to_string());
+    }
+    if ty == VARIADIC {
+        return Err("`...` is a trailing parameter or a return, not a type".to_string());
+    }
+    let chars: Vec<char> = ty.chars().collect();
     let mut out = String::new();
+    let mut open: Vec<char> = Vec::new();
     let mut i = 0;
     while i < chars.len() {
         let c = chars[i];
-        if !(c.is_ascii_alphabetic() || c == '_') {
-            out.push(c);
-            i += 1;
-            continue;
+        match c {
+            _ if c.is_control() => return Err(format!("control character {c:?} in type `{ty}`")),
+            '"' => {
+                let end = string_end(&chars, i)
+                    .ok_or_else(|| format!("unterminated string in type `{ty}`"))?;
+                out.extend(&chars[i..=end]);
+                i = end + 1;
+            }
+            '(' | '{' | '[' => {
+                open.push(c);
+                out.push(c);
+                i += 1;
+            }
+            ')' | '}' | ']' => {
+                let want = match c {
+                    ')' => '(',
+                    '}' => '{',
+                    _ => '[',
+                };
+                if open.pop() != Some(want) {
+                    return Err(format!("unbalanced `{c}` in type `{ty}`"));
+                }
+                out.push(c);
+                i += 1;
+            }
+            _ if c.is_ascii_alphabetic() || c == '_' => {
+                let start = i;
+                while i < chars.len()
+                    && (chars[i].is_ascii_alphanumeric() || matches!(chars[i], '_' | '.'))
+                {
+                    i += 1;
+                }
+                let word: String = chars[start..i].iter().collect();
+                if word.split('.').any(str::is_empty) {
+                    return Err(format!("`{word}` is not part of a type: `{ty}`"));
+                }
+                let is_label = chars[i..]
+                    .iter()
+                    .find(|c| !c.is_whitespace())
+                    .is_some_and(|c| *c == ':');
+                out.push_str(&match (is_label, open.last()) {
+                    (true, Some('{')) => prop_name(&word),
+                    (true, _) => param_ident(&word),
+                    (false, _) => named_type(&word, scope),
+                });
+            }
+            '-' if chars.get(i + 1) == Some(&'>') => {
+                out.push_str("->");
+                i += 2;
+            }
+            '.' if chars[i..].starts_with(&['.', '.', '.']) => {
+                out.push_str("...");
+                i += 3;
+            }
+            ',' | ':' | '|' | '&' | '?' | ' ' | '\t' => {
+                out.push(c);
+                i += 1;
+            }
+            _ => return Err(format!("`{c}` is not part of a type: `{ty}`")),
         }
-        let start = i;
-        while i < chars.len() && (chars[i].is_ascii_alphanumeric() || matches!(chars[i], '_' | '.'))
-        {
-            i += 1;
-        }
-        let word: String = chars[start..i].iter().collect();
-        let is_label = chars[i..]
-            .iter()
-            .find(|c| !c.is_whitespace())
-            .is_some_and(|c| *c == ':');
-        out.push_str(&if is_label {
-            param_ident(&word)
-        } else {
-            named_type(&word, scope)
-        });
     }
-    out
+    if open.is_empty() {
+        Ok(out)
+    } else {
+        Err(format!("unbalanced brackets in type `{ty}`"))
+    }
+}
+
+/// The index of the quote that closes the string literal opened at `start`.
+fn string_end(chars: &[char], start: usize) -> Option<usize> {
+    let mut i = start + 1;
+    while i < chars.len() {
+        match chars[i] {
+            '\\' => i += 2,
+            '"' => return Some(i),
+            _ => i += 1,
+        }
+    }
+    None
 }
 
 fn named_type(word: &str, scope: &str) -> String {
@@ -259,52 +410,66 @@ fn named_type(word: &str, scope: &str) -> String {
         "LuaValue" => "any".to_string(),
         _ if PRIMITIVES.contains(&word) => word.to_string(),
         _ if word.contains('.') => word.replace('.', "_"),
-        _ => format!("{scope}_{word}"),
+        _ => alias_name(scope, word),
     }
 }
 
 /// The Luau return type of a recorded return type, as written after `->`.
 ///
 /// `()` returns nothing. `Result<T, string>` is the runtime's `(value, error)` idiom: `(T?, string?)`
-/// (a `()` value is `nil`). `(A, B)` is a function that returns several values of its own, and a `...`
-/// in it (or alone) is any number of further values (`...any`), for a function that hands back whatever a
-/// Lua function returned. Anything else is one value.
-fn luau_returns(ret: &str, scope: &str) -> String {
+/// (a `()` value is `nil`; a tuple or a `...` as `T` is an error, a value is not both). `(A, B)` is a function
+/// that returns several values of its own, and a `...` in it (or alone) is any number of further values
+/// (`...any`), for a function that hands back whatever a Lua function returned; it must be last. Anything
+/// else is one value.
+fn luau_returns(ret: &str, scope: &str) -> Emit<String> {
     let ret = ret.trim();
     if ret == "()" {
-        return "()".to_string();
+        return Ok("()".to_string());
     }
     if let Some(values) = unwrap_parens(ret) {
-        let items: Vec<String> = split_top_level(values)
-            .into_iter()
-            .map(|v| return_item(v, scope))
-            .collect();
-        return format!("({})", items.join(", "));
+        let parts = split_top_level(values);
+        let mut items = Vec::new();
+        for (i, part) in parts.iter().enumerate() {
+            if part.trim() == VARIADIC && i + 1 != parts.len() {
+                return Err(format!("`...` is not last in the return `{ret}`"));
+            }
+            items.push(return_item(part, scope)?);
+        }
+        return Ok(format!("({})", items.join(", ")));
     }
     if let Some(value) = ret
         .strip_prefix("Result<")
         .and_then(|r| r.strip_suffix(", string>"))
     {
-        return format!("({}, string?)", optional(&return_item(value, scope)));
+        let value = value.trim();
+        if value == VARIADIC || (value != "()" && unwrap_parens(value).is_some()) {
+            return Err(format!(
+                "`Result<{value}, string>`: a result holds one value, not a tuple or `...`"
+            ));
+        }
+        return Ok(format!(
+            "({}, string?)",
+            optional(&return_item(value, scope)?)
+        ));
     }
     return_item(ret, scope)
 }
 
 /// One value of a return: `()` is `nil` there, `...` is any number of values, and a function type is
 /// parenthesised, so it reads as one value in a tuple and after `->`.
-fn return_item(value: &str, scope: &str) -> String {
-    match value.trim() {
+fn return_item(value: &str, scope: &str) -> Emit<String> {
+    Ok(match value.trim() {
         "()" => "nil".to_string(),
         VARIADIC => "...any".to_string(),
         other => {
-            let ty = luau_type(other, scope);
+            let ty = luau_type(other, scope)?;
             if is_function(&ty) {
                 format!("({ty})")
             } else {
                 ty
             }
         }
-    }
+    })
 }
 
 /// `ty` made optional. `nil` and `any` already are, an already optional type stays as it is, and a function
@@ -323,25 +488,42 @@ fn optional(ty: &str) -> String {
     }
 }
 
-/// The characters of `s` outside every bracket, with their byte index: the bracket that opens a group and
-/// the one that closes it are outside it, what is between them is not.
+/// The characters of `s` outside every bracket and every string literal, with their byte index: the bracket
+/// that opens a group and the one that closes it are outside it, what is between them is not.
 fn top_level(s: &str) -> impl Iterator<Item = (usize, char)> + '_ {
     let mut depth = 0_usize;
-    s.char_indices().filter(move |&(_, c)| match c {
-        '(' | '[' | '{' => {
-            depth += 1;
-            depth == 1
+    let mut in_string = false;
+    let mut escaped = false;
+    s.char_indices().filter(move |&(_, c)| {
+        if in_string {
+            match (escaped, c) {
+                (true, _) => escaped = false,
+                (false, '\\') => escaped = true,
+                (false, '"') => in_string = false,
+                _ => {}
+            }
+            return false;
         }
-        ')' | ']' | '}' => {
-            depth = depth.saturating_sub(1);
-            depth == 0
+        match c {
+            '"' => {
+                in_string = true;
+                depth == 0
+            }
+            '(' | '[' | '{' => {
+                depth += 1;
+                depth == 1
+            }
+            ')' | ']' | '}' => {
+                depth = depth.saturating_sub(1);
+                depth == 0
+            }
+            _ => depth == 0,
         }
-        _ => depth == 0,
     })
 }
 
 /// Whether `ty` is a function type: a `->` outside every bracket.
-fn is_function(ty: &str) -> bool {
+pub(crate) fn is_function(ty: &str) -> bool {
     top_level(ty).any(|(i, c)| c == '>' && ty[..i].ends_with('-'))
 }
 
@@ -373,6 +555,15 @@ mod tests {
 
     use super::{luau_returns, luau_type, require_declaration, split_top_level};
     use crate::lua::facade::Module;
+    use crate::lua::facade::luau_decls::grammar::validate;
+
+    fn lt(ty: &str, scope: &str) -> String {
+        luau_type(ty, scope).expect("type")
+    }
+
+    fn lr(ret: &str, scope: &str) -> String {
+        luau_returns(ret, scope).expect("return")
+    }
 
     /// Each of `needles` is found after the one before it.
     fn contains_in_order(haystack: &str, needles: &[&str]) -> bool {
@@ -813,54 +1004,48 @@ mod tests {
     fn every_reserved_word_is_escaped_and_near_misses_are_not() {
         let lua = Lua::new();
         let mut m = Module::new(&lua, "lib:demo").expect("module");
-        for word in super::LUAU_KEYWORDS {
+        // the 21 reserved words of the Luau manual, written out here: not read from the list under test
+        let reserved = [
+            "and", "break", "do", "else", "elseif", "end", "false", "for", "function", "if", "in",
+            "local", "nil", "not", "or", "repeat", "return", "then", "true", "until", "while",
+        ];
+        for word in reserved {
             m.record_fn(word, &[(word, "number")], "()", "");
         }
-        for word in ["ending", "continue", "type", "export", "goto_"] {
+        for word in ["ending", "continue", "type", "export", "goto"] {
             m.record_fn(word, &[(word, "number")], "()", "");
         }
         let decls = m.luau_decls().expect("decls");
-        for word in super::LUAU_KEYWORDS {
+        for word in reserved {
             let line = format!("\t[\"{word}\"]: ({word}_: number) -> (),\n");
             assert!(decls.contains(&line), "missing {line:?} in:\n{decls}");
         }
-        for word in ["ending", "continue", "type", "export", "goto_"] {
+        // `goto` is a name in Luau and in neoc's LuaJIT (`t.goto = 1` runs), so it stays bare
+        for word in ["ending", "continue", "type", "export", "goto"] {
             let line = format!("\t{word}: ({word}: number) -> (),\n");
             assert!(decls.contains(&line), "missing {line:?} in:\n{decls}");
         }
-        assert!(
-            super::LUAU_KEYWORDS.contains(&"goto"),
-            "goto is reserved in LuaJIT"
-        );
+        assert_eq!(validate(&decls), Ok(()), "{decls}");
     }
 
     /// `Result<T, string>` makes `T` optional unless it already is (or is `any` or `nil`); a function value
     /// stays an optional function (the `?` must not bind to its return type); a union is parenthesised.
     #[test]
     fn result_value_shapes() {
+        assert_eq!(lr("Result<LuaValue, string>", "x"), "(any, string?)");
+        assert_eq!(lr("Result<string?, string>", "x"), "(string?, string?)");
+        assert_eq!(lr("Result<bool, string>", "x"), "(boolean?, string?)");
+        assert_eq!(lr("Result<(), string>", "x"), "(nil, string?)");
         assert_eq!(
-            luau_returns("Result<LuaValue, string>", "x"),
-            "(any, string?)"
-        );
-        assert_eq!(
-            luau_returns("Result<string?, string>", "x"),
-            "(string?, string?)"
-        );
-        assert_eq!(
-            luau_returns("Result<bool, string>", "x"),
-            "(boolean?, string?)"
-        );
-        assert_eq!(luau_returns("Result<(), string>", "x"), "(nil, string?)");
-        assert_eq!(
-            luau_returns("Result<Thing, string>", "lib_x"),
+            lr("Result<Thing, string>", "lib_x"),
             "(lib_x_Thing?, string?)"
         );
         assert_eq!(
-            luau_returns("Result<(a: string) -> number, string>", "x"),
+            lr("Result<(a: string) -> number, string>", "x"),
             "(((a: string) -> number)?, string?)"
         );
         assert_eq!(
-            luau_returns("Result<string | number, string>", "x"),
+            lr("Result<string | number, string>", "x"),
             "((string | number)?, string?)"
         );
     }
@@ -870,26 +1055,20 @@ mod tests {
     /// function type (an optional one is parenthesised, a trailing `?` is its return type's).
     #[test]
     fn pass_through_types_and_optionals() {
-        assert_eq!(luau_type("string", "lib_x"), "string");
-        assert_eq!(luau_type("bool?", "lib_x"), "boolean?");
-        assert_eq!(luau_type("LuaValue?", "lib_x"), "any?");
+        assert_eq!(lt("string", "lib_x"), "string");
+        assert_eq!(lt("bool?", "lib_x"), "boolean?");
+        assert_eq!(lt("LuaValue?", "lib_x"), "any?");
+        assert_eq!(lt("std_net.TcpListener?", "lib_x"), "std_net_TcpListener?");
+        assert_eq!(lt("Thing?", "lib_x"), "lib_x_Thing?");
         assert_eq!(
-            luau_type("std_net.TcpListener?", "lib_x"),
-            "std_net_TcpListener?"
-        );
-        assert_eq!(luau_type("Thing?", "lib_x"), "lib_x_Thing?");
-        assert_eq!(
-            luau_type("(a: Thing, end: number) -> string?", "lib_x"),
+            lt("(a: Thing, end: number) -> string?", "lib_x"),
             "(a: lib_x_Thing, end_: number) -> string?"
         );
         assert_eq!(
-            luau_type("((message: string) -> ())?", "lib_x"),
+            lt("((message: string) -> ())?", "lib_x"),
             "((message: string) -> ())?"
         );
-        assert_eq!(
-            luau_type("{ [string]: LuaValue }", "lib_x"),
-            "{ [string]: any }"
-        );
+        assert_eq!(lt("{ [string]: LuaValue }", "lib_x"), "{ [string]: any }");
 
         let lua = Lua::new();
         let mut m = Module::new(&lua, "lib:demo").expect("module");
@@ -927,18 +1106,18 @@ mod tests {
             ["string", " (a: A, b: B) -> c", " { [string]: any }"]
         );
         assert_eq!(
-            luau_returns("((a: string, b: number) -> string, ())", "x"),
+            lr("((a: string, b: number) -> string, ())", "x"),
             "(((a: string, b: number) -> string), nil)"
         );
-        assert_eq!(luau_returns("(LuaValue?, ...)", "lib_x"), "(any?, ...any)");
-        assert_eq!(luau_returns("...", "lib_x"), "...any");
-        assert_eq!(luau_returns("(string, ())", "lib_x"), "(string, nil)");
-        assert_eq!(luau_returns("()", "lib_x"), "()");
+        assert_eq!(lr("(LuaValue?, ...)", "lib_x"), "(any?, ...any)");
+        assert_eq!(lr("...", "lib_x"), "...any");
+        assert_eq!(lr("(string, ())", "lib_x"), "(string, nil)");
+        assert_eq!(lr("()", "lib_x"), "()");
         assert_eq!(
-            luau_returns("(a: string) -> number", "lib_x"),
+            lr("(a: string) -> number", "lib_x"),
             "((a: string) -> number)"
         );
-        assert_eq!(luau_returns("string | nil", "lib_x"), "string | nil");
+        assert_eq!(lr("string | nil", "lib_x"), "string | nil");
     }
 
     /// `require` takes one `"ns:name"` per overload and nothing else, so an unknown name is a type error.
@@ -948,5 +1127,190 @@ mod tests {
             require_declaration(&["lib:json", "std:fs"]),
             "-- ===== require =====\n\ndeclare require: \n\t((path: \"lib:json\") -> lib_json)\n\t& ((path: \"std:fs\") -> std_fs)\n"
         );
+    }
+
+    /// A reserved word is a quoted key inside a table type (`end_` would invent a key that does not exist at
+    /// run time) and a renamed label inside a function type; a string literal is copied as it is, whatever
+    /// words it holds.
+    #[test]
+    fn table_labels_and_string_literals_are_left_alone() {
+        assert_eq!(lt("{ end: number }", "lib_x"), "{ [\"end\"]: number }");
+        assert_eq!(
+            lt("{ status: number?, then: Thing }", "lib_x"),
+            "{ status: number?, [\"then\"]: lib_x_Thing }"
+        );
+        assert_eq!(
+            lt("(end: number, opts: { end: bool }) -> ()", "lib_x"),
+            "(end_: number, opts: { [\"end\"]: boolean }) -> ()"
+        );
+        assert_eq!(lt("\"GET\" | \"POST\"", "lib_x"), "\"GET\" | \"POST\"");
+        assert_eq!(
+            lt("\"a (b, {c}) -> LuaValue\\\" bool\"", "lib_x"),
+            "\"a (b, {c}) -> LuaValue\\\" bool\""
+        );
+        // the brackets inside a string are not structure: this is one type, optional as a whole
+        assert_eq!(lr("Result<\"a|b\", string>", "x"), "(\"a|b\"?, string?)");
+    }
+
+    /// What the emitter cannot write is an error of `luau_decls`, never invalid text in the file.
+    #[test]
+    fn records_that_cannot_be_written_are_errors() {
+        let fails = |setup: &dyn Fn(&mut Module), needle: &str| {
+            let lua = Lua::new();
+            let mut m = Module::new(&lua, "lib:demo").expect("module");
+            setup(&mut m);
+            let error = m.luau_decls().expect_err("must be refused").to_string();
+            assert!(error.contains(needle), "{needle:?} not in {error:?}");
+            assert!(error.contains("lib:demo"), "the module is named: {error}");
+        };
+        // control characters in a doc: a bare CR ends a Luau comment, `lines()` does not split on it
+        fails(
+            &|m| {
+                m.record_fn("f", &[], "()", "one\rtwo");
+            },
+            "control character",
+        );
+        fails(
+            &|m| {
+                m.record_fn("f", &[], "()", "bell\u{7}");
+            },
+            "control character",
+        );
+        fails(
+            &|m| {
+                m.const_("c", "number", "nul\0");
+            },
+            "control character",
+        );
+        // a result holds one value
+        fails(
+            &|m| {
+                m.record_fn("f", &[], "Result<(number, string), string>", "");
+            },
+            "not a tuple",
+        );
+        fails(
+            &|m| {
+                m.record_fn("f", &[], "Result<..., string>", "");
+            },
+            "not a tuple",
+        );
+        // `...` only last in the parameters and in a tuple, and not as a type
+        fails(
+            &|m| {
+                m.record_fn("f", &[("...", "LuaValue"), ("a", "string")], "()", "");
+            },
+            "last parameter",
+        );
+        fails(
+            &|m| {
+                m.record_fn("f", &[], "(..., string)", "");
+            },
+            "not last",
+        );
+        fails(
+            &|m| {
+                m.record_fn("f", &[("a", "...")], "()", "");
+            },
+            "not a type",
+        );
+        fails(
+            &|m| {
+                m.record_fn("f", &[("a", " ")], "()", "");
+            },
+            "is empty",
+        );
+        // a character no type uses (copied through, it would be invalid or mean something else)
+        for ty in ["a; b", "a = b", "1", "a.", "a @ b", "-"] {
+            fails(
+                &|m| {
+                    m.record_fn("f", &[("a", ty)], "()", "");
+                },
+                "is not part of a type",
+            );
+        }
+        // names are identifiers
+        fails(
+            &|m| {
+                m.record_fn("not a name", &[], "()", "");
+            },
+            "not an identifier",
+        );
+        fails(
+            &|m| {
+                m.record_fn("f", &[("a-b", "string")], "()", "");
+            },
+            "not an identifier",
+        );
+        // brackets and strings are balanced
+        fails(
+            &|m| {
+                m.record_fn("f", &[("a", "{ x: number")], "()", "");
+            },
+            "unbalanced",
+        );
+        fails(
+            &|m| {
+                m.record_fn("f", &[("a", "(string))")], "()", "");
+            },
+            "unbalanced",
+        );
+        fails(
+            &|m| {
+                m.record_fn("f", &[("a", "\"open")], "()", "");
+            },
+            "unterminated",
+        );
+        // a doc with a tab or several lines is fine
+        let lua = Lua::new();
+        let mut m = Module::new(&lua, "lib:demo").expect("module");
+        m.record_fn("f", &[], "()", "a\tb\n\nc");
+        assert!(m.luau_decls().is_ok());
+    }
+
+    /// A `()` as the type of a value (a parameter, a field) is `nil`, as a value type (a parameter, a field).
+    #[test]
+    fn unit_as_a_value_type_is_nil() {
+        let lua = Lua::new();
+        let mut m = Module::new(&lua, "lib:demo").expect("module");
+        m.record_fn("f", &[("a", "()")], "()", "");
+        m.const_("c", "()", "");
+        let decls = m.luau_decls().expect("decls");
+        assert!(decls.contains("\tc: nil,\n"), "{decls}");
+        assert!(decls.contains("\tf: (a: nil) -> (),\n"), "{decls}");
+        assert_eq!(validate(&decls), Ok(()));
+    }
+
+    /// Everything the tests above make the emitter write parses with the grammar of what it writes.
+    #[test]
+    fn what_the_emitter_writes_parses() {
+        let lua = Lua::new();
+        let mut m = Module::new(&lua, "lib:demo").expect("module");
+        m.record_fn(
+            "serve",
+            &[
+                ("listener", "std_net.TcpListener"),
+                (
+                    "handler",
+                    "(req: vnd_hyper.Request) -> ...(string | { status: number?, body: string?, headers: { [string]: string }? })",
+                ),
+                ("on_error", "((message: string) -> ())?"),
+                ("...", "LuaValue"),
+            ],
+            "Result<Thing, string>",
+            "Serves.\n\nWith a `{ [string]: string }` table.",
+        );
+        m.record_fn("first", &[], "(LuaValue?, ...)", "");
+        m.const_("verbs", "\"GET\" | \"POST\"", "");
+        m.userdata("Thing", |t| {
+            t.field("size", "number", "How big.").method(
+                "grow",
+                &[("by", "number")],
+                "()",
+                "Grows.",
+            );
+        });
+        let decls = m.luau_decls().expect("decls");
+        assert_eq!(validate(&decls), Ok(()), "{decls}");
     }
 }

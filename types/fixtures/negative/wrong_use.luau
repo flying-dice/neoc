@@ -1,8 +1,9 @@
 --!strict
 -- Deliberately wrong uses of the `std:`, `lib:` and `vnd:` modules. The luau-lsp test requires a diagnostic on
 -- every line that ends in an expect-error marker (the marker names the text the message must contain), and no
--- diagnostic on any other line. If the declarations stop loading, or `require("lib:json")` stops being typed, nothing here is flagged
--- (the module is `any` again) and the test fails.
+-- diagnostic on any other line; a line with two findings carries two markers. The marker is matched against the
+-- message up to its `caused by:` lines. If the declarations stop loading, or `require("lib:json")` stops being
+-- typed, nothing here is flagged (the module is `any` again) and the test fails.
 local base64 = require("lib:base64")
 local chrono = require("lib:chrono")
 local collections = require("std:collections")
@@ -57,13 +58,17 @@ test.expect(1).toBeAbout(1) -- expect-error: Key 'toBeAbout' not found in table 
 
 -- a handler that is not a function, a listener that is not one
 local _listener = assert(net.TcpListener.bind("127.0.0.1:0"))
-hyper.serve(_listener, "handler") -- expect-error: Expected this to be '(vnd_hyper_Request) -> (...any)', but got 'string'
+hyper.serve(_listener, "handler") -- expect-error: Expected this to be '(vnd_hyper_Request) -> (...(string | { body: string?, headers: { [string]: string }?, status: number? })?)', but got 'string'
+-- a handler returns a body, a table or nothing; a number is none of them, and the optional header is checked
+hyper.serve(_listener, function(_req) return 42 end) -- expect-error: Expected this to be '(string | { body: string?, headers: { [string]: string }?, status: number? })?', but got 'number'
+hyper.serve(_listener, function(_req) return { status = "ok" } end) -- expect-error: but got '{| status: string |}'
+hyper.serve(_listener, function(req) return req:header("accept"):upper() end) -- expect-error: Value of type 'string?' could be nil
 hyper.serve("127.0.0.1:0", function(_req) return nil end) -- expect-error: Expected this to be 'std_net_TcpListener', but got 'string'
 
 -- a module that does not exist, and a module name that is not a literal
-local _missing = require("lib:jsno") -- expect-error: Expected this to be '"std:collections"', but got '"lib:jsno"'
+local _missing = require("lib:jsno") -- expect-error: Expected this to be '"std:collections"', but got '"lib:jsno"' -- expect-error: Other overloads are also not viable
 
 local _name: string = "lib:json"
-local _dynamic = require(_name) -- expect-error: Expected this to be '"std:collections"', but got 'string'
+local _dynamic = require(_name) -- expect-error: Expected this to be '"std:collections"', but got 'string' -- expect-error: Other overloads are also not viable
 
 local _fine = base64.encode("this line is correct")

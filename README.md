@@ -85,21 +85,23 @@ A wait (`task.wait`, I/O) suspends inside `pcall`, `xpcall`, `__call` and `for .
 This repository contains [Luau](https://luau.org) declarations for every module in [`types/neoc.d.luau`](types/neoc.d.luau), one definitions file generated from the modules' own signatures: a table type per module (`lib_json` for `lib:json`), a type per resource type (`lib_json_Object`), and an overloaded `require` that gives `require("lib:json")` the type of that module. [luau-lsp](https://github.com/JohnnyMorganz/luau-lsp) gives completion, hover docs and type checks once it loads that file; a `require` of a name that is not a module is a type error, as it is at run time. The declarations are a definitions file, not a module: nothing loads them at run time.
 
 ```sh
-luau-lsp analyze --definitions path/to/neoc/types/neoc.d.luau script.luau   # type-check from the command line
+luau-lsp analyze --definitions:@neoc=path/to/neoc/types/neoc.d.luau script.luau   # type-check from the command line
 ```
 
-In VS Code with the [Luau Language Server](https://marketplace.visualstudio.com/items?itemName=JohnnyMorganz.luau-lsp) extension, these workspace settings (`.vscode/settings.json`) load the file:
+In VS Code with the [Luau Language Server](https://marketplace.visualstudio.com/items?itemName=JohnnyMorganz/luau-lsp) extension, these workspace settings (`.vscode/settings.json`) load the file. `definitionFiles` is a map from a name to a path:
 
 ```jsonc
 {
   "luau-lsp.platform.type": "standard",
-  "luau-lsp.types.definitionFiles": ["path/to/neoc/types/neoc.d.luau"]
+  "luau-lsp.types.definitionFiles": { "@neoc": "path/to/neoc/types/neoc.d.luau" }
 }
 ```
 
-`standard` keeps the extension from loading Roblox's API. Other editors start the server as `luau-lsp lsp --definitions=path/to/neoc/types/neoc.d.luau`. Put `--!strict` at the top of a script, or `{ "languageMode": "strict" }` in a [`.luaurc`](.luaurc) (this repository has one), to have strict mode flag an optional result used without a check. The resource types are exported: `local o: lib_json_Object = json.object()`. The declarations live in the source tree, not in the release binaries or the Docker image. `cargo run -p neoc-vm --example luau_decls` regenerates them.
+`standard` keeps the extension from loading Roblox's API. The extension hands the file to the server as a command-line argument, so another editor starts the server as `luau-lsp lsp --stdio --definitions:@neoc=path/to/neoc/types/neoc.d.luau`; sending `definitionFiles` to the server as a setting does not load it. The editor path is exercised by `the_language_server_types_require_as_the_editor_starts_it` in `crates/neoc-vm/tests/luau_decls.rs` (the language server started that way: typed `require`, a wrong member, hover docs). Put `--!strict` at the top of a script, or `{ "languageMode": "strict" }` in a `.luaurc` beside it, to have strict mode flag an optional result used without a check; this repository's strict `.luaurc` is [`types/fixtures/.luaurc`](types/fixtures/.luaurc) and nothing else is strict (the 53 tracked `.lua` scripts are LuaJIT-era and still show 58 type errors in an editor). The resource types are exported: `local o: lib_json_Object = json.object()`. The declarations live in the source tree, not in the release binaries or the Docker image. `cargo run -p neoc-vm --example luau_decls` regenerates them.
 
-The declarations describe Luau. The engine neoc runs scripts on today is LuaJIT, which does not parse Luau-only syntax (annotations, `continue`, compound assignment, string interpolation); the engine switch is a separate piece of work (Jira NEOC-137). The calls and results are typed either way. `require` is typed for a string literal; a name held in a variable is a type error in strict mode (neoc's own `require` takes any string and fails at run time for an unknown one). This repository's `.luaurc` is strict, which also applies to the LuaJIT `.lua` test scripts under `crates/neoc/tests` when they are opened in an editor with luau-lsp.
+`require` is typed for a string literal. `require(name)` with a variable, and `pcall(require, "lib:json")`, are type errors in strict and non-strict mode alike (neoc's own `require` takes any string and fails at run time for an unknown one); a bare function parameter (`local function load(n) return require(n) end`) is not flagged.
+
+The declarations describe Luau. The engine neoc runs scripts on today is LuaJIT: it runs `continue` and compound assignment (`n += i`), but refuses type annotations and string interpolation, which are for Luau scripts once the engine switch (a separate piece of work, Jira NEOC-137) lands. The calls and results are typed either way.
 
 ## Contributing
 

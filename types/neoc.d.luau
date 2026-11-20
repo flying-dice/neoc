@@ -2,7 +2,7 @@
 -- recorded surface. Do not edit. Regenerate with the same command; `-- --check` fails
 -- when this file is stale.
 --
--- Luau declarations for luau-lsp: a definitions file (`--definitions` of `luau-lsp analyze`,
+-- Luau declarations for luau-lsp: a definitions file (`--definitions:@neoc=<this file>` of `luau-lsp`,
 -- `luau-lsp.types.definitionFiles` in an editor). Never loaded by neoc. One section per module, then
 -- the `require` overloads that give `require("lib:json")` the type of that module.
 
@@ -1253,7 +1253,7 @@ export type vnd_hyper = {
 	--- Perform an HTTP or HTTPS request with an arbitrary method given `{ method, url, body?, headers?, ca_pem? }`.
 	request: (opts: any) -> (any, string?),
 	--- Attach `handler` to `listener` and start accepting HTTP connections. The handler returns a body string, `{ status?, body?, headers? }`, or nothing (an empty 200).
-	serve: (listener: std_net_TcpListener, handler: (req: vnd_hyper_Request) -> ...any) -> (vnd_hyper_ServerHandle?, string?),
+	serve: (listener: std_net_TcpListener, handler: (req: vnd_hyper_Request) -> ...(string | { status: number?, body: string?, headers: { [string]: string }? } | nil)) -> (vnd_hyper_ServerHandle?, string?),
 }
 
 -- ===== vnd:jsonschema =====

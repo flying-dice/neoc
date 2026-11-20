@@ -99,6 +99,10 @@ local date = assert(chrono.Date.new(2026, 5, 20))
 print(date.year, assert(date:format("%Y-%m-%d")))
 local timeout = time.Duration.from_secs(5)
 print(timeout:as_millis(), time.Duration.ZERO:is_zero())
+print(time.sleep(timeout):as_secs(), time.Instant.now():elapsed():as_millis())
+print(chrono.Duration.of({ hours = 1 }), glob.Glob.new("*.lua"))
+-- the optional argument of a constructor
+print(assert(tempfile.TempFile.new()), assert(tempfile.TempFile.new({ prefix = "x" })))
 local counter = collections.Counter.new()
 print(counter:increment(), collections.Counter.new(10):get())
 local map = collections.Map.new()
@@ -134,7 +138,7 @@ local server = assert(hyper.serve(listener, function(req)
 	end
 	return { status = 200, body = accept:upper() }
 end))
-print(server:addr())
+print(server:addr(), server:wait(), thread.parent and thread.parent:send(1))
 server:close()
 -- a handler may return nothing, or only on some paths, and reads the request's fields
 hyper.serve(listener, function(_req) end)
@@ -144,8 +148,38 @@ hyper.serve(listener, function(req)
 		return "hello"
 	end
 end)
+hyper.serve(listener, function(_req)
+	return { status = 404 }
+end)
+hyper.serve(listener, function(_req)
+	return { status = 201, body = "made", headers = { ["content-type"] = "text/plain" } }
+end)
 local response, request_err = hyper.get("http://127.0.0.1:1/")
 print(response, request_err)
+
+-- the SQL parameters of the network databases are trailing arguments too
+local function network_databases(
+	mysql: vnd_sqlx_mysql_Database,
+	mysql_statement: vnd_sqlx_mysql_Statement,
+	postgres: vnd_sqlx_postgres_Database
+)
+	print(mysql:execute("INSERT INTO t VALUES (?, ?)", 1, 2))
+	print(mysql:query("SELECT * FROM t WHERE a = ? AND b = ?", 1, 2))
+	print(mysql:query_one("SELECT * FROM t WHERE a = ?", 1))
+	print(mysql_statement:execute(1, 2))
+	print(mysql_statement:query(1, 2))
+	print(mysql_statement:query_one(1))
+	print(postgres:execute("INSERT INTO t VALUES ($1, $2)", 1, 2))
+	print(postgres:query("SELECT * FROM t WHERE a = $1 AND b = $2", 1, 2))
+	print(postgres:query_one("SELECT * FROM t WHERE a = $1", 1))
+end
+print(network_databases)
+
+-- a handler reads its request, and may name the type of one
+local function describe(req: vnd_hyper_Request)
+	print(req.method, req.path, req.body, req.is_json, req.headers, req.json, req:header("accept"))
+end
+print(describe)
 
 -- the test framework: a plain table of matchers, called with a dot
 test.describe("fixture", function()
