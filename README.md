@@ -82,19 +82,24 @@ A wait (`task.wait`, I/O) suspends inside `pcall`, `xpcall`, `__call` and `for .
 
 ## Editor types
 
-This repository contains [LuaCATS](https://luals.github.io/wiki/annotations/) definitions for every module in [`types/luals/`](types/luals), one file per module (`lib/json.lua` for `lib:json`, `vnd/rusqlite.lua` for `vnd:rusqlite`), generated from the modules' own signatures. [lua-language-server](https://luals.github.io/) gives completion, hover docs and type checks of `require("lib:json")` and the rest once it can find them. Its `require` search cannot map a name with a colon to a file, so [`types/luals-plugin.lua`](types/luals-plugin.lua) does that. Point both at your copy of the repository:
+This repository contains [Luau](https://luau.org) declarations for every module in [`types/neoc.d.luau`](types/neoc.d.luau), one definitions file generated from the modules' own signatures: a table type per module (`lib_json` for `lib:json`), a type per resource type (`lib_json_Object`), and an overloaded `require` that gives `require("lib:json")` the type of that module. [luau-lsp](https://github.com/JohnnyMorganz/luau-lsp) gives completion, hover docs and type checks once it loads that file; a `require` of a name that is not a module is a type error, as it is at run time. The declarations are a definitions file, not a module: nothing loads them at run time.
+
+```sh
+luau-lsp analyze --definitions path/to/neoc/types/neoc.d.luau script.luau   # type-check from the command line
+```
+
+In VS Code with the [Luau Language Server](https://marketplace.visualstudio.com/items?itemName=JohnnyMorganz.luau-lsp) extension, these workspace settings (`.vscode/settings.json`) load the file:
 
 ```jsonc
-// .luarc.json
 {
-  "runtime.version": "Lua 5.1",
-  "diagnostics.globals": ["bit32"],
-  "workspace.library": ["path/to/neoc/types/luals"],
-  "runtime.plugin": "path/to/neoc/types/luals-plugin.lua"
+  "luau-lsp.platform.type": "standard",
+  "luau-lsp.types.definitionFiles": ["path/to/neoc/types/neoc.d.luau"]
 }
 ```
 
-Inside this repository nothing is needed: its own [`.luarc.json`](.luarc.json) already does it. VS Code with the sumneko Lua extension reads `.luarc.json` from the workspace root and should pick both settings up. Whether it asks you to trust the plugin (it only turns `lib:json` into a file path) may depend on the extension version and VS Code's Workspace Trust; allow it if asked. lua-language-server runs a plugin's `ResolveRequire` only when every configured plugin defines it, so this plugin cannot sit next to a plugin that lacks one (it would silently stop resolving `lib:json`). Other editors need the same two settings in their lua-language-server configuration. The definitions live in the source tree, not in the release binaries or the Docker image. `cargo run -p neoc-vm --example luals` regenerates them.
+`standard` keeps the extension from loading Roblox's API. Other editors start the server as `luau-lsp lsp --definitions=path/to/neoc/types/neoc.d.luau`. Put `--!strict` at the top of a script, or `{ "languageMode": "strict" }` in a [`.luaurc`](.luaurc) (this repository has one), to have strict mode flag an optional result used without a check. The resource types are exported: `local o: lib_json_Object = json.object()`. The declarations live in the source tree, not in the release binaries or the Docker image. `cargo run -p neoc-vm --example luau_decls` regenerates them.
+
+The declarations describe Luau. The engine neoc runs scripts on today is LuaJIT, which does not parse Luau-only syntax (annotations, `continue`, compound assignment, string interpolation); the engine switch is tracked as NEOC-137. The calls and results are typed either way.
 
 ## Contributing
 

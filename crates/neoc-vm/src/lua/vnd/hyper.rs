@@ -123,7 +123,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "serve",
         &[
             ("listener", "std_net.TcpListener"),
-            ("handler", "fun(req: vnd_hyper.Request): string|table|nil"),
+            ("handler", "(req: vnd_hyper.Request) -> string | { [string]: any } | nil"),
         ],
         "Result<ServerHandle, string>",
         "Attach `handler` to `listener` and start accepting HTTP connections. The handler returns a body string, `{ status?, body?, headers? }`, or nothing (an empty 200).",
