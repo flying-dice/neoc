@@ -120,11 +120,11 @@
 ///
 /// | recursion through | debug | release |
 /// |---|---|---|
-/// | `Mutex:with_lock` nested | 4608 | 768 |
+/// | `Mutex:with_lock` nested | 4608 | 640 |
 /// | `lib:test` `describe` nested | 4096 | 640 |
 /// | `lib:cache` `on_evict` re-entering the cache | 3072 | 768 |
 /// | a `vnd:hyper` request whose options table recurses | 1536 | 512 |
-/// | a `std:thread` spawn whose options table recurses | 1024 | 768 |
+/// | a `std:thread` spawn, or a `lib:http` `serve_static`, whose options table recurses | 1024 | 640 |
 /// | a `__tostring` that resumes a failing coroutine through mlua | 768 | under 256 |
 /// | a `string.gsub` callback | 384 | 384 |
 ///

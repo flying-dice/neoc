@@ -269,6 +269,22 @@ const CASES: &[Case] = &[
                return "hyper.request recursion: " .. tostring(ok) .. ",depth>50:" .. tostring(depth > 50)"#,
         )
     }),
+    ("http_serve_static_options_recursion", || {
+        // `lib:http` `serve_static` reads `opts.port` and `opts.host`; a glob that matches nothing makes every level end
+        // at once instead of serving
+        script(
+            r#"local http = require("lib:http")
+               local depth = 0
+               local function opts()
+                 local first = true
+                 return setmetatable({}, {
+                   __index = function() if first then first = false depth = depth + 1 pcall(http.serve_static, "/nonexistent/*", opts()) end end,
+                 })
+               end
+               local ok, e = pcall(http.serve_static, "/nonexistent/*", opts())
+               return "serve_static recursion: " .. tostring(ok) .. ",depth>50:" .. tostring(depth > 50)"#,
+        )
+    }),
     ("thread_spawn_options_recursion", || {
         script(
             r#"local thread = require("std:thread")
@@ -486,6 +502,12 @@ survives!(
     hyper_request_options_recursion,
     "hyper_request_options_recursion",
     "hyper.request recursion:",
+    "depth>50:true"
+);
+survives!(
+    http_serve_static_options_recursion,
+    "http_serve_static_options_recursion",
+    "serve_static recursion: false",
     "depth>50:true"
 );
 survives!(

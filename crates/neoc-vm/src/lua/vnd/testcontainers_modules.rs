@@ -362,15 +362,27 @@ async fn map_ports(
     Ok(ports)
 }
 
+/// The options are read here, before the future exists (see `vnd:hyper`'s client): a script table can run script code
+/// when it is read, and read inside the future each level of a recursion would stack another polled future.
+fn start_generic(
+    lua: Lua,
+    opts: Table,
+) -> impl std::future::Future<Output = mlua::Result<(Value, Value)>> + Send + 'static {
+    start_generic_with(lua, parse_generic_opts(&opts))
+}
+
 #[instrument(
     name = "testcontainers_modules.generic",
     target = "lua::lib::testcontainers_modules",
     skip_all
 )]
-async fn start_generic(lua: Lua, opts: Table) -> mlua::Result<(Value, Value)> {
+async fn start_generic_with(
+    lua: Lua,
+    parsed: mlua::Result<GenericOpts>,
+) -> mlua::Result<(Value, Value)> {
     let op = "testcontainers_modules.generic";
 
-    let parsed = match parse_generic_opts(&opts) {
+    let parsed = match parsed {
         Ok(p) => p,
         Err(e) => return from_err(&lua, op, e),
     };
