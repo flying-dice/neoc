@@ -62,7 +62,7 @@ const CORE_EXTERNAL: Record<string, Set<string>> = {
 }
 
 /**
- * Where each framework crate may be a NORMAL dependency (deny.toml `bans` lists the same crates, but its `wrappers`
+ * Where each framework crate may be a normal or build dependency (deny.toml `bans` lists the same crates, but its `wrappers`
  * also match dev-dependencies, so that file alone would let one of these move from a test dependency to a runtime one).
  */
 const FRAMEWORK_HOMES: Record<string, string[]> = {
@@ -71,7 +71,9 @@ const FRAMEWORK_HOMES: Record<string, string[]> = {
   rmcp: ['agentos-mcp'],
   'agent-client-protocol': ['agentos-acp'],
   axum: ['agentos-http', 'agentos-mcp', 'agentos-agui', 'agentos-host'],
-  'axum-server': ['agentos-host']
+  'axum-server': ['agentos-host'],
+  // reached only through neoc-vm's dependencies (deny.toml lets tonic use axum); no workspace crate names it
+  tonic: []
 }
 
 /** Framework and runtime crates that never appear in the core, whatever the tables above say. */
@@ -93,54 +95,65 @@ interface Dependency {
   name: string
   kind: string | null
 }
-interface Metadata {
-  packages: { name: string; dependencies: Dependency[] }[]
+export interface WorkspaceCrate {
+  name: string
+  dependencies: Dependency[]
 }
 
-const run = spawnSync('cargo', ['metadata', '--format-version', '1', '--no-deps'], {
-  encoding: 'utf8',
-  maxBuffer: 64 * 1024 * 1024
-})
-if (run.status !== 0) {
-  console.error(`check-deps: \`cargo metadata\` failed\n${run.stderr}`)
-  process.exit(1)
-}
-const metadata = JSON.parse(run.stdout) as Metadata
-
-const problems: string[] = []
-const seen = new Set<string>()
-for (const pkg of metadata.packages) {
-  const allowed = INTERNAL[pkg.name]
-  if (!allowed) {
-    problems.push(`${pkg.name}: workspace crate is not placed (add it to INTERNAL in scripts/check-deps.ts)`)
-    continue
+/** What `cargo metadata --no-deps` says about the workspace crates, checked against the tables above. */
+export function findProblems(packages: WorkspaceCrate[]): { problems: string[]; seen: Set<string> } {
+  const problems: string[] = []
+  const seen = new Set<string>()
+  for (const pkg of packages) {
+    const allowed = INTERNAL[pkg.name]
+    if (!allowed) {
+      problems.push(`${pkg.name}: workspace crate is not placed (add it to INTERNAL in scripts/check-deps.ts)`)
+      continue
+    }
+    seen.add(pkg.name)
+    // a framework crate is held to its home whether it is a normal or a build dependency; a dev-dependency (a test
+    // client or server) is exempt
+    for (const { name, kind } of pkg.dependencies) {
+      const homes = FRAMEWORK_HOMES[name]
+      if (kind !== 'dev' && homes && !homes.includes(pkg.name)) {
+        problems.push(
+          `${pkg.name} -> ${name}: framework crate is not allowed here as a ${kind ?? 'normal'} dependency (allowed in: ${homes.join(', ') || 'none'})`
+        )
+      }
+    }
+    for (const { name } of pkg.dependencies.filter((d) => d.kind === null)) {
+      const internal = name in INTERNAL
+      if (internal && !allowed.includes(name)) {
+        problems.push(`${pkg.name} -> ${name}: internal edge not allowed (allowed: ${allowed.join(', ') || 'none'})`)
+      }
+      const core = CORE_EXTERNAL[pkg.name]
+      if (core && !internal && !core.has(name)) {
+        problems.push(`${pkg.name} -> ${name}: external crate is not on the core allow-list`)
+      }
+      if (core && FRAMEWORKS.has(name)) {
+        problems.push(`${pkg.name} -> ${name}: framework or runtime crate in the core`)
+      }
+    }
   }
-  seen.add(pkg.name)
-  const normal = pkg.dependencies.filter((d) => d.kind === null)
-  for (const { name } of normal) {
-    const internal = name in INTERNAL
-    if (internal && !allowed.includes(name)) {
-      problems.push(`${pkg.name} -> ${name}: internal edge not allowed (allowed: ${allowed.join(', ') || 'none'})`)
-    }
-    const homes = FRAMEWORK_HOMES[name]
-    if (homes && !homes.includes(pkg.name)) {
-      problems.push(`${pkg.name} -> ${name}: framework crate is not allowed here as a normal dependency (allowed in: ${homes.join(', ')})`)
-    }
-    const core = CORE_EXTERNAL[pkg.name]
-    if (core && !internal && !core.has(name)) {
-      problems.push(`${pkg.name} -> ${name}: external crate is not on the core allow-list`)
-    }
-    if (core && FRAMEWORKS.has(name)) {
-      problems.push(`${pkg.name} -> ${name}: framework or runtime crate in the core`)
-    }
+  for (const name of Object.keys(INTERNAL)) {
+    if (!seen.has(name)) problems.push(`${name}: listed in INTERNAL but not in the workspace`)
   }
-}
-for (const name of Object.keys(INTERNAL)) {
-  if (!seen.has(name)) problems.push(`${name}: listed in INTERNAL but not in the workspace`)
+  return { problems, seen }
 }
 
-if (problems.length > 0) {
-  console.error(`dependency direction violations:\n  ${problems.join('\n  ')}`)
-  process.exit(1)
+if (import.meta.main) {
+  const run = spawnSync('cargo', ['metadata', '--format-version', '1', '--no-deps'], {
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024
+  })
+  if (run.status !== 0) {
+    console.error(`check-deps: \`cargo metadata\` failed\n${run.stderr}`)
+    process.exit(1)
+  }
+  const { problems, seen } = findProblems((JSON.parse(run.stdout) as { packages: WorkspaceCrate[] }).packages)
+  if (problems.length > 0) {
+    console.error(`dependency direction violations:\n  ${problems.join('\n  ')}`)
+    process.exit(1)
+  }
+  console.log(`dependency direction OK (${seen.size} crates checked)`)
 }
-console.log(`dependency direction OK (${seen.size} crates checked)`)
