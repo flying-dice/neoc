@@ -1,4 +1,11 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
+//! LuaJIT notes (the VM is `neoc-vm`, LuaJIT 2.1 in its 5.1 mode, here): where an expectation below was a PUC Lua 5.1
+//! fact and LuaJIT differs, the test says so. The differences that matter: a LuaJIT bytecode header is `\x1bLJ`;
+//! LuaJIT's pattern matcher bounds its own recursion (`pattern too complex`, `too many captures`), so `lua::patterns`
+//! is not needed; LuaJIT yields across `pcall`, `xpcall`, metamethods and `for ... in` iterators (only C functions
+//! with a callback, such as `string.gsub` and `table.sort`, and the handler of `xpcall`, refuse); and a function that
+//! tail-calls a host function leaves no frame of its own, so an error from that call carries no app line.
+//!
 //! What running on standard Lua 5.1 changes: the sandbox of an app's environment (nothing is budgeted: apps
 //! get Lua's own `string` and `table` functions), and async host calls where 5.1 cannot yield (across `pcall`,
 //! metamethods, C functions).
@@ -49,7 +56,8 @@ async fn text_only_loading_binary_chunks_never_run() {
         .unwrap()
         .as_bytes()
         .to_vec();
-    assert!(bytecode.starts_with(b"\x1bLua"));
+    // LuaJIT bytecode starts `\x1bLJ` (PUC Lua 5.1: `\x1bLua`)
+    assert!(bytecode.starts_with(b"\x1bLJ"));
     let package = agentos_application::ports::AppPackage {
         entry: "app.lua".into(),
         files: [("app.lua".to_owned(), bytecode)].into(),
@@ -166,7 +174,10 @@ async fn the_preludes_polyfills_are_there_and_sealed() {
 
 // ---- patterns and strings, which C code would run unchecked ------------------------------------------------
 
-/// Lua 5.1's C pattern matcher recurses with no depth limit: `("a?"):rep(20000)` overflowed a 2 MiB stack (a
+/// LuaJIT: the matcher bounds its own recursion (`MAXCCALLS` 200: `pattern too complex`) and its captures (32:
+/// `too many captures`), so no guard of ours is in the way and the refusal is LuaJIT's own.
+///
+/// PUC Lua 5.1's C pattern matcher recurses with no depth limit: `("a?"):rep(20000)` overflowed a 2 MiB stack (a
 /// `#[tokio::test]` runs on one) and aborted the process. In an app it is a Lua error the app can catch.
 #[tokio::test]
 async fn a_huge_pattern_in_an_app_is_a_catchable_error_not_a_stack_overflow() {
@@ -177,9 +188,10 @@ async fn a_huge_pattern_in_an_app_is_a_catchable_error_not_a_stack_overflow() {
           for _, item in ipairs { "a?", "a*", "(a)" } do
             local pattern = item:rep(20000)
             local ok, err = pcall(string.find, subject, pattern)
-            results[#results + 1] = { ok = ok, refused = tostring(err):find("pattern too complex", 1, true) ~= nil }
+            local function refused(e) return tostring(e):find("pattern too complex", 1, true) ~= nil or tostring(e):find("too many captures", 1, true) ~= nil end
+            results[#results + 1] = { ok = ok, refused = refused(err) }
             ok, err = pcall(function() return subject:gsub(pattern, "") end)
-            results[#results + 1] = { ok = ok, refused = tostring(err):find("pattern too complex", 1, true) ~= nil }
+            results[#results + 1] = { ok = ok, refused = refused(err) }
           end
           return results
         end)
@@ -391,21 +403,48 @@ async fn dropping_a_call_that_waits_inside_coroutines_ends_it_without_running_ap
 }
 
 #[tokio::test]
-async fn a_host_call_where_lua_5_1_cannot_yield_fails_with_a_clear_error_not_a_hang() {
-    // the known limits: callbacks code in Rust runs (gsub) and `for ... in` iterator functions
+async fn a_host_call_where_lua_cannot_yield_fails_with_a_clear_error_not_a_hang() {
+    // the known limits on LuaJIT: C functions that call back into Lua (gsub, a sort comparator), the handler of
+    // `xpcall` and `string.format("%s")` of a `__tostring`. (On PUC Lua 5.1 a metamethod and a `for ... in` iterator
+    // function were limits too; LuaJIT yields across both, see `host_calls_in_metamethods_and_iterators_yield`.)
     let src = r#"
         app.tools.register { name = "limits", run = function()
           local function message(fn) local ok, e = pcall(fn) return ok and "worked" or tostring(e) end
           return {
             gsub = message(function() return (string.gsub("a", "a", function() app.kv:get("k") return "b" end)) end),
-            iterator = message(function() for _ in function() app.kv:get("k") end do break end end),
+            sort = message(function() table.sort({ 2, 1 }, function(a, b) app.kv:get("k") return a < b end) end),
+            format = message(function() return string.format("%s", setmetatable({}, { __tostring = function() app.kv:get("k") return "s" end })) end),
+            xpcall_handler = select(2, xpcall(function() error("e") end, function(m) app.kv:get("k") return m end)),
           }
         end }
     "#;
     let vm = load(src).await;
     let out = vm.call_tool("limits", json!({}), &agent_ctx(0), false).await.unwrap();
-    for field in ["gsub", "iterator"] {
+    for field in ["gsub", "sort", "format"] {
         let message = out[field].as_str().unwrap();
         assert!(message.contains("yield across"), "{field}: {message}");
     }
+    // a wait refused inside the message handler is an error in the handler: xpcall reports it, the script goes on
+    assert_eq!(out["xpcall_handler"], json!("error in error handling"), "{out}");
+}
+
+/// LuaJIT, unlike PUC Lua 5.1, suspends across metamethods and `for ... in` iterator functions: an async host call
+/// there is an ordinary wait, not an error.
+#[tokio::test]
+async fn host_calls_in_metamethods_and_iterators_yield() {
+    let src = r#"
+        app.tools.register { name = "yields", run = function()
+          local mt = setmetatable({}, {
+            __index = function() return app.kv:get("k") or "index" end,
+            __add = function() app.kv:set("k", "add") return app.kv:get("k") end,
+            __tostring = function() return app.kv:get("k") or "ts" end,
+          })
+          local seen = {}
+          for v in function() if #seen < 2 then seen[#seen + 1] = app.kv:get("k") or "iter" return #seen end end do end
+          return { index = mt.x, add = mt + 1, tostring = tostring(mt), iterations = #seen }
+        end }
+    "#;
+    let vm = load(src).await;
+    let out = vm.call_tool("yields", json!({}), &agent_ctx(0), false).await.unwrap();
+    assert_eq!(out, json!({ "index": "index", "add": "add", "tostring": "add", "iterations": 2 }));
 }

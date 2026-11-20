@@ -1,8 +1,11 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
 //! A generator of hostile scripts, and the invariants every one of them must leave intact.
 //!
-//! Lua 5.1 cannot yield across a `string.gsub` callback, a sort comparator, a metamethod or an iterator, so a host
-//! call made there fails with a Lua error, and the script (which may catch it) goes on. Each way that can leave a
+//! Lua cannot yield across some of its own machinery, so a host call made there fails with a Lua error, and the script
+//! (which may catch it) goes on. On LuaJIT (the VM under test here) those places are the C functions that call back
+//! into Lua (`string.gsub`, `table.sort`), `string.format("%s")` of a `__tostring` and the message handler of
+//! `xpcall`; PUC Lua 5.1 also refused metamethods and `for ... in` iterator functions, which LuaJIT suspends across
+//! (the generator still puts leaves there, as ordinary suspensions: see `CONTEXTS`). Each way that can leave a
 //! call half-done (a future, a lend mark, a lock, a transaction) was found one case at a time; this test builds
 //! programs out of the ingredients and checks the invariants over all of them instead.
 //!
@@ -182,31 +185,46 @@ const CONTROLS: &[Control] = &[
     Control::SpawnInTx,
 ];
 
-/// Where Lua 5.1 cannot yield. Each gets the body in place of `<S>`.
-const CONTEXTS: &[(&str, &str)] = &[
-    ("gsub callback", "string.gsub('a', 'a', function() <S> end)"),
-    ("sort comparator", "table.sort({ 3, 2, 1 }, function(a, b) <S> return a < b end)"),
-    ("__index", "local _ = setmetatable({}, { __index = function() <S> end }).x"),
-    ("__add", "local _ = setmetatable({}, { __add = function() <S> return 1 end }) + 1"),
-    ("for iterator", "for _ in function() <S> end do end"),
+/// Places a leaf runs inside Lua's own machinery. Each gets the body in place of `<S>`. The flag says whether LuaJIT
+/// can suspend there: where it cannot, the host call fails and the step must not lend the turn (and nothing may
+/// run inside it); where it can (a metamethod, an iterator, `tostring`), the leaf is an ordinary suspension.
+const CONTEXTS: &[(&str, &str, bool)] = &[
+    ("gsub callback", "string.gsub('a', 'a', function() <S> end)", false),
+    ("sort comparator", "table.sort({ 3, 2, 1 }, function(a, b) <S> return a < b end)", false),
+    (
+        "string.format __tostring",
+        "local _ = string.format('%s', setmetatable({}, { __tostring = function() <S> return 's' end }))",
+        false,
+    ),
+    ("xpcall handler", "xpcall(function() error('x') end, function(m) <S> return m end)", false),
+    ("__index", "local _ = setmetatable({}, { __index = function() <S> end }).x", true),
+    ("__add", "local _ = setmetatable({}, { __add = function() <S> return 1 end }) + 1", true),
+    ("for iterator", "for _ in function() <S> end do end", true),
+    (
+        "tostring",
+        "local _ = tostring(setmetatable({}, { __tostring = function() <S> return 's' end }))",
+        true,
+    ),
 ];
 
 fn wrap(control: Control, body: &str) -> String {
     match control {
-        // each protected call stashes the thread its body runs in, for the meddlers to find (it is not the script's)
-        Control::Pcall => format!("pcall(function() SH[#SH + 1] = coroutine.running() {body} end)"),
+        // each protected call stashes the thread its body runs in, for the meddlers to find. On LuaJIT a protected call runs
+        // in the thread that called it (PUC Lua 5.1 with the coroutine-based `pcall` ran it in a thread of its own), so
+        // `sh()` skips a thread the script made itself: those may be resumed (rule 6), the call's and the tasks' may not
+        Control::Pcall => format!("pcall(function() sh() {body} end)"),
         Control::Xpcall => format!(
-            "xpcall(function() SH[#SH + 1] = coroutine.running() {body} end, function(e) return e end)"
+            "xpcall(function() sh() {body} end, function(e) return e end)"
         ),
         Control::NestedPcall => format!(
-            "pcall(function() SH[#SH + 1] = coroutine.running() pcall(function() SH[#SH + 1] = coroutine.running() {body} end) end)"
+            "pcall(function() sh() pcall(function() sh() {body} end) end)"
         ),
         Control::CoCreate => format!(
-            "do local co = coroutine.create(function() {body} end) keep[#keep + 1] = co coroutine.resume(co) end"
+            "do local co = coroutine.create(function() {body} end) MINE[co] = true keep[#keep + 1] = co coroutine.resume(co) end"
         ),
         // the thread inside a `wrap` is the script's own: it is kept with the coroutines the meddlers may resume
         Control::CoWrap => format!(
-            "do local w = coroutine.wrap(function() keep[#keep + 1] = coroutine.running() {body} end) WR[#WR + 1] = w pcall(w) end"
+            "do local w = coroutine.wrap(function() MINE[coroutine.running()] = true keep[#keep + 1] = coroutine.running() {body} end) WR[#WR + 1] = w pcall(w) end"
         ),
         Control::Yield => format!("{body} coroutine.yield() coroutine.yield()"),
         Control::Spawn => format!("task_start(task.spawn, function() {body} end)"),
@@ -218,7 +236,7 @@ fn wrap(control: Control, body: &str) -> String {
             "TX(function() task_start(task.spawn, function() {body} end) local _ = app.db:one('select 1 as one') end)"
         ),
         Control::Stale => format!(
-            "do local co = coroutine.create(function() {body} end) keep[#keep + 1] = co \
+            "do local co = coroutine.create(function() {body} end) MINE[co] = true keep[#keep + 1] = co \
              pcall(string.gsub, 'a', 'a', function() coroutine.resume(co) end) \
              TX(function() coroutine.resume(co) end) coroutine.resume(co) end"
         ),
@@ -257,14 +275,20 @@ fn step(rng: &mut Rng, n: usize, kind: Kind) -> Step {
         describe.push_str(" (inner control)");
     }
     if rng.chance(65) {
-        let (name, template) = *rng.pick(CONTEXTS);
+        let (name, template, yields) = *rng.pick(CONTEXTS);
         let _ = write!(describe, " in a {name}");
-        // the context fails the host call with a Lua error, so it runs under `pcall`, with a counter check around it
-        body = format!(
-            "do local c0 = counter pcall(function() {} end) if counter ~= c0 then viol('another call ran inside a {name}') end end",
-            template.replace("<S>", &body)
-        );
-        may_lend = false;
+        let inside = template.replace("<S>", &body);
+        if yields {
+            // LuaJIT suspends here: an idle wait lends the turn as anywhere else, so nothing is added
+            body = format!("pcall(function() {inside} end)");
+        } else {
+            // the context fails the host call with a Lua error, so it runs under `pcall`, with a counter check
+            // around it
+            body = format!(
+                "do local c0 = counter pcall(function() {inside} end) if counter ~= c0 then viol('another call ran inside a {name}') end end"
+            );
+            may_lend = false;
+        }
     }
     for _ in 0..rng.below(3) {
         let control = *rng.pick(CONTROLS);
@@ -293,6 +317,10 @@ local A, X, V, keep, pending, txp = {}, {}, {}, {}, 0, nil
 -- what the program leaves behind for another call to find: the threads it did not make (its top-level thread, the
 -- threads its tasks and its protected calls run in: no script may resume them) and the functions of its `coroutine.wrap`s
 local SH, WR = {}, {}
+-- the coroutines the script made itself (`create`, `wrap`): on LuaJIT a `pcall` runs in the thread that called it, so
+-- `coroutine.running()` inside one is the script's own coroutine when the `pcall` is inside one
+local MINE = setmetatable({}, { __mode = "k" })
+local function sh() local t = coroutine.running() if not MINE[t] then SH[#SH + 1] = t end end
 -- set while a side call resumes the program's own script coroutines: they run in the resumer's turn, as Lua says
 local MEDDLING = false
 

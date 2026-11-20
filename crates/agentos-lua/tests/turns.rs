@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
 //! Whose turn it is in the VM, and what the call that holds it may do. Every test here failed before its fix.
 //!
-//! - a wait Lua cannot yield from (a `string.gsub` callback, a sort comparator, a metamethod, an iterator) fails
+//! - a wait Lua cannot yield from (a `string.gsub` callback, a sort comparator, an `xpcall` handler: see `SPELLINGS`) fails
 //!   with a Lua error and must not lend the turn: the call keeps it, and a `readOnly` tool stays read-only;
 //! - a wait that failed to yield must not make the call give up the turn at the *next* thing it waits for: a host
 //!   call Lua could not suspend at is abandoned the moment the script goes on (every async host function is a
@@ -46,14 +46,31 @@ async fn canned_server() -> String {
 
 // ---- a wait that cannot yield keeps the turn --------------------------------------------------------------------
 
-/// Each way Lua 5.1 refuses a yield (a C function or the VM calling back into Lua), with each kind of wait
-/// inside it. `WAIT` is replaced with the wait's source.
-const SPELLINGS: &[(&str, &str)] = &[
-    ("gsub callback", r#"string.gsub("a", "a", function() WAIT end)"#),
-    ("sort comparator", r"table.sort({ 3, 2, 1 }, function(a, b) WAIT return a < b end)"),
-    ("__index metamethod", r"local _ = setmetatable({}, { __index = function() WAIT end }).x"),
-    ("__add metamethod", r"local _ = setmetatable({}, { __add = function() WAIT return 1 end }) + 1"),
-    ("for iterator", r"for _ in function() WAIT end do end"),
+/// Where a host call runs inside Lua's own machinery, with each kind of wait inside it. `WAIT` is replaced with the
+/// wait's source. The flag says whether the engine can suspend there.
+///
+/// On LuaJIT (this VM) the C functions that call back into Lua (`string.gsub`, `table.sort`), `string.format("%s")`
+/// of a `__tostring` and the message handler of `xpcall` refuse a yield: the wait fails and must not lend the turn.
+/// A metamethod and a `for ... in` iterator function do not refuse it (PUC Lua 5.1 did): the wait suspends and lends
+/// the turn like any other, and the call is read-only on resuming, as before. LuaJIT's `tostring()` yields too.
+const SPELLINGS: &[(&str, &str, bool)] = &[
+    ("gsub callback", r#"string.gsub("a", "a", function() WAIT end)"#, false),
+    ("sort comparator", r"table.sort({ 3, 2, 1 }, function(a, b) WAIT return a < b end)", false),
+    (
+        "string.format __tostring",
+        r#"local _ = string.format("%s", setmetatable({}, { __tostring = function() WAIT return "s" end }))"#,
+        false,
+    ),
+    (
+        "xpcall handler",
+        // the handler cannot raise the wait's error to the caller (xpcall would answer "error in error handling"),
+        // so it keeps it and the script raises it after
+        r#"local why xpcall(function() error("e") end, function(m) local ok, e = pcall(function() WAIT end) why = e return m end) if why then error(why, 0) end"#,
+        false,
+    ),
+    ("__index metamethod", r"local _ = setmetatable({}, { __index = function() WAIT end }).x", true),
+    ("__add metamethod", r"local _ = setmetatable({}, { __add = function() WAIT return 1 end }) + 1", true),
+    ("for iterator", r"for _ in function() WAIT end do end", true),
 ];
 
 fn waits(url: &str) -> Vec<(&'static str, String)> {
@@ -68,7 +85,7 @@ fn waits(url: &str) -> Vec<(&'static str, String)> {
 async fn a_wait_that_cannot_yield_does_not_lend_the_turn_of_a_read_only_tool() {
     let url = canned_server().await;
     let mut attempts = String::new();
-    for (spelling, source) in SPELLINGS {
+    for (spelling, source, _) in SPELLINGS {
         for (wait, call) in waits(&url) {
             let body = source.replace("WAIT", &call);
             write!(
@@ -126,10 +143,17 @@ async fn a_wait_that_cannot_yield_does_not_lend_the_turn_of_a_read_only_tool() {
     let results = out.as_object().unwrap();
     assert_eq!(results.len(), SPELLINGS.len() * 3, "{out}");
     for (name, r) in results {
-        // the wait failed where Lua cannot yield, the call went on, and it is still read-only
-        assert_eq!(r["ok"], false, "{name}: {r}");
-        assert!(r["why"].as_str().unwrap().contains("yield"), "{name}: {r}");
-        assert_eq!(r["interleaved"], false, "{name}: another call ran inside this one: {r}");
+        let yields = SPELLINGS.iter().any(|(spelling, _, yields)| *yields && name.starts_with(spelling));
+        if yields {
+            // the wait suspended for real (the turn was lent, so a writable tool may have run meanwhile), and the
+            // call is still read-only afterwards: the restriction belongs to the call, not to the turn
+            assert_eq!(r["ok"], true, "{name}: LuaJIT suspends here: {r}");
+        } else {
+            // the wait failed where Lua cannot yield, the call went on, and it is still read-only
+            assert_eq!(r["ok"], false, "{name}: {r}");
+            assert!(r["why"].as_str().unwrap().contains("yield"), "{name}: {r}");
+            assert_eq!(r["interleaved"], false, "{name}: another call ran inside this one: {r}");
+        }
         assert_eq!(r["db_write"], true, "{name}: {r}");
         assert_eq!(r["state_write"], true, "{name}: {r}");
         assert_eq!(r["kv_write"], true, "{name}: {r}");

@@ -114,7 +114,9 @@ impl Rig {
 
 #[tokio::test]
 async fn every_library_module_can_be_required_and_is_one_table_per_app() {
-    let names: Vec<&str> = modules::names().collect();
+    // the library offers every module; an app is not offered these three (`require.rs`, `NOT_FOR_APPS`)
+    let names: Vec<&str> =
+        modules::names().filter(|n| !["lib:test", "lib:compile", "std:workers"].contains(n)).collect();
     assert!(names.len() >= 46, "{names:?}");
     let list = names.iter().map(|n| format!("{n:?}")).collect::<Vec<_>>().join(", ");
     let src = format!(
@@ -208,6 +210,35 @@ async fn a_worker_gets_the_same_modules_and_lib_log_goes_to_tracing_not_stdout()
     assert_eq!(out["sha"], "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "{out}");
     assert_eq!(vm.call_tool("log", json!({}), &agent_ctx(0), false).await.unwrap(), json!(true));
     // the worker's OS thread is released with the app, not left to the end of the process
+    vm.shutdown();
+}
+
+/// A worker is offered what its app was offered: `std:workers` fires the process-wide shutdown signal that every
+/// app's `server:wait()` selects on, so an app that is refused it must not get it through `std:thread`.
+#[tokio::test]
+async fn a_worker_is_refused_what_its_app_is_refused() {
+    let src = r#"
+        local thread = require("std:thread")
+        app.tool { name = "probe", run = function()
+          local app_side = {}
+          for _, n in ipairs { "std:workers", "lib:compile", "lib:test", "lib:json" } do
+            app_side[n] = (pcall(require, n))
+          end
+          local worker = thread.spawn { source = [[
+            local out = {}
+            for _, n in ipairs { "std:workers", "lib:compile", "lib:test", "lib:json" } do
+              out[n] = (pcall(require, n))
+            end
+            return out
+          ]] }
+          return { app = app_side, worker = worker:await() }
+        end }
+    "#;
+    let vm = load(src).await;
+    let out = vm.call_tool("probe", json!({}), &agent_ctx(0), false).await.unwrap();
+    let expected = json!({ "std:workers": false, "lib:compile": false, "lib:test": false, "lib:json": true });
+    assert_eq!(out["app"], expected, "{out}");
+    assert_eq!(out["worker"], expected, "{out}");
     vm.shutdown();
 }
 

@@ -14,8 +14,12 @@ pub fn fake_agent_path() -> PathBuf {
     BUILT
         .get_or_init(|| {
             let exe = std::env::current_exe().unwrap();
-            // target/<profile>/deps/<test> -> target/<profile>
-            let profile_dir = exe.parent().unwrap().parent().unwrap();
+            // target/<profile>/deps/<test> -> target/<profile> (with cargo's newer build-dir layout the test sits in
+            // target/<profile>/build/<package>/<hash>/out: the profile directory is the nearest `debug`/`release`)
+            let profile_dir = exe
+                .ancestors()
+                .find(|p| p.file_name().is_some_and(|n| n == "debug" || n == "release"))
+                .unwrap();
             let path = profile_dir.join(if cfg!(windows) { "fake_agent.exe" } else { "fake_agent" });
             if !path.exists() {
                 let status = std::process::Command::new(env!("CARGO"))
