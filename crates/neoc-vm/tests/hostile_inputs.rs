@@ -1,0 +1,686 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test harness
+//! Every function of every module the VM offers, called with hostile numbers, strings and tables
+//! (infinities, NaN, negatives, `2^53`, `2^63`, `1e300`, invalid UTF-8, mid-character text, cyclic and
+//! absurdly keyed tables), and the methods of the handles they return. Each call must give a value or a Lua
+//! error: a panic is a bug, because a panic reachable from script input takes the host down (the release
+//! profile unwinds, but a panic inside a native callback still ends the call it was made in and a stack
+//! overflow or an allocation failure aborts the process regardless).
+//!
+//! The harness records panics with a hook (mlua turns a callback's panic into a Lua error that `pcall`
+//! returns as a string, and outside `pcall` resumes the unwind at the outermost call; the hook sees the
+//! panic either way, so neither hides it) and a watchdog turns a hang
+//! into a failure that names the call. Allocation failures and stack overflows abort the process: that
+//! is a failure too, the test binary dies on the call it printed last (`HOSTILE_TRACE=1`).
+//!
+//! The sweep and the other tests here run on a 2 MiB thread (the stack of a default runtime worker): a
+//! recursion that only fits a bigger stack is a stack overflow, which aborts the host, so it fails here.
+//!
+//! Not swept: `std:thread`, `std:net` and the network modules (`vnd:hyper`, `vnd:sqlx_*`, `vnd:testcontainers_modules`), which open
+//! sockets or spawn workers, `std:workers` (a process-wide Ctrl-C signal) and `std:task` (its sleeps are covered by `std/task.rs` tests). The sweep
+//! runs in a scratch working directory.
+
+use mlua::{AnyUserData, Function, Lua, MultiValue, Table, Value};
+use neoc_vm::lua::sandbox::make_engine;
+use std::{
+    panic::{AssertUnwindSafe, catch_unwind},
+    sync::{Arc, Mutex, mpsc},
+    time::Duration,
+};
+
+/// Every module name `modules.rs` registers, read from its source so a module added later is swept too.
+fn module_names() -> Vec<String> {
+    let source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lua/modules.rs"),
+    )
+    .unwrap();
+    let names: Vec<String> = regex::Regex::new(r#"modules\.insert\(\s*"((?:std|lib|vnd):\w+)""#)
+        .unwrap()
+        .captures_iter(&source)
+        .map(|c| c[1].to_owned())
+        .collect();
+    assert!(names.len() >= 50, "found only {} modules", names.len());
+    names
+}
+
+const SKIPPED_MODULES: &[&str] = &[
+    "std:thread",
+    "std:net",
+    "std:task",
+    "std:workers",
+    "vnd:hyper",
+    "vnd:sqlx_mysql",
+    "vnd:sqlx_postgres",
+    "vnd:testcontainers_modules",
+];
+
+/// Functions that block on purpose (stdin, sleeps, servers) and are not an input-validation surface.
+const SKIPPED_FUNCTIONS: &[&str] = &[
+    "stdin",
+    "read_line",
+    "sleep",
+    "park",
+    "wait",
+    "serve",
+    "serve_static",
+];
+
+/// The hostile values, as Lua source (built in the VM so tables and functions are real).
+const POOL: &str = r#"
+    -- an options table with one hostile number under every option name the modules read
+    local function opts(n)
+      local t = {}
+      for _, key in ipairs { "context", "width", "max_size", "max_output_size", "level", "limit", "size", "length",
+        "count", "depth", "indent", "max_len", "ttl", "capacity", "timeout", "step_by", "max_entries", "mtime",
+        "mode", "radius", "offset", "max_depth" } do t[key] = n end
+      return t
+    end
+    local cyc = {} cyc[1] = cyc cyc.self = cyc
+    local deep = {} for _ = 1, 50000 do deep = { deep } end
+    return {
+        true, false,
+        0, -0, 1, -1, 255, 256, 65536, 2^31, 2^32, -2^31, 2^53, 2^53 + 2, -2^53, 2^63, -2^63, 2^64, 1e300, -1e300,
+        1/0, -1/0, 0/0, 0.5, -0.5, 1e-300,
+        "", "a\0b", "\255\254\253", "\195", "Ü", "ÜÜÜÜÜÜÜÜÜÜ", "&ÜÜÜÜÜÜÜÜ;", "%ÜÜ", "a=b", "🦀",
+        ("é"):rep(50), ("&"):rep(100), ("\240\159"):rep(20),
+        {}, { 1, 2, 3 }, { a = 1 }, { [2^53] = 1 }, { [1e300] = "x" }, { [-1] = 1, [0] = 2 },
+        { 1, nil, 3 }, { "a", "b" }, { {}, {} }, cyc, deep,
+        function() end,
+        print,
+        opts(1e300), opts(2^63), opts(2^53), opts(-1), opts(0/0), opts(1/0), opts(-1/0),
+        -- text that nests: parsers, pattern compilers and template engines recurse on these
+        -- (past the recursion limit of every parser, small enough that quadratic ones like `diff` stay quick)
+        ("["):rep(3000), ("{"):rep(3000), ("("):rep(3000), ("<a>"):rep(2000), ("(?:"):rep(2000),
+        ("{a,"):rep(130) .. "a" .. ("}"):rep(130), ("a?"):rep(2000),
+        ("{% for i in [1] %}"):rep(500), ("{% if true %}"):rep(500), "{{ 1" .. (" + 1"):rep(3000) .. " }}",
+        -- Tera 1.20 panics on these: `i64::MIN % -1`, and a macro call as an operand of arithmetic or of `<`
+        -- (`lib:template` refuses the second and catches the first)
+        "{{ (0 - 9223372036854775807 - 1) % -1 }}",
+        "{% macro m() %}1{% endmacro m %}{{ 1 + self::m() }}{% if self::m() > 0 %}a{% endif %}",
+    }
+"#;
+
+/// Text and tables nested a hundred thousand deep, for every bracket kind a parser, a pattern compiler or a
+/// template engine might recurse on (and the keys of nested tables). [`POOL`]'s nesting is only thousands deep, which
+/// the recursion limits of the parsers in use survive: a glob parser that recursed once per `{` still fit
+/// there and overflowed here. Swept with one and two arguments only (every function would be quadratic in these).
+const DEEP: &str = r#"
+    local N = 100000
+    local deep, deep_keys = {}, {}
+    for _ = 1, N do deep = { deep } deep_keys = { a = deep_keys } end
+    return {
+        ("["):rep(N), ("{"):rep(N), ("("):rep(N), ("<"):rep(N), ("<a>"):rep(N), ("[["):rep(N), ("{{"):rep(N),
+        ("(?:"):rep(N), ("(?"):rep(N), ("[:"):rep(N), ("{a,"):rep(N), ("a{b,"):rep(N), ("a{1,"):rep(N),
+        ("${"):rep(N), ("<!--"):rep(N), ("- "):rep(N), ("a = ["):rep(N), ('{"a":'):rep(N), ("[1,"):rep(N),
+        ("{%"):rep(N), ("{{ ("):rep(N), ("%("):rep(N), ("\\"):rep(N), ("*"):rep(N), ("&"):rep(N),
+        ("["):rep(N) .. ("]"):rep(N), ("{"):rep(N) .. ("}"):rep(N), ("("):rep(N) .. (")"):rep(N),
+        ("<a>"):rep(N) .. ("</a>"):rep(N), ("{a,"):rep(N) .. ("}"):rep(N), ("a{b,"):rep(N) .. ("}"):rep(N),
+        deep, deep_keys,
+    }
+"#;
+
+/// A reduced pool (indices into [`POOL`]) for three-argument combinations and for the methods of handles:
+/// `1`, `-1`, `2^63`, `-2^63`, `1e300`, NaN; `""`, `"a\0b"`, `"&ÜÜÜÜÜÜÜÜ;"`, invalid UTF-8 cut mid-character;
+/// `{}`, `{ 1, 2, 3 }`, `{ a = 1 }`; and the options tables with `1e300`, `2^63` and NaN under every name.
+const SMALL_POOL: &[usize] = &[4, 5, 15, 16, 18, 22, 26, 27, 32, 38, 39, 40, 41, 52, 53, 56];
+
+static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+struct Harness {
+    lua: Lua,
+    pool: Vec<Value>,
+    deep: Vec<Value>,
+    panics: Arc<Mutex<Vec<String>>>,
+    current: Arc<Mutex<String>>,
+    calls: usize,
+    rt: tokio::runtime::Runtime,
+    trace: bool,
+}
+
+impl Harness {
+    fn call(&mut self, label: &str, f: &Function, args: &[Value]) -> Option<Vec<Value>> {
+        self.calls += 1;
+        CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if self.trace {
+            eprintln!("{label} #{}", args.len());
+        }
+        *self.current.lock().unwrap() = format!(
+            "{label}({})",
+            args.iter().map(describe).collect::<Vec<_>>().join(", ")
+        );
+        let before = self.panics.lock().unwrap().len();
+        let outcome = catch_unwind(AssertUnwindSafe(|| {
+            self.rt.block_on(async {
+                f.call_async::<MultiValue>(MultiValue::from_iter(args.iter().cloned()))
+                    .await
+            })
+        }));
+        if outcome.is_ok() {
+            // a panic inside Tera that `lib:template` caught and returned as an error is not a failure: the
+            // call completed. (One that unwound through the call still is.)
+            let mut recorded = self.panics.lock().unwrap();
+            let mut at = before;
+            while at < recorded.len() {
+                if recorded[at].contains("/tera-") {
+                    recorded.remove(at);
+                } else {
+                    at += 1;
+                }
+            }
+        }
+        if outcome.is_err() && self.panics.lock().unwrap().len() == before {
+            self.panics.lock().unwrap().push(format!(
+                "{}: unwound without a recorded message",
+                self.current.lock().unwrap()
+            ));
+        }
+        match outcome {
+            Ok(Ok(values)) => Some(values.into_iter().collect()),
+            _ => None,
+        }
+    }
+
+    fn sweep_function(&mut self, label: &str, f: &Function, prefix: &[Value]) -> Vec<AnyUserData> {
+        let mut handles = Vec::new();
+        let keep = |h: &mut Vec<AnyUserData>, out: Option<Vec<Value>>| {
+            for v in out.into_iter().flatten() {
+                if let Value::UserData(ud) = v
+                    && h.len() < 4
+                {
+                    h.push(ud);
+                }
+            }
+        };
+        let pool = self.pool.clone();
+        let with = |rest: &[Value]| -> Vec<Value> {
+            prefix.iter().cloned().chain(rest.iter().cloned()).collect()
+        };
+        let out = self.call(label, f, &with(&[]));
+        keep(&mut handles, out);
+        for a in &pool {
+            let out = self.call(label, f, &with(std::slice::from_ref(a)));
+            keep(&mut handles, out);
+        }
+        // A handle accumulates what earlier calls did to it, so its methods get the reduced pool throughout
+        // (a million-element array would make every later call a slow one).
+        let wide: Vec<&Value> = if prefix.is_empty() {
+            pool.iter().collect()
+        } else {
+            SMALL_POOL.iter().map(|&i| &pool[i]).collect()
+        };
+        for a in &wide {
+            for b in &wide {
+                let out = self.call(label, f, &with(&[(*a).clone(), (*b).clone()]));
+                keep(&mut handles, out);
+            }
+        }
+        // the deep nesting goes in as an argument, alone and next to a plain one (a pattern to
+        // compile or a text to parse, whichever way round), for module functions: the methods of a handle take the same text
+        // through the constructors swept here, and sweeping them too would only repeat the cost
+        if prefix.is_empty() {
+            let plain = self.lua.create_string("x").map(Value::String).unwrap();
+            for d in self.deep.clone() {
+                for args in [
+                    vec![d.clone()],
+                    vec![d.clone(), plain.clone()],
+                    vec![plain.clone(), d.clone()],
+                ] {
+                    let out = self.call(label, f, &args);
+                    keep(&mut handles, out);
+                }
+            }
+        }
+        if prefix.is_empty() {
+            for &i in SMALL_POOL {
+                for &j in SMALL_POOL {
+                    for &k in SMALL_POOL {
+                        let args = with(&[pool[i].clone(), pool[j].clone(), pool[k].clone()]);
+                        let out = self.call(label, f, &args);
+                        keep(&mut handles, out);
+                    }
+                }
+            }
+        }
+        handles
+    }
+
+    fn sweep_table(&mut self, label: &str, t: &Table, depth: usize) {
+        let mut entries: Vec<(String, Value)> =
+            t.pairs::<String, Value>().filter_map(Result::ok).collect();
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        for (name, value) in entries {
+            let path = format!("{label}.{name}");
+            match value {
+                Value::Function(f) if !SKIPPED_FUNCTIONS.contains(&name.as_str()) => {
+                    let handles = self.sweep_function(&path, &f, &[]);
+                    for (n, ud) in handles.into_iter().enumerate() {
+                        self.sweep_handle(&format!("{path}()#{n}"), &ud);
+                    }
+                }
+                Value::Table(inner) if depth < 2 => self.sweep_table(&path, &inner, depth + 1),
+                _ => {}
+            }
+        }
+    }
+
+    /// The methods of a handle: found through the `__index` table mlua builds for a userdata type.
+    fn sweep_handle(&mut self, label: &str, ud: &AnyUserData) {
+        let Ok(mt) = ud.metatable() else { return };
+        let Ok(Value::Table(methods)) = mt.get::<Value>("__index") else {
+            return;
+        };
+        let names: Vec<String> = methods
+            .pairs::<String, Value>()
+            .filter_map(Result::ok)
+            .map(|(k, _)| k)
+            .collect();
+        for name in names {
+            if SKIPPED_FUNCTIONS.contains(&name.as_str()) {
+                continue;
+            }
+            let Ok(Value::Function(f)) = methods.get::<Value>(name.as_str()) else {
+                continue;
+            };
+            // a method takes the handle itself first
+            self.sweep_function(
+                &format!("{label}:{name}"),
+                &f,
+                &[Value::UserData(ud.clone())],
+            );
+        }
+    }
+}
+
+fn describe(v: &Value) -> String {
+    match v {
+        Value::String(s) => {
+            let b = s.as_bytes();
+            format!("{:?}", String::from_utf8_lossy(&b[..b.len().min(24)]))
+        }
+        Value::Table(t) => format!("table(len {})", t.raw_len()),
+        Value::UserData(_) => "userdata".into(),
+        other => format!("{other:?}"),
+    }
+}
+
+fn sweep() -> (usize, Vec<String>) {
+    let scratch = tempfile::tempdir().unwrap();
+    std::env::set_current_dir(scratch.path()).unwrap();
+
+    let panics = Arc::new(Mutex::new(Vec::<String>::new()));
+    let current = Arc::new(Mutex::new(String::new()));
+    let hook_panics = panics.clone();
+    let hook_current = current.clone();
+    std::panic::set_hook(Box::new(move |info| {
+        let at = info.location().map(ToString::to_string).unwrap_or_default();
+        let msg = info
+            .payload()
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| {
+                info.payload()
+                    .downcast_ref::<&str>()
+                    .map(ToString::to_string)
+            })
+            .unwrap_or_default();
+        let line = format!("{at}: {msg}  <= {}", hook_current.lock().unwrap());
+        hook_panics.lock().unwrap().push(line);
+    }));
+
+    // a call that never returns is named after ten quiet seconds
+    {
+        let current = current.clone();
+        std::thread::spawn(move || {
+            let mut last = usize::MAX;
+            loop {
+                std::thread::sleep(Duration::from_secs(10));
+                let now = CALLS.load(std::sync::atomic::Ordering::Relaxed);
+                if now == last {
+                    eprintln!("STUCK for 10s in {}", current.lock().unwrap());
+                }
+                last = now;
+            }
+        });
+    }
+    let only = std::env::var("HOSTILE_ONLY").ok();
+    let mut total = 0;
+    for name in module_names()
+        .iter()
+        .map(String::as_str)
+        .filter(|n| !SKIPPED_MODULES.contains(n))
+    {
+        if only.as_deref().is_some_and(|o| !name.contains(o)) {
+            continue;
+        }
+        let lua = make_engine().unwrap();
+        let pool: Table = lua.load(POOL).eval().unwrap();
+        let pool: Vec<Value> = pool
+            .sequence_values::<Value>()
+            .map(Result::unwrap)
+            .collect();
+        let deep: Table = if std::env::var_os("HOSTILE_NO_DEEP").is_some() {
+            lua.create_table().unwrap()
+        } else {
+            lua.load(DEEP).eval().unwrap()
+        };
+        let deep: Vec<Value> = deep
+            .sequence_values::<Value>()
+            .map(Result::unwrap)
+            .collect();
+        let module: Table = lua
+            .load(format!("return require({name:?})"))
+            .eval()
+            .unwrap();
+        let mut h = Harness {
+            lua,
+            pool,
+            deep,
+            panics: panics.clone(),
+            current: current.clone(),
+            calls: 0,
+            trace: std::env::var_os("HOSTILE_TRACE").is_some(),
+            rt: tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap(),
+        };
+        let before = panics.lock().unwrap().len();
+        h.sweep_table(name, &module, 0);
+        total += h.calls;
+        eprintln!(
+            "{name}: {} calls, {} panics",
+            h.calls,
+            panics.lock().unwrap().len() - before
+        );
+        let _ = &h.lua;
+    }
+    let _ = std::panic::take_hook();
+    let found = panics.lock().unwrap().clone();
+    (total, found)
+}
+
+#[test]
+fn no_module_function_panics_on_hostile_input() {
+    let (tx, rx) = mpsc::channel();
+    std::thread::Builder::new()
+        .stack_size(2 << 20)
+        .spawn(move || {
+            let _ = tx.send(sweep());
+        })
+        .unwrap();
+    match rx.recv_timeout(Duration::from_mins(15)) {
+        Ok((calls, panics)) => {
+            eprintln!("{calls} hostile calls");
+            let mut by_site: std::collections::BTreeMap<String, String> =
+                std::collections::BTreeMap::new();
+            for p in panics {
+                let site = p.split("  <= ").next().unwrap_or_default().to_owned();
+                by_site.entry(site).or_insert(p);
+            }
+            let unique: Vec<String> = by_site.into_values().collect();
+            assert!(
+                unique.is_empty(),
+                "{} distinct panics:\n{}",
+                unique.len(),
+                unique.join("\n")
+            );
+        }
+        Err(e) => panic!("the sweep hung or died: {e}"),
+    }
+}
+
+/// Run `f` on a 2 MiB thread, the stack of a default runtime worker; a panic or stack overflow fails the test.
+fn on_small_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+    std::thread::Builder::new()
+        .stack_size(2 << 20)
+        .spawn(f)
+        .unwrap()
+        .join()
+        .expect("the call panicked")
+}
+
+/// LuaJIT's pattern matcher recurses in C like PUC Lua 5.1's, but counts its depth and gives up past
+/// `LJ_MAX_XLEVEL` (200) with "pattern too complex". These patterns would take tens of thousands of C frames:
+/// through `find`, `match`, `gmatch` and `gsub`, called as functions and as string methods, each must be a
+/// Lua error on a 2 MiB stack, not a stack overflow (an abort of the host). So no depth guard of our own is
+/// needed on top of the engine's (the `patterns.rs` guard of the Lua 5.1 build has no counterpart here).
+///
+/// Each item is followed by a literal (`a?b`) and the subject alternates `ab`, so the matcher goes deep at
+/// once instead of backtracking (`a+a+a+...` over `aaaa...` is a polynomial search: slow, not a crash, and
+/// what the engine does with any pattern; there is no time budget).
+#[test]
+fn a_pattern_with_tens_of_thousands_of_items_is_an_error_not_a_stack_overflow() {
+    let results = on_small_stack(|| {
+        let lua = neoc_vm::lua::sandbox::make_engine().unwrap();
+        let out: Table = lua
+            .load(
+                r#"
+                local out = {}
+                local subject = ("ab"):rep(20000)
+                -- the repetition items hit the depth limit; nested captures hit the capture limit first
+                for _, item in ipairs { "a?b", "a*b", "a+b", "a-b", "(a)b", "(", "(a?b)" } do
+                  local pattern = item:rep(20000)
+                  local calls = {
+                    function() return string.find(subject, pattern) end,
+                    function() return string.match(subject, pattern) end,
+                    function() return string.gmatch(subject, pattern)() end,
+                    function() return string.gsub(subject, pattern, "") end,
+                    function() return subject:find(pattern) end,
+                    function() return subject:gsub(pattern, "x") end,
+                  }
+                  for i, call in ipairs(calls) do
+                    local ok, err = pcall(call)
+                    out[#out + 1] = item .. "|" .. i .. "|" .. tostring(ok) .. "|" .. tostring(err)
+                  end
+                end
+                return out
+                "#,
+            )
+            .eval()
+            .unwrap();
+        out.sequence_values::<String>()
+            .map(Result::unwrap)
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(results.len(), 42);
+    for r in &results {
+        let mut parts = r.splitn(4, '|');
+        let (item, _, ok, err) = (
+            parts.next().unwrap(),
+            parts.next(),
+            parts.next().unwrap(),
+            parts.next().unwrap(),
+        );
+        assert_eq!(ok, "false", "{r}");
+        let want = if item.starts_with('(') {
+            "too many captures"
+        } else {
+            "pattern too complex"
+        };
+        assert!(err.contains(want), "{r}");
+    }
+}
+
+/// Patterns inside the engine's depth limit still match (on a 2 MiB thread, nested inside protected calls), and
+/// what is not a pattern is untouched.
+#[test]
+fn patterns_within_the_depth_limit_still_match_and_plain_searches_are_not_interpreted() {
+    on_small_stack(|| {
+        let lua = neoc_vm::lua::sandbox::make_engine().unwrap();
+        let ok: bool = lua
+            .load(
+                r##"
+                local items = 100
+                local subject = ("a"):rep(items)
+                local function nested(n, f) if n == 0 then return f() end return select(2, pcall(nested, n - 1, f)) end
+                local within = nested(100, function()
+                  return subject:find(("a?"):rep(items)) == 1 and select(2, subject:find(("a*"):rep(items))) == items
+                end)
+                local grouped = select("#", subject:match(("(a)"):rep(32))) == 32
+                -- a plain find reads no pattern, whatever it holds
+                local plain = (("x*"):rep(600)):find(("x*"):rep(600), 1, true) == 1
+                local over = pcall(string.find, ("ab"):rep(1000), ("a?b"):rep(1000))
+                local gsub = (("ab"):rep(100)):gsub("(a)(b)", "%2%1") == ("ba"):rep(100)
+                return within and grouped and plain and not over and gsub
+                "##,
+            )
+            .eval()
+            .unwrap();
+        assert!(ok);
+    });
+}
+
+/// globset parses `{...}` recursively: a pattern of nested alternations overflowed even a 16 MiB stack, an
+/// abort of the host. Every place the VM compiles a glob goes through one bounded helper: `lib:glob` (every
+/// constructor and `ignore`), `lib:archive`'s `include` and `lib:http`'s `serve_static`.
+#[test]
+fn deeply_nested_glob_patterns_are_an_error_in_every_entry_point() {
+    let lines = on_small_stack(|| {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let lua = neoc_vm::lua::sandbox::make_engine().unwrap();
+        let out: Table = rt
+            .block_on(
+                lua.load(
+                    r#"
+                    local glob, archive, http = require("lib:glob"), require("lib:archive"), require("lib:http")
+                    local out = {}
+                    for _, pattern in ipairs {
+                      ("{"):rep(100000) .. ("}"):rep(100000), ("a{b,"):rep(100000), ("{"):rep(100000),
+                      ("{a,"):rep(100) .. "a" .. ("}"):rep(100),
+                    } do
+                      local calls = {
+                        function() return glob.is_match(pattern, "a") end,
+                        function() return glob.Glob.new(pattern) end,
+                        function() return glob.GlobSet.new({ pattern }) end,
+                        function() return glob.scan(pattern, { cwd = "." }) end,
+                        function() return glob.scan("*", { cwd = ".", ignore = { pattern } }) end,
+                        function() return archive.tar_extract("not a tar", "out", { include = { pattern } }) end,
+                        function() return archive.zip_extract("not a zip", "out", { include = { pattern } }) end,
+                        function() return http.serve_static(pattern, { port = 0, host = "127.0.0.1" }) end,
+                      }
+                      for i, call in ipairs(calls) do
+                        local ok, value, err = pcall(call)
+                        -- a Lua error, or the (nil, message) pair: never a crash, never a handle
+                        local message = (not ok and tostring(value)) or (value == nil and tostring(err)) or "ACCEPTED"
+                        out[#out + 1] = i .. ":" .. message
+                      end
+                    end
+                    return out
+                    "#,
+                )
+                .eval_async::<Table>(),
+            )
+            .unwrap();
+        out.sequence_values::<String>()
+            .map(Result::unwrap)
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(lines.len(), 32);
+    assert!(
+        lines.iter().all(|l| l.contains("glob pattern")),
+        "{lines:#?}"
+    );
+}
+
+/// Render `source` with `lib:template` on a 2 MiB thread and return its error; a stack overflow aborts the
+/// test binary, so reaching the assertion is the proof.
+fn template_error_on_small_stack(source: String) -> String {
+    on_small_stack(move || {
+        let lua = make_engine().unwrap();
+        let (out, err): (Option<String>, Option<String>) = lua
+            .load(r#"return require("lib:template").render(..., {})"#)
+            .call(source)
+            .unwrap();
+        assert!(out.is_none(), "rendered {out:?}");
+        err.unwrap()
+    })
+}
+
+/// `lib:template` bounds what it renders. A chain of twenty thousand macros, none recursive, once overflowed the
+/// guard's own walk (it recursed once per macro), and a cycle check that restarted at every macro took minutes.
+#[test]
+fn a_chain_of_twenty_thousand_macros_is_refused_without_overflowing() {
+    let mut src = String::new();
+    for i in 0..20_000 {
+        src.push_str(&format!(
+            "{{% macro m{i}() %}}{{{{ self::m{}() }}}}{{% endmacro m{i} %}}",
+            i + 1
+        ));
+    }
+    src.push_str("{% macro m20000() %}end{% endmacro m20000 %}{{ self::m0() }}");
+    let started = std::time::Instant::now();
+    let err = template_error_on_small_stack(src);
+    assert!(err.contains("too complex"), "{err}");
+    assert!(
+        started.elapsed() < Duration::from_secs(60),
+        "took {:?}",
+        started.elapsed()
+    );
+}
+
+/// Tera evaluates the arguments of a macro call before it enters the macro, but a call inside an argument is
+/// still nested in the call around it: eight levels of arguments in each of 23 macros went through the guard as
+/// siblings and aborted a debug build on 2 MiB.
+#[test]
+fn macro_calls_nested_in_arguments_are_counted_as_nested() {
+    let nested = |callee: usize| {
+        format!(
+            "{}1{}",
+            format!("self::m{callee}(x=").repeat(8),
+            ")".repeat(8)
+        )
+    };
+    let mut src = String::new();
+    for i in 0..23 {
+        src.push_str(&format!(
+            "{{% macro m{i}(x) %}}{{{{ {} }}}}{{% endmacro m{i} %}}",
+            nested(i + 1)
+        ));
+    }
+    src.push_str("{% macro m23(x) %}{{ nope }}{% endmacro m23 %}{{ self::m0(x=1) }}");
+    assert!(template_error_on_small_stack(src).contains("too complex"));
+}
+
+/// A macro that never stops calling itself, directly, through blocks, through another macro and through
+/// argument nesting, ends in an ordinary render error on 2 MiB.
+#[test]
+fn unbounded_macro_recursion_is_a_render_error_on_a_small_stack() {
+    for src in [
+        "{% macro f(n) %}{{ self::f(n=n) }}{% endmacro f %}{{ self::f(n=1) }}",
+        "{% macro f(n) %}{% for i in [1] %}{% if true %}{% for j in [1] %}{{ self::f(n=n) }}{% endfor %}{% endif %}{% endfor %}{% endmacro f %}{{ self::f(n=1) }}",
+        "{% macro a() %}{{ self::b() }}{% endmacro a %}{% macro b() %}{{ self::a() }}{% endmacro b %}{{ self::a() }}",
+        "{% macro f(x) %}{{ self::f(x=self::f(x=self::f(x=1))) }}{% endmacro f %}{{ self::f(x=1) }}",
+    ] {
+        let err = template_error_on_small_stack(src.to_owned());
+        assert!(
+            err.contains("levels deep") || err.contains("too complex"),
+            "{src:.50}: {err}"
+        );
+    }
+}
+
+/// One large call cycle: a ring of sixty thousand macros. The cost of an edge must not grow with the size of the
+/// cycle (a membership scan per edge took 12.6 s in debug); the recursion is bounded at run time, so the render
+/// is an ordinary error.
+#[test]
+fn a_ring_of_sixty_thousand_macros_is_planned_in_linear_time() {
+    let n = 60_000;
+    let mut src = String::new();
+    for i in 0..n {
+        src.push_str(&format!(
+            "{{% macro m{i}() %}}{{{{ self::m{}() }}}}{{% endmacro m{i} %}}",
+            (i + 1) % n
+        ));
+    }
+    src.push_str("{{ self::m0() }}");
+    let started = std::time::Instant::now();
+    let err = template_error_on_small_stack(src);
+    assert!(err.contains("levels deep"), "{err:.200}");
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "took {:?}",
+        started.elapsed()
+    );
+}

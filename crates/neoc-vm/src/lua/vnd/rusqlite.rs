@@ -42,25 +42,14 @@
 //! on a high-concurrency path, structure the code so it runs in a
 //! `tokio::task::spawn_blocking` block at the call site.
 //!
-//! ## Connection model — lockless within an engine
+//! ## Connection model
 //!
-//! Each `Database` wraps a single `rusqlite::Connection` directly, with no
-//! `Mutex`. mlua's `send` feature requires `UserData: Send + Sync`, and
-//! `rusqlite::Connection` is `Send` but not `Sync`, so we'd normally wrap
-//! it. But every method here is `add_method` (sync) — sync methods don't
-//! yield the Lua coroutine, and Lua coroutines on a single engine never
-//! actually run concurrently (they cooperate via yield). So nothing ever
-//! tries to access the connection from two threads at the same instant.
-//! The `Mutex` was pure ceremony to satisfy the type system.
-//!
-//! We get the `Sync` bound from an `unsafe impl Sync` on `LocalConn`. The
-//! safety invariant is: a `Database` is not shared across mlua engines.
-//! That's naturally true because `lib.rusqlite.open()` creates a fresh
-//! handle per call and there's no API to send a `Database` between
-//! engines. Inside one engine, sync method calls serialize through the
-//! Lua scheduler, so even though tokio may move the engine task between
-//! worker threads between calls, no two threads are ever in a method at
-//! the same instant.
+//! Each `Database` wraps a single `rusqlite::Connection` behind a `parking_lot::Mutex`. mlua's `send`
+//! feature requires `UserData: Send + Sync`, and `rusqlite::Connection` is `Send` but not `Sync`, so the
+//! mutex supplies the `Sync` half safely. Every method here is `add_method` (sync) and Lua coroutines on
+//! one engine never run concurrently, so the lock is uncontended in practice: it is held for one
+//! statement and never across a yield. SQLite's own per-connection mutex is off (`OPEN_NO_MUTEX`)
+//! because this one serialises access already.
 //!
 //! Statement caching uses rusqlite's built-in `prepare_cached` so
 //! re-issuing the same SQL skips the parse.
@@ -73,10 +62,10 @@
 //! between the two is whether the Lua → Rust crossing has to re-allocate
 //! the SQL string. Use `prepare()` for hot paths.
 
-use std::cell::UnsafeCell;
 use std::sync::Arc;
 
 use mlua::{Lua, MultiValue, Table, UserData, UserDataMethods, Value};
+use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 use rusqlite::OpenFlags;
 use rusqlite::types::{ToSql, ToSqlOutput, Value as SqlValue, ValueRef};
 use tracing::instrument;
@@ -85,30 +74,22 @@ use super::split_sql_args;
 use crate::lua::facade::Module;
 use crate::lua::sandbox::{from_err, i64_to_lua, ok};
 
-/// Lockless wrapper around a rusqlite connection. See module docs for the
-/// safety invariant.
-struct LocalConn(UnsafeCell<Option<rusqlite::Connection>>);
+/// A rusqlite connection behind a mutex. `None` once `:close()` has dropped it.
+struct SharedConn(Mutex<Option<rusqlite::Connection>>);
 
-// SAFETY: see module docs. The Connection is only ever accessed from one
-// thread at a time, even though tokio may schedule its owning Lua engine
-// onto different workers between calls — sync mlua methods don't yield,
-// and Lua coroutines within an engine cooperate via yield, so no two
-// access points can run concurrently.
-unsafe impl Send for LocalConn {}
-unsafe impl Sync for LocalConn {}
-
-impl LocalConn {
+impl SharedConn {
     fn new(conn: rusqlite::Connection) -> Self {
-        Self(UnsafeCell::new(Some(conn)))
+        Self(Mutex::new(Some(conn)))
     }
 
-    /// SAFETY: caller must guarantee no other reference to the inner
-    /// `Option` exists for the duration of the returned borrow. Within
-    /// this module that holds because mlua serializes method calls and
-    /// our methods don't yield.
-    #[allow(clippy::mut_from_ref)]
-    unsafe fn get_mut(&self) -> &mut Option<rusqlite::Connection> {
-        unsafe { &mut *self.0.get() }
+    /// Lock the connection, or report that the database was closed.
+    fn lock(&self) -> Result<MappedMutexGuard<'_, rusqlite::Connection>, &'static str> {
+        MutexGuard::try_map(self.0.lock(), Option::as_mut).map_err(|_| "database is closed")
+    }
+
+    /// Drop the connection (rusqlite closes it); later calls report "database is closed".
+    fn close(&self) {
+        drop(self.0.lock().take());
     }
 }
 
@@ -200,16 +181,15 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
 #[derive(Clone)]
 pub struct Database {
-    /// `Option` (inside `LocalConn`) so `:close()` can drop the connection
-    /// cleanly; `Arc` so `prepare()` can hand a `Statement` a co-owning
-    /// reference. No locking — see module docs.
-    conn: Arc<LocalConn>,
+    /// `Arc` so `prepare()` can hand a `Statement` a co-owning reference; the
+    /// connection inside is `None` once `:close()` ran. See module docs.
+    conn: Arc<SharedConn>,
 }
 
 #[instrument(name = "rusqlite.open", target = "lua::lib::rusqlite", skip_all)]
 fn open(lua: &Lua, path: String) -> mlua::Result<(Value, Value)> {
-    // OPEN_NO_MUTEX — we serialize via the Lua scheduler, SQLite's own
-    // per-connection serialized mutex would just be redundant work.
+    // OPEN_NO_MUTEX: `SharedConn` serialises access, SQLite's own per-connection
+    // mutex would just be redundant work.
     let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
         | OpenFlags::SQLITE_OPEN_CREATE
         | OpenFlags::SQLITE_OPEN_NO_MUTEX
@@ -221,7 +201,7 @@ fn open(lua: &Lua, path: String) -> mlua::Result<(Value, Value)> {
         Ok(c) => ok(
             lua,
             Database {
-                conn: Arc::new(LocalConn::new(c)),
+                conn: Arc::new(SharedConn::new(c)),
             },
         ),
         Err(e) => from_err(lua, "rusqlite.open", e),
@@ -252,9 +232,7 @@ impl UserData for Database {
         methods.add_method("close", |_, this, _: ()| {
             // Take the connection out so the next call lands on the
             // "database is closed" branch in the helpers below.
-            // SAFETY: see LocalConn impl.
-            let slot = unsafe { this.conn.get_mut() };
-            let _ = slot.take(); // drop runs rusqlite's close
+            this.conn.close();
             Ok(())
         });
     }
@@ -267,7 +245,7 @@ impl UserData for Database {
 #[derive(Clone)]
 pub struct Statement {
     sql: Arc<String>,
-    conn: Arc<LocalConn>,
+    conn: Arc<SharedConn>,
 }
 
 impl UserData for Statement {
@@ -311,26 +289,16 @@ impl UserData for Statement {
 // shared execution helpers
 // ---------------------------------------------------------------------------
 
-/// Borrow the connection or return the "database is closed" error. The
-/// helpers below all start with this two-line check; factoring it out
-/// keeps the per-method shape simple. SAFETY: see `LocalConn`.
-#[allow(clippy::mut_from_ref, clippy::needless_lifetimes)]
-fn conn_mut(handle: &Arc<LocalConn>) -> Result<&mut rusqlite::Connection, &'static str> {
-    // SAFETY: see LocalConn impl.
-    let slot = unsafe { handle.get_mut() };
-    slot.as_mut().ok_or("database is closed")
-}
-
 /// A `run_*` helper: prepare + run the SQL, shaping the result for its op.
 type RunFn =
-    fn(&Lua, &Arc<LocalConn>, &'static str, &str, Vec<Value>) -> mlua::Result<(Value, Value)>;
+    fn(&Lua, &Arc<SharedConn>, &'static str, &str, Vec<Value>) -> mlua::Result<(Value, Value)>;
 
 /// Split a `db:execute`/`query`/`query_one` call's args into SQL + params and
 /// dispatch to the matching `run_*` helper. The three `Database` methods differ
 /// only by op name and which helper shapes the result.
 fn db_dispatch(
     lua: &Lua,
-    conn: &Arc<LocalConn>,
+    conn: &Arc<SharedConn>,
     op: &'static str,
     args: MultiValue,
     run: RunFn,
@@ -369,12 +337,12 @@ fn materialize_row(
 
 fn run_execute(
     lua: &Lua,
-    handle: &Arc<LocalConn>,
+    handle: &Arc<SharedConn>,
     op: &'static str,
     sql: &str,
     params: Vec<Value>,
 ) -> mlua::Result<(Value, Value)> {
-    let conn = match conn_mut(handle) {
+    let conn = match handle.lock() {
         Ok(c) => c,
         Err(e) => return from_err(lua, op, e),
     };
@@ -393,12 +361,12 @@ fn run_execute(
 
 fn run_query(
     lua: &Lua,
-    handle: &Arc<LocalConn>,
+    handle: &Arc<SharedConn>,
     op: &'static str,
     sql: &str,
     params: Vec<Value>,
 ) -> mlua::Result<(Value, Value)> {
-    let conn = match conn_mut(handle) {
+    let conn = match handle.lock() {
         Ok(c) => c,
         Err(e) => return from_err(lua, op, e),
     };
@@ -426,12 +394,12 @@ fn run_query(
 
 fn run_query_one(
     lua: &Lua,
-    handle: &Arc<LocalConn>,
+    handle: &Arc<SharedConn>,
     op: &'static str,
     sql: &str,
     params: Vec<Value>,
 ) -> mlua::Result<(Value, Value)> {
-    let conn = match conn_mut(handle) {
+    let conn = match handle.lock() {
         Ok(c) => c,
         Err(e) => return from_err(lua, op, e),
     };

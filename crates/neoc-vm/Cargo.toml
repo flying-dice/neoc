@@ -137,6 +137,11 @@ globset = "0.4"
 hyper = { version = "1", features = ["client", "server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
+# TLS for the `vnd:hyper` client: rustls over the `ring` provider (already in the tree through
+# testcontainers, so no second crypto backend), with the platform certificate verifier (the operating
+# system's trust store).
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+rustls-platform-verifier = "0.7"
 bytes = "1"
 
 # sqlx is async-only and used here for `lib.mysql` / `lib.postgres`, where the
@@ -145,7 +150,7 @@ bytes = "1"
 # async/await machinery on top adds overhead with no IO to overlap. Both
 # ultimately link the same vendored libsqlite3-sys.
 # `mysql`/`postgres` are pure-Rust drivers; TLS is intentionally not enabled here
-# (consistent with `lib.http` being HTTP-only).
+# (only the `vnd:hyper` client carries a TLS stack, see `tokio-rustls` above).
 # `mysql-rsa` keeps MySQL's `caching_sha2_password` working over a plain
 # connection (sqlx 0.9 made the RSA key exchange opt-in; 0.8 always included it).
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite", "mysql", "mysql-rsa", "postgres"] }
@@ -196,6 +201,8 @@ caseless = "0.2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+# a self-signed certificate for the `vnd:hyper` TLS tests
+rcgen = "0.14"
 
 # Optional regular dep, gated behind the `bench` feature so it doesn't
 # bloat normal lib builds. Lives in `[dependencies]` rather than
@@ -227,7 +234,8 @@ required-features = ["bench"]
 
 # The root `[workspace.lints]` table (clippy pedantic, `unsafe_code = "deny"`) was
 # imported with the old compiler crates and never inherited here: opting in
-# today means ~700 pedantic findings and six `unsafe` blocks. Adopting it is its
-# own change, so silence cargo's "missing lints inheritance" nag until then.
+# today means ~700 pedantic findings. (`neoc-vm` has no `unsafe` outside tests and
+# forbids it in `lib.rs`; the `neoc` crate has the rest.) Adopting it is its own
+# change, so silence cargo's "missing lints inheritance" nag until then.
 [lints.cargo]
 missing_lints_inheritance = "allow"

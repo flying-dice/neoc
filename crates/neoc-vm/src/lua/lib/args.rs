@@ -6,6 +6,14 @@
 //!
 //! Behaviour follows clap defaults — booleans are presence-only, error wording
 //! is clap's, help formatting tracks clap's renderer version.
+//!
+//! A spec clap would panic on (a debug build; a release build accepted it with an unspecified winner) is an
+//! error instead: duplicate or reserved flag names (`help`, `__positional`, `__rest`), two flags with the same
+//! short, a short that is `-`, `=` or whitespace, a long name starting with `-`, a subcommand named `help`.
+//! A flag may claim the short `-h` (for `--host`, say): it takes it from the built-in help, which keeps
+//! `--help`.
+
+use std::collections::HashSet;
 
 use clap::{Arg, ArgAction, ArgMatches, Command, error::ErrorKind, value_parser};
 use mlua::{Lua, Table, Value};
@@ -91,7 +99,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 fn parse(lua: &Lua, argv_tbl: &Table, config_tbl: &Table) -> Result<Table, String> {
     let argv = read_argv(argv_tbl)?;
     let spec = read_command(config_tbl, true)?;
-    let cmd = build_command(&spec);
+    let cmd = build_command(&spec, false);
     match cmd.try_get_matches_from(argv) {
         Ok(matches) => build_parsed_table(lua, &spec, &matches).map_err(|e| e.to_string()),
         Err(err)
@@ -109,7 +117,7 @@ fn parse(lua: &Lua, argv_tbl: &Table, config_tbl: &Table) -> Result<Table, Strin
 
 fn help(config_tbl: &Table) -> Result<String, String> {
     let spec = read_command(config_tbl, true)?;
-    let mut cmd = build_command(&spec);
+    let mut cmd = build_command(&spec, false);
     Ok(cmd.render_help().to_string())
 }
 
@@ -118,7 +126,8 @@ fn help(config_tbl: &Table) -> Result<String, String> {
 // ---------------------------------------------------------------------------
 
 fn read_argv(t: &Table) -> Result<Vec<String>, String> {
-    let mut out = Vec::with_capacity(t.raw_len());
+    // not presized: `#t` is whatever border Lua finds, so a forged table can report 2^30
+    let mut out = Vec::new();
     for entry in t.clone().sequence_values::<mlua::LuaString>() {
         let s = entry.map_err(|e| format!("argv must be a string array: {e}"))?;
         let s = s
@@ -154,7 +163,59 @@ fn read_command(t: &Table, top_level: bool) -> Result<CommandSpec, String> {
     })
 }
 
+/// Ids clap (or this module's own positional arguments) already use in every command. A flag with one of
+/// these names would collide with them.
+const RESERVED_FLAG_NAMES: &[&str] = &["help", POSITIONAL_ID, REST_ID];
+const POSITIONAL_ID: &str = "__positional";
+const REST_ID: &str = "__rest";
+
+/// Reject specs clap would panic on while building the command (duplicate or reserved ids, a clashing
+/// short, a long that starts with a dash): a spec is script input, and a panic here takes the host down.
+fn validate_flags(flags: &[FlagSpec], ctx: &str) -> Result<(), String> {
+    let mut names: HashSet<&str> = HashSet::new();
+    let mut shorts: HashSet<char> = HashSet::new();
+    for flag in flags {
+        let name = flag.name.as_str();
+        if RESERVED_FLAG_NAMES.contains(&name) {
+            return Err(format!("{}: flag name '{name}' is reserved", err_ctx(ctx)));
+        }
+        if name.starts_with('-') {
+            return Err(format!(
+                "{}: flag name '{name}' must not start with '-'",
+                err_ctx(ctx)
+            ));
+        }
+        if !names.insert(name) {
+            return Err(format!(
+                "{}: flag '--{name}' is declared twice",
+                err_ctx(ctx)
+            ));
+        }
+        if let Some(c) = flag.short {
+            if c == '-' || c.is_whitespace() || c == '=' {
+                return Err(format!(
+                    "{}: flag '--{name}' short alias {c:?} is not allowed",
+                    err_ctx(ctx)
+                ));
+            }
+            if !shorts.insert(c) {
+                return Err(format!(
+                    "{}: short alias '-{c}' is used by two flags",
+                    err_ctx(ctx)
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn read_flags(t: &Table, ctx: &str) -> Result<Vec<FlagSpec>, String> {
+    let flags = read_flag_list(t, ctx)?;
+    validate_flags(&flags, ctx)?;
+    Ok(flags)
+}
+
+fn read_flag_list(t: &Table, ctx: &str) -> Result<Vec<FlagSpec>, String> {
     if t.raw_len() > 0 {
         let mut out = Vec::new();
         for entry in t.clone().sequence_values::<Table>() {
@@ -283,9 +344,9 @@ fn read_subcommands(t: &Table, ctx: &str) -> Result<Vec<CommandSpec>, String> {
     let mut out = Vec::new();
     for pair in t.clone().pairs::<String, Table>() {
         let (name, body) = pair.map_err(|e| format!("{}: subcommands: {e}", err_ctx(ctx)))?;
-        if name.is_empty() || name.starts_with('-') {
+        if name.is_empty() || name.starts_with('-') || name == "help" {
             return Err(format!(
-                "{}: subcommand name '{}' invalid (must be non-empty, no leading '-')",
+                "{}: subcommand name '{}' invalid (must be non-empty, not 'help', no leading '-')",
                 err_ctx(ctx),
                 name
             ));
@@ -317,7 +378,9 @@ fn stringify<E: std::fmt::Display>(e: E) -> String {
 // Build clap::Command from CommandSpec
 // ---------------------------------------------------------------------------
 
-fn build_command(spec: &CommandSpec) -> Command {
+/// `help_disabled`: an ancestor claimed `-h`, which in clap 4.6 switches the built-in help off for every
+/// command below it too.
+fn build_command(spec: &CommandSpec, help_disabled: bool) -> Command {
     let mut cmd = Command::new(spec.name.clone()).no_binary_name(true);
     if let Some(desc) = &spec.description {
         cmd = cmd.about(desc.clone());
@@ -326,17 +389,31 @@ fn build_command(spec: &CommandSpec) -> Command {
     for flag in &spec.flags {
         cmd = cmd.arg(build_arg(flag));
     }
+    // A flag that claims `-h` (`--host`, say) takes the short from clap's built-in help and `--help` stays.
+    // Clap's `disable_help_flag` also reaches the commands below, so each of those that does not claim `-h`
+    // itself gets the full `-h`/`--help` back.
+    let claims_h = spec.flags.iter().any(|f| f.short == Some('h'));
+    if claims_h || help_disabled {
+        let mut help = Arg::new("help")
+            .long("help")
+            .action(ArgAction::Help)
+            .help("Print help");
+        if !claims_h {
+            help = help.short('h');
+        }
+        cmd = cmd.disable_help_flag(true).arg(help);
+    }
 
     if spec.subcommands.is_empty() {
         cmd = cmd
             .arg(
-                Arg::new("__positional")
+                Arg::new(POSITIONAL_ID)
                     .index(1)
                     .num_args(0..)
                     .action(ArgAction::Append),
             )
             .arg(
-                Arg::new("__rest")
+                Arg::new(REST_ID)
                     .index(2)
                     .num_args(0..)
                     .action(ArgAction::Append)
@@ -346,7 +423,7 @@ fn build_command(spec: &CommandSpec) -> Command {
     } else {
         cmd = cmd.subcommand_required(true);
         for sub in &spec.subcommands {
-            cmd = cmd.subcommand(build_command(sub));
+            cmd = cmd.subcommand(build_command(sub, help_disabled || claims_h));
         }
     }
 
@@ -413,16 +490,11 @@ fn build_parsed_table(lua: &Lua, spec: &CommandSpec, matches: &ArgMatches) -> ml
         t.set(flag.name.clone(), val)?;
     }
 
-    let (positional, rest) = if spec.subcommands.is_empty() {
-        let p: Vec<String> = matches
-            .get_many::<String>("__positional")
-            .map(|m| m.cloned().collect())
-            .unwrap_or_default();
-        let r: Vec<String> = matches
-            .get_many::<String>("__rest")
-            .map(|m| m.cloned().collect())
-            .unwrap_or_default();
-        (p, r)
+    let (positional, rest): (Vec<String>, Vec<String>) = if spec.subcommands.is_empty() {
+        (
+            try_many(matches, POSITIONAL_ID)?,
+            try_many(matches, REST_ID)?,
+        )
     } else {
         (Vec::new(), Vec::new())
     };
@@ -449,40 +521,58 @@ fn build_parsed_table(lua: &Lua, spec: &CommandSpec, matches: &ArgMatches) -> ml
 
 fn flag_value_to_lua(lua: &Lua, flag: &FlagSpec, matches: &ArgMatches) -> mlua::Result<Value> {
     match flag.ty {
-        FlagType::Boolean => Ok(Value::Boolean(matches.get_flag(&flag.name))),
+        FlagType::Boolean => Ok(Value::Boolean(
+            try_one::<bool>(matches, &flag.name)?.unwrap_or(false),
+        )),
         FlagType::String => {
             if flag.multiple {
-                let items: Vec<String> = matches
-                    .get_many::<String>(&flag.name)
-                    .map(|m| m.cloned().collect())
-                    .unwrap_or_default();
+                let items: Vec<String> = try_many(matches, &flag.name)?;
                 Ok(Value::Table(strings_to_table(lua, &items)?))
             } else {
-                match matches.get_one::<String>(&flag.name) {
-                    Some(s) => Ok(Value::String(lua.create_string(s)?)),
+                match try_one::<String>(matches, &flag.name)? {
+                    Some(s) => Ok(Value::String(lua.create_string(&s)?)),
                     None => Ok(Value::Nil),
                 }
             }
         }
         FlagType::Number => {
             if flag.multiple {
-                let items: Vec<f64> = matches
-                    .get_many::<f64>(&flag.name)
-                    .map(|m| m.copied().collect())
-                    .unwrap_or_default();
+                let items: Vec<f64> = try_many(matches, &flag.name)?;
                 let t = lua.create_table()?;
                 for (i, n) in items.iter().enumerate() {
                     t.set(i + 1, *n)?;
                 }
                 Ok(Value::Table(t))
             } else {
-                match matches.get_one::<f64>(&flag.name) {
-                    Some(n) => Ok(Value::Number(*n)),
+                match try_one::<f64>(matches, &flag.name)? {
+                    Some(n) => Ok(Value::Number(n)),
                     None => Ok(Value::Nil),
                 }
             }
         }
     }
+}
+
+/// One value of `id`, with a type mismatch as an error. `ArgMatches::get_one` panics on one.
+fn try_one<T: Clone + Send + Sync + 'static>(
+    matches: &ArgMatches,
+    id: &str,
+) -> mlua::Result<Option<T>> {
+    matches
+        .try_get_one::<T>(id)
+        .map(|v: Option<&T>| v.cloned())
+        .map_err(|e| mlua::Error::external(format!("args.parse: flag '{id}': {e}")))
+}
+
+/// Every value of `id` (none when absent), with a type mismatch as an error.
+fn try_many<T: Clone + Send + Sync + 'static>(
+    matches: &ArgMatches,
+    id: &str,
+) -> mlua::Result<Vec<T>> {
+    matches
+        .try_get_many::<T>(id)
+        .map(|v| v.map(|m| m.cloned().collect()).unwrap_or_default())
+        .map_err(|e| mlua::Error::external(format!("args.parse: flag '{id}': {e}")))
 }
 
 fn strings_to_table(lua: &Lua, v: &[String]) -> mlua::Result<Table> {
@@ -569,6 +659,125 @@ mod tests {
 
     fn parse_call(lua: &Lua, src: &str) -> (mlua::Value, mlua::Value) {
         lua.load(src).eval().expect("eval parse_call")
+    }
+
+    /// Duplicate or reserved ids, a clashing short or a dashed long made clap panic in a debug build while
+    /// it built the command (a release build accepted them silently, with an unspecified winner) or when a
+    /// getter read the wrong type; the spec is script input, so each is an ordinary `(nil, err)` instead.
+    #[test]
+    fn hostile_specs_are_errors_not_clap_panics() {
+        let lua = lua_with_args();
+        let specs = [
+            r#"{name="t",flags={{name="a",type="boolean"},{name="a",type="string"}}}"#,
+            r#"{name="t",flags={help={type="boolean"}}}"#,
+            r#"{name="t",flags={__positional={type="number"}}}"#,
+            r#"{name="t",flags={__rest={type="string"}}}"#,
+            r#"{name="t",flags={{name="a",short="b",type="boolean"},{name="b",short="b",type="boolean"}}}"#,
+            r#"{name="t",flags={{name="--a",type="boolean"}}}"#,
+            r#"{name="t",flags={{name="a",short="-",type="boolean"}}}"#,
+            r#"{name="t",flags={{name="a",short="=",type="boolean"}}}"#,
+            r#"{name="t",subcommands={help={}}}"#,
+            r#"{name="t",subcommands={a={flags={{name="x",type="string"},{name="x",type="string"}}}}}"#,
+        ];
+        for spec in specs {
+            for call in [
+                "parse({}, SPEC)",
+                "parse({\"--a\", \"1\"}, SPEC)",
+                "parse({\"-h\"}, SPEC)",
+                "help(SPEC)",
+            ] {
+                let src = format!("return args.{}", call.replace("SPEC", spec));
+                let (v, e): (mlua::Value, mlua::Value) =
+                    lua.load(&src).eval().expect("no panic, no throw");
+                assert!(matches!(v, mlua::Value::Nil), "{src} -> {v:?}");
+                assert!(
+                    matches!(e, mlua::Value::String(_)),
+                    "{src} should give an error string, got {e:?}"
+                );
+            }
+        }
+        // the valid neighbours still work
+        let (parsed, err) = parse_call(
+            &lua,
+            r#"return args.parse({"-b", "--a", "x"}, { name = "t", flags = {
+                { name = "a", short = "a", type = "string" }, { name = "b", short = "b", type = "boolean" } } })"#,
+        );
+        assert!(matches!(err, mlua::Value::Nil), "{err:?}");
+        assert!(parsed.as_table().unwrap().get::<bool>("b").unwrap());
+    }
+
+    /// `-h` is the usual short for `--host`: a flag that claims it takes it from clap's built-in help, which
+    /// keeps `--help`. Commands whose flags do not claim it still answer `-h`.
+    #[test]
+    fn a_flag_may_claim_the_short_h() {
+        let lua = lua_with_args();
+        let (parsed, err) = parse_call(
+            &lua,
+            r#"return args.parse({"-h", "example.org", "-p", "80"}, { name = "t", flags = {
+                { name = "host", short = "h", type = "string" }, { name = "port", short = "p", type = "number" } } })"#,
+        );
+        assert!(matches!(err, mlua::Value::Nil), "{err:?}");
+        let t = parsed.as_table().unwrap();
+        assert_eq!(t.get::<String>("host").unwrap(), "example.org");
+        assert_eq!(t.get::<f64>("port").unwrap(), 80.0);
+        // `--help` still works for it, and so does `-h` where no flag claimed it
+        for (argv, flag) in [
+            (
+                r#"{"--help"}"#,
+                r#"{ name = "host", short = "h", type = "string" }"#,
+            ),
+            (r#"{"-h"}"#, r#"{ name = "all", type = "boolean" }"#),
+        ] {
+            let (parsed, _) = parse_call(
+                &lua,
+                &format!(
+                    r#"return args.parse({argv}, {{ name = "t", description = "tool", flags = {{ {flag} }} }})"#
+                ),
+            );
+            let t = parsed.as_table().unwrap();
+            assert!(t.get::<bool>("help").unwrap(), "{argv}");
+            assert!(t.get::<String>("help_text").unwrap().contains("tool"));
+        }
+        // subcommands keep their help when the top level claims `-h`, and one that claims it too keeps `--help`
+        let top = r#"{ name = "t", flags = { { name = "host", short = "h", type = "string" } }, subcommands = {
+            run = { description = "run it", flags = {} },
+            serve = { description = "serve it", flags = { { name = "hash", short = "h", type = "string" } } },
+        } }"#;
+        for (argv, text) in [
+            (r#"{"run","--help"}"#, "run it"),
+            (r#"{"run","-h"}"#, "run it"),
+            (r#"{"serve","--help"}"#, "serve it"),
+        ] {
+            let (parsed, err) = parse_call(&lua, &format!("return args.parse({argv}, {top})"));
+            let t = parsed
+                .as_table()
+                .unwrap_or_else(|| panic!("{argv}: {err:?}"));
+            assert!(t.get::<bool>("help").unwrap(), "{argv}");
+            assert!(
+                t.get::<String>("help_text").unwrap().contains(text),
+                "{argv}"
+            );
+        }
+        let (parsed, err) = parse_call(
+            &lua,
+            &format!(r#"return args.parse({{"serve","-h","abc"}}, {top})"#),
+        );
+        assert!(matches!(err, mlua::Value::Nil), "{err:?}");
+        let serve: Table = parsed.as_table().unwrap().get("serve").unwrap();
+        assert_eq!(serve.get::<String>("hash").unwrap(), "abc");
+        // and a flag claiming `-h` does not turn `-h` into a help request
+        let (parsed, _) = parse_call(
+            &lua,
+            r#"return args.parse({"-h", "x"}, { name = "t", flags = { { name = "host", short = "h", type = "string" } } })"#,
+        );
+        assert!(
+            parsed
+                .as_table()
+                .unwrap()
+                .get::<Option<bool>>("help")
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! HTTP client and server — `vnd:hyper`, backed by hyper.
 //!
 //! ## Client
-//! HTTP-only (no TLS). URLs must be `http://...`. Client functions are
+//! `http://` and `https://` (rustls; see `client`). Client functions are
 //! async on the Lua side: calls yield the calling coroutine until the
 //! response is ready, so other coroutines on the same engine (e.g. a
 //! request handler installed via `serve`) keep running concurrently.
@@ -83,13 +83,13 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
     m.set(
         "get",
-        lua.create_async_function(|lua, url: String| get(lua, url))?,
+        lua.create_async_function(|lua, args: (String, Option<Table>)| get(lua, args))?,
     )?;
     m.record_fn(
         "get",
-        &[("url", "string")],
+        &[("url", "string"), ("opts", "LuaValue?")],
         "Result<LuaValue, string>",
-        "Perform an HTTP GET request, returning a response table `{ status, headers, body }`.",
+        "Perform an HTTP or HTTPS GET request, returning a response table `{ status, headers, body }`. `opts` may carry `ca_pem`.",
     );
 
     m.set(
@@ -100,7 +100,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "post",
         &[("opts", "LuaValue")],
         "Result<LuaValue, string>",
-        "Perform an HTTP POST request given `{ url, body?, headers? }`.",
+        "Perform an HTTP or HTTPS POST request given `{ url, body?, headers?, ca_pem? }`.",
     );
 
     m.set(
@@ -111,7 +111,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
         "request",
         &[("opts", "LuaValue")],
         "Result<LuaValue, string>",
-        "Perform an HTTP request with an arbitrary method given `{ method, url, body?, headers? }`.",
+        "Perform an HTTP or HTTPS request with an arbitrary method given `{ method, url, body?, headers?, ca_pem? }`.",
     );
 
     m.set("serve", lua.create_function(serve)?)?;

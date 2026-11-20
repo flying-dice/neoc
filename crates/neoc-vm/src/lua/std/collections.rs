@@ -244,15 +244,21 @@ impl UserData for Counter {
         });
 
         methods.add_method("increment", |_, this, _: ()| {
-            Ok(i64_to_lua(this.0.value.fetch_add(1, Ordering::Relaxed) + 1))
+            Ok(i64_to_lua(
+                this.0.value.fetch_add(1, Ordering::Relaxed).wrapping_add(1),
+            ))
         });
 
         methods.add_method("decrement", |_, this, _: ()| {
-            Ok(i64_to_lua(this.0.value.fetch_sub(1, Ordering::Relaxed) - 1))
+            Ok(i64_to_lua(
+                this.0.value.fetch_sub(1, Ordering::Relaxed).wrapping_sub(1),
+            ))
         });
 
         methods.add_method("add", |_, this, n: i64| {
-            Ok(i64_to_lua(this.0.value.fetch_add(n, Ordering::Relaxed) + n))
+            Ok(i64_to_lua(
+                this.0.value.fetch_add(n, Ordering::Relaxed).wrapping_add(n),
+            ))
         });
 
         methods.add_method("set", |_, this, n: i64| {
@@ -290,5 +296,29 @@ impl UserData for Mutex {
                 f.call_async::<MultiValue>(()).await
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// `Counter` arithmetic wraps at the `i64` edge: a plain `+` panics on overflow in a debug build.
+    #[test]
+    fn counter_arithmetic_wraps_instead_of_overflowing() {
+        let lua = crate::lua::sandbox::make_engine().expect("engine");
+        // Lua numbers are doubles, so the edges are reached with powers of two
+        let (add, dec): (f64, f64) = lua
+            .load(
+                r#"
+                local c = require("std:collections").Counter.new()
+                c:set(2^62)
+                local add = c:add(2^62)       -- 2^63 does not fit an i64
+                c:set(-2^63)
+                local dec = c:decrement()     -- one below the minimum
+                return add, dec
+                "#,
+            )
+            .eval()
+            .expect("no panic");
+        assert_eq!((add, dec), (-(2f64.powi(63)), 2f64.powi(63)));
     }
 }

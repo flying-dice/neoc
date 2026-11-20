@@ -3,6 +3,11 @@
 # Every advisory ignore carries a reason, an upstream link and whether a fixed
 # version exists; delete the entry as soon as the upstream fix is adopted.
 
+# Check only what neoc ships (release.yml, Dockerfile): the Linux and Windows binaries. Crates that exist
+# only for other targets (Android, wasm, macOS) are not in the graph.
+[graph]
+targets = ["x86_64-unknown-linux-gnu", "x86_64-pc-windows-gnu"]
+
 [advisories]
 yanked = "warn"
 unmaintained = "all"
@@ -19,7 +24,6 @@ allow = [
     "0BSD",
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
-    "BSD-1-Clause",
     "BSD-2-Clause",
     "BSD-3-Clause",
     "BSL-1.0",

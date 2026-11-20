@@ -286,4 +286,22 @@ describe("text", function()
         end)
     end)
 
+
+    describe("pad sizes", function()
+        test("a negative width is an error", function()
+            for _, f in ipairs({ text.pad_left, text.pad_right, text.center }) do
+                local v, err = f("x", -1)
+                expect(v).toBeNil()
+                expect(err).toContain("width must be non-negative")
+            end
+        end)
+
+        test("a width no call may allocate is an error", function()
+            for _, f in ipairs({ text.pad_left, text.pad_right, text.center }) do
+                local v, err = f("x", 2 ^ 40)
+                expect(v).toBeNil()
+                expect(err).toContain("too large")
+            end
+        end)
+    end)
 end)

@@ -103,11 +103,25 @@ describe("hyper", function()
             expect(err).toContain("hyper.get:")
         end)
 
-        test("https scheme is rejected", function()
-            local resp, err = hyper.get("https://example.com/")
+        test("a scheme other than http and https is rejected", function()
+            local resp, err = hyper.get("ftp://example.com/")
             expect(resp).toBeNil()
             expect(err).toContain("hyper.get:")
-            expect(err).toContain("only http://")
+            expect(err).toContain("only http:// and https://")
+        end)
+
+        -- needs network access: the certificate is checked against the platform trust store
+        test("https request to a public host succeeds", function()
+            local resp, err = hyper.get("https://example.com/")
+            expect(err).toBeNil()
+            expect(resp.status).toBe(200)
+            expect(resp.body).toContain("Example Domain")
+        end)
+
+        test("a ca_pem that is not PEM is an error", function()
+            local resp, err = hyper.get("https://example.com/", { ca_pem = "nonsense" })
+            expect(resp).toBeNil()
+            expect(err).toContain("ca_pem")
         end)
 
         test("connection failure returns error", function()
@@ -176,13 +190,24 @@ describe("hyper", function()
             expect(err).toContain("hyper.request:")
         end)
 
-        test("https scheme is rejected", function()
+        test("a scheme other than http and https is rejected", function()
             local resp, err = hyper.request({
                 method = "GET",
-                url    = "https://example.com/",
+                url    = "ftp://example.com/",
             })
             expect(resp).toBeNil()
             expect(err).toContain("hyper.request:")
+            expect(err).toContain("only http:// and https://")
+        end)
+
+        test("a ca_pem that is not a string is an error", function()
+            local resp, err = hyper.request({
+                method = "GET",
+                url    = "https://example.com/",
+                ca_pem = {},
+            })
+            expect(resp).toBeNil()
+            expect(err).toContain("ca_pem must be a string")
         end)
     end)
 

@@ -37,6 +37,7 @@ use tracing::instrument;
 use uuid::Uuid;
 
 use crate::lua::facade::Module;
+use crate::lua::limits;
 use crate::lua::sandbox::{err, from_err, ok};
 
 /// Fill `buf` from the OS CSPRNG. `SysRng` is fallible in rand 0.10; an
@@ -141,10 +142,10 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
 #[instrument(name = "random.random_bytes", target = "lua::lib::random", skip_all)]
 fn random_bytes(lua: &Lua, n_bytes: i64) -> mlua::Result<(Value, Value)> {
-    if n_bytes < 0 {
-        return err(lua, "random.random_bytes: byte count must be non-negative");
-    }
-    let mut buf = vec![0u8; n_bytes as usize];
+    let mut buf = match limits::size(n_bytes, "byte count").and_then(limits::zeroed) {
+        Ok(buf) => buf,
+        Err(e) => return err(lua, format!("random.random_bytes: {e}")),
+    };
     if let Err(e) = fill_random(&mut buf) {
         return err(lua, format!("random.random_bytes: {e}"));
     }
@@ -258,9 +259,7 @@ impl SmallDraws {
 }
 
 fn random_string(n: i64, alphabet: Option<mlua::LuaString>) -> Result<String, String> {
-    if n < 0 {
-        return Err("length must be non-negative".to_string());
-    }
+    let len = limits::size(n, "length")?;
     // Select whole characters, not bytes. Picking bytes out of a multi-byte
     // UTF-8 alphabet (e.g. "αβγ") splits codepoints and yields invalid UTF-8;
     // `chars()` is the unit the docs promise. ASCII alphabets are unaffected
@@ -278,20 +277,17 @@ fn random_string(n: i64, alphabet: Option<mlua::LuaString>) -> Result<String, St
     if alpha.is_empty() {
         return Err("alphabet must be non-empty".to_string());
     }
-    let mut out = String::with_capacity(n as usize);
+    let mut out = limits::string_with_capacity(len)?;
     // Exactly uniform over the alphabet (rejection sampling, no modulo bias).
-    let mut draws = SmallDraws::new(n as usize);
-    for _ in 0..n {
+    let mut draws = SmallDraws::new(len);
+    for _ in 0..len {
         out.push(alpha[draws.below(alpha.len())?]);
     }
     Ok(out)
 }
 
 fn token_urlsafe(n_bytes: i64) -> Result<String, String> {
-    if n_bytes < 0 {
-        return Err("byte count must be non-negative".to_string());
-    }
-    let mut buf = vec![0u8; n_bytes as usize];
+    let mut buf = limits::zeroed(limits::size(n_bytes, "byte count")?)?;
     fill_random(&mut buf)?;
     Ok(URL_SAFE_NO_PAD.encode(&buf))
 }

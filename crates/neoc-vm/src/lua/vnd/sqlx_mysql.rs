@@ -2,8 +2,8 @@
 //!
 //! Connection strings are standard MySQL URLs:
 //! `mysql://user:pass@host:3306/dbname`. **TLS is not enabled in this build**
-//! — connect to plaintext servers only (consistent with `lib.hyper` being
-//! HTTP-only). MySQL 8.0+ servers usually require TLS by default; configure
+//! — connect to plaintext servers only (`vnd:hyper` is the only module with a
+//! TLS stack). MySQL 8.0+ servers usually require TLS by default; configure
 //! the server to allow plaintext or run via a sidecar.
 //!
 //! ```lua

@@ -1,5 +1,8 @@
 //! JSON value handles — `lib:json`.
 //!
+//! Limits: a Lua value becomes JSON at most 127 levels deep, which `serde_json` can read back (a table that
+//! contains itself is an error), and `Array:set` pads at most 1 Mi `null`s past the end.
+//!
 //! Foundation that `vnd:serde_json::from_str` returns: a parsed JSON body
 //! lives as one `JsonValue` tree in Rust memory (built out of `String`,
 //! `Vec`, `BTreeMap`, `i64`, `f64`, `bool` — pure std), addressed from Lua
@@ -629,11 +632,21 @@ pub struct Array {
 impl Array {
     fn set_inner(&self, idx: usize, v: JsonValue) -> mlua::Result<()> {
         with_array_mut(&self.root, &self.path, |a| {
+            // Setting past the end pads with nulls. The padding is bounded: an index that is a Lua number
+            // (`2^53`) must not become a multi-petabyte `resize`, which aborts the host.
+            if idx >= a.len().saturating_add(MAX_ARRAY_GAP) {
+                return Err(mlua::Error::external(format!(
+                    "json.array: index {} is too far past the end (length {}, at most {MAX_ARRAY_GAP} may be padded with null)",
+                    idx.saturating_add(1),
+                    a.len()
+                )));
+            }
             if idx >= a.len() {
                 a.resize(idx + 1, JsonValue::Null);
             }
             a[idx] = v;
-        })
+            Ok(())
+        })?
     }
 
     fn push_inner(&self, v: JsonValue) -> mlua::Result<()> {
@@ -653,7 +666,10 @@ impl UserData for Array {
             if i < 1 {
                 return Err(mlua::Error::external("json.array: index must be >= 1"));
             }
-            this.set_inner((i - 1) as usize, lua_value_to_json_value(&v)?)
+            this.set_inner(
+                usize::try_from(i - 1).unwrap_or(usize::MAX),
+                lua_value_to_json_value(&v)?,
+            )
         });
         methods.add_method("push", |_, this, v: Value| {
             this.push_inner(lua_value_to_json_value(&v)?)
@@ -714,6 +730,43 @@ pub fn wrap_root(lua: &Lua, v: JsonValue) -> mlua::Result<Value> {
 /// `Array` handles so nested structures don't have to round-trip through
 /// Lua tables.
 pub fn lua_value_to_json_value(v: &Value) -> mlua::Result<JsonValue> {
+    let json = value_to_json(v, 0)?;
+    check_depth(&json)?;
+    Ok(json)
+}
+
+/// How deep a Lua value may nest when it becomes JSON: one under `serde_json`'s parse limit of 128 (which
+/// refuses the 128th level), so what this module writes it can read back. A table that contains itself (or
+/// just nests this far) is an error, not the stack overflow that would abort the host.
+pub const MAX_DEPTH: usize = 127;
+
+/// How many `null`s `Array:set` may pad when the index is past the end (1 Mi).
+pub const MAX_ARRAY_GAP: usize = 1 << 20;
+
+fn too_deep() -> mlua::Error {
+    mlua::Error::external(format!(
+        "json: value nests more than {MAX_DEPTH} levels deep (does a table contain itself?)"
+    ))
+}
+
+/// Error when `v` nests deeper than [`MAX_DEPTH`]. Handles are copied into the result by value, so a
+/// handle's own depth adds to the depth it is placed at; each part was within the limit, so this walk's
+/// recursion is bounded by twice the limit.
+fn check_depth(v: &JsonValue) -> mlua::Result<()> {
+    fn depth(v: &JsonValue) -> usize {
+        match v {
+            JsonValue::Array(a) => 1 + a.iter().map(depth).max().unwrap_or(0),
+            JsonValue::Object(m) => 1 + m.values().map(depth).max().unwrap_or(0),
+            _ => 0,
+        }
+    }
+    if depth(v) > MAX_DEPTH {
+        return Err(too_deep());
+    }
+    Ok(())
+}
+
+fn value_to_json(v: &Value, depth: usize) -> mlua::Result<JsonValue> {
     match v {
         Value::Nil => Ok(JsonValue::Null),
         Value::Boolean(b) => Ok(JsonValue::Bool(*b)),
@@ -728,7 +781,7 @@ pub fn lua_value_to_json_value(v: &Value) -> mlua::Result<JsonValue> {
             }
         }
         Value::String(s) => Ok(JsonValue::String(s.to_str()?.to_owned())),
-        Value::Table(t) => table_to_json_value(t),
+        Value::Table(t) => table_to_json_value(t, depth + 1),
         Value::UserData(ud) => {
             if ud.borrow::<JsonNull>().is_ok() {
                 return Ok(JsonValue::Null);
@@ -754,7 +807,10 @@ pub fn lua_value_to_json_value(v: &Value) -> mlua::Result<JsonValue> {
     }
 }
 
-fn table_to_json_value(t: &Table) -> mlua::Result<JsonValue> {
+fn table_to_json_value(t: &Table, depth: usize) -> mlua::Result<JsonValue> {
+    if depth > MAX_DEPTH {
+        return Err(too_deep());
+    }
     let len = t.raw_len();
     // Walk the table once; this feeds both the array/object decision and the build.
     let entries: Vec<(Value, Value)> = t
@@ -787,7 +843,7 @@ fn table_to_json_value(t: &Table) -> mlua::Result<JsonValue> {
         indexed.sort_unstable_by_key(|(i, _)| *i);
         let mut arr = Vec::with_capacity(total);
         for (_, v) in indexed {
-            arr.push(lua_value_to_json_value(&v)?);
+            arr.push(value_to_json(&v, depth)?);
         }
         Ok(JsonValue::Array(arr))
     } else {
@@ -804,7 +860,7 @@ fn table_to_json_value(t: &Table) -> mlua::Result<JsonValue> {
                     )));
                 }
             };
-            map.insert(key, lua_value_to_json_value(&v)?);
+            map.insert(key, value_to_json(&v, depth)?);
         }
         Ok(JsonValue::Object(map))
     }
@@ -1087,6 +1143,74 @@ mod tests {
         let m: Table = lua.load(r#"return require("lib:json")"#).eval().unwrap();
         lua.globals().set("json", m).unwrap();
         lua
+    }
+
+    /// `Array:set(2^53, v)` used to `resize` to that many elements (a `capacity overflow` panic or an
+    /// allocation abort); a small gap still pads with null.
+    #[test]
+    fn array_set_far_past_the_end_is_an_error_not_an_abort() {
+        let lua = engine();
+        let (small, far_msg, huge_msg, len): (bool, String, String, i64) = lua
+            .load(
+                r#"
+                local a = json.array()
+                a:push(1)
+                local small = a:set(5, "x") == nil and a:len() == 5 and a:get(3) == json.null
+                local ok1, far = pcall(a.set, a, 2^40, 1)
+                local ok2, huge = pcall(a.set, a, 2^60, 1)
+                local ok3 = pcall(a.set, a, 2^63, 1)
+                assert(not ok1 and not ok2 and not ok3)
+                return small, tostring(far), tostring(huge), a:len()
+                "#,
+            )
+            .eval()
+            .unwrap();
+        assert!(small, "a small gap still pads with null");
+        assert!(far_msg.contains("too far past the end"), "{far_msg}");
+        assert!(huge_msg.contains("too far past the end"), "{huge_msg}");
+        assert_eq!(len, 5, "a refused set leaves the array alone");
+    }
+
+    /// A table that contains itself recursed until the Rust stack overflowed (an abort); so did one nested
+    /// a hundred thousand deep.
+    #[test]
+    fn cyclic_and_very_deep_tables_are_an_error_not_a_stack_overflow() {
+        let lua = engine();
+        let msgs: Vec<String> = lua
+            .load(
+                r#"
+                local out = {}
+                local cyc = {}
+                cyc[1] = cyc
+                local obj = {}
+                obj.self = obj
+                local deep = {}
+                for _ = 1, 100000 do deep = { deep } end
+                local a = json.array()
+                for _, v in ipairs({ cyc, obj, deep }) do
+                    local ok, e = pcall(a.push, a, v)
+                    assert(not ok)
+                    out[#out + 1] = tostring(e)
+                end
+                -- handles nested inside handles cannot build a deep tree either
+                local inner = json.array()
+                local failed = false
+                for _ = 1, 300 do
+                    local outer = json.array()
+                    local ok = pcall(outer.push, outer, inner)
+                    if not ok then failed = true break end
+                    inner = outer
+                end
+                assert(failed)
+                out[#out + 1] = "ok"
+                return out
+                "#,
+            )
+            .eval()
+            .unwrap();
+        for m in &msgs[..3] {
+            assert!(m.contains("levels deep"), "{m}");
+        }
     }
 
     // A handle re-resolves its path on every access, so retyping a child under
