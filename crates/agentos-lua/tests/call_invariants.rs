@@ -16,7 +16,8 @@
 
 mod common;
 
-use common::{db, load, timed_tool, try_load_with};
+use agentos_application::{data::Params, ports::AppData};
+use common::{load, timed_tool, try_load_with, Stalling};
 use serde_json::{json, Value};
 use std::{sync::Arc, time::Duration};
 
@@ -29,21 +30,23 @@ fn spawn_call(vm: &Arc<agentos_lua::AppVm>, tool: &'static str) -> tokio::task::
     tokio::spawn(async move { call(&vm, tool).await })
 }
 
-/// A database call that Lua cannot suspend at must not keep the database's write gate.
+/// A database call that Lua cannot suspend at must not keep the database's write gate. The statement inside the
+/// callback is one that never finishes (`Stalling`), so it always has to suspend: an ordinary statement can be ready
+/// on its first poll, and then there is no yield to refuse (the NEOC-121 shape).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_database_call_lua_could_not_suspend_at_does_not_hold_the_write_gate() {
-    let data = db();
+    let data = Stalling::new();
     let vm = Arc::new(
         try_load_with(
             "gate",
             r#"
             app.tool { name = "g", run = function()
-              local ok, e = pcall(string.gsub, "a", "a", function() return tostring(app.db:one("select 1 as one").one) end)
+              local ok, e = pcall(string.gsub, "a", "a", function() return tostring(app.db:one("select 1 as one -- stall").one) end)
               local two = app.db:one("select 2 as two").two
               return { ok = ok, e = tostring(e), two = two }
             end }
             app.tool { name = "g1", run = function()
-              local ok = pcall(string.gsub, "a", "a", function() return tostring(app.db:one("select 1 as one").one) end)
+              local ok = pcall(string.gsub, "a", "a", function() return tostring(app.db:one("select 1 as one -- stall").one) end)
               return { ok = ok }
             end }
             app.tool { name = "plain", run = function() return app.db:one("select 3 as three").three end }
@@ -59,7 +62,7 @@ async fn a_database_call_lua_could_not_suspend_at_does_not_hold_the_write_gate()
     // the call ends right after the failed statement: nothing is left holding the gate
     assert_eq!(call(&vm, "g1").await["ok"], false);
     assert_eq!(call(&vm, "plain").await, 3);
-    tokio::time::timeout(Duration::from_secs(3), data.query("select 1".into(), vec![]))
+    tokio::time::timeout(Duration::from_secs(3), data.query("select 1".into(), Params::None))
         .await
         .expect("a window query (it does not go through the VM) is not stuck behind the dead statement")
         .unwrap();
