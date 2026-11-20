@@ -21,7 +21,8 @@ deny = [
   # the VM exposes SQLite to scripts as `vnd:rusqlite`
   { crate = "rusqlite", wrappers = ["agentos-sqlite", "neoc-vm"], reason = "SQLite lives in the sqlite adapter (and the VM's vnd:rusqlite module)" },
   # `wrappers` also sees dev-dependencies (the graph keeps them so neoc's test-only crates stay checked): the host's
-  # end-to-end tests use rmcp as the MCP client, and the fetch tests run an axum server.
+  # end-to-end tests use rmcp as the MCP client, and the fetch tests run an axum server. That makes these two bans
+  # blind to a move from dev to normal dependency, so scripts/check-deps.ts (FRAMEWORK_HOMES) holds the normal edges.
   { crate = "rmcp", wrappers = ["agentos-mcp", "agentos-host"], reason = "MCP lives in the mcp adapter (agentos-host: dev-dependency, the test client)" },
   { crate = "agent-client-protocol", wrappers = ["agentos-acp"], reason = "ACP lives in the acp adapter" },
   { crate = "axum", wrappers = ["agentos-http", "agentos-mcp", "agentos-agui", "agentos-host", "agentos-fetch", "tonic"], reason = "HTTP stack in driving adapters and the host (agentos-fetch: dev-dependency, a test server; tonic: gRPC under neoc-vm's vnd:testcontainers_modules)" },
@@ -44,7 +45,8 @@ ignore = [
 
 [licenses]
 # The neoc crates carry the workspace license (MIT OR Apache-2.0); the AgentOS crates are `publish = false` and carry
-# none. Every third-party license in the tree is permissive. Anything not listed fails.
+# none. Every third-party license in the tree is permissive, or (MPL-2.0) file-level copyleft that
+# the AgentOS side needs. Anything not listed fails.
 private = { ignore = true }
 unused-allowed-license = "allow"
 allow = [

@@ -61,6 +61,19 @@ const CORE_EXTERNAL: Record<string, Set<string>> = {
   'agentos-application': new Set(['async-trait', 'futures-channel', 'futures-util', 'parking_lot', 'serde_json', 'sha2', 'thiserror', 'tracing'])
 }
 
+/**
+ * Where each framework crate may be a NORMAL dependency (deny.toml `bans` lists the same crates, but its `wrappers`
+ * also match dev-dependencies, so that file alone would let one of these move from a test dependency to a runtime one).
+ */
+const FRAMEWORK_HOMES: Record<string, string[]> = {
+  mlua: ['neoc-vm', 'neoc'],
+  rusqlite: ['agentos-sqlite', 'neoc-vm'],
+  rmcp: ['agentos-mcp'],
+  'agent-client-protocol': ['agentos-acp'],
+  axum: ['agentos-http', 'agentos-mcp', 'agentos-agui', 'agentos-host'],
+  'axum-server': ['agentos-host']
+}
+
 /** Framework and runtime crates that never appear in the core, whatever the tables above say. */
 const FRAMEWORKS = new Set([
   'tokio',
@@ -99,7 +112,7 @@ const seen = new Set<string>()
 for (const pkg of metadata.packages) {
   const allowed = INTERNAL[pkg.name]
   if (!allowed) {
-    problems.push(`${pkg.name}: workspace crate is not placed in the hexagon (add it to INTERNAL in scripts/check-deps.ts)`)
+    problems.push(`${pkg.name}: workspace crate is not placed (add it to INTERNAL in scripts/check-deps.ts)`)
     continue
   }
   seen.add(pkg.name)
@@ -108,6 +121,10 @@ for (const pkg of metadata.packages) {
     const internal = name in INTERNAL
     if (internal && !allowed.includes(name)) {
       problems.push(`${pkg.name} -> ${name}: internal edge not allowed (allowed: ${allowed.join(', ') || 'none'})`)
+    }
+    const homes = FRAMEWORK_HOMES[name]
+    if (homes && !homes.includes(pkg.name)) {
+      problems.push(`${pkg.name} -> ${name}: framework crate is not allowed here as a normal dependency (allowed in: ${homes.join(', ')})`)
     }
     const core = CORE_EXTERNAL[pkg.name]
     if (core && !internal && !core.has(name)) {

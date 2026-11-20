@@ -221,7 +221,7 @@ jobs:
           crates=$(cargo tree --workspace --depth 0 --prefix none | awk 'NF {print $1}')
           test -n "$crates"
           cargo clean $(printf -- '-p %s ' $crates) $CLEAN_ARGS
-      - run: cargo build --release
+      - run: cargo build --release -p neoc
       - name: Stage artifact
         run: |
           mkdir -p artifacts
@@ -260,7 +260,7 @@ jobs:
           crates=$(cargo tree --workspace --depth 0 --prefix none | awk 'NF {print $1}')
           test -n "$crates"
           cargo clean $(printf -- '-p %s ' $crates) $CLEAN_ARGS
-      - run: cargo build --release --target "$TARGET"
+      - run: cargo build --release -p neoc --target "$TARGET"
       - name: Stage artifact
         run: |
           mkdir -p artifacts

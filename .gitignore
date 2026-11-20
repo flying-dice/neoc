@@ -1,6 +1,5 @@
 # Rust build output
 /target
-target
 
 # CI — cargo cache and build artifacts land here during pipeline runs
 /.cargo
