@@ -669,8 +669,8 @@ async fn a_static_server_ends_when_the_script_is_shut_down() {
 
 // ---- the log sink and the module registry --------------------------------------------------------------------------
 
-#[test]
-fn lib_log_lines_go_to_the_embedders_sink() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn lib_log_lines_go_to_the_embedders_sink_and_a_worker_logs_there_too() {
     let lua = make_engine().unwrap();
     let lines = Arc::new(parking_lot::Mutex::new(Vec::<(String, String)>::new()));
     let sink = lines.clone();
@@ -685,12 +685,30 @@ fn lib_log_lines_go_to_the_embedders_sink() {
     )
     .exec()
     .unwrap();
+    {
+        let lines = lines.lock();
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert_eq!(lines[0].0, "info");
+        assert!(lines[0].1.contains(r#""msg":"hello""#) && lines[0].1.contains(r#""n":1"#));
+        assert_eq!(lines[1].0, "debug");
+        assert!(lines[1].1.contains("[debug] quiet"), "{}", lines[1].1);
+    }
+    // a worker the script starts logs to the same sink
+    let _: Value = lua
+        .load(
+            r#"local worker = require("std:thread").spawn { source = "require('lib:log').warn('from the worker')" }
+               return worker:await()"#,
+        )
+        .eval_async()
+        .await
+        .unwrap();
     let lines = lines.lock();
-    assert_eq!(lines.len(), 2, "{lines:?}");
-    assert_eq!(lines[0].0, "info");
-    assert!(lines[0].1.contains(r#""msg":"hello""#) && lines[0].1.contains(r#""n":1"#));
-    assert_eq!(lines[1].0, "debug");
-    assert!(lines[1].1.contains("[debug] quiet"), "{}", lines[1].1);
+    assert!(
+        lines
+            .iter()
+            .any(|(level, line)| level == "warn" && line.contains("from the worker")),
+        "{lines:?}"
+    );
 }
 
 #[test]
