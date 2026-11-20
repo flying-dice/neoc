@@ -33,6 +33,8 @@ cargo test --workspace
 cargo run -p neoc -- run \
   "crates/neoc/tests/lib/*.test.lua" \
   "crates/neoc/tests/std/*.test.lua" \
+  "crates/neoc/tests/std/task.spec.lua" \
+  "crates/neoc/tests/app.test.lua" \
   "crates/neoc/tests/vnd/jsonschema.test.lua" \
   "crates/neoc/tests/vnd/quick_xml.test.lua" \
   "crates/neoc/tests/vnd/rusqlite.test.lua" \
@@ -40,27 +42,29 @@ cargo run -p neoc -- run \
   "crates/neoc/tests/vnd/serde_yaml.test.lua" \
   "crates/neoc/tests/vnd/toml.test.lua"
 cargo bench -p neoc-vm --features bench --bench lib --bench vnd -- --test
+scripts/check-toolchain-pin.sh
 ```
 
-The Lua list leaves out the suites that need a Docker daemon (`sqlx_mysql`, `sqlx_postgres`, `testcontainers_modules`). With Docker running, use the `**` glob above instead to include them.
+The Lua list leaves out the suites that need a Docker daemon (`sqlx_mysql`, `sqlx_postgres`, `testcontainers_modules`). With Docker running, run every suite instead: `cargo run -p neoc -- run 'crates/neoc/tests/**/*.test.lua' 'crates/neoc/tests/**/*.spec.lua'`.
 
 The bench line compiles every bench and runs each body once, with no timing. It catches stale bench code the other checks never build. To time a module, drop `-- --test` and name it: `cargo bench -p neoc-vm --features bench --bench lib <name>`.
 
-GitHub Actions (`.github/workflows/ci.yml`) mirrors these checks on pushes to `main`, but it is not a gate: the local run is the verification.
+GitHub Actions (`.github/workflows/ci.yml`) runs similar checks on pushes to `main`, plus `cargo deny check advisories`, the release-binary cross builds and the Docker image build. It is not a gate and is not relied on: the local run is the verification.
 
 ## Branching and PRs
 
 `main` is the only long-lived branch.
 
 1. Branch from `main`: `issues/{key}-{slug}` (e.g. `issues/NEOC-6-std-task`).
-2. Run the [pre-PR checks](#pre-pr-checks).
-3. Self-review the diff with the `pr-self-review` skill (or `change-review`).
-4. Open a PR into `main`. One module or one well-scoped change per PR. Say why in the description, not only what. Reference the Jira key (`Refs NEOC-<n>`).
-5. Squash-merge once the checks and the self-review are clean, then delete the branch.
+2. Run the [pre-PR checks](#pre-pr-checks) locally.
+3. Self-review with the `pr-self-review` skill and post the `Self-review` note on the PR for the head SHA.
+4. Open the PR into `main` (before or after step 3). One module or one well-scoped change per PR. Say why in the description, not only what. Reference the Jira key (`Refs NEOC-<n>`).
+5. Hand off to an independent `pr-review` pass: a fresh reviewer with no session context, who posts a verdict note for the head SHA (`READY TO MERGE` or `CHANGES NEEDED`). Fix and re-run from step 2 until `READY TO MERGE`.
+6. Squash-merge only on `READY TO MERGE` for the current head, then delete the branch.
 
 ### Commits and PR titles
 
-[Conventional Commits](https://www.conventionalcommits.org/): `<type>(<scope>): <subject>`. The squash-merge commit takes the PR title, so the title follows the same format.
+[Conventional Commits](https://www.conventionalcommits.org/): `<type>(<scope>): <subject>`. The squash commit message comes from the PR title (a PR with several commits) or from the commit itself (a single-commit PR), so keep both in this format.
 
 | Type | When |
 |---|---|
@@ -79,7 +83,7 @@ Scope is optional (a module or a subsystem). Subject is imperative, lowercase, n
 Example: a `lib:foo` module. Pick the namespace first (see [CLAUDE.md](CLAUDE.md#modules)). Copy the shape of a small existing module such as `crates/neoc-vm/src/lua/lib/hex.rs`; don't write one from scratch.
 
 1. **Module file.** `crates/neoc-vm/src/lua/lib/foo.rs` exports `pub fn module(lua: &Lua) -> mlua::Result<Table>` and a `declare` that builds the surface through the `Module` facade (`crates/neoc-vm/src/lua/facade.rs`). Each function carries its name, parameter types and a one-line description. Fallible functions return `(value, err)`.
-2. **Register.** Add `pub mod foo;` to `crates/neoc-vm/src/lua/lib/mod.rs` and a `modules.insert("lib:foo".into(), lib::foo::module(lua)?)` line in `install` in `crates/neoc-vm/src/lua/modules.rs`, both alphabetical. Add `foo` to the `declared` and `runtime_tables` lists in that file's tests and update the registered-module count they assert.
+2. **Register.** Add `pub mod foo;` to `crates/neoc-vm/src/lua/lib/mod.rs` and a `modules.insert("lib:foo".into(), lib::foo::module(lua)?)` line in `registry()` in `crates/neoc-vm/src/lua/modules.rs`, both alphabetical. Add `foo` to the `declared` and `runtime_tables` lists in that file's tests and update the registered-module count they assert.
 3. **Rust tests.** A `#[cfg(test)] mod tests` in the module file, driving the full engine from `crate::lua::sandbox::make_engine()`. Run: `cargo test -p neoc-vm foo`.
 4. **Benches.** A `#[cfg(feature = "bench")] pub fn benches(c: &mut Criterion)` with three tiers: `library` (pure Rust), `into_out_lua` (marshalling cost) and `through_lua` (the full user path). Add it to the `criterion_group!` in `crates/neoc-vm/benches/lib/lib.rs`. Run: `cargo bench -p neoc-vm --features bench --bench lib foo`.
 5. **Lua test.** `crates/neoc/tests/lib/foo.test.lua`, using `lib:test`:

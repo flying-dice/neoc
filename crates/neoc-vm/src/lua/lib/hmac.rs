@@ -48,8 +48,8 @@ type HmacSha256 = hmac::Hmac<Sha256>;
 type HmacSha384 = hmac::Hmac<Sha384>;
 type HmacSha512 = hmac::Hmac<Sha512>;
 
-/// Canonical algorithm list — the registration order. Used by `algorithms()`
-/// and by tests that iterate every backend.
+/// Canonical algorithm list. Its order is the order `algorithms()` returns.
+/// Used by `algorithms()` and by tests that iterate every backend.
 const ALGOS: &[&str] = &["sha256", "sha384", "sha512"];
 
 // ---------------------------------------------------------------------------

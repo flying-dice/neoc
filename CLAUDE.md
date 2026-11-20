@@ -16,6 +16,7 @@ crates/neoc/                 # the `neoc` binary (the only bin)
   src/main.rs                # CLI entry: `run`, embedded-payload executables
   tests/                     # Lua suites (*.test.lua, *.spec.lua), cli.rs, cucumber.rs
 crates/neoc-vm/              # the runtime library
+  tests/script_parse.rs      # compiles (never runs) every Lua script, Docker or not
   src/errors.rs              # runtime error types (NeocError)
   src/lua/sandbox.rs         # engine construction, stripped globals
   src/lua/facade.rs          # Module builder: registration, spans, (value, error)
@@ -32,7 +33,7 @@ The crate boundary is enforced by `Cargo.toml`. `neoc-vm` owns the `mlua`/`tokio
 ```sh
 cargo build                                          # debug build
 cargo test --workspace                               # Rust, CLI integration and the Gherkin spec
-cargo run -p neoc -- run 'crates/neoc/tests/**/*.test.lua'   # Lua suites (Docker ones need a daemon)
+cargo run -p neoc -- run 'crates/neoc/tests/**/*.test.lua' 'crates/neoc/tests/**/*.spec.lua'   # all Lua suites (Docker ones need a daemon)
 cargo bench -p neoc-vm --features bench --bench lib --bench vnd -- --test   # bench smoke
 cargo clippy --workspace --all-targets               # lint
 cargo fmt --check                                    # formatting
@@ -64,8 +65,20 @@ Priority order, 1 > 2 > 3 > 4:
 - Every module exports `pub fn module(lua: &Lua) -> mlua::Result<Table>`. The table is the public surface; Rust items stay private. No globals.
 - **Errors.** The shape is fixed per function. A recoverable failure (file missing, network down) returns `(value, err)` through the `ok` / `from_err` helpers: `(value, nil)` on success, `(nil, "module.function: message")` on failure. A programming error (wrong type, closed handle) raises. Infallible functions return the value directly.
 - **Error prefixes** are `module.function:` (the bare module name, no namespace), and stable: scripts match on them.
+- **Hidden async.** I/O looks synchronous: a call such as `hyper.get(url)` returns its result directly. No futures, no `:await()`, no callbacks. Concurrency is opt-in through `std:task` (and batch functions where a module has them).
 - **Naming.** A `UserData` type is named after its Rust type (`Url`, `Path`, `Map`). Constructors live on a sub-table: `mod.Type.new()`, `.parse()`, `.from_*()`. Mutators follow Rust (`push`, `set_path`). Avoid `new_with_*` and builders.
-- **Flat vs `UserData`.** Flat functions return strings and tables, never `UserData` (except a `parse()` alias). They use scripting convention (`extname()` gives `".txt"`); `UserData` mirrors Rust (`extension()` gives `"txt"`). A stateless module (`lib:base64`) needs only the flat surface.
+- **Constructor names.**
+
+  | Situation | Use |
+  |---|---|
+  | Bare, default | `new()` |
+  | Wrapping an existing value | `from_lua()`, `from_file()` |
+  | Config struct | `from_options()` |
+  | Raw data | `from_snapshot()` |
+  | Opinionated preset | `with_stdlib()`, `with_sandbox()` |
+
+  If `new` could be more descriptive without feeling redundant, use the descriptive name.
+- **Flat vs `UserData`.** Read methods return Lua values (strings, numbers, tables); methods that return a domain object return `UserData`. Flat functions return strings and tables, never `UserData` (except a `parse()` alias). They use scripting convention (`extname()` gives `".txt"`); `UserData` mirrors Rust (`extension()` gives `"txt"`). A stateless module (`lib:base64`) needs only the flat surface.
 - **Resources.** OS resources are `UserData` handles with methods. Operations across several handles are free functions on the module table.
 - **No speculative abstractions.** Add a helper only when 3+ call sites exist.
 - A module's tracing target is `lua::lib::<module>` whatever its namespace.
@@ -75,7 +88,7 @@ Adding a module: see [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-new-module).
 ## Tests
 
 - **Rust:** `#[cfg(test)] mod tests` next to the code. Integration tests in `tests/` only where they cross crate boundaries.
-- **Lua:** every module has `crates/neoc/tests/<ns>/<name>.test.lua`, run with `neoc run`. Per exported function: one happy path, one test per distinct error condition, and an empty or zero value where it applies. The outer `describe` is the bare module name.
+- **Lua:** a new module gets `crates/neoc/tests/<ns>/<name>.test.lua`, run with `neoc run`. (Not every existing module has one yet: `std:net`, `std:workers` and `lib:test` have none, and `std:task` uses a `.spec.lua`.) Per exported function: one happy path, one test per distinct error condition, and an empty or zero value where it applies. The outer `describe` is the bare module name.
 - **CLI spec:** `tooling/cli/*.feature`, driven by `crates/neoc/tests/cucumber.rs`.
 - **Benches:** three tiers per module (`library`, `into_out_lua`, `through_lua`), behind the `bench` feature.
 
@@ -93,10 +106,11 @@ Adding a module: see [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-new-module).
 `main` is the only long-lived branch. Work is tracked in [Jira](https://flying-dice.atlassian.net/jira/software/projects/NEOC) (project `NEOC`); code and pull requests are on GitHub at `flying-dice/neoc`.
 
 1. Branch from `main`: `issues/{key}-{slug}` (e.g. `issues/NEOC-6-std-task`).
-2. Run the [pre-PR checks](CONTRIBUTING.md#pre-pr-checks) locally. GitHub Actions is not a gate: it is not relied on, so the local run is the verification.
-3. Self-review the diff with the `pr-self-review` skill (or `change-review`).
-4. Open a PR into `main`. The squash-merge commit takes the PR title, so the title is a Conventional Commit. Reference the Jira key in the body or footer (`Refs NEOC-6`).
-5. Squash-merge once the checks and the self-review are clean, then delete the branch. Mark the Jira ticket Done.
+2. Run the [pre-PR checks](CONTRIBUTING.md#pre-pr-checks) locally. GitHub Actions is not a gate and is not relied on: the local run is the verification.
+3. Self-review with the `pr-self-review` skill and post its `Self-review` note on the PR for the head SHA.
+4. Open a PR into `main`. Title and commits are Conventional Commits (the squash commit message comes from the PR title for a multi-commit PR, from the commit for a single-commit one). Reference the Jira key in the body or footer (`Refs NEOC-6`).
+5. Hand off to an independent `pr-review` pass: a fresh reviewer with no session context, who posts a verdict note for the head SHA (`READY TO MERGE` or `CHANGES NEEDED`). Fix and repeat from step 2 until `READY TO MERGE`.
+6. Squash-merge only on `READY TO MERGE` for the current head, then delete the branch. Mark the Jira ticket Done.
 
 Releases are cut by pushing a `vX.Y.Z` tag on `main` (see CONTRIBUTING.md). Don't push release tags unless asked.
 

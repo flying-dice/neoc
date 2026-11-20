@@ -77,9 +77,15 @@ SRP, DRY, low coupling, KISS. Terse. Conventional Commits with the module as sco
 
 1. Create `crates/neoc-vm/src/lua/std/<name>.rs` with a `module` fn.
 2. Register in `crates/neoc-vm/src/lua/std/mod.rs` (alphabetical).
-3. `#[cfg(test)] mod tests` in the file.
-4. Criterion benches behind the `bench` feature where the module is performance-sensitive.
-5. `crates/neoc/tests/std/<name>.test.lua`.
+3. Add the `modules.insert("std:<name>".into(), std::<name>::module(lua)?)` line in `registry()` in
+   `crates/neoc-vm/src/lua/modules.rs`; add the module to the `declared` and `runtime_tables`
+   lists in that file's tests and update the registered-module count they assert.
+4. `#[cfg(test)] mod tests` in the file.
+5. Criterion benches behind the `bench` feature where the module is performance-sensitive.
+6. `crates/neoc/tests/std/<name>.test.lua`.
+7. Add the module to the README modules table (alphabetical within the namespace).
+
+See CONTRIBUTING.md → "Adding a new module".
 
 ## Autonomy & escalation
 

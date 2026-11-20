@@ -1,9 +1,9 @@
 ---
 name: pr-self-review
-description: Use before marking a pull request ready, requesting review, or re-requesting review after fixes — author-side quality gate
+description: Use before marking a pull request ready, handing it to an independent review, or re-handing it after fixes — author-side quality gate
 ---
 
-Author gate. Run before every review request and every re-request. Reviewer runs the same rubric — anything skipped here, they find, and each find costs a full round.
+Author gate. Run before every handoff to review and every re-handoff. Reviewer runs the same rubric — anything skipped here, they find, and each find costs a full round.
 
 ## Standard
 
@@ -15,7 +15,7 @@ You are your own first reviewer. Default verdict FAIL until each gate carries ev
 2. **Run the rubric** in author mode. Fan-out per the rubric, `model: "sonnet"`.
 3. **Fix loop.** Any FAIL → fix, push, back to step 1. A note is valid only for the SHA it names.
 4. **Post** the Self-review note (template below) on the PR.
-5. **Request review** only when every gate is PASS or `N/A — <reason>`.
+5. **Hand off to an independent `pr-review` pass** only when every gate is PASS or `N/A — <reason>`.
 
 <!-- rubric:begin -->
 ## Rubric
@@ -164,7 +164,7 @@ Diff: <files> files, +<add> / -<del>
 ## Don't
 
 - Mark a gate PASS without a command.
-- Request review before the pre-PR checks pass at the head SHA.
+- Hand off before the pre-PR checks pass at the head SHA.
 - Push after posting the note without re-running — note goes stale.
 - Bundle prose rewrites or new behaviour into a fix round.
 - `@mention` attributively — cite the comment by link. A mention spawns a pass.

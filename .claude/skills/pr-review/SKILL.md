@@ -1,9 +1,9 @@
 ---
 name: pr-review
-description: Use when you are the reviewer on a pull request — before approving, requesting changes, or posting review comments
+description: Use when you are the reviewer on a pull request — before giving a verdict, requesting changes, or posting review comments
 ---
 
-Assigned as reviewer. No session context. Code speaks for itself. Author ran this rubric via `pr-self-review` — your job: prove their evidence, then find what they missed.
+Assigned as reviewer: a fresh reviewer with no session context, independent of the author. Code speaks for itself. Author ran this rubric via `pr-self-review` — your job: prove their evidence, then find what they missed.
 
 ## Standard
 
@@ -48,7 +48,7 @@ Cost-ordered. Phase 0–1 block → pass ends — no deep probing on a build a c
 5. Post the review comment.
 6. Count unresolved review threads via `gh api graphql` (`reviewThreads { isResolved }`). Never trust the review decision alone.
 7. Changes needed → threads stay open; hand back with a PR comment that **@mentions the PR assignee once**. Reference other comments by link, not `@name`.
-8. Approved → **Approve the PR** — `gh pr review <n> --approve`. A comment is not approval.
+8. Clean → post the review note with verdict **READY TO MERGE** at the head SHA. The author cannot approve their own PR and nothing reads GitHub approvals: the squash-merge requires this note, for the exact head SHA.
 
 <!-- rubric:begin -->
 ## Rubric
@@ -167,7 +167,7 @@ Same finding class raised on ≥ 2 PRs and no gate covers it → Jira ticket pro
 Post on the PR. Every gate PASS, FAIL, or `N/A — <reason>`. No blanks.
 
 ```
-## Review — <sha8> — APPROVED | CHANGES REQUESTED | HOLD
+## Review — <sha8> — READY TO MERGE | CHANGES NEEDED | HOLD
 
 Mode: fan-out (4× opus) | single-reader | degraded — <reason>
 Evidence audit: <n> rows re-derived, <m> mismatched
@@ -196,9 +196,9 @@ detail
 
 - `bug` — breaks at runtime.
 - `issue` — wrong but won't crash (incl. any clean-code defect: SRP/DRY/naming/coupling/dead/KISS, and any failed gate).
-- `question` — need answer before approving.
+- `question` — need answer before a READY TO MERGE verdict.
 
-Every finding blocks. No severity scale. No non-blocking tier. No "nit". No defer-to-follow-up. One unresolved thread per finding. Approval forbidden while any thread is open. Name the gate in the summary: `**[issue]** G5 — regression test asserts the attribute, not the behaviour`.
+Every finding blocks. No severity scale. No non-blocking tier. No "nit". No defer-to-follow-up. One unresolved thread per finding. READY TO MERGE is forbidden while any thread is open. Name the gate in the summary: `**[issue]** G5 — regression test asserts the attribute, not the behaviour`.
 
 ## Focus
 
