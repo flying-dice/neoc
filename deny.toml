@@ -15,14 +15,16 @@ targets = ["x86_64-unknown-linux-gnu", "x86_64-pc-windows-gnu", "aarch64-apple-d
 multiple-versions = "allow"
 # `wrappers` = only these crates may depend on the banned crate directly.
 deny = [
-  # the Lua adapter reaches mlua through the VM crate's re-export: it does not depend on it directly
-  { crate = "mlua", wrappers = ["agentos-luavm", "neoc-vm", "neoc"], reason = "Lua lives in the VM crate (the neoc CLI names the error type it surfaces)" },
-  { crate = "agentos-luavm", wrappers = ["agentos-lua"], reason = "only the Lua adapter wires the VM library to the AppRuntime port" },
+  # the Lua adapter reaches mlua through neoc-vm's re-export: it does not depend on it directly
+  { crate = "mlua", wrappers = ["neoc-vm", "neoc"], reason = "Lua lives in neoc-vm (the neoc CLI names the error type it surfaces)" },
+  { crate = "neoc-vm", wrappers = ["agentos-lua", "neoc"], reason = "only the Lua adapter wires the VM library to the AppRuntime port (and the neoc CLI is its own front end)" },
   # the VM exposes SQLite to scripts as `vnd:rusqlite`
-  { crate = "rusqlite", wrappers = ["agentos-sqlite", "agentos-luavm", "neoc-vm"], reason = "SQLite lives in the sqlite adapter (and the Lua VM's vnd:rusqlite module)" },
-  { crate = "rmcp", wrappers = ["agentos-mcp"], reason = "MCP lives in the mcp adapter" },
+  { crate = "rusqlite", wrappers = ["agentos-sqlite", "neoc-vm"], reason = "SQLite lives in the sqlite adapter (and the VM's vnd:rusqlite module)" },
+  # `wrappers` also sees dev-dependencies (the graph keeps them so neoc's test-only crates stay checked): the host's
+  # end-to-end tests use rmcp as the MCP client, and the fetch tests run an axum server.
+  { crate = "rmcp", wrappers = ["agentos-mcp", "agentos-host"], reason = "MCP lives in the mcp adapter (agentos-host: dev-dependency, the test client)" },
   { crate = "agent-client-protocol", wrappers = ["agentos-acp"], reason = "ACP lives in the acp adapter" },
-  { crate = "axum", wrappers = ["agentos-http", "agentos-mcp", "agentos-agui", "agentos-host"], reason = "HTTP stack in driving adapters and the host" },
+  { crate = "axum", wrappers = ["agentos-http", "agentos-mcp", "agentos-agui", "agentos-host", "agentos-fetch", "tonic"], reason = "HTTP stack in driving adapters and the host (agentos-fetch: dev-dependency, a test server; tonic: gRPC under neoc-vm's vnd:testcontainers_modules)" },
   { crate = "axum-server", wrappers = ["agentos-host"], reason = "TLS termination is wiring: the host owns the listener" },
   # rustls only: no system OpenSSL, so every binary stays self-contained
   { crate = "openssl" },

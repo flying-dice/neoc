@@ -8,11 +8,14 @@
  *   domain      -> nothing internal; external: serde, serde_json, sha2, thiserror (+ ts-rs, schemars)
  *   application -> domain; external: async-trait, futures-channel, futures-util (its runtime-free `lock::Mutex`), parking_lot, serde_json, sha2, thiserror, tracing
  *   adapters    -> application, domain; never each other
- *   lua         -> application, domain, luavm (the one adapter that may use the Lua VM library)
- *   luavm       -> nothing internal (the Lua VM library; only the lua adapter may depend on it)
- *   host        -> everything
+ *   lua         -> application, domain, neoc-vm (the one agentos crate that may use the Lua VM library)
+ *   neoc-vm     -> nothing internal (the Lua VM library; the lua adapter and the `neoc` CLI may depend on it)
+ *   neoc        -> neoc-vm only (the CLI over the VM; it never reaches into the agentos crates)
+ *   host        -> every adapter, never neoc-vm
  *
- * A crate that is not in INTERNAL fails the gate, so a new crate has to be placed in the hexagon on purpose.
+ * The workspace holds two products, the agentos hexagon and neoc (`neoc-vm` and the `neoc` CLI); the lists below
+ * keep each side's edges inside its own. A crate that is not in INTERNAL fails the gate, so a new crate has to be
+ * placed on purpose.
  * `cargo deny` (deny.toml `bans` with `wrappers`) is the second line of defence for the framework crates.
  *
  * Why a bun script and not a Rust xtask: it runs with the other lint scripts (`bun run lint`), needs no
@@ -25,11 +28,13 @@ import { spawnSync } from 'node:child_process'
 const INTERNAL: Record<string, string[]> = {
   'agentos-domain': [],
   'agentos-application': ['agentos-domain'],
-  // The Lua adapter runs apps (plain Lua 5.1) on top of the Lua VM library below.
-  'agentos-lua': ['agentos-domain', 'agentos-application', 'agentos-luavm'],
-  // The Lua 5.1 VM: a support library, not an adapter. It depends on no agentos crate, and only the Lua
-  // adapter may depend on it (the one place a script engine is wired to a port), so the VM stays swappable.
-  'agentos-luavm': [],
+  // The Lua adapter runs apps (plain Lua 5.1 source) on top of the Lua VM library below.
+  'agentos-lua': ['agentos-domain', 'agentos-application', 'neoc-vm'],
+  // The Lua VM (LuaJIT): a support library, not an adapter. It depends on no other crate here, and among the
+  // agentos crates only the Lua adapter may depend on it (the one place a script engine is wired to a port), so
+  // the VM stays swappable. The `neoc` CLI is its other client.
+  'neoc-vm': [],
+  neoc: ['neoc-vm'],
   'agentos-sqlite': ['agentos-domain', 'agentos-application'],
   'agentos-fetch': ['agentos-application'],
   'agentos-mcp': ['agentos-domain', 'agentos-application'],
@@ -100,7 +105,7 @@ for (const pkg of metadata.packages) {
   seen.add(pkg.name)
   const normal = pkg.dependencies.filter((d) => d.kind === null)
   for (const { name } of normal) {
-    const internal = name.startsWith('agentos-')
+    const internal = name in INTERNAL
     if (internal && !allowed.includes(name)) {
       problems.push(`${pkg.name} -> ${name}: internal edge not allowed (allowed: ${allowed.join(', ') || 'none'})`)
     }
