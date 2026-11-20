@@ -208,10 +208,10 @@ pub fn from_err<E: ::std::fmt::Display>(
     err(lua, format!("{prefix}: {e}"))
 }
 
-/// Luau bytecode for `return 7`, as the text the script-facing loaders take. Compiled with the debug level
-/// at 0, there is no debug info or chunk name, and every byte is ASCII (the constant `7` is the double
-/// `0x401C000000000000`), so it survives the `String` conversion script-facing loaders apply. The escape-vector
-/// fixture for the text-only loader tests: Luau's bytecode is not verified when it is loaded.
+/// Luau bytecode for `return 7`, as the text the script-facing loaders take. Compiled with the debug level at 0 it
+/// has no debug info or chunk name, and every byte is below 0x80 (a version byte, small counts and the instruction
+/// words), so it survives the `String` conversion script-facing loaders apply. The escape-vector fixture for the
+/// text-only loader tests: Luau's bytecode is not verified when it is loaded.
 #[cfg(test)]
 pub(crate) fn luau_bytecode() -> String {
     let bytes = mlua::chunk::Compiler::new()
