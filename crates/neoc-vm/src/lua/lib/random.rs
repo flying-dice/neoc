@@ -208,9 +208,24 @@ impl SmallDraws {
     }
 
     fn next_u32(&mut self) -> Result<u32, String> {
+        self.next_u32_from(&mut fill_random)
+    }
+
+    /// `next_u32` with the entropy source passed in, so a test can inject a
+    /// failing one.
+    fn next_u32_from(
+        &mut self,
+        fill: &mut dyn FnMut(&mut [u8]) -> Result<(), String>,
+    ) -> Result<u32, String> {
         if self.pos + 4 > self.buf.len() {
             self.buf.resize(self.chunk, 0);
-            fill_random(&mut self.buf)?;
+            if let Err(e) = fill(&mut self.buf) {
+                // Drop the zeroed, never-filled buffer so a retry refills
+                // instead of handing out zeros as if they were entropy.
+                self.buf.clear();
+                self.pos = 0;
+                return Err(e);
+            }
             self.pos = 0;
         }
         let bytes = [
@@ -488,16 +503,41 @@ mod tests {
     }
 
     #[test]
-    fn small_draws_stay_in_range_and_cover_every_index() {
-        // A span that does not divide 2^32 (3) exercises the rejection path;
-        // every index must appear and none may fall outside the span.
+    fn small_draws_reject_the_partial_bucket_and_stay_balanced() {
+        // span = 2^31 + 1 leaves a partial bucket of 2^31 - 1 draws out of
+        // 2^32 (about half of all raw draws are rejected), so this loop goes
+        // through the rejection branch thousands of times. Every result must
+        // be below the span and the two halves roughly balanced.
+        let span = (1usize << 31) + 1;
         let mut draws = super::SmallDraws::new(8);
-        let mut seen = [0u32; 3];
-        for _ in 0..3000 {
-            seen[draws.below(3).unwrap()] += 1;
+        let mut low = 0u32;
+        let n = 4000;
+        for _ in 0..n {
+            let v = draws.below(span).unwrap();
+            assert!(v < span, "draw {v} outside span {span}");
+            if v < span / 2 {
+                low += 1;
+            }
         }
-        assert!(seen.iter().all(|&c| c > 800), "uneven draws: {seen:?}");
+        assert!(
+            (1700..=2300).contains(&low),
+            "halves unbalanced: {low} of {n} below the midpoint"
+        );
         assert_eq!(draws.below(1).unwrap(), 0);
+    }
+
+    #[test]
+    fn failed_refill_is_not_served_as_zero_entropy() {
+        let mut draws = super::SmallDraws::new(8);
+        let mut fail = |_: &mut [u8]| Err("boom".to_string());
+        assert_eq!(draws.next_u32_from(&mut fail), Err("boom".to_string()));
+        // The retry must refill from the (now working) source, not hand out
+        // the zeroed buffer the failed refill left behind.
+        let mut ones = |buf: &mut [u8]| {
+            buf.fill(0xFF);
+            Ok(())
+        };
+        assert_eq!(draws.next_u32_from(&mut ones), Ok(u32::MAX));
     }
 
     #[test]
