@@ -7,7 +7,9 @@
 //! ```
 //!
 //! `--out <file>` writes (or checks) another file than `types/neoc.d.luau`. Exit codes: 0 done, 1 stale,
-//! missing, not writable or a record the emitter refuses, 2 bad arguments; `tests/luau_decls.rs` runs the example for each.
+//! missing, not writable or a record the emitter refuses, 2 bad arguments. `tests/luau_decls.rs` runs the example for
+//! 0, for 1 (stale, missing, not writable) and for 2; a record the emitter refuses is unit-tested in
+//! `facade/luau_decls.rs` (no real module has one).
 //!
 //! One definitions file for luau-lsp: a section of `export type` aliases per module and an overloaded `require`
 //! that maps `require("lib:json")` to its module type, so no file is named after a registry key (a colon is

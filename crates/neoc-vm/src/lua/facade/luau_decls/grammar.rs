@@ -25,7 +25,7 @@ pub(crate) fn validate(text: &str) -> Result<(), String> {
         let at = |e: String| format!("line {}: {e}: `{line}`", n + 1);
         state = match state {
             State::Top => top(line, &mut declared).map_err(at)?,
-            State::Type => in_type(line).map_err(at)?,
+            State::Type(names) => in_type(line, names).map_err(at)?,
             State::Require { first } => in_require(line, first).map_err(at)?,
         };
     }
@@ -37,7 +37,7 @@ pub(crate) fn validate(text: &str) -> Result<(), String> {
 
 enum State {
     Top,
-    Type,
+    Type(HashSet<String>),
     Require { first: bool },
 }
 
@@ -57,7 +57,7 @@ fn top(line: &str, declared: &mut HashSet<String>) -> Result<State, String> {
         }
         return match open {
             "{}" => Ok(State::Top),
-            "{" => Ok(State::Type),
+            "{" => Ok(State::Type(HashSet::new())),
             _ => Err("a table type opens with `{`".to_string()),
         };
     }
@@ -67,7 +67,7 @@ fn top(line: &str, declared: &mut HashSet<String>) -> Result<State, String> {
     Err("not a comment, an `export type` or `declare require:`".to_string())
 }
 
-fn in_type(line: &str) -> Result<State, String> {
+fn in_type(line: &str, mut names: HashSet<String>) -> Result<State, String> {
     if line == "}" {
         return Ok(State::Top);
     }
@@ -75,7 +75,7 @@ fn in_type(line: &str) -> Result<State, String> {
         .strip_prefix('\t')
         .ok_or("a property or a doc line is indented by one tab")?;
     if body == "---" || body.starts_with("--- ") {
-        return Ok(State::Type);
+        return Ok(State::Type(names));
     }
     let (name, rest) = body.split_once(": ").ok_or("`name: type,` expected")?;
     let quoted = name
@@ -87,9 +87,12 @@ fn in_type(line: &str) -> Result<State, String> {
             "`{name}` is not a property name (a reserved word is quoted)"
         ));
     }
+    if !names.insert(quoted.to_string()) {
+        return Err(format!("`{quoted}` is a property of this type twice"));
+    }
     let ty = rest.strip_suffix(',').ok_or("a property ends with `,`")?;
     parse_type(ty)?;
-    Ok(State::Type)
+    Ok(State::Type(names))
 }
 
 fn in_require(line: &str, first: bool) -> Result<State, String> {
@@ -161,7 +164,10 @@ fn lex(s: &str) -> Result<Vec<Tok>, String> {
                 loop {
                     match chars.get(i) {
                         None => return Err("unterminated string".to_string()),
-                        Some('\\') => i += 2,
+                        Some('\\') => {
+                            i += super::escape_len(&chars, i)
+                                .ok_or("a string has an escape Luau does not read")?;
+                        }
                         Some('"') => break,
                         Some(_) => i += 1,
                     }
@@ -358,6 +364,9 @@ impl Parser {
             if !self.eat(&Tok::Comma) {
                 break;
             }
+            if self.peek() == Some(&Tok::RParen) {
+                return Err("a trailing comma in a parenthesised group".to_string());
+            }
         }
         self.expect(&Tok::RParen)?;
         group.arrow = self.peek() == Some(&Tok::Arrow);
@@ -386,6 +395,12 @@ impl Parser {
             while self.eat(&Tok::Bar) || self.eat(&Tok::Amp) {
                 self.postfix()?;
             }
+        } else if matches!(self.peek(), Some(Tok::Question | Tok::Bar | Tok::Amp)) {
+            // luau-lsp reads `() -> (A, B)?` as an optional function, not an optional pack
+            return Err(
+                "a return pack of several values (or none) is not optional or a union member"
+                    .to_string(),
+            );
         }
         Ok(())
     }
@@ -413,6 +428,8 @@ mod tests {
             "((path: \"lib:json\") -> lib_json)",
             "((f))?",
             "() -> (nil, string?)",
+            "\"a\\n\\x41\\065\\u{1F600}\\z\\\\\"",
+            "{ a: number, }",
         ] {
             assert_eq!(parse_type(ty), Ok(()), "{ty}");
         }
@@ -434,6 +451,15 @@ mod tests {
             "string\r",
             "\"open",
             "a.b",
+            "(a: string,) -> ()", // a trailing comma in a group
+            "(string,)",
+            "\"\\999\"", // a decimal escape above 255
+            "\"\\q\"",
+            "\"\\x4\"",
+            "\"\\u{110000}\"",
+            "() -> (number, string)?", // luau-lsp reads it as an optional function
+            "() -> (number, string) | nil",
+            "() -> ()?",
         ] {
             assert!(parse_type(ty).is_err(), "{ty} was accepted");
         }
@@ -473,6 +499,14 @@ mod tests {
                 "export type a_B = {}\nexport type a_B = {}\n",
             ),
             ("a nested line", "export type a_B = {\n\t\tf: number,\n}\n"),
+            (
+                "a property twice",
+                "export type a_B = {\n\tf: number,\n\tf: string,\n}\n",
+            ),
+            (
+                "a property twice, one quoted",
+                "export type a_B = {\n\t[\"end\"]: number,\n\t[\"end\"]: string,\n}\n",
+            ),
             ("require without an overload", "declare require: \n\n"),
         ];
         for (what, text) in cases {

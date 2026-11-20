@@ -102,6 +102,13 @@ impl Module<'_> {
         check_key(&self.name)?;
         let mut out = format!("-- ===== {} =====\n\n", self.name);
         let mut statics = Vec::new();
+        check_unique(
+            &self.name,
+            self.userdata
+                .iter()
+                .map(|u| u.type_name.as_str())
+                .chain(self.types.iter().map(|t| t.type_name.as_str())),
+        )?;
         for ud in &self.userdata {
             write_alias(
                 &mut out,
@@ -126,6 +133,14 @@ impl Module<'_> {
             statics.push(&ty.type_name);
         }
 
+        check_unique(
+            &scope,
+            statics
+                .iter()
+                .map(|n| n.as_str())
+                .chain(self.consts.iter().map(|c| c.name.as_str()))
+                .chain(self.entries.iter().map(|e| e.name.as_str())),
+        )?;
         out.push_str(&format!("export type {scope} = {{\n"));
         for name in statics {
             write_prop(&mut out, "", name, &alias_name(&scope, &statics_name(name)))?;
@@ -149,6 +164,18 @@ fn alias_name(scope: &str, type_name: &str) -> String {
 /// The type name of the sub-table of a type on its module (`Duration.from_secs`): `DurationStatics`.
 fn statics_name(type_name: &str) -> String {
     format!("{type_name}Statics")
+}
+
+/// Names written into one table type must differ: Luau keeps the last of two equal keys, so the other
+/// record would silently be lost.
+fn check_unique<'a>(table: &str, names: impl Iterator<Item = &'a str>) -> Emit<()> {
+    let mut seen = std::collections::HashSet::new();
+    for name in names {
+        if !seen.insert(name) {
+            return Err(format!("`{name}` is recorded twice in `{table}`"));
+        }
+    }
+    Ok(())
 }
 
 /// A registry key is `ns:name` with both parts identifiers: it is written in a header comment and in a
@@ -213,6 +240,14 @@ fn write_alias(
 ) -> Emit<()> {
     check_ident("type name", name)?;
     let alias = alias_name(scope, name);
+    check_unique(
+        &alias,
+        fields.iter().map(|f| f.name.as_str()).chain(
+            groups
+                .iter()
+                .flat_map(|(entries, _)| entries.iter().map(|e| e.name.as_str())),
+        ),
+    )?;
     if fields.is_empty() && groups.iter().all(|(entries, _)| entries.is_empty()) {
         out.push_str(&format!("export type {alias} = {{}}\n\n"));
         return Ok(());
@@ -326,8 +361,12 @@ fn luau_type(ty: &str, scope: &str) -> Emit<String> {
         match c {
             _ if c.is_control() => return Err(format!("control character {c:?} in type `{ty}`")),
             '"' => {
-                let end = string_end(&chars, i)
-                    .ok_or_else(|| format!("unterminated string in type `{ty}`"))?;
+                let end = string_end(&chars, i).map_err(|e| format!("{e} in type `{ty}`"))?;
+                if let Some(c) = chars[i..=end].iter().find(|c| c.is_control()) {
+                    return Err(format!(
+                        "control character {c:?} in a string in type `{ty}`"
+                    ));
+                }
                 out.extend(&chars[i..=end]);
                 i = end + 1;
             }
@@ -377,7 +416,7 @@ fn luau_type(ty: &str, scope: &str) -> Emit<String> {
                 out.push_str("...");
                 i += 3;
             }
-            ',' | ':' | '|' | '&' | '?' | ' ' | '\t' => {
+            ',' | ':' | '|' | '&' | '?' | ' ' => {
                 out.push(c);
                 i += 1;
             }
@@ -391,17 +430,66 @@ fn luau_type(ty: &str, scope: &str) -> Emit<String> {
     }
 }
 
-/// The index of the quote that closes the string literal opened at `start`.
-fn string_end(chars: &[char], start: usize) -> Option<usize> {
+/// The index of the quote that closes the string literal opened at `start`; every escape in it is one Luau
+/// reads (`escape_len`).
+fn string_end(chars: &[char], start: usize) -> Result<usize, String> {
     let mut i = start + 1;
     while i < chars.len() {
         match chars[i] {
-            '\\' => i += 2,
-            '"' => return Some(i),
+            '\\' => {
+                i += escape_len(chars, i).ok_or_else(|| {
+                    format!(
+                        "malformed escape in a string at `{}`",
+                        chars[i..].iter().take(6).collect::<String>()
+                    )
+                })?;
+            }
+            '"' => return Ok(i),
             _ => i += 1,
         }
     }
-    None
+    Err("unterminated string".to_string())
+}
+
+/// The length of the escape that starts with the backslash at `at`, or `None` when Luau would refuse it: one
+/// of `\a \b \f \n \r \t \v \\ \" \' \z`, `\xHH`, `\u{H...}` (a code point) or `\ddd` (one to three digits,
+/// at most 255).
+fn escape_len(chars: &[char], at: usize) -> Option<usize> {
+    let hex = |i: usize| chars.get(i).is_some_and(char::is_ascii_hexdigit);
+    match *chars.get(at + 1)? {
+        'a' | 'b' | 'f' | 'n' | 'r' | 't' | 'v' | '\\' | '"' | '\'' | 'z' => Some(2),
+        'x' => (hex(at + 2) && hex(at + 3)).then_some(4),
+        'u' => {
+            if chars.get(at + 2) != Some(&'{') {
+                return None;
+            }
+            let digits = chars[at + 3..]
+                .iter()
+                .take_while(|c| c.is_ascii_hexdigit())
+                .count();
+            let value = u32::from_str_radix(
+                &chars[at + 3..at + 3 + digits].iter().collect::<String>(),
+                16,
+            )
+            .ok()?;
+            (digits > 0 && chars.get(at + 3 + digits) == Some(&'}') && value <= 0x0010_FFFF)
+                .then_some(4 + digits + 1)
+        }
+        '0'..='9' => {
+            let digits = chars[at + 1..]
+                .iter()
+                .take(3)
+                .take_while(|c| c.is_ascii_digit())
+                .count();
+            let value: u32 = chars[at + 1..at + 1 + digits]
+                .iter()
+                .collect::<String>()
+                .parse()
+                .ok()?;
+            (value <= 255).then_some(1 + digits)
+        }
+        _ => None,
+    }
 }
 
 fn named_type(word: &str, scope: &str) -> String {
@@ -1266,6 +1354,68 @@ mod tests {
         let mut m = Module::new(&lua, "lib:demo").expect("module");
         m.record_fn("f", &[], "()", "a\tb\n\nc");
         assert!(m.luau_decls().is_ok());
+    }
+
+    /// A key that is not `ns:name`, a type name that is not an identifier, two records of one name, a control
+    /// character or a bad escape in a type: each an error naming the module.
+    #[test]
+    fn names_keys_duplicates_and_literals_are_checked() {
+        let lua = Lua::new();
+        let refused = |m: &Module, needle: &str| {
+            let error = m.luau_decls().expect_err("must be refused").to_string();
+            assert!(error.contains(needle), "{needle:?} not in {error:?}");
+        };
+        for key in ["nocolon", "lib:", ":json", "lib:j-son", "a:b:c"] {
+            let m = Module::new(&lua, key).expect("module");
+            refused(&m, "registry key");
+        }
+        let mut m = Module::new(&lua, "lib:demo").expect("module");
+        m.userdata("Bad Name", |_| {});
+        refused(&m, "type name `Bad Name` is not an identifier");
+        // two records of one name: functions, a function and a constant, fields, types
+        let mut m = Module::new(&lua, "lib:demo").expect("module");
+        m.record_fn("f", &[], "()", "")
+            .record_fn("f", &[], "number", "");
+        refused(&m, "`f` is recorded twice in `lib_demo`");
+        let mut m = Module::new(&lua, "lib:demo").expect("module");
+        m.const_("f", "number", "").record_fn("f", &[], "()", "");
+        refused(&m, "`f` is recorded twice");
+        let mut m = Module::new(&lua, "lib:demo").expect("module");
+        m.userdata("T", |t| {
+            t.field("x", "number", "").method("x", &[], "()", "");
+        });
+        refused(&m, "`x` is recorded twice in `lib_demo_T`");
+        let mut m = Module::new(&lua, "lib:demo").expect("module");
+        m.userdata("T", |_| {});
+        m.userdata("T", |_| {});
+        refused(&m, "`T` is recorded twice in `lib:demo`");
+        // control characters and escapes in a type
+        for ty in ["string\tx", "a\u{7}", "\"a\nb\"", "\"a\u{7}b\""] {
+            let mut m = Module::new(&lua, "lib:demo").expect("module");
+            m.record_fn("f", &[("a", ty)], "()", "");
+            refused(&m, "control character");
+        }
+        for ty in [
+            "\"\\999\"",
+            "\"\\q\"",
+            "\"\\x4\"",
+            "\"\\u{110000}\"",
+            "\"\\u{}\"",
+        ] {
+            let mut m = Module::new(&lua, "lib:demo").expect("module");
+            m.record_fn("f", &[("a", ty)], "()", "");
+            refused(&m, "malformed escape");
+        }
+        // the escapes Luau reads are copied
+        let mut m = Module::new(&lua, "lib:demo").expect("module");
+        m.record_fn(
+            "f",
+            &[("a", "\"a\\n\\x41\\065\\u{1F600}\\z\\\\\\\"\"")],
+            "()",
+            "",
+        );
+        let decls = m.luau_decls().expect("decls");
+        assert_eq!(validate(&decls), Ok(()), "{decls}");
     }
 
     /// A `()` as the type of a value (a parameter, a field) is `nil`, as a value type (a parameter, a field).

@@ -172,6 +172,16 @@ fn the_example_writes_and_checks() {
     assert!(fs::read_to_string(&file).unwrap().ends_with("-- stale\n"));
 }
 
+/// A file that cannot be written (here: a folder) is exit 1 with the reason, not a panic and not exit 0.
+#[test]
+fn the_example_reports_a_file_it_cannot_write() {
+    let scratch = Scratch::new("decls-unwritable");
+    let (code, stdout, stderr) = run_example(&["--out", scratch.0.to_str().unwrap()]);
+    assert_eq!(code, 1, "{stdout}{stderr}");
+    assert!(stderr.starts_with("luau_decls: "), "{stderr}");
+    assert!(!stdout.contains("wrote"), "{stdout}");
+}
+
 #[test]
 fn the_example_refuses_bad_arguments() {
     for args in [&["--bogus"][..], &["--out"], &["--check", "extra"]] {
@@ -341,6 +351,37 @@ fn matcher_refuses_extra_missing_and_unmarked_findings() {
     );
     // a fixture without markers expects nothing
     assert_eq!(check_negative("f", "a()\n", &[]).len(), 1);
+}
+
+/// How many `-- expect-error` markers each negative fixture holds. Deleting a wrong line together with its
+/// marker would otherwise shrink what is checked without a failure: it changes the count, which is edited
+/// here on purpose, in the same change.
+const NEGATIVE_MARKERS: &[(&str, usize)] = &[
+    ("types/fixtures/negative/result_handling.luau", 5),
+    ("types/fixtures/negative/wrong_use.luau", 31),
+];
+
+#[test]
+fn negative_fixtures_keep_their_markers() {
+    let mut files = Vec::new();
+    fixtures_under("types/fixtures/negative", &mut files);
+    let listed: Vec<&str> = NEGATIVE_MARKERS.iter().map(|(file, _)| *file).collect();
+    assert_eq!(
+        files.iter().map(String::as_str).collect::<Vec<_>>(),
+        listed,
+        "a negative fixture is not in NEGATIVE_MARKERS (or one listed is gone)"
+    );
+    for (file, expected) in NEGATIVE_MARKERS {
+        let source = fs::read_to_string(root().join(file)).unwrap();
+        let markers: usize = expected_errors(file, &source)
+            .iter()
+            .map(|(_, markers)| markers.len())
+            .sum();
+        assert_eq!(
+            markers, *expected,
+            "{file} holds {markers} markers, NEGATIVE_MARKERS says {expected}"
+        );
+    }
 }
 
 // ---- luau-lsp ----
@@ -631,8 +672,10 @@ fn the_language_server_types_require_as_the_editor_starts_it() {
     let script = "--!strict\nlocal base64 = require(\"lib:base64\")\nlocal n: number = base64.encode(\"a\")\nbase64.nope()\nprint(base64.encode(\"x\"), n)\n";
     let file = scratch.0.join("main.luau");
     fs::write(&file, script).unwrap();
-    let folder = format!("file://{}", scratch.0.display());
-    let uri = format!("file://{}", file.display());
+    let folder = url::Url::from_directory_path(&scratch.0)
+        .unwrap()
+        .to_string();
+    let uri = url::Url::from_file_path(&file).unwrap().to_string();
 
     let mut client = Client::start(&luau_lsp);
     client.request(
