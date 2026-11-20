@@ -25,7 +25,6 @@ agentos-mcp         = { path = "crates/agentos-mcp" }
 agentos-acp         = { path = "crates/agentos-acp" }
 agentos-agui        = { path = "crates/agentos-agui" }
 agentos-http        = { path = "crates/agentos-http" }
-agentos-codegen     = { path = "crates/agentos-codegen" }
 # external
 anyhow      = "1.0"
 async-trait = "0.1"
@@ -50,7 +49,6 @@ ts-rs       = { version = "12.0.1", features = ["serde-json-impl"] }
 schemars    = "1.2.3"
 tower-http  = { version = "0.6.11", features = ["fs", "set-header", "trace"] }
 tokio-tungstenite = "0.30"
-tokio-stream = "0.1"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 futures-channel = "0.3"
 agent-client-protocol = { version = "5.3.0", default-features = false }
