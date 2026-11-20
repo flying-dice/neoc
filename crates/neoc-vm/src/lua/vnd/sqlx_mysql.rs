@@ -28,6 +28,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use mlua::{Lua, MultiValue, Table, UserData, UserDataMethods, Value};
+use sqlx::AssertSqlSafe;
 use sqlx::mysql::{MySql, MySqlArguments, MySqlConnectOptions, MySqlPool, MySqlRow, MySqlValueRef};
 use sqlx::pool::PoolOptions;
 use sqlx::query::Query;
@@ -311,11 +312,14 @@ async fn run_query_one(
     }
 }
 
+// `AssertSqlSafe`: running caller-supplied SQL text is this module's purpose;
+// values reach the database only through bound parameters (sqlx 0.9 requires
+// the explicit opt-in for non-literal SQL).
 fn build_query<'q>(
     sql: &'q str,
     params: Vec<Value>,
 ) -> Result<Query<'q, MySql, MySqlArguments>, String> {
-    let mut q = sqlx::query(sql);
+    let mut q = sqlx::query(AssertSqlSafe(sql));
     for p in params {
         q = bind_param(q, p)?;
     }

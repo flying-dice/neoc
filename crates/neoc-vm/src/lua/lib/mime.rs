@@ -116,7 +116,7 @@ fn detect(_: &Lua, filename: String) -> Result<String, String> {
 
 #[cfg(feature = "bench")]
 pub fn benches(c: &mut criterion::Criterion) {
-    use criterion::black_box;
+    use std::hint::black_box;
 
     let lua = crate::lua::sandbox::make_engine().expect("engine");
 

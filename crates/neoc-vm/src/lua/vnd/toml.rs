@@ -123,7 +123,8 @@ fn to_toml_string(v: &Value, pretty: bool) -> Result<String, String> {
 
 #[cfg(feature = "bench")]
 pub fn benches(c: &mut criterion::Criterion) {
-    use criterion::{Throughput, black_box};
+    use criterion::Throughput;
+    use std::hint::black_box;
 
     const PAYLOAD: &str = r#"
 [server]

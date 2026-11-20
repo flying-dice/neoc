@@ -1,6 +1,6 @@
 //! CSPRNG and UUIDs — `lib:random`.
 //!
-//! All randomness comes from `OsRng` (the OS getrandom syscall via the `rand`
+//! All randomness comes from `SysRng` (the OS getrandom syscall via the `rand`
 //! crate), never from the seedable `math.random` PRNG. UUIDs use the `uuid`
 //! crate's `v4` (random) and `v7` (timestamp-ordered) generators, which
 //! themselves draw from the OS source.
@@ -31,14 +31,22 @@
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use mlua::{Lua, Table, Value};
-use rand::RngCore;
-use rand::rngs::OsRng;
-use rand::seq::SliceRandom;
+use rand::Rng;
+use rand::rand_core::UnwrapErr;
+use rand::rngs::SysRng;
+use rand::seq::IndexedRandom;
 use tracing::instrument;
 use uuid::Uuid;
 
 use crate::lua::facade::Module;
 use crate::lua::sandbox::{err, from_err, ok};
+
+/// The OS CSPRNG as an infallible `Rng`. `SysRng` is fallible in rand 0.10;
+/// `UnwrapErr` restores the rand 0.8 `OsRng` behaviour (panic if the OS
+/// entropy source fails, which is not recoverable).
+pub(crate) fn os_rng() -> UnwrapErr<SysRng> {
+    UnwrapErr(SysRng)
+}
 
 /// Default alphabet for `random_string` when no alphabet is supplied.
 /// 62 chars — digits + upper + lower. ~5.95 bits of entropy per char.
@@ -137,7 +145,7 @@ fn random_bytes(lua: &Lua, n_bytes: i64) -> mlua::Result<(Value, Value)> {
         return err(lua, "random.random_bytes: byte count must be non-negative");
     }
     let mut buf = vec![0u8; n_bytes as usize];
-    OsRng.fill_bytes(&mut buf);
+    os_rng().fill_bytes(&mut buf);
     ok(lua, lua.create_string(&buf)?)
 }
 
@@ -168,7 +176,7 @@ fn uniform_u128(span: u128) -> u128 {
     let limit = u128::MAX - (u128::MAX % span);
     loop {
         let mut buf = [0u8; 16];
-        OsRng.fill_bytes(&mut buf);
+        os_rng().fill_bytes(&mut buf);
         let draw = u128::from_le_bytes(buf);
         if draw < limit {
             return draw % span;
@@ -200,7 +208,7 @@ fn random_string(n: i64, alphabet: Option<mlua::LuaString>) -> Result<String, St
     let mut out = String::with_capacity(n as usize);
     for _ in 0..n {
         let pick = alpha
-            .choose(&mut OsRng)
+            .choose(&mut os_rng())
             .expect("alphabet non-empty (checked above)");
         out.push(*pick);
     }
@@ -212,7 +220,7 @@ fn token_urlsafe(n_bytes: i64) -> Result<String, String> {
         return Err("byte count must be non-negative".to_string());
     }
     let mut buf = vec![0u8; n_bytes as usize];
-    OsRng.fill_bytes(&mut buf);
+    os_rng().fill_bytes(&mut buf);
     Ok(URL_SAFE_NO_PAD.encode(&buf))
 }
 
@@ -257,7 +265,7 @@ fn uuid_format(input: mlua::LuaString) -> Result<String, String> {
 
 #[cfg(feature = "bench")]
 pub fn benches(c: &mut criterion::Criterion) {
-    use criterion::black_box;
+    use std::hint::black_box;
 
     let lua = crate::lua::sandbox::make_engine().expect("engine");
 
@@ -266,7 +274,7 @@ pub fn benches(c: &mut criterion::Criterion) {
     g.bench_function("library/random_bytes_32", |b| {
         b.iter(|| {
             let mut buf = [0u8; 32];
-            OsRng.fill_bytes(black_box(&mut buf));
+            os_rng().fill_bytes(black_box(&mut buf));
         });
     });
 

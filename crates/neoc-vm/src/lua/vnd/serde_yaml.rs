@@ -119,7 +119,8 @@ fn lua_to_json_value(v: &Value) -> Result<serde_json::Value, Error> {
 
 #[cfg(feature = "bench")]
 pub fn benches(c: &mut criterion::Criterion) {
-    use criterion::{Throughput, black_box};
+    use criterion::Throughput;
+    use std::hint::black_box;
 
     const PAYLOAD: &str = r#"
 server:

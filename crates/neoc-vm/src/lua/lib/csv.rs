@@ -477,7 +477,8 @@ fn writer_fn(lua: &Lua, opts: Table) -> mlua::Result<(Value, Value)> {
 
 #[cfg(feature = "bench")]
 pub fn benches(c: &mut criterion::Criterion) {
-    use criterion::{Throughput, black_box};
+    use criterion::Throughput;
+    use std::hint::black_box;
 
     let lua = crate::lua::sandbox::make_engine().expect("engine");
     let mut payload = String::from("name,age,city\n");

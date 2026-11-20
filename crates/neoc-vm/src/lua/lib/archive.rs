@@ -800,7 +800,7 @@ fn unix_mode(_meta: &fs::Metadata) -> u32 {
     0o644
 }
 
-fn zip_mtime(file: &zip::read::ZipFile) -> i64 {
+fn zip_mtime<R: Read + ?Sized>(file: &zip::read::ZipFile<'_, R>) -> i64 {
     let Some(dt) = file.last_modified() else {
         return 0;
     };
@@ -828,7 +828,7 @@ fn zip_list_entries(bytes: &[u8]) -> Result<Vec<EntryMeta>, String> {
     for i in 0..archive.len() {
         let file = archive.by_index(i).map_err(|e| e.to_string())?;
         out.push(EntryMeta {
-            name: file.name().to_string(),
+            name: file.name().map_err(|e| e.to_string())?.into_owned(),
             size: file.size(),
             mode: file.unix_mode().unwrap_or(0),
             timestamp: zip_mtime(&file),
@@ -850,7 +850,7 @@ fn zip_extract_all(
     let mut count = 0usize;
     for i in 0..archive.len() {
         let mut file = archive.by_index(i).map_err(|e| e.to_string())?;
-        let raw = file.name().to_string();
+        let raw = file.name().map_err(|e| e.to_string())?.into_owned();
         let Some(rel) = accept_entry(&raw, include) else {
             continue;
         };

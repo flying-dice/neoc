@@ -32,6 +32,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use mlua::{Lua, MultiValue, Table, UserData, UserDataMethods, Value};
+use sqlx::AssertSqlSafe;
 use sqlx::pool::PoolOptions;
 use sqlx::postgres::{PgArguments, PgConnectOptions, PgPool, PgRow, Postgres};
 use sqlx::query::Query;
@@ -212,11 +213,16 @@ fn prepare(args: MultiValue, pool: &PgPool) -> Result<(String, Vec<Value>), Stri
     Ok((sql, params))
 }
 
+// `AssertSqlSafe`: running caller-supplied SQL text is this module's purpose;
+// values reach the database only through bound parameters (sqlx 0.9 requires
+// the explicit opt-in for non-literal SQL).
 fn build_query<'q>(
     sql: &'q str,
     params: Vec<Value>,
 ) -> Result<Query<'q, Postgres, PgArguments>, String> {
-    params.into_iter().try_fold(sqlx::query(sql), bind_param)
+    params
+        .into_iter()
+        .try_fold(sqlx::query(AssertSqlSafe(sql)), bind_param)
 }
 
 // ---------------------------------------------------------------------------
