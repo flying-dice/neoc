@@ -132,7 +132,8 @@ fn run_runtime_fault_names_the_script_and_cause() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("fault.lua")
-            && stderr.contains("attempt to call global 'explode' (a nil value)"),
+            // Luau names no global: "attempt to call a nil value" (LuaJIT said "global 'explode'")
+            && stderr.contains("attempt to call a nil value"),
         "stderr: {stderr}"
     );
 }
@@ -249,19 +250,15 @@ fn compile_bundle_runs_standalone_with_arguments() {
     );
 }
 
-// LuaJIT bytecode is unverified — a crafted chunk escapes the sandbox — so
-// `neoc run` loads `.lua` files as text only. The fixture is a stripped dump of
-// `return 7`: a `\x1bLJ` header the text loader must refuse.
+// Luau bytecode is not verified when it is loaded — a crafted chunk escapes the sandbox — so
+// `neoc run` loads `.lua` files as text only. The fixture is the compiled form of
+// `return 7`: a version byte the text loader must refuse.
 #[test]
 fn run_lua_file_rejects_bytecode() {
     let dir = tempdir().unwrap();
-    let lua = mlua::Lua::new();
-    let dump: mlua::LuaString = lua
-        .load("return string.dump(function() return 7 end, true)")
-        .eval()
-        .unwrap();
+    let dump = mlua::chunk::Compiler::new().compile("return 7").unwrap();
     let path = dir.path().join("payload.lua");
-    fs::write(&path, dump.as_bytes()).unwrap();
+    fs::write(&path, dump).unwrap();
 
     let out = Command::new(BIN).arg("run").arg(&path).output().unwrap();
     assert!(!out.status.success(), "bytecode must not run");

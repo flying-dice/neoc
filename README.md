@@ -1,8 +1,8 @@
 # neoc
 
-A fast, lightweight [LuaJIT](https://luajit.org/) runtime. One binary: Lua scripts plus a curated set of Rust-backed modules, with nothing to install at run time.
+A fast, lightweight [Luau](https://luau.org/) runtime (Roblox's Lua 5.1 derivative, embedded through mlua). One binary: Lua scripts plus a curated set of Rust-backed modules, with nothing to install at run time.
 
-`neoc` runs Lua in a VM with the unsafe globals stripped (`load*`, `io`, `os`, `debug`, `ffi`, ...). Scripts reach the outside world only through registered modules. This is a curated surface, not a security boundary.
+`neoc` runs Lua in a VM with the unsafe globals stripped (`loadstring`, `os`, `debug`, `getfenv`, `setfenv`, ...). Scripts reach the outside world only through registered modules. This is a curated surface, not a security boundary.
 
 neoc used to be a language that compiled to Lua. That is gone; the runtime is the product. The last state of the language is preserved under the `neoc-lang-final` tag.
 
@@ -68,7 +68,7 @@ This repository contains [LuaCATS](https://luals.github.io/wiki/annotations/) de
 ```jsonc
 // .luarc.json
 {
-  "runtime.version": "LuaJIT",
+  "runtime.version": "Lua 5.1",
   "workspace.library": ["path/to/neoc/types/luals"],
   "runtime.plugin": "path/to/neoc/types/luals-plugin.lua"
 }

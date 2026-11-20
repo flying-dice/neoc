@@ -430,8 +430,8 @@ fn on_small_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> 
         .expect("the call panicked")
 }
 
-/// LuaJIT's pattern matcher recurses in C like PUC Lua 5.1's, but counts its depth and gives up past
-/// `LJ_MAX_XLEVEL` (200) with "pattern too complex". These patterns would take tens of thousands of C frames:
+/// Luau's pattern matcher recurses in C like PUC Lua 5.1's, but counts its depth and gives up past
+/// `LUAI_MAXCCALLS` (200) with "pattern too complex". These patterns would take tens of thousands of C frames:
 /// through `find`, `match`, `gmatch` and `gsub`, called as functions and as string methods, each must be a
 /// Lua error on a 2 MiB stack, not a stack overflow (an abort of the host). So no depth guard of our own is
 /// needed on top of the engine's (the `patterns.rs` guard of the Lua 5.1 build has no counterpart here).

@@ -18,11 +18,11 @@
 -- wrapper; it is only sent when the parked frame is mlua's own wrapper, never to the yield below, so nothing
 -- here handles it.)
 --
--- LuaJIT yields across `pcall`, `xpcall`, metamethods and `for ... in` iterator functions, so a host call in any of
--- those suspends the call like any other. It still cannot yield out of a C function that calls back into Lua (a
--- `string.gsub` callback, a `table.sort` comparator), `string.format("%s")` of a `__tostring`, the message handler
--- of an `xpcall` or a host function that calls Lua synchronously: a host call there fails with Lua's own "attempt to
--- yield across C-call boundary".
+-- Luau yields across `pcall`, `xpcall` (its protected function), a `__call` metamethod and `for ... in` iterator
+-- functions, so a host call in any of those suspends the call like any other. It cannot yield out of any other
+-- metamethod, `tostring()` of a `__tostring`, a C function that calls back into Lua (a `string.gsub` callback, a
+-- `table.sort` comparator), the message handler of an `xpcall` or a host function that calls Lua synchronously: a host
+-- call there fails with Luau's own "attempt to yield across metamethod/C-call boundary".
 --
 -- WHO MAY RESUME WHAT. A script reaches threads it did not make: `coroutine.running()` returns the thread it runs in,
 -- which may be the top-level thread of a call the host is driving or a task's thread (a `pcall` runs in the thread that
@@ -50,7 +50,7 @@ local create, resume, yield, status, running = raw.create, raw.resume, raw.yield
 -- coroutines that resumed it), so once that call is dropped nothing refers to the thread, the garbage collector
 -- clears the entry, and the coroutine can be resumed again (it finds its host call abandoned). Clearing an entry for
 -- a thread nothing can resume allows no second driver, and a strong value would keep the dead thread, its stack
--- and the coroutine (Lua 5.1 and LuaJIT have no ephemerons: the value refers back to the key) for ever.
+-- and the coroutine (the value refers back to the key, so a collector without ephemerons would keep both alive) for ever.
 local function is_driven(co)
   local driver = driven[co]
   if driver == nil then

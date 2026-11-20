@@ -28,12 +28,15 @@
 //!
 //!   **Who lends, and when.** A wait that cannot suspend the call must not lend the baton: the script goes on
 //!   running, and so must whatever the embedder attaches to the turn (a limit on what the call may do, say). The wait fails with an error the
-//!   script may catch. On LuaJIT (the engine of this VM) the places that *refuse* a yield are the C functions that
-//!   call back into Lua (a `string.gsub` replacement function or table, a `table.sort` comparator), `string.format`
-//!   of a `__tostring` and the message handler of `xpcall` (it runs on the C stack of the error), and any
-//!   host function that calls Lua synchronously (`mlua::Function::call`). LuaJIT *does* yield across `pcall`,
-//!   `xpcall` (its protected function), every metamethod, `tostring()` and `for ... in` iterator functions, so
-//!   those are ordinary suspensions that lend (PUC Lua 5.1 refused all of them). The VM cannot see whether Lua
+//!   script may catch. On Luau (the engine of this VM) the places that *refuse* a yield are every metamethod
+//!   (`__index`, `__newindex`, the arithmetic, comparison, `__concat`, `__len` and `__iter` ones; `__call` is
+//!   the exception, it is an ordinary call), `tostring()` of a `__tostring`, the C functions that call back into Lua
+//!   (a `string.gsub` replacement function or table, a `table.sort` comparator), the message handler of `xpcall` (it
+//!   runs on the C stack of the error), and any host function that calls Lua synchronously
+//!   (`mlua::Function::call`): Luau says "attempt to yield across metamethod/C-call boundary". Luau *does* yield
+//!   across `pcall`, `xpcall` (its protected function), a `__call` and `for ... in` iterator functions, so those
+//!   are ordinary suspensions that lend. (LuaJIT also yielded across every metamethod and `tostring()`; PUC Lua 5.1
+//!   refused all of them. `tests/embedding.rs` holds the table to a real engine.) The VM cannot see whether Lua
 //!   managed to yield, so the rules are structural, and an embedder is expected to check them with generated
 //!   programs over every boundary (`tests/embedding.rs` lists the boundaries, and a generated-program test
 //!   generates programs out of them):
@@ -70,7 +73,7 @@
 //!      (`async_coroutines.lua`); `coroutine.resume` of any other thread is refused with "cannot resume non-suspended
 //!      coroutine", as for a coroutine that is running. A script can hold other threads (`coroutine.running()` returns
 //!      the top-level thread of a call, a task's thread), but the refusal is the default, so there is no list of host
-//!      threads to keep complete. (On LuaJIT a `pcall` or `xpcall` runs in the thread that called it, so inside a
+//!      threads to keep complete. (On Luau a `pcall` or `xpcall` runs in the thread that called it, so inside a
 //!      coroutine the script made `coroutine.running()` is that coroutine, which it may resume.) A coroutine of its own is
 //!      refused too while someone else drives it: a thread is waiting at its host call, or [`mark_driven`](crate::lua::script_env::mark_driven) gave it to
 //!      the task scheduler (`task.spawn`, `defer` and `delay` take only coroutines the script made).

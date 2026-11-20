@@ -356,13 +356,14 @@ fn make_matcher(lua: &Lua, value: Value) -> mlua::Result<Table> {
         },
     )?;
 
-    // toThrow() — value must be a callable that raises an error. The call goes through `call_guarded`: the error
-    // value is not turned into text by mlua's own message handler (see `guarded_call.lua`).
+    // toThrow() — value must be a callable that raises an error. mlua's message handler turns the error value
+    // into text; Luau answers "error in error handling" when that conversion itself fails
+    // (`tests/abort_regressions.rs` holds it to a 2 MiB thread).
     let thrower = value;
     m.set(
         "toThrow",
-        lua.create_function(move |lua, (): ()| match &thrower {
-            Value::Function(f) => match crate::lua::sandbox::call_guarded::<Value>(lua, f, ()) {
+        lua.create_function(move |_, (): ()| match &thrower {
+            Value::Function(f) => match f.call::<Value>(()) {
                 Err(_) => Ok(()),
                 Ok(_) => Err(mlua::Error::RuntimeError(
                     "expected function to throw, but it returned normally".into(),

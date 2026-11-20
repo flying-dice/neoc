@@ -1,28 +1,25 @@
 //! The environment an untrusted script runs in.
 //!
-//! LuaJIT keeps Lua 5.1's function environments: a chunk loaded with `Chunk::set_environment` and every closure
+//! Luau keeps Lua 5.1's function environments: a chunk loaded with `Chunk::set_environment` and every closure
 //! created inside it see only that table as their globals (the engine's `setfenv` and `getfenv` are stripped, so
 //! the script cannot change or read it). [`new_env`] builds it, [`freeze`] seals it. An embedder runs a script
 //! in it so that scripts do not share state by accident; it is not a security boundary (a script still has every
 //! module the embedder gives it):
 //!
-//! - the **base functions** a script may call are copied in one by one (an allow-list: a function a Lua
-//!   or LuaJIT upgrade adds is not available until someone adds it here): no `load*`, `dofile`, `getfenv`,
-//!   `setfenv`, `newproxy`, `collectgarbage`, `module`, `require`, `print` (it writes to the process's stdout)
-//!   and no `io`/`os`/`debug`/`package`/`jit`/`ffi`;
-//! - the **libraries** (`string`, `table`, `math`, `coroutine`, `bit`) are private copies (`coroutine.create`,
+//! - the **base functions** a script may call are copied in one by one (an allow-list: a function a Luau
+//!   upgrade adds is not available until someone adds it here): no `load*`, `dofile`, `getfenv`,
+//!   `setfenv`, `newproxy`, `collectgarbage`, `require`, `print` (it writes to the process's stdout)
+//!   and no `os`/`debug`/`buffer`/`vector`/`utf8`;
+//! - the **libraries** (`string`, `table`, `math`, `coroutine`, `bit32`) are private copies (`coroutine.create`,
 //!   `resume` and `wrap` are versions that let an async host call run inside a coroutine of the script's own and
 //!   let a script resume only the coroutines it made, see `async_coroutines.lua`), so the host may add
 //!   its own functions to them before [`freeze`], and the script can never reach the
 //!   engine's own shared tables;
-//! - [`freeze`] then replaces every library in the environment with an empty read-only proxy whose
-//!   `__index` is the copy: assigning to it fails (the key is absent, so `__newindex` always fires), its
-//!   metatable is locked (`getmetatable` returns a string, `setmetatable` is refused), and `rawset` is
-//!   replaced by a version that refuses the proxies, as are `table.insert`, `table.remove`, `table.sort` and `table.move`
-//!   (LuaJIT's versions store with raw sets, which skip `__newindex`: see `guarded_table.lua`).
-//!
-//! Known limits of a proxy: `pairs(string)` and `next(string)` see no entries (LuaJIT's default mode, like Lua 5.1,
-//! has no `__pairs`), and `rawget(string, "len")` is `nil`; the functions are all reachable by name.
+//! - [`freeze`] then marks every library in the environment read-only with Luau's own `readonly` table flag:
+//!   assigning to it, `rawset`, `table.insert`, `table.remove`, `table.sort`, `table.move` and `table.clear` on it
+//!   all fail with "attempt to modify a readonly table", and `setmetatable` on it is refused. (LuaJIT had no such
+//!   flag: the libraries were empty proxies behind a guarded `rawset` and guarded `table` writers, which Luau makes
+//!   redundant, and `pairs(string)` saw nothing; it sees the functions now.)
 //!
 //! The string metatable is a different matter: it is shared by every string in the engine, and
 //! [`make_bare_engine`](crate::lua::sandbox::make_bare_engine) locks it.
@@ -34,8 +31,7 @@ use parking_lot::Mutex;
 
 use crate::lua::sandbox::load_source;
 
-/// Base functions a script gets, copied from the engine's globals (after `xpcall` was replaced by its guarded
-/// version, see `guarded_xpcall.lua`). `rawset` is installed by [`freeze`], not copied.
+/// Base functions a script gets, copied from the engine's globals.
 const BASE_FUNCTIONS: &[&str] = &[
     "assert",
     "error",
@@ -46,17 +42,20 @@ const BASE_FUNCTIONS: &[&str] = &[
     "pcall",
     "rawequal",
     "rawget",
+    "rawlen",
+    "rawset",
     "select",
     "setmetatable",
     "tonumber",
     "tostring",
     "type",
+    "typeof",
     "unpack",
     "xpcall",
 ];
 
 /// Libraries a script gets a private copy of.
-const LIBRARIES: &[&str] = &["string", "table", "math", "coroutine", "bit"];
+const LIBRARIES: &[&str] = &["string", "table", "math", "coroutine", "bit32"];
 
 /// A shallow copy of `source`: a new table holding the same functions.
 fn copy(lua: &Lua, source: &Table) -> mlua::Result<Table> {
@@ -92,11 +91,11 @@ pub fn new_env(lua: &Lua) -> mlua::Result<Table> {
 }
 
 /// `math.random` and `math.randomseed` over a generator of the script's own, seeded from the operating system
-/// (xorshift64*; not for secrets, scripts get no source of those). LuaJIT's own generator is unseeded at start: the
-/// first `math.random()` of a fresh engine is the same number on every run (measured), so a script's "random"
-/// values would be predictable. It also takes `math.random(0)` and `math.random(5, 1)` without an error and gives a
-/// non-integer for `math.random(1e300)`. This one keeps Lua 5.1's shape (an empty interval is an error) and
-/// refuses a bound that has no integer representation.
+/// (xorshift64*; not for secrets, scripts get no source of those). Luau's own generator is seeded at start (LuaJIT's was
+/// not: the first `math.random()` of a fresh engine was the same number on every run), but a script environment keeps
+/// its own because `math.random(1e300)` is not an error on Luau (it gives an integer of no particular meaning) and
+/// because one script must not be able to reseed another's draws. This one keeps Lua 5.1's shape (an empty interval is
+/// an error) and refuses a bound that has no integer representation.
 fn install_private_random(lua: &Lua, math: &Table) -> mlua::Result<()> {
     let mut seed = [0u8; 8];
     crate::lua::lib::random::fill_random(&mut seed).map_err(mlua::Error::runtime)?;
@@ -201,24 +200,6 @@ fn weak_table(lua: &Lua, mode: &str) -> mlua::Result<Table> {
     Ok(table)
 }
 
-/// A read-only view of `target`: an empty table whose `__index` is `target`.
-fn read_only(lua: &Lua, name: &str, target: Table) -> mlua::Result<Table> {
-    let message = format!("attempt to modify the read-only table `{name}`");
-    let meta = lua.create_table()?;
-    meta.raw_set("__index", target)?;
-    meta.raw_set(
-        "__newindex",
-        lua.create_function(move |_, _: mlua::MultiValue| -> mlua::Result<()> {
-            Err(mlua::Error::runtime(message.clone()))
-        })?,
-    )?;
-    // makes `getmetatable` return this string and `setmetatable` raise "cannot change a protected metatable"
-    meta.raw_set("__metatable", format!("read-only {name}"))?;
-    let proxy = lua.create_table()?;
-    proxy.set_metatable(Some(meta))?;
-    Ok(proxy)
-}
-
 /// Where the Lua registry keeps the table of coroutines the script made (`async_coroutines.lua`): the only ones it may
 /// resume.
 const OWNED: &str = "neoc.owned_coroutines";
@@ -271,48 +252,18 @@ pub fn mark_driven(lua: &Lua, thread: &mlua::Thread) -> mlua::Result<()> {
     driven.raw_set(thread.clone(), true)
 }
 
-/// Seal `env`: every table in it other than `_G` becomes a read-only proxy and `rawset` refuses them.
+/// Seal `env`: every table in it other than `_G` becomes read-only (Luau's `readonly` table flag).
 /// Call it after the host's own additions and before the script runs.
 ///
 /// # Errors
-/// Fails when a proxy or the guarded `rawset` cannot be created.
-pub fn freeze(lua: &Lua, env: &Table) -> mlua::Result<()> {
-    let guarded = lua.create_table()?; // proxy -> true, so `rawset` can refuse it
-    let libraries: Vec<(String, Table)> = env
-        .pairs::<String, Value>()
-        .filter_map(|pair| match pair {
-            Ok((name, Value::Table(table))) if name != "_G" => Some((name, table)),
-            _ => None,
-        })
-        .collect();
-    for (name, library) in libraries {
-        if name == "table" {
-            guard_table_writes(lua, &library, &guarded)?;
+/// Fails when the environment cannot be read.
+pub fn freeze(_lua: &Lua, env: &Table) -> mlua::Result<()> {
+    for pair in env.pairs::<String, Value>() {
+        if let (name, Value::Table(library)) = pair?
+            && name != "_G"
+        {
+            library.set_readonly(true);
         }
-        let proxy = read_only(lua, &name, library)?;
-        guarded.raw_set(proxy.clone(), true)?;
-        env.raw_set(name, proxy)?;
-    }
-    let raw_set = lua.create_function(move |_, (table, key, value): (Table, Value, Value)| {
-        if guarded.raw_get::<bool>(table.clone()).unwrap_or(false) {
-            return Err(mlua::Error::runtime("attempt to modify a read-only table"));
-        }
-        table.raw_set(key, value)?;
-        Ok(table)
-    })?;
-    env.raw_set("rawset", raw_set)
-}
-
-/// Put versions of `table.insert`, `table.remove`, `table.sort` and `table.move` in the script's copy of `table` that refuse a
-/// frozen table (`guarded.proxy == true`): the engine's own store with raw sets, past a proxy's `__newindex`.
-fn guard_table_writes(lua: &Lua, copy: &Table, guarded: &Table) -> mlua::Result<()> {
-    let writers = ["insert", "remove", "sort", "move"];
-    let [insert, remove, sort, mv] = writers.map(|name| copy.raw_get::<Value>(name));
-    let guards: Table = load_source(lua, include_str!("guarded_table.lua"))
-        .set_name("=guarded_table")
-        .call((guarded.clone(), insert?, remove?, sort?, mv?))?;
-    for name in writers {
-        copy.raw_set(name, guards.raw_get::<Value>(name)?)?;
     }
     Ok(())
 }
@@ -356,9 +307,7 @@ mod tests {
         fn denied(&self, source: &str) {
             let err = self.run(source).expect_err(source).to_string();
             assert!(
-                err.contains("read-only")
-                    || err.contains("protected")
-                    || err.contains("attempt to"),
+                err.contains("readonly") || err.contains("protected") || err.contains("attempt to"),
                 "{source}: {err}"
             );
         }
@@ -479,7 +428,7 @@ mod tests {
                 "_G",
                 "_VERSION",
                 "assert",
-                "bit",
+                "bit32",
                 "coroutine",
                 "error",
                 "getmetatable",
@@ -490,6 +439,7 @@ mod tests {
                 "pcall",
                 "rawequal",
                 "rawget",
+                "rawlen",
                 "rawset",
                 "select",
                 "setmetatable",
@@ -498,6 +448,7 @@ mod tests {
                 "tonumber",
                 "tostring",
                 "type",
+                "typeof",
                 "unpack",
                 "xpcall"
             ]
@@ -537,16 +488,26 @@ mod tests {
         assert!(matches!(real, Value::Nil));
     }
 
-    /// LuaJIT's `table.insert`, `table.remove`, `table.sort` and `table.move` store with raw sets, past a proxy's `__newindex`:
-    /// each is refused on a frozen library, in each spelling, and works on the script's own tables.
+    /// `table.insert`, `table.remove`, `table.sort` and `table.move` check Luau's `readonly` flag themselves (LuaJIT's
+    /// stored with raw sets, past a proxy): each is refused on a frozen library, in each spelling, and works on the
+    /// script's own tables.
     #[test]
     fn the_table_functions_refuse_a_frozen_library_and_work_on_a_plain_table() {
         let rig = Rig::new();
-        for library in ["string", "table", "math", "coroutine", "bit"] {
+        for library in ["string", "table", "math", "coroutine", "bit32"] {
             rig.denied(&format!("table.insert({library}, 'x')"));
             rig.denied(&format!("table.insert({library}, 1, 'x')"));
-            rig.denied(&format!("table.remove({library})"));
-            rig.denied(&format!("table.remove({library}, 1)"));
+            // Luau's `table.remove` of a table with no array part (a library has none) removes nothing and
+            // raises nothing, frozen or not: the library is unchanged, which `denied` cannot tell
+            assert_eq!(
+                rig.string(&format!(
+                    "local before = 0 for _ in pairs({library}) do before = before + 1 end \
+                     local removed = table.remove({library}) local again = table.remove({library}, 1) \
+                     local after = 0 for _ in pairs({library}) do after = after + 1 end \
+                     return tostring(removed) .. tostring(again) .. (before == after and 'same' or 'changed')"
+                )),
+                "nilnilsame"
+            );
             rig.denied(&format!("table.sort({library})"));
             rig.denied(&format!(
                 "table.sort({library}, function(a, b) return a < b end)"
@@ -573,11 +534,11 @@ mod tests {
         // the refusal names the table, and a non-table argument is the engine's own error
         assert!(
             rig.string("return select(2, pcall(table.insert, string, 'x'))")
-                .contains("read-only")
+                .contains("readonly table")
         );
         assert!(
             rig.string("return select(2, pcall(table.insert, nil, 'x'))")
-                .contains("bad argument")
+                .contains("invalid argument #1 to 'insert'")
         );
     }
 
@@ -594,16 +555,13 @@ mod tests {
     }
 
     #[test]
-    fn a_library_s_metatable_is_locked() {
+    fn a_library_s_metatable_cannot_be_set() {
         let rig = Rig::new();
-        assert_eq!(
-            rig.string("return tostring(getmetatable(string))"),
-            "read-only string"
-        );
+        // a library is a read-only table with no metatable (LuaJIT's was a proxy that answered a string)
+        assert_eq!(rig.string("return tostring(getmetatable(string))"), "nil");
         rig.denied("setmetatable(string, {})");
         rig.denied("setmetatable(table, { __index = function() return 1 end })");
-        // and the proxy cannot be unwrapped to the table behind it
-        assert_eq!(rig.string("return type(getmetatable(math))"), "string");
+        assert_eq!(rig.string("return type(getmetatable(math))"), "nil");
     }
 
     #[test]
@@ -642,7 +600,7 @@ mod tests {
             rig.string("return type(load) .. type(loadstring) .. type(dofile)"),
             "nilnilnil"
         );
-        let raw = crate::lua::sandbox::ascii_bytecode();
+        let raw = crate::lua::sandbox::luau_bytecode();
         let err = rig
             .lua
             .load(raw)
