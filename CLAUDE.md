@@ -19,10 +19,15 @@ crates/neoc-vm/              # the runtime library
   tests/script_parse.rs      # compiles (never runs) every Lua script, Docker or not
   src/errors.rs              # runtime error types (NeocError)
   src/lua/sandbox.rs         # engine construction, stripped globals
-  src/lua/facade.rs          # Module builder: registration, spans, (value, error)
+  src/lua/facade.rs          # Module builder: registration, spans, (value, error), the LuaCATS emitter
   src/lua/modules.rs         # module registration + `require`
   src/lua/{std,lib,vnd}/     # one file per module
+  examples/luals.rs          # writes (or `-- --check`s) the LuaCATS definitions in types/luals/
+  tests/luals.rs             # drift check of types/luals/ + the lua-language-server fixtures
   benches/                   # Criterion suites (lib/, vnd/), behind the `bench` feature
+types/luals/                 # GENERATED LuaCATS definitions, one file per module key (`lib:json.lua`)
+types/fixtures/              # lua-language-server fixtures: usage.lua (clean) and negative/ (expect-error)
+.luarc.json                  # lua-language-server config for the repo (LuaJIT, library = types/luals)
 tooling/cli/                 # Gherkin spec for the CLI, run against the built binary
 ```
 
@@ -82,6 +87,7 @@ Priority order, 1 > 2 > 3 > 4:
 - **Resources.** OS resources are `UserData` handles with methods. Operations across several handles are free functions on the module table.
 - **No speculative abstractions.** Add a helper only when 3+ call sites exist.
 - A module's tracing target is `lua::lib::<module>` whatever its namespace.
+- **Types.** Every module's `declare` records its surface (functions, parameter and return types, docs, resource types with their methods, fields and constructors) and that record is the source of the editor types in `types/luals/`, never edited by hand: `cargo run -p neoc-vm --example luals` regenerates, `-- --check` fails on drift. Keep the record true to the runtime; the drift tests in `modules.rs` check it against the live tables. The vocabulary is `string`, `number`, `bool`, `LuaValue` (opaque, `any`), a trailing `?` for optional, `Result<T, string>` for `(value, err)`, `(A, B)` for several returns, a trailing `("...", "LuaValue")` for variadic arguments, and a type's own name for a resource type.
 
 Adding a module: see [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-new-module).
 

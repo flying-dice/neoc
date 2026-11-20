@@ -61,6 +61,20 @@ The source in [`crates/neoc-vm/src/lua/`](crates/neoc-vm/src/lua) is the catalog
 - `lib:test` is the test runner: a script named `*.test.lua` or `*.spec.lua` runs under it when passed to `neoc run`.
 - `lib:compile` bundles a script and the runtime into a standalone executable.
 
+## Editor types
+
+The runtime ships [LuaCATS](https://luals.github.io/wiki/annotations/) definitions for every module in [`types/luals/`](types/luals), one file per module named after its `require` key (`lib:json.lua`), generated from the modules' own signatures. Point [lua-language-server](https://luals.github.io/) at them for completion, hover docs and type checks of `require("lib:json")` and the rest:
+
+```jsonc
+// .luarc.json
+{
+  "runtime.version": "LuaJIT",
+  "workspace.library": ["path/to/neoc/types/luals"]
+}
+```
+
+This repository's own [`.luarc.json`](.luarc.json) does that. The file names contain a colon, which Windows file systems do not allow, so a Windows checkout needs WSL (or a copy of the folder made elsewhere). `cargo run -p neoc-vm --example luals` regenerates the folder.
+
 ## Contributing
 
 [CONTRIBUTING.md](CONTRIBUTING.md) covers building, testing, adding a module and releasing. [CLAUDE.md](CLAUDE.md) holds the module design rules.
