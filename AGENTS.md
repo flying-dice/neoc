@@ -8,7 +8,7 @@ AgentOS is an iPadOS-style virtual desktop for agents. It has three parts:
   client must pair as a device first.
 - **The apps** (`apps/<id>/`): server-side code **authored in plain Lua 5.1** (`app.json` + `*.lua`, checked by
   lua-language-server against generated LuaCATS definitions): `bun run build:apps` bundles an app into one `app.lua`
-  with darklua, and the host runs that in one VM per app (the `agentos-lua` adapter on the `agentos-luavm` library),
+  with darklua, and the host runs that in one VM per app (the `agentos-lua` adapter on the `neoc-vm` library, a LuaJIT engine that runs the Lua 5.1 source as written),
   loaded from an app ref over `file://`, `http://` or `https://`. An app holds its state, data, tools, notifications
   and UI description. Examples: `apps/calculator`, `apps/agents`.
 - **The client** (`client/`): a managed Vite + Svelte 5 PWA. It renders the view trees the host sends with the kit in
@@ -75,9 +75,10 @@ A change is done when all of these hold:
 - **Crate dependency direction** (hexagonal; inward only): `agentos-domain` is pure and depends on no other crate;
   `agentos-application` (ports and use cases) depends on domain; each adapter (`lua`, `sqlite`, `mcp`, `acp`, `agui`,
   `fetch`, `http`, `codegen`) depends on application and domain and **never on another adapter**; `agentos-host` is the
-  composition root and the only crate that sees them all. `agentos-luavm` is a support library, not an adapter: the
-  per-app Lua 5.1 VM (mlua, vendored), depending on no other crate here. Only the `lua` adapter may depend on it (it
-  reaches mlua through luavm's re-export, so mlua stays in one crate). Enforced by `bun run lint:deps` (`scripts/check-deps.ts`,
+  composition root and the only crate that sees them all. `neoc-vm` is a support library, not an adapter: the
+  per-app Lua VM (mlua on LuaJIT, vendored), depending on no other crate here (the `neoc` CLI is its other client, and
+  `neoc`/`neoc-vm` never depend on an `agentos-*` crate). Among the `agentos-*` crates only the `lua` adapter may depend
+  on it (it reaches mlua through neoc-vm's re-export, so mlua stays in one crate). Enforced by `bun run lint:deps` (`scripts/check-deps.ts`,
   an allow-list over `cargo metadata`) and `cargo deny check` (`deny.toml`: each framework crate is pinned to its
   adapter). A new crate must be placed in the allow-list on purpose.
 - **Rust hygiene** (`[workspace.lints]`): clippy pedantic with `-D warnings`; `unsafe_code` is forbidden;
@@ -91,7 +92,7 @@ A change is done when all of these hold:
   permissions** and **no budgets** (no CPU, memory or time limits): a runaway app (a loop that never yields, a
   `std:thread` worker) can hang the host, not just itself, and can outlive its uninstall, because unloading aborts
   work only at the points where the app yields to the host. That is accepted. It reaches the host through the `app` table (typed by the generated LuaCATS definitions in `types/generated/luals/`) and
-  through **every `std:`, `lib:` and `vnd:` module of `agentos-luavm`** (`require("std:fs")`, `require("lib:json")`,
+  through **every `std:`, `lib:` and `vnd:` module of `neoc-vm`** (`require("std:fs")`, `require("lib:json")`,
   `require("vnd:hyper")`, ...: files, network, servers, tasks, threads, SQLite, TLS), next to `@agentos/app` and
   `@agentos/ui`. What an app starts (tasks, servers, workers) belongs to it: unloading or replacing the app aborts
   it and closes its listeners, and what a task or a request handler runs queues behind the app's other calls (one
@@ -146,14 +147,14 @@ bun run build:apps      # bundle every apps/*/app.json into one Lua 5.1 file (da
 bun run build           # build the client (client/dist)
 bun run host            # cargo run -p agentos-host: serves client/dist, /rpc, /agui, /mcp on :7400
 bun run host pair       # print a fresh device pairing code (every client must pair; see host-stack.md)
-bun start               # the same host, release build
+bun start               # the same host, built with the release-host profile (opt-level z, panic abort)
 bun run lint            # conflict markers + atomic layers + test ids + boundaries + rust + lua (LuaLS) + stylua + codegen:check + package eslint
 bun run lint:conflicts  # leftover merge-conflict markers in tracked files (runs first)
 bun run lint:rust       # cargo fmt --check, clippy -D warnings, lint:deps (crate direction), cargo deny
-bun run lint:lua        # lua-language-server --check of every app against types/generated/luals (plus negative fixtures)
+bun run lint:lua        # lua-language-server --check of every app against types/luals + types/generated/luals (plus negative fixtures)
 bun run lint:stylua     # StyLua check (skipped with a message when stylua is not installed)
 bun run typecheck       # cargo check --workspace --all-targets + tsc on types/ + svelte-check in each package
-bun run test            # cargo nextest run --workspace + bun test (types, scripts, client, kit)
+bun run test            # cargo nextest over the agentos crates (neoc's crates have their own gate) + bun test (types, scripts, client, kit)
 bun run format          # prettier + cargo fmt + StyLua
 bun run test:e2e        # all Storybooks + desktop + journeys, headless, against the real host
                         # AGENTOS_PORT_BASE=9100 for a second worktree (Storybook = base, e2e host = base + 10)
@@ -170,7 +171,7 @@ Visual baselines (`e2e/__screenshots__`) are macOS-only, so run `test:e2e` on a 
 apps fail without it, they never skip) and, for the Lua checks, `lua-language-server` 3.19.2 (`brew install lua-language-server`) and `stylua`.
 Without them `lint:lua` and `lint:stylua` skip on a developer machine and **fail** when `AGENTOS_GATE=1` or `CI` is
 set (the `agentos-pre-commit` skill runs the gate that way). No system Lua 5.1 is needed: the Rust tests load and run the
-bundled apps on the VM's vendored 5.1. A native Lua 5.3+ is optional: with it `bun test scripts` also compares the
+bundled apps on neoc-vm's vendored LuaJIT. A native Lua 5.3+ is optional: with it `bun test scripts` also compares the
 prelude's polyfills with the native ones.
 
 ## Adding an app

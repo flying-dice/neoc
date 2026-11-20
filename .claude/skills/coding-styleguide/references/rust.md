@@ -20,7 +20,7 @@ Rules of thumb:
   use case, not an adapter. An adapter translates (SQLite rows, mlua values, HTTP, ACP messages) and holds no policy.
 - A new need from the outside world is a **port** in `agentos-application::ports` first, with a fake in `testing`, then an
   adapter. A driving adapter (`http`, `mcp`, `agui`) calls use cases, never reaches an adapter.
-- A framework crate appears only in its adapter (`deny.toml` pins it with `wrappers`): mlua in `lua` (via `luavm`), rusqlite in
+- A framework crate appears only in its adapter (`deny.toml` pins it with `wrappers`): mlua in `neoc-vm` (the `lua` adapter reaches it through neoc-vm's re-export), rusqlite in
   `sqlite`, rmcp in `mcp`, agent-client-protocol in `acp`, axum in the driving adapters and the host. A new crate must
   be added to `scripts/check-deps.ts` on purpose.
 - Dependencies are declared once in `[workspace.dependencies]` with pins for the fast movers (`rmcp`, `agent-client-protocol`,

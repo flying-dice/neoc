@@ -18,7 +18,7 @@ This replaces the Bun/TypeScript server, the app client bundles and the shared-m
  │ renderer: view trees → kit (Svelte)  │◀──── /rpc ────▶│   install, dispatch event, tool call,     │
  │ client-managed state, drafts         │                │   agent run, notifications                │
  │ no app code, ever                    │ AG-UI / SSE    │ adapters:                                 │
- │ agent chats ◀────────────────────────┼──── /agui ─────│   lua (one Lua 5.1 VM per app, on luavm)  │
+ │ agent chats ◀────────────────────────┼──── /agui ─────│   lua (one Lua VM per app, on neoc-vm)    │
  └──────────────────────────────────────┘                │   sqlite (per-app DB, live queries)       │
                                                          │   mcp /mcp ◀── agents (per-agent tokens)  │
   built app packages ── app refs ── registries            │   acp ──▶ agent processes (stdio)         │
@@ -46,7 +46,7 @@ crates/
                         notifications, view tree and component schema, protocol messages
   agentos-application   ports (traits) and use cases; in-memory fakes for tests; no frameworks
   agentos-lua          adapter: runs apps as Lua 5.1, one VM per app: the app API modules, views, the call queue
-  agentos-luavm         support library (not an adapter): the Lua 5.1 VM on mlua, the per-app environment, the
+  neoc-vm               support library (not an adapter): the Lua VM (LuaJIT) on mlua, the per-app environment, the
                         `std:`/`lib:`/`vnd:` modules, the lifecycle of what apps spawn; depends on no other
                         crate, only `lua` may depend on it
   agentos-sqlite        adapter: per-app rusqlite DBs, migrations, live queries via commit hooks
@@ -74,7 +74,7 @@ crates/
   - `cargo nextest`.
 - **Crates** (versions in `host-stack.md`):
   - runtime: tokio, axum;
-  - Lua 5.1: mlua (`lua51`, `vendored`, `async`, `serialize`, `send`), in `agentos-luavm` only;
+  - Lua: mlua (`luajit`, `vendored`, `async`, `serialize`, `send`), in `neoc-vm` only (apps are Lua 5.1 source);
   - SQLite: rusqlite (bundled);
   - protocols: rmcp, agent-client-protocol;
   - fetch: reqwest (rustls);
@@ -97,7 +97,7 @@ crates/
     `getfenv`/`setfenv`, read-only standard libraries, text-only chunks, a locked string metatable. Apps cannot reach
     each other's state;
   - `require` knows `@agentos/app`, `@agentos/ui` (an app's own modules are bundled at build time) and **every
-    `std:`, `lib:` and `vnd:` module of `agentos-luavm`** (files, network, servers, tasks, threads, SQLite, TLS);
+    `std:`, `lib:` and `vnd:` module of `neoc-vm`** (files, network, servers, tasks, threads, SQLite, TLS);
   - no permissions and no CPU, memory or time budgets: apps are the person's own code on their own host;
   - what an app starts (tasks, servers, workers) is aborted and its listeners are closed when it is unloaded or
     replaced; callbacks that come from inside the VM take their turn in the app's one-call-at-a-time queue;

@@ -18,7 +18,7 @@ The AgentOS adapter (`crates/agentos-lua`) is an embedder of `neoc-vm`: AgentOS 
 ## Layout
 
 ```
-crates/neoc/                 # the `neoc` binary (the only bin)
+crates/neoc/                 # the `neoc` binary (the AgentOS host is the other bin, `agentos-host`)
   src/main.rs                # CLI entry: `run`, embedded-payload executables
   tests/                     # Lua suites (*.test.lua, *.spec.lua), cli.rs, cucumber.rs
 crates/neoc-vm/              # the runtime library
@@ -125,7 +125,7 @@ Adding a module: see [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-new-module).
 
 ## Rust style
 
-- Edition 2024. `unsafe_code` is denied in the workspace lint table, which the crates do not inherit yet (see their `[lints.cargo]` comment). `neoc-vm` forbids `unsafe` outside tests (`lib.rs`); the `neoc` binary crate still has some, in its CLI test helper.
+- Edition 2024 for the neoc crates (the AgentOS crates set edition 2021 themselves). The workspace lint table (`unsafe_code = forbid`, clippy pedantic, `unwrap`/`expect`/`panic` denied) is inherited by the AgentOS crates only; the neoc crates do not inherit it yet (see their `[lints.cargo]` comment: adopting it means ~700 pedantic findings and six `unsafe` blocks). `neoc-vm` forbids `unsafe` outside tests (`lib.rs`); the `neoc` binary crate still has some, in its CLI test helper.
 - `clippy::all` + `clippy::pedantic`; warnings are errors (`RUSTFLAGS="-D warnings"`). Use `#[allow(...)]` with a comment when you must.
 - `thiserror` for library error enums; the CLI renders them with `miette`. No `unwrap()` / `expect()` in library code.
 - `///` on public items is full, normal English. Everywhere else, write tight: cut filler, keep every fact. Never abbreviate code, API names, types, commands, paths or error text.

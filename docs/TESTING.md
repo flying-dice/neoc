@@ -42,7 +42,7 @@ snapshots deliberately with `bun run test:e2e:update`, then open the changed PNG
   a read-only, writable, concurrent or own-server call, and checks that nothing was written read-only, nothing
   interleaved, no acknowledged write was lost, `db:tx` success means committed, the app and its database still answer,
   and the host did not panic; 600 cases take about a second. `CHAOS_CASES=20000` (and `CHAOS_SEED`) go further, and
-  `CHAOS_ONLY=<case>` prints and runs one. A second generated test drops a call (timeout or abort) while its own coroutine waits, and checks that another call can neither run nor refuse for ever what it left behind (`CHAOS_DROPPED_CASES`). `agentos-luavm` has its own unit tests (the module registry, the lifecycle,
+  `CHAOS_ONLY=<case>` prints and runs one. A second generated test drops a call (timeout or abort) while its own coroutine waits, and checks that another call can neither run nor refuse for ever what it left behind (`CHAOS_DROPPED_CASES`). `neoc-vm` has its own unit tests (the module registry, the lifecycle,
   and the `vnd:hyper` client against a local TLS server).
 - **Host** (`agentos-host/tests`): the real wiring on an ephemeral loopback port (`tests/common`), driven like a
   browser or an agent would: `/rpc`, `/agui`, `/mcp`, pairing, the Agents app.
@@ -68,10 +68,11 @@ under `bun test` too, through the preload in `client/bunfig.toml` (`client/test/
 
 - **Check:** `bun run lint:lua` runs `lua-language-server --check` (pinned: 3.19.2, in `scripts/lint-lua.ts`) over
   every `.lua` file `.luarc.json` does not ignore (apps, `lua/prelude.lua`, the codegen example app), against the
-  generated LuaCATS definitions in `types/generated/luals/` (`agentos.lua` for the global `app`, `@agentos/ui.lua` and
-  `@agentos/app.lua` for the two `require`s, and one `<key>.lua` per `std:`/`lib:`/`vnd:` module, e.g. `lib:json.lua`,
-  written by `cargo run -p agentos-luavm --example luals` from the module's recorded surface; LuaLS finds them by file
-  path through the library setting). Files in `negative/` folders (`scripts/fixtures/negative/`) mark lines with
+  generated LuaCATS definitions: `types/generated/luals/` (`agentos.lua` for the global `app`, `@agentos/ui.lua` and
+  `@agentos/app.lua` for the two `require`s) and `types/luals/` (one file per `std:`/`lib:`/`vnd:` module, e.g.
+  `lib/json.lua` for `lib:json`, written by `cargo run -p neoc-vm --example luals` from the module's recorded
+  surface; `types/luals-plugin.lua` maps the module key to the file, and both folders are libraries in
+  `.luarc.json`). Files in `negative/` folders (`scripts/fixtures/negative/`) mark lines with
   `-- expect-error`; the check demands exactly those lines are flagged, so a broken definitions file cannot pass
   silently (`wrong_module_use.lua` is the one for the modules, `modules_usage.lua` its correct counterpart).
 - **Format:** `bun run lint:stylua` (`stylua.toml`, syntax `Lua51`; `.styluaignore`); `bun run format` rewrites.
@@ -84,7 +85,7 @@ under `bun test` too, through the preload in `client/bunfig.toml` (`client/test/
   (`scripts/lua51.test.ts`) checks the sources stay plain Lua 5.1 (no Luau syntax, no library members Lua 5.1 and `lua/prelude.lua` lack), that each
   app bundles into one file whose only requires are runtime ones (`@agentos/*` and the `std:`/`lib:`/`vnd:` modules, with a fixture that requires them), and (with a native Lua 5.3+ on PATH) that the prelude's
   `utf8`/`table.move` polyfills agree with the native ones. The prelude, `ui.lua` and the bundles are loaded and run
-  under Lua 5.1 by the Rust tests (the VM's vendored 5.1), so no system Lua 5.1 is needed. `bun run codegen:check`
+  under Lua 5.1 by the Rust tests (neoc-vm's vendored LuaJIT), so no system Lua 5.1 is needed. `bun run codegen:check`
   also fails when `types/generated/ui.lua`, `luals/*` or `prelude.lua` is stale.
 - **Logic and tools:** tested from Rust against the shipped package (see "Rust"); views and journeys against the real
   host (below).
@@ -97,7 +98,7 @@ them (a skipped lint is not a pass; with `AGENTOS_GATE=1` or `CI` they fail): `l
 **Optional interpreter**, used by `scripts/lua51.test.ts` only: a native **Lua 5.3+** compares the polyfills with the
 native `utf8`/`table.move`. Without it that test is skipped, not failed: the skip is written to stderr
 (`!! polyfill comparison SKIPPED`) and in the test name (`[SKIPPED: ...]`). The bundles themselves run on mlua's
-vendored Lua 5.1 in the Rust tests, so no system Lua 5.1 is involved.
+vendored LuaJIT in the Rust tests, so no system Lua 5.1 is involved.
 
 ## Storybook and the fake hosts
 
