@@ -331,8 +331,14 @@ mod tests {
     /// A TLS server on a local port with a self-signed certificate for `localhost`: answers every request on
     /// every connection with `hello`. Returns the port and the certificate (PEM).
     async fn tls_server() -> (u16, String) {
+        tls_server_on("127.0.0.1:0", "localhost").await
+    }
+
+    /// [`tls_server`] bound to `bind`, with a certificate whose subject alternative name is `name` (a DNS
+    /// name, or an IP address, which rcgen turns into an IP SAN).
+    async fn tls_server_on(bind: &str, name: &str) -> (u16, String) {
         let rcgen::CertifiedKey { cert, signing_key } =
-            rcgen::generate_simple_self_signed(vec!["localhost".to_owned()]).expect("certificate");
+            rcgen::generate_simple_self_signed(vec![name.to_owned()]).expect("certificate");
         let provider = Arc::new(rustls::crypto::ring::default_provider());
         let config = ServerConfig::builder_with_provider(provider)
             .with_safe_default_protocol_versions()
@@ -344,7 +350,7 @@ mod tests {
             )
             .expect("server config");
         let acceptor = TlsAcceptor::from(Arc::new(config));
-        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let listener = TcpListener::bind(bind).await.expect("bind");
         let port = listener.local_addr().expect("addr").port();
         tokio::spawn(async move {
             loop {
@@ -419,6 +425,25 @@ mod tests {
             body.as_deref(),
             Some("hello POST /p HTTP/1.1 | hello PUT /q HTTP/1.1")
         );
+    }
+
+    /// An IPv6 literal URL: the URL's host keeps its brackets (`[::1]`), the certificate names the bare address.
+    #[tokio::test]
+    async fn https_to_an_ipv6_literal_checks_the_ip_san() {
+        let (port, pem) = tls_server_on("[::1]:0", "::1").await;
+        let lua = make_engine().expect("engine");
+        lua.globals().set("PEM", pem).expect("pem");
+        let (body, err) = run(
+            &lua,
+            &format!(
+                r#"local r, e = require("vnd:hyper").get("https://[::1]:{port}/v6", {{ ca_pem = PEM }})
+                   if not r then return nil, e end
+                   return r.body"#
+            ),
+        )
+        .await;
+        assert_eq!(err, None);
+        assert_eq!(body.as_deref(), Some("hello GET /v6 HTTP/1.1"));
     }
 
     #[tokio::test]
