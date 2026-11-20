@@ -13,6 +13,7 @@ use mlua::{Lua, Table, UserData, UserDataMethods};
 use tokio::sync::Notify;
 
 use crate::lua::facade::Module;
+use crate::lua::lifecycle::{Role, async_method};
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
     Ok(declare(lua)?.into_table())
@@ -114,7 +115,7 @@ impl ShutdownSignal {
 impl UserData for ShutdownSignal {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("is_fired", |_, this, _: ()| Ok(this.is_fired()));
-        methods.add_async_method("wait", |_, this, _: ()| {
+        async_method(methods, "wait", Role::Wait, |_, this, (): ()| {
             let signal = this.clone();
             async move {
                 signal.wait().await;

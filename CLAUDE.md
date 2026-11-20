@@ -18,11 +18,14 @@ crates/neoc/                 # the `neoc` binary (the only bin)
 crates/neoc-vm/              # the runtime library
   tests/script_parse.rs      # compiles (never runs) every Lua script, Docker or not
   src/errors.rs              # runtime error types (NeocError)
-  src/lua/sandbox.rs         # engine construction, stripped globals
+  src/lua/sandbox.rs         # engine construction, stripped globals, the guarded `xpcall`
+  src/lua/lifecycle.rs       # the embedding hooks: Life, CallEntry/Baton, async_function/async_method, Role
+  src/lua/script_env.rs      # a sealed environment for one script (+ async_coroutines.lua)
   src/lua/facade.rs          # Module builder: registration, spans, (value, error), the LuaCATS emitter
   src/lua/modules.rs         # module registration + `require`
   src/lua/{std,lib,vnd}/     # one file per module
   examples/luals.rs          # writes (or `-- --check`s) the LuaCATS definitions in types/luals/
+  tests/embedding.rs         # the embedding hooks on LuaJIT: yield boundaries, environments, lifetimes
   tests/luals.rs             # drift check of types/luals/, no colon in a file name, the lua-language-server fixtures
   benches/                   # Criterion suites (lib/, vnd/), behind the `bench` feature
 types/luals/                 # GENERATED LuaCATS definitions, one file per module (`lib/json.lua` for `lib:json`)
@@ -92,9 +95,20 @@ Priority order, 1 > 2 > 3 > 4:
 
 Adding a module: see [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-new-module).
 
+## Embedding the VM
+
+`neoc run` is one script in one engine, and uses none of this: every hook is a no-op by default (`make_engine()`, no `CallEntry`). A program that embeds `neoc-vm` and runs several scripts (one engine each) gets four generic mechanisms. They carry no policy of their own: what a script may do, and which modules it is offered, stay with the embedder.
+
+- **Lifetimes (`lifecycle::Life`).** The per-engine registry of what a script starts: `std:task` tasks, `std:thread` workers, a `vnd:hyper` server's accept loop, a `std:net` listener's socket, a `lib:http` static server. `Life::shutdown` aborts all of it and refuses anything new; `Life::stop_background` does the same but stays open. Build the engine with `sandbox::make_engine_in(life)`, or `make_bare_engine` + `install_runtime_state(&lua, life)`.
+- **A turn at a time (`lifecycle::CallEntry`, `Baton`).** When the embedder serialises the calls into one VM, callbacks nobody called (an HTTP request to the script's own server, the next slice of a task) take their turn through `set_entry`, and a call lends its turn while it waits for something that does not use the VM. Every async host function is made by `lifecycle::async_function` / `async_method` with a `Role` (clippy's `disallowed-methods` refuses `create_async_function` and `add_async_method` everywhere else; see `clippy.toml`). The rules, and which boundaries refuse a yield on LuaJIT, are in the `lifecycle.rs` module doc; `tests/embedding.rs` holds each of them to a real engine.
+- **A script environment (`script_env`).** `new_env` builds a table to load a chunk into (`Chunk::set_environment`): an allow-list of base functions, private copies of the libraries, a private `math.random`, and coroutine functions that let a host call suspend inside a coroutine of the script's own and refuse to resume one the script did not make. `freeze` seals it: read-only library proxies and a guarded `rawset`. `make_bare_engine` locks the one shared string metatable. Run the embedder's own prelude between the two.
+- **The module registry (`modules::names`, `build`, `unknown_module`, `install_allowed`).** Build a module in an engine on request to give the script its own `require` over any subset of the modules. `lib::log::set_log_sink` takes `lib:log` lines instead of stderr.
+
+`neoc_vm::mlua` is re-exported: name that one binding.
+
 ## Tests
 
-- **Rust:** `#[cfg(test)] mod tests` next to the code. Integration tests in `tests/` only where they cross crate boundaries, plus `crates/neoc-vm/tests/luals.rs` (the generated definitions and the lua-language-server fixtures), `crates/neoc-vm/tests/hostile_inputs.rs` (every module called with hostile values, fails on any panic) and `forged_len.rs`.
+- **Rust:** `#[cfg(test)] mod tests` next to the code. Integration tests in `tests/` only where they cross crate boundaries, plus `crates/neoc-vm/tests/embedding.rs` (the embedding hooks), `crates/neoc-vm/tests/luals.rs` (the generated definitions and the lua-language-server fixtures), `crates/neoc-vm/tests/hostile_inputs.rs` (every module called with hostile values, fails on any panic) and `forged_len.rs`.
 - **Lua:** a new module gets `crates/neoc/tests/<ns>/<name>.test.lua`, run with `neoc run`. (Not every existing module has one yet: `std:net`, `std:workers` and `lib:test` have none, and `std:task` uses a `.spec.lua`.) Per exported function: one happy path, one test per distinct error condition, and an empty or zero value where it applies. The outer `describe` is the bare module name.
 - **CLI spec:** `tooling/cli/*.feature`, driven by `crates/neoc/tests/cucumber.rs`.
 - **Benches:** three tiers per module (`library`, `into_out_lua`, `through_lua`), behind the `bench` feature.

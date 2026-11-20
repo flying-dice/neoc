@@ -27,17 +27,9 @@ use std::{
     time::Duration,
 };
 
-/// Every module name `modules.rs` registers, read from its source so a module added later is swept too.
+/// Every module name the registry holds (`modules::names`), so a module added later is swept too.
 fn module_names() -> Vec<String> {
-    let source = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lua/modules.rs"),
-    )
-    .unwrap();
-    let names: Vec<String> = regex::Regex::new(r#"modules\.insert\(\s*"((?:std|lib|vnd):\w+)""#)
-        .unwrap()
-        .captures_iter(&source)
-        .map(|c| c[1].to_owned())
-        .collect();
+    let names: Vec<String> = neoc_vm::lua::modules::names().map(String::from).collect();
     assert!(names.len() >= 50, "found only {} modules", names.len());
     names
 }

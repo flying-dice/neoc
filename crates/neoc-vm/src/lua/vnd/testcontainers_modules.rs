@@ -44,6 +44,7 @@ use tokio::sync::Mutex;
 use tracing::instrument;
 
 use crate::lua::facade::Module;
+use crate::lua::lifecycle::{Role, async_function, async_method};
 use crate::lua::sandbox::{from_err, ok};
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
@@ -70,7 +71,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
     m.set(
         "mysql",
-        lua.create_async_function(|lua, _: ()| start_mysql(lua))?,
+        async_function(lua, Role::Wait, |lua, _: ()| start_mysql(lua))?,
     )?;
     m.record_fn(
         "mysql",
@@ -81,7 +82,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
     m.set(
         "postgres",
-        lua.create_async_function(|lua, _: ()| start_postgres(lua))?,
+        async_function(lua, Role::Wait, |lua, _: ()| start_postgres(lua))?,
     )?;
     m.record_fn(
         "postgres",
@@ -92,7 +93,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
 
     m.set(
         "generic",
-        lua.create_async_function(|lua, opts: Table| start_generic(lua, opts))?,
+        async_function(lua, Role::Wait, |lua, opts: Table| start_generic(lua, opts))?,
     )?;
     m.record_fn(
         "generic",
@@ -220,7 +221,7 @@ where
         methods.add_method("url", |_, this, _: ()| Ok(this.url.clone()));
         methods.add_method("host", |_, this, _: ()| Ok(this.host.clone()));
         methods.add_method("port", |_, this, _: ()| Ok(this.port as i32));
-        methods.add_async_method("stop", |_, this, _: ()| {
+        async_method(methods, "stop", Role::Wait, |_, this, _: ()| {
             let inner = this.inner.clone();
             async move { stop_container(inner).await }
         });
@@ -430,7 +431,7 @@ impl UserData for GenericContainer {
                     ))
                 })
         });
-        methods.add_async_method("stop", |_, this, _: ()| {
+        async_method(methods, "stop", Role::Wait, |_, this, _: ()| {
             let inner = this.inner.clone();
             async move { stop_container(inner).await }
         });

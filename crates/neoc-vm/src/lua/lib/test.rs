@@ -10,6 +10,7 @@
 use mlua::{Lua, Table, Value};
 
 use crate::lua::facade::Module;
+use crate::lua::lifecycle::{Role, async_function};
 
 const STATE_KEY: &str = "_NEOC_TEST";
 
@@ -85,7 +86,7 @@ pub fn module(lua: &Lua) -> mlua::Result<Table> {
 /// Declares the `lib:test` surface through the facade.
 ///
 /// Every function is set verbatim with [`crate::lua::facade::Module::set`]:
-/// `describe` / `test` / `it` are async (created with `create_async_function`)
+/// `describe` / `test` / `it` are async (made with `lifecycle::async_function`, a `Role::Vm`: they run script code)
 /// and `expect` returns a matcher table whose chained assertions raise
 /// `mlua::Error::RuntimeError` directly — none use the `(value, error)` idiom
 /// or an `#[instrument]` span, so the facade's `func` / `try_func` path does
@@ -117,14 +118,18 @@ fn register_suite_fns(lua: &Lua, m: &mut Module<'_>) -> mlua::Result<()> {
     // describe(name, fn) — async so test bodies can call yielding functions
     m.set(
         "describe",
-        lua.create_async_function(|lua, (name, f): (String, mlua::Function)| async move {
-            println!("\n{name}");
-            let state: Table = lua.named_registry_value(STATE_KEY)?;
-            state.set("current_suite", lua.create_string(name.as_bytes())?)?;
-            let result = f.call_async::<()>(()).await;
-            state.set("current_suite", Value::Nil)?;
-            result
-        })?,
+        async_function(
+            lua,
+            Role::Vm,
+            |lua, (name, f): (String, mlua::Function)| async move {
+                println!("\n{name}");
+                let state: Table = lua.named_registry_value(STATE_KEY)?;
+                state.set("current_suite", lua.create_string(name.as_bytes())?)?;
+                let result = f.call_async::<()>(()).await;
+                state.set("current_suite", Value::Nil)?;
+                result
+            },
+        )?,
     )?;
     m.record_fn(
         "describe",
@@ -134,8 +139,10 @@ fn register_suite_fns(lua: &Lua, m: &mut Module<'_>) -> mlua::Result<()> {
     );
 
     // test(name, fn) / it(name, fn) — async for the same reason
-    let run_test =
-        lua.create_async_function(|lua, (name, f): (String, mlua::Function)| async move {
+    let run_test = async_function(
+        lua,
+        Role::Vm,
+        |lua, (name, f): (String, mlua::Function)| async move {
             let state: Table = lua.named_registry_value(STATE_KEY)?;
             let suite: Option<mlua::LuaString> = state.get("current_suite")?;
             let label = match suite {
@@ -160,7 +167,8 @@ fn register_suite_fns(lua: &Lua, m: &mut Module<'_>) -> mlua::Result<()> {
                 }
             }
             Ok(())
-        })?;
+        },
+    )?;
     m.set("test", run_test.clone())?;
     m.record_fn(
         "test",

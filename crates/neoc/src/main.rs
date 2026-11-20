@@ -140,9 +140,9 @@ fn engine_with_args(user_args: &[String]) -> mlua::Lua {
 
 /// Drains any tasks spawned via `std:task` that outlive the main script. Exits
 /// with code 1 if any of them errored.
-async fn drain_scheduler(engine: &mlua::Lua) {
+fn drain_scheduler(engine: &mlua::Lua) {
     if let Some(scheduler) = engine.app_data_ref::<lua::std::task::Scheduler>() {
-        scheduler.wait_all().await;
+        scheduler.wait_all();
         if scheduler.had_task_errors() {
             process::exit(1);
         }
@@ -201,7 +201,7 @@ async fn run(paths: &[String], user_args: &[String]) {
             report_script_error(&e, &source, path);
         }
 
-        drain_scheduler(&engine).await;
+        drain_scheduler(&engine);
 
         let is_test = path.ends_with(".test.lua") || path.ends_with(".spec.lua");
         if is_test {
@@ -263,7 +263,7 @@ async fn run_eval(source: &str, user_args: &[String]) {
         report_script_error(&e, source, "<eval>");
     }
 
-    drain_scheduler(&engine).await;
+    drain_scheduler(&engine);
 }
 
 /// Check for an embedded payload in the current executable. If found, run it
@@ -304,7 +304,7 @@ async fn run_embedded(payload: &[u8]) {
         report_error(NeocError::Runtime(e.to_string()));
     }
 
-    drain_scheduler(&engine).await;
+    drain_scheduler(&engine);
 }
 
 /// Builds the multi-thread tokio runtime the Lua engine paths drive on, then

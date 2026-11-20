@@ -29,6 +29,7 @@ use mlua::{Lua, Table, UserData, UserDataMethods};
 use tokio::net::TcpListener;
 
 use crate::lua::facade::Module;
+use crate::lua::lifecycle::Life;
 
 pub fn module(lua: &Lua) -> mlua::Result<Table> {
     Ok(declare(lua)?.into_table())
@@ -54,7 +55,7 @@ pub(crate) fn declare(lua: &Lua) -> mlua::Result<Module<'_>> {
             "bind",
             &[("addr", "string")],
             "Bind a TCP socket to `addr` (e.g. `\"0.0.0.0:3000\"`). Returns a listener handle on success.",
-            |_, addr: String| bind(&addr).map(|l| Listener::from_arc(Arc::new(l))),
+            |lua, addr: String| bind(&addr).map(|l| Listener::new(lua, l)),
         )?
         .method(
             "addr",
@@ -77,21 +78,50 @@ fn bind(addr: &str) -> Result<TcpListener, String> {
     TcpListener::from_std(std_listener).map_err(|e| format!("from_std: {e}"))
 }
 
+/// The socket behind a [`Listener`]: taken out (and so dropped, which closes it once the tasks that were
+/// accepting on it are gone too) when the script is shut down.
+#[derive(Default)]
+pub struct ListenerSlot(parking_lot::Mutex<Option<Arc<TcpListener>>>);
+
+impl ListenerSlot {
+    fn close(&self) {
+        self.0.lock().take();
+    }
+}
+
 /// Lua-facing TCP listener handle. Named `Listener` on the Rust side to
 /// avoid collision with `tokio::net::TcpListener` in scope; exposed to
 /// Lua as `TcpListener` via the module constructor table.
+///
+/// Dropping a Lua VM frees its listeners, but a script that is unloaded or replaced may still be referenced
+/// for a moment (a call in flight, the next version loading): the socket is therefore released by the
+/// engine's [`Life`] at shutdown, so a replacement can bind the same port.
 #[derive(Clone)]
-pub struct Listener(Arc<TcpListener>);
+pub struct Listener(Arc<ListenerSlot>);
 
 impl Listener {
-    pub fn from_arc(arc: Arc<TcpListener>) -> Self {
-        Self(arc)
+    fn new(lua: &Lua, listener: TcpListener) -> Self {
+        let slot = Arc::new(ListenerSlot(parking_lot::Mutex::new(Some(Arc::new(
+            listener,
+        )))));
+        let weak = Arc::downgrade(&slot);
+        Life::of(lua).on_shutdown(move || {
+            if let Some(slot) = weak.upgrade() {
+                slot.close();
+            }
+        });
+        Self(slot)
     }
-    pub fn arc(&self) -> Arc<TcpListener> {
-        self.0.clone()
+    /// The socket, or `None` once the script was shut down.
+    pub fn arc(&self) -> Option<Arc<TcpListener>> {
+        self.0.0.lock().clone()
     }
     pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
-        self.0.local_addr()
+        self.arc()
+            .ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::NotConnected, "the listener is closed")
+            })?
+            .local_addr()
     }
 }
 
@@ -100,10 +130,7 @@ impl crate::lua::std::thread::Sendable for Listener {
         self.0.clone()
     }
     fn from_shared(arc: &std::sync::Arc<dyn std::any::Any + Send + Sync>) -> Option<Self> {
-        arc.clone()
-            .downcast::<TcpListener>()
-            .ok()
-            .map(Listener::from_arc)
+        arc.clone().downcast::<ListenerSlot>().ok().map(Listener)
     }
 }
 

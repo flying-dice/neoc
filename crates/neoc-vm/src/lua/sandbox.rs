@@ -3,6 +3,7 @@
 use mlua::chunk::{AsChunk, Chunk, ChunkMode};
 use mlua::{IntoLua, Lua, StdLib, Value};
 
+use crate::lua::lifecycle::Life;
 use crate::lua::modules;
 
 /// Globals removed after the standard libraries load.
@@ -42,15 +43,82 @@ const STRIPPED_GLOBALS: &[&str] = &[
 /// hazards and our `fs`/`os`/`process` modules cover their legitimate uses.
 /// The unsafe parts of BASE and STRING are then stripped
 /// (see [`STRIPPED_GLOBALS`]) and the custom `require` is installed.
+///
+/// # Errors
+/// Fails when the engine, a library or a module cannot be set up.
 pub fn make_engine() -> mlua::Result<Lua> {
+    make_engine_in(Life::new())
+}
+
+/// [`make_engine`] whose spawned work (tasks, servers, workers) registers with `life`: an embedder that
+/// shuts the script down calls [`Life::shutdown`], and a `std:thread` worker joins the registry of the engine
+/// that started it.
+///
+/// # Errors
+/// Fails when the engine, a library or a module cannot be set up.
+pub fn make_engine_in(life: Life) -> mlua::Result<Lua> {
+    let lua = base_engine()?;
+    install_runtime_state(&lua, life);
+    modules::install(&lua)?;
+    Ok(lua)
+}
+
+/// What the `std:`/`lib:`/`vnd:` modules keep per engine: the registry of what the script spawns and the
+/// `std:task` scheduler over it. [`make_engine`] sets it; an embedder that builds its own engine from
+/// [`make_bare_engine`] and offers the modules itself calls this first.
+pub fn install_runtime_state(lua: &Lua, life: Life) {
+    Life::adopt(lua, life.clone());
+    lua.set_app_data(crate::lua::std::task::Scheduler::with_life(life));
+}
+
+/// Build a bare engine for a script an embedder runs in its own [script environment](crate::lua::script_env):
+/// the curated stdlib of [`make_engine`], but NO `std:`/`lib:`/`vnd:` modules, no scheduler and no `require`
+/// (the embedder installs its own and gives each script its own environment).
+///
+/// The one shared string metatable is locked (`__metatable`), so `getmetatable("").__index` cannot be used
+/// to reach, and mutate, the shared `string` table.
+///
+/// To offer a script some of the modules, build them with [`modules::build`] or install a subset with
+/// [`modules::install_allowed`]: this function deliberately exposes none.
+///
+/// # Errors
+/// Fails when the engine or a library cannot be set up.
+pub fn make_bare_engine() -> mlua::Result<Lua> {
+    let lua = base_engine()?;
+    lock_string_metatable(&lua)?;
+    Ok(lua)
+}
+
+/// The libraries, the stripped globals and the guarded `xpcall` shared by both engines.
+fn base_engine() -> mlua::Result<Lua> {
     let lua = Lua::new_with(
         StdLib::TABLE | StdLib::STRING | StdLib::MATH | StdLib::BIT,
         mlua::LuaOptions::new(),
     )?;
     strip_unsafe_globals(&lua)?;
-    lua.set_app_data(crate::lua::std::task::Scheduler::new());
-    modules::install(&lua)?;
+    install_guarded_xpcall(&lua)?;
     Ok(lua)
+}
+
+/// Replace `xpcall` with a version whose message handler cannot fail the error handling (see
+/// `guarded_xpcall.lua`): on LuaJIT a handler that errors after a protected call of its own is called again by
+/// its own error, until a stack overflow that is past the stack of a 2 MiB thread.
+fn install_guarded_xpcall(lua: &Lua) -> mlua::Result<()> {
+    lua.load(include_str!("guarded_xpcall.lua"))
+        .set_name("=guarded_xpcall")
+        .set_mode(ChunkMode::Text)
+        .exec()
+}
+
+/// Every string shares one metatable (`{ __index = string }`) that `getmetatable("")` returns. Locking it
+/// makes `getmetatable("")` return the lock value instead, so a script cannot reach the table `__index`
+/// names. (Scripts cannot `setmetatable` a string, and the `debug` library is not loaded.)
+fn lock_string_metatable(lua: &Lua) -> mlua::Result<()> {
+    let meta: Option<mlua::Table> = lua.load("return getmetatable('')").eval()?;
+    if let Some(meta) = meta {
+        meta.raw_set("__metatable", "locked")?;
+    }
+    Ok(())
 }
 
 /// Load script source as a text-only chunk.

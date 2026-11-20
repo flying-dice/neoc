@@ -16,7 +16,7 @@ function ud_ServerHandle:addr() end
 --- Initiate graceful shutdown; returns immediately. Use `:wait()` to block until stopped.
 function ud_ServerHandle:close() end
 
---- Block until the server stops accepting connections (`:close()` or process shutdown signal).
+--- Block until the server stops accepting connections (`:close()`, the process shutdown signal, or an embedder shutting the script down).
 function ud_ServerHandle:wait() end
 
 ---@class vnd_hyper.Request
