@@ -194,5 +194,43 @@ describe("serde_json", function()
         end)
     end)
 
-end)
 
+    -- nesting limit ------------------------------------------------------------
+
+    describe("nesting limit", function()
+        local function nested(depth)
+            local v = {}
+            for _ = 2, depth do v = { v } end
+            return v
+        end
+
+        -- an error is raised or returned as (nil, err), whichever the function does
+        local function failure(f, ...)
+            local ok, a, b = pcall(f, ...)
+            if not ok then return tostring(a) end
+            if a == nil then return tostring(b) end
+            return nil
+        end
+
+        test("127 levels are written and read back, 128 are refused by every writer", function()
+            local text = serde_json.to_string(nested(127))
+            expect(text).toBeTruthy()
+            local back, err = serde_json.from_str(text)
+            expect(err).toBeNil()
+            expect(back).toBeTruthy()
+
+            for _, f in ipairs({ serde_json.to_string, serde_json.to_string_pretty }) do
+                expect(failure(f, nested(128))).toContain("levels deep")
+            end
+            local writer = fs.open({ path = ".tmp/json_too_deep.json", mode = "w" })
+            expect(failure(serde_json.to_writer, nested(128), writer)).toContain("levels deep")
+        end)
+
+        test("a table that contains itself is an error", function()
+            local t = {}
+            t.self = t
+            expect(failure(serde_json.to_string, t)).toContain("levels deep")
+        end)
+    end)
+
+end)

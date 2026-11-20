@@ -1,7 +1,7 @@
 //! JSON value handles — `lib:json`.
 //!
-//! Limits: a Lua value becomes JSON at most 127 levels deep (what `serde_json` reads back) (a table that contains itself is an error),
-//! and `Array:set` pads at most 1 Mi `null`s past the end.
+//! Limits: a Lua value becomes JSON at most 127 levels deep, which `serde_json` can read back (a table that
+//! contains itself is an error), and `Array:set` pads at most 1 Mi `null`s past the end.
 //!
 //! Foundation that `vnd:serde_json::from_str` returns: a parsed JSON body
 //! lives as one `JsonValue` tree in Rust memory (built out of `String`,
@@ -736,8 +736,8 @@ pub fn lua_value_to_json_value(v: &Value) -> mlua::Result<JsonValue> {
 }
 
 /// How deep a Lua value may nest when it becomes JSON: one under `serde_json`'s parse limit of 128 (which
-/// refuses the 128th level), so what this module writes it can read back. A table that contains itself (or just nests this far) is an error, not the
-/// stack overflow that would abort the host.
+/// refuses the 128th level), so what this module writes it can read back. A table that contains itself (or
+/// just nests this far) is an error, not the stack overflow that would abort the host.
 pub const MAX_DEPTH: usize = 127;
 
 /// How many `null`s `Array:set` may pad when the index is past the end (1 Mi).
