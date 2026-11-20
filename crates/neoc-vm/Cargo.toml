@@ -3,6 +3,9 @@ name = "neoc-vm"
 version.workspace = true
 edition.workspace = true
 publish = false
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [lib]
 name = "neoc_vm"
@@ -12,81 +15,82 @@ path = "src/lib.rs"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
-toml = { version = "0.8", features = ["parse", "display"] }
-quick-xml = { version = "0.41", features = ["serialize"] }
+toml = { version = "1.2", features = ["parse", "display"] }
+quick-xml = { version = "0.42", features = ["serialize"] }
 tracing = "0.1"
 tracing-core = "0.1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "net", "io-util", "signal"] }
 mlua = { version = "0.12", features = ["luajit", "async", "send", "vendored", "serialize", "macros"] }
-parking_lot = "0.12"
+parking_lot = "0.13"
 regex = "1"
-base64 = "0.22"
+base64 = "0.23"
 # De-facto Rust standard for hex (cited in the lib:hex issue) and already in
 # the tree transitively. Zero-dep, backs `lib:hex` alongside the base64 crate.
 hex = "0.4"
-sha2 = "0.10"
-sha3 = "0.10"
+sha2 = "0.11"
+sha3 = "0.12"
 blake3 = "1"
-md-5 = "0.10"
-sha1 = "0.10"
+md-5 = "0.11"
+sha1 = "0.11"
 xxhash-rust = { version = "0.8", features = ["xxh3", "xxh64"] }
-# HMAC over the sha2 digests, backing `lib:hmac`. RustCrypto `hmac` 0.12 pairs
-# with the `digest` 0.10 traits `sha2` already implements — no new digest
+# HMAC over the sha2 digests, backing `lib:hmac`. RustCrypto `hmac` 0.13 pairs
+# with the `digest` 0.11 traits `sha2` already implements — no new digest
 # backend, just the keyed construction. `subtle` gives the constant-time tag
 # comparison (`verify`); hand-rolling that is the side-channel footgun the
 # module exists to avoid. Both are RustCrypto crates already in the tree
 # transitively via the digest stack.
-hmac = "0.12"
+hmac = "0.13"
 subtle = "2"
-# AEAD primitives backing `lib:crypto`. `aes-gcm` 0.10 ships Aes128Gcm /
-# Aes256Gcm; `chacha20poly1305` 0.10 ships ChaCha20Poly1305. Both implement
+# AEAD primitives backing `lib:crypto`. `aes-gcm` 0.11 ships Aes128Gcm /
+# Aes256Gcm; `chacha20poly1305` 0.11 ships ChaCha20Poly1305. Both implement
 # the `aead::Aead` trait we dispatch through, and verify the tag in constant
 # time inside the crate. RustCrypto family — same maintainers and audit basis
 # as the `hmac`/`sha2`/`subtle` crates already in the tree, though they pull
 # their own AEAD primitive crates (aes, ghash, chacha20, poly1305) into the
 # lockfile.
-aes-gcm = "0.10"
-chacha20poly1305 = "0.10"
+aes-gcm = "0.11"
+chacha20poly1305 = "0.11"
 # Asymmetric signing/verification backing `lib:pkey` — the issue's cited
 # RustCrypto `signature` ecosystem, one crate per algorithm family. All three
-# share the `signature` 2.x Signer/Verifier traits and the `pkcs8` 0.10 /
-# `spki` 0.7 encoding layer already in the tree transitively (pulled by `rsa`,
+# share the `signature` 3.x Signer/Verifier traits and the `pkcs8` 0.11 /
+# `spki` 0.8 encoding layer already in the tree transitively (pulled by `rsa`,
 # itself a sqlx-mysql auth dependency):
-#   ed25519-dalek — Ed25519, the modern default. `rand_core` for keygen off the
-#                   same `OsRng` `lib:random` uses; `pkcs8`/`pem` for PKCS#8 +
+#   ed25519-dalek — Ed25519, the modern default. `rand_core` + `digest` (the
+#                   fallible `Generate` impl) for keygen off the
+#                   same `SysRng` `lib:random` uses; `pkcs8`/`pem` for PKCS#8 +
 #                   SPKI. Default `zeroize` stays on so secret keys wipe on drop.
 #   p256          — ECDSA over NIST P-256. Default `ecdsa` + `sha256` give ES256
 #                   (SHA-256 prehash); `pem` adds PEM on top of the default pkcs8.
-#   rsa           — RSA-PSS and RSA-PKCS#1 v1.5. `sha2` wires the SHA-256 digest
-#                   and its OID (the v1.5 DigestInfo prefix); `pem` adds PEM.
-#                   SECURITY: 0.9.x carries RUSTSEC-2023-0071 (Marvin timing
-#                   side-channel in RSA sign); no fixed upstream release. Only
-#                   pure-Rust RSA backend (#35) — conscious trade-off. ed25519 /
-#                   ecdsa-p256 unaffected. Advisory gate + tracking: #51.
+#   rsa           — RSA-PSS and RSA-PKCS#1 v1.5 (`pkcs1v15` feature); PEM comes
+#                   from `pkcs8`'s `pem` feature, the SHA-256 digest from `sha2`.
+#                   0.10 is the constant-time rewrite: 0.9.x's RUSTSEC-2023-0071
+#                   (Marvin timing side-channel in RSA sign) does not apply.
 # `pkcs8`/`spki` (pinned to the in-tree versions) give the EncodePrivateKey /
 # EncodePublicKey traits + their PEM emitters, used uniformly across all three.
-ed25519-dalek = { version = "2", features = ["pkcs8", "pem", "rand_core"] }
-p256 = { version = "0.13", features = ["pem"] }
-rsa = { version = "0.9", features = ["pem", "sha2"] }
-signature = "2"
-pkcs8 = { version = "0.10", features = ["pem", "std"] }
-spki = { version = "0.7", features = ["pem", "std"] }
+ed25519-dalek = { version = "3", features = ["pkcs8", "pem", "rand_core", "digest"] }
+p256 = { version = "0.14", features = ["pem"] }
+rsa = { version = "0.10", features = ["pkcs1v15"] }
+signature = "3"
+pkcs8 = { version = "0.11", features = ["pem", "std"] }
+spki = { version = "0.8", features = ["pem", "std"] }
 flate2 = "1"
-zstd = "0.13"
-brotli = "7"
+zstd = "0.14"
+brotli = "9"
 # Archive handling backing `lib:archive` (#11). `tar` is the de-facto Rust tar
 # crate (same author as flate2); it operates on any `Read`/`Write`, so the
 # gzip/zstd layer is composed from the flate2/zstd crates already above —
 # `lib:archive` integrates compression internally rather than depending on
 # `lib:compress` at the Rust level. `zip` reads/writes zip; `default-features
 # = false` drops the optional codecs (bzip2, zstd-in-zip, AES) we don't expose,
-# leaving DEFLATE (the universal zip method) via the in-tree flate2.
+# leaving DEFLATE (the universal zip method) via the in-tree flate2. zip 9's
+# `deflate` feature would add flate2's zlib-rs backend (and change the bytes
+# `lib:compress` emits through feature unification), so it names the two parts
+# it is made of, minus zlib-rs: `deflate-flate2` and zopfli for the top levels.
 tar = "0.4"
-zip = { version = "2", default-features = false, features = ["deflate"] }
-# CSPRNG (OsRng) backing `lib:random`. `rand` 0.8 is already in the dep tree
-# transitively; pinning here keeps the build stable. Default features pull in
-# `getrandom` + `std_rng`, which is all we need.
-rand = "0.8"
+zip = { version = "9", default-features = false, features = ["deflate-flate2", "deflate-zopfli"] }
+# CSPRNG (`SysRng`) backing `lib:random`. Default features pull in `getrandom`
+# + `std_rng`, which is all we need.
+rand = "0.10"
 # UUID generation + parsing for `lib:random`. `v4` = random, `v7` = unix-ms
 # timestamp ordered. `uuid` 1.x is already a transitive dep — features make
 # it ours.
@@ -101,7 +105,7 @@ percent-encoding = "2"
 # Civil dates, times, IANA timezone conversion, RFC 3339 / strftime parse and
 # format. Default features bundle the tzdb on Windows and read /usr/share/zoneinfo
 # on Unix, plus detect the system zone — exactly what `lib:chrono` needs.
-jiff = "0.2"
+jiff = "1.0"
 strsim = "0.11"
 heck = "0.5"
 unicode-width = "0.2"
@@ -115,9 +119,13 @@ futures = { version = "0.3", default-features = false, features = ["std"] }
 # always-on filter set, so keeping `builtins` out avoids dragging chrono +
 # tz data just for date formatting. Scripts that need those helpers can use
 # their dedicated library modules and chain results through filters.
+# Held at 1.x on purpose: tera 2 rewrites the template language (no
+# `json_encode`, `slice`, `concat`, `map`, `filter`, `as_str` filters or
+# `get_env()`; `int`/`float` reject non-integers; unknown filters fail when the
+# template compiles), so moving to it is a deliberate `lib:template` change, not
+# a dependency bump.
 tera = { version = "1.20", default-features = false }
 walkdir = "2"
-serde-jsonlines = "0.7.0"
 
 # `lib:args` parses script argv with clap's builder API (`Arg`, `Command`,
 # `value_parser`) — the runtime arg-parser, not a CLI tree. `derive` is the
@@ -131,8 +139,6 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 bytes = "1"
 
-socket2 = { version = "0.5", features = ["all"] }
-
 # sqlx is async-only and used here for `lib.mysql` / `lib.postgres`, where the
 # work genuinely is network IO (worth yielding for). For `lib.sqlite` we use
 # rusqlite directly — sqlite is a synchronous C library, so wrapping it in
@@ -140,13 +146,17 @@ socket2 = { version = "0.5", features = ["all"] }
 # ultimately link the same vendored libsqlite3-sys.
 # `mysql`/`postgres` are pure-Rust drivers; TLS is intentionally not enabled here
 # (consistent with `lib.http` being HTTP-only).
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "mysql", "postgres"] }
-rusqlite = { version = "0.32", features = ["bundled"] }
+# `mysql-rsa` keeps MySQL's `caching_sha2_password` working over a plain
+# connection (sqlx 0.9 made the RSA key exchange opt-in; 0.8 always included it).
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite", "mysql", "mysql-rsa", "postgres"] }
+rusqlite = { version = "0.43", features = ["bundled"] }
 
 # JSON Schema validation. `default-features = false` drops the optional
 # resolvers (HTTP/file remote $ref) — schemas embedded in scripts don't
-# need them, and turning them off shrinks the dependency tree.
-jsonschema = { version = "0.30", default-features = false }
+# need them, and turning them off shrinks the dependency tree. `idna` is the
+# one default feature kept: since 0.61 it backs the `idn-hostname` and
+# `idn-email` formats, which silently pass anything without it.
+jsonschema = { version = "0.61", default-features = false, features = ["idna"] }
 
 # Exposed to Lua as `lib.testcontainers` so scripts (and our integration
 # tests) can spin up disposable backing services without external setup.
@@ -161,7 +171,7 @@ tempfile = "3"
 # de-facto Rust standard (alongside `hashicorp/golang-lru` in Go). Provides the
 # capacity-bounded recency map; per-entry TTL is layered on top in the module.
 # Its only dependency is `hashbrown`, already in the tree transitively.
-lru = "0.18"
+lru = "0.19"
 # Unicode correctness primitives backing `lib:unicode` (#25). The three the
 # issue names are unicode-rs crates already in the tree transitively, so this
 # only promotes them to direct deps:
@@ -193,7 +203,7 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 # `src/lua/lib/<module>.rs` need to reference `criterion::Criterion` from
 # library code — and dev-dependencies aren't visible to lib code.
 [dependencies.criterion]
-version = "0.5"
+version = "0.8"
 features = ["html_reports"]
 optional = true
 
@@ -214,3 +224,10 @@ name = "vnd"
 path = "benches/vnd/vnd.rs"
 harness = false
 required-features = ["bench"]
+
+# The root `[workspace.lints]` table (clippy pedantic, `unsafe_code = "deny"`) was
+# imported with the old compiler crates and never inherited here: opting in
+# today means ~700 pedantic findings and six `unsafe` blocks. Adopting it is its
+# own change, so silence cargo's "missing lints inheritance" nag until then.
+[lints.cargo]
+missing_lints_inheritance = "allow"

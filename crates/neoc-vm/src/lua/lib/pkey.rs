@@ -60,16 +60,15 @@
 //!
 //! ## Security
 //!
-//! RSA private-key operations (sign) via the `rsa` crate (0.9.x) carry
-//! RUSTSEC-2023-0071 — the "Marvin" key-recovery timing side-channel. No fixed
-//! upstream release exists; `rsa` is the only pure-Rust RSA backend (#35
-//! sanctions RustCrypto), so this is a conscious trade-off, not an oversight.
-//! `ed25519` and `ecdsa-p256` are unaffected — prefer them for new signers.
-//! Advisory-gate + upstream tracking: #51.
+//! RSA private-key operations (sign) go through the `rsa` crate. 0.10 is the
+//! `crypto-bigint` migration with the constant-time mitigations that fix
+//! RUSTSEC-2023-0071 (the "Marvin" key-recovery timing side-channel in 0.9.x),
+//! so the advisory no longer applies and `deny.toml` carries no ignore for it.
 
 use mlua::{Lua, MetaMethod, Table, UserData, UserDataMethods};
+use p256::elliptic_curve::Generate;
 use pkcs8::{DecodePrivateKey, EncodePrivateKey, LineEnding};
-use rand::rngs::OsRng;
+use rand::rngs::SysRng;
 use sha2::Sha256;
 use signature::{RandomizedSigner, SignatureEncoding, Signer, Verifier};
 use spki::{DecodePublicKey, EncodePublicKey};
@@ -125,7 +124,7 @@ impl Algo {
 }
 
 // ---------------------------------------------------------------------------
-// Key state — one variant per backend. RSA stores the bare `RsaPrivateKey`
+// Key state — one variant per backend. RSA stores the bare `PrivateKey`
 // (the type that serialises) plus the scheme in the variant; the scheme-bound
 // signing key is built per call, which is cheap next to the signature itself.
 // ---------------------------------------------------------------------------
@@ -133,15 +132,15 @@ impl Algo {
 enum Secret {
     Ed25519(ed25519_dalek::SigningKey),
     EcdsaP256(p256::ecdsa::SigningKey),
-    RsaPss(rsa::RsaPrivateKey),
-    RsaPkcs1v15(rsa::RsaPrivateKey),
+    RsaPss(rsa::PrivateKey),
+    RsaPkcs1v15(rsa::PrivateKey),
 }
 
 enum Public {
     Ed25519(ed25519_dalek::VerifyingKey),
     EcdsaP256(p256::ecdsa::VerifyingKey),
-    RsaPss(rsa::RsaPublicKey),
-    RsaPkcs1v15(rsa::RsaPublicKey),
+    RsaPss(rsa::PublicKey),
+    RsaPkcs1v15(rsa::PublicKey),
 }
 
 impl Secret {
@@ -177,14 +176,18 @@ pub struct KeyPair {
 impl KeyPair {
     fn generate(algo: Algo) -> Result<Self, String> {
         let secret = match algo {
-            Algo::Ed25519 => Secret::Ed25519(ed25519_dalek::SigningKey::generate(&mut OsRng)),
-            Algo::EcdsaP256 => Secret::EcdsaP256(p256::ecdsa::SigningKey::random(&mut OsRng)),
-            Algo::RsaPss => {
-                Secret::RsaPss(rsa::RsaPrivateKey::new(&mut OsRng, RSA_BITS).map_err(stringify)?)
-            }
-            Algo::RsaPkcs1v15 => Secret::RsaPkcs1v15(
-                rsa::RsaPrivateKey::new(&mut OsRng, RSA_BITS).map_err(stringify)?,
+            Algo::Ed25519 => Secret::Ed25519(
+                ed25519_dalek::SigningKey::try_generate_from_rng(&mut SysRng).map_err(stringify)?,
             ),
+            Algo::EcdsaP256 => Secret::EcdsaP256(
+                p256::ecdsa::SigningKey::try_generate_from_rng(&mut SysRng).map_err(stringify)?,
+            ),
+            Algo::RsaPss => {
+                Secret::RsaPss(rsa::PrivateKey::new(&mut SysRng, RSA_BITS).map_err(stringify)?)
+            }
+            Algo::RsaPkcs1v15 => {
+                Secret::RsaPkcs1v15(rsa::PrivateKey::new(&mut SysRng, RSA_BITS).map_err(stringify)?)
+            }
         };
         Ok(Self { secret })
     }
@@ -198,10 +201,10 @@ impl KeyPair {
                 Secret::EcdsaP256(p256::ecdsa::SigningKey::from_pkcs8_pem(pem).map_err(stringify)?)
             }
             Algo::RsaPss => {
-                Secret::RsaPss(rsa::RsaPrivateKey::from_pkcs8_pem(pem).map_err(stringify)?)
+                Secret::RsaPss(rsa::PrivateKey::from_pkcs8_pem(pem).map_err(stringify)?)
             }
             Algo::RsaPkcs1v15 => {
-                Secret::RsaPkcs1v15(rsa::RsaPrivateKey::from_pkcs8_pem(pem).map_err(stringify)?)
+                Secret::RsaPkcs1v15(rsa::PrivateKey::from_pkcs8_pem(pem).map_err(stringify)?)
             }
         };
         Ok(Self { secret })
@@ -216,10 +219,10 @@ impl KeyPair {
                 Secret::EcdsaP256(p256::ecdsa::SigningKey::from_pkcs8_der(der).map_err(stringify)?)
             }
             Algo::RsaPss => {
-                Secret::RsaPss(rsa::RsaPrivateKey::from_pkcs8_der(der).map_err(stringify)?)
+                Secret::RsaPss(rsa::PrivateKey::from_pkcs8_der(der).map_err(stringify)?)
             }
             Algo::RsaPkcs1v15 => {
-                Secret::RsaPkcs1v15(rsa::RsaPrivateKey::from_pkcs8_der(der).map_err(stringify)?)
+                Secret::RsaPkcs1v15(rsa::PrivateKey::from_pkcs8_der(der).map_err(stringify)?)
             }
         };
         Ok(Self { secret })
@@ -243,7 +246,7 @@ impl KeyPair {
                 sig.to_vec()
             }
             Secret::RsaPss(k) => rsa::pss::SigningKey::<Sha256>::new(k.clone())
-                .try_sign_with_rng(&mut OsRng, msg)
+                .try_sign_with_rng(&mut SysRng, msg)
                 .map_err(stringify)?
                 .to_vec(),
             Secret::RsaPkcs1v15(k) => rsa::pkcs1v15::SigningKey::<Sha256>::new(k.clone())
@@ -322,10 +325,10 @@ impl PublicKey {
                 p256::ecdsa::VerifyingKey::from_public_key_pem(pem).map_err(stringify)?,
             ),
             Algo::RsaPss => {
-                Public::RsaPss(rsa::RsaPublicKey::from_public_key_pem(pem).map_err(stringify)?)
+                Public::RsaPss(rsa::PublicKey::from_public_key_pem(pem).map_err(stringify)?)
             }
             Algo::RsaPkcs1v15 => {
-                Public::RsaPkcs1v15(rsa::RsaPublicKey::from_public_key_pem(pem).map_err(stringify)?)
+                Public::RsaPkcs1v15(rsa::PublicKey::from_public_key_pem(pem).map_err(stringify)?)
             }
         };
         Ok(Self { public })
@@ -340,10 +343,10 @@ impl PublicKey {
                 p256::ecdsa::VerifyingKey::from_public_key_der(der).map_err(stringify)?,
             ),
             Algo::RsaPss => {
-                Public::RsaPss(rsa::RsaPublicKey::from_public_key_der(der).map_err(stringify)?)
+                Public::RsaPss(rsa::PublicKey::from_public_key_der(der).map_err(stringify)?)
             }
             Algo::RsaPkcs1v15 => {
-                Public::RsaPkcs1v15(rsa::RsaPublicKey::from_public_key_der(der).map_err(stringify)?)
+                Public::RsaPkcs1v15(rsa::PublicKey::from_public_key_der(der).map_err(stringify)?)
             }
         };
         Ok(Self { public })

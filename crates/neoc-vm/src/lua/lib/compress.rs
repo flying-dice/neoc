@@ -273,10 +273,11 @@ pub fn benches(c: &mut criterion::Criterion) {
     use std::io::Write;
 
     use brotli::{CompressorWriter, Decompressor};
-    use criterion::{Throughput, black_box};
+    use criterion::Throughput;
     use flate2::Compression;
     use flate2::read::{GzDecoder, ZlibDecoder};
     use flate2::write::{GzEncoder, ZlibEncoder};
+    use std::hint::black_box;
 
     let lua = crate::lua::sandbox::make_engine().expect("engine");
     let payload = "The quick brown fox jumps over the lazy dog. ".repeat(50);

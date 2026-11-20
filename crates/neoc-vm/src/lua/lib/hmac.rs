@@ -33,7 +33,7 @@
 //! Tracing spans `skip_all` deliberately: the key and message must never reach
 //! the log.
 
-use hmac::Mac;
+use hmac::{KeyInit, Mac};
 use mlua::{Lua, MetaMethod, Table, UserData, UserDataMethods, Value};
 use sha2::{Sha256, Sha384, Sha512};
 use subtle::ConstantTimeEq;
@@ -268,7 +268,8 @@ fn hmac_one_shot(
 
 #[cfg(feature = "bench")]
 pub fn benches(c: &mut criterion::Criterion) {
-    use criterion::{Throughput, black_box};
+    use criterion::Throughput;
+    use std::hint::black_box;
 
     let lua = crate::lua::sandbox::make_engine().expect("engine");
     let key = b"benchmark-hmac-key-0123456789abc";

@@ -355,7 +355,7 @@ fn write_props(table: &Table, out: &mut String, spacing: bool) -> mlua::Result<(
 
 #[cfg(feature = "bench")]
 pub fn benches(c: &mut criterion::Criterion) {
-    use criterion::black_box;
+    use std::hint::black_box;
 
     let lua = crate::lua::sandbox::make_engine().expect("engine");
     let payload = "[section1]\nkey1=value1\nkey2=value2\n\n[section2]\nfoo=bar\nbaz\n".repeat(20);

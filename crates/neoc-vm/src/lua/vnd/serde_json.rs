@@ -189,7 +189,8 @@ fn to_writer(_: &Lua, (v, ud): (Value, AnyUserData)) -> Result<bool, String> {
 
 #[cfg(feature = "bench")]
 pub fn benches(c: &mut criterion::Criterion) {
-    use criterion::{Throughput, black_box};
+    use criterion::Throughput;
+    use std::hint::black_box;
 
     const PAYLOAD: &str = r#"{"users":[{"id":1,"name":"Alice","email":"alice@example.com","active":true},{"id":2,"name":"Bob","email":"bob@example.com","active":false},{"id":3,"name":"Carol","email":"carol@example.com","active":true}],"total":3,"page":1}"#;
 

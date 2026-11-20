@@ -85,6 +85,44 @@ describe("jsonschema", function()
         end)
     end)
 
+    -- string formats ----------------------------------------------------------
+    -- `idn-hostname` / `idn-email` need jsonschema's `idna` feature; without it
+    -- every value passes, so these pin both the valid and the invalid side.
+    describe("idn formats", function()
+        local function format_schema(format)
+            return assert(jsonschema.compile(
+                '{"$schema":"http://json-schema.org/draft-07/schema#","type":"string","format":"' .. format .. '"}'
+            ))
+        end
+
+        test("idn-hostname accepts valid names, including unicode", function()
+            local s = format_schema("idn-hostname")
+            expect(s:is_valid("example.com")).toBe(true)
+            expect(s:is_valid("\195\188ber.example")).toBe(true)
+        end)
+
+        test("idn-hostname rejects invalid names", function()
+            local s = format_schema("idn-hostname")
+            expect(s:is_valid("-bad-")).toBe(false)
+            expect(s:is_valid("a..b")).toBe(false)
+            expect(s:is_valid("xn--")).toBe(false)
+            expect(s:is_valid(string.rep("a", 64) .. ".com")).toBe(false)
+            expect(s:validate("-bad-"):errors()[1]).toContain("idn-hostname")
+        end)
+
+        test("idn-email accepts valid addresses, including unicode", function()
+            local s = format_schema("idn-email")
+            expect(s:is_valid("user@example.com")).toBe(true)
+            expect(s:is_valid("\206\177@\207\128\206\177\207\129.gr")).toBe(true)
+        end)
+
+        test("idn-email rejects invalid addresses", function()
+            local s = format_schema("idn-email")
+            expect(s:is_valid("not an email")).toBe(false)
+            expect(s:is_valid("@nope")).toBe(false)
+        end)
+    end)
+
     -- primitive inputs --------------------------------------------------------
     describe("primitive validation", function()
         test("validates a string against type:string schema", function()

@@ -39,10 +39,9 @@
 //! the error string carries no oracle-shaped detail. Tracing spans `skip_all`
 //! deliberately — keys, nonces, plaintexts must never reach the log.
 
-use aes_gcm::aead::generic_array::GenericArray;
 use aes_gcm::{
     Aes128Gcm, Aes256Gcm, KeyInit,
-    aead::{Aead, Payload},
+    aead::{Aead, Nonce, Payload},
 };
 use chacha20poly1305::ChaCha20Poly1305;
 use mlua::{Lua, Table, Value};
@@ -70,6 +69,20 @@ fn key_len(algo: &str) -> Result<usize, String> {
         "chacha20_poly1305" => Ok(32),
         _ => Err(format!("unknown algorithm '{algo}'")),
     }
+}
+
+/// The three AEADs share one 96-bit nonce type; `Aes128Gcm` stands in for it.
+type AeadNonce = Nonce<Aes128Gcm>;
+
+fn to_nonce(nonce: &[u8]) -> Result<AeadNonce, String> {
+    AeadNonce::try_from(nonce)
+        .map_err(|_| format!("expected {NONCE_LEN}-byte nonce, got {}", nonce.len()))
+}
+
+/// Unreachable in practice: `Cipher::new` checks the key length first. Kept as
+/// an error rather than a panic.
+fn bad_key(algo: &str, key: &[u8]) -> String {
+    format!("invalid {}-byte key for {algo}", key.len())
 }
 
 // ---------------------------------------------------------------------------
@@ -102,15 +115,15 @@ impl Cipher {
             ));
         }
         match algo {
-            "aes_128_gcm" => Ok(Self::Aes128Gcm(Aes128Gcm::new(GenericArray::from_slice(
-                key,
-            )))),
-            "aes_256_gcm" => Ok(Self::Aes256Gcm(Aes256Gcm::new(GenericArray::from_slice(
-                key,
-            )))),
-            "chacha20_poly1305" => Ok(Self::ChaCha20Poly1305(ChaCha20Poly1305::new(
-                GenericArray::from_slice(key),
-            ))),
+            "aes_128_gcm" => Aes128Gcm::new_from_slice(key)
+                .map(Self::Aes128Gcm)
+                .map_err(|_| bad_key(algo, key)),
+            "aes_256_gcm" => Aes256Gcm::new_from_slice(key)
+                .map(Self::Aes256Gcm)
+                .map_err(|_| bad_key(algo, key)),
+            "chacha20_poly1305" => ChaCha20Poly1305::new_from_slice(key)
+                .map(Self::ChaCha20Poly1305)
+                .map_err(|_| bad_key(algo, key)),
             // unreachable — `key_len` above would have errored already.
             _ => Err(format!("unknown algorithm '{algo}'")),
         }
@@ -123,7 +136,7 @@ impl Cipher {
                 nonce.len()
             ));
         }
-        let nonce = GenericArray::from_slice(nonce);
+        let nonce = to_nonce(nonce)?;
         let payload = Payload {
             msg: plaintext,
             aad,
@@ -132,9 +145,9 @@ impl Cipher {
         // (16 + plaintext.len() > usize::MAX). In practice unreachable from
         // the runtime, but we surface the error rather than panic.
         let out = match self {
-            Self::Aes128Gcm(c) => c.encrypt(nonce, payload),
-            Self::Aes256Gcm(c) => c.encrypt(nonce, payload),
-            Self::ChaCha20Poly1305(c) => c.encrypt(nonce, payload),
+            Self::Aes128Gcm(c) => c.encrypt(&nonce, payload),
+            Self::Aes256Gcm(c) => c.encrypt(&nonce, payload),
+            Self::ChaCha20Poly1305(c) => c.encrypt(&nonce, payload),
         };
         out.map_err(|e| format!("encryption failed: {e}"))
     }
@@ -152,15 +165,15 @@ impl Cipher {
                 ciphertext.len()
             ));
         }
-        let nonce = GenericArray::from_slice(nonce);
+        let nonce = to_nonce(nonce)?;
         let payload = Payload {
             msg: ciphertext,
             aad,
         };
         let out = match self {
-            Self::Aes128Gcm(c) => c.decrypt(nonce, payload),
-            Self::Aes256Gcm(c) => c.decrypt(nonce, payload),
-            Self::ChaCha20Poly1305(c) => c.decrypt(nonce, payload),
+            Self::Aes128Gcm(c) => c.decrypt(&nonce, payload),
+            Self::Aes256Gcm(c) => c.decrypt(&nonce, payload),
+            Self::ChaCha20Poly1305(c) => c.decrypt(&nonce, payload),
         };
         // Generic message — leaking "tag mismatch" vs "AAD wrong" vs anything
         // else is the canonical AEAD oracle footgun. The aead crate already
@@ -327,7 +340,8 @@ fn decrypt(
 
 #[cfg(feature = "bench")]
 pub fn benches(c: &mut criterion::Criterion) {
-    use criterion::{Throughput, black_box};
+    use criterion::Throughput;
+    use std::hint::black_box;
 
     let lua = crate::lua::sandbox::make_engine().expect("engine");
     let payload = "The quick brown fox jumps over the lazy dog. ".repeat(50);

@@ -71,6 +71,26 @@ describe("toml", function()
             expect(val.nums[3]).toBe(3)
         end)
 
+        test("decodes TOML 1.1 inline tables with newlines and trailing commas", function()
+            -- toml 1.x implements TOML 1.1; toml 0.8 (TOML 1.0) rejected this.
+            local val, err = toml.decode_string("x = {\n  a = 1,\n  b = 2,\n}\n")
+            expect(err).toBeNil()
+            expect(val.x.a).toBe(1)
+            expect(val.x.b).toBe(2)
+        end)
+
+        test("decodes the TOML 1.1 escape-key string escape", function()
+            local val, err = toml.decode_string('x = "\\e"')
+            expect(err).toBeNil()
+            expect(val.x).toBe("\27")
+        end)
+
+        test("decodes TOML 1.1 times without seconds", function()
+            local val, err = toml.decode_string("t = 07:32\n")
+            expect(err).toBeNil()
+            expect(val.t).toBeTruthy()
+        end)
+
         test("decodes boolean values", function()
             local val, err = toml.decode_string("enabled = true\n")
             expect(err).toBeNil()

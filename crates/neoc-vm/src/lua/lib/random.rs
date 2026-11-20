@@ -1,6 +1,6 @@
 //! CSPRNG and UUIDs — `lib:random`.
 //!
-//! All randomness comes from `OsRng` (the OS getrandom syscall via the `rand`
+//! All randomness comes from `SysRng` (the OS getrandom syscall via the `rand`
 //! crate), never from the seedable `math.random` PRNG. UUIDs use the `uuid`
 //! crate's `v4` (random) and `v7` (timestamp-ordered) generators, which
 //! themselves draw from the OS source.
@@ -31,14 +31,22 @@
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use mlua::{Lua, Table, Value};
-use rand::RngCore;
-use rand::rngs::OsRng;
-use rand::seq::SliceRandom;
+use rand::TryRng;
+use rand::rngs::SysRng;
 use tracing::instrument;
 use uuid::Uuid;
 
 use crate::lua::facade::Module;
 use crate::lua::sandbox::{err, from_err, ok};
+
+/// Fill `buf` from the OS CSPRNG. `SysRng` is fallible in rand 0.10; an
+/// entropy-source failure comes back as an error for the caller to surface (a
+/// Lua error value) instead of a panic.
+pub(crate) fn fill_random(buf: &mut [u8]) -> Result<(), String> {
+    SysRng
+        .try_fill_bytes(buf)
+        .map_err(|e| format!("OS entropy source failed: {e}"))
+}
 
 /// Default alphabet for `random_string` when no alphabet is supplied.
 /// 62 chars — digits + upper + lower. ~5.95 bits of entropy per char.
@@ -137,7 +145,9 @@ fn random_bytes(lua: &Lua, n_bytes: i64) -> mlua::Result<(Value, Value)> {
         return err(lua, "random.random_bytes: byte count must be non-negative");
     }
     let mut buf = vec![0u8; n_bytes as usize];
-    OsRng.fill_bytes(&mut buf);
+    if let Err(e) = fill_random(&mut buf) {
+        return err(lua, format!("random.random_bytes: {e}"));
+    }
     ok(lua, lua.create_string(&buf)?)
 }
 
@@ -152,26 +162,97 @@ fn random_int(min: i64, max: i64) -> Result<i64, String> {
     // i64 would overflow. The i128 sum is always within i64 range, so the
     // narrowing cast is lossless.
     let span = ((max as i128) - (min as i128) + 1) as u128;
-    let value = uniform_u128(span);
+    let value = uniform_u128(span)?;
     Ok(((min as i128) + (value as i128)) as i64)
 }
 
 /// Unbiased uniform draw in `[0, span)` via rejection sampling on `u128`.
 /// `span` must be > 0; caller enforces (random_int's min<=max guard makes
 /// span >= 1).
-fn uniform_u128(span: u128) -> u128 {
+fn uniform_u128(span: u128) -> Result<u128, String> {
     if span == 1 {
-        return 0;
+        return Ok(0);
     }
     // Reject any draw landing in the partial bucket above `limit` so the
     // remaining range is an exact multiple of `span` — eliminates modulo bias.
     let limit = u128::MAX - (u128::MAX % span);
     loop {
         let mut buf = [0u8; 16];
-        OsRng.fill_bytes(&mut buf);
+        fill_random(&mut buf)?;
         let draw = u128::from_le_bytes(buf);
         if draw < limit {
-            return draw % span;
+            return Ok(draw % span);
+        }
+    }
+}
+
+/// Batches OS entropy for exact uniform draws below a small span: one
+/// `getrandom` call fills a chunk of `u32` draws instead of one call (and 16
+/// bytes) per character. Rejection sampling is unchanged, so every draw is
+/// exactly uniform, and a failed refill is still an error.
+struct SmallDraws {
+    buf: Vec<u8>,
+    pos: usize,
+    chunk: usize,
+}
+
+impl SmallDraws {
+    /// `expected` is the number of draws the caller will need (a hint that
+    /// sizes the first chunk, capped at 4 KiB).
+    fn new(expected: usize) -> Self {
+        Self {
+            buf: Vec::new(),
+            pos: 0,
+            chunk: expected.saturating_mul(4).clamp(16, 4096),
+        }
+    }
+
+    fn next_u32(&mut self) -> Result<u32, String> {
+        self.next_u32_from(&mut fill_random)
+    }
+
+    /// `next_u32` with the entropy source passed in, so a test can inject a
+    /// failing one.
+    fn next_u32_from(
+        &mut self,
+        fill: &mut dyn FnMut(&mut [u8]) -> Result<(), String>,
+    ) -> Result<u32, String> {
+        if self.pos + 4 > self.buf.len() {
+            self.buf.resize(self.chunk, 0);
+            if let Err(e) = fill(&mut self.buf) {
+                // Drop the zeroed, never-filled buffer so a retry refills
+                // instead of handing out zeros as if they were entropy.
+                self.buf.clear();
+                self.pos = 0;
+                return Err(e);
+            }
+            self.pos = 0;
+        }
+        let bytes = [
+            self.buf[self.pos],
+            self.buf[self.pos + 1],
+            self.buf[self.pos + 2],
+            self.buf[self.pos + 3],
+        ];
+        self.pos += 4;
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    /// Exactly uniform index in `[0, len)`; `len` must be > 0.
+    fn below(&mut self, len: usize) -> Result<usize, String> {
+        let Ok(span) = u64::try_from(len) else {
+            return Ok(uniform_u128(len as u128)? as usize);
+        };
+        if span > 1 << 32 {
+            return Ok(uniform_u128(u128::from(span))? as usize);
+        }
+        // Reject draws in the partial bucket above `limit` (no modulo bias).
+        let limit = (1u64 << 32) - ((1u64 << 32) % span);
+        loop {
+            let draw = u64::from(self.next_u32()?);
+            if draw < limit {
+                return Ok((draw % span) as usize);
+            }
         }
     }
 }
@@ -198,11 +279,10 @@ fn random_string(n: i64, alphabet: Option<mlua::LuaString>) -> Result<String, St
         return Err("alphabet must be non-empty".to_string());
     }
     let mut out = String::with_capacity(n as usize);
+    // Exactly uniform over the alphabet (rejection sampling, no modulo bias).
+    let mut draws = SmallDraws::new(n as usize);
     for _ in 0..n {
-        let pick = alpha
-            .choose(&mut OsRng)
-            .expect("alphabet non-empty (checked above)");
-        out.push(*pick);
+        out.push(alpha[draws.below(alpha.len())?]);
     }
     Ok(out)
 }
@@ -212,7 +292,7 @@ fn token_urlsafe(n_bytes: i64) -> Result<String, String> {
         return Err("byte count must be non-negative".to_string());
     }
     let mut buf = vec![0u8; n_bytes as usize];
-    OsRng.fill_bytes(&mut buf);
+    fill_random(&mut buf)?;
     Ok(URL_SAFE_NO_PAD.encode(&buf))
 }
 
@@ -257,7 +337,7 @@ fn uuid_format(input: mlua::LuaString) -> Result<String, String> {
 
 #[cfg(feature = "bench")]
 pub fn benches(c: &mut criterion::Criterion) {
-    use criterion::black_box;
+    use std::hint::black_box;
 
     let lua = crate::lua::sandbox::make_engine().expect("engine");
 
@@ -266,7 +346,7 @@ pub fn benches(c: &mut criterion::Criterion) {
     g.bench_function("library/random_bytes_32", |b| {
         b.iter(|| {
             let mut buf = [0u8; 32];
-            OsRng.fill_bytes(black_box(&mut buf));
+            fill_random(black_box(&mut buf)).expect("os entropy");
         });
     });
 
@@ -420,6 +500,44 @@ mod tests {
             lua.load(r#"return rng.random_int(10, 5)"#).eval().unwrap();
         assert!(v.is_none());
         assert!(e.unwrap().starts_with("random.random_int:"));
+    }
+
+    #[test]
+    fn small_draws_reject_the_partial_bucket_and_stay_balanced() {
+        // span = 2^31 + 1 leaves a partial bucket of 2^31 - 1 draws out of
+        // 2^32 (about half of all raw draws are rejected), so this loop goes
+        // through the rejection branch thousands of times. Every result must
+        // be below the span and the two halves roughly balanced.
+        let span = (1usize << 31) + 1;
+        let mut draws = super::SmallDraws::new(8);
+        let mut low = 0u32;
+        let n = 4000;
+        for _ in 0..n {
+            let v = draws.below(span).unwrap();
+            assert!(v < span, "draw {v} outside span {span}");
+            if v < span / 2 {
+                low += 1;
+            }
+        }
+        assert!(
+            (1700..=2300).contains(&low),
+            "halves unbalanced: {low} of {n} below the midpoint"
+        );
+        assert_eq!(draws.below(1).unwrap(), 0);
+    }
+
+    #[test]
+    fn failed_refill_is_not_served_as_zero_entropy() {
+        let mut draws = super::SmallDraws::new(8);
+        let mut fail = |_: &mut [u8]| Err("boom".to_string());
+        assert_eq!(draws.next_u32_from(&mut fail), Err("boom".to_string()));
+        // The retry must refill from the (now working) source, not hand out
+        // the zeroed buffer the failed refill left behind.
+        let mut ones = |buf: &mut [u8]| {
+            buf.fill(0xFF);
+            Ok(())
+        };
+        assert_eq!(draws.next_u32_from(&mut ones), Ok(u32::MAX));
     }
 
     #[test]

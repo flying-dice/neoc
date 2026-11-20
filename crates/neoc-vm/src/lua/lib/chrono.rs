@@ -17,7 +17,7 @@ use std::str::FromStr;
 
 use jiff::civil::{Date, DateTime, Time};
 use jiff::tz::TimeZone;
-use jiff::{Span, Timestamp, Unit, Zoned};
+use jiff::{Span, Timestamp, Unit, ZonedDateTime};
 use mlua::{AnyUserData, Lua, MetaMethod, Table, UserData, UserDataFields, UserDataMethods, Value};
 use tracing::instrument;
 
@@ -610,7 +610,7 @@ impl UserData for DateTimeHandle {
                 Ok(z) => z,
                 Err(msg) => return err(lua, format!("chrono.DateTime.in_zone: {msg}")),
             };
-            match this.0.to_zoned(tz) {
+            match this.0.to_zoned_datetime(tz) {
                 Ok(z) => ok(lua, ZonedDateTimeHandle(z)),
                 Err(e) => err(lua, format!("chrono.DateTime.in_zone: {e}")),
             }
@@ -732,7 +732,7 @@ fn datetime_parse_ctor(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
 // ---------------------------------------------------------------------------
 
 #[derive(Clone)]
-pub struct ZonedDateTimeHandle(pub Zoned);
+pub struct ZonedDateTimeHandle(pub ZonedDateTime);
 
 impl UserData for ZonedDateTimeHandle {
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
@@ -860,7 +860,7 @@ impl UserData for ZonedDateTimeHandle {
     skip_all
 )]
 fn zdt_parse_ctor(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
-    match Zoned::from_str(&s) {
+    match ZonedDateTime::from_str(&s) {
         Ok(z) => ok(lua, ZonedDateTimeHandle(z)),
         Err(e) => err(lua, format!("chrono.ZonedDateTime.parse: {e}")),
     }
@@ -962,13 +962,13 @@ fn duration_parse_ctor(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
 
 #[instrument(name = "chrono.now", target = "lua::lib::chrono", skip_all)]
 fn flat_now(_: &Lua, _: ()) -> mlua::Result<ZonedDateTimeHandle> {
-    Ok(ZonedDateTimeHandle(Zoned::now()))
+    Ok(ZonedDateTimeHandle(ZonedDateTime::now()))
 }
 
 #[instrument(name = "chrono.utc_now", target = "lua::lib::chrono", skip_all)]
 fn flat_utc_now(_: &Lua, _: ()) -> mlua::Result<ZonedDateTimeHandle> {
     Ok(ZonedDateTimeHandle(
-        Timestamp::now().to_zoned(TimeZone::UTC),
+        Timestamp::now().to_zoned_datetime(TimeZone::UTC),
     ))
 }
 
@@ -982,14 +982,17 @@ fn flat_utc_now(_: &Lua, _: ()) -> mlua::Result<ZonedDateTimeHandle> {
 fn flat_parse(lua: &Lua, s: String) -> mlua::Result<(Value, Value)> {
     let has_datetime_shape = s.contains('T') || s.contains(' ');
     if has_datetime_shape {
-        if let Ok(z) = Zoned::from_str(&s) {
+        if let Ok(z) = ZonedDateTime::from_str(&s) {
             return ok(lua, ZonedDateTimeHandle(z));
         }
         // RFC 3339 with `Z` or numeric offset but no `[zone]` suffix —
-        // `Zoned::from_str` rejects it, but `Timestamp::from_str` accepts.
+        // `ZonedDateTime::from_str` rejects it, but `Timestamp::from_str` accepts.
         // Normalise to a UTC-zoned instant so the instant is preserved.
         if let Ok(ts) = Timestamp::from_str(&s) {
-            return ok(lua, ZonedDateTimeHandle(ts.to_zoned(TimeZone::UTC)));
+            return ok(
+                lua,
+                ZonedDateTimeHandle(ts.to_zoned_datetime(TimeZone::UTC)),
+            );
         }
         if let Ok(dt) = DateTime::from_str(&s) {
             return ok(lua, DateTimeHandle(dt));
@@ -1044,7 +1047,7 @@ fn clamp_i32(v: i64, prefix: &str) -> Result<i32, String> {
 
 #[cfg(feature = "bench")]
 pub fn benches(c: &mut criterion::Criterion) {
-    use criterion::black_box;
+    use std::hint::black_box;
 
     let lua = crate::lua::sandbox::make_engine().expect("engine");
 
@@ -1053,13 +1056,14 @@ pub fn benches(c: &mut criterion::Criterion) {
     g.bench_function("library/parse_rfc3339", |b| {
         b.iter(|| {
             let _ =
-                Zoned::from_str(black_box("2026-05-20T16:30:00-04:00[America/New_York]")).unwrap();
+                ZonedDateTime::from_str(black_box("2026-05-20T16:30:00-04:00[America/New_York]"))
+                    .unwrap();
         });
     });
 
     g.bench_function("library/now_utc", |b| {
         b.iter(|| {
-            let _ = Timestamp::now().to_zoned(TimeZone::UTC);
+            let _ = Timestamp::now().to_zoned_datetime(TimeZone::UTC);
         });
     });
 

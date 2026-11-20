@@ -10,6 +10,10 @@
 //!
 //! *TOML has no streaming parser; `decode` reads the handle to completion
 //! first, then parses. The root value must be a table for encoding.
+//!
+//! The `toml` 1.x crate implements TOML 1.1: inline tables may span lines and end
+//! with a comma, `\e` is a string escape, and times may omit seconds
+//! (`07:32`). Documents that 1.0 parsers (and `toml` 0.8) rejected now decode.
 
 use mlua::{AnyUserData, Lua, LuaSerdeExt, Table, Value};
 
@@ -123,7 +127,8 @@ fn to_toml_string(v: &Value, pretty: bool) -> Result<String, String> {
 
 #[cfg(feature = "bench")]
 pub fn benches(c: &mut criterion::Criterion) {
-    use criterion::{Throughput, black_box};
+    use criterion::Throughput;
+    use std::hint::black_box;
 
     const PAYLOAD: &str = r#"
 [server]

@@ -626,7 +626,8 @@ fn slugify_str(input: &str) -> String {
 
 #[cfg(feature = "bench")]
 pub fn benches(c: &mut criterion::Criterion) {
-    use criterion::{Throughput, black_box};
+    use criterion::Throughput;
+    use std::hint::black_box;
 
     let lua = crate::lua::sandbox::make_engine().expect("engine");
     let payload = "The quick brown fox jumps over the lazy dog. ".repeat(50);
