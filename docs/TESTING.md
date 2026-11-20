@@ -33,7 +33,7 @@ snapshots deliberately with `bun run test:e2e:update`, then open the changed PNG
   and `crates/agentos-host/tests/common` call, so `bun` and `darklua` must be installed); inline snippets in those tests
   are plain Lua 5.1. `crates/agentos-lua/tests/lua51.rs` holds what is specific to running on Lua 5.1: the
   isolation of the per-app VMs, the read-only libraries and host calls under `pcall` and in coroutines; `modules.rs` holds the modules and
-  the lifecycle: every `std:`/`lib:`/`vnd:` module can be required, a request handler and a task take their turn in
+  the lifecycle: every `std:`/`lib:`/`vnd:` module an app is offered can be required (not `lib:test`, `lib:compile`, `std:workers`), a request handler and a task take their turn in
   the VM's one-call-at-a-time queue, an unloaded or replaced app's listener port is free again and its tasks and
   workers stop. `call_invariants.rs` and `turns.rs` pin what a call into the VM may and may not do (when it lends
   the VM, `db:tx`, a host call Lua cannot suspend at), each with the script that broke it. `chaos.rs` generates

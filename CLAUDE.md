@@ -143,7 +143,7 @@ Adding a module: see [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-new-module).
 3. Open a PR into `main` (a draft is fine). Title and commits are Conventional Commits (the squash commit message comes from the PR title for a multi-commit PR, from the commit for a single-commit one). Reference the Jira key in the body or footer (`Refs NEOC-6`).
 4. Self-review with the `pr-self-review` skill and post its `Self-review` note on the PR for the head SHA.
 5. Hand off to an independent `pr-review` pass: a fresh reviewer with no session context, who posts a verdict note for the head SHA (`READY TO MERGE` or `CHANGES NEEDED`). Fix and repeat from step 2 until `READY TO MERGE`.
-6. Squash-merge only on `READY TO MERGE` for the current head, then delete the branch. Mark the Jira ticket Done.
+6. Squash-merge only on `READY TO MERGE` for the current head, then delete the branch. The one exception is the merge of AgentOS (NEOC-113, PR #34), which lands with a merge commit so that AgentOS's history stays in `main`: never squash it. Mark the Jira ticket Done.
 
 Releases are cut by pushing a `vX.Y.Z` tag on `main` (see CONTRIBUTING.md). Don't push release tags unless asked.
 

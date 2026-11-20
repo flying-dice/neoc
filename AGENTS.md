@@ -107,17 +107,19 @@ A change is done when all of these hold:
   cyclic or absurdly shared table handed back to the host is an error (never a stack overflow), a Lua number can
   not panic a module or size an unbounded allocation (an error instead: a host panic aborts every app), and chunks
   load as text only.
-- **Open (NEOC-120, NEOC-123, NEOC-124): an app can abort the host.** On LuaJIT an app that raises an error value
-  whose `__tostring` makes a protected call and then fails (`mt.__tostring = function() pcall(error, "x")
-  error(setmetatable({}, mt)) end`) overflows the stack in the engine's message handler and aborts the process; the PUC
-  Lua 5.1 this host ran on before reported a catchable "C stack overflow". Reproduced paths: the entry chunk
-  (`exec_async`), a field read of an app table that has a metatable (mlua's own protected `Table::get`, for example the
-  table given to `app.tool`, at install) and the adapter's `call_async` sites (tools, events, handlers, views,
-  write-backs, transaction bodies, task bodies). What closes what: NEOC-120's guarded entry point covers the
-  `call_async` sites once the adapter switches to it; the entry chunk and mlua's own table reads are covered only by the
-  mlua patch (NEOC-124, pending the owner's decision NEOC-123). Until both are in, any app can take the host down.
-  `crates/agentos-lua/tests/poison.rs` has one test per path; the ones that abort are `#[ignore]`d with the tickets and
-  are meant to turn on with the fix. (A Tera panic in `lib:template` also aborts under `release-host`: NEOC-125.)
+- **Open (NEOC-124): an app can abort the host.** On LuaJIT an app that raises an error value whose `__tostring` makes
+  a protected call and then fails (`mt.__tostring = function() pcall(error, "x") error(setmetatable({}, mt)) end`)
+  overflows the stack in the engine's message handler and aborts the process; the PUC Lua 5.1 this host ran on before
+  reported a catchable "C stack overflow". Reproduced paths: the entry chunk (`exec_async`, `vm.rs`), the adapter's
+  `call_async` sites (tool, event, render and view calls reproduced; write-backs and transaction bodies are the same
+  kind of site, without a probe yet), a failing `std:task` task, and a field read of an app table that has a
+  metatable by mlua's own protected `Table::get` (the table given to `app.tool`, `app.notify` or `app.window`, a
+  render's return value). What closes it: NEOC-124 (PR #36, decision NEOC-123 = A), a patch to mlua that makes its own
+  protected calls survive such an error, so the plain `exec_async`, `call_async` and `Table::get` the adapter uses
+  stop aborting and the adapter needs no other change. Until it is merged and main is merged into this branch, any app
+  can take the host down. `crates/agentos-lua/tests/poison.rs` has a test per reproduced path that reads the value;
+  the aborting ones are `#[ignore = "aborts until NEOC-124 lands"]` and come off with the fix. (A Tera panic in
+  `lib:template` also aborts under `release-host`: NEOC-125.)
 - **The client runs no app code.** The renderer draws view trees and sends events; nothing executable crosses the
   wire. Kit knowledge of apps, and app knowledge in the client, are both bugs.
 - **Agent and tool output is untrusted:** render it as text. No `{@html}` or `innerHTML` for it (the only `{@html}` is

@@ -347,8 +347,8 @@ async fn host_calls_that_await_work_inside_pcall_coroutines_and_event_handlers()
 
 #[tokio::test]
 async fn the_proxies_apps_index_never_yield_so_they_work_anywhere() {
-    // app.state, a window's state / client / env, and a source handle are tables with __index / __newindex
-    // functions: they are plain synchronous Rust functions (PUC Lua 5.1 could not yield across a metamethod, which is
+    // app.state (and a window's state / client / env and a source handle, which this test does not render) are
+    // tables with __index / __newindex functions: they are plain synchronous Rust functions (PUC Lua 5.1 could not yield across a metamethod, which is
     // why; LuaJIT can). What shows that they never wait is a place where LuaJIT refuses a yield: a `string.gsub`
     // callback. A proxy that suspended would fail there with "attempt to yield across C-call boundary".
     let src = r#"

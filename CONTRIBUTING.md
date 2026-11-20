@@ -16,7 +16,7 @@ cargo test -p neoc -p neoc-vm
 
 `cargo test -p neoc -p neoc-vm` runs the `neoc-vm` unit tests, the `neoc` binary tests, the CLI integration tests and the Gherkin spec in `tooling/cli/`.
 
-The workspace also holds the AgentOS crates (`crates/agentos-*`, governed by [AGENTS.md](AGENTS.md)). neoc's checks need nothing they need: the test line names `-p neoc -p neoc-vm`, so neoc contributors need neither `bun` nor `darklua`. The AgentOS crates have their own gate (`bun run lint`, `typecheck`, `test`, `test:e2e`, in AGENTS.md); their tests build the bundled apps, which needs `bun` and `darklua` 0.18.0 on `PATH`, and `cargo test --workspace` would run them. `cargo build` and `cargo clippy --all-targets` cover the AgentOS crates too, and need nothing extra. NEOC-115 unifies the two gates.
+The workspace also holds the AgentOS crates (`crates/agentos-*`, governed by [AGENTS.md](AGENTS.md)). neoc's own checks do not need what those crates need: the test line names `-p neoc -p neoc-vm`, so neoc contributors need neither `bun` nor `darklua`. The AgentOS crates have their own gate (`bun run lint`, `typecheck`, `test`, `test:e2e`, in AGENTS.md); their tests build the bundled apps, which needs `bun` and `darklua` 0.18.0 on `PATH`, and `cargo test --workspace` would run them. `cargo build` and `cargo clippy --all-targets` cover the AgentOS crates too, and need nothing extra. NEOC-115 unifies the two gates.
 
 Lua suites run with the binary itself:
 
@@ -67,7 +67,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs similar checks on pushes to `ma
 3. Open the PR into `main` (a draft is fine). One module or one well-scoped change per PR. Say why in the description, not only what. Reference the Jira key (`Refs NEOC-<n>`).
 4. Self-review with the `pr-self-review` skill and post the `Self-review` note on the PR for the head SHA.
 5. Hand off to an independent `pr-review` pass: a fresh reviewer with no session context, who posts a verdict note for the head SHA (`READY TO MERGE` or `CHANGES NEEDED`). Fix and re-run from step 2 until `READY TO MERGE`.
-6. Squash-merge only on `READY TO MERGE` for the current head, then delete the branch.
+6. Squash-merge only on `READY TO MERGE` for the current head, then delete the branch. The one exception is the merge of AgentOS (NEOC-113, PR #34), which lands with a merge commit so that AgentOS's history stays in `main`: never squash it.
 
 ### Commits and PR titles
 

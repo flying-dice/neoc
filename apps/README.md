@@ -354,9 +354,9 @@ it in the app's own VM and keeps it going for as long as the app is loaded.
   - *You can resume only the coroutines you created yourself.* `coroutine.resume` (and a `coroutine.wrap` function)
     works on a coroutine your own code made with `coroutine.create` or `coroutine.wrap`, and on nothing else.
     Every other thread belongs to the host and is refused: the top-level thread of a call (a tool, an event, a
-    window callback, a request handler, a `db:tx` or `Mutex:with_lock` body, the app's entry), a task's thread,
-    however you got hold of it (a `pcall` runs in its caller's thread, so it has none of its own) (a `coroutine.running()` you
-    stashed in a variable and resume from another tool). The refusal is `false, "cannot resume non-suspended
+    window callback, a request handler, a `db:tx` or `Mutex:with_lock` body, the app's entry), a task's thread
+    (a `pcall` runs in its caller's thread, so it has none of its own), however you got hold of one (a
+    `coroutine.running()` you stashed in a variable and resume from another tool). The refusal is `false, "cannot resume non-suspended
     coroutine"`, and a `coroutine.wrap` function raises it; nothing changes in the thread you tried to resume. A
     coroutine you did create is refused the same way while a host call it is waiting at is in flight (another thread
     is waiting for it) and once you gave it to `task.spawn`, `task.defer` or `task.delay` (the scheduler drives it

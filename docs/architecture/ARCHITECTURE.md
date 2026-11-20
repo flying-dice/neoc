@@ -45,7 +45,7 @@ crates/
   agentos-domain        pure model, no I/O: app ids, app refs, manifests, tool grants, agent identity, tools,
                         notifications, view tree and component schema, protocol messages
   agentos-application   ports (traits) and use cases; in-memory fakes for tests; no frameworks
-  agentos-lua          adapter: runs apps as Lua 5.1, one VM per app: the app API modules, views, the call queue
+  agentos-lua          adapter: runs apps (Lua 5.1 source, on LuaJIT), one VM per app: the app API modules, views, the call queue
   neoc-vm               support library (not an adapter): the Lua VM (LuaJIT) on mlua, the per-app environment, the
                         `std:`/`lib:`/`vnd:` modules, the lifecycle of what apps spawn; depends on no other
                         crate; among the agentos crates only `lua` may depend on it (and the
