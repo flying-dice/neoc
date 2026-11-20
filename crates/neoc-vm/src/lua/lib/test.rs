@@ -358,7 +358,7 @@ fn make_matcher(lua: &Lua, value: Value) -> mlua::Result<Table> {
     )?;
 
     // toThrow() — value must be a callable that raises an error. The call goes through `call_guarded`: the error
-    // value is not turned into text by mlua's own message handler (see `guarded_call.lua`).
+    // value is not turned into text by mlua's own message handler (see `guard.rs`).
     let thrower = value;
     m.set(
         "toThrow",

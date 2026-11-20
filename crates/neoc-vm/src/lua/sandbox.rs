@@ -6,7 +6,7 @@ use mlua::{IntoLua, Lua, StdLib, Value};
 use crate::lua::lifecycle::Life;
 use crate::lua::modules;
 
-pub use crate::lua::guard::call_guarded_async;
+pub use crate::lua::guard::{call_guarded, call_guarded_async};
 
 /// Globals removed after the standard libraries load.
 ///
@@ -191,44 +191,6 @@ fn strip_unsafe_globals(lua: &Lua) -> mlua::Result<()> {
         }
     }
     Ok(())
-}
-
-/// Call a script function from Rust, with `args`, so that an error it raises reaches the caller as a Lua error with
-/// text, whatever the error value is. Use this, not `Function::call`, wherever a host function calls a callback the
-/// script gave it: on LuaJIT an error value whose `__tostring` makes a protected call and then fails sends the
-/// message handler of a plain `Function::call` into a recursion that overflows a runtime worker's stack and
-/// aborts the process (`guarded_call.lua`). It is not for a call that may suspend: that is [`call_guarded_async`].
-///
-/// # Errors
-/// The function raised: the error is its message (a value that is not text is converted without running a
-/// `__tostring` that fails).
-pub fn call_guarded<R: mlua::FromLuaMulti>(
-    lua: &Lua,
-    function: &mlua::Function,
-    args: impl mlua::IntoLuaMulti,
-) -> mlua::Result<R> {
-    const KEY: &str = "neoc.guarded_call";
-    let trampoline = match lua.named_registry_value::<Value>(KEY)? {
-        Value::Function(f) => f,
-        _ => {
-            let f: mlua::Function = load_source(lua, include_str!("guarded_call.lua"))
-                .set_name("=guarded_call")
-                .eval()?;
-            lua.set_named_registry_value(KEY, f.clone())?;
-            f
-        }
-    };
-    let mut returned: mlua::MultiValue = trampoline.call((function.clone(), args))?;
-    let ok = matches!(returned.pop_front(), Some(Value::Boolean(true)));
-    if ok {
-        R::from_lua_multi(returned, lua)
-    } else {
-        let message = match returned.pop_front() {
-            Some(Value::String(s)) => s.to_string_lossy(),
-            _ => "<error object>".to_owned(),
-        };
-        Err(mlua::Error::runtime(message))
-    }
 }
 
 /// Convert a Rust `i64` to a Lua number.

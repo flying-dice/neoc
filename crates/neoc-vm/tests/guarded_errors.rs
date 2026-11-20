@@ -1,7 +1,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test harness
-//! An error value whose `__tostring` fails must not abort the process, at every place a script error reaches mlua
-//! (NEOC-120): `call_guarded_async` (an embedder's async call, `neoc run`'s main chunk, a worker, a test body, a
-//! request handler) and a `std:task` task. And an ordinary error must read as it did before.
+//! An error value whose `__tostring` fails must not abort the process where a script's own code raises it, at the
+//! places a script error reaches mlua (NEOC-120): `call_guarded_async` and `call_guarded` (an embedder's call, `neoc
+//! run`'s main chunk, a worker, a test body, a request handler, a filter), and a `std:task` task. An ordinary error
+//! must read as it did, and each way it does not is pinned here. What is *not* closed is pinned too: a host function
+//! that reads a script value through its metamethods from Rust (NEOC-123).
 //!
 //! On LuaJIT, mlua turns an error value into text with `luaL_tolstring` under a message handler of its own, and a
 //! handler that has made a protected call and then fails is run again by its own failure until the C stack is
@@ -146,9 +148,9 @@ fn the_text_of_the_error_is_the_text_of_its_tostring_and_a_failing_one_says_why(
                     "{fails}"
                 );
                 let not_a_string = text(&run("not_a_string").await);
+                // what `luaL_tolstring` says, which is the text of the error
                 assert!(
-                    not_a_string.starts_with("error object's __tostring failed:")
-                        || not_a_string.starts_with("error object's __tostring did not return"),
+                    not_a_string.starts_with("'__tostring' must return a string\nstack traceback:"),
                     "{not_a_string}"
                 );
                 let hidden = text(&run("hidden").await);
@@ -347,6 +349,25 @@ const ORDINARY: &[(&str, &str)] = &[
     (
         "table with a __tostring that calls pcall",
         "error(setmetatable({}, { __tostring = function() pcall(error, 'x') return 'after pcall' end }))",
+    ),
+    (
+        "table whose __tostring returns a number",
+        "error(setmetatable({}, { __tostring = function() return 42 end }), 0)",
+    ),
+    (
+        "table whose __tostring returns a float",
+        "error(setmetatable({}, { __tostring = function() return 4.5 end }), 0)",
+    ),
+    (
+        "table with an empty metatable",
+        "error(setmetatable({}, {}), 0)",
+    ),
+    ("a builtin function", "error(print, 0)"),
+    ("a Lua function", "error(function() end, 0)"),
+    ("a coroutine", "error(coroutine.create(function() end), 0)"),
+    (
+        "a frame name that is not UTF-8",
+        "local t = {} t['\\xff\\xfe'] = function() error('boom') end local function g() t['\\xff\\xfe']() end g()",
     ),
     (
         "table with a __name",
@@ -770,10 +791,248 @@ fn a_failing_coroutine_task_reports_its_message_and_a_bare_table_its_type() {
         assert_eq!(parts[0], "runtime error: plain");
         assert_eq!(parts[1], "runtime error: 42");
         assert_eq!(parts[2], "runtime error: table: 0xP");
-        assert!(
-            parts[3].starts_with("runtime error: error object's __tostring"),
-            "{}",
-            parts[3]
+        assert_eq!(parts[3], "runtime error: '__tostring' must return a string");
+    });
+}
+
+// ---- ordinary errors that used to differ, and the differences that remain ---------------------------------------
+
+/// An out-of-memory error under `Lua::set_memory_limit` is a `MemoryError` as it is from a plain call: an embedder that
+/// downcasts it to see a limit breach still sees it. A script's own `error("not enough memory")` is a script error.
+#[test]
+fn an_out_of_memory_error_is_a_memory_error_as_it_was() {
+    runtime().block_on(async {
+        let lua = make_engine().unwrap();
+        let hog = load_source(
+            &lua,
+            "local t = {} local i = 0 while true do i = i + 1 t[i] = { i } end",
+        )
+        .into_function()
+        .unwrap();
+        lua.set_memory_limit(lua.used_memory() + 64 * 1024 * 1024)
+            .unwrap();
+        let before = native(&hog).await.unwrap_err();
+        lua.gc_collect().unwrap();
+        lua.set_memory_limit(lua.used_memory() + 64 * 1024 * 1024)
+            .unwrap();
+        let after = call_guarded_async::<()>(&lua, &hog, ()).await.unwrap_err();
+        assert!(matches!(&before, Error::MemoryError(_)), "{before:?}");
+        assert!(matches!(&after, Error::MemoryError(_)), "{after:?}");
+        assert_eq!(before.to_string(), after.to_string());
+
+        lua.gc_collect().unwrap();
+        lua.set_memory_limit(0).unwrap();
+        let own = load_source(&lua, "error('not enough memory', 0)")
+            .into_function()
+            .unwrap();
+        let own = call_guarded_async::<()>(&lua, &own, ()).await.unwrap_err();
+        assert!(matches!(&own, Error::RuntimeError(_)), "{own:?}");
+    });
+}
+
+/// The first line of an error text: what it says, before its traceback.
+fn first_line(error: &Error) -> String {
+    with_pointers_hidden(error.to_string().lines().next().unwrap_or_default())
+}
+
+/// A host userdata raised as an error value is named by its type, or told by its own `__tostring`, as before; it has
+/// no traceback (the message handler is not run for a userdata: a Rust error is one, and looking at a panic raises
+/// it).
+#[test]
+fn a_host_userdata_as_an_error_value_is_named_as_before_without_its_traceback() {
+    runtime().block_on(async {
+        let lua = make_engine().unwrap();
+        for body in [
+            "error(require('std:task').spawn(function() end), 0)",
+            "error(require('std:collections').Mutex.new(), 0)",
+            "error(require('std:time').Duration.from_secs(3), 0)",
+        ] {
+            let f = load_source(&lua, body)
+                .set_name("=case")
+                .into_function()
+                .unwrap();
+            let before = native(&f).await.unwrap_err();
+            let after = call_guarded_async::<()>(&lua, &f, ()).await.unwrap_err();
+            assert_eq!(first_line(&before), first_line(&after), "{body}");
+            assert!(before.to_string().contains("stack traceback"), "{body}");
+            assert!(!after.to_string().contains("stack traceback"), "{body}");
+        }
+    });
+}
+
+/// A `__tostring` that returns something that is not text fails the conversion with `luaL_tolstring`'s own words.
+#[test]
+fn a_tostring_that_returns_no_text_says_what_lua_l_tolstring_says() {
+    runtime().block_on(async {
+        let lua = make_engine().unwrap();
+        for value in ["nil", "true", "{}", "print"] {
+            let f = load_source(
+                &lua,
+                format!(
+                    "error(setmetatable({{}}, {{ __tostring = function() return {value} end }}), 0)"
+                ),
+            )
+            .into_function()
+            .unwrap();
+            let before = native(&f).await.unwrap_err();
+            let after = call_guarded_async::<()>(&lua, &f, ()).await.unwrap_err();
+            assert_eq!(
+                first_line(&before),
+                "runtime error: '__tostring' must return a string"
+            );
+            assert_eq!(first_line(&before), first_line(&after), "{value}");
+        }
+    });
+}
+
+/// A script that catches a failed host function itself and prints it sees one more frame at the foot of the
+/// traceback, the base of the thread it runs in: a difference of this design (the text is made inside the thread).
+#[test]
+fn a_script_that_catches_a_host_error_sees_the_base_frame_of_its_thread() {
+    runtime().block_on(async {
+        let lua = make_engine().unwrap();
+        let f = load_source(
+            &lua,
+            "local ok, e = pcall(require('std:task').spawn, 5) return tostring(e)",
+        )
+        .set_name("=case")
+        .into_function()
+        .unwrap();
+        let before: String = f.call_async(()).await.unwrap();
+        let after: String = call_guarded_async(&lua, &f, ()).await.unwrap();
+        assert!(!before.trim_end().ends_with("[C]: in ?"), "{before}");
+        assert_eq!(
+            after.trim_end(),
+            format!("{}\n\t[C]: in ?", before.trim_end()),
+            "{after}"
         );
+    });
+}
+
+/// A script's recursion limit is two frames lower in a guarded thread: the frames the thread body takes.
+#[test]
+fn the_recursion_limit_is_two_frames_lower() {
+    runtime().block_on(async {
+        let lua = make_engine().unwrap();
+        let f = load_source(
+            &lua,
+            "local n = 0 local function f() n = n + 1 return 1 + f() end pcall(f) return n",
+        )
+        .into_function()
+        .unwrap();
+        let before: i64 = f.call_async(()).await.unwrap();
+        let after: i64 = call_guarded_async(&lua, &f, ()).await.unwrap();
+        assert_eq!(before - after, 2, "{before} and {after}");
+    });
+}
+
+/// A script that resumes the thread of its own task (the raw `coroutine` library of `neoc run` allows it) sees the
+/// results of the thread body, `xpcall`: a leading `true`, and on failure the handler's answer. A difference of this
+/// design: hiding it takes a Lua frame under every guarded thread.
+#[test]
+fn a_script_that_resumes_its_own_tasks_thread_sees_the_results_of_xpcall() {
+    runtime().block_on(async {
+        let lua = make_engine().unwrap();
+        let f = load_source(
+            &lua,
+            r"local task = require('std:task')
+              local th
+              task.spawn(function() th = coroutine.running() coroutine.yield() return 'one' end)
+              local a, b, c = coroutine.resume(th)
+              return tostring(a) .. ' ' .. tostring(b) .. ' ' .. tostring(c)",
+        )
+        .into_function()
+        .unwrap();
+        let after: String = call_guarded_async(&lua, &f, ()).await.unwrap();
+        assert_eq!(after, "true true one");
+    });
+}
+
+/// A stack overflow is an ordinary error: the message and the kind are the plain call's. Whether the traceback fits in
+/// the stack the failing code left is up to that stack: a traceback that is kept has the top frame's line, as mlua's.
+#[test]
+fn a_stack_overflow_has_the_message_and_the_top_frame_of_a_plain_call() {
+    runtime().block_on(async {
+        let lua = make_engine().unwrap();
+        let f = load_source(&lua, "local function r(n) return 1 + r(n + 1) end r(1)")
+            .set_name("=overflow")
+            .into_function()
+            .unwrap();
+        let before = native(&f).await.unwrap_err().to_string();
+        let after = call_guarded_async::<()>(&lua, &f, ())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert_eq!(before.lines().next(), after.lines().next());
+        if after.contains("stack traceback") {
+            let top = |text: &str| text.lines().nth(2).map(str::to_owned);
+            assert_eq!(top(&before), top(&after));
+        }
+    });
+}
+
+/// The known limit (NEOC-123): a host function that reads a script table through its metamethods, from Rust, is
+/// run by mlua under a protected call whose message handler runs the `__tostring` of what the metamethod raises.
+/// This guard does not reach it. The test says so: it passes while the process aborts, and fails the day it does
+/// not (then the known limit in CLAUDE.md and the module doc of `guard.rs` are to go).
+#[test]
+fn a_host_read_of_a_script_table_through_its_metamethods_still_aborts_the_known_limit() {
+    let name = "a_host_read_of_a_script_table_through_its_metamethods_still_aborts_the_known_limit";
+    if std::env::var("NEOC_ISOLATED_TEST").as_deref() == Ok(name) {
+        std::thread::Builder::new()
+            .stack_size(512 * 1024)
+            .spawn(|| {
+                runtime().block_on(async {
+                    let lua = make_engine().unwrap();
+                    let source = format!(
+                        r#"{HOSTILE}
+                        local opts = setmetatable({{}}, {{ __index = function() error(setmetatable({{}}, mt)) end }})
+                        pcall(require("std:thread").spawn, opts)"#
+                    );
+                    let f = load_source(&lua, source).into_function().unwrap();
+                    let _ = call_guarded_async::<()>(&lua, &f, ()).await;
+                });
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+        return;
+    }
+    let out = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", name, "--nocapture", "--test-threads=1"])
+        .env("NEOC_ISOLATED_TEST", name)
+        .output()
+        .unwrap();
+    assert!(
+        !out.status.success(),
+        "the process no longer aborts: the known limit is closed ({})",
+        out.status
+    );
+}
+
+/// A stack overflow, at some depths of the stack it starts from, leaves no room for a traceback: it is reported
+/// without one (the handler cannot take it), not lost, and its message is the plain call's.
+#[test]
+fn a_stack_overflow_that_leaves_no_room_for_a_traceback_is_reported_without_one() {
+    runtime().block_on(async {
+        let lua = make_engine().unwrap();
+        let f: Function = load_source(
+            &lua,
+            r"local function overflow() return 1 + overflow() end
+              return function(prefix)
+                local function down(n) if n == 0 then return overflow() end return 1 + down(n - 1) end
+                return down(prefix)
+              end",
+        )
+        .eval()
+        .unwrap();
+        let mut without_traceback = 0;
+        for prefix in 0..300 {
+            let e = call_guarded_async::<()>(&lua, &f, prefix).await.unwrap_err();
+            let text = e.to_string();
+            assert!(text.starts_with("runtime error: stack overflow"), "{prefix}: {text}");
+            without_traceback += i32::from(!text.contains("stack traceback"));
+        }
+        assert!(without_traceback > 0, "an overflow that had room for its traceback every time");
     });
 }

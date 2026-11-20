@@ -539,3 +539,45 @@ fn run_prints_ordinary_errors_exactly_as_it_did() {
         assert_eq!(&stderr, expected, "{name}");
     }
 }
+
+#[test]
+fn run_a_syntax_error_is_reported_and_exits_nonzero() {
+    let dir = tempdir().unwrap();
+    write(dir.path(), "broken.lua", "local = 1\n");
+    let (code, stderr) = run_script(dir.path(), "broken.lua");
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert_eq!(
+        stderr,
+        "syntax error: [string \"broken.lua\"]:1: '<name>' expected near '='\n"
+    );
+}
+
+/// The chunk of a compiled bundle has no name of its own, and its errors have always named a line of neoc's own source
+/// (`main.rs:300`): the text stays as it was, whatever else changes in that file.
+#[test]
+fn compile_bundle_error_names_its_chunk_as_it_always_did() {
+    let dir = tempdir().unwrap();
+    write(dir.path(), "main.lua", "error(\"boom\")\n");
+    let app_name = if cfg!(windows) { "app.exe" } else { "app" };
+    write(
+        dir.path(),
+        "build.lua",
+        &format!(
+            "assert(require(\"lib:compile\").bundle({{ entrypoint = \"main.lua\", output = \"{app_name}\" }}))\n"
+        ),
+    );
+    let build = Command::new(BIN)
+        .arg("run")
+        .arg("build.lua")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(build.status.success(), "{build:?}");
+    let out = Command::new(dir.path().join(app_name)).output().unwrap();
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert!(
+        String::from_utf8_lossy(&out.stderr)
+            .contains("runtime error: crates/neoc/src/main.rs:300:1: boom"),
+        "{out:?}"
+    );
+}

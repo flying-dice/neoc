@@ -93,6 +93,35 @@ async fn a_workers_own_tasks_end_with_the_worker() {
     }
 }
 
+/// The same for a task the worker `defer`red or `delay`ed: the engine is dropped when the worker returns, and these
+/// tasks (which hold the engine weakly) end with it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_workers_deferred_and_delayed_tasks_end_with_the_worker() {
+    for start in ["t.defer(", "t.delay(0, "] {
+        for lua in [make_engine().unwrap(), make_engine_in(Life::new()).unwrap()] {
+            let source = format!(
+                r#"local collections = require("std:collections")
+                   local c = collections.Counter.new(0)
+                   local worker = require("std:thread").spawn {{
+                     source = "local t = require('std:task') local th = require('std:thread') "
+                       .. "{start}function() while true do t.wait(0.01) th.shared.c:increment() end end) return 1",
+                     shared = {{ c = c }},
+                   }}
+                   worker:await()
+                   require("std:task").wait(0.1)
+                   local at_return = c:get()
+                   require("std:task").wait(0.3)
+                   return c:get() - at_return"#
+            );
+            let out: f64 = lua.load(source).eval_async().await.unwrap();
+            assert!(
+                out == 0.0,
+                "{start}: the worker's task kept running after the worker ended ({out} more ticks)"
+            );
+        }
+    }
+}
+
 /// After a script ends, the CLI aborts the tasks of its scheduler (`wait_all`) and drops the engine: the servers,
 /// workers and listeners the script started stay up for the next script, as on `main`. (`neoc run a.lua b.lua`
 /// gives each file an engine of its own.)

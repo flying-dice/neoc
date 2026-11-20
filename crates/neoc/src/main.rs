@@ -298,7 +298,11 @@ async fn run_embedded(payload: &[u8]) {
 
     let engine = engine_with_args(&user_args);
 
-    let chunk = lua::sandbox::load_source(&engine, payload);
+    // The chunk of a bundle has no name of its own. It was named after the line of neoc's source that loaded it, as
+    // mlua does for an unnamed chunk, and the text of its errors says so (`main.rs:300:1: boom`): keep that, however
+    // this file changes.
+    let chunk =
+        lua::sandbox::load_source(&engine, payload).set_name("@crates/neoc/src/main.rs:300");
     if let Err(e) = exec_guarded(&engine, chunk).await {
         report_error(NeocError::Runtime(e.to_string()));
     }

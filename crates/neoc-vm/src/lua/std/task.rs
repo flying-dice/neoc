@@ -336,7 +336,7 @@ fn settled(lua: &WeakLua, returned: MultiValue) -> TaskOutcome {
     let Some(lua) = lua.try_upgrade() else {
         return TaskOutcome::Cancelled;
     };
-    match into_call_result(&lua, returned) {
+    match into_call_result(&lua, returned, false) {
         Ok(vals) => TaskOutcome::Ok(vals.into_vec()),
         Err(e) => TaskOutcome::Err(e.to_string()),
     }
@@ -638,6 +638,23 @@ mod tests {
 
     fn engine() -> mlua::Lua {
         lua::sandbox::make_engine().expect("engine")
+    }
+
+    /// A task does not keep its engine alive: once the engine is gone the outcome of a task has nothing to be told
+    /// to, and it is cancelled.
+    #[test]
+    fn the_outcome_of_a_task_of_a_dropped_engine_is_cancelled() {
+        let e = engine();
+        let weak = e.weak();
+        assert!(matches!(
+            super::settled(&weak, mlua::MultiValue::new()),
+            super::TaskOutcome::Err(_)
+        ));
+        drop(e);
+        assert!(matches!(
+            super::settled(&weak, mlua::MultiValue::new()),
+            super::TaskOutcome::Cancelled
+        ));
     }
 
     #[test]
