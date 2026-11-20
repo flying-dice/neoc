@@ -548,7 +548,7 @@ fn the_sealed_environment_holds_on_luau() {
         &lua,
         &env,
         r#"local found = {}
-           for _, name in ipairs { "utf8", "buffer", "vector", "debug", "io", "os", "package", "require", "print", "load", "loadstring",
+           for _, name in ipairs { "typeof", "utf8", "buffer", "vector", "debug", "io", "os", "package", "require", "print", "load", "loadstring",
              "loadfile", "dofile", "getfenv", "setfenv", "newproxy", "module", "collectgarbage", "gcinfo" } do
              if _G[name] ~= nil then found[#found + 1] = name end
            end
@@ -584,6 +584,9 @@ fn the_sealed_environment_holds_on_luau() {
         "table.move(string, 1, 1, 2)",
         "setmetatable(table, nil)",
         "setmetatable(coroutine, { __index = function() end })",
+        // Luau-only writers
+        "table.clear(string)",
+        "table.freeze(string)",
     ] {
         assert!(run_in(&lua, &env, write).is_err(), "{write} must fail");
     }
@@ -682,19 +685,24 @@ async fn a_script_resumes_only_the_coroutines_it_made() {
                local status = coroutine.status(host)
                local attempt = { pcall(coroutine.resume, host) }
                local with_args = { pcall(coroutine.resume, host, 1, 2) }
+               -- `coroutine.close` (Luau's) kills a suspended thread: held to the same rule
+               local close_attempt = { pcall(coroutine.close, host) }
                local after_attempts = ran
                -- the task is not harmed: it finishes its wait and runs on
                task.wait(0.4)
                local mine = coroutine.create(function() coroutine.yield("a") return "b" end)
                local made = { coroutine.resume(mine) }
                local wrapped = coroutine.wrap(function() coroutine.yield(1) return 2 end)
+               local closed_own = coroutine.close(mine)
                return {
                  status = status,
                  refused = (not attempt[2]) and (not with_args[2]),
+                 close_refused = (not close_attempt[1]) and tostring(close_attempt[2]):find("not yours", 1, true) ~= nil,
                  msg = tostring(attempt[3]),
                  ran_after_attempts = after_attempts,
                  ran_at_the_end = ran,
                  made = made[1] and made[2],
+                 closed_own = closed_own,
                  wrapped = wrapped(),
                }"#,
         )
@@ -706,6 +714,8 @@ async fn a_script_resumes_only_the_coroutines_it_made() {
         .unwrap();
     assert_eq!(out.get::<String>("status").unwrap(), "suspended");
     assert!(out.get::<bool>("refused").unwrap());
+    assert!(out.get::<bool>("close_refused").unwrap());
+    assert!(out.get::<bool>("closed_own").unwrap());
     assert_eq!(
         out.get::<String>("msg").unwrap(),
         "cannot resume non-suspended coroutine"

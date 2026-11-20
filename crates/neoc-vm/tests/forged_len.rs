@@ -10,8 +10,8 @@
 
 use neoc_vm::lua::sandbox::make_engine;
 
-/// A table of four values whose `#` is about 2^29. `#t` finds a border by probing doubling keys when the table has
-/// a hash part (here: 40 keys inserted and removed, so the nodes stay allocated), so a chain of keys 5, 10, 20, ...
+/// A table of four values whose `#` is about 2^29 on LuaJIT (and a small number on Luau, see above). `#t` finds a
+/// border on LuaJIT by probing doubling keys when the table has a hash part (here: 40 keys inserted and removed, so the nodes stay allocated), so a chain of keys 5, 10, 20, ...
 /// makes the probe run to 2^29.
 const FORGE: &str = r#"
     local function huge(v)

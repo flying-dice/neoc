@@ -61,6 +61,10 @@ The source in [`crates/neoc-vm/src/lua/`](crates/neoc-vm/src/lua) is the catalog
 - `lib:test` is the test runner: a script named `*.test.lua` or `*.spec.lua` runs under it when passed to `neoc run`.
 - `lib:compile` bundles a script and the runtime into a standalone executable.
 
+## Language
+
+Scripts are Lua 5.1 syntax running on Luau (the base library is Luau's, not LuaJIT's). What differs from LuaJIT, the engine before NEOC-137: `bit` is `bit32` (unsigned results); `string.format("%s", v)` takes strings and numbers only (no `nil`, booleans, tables or `__tostring`); `string.rep` ignores a separator; `assert(false, <table>)` needs a string message; `goto`, hex floats and `1ULL` are syntax errors; there are no proper tail calls; recursion through a metamethod, `string.gsub` callback or `table.sort` comparator stops at about 200 levels with `C stack overflow`; `tostring(1e15)` is `1000000000000000`; error messages use Luau's wording; a failing `xpcall` handler is not re-run. A wait (`task.wait`, I/O) suspends inside `pcall`, `xpcall`, `__call` and `for ... in` iterator functions, and is refused with "attempt to yield across metamethod/C-call boundary" in every other metamethod, in `tostring`, and in `string.gsub` and `table.sort` callbacks.
+
 ## Editor types
 
 This repository contains [LuaCATS](https://luals.github.io/wiki/annotations/) definitions for every module in [`types/luals/`](types/luals), one file per module (`lib/json.lua` for `lib:json`, `vnd/rusqlite.lua` for `vnd:rusqlite`), generated from the modules' own signatures. [lua-language-server](https://luals.github.io/) gives completion, hover docs and type checks of `require("lib:json")` and the rest once it can find them. Its `require` search cannot map a name with a colon to a file, so [`types/luals-plugin.lua`](types/luals-plugin.lua) does that. Point both at your copy of the repository:

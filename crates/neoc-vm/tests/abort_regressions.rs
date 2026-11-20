@@ -4,9 +4,9 @@
 //! LuaJIT 2.1 has no C-call depth limit, and mlua's error handler and LuaJIT's `xpcall` handler call an error
 //! value's `__tostring` while they run: a `__tostring` that makes a protected call and then raises itself was
 //! called again by its own error until the C stack of a runtime worker (2 MiB) was gone, and the process aborted
-//! (NEOC-120, patched by a vendored mlua and a guard layer, both removed with the switch to Luau). A script that
-//! recursed through a host function that calls back into Lua (`string.gsub`, `table.sort`, a module that runs a
-//! callback) aborted the same way.
+//! (NEOC-120; main closed it with a guard layer, `guarded_xpcall.lua` and `call_guarded`, which the switch to Luau
+//! removes). A script that recursed through a host function that calls back into Lua (`string.gsub`, a module that
+//! runs a callback) aborted the same way.
 //!
 //! Each case here runs in a **child process** (this test binary, run again with `NEOC_ABORT_CASE`) on a **2 MiB
 //! thread**, so a case that still aborts fails its own test (the child dies on a signal) instead of taking the whole
@@ -182,7 +182,7 @@ const CASES: &[Case] = &[
                 .map_err(|e| e.to_string())
         },
     ),
-    // ---- recursion through a host function that calls back into Lua: no C-call depth limit on LuaJIT -------------
+    // ---- recursion through a host function that calls back into Lua: Luau stops it at its C-call limit ----------
     ("gsub_callback_recursion", || {
         script(
             r#"local function f() return (string.gsub("a", "a", f)) end
@@ -299,35 +299,43 @@ macro_rules! survives {
 survives!(
     main_chunk_raises_the_poison,
     "main_chunk_raises_the_poison",
-    "error:"
+    "error: runtime error: error in error handling"
 );
-survives!(failing_task, "failing_task", "task finished");
-survives!(failing_worker, "failing_worker", "worker finished");
-survives!(embedder_call_async, "embedder_call_async", "error:");
+survives!(failing_task, "failing_task", "task finished: nil,string");
+survives!(
+    failing_worker,
+    "failing_worker",
+    "worker finished: nil,string"
+);
+survives!(
+    embedder_call_async,
+    "embedder_call_async",
+    "error: runtime error: error in error handling"
+);
 survives!(
     table_get_through_a_poisoned_index,
     "table_get_through_a_poisoned_index",
-    "error:"
+    "error: runtime error: error in error handling"
 );
 survives!(
     thread_spawn_with_a_poisoned_options_table,
     "thread_spawn_with_a_poisoned_options_table",
-    "spawn:"
+    "spawn: true,nil,string"
 );
 survives!(
     hyper_request_with_a_poisoned_options_table,
     "hyper_request_with_a_poisoned_options_table",
-    "request:"
+    "request: true,nil,string"
 );
 survives!(
     hyper_handler_returns_the_poison,
     "hyper_handler_returns_the_poison",
-    "handler:"
+    "handler: table,nil"
 );
 survives!(
     hyper_handler_raises_the_poison,
     "hyper_handler_raises_the_poison",
-    "handler:"
+    "handler: table,nil"
 );
 survives!(
     xpcall_handler_recursion,
@@ -342,7 +350,7 @@ survives!(
 survives!(
     tostring_resumes_a_coroutine_that_fails_with_the_same_value,
     "tostring_resumes_a_coroutine_that_fails_with_the_same_value",
-    "error:"
+    "error: runtime error: x"
 );
 survives!(
     gsub_callback_recursion,
@@ -356,7 +364,7 @@ survives!(
     "sort: false",
     "overflow"
 );
-/// The one case that needs more than 2 MiB in a **debug** build: each level of `Lua -> lib:cache (Rust) -> on_evict
+/// The first of two cases that need more than 2 MiB in a **debug** build: each level of `Lua -> lib:cache (Rust) -> on_evict
 /// (Lua)` takes about 25 KiB of Rust stack there (about 1 KiB in release), and Luau stops the recursion at 200 C
 /// levels with "C stack overflow", which is 5 MiB of frames in debug and 0.2 MiB in release. Measured: the child aborts
 /// at 2, 3 and 4 MiB in debug, survives at 6 MiB in debug and at 2 MiB in release. Run it with
@@ -372,6 +380,7 @@ fn neoc_host_function_running_a_callback_recurses_into_itself() {
     // (it is that deep), and what comes back to the script is `error in error handling`
     assert!(
         outcome.contains("on_evict: false")
+            && outcome.contains("depth>100:true")
             && (outcome.contains("overflow") || outcome.contains("error in error handling")),
         "{outcome}"
     );
@@ -385,7 +394,9 @@ fn neoc_host_function_running_a_callback_recurses_into_itself() {
 fn async_host_function_running_a_callback_recurses_into_itself() {
     let outcome = in_child("async_host_function_running_a_callback_recurses_into_itself");
     assert!(
-        outcome.contains("describe: false") && outcome.contains("C stack overflow"),
+        outcome.contains("describe: false")
+            && outcome.contains("depth>100:true")
+            && outcome.contains("C stack overflow"),
         "{outcome}"
     );
 }

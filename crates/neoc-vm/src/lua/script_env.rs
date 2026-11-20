@@ -8,18 +8,19 @@
 //!
 //! - the **base functions** a script may call are copied in one by one (an allow-list: a function a Luau
 //!   upgrade adds is not available until someone adds it here): no `load*`, `dofile`, `getfenv`,
-//!   `setfenv`, `newproxy`, `collectgarbage`, `require`, `print` (it writes to the process's stdout)
-//!   and no `os`/`debug`/`buffer`/`vector`/`utf8`;
+//!   `setfenv`, `newproxy`, `collectgarbage`, `require`, `print` (it writes to the process's stdout), no `typeof`
+//!   (it names the host's userdata types, where `type` says `userdata`) and no `os`/`debug`/`buffer`/`vector`/`utf8`;
 //! - the **libraries** (`string`, `table`, `math`, `coroutine`, `bit32`) are private copies (`coroutine.create`,
 //!   `resume` and `wrap` are versions that let an async host call run inside a coroutine of the script's own and
 //!   let a script resume only the coroutines it made, see `async_coroutines.lua`), so the host may add
 //!   its own functions to them before [`freeze`], and the script can never reach the
 //!   engine's own shared tables;
 //! - [`freeze`] then marks every library in the environment read-only with Luau's own `readonly` table flag:
-//!   assigning to it, `rawset`, `table.insert`, `table.remove`, `table.sort`, `table.move` and `table.clear` on it
-//!   all fail with "attempt to modify a readonly table", and `setmetatable` on it is refused. (LuaJIT had no such
-//!   flag: the libraries were empty proxies behind a guarded `rawset` and guarded `table` writers, which Luau makes
-//!   redundant, and `pairs(string)` saw nothing; it sees the functions now.)
+//!   assigning to it, `rawset`, `table.insert`, `table.sort`, `table.move`, `table.clear` and `table.freeze`, and
+//!   `setmetatable` on it, all fail with "attempt to modify a readonly table" (`table.remove` too, except that on a table
+//!   with no array part, which a library is, it removes nothing and raises nothing). LuaJIT had no such flag: the
+//!   libraries were empty proxies behind a guarded `rawset` and guarded `table` writers, which Luau makes redundant,
+//!   and `pairs(string)` saw nothing; it sees the functions now. The flag is set on the table itself, not on a proxy.
 //!
 //! The string metatable is a different matter: it is shared by every string in the engine, and
 //! [`make_bare_engine`](crate::lua::sandbox::make_bare_engine) locks it.
@@ -49,7 +50,6 @@ const BASE_FUNCTIONS: &[&str] = &[
     "tonumber",
     "tostring",
     "type",
-    "typeof",
     "unpack",
     "xpcall",
 ];
@@ -169,7 +169,7 @@ fn splitmix(x: u64) -> u64 {
     (z ^ (z >> 31)) | 1
 }
 
-/// Replace `create`, `resume` and `wrap` in the script's copy of `coroutine` with versions that let an async host call
+/// Replace `create`, `resume`, `wrap` and `close` in the script's copy of `coroutine` with versions that let an async host call
 /// inside a coroutine of the script's own reach the executor, and that refuse to resume a coroutine the script did not
 /// make (see `async_coroutines.lua`).
 fn install_async_coroutines(lua: &Lua, copy: &Table, raw: &Table) -> mlua::Result<()> {
@@ -185,7 +185,7 @@ fn install_async_coroutines(lua: &Lua, copy: &Table, raw: &Table) -> mlua::Resul
     let wrappers: Table = load_source(lua, include_str!("async_coroutines.lua"))
         .set_name("=async_coroutines")
         .call((pending, raw.clone(), driven, owned))?;
-    for name in ["create", "resume", "wrap"] {
+    for name in ["create", "resume", "wrap", "close"] {
         copy.raw_set(name, wrappers.raw_get::<Value>(name)?)?;
     }
     Ok(())
@@ -256,10 +256,13 @@ pub fn mark_driven(lua: &Lua, thread: &mlua::Thread) -> mlua::Result<()> {
 /// Call it after the host's own additions and before the script runs.
 ///
 /// # Errors
-/// Fails when the environment cannot be read.
+/// None today; the `Result` is kept so that a failure to seal (an engine without the flag) stays an error.
 pub fn freeze(_lua: &Lua, env: &Table) -> mlua::Result<()> {
-    for pair in env.pairs::<String, Value>() {
-        if let (name, Value::Table(library)) = pair?
+    // a key that is not a string is skipped, as it always was; a value that is a table is flagged *itself*, not a
+    // proxy: an embedder that shares one table between environments, or changes it later, gets a read-only table
+    // everywhere, and its own `set` fails on it
+    for (name, value) in env.pairs::<String, Value>().flatten() {
+        if let Value::Table(library) = value
             && name != "_G"
         {
             library.set_readonly(true);
@@ -306,10 +309,7 @@ mod tests {
 
         fn denied(&self, source: &str) {
             let err = self.run(source).expect_err(source).to_string();
-            assert!(
-                err.contains("readonly") || err.contains("protected") || err.contains("attempt to"),
-                "{source}: {err}"
-            );
+            assert!(err.to_lowercase().contains("readonly"), "{source}: {err}");
         }
     }
 
@@ -448,7 +448,6 @@ mod tests {
                 "tonumber",
                 "tostring",
                 "type",
-                "typeof",
                 "unpack",
                 "xpcall"
             ]
@@ -474,7 +473,7 @@ mod tests {
     #[test]
     fn writing_to_a_library_fails_and_the_library_is_unchanged() {
         let rig = Rig::new();
-        for library in ["string", "table", "math", "coroutine", "bit"] {
+        for library in ["string", "table", "math", "coroutine", "bit32"] {
             rig.denied(&format!("{library}.evil = 1"));
             rig.denied(&format!("{library}.len = nil"));
             rig.denied(&format!("{library}[1] = 1"));
@@ -568,8 +567,14 @@ mod tests {
     fn the_shared_string_metatable_cannot_be_used_to_mutate_string() {
         let rig = Rig::new();
         assert_eq!(rig.string("return tostring(getmetatable(''))"), "locked");
-        rig.denied("getmetatable('').__index.evil = 1");
-        rig.denied("getmetatable('').__index = {}");
+        // the lock makes `getmetatable('')` a string, so there is no table to write to: an index error, not `readonly`
+        for source in [
+            "getmetatable('').__index.evil = 1",
+            "getmetatable('').__index = {}",
+        ] {
+            let err = rig.run(source).expect_err(source).to_string();
+            assert!(err.contains("attempt to index"), "{source}: {err}");
+        }
         rig.denied("string.rep = nil");
         // methods on strings still work
         assert_eq!(rig.string("return ('x'):rep(3) .. ('Ab'):lower()"), "xxxab");

@@ -11,9 +11,9 @@ use crate::lua::modules;
 /// Each is a sandbox hazard: runtime code loading (`loadstring`, which mlua adds to Luau), environment/identity
 /// tampering (`getfenv`, `setfenv`, `newproxy`), GC control and introspection (`collectgarbage`, which mlua
 /// adds, `gcinfo`) and mlua's file-system `require` (the engine's own is installed by `modules::install`).
-/// Luau has no `load`, `dofile`, `loadfile`, `module` or `string.dump`; the `io`, `os`, `package`, `debug`
-/// and `ffi` names are not loaded either and stay on the list so a library a future mlua opens by default is
-/// removed. Paths are dotted; the last segment is the key removed from its parent table.
+/// Luau has no `load`, `dofile`, `loadfile`, `module` or `string.dump`; the `io`, `os`, `package`, `debug`,
+/// `utf8`, `buffer`, `vector` and `integer` names are not opened either and stay on the list so a library a future
+/// mlua opens by default is removed (`jit` and `ffi` went with LuaJIT). Paths are dotted; the last segment is the key removed from its parent table.
 const STRIPPED_GLOBALS: &[&str] = &[
     "load",
     "loadstring",
@@ -42,7 +42,7 @@ const STRIPPED_GLOBALS: &[&str] = &[
 /// Only the language-semantics libraries load: COROUTINE/TABLE/STRING/MATH/BIT (Luau's `bit32`), plus BASE
 /// which `mlua` always opens (`pairs`, `ipairs`, `tostring`, `pcall`, ...). OS/DEBUG/UTF8/BUFFER/VECTOR never
 /// load: `os` and `debug` are sandbox hazards that our `std:` modules cover, and the others are Luau
-/// extensions neoc does not offer. The unsafe parts of BASE are then stripped (see `STRIPPED_GLOBALS`)
+/// extensions neoc does not offer (`INTEGER` is not opened either). The unsafe parts of BASE are then stripped (see `STRIPPED_GLOBALS`)
 /// and the custom `require` is installed.
 ///
 /// # Errors
@@ -157,9 +157,9 @@ fn lock_string_metatable(lua: &Lua) -> mlua::Result<()> {
 
 /// Load script source as a text-only chunk.
 ///
-/// Luau bytecode is not verified when it is loaded (a crafted chunk corrupts memory and escapes the sandbox,
-/// as LuaJIT's does), so every entry point that runs script-supplied source goes through here and
-/// refuses binary chunks.
+/// Luau's loader checks the bytecode version and does not verify the instructions (LuaJIT's did not either), so a
+/// crafted chunk is treated as able to corrupt memory: every entry point that runs script-supplied source goes
+/// through here and refuses binary chunks.
 #[track_caller]
 pub fn load_source<'a>(lua: &Lua, source: impl AsChunk + 'a) -> Chunk<'a> {
     lua.load(source).set_mode(ChunkMode::Text)
@@ -320,6 +320,29 @@ mod tests {
                 ("unpack", "function"),
                 ("upper", "function"),
             ])
+        );
+    }
+
+    // `STRIPPED_GLOBALS` seen from a script: the engine of `neoc run` has its own `require` and nothing else on the
+    // list; a bare engine has none of them (mlua installs a file-system `require`, `loadstring` and
+    // `collectgarbage`, which are stripped; `utf8`, `buffer`, `vector` and `integer` are not opened)
+    #[test]
+    fn given_either_engine_when_probing_the_stripped_names_then_none_is_reachable() {
+        let names = "{ 'load', 'loadstring', 'dofile', 'loadfile', 'getfenv', 'setfenv', 'newproxy', 'module', \
+             'collectgarbage', 'gcinfo', 'io', 'os', 'package', 'debug', 'utf8', 'buffer', 'vector', 'integer' }";
+        let probe = format!(
+            "local found = {{}} for _, n in ipairs({names}) do if _G[n] ~= nil then found[#found + 1] = n end end \
+             if string.dump then found[#found + 1] = 'string.dump' end return table.concat(found, ',') .. '|' .. type(require)"
+        );
+        let full: String = make_engine().unwrap().load(&probe).eval().unwrap();
+        assert_eq!(
+            full, "|function",
+            "the engine's own require, nothing stripped left"
+        );
+        let bare: String = make_bare_engine().unwrap().load(&probe).eval().unwrap();
+        assert_eq!(
+            bare, "|nil",
+            "a bare engine has no require, not even mlua's file-system one"
         );
     }
 

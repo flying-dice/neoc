@@ -31,7 +31,7 @@ strip = "symbols"
 
 # mlua-sys builds Luau's C++ in its build script, with this package's opt level. At `opt-level = 0` a dev build runs
 # the VM about 3 times slower (a 5e7-iteration numeric loop: 0.83 s against 0.28 s), where the LuaJIT it replaced was
-# always built optimised, so build the engine optimised even in a dev build. (Rust code and its debug info stay as
-# they are.)
+# always built optimised, so build the engine optimised even in a dev build. (This is the package's own Rust code as
+# well, a few small functions.)
 [profile.dev.package.mlua-sys]
 opt-level = 2
